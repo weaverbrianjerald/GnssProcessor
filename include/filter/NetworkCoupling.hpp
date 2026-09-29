@@ -126,6 +126,12 @@ struct LocalBlockCol {
     /// the injector (an ISB is carried as a pure random walk, the clock about a carried
     /// drift), not here.
     bool              is_rx_isb{false};
+    /// The entry is one of the station's carried receiver code-bias columns
+    /// (RXCB-IN-BLOCK, @c network.carry_rx_code_bias_in_block).  Telemetry only, like
+    /// @c is_rx_clk: it splits @c pl_blk_rxcb_cols / @c pl_blk_rxcb_missing_cross out of
+    /// the ambiguity population.  Default false, so an existing brace-init keeps its
+    /// meaning.
+    bool              is_rx_cb{false};
 };
 
 /// One buffered present-column term of a coupling row under the border time update

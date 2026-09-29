@@ -479,7 +479,27 @@ bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
         if (d == 0.0) continue;
         const auto pv = xe.pivot.find(cc);
         if (pv == xe.pivot.end()) {
-            ++X.gauge_orphan;
+            // The stash's pivot left the layout (its satellite set, or a pivot handover):
+            // spread the deficit evenly over the constellation's present clock columns in S,
+            // which keeps the row's clock-family sum at its harvest value and so its
+            // blindness to the declared gauge (card 1f's restore, used only here).  With no
+            // present clock of the constellation the row stays gauge-variant (counted).
+            std::vector<Eigen::Index> cs;
+            for (Eigen::Index s = 0; s < xe.nS(); ++s) {
+                const int p = xe.p_of_s[static_cast<std::size_t>(s)];
+                if (xe.clk_p[static_cast<std::size_t>(p)] && xe.cc_p[static_cast<std::size_t>(p)] == cc)
+                    cs.push_back(s);
+            }
+            if (cs.empty()) {
+                ++X.gauge_orphan;
+                continue;
+            }
+            const double share = d / static_cast<double>(cs.size());
+            for (Eigen::Index s : cs) {
+                emit[xe.col_of_s[static_cast<std::size_t>(s)]] += share;
+                rhs += share * xe.shat_s(s);
+            }
+            ++X.gauge_spread;
             continue;
         }
         emit[pv->second.first] += d;
@@ -535,6 +555,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
             ++R.pl_blk_rxclk_cols;
             if (c.is_rx_isb) ++R.pl_blk_rxclk_isb_cols;
         }
+        if (c.is_rx_cb) ++R.pl_blk_rxcb_cols;   // RXCB-IN-BLOCK, same rule
         ing.push_back(std::move(g));
     }
     const Eigen::Index n = static_cast<Eigen::Index>(ing.size());
@@ -597,6 +618,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                 // (clock, iono) counts in both splits by design: no counter here
                 // partitions pl_blk_pair_missing.
                 if (ci.is_rx_clk || cj.is_rx_clk) ++R.pl_blk_rxclk_missing_cross;
+                if (ci.is_rx_cb || cj.is_rx_cb) ++R.pl_blk_rxcb_missing_cross;   // RXCB-IN-BLOCK
                 continue;
             }
             if (ci.vce_fac != 1.0 || cj.vce_fac != 1.0) v *= std::sqrt(ci.vce_fac * cj.vce_fac);

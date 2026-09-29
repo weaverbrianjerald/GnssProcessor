@@ -262,6 +262,11 @@ if(MSVC)
     set_source_files_properties(src/core/filter/KalmanFilter.cpp
         src/core/app/ApplicationNetworkAssembly.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_block_baarda.cpp sits at the Debug section limit through the network
+    # run-context headers it includes (card CTU section 14 added a few template members
+    # there and tipped it over, C1128).
+    set_source_files_properties(tests/test_block_baarda.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
 if(WIN32)
@@ -528,6 +533,7 @@ add_executable(gnss_tests
     tests/test_galileo_network.cpp
     tests/test_clock_level_carry.cpp
     tests/test_coupling_exact_update.cpp
+    tests/test_ctu_level_guard.cpp
     tests/test_owd_wire_contract.cpp
     tests/test_reinflate_never_shrinks.cpp
     tests/test_active_system_admission.cpp

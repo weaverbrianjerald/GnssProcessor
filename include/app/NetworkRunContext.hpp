@@ -171,6 +171,7 @@ namespace GnssProcessor {
         /// birth stash reads @ref amb_birth_var_floor alone.  Resolved to 0 off the
         /// float_kf vehicle.  0.0 (default) adds no drop floor (RF-3a).
         double amb_drop_var_floor{};
+        bool   amb_drop_decouple_always{};   ///< network.amb_float_drop_decouple_always (card CTU section 14): a drop clears the arc's regression and block row even at birth strength
         /// network.amb_float_drop_floor_after_ep: the processed epoch (@c n_loop_epochs)
         /// from which @ref amb_drop_var_floor is in force; 0 = no gate.  Resolved to 0 when
         /// the floor itself is unarmed, so every site reads one pair of numbers and a
@@ -228,6 +229,9 @@ namespace GnssProcessor {
         bool carry_cpl_exact{};
         bool clm_on{};      ///< network.clock_level_monitor (card CTU): the level monitor, measure-only
         bool clm_raise{};   ///< network.clock_level_bound_raise (card CTU): raise the stashed block to the level bound
+        int  clm_restore_credit_ep{};   ///< network.clock_level_restore_credit_ep (card CTU G5): epochs of code information the restored level is credited with (0 = all the snapshot's)
+        bool clm_restore_raise{};       ///< network.clock_level_restore_raise (card CTU G5): raise the restored border block along each satellite's level to its code-only variance, once, at the first leg epoch
+        int  clm_innov_window_ep{60};   ///< network.clock_level_innov_window_ep (card CTU section 14): the level innovation instrument's window, epochs
         bool carry_cpl_shmarg{};
         /// network.carry_coupling_gauge_project (card 1f): hold each (constellation, kind)
         /// coefficient sum of a truncated coupling row at its harvest value, so a departed
@@ -287,6 +291,7 @@ namespace GnssProcessor {
         double rxclk_jump_k{};      ///< Clock-jump gate (sigma) on the one-step prediction innovation at harvest; exceeding it erases the carry (the wired response of invariant #1).
         bool rxclk_isb{};           ///< Carry the per-system ISB columns too (pure RW, no drift state).
         bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
+        bool rxcb_blk{};      ///< RXCB-IN-BLOCK (network.carry_rx_code_bias_in_block, card CTU section 14): the rx-CB columns fold inside the station's whitened local block; loader guarantees rx_cb_on + coupling + a local block.
         bool rx_cb_datum{};   ///< Zero-mean-over-receivers DCB datum (network.rx_code_bias_datum; card RXCB-DATUM).
         double rx_cb_datum_sigma{};  ///< Loose physical-bound sigma (m) of that datum (network.rx_code_bias_datum_sigma_m).
         bool sta_prior_pre_pd{};  ///< Fold the station's datum rows before the addStation PD test (network.station_prior_before_pd; card RF-PD-fix).
@@ -626,6 +631,8 @@ namespace GnssProcessor {
         double cta_k{};              ///< network.clock_anchor_k: |w| trip threshold on the standardized predicted residual (empirical, §3)
         double cta_abs_m{};          ///< network.clock_anchor_abs_m: floor-independent absolute backstop on |ê| (m); 0 = off
         double cta_sigma_floor_m{};  ///< network.clock_anchor_sigma_floor_m: √S floor, so a weak-data epoch gives w ≈ 0 instead of 0/0
+        int    cta_space{};          ///< network.clock_anchor_guard_space (card CTU section 14): 0 clock, 1 phase_shadow, 2 phase
+        double cta_phi_floor_m{};    ///< network.clock_anchor_phase_sigma_floor_m: sqrt(S) floor of the phase-space statistic (m)
         int    cta_recouple_ep{};    ///< network.clock_anchor_recouple_epochs: consecutive in-band epochs a loose satellite must serve before the anchor re-engages (the re-validation of invariant #7)
         bool   cta_mark{};           ///< network.clock_anchor_mark: wire-mark the decoupling edge (per-sat disc through the B1 retro-bump chain)
         /// The one resolved gauge-free predicate that every fold, withdraw and replay site
@@ -971,6 +978,16 @@ namespace GnssProcessor {
         CouplingExactEpoch cxu_epoch;                       ///< this epoch's inputs; ok = false when off or unbuilt
         std::map<std::string, double> clm_info;             ///< card CTU monitor: satellite -> accumulated code-only level information I_L (1/m^2), undecayed
         std::map<std::string, int>    clm_n;                ///< card CTU monitor: satellite -> epochs of code information accumulated
+        std::map<std::string, double> clm_info_c;           ///< card CTU G5: satellite -> code-only level information in the constellation contrast, 1/(s0^2 Q) summed (1/m^2)
+        std::map<std::string, double> clm_seam_q;           ///< card CTU G5: satellite -> level process noise of this epoch's time update (m^2), set at a switch-on resume, cleared after the fold
+        bool                          clm_restore_raise_pending{false};   ///< card CTU G5: a warm resume restored LB rows and the raise waits for the first leg epoch
+        // Level innovation instrument (card CTU section 14), measure-only.
+        std::map<std::string, double> clm_prev_clk;         ///< previous monitored epoch's clock per satellite (m), the innovation's prior mean
+        Eigen::MatrixXd               clm_prev_pclk;        ///< previous stash's clock-clock block (m^2), the innovation's prior variance
+        std::map<std::string, int>    clm_prev_pidx;        ///< satellite -> row of clm_prev_pclk
+        double                        clm_prev_s{-1.0};     ///< continuous GPS seconds of the previous monitored epoch
+        std::map<std::string, ClockLevelInnovWin> clm_win;  ///< per-satellite window sums
+        int                           clm_win_ep{0};        ///< epochs in the current window
         // Readmit continuity: E2 seed-first re-admission and the block re-coupling edge
         // (network.readmit_seed_horizon_s / readmit_coupling_marg_ep).  Not snapshotted
         // (forward-only response policy): a seam during a satellite's absence loses its
@@ -2396,6 +2413,8 @@ namespace GnssProcessor {
         std::filesystem::path snap_path;
         double   last_snapshot_write_s = -1.0;   // product time of the last snapshot write
         uint64_t live_fingerprint      = 0;
+        uint64_t live_fingerprint_ctu_off = 0;   ///< card CTU G5: the live fingerprint without the card's switch-on tokens (0 when none is armed)
+        bool     ctu_switch_on_resume = false;   ///< card CTU G5: this run resumed from a snapshot written without the card's knobs
         // Write-side telemetry (RTB-7(e), invariant #4).  The carry blob is about 99 % of
         // the snapshot, so its size and shape are the only readout that shows
         // network.state_snapshot_carry_diagonal took effect: a diagonal run otherwise looks
@@ -2820,6 +2839,17 @@ namespace GnssProcessor {
         std::array<long long, 8> cta_e_ge{}; ///< |ê| ≥ @ref kCtaELadder[i] (m): the ladder the absolute backstop's rail is read off
         double    cta_sum_sqrt_s = 0.0;      ///< Σ √S over those rows, so mean √S = the metres that one unit of k buys at this rung
         double    cta_sum_abs_e = 0.0;       ///< Σ |ê| over those rows (m)
+        // Card CTU section 14: the phase-space statistic (network.clock_anchor_guard_space).
+        long long cta_phi_rows = 0;          ///< anchored pass-0 rows with a phase statistic
+        long long cta_phi_unavail = 0;       ///< rows tested without one (no dense clock + two-band PB prior this epoch): abs only in phase mode
+        long long cta_phi_floor_rows = 0;    ///< rows whose phase sqrt(S) sat at its floor
+        std::array<long long, 8> cta_phi_w_ge{};   ///< |w_phi| >= kCtaWLadder[i]
+        std::array<long long, 8> cta_phi_e_ge{};   ///< |e_phi| >= kCtaELadder[i] (m)
+        double    cta_phi_sum_w2 = 0.0;      ///< sum w_phi^2 (the phase statistic's own sigma0)
+        long long cta_x_both = 0;            ///< anchored pass-0 rows over k on both statistics
+        long long cta_x_clk_only = 0;        ///< …on the clock statistic only (the level's motion)
+        long long cta_x_phi_only = 0;        ///< …on the phase statistic only
+        long long cta_trip_phi = 0;          ///< decouples decided by the phase statistic (phase mode)
         double    cta_sum_w2 = 0.0;          ///< Σ w², so √(Σw²/n) is the guard's own σ̂₀, a same-statistic cross-check on the census's σ̂₀_clk
 
         // --- Run tallies of the SD EWL Route-B integer decision (increment 2a).  Standing
@@ -3147,6 +3177,19 @@ namespace GnssProcessor {
         long long n_pl_blk_rxclk_isb_cols = 0;           ///< …of which are ISB columns.  0 is not an alarm (a GPS-only / BSSD posture allocates no per-system time-offset state).
         long long n_pl_blk_rxclk_not_folded = 0;         ///< clock-family columns pushed but not folded (non-SPD block): their carry did not act, and there is no diagonal fallback, on purpose
         long long n_pl_blk_rxclk_missing_cross = 0;      ///< (clock-family, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block); a subset of n_pl_blk_pair_missing
+        // Invariant #4/#7 telemetry of RXCB-IN-BLOCK (network.carry_rx_code_bias_in_block).
+        // An armed run with n_pl_blk_rxcb_cols == 0 is unwired, not clean; the not-folded
+        // count is a "carried nothing" count (no diagonal fallback, as for the clock).
+        long long n_pl_blk_rxcb_cols = 0;                ///< receiver code-bias columns admitted into a block build
+        long long n_pl_blk_rxcb_not_folded = 0;          ///< receiver code-bias columns pushed but not folded (non-SPD block)
+        long long n_pl_blk_rxcb_missing_cross = 0;       ///< (receiver code-bias, other) pairs zeroed for a missing harvest cross term
+        long long n_rxcb_blk_harvested = 0;              ///< receiver code-bias entries stashed with a border regression and a harvest-block row
+        long long n_rxcb_blk_harvest_fail = 0;           ///< receiver code-bias columns whose coupling harvest failed (not stashed; the column is cold next epoch)
+        long long n_amb_drop_decoupled_idem = 0;         ///< card CTU section 14: drops at birth strength that cleared a regression / block row (network.amb_float_drop_decouple_always)
+        long long cxu_resume_stash = 0;                  ///< card CTU G5: the exact update's stash stamp rebuilt from a restored dense border
+        long long n_rxcb_blk_restored_skip = 0;          ///< RXCB-IN-BLOCK: carried entries without a harvest-block row (restored from a diagonal-carry snapshot) left out of the block and re-harvested
+        long long n_rxcb_blk_step_reset = 0;             ///< receiver code-bias entries erased at the harvest by the frame-invariant step test (10 sigma of the two harvested variances, the walk and a 0.5 m guard): the event response of invariant #1
+        long long n_rxcb_blk_no_block = 0;               ///< receiver code-bias entries stashed without a harvest-block row (cross terms to the station's other columns missing next epoch)
         long long n_rxclk_carry_refused = 0;             ///< clock carries erased by the jump gate (network.carry_rx_clock_jump_k) at harvest: |one-step prediction innovation| > k*sigma means the receiver (or the solve) stepped, so both the bias and the drift are dropped and re-born cold.  The wired response of invariant #1 for a quantity that has no other jump detector on the network path.
         long long n_rxclk_carry_gap_drop = 0;            ///< clock-family carries dropped at the harvest prune for exceeding carry_rx_clock_max_gap_s without a sighting (the absent-station edge)
         // --- The jump gate's own scale, so a leg can say what it would have caught ---
@@ -3580,6 +3623,21 @@ namespace GnssProcessor {
         double    clm_min_ratio = 0.0, clm_raised_sum = 0.0, clm_raised_max = 0.0;
         std::vector<double> clm_ratios;        ///< every counted ratio (the run-end median)
         std::map<std::string, long long> clm_raised_by_sat;   ///< raises per satellite (invariant 7)
+        // Level innovation instrument (card CTU section 14).
+        long long clm_innov_rows{0};           ///< satellite-epoch innovations formed
+        long long clm_innov_tripped{0};        ///< satellite-epochs left out because the anchor withdrew the clock's prior
+        double    clm_innov_nis_sum{0.0};      ///< summed NIS after epoch 15
+        long long clm_restore_raised{0};       ///< card CTU G5: satellites raised on restore
+        double    clm_restore_raise_sum{0.0};  ///< …summed variance added (m^2)
+        double    clm_restore_raise_max{0.0};  ///< …largest (m^2)
+        long long clm_innov_nis_n{0};          ///< NIS values summed
+        long long clm_innov_nis_gt{0};         ///< NIS values above 6.63 (chi2(1), 1 %)
+        std::vector<double> clm_win_nees;      ///< per window: the split-half truth-free level NEES
+        std::vector<double> clm_win_rms;       ///< per window: rms over satellites of the mean innovation (m)
+        std::vector<double> clm_win_T;         ///< per window: mean over satellites of T = nubar^2 / var(nubar)
+        std::vector<double> clm_win_phi;       ///< per window: split-half noise over the white prediction
+        long long clm_win_Tgt{0};              ///< window satellites with T above 6.63
+        long long clm_win_Tn{0};               ///< window satellites with a T
         // On-path telemetry for the departed-column gauge defect.  `held` counts
         // (constellation, kind) families whose coefficient sum was restored to its harvest
         // value against a truncated column; `orphan` counts families whose truncated mass

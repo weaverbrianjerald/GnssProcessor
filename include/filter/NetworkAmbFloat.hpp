@@ -109,7 +109,12 @@ namespace GnssProcessor {
      *         @c dropped_ep and @c drop_walk_ph are still updated), or when the
      *         restored variance would not be positive (the entry is left unchanged).
      */
-    bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_ep);
+    bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_ep,
+                      bool decouple_always = false, bool* decoupled_idem = nullptr);
+    // @p decouple_always (network.amb_float_drop_decouple_always, card CTU section 14):
+    // the idempotent branch also clears the border regression and the block row when the
+    // arc still has them, and sets *@p decoupled_idem.  Default false = the previous
+    // behaviour.
 
     /**
      * @brief Outcome of a drop taken with both floors in hand (RF-3a A1).
@@ -123,6 +128,7 @@ namespace GnssProcessor {
     struct AmbDropOutcome {
         bool acted{false};            ///< The entry's variance actually moved (@ref ambFloatDrop's return).
         bool from_drop_floor{false};  ///< The restored variance came from @c network.amb_float_drop_var_m2.
+        bool decoupled_idem{false};   ///< Card CTU section 14: the variance did not move but the regression and the block row were cleared (network.amb_float_drop_decouple_always).
     };
 
     /**
@@ -146,7 +152,7 @@ namespace GnssProcessor {
      */
     AmbDropOutcome ambFloatDropFloored(LocalCarry& lc, double birth_floor_m2,
                                        double drop_floor_m2, double now_s,
-                                       long long now_ep);
+                                       long long now_ep, bool decouple_always = false);
 
     /**
      * @brief Drop floor in force at this epoch, i.e. the warm-up gate (RF-3c).

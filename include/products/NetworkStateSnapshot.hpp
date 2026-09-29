@@ -590,6 +590,11 @@ struct NetworkStateSnapshot {
         double t_s{0.0};     ///< Continuous-GPS s of the last harvest; ≤ 0 marks a never-harvested (cold) entry.
     };
     std::map<std::string, ShDev> sh_dev_carry;  ///< "<station>|<sat>" -> deviation carry.
+    /// Card CTU (section 9.3, G5): satellite -> (the code-only information of its level in
+    /// the constellation contrast, 1/m^2; the epochs it accumulated), @c LB rows.  Written
+    /// whenever the level monitor (network.clock_level_monitor) ran; read back by a leg's
+    /// raise on restore (network.clock_level_restore_raise).  Empty otherwise.
+    std::map<std::string, std::pair<double, int>> level_info;
     /// True when any RS-6 station-layer record is present.  A predicate of its own, like
     /// @ref hasEmitState / @ref hasDatumState / @ref hasCouplingState: the restore site
     /// reports and warns about the two halves (rx-CB carry, deviation carry) separately,

@@ -246,7 +246,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   census keys above 400 m in hour 1). `processing.ssr_pb_hold_presence_flip` (harness
   `network.closed_loop.pb_hold_presence_flip`) gives a held key's A5 edge the reaction of an unheld
   key; the consumer replay now writes card CST's per-satellite trace.
-- [CTU](CTU_coupling_time_update_2026-09-28.md): open (section 13, 2026-09-28: BUILT, default
+- [CTU](CTU_coupling_time_update_2026-09-28.md): open (section 14, 2026-09-29: the follow-up is card
+  CTU2; section 13, 2026-09-28: BUILT, default
   off, not armed; floor folds 63 % to 0 % and sim level 1.15 to 0.28 m, but G1, G2 and G4 fail;
   next: the ignition damage, the anchor guard on the level, a level instrument), 2026-09-28: pre-registered from the
   outside review of the brief "Clock Level Handoff" (card CLV2 section 6.8). The clock level's
@@ -260,3 +261,14 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   code-only bound 1 / I_L as a raise at the switch-on and a monitor on every run (card CLV's
   accumulator kept, its corrector retired), and the hold decision in the same card; gates frozen
   before any arm.
+- [CTU2](CTU2_level_recursion_followup_2026-09-29.md): open, 2026-09-29: card CTU's follow-up, nothing
+  armed. The sim's ignition damage is a fixture artifact (orbit extrapolation in the 24 h sim fixture's
+  first epochs; from 00:30:15 the control converges to 0.14 m and freezes). The diagonal receiver
+  code-bias carry doubled the border information every epoch (`network.carry_rx_code_bias_in_block`
+  folds it in the station block). The monitor carries a truth-free level instrument (split-half
+  NEES), the anchor guard a level-blind phase statistic (`network.clock_anchor_guard_space`), and a
+  float-vehicle drop now decouples an arc at birth strength (`network.amb_float_drop_decouple_always`).
+  Clean-start sim with the exact update: G1 and G2 pass (0.03 m at 2 h); field G4 0.164 m against
+  0.15; G5 fails (a switch-on keeps the level, held by the restored ambiguities); the consumer is
+  worse with the exact update under every hold setting, so the hold needs a level-aware form next.
+  6 h: the departed pivot's deficit is spread over the present clocks (0 withheld epochs, was 30).

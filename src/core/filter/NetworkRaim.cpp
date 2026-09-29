@@ -1072,7 +1072,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                                            e_pa, amb_elev_power_),
                                         se.time.week * 604800.0 + se.time.tow,
                                         static_cast<long long>(
-                                            ctx.counters.n_loop_epochs));
+                                            ctx.counters.n_loop_epochs),
+                                        ctx.knobs.amb_drop_decouple_always);
+                                    if (o_t4.decoupled_idem)
+                                        ++ctx.counters.n_amb_drop_decoupled_idem;
                                     if (o_t4.from_drop_floor)
                                         ++ctx.counters.n_amb_drop_floored;
                                     if (amb_drop_pre_gate_)
@@ -1286,7 +1289,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                                        e_pa, amb_elev_power_),
                                     se.time.week * 604800.0 + se.time.tow,
                                     static_cast<long long>(
-                                        ctx.counters.n_loop_epochs));
+                                        ctx.counters.n_loop_epochs),
+                                    ctx.knobs.amb_drop_decouple_always);
+                                if (o_t3.decoupled_idem)
+                                    ++ctx.counters.n_amb_drop_decoupled_idem;
                                 if (o_t3.from_drop_floor)
                                     ++ctx.counters.n_amb_drop_floored;
                                 if (amb_drop_pre_gate_)

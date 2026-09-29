@@ -35,7 +35,9 @@ double ambFloatBirthFloor(double base_m2, double elev_deg, double elev_power) {
     return std::max(base_m2, std::isfinite(scaled) ? scaled : base_m2);
 }
 
-bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_ep) {
+bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_ep,
+                  bool decouple_always, bool* decoupled_idem) {
+    if (decoupled_idem) *decoupled_idem = false;
     // The restored prior: what the arc was worth at birth, never tighter than the
     // posture's floor.  max() over all three, so a drop can only loosen; an arc whose
     // var_birth was recorded before the floor was armed (or a warm-resume-restored
@@ -52,6 +54,21 @@ bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_e
         // this one: the level is re-determined either way, and an OFF run reports the
         // walk it suffers whether or not the variance moved (RF-3a A2).
         lc.drop_walk_ph = 1;
+        // Card CTU section 14: the regression and the block row belong to the doubted
+        // value whether or not the variance moved.  An arc that slips one epoch after its
+        // birth is already at birth strength, and without this it keeps folding its
+        // pre-slip value with full cross terms and a full border regression; under a
+        // consistent time update the station's ionosphere-free ties are then phase-tight
+        // and the stale value is pushed into the satellite clocks (the field's first-fold
+        // jump, BSHM00ISR G07 L2W).  Resetting blk leaves the siblings the principal
+        // submatrix of their harvest, their exact marginal.  Opt-in (default false keeps
+        // the previous behaviour byte for byte).
+        if (decouple_always && (!lc.coupling.empty() || lc.blk)) {
+            lc.coupling.clear();
+            lc.blk.reset();
+            lc.blk_idx = -1;
+            if (decoupled_idem) *decoupled_idem = true;
+        }
         return false;
     }
     lc.var = target;
@@ -82,13 +99,14 @@ double ambFloatDropFloorNow(double drop_floor_m2, long long now_ep, int after_ep
 
 AmbDropOutcome ambFloatDropFloored(LocalCarry& lc, double birth_floor_m2,
                                    double drop_floor_m2, double now_s,
-                                   long long now_ep) {
+                                   long long now_ep, bool decouple_always) {
     AmbDropOutcome out;
     // What the arc would have been restored to without the drop-only floor.  Computed
     // before the call, because the call overwrites lc.var.
     const double without_drop = std::max({lc.var_birth, lc.var_first, birth_floor_m2});
     out.from_drop_floor = (drop_floor_m2 > 0.0) && (drop_floor_m2 > without_drop);
-    out.acted = ambFloatDrop(lc, std::max(birth_floor_m2, drop_floor_m2), now_s, now_ep);
+    out.acted = ambFloatDrop(lc, std::max(birth_floor_m2, drop_floor_m2), now_s, now_ep,
+                             decouple_always, &out.decoupled_idem);
     // An arc already looser than every floor is not evidence that the drop floor acted:
     // report the floor as the source only when the variance actually moved to it, so an
     // idempotent re-drop does not inflate the counter.
@@ -143,7 +161,9 @@ void networkAmbFloatApplyDrops(
         const double e = elevOf(sta, sat);
         const AmbDropOutcome o = ambFloatDropFloored(
             lc, ambFloatBirthFloor(floor_base, e, elev_power),
-            ambFloatBirthFloor(drop_base,  e, elev_power), pl_now_s, now_ep);
+            ambFloatBirthFloor(drop_base,  e, elev_power), pl_now_s, now_ep,
+            ctx.knobs.amb_drop_decouple_always);
+        if (o.decoupled_idem) ++counters.n_amb_drop_decoupled_idem;
         if (o.from_drop_floor) ++n_dropfloor;
         if (pre_gate)          ++n_pregate;
         return o.acted;

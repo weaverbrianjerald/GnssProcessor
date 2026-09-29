@@ -31,6 +31,8 @@ bool couplingExactFactor(CouplingExactEpoch& ep) {
         }
         A(a, a) += ep.q_s(a);
     }
+    for (const auto& [a, b, v] : ep.q_off)   // card CTU G5: the seam's level noise
+        if (a >= 0 && b >= 0 && a < n && b < n) A(a, b) += v;
     if (!A.allFinite()) return false;
     // Correlation scaling, as the dense fold inverts its block: the matrix mixes
     // phase-stiff entries (~1e-9 m^2) with loose clock entries (~1e-2 m^2).
@@ -79,8 +81,12 @@ CouplingExactRow couplingExactRow(const CouplingExactEpoch& ep,
         }
     }
     r.m_d.assign(md.begin(), md.end());
-    // g = Q_S M_S (Q_S is diagonal).
+    // g = Q_S M_S; Q_S is diagonal except on a switch-on seam's epoch (q_off), where the
+    // level noise couples a satellite's clock and phase-bias columns.  Every formula below
+    // holds for a general symmetric Q_S.
     Eigen::VectorXd gd = ep.q_s.cwiseProduct(r.m_s);
+    for (const auto& [a, b, v] : ep.q_off)
+        if (a >= 0 && b >= 0 && a < nS && b < nS) gd(a) += v * r.m_s(b);
     for (Eigen::Index s = 0; s < nS; ++s) {
         const double gv = gd(s);
         if (gv != 0.0) r.g.emplace_back(static_cast<int>(s), gv);

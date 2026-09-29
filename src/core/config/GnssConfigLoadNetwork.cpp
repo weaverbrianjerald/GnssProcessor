@@ -4369,6 +4369,9 @@ namespace GnssProcessor {
         // stiff variance is handed back.
         network_config_.amb_float_drop_var_m2 =
             jval<double>(json, "network.amb_float_drop_var_m2", "amb_float_drop_var_m2", 0.0);
+        network_amb_float_drop_decouple_always_ =
+            jval<bool>(json, "network.amb_float_drop_decouple_always",
+                       "amb_float_drop_decouple_always", false);
         if (network_config_.amb_float_drop_var_m2 < 0.0)
             throw std::runtime_error("network.amb_float_drop_var_m2 must be >= 0 "
                                      "(0 = a drop restores max(var_birth, var_first) "
@@ -5245,6 +5248,13 @@ namespace GnssProcessor {
             jval<bool>(json, "network.carry_rx_code_bias", "carry_rx_code_bias", false);
         network_rx_cb_carry_q_ =
             jval<double>(json, "network.rx_cb_carry_q", "rx_cb_carry_q", 1e-9);
+        // RXCB-IN-BLOCK (card CTU section 14): the carried receiver code-bias columns
+        // folded inside the station's whitened local block with their border regression,
+        // instead of the diagonal fold at the conditional variance.  Validated in the
+        // post-parse block after the carry's own guard (which can still force it off).
+        network_carry_rx_code_bias_in_block_ =
+            jval<bool>(json, "network.carry_rx_code_bias_in_block",
+                       "carry_rx_code_bias_in_block", false);
         // De-means the rx-CB carry's common mode (card LV-2;
         // docs/SPEC_level_information_budget.md).  Parsed next to the carry it modifies;
         // its guard and banner live in the post-parse block with the carry's own
@@ -8926,6 +8936,27 @@ namespace GnssProcessor {
         network_clock_anchor_sigma_floor_m_ =
             jval<double>(json, "network.clock_anchor_sigma_floor_m",
                          "network_clock_anchor_sigma_floor_m", 0.02);
+        // Card CTU section 14: the guard's statistic in the phase-visible complement.
+        {
+            const std::string sp = jval<std::string>(json, "network.clock_anchor_guard_space",
+                                                     "clock_anchor_guard_space",
+                                                     std::string{"clock"});
+            if (sp == "clock")             network_clock_anchor_guard_space_ = 0;
+            else if (sp == "phase_shadow") network_clock_anchor_guard_space_ = 1;
+            else if (sp == "phase")        network_clock_anchor_guard_space_ = 2;
+            else {
+                log->error("Network: network.clock_anchor_guard_space = '{}' is not one of "
+                           "clock|phase_shadow|phase.", sp);
+                return false;
+            }
+            network_clock_anchor_phase_sigma_floor_m_ =
+                jval<double>(json, "network.clock_anchor_phase_sigma_floor_m",
+                             "clock_anchor_phase_sigma_floor_m", 0.02);
+            if (!(network_clock_anchor_phase_sigma_floor_m_ > 0.0)) {
+                log->error("Network: network.clock_anchor_phase_sigma_floor_m must be > 0.");
+                return false;
+            }
+        }
         network_clock_anchor_recouple_epochs_ =
             jval<int>(json, "network.clock_anchor_recouple_epochs",
                       "network_clock_anchor_recouple_epochs", 4);
@@ -9144,6 +9175,28 @@ namespace GnssProcessor {
         // measure-only level monitor and the raise of the stashed block to its bound.
         network_clock_level_monitor_ =
             jval<bool>(json, "network.clock_level_monitor", "network_clock_level_monitor", false);
+        network_clock_level_innov_window_ep_ =
+            jval<int>(json, "network.clock_level_innov_window_ep",
+                      "clock_level_innov_window_ep", 60);
+        network_clock_level_restore_raise_ =
+            jval<bool>(json, "network.clock_level_restore_raise", "clock_level_restore_raise", false);
+        network_clock_level_restore_credit_ep_ =
+            jval<int>(json, "network.clock_level_restore_credit_ep", "clock_level_restore_credit_ep", 0);
+        if (network_clock_level_restore_credit_ep_ < 0) {
+            log->error("Network: network.clock_level_restore_credit_ep must be >= 0.");
+            return false;
+        }
+        if (network_clock_level_restore_raise_ && !network_clock_level_monitor_) {
+            log->error("Network: network.clock_level_restore_raise requires "
+                       "network.clock_level_monitor (it raises to the monitor's code-only "
+                       "level information).");
+            return false;
+        }
+        if (network_clock_level_innov_window_ep_ < 2) {
+            log->error("Network: network.clock_level_innov_window_ep must be >= 2 (got {}).",
+                       network_clock_level_innov_window_ep_);
+            return false;
+        }
         network_clock_level_bound_raise_ =
             jval<bool>(json, "network.clock_level_bound_raise",
                        "network_clock_level_bound_raise", false);
@@ -9373,6 +9426,15 @@ namespace GnssProcessor {
         network_rank_gate_tol_ =
             jval<double>(json, "network.rank_gate_tol",
                          "network_rank_gate_tol", 1e-9);
+        // The dense border fold's relative-pivot bound (card CTU section 14); default =
+        // the historical constant, byte-identical.
+        network_dense_fold_kappa_ =
+            jval<double>(json, "network.dense_fold_kappa", "dense_fold_kappa", 1e-6);
+        if (!(network_dense_fold_kappa_ > 0.0) || network_dense_fold_kappa_ > 1e-6) {
+            log->error("Network: network.dense_fold_kappa must be in (0, 1e-6] (got {:g}).",
+                       network_dense_fold_kappa_);
+            return false;
+        }
         if (!(network_rank_gate_tol_ > 0.0)) {
             // NaN also lands here (every comparison is false), on purpose: a NaN cutoff
             // makes every `ev < cutoff` test false and would report a rank-0 null space
@@ -11658,6 +11720,45 @@ namespace GnssProcessor {
                           "the carry_invariant lineage).",
                           network_rx_cb_carry_q_);
             }
+        }
+        // RXCB-IN-BLOCK (card CTU section 14): interlocks, after the carry's own guard.
+        // Every refusal is a hard error: an armed knob that silently rides the diagonal
+        // fold would measure the very double count it exists to remove.
+        if (network_carry_rx_code_bias_in_block_) {
+            const bool float_kf =
+                network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf;
+            if (!network_carry_rx_code_bias_) {
+                log->error("Network: network.carry_rx_code_bias_in_block requires "
+                           "network.carry_rx_code_bias (armed, with code_datum_time_linked).");
+                return false;
+            }
+            if (!network_carry_conditional_coupling_ || network_carry_coupling_joint_whiten_) {
+                log->error("Network: network.carry_rx_code_bias_in_block requires "
+                           "network.carry_conditional_coupling and refuses "
+                           "network.carry_coupling_joint_whiten (the block rows are the "
+                           "card 1 coupling rows, whitened per station).");
+                return false;
+            }
+            if (!float_kf && !network_phase_leveling_local_block_) {
+                log->error("Network: network.carry_rx_code_bias_in_block needs a local "
+                           "block: network.ambiguity_vehicle float_kf, or "
+                           "network.phase_leveling_local_block.");
+                return false;
+            }
+            if (network_rx_cb_carry_demean_ || network_rx_cb_carry_demean_within_
+                || network_rx_cb_carry_step_gate_ || network_rx_cb_harvest_demean_) {
+                log->error("Network: network.carry_rx_code_bias_in_block refuses the LV-2 / "
+                           "LV-5 de-mean, the LV-4 step gate and the S2H harvest de-mean: "
+                           "all four act on the diagonal fold or its standalone harvest, "
+                           "which this knob replaces.");
+                return false;
+            }
+            log->info("Network (RXCB-IN-BLOCK): receiver code-bias carry folded INSIDE each "
+                      "station's whitened local block as conditional coupling rows (border "
+                      "regression + cross covariances to the carried ambiguities), not as the "
+                      "diagonal prior at the conditional variance.  No diagonal fallback: "
+                      "before the leveling carry is warm and on a non-SPD block the columns "
+                      "carry nothing (counted).");
         }
         // The two interlocks of the second code channel (card SCC, R6).  Checked here,
         // after the rx-CB carry block, because both inputs are final only at this point:

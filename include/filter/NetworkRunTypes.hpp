@@ -1291,6 +1291,20 @@ struct StationAssembly {
     /// on every station-epoch that pushed none, and on a non-SPD block (no whitened row
     /// exists).
     std::vector<Eigen::Index> pl_rxclk_blk_cols;
+    // The station's receiver code-bias columns carried inside the same local block
+    // (RXCB-IN-BLOCK, network.carry_rx_code_bias_in_block).  As for the receiver clock
+    // there is no diagonal fallback row: the diagonal rx-CB fold at the conditional
+    // variance re-asserts the shared border every epoch (the information along each
+    // satellite's level doubles per epoch, card CTU section 14), so a column whose block
+    // fails to factorize carries nothing that epoch and is counted.
+    long long                 pl_blk_rxcb_cols{0};           ///< Receiver code-bias columns admitted into the block build this station-epoch (they passed the scalar screen and became rows of Sigma).  A block that then failed to factorize still counts here; read it against @c pl_blk_rxcb_not_folded.
+    long long                 pl_blk_rxcb_not_folded{0};     ///< Receiver code-bias columns pushed but not folded: the block was non-SPD this station-epoch and there is no diagonal row to fall back to.
+    long long                 pl_blk_rxcb_missing_cross{0};  ///< (receiver code-bias, other) pairs zeroed for a missing harvest cross term: a subset of @c pl_blk_pair_missing.
+    long long                 pl_rxcb_restored_skip{0};      ///< carried receiver code-bias entries without a harvest-block row (restored from a diagonal-carry snapshot), left out of the block.
+    /// The A_r columns of the receiver code-bias entries pushed into this station-epoch's
+    /// block (RXCB-IN-BLOCK).  Empty with the knob off, on a station-epoch that pushed
+    /// none, and on a non-SPD block.
+    std::vector<Eigen::Index> pl_rxcb_blk_cols;
     // Age-aware young-arc inflation (network.phase_leveling_young_inflate_var_m2,
     // SPEC_amb_iono_split_overcount §6.17–§6.18): per-station telemetry, folded serially
     // like every other block counter.  Counted at the compute site (once per carried
@@ -1690,6 +1704,19 @@ struct ClockLevelSat {
 /// holds.
 struct ClockLevelState {
     std::map<std::string, ClockLevelSat> sat;
+};
+
+/// Per-satellite window sums of the level innovation instrument (card CTU section 14),
+/// reset at every window end.
+struct ClockLevelInnovWin {
+    int    k{0};          ///< epochs accumulated
+    double s_nu{0.0};     ///< sum of the innovation nu (m)
+    double s_var{0.0};    ///< sum of its predicted variance P + R (m^2)
+    double s_r{0.0};      ///< sum of the code part R = s0^2 Q (m^2)
+    double s_p{0.0};      ///< sum of the prior contrast variance P (m^2)
+    int    kab{0};        ///< epochs with both split halves
+    double s_nua{0.0};    ///< sum of the even-station half's innovation (m)
+    double s_nub{0.0};    ///< sum of the odd-station half's innovation (m)
 };
 
 /// Predict a ClockOsc forward by @p dt with white-FM @p q1 and random-walk-FM @p q2.

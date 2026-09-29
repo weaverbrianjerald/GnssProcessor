@@ -70,6 +70,9 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       pf_rows_trace_path(log_dir_ / "network_pf_rows.csv"),
       clock_level_trace_path(log_dir_ / "network_clock_level.csv"),
       level_bound_trace_path(log_dir_ / "network_level_bound.csv"),
+      anchor_guard_trace_path(log_dir_ / "network_anchor_guard.csv"),
+      level_innov_trace_path(log_dir_ / "network_level_innov.csv"),
+      level_innov_win_trace_path(log_dir_ / "network_level_innov_win.csv"),
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
       amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
       arc_ledger_trace_path(log_dir_ / "network_arc_ledger.csv"),
@@ -495,6 +498,13 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network: failed to open per-row post-fit trace {}",
                       pf_rows_trace_path.string());
     }
+    if (config_.networkClockAnchorGuardSpace() != 0 && nc.trace_events) {
+        // The Q3 guard's clock and phase-space statistics (card CTU section 14).
+        anchor_guard_trace.open(anchor_guard_trace_path);
+        if (anchor_guard_trace)
+            anchor_guard_trace << "week,tow,sat,anchored,e_clk,sqrtS_clk,w_clk,e_phi,sqrtS_phi,"
+                                  "w_phi,n_pb,decision\n";
+    }
     if (config_.networkClockLevelMonitor() && nc.trace_events) {
         // The level monitor of card CTU; the header documents the columns.
         level_bound_trace.open(level_bound_trace_path);
@@ -503,6 +513,15 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open level-bound trace {}",
                       level_bound_trace_path.string());
+        // The level innovation instrument (card CTU section 14); the header documents
+        // the columns.
+        level_innov_trace.open(level_innov_trace_path);
+        if (level_innov_trace)
+            level_innov_trace << "week,tow,sat,n_pairs,z_m,dclk_m,nu_m,r_m2,p_prior_m2,s0sq,nis\n";
+        level_innov_win_trace.open(level_innov_win_trace_path);
+        if (level_innov_win_trace)
+            level_innov_win_trace << "week,tow_end,sat,k,nubar_m,nubar_a_m,nubar_b_m,var_nubar_m2,"
+                                     "pbar_m2,T\n";
     }
     if (config_.networkClockLevelCarry() && nc.trace_events) {
         // The per-satellite level filter (card CLV); the header documents the columns.
@@ -2547,6 +2566,9 @@ void NetworkRunTraces::closeAll() {
     if (pf_rows_trace.is_open()) pf_rows_trace.close();
     if (clock_level_trace.is_open()) clock_level_trace.close();
     if (level_bound_trace.is_open()) level_bound_trace.close();
+    if (level_innov_trace.is_open()) level_innov_trace.close();
+    if (anchor_guard_trace.is_open()) anchor_guard_trace.close();
+    if (level_innov_win_trace.is_open()) level_innov_win_trace.close();
     // Same reason: added after INC-4, and the station-block audit is the graded
     // artifact of a §24.10 card-ZP arm, so its tail must be flushed at teardown.
     if (station_block_trace.is_open()) station_block_trace.close();

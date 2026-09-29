@@ -186,6 +186,39 @@ ClockLevelTwoWay clockLevelTwoWay(const std::vector<ClockLevelPair>& pairs, int 
     const Eigen::VectorXd x = f.solve(b);
     if (!x.allFinite()) return out;
     for (const auto& [sat, i] : sidx) out.effect[sat] = x(i);
+    // The effect covariance at unit weight (card CTU section 14): the satellites' block of
+    // the inverse normals (one solve per satellite on the same factor), projected on each
+    // constellation's contrast.  The stiff sum-to-zero leaves 1/(n^2 big) on every entry
+    // along the common direction; the projection removes it exactly, which gives the
+    // minimum-norm (sum-to-zero) covariance of the effects.
+    Eigen::MatrixXd Z(S, S);
+    for (int i = 0; i < S; ++i) {
+        Eigen::VectorXd e = Eigen::VectorXd::Zero(S + R);
+        e(i) = 1.0;
+        const Eigen::VectorXd z = f.solve(e);
+        Z.col(i) = z.head(S);
+    }
+    if (Z.allFinite()) {
+        for (const auto& [c, idx] : by_const) {
+            (void)c;
+            const double n = static_cast<double>(idx.size());
+            double grand = 0.0;
+            std::map<int, double> rowsum;
+            for (int a : idx)
+                for (int bb : idx) { rowsum[a] += Z(a, bb); grand += Z(a, bb); }
+            for (const auto& [sat, i] : sidx)
+                if (rowsum.count(i))
+                    out.var[sat] = Z(i, i) - 2.0 * rowsum[i] / n + grand / (n * n);
+        }
+    }
+    double chi = 0.0;
+    for (std::size_t k : use) {
+        const ClockLevelPair& p = pairs[k];
+        const double r = p.v_if - x(sidx.at(p.sat)) + x(S + ridx.at({p.station, p.sat[0]}));
+        chi += p.w_if * r * r;
+    }
+    const long long dof = out.used - (S - 1) - R;
+    if (dof > 0) out.s0sq = chi / static_cast<double>(dof);
     out.ok = true;
     return out;
 }
@@ -566,6 +599,211 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
     return true;
 }
 
+/// The level innovation instrument (card CTU section 14; the offline prototype is the
+/// session scratchpad's wf/lvl/lvl3.py).  The ionosphere-free code is the only
+/// observable of a satellite's level, and it sees the clock alone (the code bias's IF
+/// combination is the datum), so the prefit IF code read against the constellation is an
+/// innovation of the level: its two-way effect at the prior clocks is the post-fit
+/// effect minus the constellation contrast of this epoch's clock update,
+/// nu_s = (z_s - mean z) - (dc_s - mean dc).  (The slant ionosphere cannot absorb it: the
+/// IF coefficients cancel any ionosphere share exactly, A(1-k') - B(1-g k') = 1 with
+/// A - B g = 0, so carried ambiguities do not change the reading.)  Its predicted variance
+/// is S = u'P-u + s0^2 Q: the previous stash's clock block along the contrast plus the
+/// anchor walk, and the fit's own variance.  Per epoch NIS = nu^2/S; per window of W
+/// epochs, the mean innovation per satellite and its chi2(1) statistic
+/// T = nubar^2 / (sum S / k^2), and the truth-free level NEES from two station halves
+/// (even and odd station index), NEES_tf = sum_s nubar_A nubar_B / sum_s Pbar_s: the
+/// cross product of two independent reads of the same level error is unbiased for its
+/// square, whatever the code noise.  Measure-only.
+void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& t,
+                          const NetworkEstimator& est, const Eigen::VectorXd& x_s,
+                          const std::vector<ClockLevelPair>& pairs, const ClockLevelTwoWay& tw) {
+    auto& C = ctx.carry;
+    auto& K = ctx.counters;
+    const double now_s = TimeUtils::continuousGpsSeconds(t);
+    std::map<std::string, double> c_now;
+    for (const auto& [sat, e] : tw.effect) {
+        (void)e;
+        try {
+            const Eigen::Index col = est.clockColumn(sat);
+            if (col >= 0 && col < x_s.size() && std::isfinite(x_s(col))) c_now[sat] = x_s(col);
+        } catch (...) {}
+    }
+    const double dt = (C.clm_prev_s > 0.0) ? now_s - C.clm_prev_s : 0.0;
+    // Split-half fits (station parity), on the post-fit pairs: the clock-update contrast
+    // is subtracted below exactly as for the full fit.
+    std::vector<ClockLevelPair> pa, pb;
+    for (const ClockLevelPair& p : pairs) (p.station % 2 == 0 ? pa : pb).push_back(p);
+    const ClockLevelTwoWay ta = clockLevelTwoWay(pa, kClvMinPairs, kClvClipK, kClvClipFloorM);
+    const ClockLevelTwoWay tb = clockLevelTwoWay(pb, kClvMinPairs, kClvClipK, kClvClipFloorM);
+    if (tw.ok && !C.clm_prev_clk.empty() && dt > 0.0 && dt <= 300.0
+        && std::isfinite(tw.s0sq)) {
+        // The fit set F: satellites with an effect, a clock now and a clock before, not
+        // decoupled by the anchor this epoch (its prior was withdrawn).
+        std::vector<std::string> F;
+        for (const auto& [sat, z] : tw.effect) {
+            (void)z;
+            if (!c_now.count(sat) || !C.clm_prev_clk.count(sat)) continue;
+            if (C.clk_anchor.tripped.count(sat)) { ++K.clm_innov_tripped; continue; }
+            F.push_back(sat);
+        }
+        const std::size_t n = F.size();
+        if (n >= 3) {
+            double zbar = 0.0, dbar = 0.0, zabar = 0.0, zbbar = 0.0;
+            std::size_t nab = 0;
+            for (const auto& s : F) {
+                zbar += tw.effect.at(s);
+                dbar += c_now.at(s) - C.clm_prev_clk.at(s);
+            }
+            zbar /= static_cast<double>(n); dbar /= static_cast<double>(n);
+            // The halves share the fit set only where both saw the satellite.
+            std::vector<std::string> Fab;
+            if (ta.ok && tb.ok)
+                for (const auto& s : F)
+                    if (ta.effect.count(s) && tb.effect.count(s)) Fab.push_back(s);
+            if (Fab.size() >= 3) {
+                double dab = 0.0;
+                for (const auto& s : Fab) {
+                    zabar += ta.effect.at(s); zbbar += tb.effect.at(s);
+                    dab += c_now.at(s) - C.clm_prev_clk.at(s);
+                }
+                nab = Fab.size();
+                zabar /= static_cast<double>(nab); zbbar /= static_cast<double>(nab);
+                dab /= static_cast<double>(nab);
+                for (const auto& s : Fab) {
+                    const double dc = c_now.at(s) - C.clm_prev_clk.at(s) - dab;
+                    auto& w = C.clm_win[s];
+                    w.s_nua += (ta.effect.at(s) - zabar) - dc;
+                    w.s_nub += (tb.effect.at(s) - zbbar) - dc;
+                    ++w.kab;
+                }
+            }
+            // The prior contrast variance u'P-u from the previous stash's clock block
+            // (the pivot, pinned outside the block, contributes 0) plus the walk the
+            // fold applied (the anchor's q, or the loose clock q for a LOOSE clock).
+            const double q_clk = ctx.knobs.q_clock;
+            std::vector<int> pr(n, -1);
+            for (std::size_t a = 0; a < n; ++a) {
+                const auto it = C.clm_prev_pidx.find(F[a]);
+                if (it != C.clm_prev_pidx.end()) pr[a] = it->second;
+            }
+            const auto Pab = [&](std::size_t a, std::size_t b) {
+                if (pr[a] < 0 || pr[b] < 0) return 0.0;
+                double v = C.clm_prev_pclk(pr[a], pr[b]);
+                if (a == b) {
+                    const auto ait = C.clk_anchor.sat.find(F[a]);
+                    const bool anch = ctx.knobs.cta_on && ait != C.clk_anchor.sat.end()
+                                      && ait->second.anchored;
+                    v += (anch ? ctx.knobs.cta_q : q_clk) * dt;
+                }
+                return v;
+            };
+            double sumP = 0.0;
+            std::vector<double> rowsum(n, 0.0);
+            for (std::size_t a = 0; a < n; ++a)
+                for (std::size_t b = 0; b < n; ++b) {
+                    const double v = Pab(a, b);
+                    rowsum[a] += v;
+                    sumP += v;
+                }
+            const double nn = static_cast<double>(n);
+            for (std::size_t a = 0; a < n; ++a) {
+                const std::string& s = F[a];
+                const double z  = tw.effect.at(s) - zbar;
+                const double dc = c_now.at(s) - C.clm_prev_clk.at(s) - dbar;
+                const double nu = z - dc;
+                const double P  = std::max(0.0, Pab(a, a) - 2.0 * rowsum[a] / nn + sumP / (nn * nn));
+                const auto vit = tw.var.find(s);
+                const double R  = (vit != tw.var.end() ? vit->second : 0.0) * tw.s0sq;
+                const double S  = P + R;
+                if (!(S > 0.0) || !std::isfinite(nu)) continue;
+                const double nis = nu * nu / S;
+                auto& w = C.clm_win[s];
+                ++w.k; w.s_nu += nu; w.s_var += S; w.s_r += R; w.s_p += P;
+                ++K.clm_innov_rows;
+                if (K.clm_epochs > 15) {
+                    K.clm_innov_nis_sum += nis;
+                    ++K.clm_innov_nis_n;
+                    if (nis > 6.63) ++K.clm_innov_nis_gt;
+                }
+                if (traces.level_innov_trace.is_open())
+                    traces.level_innov_trace
+                        << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << s << ','
+                        << tw.n_pairs.at(s) << ','
+                        << fmt::format("{:.4f},{:.4f},{:.4f},{:.4e},{:.4e},{:.4e},{:.4f}",
+                                       z, dc, nu, R, P, tw.s0sq, nis)
+                        << '\n';
+            }
+        }
+    }
+    // Window end: the per-satellite means, T, and the split-half NEES.
+    if (++C.clm_win_ep >= std::max(1, ctx.knobs.clm_innov_window_ep)) {
+        double sxab = 0.0, sP = 0.0, sdd = 0.0, sRk = 0.0, sT = 0.0, snu2 = 0.0;
+        int nsat = 0, nab = 0, nT = 0;
+        long long ngt = 0;
+        const int kmin = std::max(1, C.clm_win_ep / 2);
+        for (const auto& [s, w] : C.clm_win) {
+            if (w.k < kmin) continue;
+            const double kk = static_cast<double>(w.k);
+            const double nub = w.s_nu / kk;
+            const double T = nub * nub / (w.s_var / (kk * kk));
+            ++nsat; snu2 += nub * nub; sP += w.s_p / kk; sRk += w.s_r / (kk * kk);
+            if (std::isfinite(T)) { sT += T; ++nT; if (T > 6.63) ++ngt; }
+            double nua = 0.0, nubb = 0.0;
+            if (w.kab >= kmin) {
+                nua = w.s_nua / static_cast<double>(w.kab);
+                nubb = w.s_nub / static_cast<double>(w.kab);
+                sxab += nua * nubb;
+                sdd += 0.25 * (nua - nubb) * (nua - nubb);
+                ++nab;
+            }
+            if (traces.level_innov_win_trace.is_open())
+                traces.level_innov_win_trace
+                    << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << s << ','
+                    << w.k << ',' << fmt::format("{:.4f},{:.4f},{:.4f},{:.4e},{:.4e},{:.3f}",
+                                                 nub, nua, nubb, w.s_var / (kk * kk),
+                                                 w.s_p / kk, T)
+                    << '\n';
+        }
+        if (nsat > 0 && nab > 0 && sP > 0.0) {
+            const double nees = sxab / sP;
+            const double phi = (sRk > 0.0) ? (sdd / nab) / (sRk / nsat) : 0.0;
+            K.clm_win_nees.push_back(nees);
+            K.clm_win_rms.push_back(std::sqrt(snu2 / nsat));
+            K.clm_win_T.push_back(nT > 0 ? sT / nT : 0.0);
+            K.clm_win_phi.push_back(phi);
+            K.clm_win_Tgt += ngt;
+            K.clm_win_Tn += nT;
+        }
+        C.clm_win.clear();
+        C.clm_win_ep = 0;
+    }
+    // The prior of the next epoch: this epoch's clocks and stashed clock block (the raise,
+    // when armed, runs after this call and moves only the level direction's variance,
+    // which the next epoch then reads through this copy only if it was taken after it;
+    // taking it here keeps the instrument independent of the raise).
+    C.clm_prev_clk = std::move(c_now);
+    C.clm_prev_s = now_s;
+    C.clm_prev_pidx.clear();
+    const SharedCarryCov& pcc = C.prev_carry_cov;
+    std::vector<std::pair<std::string, std::size_t>> crow;
+    for (const auto& [key, row] : pcc.row) {
+        const std::size_t bar = key.find('|');
+        if (bar == std::string::npos || key.substr(bar + 1) != "CLK") continue;
+        if (row >= static_cast<std::size_t>(pcc.P.rows())) continue;
+        crow.emplace_back(key.substr(0, bar), row);
+    }
+    C.clm_prev_pclk.resize(static_cast<Eigen::Index>(crow.size()),
+                           static_cast<Eigen::Index>(crow.size()));
+    for (std::size_t a = 0; a < crow.size(); ++a) {
+        C.clm_prev_pidx[crow[a].first] = static_cast<int>(a);
+        for (std::size_t b = 0; b < crow.size(); ++b)
+            C.clm_prev_pclk(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b)) =
+                pcc.P(static_cast<Eigen::Index>(crow[a].second),
+                      static_cast<Eigen::Index>(crow[b].second));
+    }
+}
+
 }  // namespace
 
 void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
@@ -877,6 +1115,65 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
     }
 }
 
+void networkClockLevelRestoreRaise(NetworkRunContext& ctx,
+                                   const std::shared_ptr<spdlog::logger>& log) {
+    if (!ctx.carry.clm_restore_raise_pending) return;
+    ctx.carry.clm_restore_raise_pending = false;
+    SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
+    const Eigen::Index np = pcc.P.rows();
+    if (np == 0 || pcc.P.cols() != np) {
+        log->warn("Network (card CTU G5): level raise on restore armed but no dense border "
+                  "block was restored: INERT.");
+        return;
+    }
+    std::map<std::string, std::vector<std::size_t>> u_rows;
+    for (const auto& [key, row] : pcc.row) {
+        const std::size_t bar = key.find('|');
+        if (bar == std::string::npos || row >= static_cast<std::size_t>(np)) continue;
+        const std::string rest = key.substr(bar + 1);
+        if (rest == "CLK" || rest.rfind("PB|", 0) == 0) u_rows[key.substr(0, bar)].push_back(row);
+    }
+    long long n = 0;
+    double sum = 0.0, mx = 0.0;
+    for (const auto& [sat, rows] : u_rows) {
+        const auto it = ctx.carry.clm_info_c.find(sat);
+        if (it == ctx.carry.clm_info_c.end() || !(it->second > 0.0)) continue;
+        bool has_clk = false;
+        for (const auto& [key, row] : pcc.row)
+            if (key == sat + "|CLK") { has_clk = true; break; }
+        if (!has_clk) continue;   // the pivot: pinned, no level to loosen
+        // Card CTU G5: the seam is a process-noise event of variance v along the level
+        // direction, applied by this epoch's time update (the dense fold, and the coupling
+        // rows' exact update when armed), not a raise of the stashed block.  The
+        // distinction matters for the restored coupling rows: a row harvested in a lineage
+        // whose recursion stated the level carries a level component in its regression, and
+        // only the time update's re-attribution through P + Q releases it; a raised block
+        // alone leaves the rows asserting the old level (measured: 0.14 m frozen after the
+        // seam with the raise).
+        // The information the inherited level is credited with: all the snapshot's epochs
+        // (credit 0, the default: V = 1/I_c), or only `credit` epochs' worth of the
+        // writer's average per-epoch information (V = n / (credit I_c)); a lineage whose
+        // level recursion was not consistent holds a level error beyond its own
+        // information, and crediting it with less re-opens the level to the code.
+        const int credit = ctx.knobs.clm_restore_credit_ep;
+        const auto nit = ctx.carry.clm_n.find(sat);
+        const int n_ep = (nit != ctx.carry.clm_n.end()) ? nit->second : 0;
+        const double v = (credit > 0 && n_ep > credit)
+                             ? static_cast<double>(n_ep) / (static_cast<double>(credit) * it->second)
+                             : 1.0 / it->second;
+        ctx.carry.clm_seam_q[sat] = v;
+        (void)rows;
+        ++n; sum += v; mx = std::max(mx, v);
+    }
+    ctx.counters.clm_restore_raised = n;
+    ctx.counters.clm_restore_raise_sum = sum;
+    ctx.counters.clm_restore_raise_max = mx;
+    log->info("Network (card CTU G5): level noise on restore armed for {} satellite(s): this "
+              "epoch's time update adds each satellite's code-only level variance along its level "
+              "direction (sum {:.4e} m^2, largest {:.4e} m^2); phase-visible combinations get "
+              "none.", n, sum, mx);
+}
+
 void networkClockLevelMonitor(NetworkRunContext& ctx, NetworkRunTraces& traces,
                               const GnssTime& t, const NetworkEstimator& est,
                               const Eigen::VectorXd& x_s,
@@ -886,6 +1183,11 @@ void networkClockLevelMonitor(NetworkRunContext& ctx, NetworkRunTraces& traces,
     ++ctx.counters.clm_epochs;
     if (datum_changed) {
         ++ctx.counters.clm_skip_datum;
+        // The clock frame stepped: the previous epoch's clocks and block are in the
+        // retired frame, so the next innovation has no prior (the window keeps its sums).
+        ctx.carry.clm_prev_clk.clear();
+        ctx.carry.clm_prev_pclk.resize(0, 0);
+        ctx.carry.clm_prev_pidx.clear();
         return;
     }
     // (1)-(2) The level read of the re-base, on the realized pin pair only, with no
@@ -896,6 +1198,7 @@ void networkClockLevelMonitor(NetworkRunContext& ctx, NetworkRunTraces& traces,
                               /*free_cb_rebase=*/false, nullptr, pairs, fcb_unused))
         return;
     const ClockLevelTwoWay tw = clockLevelTwoWay(pairs, kClvMinPairs, kClvClipK, kClvClipFloorM);
+    clockLevelInnovation(ctx, traces, t, est, x_s, pairs, tw);
     // (3) The code-only information, accumulated without decay: the level has no process
     //     noise, and a decaying bound would make the raise a per-epoch level variance.
     for (const auto& [sat, info] : tw.info) {
@@ -903,6 +1206,12 @@ void networkClockLevelMonitor(NetworkRunContext& ctx, NetworkRunTraces& traces,
         ctx.carry.clm_info[sat] += info;
         ++ctx.carry.clm_n[sat];
     }
+    // Card CTU G5: the same information in the constellation contrast and at the fit's own
+    // unit variance, 1 / (s0^2 Q_ss): the level variance a consistent carry holds after
+    // these epochs is its inverse (section 14.4: the effective code gain is IF-efficient).
+    if (tw.ok && std::isfinite(tw.s0sq) && tw.s0sq > 0.0)
+        for (const auto& [sat, q] : tw.var)
+            if (q > 0.0 && std::isfinite(q)) ctx.carry.clm_info_c[sat] += 1.0 / (tw.s0sq * q);
     // (4) The stashed block's variance along each satellite's level direction.
     SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
     const Eigen::Index np = pcc.P.rows();

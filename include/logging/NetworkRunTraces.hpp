@@ -696,6 +696,24 @@ namespace GnssProcessor {
         /// (0 when none), @c n_code_ep the epochs of code information in I_L.
         std::ofstream level_bound_trace;
         const std::filesystem::path level_bound_trace_path;
+        /// The level innovation instrument of the monitor (card CTU section 14): one row per
+        /// satellite per epoch.  @c z_m the post-fit two-way effect (constellation
+        /// contrast), @c dclk_m the contrast of this epoch's clock update, @c nu_m their
+        /// difference (the prefit innovation of the level), @c r_m2 the fit's variance of the
+        /// effect, @c p_prior_m2 the prior clock contrast variance, @c s0sq the fit's unit
+        /// variance, @c nis = nu^2 / (P + R).
+        /// The Q3 guard's two statistics side by side (card CTU section 14,
+        /// @c network.clock_anchor_guard_space not @c clock): one row per tested satellite
+        /// per pass-0 epoch.
+        std::ofstream anchor_guard_trace;
+        const std::filesystem::path anchor_guard_trace_path;
+        std::ofstream level_innov_trace;
+        const std::filesystem::path level_innov_trace_path;
+        /// The instrument's window rows: per satellite @c nubar_m (mean innovation), the two
+        /// station halves' means, the white variance of the mean, the mean prior contrast
+        /// variance and @c T = nubar^2 / var(nubar).
+        std::ofstream level_innov_win_trace;
+        const std::filesystem::path level_innov_win_trace_path;
         /// Per-station local-block audit (@c network.trace_station_block;
         /// SPEC_event_harness §24.10, card ZP): one row per station per traced epoch (the
         /// first 20 emitted epochs, then every 60th) describing

@@ -3009,6 +3009,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double rx_cb_q       = ctx.knobs.rx_cb_q;              // rx-CB carry RW process noise (m²/s)
     const bool   rx_cb_demean  = ctx.knobs.rx_cb_demean;         // fold η = λ(innov − μ), gate on |innov − μ| (card LV-2)
     const bool   rx_cb_step_gate = ctx.knobs.rx_cb_step_gate;    // retire the frame-dependent inject screen; the harvest owns the event (card LV-4)
+    // RXCB-IN-BLOCK (card CTU section 14): the rx-CB columns ride the station's local
+    // block with their border regression; the diagonal fold below is then skipped for
+    // every station-epoch (no diagonal fallback, as for the receiver clock).  The
+    // loader guarantees the carry, the coupling rows and a local block; pl_blk_on is the
+    // live half of that gate.
+    const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk && pl_blk_on && rx_cb_on;
     const auto&  rx_cb_demean_mu = ctx.carry.rx_cb_demean_mu;    // lag-1 μ per code-bias family (LV-2); read-only here, the serial harvest writes it
     const bool   lv1_seed_frame = ctx.knobs.lv1_seed_frame;      // seed per-LOS iono in the field's frame (card LV-1)
     const int    lv1_min_sats   = ctx.knobs.lv1_min_sats;        // per-station median sample floor (LV-1)
@@ -4205,13 +4211,64 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             /*is_rx_isb=*/!rc.kind.empty()});
                     }
                 }
+                // RXCB-IN-BLOCK (card CTU section 14): the station's carried receiver
+                // code-bias columns as more columns of the same block.  The diagonal fold
+                // at the conditional variance (N_rr^-1)_cc states the column given the
+                // shared border as if it were known absolutely, so each epoch it
+                // re-asserts the border along the column's regression on top of the dense
+                // border carry that already holds that information (the level
+                // information doubled per epoch on the sim bed).  Here the column is a
+                // card 1 coupling row (its regression on the border is harvested with
+                // it) and its overlap with the station's ambiguities is the harvested
+                // cross covariance.  The inject decision is the carry's gap bound
+                // (rxCbInjectGate with the innovation test off): the diagonal route's
+                // inject screen |value_abs - x_lin| compares the carry with a frozen
+                // linearization point, so it withholds a station with a large bias for the
+                // whole run (4 of 60 sim stations) and cannot see a jump between two
+                // epochs.  The event response is the frame-invariant step between two
+                // harvested absolutes, at the harvest (the receiver clock's rule).  The
+                // carry map is read-only here; the columns point at the entries.
+                std::vector<LocalBlockCol> rxcb_bc;
+                if (rxcb_blk_on) {
+                    for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
+                        if (StateKeys::isGlonassPerSlotIfbKey(cb_key)) continue;  // anchored family
+                        const int cb_idx = static_cast<int>(cb_sidx);
+                        if (cb_idx < 0 || cb_idx >= x_lin.size()) continue;
+                        if (!std::isfinite(x_lin(cb_idx))) continue;
+                        const auto cbhit = h2local.find(cb_idx);
+                        if (cbhit == h2local.end()) continue;
+                        const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
+                        if (cbit == rx_cb_carry.end()) continue;   // cold: the harvest seeds it
+                        // An entry with no harvest-block row was not harvested on this
+                        // route (a warm resume restored it from a diagonal-carry
+                        // snapshot): without its regression it would state the border
+                        // absolutely, the double count this route removes.  It is left out
+                        // and re-harvested this epoch (counted).
+                        if (!cbit->second.blk) { ++R.pl_rxcb_restored_skip; continue; }
+                        double cb_var_eff = 0.0;
+                        const RxCbInjectAction act = rxCbInjectGate(
+                            pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/900.0,
+                            cbit->second.var, rx_cb_q, cbit->second.value_abs - x_lin(cb_idx),
+                            /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
+                            /*innov_test=*/false);
+                        if (act != RxCbInjectAction::Fold) continue;
+                        rxcb_bc.push_back(LocalBlockCol{
+                            static_cast<Eigen::Index>(cbhit->second), x_lin(cb_idx),
+                            &cbit->second, cb_var_eff,
+                            std::max(0.0, pl_now_s - cbit->second.last_seen_s),
+                            /*vce_fac=*/1.0, /*is_zwd=*/false, /*is_iono=*/false,
+                            /*var_add=*/0.0, /*is_rx_clk=*/false, /*is_rx_isb=*/false,
+                            /*is_rx_cb=*/true});
+                    }
+                }
                 // Off: iono_bc and rxclk_bc are always empty, so this predicate reduces
                 // to `if (!pl_pend.empty())` (byte-identical).  On, it also admits a
                 // station whose ambiguity set is entirely young/stale/absent but whose
                 // iono or receiver-clock carry is live: those columns still whiten
                 // jointly among themselves, which is the correct prior, and the
                 // pl_pend-driven code below is a no-op on an empty pl_pend.
-                if (!pl_pend.empty() || !iono_bc.empty() || !rxclk_bc.empty()) {
+                if (!pl_pend.empty() || !iono_bc.empty() || !rxclk_bc.empty()
+                    || !rxcb_bc.empty()) {
                     bool blk_done = false;
                     if (pl_blk_on) {
                         // Local block (F3, network.phase_leveling_local_block,
@@ -4370,6 +4427,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             bc.push_back(rc);
                             R.pl_rxclk_blk_cols.push_back(rc.col);
                         }
+                        // RXCB-IN-BLOCK: the receiver code-bias columns last.
+                        for (const LocalBlockCol& cc : rxcb_bc) {
+                            bc.push_back(cc);
+                            R.pl_rxcb_blk_cols.push_back(cc.col);
+                        }
                         blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
                         if (!blk_done) {
                             ++R.pl_blk_fallback;
@@ -4414,6 +4476,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             R.pl_blk_rxclk_not_folded +=
                                 static_cast<long long>(rxclk_bc.size());
                             R.pl_rxclk_blk_cols.clear();
+                        }
+                        // RXCB-IN-BLOCK degrade edge (invariant #4/#7): no diagonal row to
+                        // fall back to, by design, so a non-SPD block means the receiver
+                        // code-bias carry did not act this station-epoch.
+                        if (!blk_done && !rxcb_bc.empty()) {
+                            R.pl_blk_rxcb_not_folded +=
+                                static_cast<long long>(rxcb_bc.size());
+                            R.pl_rxcb_blk_cols.clear();
+                        } else if (blk_done) {
+                            R.pl_cb_injected += static_cast<int>(rxcb_bc.size());
                         }
                         // B9-in-block: when the ZWD folded through the block, the diagonal
                         // B9 row below must not also fire (that would be the double count
@@ -4735,6 +4807,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             }
                         }
                         if (!rx_cb_on) continue;   // datum-only: record the column, carry nothing
+                        // RXCB-IN-BLOCK: the carry folded (or deliberately did not) in the
+                        // block above; there is no diagonal row on this route.
+                        if (rxcb_blk_on) continue;
                         const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
                         if (cbit == rx_cb_carry.end()) continue;   // cold: the harvest seeds it
                         double cb_var_eff = 0.0;
@@ -5022,6 +5097,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             ctx.counters.n_pl_blk_rxclk_isb_cols      += Rc.pl_blk_rxclk_isb_cols;
             ctx.counters.n_pl_blk_rxclk_not_folded    += Rc.pl_blk_rxclk_not_folded;
             ctx.counters.n_pl_blk_rxclk_missing_cross += Rc.pl_blk_rxclk_missing_cross;
+            ctx.counters.n_pl_blk_rxcb_cols           += Rc.pl_blk_rxcb_cols;
+            ctx.counters.n_pl_blk_rxcb_not_folded     += Rc.pl_blk_rxcb_not_folded;
+            ctx.counters.n_pl_blk_rxcb_missing_cross  += Rc.pl_blk_rxcb_missing_cross;
+            ctx.counters.n_rxcb_blk_restored_skip     += Rc.pl_rxcb_restored_skip;
             ctx.counters.n_rxclk_carry_gap_drop       += Rc.pl_blk_rxclk_gap_drop;
             for (int b = 0; b < 5; ++b)
                 ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];

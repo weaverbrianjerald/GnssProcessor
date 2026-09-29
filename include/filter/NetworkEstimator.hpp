@@ -276,6 +276,18 @@ public:
     /// dump and the drop-and-heal; no consumer keeps a private tolerance.
     double rankGateTol() const { return rank_gate_tol_; }
 
+    /// Relative-pivot bound of the dense border fold (@ref addSharedPriorDense and the
+    /// refolds that share its terms): the correlation-scaled carried block is accepted
+    /// when its smallest LDLT pivot is at least this fraction of the largest
+    /// (@c network.dense_fold_kappa, default 1e-6).  A consistent carry whose level is
+    /// loose while its phase-visible combinations are phase-precise has correlations
+    /// within about 1e-8 of one between a clock and its phase biases, which the default
+    /// rejects (the fold then falls back to the diagonal carry for that epoch, card CTU
+    /// section 14).  The absolute folded-information budget is unchanged.
+    void setDenseFoldKappa(double k) { dense_fold_kappa_ = k; }
+    /// The resolved dense-fold pivot bound (@ref setDenseFoldKappa).
+    double denseFoldKappa() const { return dense_fold_kappa_; }
+
     /// Pin-aware station PD guard passthrough
     /// (@ref NetworkNormalEquations::setStationPdMedianScale;
     /// @c network.station_pd_pin_aware).  Configuration-level: set once before
@@ -1198,6 +1210,7 @@ private:
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
     int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = off; > 1 gives ULP-level differences on the reduction and stays byte-identical on the middle inverse; set by the driver)
+    double dense_fold_kappa_{1e-6};               ///< relative-pivot bound of the dense border fold (network.dense_fold_kappa, card CTU section 14); 1e-6 = the historical constant, byte-identical (@ref setDenseFoldKappa)
     double rank_gate_tol_{kNullSpaceTol};         ///< resolved null-space rank-gate tolerance every consumer reads (gate / dump / drop-and-heal; network.rank_gate_tol, Card DG); defaults to kNullSpaceTol so an unset config is byte-identical (@ref setRankGateTol)
     bool epoch_open_{false};                      ///< set by beginEpoch(), cleared by reset(); registration throws while set
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()

@@ -83,6 +83,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // Variance floor applied at the drop only (RF-3a).  It is gated on the vehicle here, so
     // every downstream site reads one number and a floor configured without float_kf
     // resolves to 0 instead of acting at some sites and not at others.
+    k.amb_drop_decouple_always = k.amb_float_kf && config_.networkAmbFloatDropDecoupleAlways();   // card CTU section 14
     k.amb_drop_var_floor  = k.amb_float_kf
                                 ? config_.getNetworkConfig().amb_float_drop_var_m2 : 0.0;
     // The drop floor's warm-up gate (RF-3c) has no meaning without the floor, so it
@@ -123,6 +124,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov + !joint
     k.clm_on    = config_.networkClockLevelMonitor();      // card CTU monitor (trace class)
     k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
+    k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
+    k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();   // card CTU G5
+    k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // card CTU G5; loader guarantees clm_on
     k.carry_cpl_shmarg = config_.networkCarryCouplingShMarginalize();
     k.carry_cpl_gauge  = config_.networkCarryCouplingGaugeProject();
     k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
@@ -175,6 +179,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.iono_var_floor = config_.networkIonoCarryVarFloor();
     k.iono_max_gap_s = config_.networkIonoCarryMaxGapS();
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
+    k.rxcb_blk = config_.networkCarryRxCodeBiasInBlock();   // RXCB-IN-BLOCK; loader guarantees rx_cb_on + coupling + a local block
     k.rx_cb_datum = config_.networkRxCodeBiasDatum();
     k.rx_cb_datum_sigma = config_.networkRxCodeBiasDatumSigmaM();
     k.sta_prior_pre_pd = config_.getNetworkConfig().station_prior_before_pd;
@@ -263,6 +268,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_k              = config_.networkClockAnchorK();
     k.cta_abs_m          = config_.networkClockAnchorAbsM();
     k.cta_sigma_floor_m  = config_.networkClockAnchorSigmaFloorM();
+    k.cta_space          = config_.networkClockAnchorGuardSpace();          // card CTU section 14
+    k.cta_phi_floor_m    = config_.networkClockAnchorPhaseSigmaFloorM();
     k.cta_recouple_ep    = config_.networkClockAnchorRecoupleEpochs();
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
@@ -988,6 +995,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
                 || ctx.knobs.cta_stat_proj_prior))
             add(fmt::format("cta:gfstat:{}:{}", ctx.knobs.cta_stat_proj_post ? 1 : 0,
                             ctx.knobs.cta_stat_proj_prior ? 1 : 0));
+        // Card CTU section 14: the phase-space guard decides trips, which changes the carried
+        // state; the shadow mode is trace-only.  Appended only in phase mode.
+        if (ctx.knobs.cta_on && ctx.knobs.cta_space == 2)
+            add(fmt::format("cta:space:phase:{:.4f}", ctx.knobs.cta_phi_floor_m));
         // The clock level re-base (card CLV) moves the carried clock and phase-bias values
         // (and every coupling term that references them), so a snapshot written with it
         // armed holds a different state than one written without it.  Appended only when
@@ -1138,6 +1149,14 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // trace class and stays out of the fingerprint.
         if (ctx.knobs.clm_raise)
             add(fmt::format("clmraise={}", ctx.knobs.clm_raise));
+        // RXCB-IN-BLOCK changes what a carried receiver code-bias entry is (a block row with
+        // a border regression instead of a diagonal prior); appended only when armed.
+        if (ctx.knobs.rxcb_blk)
+            add(fmt::format("rxcbblk={}", ctx.knobs.rxcb_blk));
+        // A drop that decouples at birth strength changes the carried state; appended
+        // only when armed (card CTU section 14).
+        if (ctx.knobs.amb_drop_decouple_always)
+            add("ambdropdecouple=true");
         // Marginalized against carried SH coupling (card 1d-SH) changes what an armed
         // carry means; appended only when armed, so existing fingerprints are unchanged.
         if (carry_cpl_shmarg)
@@ -1262,6 +1281,30 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // on.  (zwd_on / zwd_q above stay fingerprinted, because the continuous carry
         // affects the solve on both sides of a seam.)
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
+        // Card CTU G5: the same fingerprint with the card's own tokens removed, so a run
+        // that switches the exact update, the bound raise, the in-block rx-CB carry or the
+        // phase-space guard ON can resume from a snapshot written without them (the
+        // switch-on seam the card's G5 grades).  The reverse direction is not accepted:
+        // a snapshot written with them holds the card's state, which a run without them
+        // would read under the old rules.
+        {
+            std::string off = fp;
+            for (const std::string& tok : {std::string("carrycplexact=true"),
+                                           std::string("clmraise=true"),
+                                           std::string("rxcbblk=true"),
+                                           std::string("ambdropdecouple=true")}) {
+                const std::string t = tok + '\x1f';
+                const auto pos = off.find(t);
+                if (pos != std::string::npos) off.erase(pos, t.size());
+            }
+            const auto cs = off.find("cta:space:phase:");
+            if (cs != std::string::npos) {
+                const auto end = off.find('\x1f', cs);
+                if (end != std::string::npos) off.erase(cs, end - cs + 1);
+            }
+            ctx.carry.live_fingerprint_ctu_off =
+                (off != fp) ? NetworkStateSnapshotIO::fnv1a64(off) : 0;
+        }
     }
 }
 
@@ -1396,7 +1439,16 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                 hb1(WarmResumeRefusal::NoLiveEpochs,
                     "no live epochs to resume against (snapshot '" + snap_path.string() + "')");
             } else if (!NetworkStateSnapshotIO::warmResumeAllowed(
-                           snap, live_fingerprint, first_live_s, horizon_s, &gate, &gate_why)) {
+                           snap,
+                           // Card CTU G5: a snapshot written without the card's knobs is
+                           // admitted under the stripped fingerprint (switch-on only).
+                           (ctx.carry.live_fingerprint_ctu_off != 0
+                            && snap.config_fingerprint == ctx.carry.live_fingerprint_ctu_off
+                            && snap.config_fingerprint != live_fingerprint)
+                               ? (ctx.carry.ctu_switch_on_resume = true,
+                                  ctx.carry.live_fingerprint_ctu_off)
+                               : live_fingerprint,
+                           first_live_s, horizon_s, &gate, &gate_why)) {
                 if (cold_ok)
                     log->warn("Network (RTB-7): state snapshot '{}' NOT warm-resumable — {} — "
                               "COLD START (a new generation id is minted at first emit as usual).",
@@ -1876,6 +1928,25 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // absent half reads as inert for that half alone.  The two sub-switches
                     // are diagnostic: they let one §21.13 attribution leg restore a single
                     // half, and a withheld half is logged as withheld, not as absent.
+                    // Card CTU G5: the level information of the writer's monitor, and
+                    // the raise it arms for the first leg epoch.
+                    if (ctx.knobs.clm_on && !snap.level_info.empty()) {
+                        for (const auto& [sat, in] : snap.level_info) {
+                            ctx.carry.clm_info_c[sat] = in.first;
+                            ctx.carry.clm_n[sat] = in.second;
+                        }
+                        ctx.carry.clm_restore_raise_pending = ctx.knobs.clm_restore_raise;
+                        log->info("Network (card CTU G5): {} satellite(s) of contrast-frame level "
+                                  "information restored from the snapshot's LB rows{}.",
+                                  snap.level_info.size(),
+                                  ctx.knobs.clm_restore_raise
+                                      ? "; the level raise on restore is armed for the first "
+                                        "leg epoch" : "");
+                    } else if (ctx.knobs.clm_restore_raise) {
+                        log->warn("Network (card CTU G5): network.clock_level_restore_raise is "
+                                  "armed but the snapshot carries no LB rows (the writer did not "
+                                  "run network.clock_level_monitor): nothing to raise to, INERT.");
+                    }
                     if (ctx.knobs.resume_station_restore) {
                         const bool have_rc = !snap.rx_cb_carry.empty();
                         const bool have_sd = !snap.sh_dev_carry.empty();
@@ -2261,6 +2332,20 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         }
                         if (nk > 0 && finite) {
                             ctx.carry.prev_carry_cov = std::move(cov);
+                            // Card CTU G5: the exact update's stash stamp is the snapshot's
+                            // own epoch (the coupling rows restored with it were harvested
+                            // there), and the clock pivot is the snapshot's (pinned at 0 in
+                            // its datum).  Without this the first leg epoch has no valid
+                            // stash and every row takes card 1d's kappa.
+                            if (ctx.knobs.carry_cpl_exact) {
+                                ctx.carry.cxu_stash_s =
+                                    static_cast<double>(snap.snap_week) * 604800.0 + snap.snap_tow;
+                                ctx.carry.cxu_stash_valid = ctx.carry.prev_carry_cov.P.rows() > 0;
+                                ctx.carry.cxu_pivot.clear();
+                                for (const auto& [c, sat] : snap.prev_pivot)
+                                    if (!sat.empty()) ctx.carry.cxu_pivot[sat[0]] = {sat, 0.0};
+                                ++ctx.counters.cxu_resume_stash;
+                            }
                             ctx.counters.n_resume_cpl_cov_keys    = static_cast<long long>(nk);
                             ctx.counters.n_resume_cpl_cov_dropped = n_drop_cov;
                             log->info("Network ({}, dense border): {} dense-carry key(s) "
@@ -3065,6 +3150,14 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                         NetworkStateSnapshot::ShDev{dc.dev, dc.var, dc.var_ss, dc.t_s};
             ctx.carry.snap_station_rows_last =
                 static_cast<long long>(snap.rx_cb_carry.size() + snap.sh_dev_carry.size());
+        }
+        // Card CTU G5: the monitor's contrast-frame level information (LB rows).
+        if (ctx.knobs.clm_on) {
+            for (const auto& [sat, info] : ctx.carry.clm_info_c)
+                if (std::isfinite(info) && info > 0.0) {
+                    const auto nit = ctx.carry.clm_n.find(sat);
+                    snap.level_info[sat] = {info, nit != ctx.carry.clm_n.end() ? nit->second : 0};
+                }
         }   // state_snapshot_station_capture
         // Canonical-signal capture (RS-8; network.state_snapshot_signal_capture,
         // SPEC_event_harness §21.16): the write half of the per-station latch that no
@@ -3758,6 +3851,13 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 if (floor > 0.0) var_eff = std::max(var_eff, floor);
             }
             var_eff = vce_scale_shared(cp.kind, cp.sat, cp.inflate_q, var_eff);  // VCE apply factor (M2 v2)
+            // Card CTU G5: a switch-on seam's level noise, on the diagonal here and between
+            // the satellite's clock and phase-bias keys below.
+            if (!cp.inflate_q && !ctx.carry.clm_seam_q.empty()
+                && (cp.kind == SharedParamKind::Clock || cp.kind == SharedParamKind::PhaseBias)) {
+                const auto sq = ctx.carry.clm_seam_q.find(cp.sat);
+                if (sq != ctx.carry.clm_seam_q.end()) var_eff += sq->second;
+            }
             if (!(var_eff > 0.0)) continue;
             NetworkEstimator::SharedPrior p;
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
@@ -3831,6 +3931,24 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 }
                 cov_eff(a, a) = dvar_eff[a];
             }
+            // Card CTU G5: the off-diagonal half of the seam's level noise (its diagonal is
+            // in dvar_eff): v between every pair of the satellite's clock and phase-bias
+            // keys, so the phase-visible combinations get no noise.
+            if (!ctx.carry.clm_seam_q.empty()) {
+                const auto lvl = [&](std::size_t a) {
+                    const auto& k = dkeys[a];
+                    return !dinflate[a] && (k.kind == SharedParamKind::Clock
+                                            || k.kind == SharedParamKind::PhaseBias);
+                };
+                for (std::size_t a = 0; a < kd; ++a) {
+                    if (!lvl(a)) continue;
+                    const auto sq = ctx.carry.clm_seam_q.find(dkeys[a].sat);
+                    if (sq == ctx.carry.clm_seam_q.end()) continue;
+                    for (std::size_t b = 0; b < kd; ++b)
+                        if (b != a && lvl(b) && dkeys[b].sat == dkeys[a].sat)
+                            cov_eff(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b)) += sq->second;
+                }
+            }
             try {
                 Eigen::VectorXd lam;
                 est.attribTag("dense_c1");
@@ -3899,6 +4017,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), leftovers.begin(), leftovers.end());
     }
+    // Card CTU G5: the seam's level noise is one epoch's process noise.
+    ctx.carry.clm_seam_q.clear();
     // The partial-support skip tally (card C-GF) is run-scoped on the estimator and is
     // read once at teardown; reading it here would miss the withdraw and
     // within-epoch-replay folds, which run after this point in the epoch.
@@ -3972,6 +4092,12 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
                                                                      : 0.0;
         if (floor > 0.0) var_eff = std::max(var_eff, floor);
         var_eff = vce_scale(cp.kind, cp.sat, false, var_eff);
+        // Card CTU G5: the switch-on seam's level noise, as the fold adds it.
+        if (!ctx.carry.clm_seam_q.empty()
+            && (cp.kind == SharedParamKind::Clock || cp.kind == SharedParamKind::PhaseBias)) {
+            const auto sq = ctx.carry.clm_seam_q.find(cp.sat);
+            if (sq != ctx.carry.clm_seam_q.end()) var_eff += sq->second;
+        }
         if (!(var_eff > 0.0)) {
             route = CouplingExactDRoute::Skipped;
             return nan;
@@ -4031,6 +4157,7 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
             continue;
         }
         double q = var_eff - pcc.P(p, p);    // the fold sets the diagonal of P to var_eff
+        // (the seam's level noise is inside var_eff through foldVar, like the fold's)
         if (q < 0.0) {
             ++ctx.counters.cxu_q_negative;
             q = 0.0;
@@ -4050,6 +4177,29 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
     ep.q_s    = Eigen::Map<const Eigen::VectorXd>(qs.data(), static_cast<Eigen::Index>(qs.size()));
     ep.shat_s = Eigen::Map<const Eigen::VectorXd>(sh.data(), static_cast<Eigen::Index>(sh.size()));
     ep.stash_s = ctx.carry.cxu_stash_s;
+    // Card CTU G5: the off-diagonal half of a switch-on seam's level noise (the fold adds
+    // the same between the satellite's clock and phase-bias keys).
+    ep.q_off.clear();
+    if (!ctx.carry.clm_seam_q.empty()) {
+        const Eigen::Index nS = ep.nS();
+        const auto lvlCp = [&](Eigen::Index a) -> const CarryPrior* {
+            const CarryPrior* c = cp_of_p[static_cast<std::size_t>(ep.p_of_s[static_cast<std::size_t>(a)])];
+            if (!c || c->inflate_q) return nullptr;
+            return (c->kind == SharedParamKind::Clock || c->kind == SharedParamKind::PhaseBias) ? c : nullptr;
+        };
+        for (Eigen::Index a = 0; a < nS; ++a) {
+            const CarryPrior* ca = lvlCp(a);
+            if (!ca) continue;
+            const auto sq = ctx.carry.clm_seam_q.find(ca->sat);
+            if (sq == ctx.carry.clm_seam_q.end()) continue;
+            for (Eigen::Index b = 0; b < nS; ++b) {
+                if (b == a) continue;
+                const CarryPrior* cb2 = lvlCp(b);
+                if (cb2 && cb2->sat == ca->sat)
+                    ep.q_off.emplace_back(static_cast<int>(a), static_cast<int>(b), sq->second);
+            }
+        }
+    }
     // The pivots, re-resolved in this epoch's layout.  A pivot that left the layout keeps
     // no entry, and the rows count the deficit as an orphan.
     bool any_clk = false;
@@ -4321,6 +4471,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const double rxclk_rate_q  = ctx.knobs.rxclk_rate_q;
     const double rxclk_rate_var0 = ctx.knobs.rxclk_rate_var0;
     const double rxclk_jump_k  = ctx.knobs.rxclk_jump_k;
+    // RXCB-IN-BLOCK (network.carry_rx_code_bias_in_block, card CTU section 14): the
+    // receiver code-bias columns join the same harvest block and are stashed with their
+    // border regression and block row here; the standalone diagonal harvest below then
+    // skips its stash.  Off => `cols` is untouched (byte-identical).
+    const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk && ctx.knobs.rx_cb_on
+                                 && pl_local_block && carry_cpl_cond;
     // Seam-scoped ZWD re-seed + unconditional Z-row capture (§17 finding 3).
     const bool   zwd_capture   = ctx.knobs.zwd_capture;
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
@@ -4582,6 +4738,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             rblk_cols_of_sta.resize(stations.size());
             rblk_row0_of_sta.assign(stations.size(), -1);
         }
+        // RXCB-IN-BLOCK: the same hand-forward for the receiver code-bias loop below.
+        std::vector<std::shared_ptr<PlHarvestBlock>> cblk_of_sta;
+        std::vector<std::vector<Eigen::Index>>       cblk_cols_of_sta;
+        std::vector<Eigen::Index>                    cblk_row0_of_sta;
+        if (rxcb_blk_on) {
+            cblk_of_sta.resize(stations.size());
+            cblk_cols_of_sta.resize(stations.size());
+            cblk_row0_of_sta.assign(stations.size(), -1);
+        }
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
             // Prioritized datum: harvest the former pivot too.  Its non-anchored arcs are
@@ -4602,7 +4767,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             // and skipping it here would stash the entry without a block, diagonalizing
             // the most station-common direction of all.
             if (R.pl_amb.empty() && !(iono_blk_on && !R.pl_iono.empty())
-                && !(rxclk_blk_on && !R.pl_rxclk.empty())) continue;
+                && !(rxclk_blk_on && !R.pl_rxclk.empty())
+                && !(rxcb_blk_on && !R.pl_cb.empty())) continue;
             const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
             std::vector<Eigen::Index> cols;
             cols.reserve(R.pl_amb.size() + 1 + R.pl_iono.size() + R.pl_rxclk.size());
@@ -4633,6 +4799,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             const bool rxclk_in_cols = rxclk_blk_on && !R.pl_rxclk.empty();
             if (rxclk_in_cols)
                 for (const auto& t : R.pl_rxclk) cols.push_back(t.col);
+            // RXCB-IN-BLOCK: every present receiver code-bias column, carried or cold, so
+            // each is stashed with its cross terms to the station's other columns.
+            const Eigen::Index rxcb_row0 = static_cast<Eigen::Index>(cols.size());
+            const bool rxcb_in_cols = rxcb_blk_on && !R.pl_cb.empty();
+            if (rxcb_in_cols)
+                for (const auto& t : R.pl_cb) cols.push_back(std::get<1>(t));
             const bool zwd_in_cols = zwd_blk_on && R.pl_zwd_present
                                      && R.pl_zwd.col >= 0;
             if (zwd_in_cols) cols.push_back(R.pl_zwd.col);
@@ -4674,6 +4846,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     rblk_of_sta[i]      = hblk;
                     rblk_cols_of_sta[i] = cols;
                     rblk_row0_of_sta[i] = rxclk_row0;
+                }
+                if (rxcb_in_cols) {   // RXCB-IN-BLOCK
+                    cblk_of_sta[i]      = hblk;
+                    cblk_cols_of_sta[i] = cols;
+                    cblk_row0_of_sta[i] = rxcb_row0;
                 }
             }
             for (size_t a = 0; a < R.pl_amb.size(); ++a) {
@@ -5712,6 +5889,90 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             }
             ctx.carry.rxclk_prev_now_s = pl_now_s;
         }
+        // --- RXCB-IN-BLOCK (card CTU section 14): harvest the receiver code biases -
+        //     with their border regression and their row of the station's harvest
+        //     block, so next epoch's inject folds them as coupling rows of the same
+        //     whitened block as the ambiguities.  The value is the posterior absolute
+        //     (x_lin + x_r), the variance the pure conditional (N_rr^-1)_cc, exactly as
+        //     for every other block column.  The standalone diagonal harvest further
+        //     down skips its stash under this knob (it still sums the produce counters
+        //     and runs the gap prune).
+        if (rxcb_blk_on) {
+            auto& rx_cb_carry = ctx.carry.rx_cb_carry;
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (est_index_of[i] < 0) continue;
+                const StationAssembly& R = asm_res[i];
+                if (R.pl_cb.empty()) continue;
+                const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
+                const std::shared_ptr<PlHarvestBlock> cblk = cblk_of_sta[i];
+                const std::vector<Eigen::Index>* ccross_cols =
+                    cblk ? &cblk_cols_of_sta[i] : nullptr;
+                const Eigen::Index crow0 = cblk ? cblk_row0_of_sta[i] : Eigen::Index{-1};
+                Eigen::VectorXd xr;
+                try { xr = est.reconstructStation(est_idx, x_s); } catch (...) { continue; }
+                for (std::size_t a = 0; a < R.pl_cb.size(); ++a) {
+                    const auto& [cb_key, ccol, cx_lin] = R.pl_cb[a];
+                    if (ccol < 0 || ccol >= xr.size()) continue;
+                    const double value_abs = cx_lin + xr(ccol);
+                    if (!std::isfinite(value_abs)) continue;
+                    Eigen::VectorXd ccross;
+                    auto hc = harvestCoupling(est_idx, ccol, ccross_cols,
+                                              cblk ? &ccross : nullptr);
+                    const double var = hc.first;
+                    if (!(var > 0.0) || !std::isfinite(var)) {
+                        ++ctx.counters.n_rxcb_blk_harvest_fail;
+                        continue;
+                    }
+                    const auto key = std::make_pair(static_cast<int>(i), cb_key);
+                    // Event response (invariant #1): the step between this harvest's
+                    // absolute and the carried one, against both variances, the random
+                    // walk over the gap and the diagonal route's 0.5 m guard, at 10 sigma.
+                    // Frame-invariant (two absolute realizations), unlike the inject
+                    // screen it replaces.  A step erases the entry (reset, not repair):
+                    // this epoch folded the stale prior, so its posterior is suspect too,
+                    // and the next harvest re-seeds from a free solve.
+                    {
+                        const auto sit = rx_cb_carry.find(key);
+                        if (sit != rx_cb_carry.end()) {
+                            const double sgap = pl_now_s - sit->second.last_seen_s;
+                            if (sgap >= 0.0 && sgap <= 900.0) {
+                                const double sv = var + sit->second.var
+                                                  + ctx.knobs.rx_cb_q * sgap + 0.25;
+                                if (std::abs(value_abs - sit->second.value_abs)
+                                    > 10.0 * std::sqrt(sv)) {
+                                    rx_cb_carry.erase(sit);
+                                    ++ctx.counters.n_rxcb_blk_step_reset;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    LocalCarry ent{value_abs, var, pl_now_s, std::move(hc.second)};
+                    const auto oit = rx_cb_carry.find(key);
+                    const LocalCarry* cprev = (oit != rx_cb_carry.end()) ? &oit->second : nullptr;
+                    ent.var_first = cprev ? cprev->var_first : var;
+                    localCarryStampBirth(
+                        ent, cprev, static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
+                    // Row crow0 + a of the station's harvest block is this column's n_c read
+                    // at every carried column of the station, so next epoch's block pairs
+                    // it with the ambiguities by pointer equality.
+                    bool in_blk = false;
+                    if (cblk && crow0 >= 0 && ccross.size() == cblk->C.rows()) {
+                        const Eigen::Index crow = crow0 + static_cast<Eigen::Index>(a);
+                        if (crow < cblk->C.rows()) {
+                            cblk->C.row(crow) = ccross.transpose();
+                            ent.blk     = cblk;
+                            ent.blk_idx = static_cast<int>(crow);
+                            in_blk = true;
+                        }
+                    }
+                    if (!in_blk) ++ctx.counters.n_rxcb_blk_no_block;
+                    rx_cb_carry[key] = std::move(ent);
+                    ++ctx.counters.n_rxcb_blk_harvested;
+                    ++ctx.carry.rx_cb_harvested_total;
+                }
+            }
+        }
         // --- ZWD carry (B9): harvest the posterior ZWD and stash it (mirrors the
         //     ambiguity harvest, in an independent loop so it works whether or not
         //     ambiguities are present).  Runs for B9 proper, for a live post-resume
@@ -6089,6 +6350,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             // before any early continue, so a station whose back-substitution throws
             // still reports what the retired screen would have done to its folds.
             ctx.carry.lv4_frame_gate_would_skip += R.pl_cb_frame_gate_would_skip;
+            // RXCB-IN-BLOCK: the stash happened in the block harvest above (with the
+            // border regression), and only while the leveling carry is warm; a cold
+            // entry must not be written here without one.
+            if (ctx.knobs.rxcb_blk) continue;
             if (R.pl_cb.empty()) continue;
             const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
             Eigen::VectorXd xr, vard;

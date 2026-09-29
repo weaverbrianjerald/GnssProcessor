@@ -12,6 +12,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey
+#include "common/SignalBand.hpp"             // phase-space statistic: band wavelengths (card CTU section 14)
 
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -70,6 +71,144 @@ std::vector<double> clockAnchorGaugeProject(const Eigen::MatrixXd& cov,
     std::vector<double> out(n, 0.0);
     for (std::size_t a = 0; a < n; ++a)
         out[a] = cov(cols[a], cols[a]) - 2.0 * rowmean[a] + grand;
+    return out;
+}
+
+std::vector<double> clockAnchorPhaseClockWeights(const std::vector<double>& alpha) {
+    const std::size_t m = alpha.size();
+    if (m < 2) return {};
+    // w = A'(AA')^-1 (1, 0)' with A = [1'; alpha'] (the minimum-norm weights with
+    // sum w = 1 and sum w alpha = 0).
+    double s1 = 0.0, sa = 0.0, saa = 0.0;
+    for (double a : alpha) { s1 += 1.0; sa += a; saa += a * a; }
+    const double det = s1 * saa - sa * sa;
+    if (!(std::abs(det) > 1e-12 * std::max(1.0, saa * s1))) return {};   // one band only
+    // (AA')^-1 (1,0)' = (saa, -sa)' / det
+    const double c1 = saa / det, c2 = -sa / det;
+    std::vector<double> w(m);
+    for (std::size_t j = 0; j < m; ++j) w[j] = c1 + c2 * alpha[j];
+    return w;
+}
+
+std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
+        const NetworkEstimator& est, const Eigen::VectorXd& x_s,
+        const std::vector<NetworkEstimator::SharedPrior>& keys, const Eigen::MatrixXd& cov,
+        double floor_m) {
+    std::map<std::string, ClockAnchorPhiRow> out;
+    if (keys.empty() || cov.rows() != static_cast<Eigen::Index>(keys.size())) return out;
+    // Per satellite: its clock and phase-bias keys in the folded dense block.
+    struct Sat { int ic{-1}; std::vector<int> ip; std::vector<std::string> sig; };
+    std::map<std::string, Sat> by;
+    for (std::size_t a = 0; a < keys.size(); ++a) {
+        const auto& p = keys[a];
+        if (p.sat.empty()) continue;
+        if (p.kind == SharedParamKind::Clock) by[p.sat].ic = static_cast<int>(a);
+        else if (p.kind == SharedParamKind::PhaseBias) {
+            by[p.sat].ip.push_back(static_cast<int>(a));
+            by[p.sat].sig.push_back(p.signal);
+        }
+    }
+    const Eigen::MatrixXd& post = est.sharedCovariance();
+    // The functional per satellite: coefficients over the folded keys and over the
+    // shared columns.
+    struct Fn { std::vector<std::pair<int, double>> ka; std::vector<std::pair<Eigen::Index, double>> sc; };
+    std::map<char, std::vector<std::pair<std::string, Fn>>> by_const;
+    for (auto& [sat, s0] : by) {
+        if (s0.ic < 0 || s0.ip.size() < 2) continue;
+        // One phase bias per band: the best-determined one (smallest folded variance).  A
+        // band with a second signal (GPS L1C and L1W) keeps its primary column; the
+        // sparse family's column wanders with its own anchor, and any one signal per band
+        // gives a functional blind to the level and to the ionosphere direction.
+        Sat s;
+        s.ic = s0.ic;
+        {
+            std::map<int, std::pair<int, std::string>> best;   // band -> (key index, signal)
+            bool ok_band = true;
+            for (std::size_t j = 0; j < s0.ip.size(); ++j) {
+                const int band = static_cast<int>(classifySignalForSat(sat, s0.sig[j]).band);
+                const auto it = best.find(band);
+                if (it == best.end()
+                    || cov(s0.ip[j], s0.ip[j]) < cov(it->second.first, it->second.first))
+                    best[band] = {s0.ip[j], s0.sig[j]};
+                if (!(bandNominalWavelengthMeters(classifySignalForSat(sat, s0.sig[j]).band) > 0.0))
+                    ok_band = false;
+            }
+            if (!ok_band) continue;
+            for (const auto& [band, kv] : best) {
+                (void)band;
+                s.ip.push_back(kv.first);
+                s.sig.push_back(kv.second);
+            }
+        }
+        if (s.ip.size() < 2) continue;
+        std::vector<double> alpha;
+        bool ok = true;
+        for (const auto& sg : s.sig) {
+            const double lam = bandNominalWavelengthMeters(classifySignalForSat(sat, sg).band);
+            if (!(lam > 0.0)) { ok = false; break; }
+            alpha.push_back(lam * lam);
+        }
+        if (!ok) continue;
+        const std::vector<double> w = clockAnchorPhaseClockWeights(alpha);
+        if (w.empty()) continue;
+        Fn fn;
+        ClockAnchorPhiRow row;
+        try {
+            const Eigen::Index cc = est.clockColumn(sat);
+            if (cc < 0 || cc >= x_s.size()) continue;
+            double e = x_s(cc) - keys[static_cast<std::size_t>(s.ic)].value;
+            fn.ka.emplace_back(s.ic, 1.0);
+            fn.sc.emplace_back(cc, 1.0);
+            for (std::size_t j = 0; j < s.ip.size(); ++j) {
+                const Eigen::Index pc = est.phaseBiasColumn(sat, s.sig[j]);
+                if (pc < 0 || pc >= x_s.size()) { ok = false; break; }
+                e -= w[j] * (x_s(pc) - keys[static_cast<std::size_t>(s.ip[j])].value);
+                fn.ka.emplace_back(s.ip[j], -w[j]);
+                fn.sc.emplace_back(pc, -w[j]);
+            }
+            if (!ok || !std::isfinite(e)) continue;
+            row.e = e;
+        } catch (...) { continue; }
+        row.n_pb = static_cast<int>(s.ip.size());
+        out[sat] = row;
+        by_const[sat[0]].emplace_back(sat, std::move(fn));
+    }
+    const double floor2 = floor_m * floor_m;
+    for (auto& [c, v] : by_const) {
+        (void)c;
+        const std::size_t n = v.size();
+        if (n < 2) { for (auto& [sat, fn] : v) out.erase(sat); continue; }   // no contrast
+        Eigen::MatrixXd Cm(n, n), Cp(n, n);
+        for (std::size_t a = 0; a < n; ++a)
+            for (std::size_t b = a; b < n; ++b) {
+                double m = 0.0, q = 0.0;
+                for (const auto& [ia, wa] : v[a].second.ka)
+                    for (const auto& [ib, wb] : v[b].second.ka) m += wa * wb * cov(ia, ib);
+                for (const auto& [ca, wa] : v[a].second.sc)
+                    for (const auto& [cb, wb] : v[b].second.sc)
+                        if (ca < post.rows() && cb < post.cols()) q += wa * wb * post(ca, cb);
+                Cm(a, b) = Cm(b, a) = m;
+                Cp(a, b) = Cp(b, a) = q;
+            }
+        std::vector<Eigen::Index> idx(n);
+        for (std::size_t a = 0; a < n; ++a) idx[a] = static_cast<Eigen::Index>(a);
+        const std::vector<double> pm = clockAnchorGaugeProject(Cm, idx);
+        const std::vector<double> pp = clockAnchorGaugeProject(Cp, idx);
+        std::vector<double> ev;
+        ev.reserve(n);
+        for (const auto& [sat, fn] : v) { (void)fn; ev.push_back(out[sat].e); }
+        std::vector<double> tmp = ev;
+        std::nth_element(tmp.begin(), tmp.begin() + static_cast<std::ptrdiff_t>(n / 2), tmp.end());
+        const double med = tmp[n / 2];
+        for (std::size_t a = 0; a < n; ++a) {
+            ClockAnchorPhiRow& r = out[v[a].first];
+            const double s = pm[a] - pp[a];
+            r.floored = !(s > floor2);
+            r.S = std::max(floor2, s);
+            r.e_hat = r.e - med;
+            r.ok = std::isfinite(r.S) && std::isfinite(r.e_hat);
+        }
+    }
     return out;
 }
 
@@ -402,19 +541,62 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             med[c] = v[v.size() / 2];
         }
 
+        // Card CTU section 14: the statistic in the phase-visible complement.  Empty
+        // (and nothing computed) with network.clock_anchor_guard_space = clock.
+        const std::map<std::string, ClockAnchorPhiRow> phi =
+            (ctx.knobs.cta_space != 0)
+                ? clockAnchorPhaseStatistic(est, x_s, ws.cap_dense_keys, ws.cap_dense_cov,
+                                            ctx.knobs.cta_phi_floor_m)
+                : std::map<std::string, ClockAnchorPhiRow>{};
         std::set<std::string> trip;          // anchored satellites that failed
         std::set<std::string> trip_resolve;  // …whose prior may also be withdrawn
         for (const Row& r : rows) {
             const double eh = r.e - med[r.sat[0]];
             const double w  = eh / std::sqrt(r.S);
             const double aw = std::abs(w);
+            const auto pit = phi.find(r.sat);
+            const bool phi_ok = pit != phi.end() && pit->second.ok;
+            const double w_phi = phi_ok ? pit->second.e_hat / std::sqrt(pit->second.S) : 0.0;
             if (aw > ctx.counters.cta_max_w) {
                 ctx.counters.cta_max_w     = aw;
                 ctx.counters.cta_max_w_tow = se_time.tow;
                 ctx.counters.cta_max_w_sat = r.sat;
             }
-            const bool bad_nis = aw > k;
+            const bool bad_clk = aw > k;
+            // Phase mode: the phase-visible statistic decides the NIS trip (the level
+            // cannot trip it); a row without one is tested on the absolute backstop only.
+            // Shadow and clock modes: the clock statistic decides, as before.
+            const bool bad_nis = (ctx.knobs.cta_space == 2) ? (phi_ok && std::abs(w_phi) > k)
+                                                            : bad_clk;
             const bool bad_abs = abs_m > 0.0 && std::abs(eh) > abs_m;
+            if (ctx.knobs.cta_space != 0 && pass == 0 && r.anchored) {
+                auto& C = ctx.counters;
+                if (phi_ok) {
+                    ++C.cta_phi_rows;
+                    C.cta_phi_sum_w2 += w_phi * w_phi;
+                    if (pit->second.floored) ++C.cta_phi_floor_rows;
+                    for (std::size_t b = 0; b < kCtaWLadder.size(); ++b)
+                        if (std::abs(w_phi) >= kCtaWLadder[b]) ++C.cta_phi_w_ge[b];
+                    for (std::size_t b = 0; b < kCtaELadder.size(); ++b)
+                        if (std::abs(pit->second.e_hat) >= kCtaELadder[b]) ++C.cta_phi_e_ge[b];
+                    const bool bad_phi = std::abs(w_phi) > k;
+                    if (bad_clk && bad_phi) ++C.cta_x_both;
+                    else if (bad_clk)       ++C.cta_x_clk_only;
+                    else if (bad_phi)       ++C.cta_x_phi_only;
+                } else {
+                    ++C.cta_phi_unavail;
+                }
+            }
+            if (ctx.knobs.cta_space != 0 && pass == 0 && traces.anchor_guard_trace.is_open())
+                traces.anchor_guard_trace
+                    << se_time.week << ',' << fmt::format("{:.3f}", se_time.tow) << ','
+                    << r.sat << ',' << (r.anchored ? 1 : 0) << ','
+                    << fmt::format("{:.5f},{:.5f},{:.3f},", eh, std::sqrt(r.S), w)
+                    << (phi_ok ? fmt::format("{:.5f},{:.5f},{:.3f},{}", pit->second.e_hat,
+                                             std::sqrt(pit->second.S), w_phi, pit->second.n_pb)
+                               : std::string(",,,0"))
+                    << ',' << ((bad_nis || bad_abs) ? (r.anchored ? "trip" : "out") : "ok")
+                    << '\n';
             // The k derivation of §3 needs the realized distribution, not only its
             // max: the denominator √S shrinks as q tightens, so a fixed k means a
             // different number of metres at every rung of the ladder.  Accumulated
@@ -437,10 +619,17 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (!bad_nis && !bad_abs) continue;
                 if (bad_nis) ++ctx.counters.cta_trip_nis;
                 else         ++ctx.counters.cta_trip_abs;
-                decouple(ctx, traces, se_time, r.sat, bad_nis ? "nis" : "abs", aw,
+                if (bad_nis && ctx.knobs.cta_space == 2) ++ctx.counters.cta_trip_phi;
+                decouple(ctx, traces, se_time, r.sat,
+                         bad_nis ? (ctx.knobs.cta_space == 2 ? "phi" : "nis") : "abs",
+                         (ctx.knobs.cta_space == 2 && bad_nis) ? std::abs(w_phi) : aw,
                          bad_nis ? k : abs_m,
-                         fmt::format("e={:.4f};med={:.4f};sqrtS={:.4f};pass={}",
-                                     r.e, med[r.sat[0]], std::sqrt(r.S), pass));
+                         phi_ok ? fmt::format("e={:.4f};med={:.4f};sqrtS={:.4f};pass={};"
+                                              "e_phi={:.4f};sqrtS_phi={:.4f}",
+                                              r.e, med[r.sat[0]], std::sqrt(r.S), pass,
+                                              pit->second.e_hat, std::sqrt(pit->second.S))
+                                : fmt::format("e={:.4f};med={:.4f};sqrtS={:.4f};pass={}",
+                                              r.e, med[r.sat[0]], std::sqrt(r.S), pass));
                 trip.insert(r.sat);
                 // Admission screen for the same-epoch value correction only; the
                 // decouple and the mark are unconditional.

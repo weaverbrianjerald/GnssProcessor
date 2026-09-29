@@ -75,7 +75,8 @@ struct CouplingExactCounters {
     long long terms_out_sh{0};       ///< SH-VTEC terms (never in the dense block): the card 1d treatment
     long long terms_emitted{0};      ///< coefficients written to the rows (the dense spread over S included)
     long long gauge_held{0};         ///< clock-family deficits moved onto the constellation's pinned pivot
-    long long gauge_orphan{0};       ///< clock-family deficits with no known pivot (the row stays gauge-dirty)
+    long long gauge_orphan{0};       ///< clock-family deficits with no known pivot and no present clock of the constellation (the row stays gauge-dirty)
+    long long gauge_spread{0};       ///< clock-family deficits whose pivot left the layout, spread over the constellation's present clocks
     long long sprev_mismatch{0};     ///< S terms whose stashed s_prev differs from the carried mean by > 1e-9 m
     long long var_negative{0};       ///< rows whose bracket term came out below 0 (rounding) and was clamped
     double    var_add_sum{0.0};      ///< summed per-row inflation M'BM (m^2), the mass the per-row form adds
@@ -88,7 +89,7 @@ struct CouplingExactCounters {
         terms_pinned += o.terms_pinned; terms_out_scalar += o.terms_out_scalar;
         terms_out_departed += o.terms_out_departed; terms_out_sh += o.terms_out_sh;
         terms_emitted += o.terms_emitted; gauge_held += o.gauge_held;
-        gauge_orphan += o.gauge_orphan;
+        gauge_orphan += o.gauge_orphan; gauge_spread += o.gauge_spread;
         sprev_mismatch += o.sprev_mismatch;
         var_negative += o.var_negative;
         var_add_sum += o.var_add_sum; shrink_abs_sum += o.shrink_abs_sum;
@@ -130,6 +131,11 @@ struct CouplingExactEpoch {
     /// The fold's inflation of carried keys that have no dense row (they fold through the
     /// diagonal leftovers), keyed like @c p_of_key: the scalar fallback of those terms.
     std::map<std::string, double> q_outside;
+    /// Off-diagonal process noise between S columns, (S index, S index, m^2), both orders
+    /// listed (card CTU G5: the level noise of a switch-on seam, V u u' over a satellite's
+    /// clock and phase-bias columns, whose diagonal is in @c q_s).  Empty on every other
+    /// epoch, which leaves Q_S diagonal as before.
+    std::vector<std::tuple<int, int, double>> q_off;
 
     /// Number of S columns.
     Eigen::Index nS() const { return static_cast<Eigen::Index>(p_of_s.size()); }

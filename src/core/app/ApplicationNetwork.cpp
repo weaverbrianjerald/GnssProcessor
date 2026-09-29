@@ -1118,6 +1118,7 @@ int Application::runNetwork() {
     // compile-time constant.  The default is NetworkEstimator::kNullSpaceTol, so an unset
     // key sends the identical double through the identical arithmetic (byte-identical).
     est.setRankGateTol(config_.networkRankGateTol());
+    est.setDenseFoldKappa(config_.networkDenseFoldKappa());   // card CTU section 14; default 1e-6 = byte-identical
     // network.parallel_carry also un-pins Eigen's threading (RAII) around the two
     // GEMM-bound carry stages, buildDdPriors (W·Pᶻ·Wᵀ) and installPosterior
     // (posterior-covariance read-back), whose large dense products Eigen threads well.
@@ -2429,6 +2430,7 @@ int Application::runNetwork() {
         // before PASS B, whose parallel produce reads the result.  It mirrors this
         // epoch's D2 fold, which runs later in networkSolveGlue and checks the mirror.
         // Inside the SB_PREASM bracket for the reason networkSdEwlAr gives.  No-op off.
+        networkClockLevelRestoreRaise(ctx, log);   // card CTU G5: once, the first leg epoch after a warm resume
         networkCouplingExactPrepare(ctx, est, se.time, dt, log);
         subEnd(SB_PREASM);   // close pre-assembly; the assembly wall below is timed separately (D0b)
 

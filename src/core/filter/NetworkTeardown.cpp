@@ -4414,6 +4414,31 @@ int networkTeardown(
                   ctx.carry.rx_cb_injected_total, ctx.carry.rx_cb_innov_skips_total,
                   ctx.carry.rx_cb_harvested_total, ctx.carry.rx_cb_carry.size(),
                   config_.networkRxCbCarryQ(), nothing_tail);
+        // RXCB-IN-BLOCK (card CTU section 14): the in-block route's own counts.  Zero
+        // block columns on an armed run means the knob never acted (invariant #4).
+        if (ctx.knobs.rxcb_blk) {
+            const auto& C = ctx.counters;
+            log->info("Network (RXCB-IN-BLOCK): {} receiver code-bias column(s) admitted into "
+                      "station blocks, {} pushed but NOT folded (non-SPD block, no diagonal "
+                      "fallback), {} (rx-CB, other) pair(s) zeroed for a missing cross term; "
+                      "harvest: {} stashed with a border regression, {} without a block row, "
+                      "{} coupling harvest(s) failed, {} erased by the step test (event "
+                      "response).",
+                      C.n_pl_blk_rxcb_cols, C.n_pl_blk_rxcb_not_folded,
+                      C.n_pl_blk_rxcb_missing_cross, C.n_rxcb_blk_harvested,
+                      C.n_rxcb_blk_no_block, C.n_rxcb_blk_harvest_fail,
+                      C.n_rxcb_blk_step_reset);
+            if (C.n_rxcb_blk_restored_skip > 0 || ctx.carry.ctu_switch_on_resume)
+                log->info("Network (RXCB-IN-BLOCK / card CTU G5): switch-on warm resume {}; {} "
+                          "restored diagonal rx-CB entr(y/ies) kept out of the block and "
+                          "re-harvested; exact-update stash stamp rebuilt from the restored "
+                          "border {} time(s).",
+                          ctx.carry.ctu_switch_on_resume ? "YES" : "no",
+                          C.n_rxcb_blk_restored_skip, C.cxu_resume_stash);
+            if (C.n_pl_blk_rxcb_cols == 0)
+                log->warn("Network (RXCB-IN-BLOCK): ARMED but no receiver code-bias column "
+                          "entered a block over the whole run: the knob is inert.");
+        }
     }
     // Receiver code-bias de-mean (card LV-2, docs/SPEC_level_information_budget.md):
     // run-end line, printed only when armed.  "0 demeaned" has to be visible, because a
@@ -5322,6 +5347,12 @@ int networkTeardown(
                  C.n_amb_birth_floored, C.n_cr_gap_prune,
                  C.n_relevel_free_skips, C.n_cr_inject_stale);
     }
+    // Card CTU section 14: drops at birth strength that decoupled the arc anyway.
+    if (ctx.knobs.amb_drop_decouple_always)
+        log->info("Network (card CTU / drop decouple): {} drop(s) found the arc already at "
+                  "birth strength and still cleared its border regression and block row "
+                  "(network.amb_float_drop_decouple_always).",
+                  ctx.counters.n_amb_drop_decoupled_idem);
     // Inventory of the drop-only floor and the walk it targets
     // (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A2, RF-3a).  Emitted in both knob
     // states: a run with the knob off reports the walk it has, which is what gives the
@@ -5627,6 +5658,26 @@ int networkTeardown(
                   c.cta_max_w, ctx.knobs.cta_k,
                   c.cta_max_w_sat.empty() ? std::string("(none)") : c.cta_max_w_sat,
                   c.cta_max_w_tow);
+        if (ctx.knobs.cta_space != 0) {
+            // Card CTU section 14: the phase-space statistic beside the clock statistic.
+            // In shadow mode the clock statistic decided; in phase mode the phase one did.
+            std::string wl, el;
+            for (std::size_t b = 0; b < kCtaWLadder.size(); ++b)
+                wl += fmt::format("{}>={:g}:{}", b ? " " : "", kCtaWLadder[b], c.cta_phi_w_ge[b]);
+            for (std::size_t b = 0; b < kCtaELadder.size(); ++b)
+                el += fmt::format("{}>={:g}:{}", b ? " " : "", kCtaELadder[b], c.cta_phi_e_ge[b]);
+            log->info("Network (Card Q3 / phase-space guard, {}): {} anchored row(s) with the "
+                      "ionosphere-free phase clock statistic, {} without one (abs only in phase "
+                      "mode), {} at the {:.3f} m floor; sigma0_phi {:.3f}; over k on both {}, on "
+                      "the CLOCK statistic only {} (the level's motion), on the PHASE statistic "
+                      "only {}; {} decouple(s) decided by the phase statistic.  |w_phi| ladder "
+                      "[{}]; |e_phi| ladder [{}].",
+                      ctx.knobs.cta_space == 2 ? "DECIDING" : "shadow", c.cta_phi_rows,
+                      c.cta_phi_unavail, c.cta_phi_floor_rows, ctx.knobs.cta_phi_floor_m,
+                      c.cta_phi_rows > 0 ? std::sqrt(c.cta_phi_sum_w2
+                                                     / static_cast<double>(c.cta_phi_rows)) : 0.0,
+                      c.cta_x_both, c.cta_x_clk_only, c.cta_x_phi_only, c.cta_trip_phi, wl, el);
+        }
         if (ctx.knobs.carry_gauge_free) {
             // Denominator of the gauge-free step (§2.1).  `gf_keys = 0` on an armed run
             // means the downdate never reached a group of ≥ 2 carried clocks, so the
@@ -5834,6 +5885,34 @@ int networkTeardown(
         if (c.clm_rows == 0)
             log->warn("Network (card CTU): the level monitor is ARMED but counted no ratio: "
                       "no satellite had both code information and a carried level.");
+        // The level innovation instrument (card CTU section 14).  A consistent level reads
+        // NIS mean ~1, window T ~1 and NEES_tf ~0.6 to 1 (the split-half cross product over
+        // the mean prior variance); a frozen or overconfident one reads NEES_tf >> 1.
+        {
+            std::string nees, rms, tt, phi;
+            for (std::size_t w = 0; w < c.clm_win_nees.size(); ++w) {
+                const char* sep = w ? " " : "";
+                nees += fmt::format("{}{:.2f}", sep, c.clm_win_nees[w]);
+                rms  += fmt::format("{}{:.3f}", sep, c.clm_win_rms[w]);
+                tt   += fmt::format("{}{:.2f}", sep, c.clm_win_T[w]);
+                phi  += fmt::format("{}{:.2f}", sep, c.clm_win_phi[w]);
+            }
+            log->info("Network (card CTU / level innovation): {} satellite-epoch innovation(s) "
+                      "({} left out, the anchor withdrew the prior); NIS mean {:.3f} over {} after "
+                      "epoch 15, {:.1f} % above 6.63; per {}-epoch window: truth-free level NEES "
+                      "[{}], rms mean innovation [{}] m, mean T [{}] ({:.1f} % of window "
+                      "satellites above 6.63), split-half noise ratio [{}].",
+                      c.clm_innov_rows, c.clm_innov_tripped,
+                      c.clm_innov_nis_n > 0 ? c.clm_innov_nis_sum
+                                                  / static_cast<double>(c.clm_innov_nis_n) : 0.0,
+                      c.clm_innov_nis_n,
+                      c.clm_innov_nis_n > 0 ? 100.0 * static_cast<double>(c.clm_innov_nis_gt)
+                                                  / static_cast<double>(c.clm_innov_nis_n) : 0.0,
+                      ctx.knobs.clm_innov_window_ep, nees, rms, tt,
+                      c.clm_win_Tn > 0 ? 100.0 * static_cast<double>(c.clm_win_Tgt)
+                                             / static_cast<double>(c.clm_win_Tn) : 0.0,
+                      phi);
+        }
     }
     if (ctx.knobs.carry_cpl_exact) {
         // Card CTU run-end telemetry (invariant 4).  `rows exact = 0` means the rule never
@@ -5855,12 +5934,12 @@ int networkTeardown(
                   "unbuilt epoch; terms {} updated in S, re-attributed {} departed / {} reinit "
                   "/ {} reref / {} skipped, {} pinned, {} scalar outside the block, {} "
                   "marginalized outside, {} SH; {} coefficient(s) written; clock-family "
-                  "deficit {} to the pivot, {} ORPHAN; inflation "
+                  "deficit {} to the pivot, {} spread over present clocks (pivot left), {} ORPHAN; inflation "
                   "mass {:.4e} m^2 ({} clamped); |M - M_new| mass {:.4e}; s_prev mismatches {}.",
                   X.rows_exact, X.rows_stale, X.rows_unfactored, X.terms_s,
                   d(Rt::Departed), d(Rt::Reinit), d(Rt::Reref), d(Rt::Skipped), X.terms_pinned,
                   X.terms_out_scalar, X.terms_out_departed, X.terms_out_sh, X.terms_emitted,
-                  X.gauge_held, X.gauge_orphan, X.var_add_sum, X.var_negative,
+                  X.gauge_held, X.gauge_spread, X.gauge_orphan, X.var_add_sum, X.var_negative,
                   X.shrink_abs_sum, X.sprev_mismatch);
         log->info("Network (card CTU): fold check — {} key(s) checked, {} set mismatch(es), "
                   "{} inflation mismatch(es) (largest |dQ| {:.3e} m^2), {} handover epoch(s) "

@@ -3477,6 +3477,63 @@ namespace GnssProcessor {
         bool networkCarryRxCodeBias() const { return network_carry_rx_code_bias_; }
 
         /**
+         * @brief Carry the receiver code-bias columns inside the station's jointly
+         *        whitened local block, as conditional coupling rows
+         *        (@c network.carry_rx_code_bias_in_block, RXCB-IN-BLOCK, card CTU
+         *        section 14).
+         *
+         * The diagonal rx-CB fold of @ref networkCarryRxCodeBias uses the pure
+         * conditional variance (N_rr⁻¹)_cc, which is the variance of the column given
+         * the shared border, as an absolute prior.  It therefore re-asserts the border
+         * (the column's regression on it) at that precision every epoch, on top of the
+         * dense border carry that already holds the same information: the information
+         * along each satellite's level doubles per epoch (measured on the sim bed:
+         * P_L 188, 63, 27, 13, 6.3 m² over epochs 1 to 5 against 188/k without the
+         * carry).  With this knob the columns are harvested with their regression on
+         * the border and their cross covariances to the station's other carried
+         * columns, and folded as rows of the same whitened block as the ambiguities
+         * (the receiver-clock and ZWD in-block cards' route), so neither the border nor
+         * the local-local overlap is counted twice.  There is no diagonal fallback:
+         * before the leveling carry is warm, and on a non-SPD block, the columns carry
+         * nothing (counted).
+         *
+         * Requires @ref networkCarryRxCodeBias, @ref networkCarryConditionalCoupling
+         * and a local block (the float_kf vehicle, or
+         * @ref networkPhaseLevelingLocalBlock), refuses
+         * @ref networkCarryCouplingJointWhiten, the LV-2 de-mean and the LV-4 step
+         * gate (both act on the diagonal fold).  Fingerprinted.  Default false =
+         * byte-identical.
+         */
+        bool networkCarryRxCodeBiasInBlock() const { return network_carry_rx_code_bias_in_block_; }
+
+        /**
+         * @brief A float-vehicle ambiguity drop clears the arc's border regression and its
+         *        block row even when the variance is already at birth strength
+         *        (@c network.amb_float_drop_decouple_always; card CTU section 14).
+         *
+         * The drop restores max(var_birth, var_first, floors) and, when the variance moves,
+         * clears the regression and the block row.  An arc that slips one epoch after birth
+         * is already at that variance, so the drop returned early and the arc kept folding
+         * its pre-slip value with full cross terms and a full border regression.  Under the
+         * exact time update the station's ionosphere-free ties are phase-tight and the
+         * stale value went into the satellite clocks (field, BSHM00ISR G07 L2W at epoch 8:
+         * metre-scale level jumps on six satellites).  Default false = byte-identical.
+         * Inert without the float_kf vehicle.
+         */
+        bool networkAmbFloatDropDecoupleAlways() const { return network_amb_float_drop_decouple_always_; }
+
+        /**
+         * @brief Relative-pivot bound of the dense border fold
+         *        (@c network.dense_fold_kappa, default 1e-6, card CTU section 14).
+         *
+         * See NetworkEstimator::setDenseFoldKappa.  Must be in (0, 1e-6]; a smaller bound
+         * admits the carried blocks of a consistent level (loose level, phase-precise
+         * clock-minus-bias combinations), which the default sends to the diagonal
+         * fallback.  Default = byte-identical.
+         */
+        double networkDenseFoldKappa() const { return network_dense_fold_kappa_; }
+
+        /**
          * @brief rx-CB carry random-walk process noise (m²/s)
          *        (@c network.rx_cb_carry_q, docs/SPEC_rx_cb_carry.md).
          *
@@ -5242,6 +5299,33 @@ namespace GnssProcessor {
         /// false-trip the lowest-confidence satellites.  Same reasoning as the
         /// two-state model's B3 @c clock_model_meas_std_m floor.
         double networkClockAnchorSigmaFloorM() const { return network_clock_anchor_sigma_floor_m_; }
+
+        /**
+         * @brief Space of the Q3 anchor guard's statistic
+         *        (@c network.clock_anchor_guard_space: @c clock (default), @c phase_shadow,
+         *        @c phase; card CTU section 14).
+         *
+         * The anchor binds the satellite clock's walk, which the phase sees; the level
+         * (the clock and every phase bias moved together) is seen by the code only and
+         * converges at code rate once the coupling rows' time update is consistent.  The
+         * clock statistic mixes the two and trips on the level's own motion.  @c phase
+         * tests the ionosphere-free phase clock instead, d = c - sum_j w_j p_j with
+         * sum w_j = 1 (blind to the level) and sum w_j lambda_j^2 = 0 (blind to the
+         * satellite's ionosphere direction), against its own P- - P+ projected on the
+         * constellation contrast and floored at @ref networkClockAnchorPhaseSigmaFloorM.
+         * The absolute backstop stays on the clock.  @c phase_shadow computes, ladders and
+         * traces the phase statistic while the clock statistic decides (solve
+         * byte-identical).  @c clock = byte-identical.
+         * @return 0 clock, 1 phase_shadow, 2 phase.
+         */
+        int    networkClockAnchorGuardSpace() const { return network_clock_anchor_guard_space_; }
+
+        /**
+         * @brief Floor on the phase-space statistic's sqrt(S) (m),
+         *        @c network.clock_anchor_phase_sigma_floor_m (default 0.02; card CTU
+         *        section 14).  Set from the @c phase_shadow ladder.
+         */
+        double networkClockAnchorPhaseSigmaFloorM() const { return network_clock_anchor_phase_sigma_floor_m_; }
         /// Consecutive in-band epochs a decoupled satellite must serve before the
         /// anchor re-engages: the re-coupling re-validation of invariant #7.
         int    networkClockAnchorRecoupleEpochs() const { return network_clock_anchor_recouple_epochs_; }
@@ -5337,6 +5421,44 @@ namespace GnssProcessor {
         /// fingerprinted.
         bool   networkClockLevelBoundRaise() const { return network_clock_level_bound_raise_; }
 
+        /**
+         * @brief Window of the level innovation instrument, epochs
+         *        (@c network.clock_level_innov_window_ep, default 60; card CTU section 14).
+         *
+         * The instrument runs inside the level monitor (@ref networkClockLevelMonitor,
+         * trace class): per epoch the innovation of the ionosphere-free code along each
+         * satellite's level and its NIS, per window the mean innovation's chi2(1)
+         * statistic and the split-half truth-free level NEES.  Must be >= 2.
+         */
+        int    networkClockLevelInnovWindowEp() const { return network_clock_level_innov_window_ep_; }
+
+        /**
+         * @brief Raise the border block restored by a warm resume along each satellite's
+         *        level direction, once, at the first leg epoch
+         *        (@c network.clock_level_restore_raise; card CTU section 9.3 and G5).
+         *
+         * A snapshot written by a carry whose level recursion was not consistent (every
+         * lineage before card CTU) holds a level variance far below what the code
+         * supports, and the exact update switched on over it keeps the level frozen
+         * (measured: 0.14 m unchanged after the seam).  The raise adds
+         * V_L u_s u_s' to the block and V_L to the carried clock and phase-bias variances,
+         * V_L the inverse of the writer monitor's contrast-frame code information (the
+         * snapshot's LB rows), u_s the indicator of the satellite's clock and phase-bias
+         * rows: the level loosens to its code-only variance and every phase-visible
+         * combination keeps its variance (a raise, never a set; no information is added).
+         * Requires @ref networkClockLevelMonitor.  Default false = byte-identical.
+         */
+        bool   networkClockLevelRestoreRaise() const { return network_clock_level_restore_raise_; }
+        /**
+         * @brief Epochs of code information the level restored by a warm resume is
+         *        credited with (@c network.clock_level_restore_credit_ep; card CTU G5).
+         *
+         * 0 (default): all the snapshot's epochs, V = 1/I_c.  k > 0: V = n / (k I_c), the
+         * variance k epochs of the writer's average code information would leave; a small
+         * k re-opens an inherited level that is wrong beyond its own information (the
+         * lineages before card CTU) to the code at the seam.
+         */
+        int    networkClockLevelRestoreCreditEp() const { return network_clock_level_restore_credit_ep_; }
         /// @brief Floor on the level standard deviation (m, @c network.clock_level_sigma_floor_m).
         ///
         /// V_L = max(1 / I_L, floor^2): the filter's information never exceeds
@@ -8767,6 +8889,9 @@ namespace GnssProcessor {
         double network_iono_carry_max_gap_s_{300.0};      ///< Carry eviction gap (s; QUEUE 8b); deliberately longer than pl_max_gap_s so the carry survives to the gap re-birth it exists to fix.
         std::string network_iono_carry_source_{"solve"};  ///< Carried-value source (QUEUE 8b): "solve" (reconstructed from the estimate; the displacement accumulator falsified in arm i1) or "smoothed_gf" (the CS-GF code-anchored authority, the §6.2 successor).
         bool   network_carry_rx_code_bias_{false};        ///< Carry per-station receiver code biases across epochs as diagonal RW priors, harvested outside the phase-leveling gate (rx-CB carry, SPEC_rx_cb_carry). Forced off without code_datum_time_linked. Off = byte-identical.
+        bool   network_carry_rx_code_bias_in_block_{false};  ///< Carry the receiver code-bias columns inside the station's jointly whitened local block as conditional coupling rows (RXCB-IN-BLOCK), instead of the diagonal fold at the conditional variance, which re-asserts the shared border every epoch.  Requires carry_rx_code_bias, carry_conditional_coupling and a local block; refuses joint whitening, the LV-2 de-mean and the LV-4 step gate.  Off = byte-identical.
+        bool   network_amb_float_drop_decouple_always_{false};  ///< A float-vehicle drop clears the regression and block row even at birth strength (card CTU section 14).
+        double network_dense_fold_kappa_{1e-6};           ///< Relative-pivot bound of the dense border fold (card CTU section 14); 1e-6 = the historical constant.
         double network_rx_cb_carry_q_{1e-9};              ///< rx-CB carry RW process noise (m²/s); var_eff = var + q·Δt. Only used when network.carry_rx_code_bias.
         bool   network_rx_cb_carry_demean_{false};        ///< Subtract the information-weighted mean innovation (per constellation, computed at the serial harvest, applied lag-1) from every rx-CB carry fold (card LV-2, SPEC_level_information_budget), so the carry transports between-station differences at full stiffness and stops re-asserting last epoch's common-mode realization.  It does not free that direction: in absolute terms it re-pins the DCB common mode to mean(x_lin), the frozen first-epoch seed frame (SPEC §13).  Requires carry_rx_code_bias.  Fingerprinted when armed.  Off = byte-identical.
         int    network_rx_cb_carry_demean_min_stations_{8};  ///< Minimum contributing stations for a fresh μ (card LV-2); below it μ freezes at its previous value (counted lv2_mu_frozen).  Only used when network.rx_cb_carry_demean.
@@ -8931,12 +9056,17 @@ namespace GnssProcessor {
         double network_clock_anchor_k_{6.0};               ///< Trip threshold on |w|, the standardized generalized predicted residual ê/√(P⁻−P⁺) with the per-constellation common mode removed (card Q3). Empirical: derived from the measured prior-residual ladder of the `clk` census family at the armed q, never from the stochastic model. Target trip rate ≈ 1–2 network-wide per hour on a quiet day (in CLK-R, 16σ produced ~7 marks/h and 106 consumer epochs > 20 m). Inert unless network_clock_temporal_anchor_.
         double network_clock_anchor_abs_m_{2.0};           ///< Floor-independent absolute backstop (m) on the common-removed innovation |ê| (card Q3): trips even if the standardizing variance were mis-set. Empirical band: the 12 h dev-channel p99 is 0.68 m and its max 10.0 m, so 1.5–3 m isolates real steps without touching the body. 0 = off. Inert unless network_clock_temporal_anchor_.
         double network_clock_anchor_sigma_floor_m_{0.02};  ///< Floor on √S (m; card Q3). A weak-data epoch removes no information (P⁺ → P⁻ ⇒ S → 0) and would otherwise yield a 0/0 statistic that false-trips exactly the lowest-confidence satellites; the floor makes it read w ≈ 0 instead. A lower bound on the denominator, never an addition to it (the addition form, used before B3, double-counts the data). Default 2 cm = the measured physical per-30 s change. Inert unless network_clock_temporal_anchor_.
+        int    network_clock_anchor_guard_space_{0};          ///< Q3 guard statistic space: 0 clock, 1 phase_shadow, 2 phase (card CTU section 14).
+        double network_clock_anchor_phase_sigma_floor_m_{0.02};  ///< Floor on the phase-space statistic's sqrt(S) (m; card CTU section 14).
         int    network_clock_anchor_recouple_epochs_{4};   ///< Consecutive in-band epochs a decoupled satellite must serve before the anchor re-engages (card Q3): the re-coupling edge must re-validate or re-seed what it reconnects (invariant #7). The re-engaged fold also re-seeds (its first variance is cp.var + q·Δt off the LOOSE posterior, not the steady-state tight value). Inert unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_mark_{true};           ///< Wire-mark the decoupling edge (card Q3; markSatDiscontinuity → R record + per-sat phase/code/clock counters, the chain Q4 proved end-to-end). A satellite whose clock changed both temporal regime and value must not be integrated across. Unlike CLK-R stage 2, whose marked population was ~98 % churn and cost the quiet-day consumer, this population is by construction not churn (the churn is what the anchor removes), but the rate discipline still applies, and the knob exists so a 12 h A/B can bisect hold vs marks as CLK-R's did. Inert unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_gauge_free_{false};    ///< Fold the clock prior with the per-constellation clock gauge direction marginalized out (card Q3 §2.1; Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ; diagonally this is "anchor each clock to its carried value minus the information-weighted mean", i.e. anchor the differences). Applied to the joint dense block, so the clock↔code-bias off-diagonals the C1 carry retains are preserved; only the gauge is removed. A constellation with < 2 carried clocks contributes nothing (its lone key is the gauge). Solve-affecting; part of the anchor's fingerprint. Inert unless network_clock_temporal_anchor_.
         bool   network_clock_level_carry_{false};          ///< Estimate each satellite's clock level (its clock and every phase bias shifted together, a direction every phase row is blind to) from the post-fit ionosphere-free code alone and re-base the carry along it after every kept epoch (card CLV, docs/refound/CLV_clock_level_2026-09-22.md); the emit hold follows the shift so the wire's phase side does not move. Solve-affecting and fingerprinted. Off = byte-identical.
         bool   network_clock_level_monitor_{false};      ///< Card CTU measure-only level monitor: per satellite the undecayed code-only level information I_L against the stashed block's level variance P_L, the ratio P_L/(1/I_L) traced and read out; solve byte-identical.  Requires shared_carry_full_cov; refuses clock_level_carry.
         bool   network_clock_level_bound_raise_{false};  ///< Card CTU: raise the stashed border block along each satellite's level direction to 1/I_L where the monitor ratio is below 1 (a raise, never a set), with the carried variances.  Requires clock_level_monitor.  Solve-affecting, fingerprinted.
+        int    network_clock_level_innov_window_ep_{60};  ///< Window (epochs) of the level innovation instrument of the monitor (card CTU section 14).
+        bool   network_clock_level_restore_raise_{false};    ///< Raise the restored border along each satellite's level to its code-only variance at the first leg epoch (card CTU G5).
+        int    network_clock_level_restore_credit_ep_{0};     ///< Epochs of code information the restored level is credited with (card CTU G5); 0 = all.
         double network_clock_level_sigma_floor_m_{0.01};   ///< Floor (m) on the level standard deviation, V_L = max(1 / I_L, floor^2) (card CLV). Inert unless network_clock_level_carry_.
         double network_clock_level_horizon_s_{7200.0};     ///< Memory horizon (s) of the level filter's information I_L, decayed per epoch by exp(-dt / horizon) (card CLV). Inert unless network_clock_level_carry_.
         bool   network_clock_level_pin_pair_read_{false};  ///< Card CLV R-A: the ionosphere-free pairs of the level fit come only from the satellite's realized pin pair (GPS C1C/C2W, Galileo C1C/C5Q), never from a free same-band extra whose column absorbed the level. INERT unless network_clock_level_carry_. OFF = the heaviest row per pin band (byte-identical).

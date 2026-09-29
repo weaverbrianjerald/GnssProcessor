@@ -100,6 +100,7 @@
  */
 
 #include <array>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -159,6 +160,33 @@ std::vector<double> clockAnchorGaugeProjectDiag(const std::vector<double>& var);
 /// Spans the k value in use (6, the default) and the tail beyond it, so one armed run
 /// reports how many rows each candidate threshold k would have tripped.
 inline constexpr std::array<double, 8> kCtaWLadder{1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 20.0};
+
+/// One satellite's phase-space guard statistic (card CTU section 14).
+struct ClockAnchorPhiRow {
+    bool   ok{false};
+    double e{0.0};       ///< the phase clock's innovation, (c - mu_c) - sum_j w_j (p_j - mu_pj) (m)
+    double e_hat{0.0};   ///< …with the constellation median removed (the clock gauge)
+    double S{0.0};       ///< P- - P+ of the contrast, floored (m^2)
+    bool   floored{false};
+    int    n_pb{0};      ///< phase-bias columns in the functional
+};
+
+/// Minimum-norm weights w over a satellite's phase-bias signals with sum w = 1 (blind to
+/// the level) and sum w alpha = 0 (alpha_j = lambda_j^2: blind to the ionosphere direction).
+/// Two bands give the ionosphere-free pair (GPS L1/L2: 2.5457, -1.5457).  Empty when all
+/// signals share one band.
+std::vector<double> clockAnchorPhaseClockWeights(const std::vector<double>& alpha);
+
+/// The phase-space statistic of every satellite with a clock and two or more phase-bias
+/// keys in the folded dense block (@p keys / @p cov, the fold's capture): the innovation
+/// of the ionosphere-free phase clock against the folded prior means, its variance
+/// P- - P+ (the folded block and the posterior, projected on the constellation contrast)
+/// floored at @p floor_m^2, and the constellation median removed.  A constellation with
+/// fewer than two such satellites has no contrast and yields no rows.
+std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
+    const NetworkEstimator& est, const Eigen::VectorXd& x_s,
+    const std::vector<NetworkEstimator::SharedPrior>& keys, const Eigen::MatrixXd& cov,
+    double floor_m);
 
 /// Rungs of the guard's absolute |ê| ladder in metres (@ref NetworkServiceCounters::cta_e_ge).
 /// The top rung is the `clock_anchor_abs_m` default (2 m), so the last column gives the

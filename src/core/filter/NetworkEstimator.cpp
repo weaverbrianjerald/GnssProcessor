@@ -576,7 +576,8 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
         dinv(a) = 1.0 / std::sqrt(P(a, a));
     }
     Eigen::MatrixXd C = dinv.asDiagonal() * P * dinv.asDiagonal();
-    const auto pdOk = [](const Eigen::LDLT<Eigen::MatrixXd>& f) {
+    const double kappa = dense_fold_kappa_;   // network.dense_fold_kappa (default 1e-6)
+    const auto pdOk = [kappa](const Eigen::LDLT<Eigen::MatrixXd>& f) {
         if (f.info() != Eigen::Success) return false;
         const Eigen::VectorXd dv = f.vectorD();
         const double dmax = dv.maxCoeff();
@@ -593,7 +594,7 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
         // block to the driver's diagonal fallback instead (bounded at the legacy
         // 1/var_eff), which stashes a fresh block at the next emit, so the
         // condition clears without intervention.
-        return dmin > 0.0 && dmin >= 1e-6 * dmax;
+        return dmin > 0.0 && dmin >= kappa * dmax;
     };
     Eigen::LDLT<Eigen::MatrixXd> ldlt(C);
     if (!pdOk(ldlt)) {

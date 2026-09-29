@@ -149,7 +149,15 @@ struct ClockLevelTwoWay {
     long long used{0};                     ///< pairs in the fit
     long long clipped{0};                  ///< pairs removed by the robust screen
     long long few{0};                      ///< satellites dropped for having fewer than the minimum pairs
+    /// satellite -> variance of its effect at unit weight (the diagonal of the fit's
+    /// inverse normals, the station offsets eliminated and the sum-to-zero constraint
+    /// imposed): the effect's variance is this times @c s0sq (card CTU section 14).
+    std::map<std::string, double> var;
+    /// A posteriori unit variance of the fit: sum w (v - e + c)^2 over the used pairs,
+    /// over used - (S - 1) - R.  NaN with no redundancy.
+    double s0sq{std::numeric_limits<double>::quiet_NaN()};
 };
+
 
 /// @brief Two-way fit of the ionosphere-free residuals: v = e_sat - c_(station, constellation).
 ///
@@ -307,6 +315,18 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
                              const Eigen::VectorXd& x_s,
                              const std::vector<StationAssembly>& asm_res,
                              const std::vector<int>& est_index_of, bool datum_changed);
+
+/// @brief Card CTU G5 (section 9.3): after a warm resume, raise the restored dense border
+///        along each satellite's level direction (its clock and phase-bias rows moved
+///        together) by the code-only level variance 1/I_c of the writer monitor's
+///        contrast-frame information (the snapshot's LB rows), once, before the first
+///        leg epoch's rows and fold.  A raise, never a set: every phase-visible
+///        combination keeps its variance and no information is added.  No-op unless
+///        @c network.clock_level_restore_raise armed it at the restore.
+/// @param ctx the run context (the carry is modified).
+/// @param log the network logger.
+void networkClockLevelRestoreRaise(NetworkRunContext& ctx,
+                                   const std::shared_ptr<spdlog::logger>& log);
 
 /// @brief The level monitor and bound raise of card CTU
 ///        (@c network.clock_level_monitor, @c network.clock_level_bound_raise;

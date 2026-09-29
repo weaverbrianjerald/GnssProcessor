@@ -260,6 +260,11 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
                         l.value_abs, l.var, l.last_seen_s));
     for (const auto& [key, d] : snap.sh_dev_carry)
         put(fmt::format("SD,{},{},{},{},{}", key, d.dev, d.var, d.var_ss, d.t_s));
+    // Card CTU G5: the level monitor's contrast-frame code information per satellite
+    // (LB rows); empty unless the writer ran the monitor, so a run without it writes the
+    // previous bytes unchanged.
+    for (const auto& [sat, in] : snap.level_info)
+        put(fmt::format("LB,{},{},{}", sat, in.first, in.second));
     // Canonical-signal records (SPEC_event_harness §21.16; RS-8): the per-station
     // per-(constellation, band, obs-type) latch that PppModel locks from one epoch's
     // satellite counts.  Written only under network.state_snapshot_signal_capture
@@ -707,6 +712,12 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 return fail("RC field not finite (or a non-positive variance)");
             s.rx_cb_carry[{static_cast<int>(i1), f[2]}] =
                 NetworkStateSnapshot::Local{d1, d2, d3};
+        } else if (tag == "LB") {   // card CTU G5: contrast-frame level information
+            if (f.size() != 4 || f[1].empty()) return fail("malformed LB line");
+            if (!parseD(f[2], d1) || !parseI(f[3], i1)) return fail("malformed LB fields");
+            if (!std::isfinite(d1) || d1 < 0.0 || i1 < 0)
+                return fail("LB field not finite (or negative)");
+            s.level_info[f[1]] = {d1, static_cast<int>(i1)};
         } else if (tag == "SD") {   // T5 / Iono-2 per-LOS deviation carry entry (RS-6)
             if (f.size() != 6 || f[1].empty()) return fail("malformed SD line");
             if (!parseD(f[2], d1) || !parseD(f[3], d2) || !parseD(f[4], d3))
