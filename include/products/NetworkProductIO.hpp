@@ -175,6 +175,11 @@ struct SbasisContract {
     /// reads a hold); @c checkContract compares it.  Never true without
     /// @c emit_pb_hold.
     bool              emit_pb_hold_phase_clock{false};
+    /// Whether the hold is the smoothed member (@c network.emit_pb_hold_smoothed, card
+    /// SMH): a held @c bias_m follows the phase-clock transfer minus the clock clone's
+    /// passed motion within a generation.  Serialized as @c pbhold=3; @c checkContract compares it.  Never true
+    /// without @c emit_pb_hold.
+    bool              emit_pb_hold_smoothed{false};
     /// Whether the producer's emitter maintained the per-satellite clock
     /// discontinuity counter (A2).  Second replay-emitter construction parameter;
     /// with the others in this struct it determines the @c NetworkProductEmitter

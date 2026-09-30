@@ -74,6 +74,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       level_innov_trace_path(log_dir_ / "network_level_innov.csv"),
       level_innov_win_trace_path(log_dir_ / "network_level_innov_win.csv"),
       phase_visible_trace_path(log_dir_ / "network_phase_visible.csv"),
+      pb_hold_clone_trace_path(log_dir_ / "network_pb_hold_clone.csv"),
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
       amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
       arc_ledger_trace_path(log_dir_ / "network_arc_ledger.csv"),
@@ -533,6 +534,16 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open phase-visible trace {}",
                       phase_visible_trace_path.string());
+    }
+    if (nc.emit_pb_hold && nc.emit_pb_hold_smoothed) {
+        // The smoothed hold's clock clones (card SMH); the header documents the columns.
+        pb_hold_clone_trace.open(pb_hold_clone_trace_path);
+        if (pb_hold_clone_trace)
+            pb_hold_clone_trace << "week,tow,sat,sig,gen,age_s,xfer_m,xfer_lah_m,phi_m,w_m2,"
+                                   "vpost_m2,var_m2,r,pd0_m2,f0\n";
+        else
+            log->warn("Network: failed to open pb-hold clone trace {}",
+                      pb_hold_clone_trace_path.string());
     }
     if (config_.networkClockLevelCarry() && nc.trace_events) {
         // The per-satellite level filter (card CLV); the header documents the columns.

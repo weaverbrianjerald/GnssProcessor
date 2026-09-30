@@ -724,6 +724,19 @@ namespace GnssProcessor {
         /// sqrt(S- - S+) (empty when not positive), @c nis = e^2 / (S- - S+).
         std::ofstream phase_visible_trace;
         const std::filesystem::path phase_visible_trace_path;
+        /// The smoothed hold's clock clones (card SMH, @c network.emit_pb_hold_smoothed):
+        /// one row per smoothed held emission.  @c age_s the clone's age, @c xfer_m the
+        /// key's transfer (the phase-clock transfer minus phi, card SMH section 10),
+        /// @c xfer_lah_m the phase-clock transfer computed in the same pass (empty on an
+        /// epoch without the satellite's clock), @c phi_m the frame-free passed motion since
+        /// the clone's birth, @c w_m2 the fold inflation applied to the clock since birth,
+        /// @c vpost_m2 the posterior variance of the increment, @c var_m2 the row's
+        /// residual variance, @c r = phi^2 / (W - V_post), @c pd0_m2 and @c f0 the stated
+        /// variance of c - p_j at birth and the clock's share of it (they carry the
+        /// float-ambiguity datum and are not G3's prediction inputs, card SMH section 9;
+        /// empty on a pinned clock).
+        std::ofstream pb_hold_clone_trace;
+        const std::filesystem::path pb_hold_clone_trace_path;
         /// Per-station local-block audit (@c network.trace_station_block;
         /// SPEC_event_harness §24.10, card ZP): one row per station per traced epoch (the
         /// first 20 emitted epochs, then every 60th) describing

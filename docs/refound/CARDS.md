@@ -306,3 +306,25 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   kind read by every mechanism, one traversal over every carried reference, a run-end "model as
   armed" table, a declarative knob table; five byte-identity-gated phases after CTU2's code
   lands; no estimator class hierarchy, no unification of the epoch-skip payloads.
+- [SMH](SMH_smoothed_hold_clone_2026-09-29.md): open, 2026-09-29: pre-registered (the author's
+  decision after card PVN): the smoothed member of card LAH's hold family, P_j(t) = p_j(t0|t0) +
+  [c(t0|t) - c(t0|t0)], with c(t0|t) carried as a clone (a coupling row with no observations in
+  its own carry site, time-updated by card CTU's exact rule, never shrunk; reverts to the
+  phase-clock transfer when its clone dies). `network.emit_pb_hold_smoothed`, `pbhold=3`,
+  emit-side only. Gates: consumer equal to the phase-clock hold's within millimetres on both beds;
+  the passed motion against its stated variance as a baseline; one adaptation arm with a known
+  walk injected into the a priori clock product and a pre-registered hidden fraction. BUILT, not
+  armed (sections 7 to 11): the clone lives while card Q3's anchor holds its clock; one frame for
+  the hold family (the transfer is card LAH's minus the passed motion); G3 passes 97 % of an
+  injected walk with the anchor's q matched; `network.dense_fold_kappa` default 1e-12; the 6 h
+  field census loses at the C1W sites from hour 3 by exactly the passed motion, read as mostly
+  level (section 11); the member that separates the walks is card SMD.
+- [SMD](SMD_smoothed_hold_block_member_2026-09-30.md): open, 2026-09-30: pre-registered (the
+  outside review's fourth note after SMH section 10): the smoothed hold on the ionosphere-free
+  phase-visible clock D = c - sum_j w_j p_j, passing Phi_D = D(t|t) - D(t0|t) on a (c, p_1, p_2)
+  block clone with the band pair fixed at birth; a level walk cancels, a clock walk passes, and a
+  phase-bias re-realization is hidden by retiring the clone at every re-reference, new anchor
+  tenure and emitter mark of its pair. `network.emit_pb_hold_smoothed_block`, `pbhold=4`, emit-side
+  only. Predictions: on the field the level part carries the centimetres and the phase-visible part
+  is small; the census's hour-3 loss disappears and its hour-1 gain stays; on the sim the two
+  members differ by the sim's small level wander.

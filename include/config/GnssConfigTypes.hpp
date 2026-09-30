@@ -2943,6 +2943,34 @@ namespace GnssProcessor {
          */
         bool emit_pb_hold_phase_clock{ false };
         /**
+         * @brief The smoothed hold (@c network.emit_pb_hold_smoothed, default false)
+         *        (card SMH).
+         *
+         * The held key keeps @f$(C - P)(t) = (c - p)(t_0|t_0) + \Phi(t)@f$ with
+         * @f$\Phi = c(t|t) - c(t_0|t)@f$: the phase side keeps the generation-start
+         * phase-visible clock plus the estimator's smoothed clock motion since @f$t_0@f$,
+         * and a revision of @f$c(t_0)@f$ (the level) reaches the phase bias, so the code
+         * side only.  It is written as the phase-clock transfer of
+         * @ref emit_pb_hold_phase_clock minus @f$\Phi@f$ accumulated frame-free, so the
+         * members share one frame (card SMH section 10).  @f$c(t_0|t)@f$ is a clock clone
+         * per hold key, a coupling row with no observation rows time-updated by card CTU's
+         * exact rule (@ref NetworkPbHoldClone.hpp).  A clone lives while card Q3's anchor holds
+         * its clock: it is born at the first stash at which the anchor holds, dies at the
+         * epoch the anchor withdraws the clock, and the key bridges on the phase-clock
+         * transfer (@ref emit_pb_hold_phase_clock's rule, its common-mode median included)
+         * until the next birth.  A clone that would take card 1d's route dies and its key
+         * carries the phase-clock transfer for the rest of the generation.  Requires
+         * @ref emit_pb_hold, @c network.carry_coupling_exact_update,
+         * @c network.raim_within_epoch (whose fold capture records which keys the final
+         * solve folded) and @c network.clock_temporal_anchor without
+         * @c network.clock_model, all refused at load time on their resolved values; excludes
+         * @ref emit_pb_hold_phase_clock (its fallback); refuses
+         * @c network.clock_level_carry and @c network.fast_clock.enable for the phase-clock
+         * mode's reasons.  Emit-side only: the solve, the C and B records are
+         * byte-identical.  Declared on the S line as @c pbhold=3.
+         */
+        bool emit_pb_hold_smoothed{ false };
+        /**
          * @brief Fold the station's own datum rows into its local block before the
          *        @c addStation positive-definiteness test
          *        (@c network.station_prior_before_pd) (card RF-PD-fix).

@@ -178,6 +178,24 @@ namespace GnssProcessor {
         logNetworkSummary_(log);
         finalizeNetworkProcessNoise_(json, log);
 
+        // The smoothed hold's two load-time refusals (card SMH sections 8 and 9), on the
+        // resolved values: the within-epoch tier can be armed by raim_withhold_sigma0 or
+        // raim_we_code_iono, and the anchor is disarmed under the clock model.  Neither is
+        // left to degrade at run time.
+        if (network_config_.emit_pb_hold_smoothed && !network_raim_within_epoch_)
+            throw std::runtime_error("network.emit_pb_hold_smoothed requires "
+                                     "network.raim_within_epoch: its fold capture is the record "
+                                     "of which keys the final solve folded and at which prior "
+                                     "means, which the clone's revision reads (card SMH)");
+        if (network_config_.emit_pb_hold_smoothed
+            && (!network_clock_temporal_anchor_ || network_clock_model_))
+            throw std::runtime_error("network.emit_pb_hold_smoothed requires "
+                                     "network.clock_temporal_anchor (and not network.clock_model, "
+                                     "which disarms it): the clone lives while the anchor holds its "
+                                     "clock, and without the anchor the clock's q is the legacy "
+                                     "rate, a datum device the smoother would pass as motion "
+                                     "(card SMH section 9)");
+
         // Feed interlock for network.carry_coupling_reinit_sources (card 1g).  It sits
         // here, at the end of the section, rather than beside the knob's own parse:
         // `phase_datum_eq34` and `phase_anchor_carry_reref` are parsed in later helpers
@@ -2549,6 +2567,44 @@ namespace GnssProcessor {
                           "phase-visible clock motion is the broadcast clock's, which drops the "
                           "network's real clock corrections (decimetres per hour).  The mode was "
                           "validated only with a precise a priori clock.");
+        }
+        // The smoothed hold (card SMH): the held phase bias follows the clock clone
+        // c(t0|t); the phase-clock transfer after a clone dies.  Emit-side only.
+        network_config_.emit_pb_hold_smoothed =
+            jval<bool>(json, "network.emit_pb_hold_smoothed", "emit_pb_hold_smoothed", false);
+        if (network_config_.emit_pb_hold_smoothed) {
+            if (!network_config_.emit_pb_hold)
+                throw std::runtime_error("network.emit_pb_hold_smoothed requires "
+                                         "network.emit_pb_hold (it is a mode of the hold; card SMH)");
+            if (network_config_.emit_pb_hold_phase_clock)
+                throw std::runtime_error("network.emit_pb_hold_smoothed excludes "
+                                         "network.emit_pb_hold_phase_clock: the smoothed hold carries "
+                                         "the phase-clock transfer as its fallback (card SMH)");
+            if (!jval<bool>(json, "network.carry_coupling_exact_update",
+                            "carry_coupling_exact_update", false))
+                throw std::runtime_error("network.emit_pb_hold_smoothed requires "
+                                         "network.carry_coupling_exact_update: the clock clone is "
+                                         "time-updated by the exact rule, and card 1d's shrink "
+                                         "would destroy it in one epoch (card SMH)");
+            // network.raim_within_epoch and card Q3's anchor are refused at the end of this
+            // section, on their resolved values (the within-epoch tier can be armed by
+            // other knobs, and the anchor is disarmed by the clock model).
+            if (jval<bool>(json, "network.clock_level_carry", "network_clock_level_carry", false))
+                throw std::runtime_error("network.emit_pb_hold_smoothed refuses "
+                                         "network.clock_level_carry: CLV's discrete re-base is a "
+                                         "revision the clone would not see (card SMH)");
+            if (jval<bool>(json, "network.fast_clock.enable", "network_fast_clock_enable", false))
+                throw std::runtime_error("network.emit_pb_hold_smoothed refuses "
+                                         "network.fast_clock.enable: the FC-1 K records move the "
+                                         "clock between full epochs while the held phase bias "
+                                         "stays (card SMH)");
+            log->info("Network (card SMH): network.emit_pb_hold_smoothed = true: a held "
+                      "(satellite, signal) emits the phase-clock transfer minus the passed motion "
+                      "Phi = c(t|t) - c(t0|t), with c(t0|t) a clock clone time-updated by the "
+                      "exact rule and alive while card Q3's anchor holds the clock; the "
+                      "phase-clock transfer bridges the rest.  S line pbhold=3; "
+                      "the solve, C and B records are unchanged; trace "
+                      "logs/network_pb_hold_clone.csv.");
         }
         // Installs the station's own datum rows before the PD test (card RF-PD-fix).
         // Solve-affecting (it changes which stations are in the network); the

@@ -123,6 +123,7 @@
 #include "filter/NetworkFastClock.hpp"    // split-cadence clocks-only fast pass (FC-1)
 #include "filter/NetworkTeardown.hpp"
 #include "filter/NetworkPhaseVisibleDiag.hpp"  // phase-visible consistency instrument (card PVN)
+#include "filter/NetworkPbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
 #include "filter/NetworkProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkCanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
@@ -2735,6 +2736,9 @@ int Application::runNetwork() {
         // documented by the C1 card: a delta measured inside a withheld era could be
         // published across a consumer-visible gap.
         const std::size_t fc_n_emitted_before = ctx.counters.n_emitted;
+        // The smoothed hold's clock clones (card SMH): advanced over this epoch before the
+        // hold reads them at emit.  No-op off.
+        networkPbHoldCloneUpdate(ctx, log, est, x_s, ws);
         subBegin(SB_EMITSTORE); // block 7: re-base + PB-emit filter + store push + solution CSV (D0b)
         networkEmitStore(ctx, config_, log, traces, setup, se, est, x_s, pl_now_s,
                          datum_changed, sigma0_adapt, sol, epoch_withheld_consts, global_bump,
@@ -2974,6 +2978,9 @@ int Application::runNetwork() {
                            sigma0_adapt, total_pins, vce_wants_cb, vce_wants_pb, dt,
                            datum_changed, changed_consts, n_clock, n_present, n_pb, n_cb,
                            n_dropped_sats, n_adapt);
+        // Card SMH: the clones re-harvested on the stash just written, and the clones of
+        // the generations that started at this epoch's emit born on it.  No-op off.
+        networkPbHoldCloneHarvest(ctx, est, x_s, TimeUtils::continuousGpsSeconds(se.time));
         // Code-only level re-base (card CLV).  It runs after the stash, because it moves
         // the carry the stash just wrote (and every coupling term the leveling harvest
         // wrote), and only on a kept epoch, which is every epoch that reaches here.

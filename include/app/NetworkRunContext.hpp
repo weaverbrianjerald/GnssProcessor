@@ -25,6 +25,7 @@
 
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactCounters (card CTU)
+#include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone (card SMH)
 #include "filter/NetworkYoungInflate.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
 #include "filter/NetworkAnchorHygiene.hpp" // NetworkAnchorTallies (eq34 reattach hygiene)
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
@@ -623,6 +624,7 @@ namespace GnssProcessor {
         bool   emit_pb_hold{};             ///< Hold each (sat, signal) emitted phase bias at the first value of its generation (network.emit_pb_hold; card PBH); state in NetworkCarryState::pb_hold.
         double emit_pb_hold_max_gap_s{};   ///< Arc gap (s) beyond which a returning key starts a new generation (network.emit_pb_hold_max_gap_s; card PBH).  Inert unless emit_pb_hold.
         bool   emit_pb_hold_phase_clock{}; ///< Hold the phase-visible clock instead of the phase bias (network.emit_pb_hold_phase_clock; card LAH).  Inert unless emit_pb_hold.
+        bool   emit_pb_hold_smoothed{};    ///< The smoothed hold (network.emit_pb_hold_smoothed; card SMH): the held phase bias follows the clock clone c(t0|t); LAH's transfer after a clone dies.  Inert unless emit_pb_hold.
         // --- Guarded temporal clock anchor (card Q3) ---
         // Solve-affecting and fingerprinted.  `cta_on` is the one predicate every site reads
         // for "does this run touch the clock carry at all", so an off run never allocates the
@@ -1662,6 +1664,22 @@ namespace GnssProcessor {
             /// Card LAH: the transfer written at this key's last held emission (m), reused
             /// on an epoch without an emitted clock for the satellite.
             double        frz_last{0.0};
+            /// Card SMH: the key's clone died this generation of a cause other than the
+            /// anchor's withdrawal or disengagement, and the key carries card LAH's
+            /// transfer from the switch on for the rest of the generation.
+            bool          smh_reverted{false};
+            /// Card SMH: the transfer written at this key's last held emission (m).
+            double        smh_last{0.0};
+            /// Card SMH: after a revert with no clock that epoch, LAH's reference waits
+            /// for the satellite's next emitted clock (continuity of the transfer).
+            bool          smh_ref_pending{false};
+            /// Card SMH: the key's last held emission wrote its clone's transfer (so a
+            /// clone that is not live now is a switch to the bridge).
+            bool          smh_on_clone{false};
+            /// Card SMH: LAH's transfer at the key's last smoothed emission (m), the frame
+            /// the clone's transfer is written in (LAH's minus the passed motion), reused
+            /// on an epoch without an emitted clock for the satellite (section 10).
+            double        smh_lah_last{0.0};
         };
         /// "<sat>|<signal>" -> the held value and its generation (card PBH,
         /// @c network.emit_pb_hold).  Owned here rather than in the seam because it must
@@ -1698,6 +1716,15 @@ namespace GnssProcessor {
         /// Card LAH: |transfer| (m) per held emission, the accumulated move since the
         /// generation start.
         std::vector<double> pb_hold_frz_total_abs_m;
+        /// Card SMH: hold key ("sat|signal") -> its clock clone (network.emit_pb_hold_smoothed).
+        /// A clone lives for its key's generation; a dead one stays until the next
+        /// generation replaces it.  Empty and untouched unless the mode is armed.
+        std::map<std::string, PbHoldClone> smh_clone;
+        /// Card SMH: hold keys whose generation started at this epoch's emit, born at
+        /// this epoch's stash (sat, signal and generation filled in).
+        std::map<std::string, PbHoldClone> smh_pending;
+        /// Card SMH: continuous GPS seconds of the first held emission (the hour basis).
+        double smh_t_first_s{-1.0};
         /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed (station
         /// index, sat).  Diagonal only (the rx-CB rationale: no shared-border footprint;
         /// the coupling variant is deferred).  Not snapshotted: a warm resume cold-starts
@@ -3554,6 +3581,33 @@ namespace GnssProcessor {
         long long n_pbh_frz_noref      = 0;  ///< held emissions of a generation started without a clock (held plainly)
         long long n_pbh_frz_epochs     = 0;  ///< epochs that advanced M (at least one satellite with a clock at both emissions)
         long long n_pbh_frz_coupled    = 0;  ///< coupled clock+phase-bias marks whose clock step the mode transferred
+        // --- Card SMH (network.emit_pb_hold_smoothed) ---
+        long long smh_births           = 0;  ///< clones born on a stashed clock
+        long long smh_births_pinned    = 0;  ///< clones born on the constellation's pinned clock (a transfer of zero)
+        long long smh_births_deferred  = 0;  ///< clones born at least one stash after their birth was queued (section 9)
+        long long smh_rebirths         = 0;  ///< clones born after a disengagement within their generation (section 9)
+        long long smh_defer_loose      = 0;  ///< stashes at which a pending birth waited because card Q3's anchor did not hold the clock
+        long long smh_defer_nostash    = 0;  ///< stashes at which a pending birth waited for a stashed clock (or a dense stash)
+        long long smh_pending_dropped  = 0;  ///< pending births dropped because their generation was superseded
+        long long smh_bridges          = 0;  ///< switches from a live clone to the phase-clock transfer at a disengagement
+        long long smh_held_bridged     = 0;  ///< held emissions on the phase-clock transfer while the key waits for a clone
+        std::vector<double> smh_defer_ep;    ///< epochs waited, per deferred birth
+        long long smh_updates          = 0;  ///< clone-epochs advanced by the exact route
+        long long smh_deaths[static_cast<int>(PbHoldCloneDeath::kCount)]{};   ///< clone deaths by cause
+        long long smh_reverts          = 0;  ///< held keys switched to LAH's transfer by their clone's death
+        long long smh_held_smoothed    = 0;  ///< held emissions that wrote the clone's transfer
+        long long smh_held_lah         = 0;  ///< held emissions that wrote LAH's transfer after a revert (the rest of the generation)
+        long long smh_terms_s          = 0;  ///< clone terms updated by the one rule
+        long long smh_terms_d          = 0;  ///< clone terms re-attributed through P
+        long long smh_terms_outside    = 0;  ///< clone terms outside the dense block (kappa or marginalized)
+        long long smh_deficit_orphan   = 0;  ///< clock-family deficits with no pivot (dropped)
+        long long smh_epochs_restricted = 0; ///< epochs whose exact inputs were restricted to the keys the solve folded
+        long long smh_keys_unfolded    = 0;  ///< S keys the solve did not fold (a withdrawn clock, a skipped handover), summed
+        long long smh_w_invalid        = 0;  ///< held emissions whose W is void (the parent clock left S this generation)
+        std::vector<double> smh_xfer_abs;    ///< |the clone's transfer| per smoothed held emission (m)
+        std::vector<double> smh_diff_abs;    ///< |the clone's transfer - LAH's| per smoothed held emission (m)
+        std::vector<double> smh_phi_abs;     ///< |Phi| per smoothed held emission (m)
+        std::map<std::pair<char, int>, std::pair<double, long long>> smh_r;   ///< (constellation, hour) -> (sum r, count), r = Phi^2 / (W - V_post)
         // Observability of the prioritized-datum drop-and-heal: epochs where the gate threw
         // and the near-null phase-bias soft anchor recovered it, and the total columns
         // anchored.  Without these a run that recovers every epoch would look successful

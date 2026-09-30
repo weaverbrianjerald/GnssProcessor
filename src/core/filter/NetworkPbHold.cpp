@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -95,7 +96,8 @@ void networkPbHold(NetworkRunContext& ctx,
     if (sol.sats.empty()) {
         // An emitted epoch with no satellite (every one pruned) is still an emission, so
         // the phase-clock mode's next step is taken against it: nothing (card LAH).
-        if (ctx.knobs.emit_pb_hold_phase_clock) ctx.carry.pb_hold_frz_prev_clk.clear();
+        if (ctx.knobs.emit_pb_hold_phase_clock || ctx.knobs.emit_pb_hold_smoothed)
+            ctx.carry.pb_hold_frz_prev_clk.clear();
         return;
     }
 
@@ -125,7 +127,13 @@ void networkPbHold(NetworkRunContext& ctx,
     // code and phase alike, and a satellite's own move (its level included) is written
     // into its held phase biases as well.  Built before the sweep from the clocks about
     // to be emitted (the frame-held values in sol).
-    const bool frz_on = ctx.knobs.emit_pb_hold_phase_clock;
+    // Card SMH (network.emit_pb_hold_smoothed) runs the same machinery: it is the
+    // transfer a key reverts to when its clock clone dies, and the shadow the clone's
+    // transfer is compared with.
+    const bool smh_on = ctx.knobs.emit_pb_hold_smoothed;
+    const bool frz_on = ctx.knobs.emit_pb_hold_phase_clock || smh_on;
+    const long long loop_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+    if (smh_on && ctx.carry.smh_t_first_s < 0.0) ctx.carry.smh_t_first_s = epoch_s;
     std::map<std::string, double> frz_c;   // satellite -> c~(t), satellites with a clock
     if (frz_on) {
         std::set<char> ccs;
@@ -193,6 +201,18 @@ void networkPbHold(NetworkRunContext& ctx,
                     st.frz_ref = fcit->second;
                     st.frz_ok  = true;
                 }
+                if (smh_on) {
+                    // Card SMH: the generation's clock clone is born at this epoch's
+                    // stash, or at the first later one at which card Q3's anchor holds
+                    // the clock (section 9); the previous generation's clone retires here.
+                    ctx.carry.smh_clone.erase(key);
+                    PbHoldClone pc;
+                    pc.sat        = s.sat;
+                    pc.signal     = signal;
+                    pc.generation = st.generation;
+                    pc.queued_ep  = loop_ep;
+                    ctx.carry.smh_pending[key] = pc;
+                }
                 if (first) {
                     hold.emplace(key, st);
                     ++ctx.counters.n_pbh_keys;
@@ -235,7 +255,114 @@ void networkPbHold(NetworkRunContext& ctx,
             // clock, so c - p stays at its generation-start value.  An epoch without the
             // satellite's clock reuses the last transfer; a generation started without
             // one is held plainly (both counted).
-            if (frz_on) {
+            // Card SMH: a live clone updated this epoch writes LAH's transfer minus the
+            // clone's frame-free passed motion Phi (section 10): the members of the hold
+            // family share LAH's frame and median and differ only by Phi, so a smoothed key
+            // and a bridged neighbour stay consistent.  A key with no live clone of its
+            // generation (not yet born, or killed by the anchor's disengagement) bridges on
+            // LAH's transfer until a clone is born (section 9).  A clone dead of any other
+            // cause reverts the key to LAH's transfer for the rest of the generation.
+            // Every switch is continuous.
+            bool smh_written = false;
+            if (smh_on) {
+                const auto cit  = ctx.carry.smh_clone.find(key);
+                const bool mine = cit != ctx.carry.smh_clone.end()
+                                  && cit->second.generation == st.generation;
+                const bool live = !st.smh_reverted && mine && cit->second.alive
+                                  && cit->second.updated_ep == loop_ep;
+                const bool structural = mine && !cit->second.alive
+                                        && cit->second.death != PbHoldCloneDeath::Withdrawn
+                                        && cit->second.death != PbHoldCloneDeath::Disengaged;
+                if (live) {
+                    const PbHoldClone& c = cit->second;
+                    const double nan = std::numeric_limits<double>::quiet_NaN();
+                    if (!st.smh_on_clone) {
+                        st.smh_on_clone = true;
+                        // LAH's reference continues from the transfer the key reached: a
+                        // generation started without an emitted clock (no reference yet), or
+                        // a bridge still waiting for one, takes it here.
+                        if ((!st.frz_ok || st.smh_ref_pending) && has_frz) {
+                            st.frz_ref         = fcit->second - st.frz_last;
+                            st.frz_ok          = true;
+                            st.smh_ref_pending = false;
+                        }
+                        st.smh_lah_last = st.frz_last;
+                    }
+                    // LAH's transfer, the frame every member shares; an epoch without the
+                    // satellite's clock reuses the last one.
+                    const double lah_m = (st.frz_ok && has_frz) ? fcit->second - st.frz_ref : nan;
+                    if (std::isfinite(lah_m)) st.smh_lah_last = lah_m;
+                    const double xfer_m = st.smh_lah_last - c.phi;
+                    st.smh_last  = xfer_m;
+                    held_emit   += xfer_m;
+                    smh_written  = true;
+                    ++ctx.counters.smh_held_smoothed;
+                    ctx.counters.smh_xfer_abs.push_back(std::abs(xfer_m));
+                    if (std::isfinite(lah_m)) ctx.counters.smh_diff_abs.push_back(std::abs(xfer_m - lah_m));
+                    double r = nan;
+                    if (c.phi_ok) {
+                        ctx.counters.smh_phi_abs.push_back(std::abs(c.phi));
+                        const double den = c.W - c.vpost;
+                        if (!c.w_valid) {
+                            ++ctx.counters.smh_w_invalid;
+                        } else if (den > 0.0) {
+                            r = c.phi * c.phi / den;
+                            const int hour = static_cast<int>(std::floor((epoch_s - ctx.carry.smh_t_first_s) / 3600.0));
+                            auto& acc = ctx.counters.smh_r[{s.sat[0], hour}];
+                            acc.first  += r;
+                            acc.second += 1;
+                        }
+                    }
+                    if (traces.pb_hold_clone_trace.is_open())
+                        traces.pb_hold_clone_trace
+                            << sol.epoch_time.week << ',' << fmt::format("{:.3f}", sol.epoch_time.tow) << ','
+                            << s.sat << ',' << signal << ',' << st.generation << ','
+                            << fmt::format("{:.1f},{:.6f},", epoch_s - c.t0_s, xfer_m)
+                            << (std::isfinite(lah_m) ? fmt::format("{:.6f}", lah_m) : std::string{}) << ','
+                            << (c.phi_ok ? fmt::format("{:.6f}", c.phi) : std::string{}) << ','
+                            << fmt::format("{:.6e},{:.6e},{:.6e},", c.W, c.vpost, c.var)
+                            << (std::isfinite(r) ? fmt::format("{:.4f}", r) : std::string{}) << ','
+                            << (std::isfinite(c.pd0) ? fmt::format("{:.6e}", c.pd0) : std::string{}) << ','
+                            << (std::isfinite(c.f0) ? fmt::format("{:.4f}", c.f0) : std::string{}) << '\n';
+                } else if (!st.smh_reverted) {
+                    // Leaving the clone: LAH's transfer continues from the clone's last
+                    // one.  A key already on the bridge is continuous as it stands.
+                    const bool was_on = st.smh_on_clone;
+                    if (was_on) {
+                        st.frz_ok          = true;
+                        st.frz_last        = st.smh_last;
+                        st.smh_ref_pending = true;
+                        st.smh_on_clone    = false;
+                    }
+                    const int why = mine ? static_cast<int>(cit->second.death) : -1;
+                    if (structural) {
+                        st.smh_reverted = true;
+                        ++ctx.counters.smh_reverts;
+                        traces.emitEvent(se.time, "PB_HOLD", "smh_revert", s.sat, "",
+                                         st.frz_last, std::nullopt, "clone_dead",
+                                         fmt::format("sig={} gen={} death={} transfer={:.6f} m",
+                                                     signal, st.generation, why, st.frz_last));
+                    } else if (was_on) {
+                        ++ctx.counters.smh_bridges;
+                        traces.emitEvent(se.time, "PB_HOLD", "smh_bridge", s.sat, "",
+                                         st.frz_last, std::nullopt,
+                                         why == static_cast<int>(PbHoldCloneDeath::Withdrawn)
+                                             ? "withdrawn" : "disengaged",
+                                         fmt::format("sig={} gen={} death={} transfer={:.6f} m",
+                                                     signal, st.generation, why, st.frz_last));
+                    }
+                }
+            }
+            if (frz_on && !smh_written) {
+                if (smh_on) {
+                    if (st.smh_reverted) ++ctx.counters.smh_held_lah;
+                    else                 ++ctx.counters.smh_held_bridged;
+                }
+                if (st.smh_ref_pending && has_frz) {
+                    // Continue LAH's transfer from the clone's last one (card SMH).
+                    st.frz_ref         = fcit->second - st.frz_last;
+                    st.smh_ref_pending = false;
+                }
                 if (!st.frz_ok) {
                     ++ctx.counters.n_pbh_frz_noref;
                 } else {
@@ -261,7 +388,7 @@ void networkPbHold(NetworkRunContext& ctx,
             st.last_emit_s      = epoch_s;
             ++ctx.counters.n_pbh_held_emissions;
 
-            if (coupled && !counted_coupled && frz_on && st.frz_ok && has_frz) {
+            if (coupled && !counted_coupled && frz_on && !smh_written && st.frz_ok && has_frz) {
                 // Card LAH: the mode writes the satellite's clock step into the held
                 // phase bias, so a coupled move is transferred, not lost.
                 counted_coupled = true;

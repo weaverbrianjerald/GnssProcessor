@@ -378,6 +378,7 @@ struct LineAssembler {
                             const int ph = std::stoi(f[k].substr(7));
                             c.emit_pb_hold = (ph != 0);               // phase-bias hold (Card PBH)
                             c.emit_pb_hold_phase_clock = (ph == 2);   // phase-clock mode (Card LAH)
+                            c.emit_pb_hold_smoothed    = (ph == 3);   // smoothed mode (Card SMH)
                         } else if (f[k].rfind("hsig=", 0) == 0) {
                             c.h_sigma0_source = f[k].substr(5);   // sigma0 statistic id (H-rider)
                         } else if (f[k].rfind("cbpin=", 0) == 0) {
@@ -610,8 +611,10 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // byte-for-byte.
     // pbhold=2: the hold keeps the phase-visible clock instead (card LAH), so a held
     // bias_m moves with the satellite's common-removed clock within a generation.
+    // pbhold=3: the smoothed hold (card SMH), a held bias_m follows the clock clone.
     if (contract.emit_pb_hold)
-        out_ << (contract.emit_pb_hold_phase_clock ? ",pbhold=2" : ",pbhold=1");
+        out_ << (contract.emit_pb_hold_smoothed ? ",pbhold=3"
+                 : contract.emit_pb_hold_phase_clock ? ",pbhold=2" : ",pbhold=1");
     out_ << '\n';
 }
 
@@ -1113,6 +1116,9 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.emit_pb_hold_phase_clock != expected.emit_pb_hold_phase_clock)
         note(fmt::format("emit_pb_hold_phase_clock: file {} vs expected {}",
                          file.emit_pb_hold_phase_clock, expected.emit_pb_hold_phase_clock));
+    if (file.emit_pb_hold_smoothed != expected.emit_pb_hold_smoothed)
+        note(fmt::format("emit_pb_hold_smoothed: file {} vs expected {}",
+                         file.emit_pb_hold_smoothed, expected.emit_pb_hold_smoothed));
     if (file.emit_clock_disc != expected.emit_clock_disc)
         note(fmt::format("emit_clock_disc: file {} vs expected {}",
                          file.emit_clock_disc, expected.emit_clock_disc));

@@ -245,6 +245,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkCouplingExact.cpp
     src/core/filter/NetworkPhaseVisibleDiag.cpp
+    src/core/filter/NetworkPbHoldClone.cpp
     src/core/filter/NetworkAmbStateTrace.cpp
     src/core/filter/NetworkAmbFloat.cpp
     src/core/filter/NetworkBiasAdmission.cpp
@@ -449,6 +450,7 @@ add_executable(gnss_tests
     tests/test_pb_step_translate.cpp
     tests/test_pb_emit_hold.cpp
     tests/test_pb_hold_phase_clock.cpp
+    tests/test_pb_hold_smoothed.cpp
     tests/test_phase_visible_monitor.cpp
     tests/test_pb_hold_presence.cpp
     tests/test_pb_translation_premise.cpp

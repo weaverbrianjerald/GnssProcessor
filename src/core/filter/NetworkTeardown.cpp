@@ -6495,7 +6495,8 @@ int networkTeardown(
             // telemetry.  `moved 0` means the mode never wrote.  Under the mode the
             // |estimate - held| line above measures what the hold hides with the level
             // transferred (the phase-visible wander only).
-            if (config_.getNetworkConfig().emit_pb_hold_phase_clock) {
+            if (config_.getNetworkConfig().emit_pb_hold_phase_clock
+                || config_.getNetworkConfig().emit_pb_hold_smoothed) {
                 auto st = ctx.carry.pb_hold_frz_step_abs_m;   // copy: run-end readout
                 auto tt = ctx.carry.pb_hold_frz_total_abs_m;
                 const double s50 = q(st, 0.50), s90 = q(st, 0.90);
@@ -6516,6 +6517,73 @@ int networkTeardown(
                           k.n_pbh_frz_epochs, m_final, s50, s90, smax,
                           ctx.carry.pb_hold_frz_step_abs_m.size(), t50, t90, tmax,
                           ctx.carry.pb_hold_frz_total_abs_m.size(), k.n_pbh_frz_coupled);
+            }
+            // Card SMH (network.emit_pb_hold_smoothed): the smoothed hold's ON-path
+            // telemetry.  `0 update(s)` means no clone was ever advanced (the mode wrote
+            // only the phase-clock fallback).  r reads the passed motion against its
+            // stated variance; under a consistent covariance it averages 1 (card SMH
+            // section 4).  The phase-clock line above counts the fallback's emissions.
+            if (config_.getNetworkConfig().emit_pb_hold_smoothed) {
+                auto xa = k.smh_xfer_abs;   // copies: run-end readout
+                auto da = k.smh_diff_abs;
+                auto pa = k.smh_phi_abs;
+                static const char* kDeath[] = {"none", "unfactored", "stale", "parent_outside",
+                                               "row_failed", "no_stash", "missed", "unlinked",
+                                               "withdrawn", "disengaged"};
+                static_assert(sizeof(kDeath) / sizeof(kDeath[0])
+                                  == static_cast<std::size_t>(PbHoldCloneDeath::kCount),
+                              "one name per clone death cause");
+                std::string deaths;
+                for (int d = 1; d < static_cast<int>(PbHoldCloneDeath::kCount); ++d)
+                    deaths += fmt::format("{}{} {}", deaths.empty() ? "" : ", ", kDeath[d],
+                                          k.smh_deaths[d]);
+                std::string rs;
+                std::map<char, std::pair<double, long long>> rc;
+                for (const auto& [ch, acc] : k.smh_r) {
+                    rs += fmt::format("{}{} h{} {:.3f} ({})", rs.empty() ? "" : ", ", ch.first,
+                                      ch.second, acc.second > 0 ? acc.first / acc.second : 0.0,
+                                      acc.second);
+                    rc[ch.first].first  += acc.first;
+                    rc[ch.first].second += acc.second;
+                }
+                std::string rall;
+                for (const auto& [cc, acc] : rc)
+                    rall += fmt::format("{}{} {:.3f} ({})", rall.empty() ? "" : ", ", cc,
+                                        acc.second > 0 ? acc.first / acc.second : 0.0, acc.second);
+                const double xmax = xa.empty() ? 0.0 : *std::max_element(xa.begin(), xa.end());
+                const double dmax = da.empty() ? 0.0 : *std::max_element(da.begin(), da.end());
+                auto we = k.smh_defer_ep;
+                const double wmax = we.empty() ? 0.0 : *std::max_element(we.begin(), we.end());
+                log->info("  pb hold, smoothed (SMH), the anchor's engagement (section 9): {} "
+                          "birth(s) deferred (wait p50 {:.0f} / max {:.0f} epoch(s)), {} re-birth(s) "
+                          "after a disengagement; pending births waited {} stash(es) on the anchor "
+                          "and {} on a stashed clock, {} dropped with their generation; {} clone(s) "
+                          "killed by a withdrawal and {} by a fold off the anchored variance; {} "
+                          "switch(es) to the bridge; {} held emission(s) bridged on the phase-clock "
+                          "transfer",
+                          k.smh_births_deferred, q(we, 0.50), wmax, k.smh_rebirths,
+                          k.smh_defer_loose, k.smh_defer_nostash, k.smh_pending_dropped,
+                          k.smh_deaths[static_cast<int>(PbHoldCloneDeath::Withdrawn)],
+                          k.smh_deaths[static_cast<int>(PbHoldCloneDeath::Disengaged)],
+                          k.smh_bridges, k.smh_held_bridged);
+                log->info("  pb hold, smoothed (SMH): {} clone(s) born ({} on a pinned clock); "
+                          "{} clone-epoch update(s) (terms {} S / {} D / {} "
+                          "outside the block; {} orphaned deficit(s)); deaths [{}]; {} key "
+                          "revert(s) to the phase-clock transfer; held emissions {} smoothed / "
+                          "{} bridged / {} phase-clock after a revert; {} epoch(s) restricted to the folded keys ({} key(s) unfolded); "
+                          "|transfer| p50 {:.4f} / p90 {:.4f} / max {:.4f} m; "
+                          "|transfer - phase-clock transfer| p50 {:.4f} / p90 {:.4f} / max {:.4f} "
+                          "m over {}; |Phi| p50 {:.4f} / p90 {:.4f} m; r = Phi^2 / (W - V_post) "
+                          "mean [{}], by hour [{}]; {} emission(s) with W void (the clock left S)",
+                          k.smh_births, k.smh_births_pinned, k.smh_updates,
+                          k.smh_terms_s, k.smh_terms_d, k.smh_terms_outside,
+                          k.smh_deficit_orphan, deaths, k.smh_reverts, k.smh_held_smoothed,
+                          k.smh_held_bridged, k.smh_held_lah, k.smh_epochs_restricted, k.smh_keys_unfolded, q(xa, 0.50), q(xa, 0.90), xmax, q(da, 0.50),
+                          q(da, 0.90), dmax, k.smh_diff_abs.size(), q(pa, 0.50), q(pa, 0.90),
+                          rall, rs, k.smh_w_invalid);
+                if (k.smh_updates == 0)
+                    log->warn("Network (card SMH): network.emit_pb_hold_smoothed is ARMED but no "
+                              "clone was advanced: every held key wrote the phase-clock transfer.");
             }
         }
         // Per-channel mark scope (card MS): the ON-path telemetry (invariant #4).  Printed
