@@ -9545,10 +9545,12 @@ namespace GnssProcessor {
         network_rank_gate_tol_ =
             jval<double>(json, "network.rank_gate_tol",
                          "network_rank_gate_tol", 1e-9);
-        // The dense border fold's relative-pivot bound (card CTU section 14); default =
-        // the historical constant, byte-identical.
+        // The dense border fold's relative-pivot bound (card CTU section 14).  Default 1e-12
+        // from card SMH section 9 (2026-09-29): on the clean start the honest engagement
+        // block is admitted, the level gates and card PVN are unchanged or better, and the
+        // golden posture is byte-identical to the historical 1e-6 (2 h, both beds).
         network_dense_fold_kappa_ =
-            jval<double>(json, "network.dense_fold_kappa", "dense_fold_kappa", 1e-6);
+            jval<double>(json, "network.dense_fold_kappa", "dense_fold_kappa", 1e-12);
         if (!(network_dense_fold_kappa_ > 0.0) || network_dense_fold_kappa_ > 1e-6) {
             log->error("Network: network.dense_fold_kappa must be in (0, 1e-6] (got {:g}).",
                        network_dense_fold_kappa_);

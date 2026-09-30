@@ -3524,12 +3524,17 @@ namespace GnssProcessor {
 
         /**
          * @brief Relative-pivot bound of the dense border fold
-         *        (@c network.dense_fold_kappa, default 1e-6, card CTU section 14).
+         *        (@c network.dense_fold_kappa, default 1e-12, card CTU section 14, card SMH
+         *        section 9).
          *
-         * See NetworkEstimator::setDenseFoldKappa.  Must be in (0, 1e-6]; a smaller bound
+         * See NetworkEstimator::setDenseFoldKappa.  Must be in (0, 1e-6].  The bound
          * admits the carried blocks of a consistent level (loose level, phase-precise
-         * clock-minus-bias combinations), which the default sends to the diagonal
-         * fallback.  Default = byte-identical.
+         * clock-minus-bias combinations), which the historical 1e-6 sent to the diagonal
+         * fallback at the anchor's engagement.  The default moved from 1e-6 to 1e-12 on
+         * 2026-09-29 (card SMH section 9): the golden posture is byte-identical at both
+         * values (2 h, both beds); the exact-update posture's clean start is unchanged or
+         * better on the level gates and card PVN, and the smoothed hold's clones survive
+         * the engagement.  1e-6 restores the historical behaviour.
          */
         double networkDenseFoldKappa() const { return network_dense_fold_kappa_; }
 
@@ -8912,7 +8917,7 @@ namespace GnssProcessor {
         bool   network_carry_rx_code_bias_{false};        ///< Carry per-station receiver code biases across epochs as diagonal RW priors, harvested outside the phase-leveling gate (rx-CB carry, SPEC_rx_cb_carry). Forced off without code_datum_time_linked. Off = byte-identical.
         bool   network_carry_rx_code_bias_in_block_{false};  ///< Carry the receiver code-bias columns inside the station's jointly whitened local block as conditional coupling rows (RXCB-IN-BLOCK), instead of the diagonal fold at the conditional variance, which re-asserts the shared border every epoch.  Requires carry_rx_code_bias, carry_conditional_coupling and a local block; refuses joint whitening, the LV-2 de-mean and the LV-4 step gate.  Off = byte-identical.
         bool   network_amb_float_drop_decouple_always_{false};  ///< A float-vehicle drop clears the regression and block row even at birth strength (card CTU section 14).
-        double network_dense_fold_kappa_{1e-6};           ///< Relative-pivot bound of the dense border fold (card CTU section 14); 1e-6 = the historical constant.
+        double network_dense_fold_kappa_{1e-12};          ///< Relative-pivot bound of the dense border fold (card CTU section 14); default 1e-12 since card SMH section 9, 1e-6 = the historical constant.
         double network_rx_cb_carry_q_{1e-9};              ///< rx-CB carry RW process noise (m²/s); var_eff = var + q·Δt. Only used when network.carry_rx_code_bias.
         bool   network_rx_cb_carry_demean_{false};        ///< Subtract the information-weighted mean innovation (per constellation, computed at the serial harvest, applied lag-1) from every rx-CB carry fold (card LV-2, SPEC_level_information_budget), so the carry transports between-station differences at full stiffness and stops re-asserting last epoch's common-mode realization.  It does not free that direction: in absolute terms it re-pins the DCB common mode to mean(x_lin), the frozen first-epoch seed frame (SPEC §13).  Requires carry_rx_code_bias.  Fingerprinted when armed.  Off = byte-identical.
         int    network_rx_cb_carry_demean_min_stations_{8};  ///< Minimum contributing stations for a fresh μ (card LV-2); below it μ freezes at its previous value (counted lv2_mu_frozen).  Only used when network.rx_cb_carry_demean.

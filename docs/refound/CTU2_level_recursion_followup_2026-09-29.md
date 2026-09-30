@@ -336,3 +336,17 @@ Section 9 item 1 is card [LAH](LAH_level_aware_hold_2026-09-29.md): the phase-cl
 (`network.emit_pb_hold_phase_clock`), built and gated, not armed. With the exact update its 6 h
 census reads 0.59 / 0.17 / 0.12 / 0.08 / 0.10 / 0.08 m by hour against 2.27 / 0.75 / 0.57 / 0.38 /
 0.26 / 0.20 under the plain hold and the control's 0.67 / 0.17 / 0.10 / 0.08 / 0.09 / 0.07.
+
+## 12. The fold bound's default (2026-09-29)
+
+Section 3 kept `network.dense_fold_kappa` at 1e-6 after a trial on the 00:00:30 start. Card
+[SMH](SMH_smoothed_hold_clone_2026-09-29.md) section 9 re-ran it on the clean start (the exact
+update, 2 h, both beds): the datum-free level at epochs 16 / 60 / 120 / 240 0.10 / 0.06 / 0.04 /
+0.03 m against 0.10 / 0.07 / 0.05 / 0.03 (sim), the IF code-residual spread in hour 2 0.048
+against 0.052 m (sim) and 0.164 against 0.164 m (field), anchor trips 0 against 4 and re-floats 7
+/ 23 against 9 / 27 (field), card PVN's NIS 1.04 against 1.03 (sim) and 0.05 against 0.10
+(field) and its within-arc NEES 0.4 against 0.3 (sim) and 0.0 against 0.2 (field), and the
+engagement epoch's diagonal fallback gone (2 to 0 per bed). On the golden posture the two bounds
+are byte-identical (products and consumer, 2 h, both beds). The config default moved to 1e-12
+(the loader and `GnssConfig`; the estimator's class default stays 1e-6; 1e-6 in a config
+restores the historical behaviour).

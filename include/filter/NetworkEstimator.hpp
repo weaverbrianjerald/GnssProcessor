@@ -279,11 +279,12 @@ public:
     /// Relative-pivot bound of the dense border fold (@ref addSharedPriorDense and the
     /// refolds that share its terms): the correlation-scaled carried block is accepted
     /// when its smallest LDLT pivot is at least this fraction of the largest
-    /// (@c network.dense_fold_kappa, default 1e-6).  A consistent carry whose level is
-    /// loose while its phase-visible combinations are phase-precise has correlations
-    /// within about 1e-8 of one between a clock and its phase biases, which the default
-    /// rejects (the fold then falls back to the diagonal carry for that epoch, card CTU
-    /// section 14).  The absolute folded-information budget is unchanged.
+    /// (@c network.dense_fold_kappa; the class default is the historical 1e-6, the config
+    /// default 1e-12 since card SMH section 9).  A consistent carry whose level is loose
+    /// while its phase-visible combinations are phase-precise has correlations within
+    /// about 1e-8 of one between a clock and its phase biases, which 1e-6 rejects (the fold
+    /// then falls back to the diagonal carry for that epoch, card CTU section 14).  The
+    /// absolute folded-information budget is unchanged.
     void setDenseFoldKappa(double k) { dense_fold_kappa_ = k; }
     /// The resolved dense-fold pivot bound (@ref setDenseFoldKappa).
     double denseFoldKappa() const { return dense_fold_kappa_; }

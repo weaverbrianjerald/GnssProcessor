@@ -1120,7 +1120,7 @@ int Application::runNetwork() {
     // compile-time constant.  The default is NetworkEstimator::kNullSpaceTol, so an unset
     // key sends the identical double through the identical arithmetic (byte-identical).
     est.setRankGateTol(config_.networkRankGateTol());
-    est.setDenseFoldKappa(config_.networkDenseFoldKappa());   // card CTU section 14; default 1e-6 = byte-identical
+    est.setDenseFoldKappa(config_.networkDenseFoldKappa());   // card CTU section 14; config default 1e-12 (card SMH section 9)
     // network.parallel_carry also un-pins Eigen's threading (RAII) around the two
     // GEMM-bound carry stages, buildDdPriors (W·Pᶻ·Wᵀ) and installPosterior
     // (posterior-covariance read-back), whose large dense products Eigen threads well.
