@@ -325,14 +325,23 @@ void networkPbHold(NetworkRunContext& ctx,
                             << (std::isfinite(c.pd0) ? fmt::format("{:.6e}", c.pd0) : std::string{}) << ','
                             << (std::isfinite(c.f0) ? fmt::format("{:.4f}", c.f0) : std::string{}) << '\n';
                 } else if (!st.smh_reverted) {
-                    // Leaving the clone: LAH's transfer continues from the clone's last
-                    // one.  A key already on the bridge is continuous as it stands.
+                    // Leaving the clone: LAH's transfer continues with the passed motion
+                    // the clone had reached folded into LAH's reference, so this epoch's
+                    // clock step is transferred as LAH transfers it and C - P stays
+                    // continuous (card SMD section 7: re-referencing LAH on the last
+                    // written transfer dropped that step, a step of C - P at every switch).
+                    // Without an LAH reference yet, it is taken at the next emitted clock.
+                    // A key already on the bridge is continuous as it stands.
                     const bool was_on = st.smh_on_clone;
                     if (was_on) {
-                        st.frz_ok          = true;
-                        st.frz_last        = st.smh_last;
-                        st.smh_ref_pending = true;
-                        st.smh_on_clone    = false;
+                        if (st.frz_ok) {
+                            st.frz_ref += st.smh_lah_last - st.smh_last;
+                        } else {
+                            st.frz_ok          = true;
+                            st.smh_ref_pending = true;
+                        }
+                        st.frz_last     = st.smh_last;
+                        st.smh_on_clone = false;
                     }
                     const int why = mine ? static_cast<int>(cit->second.death) : -1;
                     if (structural) {

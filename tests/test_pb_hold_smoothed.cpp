@@ -659,6 +659,46 @@ TEST(PbHoldSmoothedTest, TheBridgeKeepsTheMedianAndTheRebornCloneContinuesIt) {
     EXPECT_EQ(ctx->counters.smh_reverts, 0);
 }
 
+TEST(PbHoldSmoothedTest, ASwitchToTheBridgeKeepsTheEpochsClockStep) {
+    // Section 12: at the epoch a clone dies the key takes LAH's step of that epoch on top of
+    // the transfer it had reached, so C - P does not step.  G32's clock moves 5 cm at the
+    // death epoch while its mates hold (the constellation's median step is 0).
+    GnssConfig cfg;
+    auto ctx = smhContext(cfg, "bridgestep");
+    const fs::path dir = fs::temp_directory_path() / "smh_traces_bridgestep";
+    fs::create_directories(dir);
+    NetworkRunTraces traces(dir);
+    NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/false);
+    SsrCorrectionStore store;
+    SyncedEpoch se;
+    const auto step = [&](NetworkSolutionEpoch& sol, long long ep) {
+        ctx->counters.n_loop_epochs = static_cast<decltype(ctx->counters.n_loop_epochs)>(ep);
+        se.time = sol.epoch_time;
+        networkPbHold(*ctx, cfg, smhLogger(), traces, emitter, se, sol);
+        emitter.emitToStore(sol, store);
+    };
+    auto e1 = smhEpoch(100.0, {{"G32", 10.0, 1.0}, {"G12", 20.0, 2.0}, {"G05", 30.0, 3.0}});
+    step(e1, 1);
+    ctx->carry.smh_clone["G32|L1W"] = liveClone("G32", 5.0, 1);
+    ctx->carry.smh_pending.clear();
+    ctx->carry.smh_clone["G32|L1W"].phi        = -0.03;
+    ctx->carry.smh_clone["G32|L1W"].updated_ep = 2;
+    auto e2 = smhEpoch(130.0, {{"G32", 10.0, 1.5}, {"G12", 20.0, 2.5}, {"G05", 30.0, 3.5}});
+    step(e2, 2);
+    EXPECT_NEAR(pbOf(e2, "G32"), 1.03, 1e-12);
+    // Epoch 3: the anchor withdraws G32's clock, which moves 5 cm this epoch.
+    ctx->carry.smh_clone["G32|L1W"].alive = false;
+    ctx->carry.smh_clone["G32|L1W"].death = PbHoldCloneDeath::Withdrawn;
+    auto e3 = smhEpoch(160.0, {{"G32", 10.05, 1.7}, {"G12", 20.0, 2.7}, {"G05", 30.0, 3.7}});
+    step(e3, 3);
+    EXPECT_NEAR(pbOf(e3, "G32"), 1.08, 1e-12) << "the bridge takes this epoch's clock step";
+    // Epoch 4: the bridge goes on with LAH's steps, the -3 cm the clone reached kept.
+    auto e4 = smhEpoch(190.0, {{"G32", 10.07, 1.9}, {"G12", 20.0, 2.9}, {"G05", 30.0, 3.9}});
+    step(e4, 4);
+    EXPECT_NEAR(pbOf(e4, "G32"), 1.10, 1e-12);
+    EXPECT_EQ(ctx->counters.smh_bridges, 1);
+}
+
 TEST(PbHoldSmoothedTest, AZeroPassedMotionWritesThePhaseClockTransfer) {
     // Section 10: the members share LAH's frame.  G32 is smoothed with no passed motion, G12
     // and G05 bridge; the clocks move by different amounts, so the constellation's median

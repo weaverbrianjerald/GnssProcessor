@@ -1670,8 +1670,11 @@ namespace GnssProcessor {
             bool          smh_reverted{false};
             /// Card SMH: the transfer written at this key's last held emission (m).
             double        smh_last{0.0};
-            /// Card SMH: after a revert with no clock that epoch, LAH's reference waits
-            /// for the satellite's next emitted clock (continuity of the transfer).
+            /// Card SMH: a clone left before LAH had a reference (a generation started
+            /// without an emitted clock), so LAH's reference waits for the satellite's next
+            /// emitted clock and starts from the last transfer (continuity of the transfer).
+            /// With a reference, leaving a clone folds its passed motion into it instead
+            /// (card SMD section 7).
             bool          smh_ref_pending{false};
             /// Card SMH: the key's last held emission wrote its clone's transfer (so a
             /// clone that is not live now is a switch to the bridge).
