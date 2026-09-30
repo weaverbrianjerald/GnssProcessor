@@ -273,3 +273,28 @@ failing reading is recorded here.
 - The gates' tools: the object-code identity proof (memory `project_object_code_identity_proof`),
   `scripts/event_leg.py` (seam arms), `scripts/rapid_arm.py` (2 h arms), the session graders
   `hash3.py` and `ident2h.py` (to be promoted into the P0 script).
+
+## 12. The first graded case of the q rule and the birth variance (2026-09-29)
+
+Card [SMH](SMH_smoothed_hold_clone_2026-09-29.md) (sections 7 to 9) put a fixed-point smoother on
+the satellite clock, and a smoother reads q literally as motion. Card Q3's anchor folds every
+satellite's clock at the legacy rate (1e-3 m2/s, 0.03 m2 per 30 s epoch) until its guard
+re-validates it (4 epochs at the run start, and at every re-admission and withdrawal). That q is
+a datum device, the clock re-solved nearly fresh while it finds the a priori's frame, not a
+statement about the clock's motion. The smoother passed the estimator's settling across those
+epochs as motion: 5 cm p50 of phase-visible motion on the sim (clock truth without jumps), the
+consumer at 1.41 m against the phase-clock hold's 0.34 m in hour 0 (SMH section 7). The
+difference is visible on the wire, so the registry has to be able to say it:
+
+- `q_rule` distinguishes a motion model from a datum device. The anchor's LOOSE fold is the
+  second; a consumer of the q (a smoother, a clone, an instrument that reads the passed motion
+  against the stated walk) must not read it as motion. SMH section 9 does this by hand (the
+  clone lives only while the anchor holds its clock, and the phase-clock transfer bridges the
+  rest); with the registry it is a property of the kind and the disposition.
+- The principled replacement for the LOOSE rate is a `birth_var_m2` with the physical q from the
+  first epoch (the clock's own walk, card Q3's 2.9e-8 m2/s), with the engagement test kept as
+  the event it is (`on_readmit`, `on_decouple`), not expressed as a q.
+- SMH section 9's G3 adds a second case: with a known walk injected into the a priori clock, the
+  hold passes the walk only when the anchor's q states it (97 % passed with q matched, 46 % hidden
+  with the golden q). Card Q3's q is therefore a statement about the a priori product's error,
+  and it belongs in the registry as such, with the product it was derived for.
