@@ -327,4 +327,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   tenure and emitter mark of its pair. `network.emit_pb_hold_smoothed_block`, `pbhold=4`, emit-side
   only. Predictions: on the field the level part carries the centimetres and the phase-visible part
   is small; the census's hour-3 loss disappears and its hour-1 gain stays; on the sim the two
-  members differ by the sim's small level wander.
+  members differ by the sim's small level wander. BUILT, NOT armed (sections 7 and 8): P1 and P2
+  FAIL: the level part is zero (the phase biases are constants of the model, so the smoother reads
+  every level move as a revision) and the census loss from hour 3 stays; the passed motion is all
+  phase-visible, about 1 cm p90 of estimator wander on the sim and twice that on the field. A
+  defect of card SMH's bridge (the epoch's clock step dropped at every switch) found and fixed.

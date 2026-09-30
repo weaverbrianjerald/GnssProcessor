@@ -6529,7 +6529,7 @@ int networkTeardown(
                 auto pa = k.smh_phi_abs;
                 static const char* kDeath[] = {"none", "unfactored", "stale", "parent_outside",
                                                "row_failed", "no_stash", "missed", "unlinked",
-                                               "withdrawn", "disengaged"};
+                                               "withdrawn", "disengaged", "followed", "pair_lost"};
                 static_assert(sizeof(kDeath) / sizeof(kDeath[0])
                                   == static_cast<std::size_t>(PbHoldCloneDeath::kCount),
                               "one name per clone death cause");
@@ -6584,6 +6584,53 @@ int networkTeardown(
                 if (k.smh_updates == 0)
                     log->warn("Network (card SMH): network.emit_pb_hold_smoothed is ARMED but no "
                               "clone was advanced: every held key wrote the phase-clock transfer.");
+                // Card SMD: the block clones (carried whenever the smoothed hold is armed).
+                // `0 update(s)` under network.emit_pb_hold_smoothed_block means the wire was the
+                // phase-clock transfer throughout.
+                {
+                    auto pa = k.smh_pv_phi_abs;   // copies: run-end readout
+                    auto la = k.smh_pv_lvl_abs;
+                    std::string pdeaths;
+                    for (int d = 1; d < static_cast<int>(PbHoldCloneDeath::kCount); ++d)
+                        pdeaths += fmt::format("{}{} {}", pdeaths.empty() ? "" : ", ", kDeath[d],
+                                               k.smh_pv_deaths[d]);
+                    std::string pairs;
+                    for (const auto& [nm, n] : k.smh_pv_pairs)
+                        pairs += fmt::format("{}{} {}", pairs.empty() ? "" : ", ", nm, n);
+                    std::string rds;
+                    for (const auto& [ch, acc] : k.smh_pv_r)
+                        rds += fmt::format("{}{} h{} {:.3f} ({})", rds.empty() ? "" : ", ", ch.first,
+                                           ch.second, acc.second > 0 ? acc.first / acc.second : 0.0,
+                                           acc.second);
+                    std::string ush;
+                    for (const auto& [h, n] : k.smh_pv_steps_unmarked_hour)
+                        ush += fmt::format("{}h{} {}", ush.empty() ? "" : ", ", h, n);
+                    const auto fol = [&k](PbHoldFollow f) { return k.smh_pv_follow[static_cast<int>(f)]; };
+                    log->info("  pb hold, smoothed, block clones (SMD){}: {} born ({} on a pinned clock, "
+                              "{} again within a generation); pending births waited {} stash(es) on the "
+                              "anchor, {} on a stashed clock, {} for phase biases on two bands, {} "
+                              "dropped with their generation; pairs [{}]; {} update(s); deaths [{}]; "
+                              "steps followed: {} re-reference(s), {} new anchor tenure(s), {} emitter "
+                              "mark(s); {} re-reference(s) with no phase-channel mark; {} unmarked "
+                              "step(s) of D above the pair's smallest emitter bar (largest {:.4f} m; by "
+                              "hour [{}]); {} held emission(s) "
+                              "written; |Phi_D| p50 {:.4f} / p90 {:.4f} m, level part |Phi_c - Phi_D| "
+                              "p50 {:.4f} / p90 {:.4f} m over {}; r_D by hour [{}]",
+                              config_.getNetworkConfig().emit_pb_hold_smoothed_block ? ", the wire"
+                                                                                    : ", instrument",
+                              k.smh_pv_births + k.smh_pv_births_pinned, k.smh_pv_births_pinned,
+                              k.smh_pv_rebirths, k.smh_pv_defer_anchor, k.smh_pv_defer_nostash,
+                              k.smh_pv_defer_nopair, k.smh_pv_pending_dropped, pairs,
+                              k.smh_pv_updates, pdeaths, fol(PbHoldFollow::Reref),
+                              fol(PbHoldFollow::Tenure), fol(PbHoldFollow::Mark),
+                              k.smh_pv_reref_unmarked, k.smh_pv_steps_unmarked,
+                              k.smh_pv_step_unmarked_max, ush, k.smh_pv_held, q(pa, 0.50), q(pa, 0.90),
+                              q(la, 0.50), q(la, 0.90), k.smh_pv_lvl_abs.size(), rds);
+                    if (config_.getNetworkConfig().emit_pb_hold_smoothed_block && k.smh_pv_updates == 0)
+                        log->warn("Network (card SMD): network.emit_pb_hold_smoothed_block is ARMED "
+                                  "but no block clone was advanced: every held key wrote the "
+                                  "phase-clock transfer.");
+                }
             }
         }
         // Per-channel mark scope (card MS): the ON-path telemetry (invariant #4).  Printed

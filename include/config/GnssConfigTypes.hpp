@@ -2971,6 +2971,22 @@ namespace GnssProcessor {
          */
         bool emit_pb_hold_smoothed{ false };
         /**
+         * @brief The smoothed hold's phase-visible member
+         *        (@c network.emit_pb_hold_smoothed_block, default false) (card SMD).
+         *
+         * The held key passes @f$\Phi_D = D(t|t) - D(t_0|t)@f$ of the ionosphere-free
+         * phase-visible clock @f$D = c - \sum_j w_j p_j@f$ (one phase bias per band, fixed at
+         * the clone's birth) instead of the clock's @f$\Phi@f$: a level walk or revision
+         * cancels (@f$\sum w = 1@f$), a clock walk passes.  @f$D(t_0|t)@f$ is a block clone's
+         * row (@ref NetworkPbHoldClone.hpp), which retires at every re-reference, new anchor
+         * tenure and emitter phase-channel mark of its pair, the key bridging on the
+         * phase-clock transfer until it is born again.  The block clones are carried whenever
+         * @ref emit_pb_hold_smoothed is armed (they report the split of the passed motion);
+         * this knob only selects them for the wire.  Requires @ref emit_pb_hold_smoothed.
+         * Emit-side only.  Declared on the S line as @c pbhold=4.
+         */
+        bool emit_pb_hold_smoothed_block{ false };
+        /**
          * @brief Fold the station's own datum rows into its local block before the
          *        @c addStation positive-definiteness test
          *        (@c network.station_prior_before_pd) (card RF-PD-fix).

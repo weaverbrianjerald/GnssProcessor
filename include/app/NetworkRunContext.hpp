@@ -625,6 +625,7 @@ namespace GnssProcessor {
         double emit_pb_hold_max_gap_s{};   ///< Arc gap (s) beyond which a returning key starts a new generation (network.emit_pb_hold_max_gap_s; card PBH).  Inert unless emit_pb_hold.
         bool   emit_pb_hold_phase_clock{}; ///< Hold the phase-visible clock instead of the phase bias (network.emit_pb_hold_phase_clock; card LAH).  Inert unless emit_pb_hold.
         bool   emit_pb_hold_smoothed{};    ///< The smoothed hold (network.emit_pb_hold_smoothed; card SMH): the held phase bias follows the clock clone c(t0|t); LAH's transfer after a clone dies.  Inert unless emit_pb_hold.
+        bool   emit_pb_hold_smoothed_block{}; ///< The smoothed hold's phase-visible member (network.emit_pb_hold_smoothed_block; card SMD): the wire takes the block clone's Phi_D instead of the clock clone's Phi.  Inert unless emit_pb_hold_smoothed.
         // --- Guarded temporal clock anchor (card Q3) ---
         // Solve-affecting and fingerprinted.  `cta_on` is the one predicate every site reads
         // for "does this run touch the clock carry at all", so an off run never allocates the
@@ -1728,6 +1729,12 @@ namespace GnssProcessor {
         std::map<std::string, PbHoldClone> smh_pending;
         /// Card SMH: continuous GPS seconds of the first held emission (the hour basis).
         double smh_t_first_s{-1.0};
+        /// Card SMD: hold key ("sat|signal") -> its block clone (a clock row and the
+        /// phase-visible row on one lifetime).  Carried whenever the smoothed hold is armed;
+        /// the wire reads it under network.emit_pb_hold_smoothed_block.
+        std::map<std::string, PbHoldClone> smh_block;
+        /// Card SMD: hold keys whose block clone waits for a birth (as @c smh_pending).
+        std::map<std::string, PbHoldClone> smh_block_pending;
         /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed (station
         /// index, sat).  Diagonal only (the rx-CB rationale: no shared-border footprint;
         /// the coupling variant is deferred).  Not snapshotted: a warm resume cold-starts
@@ -3611,6 +3618,26 @@ namespace GnssProcessor {
         std::vector<double> smh_diff_abs;    ///< |the clone's transfer - LAH's| per smoothed held emission (m)
         std::vector<double> smh_phi_abs;     ///< |Phi| per smoothed held emission (m)
         std::map<std::pair<char, int>, std::pair<double, long long>> smh_r;   ///< (constellation, hour) -> (sum r, count), r = Phi^2 / (W - V_post)
+        // --- Card SMD (the block clones; carried whenever network.emit_pb_hold_smoothed) ---
+        long long smh_pv_births         = 0;  ///< block clones born on a stashed clock
+        long long smh_pv_births_pinned  = 0;  ///< block clones born on the constellation's pinned clock
+        long long smh_pv_rebirths       = 0;  ///< block clones born again within their generation
+        long long smh_pv_defer_anchor   = 0;  ///< stashes at which a pending block birth waited for the anchor
+        long long smh_pv_defer_nostash  = 0;  ///< stashes at which a pending block birth waited for a stashed clock
+        long long smh_pv_defer_nopair   = 0;  ///< stashes at which a pending block birth waited for phase biases on two bands
+        long long smh_pv_pending_dropped = 0; ///< pending block births dropped with their generation
+        long long smh_pv_updates        = 0;  ///< block-clone epochs advanced (both rows)
+        long long smh_pv_deaths[static_cast<int>(PbHoldCloneDeath::kCount)]{};   ///< block-clone deaths by cause
+        long long smh_pv_follow[static_cast<int>(PbHoldFollow::kCount)]{};       ///< block-clone retirements by the step followed
+        long long smh_pv_reref_unmarked = 0;  ///< block clones retired at a re-reference whose satellite carried no phase-channel mark
+        long long smh_pv_steps_unmarked = 0;  ///< live block-clone steps of D above the smallest emitter jump bar of the pair (passed as motion), per held key
+        std::map<int, long long> smh_pv_steps_unmarked_hour;   ///< the same by hour of the run
+        double    smh_pv_step_unmarked_max = 0.0;  ///< the largest such step (m)
+        long long smh_pv_held           = 0;  ///< held emissions written from a block clone (the block member)
+        std::map<std::string, long long> smh_pv_pairs;   ///< the pair at birth ("L1C+L2W") -> block births
+        std::vector<double> smh_pv_phi_abs;   ///< |Phi_D| per live block clone at a held emission (m)
+        std::vector<double> smh_pv_lvl_abs;   ///< |Phi_c - Phi_D| (the level part) per live block clone at a held emission (m)
+        std::map<std::pair<char, int>, std::pair<double, long long>> smh_pv_r;   ///< (constellation, hour) -> (sum r_D, count), r_D = Phi_D^2 / (W_D - V_D)
         // Observability of the prioritized-datum drop-and-heal: epochs where the gate threw
         // and the near-null phase-bias soft anchor recovered it, and the total columns
         // anchored.  Without these a run that recovers every epoch would look successful

@@ -342,6 +342,12 @@ public:
      */
     unsigned pendingMarkChannels(const std::string& sat) const;
 
+    /// The jump-test threshold (m) for a given (sat, signal): frac·λ when the
+    /// fractional-cycle mode is armed and λ resolves, else the flat metre gate.  Public
+    /// so the hold can read an estimator step against the bar the emitter applies to
+    /// the wire (card SMD's unmarked steps).
+    double discThresholdM(const std::string& sat, const std::string& signal) const;
+
     /// Stable lowercase name of one channel ("clk" / "cb" / "pb"), for trace events
     /// and tests (card MS).
     static const char* discChannelName(DiscChannel c);
@@ -597,9 +603,6 @@ private:
     /// When > 0, the per-(sat,signal) jump threshold is disc_threshold_frac_cycles_ ×
     /// λ(sat,signal) (fixed contract, uniform in cycles).  0 = legacy flat metres (H3).
     double disc_threshold_frac_cycles_{0.0};
-    /// The jump-test threshold (m) for a given (sat, signal): frac·λ when the
-    /// fractional-cycle mode is armed and λ resolves, else the flat metre gate.
-    double discThresholdM(const std::string& sat, const std::string& signal) const;
     /// Screen the de-commoned phase step (raw minus the signal's median) rather than
     /// the raw one (card JT).  Default false = the legacy raw test, which does not
     /// separate frame moves from satellite steps (byte-identical).  Travels in the

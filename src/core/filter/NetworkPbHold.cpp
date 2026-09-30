@@ -212,6 +212,10 @@ void networkPbHold(NetworkRunContext& ctx,
                     pc.generation = st.generation;
                     pc.queued_ep  = loop_ep;
                     ctx.carry.smh_pending[key] = pc;
+                    // Card SMD: the generation's block clone, under the same rule.
+                    ctx.carry.smh_block.erase(key);
+                    pc.block = true;
+                    ctx.carry.smh_block_pending[key] = pc;
                 }
                 if (first) {
                     hold.emplace(key, st);
@@ -265,17 +269,37 @@ void networkPbHold(NetworkRunContext& ctx,
             // Every switch is continuous.
             bool smh_written = false;
             if (smh_on) {
-                const auto cit  = ctx.carry.smh_clone.find(key);
-                const bool mine = cit != ctx.carry.smh_clone.end()
-                                  && cit->second.generation == st.generation;
+                // Card SMD: the key's block clone against the emitter's marks on the
+                // satellite's phase channel (a retirement, or its unmarked steps and the
+                // split of its passed motion).
+                networkPbHoldBlockAtHold(
+                    ctx, key, st.generation,
+                    (marked & NetworkProductEmitter::kDiscChanPhaseBias) != 0u, epoch_s,
+                    [&emitter, &s](const std::string& sg) { return emitter.discThresholdM(s.sat, sg); });
+                // The member that writes: card SMH's clock clone, or card SMD's block clone
+                // (network.emit_pb_hold_smoothed_block).  Both share the key's bridge.
+                const bool blk  = ctx.knobs.emit_pb_hold_smoothed_block;
+                auto&      wmap = blk ? ctx.carry.smh_block : ctx.carry.smh_clone;
+                const auto cit  = wmap.find(key);
+                const bool mine = cit != wmap.end() && cit->second.generation == st.generation;
                 const bool live = !st.smh_reverted && mine && cit->second.alive
                                   && cit->second.updated_ep == loop_ep;
                 const bool structural = mine && !cit->second.alive
                                         && cit->second.death != PbHoldCloneDeath::Withdrawn
-                                        && cit->second.death != PbHoldCloneDeath::Disengaged;
+                                        && cit->second.death != PbHoldCloneDeath::Disengaged
+                                        && cit->second.death != PbHoldCloneDeath::Followed
+                                        && cit->second.death != PbHoldCloneDeath::PairLost;
                 if (live) {
                     const PbHoldClone& c = cit->second;
                     const double nan = std::numeric_limits<double>::quiet_NaN();
+                    // The writing row: the clock row, or the block's phase-visible row.
+                    const double c_phi     = blk ? c.pv_phi : c.phi;
+                    const bool   c_phi_ok  = blk ? c.pv_phi_ok : c.phi_ok;
+                    const double c_W       = blk ? c.pv_W : c.W;
+                    const bool   c_w_valid = blk ? c.pv_w_valid : c.w_valid;
+                    const double c_vpost   = blk ? c.pv_vpost : c.vpost;
+                    const double c_var     = blk ? c.pv_var : c.var;
+                    if (blk) ++ctx.counters.smh_pv_held;
                     if (!st.smh_on_clone) {
                         st.smh_on_clone = true;
                         // LAH's reference continues from the transfer the key reached: a
@@ -292,7 +316,7 @@ void networkPbHold(NetworkRunContext& ctx,
                     // satellite's clock reuses the last one.
                     const double lah_m = (st.frz_ok && has_frz) ? fcit->second - st.frz_ref : nan;
                     if (std::isfinite(lah_m)) st.smh_lah_last = lah_m;
-                    const double xfer_m = st.smh_lah_last - c.phi;
+                    const double xfer_m = st.smh_lah_last - c_phi;
                     st.smh_last  = xfer_m;
                     held_emit   += xfer_m;
                     smh_written  = true;
@@ -300,30 +324,50 @@ void networkPbHold(NetworkRunContext& ctx,
                     ctx.counters.smh_xfer_abs.push_back(std::abs(xfer_m));
                     if (std::isfinite(lah_m)) ctx.counters.smh_diff_abs.push_back(std::abs(xfer_m - lah_m));
                     double r = nan;
-                    if (c.phi_ok) {
-                        ctx.counters.smh_phi_abs.push_back(std::abs(c.phi));
-                        const double den = c.W - c.vpost;
-                        if (!c.w_valid) {
+                    if (c_phi_ok) {
+                        ctx.counters.smh_phi_abs.push_back(std::abs(c_phi));
+                        const double den = c_W - c_vpost;
+                        if (!c_w_valid) {
                             ++ctx.counters.smh_w_invalid;
                         } else if (den > 0.0) {
-                            r = c.phi * c.phi / den;
+                            r = c_phi * c_phi / den;
                             const int hour = static_cast<int>(std::floor((epoch_s - ctx.carry.smh_t_first_s) / 3600.0));
                             auto& acc = ctx.counters.smh_r[{s.sat[0], hour}];
                             acc.first  += r;
                             acc.second += 1;
                         }
                     }
-                    if (traces.pb_hold_clone_trace.is_open())
+                    if (traces.pb_hold_clone_trace.is_open()) {
+                        // Card SMD: the key's block clone beside the writing member (the
+                        // split of its passed motion on its own birth), empty when not live.
+                        std::string bcols = ",,,,,,,";
+                        const auto bit = ctx.carry.smh_block.find(key);
+                        if (bit != ctx.carry.smh_block.end() && bit->second.generation == st.generation
+                            && bit->second.alive && bit->second.updated_ep == loop_ep
+                            && bit->second.phi_ok && bit->second.pv_phi_ok) {
+                            const PbHoldClone& b = bit->second;
+                            const double bden = b.pv_W - b.pv_vpost;
+                            std::string pair;
+                            for (std::size_t j = 0; j < b.pv_pair.sig.size(); ++j)
+                                pair += (j ? "+" : "") + b.pv_pair.sig[j];
+                            bcols = fmt::format("{:.1f},{:.6f},{:.6f},{:.6f},{:.6e},{:.6e},", epoch_s - b.t0_s,
+                                                b.phi, b.pv_phi, b.phi - b.pv_phi, b.pv_W, b.pv_vpost)
+                                    + (b.pv_w_valid && bden > 0.0
+                                           ? fmt::format("{:.4f}", b.pv_phi * b.pv_phi / bden) : std::string{})
+                                    + ',' + pair;
+                        }
                         traces.pb_hold_clone_trace
                             << sol.epoch_time.week << ',' << fmt::format("{:.3f}", sol.epoch_time.tow) << ','
                             << s.sat << ',' << signal << ',' << st.generation << ','
                             << fmt::format("{:.1f},{:.6f},", epoch_s - c.t0_s, xfer_m)
                             << (std::isfinite(lah_m) ? fmt::format("{:.6f}", lah_m) : std::string{}) << ','
-                            << (c.phi_ok ? fmt::format("{:.6f}", c.phi) : std::string{}) << ','
-                            << fmt::format("{:.6e},{:.6e},{:.6e},", c.W, c.vpost, c.var)
+                            << (c_phi_ok ? fmt::format("{:.6f}", c_phi) : std::string{}) << ','
+                            << fmt::format("{:.6e},{:.6e},{:.6e},", c_W, c_vpost, c_var)
                             << (std::isfinite(r) ? fmt::format("{:.4f}", r) : std::string{}) << ','
                             << (std::isfinite(c.pd0) ? fmt::format("{:.6e}", c.pd0) : std::string{}) << ','
-                            << (std::isfinite(c.f0) ? fmt::format("{:.4f}", c.f0) : std::string{}) << '\n';
+                            << (std::isfinite(c.f0) ? fmt::format("{:.4f}", c.f0) : std::string{}) << ','
+                            << (blk ? "pv" : "clk") << ',' << bcols << '\n';
+                    }
                 } else if (!st.smh_reverted) {
                     // Leaving the clone: LAH's transfer continues with the passed motion
                     // the clone had reached folded into LAH's reference, so this epoch's
@@ -355,8 +399,10 @@ void networkPbHold(NetworkRunContext& ctx,
                         ++ctx.counters.smh_bridges;
                         traces.emitEvent(se.time, "PB_HOLD", "smh_bridge", s.sat, "",
                                          st.frz_last, std::nullopt,
-                                         why == static_cast<int>(PbHoldCloneDeath::Withdrawn)
-                                             ? "withdrawn" : "disengaged",
+                                         why == static_cast<int>(PbHoldCloneDeath::Withdrawn) ? "withdrawn"
+                                         : why == static_cast<int>(PbHoldCloneDeath::Followed) ? "followed"
+                                         : why == static_cast<int>(PbHoldCloneDeath::PairLost) ? "pair_lost"
+                                                                                                : "disengaged",
                                          fmt::format("sig={} gen={} death={} transfer={:.6f} m",
                                                      signal, st.generation, why, st.frz_last));
                     }

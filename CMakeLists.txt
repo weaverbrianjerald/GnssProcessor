@@ -451,6 +451,7 @@ add_executable(gnss_tests
     tests/test_pb_emit_hold.cpp
     tests/test_pb_hold_phase_clock.cpp
     tests/test_pb_hold_smoothed.cpp
+    tests/test_pb_hold_block.cpp
     tests/test_phase_visible_monitor.cpp
     tests/test_pb_hold_presence.cpp
     tests/test_pb_translation_premise.cpp

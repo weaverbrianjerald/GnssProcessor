@@ -10,6 +10,8 @@
 #include "filter/NetworkPbHoldClone.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/SignalBand.hpp"          // the band pair's wavelengths (card SMD)
+#include "filter/NetworkClockAnchor.hpp"  // clockAnchorPhaseClockWeights (card SMD)
 #include "filter/NetworkRunTypes.hpp"
 
 #include <spdlog/spdlog.h>
@@ -52,27 +54,75 @@ void killClone(NetworkRunContext& ctx, PbHoldClone& c, PbHoldCloneDeath why) {
     ++ctx.counters.smh_deaths[static_cast<int>(why)];
 }
 
+/// Card SMD: a block clone's death (its own counters; the epoch kept for the hold).
+void killBlock(NetworkRunContext& ctx, PbHoldClone& c, PbHoldCloneDeath why, long long ep) {
+    c.alive   = false;
+    c.death   = why;
+    c.died_ep = ep;
+    ++ctx.counters.smh_pv_deaths[static_cast<int>(why)];
+}
+
+/// Card SMD: queue a block clone's birth again within its generation (after a withdrawal, a
+/// disengagement, a followed step or a lost pair).  A newer generation's entry wins.
+void queueBlockBirth(NetworkRunContext& ctx, const std::string& key, const PbHoldClone& c,
+                     long long ep) {
+    PbHoldClone q;
+    q.sat        = c.sat;
+    q.signal     = c.signal;
+    q.generation = c.generation;
+    q.queued_ep  = ep;
+    q.rebirth    = true;
+    q.block      = true;
+    ctx.carry.smh_block_pending.emplace(key, q);
+}
+
+/// Card SMH section 9's engagement test for a clone of either map: @c Withdrawn when card
+/// Q3's guard decoupled the parent clock this epoch, @c Disengaged when its fold was not the
+/// anchored one (the constellation's pinned clock exempt), otherwise @c None.
+PbHoldCloneDeath engagementDeath(const NetworkRunContext& ctx, const PbHoldClone& c) {
+    const ClockAnchorState& an = ctx.carry.clk_anchor;
+    if (an.tripped.count(c.sat)) return PbHoldCloneDeath::Withdrawn;
+    const auto pv = ctx.carry.cxu_pivot.find(c.sat.empty() ? '\0' : c.sat[0]);
+    const bool pinned = pv != ctx.carry.cxu_pivot.end() && pv->second.first == c.sat;
+    const auto it = an.sat.find(c.sat);
+    if (!pinned && (it == an.sat.end() || !it->second.folded_anchored))
+        return PbHoldCloneDeath::Disengaged;
+    return PbHoldCloneDeath::None;
+}
+
 }  // namespace
 
 PbHoldCloneStep pbHoldCloneAdvance(const PbHoldCloneInputs& in, const PbHoldClone& c) {
+    const std::vector<PbHoldCloneOwn> clock_alone{PbHoldCloneOwn{}};   // the parent clock, g = 1
+    return pbHoldCloneAdvanceRow(in, c.sat, clock_alone, c.terms, c.value, c.var, c.stamp_s);
+}
+
+PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::string& sat,
+                                      const std::vector<PbHoldCloneOwn>& own,
+                                      const std::vector<PbHoldCloneTerm>& row_terms,
+                                      double value, double var, double stamp_s) {
     PbHoldCloneStep out;
     const CouplingExactEpoch* xe = in.xe;
     if (!xe || !xe->ok) {
         out.death = PbHoldCloneDeath::Unfactored;
         return out;
     }
-    if (std::abs(c.stamp_s - xe->stash_s) > 1e-6) {
+    if (std::abs(stamp_s - xe->stash_s) > 1e-6) {
         out.death = PbHoldCloneDeath::Stale;
         return out;
     }
-    const std::string parent = sharedCarryKey(SharedParamKind::Clock, c.sat, "");
+    // The row's own keys (the parent clock for card SMH's row; the clock and the band pair
+    // for card SMD's phase-visible row).
+    std::vector<std::string> own_key(own.size());
+    for (std::size_t i = 0; i < own.size(); ++i)
+        own_key[i] = sharedCarryKey(own[i].kind, sat, own[i].signal);
     std::vector<std::pair<int, double>> pterms;
     std::vector<PbHoldCloneTerm>        kept;         // pinned and outside-block terms
     std::map<char, double>              out_clk_def;  // clock-family deficit of those terms
     double dep_var = 0.0;                             // marginalized terms
     double tu_var  = 0.0;                             // kappa terms outside the block
     double rev     = 0.0;                             // the border's revision along the row
-    for (const PbHoldCloneTerm& tm : c.terms) {
+    for (const PbHoldCloneTerm& tm : row_terms) {
         const std::string key = termKey(tm);
         const auto pit = xe->p_of_key.find(key);
         if (pit != xe->p_of_key.end()) {
@@ -97,10 +147,14 @@ PbHoldCloneStep pbHoldCloneAdvance(const PbHoldCloneInputs& in, const PbHoldClon
             continue;
         }
         // Outside the dense block.  The clone's own clock there is card 1d's route in
-        // all but name, which the card forbids: the clone dies.
-        if (key == parent) {
-            out.death = PbHoldCloneDeath::ParentOutside;
-            return out;
+        // all but name, which the card forbids: the clone dies (so does a row whose other
+        // own key, a phase bias of card SMD's pair, is there).
+        for (std::size_t i = 0; i < own_key.size(); ++i) {
+            if (key == own_key[i]) {
+                out.death       = PbHoldCloneDeath::ParentOutside;
+                out.outside_own = static_cast<int>(i);
+                return out;
+            }
         }
         ++out.n_outside;
         const double nan   = std::numeric_limits<double>::quiet_NaN();
@@ -163,18 +217,73 @@ PbHoldCloneStep pbHoldCloneAdvance(const PbHoldCloneInputs& in, const PbHoldClon
         addPinnedClock(kept, ps->second, d, pv->second.second, pv->second.first);
     }
     out.terms.insert(out.terms.end(), kept.begin(), kept.end());
-    out.value = c.value - rev;
-    out.var   = c.var + xr.var_add + dep_var + tu_var;
-    const auto pp = xe->p_of_key.find(parent);
-    if (pp != xe->p_of_key.end()) {
-        const int s = xe->s_of_p[static_cast<std::size_t>(pp->second)];
-        if (s >= 0) {
-            out.parent_in_s = true;
-            out.dW          = xe->q_s(s);
+    out.value = value - rev;
+    out.var   = var + xr.var_add + dep_var + tu_var;
+    // The fold's inflation along the functional, g'Qg over the own keys, when every one of
+    // them is in S (for the clock alone, its q).  The seam's off-diagonal noise lists pairs
+    // of distinct S columns only; its diagonal is in q_s.
+    std::vector<int> own_s(own.size(), -1);
+    bool all_s = !own.empty();
+    for (std::size_t i = 0; i < own.size(); ++i) {
+        const auto pp = xe->p_of_key.find(own_key[i]);
+        if (pp != xe->p_of_key.end()) own_s[i] = xe->s_of_p[static_cast<std::size_t>(pp->second)];
+        if (own_s[i] < 0) all_s = false;
+    }
+    if (all_s) {
+        double dW = 0.0;
+        for (std::size_t i = 0; i < own.size(); ++i)
+            dW += own[i].g * own[i].g * xe->q_s(own_s[i]);
+        if (own.size() > 1) {
+            for (const auto& [ia, ib, v] : xe->q_off) {
+                if (ia == ib) continue;
+                for (std::size_t a = 0; a < own.size(); ++a) {
+                    if (own_s[a] != ia) continue;
+                    for (std::size_t b = 0; b < own.size(); ++b)
+                        if (own_s[b] == ib) dW += own[a].g * own[b].g * v;
+                }
+            }
         }
+        out.parent_in_s = true;
+        out.dW          = dW;
     }
     out.ok = true;
     return out;
+}
+
+PbHoldPair pbHoldClonePickPair(const std::string& sat, const std::map<std::string, double>& pb_var) {
+    PbHoldPair out;
+    std::map<int, std::pair<std::string, double>> best;   // band -> (signal, stashed variance)
+    for (const auto& [sig, v] : pb_var) {
+        if (!(v > 0.0) || !std::isfinite(v)) continue;
+        const FrequencyBand band = classifySignalForSat(sat, sig).band;
+        if (!(bandNominalWavelengthMeters(band) > 0.0)) continue;
+        const int b = static_cast<int>(band);
+        const auto it = best.find(b);
+        if (it == best.end() || v < it->second.second) best[b] = {sig, v};
+    }
+    if (best.size() < 2) return out;
+    std::vector<double> alpha;
+    for (const auto& [b, sv] : best) {
+        (void)b;
+        out.sig.push_back(sv.first);
+        const double lam = bandNominalWavelengthMeters(classifySignalForSat(sat, sv.first).band);
+        alpha.push_back(lam * lam);
+    }
+    out.w = clockAnchorPhaseClockWeights(alpha);
+    if (out.w.size() != out.sig.size()) {
+        out.sig.clear();
+        out.w.clear();
+    }
+    return out;
+}
+
+std::vector<PbHoldCloneOwn> pbHoldCloneOwnPv(const PbHoldPair& pair) {
+    std::vector<PbHoldCloneOwn> own;
+    own.reserve(pair.sig.size() + 1);
+    own.push_back(PbHoldCloneOwn{});   // the clock, g = 1
+    for (std::size_t j = 0; j < pair.sig.size() && j < pair.w.size(); ++j)
+        own.push_back(PbHoldCloneOwn{SharedParamKind::PhaseBias, pair.sig[j], -pair.w[j]});
+    return own;
 }
 
 std::vector<PbHoldCloneTerm> pbHoldCloneRebase(
@@ -268,20 +377,11 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
     // and the birth is queued again for the first stash at which the anchor holds.  The
     // constellation's pinned clock has no anchor fold and passes nothing: exempt from the
     // second test.
+    auto& blocks = ctx.carry.smh_block;   // card SMD's block clones
     if (ctx.knobs.cta_on) {
-        const ClockAnchorState& an = ctx.carry.clk_anchor;
         for (auto& [key, c] : clones) {
             if (!c.alive) continue;
-            PbHoldCloneDeath why = PbHoldCloneDeath::None;
-            if (an.tripped.count(c.sat)) {
-                why = PbHoldCloneDeath::Withdrawn;
-            } else {
-                const auto pv = ctx.carry.cxu_pivot.find(c.sat.empty() ? '\0' : c.sat[0]);
-                const bool pinned = pv != ctx.carry.cxu_pivot.end() && pv->second.first == c.sat;
-                const auto it = an.sat.find(c.sat);
-                if (!pinned && (it == an.sat.end() || !it->second.folded_anchored))
-                    why = PbHoldCloneDeath::Disengaged;
-            }
+            const PbHoldCloneDeath why = engagementDeath(ctx, c);
             if (why == PbHoldCloneDeath::None) continue;
             killClone(ctx, c, why);
             PbHoldClone q;
@@ -292,10 +392,57 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
             q.rebirth    = true;
             ctx.carry.smh_pending.emplace(key, q);   // a newer generation's entry wins
         }
+        for (auto& [key, c] : blocks) {
+            if (!c.alive) continue;
+            const PbHoldCloneDeath why = engagementDeath(ctx, c);
+            if (why == PbHoldCloneDeath::None) continue;
+            killBlock(ctx, c, why, ep);
+            queueBlockBirth(ctx, key, c, ep);
+        }
+    }
+
+    // Card SMD section 3: a block clone follows the phase datum's declared steps of its pair
+    // by retiring at them, before the exact route reads the epoch.  A re-reference withholds
+    // the key's prior (no frame-free step exists); a new anchor tenure without one is a
+    // continuous handover, whose pin at the successor's ledger value steps the family by an
+    // undeclared amount.  The key bridges on the phase-clock transfer and the birth is queued
+    // for this epoch's stash, on the new frame.  (The emitter's marks are read at the hold.)
+    {
+        const auto& pa_reref   = ctx.carry.phase_anchor_reref;
+        const auto& eq34_reref = ctx.carry.eq34_reref;
+        const auto& basis      = ctx.carry.phase_basis;
+        for (auto& [key, c] : blocks) {
+            if (!c.alive) continue;
+            PbHoldFollow f = PbHoldFollow::None;
+            for (const std::string& sg : c.pv_pair.sig) {
+                if (pa_reref.count({c.sat, sg}) || eq34_reref.count({c.sat, sg})) {
+                    f = PbHoldFollow::Reref;
+                    break;
+                }
+            }
+            if (f == PbHoldFollow::None) {
+                for (const std::string& sg : c.pv_pair.sig) {
+                    const auto bit = basis.find(c.sat + "_" + sg);
+                    if (bit != basis.end() && bit->second.elected_ep == ep) {
+                        f = PbHoldFollow::Tenure;
+                        break;
+                    }
+                }
+            }
+            if (f == PbHoldFollow::None) continue;
+            c.follow = f;
+            ++ctx.counters.smh_pv_follow[static_cast<int>(f)];
+            killBlock(ctx, c, PbHoldCloneDeath::Followed, ep);
+            queueBlockBirth(ctx, key, c, ep);
+        }
     }
 
     bool any = false;
     for (const auto& [key, c] : clones) {
+        (void)key;
+        if (c.alive) { any = true; break; }
+    }
+    for (const auto& [key, c] : blocks) {
         (void)key;
         if (c.alive) { any = true; break; }
     }
@@ -447,6 +594,130 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
         }
         c.vpost = c.var + q;
     }
+
+    // Card SMD: the block clones, both rows on one lifetime.  The clock row takes card SMH's
+    // rule; the phase-visible row takes the same rule over its functional {c: 1, pair: -w_j}.
+    // A failure of the clock row is card SMH's structural death; a pair phase bias outside
+    // the block, without a column or without a folded prior is PairLost (the birth queued
+    // again on the next stash, which may pick another pair).
+    const auto prior_of_key = [&folded, &diag](const std::string& k) {
+        if (const auto f = folded.find(k); f != folded.end()) return f->second;
+        if (const auto dg = diag.find(k); dg != diag.end()) return dg->second;
+        return std::numeric_limits<double>::quiet_NaN();
+    };
+    const auto unlinked = [](const PbHoldCloneStep& st) {
+        if (st.n_s + st.n_d == 0) return false;   // a row on the pinned clock alone
+        double mx = 0.0;
+        for (const PbHoldCloneTerm& t : st.terms)
+            if (t.p_prev > 0.0) mx = std::max(mx, std::abs(t.coeff));
+        return !(mx > 1e-3);
+    };
+    const auto quad = [&Sig, ns](const std::map<Eigen::Index, double>& g) {
+        double q = 0.0;
+        for (const auto& [a, ga] : g) {
+            if (a >= ns) continue;
+            for (const auto& [b, gb] : g) {
+                if (b >= ns) continue;
+                q += ga * gb * Sig(a, b);
+            }
+        }
+        return q;
+    };
+    for (auto& [key, c] : blocks) {
+        if (!c.alive) continue;
+        const PbHoldCloneStep sc = pbHoldCloneAdvance(in, c);
+        if (!sc.ok) {
+            killBlock(ctx, c, sc.death, ep);
+            continue;
+        }
+        const std::vector<PbHoldCloneOwn> own = pbHoldCloneOwnPv(c.pv_pair);
+        const PbHoldCloneStep sd = pbHoldCloneAdvanceRow(in, c.sat, own, c.pv_terms, c.pv_value,
+                                                         c.pv_var, c.stamp_s);
+        if (!sd.ok) {
+            if (sd.death == PbHoldCloneDeath::ParentOutside && sd.outside_own > 0) {
+                killBlock(ctx, c, PbHoldCloneDeath::PairLost, ep);
+                queueBlockBirth(ctx, key, c, ep);
+            } else {
+                killBlock(ctx, c, sd.death, ep);
+            }
+            continue;
+        }
+        if (unlinked(sc) || unlinked(sd)) {
+            killBlock(ctx, c, PbHoldCloneDeath::Unlinked, ep);
+            continue;
+        }
+        // The frame-free steps (card SMH section 10): the clock's, and each pair phase bias's
+        // against the prior mean the solve folded.
+        const Eigen::Index pcol = in.col_of(PbHoldCloneTerm{SharedParamKind::Clock, c.sat, "", 0.0, 0.0, 0.0, -1});
+        const double prior_c = prior_of_key(sharedCarryKey(SharedParamKind::Clock, c.sat, ""));
+        const bool pinned_parent = in.pivot_sat.count(c.sat.empty() ? '\0' : c.sat[0])
+                                   && in.pivot_sat.at(c.sat[0]) == c.sat;
+        double step_c = 0.0;
+        if (!pinned_parent) {
+            if (!(pcol >= 0 && pcol < nx) || !std::isfinite(prior_c)) {
+                killBlock(ctx, c, PbHoldCloneDeath::ParentOutside, ep);
+                continue;
+            }
+            step_c = x_s(pcol) - prior_c;
+        }
+        const std::size_t np = c.pv_pair.sig.size();
+        std::vector<double>       step_p(np, std::numeric_limits<double>::quiet_NaN());
+        std::vector<Eigen::Index> pb_col(np, -1);
+        bool lost = false;
+        for (std::size_t j = 0; j < np; ++j) {
+            const std::string& sg = c.pv_pair.sig[j];
+            const Eigen::Index col = in.col_of(PbHoldCloneTerm{SharedParamKind::PhaseBias, c.sat, sg, 0.0, 0.0, 0.0, -1});
+            const double pr = prior_of_key(sharedCarryKey(SharedParamKind::PhaseBias, c.sat, sg));
+            if (!(col >= 0 && col < nx) || !std::isfinite(pr)) {
+                lost = true;
+                break;
+            }
+            pb_col[j] = col;
+            step_p[j] = x_s(col) - pr;
+        }
+        if (lost) {
+            killBlock(ctx, c, PbHoldCloneDeath::PairLost, ep);
+            queueBlockBirth(ctx, key, c, ep);
+            continue;
+        }
+        double step_d = step_c;
+        for (std::size_t j = 0; j < np; ++j) step_d -= c.pv_pair.w[j] * step_p[j];
+        // Both rows move: the passed motion is the step less the revision of x0.
+        c.phi       += step_c - (sc.value - c.value);
+        c.phi_ok     = true;
+        c.value      = sc.value;
+        c.var        = sc.var;
+        c.terms      = sc.terms;
+        c.pv_phi    += step_d - (sd.value - c.pv_value);
+        c.pv_phi_ok  = true;
+        c.pv_value   = sd.value;
+        c.pv_var     = sd.var;
+        c.pv_terms   = sd.terms;
+        // The functional's own step, read at the hold against the emitter's bar: a level
+        // update and an ionosphere-direction update cancel in D, a re-realization of a pair
+        // phase bias does not (it steps D by w_j times its step).
+        c.pv_step_d  = step_d;
+        c.updated_ep = ep;
+        ++ctx.counters.smh_pv_updates;
+        if (sc.parent_in_s) c.W += sc.dW;
+        else                c.w_valid = false;
+        if (sd.parent_in_s) c.pv_W += sd.dW;
+        else                c.pv_w_valid = false;
+        // The posterior variances of the two increments, sigma2 + g' Sigma g with g the
+        // functional on this epoch's columns plus the row's coefficients.
+        std::map<Eigen::Index, double> gc, gd;
+        if (pcol >= 0 && pcol < nx) {
+            gc[pcol] += 1.0;
+            gd[pcol] += 1.0;
+        }
+        for (std::size_t j = 0; j < np; ++j) gd[pb_col[j]] -= c.pv_pair.w[j];
+        for (const PbHoldCloneTerm& t : c.terms)
+            if (t.col >= 0 && t.p_prev > 0.0) gc[t.col] += t.coeff;
+        for (const PbHoldCloneTerm& t : c.pv_terms)
+            if (t.col >= 0 && t.p_prev > 0.0) gd[t.col] += t.coeff;
+        c.vpost    = c.var + quad(gc);
+        c.pv_vpost = c.pv_var + quad(gd);
+    }
 }
 
 void networkPbHoldCloneHarvest(NetworkRunContext& ctx, const NetworkEstimator& est,
@@ -454,7 +725,8 @@ void networkPbHoldCloneHarvest(NetworkRunContext& ctx, const NetworkEstimator& e
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
     auto& clones  = ctx.carry.smh_clone;
     auto& pending = ctx.carry.smh_pending;
-    if (clones.empty() && pending.empty()) return;
+    if (clones.empty() && pending.empty() && ctx.carry.smh_block.empty()
+        && ctx.carry.smh_block_pending.empty()) return;
 
     const bool stash_now = ctx.carry.cxu_stash_valid
                            && std::abs(ctx.carry.cxu_stash_s - now_s) <= 1e-6;
@@ -573,6 +845,187 @@ void networkPbHoldCloneHarvest(NetworkRunContext& ctx, const NetworkEstimator& e
         }
         clones[key]  = c;
         pit_pending  = pending.erase(pit_pending);
+    }
+
+    // Card SMD: the block clones, re-harvested row by row, and born under card SMH's rule
+    // when the stash also holds the satellite's phase biases on two bands (the pair, fixed
+    // for the clone's life).
+    auto& blocks   = ctx.carry.smh_block;
+    auto& bpending = ctx.carry.smh_block_pending;
+    for (auto& [key, c] : blocks) {
+        (void)key;
+        if (!c.alive) continue;
+        if (!stash_now) {
+            killBlock(ctx, c, PbHoldCloneDeath::NoStash, ep);
+            continue;
+        }
+        if (c.updated_ep != ep) {
+            killBlock(ctx, c, PbHoldCloneDeath::Missed, ep);
+            continue;
+        }
+        c.terms    = pbHoldCloneRebase(c.terms, stash, pinned, fallback);
+        c.pv_terms = pbHoldCloneRebase(c.pv_terms, stash, pinned, fallback);
+        c.stamp_s  = now_s;
+    }
+    if (bpending.empty()) return;
+    std::map<std::string, std::map<std::string, double>> pb_var_of;   // sat -> signal -> stashed variance
+    if (stash_now) {
+        for (const CarryPrior& cp : ctx.carry.prev_carry) {
+            if (cp.kind != SharedParamKind::PhaseBias) continue;
+            const auto sit = stash.find(sharedCarryKey(cp.kind, cp.sat, cp.signal));
+            if (sit != stash.end()) pb_var_of[cp.sat][cp.signal] = sit->second.second;
+        }
+    }
+    for (auto bit = bpending.begin(); bit != bpending.end();) {
+        const std::string& key = bit->first;
+        PbHoldClone c = bit->second;
+        const auto hit = ctx.carry.pb_hold.find(key);
+        if (hit == ctx.carry.pb_hold.end() || hit->second.generation != c.generation) {
+            ++ctx.counters.smh_pv_pending_dropped;
+            bit = bpending.erase(bit);
+            continue;
+        }
+        const std::string parent = sharedCarryKey(SharedParamKind::Clock, c.sat, "");
+        PbHoldCloneTerm t;
+        t.kind  = SharedParamKind::Clock;
+        t.sat   = c.sat;
+        t.coeff = -1.0;
+        const auto sit = stash.find(parent);
+        const auto pit = pinned.find(parent);
+        bool engaged = true;
+        if (ctx.knobs.cta_on) {
+            const auto ait = ctx.carry.clk_anchor.sat.find(c.sat);
+            engaged = ait != ctx.carry.clk_anchor.sat.end() && ait->second.anchored
+                      && !ctx.carry.clk_anchor.tripped.count(c.sat);
+        }
+        bool on_pinned = false;
+        if (stash_now && pit != pinned.end()) {
+            t.s_prev  = pit->second;
+            t.p_prev  = 0.0;
+            on_pinned = true;
+        } else if (stash_now && sit != stash.end() && engaged) {
+            t.s_prev = sit->second.first;
+            t.p_prev = sit->second.second;
+        } else {
+            if (stash_now && sit != stash.end()) ++ctx.counters.smh_pv_defer_anchor;
+            else                                 ++ctx.counters.smh_pv_defer_nostash;
+            ++bit;
+            continue;
+        }
+        PbHoldPair pair;
+        if (const auto pv = pb_var_of.find(c.sat); pv != pb_var_of.end())
+            pair = pbHoldClonePickPair(c.sat, pv->second);
+        if (pair.sig.empty()) {
+            ++ctx.counters.smh_pv_defer_nopair;
+            ++bit;
+            continue;
+        }
+        if (on_pinned) ++ctx.counters.smh_pv_births_pinned;
+        else           ++ctx.counters.smh_pv_births;
+        if (c.rebirth) ++ctx.counters.smh_pv_rebirths;
+        try { t.col = est.clockColumn(c.sat); } catch (...) { t.col = -1; }
+        // The clock row: card SMH's birth.
+        c.terms      = {t};
+        c.value      = t.s_prev;
+        c.c_ref      = t.s_prev;
+        c.var        = 0.0;
+        c.phi        = 0.0;
+        c.phi_ok     = false;
+        c.W          = 0.0;
+        c.w_valid    = true;
+        c.vpost      = 0.0;
+        // The phase-visible row: {c: -1, p_j: +w_j}, so x0 = c - sum_j w_j p_j.
+        std::string pname;
+        c.pv_pair  = pair;
+        c.pv_terms = {t};
+        double d0  = t.s_prev;
+        for (std::size_t j = 0; j < pair.sig.size(); ++j) {
+            const auto& sv = stash.at(sharedCarryKey(SharedParamKind::PhaseBias, c.sat, pair.sig[j]));
+            PbHoldCloneTerm tp;
+            tp.kind   = SharedParamKind::PhaseBias;
+            tp.sat    = c.sat;
+            tp.signal = pair.sig[j];
+            tp.coeff  = pair.w[j];
+            tp.s_prev = sv.first;
+            tp.p_prev = sv.second;
+            try { tp.col = est.phaseBiasColumn(c.sat, pair.sig[j]); } catch (...) { tp.col = -1; }
+            c.pv_terms.push_back(tp);
+            d0    -= pair.w[j] * sv.first;
+            pname += (j ? "+" : "") + pair.sig[j];
+        }
+        ++ctx.counters.smh_pv_pairs[pname];
+        c.pv_value   = d0;
+        c.pv_var     = 0.0;
+        c.pv_phi     = 0.0;
+        c.pv_phi_ok  = false;
+        c.pv_W       = 0.0;
+        c.pv_w_valid = true;
+        c.pv_vpost   = 0.0;
+        c.pv_step_d  = 0.0;
+        c.block      = true;
+        c.t0_s       = now_s;
+        c.stamp_s    = now_s;
+        c.alive      = true;
+        c.death      = PbHoldCloneDeath::None;
+        c.follow     = PbHoldFollow::None;
+        c.died_ep    = -1;
+        c.updated_ep = ep;
+        blocks[key]  = c;
+        bit          = bpending.erase(bit);
+    }
+}
+
+void networkPbHoldBlockAtHold(NetworkRunContext& ctx, const std::string& key,
+                              unsigned generation, bool pb_marked, double epoch_s,
+                              const std::function<double(const std::string&)>& bar) {
+    if (!ctx.knobs.emit_pb_hold_smoothed) return;
+    const auto it = ctx.carry.smh_block.find(key);
+    if (it == ctx.carry.smh_block.end()) return;
+    PbHoldClone& c = it->second;
+    if (c.generation != generation) return;
+    const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+    if (!c.alive) {
+        // A re-reference the producer declared and the emitter did not mark: the hold is
+        // what hides that step from the wire.
+        if (c.died_ep == ep && c.death == PbHoldCloneDeath::Followed
+            && c.follow == PbHoldFollow::Reref && !pb_marked)
+            ++ctx.counters.smh_pv_reref_unmarked;
+        return;
+    }
+    if (c.updated_ep != ep) return;
+    if (pb_marked) {
+        // Card SMD section 3: the emitter's mark on the phase channel is a declared step.
+        c.follow = PbHoldFollow::Mark;
+        ++ctx.counters.smh_pv_follow[static_cast<int>(PbHoldFollow::Mark)];
+        killBlock(ctx, c, PbHoldCloneDeath::Followed, ep);
+        queueBlockBirth(ctx, key, c, ep);
+        return;
+    }
+    // A pair step above the emitter's jump bar with nothing declared: passed as motion.
+    double b = 0.0;
+    for (const std::string& sg : c.pv_pair.sig) {
+        const double bj = bar ? bar(sg) : 0.0;
+        if (bj > 0.0 && (b == 0.0 || bj < b)) b = bj;
+    }
+    if (b > 0.0 && std::isfinite(c.pv_step_d) && std::abs(c.pv_step_d) > b) {
+        ++ctx.counters.smh_pv_steps_unmarked;
+        ctx.counters.smh_pv_step_unmarked_max = std::max(ctx.counters.smh_pv_step_unmarked_max,
+                                                         std::abs(c.pv_step_d));
+        if (ctx.carry.smh_t_first_s >= 0.0)
+            ++ctx.counters.smh_pv_steps_unmarked_hour[static_cast<int>(
+                std::floor((epoch_s - ctx.carry.smh_t_first_s) / 3600.0))];
+    }
+    // The split, on the block's shared birth (card SMD section 4).
+    if (c.pv_phi_ok && c.phi_ok) {
+        ctx.counters.smh_pv_phi_abs.push_back(std::abs(c.pv_phi));
+        ctx.counters.smh_pv_lvl_abs.push_back(std::abs(c.phi - c.pv_phi));
+    }
+    const double den = c.pv_W - c.pv_vpost;
+    if (c.pv_phi_ok && c.pv_w_valid && den > 0.0 && ctx.carry.smh_t_first_s >= 0.0 && !c.sat.empty()) {
+        const int hour = static_cast<int>(std::floor((epoch_s - ctx.carry.smh_t_first_s) / 3600.0));
+        auto& acc = ctx.counters.smh_pv_r[{c.sat[0], hour}];
+        acc.first  += c.pv_phi * c.pv_phi / den;
+        acc.second += 1;
     }
 }
 
