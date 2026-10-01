@@ -276,3 +276,19 @@ rule, cards REV and SMC's sim revision NEES, cards CTU and CTU2's G1 and G2, car
 controls, the sim census baselines (`simcensus6h.py` keys), and the sim baseline pair
 `runs/_rf0hv12_sim6`. Their re-capture on the new fixture is owed, card by card, when each is next
 used.
+
+### 4.3 C2 and C3 on `k6` (2026-10-01)
+
+The program posture's block-clone instrument on `k6`'s fixture (`gnss_processor_wsx1.exe`, 2 h,
+`wsf_persist.py`, ratio at 5 / 20 / 60 / 120 epochs): `k6` 1.56 / 1.75 / 1.62 / 1.42 (`k0` 1.09 / 1.09 /
+0.84 / 0.60, `k1` 1.60 / 1.82 / 1.49 / 1.01; the field's 6 h accumulated-wind-up arm 1.45 / 1.51 / 1.54 /
+1.53, its 2 h fractional control 1.47 / 1.66 / 1.83 / 2.23).
+
+**C2 holds** (within 0.2 of the field at 5 and 20 epochs). **C3 fails as frozen**: at 60 and 120
+epochs `k6` reads 1.62 and 1.42, at or just below the field's accumulated-wind-up arm, not 0.3 below
+it. The calibrated colour (300 s, capped at 20 degrees) carries persistence out to an hour through
+the thinly observed satellites, so the long-scale remainder that cards FWS and LSR could not attribute
+may be the slow tail of the same coloured error rather than a separate source. The windows differ
+(2 h on the sim against 6 h on the field, and the 120-epoch read of a 2 h arm rests on few rows), so
+the reading is a candidate, tested in section 5 by a 6 h program-posture arm on the regenerated
+fixture against `runs/_rap_fws_wuacc6_f`.
