@@ -85,3 +85,53 @@ events); `fws_noslip10_f` drops the ten stations above (the size of the European
 not lower the persistence). If the losses of lock drive the field's persistence: `fws_noslip10_f`
 lowers the ratio at 20 and 60 epochs at least half way toward the sim's control (at most 1.38 and
 1.34), and `fws_nomac_f` by at least a quarter of the gap (at most 1.52 and 1.59).
+
+### 2.1 The trace reads (2026-10-01)
+
+Four read-only investigations of card REV's 6 h traces, each on both beds; the persistence ratio
+PR = rms(W10) / (sqrt(20) rms(dPhi)) over 10-minute windows of one clone's walk increments (field
+1.73, sim 0.94; the 2 h controls 1.62 and 1.05).
+
+- **The station side (time-correlated errors as the residuals show them) does not carry it.**
+  Each field station's ionosphere-free phase residual, de-meaned per arc, decorrelates within about
+  10 minutes (station-median autocorrelation 0.65 / 0.19 / 0.01 / -0.04 at lags 1 / 5 / 20 / 60
+  epochs; sim 0.15 / 0.04 / 0.00 / -0.02), and errors independent between stations can move D by at
+  most 1.27 mm per 10 minutes against an excess of 3.76 mm (at most 11 % of the excess variance).
+  What organizes the persistence is which stations see the satellite: satellites with the European
+  cluster in view are white (PR 0.97, 12 % of the energy), the rest carry 88 % (PR 2.08); the
+  strongest single predictor is the share of observations from 15 sparse-side stations whose
+  estimated ZWD wanders on 10 to 60 minute scales (share above 0.4: PR 2.24, 62 % of the energy; at
+  most 0.2: PR 1.04), and it follows the stations' identity and region, not their current
+  troposphere.
+- **The satellite side and geometry do not.** An orbit error projected through the network's
+  unbalanced geometry is about ten times too small (a CODE-final error moves D by at most 0.5 mm per
+  10 minutes; a signed fit sits at its null); no satellite property (block, clock roughness, beta,
+  health) ranks the satellites. The observer count does (rank correlation -0.54), and at matched
+  counts (12 to 16) the field stays at about 1.9 against the sim's 0.92: a persistent error per
+  observer that averages down as observers are added.
+- **The phase, not the code, carries the walk, and the field's phase is coloured.** On both beds the
+  walk step follows the same epoch's weighted satellite-mean ionosphere-free phase residual (r
+  -0.785 field, -0.845 sim; the code's r about 0). The field's residuals are coloured where the sim's
+  are white: every field station's lag-1 autocorrelation is at least 0.34 (sim p90 0.19), the colour
+  is the same at every elevation, strongest at low-latitude Asian and African stations in daylight
+  (ULAB00MNG, LCK400IND, SEYG00SYC, HKSL00HKG, MAJU00MHL, MBAR00UGA, URUM00CHN), and not spatially
+  coherent (the share of stations with the mean's sign matches the sim's). This explains the
+  short-lag excess (5 to 20 epochs). It does not explain the long lags (1.92 at 60 epochs, 1.82 at
+  120), where a minutes-scale colour would revert.
+- **One field-only processing feature carries part of the long lags: the fractional phase wind-up.**
+  The field posture runs wind-up in fractional (wrapping) mode (`estimation.accumulate_phase_windup`
+  off; the sim pins it on), so each crossing of half a cycle steps the applied correction by one
+  cycle on both bands, 107 mm in the ionosphere-free combination, MW-blind; the IF-TD threshold's
+  floor equals that step, so about half of them (49 of 90 in 6 h) are never flagged. Windows touched
+  by a wrap are 6.9 % of the windows and carry 51.5 % of the excess (PR 2.53 against 1.55 untouched);
+  giving them the untouched persistence takes the field from 1.80 to 1.55. None fall in the first
+  2 h. The logged slip, resume, datum and channel families carry about 4 % or less.
+
+### 3.2 The arms the reads call for, predicted before they ran
+
+| arm | change | prediction |
+| --- | --- | --- |
+| `fws_los30_s` | sim: per-line-of-sight phase sinusoid, 30 mm on L1 and L2, period 15 min (the field's colour-to-white ratio; the sim's white phase noise is about 2.5 times the field's, which is why the 5 mm arm moved nothing) | the short lags rise (ratio at 5 / 20 epochs at least 1.4 / 1.4), the 60-epoch ratio does not rise above the control's 0.85 by more than 0.15 |
+| `fws_wufrac_s` | sim: `estimation.accumulate_phase_windup` off (the field's wrapping staircase) | the 20-epoch ratio at least 1.25 and the 60-epoch ratio above 1.1 |
+| `fws_both_s` | the two together | the 20- and 60-epoch ratios at least half way to the field's (1.38 and 1.34) |
+| `fws_wuacc6_f` | field, 6 h, `card REV`'s exe: wind-up accumulated with its restart response (`estimation.accumulate_phase_windup`, `network.cycle_slip.windup_restart_refloat`) against `runs/_rap_rev1_blk6_f` | the 60- and 120-epoch ratios fall by at least a quarter of their excess over 1 (to at most 1.69 and 1.62) |
