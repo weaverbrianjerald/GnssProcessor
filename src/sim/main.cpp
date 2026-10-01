@@ -1625,6 +1625,14 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     // clock, would then be exactly degenerate with it, and no equality check would
     // detect that.
     std::mt19937_64 tropo_rng(saltSeed(atm.seed));
+    // Its own distribution as well as its own engine (card SFR section 2.1).  A
+    // normal_distribution caches the second value of each pair it draws, so the
+    // `gauss` object shared with the white-noise stream handed each wet-delay draw a
+    // value left over from that stream and the reverse: the wet-delay series moved
+    // whenever the number of white-noise draws did (a satellite more in the sky), and
+    // the white noise moved with the wet-delay knobs.  Recipes with a constant wet
+    // delay draw nothing here and are unchanged.
+    std::normal_distribution<double> tropo_gauss(0.0, 1.0);
     double zwd_rw_state = 0.0;          // accumulated random walk (m)
     double zwd_ep = atm.zwd_m;          // this epoch's truth ZWD (m)
     double zwd_sum = 0.0, zwd_min_seen = 1e9, zwd_max_seen = -1e9;
@@ -2299,7 +2307,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                 const double phi = std::exp(-scfg.trajectory.interval_s / atm.zwd_rw_tau_s);
                 zwd_rw_state = phi * zwd_rw_state
                              + atm.zwd_rw_sigma_m * std::sqrt(std::max(0.0, 1.0 - phi * phi))
-                                                  * gauss(tropo_rng);
+                                                  * tropo_gauss(tropo_rng);
             }
             const double dt = (t.week - truth.front().time.week) * 604800.0
                             + (t.tow - truth.front().time.tow) + atm.zwd_diurnal_phase_s;
