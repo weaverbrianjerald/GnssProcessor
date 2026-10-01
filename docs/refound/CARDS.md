@@ -408,6 +408,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   ANSWERED: short scales are the stations' time-correlated phase errors seen through thin coverage
   (the sim's noise is white); long scales mostly the field's fractional wind-up staircase
   (accumulating it removes 45 % of the hour-scale excess, consumer-neutral under the phase-clock hold).
+  CORRECTED (section 6): the restart response refloated no arc; the RINEX-op sim arms ran 1.53 h
+  (re-run at 2 h, verdicts unchanged); the census consumers were fractional.
 - [SOI](SOI_second_order_ionosphere_leak_2026-10-01.md): closed, 2026-10-01: pre-registered (the outside
   review's note after card FWS): is the second-order ionospheric term, which the ionosphere-free
   combination keeps and which changes sign with the line of sight's angle to the geomagnetic field,
@@ -425,3 +427,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   FALSIFIED: the posture re-estimates the wet delay every epoch (the q arm is byte-identical),
   gradients worsen the persistence, and set changes add no walk; untested: phase-centre and
   long-period multipath errors.
+- [WUP](WUP_windup_accumulated_promotion_2026-10-01.md): open, 2026-10-01: pre-registered (the outside
+  review's decision after card FWS): accumulated phase wind-up for the field lineages by the
+  promotion path. The restart response it needs walked the live ambiguity map and so never reached a
+  re-entering arc; fixed first (the drain reaches it through the leveling carry), then gates G0 to
+  G3 (byte-identity off, the fix on the program posture, the golden pair, the multi-site census).

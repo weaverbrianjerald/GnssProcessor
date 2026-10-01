@@ -624,6 +624,15 @@ def cmd_make(a):
     ops = [parse_op(t) for t in (a.rinex or [])]
     for op in ops:
         op["_prio"] = base.get("processing", {}).get("signal_priorities", {}).get("GPS", [])
+    # The rewritten RINEX ends at the arm's last epoch, which is the start offset plus the
+    # duration (the offset as the arm will carry it, after any --set).  Truncating at the
+    # duration alone cut every arm with a start offset short: the sim arms at 00:30:15
+    # ran 1.53 h of a 2 h arm (card FWS section 6).
+    start_h = float(base.get("network", {}).get("start_offset_hours") or 0.0)
+    for kv in a.set or []:
+        k, v = kv.split("=", 1)
+        if k == "network.start_offset_hours":
+            start_h = float(v)
     touched, n_holes, moved = [], 0, []
     if ops:
         files = [(k, s["name"], s["rinex_path"], s) for k, s in enumerate(net["stations"])]
@@ -635,7 +644,8 @@ def cmd_make(a):
             mine = [dict(op) for op in ops if file_selected(op, idx, name, codes)]
             if mine:
                 dst = f"{rd}/rinex/{os.path.basename(path)}"
-                n_holes += rewrite_rinex(path, dst, mine, name, hours=(a.hours + 0.05) if a.hours else None)
+                n_holes += rewrite_rinex(path, dst, mine, name,
+                                         hours=(start_h + a.hours + 0.05) if a.hours else None)
                 node["rinex_path"] = dst
                 touched.append(name)
                 # `ecc` also lowers the configured coordinate by the vector it wrote

@@ -5,7 +5,7 @@
 - **id:** FWS
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** ANSWERED 2026-10-01 (sections 2.1, 4 and 5). The field's per-satellite walk share is larger because its steps are persistent, not larger, and the persistence has two sources at the field stations. Short scales (2.5 to 10 minutes): the stations' own phase errors are time-correlated (lag-1 autocorrelation 0.65 at every station, at least 0.37; the sim's white noise 0.15), and they reach a satellite's phase-visible clock in proportion to how thinly it is observed (the sparse side of the roster carries 88 % of the persistent walk; European-visible satellites are white); a coloured phase error on the sim at the field's colour-to-white ratio reproduces it. Long scales (30 minutes to an hour): the field posture's fractional phase wind-up, whose one-cycle staircase is MW-blind and half unflagged; putting it into the sim creates long-lag persistence, and accumulating it on the 6 h field with its restart response removes 45 % of the excess at an hour, consumer-neutral under the phase-clock hold. Not the cause: the loss-of-lock stations, low elevations, the European cluster, the second code channel, L1W, the pivot, the orbits. Nothing armed.
+- **summary:** ANSWERED 2026-10-01 (sections 2.1, 4 and 5). The field's per-satellite walk share is larger because its steps are persistent, not larger, and the persistence has two sources at the field stations. Short scales (2.5 to 10 minutes): the stations' own phase errors are time-correlated (lag-1 autocorrelation 0.65 at every station, at least 0.37; the sim's white noise 0.15), and they reach a satellite's phase-visible clock in proportion to how thinly it is observed (the sparse side of the roster carries 88 % of the persistent walk; European-visible satellites are white); a coloured phase error on the sim at the field's colour-to-white ratio reproduces it. Long scales (30 minutes to an hour): the field posture's fractional phase wind-up, whose one-cycle staircase is MW-blind and half unflagged; putting it into the sim creates long-lag persistence, and accumulating it on the 6 h field with its restart response removes 45 % of the excess at an hour, consumer-neutral under the phase-clock hold. Not the cause: the loss-of-lock stations, low elevations, the European cluster, the second code channel, L1W, the pivot, the orbits. Nothing armed. CORRECTED 2026-10-01 (section 6): the wind-up restart response refloated no arc (3 carries bridged a restart unanswered; card WUP fixes it); the nine sim arms with a RINEX operation ran 1.53 h and were re-run at 2 h with every verdict unchanged; the census consumers ran fractional wind-up.
 - **source:** [WSL](WSL_walk_share_stations_link_2026-10-01.md); [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) section 5; [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md) (the martingale test, the structure of the motion); [PAC](PAC_common_drift_pivot_clock_2026-10-01.md) (the common part, excluded here); [REV](REV_revision_member_replay_2026-09-30.md) section 6 (the trace columns); card SCC (the second code channel); card CSL (the band-1 signal latch)
 - **knobs / posture:** arms only, from the 2 h controls `runs/_rap_wsx_ctl_{f,s}` (card REV's instrument, card SMD's exact-update posture): `--drop-station`, `processing.elevation_mask_deg`, `network.second_code_channel`, `processing.signal_priorities`, and the sim's RINEX ops; nothing armed
 - **dates in the text:** 2026-10-01
@@ -212,3 +212,55 @@ members that pass motion and to the estimator's own consistency.
 The re-grade of the station-side colour (this card's own computation over card REV's traces, each
 station-satellite arc of at least 40 epochs de-meaned): field station-median lag-1 / lag-5
 autocorrelation 0.65 / 0.19, every station at least 0.37; sim 0.15 / 0.04, p90 0.18.
+
+## 6. Corrections (2026-10-01, after cards SOI and LSR)
+
+Three statements of sections 4 and 5 were wrong; the conclusions they supported are re-graded here.
+
+**The restart response did not answer the restarts.** Section 4 says the response "answered the 28
+restarts it owed (none needed a refloat)". It refloated no arc: its run-end line reads 28
+"RESPONDED (0 arc(s) refloated)", and all 28 event rows read `no_arc`. The drain walked the live
+ambiguity map, and a restart is a return after a gap longer than the wind-up horizon, whose column
+was pruned with the gap and is re-created only after the drain; a warm event with no match was still
+counted as a response, so the closure read OK. Against the same-epoch gap re-entry rows
+(`network_events.csv`, tier `T0_gap`): 20 of the 28 arcs were refloated by the gap re-entry drain
+for its own evidence, 5 had no leveling carry to bridge (fresh arcs), and 3 had their carry bridged
+across the restart with nothing answering it (`KIT300UZB` G02 at TOW 262110,
+`KIT300UZB` G22 at 279690, `MAJU00MHL` G19 at 280020; each an unmeasurable return the gap drain
+bridges by design). Whether those three restarts stepped by a non-zero integer is not recorded. The
+fix and its gates are card [WUP](WUP_windup_accumulated_promotion_2026-10-01.md). The arm's walk-share
+reading (45 % of the hour-scale excess removed) does not rest on the response: it is the staircase's
+removal, with three bridged arcs in 6 h.
+
+**The sim arms with a RINEX operation ran 1.53 h, not 2 h.** `scripts/rapid_arm.py` truncated the
+rewritten RINEX at the arm's duration counted from the start of the day, not from the arm's start
+offset (00:30:15 on the sim), so the nine arms of section 4 that rewrite RINEX (`fws_mpph_s`,
+`fws_mpcd_s`, the four slip arms, `fws_step_s`, `fws_los30_s`, `fws_both_s`) ran 185 epochs against
+the control's 241, and their ratios were read over a shorter window than the control's. The tool is
+fixed (the truncation now adds the start offset) and the arms were re-run at full length
+(`runs/_rap_fws_*_s2`, `gnss_processor_wsx1.exe`, 241 epochs each; `wsf_persist.py`, ratio at
+5 / 20 / 60 / 120 epochs):
+
+| arm | as run in section 4 (1.53 h) | full length (2 h) |
+| --- | --- | --- |
+| control `wsx_ctl_s` (always 2 h) | 1.10 / 1.09 / 0.85 | 1.10 / 1.09 / 0.85 / 0.66 |
+| `fws_mpph_s` | 1.18 / 1.12 / 0.96 | 1.15 / 1.07 / 0.82 / 0.64 |
+| `fws_mpcd_s` | 1.16 / 1.12 / 0.97 | 1.14 / 1.07 / 0.84 / 0.65 |
+| `fws_slip05_s` | 1.13 / 1.13 / 0.84 | 1.11 / 1.08 / 0.88 / 0.48 |
+| `fws_slip_s` | 1.39 / 1.98 / 1.70 | 1.37 / 1.96 / 2.62 / 1.95 |
+| `fws_slip45_s` | 1.77 / 3.37 / - | 1.50 / 2.55 / 3.22 / - |
+| `fws_step_s` | 1.13 / 1.14 / 0.96 | 1.11 / 1.10 / 0.86 / 0.76 |
+| `fws_los30_s` | 1.82 / 1.67 / 0.69 | 1.82 / 1.64 / 0.61 / 0.54 |
+| `fws_both_s` | 1.82 / 1.71 / 0.99 | 1.82 / 1.72 / 0.98 / 1.07 |
+
+Every verdict of section 4 stands at full length: `fws_los30_s` holds (at least 1.4 at 5 and 20
+epochs, not above 1.0 at 60), the 5 mm phase, the code, the 0.05 per arc-hour slip and the step arms
+do nothing, the slip arms above 0.1 per arc-hour reproduce the persistence, and `fws_both_s` fails at
+60 epochs (bar 1.34). `fws_slipnorl_s` still leaves too few clone rows to read.
+
+**The census read's consumers ran fractional wind-up.** `census6h.py` builds its replays from
+`runs/_rf0hv10_field6/arm.json`, which does not accumulate, so the `fwswu` key graded the wire of the
+accumulated arm with fractional-mode consumers. "Consumer-neutral" in section 5 holds for that pair;
+an accumulating consumer, which arming the knob in the goldens would also give the in-process
+consumer (the closed-loop consumer's configuration is a copy of the producer's), was not graded. Card
+WUP's census grades it.
