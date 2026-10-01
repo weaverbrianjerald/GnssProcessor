@@ -4,12 +4,12 @@
 
 - **id:** FWS
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Opened 2026-10-01 (the author's question after card WSL). Card SMC found that card SMD's member passes a per-satellite walk share whose between-satellite spread late in the run is 25 mm on the field against 9 mm on the sim, and card WSL ruled out the stations-per-satellite arithmetic of the carry. The decomposition of section 1 changes the question: the field's single-epoch walk steps are smaller than the sim's, and its walk share is larger because its steps are persistent (the change over a lag grows about twice as fast as independent steps would give, from 2.5 minutes to an hour), where the sim's are white and then mean-reverting. The question becomes what at the field stations produces per-satellite phase-visible errors correlated over minutes to an hour. Four trace reads (section 2) and one-change bisection arms on both beds (section 3, predicted before they ran) attribute it.
+- **status:** closed
+- **summary:** ANSWERED 2026-10-01 (sections 2.1, 4 and 5). The field's per-satellite walk share is larger because its steps are persistent, not larger, and the persistence has two sources at the field stations. Short scales (2.5 to 10 minutes): the stations' own phase errors are time-correlated (lag-1 autocorrelation 0.65 at every station, at least 0.37; the sim's white noise 0.15), and they reach a satellite's phase-visible clock in proportion to how thinly it is observed (the sparse side of the roster carries 88 % of the persistent walk; European-visible satellites are white); a coloured phase error on the sim at the field's colour-to-white ratio reproduces it. Long scales (30 minutes to an hour): the field posture's fractional phase wind-up, whose one-cycle staircase is MW-blind and half unflagged; putting it into the sim creates long-lag persistence, and accumulating it on the 6 h field with its restart response removes 45 % of the excess at an hour, consumer-neutral under the phase-clock hold. Not the cause: the loss-of-lock stations, low elevations, the European cluster, the second code channel, L1W, the pivot, the orbits. Nothing armed.
 - **source:** [WSL](WSL_walk_share_stations_link_2026-10-01.md); [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) section 5; [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md) (the martingale test, the structure of the motion); [PAC](PAC_common_drift_pivot_clock_2026-10-01.md) (the common part, excluded here); [REV](REV_revision_member_replay_2026-09-30.md) section 6 (the trace columns); card SCC (the second code channel); card CSL (the band-1 signal latch)
 - **knobs / posture:** arms only, from the 2 h controls `runs/_rap_wsx_ctl_{f,s}` (card REV's instrument, card SMD's exact-update posture): `--drop-station`, `processing.elevation_mask_deg`, `network.second_code_channel`, `processing.signal_priorities`, and the sim's RINEX ops; nothing armed
 - **dates in the text:** 2026-10-01
-- **hashes / run dirs:** to be filled at the read (section 4)
+- **hashes / run dirs:** exes `gnss_processor_wsx1.exe` `e3d6c4955054e1f9` (2 h arms), `gnss_processor_rev1.exe` `a59231c8802a14f8` (6 h); arms `runs/_rap_fws_*`; rebuilt wire `runs/_rpl_fws_wuacc6_lah_f`; census key `fwswu`; scripts `scripts/clock_level/wsf_persist.py`
 
 ## 1. The decomposition (card REV's 6 h traces)
 
@@ -135,3 +135,80 @@ PR = rms(W10) / (sqrt(20) rms(dPhi)) over 10-minute windows of one clone's walk 
 | `fws_wufrac_s` | sim: `estimation.accumulate_phase_windup` off (the field's wrapping staircase) | the 20-epoch ratio at least 1.25 and the 60-epoch ratio above 1.1 |
 | `fws_both_s` | the two together | the 20- and 60-epoch ratios at least half way to the field's (1.38 and 1.34) |
 | `fws_wuacc6_f` | field, 6 h, `card REV`'s exe: wind-up accumulated with its restart response (`estimation.accumulate_phase_windup`, `network.cycle_slip.windup_restart_refloat`) against `runs/_rap_rev1_blk6_f` | the 60- and 120-epoch ratios fall by at least a quarter of their excess over 1 (to at most 1.69 and 1.62) |
+
+## 4. The arms (2026-10-01)
+
+All 2 h on `gnss_processor_wsx1.exe` (`e3d6c4955054e1f9`) unless stated; `fws_wuacc6_f` 6 h on
+`gnss_processor_rev1.exe` (`a59231c8802a14f8`) against `runs/_rap_rev1_blk6_f` (same exe). Ratio at
+5 / 20 / 60 epochs (`wsf_persist.py`):
+
+| arm | ratio | against the prediction |
+| --- | --- | --- |
+| field control `wsx_ctl_f` | 1.47 / 1.66 / 1.83 | |
+| `fws_eur_f` (European cluster dropped) | 1.54 / 1.81 / 2.00 | no (predicted no) |
+| `fws_el25_f` (mask 25 degrees) | 1.64 / 2.16 / 2.68 | the opposite of the station-side prediction |
+| `fws_noscc_f` (second code channel off) | 1.47 / 1.66 / 1.85 | no (predicted no) |
+| `fws_l1c_f` (L1C first) | 1.53 / 1.86 / 1.93 | no (predicted no) |
+| `fws_nomac_f` (MAC100AUS dropped, 38 % of the losses of lock) | 1.47 / 1.66 / 1.82 | FAILS (bar 1.52 / 1.59) |
+| `fws_noslip10_f` (the ten worst loss-of-lock stations dropped) | 1.41 / 1.51 / 1.78 | FAILS (bar 1.38 / 1.34) |
+| sim control `wsx_ctl_s` | 1.10 / 1.09 / 0.85 | |
+| `fws_mpph_s` (phase sinusoid 5 mm, 10 min) | 1.18 / 1.12 / 0.96 | FAILS (the sim's white noise is 2.5 times the field's) |
+| `fws_mpcd_s` (code sinusoid 0.3 m, 10 min) | 1.16 / 1.12 / 0.97 | no |
+| `fws_slip05_s` / `fws_slip_s` / `fws_slip45_s` (losses of lock 0.05 / 0.15 / 0.45 per arc-hour) | 1.13 / 1.13 / 0.84; 1.39 / 1.98 / 1.70; 1.77 / 3.37 / - | the sim reproduces the persistence above 0.05 |
+| `fws_step_s` (cycle steps, no gap, 0.15 per arc-hour) | 1.13 / 1.14 / 0.96 | no |
+| `fws_los30_s` (phase sinusoid 30 mm, 15 min: the field's colour-to-white ratio) | 1.82 / 1.67 / 0.69 | HOLDS |
+| `fws_wufrac_s` (fractional wind-up) | 1.18 / 1.40 / 1.56 | HOLDS |
+| `fws_both_s` (the two together) | 1.82 / 1.71 / 0.99 | FAILS at 60 epochs (bar 1.34): the coloured noise raises the one-epoch step the ratio divides by; in absolute terms its change over 60 epochs is 9.3 mm against the control's 5.1 and the fractional wind-up's 9.7 |
+| field 6 h control `rev1_blk6_f` | 1.54 / 1.83 / 1.98 (120: 1.84) | |
+| `fws_wuacc6_f` (wind-up accumulated with its restart response) | 1.45 / 1.51 / 1.54 (120: 1.53) | HOLDS (bar 1.69 / 1.62 at 60 / 120) |
+
+In absolute terms the field's walk changes over an hour by 9.1 mm (control) and 6.5 mm (accumulated
+wind-up); over two hours both reach 12 mm (sim 6.5). The restart response answered the 28 restarts it
+owed (none needed a refloat; 41 fell beyond the carry horizon; closure 69 of 69).
+
+## 5. Reading (2026-10-01)
+
+**What at the field stations makes the walk share larger** comes in two parts.
+
+The short time scales (2.5 to 10 minutes) are the field stations' own phase errors. The walk step
+follows the same epoch's satellite-mean ionosphere-free phase residual on both beds; the field's
+phase residuals are time-correlated at every station (lag-1 autocorrelation 0.64 against the sim's
+white 0.16, strongest at low-latitude stations in daylight), where the simulator draws white noise of
+2.5 times the size. Each station's coloured error is too short and too small to show on its own, but
+it reaches a satellite's phase-visible clock in proportion to how thinly that satellite is observed:
+the sparse side of the roster carries 88 % of the persistent walk and satellites seen from the dense
+European group are white. A coloured line-of-sight error on the sim at the field's colour-to-white
+ratio reproduces the field's short-lag persistence and reverts at an hour, as the field's own colour
+would.
+
+The long time scales (30 minutes to an hour) are mostly a processing choice: the field posture's
+fractional phase wind-up. Its wrapping staircase steps the applied correction by one cycle (107 mm in
+the ionosphere-free combination) at each half-cycle crossing, MW-blind, half of them unflagged by
+the IF-TD detector whose floor equals the step. Putting it into the sim creates long-lag persistence
+in 2 h; taking it out of the field (accumulated wind-up with its restart response, 6 h) removes 45 %
+of the excess at an hour and a third at two hours. What remains at the two-hour scale is not
+attributed.
+
+Not the cause: the stations that lose lock most (dropping them leaves the persistence; losses of
+lock do produce it on the sim above about 0.1 per arc-hour, but the field's are concentrated at a
+few stations whose removal changes little), low elevations (removing them makes it worse, fewer
+observations per satellite), the European cluster (it dilutes the walk), the second code channel,
+the L1W family, the clock pivot (card PAC), the orbits and the satellites' properties.
+
+**What follows (the author's decisions).** Accumulated phase wind-up for the field lineages, the open
+card of CLAUDE.md's wu93 section whose blocking response now exists and answered every restart owed
+here; the census read below grades its consumer effect. The sim's white phase noise under-represents
+the field's coloured error, so any sim validation of a member that passes motion (the hold family)
+needs a coloured component in the fixture. Coverage on the sparse side of the roster is the
+structural lever. Nothing is armed.
+
+**The census read** (not pre-registered): the phase-clock hold's wire of `fws_wuacc6_f`, rebuilt from
+its block trace (`smd_ctlwire.py ... phi_m -1`), on the 16-site census plus WTZZ00DEU (key `fwswu`)
+against the control's (`revlah`): the median paired change is 0.000 m in every hour (one or two sites
+move by a centimetre either way), WTZZ00DEU identical. Accumulated wind-up is consumer-neutral under
+the phase-clock hold, which does not pass the phase-visible motion it changes; its value is to the
+members that pass motion and to the estimator's own consistency.
+
+The re-grade of the station-side colour (this card's own computation over card REV's traces, each
+station-satellite arc of at least 40 epochs de-meaned): field station-median lag-1 / lag-5
+autocorrelation 0.65 / 0.19, every station at least 0.37; sim 0.15 / 0.04, p90 0.18.
