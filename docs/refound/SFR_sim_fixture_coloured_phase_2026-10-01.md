@@ -65,3 +65,23 @@ URUM00CHN 0.85, HKSL00HKG 0.84, JPLM00USA 0.82, LCK400IND 0.82, SGOC00LKA 0.80.
 If C1 cannot close with one Gauss-Markov term per class, the residual's shape needs a second
 component (card LSR's untested field ingredients, a phase-centre-like error swept by the geometry
 over a pass or a long-period multipath), recorded before it is added.
+
+### 3.1 The calibration ladder, predicted before it ran (2026-10-01)
+
+Candidates from the 24 h fixture's own per-station child configs (`sfr_calib.py genp`: the station,
+its seed salt and biases as generated; only the span, the white phase noise, the multipath phase
+amplitude and the colour block change), 2 h sim golden arms from 00:30:15, graded with
+`phase_acf.py`. The sim's existing multipath (2 mm at zenith per band, tau 300 s, one draw per band
+shared with the code multipath) already gives the post-fit residual a Gauss-Markov part of about 7 to
+8 mm that its 14 mm of white noise hides; its time constant is about twice the field's.
+
+| candidate | white phase sigma (zenith, per band) | multipath phase amplitude | colour (sigma at zenith, tau) |
+| --- | --- | --- | --- |
+| `k1` | 0.5 mm (from 3 mm) | 2 mm (unchanged) | none |
+| `k2` | 0.5 mm | 0 | tropical 5 mm, 120 s; mid 3.5 mm, 100 s; high 3.5 mm, 110 s |
+
+- **K1.** `k1` raises the class-median lag-1 autocorrelation to at least 0.6 but its time constant
+  (from the median acf(2) / acf(1)) reads above 150 s, longer than the field's 80 to 120 s.
+- **K2.** `k2` meets C1 in every class (within 0.10 at 1, 2 and 5 epochs, rms within 30 %), or the
+  ladder's next rung is set from `k2`'s miss by scaling sigma by the rms ratio and tau by the
+  ratio of the fitted time constants.
