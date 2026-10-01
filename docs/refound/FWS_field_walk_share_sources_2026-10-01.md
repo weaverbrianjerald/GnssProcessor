@@ -60,3 +60,28 @@ way toward the other bed's control (field toward 1.1 / 0.85, sim toward 1.66 / 1
 **Predictions.** The station side is the leading candidate: `fws_el25_f` lowers the field's ratio
 half way, and `fws_mpph_s` or `fws_mpcd_s` raises the sim's half way. `fws_eur_f`, `fws_noscc_f`,
 `fws_l1c_f` and `fws_slip_s` move it by less than a quarter of the gap.
+
+### 3.1 The first batch and the field-side arms it calls for (2026-10-01)
+
+The first batch read (`wsf_persist.py`, ratio at 5 / 20 / 60 epochs): the field subtractions do not
+lower the persistence (European cluster dropped 1.54 / 1.81 / 2.00; elevation mask 25 degrees 1.64 /
+2.16 / 2.68, worse, with the walk share at 1 h doubled to 10.3 mm; second code channel off 1.47 /
+1.66 / 1.85; L1C first 1.53 / 1.86 / 1.93; control 1.47 / 1.66 / 1.83). On the sim, time-correlated
+phase or code errors barely move it (1.18 / 1.12 / 0.96 and 1.16 / 1.12 / 0.97; control 1.10 / 1.09 /
+0.85) and losses of lock reproduce it (0.15 per arc-hour: 1.39 / 1.98 / 1.70). A second sim batch:
+0.05 per arc-hour 1.13 / 1.13 / 0.84 (no effect), 0.45 per arc-hour 1.77 / 3.37 at 5 / 20 epochs (too
+few clones reach 30 minutes for 60), cycle steps with no gap at 0.15 per arc-hour 1.13 / 1.14 / 0.96
+(no effect); the arm with `network.cycle_slip.relevel_free_epoch` off left too few clone rows to read.
+The prediction of section 3 failed on the station side (time-correlated errors) and held nowhere it
+was placed; the losses of lock carry it on the sim.
+
+On the field the loss-of-lock and resume events (lli_slip, if_slip, mw_wl_slip, reentry_relevel,
+arc_resume, sig_resume, attrib_arc) number 364 over 875 arc-hours in the first 2 h (0.42 per
+arc-hour), concentrated: MAC100AUS 137 (8.9 per arc-hour), then BSHM00ISR, MAJU00MHL, YKRO00CIV,
+BOGT00COL, SVTL00RUS, CPVG00CPV, WARK00NZL, DARW00AUS and LMMF00MTQ at 0.8 to 1.7 per arc-hour.
+
+**Two field arms, predicted before they ran.** `fws_nomac_f` drops MAC100AUS alone (38 % of the
+events); `fws_noslip10_f` drops the ten stations above (the size of the European arm, whose drop did
+not lower the persistence). If the losses of lock drive the field's persistence: `fws_noslip10_f`
+lowers the ratio at 20 and 60 epochs at least half way toward the sim's control (at most 1.38 and
+1.34), and `fws_nomac_f` by at least a quarter of the gap (at most 1.52 and 1.59).
