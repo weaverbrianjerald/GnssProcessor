@@ -74,6 +74,41 @@ def gen(a):
     sys.exit(rc)
 
 
+def recipe(a):
+    """The 24 h regeneration recipe: config/sim/simnet60_quiet_24h.json with the chosen white
+    noise, multipath phase amplitude, colour block and per-station class overrides, written to
+    config/sim/<name>.json with a provenance comment (the run length is the 24 h recipe's)."""
+    r = json.load(open(RECIPE, encoding='utf-8'))
+    r['_comment'] = [
+        f'Card SFR (docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md) re-base recipe, written by '
+        f'scripts/clock_level/sfr_calib.py recipe {" ".join(sys.argv[2:])}.',
+        'Identical to config/sim/simnet60_quiet_24h.json (commit 2306134) except the white phase noise, the '
+        'multipath phase amplitude, the phase_colour block and the per-station phase_colour overrides by latitude '
+        'class (tropical |lat| < 23.5, mid 23.5 to 50, high above 50 degrees), calibrated on the post-fit '
+        'ionosphere-free phase residual of the field golden (scripts/clock_level/phase_acf.py).'] + r.get('_comment', [])
+    if a.white is not None:
+        r['noise']['phase_sigma_zen_m'] = a.white
+    if a.mp_phase is not None:
+        r.setdefault('multipath', {})['phase_amp_zen_m'] = a.mp_phase
+    cls = {}
+    for c in a.cls or []:
+        name, v = c.split('=', 1)
+        s, t = v.split(',')
+        cls[name] = (float(s), float(t))
+    if cls and a.pc_floor is not None:
+        r.setdefault('phase_colour', {})['elev_factor_floor_deg'] = a.pc_floor
+    n = {}
+    for st in r['network_stations']:
+        k = klass(st['lat_deg'])
+        if k in cls:
+            st['phase_colour_sigma_zen_m'], st['phase_colour_tau_s'] = cls[k]
+            n[k] = n.get(k, 0) + 1
+    out = f'{ROOT}/config/sim/{a.name}.json'
+    json.dump(r, open(out, 'w', encoding='utf-8'), indent=2)
+    print(f'wrote {out}: white {r["noise"]["phase_sigma_zen_m"]}, multipath {r.get("multipath")}, '
+          f'colour {r.get("phase_colour")}, overrides {n}')
+
+
 def genp(a):
     """The calibration path: the existing fixture's per-station child configs (station, seed salt
     and biases as generated) with the run length, the white phase noise and the phase-colour block
@@ -175,5 +210,9 @@ if __name__ == '__main__':
     m = sp.add_parser('arm')
     m.add_argument('tag'); m.add_argument('posture', choices=['golden', 'program'])
     m.add_argument('--hours', type=float, default=2.0)
+    rc = sp.add_parser('recipe')
+    rc.add_argument('name'); rc.add_argument('--white', type=float)
+    rc.add_argument('--mp-phase', dest='mp_phase', type=float); rc.add_argument('--pc-floor', dest='pc_floor', type=float)
+    rc.add_argument('--class', dest='cls', action='append')
     a = p.parse_args()
-    {'gen': gen, 'genp': genp, 'arm': arm}[a.cmd](a)
+    {'gen': gen, 'genp': genp, 'arm': arm, 'recipe': recipe}[a.cmd](a)
