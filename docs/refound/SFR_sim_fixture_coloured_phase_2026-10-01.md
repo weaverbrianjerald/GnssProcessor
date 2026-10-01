@@ -47,6 +47,50 @@ URUM00CHN 0.85, HKSL00HKG 0.84, JPLM00USA 0.82, LCK400IND 0.82, SGOC00LKA 0.80.
   the white sigma and the per-class (tropical, mid, high by the station's latitude) sigma and tau
   adjusted until section 3's C1 holds.
 
+### 2.1 The build and the null gate (2026-10-01)
+
+**Built** (main, this commit): `include/sim/PhaseColour.hpp`
+(`sim::PhaseColourGenerator`, the per-line-of-sight unit-variance first-order Gauss-Markov recursion:
+a stationary start at first sight, phi = exp(-dt / tau) over the time since the satellite's previous
+visible epoch, its own `mt19937_64` and its own normal distribution, no draw and an exact 0.0 when
+sigma is 0); the `phase_colour` block of `SimConfig` (sigma at zenith, default 0; tau, default 100 s;
+the elevation floor, default the white noise's; a dedicated seed) with per-station overrides through
+the roster (`phase_colour_sigma_zen_m`, `phase_colour_tau_s`, copied into the child config by
+`writeStationConfig` only when present); in `src/sim/main.cpp` one draw per satellite and epoch,
+added in metres to every band's carrier phase and to no code, `truth_phase_colour.csv` and the
+summary lines written only when the block is on. `gnss_simulator_selftest` 99 of 99 (80 earlier and
+19 new, suites `SimPhaseColour`, `SimPhaseColourConfig`, `SimPhaseColourRoster` in
+`tests/sim/test_sim_phase_colour.cpp`). Exe `gnss_simulator_sfr1.exe`.
+
+**The null gate, as section 2 wrote it, cannot pass, and not because of the block.** No simulator
+built from the current source regenerates `runs/simnet60_quiet_wu93_24h`: card GAL (`787eca5`,
+2026-09-22) raised `MAX_CLOCK_BIAS` in `src/core/corrections/GnssCorrections.cpp` from 1e-3 to 1e-1 s,
+so three Galileo satellites whose a priori clocks exceed a millisecond (E05, E11, E12) are now
+synthesised where the old forward model dropped them, and three more satellites reorder every draw
+of every stream. The archived simulator of the fixture (`gnss_simulator_fable_24h.exe`) still
+reproduces it byte for byte on the current data, and HEAD's simulator built beside the new one
+matches it 13 of 13 files on three stations with the block off: that is the block's byte-identity.
+The re-base is therefore graded against a regeneration by the same exe (candidate `k0` of section
+3.1, no change), not against the archived fixture. The golden ignores Galileo, but the GPS
+realizations move with the draw order.
+
+**A defect found on the way, not fixed here.** `src/sim/main.cpp` shares one
+`std::normal_distribution` object between the white-noise stream and the wet-delay stream
+(`tropo_rng`); the value the distribution caches between calls crosses streams, so the "dedicated"
+wet-delay series changes whenever the number of white-noise draws does. The new block has its own
+distribution. Whether to give the wet-delay stream its own distribution in the same regeneration is
+recorded at the regeneration (it moves the wet-delay truth, which the re-base moves anyway).
+
+**The review** (an independent adversarial read of the diff, 2026-10-01): no defect blocks it; the seven
+claims hold (off draws nothing and changes no byte; the recursion is a stationary unit-variance AR(1) on the
+time since the satellite's previous visible epoch; band-common in metres on every phase band and never on
+code, |delta phase x lambda - e| at most 0.25 mm and the geometry-free part at most 0.37 mm, both the RINEX
+rounding; the roster override round-trips and an absent one inherits; the elevation factor is the white
+noise's). Open: no automated test runs the simulator's wiring itself (the selftest is product-free; the
+band-common case reproduces the formula), so the wiring rests on the two manual RINEX checks; the process
+also advances on an epoch the RINEX later drops (fewer than 5 satellites), statistically harmless; a
+non-object `phase_colour` value reads as off, as for the other blocks.
+
 ## 3. Predictions, written before any build
 
 - **C1 (the calibration closes).** Per class, the re-based sim's post-fit residual matches the

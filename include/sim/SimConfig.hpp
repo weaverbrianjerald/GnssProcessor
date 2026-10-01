@@ -22,6 +22,7 @@
  */
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -115,6 +116,15 @@ struct NetworkStation {
     /// stated explicitly.
     std::vector<RxBias> rx_code_bias;
     std::vector<RxBias> rx_phase_bias;
+    /// Per-station override of @c SimConfig::PhaseColour::sigma_zen_m (m; JSON roster
+    /// key @c phase_colour_sigma_zen_m, finite and >= 0).  NaN (the default) = absent:
+    /// the station inherits the network-level @c phase_colour block.  The coloured
+    /// phase error is calibrated per station class (tropical, mid, high latitude), so
+    /// the class is stated on the roster entry rather than derived from the latitude.
+    double phase_colour_sigma_zen_m{ std::numeric_limits<double>::quiet_NaN() };
+    /// Per-station override of @c SimConfig::PhaseColour::tau_s (s; JSON roster key
+    /// @c phase_colour_tau_s, finite and > 0).  NaN (the default) = inherit.
+    double phase_colour_tau_s{ std::numeric_limits<double>::quiet_NaN() };
 };
 
 /** @brief All run-time knobs for one synthesized dataset. */
@@ -168,6 +178,51 @@ struct SimConfig {
         double elev_factor_cap_deg{ 20.0 }; ///< 1/sin(el) amplification is clamped below this.
         std::uint64_t seed{ 20240315ULL ^ 0xA17EC0DEull }; ///< RNG seed for the multipath+slip stream (must be >= 0).
     } multipath;
+
+    /// Coloured carrier-phase error (card SFR,
+    /// docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md section 2): one
+    /// unit-variance first-order Gauss-Markov process per line of sight, scaled by
+    /// @c sigma_zen_m and the white phase noise's elevation factor
+    /// (1/sin(max(el, floor))), with a stationary start and phi = exp(-dt/tau) across
+    /// a visibility gap.  BAND-COMMON: the same metres reach the carrier phase of
+    /// every band of the satellite and nothing reaches code, so the ionosphere-free
+    /// combination keeps all of it and the free slant ionosphere none.  See
+    /// @c PhaseColourGenerator (sim/PhaseColour.hpp) for the recursion.
+    ///
+    /// The field's ionosphere-free post-fit phase residual is about 90 % such a
+    /// process (5 to 7 mm, tau 80 to 120 s, strongest in the tropics); the historical
+    /// sim's is about 80 % white.  The block is separate from @c multipath (one shared
+    /// code-and-phase draw per band, left as it is).
+    ///
+    /// Default @c sigma_zen_m = 0 = OFF: nothing is drawn, no truth file or summary
+    /// field is written, and every existing recipe regenerates byte-for-byte.  The
+    /// stream is dedicated and station-salted like the others, so an active block
+    /// cannot move the white-noise, multipath/slip, troposphere or receiver-clock
+    /// realizations.  A roster entry may override @c sigma_zen_m and @c tau_s per
+    /// station (@c NetworkStation), which is how the per-class calibration is stated.
+    /// When active, the realization is written to @c truth_phase_colour.csv.
+    struct PhaseColour {
+        double sigma_zen_m{ 0.0 };   ///< Zenith 1-sigma of the coloured phase error (m); 0 = off.  Must be >= 0.
+        double tau_s{ 100.0 };       ///< Gauss-Markov correlation time (s); must be > 0.
+        /// Floor on elevation in the 1/sin(el) amplification (deg).  NaN (the default)
+        /// = the white noise's @c noise.elev_factor_floor_deg (5 deg by default), so the
+        /// two phase errors share one elevation shape unless this is set explicitly.
+        /// Resolve with @ref SimConfig::phaseColourElevFloorDeg.
+        double elev_factor_floor_deg{ std::numeric_limits<double>::quiet_NaN() };
+        std::uint64_t seed{ 20240315ULL ^ 0xC0105EEDull }; ///< Dedicated RNG seed (must be >= 0); distinct from every other stream.
+    } phase_colour;
+
+    /**
+     * @brief The phase-colour elevation floor in effect (deg).
+     *
+     * @return @c phase_colour.elev_factor_floor_deg when it is set (finite), else
+     *         @c noise.elev_factor_floor_deg.
+     */
+    double phaseColourElevFloorDeg() const {
+        return std::isfinite(phase_colour.elev_factor_floor_deg)
+                   ? phase_colour.elev_factor_floor_deg
+                   : noise.elev_factor_floor_deg;
+    }
 
     /// Which signals each constellation transmits.  Two bands per system is the
     /// historical fixture (GPS C1C/L1C + C2W/L2W, Galileo C1C/L1C + C5Q/L5Q); a third
@@ -742,8 +797,11 @@ std::uint64_t stationSeedSalt(const std::string& name);
  * exactly), then overrides only what makes this invocation a specific station:
  * the station identity and salt, the trajectory origin, and the absolute storm
  * anchor.  A non-empty per-station @c rx_code_bias / @c rx_phase_bias list
- * replaces the matching @c biases list, and a roster entry's @c scripted_slips
- * array replaces @c cycle_slips.scripted.  It also strips @c network_stations so
+ * replaces the matching @c biases list, a roster entry's @c scripted_slips
+ * array replaces @c cycle_slips.scripted, and a finite per-station
+ * @c phase_colour_sigma_zen_m / @c phase_colour_tau_s replaces
+ * @c phase_colour.sigma_zen_m / @c phase_colour.tau_s (an absent override leaves
+ * the network-level value in the child).  It also strips @c network_stations so
  * the child cannot recurse.
  *
  * The absolute anchor is the reason this helper exists rather than the driver

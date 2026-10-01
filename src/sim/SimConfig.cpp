@@ -91,6 +91,39 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.multipath.elev_factor_cap_deg= jval(s, "multipath.elev_factor_cap_deg","", cfg.multipath.elev_factor_cap_deg);
     cfg.multipath.seed               = jseed("multipath.seed", cfg.multipath.seed);
 
+    // Coloured phase error (card SFR).  sigma_zen_m = 0 (the default) is OFF and draws
+    // nothing, so a config without the block is byte-identical.  Each key is
+    // type-checked here rather than left to jval, whose get<double>() would throw out
+    // of the loader on a non-numeric value instead of returning a readable error.
+    {
+        auto readNum = [&](const char* key, double& out) -> bool {
+            const nlohmann::json* p = resolvePath(s, key);
+            if (!p) return true;
+            if (!p->is_number()) return false;
+            out = p->get<double>();
+            return true;
+        };
+        if (!readNum("phase_colour.sigma_zen_m", cfg.phase_colour.sigma_zen_m) ||
+            !std::isfinite(cfg.phase_colour.sigma_zen_m) || cfg.phase_colour.sigma_zen_m < 0.0)
+            return fail("sim config 'phase_colour.sigma_zen_m' must be a finite number >= 0 "
+                        "(a zenith 1-sigma in metres; 0 = off)");
+        if (!readNum("phase_colour.tau_s", cfg.phase_colour.tau_s) ||
+            !std::isfinite(cfg.phase_colour.tau_s) || !(cfg.phase_colour.tau_s > 0.0))
+            return fail("sim config 'phase_colour.tau_s' must be a finite number > 0 "
+                        "(a Gauss-Markov correlation time in seconds)");
+        // Absent keeps the NaN sentinel ("use noise.elev_factor_floor_deg"); an explicit
+        // value must be a usable elevation.
+        if (resolvePath(s, "phase_colour.elev_factor_floor_deg")) {
+            if (!readNum("phase_colour.elev_factor_floor_deg", cfg.phase_colour.elev_factor_floor_deg) ||
+                !std::isfinite(cfg.phase_colour.elev_factor_floor_deg) ||
+                cfg.phase_colour.elev_factor_floor_deg <= 0.0 ||
+                cfg.phase_colour.elev_factor_floor_deg >= 90.0)
+                return fail("sim config 'phase_colour.elev_factor_floor_deg' must be a number "
+                            "in (0, 90) degrees (omit it to use noise.elev_factor_floor_deg)");
+        }
+        cfg.phase_colour.seed = jseed("phase_colour.seed", cfg.phase_colour.seed);
+    }
+
     cfg.slips.rate_base        = jval(s, "cycle_slips.rate_base",        "", cfg.slips.rate_base);
     cfg.slips.min_gap_epochs   = jint("cycle_slips.min_gap_epochs",   cfg.slips.min_gap_epochs);
     cfg.slips.max_elev_deg     = jval(s, "cycle_slips.max_elev_deg",     "", cfg.slips.max_elev_deg);
@@ -771,6 +804,22 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
             if (const char* why = loadStationRxBias("rx_phase_bias", st.rx_phase_bias))
                 return fail(where + ".rx_phase_bias " + why);
 
+            // Per-station phase-colour override (card SFR): the per-class calibration is
+            // stated on the roster.  Absent keeps the NaN sentinel, so the child inherits
+            // the network-level phase_colour block unchanged.
+            if (el.contains("phase_colour_sigma_zen_m")) {
+                const auto& v = el["phase_colour_sigma_zen_m"];
+                if (!v.is_number() || !std::isfinite(v.get<double>()) || v.get<double>() < 0.0)
+                    return fail(where + ".phase_colour_sigma_zen_m must be a finite number >= 0 (m)");
+                st.phase_colour_sigma_zen_m = v.get<double>();
+            }
+            if (el.contains("phase_colour_tau_s")) {
+                const auto& v = el["phase_colour_tau_s"];
+                if (!v.is_number() || !std::isfinite(v.get<double>()) || !(v.get<double>() > 0.0))
+                    return fail(where + ".phase_colour_tau_s must be a finite number > 0 (s)");
+                st.phase_colour_tau_s = v.get<double>();
+            }
+
             cfg.network_stations.push_back(std::move(st));
         }
         if (n_consumer > 1)
@@ -949,6 +998,22 @@ bool writeStationConfig(const std::filesystem::path& base_config,
                 s["cycle_slips"] = nlohmann::json::object();
             s["cycle_slips"]["scripted"] = el["scripted_slips"];
         }
+    }
+
+    // Per-station phase-colour override (card SFR), on the same rule as the scripted
+    // slips: a value the roster entry declares replaces the network-level knob for that
+    // station, and an absent one leaves the base value in the child untouched.  The
+    // values come from the loaded roster entry (validated there) rather than from a
+    // second walk of the raw JSON, because they are scalars with a range check.  A
+    // station with neither override gets no "phase_colour" edit at all, so its child
+    // config is the base config's block verbatim.
+    if (std::isfinite(st.phase_colour_sigma_zen_m) || std::isfinite(st.phase_colour_tau_s)) {
+        if (!s.contains("phase_colour") || !s["phase_colour"].is_object())
+            s["phase_colour"] = nlohmann::json::object();
+        if (std::isfinite(st.phase_colour_sigma_zen_m))
+            s["phase_colour"]["sigma_zen_m"] = st.phase_colour_sigma_zen_m;
+        if (std::isfinite(st.phase_colour_tau_s))
+            s["phase_colour"]["tau_s"] = st.phase_colour_tau_s;
     }
 
     // The child must not recurse, and must not think it owns a roster.

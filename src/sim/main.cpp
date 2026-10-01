@@ -49,6 +49,7 @@
 #include "sim/AmbiguityDraw.hpp"
 #include "sim/EphemerisProvider.hpp"
 #include "sim/IonoDisturbance.hpp"
+#include "sim/PhaseColour.hpp"
 #include "sim/RinexObsWriter.hpp"
 #include "sim/SatClockError.hpp"
 #include "sim/ScriptedSlips.hpp"
@@ -1929,6 +1930,18 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     const double mp_tau_s = scfg.multipath.tau_s;                 // multipath correlation time
     const double mp_phi = std::exp(-tcfg.interval_s / mp_tau_s);  // ~0.905 at 30 s
     const double mp_phase_amp = scfg.multipath.phase_amp_zen_m;   // zenith phase multipath (m)
+
+    // --- Coloured phase error (card SFR): per-line-of-sight Gauss-Markov. -------
+    // Band-common in metres, phase only.  Its own station-salted stream (the tropo_rng
+    // precedent), so it cannot move any other draw; with sigma_zen_m == 0 (the default)
+    // the generator is inactive, draws nothing, and every sample below is a literal 0.0.
+    sim::PhaseColourGenerator phase_colour(scfg.phase_colour.sigma_zen_m, scfg.phase_colour.tau_s,
+                                           scfg.phaseColourElevFloorDeg(),
+                                           saltSeed(scfg.phase_colour.seed));
+    const bool want_phase_colour = phase_colour.active();
+    double max_abs_phase_colour_m = 0.0;   // peak |e| over the arc (m)
+    double sumsq_phase_colour_m2 = 0.0;    // for the arc rms of e (m^2)
+    long long n_phase_colour = 0;          // (epoch, satellite) samples injected
     const double slip_base = scfg.slips.rate_base;     // per-epoch slip-rate base; scaled by 1/sin^2(el)
     const int slip_min_gap = scfg.slips.min_gap_epochs;// min epochs between slips on one (sat,band)
     auto slipProb = [&](double el_deg) -> double {
@@ -2171,6 +2184,17 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         windup_csv << "week,tow_s,satellite,windup_cycles\n" << std::fixed << std::setprecision(6);
     }
     double max_abs_windup_cycles = 0.0;
+
+    // Coloured phase error truth (card SFR), written only when the block is active
+    // (an absent file states that the channel was not simulated).  One row per (epoch,
+    // satellite): e_m is the band-common metres added to every band's carrier phase,
+    // u the unit-variance Gauss-Markov value it was scaled from (e_m = sigma_zen_m *
+    // 1/sin(max(el, floor)) * u), so the process can be graded without the elevation.
+    std::ofstream phase_colour_csv;
+    if (want_phase_colour) {
+        phase_colour_csv.open(outdir / "truth_phase_colour.csv");
+        phase_colour_csv << "week,tow_s,satellite,e_m,u\n" << std::fixed;
+    }
 
     // Per-observable receiver bias truth.  Written only when at least one bias is
     // configured, like truth_bias.csv / truth_otl.csv: an empty file cannot be told
@@ -2444,6 +2468,25 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                 const double sc = sigma_zen * el_factor;   // code sigma (m)
                 const double sp = sigma_phase * el_factor; // phase sigma (m)
 
+                // Coloured phase error (card SFR): one draw per (station, satellite,
+                // epoch), outside the band loop, so the same metres reach every band's
+                // phase.  The time argument is seconds since the arc's first epoch; the
+                // generator advances each line of sight across the time since its own
+                // previous visible epoch, so a set-and-rise gap decorrelates it.
+                // Inactive (the default): a literal 0.0 and no draw.
+                double pc_m = 0.0;
+                if (want_phase_colour) {
+                    const double t_arc_s = (t.week - truth.front().time.week) * 604800.0
+                                         + (t.tow - truth.front().time.tow);
+                    pc_m = phase_colour.sample(sat, t_arc_s, elev);
+                    max_abs_phase_colour_m = std::max(max_abs_phase_colour_m, std::abs(pc_m));
+                    sumsq_phase_colour_m2 += pc_m * pc_m;
+                    ++n_phase_colour;
+                    phase_colour_csv << t.week << "," << std::setprecision(3) << t.tow << ","
+                                     << sat << "," << std::setprecision(6) << pc_m << ","
+                                     << phase_colour.lastUnit() << "\n";
+                }
+
                 sim::SatObs row;
                 row.sat_id = sat;
                 double first_code_noise = 0.0;
@@ -2593,8 +2636,11 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                     const double rxb_code  = rxBias(rx_code_bias_map,  band.code);
                     const double rxb_phase = rxBias(rx_phase_bias_map, band.phase);
                     row.values[band.code] = P + tropo + m7 + ant + bias_code + rxb_code + plan.isb_m + I_b + nc + mp_code;
+                    // pc_m (card SFR) is the band-common coloured phase error in metres,
+                    // phase only; the literal 0.0 when the block is off, and x + 0.0 == x,
+                    // so an off run is byte-identical.
                     row.values[band.phase] =
-                        (P + tropo + m7 + ant + bias_phase + rxb_phase + plan.isb_m - I_b + windup_m + band.wavelength * N + np + np_scint + mp_phase) /
+                        (P + tropo + m7 + ant + bias_phase + rxb_phase + plan.isb_m - I_b + windup_m + band.wavelength * N + np + np_scint + mp_phase + pc_m) /
                         band.wavelength;
                     if (slip_lli) row.lli[band.phase] = 1; // loss-of-lock flag for flagged slips
                     const std::string akey = sat + "/" + band.phase;
@@ -2747,6 +2793,17 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         }
         if (scfg.corrections.phase_windup)
             sc << "windup_max_abs_cycles," << std::setprecision(6) << max_abs_windup_cycles << "\n";
+        // Coloured phase error (card SFR).  Emitted only when active, so an off run keeps
+        // a byte-identical truth_scalars.csv; the next row sets its own precision.
+        if (want_phase_colour) {
+            sc << "phase_colour_sigma_zen_m," << std::setprecision(6) << phase_colour.sigmaZenM() << "\n";
+            sc << "phase_colour_tau_s," << std::setprecision(3) << phase_colour.tauS() << "\n";
+            sc << "phase_colour_elev_factor_floor_deg," << phase_colour.elevFloorDeg() << "\n";
+            sc << "phase_colour_max_abs_m," << std::setprecision(6) << max_abs_phase_colour_m << "\n";
+            sc << "phase_colour_rms_m,"
+               << (n_phase_colour ? std::sqrt(sumsq_phase_colour_m2 / static_cast<double>(n_phase_colour)) : 0.0)
+               << "\n";
+        }
         sc << "storm_window_start_tow_s," << std::setprecision(3) << win_start << "\n";
         sc << "storm_window_end_tow_s," << win_end << "\n";
         sc << "peak_dI_L1_m," << std::setprecision(4) << peak_dI_L1 << "\n";
@@ -2853,6 +2910,23 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
            << ", \"phase_amp_zenith_m\": " << std::setprecision(4) << mp_phase_amp
            << ", \"elev_factor_cap_deg\": " << std::setprecision(1) << scfg.multipath.elev_factor_cap_deg
            << ", \"peak_code_m\": " << std::setprecision(3) << max_mp_code << "},\n";
+        // Coloured phase error (card SFR).  Emitted only when active, so an off run's
+        // summary is byte-identical; every number below sets its own precision and the
+        // next object's numbers set theirs.  The seed is the configured (unsalted) value,
+        // like the noise seed above; the station salt is applied on top of it.
+        if (want_phase_colour) {
+            js << "  \"phase_colour\": {\"model\": \"Gauss-Markov, per line of sight, band-common, phase only\""
+               << ", \"sigma_zen_m\": " << std::setprecision(6) << phase_colour.sigmaZenM()
+               << ", \"tau_s\": " << std::setprecision(3) << phase_colour.tauS()
+               << ", \"elev_factor_floor_deg\": " << phase_colour.elevFloorDeg()
+               << ", \"seed\": " << scfg.phase_colour.seed
+               << ", \"n_lines_of_sight\": " << phase_colour.starts()
+               << ", \"n_samples\": " << n_phase_colour
+               << ", \"max_abs_m\": " << std::setprecision(6) << max_abs_phase_colour_m
+               << ", \"rms_m\": "
+               << (n_phase_colour ? std::sqrt(sumsq_phase_colour_m2 / static_cast<double>(n_phase_colour)) : 0.0)
+               << ", \"detail\": \"truth_phase_colour.csv\"},\n";
+        }
         js << "  \"cycle_slips\": {\"count\": " << n_slips << ", \"flagged_lli\": " << n_slips_flagged
            << ", \"unflagged\": " << (n_slips - n_slips_flagged) << ", \"detail\": \"truth_slips.csv\"";
         // The answer-key record of where the scripted slips landed: one entry per
@@ -3002,6 +3076,20 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     if (n_slips_scripted > 0)
         std::cout << "; scripted: " << n_slips_scripted << " (" << n_slips_scripted_flagged << " flagged)";
     std::cout << "\n";
+    if (want_phase_colour) {
+        // Formatted through a local stream, like the ocean-loading line, so cout's
+        // float mode for the lines that follow is untouched.
+        std::ostringstream pc_msg;
+        pc_msg << std::fixed << std::setprecision(2) << "[" << tag
+               << "] coloured phase error (Gauss-Markov per line of sight, tau="
+               << phase_colour.tauS() << " s, sigma_zen=" << phase_colour.sigmaZenM() * 1.0e3
+               << " mm, floor " << phase_colour.elevFloorDeg() << " deg): "
+               << phase_colour.starts() << " lines of sight, rms "
+               << (n_phase_colour ? std::sqrt(sumsq_phase_colour_m2 / static_cast<double>(n_phase_colour)) : 0.0) * 1.0e3
+               << " mm, max |e| " << max_abs_phase_colour_m * 1.0e3
+               << " mm -- band-common, phase only (truth_phase_colour.csv)";
+        std::cout << pc_msg.str() << "\n";
+    }
     if (sf_quiet_n > 0 && sf_storm_n > 0) {
         std::cout << std::setprecision(3) << "[" << tag
                   << "] single-freq SPP (GPS L1 + Klobuchar): quiet 3D mean " << sf_quiet_sum / sf_quiet_n
