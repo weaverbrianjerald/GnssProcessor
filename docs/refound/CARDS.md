@@ -441,3 +441,5 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   tau 80 to 120 s) over 2 mm of white noise, the sim's about 80 % white (14 mm); a band-common
   per-line-of-sight Gauss-Markov term in the simulator, calibrated per station class on the post-fit
   instrument, and the white noise cut, in one regeneration (C1 to C4).
+  RE-BASED: six calibration rungs (the colour capped at 20 degrees of elevation is what matches); the
+  sim golden reads `runs/simnet60_quiet_col_24h` (baseline `runs/_rf0hv13_sim6`); old sim numbers superseded.

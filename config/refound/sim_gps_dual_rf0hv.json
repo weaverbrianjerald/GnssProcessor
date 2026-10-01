@@ -106,7 +106,8 @@
     "Accumulated, every return after a gap above 300 s restarts the unwrap; the response (fixed in card WUP: it reaches a",
     "re-entering arc through its leveling carry) frees the arcs whose carry would fold across the restart.  6 h: 69 restarts,",
     "27 answered (52 arcs), 1 with nothing to free, 0 bridged; IF-TD flags 111 to 70; WTZZ00DEU within 3 mm in every hour;",
-    "census section 5 of the card.  Baseline pair: runs/_rf0hv12_{field,sim}6, exe gnss_processor_wup2.exe."
+    "census section 5 of the card.  Baseline pair: runs/_rf0hv12_{field,sim}6, exe gnss_processor_wup2.exe.",
+    "2026-10-01 (card SFR, docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md): RE-POINTED at the re-based fixture runs/simnet60_quiet_col_24h (recipe config/sim/simnet60_quiet_col_24h.json: white phase noise 0.5 mm, a band-common Gauss-Markov phase colour by latitude class calibrated on the field's post-fit residual, the multipath phase off), the RINEX paths changed and nothing else."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -375,7 +376,7 @@
           -1593331.7073,
           3025603.1127
         ],
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/SZZ000SIM/SZZ000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/SZZ000SIM/SZZ000SIM_R_20241290000_01D_30S_MO.rnx",
         "name": "SZZ000SIM"
       }
     },
@@ -492,7 +493,7 @@
     "stations": [
       {
         "name": "S01000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S01000SIM/S01000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S01000SIM/S01000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           2265188.7012,
           0.0,
@@ -501,7 +502,7 @@
       },
       {
         "name": "S02000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S02000SIM/S02000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S02000SIM/S02000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -2021407.8772,
           1851772.8674,
@@ -510,7 +511,7 @@
       },
       {
         "name": "S03000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S03000SIM/S03000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S03000SIM/S03000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           273912.3392,
           -3121107.4037,
@@ -519,7 +520,7 @@
       },
       {
         "name": "S04000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S04000SIM/S04000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S04000SIM/S04000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           2110094.6191,
           2752245.5542,
@@ -528,7 +529,7 @@
       },
       {
         "name": "S05000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S05000SIM/S05000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S05000SIM/S05000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -3705701.6763,
           -655489.3702,
@@ -537,7 +538,7 @@
       },
       {
         "name": "S06000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S06000SIM/S06000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S06000SIM/S06000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           3397507.9405,
           -2161218.134,
@@ -546,7 +547,7 @@
       },
       {
         "name": "S07000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S07000SIM/S07000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S07000SIM/S07000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -1106673.1228,
           4116764.3558,
@@ -555,7 +556,7 @@
       },
       {
         "name": "S08000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S08000SIM/S08000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S08000SIM/S08000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -2064270.9522,
           -3974619.9047,
@@ -564,7 +565,7 @@
       },
       {
         "name": "S09000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S09000SIM/S09000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S09000SIM/S09000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           4392069.1972,
           1603975.5492,
@@ -573,7 +574,7 @@
       },
       {
         "name": "S10000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S10000SIM/S10000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S10000SIM/S10000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -4487672.5452,
           1852443.8311,
@@ -582,7 +583,7 @@
       },
       {
         "name": "S11000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S11000SIM/S11000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S11000SIM/S11000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           2128113.2168,
           -4547662.7078,
@@ -591,7 +592,7 @@
       },
       {
         "name": "S12000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S12000SIM/S12000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S12000SIM/S12000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           1547939.7961,
           4935074.6182,
@@ -600,7 +601,7 @@
       },
       {
         "name": "S13000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S13000SIM/S13000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S13000SIM/S13000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -4596705.4847,
           -2663888.1516,
@@ -609,7 +610,7 @@
       },
       {
         "name": "S14000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S14000SIM/S14000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S14000SIM/S14000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           5315422.6762,
           -1168583.9399,
@@ -618,7 +619,7 @@
       },
       {
         "name": "S15000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S15000SIM/S15000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S15000SIM/S15000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -3197637.6567,
           4548309.9624,
@@ -627,7 +628,7 @@
       },
       {
         "name": "S16000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S16000SIM/S16000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S16000SIM/S16000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -728568.2988,
           -5622341.4988,
@@ -636,7 +637,7 @@
       },
       {
         "name": "S17000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S17000SIM/S17000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S17000SIM/S17000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           4411813.1306,
           3718277.511,
@@ -645,7 +646,7 @@
       },
       {
         "name": "S18000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S18000SIM/S18000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S18000SIM/S18000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -5854622.9766,
           242105.8997,
@@ -654,7 +655,7 @@
       },
       {
         "name": "S19000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S19000SIM/S19000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S19000SIM/S19000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           4212623.3859,
           -4192116.0307,
@@ -663,7 +664,7 @@
       },
       {
         "name": "S20000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S20000SIM/S20000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S20000SIM/S20000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -277920.2669,
           6010320.5421,
@@ -672,7 +673,7 @@
       },
       {
         "name": "S21000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S21000SIM/S21000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S21000SIM/S21000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -3898490.8824,
           -4671698.1465,
@@ -681,7 +682,7 @@
       },
       {
         "name": "S22000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S22000SIM/S22000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S22000SIM/S22000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           6090331.3285,
           819440.5909,
@@ -690,7 +691,7 @@
       },
       {
         "name": "S23000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S23000SIM/S23000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S23000SIM/S23000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -5086628.8173,
           3539145.0419,
@@ -699,7 +700,7 @@
       },
       {
         "name": "S24000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S24000SIM/S24000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S24000SIM/S24000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           1370263.2173,
           -6090944.0534,
@@ -708,7 +709,7 @@
       },
       {
         "name": "S25000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S25000SIM/S25000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S25000SIM/S25000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           3123707.4603,
           5451277.822,
@@ -717,7 +718,7 @@
       },
       {
         "name": "S26000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S26000SIM/S26000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S26000SIM/S26000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -6015176.8024,
           -1919005.3175,
@@ -726,7 +727,7 @@
       },
       {
         "name": "S27000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S27000SIM/S27000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S27000SIM/S27000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           5755649.5185,
           -2659251.8342,
@@ -735,7 +736,7 @@
       },
       {
         "name": "S28000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S28000SIM/S28000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S28000SIM/S28000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -2455423.289,
           5867116.8614,
@@ -744,7 +745,7 @@
       },
       {
         "name": "S29000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S29000SIM/S29000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S29000SIM/S29000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -2156525.1935,
           -5995691.5768,
@@ -753,7 +754,7 @@
       },
       {
         "name": "S30000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S30000SIM/S30000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S30000SIM/S30000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           5646469.6887,
           2967631.571,
@@ -762,7 +763,7 @@
       },
       {
         "name": "S31000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S31000SIM/S31000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S31000SIM/S31000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -6166935.7629,
           1625586.9508,
@@ -771,7 +772,7 @@
       },
       {
         "name": "S32000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S32000SIM/S32000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S32000SIM/S32000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           3446189.4087,
           -5359613.3614,
@@ -780,7 +781,7 @@
       },
       {
         "name": "S33000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S33000SIM/S33000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S33000SIM/S33000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           1077222.1284,
           6268014.7823,
@@ -789,7 +790,7 @@
       },
       {
         "name": "S34000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S34000SIM/S34000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S34000SIM/S34000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -5012136.8694,
           -3881678.6011,
@@ -798,7 +799,7 @@
       },
       {
         "name": "S35000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S35000SIM/S35000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S35000SIM/S35000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           6292952.093,
           -521355.7515,
@@ -807,7 +808,7 @@
       },
       {
         "name": "S36000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S36000SIM/S36000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S36000SIM/S36000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -4266630.3117,
           4612109.0895,
@@ -816,7 +817,7 @@
       },
       {
         "name": "S37000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S37000SIM/S37000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S37000SIM/S37000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           30453.5145,
           -6242733.4836,
@@ -825,7 +826,7 @@
       },
       {
         "name": "S38000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S38000SIM/S38000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S38000SIM/S38000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           4164188.9032,
           4590415.345,
@@ -834,7 +835,7 @@
       },
       {
         "name": "S39000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S39000SIM/S39000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S39000SIM/S39000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -6117646.8857,
           -566978.4875,
@@ -843,7 +844,7 @@
       },
       {
         "name": "S40000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S40000SIM/S40000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S40000SIM/S40000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           4846832.3351,
           -3678572.6668,
@@ -852,7 +853,7 @@
       },
       {
         "name": "S41000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S41000SIM/S41000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S41000SIM/S41000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -1077158.0771,
           5920991.0982,
@@ -861,7 +862,7 @@
       },
       {
         "name": "S42000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S42000SIM/S42000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S42000SIM/S42000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -3164833.7543,
           -5029232.3286,
@@ -870,7 +871,7 @@
       },
       {
         "name": "S43000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S43000SIM/S43000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S43000SIM/S43000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           5651677.5197,
           1548891.5466,
@@ -879,7 +880,7 @@
       },
       {
         "name": "S44000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S44000SIM/S44000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S44000SIM/S44000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -5133228.1861,
           2634282.7642,
@@ -888,7 +889,7 @@
       },
       {
         "name": "S45000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S45000SIM/S45000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S45000SIM/S45000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           1970595.7411,
           -5315348.8366,
@@ -897,7 +898,7 @@
       },
       {
         "name": "S46000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S46000SIM/S46000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S46000SIM/S46000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           2096605.6725,
           5150264.2131,
@@ -906,7 +907,7 @@
       },
       {
         "name": "S47000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S47000SIM/S47000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S47000SIM/S47000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -4916825.9277,
           -2330170.6985,
@@ -915,7 +916,7 @@
       },
       {
         "name": "S48000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S48000SIM/S48000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S48000SIM/S48000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           5076915.0258,
           -1565268.1682,
@@ -924,7 +925,7 @@
       },
       {
         "name": "S49000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S49000SIM/S49000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S49000SIM/S49000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -2615710.4927,
           4463241.6573,
@@ -933,7 +934,7 @@
       },
       {
         "name": "S50000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S50000SIM/S50000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S50000SIM/S50000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -1053981.8223,
           -4908193.4846,
@@ -942,7 +943,7 @@
       },
       {
         "name": "S51000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S51000SIM/S51000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S51000SIM/S51000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           3958209.1877,
           2811726.1395,
@@ -951,7 +952,7 @@
       },
       {
         "name": "S52000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S52000SIM/S52000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S52000SIM/S52000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -4639766.3632,
           578242.3955,
@@ -960,7 +961,7 @@
       },
       {
         "name": "S53000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S53000SIM/S53000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S53000SIM/S53000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           2902646.3175,
           -3410151.6854,
@@ -969,7 +970,7 @@
       },
       {
         "name": "S54000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S54000SIM/S54000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S54000SIM/S54000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           155372.7678,
           4260598.8711,
@@ -978,7 +979,7 @@
       },
       {
         "name": "S55000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S55000SIM/S55000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S55000SIM/S55000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -2826473.0884,
           -2868148.0124,
@@ -987,7 +988,7 @@
       },
       {
         "name": "S56000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S56000SIM/S56000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S56000SIM/S56000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           3758168.7873,
           192156.2004,
@@ -996,7 +997,7 @@
       },
       {
         "name": "S57000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S57000SIM/S57000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S57000SIM/S57000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -2674021.2834,
           2209408.5096,
@@ -1005,7 +1006,7 @@
       },
       {
         "name": "S58000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S58000SIM/S58000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S58000SIM/S58000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           432848.6339,
           -3102426.7751,
@@ -1014,7 +1015,7 @@
       },
       {
         "name": "S59000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S59000SIM/S59000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S59000SIM/S59000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           1554735.7565,
           2257956.1359,
@@ -1023,7 +1024,7 @@
       },
       {
         "name": "S60000SIM",
-        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S60000SIM/S60000SIM_R_20241290000_01D_30S_MO.rnx",
+        "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_col_24h/S60000SIM/S60000SIM_R_20241290000_01D_30S_MO.rnx",
         "position_ecef": [
           -2208068.2554,
           -508072.2,

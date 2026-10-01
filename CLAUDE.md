@@ -386,6 +386,14 @@ and is fixed.  Baseline pair `runs/_rf0hv12_{field,sim}6` (exe `gnss_processor_w
 0.059 0.029 0.033 0.038 0.041 m by hour, sim 0.601 0.104 0.096 0.055 0.055 0.049 m; the field census with
 accumulating consumers 2.6 cm better at the median site in hours 2 to 6, none worse.  ⚠ A producer and its
 consumers belong on the SAME wind-up mode: the gain is the consumers' own (the wire alone is neutral).
+Card SFR (2026-10-01): the SIM golden re-based on the regenerated fixture `runs/simnet60_quiet_col_24h`
+(`config/sim/simnet60_quiet_col_24h.json`: white phase noise 0.5 mm, multipath phase off, a band-common
+Gauss-Markov phase colour capped at 20 degrees, tau 300 s, 6.0 / 4.9 / 4.4 mm by latitude class, calibrated
+on the field's post-fit ionosphere-free phase residual) through the frozen base
+`config/refound/sim_gps_dual_rf0hv_golden_2026-10-01.json` (RINEX paths only).  Baseline `runs/_rf0hv13_sim6`:
+0.656 0.167 0.042 0.030 0.026 0.025 m by hour.  ⚠ Every persistence-sensitive sim number on the old fixture
+(`simnet60_quiet_wu93_24h`) is SUPERSEDED (PVN, SMH G2/G3, SMD, QPV, REV/SMC, CTU/CTU2, FWS, the sim census):
+re-capture, never compare across the two fixtures.  The old fixture cannot be regenerated from current source.
 
 They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
 + `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base

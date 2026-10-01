@@ -5,7 +5,7 @@
 - **id:** SFR
 - **topic:** sim-bed
 - **status:** open
-- **summary:** PRE-REGISTERED 2026-10-01 (the outside review's decision after card FWS: a re-base, sequenced before any hold work for the real-time posture). The sim's phase error is the wrong shape for every persistence-sensitive result: its ionosphere-free post-fit phase residual is about 80 % white (14 mm) with a weak 5-minute multipath, where the field's is about 90 % a Gauss-Markov process (5 to 7 mm, tau 80 to 120 s, strongest in the tropics) over about 2 mm of white noise (section 1). The re-base adds a per-line-of-sight, band-common Gauss-Markov phase error to the simulator, calibrated per station class on the post-fit instrument (the field's raw error is not observable), and cuts the white phase noise to the field's level in the same regeneration. The old fixture's numbers become superseded, not wrong.
+- **summary:** RE-BASED 2026-10-01 (sections 4 and 5): the simulator's band-common per-line-of-sight Gauss-Markov phase colour (default off, byte-identical), calibrated in six rungs; the colour must be capped at 20 degrees of elevation (with the white noise's 1 / sin e to 5 degrees the estimator absorbs its slow part). The recipe (white 0.5 mm, multipath phase off, colour 300 s, 6.0 / 4.9 / 4.4 mm by latitude class) matches the field's post-fit residual in every class; the regenerated fixture `runs/simnet60_quiet_col_24h` is the sim golden's from this card (baseline `runs/_rf0hv13_sim6`), and every persistence-sensitive sim number on the old fixture is superseded. Open: whether the colour also carries the field's long-scale walk-share remainder (C3 failed on a 2 h arm; the 6 h test is section 5.1). PRE-REGISTERED 2026-10-01 (the outside review's decision after card FWS: a re-base, sequenced before any hold work for the real-time posture). The sim's phase error is the wrong shape for every persistence-sensitive result: its ionosphere-free post-fit phase residual is about 80 % white (14 mm) with a weak 5-minute multipath, where the field's is about 90 % a Gauss-Markov process (5 to 7 mm, tau 80 to 120 s, strongest in the tropics) over about 2 mm of white noise (section 1). The re-base adds a per-line-of-sight, band-common Gauss-Markov phase error to the simulator, calibrated per station class on the post-fit instrument (the field's raw error is not observable), and cuts the white phase noise to the field's level in the same regeneration. The old fixture's numbers become superseded, not wrong.
 - **source:** [FWS](FWS_field_walk_share_sources_2026-10-01.md) sections 2.1, 5 and 6; [LSR](LSR_long_scale_remainder_2026-10-01.md) section 6; `config/sim/simnet60_quiet_24h.json` (the current recipe, commit `2306134`); `include/sim/SimConfig.hpp` (the noise and multipath blocks); `docs/refound/GRB_golden_rebase_2026-09-22.md` (the golden re-base recipe)
 - **knobs / posture:** the simulator's new phase-colour block (default amplitude 0, byte-identical); `noise.phase_sigma_zen_m`; the sim golden's base re-pointed at the new fixture
 - **dates in the text:** 2026-10-01
@@ -292,3 +292,25 @@ may be the slow tail of the same coloured error rather than a separate source. T
 (2 h on the sim against 6 h on the field, and the 120-epoch read of a 2 h arm rests on few rows), so
 the reading is a candidate, tested in section 5 by a 6 h program-posture arm on the regenerated
 fixture against `runs/_rap_fws_wuacc6_f`.
+
+### 5.1 The regeneration and the re-base (2026-10-01)
+
+`gnss_simulator_sfr2.exe` (sha256[:16] `023cca23c861efca`, main `d7126da`, the wet-delay fix) generated
+`runs/simnet60_quiet_col_24h` from `config/sim/simnet60_quiet_col_24h.json` (61 stations, every one with its
+colour truth; `synth-network` log in the directory). The sim golden re-points through
+`config/refound/sim_gps_dual_rf0hv_golden_2026-10-01.json`; the live sim base re-points the same way.
+
+- **R0 passes.** A 2 h golden arm on the new fixture (`runs/_rap_sfr_r0`): tropical 7.50 mm, 0.73 / 0.58 /
+  0.28; mid 5.73 mm, 0.68 / 0.53 / 0.21; high 5.86 mm, 0.66 / 0.48 / 0.15 (`k6` 7.51 / 5.66 / 5.89 mm, within
+  0.02 in every autocorrelation), still within C1 of the field.
+- **R1 passes.** The regenerated sim golden differs from the previous one in its 61 RINEX paths only; the
+  field golden is unchanged; `make_golden_config.py` PASS (65 armed), `config_posture_check.py --verify-loader`
+  0 gaps.
+- **R2 passes.** `runs/_rf0hv13_sim6` (6 h, `gnss_processor_wup2.exe`): 720 of 720 emitted; SZZ000SIM 0.656 /
+  0.167 / 0.042 / 0.030 / 0.026 / 0.025 m by hour, first below a decimetre at 1.72 h and never above it in
+  hours 3 to 6, 515 of 720 epochs below a decimetre (the old fixture's `runs/_rf0hv12_sim6` 0.601 / 0.104 /
+  0.096 / 0.055 / 0.055 / 0.049 m, 448 epochs): slower through ignition, better settled. The wind-up restart
+  response reads as on the old fixture (85 restarts, 14 answered, none bridged).
+
+The sim numbers listed in section 5 are superseded from here; the 6 h program-posture test of section 4.3
+(`runs/_rap_sfr_col6_p`) is recorded below when it lands.
