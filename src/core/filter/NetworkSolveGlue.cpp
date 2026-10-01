@@ -91,7 +91,7 @@ NetworkSolveGlueResult networkSolveGlue(
     NetworkProductEmitter& emitter = *setup.emitter;
     auto& product_writer = setup.product_writer;
     auto& consumer = setup.consumer;
-    const double q_clock = ctx.knobs.q_clock;        // m²/s
+    const double q_clock = ctx.params.q(SharedParamKind::Clock);   // m²/s (the registry, card PRM)
     auto& trace                = traces.trace;
     auto& events_trace         = traces.events_trace;
     auto& prev_carry = ctx.carry.prev_carry;

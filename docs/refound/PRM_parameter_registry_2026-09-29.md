@@ -316,3 +316,46 @@ other CSV comparisons identical. The three that differ do so only in wall-clock 
 `ms_per_epoch`, `network_service_health.csv` column `ms_per_epoch_window`); the script drops those
 columns by header name (`VOLATILE_COLS`), after which all 145 comparisons are identical. Gate passed.
 The references for phase 1 are `runs/_rap_prm_g0a_{gf,gs,pf,ps}`.
+
+## 14. Phase 1a, the registry (2026-10-01)
+
+Built: `include/filter/NetworkParamRegistry.hpp` and `src/core/filter/NetworkParamRegistry.cpp`.
+The parameter kinds (`NetworkParamKind`: the four border kinds, the existing `SharedParamKind`
+values, and six station-local kinds), one `ParamSpec` per kind (estimated, carried, q with its
+units and rule, the anchored rate, the variance floor, the birth floor, the route, the knob
+sources), `NetworkParamRegistry::build(knobs, config)` once per run, held as the const member
+`NetworkRunContext::params` (declared after `knobs`). The registry reads every number from the knob
+snapshot, so its values are the doubles the folds used before it.
+
+The single process-noise source: `NetworkParamRegistry::q(SharedParamKind)` replaces the per-kind
+selection at every solve-path and instrument site that read the three border rates from the knob
+snapshot: the diagonal and dense D2 folds and the CTU mirror (`NetworkRunContext.cpp`), the coupling
+builder's rates (`ApplicationNetworkAssembly.cpp`, read by `CouplingRowBuilder::couplingQ`), the Q3
+anchor's four loose-rate terms (`NetworkClockAnchor.cpp`), the clock-level monitor
+(`NetworkClockLevel.cpp`), the prior-residual census (`NetworkStashStatus.cpp`) and a dead alias in
+`NetworkSolveGlue.cpp`. Section 11 listed the first four; the last three were found by a search of
+every read of `knobs.q_clock`, `q_pb` and `q_cb`. The fingerprint and the run manifest's knob dump
+keep reading the snapshot, because they record the configuration rather than use it. The SH ladder
+stays in `couplingQ` (section 10, third item). Both fold loops skip `VtecSh` entries before the
+selection and the dense mirror never sees one, so the registry read is exact for the three kinds
+that reach it.
+
+The "model as armed" table (section 6): one line per kind at run start and in the run-end tail
+(`Network (param model)` and `Network (param model, run end)`), the run-end tail followed by the
+carried instances of each kind counted from their carry maps, and the same rows as a `param_model`
+record in `network_run_manifest.json` when the manifest is written. On the program posture the
+table reads, among others: the satellite clock loose at 1e-3 and anchored at 2.9e-8 m2/s with the
+1e-5 floor (the pair of numbers behind card CTU's root, now on one line), the ambiguities in the
+local block with no process noise, the receiver code bias in the local block, and the wet delay,
+the slant ionosphere and the receiver clock not carried.
+
+Gate: byte-identical. `prm_ab.py cmp g0a p1 --all-csv` (exe `gnss_processor_prm1.exe` against the
+phase 0 references): all 145 comparisons identical on the four arms. Unit test
+`tests/test_network_param_registry.cpp` (5 cases: both goldens' armed values, the border q equal to
+the knob snapshot's double, the table and the JSON naming every kind, the border mapping); the full
+suite 2747 passed, 1 fixture-gated skip.
+
+Owed (phase 1b): the disposition on `CarryPrior` (section 4.4) set by the fold and read by the
+coupling builder, the exact update and the snapshot writer, with card CTU's mirror
+(`networkCouplingExactPrepare`, `clockAnchorFoldPeek`) kept as the check until its mismatch counter
+reads 0 and then removed. Card LGM's nuisance kind does not need it and is sequenced first.

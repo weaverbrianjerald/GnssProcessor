@@ -635,6 +635,12 @@ int Application::runNetwork() {
     // NetworkRunTraces (INC-4), where manifest_path is a member.
     traces.writeRunManifestStartup(config_, nc, ctx.knobs, config_path_,
                                    stations.size(), n_threads, log);
+    // The parameter model as armed (card PRM phase 1, section 6): one line per kind, read
+    // from the registry, the same rows into the manifest.  Trace class: always written,
+    // never read by the solve.
+    for (const auto& line : ctx.params.modelTable())
+        log->info("Network (param model): {}", line);
+    traces.appendRunManifestRecord(nc, ctx.params.modelJson());
     auto& prev_tow = ctx.counters.prev_tow;
     auto& prev_week = ctx.counters.prev_week;
     auto& n_emitted = ctx.counters.n_emitted;

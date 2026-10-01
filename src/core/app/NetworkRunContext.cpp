@@ -3588,9 +3588,9 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     const bool   fullcov_on = ctx.knobs.fullcov_on;
     const bool   phase_hold_on = ctx.knobs.phase_hold_on;
     const bool   clk_model_on = ctx.knobs.clk_model_on;
-    const double q_clock = ctx.knobs.q_clock;
-    const double q_cb = ctx.knobs.q_cb;
-    const double q_pb = ctx.knobs.q_pb;
+    // The border kinds' process noise comes from the parameter registry (card PRM phase 1),
+    // the one source the coupling builder, the CTU mirror and the anchor also read.
+    const NetworkParamRegistry& params = ctx.params;
     const double clk_mon_reinit_var = ctx.knobs.clk_mon_reinit_var;
     const double pb_var_floor = ctx.knobs.pb_var_floor;
     const double cb_var_floor = ctx.knobs.cb_var_floor;
@@ -3712,9 +3712,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             if (cp.kind == SharedParamKind::PhaseBias
                 && pa_reref.count({cp.sat, cp.signal})) continue;
             if (clk_model_on && cp.kind == SharedParamKind::Clock) continue;  // clock is on clock_osc
-            const double q = (cp.kind == SharedParamKind::Clock)    ? q_clock
-                           : (cp.kind == SharedParamKind::CodeBias) ? q_cb
-                                                                    : q_pb;
+            const double q = params.q(cp.kind);   // VtecSh skipped above
             // READMIT (E2 seed-first re-admission): a parked entry is a departed
             // satellite's pre-gap realization.  Column still absent ⇒ nothing to fold
             // (skipped before the anchor fold, which would otherwise stamp the satellite).
@@ -3824,9 +3822,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             if (cp.kind == SharedParamKind::PhaseBias
                 && pa_reref.count({cp.sat, cp.signal})) continue;
             if (clk_model_on && cp.kind == SharedParamKind::Clock) continue;  // clock is on clock_osc
-            const double q = (cp.kind == SharedParamKind::Clock)    ? q_clock
-                           : (cp.kind == SharedParamKind::CodeBias) ? q_cb
-                                                                    : q_pb;
+            const double q = params.q(cp.kind);   // VtecSh skipped above
             // READMIT (E2): the same parked-entry disposition as the diagonal branch above
             // (a parked entry has no dense row, since it was never in the stashed block,
             // so a seed always folds through the diagonal leftovers below).
@@ -4090,9 +4086,7 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
             route = CouplingExactDRoute::Reinit;
             return nan;
         }
-        const double q = (cp.kind == SharedParamKind::Clock)    ? ctx.knobs.q_clock
-                       : (cp.kind == SharedParamKind::CodeBias) ? ctx.knobs.q_cb
-                                                                : ctx.knobs.q_pb;
+        const double q = ctx.params.q(cp.kind);   // the registry (card PRM); dense keys only
         double var_eff = cp.var + q * std::max(0.0, dt);
         if (cta_on && cp.kind == SharedParamKind::Clock)
             var_eff = clockAnchorFoldPeek(ctx, cp.sat, cp.var, dt, cta_now_s).var_eff;

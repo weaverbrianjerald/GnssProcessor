@@ -262,7 +262,7 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
     const double dt_leg = std::max(0.0, dt_epoch);
     // Off path: the legacy expression, character for character, so an unarmed run
     // cannot differ in the last bit.
-    out.var_eff = prev_var + ctx.knobs.q_clock * dt_leg;
+    out.var_eff = prev_var + ctx.params.q(SharedParamKind::Clock) * dt_leg;
     if (!ctx.knobs.cta_on) return out;
 
     ClockAnchorSat& st = ctx.carry.clk_anchor.sat[sat];
@@ -282,7 +282,7 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
     // A LOOSE seed inflates over the true gap, not the driver's dt (the legacy loose
     // expression is kept character for character when nothing is seeding).
     if (seed_horizon_s > 0.0 && dt_sat > 0.0)
-        out.var_eff = prev_var + ctx.knobs.q_clock * dt_sat;
+        out.var_eff = prev_var + ctx.params.q(SharedParamKind::Clock) * dt_sat;
     if (stale && st.anchored) {
         // Detected here because it decides the variance.  The state transition,
         // the event and the wire mark belong to the guard, so every decoupling edge
@@ -329,7 +329,7 @@ ClockAnchorFold clockAnchorFoldPeek(const NetworkRunContext& ctx, const std::str
     // which is what the fold's operator[] would create.
     ClockAnchorFold out;
     const double dt_leg = std::max(0.0, dt_epoch);
-    out.var_eff = prev_var + ctx.knobs.q_clock * dt_leg;
+    out.var_eff = prev_var + ctx.params.q(SharedParamKind::Clock) * dt_leg;
     if (!ctx.knobs.cta_on) return out;
     ClockAnchorSat st;
     const auto it = ctx.carry.clk_anchor.sat.find(sat);
@@ -341,7 +341,7 @@ ClockAnchorFold clockAnchorFoldPeek(const NetworkRunContext& ctx, const std::str
     const bool stale = !(dt_sat > 0.0)
                     || (ctx.knobs.cta_max_gap_s > 0.0 && dt_sat > gap_bound);
     if (seed_horizon_s > 0.0 && dt_sat > 0.0)
-        out.var_eff = prev_var + ctx.knobs.q_clock * dt_sat;
+        out.var_eff = prev_var + ctx.params.q(SharedParamKind::Clock) * dt_sat;
     if (stale && st.anchored) {
         st.stale_pending = true;
         out.decoupled    = true;

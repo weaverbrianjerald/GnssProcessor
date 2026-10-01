@@ -681,7 +681,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
             // The prior contrast variance u'P-u from the previous stash's clock block
             // (the pivot, pinned outside the block, contributes 0) plus the walk the
             // fold applied (the anchor's q, or the loose clock q for a LOOSE clock).
-            const double q_clk = ctx.knobs.q_clock;
+            const double q_clk = ctx.params.q(SharedParamKind::Clock);   // the registry (card PRM)
             std::vector<int> pr(n, -1);
             for (std::size_t a = 0; a < n; ++a) {
                 const auto it = C.clm_prev_pidx.find(F[a]);

@@ -2885,9 +2885,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const int n_threads = setup.n_threads;
     auto& sh_model = setup.sh_model;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
-    const double q_clock = ctx.knobs.q_clock;        // m²/s
-    const double q_pb    = ctx.knobs.q_pb;   // m²/s
-    const double q_cb    = ctx.knobs.q_cb;    // m²/s (W6 OSB carry-forward)
+    // The border kinds' process noise, from the parameter registry (card PRM phase 1).
+    const double q_clock = ctx.params.q(SharedParamKind::Clock);     // m²/s
+    const double q_pb    = ctx.params.q(SharedParamKind::PhaseBias); // m²/s
+    const double q_cb    = ctx.params.q(SharedParamKind::CodeBias);  // m²/s (W6 OSB carry-forward)
     const bool   pl_on         = ctx.knobs.pl_on;
     const double pl_q_amb      = ctx.knobs.pl_q_amb;
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;

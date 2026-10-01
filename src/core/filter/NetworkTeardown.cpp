@@ -6240,6 +6240,26 @@ int networkTeardown(
                   "constellation individually clean while the global σ̂0 tripped).",
                   n_perconst_partial_epochs, n_perconst_diffuse_published);
 
+    // The parameter model as armed, run-end tail (card PRM phase 1, section 6): the
+    // registry's table again, then the carried instances of each kind at the run's end,
+    // counted from the carry maps that hold them.
+    {
+        std::map<SharedParamKind, long long> nb;
+        for (const CarryPrior& cp : ctx.carry.prev_carry) ++nb[cp.kind];
+        for (const auto& line : ctx.params.modelTable())
+            log->info("Network (param model, run end): {}", line);
+        log->info("Network (param model, run end): carried instances: sat_clock {}, "
+                  "sat_phase_bias {}, sat_code_bias {}, vtec_sh {}, ambiguity {}, zwd {}, "
+                  "slant_iono {} (diagonal) + {} (in block), rx_clock {}, rx_phase_bias {}, "
+                  "rx_code_bias {}",
+                  nb[SharedParamKind::Clock], nb[SharedParamKind::PhaseBias],
+                  nb[SharedParamKind::CodeBias], nb[SharedParamKind::VtecSh],
+                  ctx.carry.local_carry.size(), ctx.carry.zwd_carry.size(),
+                  ctx.carry.iono_carry.size(), ctx.carry.iono_blk_carry.size(),
+                  ctx.carry.rx_clk_carry.size(), ctx.carry.rpb_carry.size(),
+                  ctx.carry.rx_cb_carry.size());
+    }
+
     // End-of-run manifest record (L15); the body is in NetworkRunTraces (INC-4).
     traces.writeRunManifestComplete(nc, ctx.counters, synced.size(), loop_ms,
                                     networkMultiGnssManifestJson(ctx, config_));

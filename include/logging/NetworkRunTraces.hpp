@@ -969,6 +969,13 @@ namespace GnssProcessor {
                                      std::size_t n_stations, int n_threads,
                                      const std::shared_ptr<spdlog::logger>& log);
 
+        /// One extra manifest record (JSONL, appended after the startup record): card
+        /// PRM's @c param_model, the parameter registry as armed.  No-op unless
+        /// nc.write_run_manifest.
+        /// @param nc    The network config (the manifest switch).
+        /// @param json  One complete JSON object, without a trailing newline.
+        void appendRunManifestRecord(const NetworkConfig& nc, const std::string& json);
+
         /// L15 end-of-run manifest record (JSONL, appended, so a crashed run keeps
         /// the startup record).  No-op unless nc.write_run_manifest.
         /// @param extra_member Optional JSON member ("key":{...}) written before

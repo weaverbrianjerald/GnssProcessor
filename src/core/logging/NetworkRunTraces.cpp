@@ -2319,6 +2319,12 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
     }
 }
 
+void NetworkRunTraces::appendRunManifestRecord(const NetworkConfig& nc, const std::string& json) {
+    if (!nc.write_run_manifest) return;
+    std::ofstream mf(manifest_path, std::ios::app);
+    if (mf) mf << json << '\n';
+}
+
 void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                                                 const NetworkServiceCounters& counters,
                                                 std::size_t n_synced, double loop_ms,

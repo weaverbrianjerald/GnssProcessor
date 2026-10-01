@@ -24,6 +24,7 @@
  */
 
 #include "filter/NetworkRunTypes.hpp"
+#include "filter/NetworkParamRegistry.hpp" // NetworkParamRegistry: one declared property set per parameter kind (card PRM)
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactCounters (card CTU)
 #include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone (card SMH)
 #include "filter/NetworkYoungInflate.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
@@ -4409,7 +4410,8 @@ namespace GnssProcessor {
     /// lazily built helpers).
     struct NetworkRunContext {
         NetworkRunContext(const GnssConfig& config, const NetworkConfig& nc)
-            : knobs(NetworkKnobs::snapshot(config, nc)) {
+            : knobs(NetworkKnobs::snapshot(config, nc)),
+              params(NetworkParamRegistry::build(knobs, config)) {
             // The estimability census latch is a counter, so it is seeded here (the one
             // place the context is built) rather than snapshotted into knobs; the dump
             // site decrements it (RF-NS).  The default 6 equals the former hard-coded
@@ -4420,6 +4422,11 @@ namespace GnssProcessor {
         NetworkRunContext& operator=(const NetworkRunContext&) = delete;
 
         const NetworkKnobs     knobs;
+        /// The parameter registry (card PRM phase 1): one declared property set per
+        /// parameter kind, built once from @ref knobs (declared after it, so it is
+        /// initialized after it) and read, never written, inside the epoch loop.  The
+        /// single process-noise source of the border kinds (@ref NetworkParamRegistry::q).
+        const NetworkParamRegistry params;
         NetworkCarryState      carry;
         NetworkServiceCounters counters;
         NetworkBiasAdmission   admission;   // latched census result of CB-ADM (active=false: the legacy path)

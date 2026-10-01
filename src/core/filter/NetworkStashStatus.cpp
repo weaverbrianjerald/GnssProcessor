@@ -71,8 +71,8 @@ void networkStashStatus(
     auto& sh_model = setup.sh_model;
     auto& sh_model2 = setup.sh_model2;   // Iono-2 dual-layer second shell (null unless armed)
     auto& stations = setup.stations;
-    const double q_pb    = ctx.knobs.q_pb;   // m²/s
-    const double q_cb    = ctx.knobs.q_cb;    // m²/s (W6 OSB carry-forward)
+    const double q_pb    = ctx.params.q(SharedParamKind::PhaseBias); // m²/s (the registry, card PRM)
+    const double q_cb    = ctx.params.q(SharedParamKind::CodeBias);  // m²/s (W6 OSB carry-forward)
     auto& trace                = traces.trace;
     auto& epoch_status_trace   = traces.epoch_status_trace;
     auto& prev_carry = ctx.carry.prev_carry;
@@ -193,7 +193,7 @@ void networkStashStatus(
             PriresSharedPrior p;
             p.value = cp.value;
             p.var   = cp.var;
-            const double q     = is_cb ? q_cb : (is_clk ? ctx.knobs.q_clock : q_pb);
+            const double q     = is_cb ? q_cb : (is_clk ? ctx.params.q(SharedParamKind::Clock) : q_pb);
             const double floor = is_cb ? cb_var_floor : (is_clk ? 0.0 : pb_var_floor);
             // var_eff as the injector forms it: the reinit variance on a
             // clock-monitor-flagged key (a soft large-q reinitialization, not the
