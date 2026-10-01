@@ -215,3 +215,69 @@ prior itself.
 **Instruments.** `network_phase_colour.csv` (epoch, station, satellite, elevation, estimate, its
 standard deviation, born or carried) for gate G1 against `truth_phase_colour.csv`; the post-fit rows
 already include the column (`phase_acf.py` reads them unchanged).
+
+## 5.1 The first read (2026-10-01, exe `gnss_processor_lgm1.exe`, 2 h, the sim from 00:30:15)
+
+Built as section 4.1 fixed it (default off). Arms `runs/_rap_lgm_pc_{gs,gf,ps,pf}`: each C0 control
+(section 3) with `network.phase_colour_state` and `network.trace_phase_colour` and nothing else.
+
+**G0 passes.** Knob off, `scripts/prm_ab.py cmp g0a lgm1off --all-csv`: all 145 comparisons
+identical on the four arms. Unit tests `tests/test_phase_colour_state.cpp` (the state family, the
+loader's acceptance on the sim golden and its refusals, the prior law, the registry's new kind) and
+`tests/test_network_param_registry.cpp` pass.
+
+**The state is live** on every arm: about 111 000 (field) and 114 000 (sim) carried folds through
+the whitened block against 3 600 to 3 700 birth rows, no per-column fallback, no backstop birth row,
+no harvest refusal; the field's RAIM attribution erased 12 (program) and 17 (golden) entries; 186 to
+192 entries pruned past the maximum gap.
+
+| gate | sim control | sim state | field control | field state |
+| --- | --- | --- | --- | --- |
+| G1: rms(x - e) / rms(e), tropical / mid / high (golden) | | 0.885 / 0.908 / 0.908 | | (no truth) |
+| G1: correlation of x with e; the estimate's rms against the truth's (tropical) | | +0.51; 3.6 against 12.0 mm | | |
+| G2: post-fit acf(1), tropical / mid / high (golden) | 0.73 / 0.68 / 0.66 | 0.58 / 0.54 / 0.53 | 0.60 / 0.56 / 0.53 | 0.43 / 0.36 / 0.36 |
+| G3: persistence at 5 / 20 / 60 / 120 epochs (program) | 1.56 / 1.77 / 1.61 / 1.28 | 1.31 / 1.33 / 1.13 / 0.95 | 1.48 / 1.73 / 1.89 / 2.02 | 1.30 / 1.39 / 1.60 / 1.73 |
+| walk share at 1 h (program) | 3.0 mm | 2.1 mm | 6.1 mm | 4.3 mm |
+| G4: PVN NIS; FXA increment lag-1 (program) | 0.82; +0.102 | 0.79; +0.101 | 0.12; +0.414 | 0.12; +0.400 |
+| G4: sim datum-free level at 240 epochs; IF code spread, hour 2 (golden) | 0.16 m; 0.143 m | 0.16 m; 0.142 m | | |
+| G5: consumer p50 hours 1 / 2 (golden) | 0.734 / 0.084 m | 0.727 / 0.074 m | 0.559 / 0.059 m | 0.440 / 0.049 m |
+| G5: consumer p50 hours 1 / 2 (program) | 0.232 / 0.098 m | 0.232 / 0.096 m | 0.116 / 0.020 m | 0.100 / 0.030 m |
+
+G0, G4 and G5 pass; G1, G2 and G3 fail. The state moves every instrument in the right direction on
+both beds (C0 moved the persistence in opposite directions), but by too little: G3 misses its 1.2 bar
+by 0.1 to 0.2, G2 its 0.35 bar by 0.01 to 0.23, and G1 shows why. The estimate correlates with the
+truth (+0.46 to +0.57) and its stated standard deviation is consistent with its error (NEES 0.7 to
+1.35), but its amplitude is a quarter of the truth's (3.6 against 12.0 mm in the tropical class):
+the state is starved, not wrong.
+
+**The reason is the posture's white phase sigma.** The estimator states 2 mm per band on the field
+and 3 mm on the sim, about 6 and 9 mm on the ionosphere-free combination: a size that covered the
+colour as if it were white (the sim's actual white noise is 0.5 mm per band since card SFR, and the
+field's post-fit white part is 1.1 to 1.6 mm on the combination, about 0.4 to 0.5 mm per band). The
+state's process noise per epoch is sigma^2 (1 - phi^2), about (2.1 mm)^2 at 300 s and 30 s epochs, so
+against a stated (6 to 9 mm)^2 the per-epoch gain on its innovation is 0.05 to 0.1 and the estimate
+cannot follow the colour. With the colour modelled, the white sigma has to be the white part only;
+the state and the white sigma are one model, and section 2 named the first without the second.
+
+## 5.2 The white sigma with the state (predicted before it runs, 2026-10-01)
+
+Two one-change arms per posture and bed from the section 5.1 arms, exe `_lgm1`:
+
+- `lgm_pcw_*`: the state with `filter.measurement_noise.phase_std_m` 0.0005 (the sim fixture's white
+  phase noise, the field's post-fit white part per band), elevation power unchanged.
+- `lgm_w_*`: the same sigma without the state (the control of the sigma cut alone).
+
+Predictions:
+
+- **W1.** On `lgm_pcw`, G1 passes (ratio at most 0.7 in every class, correlation at least +0.7) and G2
+  passes on both beds (acf(1) at most 0.35).
+- **W2.** On `lgm_pcw`, G3 passes on both beds (persistence at 5 and 20 epochs at most 1.2) and G4 holds.
+- **W3.** On `lgm_w` (the sigma cut with the colour unmodelled) the estimator is overconfident: the
+  persistence at 5 and 20 epochs rises above its control's on both beds and the consumer's hour 2 is
+  worse than its control's by more than 3 cm on at least one bed.
+- **W4.** On `lgm_pcw`, G5 holds (hours 1 and 2 within 3 cm of the control or better, both beds, both
+  postures).
+
+If W1 and W2 hold and W3 holds, the white sigma and the state are adopted as one change for the 6 h
+pair and the census (a separate decision). If W3 fails (the sigma cut alone is as good), the state
+is not the lever and the sigma is.

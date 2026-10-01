@@ -84,6 +84,13 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // every downstream site reads one number and a floor configured without float_kf
     // resolves to 0 instead of acting at some sites and not at others.
     k.amb_drop_decouple_always = k.amb_float_kf && config_.networkAmbFloatDropDecoupleAlways();   // card CTU section 14
+    // Card LGM: the loader has validated the posture, so the knob is read as is.
+    k.pc_on        = nc.phase_colour_state;
+    k.pc_sigma_zen = nc.phase_colour_sigma_zen_m;
+    k.pc_tau_s     = nc.phase_colour_tau_s;
+    k.pc_floor_deg = nc.phase_colour_elev_floor_deg;
+    k.pc_max_gap_s = nc.phase_colour_max_gap_s;
+    k.pc_trace     = nc.phase_colour_state && nc.trace_phase_colour;
     k.amb_drop_var_floor  = k.amb_float_kf
                                 ? config_.getNetworkConfig().amb_float_drop_var_m2 : 0.0;
     // The drop floor's warm-up gate (RF-3c) has no meaning without the floor, so it
@@ -933,6 +940,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // iono, so a warm resume cannot cross the flip even though the carry map itself is
         // not snapshotted (it cold-starts).  Appended only when armed (the rxcb/shl2/iono2
         // pattern), so a snapshot written with it off keeps its fingerprint.
+        // Card LGM: the phase nuisance state changes what every carried ambiguity level
+        // means (the colour is no longer in it), and its own carry is not snapshotted, so a
+        // warm resume cannot cross the flip.  Appended only when armed.
+        if (nc.phase_colour_state)
+            add(fmt::format("pcol:{}:{}:{}:{}", nc.phase_colour_sigma_zen_m, nc.phase_colour_tau_s,
+                            nc.phase_colour_elev_floor_deg, nc.phase_colour_max_gap_s));
         if (config_.networkCarryIono())
             add(fmt::format("ionocarry:{}:{}:{}:{}:{}", config_.networkIonoCarryScope(),
                             config_.networkIonoCarrySource(),
@@ -4771,7 +4784,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             // the most station-common direction of all.
             if (R.pl_amb.empty() && !(iono_blk_on && !R.pl_iono.empty())
                 && !(rxclk_blk_on && !R.pl_rxclk.empty())
-                && !(rxcb_blk_on && !R.pl_cb.empty())) continue;
+                && !(rxcb_blk_on && !R.pl_cb.empty())
+                && !(ctx.knobs.pc_on && !R.pl_pc.empty())) continue;
             const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
             std::vector<Eigen::Index> cols;
             cols.reserve(R.pl_amb.size() + 1 + R.pl_iono.size() + R.pl_rxclk.size());
@@ -4808,6 +4822,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             const bool rxcb_in_cols = rxcb_blk_on && !R.pl_cb.empty();
             if (rxcb_in_cols)
                 for (const auto& t : R.pl_cb) cols.push_back(std::get<1>(t));
+            // Card LGM: the station's present phase-colour columns, after the receiver
+            // code bias and before the ZWD (which keeps its last-row slot).
+            const Eigen::Index pc_row0 = static_cast<Eigen::Index>(cols.size());
+            const bool pc_in_cols = ctx.knobs.pc_on && !R.pl_pc.empty();
+            if (pc_in_cols)
+                for (const PlPc& pp : R.pl_pc) cols.push_back(pp.col);
             const bool zwd_in_cols = zwd_blk_on && R.pl_zwd_present
                                      && R.pl_zwd.col >= 0;
             if (zwd_in_cols) cols.push_back(R.pl_zwd.col);
@@ -5253,6 +5273,45 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 // trusted again.  No-op when unmarked.
                 stations[i].sm->clearPendingReseed(pa.amb_key);
             }
+            // Card LGM: stash each phase-colour column's posterior (the estimate, its pure
+            // conditional variance, its border regression) and its row of the station's
+            // harvest block, so the next epoch folds it jointly with the ambiguities it
+            // shares the phase rows with.  The coupling carry is the posture's (the
+            // loader requires it); a column whose regression fails is not stashed and is
+            // born again next epoch (counted).
+            if (pc_in_cols && carry_cpl_cond) {
+                const double t_week_pc = std::floor(pl_now_s / 604800.0);
+                const double t_tow_pc  = pl_now_s - 604800.0 * t_week_pc;
+                for (std::size_t k = 0; k < R.pl_pc.size(); ++k) {
+                    const PlPc& pp = R.pl_pc[k];
+                    if (pp.col < 0 || pp.col >= xr.size()) { ++ctx.counters.n_pc_stash_fail; continue; }
+                    const double value_abs = pp.x_lin + xr(pp.col);
+                    Eigen::VectorXd pcross;
+                    auto hc = harvestCoupling(est_idx, pp.col, hblk ? &cols : nullptr,
+                                              hblk ? &pcross : nullptr);
+                    const double var = hc.first;
+                    if (!std::isfinite(value_abs) || !(var > 0.0) || !std::isfinite(var)) {
+                        ++ctx.counters.n_pc_stash_fail;
+                        continue;
+                    }
+                    LocalCarry ent{value_abs, var, pl_now_s, std::move(hc.second)};
+                    const Eigen::Index prow = pc_row0 + static_cast<Eigen::Index>(k);
+                    if (hblk && pcross.size() == hblk->C.rows() && prow < hblk->C.rows()) {
+                        hblk->C.row(prow) = pcross.transpose();
+                        ent.blk     = hblk;
+                        ent.blk_idx = static_cast<int>(prow);
+                    }
+                    ctx.carry.pc_carry[{static_cast<int>(i), pp.sat}] = std::move(ent);
+                    ++ctx.counters.n_pc_stash;
+                    ctx.counters.pc_abs_sum += std::abs(value_abs);
+                    ctx.counters.pc_sq_sum  += value_abs * value_abs;
+                    if (ctx.knobs.pc_trace)
+                        ctx.carry.pc_trace_rows.push_back(fmt::format(
+                            "{:.0f},{:.1f},{},{},{:.2f},{:.6f},{:.6f},{}\n",
+                            t_week_pc, t_tow_pc, stations[i].name, pp.sat, pp.elev_deg,
+                            value_abs, std::sqrt(var), pp.carried ? 1 : 0));
+                }
+            }
         }
         // ---- Lane observatory (rung 3 v3): post-event measurement -----------
         // Runs after the harvest loop, so both bands' fresh levels coexist, and before the
@@ -5541,6 +5600,19 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         // Stamp this harvest so the next epoch can require a one-epoch-old pre-event
         // value.
         ctx.carry.pl_prev_now_s = pl_now_s;
+
+        // Card LGM: prune phase-colour entries past the maximum gap.  Such an entry would
+        // not be folded anyway (the inject re-births the line of sight); the prune keeps
+        // the map to the live lines of sight and counts the edge.
+        if (ctx.knobs.pc_on)
+            for (auto it = ctx.carry.pc_carry.begin(); it != ctx.carry.pc_carry.end();) {
+                if (pl_now_s - it->second.last_seen_s > ctx.knobs.pc_max_gap_s) {
+                    it = ctx.carry.pc_carry.erase(it);
+                    ++ctx.counters.n_pc_gap_prune;
+                } else {
+                    ++it;
+                }
+            }
 
         // Carry-retirement census.  This prune is the mechanism behind the fleet-scale
         // carry loss that §1.3 calls the "cliff".  It reads only last_seen_s (it selects

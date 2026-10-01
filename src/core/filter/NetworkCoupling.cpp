@@ -545,6 +545,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         if (!scalarRowIngredients(c.col, c.x_lin, *c.lc, c.var_eff, c.gap, g.row, g.sigma2,
                                   wsx ? &g.xr : nullptr)) {
             ++R.pl_blk_col_refused;
+            if (c.is_pc) R.pc_refused.push_back(c.col);   // card LGM: the injector backstops it
             continue;
         }
         // The ZWD column (B9-in-block) is counted only after it survives the scalar
@@ -628,6 +629,8 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                 continue;
             }
             if (ci.vce_fac != 1.0 || cj.vce_fac != 1.0) v *= std::sqrt(ci.vce_fac * cj.vce_fac);
+            // Card LGM: a Gauss-Markov column's cross covariance transitions with it.
+            if (ci.phi != 1.0 || cj.phi != 1.0) v *= ci.phi * cj.phi;
             blk.Sigma(i, j) = v;
             blk.Sigma(j, i) = v;
         }

@@ -301,6 +301,10 @@ namespace GnssProcessor {
 
         std::set<std::string> required_ambiguities;
         std::set<std::string> required_iono_sats;
+        // Phase-colour states (network.phase_colour_state, card LGM): the satellites with
+        // an uncombined phase observation this epoch, with their elevation.
+        const bool pc_on = config_.getNetworkConfig().phase_colour_state;
+        std::map<std::string, double> required_pc_sats;
 
         // NlWl path: the phase signals seen per (satellite, band).  They determine
         // a deterministic reference band per satellite, and states are seeded from
@@ -355,6 +359,7 @@ namespace GnssProcessor {
                         .try_emplace(ref_type[1], ref_type);
                 } else {
                     required_ambiguities.insert(obs.satellite + "_" + ref_type);
+                    if (pc_on && is_uncombined) required_pc_sats[obs.satellite] = obs.elevation;
                 }
             }
         }
@@ -461,6 +466,24 @@ namespace GnssProcessor {
                     state_manager_.setIonosphereAzimuth(obs.satellite, obs.azimuth);
                 }
             }
+        }
+
+        // --- Phase-colour states (network.phase_colour_state; card LGM section 4.1) ---
+        // One column per satellite with an uncombined phase observation, seeded 0 (the
+        // network never writes the solution back, so the linearization point stays 0);
+        // the satellite's elevation is recorded for the network's prior law.  Its
+        // StateManager variance is not read by the network solve.
+        if (pc_on) {
+            const double v0 = config_.getNetworkConfig().phase_colour_sigma_zen_m
+                            * config_.getNetworkConfig().phase_colour_sigma_zen_m;
+            std::set<std::string> keep;
+            for (const auto& [sat, elev] : required_pc_sats) {
+                keep.insert(sat);
+                if (state_manager_.getPhaseColourIndex(sat) < 0)
+                    state_manager_.addPhaseColourState(sat, v0);
+                state_manager_.setPhaseColourElevation(sat, elev);
+            }
+            state_manager_.prunePhaseColourStatesExcept(keep);
         }
 
         // --- Cold-start receiver-clock pre-seed (network.cold_clock_seed) ---
@@ -1669,6 +1692,16 @@ namespace GnssProcessor {
                 jacobian(amb_idx) = 1.0;
                 amb_term = x(amb_idx);
                 predicted += amb_term;
+                // The line of sight's phase-colour state (network.phase_colour_state,
+                // card LGM): +1 on every phase row of the satellite, both bands, and on
+                // no code row.  Its linearization point is 0 (never written back).
+                if (config_.getNetworkConfig().phase_colour_state) {
+                    const int pc_idx = state_manager_.getPhaseColourIndex(obs.satellite);
+                    if (pc_idx >= 0 && pc_idx < static_cast<int>(state_size)) {
+                        jacobian(pc_idx) = 1.0;
+                        predicted += x(pc_idx);
+                    }
+                }
             } else {
                 // NlWl basis: state holds NL_ref (cycles, the L_ref carrier
                 // ambiguity) and WL_(ref, b) = N_a - N_b in canonical

@@ -771,6 +771,16 @@ namespace GnssProcessor {
         /// no rows: byte-identical).
         std::ofstream amb_state_trace;
         const std::filesystem::path amb_state_trace_path;
+        /// Per-line-of-sight phase-colour state trace (card LGM,
+        /// @c network.trace_phase_colour with @c network.phase_colour_state): one row per
+        /// harvested (station, satellite) per epoch, `week,tow,station,sat,elev_deg,x_m,
+        /// sd_m,carried`, where @c x_m is the posterior estimate, @c sd_m the square root
+        /// of its harvested conditional variance and @c carried 1 when a carried prior
+        /// folded this epoch (0: the birth row).  Written by the driver from rows
+        /// buffered in @c NetworkCarryState::pc_trace_rows.  Gate G1's instrument against
+        /// the sim fixture's @c truth_phase_colour.csv.  Off by default (no file).
+        std::ofstream phase_colour_trace;
+        const std::filesystem::path phase_colour_trace_path;
         /// One row per gauge-pinned ambiguity per processed epoch (S1;
         /// @c network.trace_phase_anchor): @c week,tow,cons,signal,sat,anchor_sta.  It is
         /// the (constellation, signal, satellite) -> anchoring station map that realizes

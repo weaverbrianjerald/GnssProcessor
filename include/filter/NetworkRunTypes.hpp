@@ -29,6 +29,7 @@
 #include <array>
 #include <cmath>          // the invariant step z (std::abs / std::isfinite)
 #include <cstdint>        // freeing-cause bitmask of the lane observatory (§7.6)
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -919,6 +920,16 @@ struct RelevelEpochState {
 /// PASS B for the post-solve harvest/stash: its A_r column, identity, and the
 /// linearization point used this epoch (so the absolute value is
 /// @c x_lin + x_r(col) and a carried prior targets @c value_abs − x_lin).
+/// One present phase-colour column of a station-epoch (card LGM section 4.1),
+/// recorded in PASS B for the post-solve harvest and the trace.
+struct PlPc {
+    std::string  sat;          ///< Satellite id (the state's key).
+    Eigen::Index col{-1};      ///< A_r column of the state (= h2local[state index]).
+    double       x_lin{0.0};   ///< Linearization point (the StateManager value; stays 0).
+    double       elev_deg{std::numeric_limits<double>::quiet_NaN()};  ///< Elevation (deg) recorded at allocation.
+    bool         carried{false};///< A carried prior was folded this epoch (else a birth row).
+};
+
 struct PlAmb {
     Eigen::Index col;     ///< A_r column of this ambiguity (= h2local[amb_idx]).
     std::string  sat;     ///< RINEX satellite id.
@@ -1383,6 +1394,16 @@ struct StationAssembly {
     /// (state key, A_r col, x_lin) recorded for the post-solve harvest.  Filled only
     /// under network.carry_rx_code_bias; same tuple shape as pl_rpb.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_cb;
+    // Card LGM (network.phase_colour_state): the present phase-colour columns and the
+    // edges of their priors this station-epoch (produce-phase locals, summed serially).
+    std::vector<PlPc>         pl_pc;        ///< Present columns, for the harvest and the trace.
+    std::vector<Eigen::Index> pc_planned;   ///< Columns that entered PASS B with a live carry.
+    std::vector<Eigen::Index> pc_folded;    ///< Of those, the columns whose carried prior folded.
+    std::vector<Eigen::Index> pc_refused;   ///< Columns the block builder's scalar screen refused.
+    long long pc_birth_rows{0};     ///< Birth prior rows (no live carry).
+    long long pc_backstop_rows{0};  ///< Birth rows for planned carried columns that did not fold.
+    long long pc_block_folds{0};    ///< Carried columns folded through the whitened block.
+    long long pc_fallback_folds{0}; ///< Carried columns folded by the per-column fallback.
     int pl_cb_datum_rows{0};   ///< Zero-mean DCB prior rows folded this station-epoch (RXCB-DATUM; summed serially).
         int pl_cb_injected{0};     ///< rx-CB priors folded this epoch (produce-phase local; summed serially).
     int pl_cb_innov_skips{0};  ///< rx-CB priors withheld by the innovation gate (receiver-reset response).

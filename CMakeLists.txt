@@ -502,6 +502,7 @@ add_executable(gnss_tests
     tests/test_windup_restart_response_config.cpp
     tests/test_windup_restart_targets.cpp
     tests/test_network_param_registry.cpp
+    tests/test_phase_colour_state.cpp
     tests/test_lane_observatory_config.cpp
     tests/test_zwd_seam_reseed_config.cpp
     tests/test_zwd_seam_reseed_q.cpp

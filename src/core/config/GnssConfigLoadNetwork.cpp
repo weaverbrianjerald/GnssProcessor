@@ -4467,6 +4467,28 @@ namespace GnssProcessor {
                            "wrong vehicle in the product's provenance.", s);
             }
         }
+        // The per-line-of-sight phase nuisance state (card LGM section 4.1).  The
+        // cross-section interlocks are in validateNetworkCarryPosture_.
+        network_config_.phase_colour_state =
+            jval<bool>(json, "network.phase_colour_state", "phase_colour_state", false);
+        network_config_.phase_colour_sigma_zen_m =
+            jval<double>(json, "network.phase_colour_sigma_zen_m", "phase_colour_sigma_zen_m", 0.005);
+        network_config_.phase_colour_tau_s =
+            jval<double>(json, "network.phase_colour_tau_s", "phase_colour_tau_s", 300.0);
+        network_config_.phase_colour_elev_floor_deg =
+            jval<double>(json, "network.phase_colour_elev_floor_deg",
+                         "phase_colour_elev_floor_deg", 20.0);
+        network_config_.phase_colour_max_gap_s =
+            jval<double>(json, "network.phase_colour_max_gap_s", "phase_colour_max_gap_s", 900.0);
+        network_config_.trace_phase_colour =
+            jval<bool>(json, "network.trace_phase_colour", "trace_phase_colour", false);
+        if (!(network_config_.phase_colour_sigma_zen_m > 0.0)
+            || !(network_config_.phase_colour_tau_s > 0.0)
+            || !(network_config_.phase_colour_max_gap_s > 0.0)
+            || !(network_config_.phase_colour_elev_floor_deg >= 0.0
+                 && network_config_.phase_colour_elev_floor_deg < 90.0))
+            throw std::runtime_error("network.phase_colour_*: sigma_zen_m, tau_s and max_gap_s "
+                                     "must be > 0 and elev_floor_deg in [0, 90)");
         network_config_.amb_float_birth_var_m2 =
             jval<double>(json, "network.amb_float_birth_var_m2", "amb_float_birth_var_m2", 0.0);
         if (network_config_.amb_float_birth_var_m2 < 0.0)
@@ -11913,6 +11935,34 @@ namespace GnssProcessor {
                       "diagonal prior at the conditional variance.  No diagonal fallback: "
                       "before the leveling carry is warm and on a non-SPD block the columns "
                       "carry nothing (counted).");
+        }
+        // The per-line-of-sight phase nuisance state (card LGM section 4.1): its carry is a
+        // column of the float vehicle's whitened local block, built from the card 1
+        // conditional coupling rows.
+        if (network_config_.phase_colour_state) {
+            const bool float_kf =
+                network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf;
+            if (!float_kf || !network_phase_leveling_ || network_carry_invariant_
+                || !network_carry_conditional_coupling_ || network_carry_coupling_joint_whiten_) {
+                log->error("Network (card LGM): network.phase_colour_state requires "
+                           "network.ambiguity_vehicle float_kf, network.phase_leveling and "
+                           "network.carry_conditional_coupling, and refuses "
+                           "network.carry_invariant and network.carry_coupling_joint_whiten "
+                           "(the state's carry is a column of the float vehicle's whitened "
+                           "local block).");
+                return false;
+            }
+            log->info("Network (card LGM): per-line-of-sight phase nuisance state ON: one "
+                      "band-common, phase-only Gauss-Markov state per (station, satellite), "
+                      "sigma_zen {:g} m, tau {:g} s, elevation floor {:g} deg, carried in the "
+                      "station's whitened local block (phi = exp(-gap/tau)), born at its "
+                      "stationary prior after a gap above {:g} s or an erase.  SOLVE-AFFECTING.",
+                      network_config_.phase_colour_sigma_zen_m, network_config_.phase_colour_tau_s,
+                      network_config_.phase_colour_elev_floor_deg,
+                      network_config_.phase_colour_max_gap_s);
+        } else if (network_config_.trace_phase_colour) {
+            log->warn("Network (card LGM): network.trace_phase_colour is set without "
+                      "network.phase_colour_state; the trace is inert.");
         }
         // The two interlocks of the second code channel (card SCC, R6).  Checked here,
         // after the rx-CB carry block, because both inputs are final only at this point:

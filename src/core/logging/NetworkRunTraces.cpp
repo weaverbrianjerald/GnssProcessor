@@ -77,6 +77,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       pb_hold_clone_trace_path(log_dir_ / "network_pb_hold_clone.csv"),
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
       amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
+      phase_colour_trace_path(log_dir_ / "network_phase_colour.csv"),
       arc_ledger_trace_path(log_dir_ / "network_arc_ledger.csv"),
       phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
       sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
@@ -636,6 +637,15 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open ambiguity carry-state trace {}",
                       amb_state_trace_path.string());
+    }
+    // Card LGM: the per-line-of-sight phase-colour state trace.
+    if (nc.phase_colour_state && nc.trace_phase_colour) {
+        phase_colour_trace.open(phase_colour_trace_path);
+        if (phase_colour_trace)
+            phase_colour_trace << "week,tow,station,sat,elev_deg,x_m,sd_m,carried\n";
+        else
+            log->warn("Network: failed to open phase-colour trace {}",
+                      phase_colour_trace_path.string());
     }
     if (config_.networkSignalRoster()) {
         // One row per arc transition (card SID phase 1).  The provenance line above
@@ -2605,6 +2615,7 @@ void NetworkRunTraces::closeAll() {
     // Same reason (RF-1 §7.4): added after INC-4, and the carry-state trace is the
     // instrument that step 2 exists to produce, so its tail must be flushed at teardown.
     if (amb_state_trace.is_open()) amb_state_trace.close();
+    if (phase_colour_trace.is_open()) phase_colour_trace.close();   // card LGM
 }
 
 } // namespace GnssProcessor

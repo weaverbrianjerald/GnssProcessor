@@ -60,7 +60,9 @@
 
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -174,6 +176,23 @@ namespace GnssProcessor {
         /// float_kf vehicle.  0.0 (default) adds no drop floor (RF-3a).
         double amb_drop_var_floor{};
         bool   amb_drop_decouple_always{};   ///< network.amb_float_drop_decouple_always (card CTU section 14): a drop clears the arc's regression and block row even at birth strength
+        // The per-line-of-sight phase nuisance state (card LGM section 4.1).  pc_on is the
+        // knob as the loader validated it (float vehicle, phase_leveling, conditional
+        // coupling; no joint whitening, no carry_invariant), so every site reads it alone.
+        bool   pc_on{};              ///< network.phase_colour_state
+        double pc_sigma_zen{};       ///< network.phase_colour_sigma_zen_m (m)
+        double pc_tau_s{};           ///< network.phase_colour_tau_s (s)
+        double pc_floor_deg{};       ///< network.phase_colour_elev_floor_deg (deg)
+        double pc_max_gap_s{};       ///< network.phase_colour_max_gap_s (s)
+        bool   pc_trace{};           ///< network.trace_phase_colour (and pc_on)
+        /// The state's stationary variance at elevation @p elev_deg:
+        /// (sigma_zen / sin(max(e, floor)))^2.  An unknown elevation (NaN) takes the floor.
+        double pcStationaryVar(double elev_deg) const {
+            const double e = (elev_deg == elev_deg) ? std::max(elev_deg, pc_floor_deg) : pc_floor_deg;
+            const double s = std::sin(e * 3.14159265358979323846 / 180.0);
+            const double sig = (s > 1e-6) ? pc_sigma_zen / s : pc_sigma_zen * 1e6;
+            return sig * sig;
+        }
         /// network.amb_float_drop_floor_after_ep: the processed epoch (@c n_loop_epochs)
         /// from which @ref amb_drop_var_floor is in force; 0 = no gate.  Resolved to 0 when
         /// the floor itself is unarmed, so every site reads one pair of numbers and a
@@ -1889,6 +1908,19 @@ namespace GnssProcessor {
         /// it must work on the carry_invariant / no-leveling lineage.  Inert unless
         /// network.carry_rx_code_bias.
         std::map<std::pair<int, std::string>, LocalCarry> rx_cb_carry;
+        /// The per-line-of-sight phase nuisance carry (card LGM section 4.1): (station,
+        /// satellite) -> the harvested estimate (value_abs, the linearization point being
+        /// 0), its conditional variance, its border regression and its row of the station's
+        /// harvest block.  Folded the next epoch as a predicted copy (value and regression
+        /// times phi = exp(-gap / tau), variance phi^2 var + sigma(e)^2 (1 - phi^2)).
+        /// Written at the harvest, read-only in PASS B, erased by the RAIM attribution and
+        /// gross line-of-sight erases, pruned past network.phase_colour_max_gap_s.  Not
+        /// snapshotted: a warm resume cold-starts it (its fingerprint token refuses a
+        /// resume across a flip of the knob).  Empty when the knob is off.
+        std::map<std::pair<int, std::string>, LocalCarry> pc_carry;
+        /// Card LGM: formatted rows of network_phase_colour.csv buffered at the harvest
+        /// and written by the driver after it (empty unless network.trace_phase_colour).
+        std::vector<std::string> pc_trace_rows;
         // rx-CB carry run counters (armed-only run-end line).
         long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,
                   rx_cb_harvested_total = 0;
@@ -3299,6 +3331,18 @@ namespace GnssProcessor {
 
         // Siblings on the same gap predicate, for other carries (departures).
         long long n_cr_zwd_gap_prune      = 0;  ///< ZWD carry entries dropped by the pl_max_gap_s prune
+        // Card LGM, the per-line-of-sight phase nuisance state: every edge counted.
+        long long n_pc_birth_rows         = 0;  ///< columns given the birth prior row (no live carry)
+        long long n_pc_backstop_rows      = 0;  ///< planned carried columns the builder refused, given a birth row instead
+        long long n_pc_block_folds        = 0;  ///< carried columns folded through the whitened block
+        long long n_pc_fallback_folds     = 0;  ///< carried columns folded by the per-column fallback (non-SPD block)
+        long long n_pc_stash              = 0;  ///< entries harvested
+        long long n_pc_stash_fail         = 0;  ///< harvest attempts refused (non-finite or a failed regression)
+        long long n_pc_gap_prune          = 0;  ///< entries pruned past the maximum gap
+        long long n_pc_erase_raim         = 0;  ///< entries erased by the RAIM attribution erase of their line of sight
+        long long n_pc_erase_gross        = 0;  ///< entries erased by the gross line-of-sight erase
+        double    pc_abs_sum              = 0.0;///< sum of |estimate| over harvested entries (m)
+        double    pc_sq_sum               = 0.0;///< sum of estimate^2 over harvested entries (m^2)
         long long n_cr_rpb_gap_prune      = 0;  ///< receiver-PB carry entries dropped by the pl_max_gap_s prune
 
         // --- Seam-scoped ZWD re-seed (network.zwd_seam_reseed) ---

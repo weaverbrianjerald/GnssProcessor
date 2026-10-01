@@ -78,6 +78,9 @@ void expectGoldenModel(const std::string& bed) {
     const ParamSpec& rxcb = r.spec(NetworkParamKind::RxCodeBias);
     EXPECT_TRUE(rxcb.carried);
     EXPECT_EQ(rxcb.route, ParamRoute::DiagonalStationPrior);
+
+    EXPECT_FALSE(r.spec(NetworkParamKind::PhaseColour).estimated);   // card LGM, off
+    EXPECT_EQ(r.spec(NetworkParamKind::PhaseColour).route, ParamRoute::NotCarried);
 }
 
 } // namespace

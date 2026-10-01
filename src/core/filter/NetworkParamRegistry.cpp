@@ -62,6 +62,7 @@ const char* paramKindName(NetworkParamKind kind) {
         case NetworkParamKind::RxClock:      return "rx_clock";
         case NetworkParamKind::RxPhaseBias:  return "rx_phase_bias";
         case NetworkParamKind::RxCodeBias:   return "rx_code_bias";
+        case NetworkParamKind::PhaseColour:  return "phase_colour";
     }
     return "?";
 }
@@ -73,6 +74,7 @@ const char* paramQRuleName(ParamQRule rule) {
         case ParamQRule::RandomWalkPerDegree: return "rw_per_degree";
         case ParamQRule::AnchorElapsed:       return "anchor_elapsed";
         case ParamQRule::RandomWalkPerEpoch:  return "rw_per_epoch";
+        case ParamQRule::GaussMarkov:         return "gauss_markov";
     }
     return "?";
 }
@@ -252,6 +254,23 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
                    "network.carry_rx_code_bias_in_block";
         set(NetworkParamKind::RxCodeBias, std::move(s));
     }
+    {
+        // Card LGM: the registry's first new kind.  q is the stationary variance at the
+        // zenith; the elevation law and the time constant complete the model.
+        ParamSpec s;
+        s.estimated = s.carried = k.pc_on;
+        s.q = k.pc_sigma_zen * k.pc_sigma_zen;
+        s.q_units = "m^2";
+        s.q_rule = k.pc_on ? ParamQRule::GaussMarkov : ParamQRule::None;
+        s.tau_s = k.pc_on ? k.pc_tau_s : kNaN;
+        s.var_floor_m2 = 0.0;
+        s.birth_var_m2 = k.pc_on ? s.q : kNaN;
+        s.route = k.pc_on ? ParamRoute::LocalBlock : ParamRoute::NotCarried;
+        s.source = "network.phase_colour_sigma_zen_m, network.phase_colour_tau_s; sigma(e) = "
+                   "sigma_zen / sin(max(e, network.phase_colour_elev_floor_deg)); "
+                   "network.phase_colour_state";
+        set(NetworkParamKind::PhaseColour, std::move(s));
+    }
     return r;
 }
 
@@ -261,15 +280,15 @@ double NetworkParamRegistry::q(SharedParamKind kind) const {
 
 std::vector<std::string> NetworkParamRegistry::modelTable() const {
     std::vector<std::string> out;
-    out.push_back(fmt::format("{:<15} {:>3} {:>3} {:>10} {:<9} {:<14} {:>10} {:>9} {:>9} {:<22} {}",
+    out.push_back(fmt::format("{:<15} {:>3} {:>3} {:>10} {:<9} {:<14} {:>10} {:>6} {:>9} {:>9} {:<22} {}",
                               "kind", "est", "car", "q", "units", "q_rule", "q_anchored",
-                              "floor_m2", "birth_m2", "route", "source"));
+                              "tau_s", "floor_m2", "birth_m2", "route", "source"));
     for (const auto& s : specs_) {
-        out.push_back(fmt::format("{:<15} {:>3} {:>3} {:>10} {:<9} {:<14} {:>10} {:>9} {:>9} {:<22} {}",
+        out.push_back(fmt::format("{:<15} {:>3} {:>3} {:>10} {:<9} {:<14} {:>10} {:>6} {:>9} {:>9} {:<22} {}",
                                   s.name, s.estimated ? "yes" : "no", s.carried ? "yes" : "no",
                                   num(s.q), s.q_units, paramQRuleName(s.q_rule),
-                                  num(s.q_anchored), num(s.var_floor_m2), num(s.birth_var_m2),
-                                  paramRouteName(s.route), s.source));
+                                  num(s.q_anchored), num(s.tau_s), num(s.var_floor_m2),
+                                  num(s.birth_var_m2), paramRouteName(s.route), s.source));
     }
     return out;
 }
@@ -288,13 +307,14 @@ std::string NetworkParamRegistry::modelJson() const {
     for (std::size_t i = 0; i < specs_.size(); ++i) {
         const auto& s = specs_[i];
         j += fmt::format("{}{{\"kind\":\"{}\",\"estimated\":{},\"carried\":{},\"q\":{},"
-                         "\"q_units\":\"{}\",\"q_rule\":\"{}\",\"q_anchored\":{},"
+                         "\"q_units\":\"{}\",\"q_rule\":\"{}\",\"q_anchored\":{},\"tau_s\":{},"
                          "\"var_floor_m2\":{},\"birth_var_m2\":{},\"route\":\"{}\","
                          "\"source\":\"{}\"}}",
                          i ? "," : "", s.name, s.estimated ? "true" : "false",
                          s.carried ? "true" : "false", jnum(s.q), s.q_units,
-                         paramQRuleName(s.q_rule), jnum(s.q_anchored), jnum(s.var_floor_m2),
-                         jnum(s.birth_var_m2), paramRouteName(s.route), esc(s.source));
+                         paramQRuleName(s.q_rule), jnum(s.q_anchored), jnum(s.tau_s),
+                         jnum(s.var_floor_m2), jnum(s.birth_var_m2), paramRouteName(s.route),
+                         esc(s.source));
     }
     j += "]}";
     return j;

@@ -1207,6 +1207,41 @@ namespace GnssProcessor {
         void pruneReceiverPhaseBiasStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
+        // Phase-colour states (network.phase_colour_state; card LGM,
+        // docs/refound/LGM_los_phase_nuisance_2026-10-01.md section 4.1).
+        //
+        // One band-common, phase-only Gauss-Markov nuisance state per satellite of this
+        // station: the line of sight's time-correlated phase error, which enters every
+        // phase row of the satellite with +1 and no code row.  Keyed by the bare
+        // satellite id in the separate map @c phase_colour_indices_ (labelled "PCOL:"),
+        // seeded 0 and never written back by the network, so the linearization point
+        // stays 0 and the solved local correction is the estimate itself.  The network
+        // carries the estimate between epochs (NetworkCarryState::pc_carry); the
+        // StateManager holds only the column.  Unused in every non-network mode.
+        // -------------------------------------------------------------------
+
+        /// @brief Index of a satellite's phase-colour state, or -1 if absent.
+        int getPhaseColourIndex(const std::string& satellite) const;
+
+        /// @brief Read-only map satellite -> phase-colour state index.
+        const std::map<std::string, size_t>& getPhaseColourStates() const;
+
+        /// @brief Append a phase-colour state for @p satellite at value 0 and variance
+        ///        @p initial_var_m2.  Idempotent if the satellite already has one.
+        /// @return The state index.
+        size_t addPhaseColourState(const std::string& satellite, double initial_var_m2);
+
+        /// @brief Prune the phase-colour states of satellites not in @p keep_sats.
+        void prunePhaseColourStatesExcept(const std::set<std::string>& keep_sats);
+
+        /// @brief Record the satellite's elevation (deg) for the state's prior law.
+        void setPhaseColourElevation(const std::string& satellite, double elevation_deg);
+
+        /// @brief Last recorded elevation (deg) of the satellite's phase-colour state,
+        ///        or NaN when none was recorded.
+        double getPhaseColourElevation(const std::string& satellite) const;
+
+        // -------------------------------------------------------------------
         // Satellite clock states (PPP_RTK_Network producer).
         //
         // Explicit per-satellite clock-correction states (Δδtˢ in metres,
@@ -1535,6 +1570,8 @@ namespace GnssProcessor {
         std::map<std::string, SatBiasCacheEntry> sat_bias_cache_; //!< Pruned sat-bias snapshots awaiting potential re-acquisition.
         std::map<std::string, size_t> sat_phase_bias_indices_; //!< Map "satellite|signal|PB" -> state index (PPP_RTK_Network satellite phase bias).
         std::map<std::string, size_t> receiver_phase_bias_indices_; //!< Map "system_RPB_signal" -> state index (eq34 receiver phase-bias split δ_{r,σ}; local, re-estimated fresh each epoch; card 3).
+        std::map<std::string, size_t> phase_colour_indices_;  //!< Map satellite -> phase-colour state index (card LGM; network only).
+        std::map<std::string, double> phase_colour_elevations_; //!< Map satellite -> last elevation (deg) of its phase-colour state (card LGM).
         std::map<std::string, size_t> sat_clock_indices_;      //!< Map "satellite|SC" -> state index (PPP_RTK_Network satellite clock).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
         std::map<std::string, size_t> iono_rate_indices_; //!< Map satellite ID -> per-satellite iono-rate (Idot_s) state index; populated only when enableIonoRate() (constant-velocity model).

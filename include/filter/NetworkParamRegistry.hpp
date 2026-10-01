@@ -59,10 +59,11 @@ enum class NetworkParamKind : int {
     RxClock,          ///< Receiver clock and ISB per station (local).
     RxPhaseBias,      ///< Receiver phase bias of the eq34 chain datum (local).
     RxCodeBias,       ///< Receiver code bias per (station, signal) (local).
+    PhaseColour,      ///< Band-common phase nuisance per (station, satellite) (local; card LGM).
 };
 
 /// Number of @ref NetworkParamKind enumerators (the registry's table size).
-inline constexpr std::size_t kNetworkParamKindCount = 10;
+inline constexpr std::size_t kNetworkParamKindCount = 11;
 
 /// @brief How a kind's process noise scales across an epoch gap.
 enum class ParamQRule {
@@ -71,6 +72,7 @@ enum class ParamQRule {
     RandomWalkPerDegree, ///< SH ladder: q / n² per degree n ≥ 1, q at n = 0 (TECU²/s).
     AnchorElapsed,       ///< Card Q3: anchored at the anchor's q over the satellite's own elapsed time, loose at the legacy q until the guard re-validates.
     RandomWalkPerEpoch,  ///< var += q · gap_s / epoch (q in m² per epoch; the in-block local carries).
+    GaussMarkov,         ///< x' = phi x + w, phi = exp(-gap/tau), var(w) = q (1 - phi²); q is the stationary variance (m²) at the zenith.
 };
 
 /// @brief The route a carried instance of a kind takes into the next epoch's solve.
@@ -103,6 +105,8 @@ struct ParamSpec {
     /// network.clock_anchor_q, m²/s): the rate a held satellite clock is folded at, while
     /// @ref q is the loose rate it takes until the guard re-validates it.  NaN otherwise.
     double       q_anchored{std::numeric_limits<double>::quiet_NaN()};
+    /// The time constant under @c ParamQRule::GaussMarkov (s).  NaN otherwise.
+    double       tau_s{std::numeric_limits<double>::quiet_NaN()};
     double       var_floor_m2{0.0}; ///< Variance floor of the carried instance (m²; 0 = none).
     double       birth_var_m2{std::numeric_limits<double>::quiet_NaN()};  ///< Variance floor at an instance's birth (m²; 0 = none, NaN = the kind has no birth rule).
     ParamRoute   route{ParamRoute::NotCarried};
@@ -159,7 +163,8 @@ public:
      *        section 6).
      *
      * Columns: kind, estimated, carried, q with its units and rule, the anchored rate,
-     * the variance floor, the birth floor, the route and the knob sources.  Trace class: written at run start
+     * the Gauss-Markov time constant, the variance floor, the birth floor, the route and
+     * the knob sources.  Trace class: written at run start
      * and in the run-end tail, never read by the solve.
      *
      * @return The lines, without trailing newlines.

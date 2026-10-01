@@ -13,6 +13,7 @@
 #include "logging/LogManager.hpp"
 #include "common/Constants.hpp"
 #include "math/TimeUtils.hpp"
+#include <limits>
 #include <stdexcept>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -156,6 +157,7 @@ namespace GnssProcessor {
         for (auto& kv : sat_bias_indices_)       if (kv.second > rem_idx) --kv.second;
         for (auto& kv : sat_phase_bias_indices_) if (kv.second > rem_idx) --kv.second;
         for (auto& kv : receiver_phase_bias_indices_) if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : phase_colour_indices_)   if (kv.second > rem_idx) --kv.second;
         for (auto& kv : sat_clock_indices_)      if (kv.second > rem_idx) --kv.second;
         for (auto& kv : ionosphere_indices_)     if (kv.second > rem_idx) --kv.second;
         for (auto& kv : iono_rate_indices_)      if (kv.second > rem_idx) --kv.second;
@@ -476,6 +478,7 @@ namespace GnssProcessor {
     size_t StateManager::getStateSize() const {
         return core_state_size_ + code_bias_indices_.size() + sat_bias_indices_.size()
              + sat_phase_bias_indices_.size() + receiver_phase_bias_indices_.size()
+             + phase_colour_indices_.size()
              + sat_clock_indices_.size()
              + ionosphere_indices_.size() + iono_rate_indices_.size()
              + ambiguity_indices_.size();
@@ -955,6 +958,7 @@ namespace GnssProcessor {
         for (const auto& kv : getSatBiasStates())      put(kv.second, "SATB:"  + kv.first);
         for (const auto& kv : getSatPhaseBiasStates()) put(kv.second, "SATPB:" + kv.first);
         for (const auto& kv : getReceiverPhaseBiasStates()) put(kv.second, "RPB:" + kv.first);
+        for (const auto& kv : getPhaseColourStates())  put(kv.second, "PCOL:"  + kv.first);
         for (const auto& kv : getSatClockStates())     put(kv.second, "SATCLK:" + kv.first);
 
         return labels;
@@ -2309,6 +2313,59 @@ namespace GnssProcessor {
             receiver_phase_bias_indices_.erase(key);
             logger->trace("Removed receiver phase-bias state for {} at former index {}", key, rem_idx);
         }
+    }
+
+    // ===================================================================
+    // Phase-colour states (network.phase_colour_state, card LGM): one band-common,
+    // phase-only Gauss-Markov nuisance per satellite, keyed by the bare satellite id.
+    // The network carries the estimate; this map holds the column only.
+    // ===================================================================
+
+    int StateManager::getPhaseColourIndex(const std::string& satellite) const {
+        auto it = phase_colour_indices_.find(satellite);
+        return it != phase_colour_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getPhaseColourStates() const {
+        return phase_colour_indices_;
+    }
+
+    size_t StateManager::addPhaseColourState(const std::string& satellite, double initial_var_m2) {
+        auto it = phase_colour_indices_.find(satellite);
+        if (it != phase_colour_indices_.end()) return it->second;
+        const size_t index = appendState(0.0, initial_var_m2);
+        phase_colour_indices_[satellite] = index;
+        log_manager_.getLogger("state_manager")->trace(
+            "Added phase-colour state for {} at index {}", satellite, index);
+        return index;
+    }
+
+    void StateManager::prunePhaseColourStatesExcept(const std::set<std::string>& keep_sats) {
+        if (phase_colour_indices_.empty()) return;
+        std::vector<std::string> to_remove;
+        for (const auto& [sat, idx] : phase_colour_indices_)
+            if (!keep_sats.count(sat)) to_remove.push_back(sat);
+        for (const auto& sat : to_remove) {
+            auto it = phase_colour_indices_.find(sat);
+            if (it == phase_colour_indices_.end()) continue;
+            const size_t rem_idx = it->second;
+            if (rem_idx < core_state_size_ || getStateSize() <= core_state_size_) continue;
+            // removeStateAtIndex decrements every higher index in every dynamic map
+            // (this one included), so the next satellite's index is re-read from the map.
+            removeStateAtIndex(rem_idx);
+            phase_colour_indices_.erase(sat);
+            phase_colour_elevations_.erase(sat);
+        }
+    }
+
+    void StateManager::setPhaseColourElevation(const std::string& satellite, double elevation_deg) {
+        phase_colour_elevations_[satellite] = elevation_deg;
+    }
+
+    double StateManager::getPhaseColourElevation(const std::string& satellite) const {
+        auto it = phase_colour_elevations_.find(satellite);
+        return it != phase_colour_elevations_.end() ? it->second
+                                                     : std::numeric_limits<double>::quiet_NaN();
     }
 
     // ===================================================================

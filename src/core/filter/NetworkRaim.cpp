@@ -1117,6 +1117,12 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         if (ctx.knobs.iono_blk &&
                             ctx.carry.iono_blk_carry.erase({i, pa.sat}))
                             ++ctx.counters.n_iono_blk_erased_t4;
+                        // Card LGM: the line of sight's phase-colour entry with them.  The
+                        // T4 statistic reads its error in the same sum, so a level that is
+                        // no longer trusted cannot vouch for it either; it re-starts from
+                        // its birth prior next epoch.
+                        if (ctx.knobs.pc_on && ctx.carry.pc_carry.erase({i, pa.sat}))
+                            ++ctx.counters.n_pc_erase_raim;
                         // The receiver clock in the carried block (RX-CLK-in-block) has no
                         // T4 edge here, by a triaged decision rather than an omission.
                         // Invariant #1 requires a wired event response for every stiff

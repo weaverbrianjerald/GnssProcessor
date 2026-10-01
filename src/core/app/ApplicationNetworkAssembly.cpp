@@ -4269,6 +4269,46 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             /*is_rx_cb=*/true});
                     }
                 }
+                // Card LGM (network.phase_colour_state, section 4.1): the station's carried
+                // phase-colour columns as more columns of the same block.  Each enters as a
+                // predicted copy of its entry (the Gauss-Markov transition: value and every
+                // border coefficient times phi = exp(-gap / tau), variance
+                // phi^2 var + sigma(e)^2 (1 - phi^2)), and the builder scales its harvested
+                // cross covariances by phi.  A column with no live carry (cold, stale, or
+                // erased) is not pushed: it gets a birth row after the carry section.  The
+                // copies are reserved to their maximum count before the first push, so no
+                // LocalBlockCol::lc dangles (the receiver clock's pattern).
+                std::vector<LocalBlockCol> pc_bc;
+                std::vector<LocalCarry> pc_pred;
+                if (ctx.knobs.pc_on && pl_blk_on) {
+                    const auto& pcs = st.sm->getPhaseColourStates();
+                    pc_pred.reserve(pcs.size());
+                    for (const auto& [pc_sat, pc_sidx] : pcs) {
+                        const int pidx = static_cast<int>(pc_sidx);
+                        if (pidx < 0 || pidx >= x_lin.size() || !std::isfinite(x_lin(pidx))) continue;
+                        const auto phit = h2local.find(pidx);
+                        if (phit == h2local.end()) continue;   // no phase row this epoch
+                        const auto pit = ctx.carry.pc_carry.find({static_cast<int>(i), pc_sat});
+                        if (pit == ctx.carry.pc_carry.end()) continue;           // cold: birth row
+                        const double pgap = pl_now_s - pit->second.last_seen_s;
+                        if (!(pgap >= 0.0) || pgap > ctx.knobs.pc_max_gap_s) continue;   // stale: birth row
+                        const double phi = std::exp(-pgap / ctx.knobs.pc_tau_s);
+                        const double s2  = ctx.knobs.pcStationaryVar(
+                            st.sm->getPhaseColourElevation(pc_sat));
+                        const double pvar = phi * phi * pit->second.var + s2 * (1.0 - phi * phi);
+                        if (!(pvar > 0.0) || !std::isfinite(pvar)) continue;
+                        pc_pred.push_back(pit->second);
+                        LocalCarry& pr = pc_pred.back();
+                        pr.value_abs *= phi;
+                        for (CoupledShared& cs : pr.coupling) cs.coeff *= phi;
+                        LocalBlockCol pcol{static_cast<Eigen::Index>(phit->second), x_lin(pidx),
+                                           &pr, pvar, std::max(0.0, pgap), /*vce_fac=*/1.0};
+                        pcol.phi   = phi;
+                        pcol.is_pc = true;
+                        pc_bc.push_back(pcol);
+                        R.pc_planned.push_back(pcol.col);
+                    }
+                }
                 // Off: iono_bc and rxclk_bc are always empty, so this predicate reduces
                 // to `if (!pl_pend.empty())` (byte-identical).  On, it also admits a
                 // station whose ambiguity set is entirely young/stale/absent but whose
@@ -4276,7 +4316,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 // jointly among themselves, which is the correct prior, and the
                 // pl_pend-driven code below is a no-op on an empty pl_pend.
                 if (!pl_pend.empty() || !iono_bc.empty() || !rxclk_bc.empty()
-                    || !rxcb_bc.empty()) {
+                    || !rxcb_bc.empty() || !pc_bc.empty()) {
                     bool blk_done = false;
                     if (pl_blk_on) {
                         // Local block (F3, network.phase_leveling_local_block,
@@ -4440,6 +4480,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             bc.push_back(cc);
                             R.pl_rxcb_blk_cols.push_back(cc.col);
                         }
+                        // Card LGM: the phase-colour columns last.
+                        for (const LocalBlockCol& pc : pc_bc) bc.push_back(pc);
                         blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
                         if (!blk_done) {
                             ++R.pl_blk_fallback;
@@ -4494,6 +4536,29 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             R.pl_rxcb_blk_cols.clear();
                         } else if (blk_done) {
                             R.pl_cb_injected += static_cast<int>(rxcb_bc.size());
+                        }
+                        // Card LGM: a phase-colour column folded through the block unless the
+                        // scalar screen refused it; on a non-SPD block each column takes the
+                        // per-column route with the same predicted copy.  A column that folds
+                        // on neither route gets a backstop birth row after the carry section,
+                        // so the station block never loses the column's only prior.
+                        if (!pc_bc.empty()) {
+                            for (const LocalBlockCol& pc : pc_bc) {
+                                if (blk_done) {
+                                    if (std::find(R.pc_refused.begin(), R.pc_refused.end(),
+                                                  pc.col) != R.pc_refused.end())
+                                        continue;
+                                    R.pc_folded.push_back(pc.col);
+                                    ++R.pc_block_folds;
+                                } else {
+                                    const std::size_t n0 = cb.crows.size();
+                                    cb.buildCplRow(pc.col, pc.x_lin, *pc.lc, pc.var_eff, pc.gap);
+                                    if (cb.crows.size() > n0) {
+                                        R.pc_folded.push_back(pc.col);
+                                        ++R.pc_fallback_folds;
+                                    }
+                                }
+                            }
                         }
                         // B9-in-block: when the ZWD folded through the block, the diagonal
                         // B9 row below must not also fire (that would be the double count
@@ -4970,6 +5035,55 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     }
                 }
             }
+            // --- Card LGM: the phase-colour columns' record and birth rows ----------
+            // Every present column is recorded for the harvest.  A column whose carried
+            // prior did not fold this epoch (cold, stale, erased, before the leveling carry
+            // is warm, or refused by the builder) gets one pseudo-observation row, x = 0 at
+            // weight 1 / sigma(e)^2: the state's stationary prior.  Within one epoch the
+            // column is confounded with its line of sight's band-common ambiguity
+            // direction, so without this row the station block would be singular.  The row
+            // sits in A_r (not the pre-test diagonal prior), so the within-epoch RAIM
+            // replay, which re-adds the assembled rows, keeps it.  Off: nothing runs.
+            if (ctx.knobs.pc_on) {
+                const Eigen::VectorXd x_lin_pc = st.sm->getStateVector();
+                std::vector<std::tuple<Eigen::Index, double, double>> brows;   // (col, w, y)
+                for (const auto& [pc_sat, pc_sidx] : st.sm->getPhaseColourStates()) {
+                    const int pidx = static_cast<int>(pc_sidx);
+                    if (pidx < 0 || pidx >= x_lin_pc.size() || !std::isfinite(x_lin_pc(pidx)))
+                        continue;
+                    const auto phit = h2local.find(pidx);
+                    if (phit == h2local.end()) continue;
+                    const Eigen::Index pcol = static_cast<Eigen::Index>(phit->second);
+                    const double elev = st.sm->getPhaseColourElevation(pc_sat);
+                    const bool folded = std::find(R.pc_folded.begin(), R.pc_folded.end(), pcol)
+                                        != R.pc_folded.end();
+                    R.pl_pc.push_back(PlPc{pc_sat, pcol, x_lin_pc(pidx), elev, folded});
+                    if (folded) continue;
+                    brows.emplace_back(pcol, 1.0 / ctx.knobs.pcStationaryVar(elev),
+                                       -x_lin_pc(pidx));
+                    if (std::find(R.pc_planned.begin(), R.pc_planned.end(), pcol)
+                        != R.pc_planned.end())
+                        ++R.pc_backstop_rows;
+                    else
+                        ++R.pc_birth_rows;
+                }
+                const Eigen::Index nb = static_cast<Eigen::Index>(brows.size());
+                if (nb > 0) {
+                    const Eigen::Index m0 = R.A_s.rows();
+                    R.A_s.conservativeResize(m0 + nb, Eigen::NoChange);
+                    R.A_s.bottomRows(nb).setZero();
+                    R.A_r.conservativeResize(m0 + nb, Eigen::NoChange);
+                    R.A_r.bottomRows(nb).setZero();
+                    R.w.conservativeResize(m0 + nb);
+                    R.y.conservativeResize(m0 + nb);
+                    for (Eigen::Index k = 0; k < nb; ++k) {
+                        const auto& [bc_col, bc_w, bc_y] = brows[static_cast<std::size_t>(k)];
+                        R.A_r(m0 + k, bc_col) = 1.0;
+                        R.w(m0 + k) = bc_w;
+                        R.y(m0 + k) = bc_y;
+                    }
+                }
+            }
             // --- Unconditional Z-row capture (§17 finding 3): record the tropo
             // column and x_lin for the post-solve ZWD harvest on any snapshot-armed
             // run, so every RTB-7 snapshot serializes fresh Z rows without the B9
@@ -5114,6 +5228,15 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];
             if (Rc.pl_blk_max_dim > ctx.counters.n_pl_blk_max_dim)
                 ctx.counters.n_pl_blk_max_dim = Rc.pl_blk_max_dim;
+        }
+    // Card LGM: the phase-colour prior edges, counted in the parallel produce and reduced
+    // here.  Off: the loop does not run.
+    if (ctx.knobs.pc_on)
+        for (const StationAssembly& Rc : asm_res) {
+            ctx.counters.n_pc_birth_rows     += Rc.pc_birth_rows;
+            ctx.counters.n_pc_backstop_rows  += Rc.pc_backstop_rows;
+            ctx.counters.n_pc_block_folds    += Rc.pc_block_folds;
+            ctx.counters.n_pc_fallback_folds += Rc.pc_fallback_folds;
         }
     // Age-aware young-arc inflate: its own fold, keyed on the knob and not on
     // pl_local_block.  The card is wired on the per-column route too, so folding it

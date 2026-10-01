@@ -889,6 +889,9 @@ void networkGrossLosAct(NetworkRunContext& ctx,
         } else {
             if (ctx.carry.iono_carry.erase(ik))     ++tal.iono_erased;
             if (ctx.carry.iono_blk_carry.erase(ik)) ++tal.iono_erased;
+            // Card LGM: a gross line of sight's phase-colour entry re-starts from its
+            // birth prior as well (the gross phase rows wrote into it).
+            if (ctx.carry.pc_carry.erase(ik)) ++ctx.counters.n_pc_erase_gross;
         }
     };
 

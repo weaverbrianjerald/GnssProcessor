@@ -132,6 +132,16 @@ struct LocalBlockCol {
     /// the ambiguity population.  Default false, so an existing brace-init keeps its
     /// meaning.
     bool              is_rx_cb{false};
+    /// The column's Gauss-Markov transition coefficient (card LGM, the phase-colour
+    /// state): the injector passes a predicted copy of the carry entry (value and border
+    /// coefficients already times phi) and the transitioned variance, and the builder
+    /// scales the column's harvested cross covariances by phi as well
+    /// (cov(phi x, y) = phi cov(x, y)).  1 (default) leaves every existing column
+    /// unchanged: the scaling is skipped, so an existing brace-init keeps its meaning.
+    double            phi{1.0};
+    /// The entry is a phase-colour column (card LGM).  Telemetry only: a refused column
+    /// is recorded in @c R.pc_refused so the injector can give it a birth row.
+    bool              is_pc{false};
 };
 
 /// One buffered present-column term of a coupling row under the border time update

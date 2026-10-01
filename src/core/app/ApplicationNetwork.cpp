@@ -3003,6 +3003,13 @@ int Application::runNetwork() {
         // and the phase-anchor carry re-reference (the datum block).  A no-op with an
         // empty buffer, which is every unarmed run.
         networkAmbStateTrace(ctx, log, traces);
+        // Card LGM: drain the phase-colour trace rows buffered at the harvest.
+        if (!ctx.carry.pc_trace_rows.empty()) {
+            if (traces.phase_colour_trace.is_open())
+                for (const std::string& row : ctx.carry.pc_trace_rows)
+                    traces.phase_colour_trace << row;
+            ctx.carry.pc_trace_rows.clear();
+        }
         subEnd(SB_STASH_STATUS);   // close the stash and epoch-status tail, before the readout (D0b)
 
         // Per-epoch section-timer readout, emitted-epoch path (D0).  Deltas of the

@@ -2060,6 +2060,32 @@ namespace GnssProcessor {
         /// handover does not persist as a state.  Solve-affecting when armed; default
         /// @c false is byte-identical.  Acts only under @c FloatKf.
         bool amb_float_declared_handover{ false };
+        /// The per-line-of-sight phase nuisance state (card LGM,
+        /// docs/refound/LGM_los_phase_nuisance_2026-10-01.md section 4.1): one band-common,
+        /// phase-only Gauss-Markov state per (station, satellite), +1 on every phase row
+        /// of the line of sight and nothing on code rows, carried in the station's
+        /// whitened local block with transition phi = exp(-gap / tau), born at
+        /// N(0, sigma(e)^2) by a pseudo-observation row.  It models the stations'
+        /// time-correlated phase error (card SFR) that the network otherwise states as
+        /// white.  Requires the float vehicle, phase_leveling and the conditional
+        /// coupling; refuses the joint whitening and carry_invariant.  Default false is
+        /// byte-identical.
+        bool phase_colour_state{ false };
+        /// Zenith sigma of the state's stationary prior (m); the elevation law is
+        /// sigma(e) = sigma_zen / sin(max(e, phase_colour_elev_floor_deg)), the sim
+        /// fixture's (card SFR section 4.2).  Must be > 0.
+        double phase_colour_sigma_zen_m{ 0.005 };
+        /// Time constant tau (s) of the Gauss-Markov transition.  Must be > 0.
+        double phase_colour_tau_s{ 300.0 };
+        /// Elevation (deg) below which sigma(e) stops growing.  In [0, 90).
+        double phase_colour_elev_floor_deg{ 20.0 };
+        /// A carried entry older than this (s) is not folded (the line of sight re-starts
+        /// from its birth prior) and is pruned at the harvest.  Must be > 0.
+        double phase_colour_max_gap_s{ 900.0 };
+        /// Per-line-of-sight trace of the state (@c network_phase_colour.csv: epoch,
+        /// station, satellite, elevation, estimate, its standard deviation, born or
+        /// carried), written at the harvest.  Trace class; inert without the state.
+        bool trace_phase_colour{ false };
         /// Per-arc carry-state trace (@c network.trace_amb_state) to
         /// @c network_amb_state.csv (RF-1 §7.4).  One row per carried (station,
         /// satellite, signal) per traced epoch, with what was carried (@c value_abs,

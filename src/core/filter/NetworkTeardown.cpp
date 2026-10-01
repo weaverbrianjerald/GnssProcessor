@@ -6259,6 +6259,31 @@ int networkTeardown(
                   ctx.carry.rx_clk_carry.size(), ctx.carry.rpb_carry.size(),
                   ctx.carry.rx_cb_carry.size());
     }
+    // Card LGM: the phase-colour state's edges (invariant #4: the run-end counters are the
+    // ON-path telemetry).
+    if (ctx.knobs.pc_on) {
+        const auto& C = ctx.counters;
+        const double n = static_cast<double>(C.n_pc_stash);
+        log->info("Network (card LGM): phase-colour state: {} birth row(s), {} carried fold(s) "
+                  "through the block, {} by the per-column fallback, {} backstop birth row(s); "
+                  "{} entries harvested (rms estimate {:.2f} mm, mean |x| {:.2f} mm), {} harvest "
+                  "refusal(s); {} erased by the RAIM attribution, {} by the gross line-of-sight "
+                  "screen, {} pruned past {:.0f} s; {} live at the end.",
+                  C.n_pc_birth_rows, C.n_pc_block_folds, C.n_pc_fallback_folds,
+                  C.n_pc_backstop_rows, C.n_pc_stash,
+                  n > 0.0 ? 1e3 * std::sqrt(C.pc_sq_sum / n) : 0.0,
+                  n > 0.0 ? 1e3 * C.pc_abs_sum / n : 0.0, C.n_pc_stash_fail,
+                  C.n_pc_erase_raim, C.n_pc_erase_gross, C.n_pc_gap_prune,
+                  ctx.knobs.pc_max_gap_s, ctx.carry.pc_carry.size());
+        if (C.n_pc_stash > 0 && C.n_pc_block_folds + C.n_pc_fallback_folds == 0)
+            log->warn("Network (card LGM): the phase-colour state was harvested but never "
+                      "folded a carried prior: it acted only through its birth rows, i.e. as "
+                      "white noise.  Read the run as the state OFF, not as its test.");
+        if (C.n_pc_backstop_rows > 0)
+            log->warn("Network (card LGM): {} planned carried phase-colour column(s) did not "
+                      "fold (refused by the block builder or the per-column route) and fell "
+                      "back to the birth prior.", C.n_pc_backstop_rows);
+    }
 
     // End-of-run manifest record (L15); the body is in NetworkRunTraces (INC-4).
     traces.writeRunManifestComplete(nc, ctx.counters, synced.size(), loop_ms,
