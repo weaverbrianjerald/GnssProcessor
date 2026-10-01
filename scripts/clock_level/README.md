@@ -52,6 +52,7 @@ copy, and that includes the files the writers produce (output location substitut
 | `wsl_link.py` | WSL | The walk share and card PVN's stated contrast against the stations carrying each satellite (L1 to L3), and the beds' walk share at matched station counts. |
 | `wsf_persist.py` | FWS | The persistence ratio of the per-satellite walk share (rms change over 5, 20 and 60 epochs against sqrt(k) times the rms step) and the median walk share at clone age 1 h, for one-change arms. |
 | `soi_test.py` | SOI | The second-order ionospheric term per line of sight (the estimator's slant ionosphere, the dipole of `MagneticField.cpp`) against the signed ionosphere-free post-fit phase residuals (T1, with a placebo) and the walk share's changes (T2). |
+| `lsr_reads.py` | LSR | R1, the zenith wet-delay misfit per station and epoch (the post-fit residuals' slope on the mapping function) by station class and against the walk share; R2, the walk share's change against the number of observing-set changes in the window. |
 | `rev_grade.py` | REV | The censuses of the hold family's members against card REV's bars: all-site, C1W, C1C and WTZZ on the field, the 16 stations on the sim (keys with an `s` appended). |
 | `smd_split.py` | SMD | The block clones' passed motion by clone age and hour of day: the level part \|Phi_c - Phi_D\|, the phase-visible part \|Phi_D\| and mean r_D. |
 | `splicekey.py` | SMH | Replaces the P records of chosen satellites in one wire with another wire's, and writes a replay arm. |

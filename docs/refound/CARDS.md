@@ -416,9 +416,12 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   against the signed post-fit residuals and the walk share's changes, the sim as the null.
   FALSIFIED: the term is 0.7 mm rms in its unabsorbable part against 4.1 mm of slow residual, no
   slope at the residual level (-0.02 +/- 0.08) and no correlation with the walk share at any lag.
-- [LSR](LSR_long_scale_remainder_2026-10-01.md): open, 2026-10-01: pre-registered (the outside
+- [LSR](LSR_long_scale_remainder_2026-10-01.md): closed, 2026-10-01: pre-registered (the outside
   review's note after cards FWS and SOI): the field's walk-share persistence that remains at an hour
   and two hours with the wind-up staircase removed, against its two remaining candidates
   (station-set changes as satellites rise and set; tropical wet-delay variability the estimator's
   1.9 mm per root hour random walk cannot follow). Two trace reads and two one-change 6 h field arms
   (the wet-delay q, troposphere gradients).
+  FALSIFIED: the posture re-estimates the wet delay every epoch (the q arm is byte-identical),
+  gradients worsen the persistence, and set changes add no walk; untested: phase-centre and
+  long-period multipath errors.
