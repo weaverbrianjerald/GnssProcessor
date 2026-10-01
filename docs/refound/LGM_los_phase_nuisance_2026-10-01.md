@@ -158,3 +158,60 @@ consumer in hour 2 on both beds, it does not whiten the residual, and its effect
 persistence has opposite signs on the two beds. The state of section 2 remains the lever. The gate
 set is revised before the build in one respect: the increment lag correlation (G4, second clause)
 does not see the colour on the sim and is kept only as a no-harm check.
+
+## 4.1 The design (fixed before code, 2026-10-01)
+
+From a read of the ambiguity carry's lifecycle on the golden posture. The float vehicle resolves
+`phase_leveling_local_block` on, so each station's carried ambiguities, and the receiver code bias on
+the program posture, already travel as one jointly whitened block with their harvested conditional
+cross covariances. The state joins that block, so its strong posterior correlation with the same line
+of sight's ambiguities (the two share the phase rows) is carried, not dropped.
+
+**Knobs** (default off; off is byte-identical): `network.phase_colour_state`;
+`network.phase_colour_sigma_zen_m` (0.005), `network.phase_colour_tau_s` (300),
+`network.phase_colour_elev_floor_deg` (20), `network.phase_colour_max_gap_s` (900);
+`network.trace_phase_colour` (the per-line-of-sight trace `network_phase_colour.csv`). The loader
+refuses the state without the network mode, the float vehicle, `phase_leveling` and
+`carry_conditional_coupling`, and with `carry_coupling_joint_whiten` or `carry_invariant`.
+
+**The column.** Each station's `StateManager` gains a per-satellite map (label `PCOL:<sat>`),
+allocated in `MeasurementModel::ensureRequiredStates` for every satellite with an uncombined phase
+observation, seeded 0 and pruned when the satellite leaves the station. `buildJacobianRow` puts +1 on
+every phase row of the satellite and nothing on code rows. The network never writes the solution back
+into the station's state, so the linearization point stays 0 and the carried value is the estimate
+itself. `networkSplitStation_` routes the column into the local block without change.
+
+**The kind.** The registry's first new entry, `NetworkParamKind::PhaseColour`: q rule Gauss-Markov
+(sigma and tau), route local block, birth variance sigma(e)^2.
+
+**Inject (PASS B).**
+
+1. *Birth row.* A column with no live carry this epoch gets one pseudo-observation row (x = 0 at
+   weight 1 / sigma(e)^2) with the station's pin rows, before the coupling rows: the station block is
+   positive definite before its test, and the row survives the within-epoch RAIM replay (which re-adds
+   the assembled rows but not the pre-test diagonal priors). A live carry is an entry within the
+   maximum gap on a station-epoch where the leveling carry injects.
+2. *Carried.* A predicted copy of the entry (the value and every border coefficient times phi,
+   phi = exp(-gap / tau)) enters the station's whitened block with variance
+   phi^2 var + sigma(e)^2 (1 - phi^2); its cross terms with the other block columns are scaled by phi
+   (a new `LocalBlockCol::phi`, default 1, so every existing column is unchanged). The block's
+   per-column fallback emits the same predicted copy. A planned carried column that the builder
+   refuses gets a birth row as a backstop (counted).
+
+**Harvest.** The columns join the station's harvest block after the receiver code bias and before the
+wet delay (which keeps its last-row slot), and are stashed in a new map keyed (station, satellite)
+with the estimate, the conditional variance, the border regression and the block row.
+
+**Responses.** No slip response: the state is not an arc quantity, and an ambiguity's drop already
+zeroes their cross terms (counted as missing pairs). The RAIM attribution erase and the gross
+line-of-sight erase also erase the line of sight's entry, so a faulty line of sight re-starts from its
+birth prior. A gap beyond the maximum prunes the entry. Every edge is counted: births, carried folds
+(block and fallback), backstop births, erases by cause, prunes, missing pairs; one run-end line.
+
+**Invariants.** #1: the state is mean-reverting with q > 0, not stiff. #7: the decoupling edge is the
+birth after a gap or an erase, bounded at the stationary variance; the re-coupling edge is the birth
+prior itself.
+
+**Instruments.** `network_phase_colour.csv` (epoch, station, satellite, elevation, estimate, its
+standard deviation, born or carried) for gate G1 against `truth_phase_colour.csv`; the post-fit rows
+already include the column (`phase_acf.py` reads them unchanged).
