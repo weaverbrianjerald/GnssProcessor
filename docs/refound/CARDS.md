@@ -332,3 +332,12 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   every level move as a revision) and the census loss from hour 3 stays; the passed motion is all
   phase-visible, about 1 cm p90 of estimator wander on the sim and twice that on the field. A
   defect of card SMH's bridge (the epoch's clock step dropped at every switch) found and fixed.
+- [QPV](QPV_anchor_q_phase_visible_2026-09-30.md): open, 2026-09-30: pre-registered (the outside
+  review's decision 2, once card SMD's split existed): the anchor's clock q derived from the
+  phase-visible passed motion, by a ladder of `network.clock_anchor_q` (a quarter to four times
+  card Q3's 2.9e-8 m2/s) on both beds, the rule that the field's passed motion net of the sim's
+  floor equals its stated walk, the census at the derived q and an emit-side shrinkage read.
+  Predictions: the derived q within a factor 2 of the floor; no q at or above it removes the
+  hour-3 loss. READ: the rule gives 3.1 times the floor (Q1 fails); at that q the census loss
+  stays and the producer pays (Q3 holds); the anchor's q stays at the floor; the shrinkage read
+  scales the hour-1 gain and the later loss together.
