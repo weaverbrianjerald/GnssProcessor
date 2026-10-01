@@ -1,7 +1,7 @@
 # scripts/clock_level/
 
 Graders, census drivers and offline wire tools for the clock-level cards in `docs/refound/`
-(CLV, CLV2, HLT, CTU, CTU2, LAH, PVN, SMH, SMD, QPV, REV, PRM). The cards cite these scripts by bare
+(CLV, CLV2, HLT, CTU, CTU2, LAH, PVN, SMH, SMD, QPV, REV, FXA, PRM). The cards cite these scripts by bare
 file name as "session scripts" or "scratchpad graders". On 2026-09-30 they were moved here from
 session scratchpads.
 
@@ -46,6 +46,7 @@ copy, and that includes the files the writers produce (output location substitut
 | `lahphi.py` | SMH | Preview wire: LAH's P minus the SMH clone's Phi wherever the clone is live, plus a replay arm. |
 | `smd_ctlwire.py` | SMD, QPV | Rebuilds a wire from the phase-clock hold's wire: P = P_LAH - alpha (frozen + Phi) on every held key. Column `phi_m` with alpha 1 reproduces the block member's wire, and the script checks it against that run's P records. An alpha below 1 gives the QPV shrinkage wires. |
 | `rev_wire.py` | REV | Card REV's offline members on the block clone's trace: P = P_LAH - (frozen + X) with X the walk share (`phi`, checked against the block run's wire), the revision (`rev`), the revision frozen at the clone's variance plateau (`revk<k>`) or both (`both`); `reads` gives R against Phi_D by clone age, the freeze's timing and the re-coupling edges. Needs a trace with the card REV columns. |
+| `fxa_attrib.py` | FXA | The martingale reads of the block clones' revision (increment NIS, lag correlations, NEES at 1 h against the increment NIS, event-window shares) and the descriptive structure of the frame-free motion of D, with and without each epoch's constellation-common step. Needs a trace with the card REV columns. |
 | `rev_grade.py` | REV | The censuses of the hold family's members against card REV's bars: all-site, C1W, C1C and WTZZ on the field, the 16 stations on the sim (keys with an `s` appended). |
 | `smd_split.py` | SMD | The block clones' passed motion by clone age and hour of day: the level part \|Phi_c - Phi_D\|, the phase-visible part \|Phi_D\| and mean r_D. |
 | `splicekey.py` | SMH | Replaces the P records of chosen satellites in one wire with another wire's, and writes a replay arm. |
