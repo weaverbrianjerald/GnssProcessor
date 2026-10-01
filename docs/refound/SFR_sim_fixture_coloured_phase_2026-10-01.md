@@ -129,3 +129,23 @@ shared with the code multipath) already gives the post-fit residual a Gauss-Mark
 - **K2.** `k2` meets C1 in every class (within 0.10 at 1, 2 and 5 epochs, rms within 30 %), or the
   ladder's next rung is set from `k2`'s miss by scaling sigma by the rms ratio and tau by the
   ratio of the fitted time constants.
+
+### 3.2 Two more rungs, predicted before they ran (2026-10-01, after `k3`)
+
+`k3` (section 4) matches the rms within 3 % and the autocorrelation at 1 and 2 epochs within 0.07 in
+every class, and reads 0.15 low at 5 epochs in every class: the field's colour has a heavier tail than
+one exponential (its acf(5) is above a single-exponential extrapolation of its acf(1) and acf(2), the
+sim's below). Two candidates, run together:
+
+| candidate | white | multipath phase | colour (sigma at zenith, tau) |
+| --- | --- | --- | --- |
+| `k4` (section 3.1's rule on `k3`'s miss) | 0.5 mm | 0 | tropical 4.89 mm, 203 s; mid 3.43 mm, 164 s; high 3.28 mm, 238 s |
+| `k5` (two components) | 0.5 mm | 1.2 mm (tau 300 s, per band) | tropical 4.0 mm, 150 s; mid 2.6 mm, 120 s; high 2.4 mm, 150 s |
+
+- **K4.** The longer time constant lifts acf(5) by at least 0.08 in every class, and acf(1) by no more
+  than 0.08, so `k4` meets C1 at 5 epochs in at least two classes.
+- **K5.** The second, slower component lifts acf(5) to within 0.10 of the field in every class while
+  acf(1), acf(2) and the rms stay within C1: `k5` meets C1 in every class.
+
+The candidate that meets C1 in more classes becomes the regeneration recipe (ties to the one with the
+smaller summed lag-5 miss).
