@@ -386,3 +386,9 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   FALSIFIED the same day: the common drift is not in the walk share (the smoother books it as
   revision), the wire moves by at most 3 mm and the census not at all; what card SMD's member
   passes is per-satellite. The hold family is closed on this estimator; the phase-clock hold stays.
+- [WSL](WSL_walk_share_stations_link_2026-10-01.md): open, 2026-10-01: pre-registered (the outside
+  review's note after cards WSX, FXA and SMC): whether the field's larger walk share (25 against
+  9 mm between satellites) is card WSX's carry defect seen through the hold, tested from existing
+  traces and the unit network: the stated contrast and the walk share against the stations
+  observing each satellite, with clone age as the rival, on both beds. If it holds, the augmented
+  previous border is the critical path.
