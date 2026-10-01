@@ -392,3 +392,9 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   traces and the unit network: the stated contrast and the walk share against the stations
   observing each satellite, with clone age as the rival, on both beds. If it holds, the augmented
   previous border is the critical path.
+- [PAC](PAC_common_drift_pivot_clock_2026-10-01.md): open, 2026-10-01: the author's question after
+  card FXA, whether the constellation-common drift is the clock pivot's a priori clock. The traces
+  say no: the pivot's own phase-visible clock and the smoothest receiver clocks move with the
+  fleet, so the drift is the network's phase-visible time scale floating on the pinned code clock;
+  one 2 h field arm with a well-tracked pivot pinned tests whether the unhealthy, sparsely tracked
+  G01 is what lets the field's float grow.
