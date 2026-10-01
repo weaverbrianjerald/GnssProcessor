@@ -471,3 +471,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   sigma (field golden consumer hour 1 0.559 to 0.440 m) but starved; whitening with the white sigma
   at the white level and a sim consumer cost. The carried ambiguity moves 3 to 7 mm per epoch per
   line of sight, so the colour cannot be separated from it: open behind card AIL.
+- [AIL](AIL_ambiguity_information_loss_2026-10-01.md): open, 2026-10-01: pre-registered (card LGM section
+  5.3): the float vehicle's carried ionosphere-free ambiguity moves 3 to 7 mm per epoch per line of
+  sight instead of being phase-stiff, which keeps the colour state from carrying the colour. A
+  trace-class instrument reads the ambiguity's variance before and after each epoch to place the
+  loss at the inject or in the solve.
