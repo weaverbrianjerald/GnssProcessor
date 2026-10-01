@@ -376,3 +376,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   their base rate), stationary and common to the constellation (the per-satellite remainder is the
   sim's size): a clock-datum drift that the smoothed hold's per-clone walk share makes
   between-satellite, a candidate for the census's C1W loss from hour 3.
+- [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md): open, 2026-10-01: pre-registered
+  (card FXA's amended decision): card SMD's member replayed offline with each epoch's
+  constellation-common step removed from its walk share, so a common drift the clones' different
+  births made between-satellite no longer reaches the wire as a difference. Predictions: the C1W
+  loss from hour 3 disappears, the hour-1 gain keeps half its size, the sim does not get worse.
