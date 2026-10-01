@@ -228,6 +228,9 @@ namespace GnssProcessor {
         /// of the coupling rows in place of card 1d's scalar kappa, on every row harvested
         /// at the stash the dense border block belongs to.
         bool carry_cpl_exact{};
+        /// network.carry_coupling_exact_cross (card WSX): the exact update's bracket between
+        /// two rows of a station, added in the whitened local block.
+        bool carry_cpl_exact_cross{};
         bool clm_on{};      ///< network.clock_level_monitor (card CTU): the level monitor, measure-only
         bool clm_raise{};   ///< network.clock_level_bound_raise (card CTU): raise the stashed block to the level bound
         int  clm_restore_credit_ep{};   ///< network.clock_level_restore_credit_ep (card CTU G5): epochs of code information the restored level is credited with (0 = all the snapshot's)

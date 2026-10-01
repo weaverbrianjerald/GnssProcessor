@@ -122,6 +122,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_joint = config_.networkCarryCouplingJointWhiten();
     k.carry_cpl_tu = config_.networkCarryCouplingTimeUpdate();
     k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov + !joint
+    k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // card WSX; loader guarantees exact
     k.clm_on    = config_.networkClockLevelMonitor();      // card CTU monitor (trace class)
     k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
     k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
@@ -1150,6 +1151,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // again, on the same footing; appended only when armed.
         if (ctx.knobs.carry_cpl_exact)
             add(fmt::format("carrycplexact={}", ctx.knobs.carry_cpl_exact));
+        // Card WSX: the within-station bracket changes the rows' joint weight; armed only.
+        if (ctx.knobs.carry_cpl_exact_cross)
+            add(fmt::format("carrycplexactx={}", ctx.knobs.carry_cpl_exact_cross));
         // The bound raise (card CTU) moves the carried border block; the monitor alone is
         // trace class and stays out of the fingerprint.
         if (ctx.knobs.clm_raise)

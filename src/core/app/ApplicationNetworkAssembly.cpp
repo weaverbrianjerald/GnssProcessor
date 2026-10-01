@@ -3807,7 +3807,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 }
                 // Card CTU: the exact time update's epoch inputs (built serially before this
                 // loop by networkCouplingExactPrepare; read-only here).
-                if (ctx.knobs.carry_cpl_exact) cb.cxu = &ctx.carry.cxu_epoch;
+                if (ctx.knobs.carry_cpl_exact) {
+                    cb.cxu       = &ctx.carry.cxu_epoch;
+                    cb.cxu_cross = ctx.knobs.carry_cpl_exact_cross;   // card WSX
+                }
                 if (legacy_local_inject) {
                 // Ambiguity carry.  Legacy: the whole pivot station is skipped (all its
                 // ambiguities are gauge pins).  Prioritized: every station carries the

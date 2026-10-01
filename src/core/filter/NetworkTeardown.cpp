@@ -5984,6 +5984,26 @@ int networkTeardown(
         if (X.rows_exact == 0)
             log->warn("Network (card CTU): network.carry_coupling_exact_update is ARMED but no "
                       "row took the exact route: the card is INERT for this run.");
+        if (ctx.knobs.carry_cpl_exact_cross) {
+            // Card WSX: the within-station bracket, its reach and its size.
+            const auto hist = [&X](int cls) {
+                std::string s;
+                for (int b = 0; b < CouplingExactCounters::kCrossRhoBins; ++b)
+                    s += (b ? " " : "") + std::to_string(X.cross_rho_hist[cls][b]);
+                return s;
+            };
+            log->info("Network (card WSX / within-station bracket): {} block(s), {} pair(s) took "
+                      "M_i'BM_k, {} pair(s) skipped (a row off the exact route); |M_i'BM_k| mass "
+                      "{:.4e} m^2; |rho| against the pair's diagonal by bin (<0.01 <0.03 <0.1 <0.2 "
+                      "<0.3 <0.5 <0.8 >=0.8): ambiguity pairs [{}] max {:.3f}, pairs with a "
+                      "receiver code bias [{}] max {:.3f}.",
+                      X.cross_blocks, X.cross_pairs, X.cross_pairs_skipped, X.cross_abs_sum,
+                      hist(0), X.cross_rho_max[0], hist(1), X.cross_rho_max[1]);
+            if (X.cross_pairs == 0)
+                log->warn("Network (card WSX): network.carry_coupling_exact_cross is ARMED but no "
+                          "pair took the term (no whitened local block, or no two exact rows in "
+                          "one): the knob is INERT for this run.");
+        }
         if (c.cxu_fold_mismatch_set > 0 || c.cxu_fold_mismatch_q > 0)
             log->warn("Network (card CTU): the fold disagreed with the rows' mirror on {} key "
                       "disposition(s) and {} inflation(s); outside handover epochs this is a "

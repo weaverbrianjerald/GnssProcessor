@@ -269,6 +269,10 @@ if(MSVC)
     # there and tipped it over, C1128).
     set_source_files_properties(tests/test_block_baarda.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_coupling_exact_update.cpp: card WSX's generalized eigen-solve of the border
+    # covariance against the batch tipped it over the Debug section limit (C1128).
+    set_source_files_properties(tests/test_coupling_exact_update.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
 if(WIN32)
@@ -452,6 +456,7 @@ add_executable(gnss_tests
     tests/test_pb_hold_phase_clock.cpp
     tests/test_pb_hold_smoothed.cpp
     tests/test_pb_hold_block.cpp
+    tests/test_wsx_within_station_cross.cpp
     tests/test_phase_visible_monitor.cpp
     tests/test_pb_hold_presence.cpp
     tests/test_pb_translation_premise.cpp

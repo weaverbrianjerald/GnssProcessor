@@ -204,6 +204,10 @@ struct CouplingRowBuilder {
     /// 1d route, byte-identical).  A row takes the exact route when the epoch is @c ok and
     /// the row was harvested at the stash the epoch's dense block belongs to.
     const CouplingExactEpoch*                cxu{nullptr};
+    /// Card WSX (network.carry_coupling_exact_cross): with @c cxu, add the exact update's
+    /// bracket between two rows of a station's local block (@ref buildLocalBlock).  False
+    /// = the per-row form (byte-identical).
+    bool                                     cxu_cross{false};
 
     /// True (and counted) when @p cs sits on a satellite inside its re-admission window.
     bool readmitDiverted(const CoupledShared& cs);
@@ -259,9 +263,13 @@ struct CouplingRowBuilder {
     /// With @c cxu armed and the row harvested at its stash, the row takes the exact
     /// route (@ref exactRowIngredients) instead.  A row the exact route cannot take is
     /// counted (@c R.cxu.rows_stale / @c rows_unfactored) and built as before.
+    /// @param xr_keep  when non-null and the row took the exact route, receives that route's
+    ///        @ref CouplingExactRow (card WSX's pair term); left untouched (@c ok false)
+    ///        on any other route.
     bool scalarRowIngredients(Eigen::Index col, double x_lin_val,
                               const LocalCarry& lc, double var_eff, double gap,
-                              PendCplRow& row, double& sigma2);
+                              PendCplRow& row, double& sigma2,
+                              CouplingExactRow* xr_keep = nullptr);
     /// The exact route of one row (card CTU section 4).  Terms on a stashed dense key go
     /// through @ref couplingExactRow (S updated, D re-attributed through P); a datum-pinned
     /// term (@c p_prev = 0) is kept as harvested; a present term with no dense row takes
@@ -269,10 +277,11 @@ struct CouplingRowBuilder {
     /// re-realized term with no dense row is marginalized; SH terms keep the card 1d
     /// treatment.  The clock-family deficit goes to the constellation's pinned pivot.
     /// σ² = var_eff + Σ_departed M²P_prev + Σ_scalar M²κqΔt + M'BM, the per-row form (the
-    /// time-update covariance between rows is dropped).  Same return and counter
-    /// contract as @ref scalarRowIngredients.
+    /// time-update covariance between rows is added only by card WSX's block term, from
+    /// @p xr_keep).  Same return and counter contract as @ref scalarRowIngredients.
     bool exactRowIngredients(Eigen::Index col, double x_lin_val, const LocalCarry& lc,
-                             double var_eff, double gap, PendCplRow& row, double& sigma2);
+                             double var_eff, double gap, PendCplRow& row, double& sigma2,
+                             CouplingExactRow* xr_keep = nullptr);
     /// Build this station's injectable carried columns as one jointly whitened local
     /// block instead of independent rows (F3, network.phase_leveling_local_block,
     /// SPEC_amb_iono_split_overcount).  Per column, the scalar-path ingredients

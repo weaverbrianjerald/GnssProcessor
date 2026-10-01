@@ -81,6 +81,24 @@ struct CouplingExactCounters {
     long long var_negative{0};       ///< rows whose bracket term came out below 0 (rounding) and was clamped
     double    var_add_sum{0.0};      ///< summed per-row inflation M'BM (m^2), the mass the per-row form adds
     double    shrink_abs_sum{0.0};   ///< summed |M_S - m_new| over the S terms (how much of each row moved)
+    // Card WSX (network.carry_coupling_exact_cross): the within-station bracket M_i'BM_k.
+    static constexpr int kCrossRhoBins = 8;   ///< |rho| bins: 0.01, 0.03, 0.1, 0.2, 0.3, 0.5, 0.8, above
+    long long cross_blocks{0};       ///< local blocks that took the term
+    long long cross_pairs{0};        ///< row pairs that took the term
+    long long cross_pairs_skipped{0};///< row pairs with a member off the exact route (no term)
+    /// |rho| of the added term against the pair's diagonal, by class: [0] two ambiguity
+    /// rows, [1] a pair with a receiver code-bias row.
+    long long cross_rho_hist[2][kCrossRhoBins]{};
+    double    cross_rho_max[2]{};
+    double    cross_abs_sum{0.0};    ///< summed |M_i'BM_k| over the pairs (m^2)
+
+    /// The |rho| bin of card WSX's histogram.
+    static int crossRhoBin(double r) {
+        static constexpr double kEdges[kCrossRhoBins - 1] = {0.01, 0.03, 0.1, 0.2, 0.3, 0.5, 0.8};
+        int b = 0;
+        while (b < kCrossRhoBins - 1 && r >= kEdges[b]) ++b;
+        return b;
+    }
 
     void add(const CouplingExactCounters& o) {
         rows_exact += o.rows_exact; rows_stale += o.rows_stale;
@@ -93,6 +111,12 @@ struct CouplingExactCounters {
         sprev_mismatch += o.sprev_mismatch;
         var_negative += o.var_negative;
         var_add_sum += o.var_add_sum; shrink_abs_sum += o.shrink_abs_sum;
+        cross_blocks += o.cross_blocks; cross_pairs += o.cross_pairs;
+        cross_pairs_skipped += o.cross_pairs_skipped; cross_abs_sum += o.cross_abs_sum;
+        for (int c = 0; c < 2; ++c) {
+            for (int b = 0; b < kCrossRhoBins; ++b) cross_rho_hist[c][b] += o.cross_rho_hist[c][b];
+            if (o.cross_rho_max[c] > cross_rho_max[c]) cross_rho_max[c] = o.cross_rho_max[c];
+        }
     }
 };
 
@@ -174,8 +198,9 @@ CouplingExactRow couplingExactRow(const CouplingExactEpoch& ep,
                                   const std::vector<std::pair<int, double>>& terms);
 
 /// The time-update covariance @f$M_a^\top B M_b@f$ of two rows updated against the same
-/// epoch.  Equals @c a.var_raw for @p a == @p b.  Not used by the producer (per-row form);
-/// the unit gate's joint reference recursion uses it.
+/// epoch.  Equals @c a.var_raw for @p a == @p b.  The producer's per-row form drops it;
+/// card WSX's @c network.carry_coupling_exact_cross adds it between two rows of a
+/// station's local block, and the unit gate's joint reference recursion uses it.
 double couplingExactCross(const CouplingExactEpoch& ep, const CouplingExactRow& a,
                           const CouplingExactRow& b);
 

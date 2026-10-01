@@ -4694,10 +4694,27 @@ namespace GnssProcessor {
             log->info("Network producer (card CTU): coupling-row time update EXACT — each row "
                       "harvested at the stashed border is re-expressed on the moved border by "
                       "M_new = (P_SS + Q_S)^-1 P_S,K M_K with the fold's own inflation Q, the "
-                      "bracket variance added (and between a station's rows in the local "
-                      "block), decoupled and departed columns re-attributed through P, and the "
-                      "clock-family deficit moved onto the pinned pivot.  Card 1d's kappa "
-                      "remains for stale rows, terms with no dense row and SH terms.");
+                      "bracket variance added per row, decoupled and departed columns "
+                      "re-attributed through P, and the clock-family deficit moved onto the "
+                      "pinned pivot.  Card 1d's kappa remains for stale rows, terms with no "
+                      "dense row and SH terms.");
+        }
+        // The same bracket between two rows of a station (card WSX): the exact update's
+        // within-station covariance, added in the whitened local block.
+        network_carry_coupling_exact_cross_ =
+            jval<bool>(json, "network.carry_coupling_exact_cross",
+                       "carry_coupling_exact_cross", false);
+        if (network_carry_coupling_exact_cross_) {
+            if (!network_carry_coupling_exact_update_)
+                throw std::runtime_error(
+                    "network.carry_coupling_exact_cross requires "
+                    "network.carry_coupling_exact_update = true (it adds that rule's bracket "
+                    "between two rows of a station; card WSX).");
+            log->info("Network producer (card WSX): network.carry_coupling_exact_cross = true — "
+                      "the exact update's bracket M_i' B M_k between two rows of a station that "
+                      "both took the exact route is added to the station's whitened local "
+                      "block (the cross-station half stays out); inert without the local "
+                      "block, counted at the run end.");
         }
         // Full marginalization of the coupling rows' SH-VTEC terms (card 1d-SH).  The SH
         // border is a mean-reverting GM (climatology-anchored), not the pure random walk

@@ -263,7 +263,8 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
 
 bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val,
                                               const LocalCarry& lc, double var_eff,
-                                              double gap, PendCplRow& row, double& sigma2) {
+                                              double gap, PendCplRow& row, double& sigma2,
+                                              CouplingExactRow* xr_keep) {
     // Card CTU: a row harvested at the stash the dense block belongs to takes the exact
     // route; any other row (harvested earlier, so its regression is on an older border
     // than P describes) keeps the card 1d route below, counted.  Off: cxu is null and
@@ -272,7 +273,7 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
         if (!cxu->ok) {
             ++R.cxu.rows_unfactored;
         } else if (std::abs(lc.last_seen_s - cxu->stash_s) <= 1e-6) {
-            return exactRowIngredients(col, x_lin_val, lc, var_eff, gap, row, sigma2);
+            return exactRowIngredients(col, x_lin_val, lc, var_eff, gap, row, sigma2, xr_keep);
         } else {
             ++R.cxu.rows_stale;
         }
@@ -364,7 +365,8 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
 
 bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
                                              const LocalCarry& lc, double var_eff,
-                                             double gap, PendCplRow& row, double& sigma2) {
+                                             double gap, PendCplRow& row, double& sigma2,
+                                             CouplingExactRow* xr_keep) {
     const CouplingExactEpoch& xe = *cxu;
     CouplingExactCounters& X = R.cxu;
     row.local_col = col;
@@ -517,6 +519,7 @@ bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
     sigma2 = var_eff + dep_var + tu_var + xr.var_add;
     if (!(sigma2 > 0.0) || !std::isfinite(rhs)) return false;
     row.y = rhs;
+    if (xr_keep) *xr_keep = std::move(xr);   // card WSX: the pair term reads it in the block
     return true;
 }
 
@@ -531,13 +534,16 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
     //     marginalization of card 1b is mutually exclusive with this block (the
     //     caller's predicate).  A column refused by the scalar screen is dropped from
     //     the block and counted.
-    struct Ing { PendCplRow row; double sigma2{0.0}; const LocalBlockCol* c{nullptr}; };
+    // xr: the row's exact-route result, kept only for card WSX's pair term (ok false otherwise).
+    struct Ing { PendCplRow row; double sigma2{0.0}; const LocalBlockCol* c{nullptr}; CouplingExactRow xr; };
+    const bool wsx = cxu_cross && cxu != nullptr && cxu->ok;
     std::vector<Ing> ing;
     ing.reserve(cols.size());
     for (const LocalBlockCol& c : cols) {
         Ing g;
         g.c = &c;
-        if (!scalarRowIngredients(c.col, c.x_lin, *c.lc, c.var_eff, c.gap, g.row, g.sigma2)) {
+        if (!scalarRowIngredients(c.col, c.x_lin, *c.lc, c.var_eff, c.gap, g.row, g.sigma2,
+                                  wsx ? &g.xr : nullptr)) {
             ++R.pl_blk_col_refused;
             continue;
         }
@@ -625,6 +631,44 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
             blk.Sigma(i, j) = v;
             blk.Sigma(j, i) = v;
         }
+    }
+    // (2a) Card WSX (network.carry_coupling_exact_cross): the exact update's bracket
+    //      between two rows that both took the exact route, M_i' B M_k (couplingExactCross,
+    //      the term the per-row form drops; the cross-station half stays out).  Added after
+    //      the harvested cross covariances and before the young-arc congruence, so that the
+    //      congruence acts on the whole matrix; not scaled by the VCE factor, as the
+    //      diagonal's own addend is not.  B is positive semi-definite, so the added matrix
+    //      is a Gram matrix over the exact rows, and its diagonal is already on Σ's diagonal
+    //      (each row's var_add).  A pair with a row on card 1d's route takes nothing.
+    if (wsx && n > 1) {
+        CouplingExactCounters& X = R.cxu;
+        bool any = false;
+        for (Eigen::Index i = 0; i < n; ++i) {
+            const Ing& gi = ing[static_cast<std::size_t>(i)];
+            for (Eigen::Index k = i + 1; k < n; ++k) {
+                const Ing& gk = ing[static_cast<std::size_t>(k)];
+                if (!gi.xr.ok || !gk.xr.ok) {
+                    ++X.cross_pairs_skipped;
+                    continue;
+                }
+                const double v = couplingExactCross(*cxu, gi.xr, gk.xr);
+                if (!std::isfinite(v)) {
+                    ++X.cross_pairs_skipped;
+                    continue;
+                }
+                blk.Sigma(i, k) += v;
+                blk.Sigma(k, i) += v;
+                any = true;
+                ++X.cross_pairs;
+                X.cross_abs_sum += std::abs(v);
+                const double den = std::sqrt(gi.sigma2 * gk.sigma2);
+                const double rho = den > 0.0 ? std::abs(v) / den : 0.0;
+                const int cls = (gi.c->is_rx_cb || gk.c->is_rx_cb) ? 1 : 0;
+                ++X.cross_rho_hist[cls][CouplingExactCounters::crossRhoBin(rho)];
+                if (rho > X.cross_rho_max[cls]) X.cross_rho_max[cls] = rho;
+            }
+        }
+        if (any) ++X.cross_blocks;
     }
     // (2b) Age-aware young-arc inflation (network.phase_leveling_young_inflate_var_m2,
     //      SPEC_amb_iono_split_overcount §6.17–§6.18): a column whose last re-level is

@@ -317,8 +317,10 @@ BatchOut runBatch(const Net& n) {
 
 /// The factorized recursion.  mode 0: the exact rule with one joint local block (the
 /// reference); mode 1: the exact rule with one block per station, cross-station
-/// time-update covariance dropped (the producer's form); mode 2: card 1d's scalar kappa
-/// at the legacy clock rate q = 1e-3 m^2/s (the lock).
+/// time-update covariance dropped and the within-station one kept (the producer's form
+/// with network.carry_coupling_exact_cross, card WSX); mode 2: card 1d's scalar kappa at the
+/// legacy clock rate q = 1e-3 m^2/s (the lock); mode 3: one block per station with the
+/// time-update addend on the diagonal only (the shipped form, the knob off).
 struct RecOut {
     std::vector<BKey> keys;
     Eigen::VectorXd shat;
@@ -430,7 +432,8 @@ RecOut runRecursion(const Net& n, int mode) {
                 for (int i = 0; i < nN; ++i)
                     for (int j = 0; j < nN; ++j) {
                         const bool same_sta = (i / (kS * 2)) == (j / (kS * 2));
-                        if (mode == 1 && !same_sta) continue;
+                        if ((mode == 1 || mode == 3) && !same_sta) continue;
+                        if (mode == 3 && i != j) continue;   // the shipped form: the diagonal only
                         Sig(i, j) += couplingExactCross(ep, xr[i], xr[j]);
                     }
             }
@@ -460,7 +463,7 @@ RecOut runRecursion(const Net& n, int mode) {
         const Eigen::MatrixXd Pinv = spdInverse(Pprev);
         G = Snb * Pinv;
         C = Sx.block(n0, n0, nN, nN) - Snb * Pinv * Snb.transpose();
-        if (mode == 1)   // one block per station: conditionally independent given the border
+        if (mode == 1 || mode == 3)   // one block per station: conditionally independent given the border
             for (int i = 0; i < nN; ++i)
                 for (int j = 0; j < nN; ++j)
                     if ((i / (kS * 2)) != (j / (kS * 2))) C(i, j) = 0.0;
@@ -690,9 +693,10 @@ TEST(CouplingExactUpdateTest, DecoupledAndDepartedColumnsEqualTheBatch) {
 // its claimed level variance collapses far below the batch's, and its level sits many of
 // its own claimed sigmas from the batch's (one realization: the distance in batch sigmas
 // is a draw of the first epochs' code, so the robust signatures are the claimed variance
-// and the error against it).  The exact rule, in the producer's per-station form, stays
-// with the batch: card section 4's claim that the dropped cross-station term leaves the
-// level untouched, measured.
+// and the error against it).  The exact rule in a per-station form (mode 1, with the
+// within-station cross terms of card WSX's knob; the shipped form, mode 3, is read in
+// WithinStationCrossTermsAgainstTheBatch) stays with the batch: card section 4's claim that
+// the dropped cross-station term leaves the level untouched, measured.
 TEST(CouplingExactUpdateTest, ShrunkFormLocksTheLevelAndTheExactFormDoesNot) {
     const Net n = makeNet(Scenario{});
     const BatchOut bt = runBatch(n);
@@ -724,6 +728,75 @@ TEST(CouplingExactUpdateTest, ShrunkFormLocksTheLevelAndTheExactFormDoesNot) {
         EXPECT_LT(std::abs(err), 0.5 * sig) << "sat " << s;
         std::printf("[CTU] sat %d  per-station level: err %.3e m (batch sigma %.3e m), "
                     "variance ratio %.4f\n", s, err, sig, ratio);
+    }
+}
+
+// Card WSX: the shipped form (mode 3, the time-update addend on the diagonal only) beside
+// the form with the within-station cross terms (mode 1), both against the exact batch.  Per
+// satellite the level's variance ratio and error; over the whole border the extreme
+// generalized eigenvalues of the recursion's covariance against the batch's (below 1: a
+// direction the recursion states tighter than the batch).
+TEST(CouplingExactUpdateTest, WithinStationCrossTermsAgainstTheBatch) {
+    const Net n = makeNet(Scenario{});
+    const BatchOut bt = runBatch(n);
+    for (const int mode : {1, 3}) {
+        const RecOut rc = runRecursion(n, mode);
+        double rmin = 1e300, rmax = 0.0, emax = 0.0;
+        for (int s = 1; s < kS; ++s) {
+            const auto [err, ratio] = levelGap(n, bt, rc, s);
+            const int bi = bt.col_of.at(BKey{true, s, 0, n.clkSeg(n.sc.K, s)});
+            const double sig = std::sqrt(bt.cov(bi, bi));
+            rmin = std::min(rmin, ratio);
+            rmax = std::max(rmax, ratio);
+            emax = std::max(emax, std::abs(err) / sig);
+            std::printf("[WSX] mode %d sat %d  level: err %.3e m (batch sigma %.3e m), variance "
+                        "ratio %.4f\n", mode, s, err, sig, ratio);
+        }
+        const Eigen::Index nb = static_cast<Eigen::Index>(rc.keys.size());
+        Eigen::MatrixXd Pb(nb, nb);
+        for (Eigen::Index a = 0; a < nb; ++a)
+            for (Eigen::Index c = 0; c < nb; ++c)
+                Pb(a, c) = bt.cov(bt.col_of.at(rc.keys[static_cast<std::size_t>(a)]),
+                                  bt.col_of.at(rc.keys[static_cast<std::size_t>(c)]));
+        Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> ge(rc.P, Pb);
+        ASSERT_EQ(ge.info(), Eigen::Success);
+        std::printf("[WSX] mode %d  level variance ratio min %.4f max %.4f, worst |err| %.3f "
+                    "batch sigma; border generalized eigenvalues min %.4f max %.4f\n", mode,
+                    rmin, rmax, emax, ge.eigenvalues().minCoeff(), ge.eigenvalues().maxCoeff());
+        // The extreme directions, normalized in the batch metric (v' Pb v = 1): the keys with
+        // the largest loadings (clock or phase bias, satellite, band).
+        for (const Eigen::Index e : {Eigen::Index{0}, nb - 1}) {
+            const Eigen::VectorXd v = ge.eigenvectors().col(e);
+            std::vector<std::pair<double, Eigen::Index>> ld;
+            for (Eigen::Index a = 0; a < nb; ++a) ld.emplace_back(std::abs(v(a)), a);
+            std::sort(ld.rbegin(), ld.rend());
+            std::printf("[WSX] mode %d  eigenvalue %.4f, largest loadings:", mode, ge.eigenvalues()(e));
+            for (std::size_t t = 0; t < std::min<std::size_t>(6, ld.size()); ++t) {
+                const BKey& k = rc.keys[static_cast<std::size_t>(ld[t].second)];
+                std::printf(" %s s%d%s %+.3f", k.clk ? "clk" : "pb", k.s,
+                            k.clk ? "" : (k.j == 0 ? " b1" : " b2"), v(ld[t].second));
+            }
+            std::printf("\n");
+        }
+        // Measured (card WSX section 6): both forms keep the level with the batch (variance
+        // ratio 1.0000 / 1.0001); the shipped form states no border direction tighter than
+        // the batch (eigenvalues 1.0000 to 1.163, the loosest the pivot satellite's
+        // phase-visible clock against the others'); the within-station half alone states one
+        // tighter (0.9445, the between-satellite contrast of the phase-visible clock D).
+        // These bounds hold for this three-station network only.  With kR raised by hand the
+        // smallest eigenvalue falls with the stations per satellite (the dropped cross-station
+        // half): shipped form 0.885 / 0.661 / 0.336 and with the within-station half 0.693 /
+        // 0.518 / 0.322 at 8 / 16 / 48 stations, always along a between-satellite
+        // phase-visible contrast, the level staying with the batch (card WSX section 6).
+        EXPECT_GT(rmin, 0.5) << "mode " << mode;
+        EXPECT_LT(rmax, 2.0) << "mode " << mode;
+        EXPECT_LT(emax, 0.5) << "mode " << mode;
+        if (mode == 3)
+            EXPECT_GT(ge.eigenvalues().minCoeff(), 1.0 - 1e-6)
+                << "the shipped form states a border direction tighter than the batch";
+        else
+            EXPECT_LT(ge.eigenvalues().minCoeff(), 1.0 - 1e-3)
+                << "the within-station half alone no longer over-states any direction";
     }
 }
 

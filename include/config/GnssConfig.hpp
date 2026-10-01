@@ -2383,8 +2383,9 @@ namespace GnssProcessor {
          * re-expressed on the moved border by the one rule
          * @f$M_{new,S}=(P_{SS}+Q_S)^{-1}P_{S,K}M_K@f$, with the variance
          * @f$M_K^\top[P_{KK}-P_{K,S}(P_{SS}+Q_S)^{-1}P_{S,K}]M_K@f$ added to the row
-         * (and, in the jointly whitened local block, the same bracket between the
-         * station's rows).  @f$P@f$ is the stashed dense block (@c prev_carry_cov),
+         * (the per-row form: the same bracket between two rows of a station is
+         * @ref networkCarryCouplingExactCross, off by default).  @f$P@f$ is the stashed
+         * dense block (@c prev_carry_cov),
          * @f$Q_S@f$ the inflation the D2 fold will apply to each key this epoch (read
          * from a side-effect-free mirror of the fold, checked against the fold every
          * epoch), @f$S@f$ the keys the fold carries with a finite inflation and @f$D@f$
@@ -2402,6 +2403,26 @@ namespace GnssProcessor {
          * Default false = the card 1d rows (byte-identical).
          */
         bool networkCarryCouplingExactUpdate() const { return network_carry_coupling_exact_update_; }
+
+        /**
+         * @brief Add the exact time update's covariance between two carried rows of one
+         *        station to the station's whitened local block
+         *        (@c network.carry_coupling_exact_cross, card WSX,
+         *        docs/refound/WSX_within_station_cross_terms_2026-09-30.md).
+         *
+         * The exact update (@ref networkCarryCouplingExactUpdate) adds each row's own
+         * inflation @f$M_i^\top B M_i@f$ and drops the bracket between rows,
+         * @f$M_i^\top B M_k@f$ with @f$B=P-P_{K,S}(P_{SS}+Q_S)^{-1}P_{S,K}@f$.  With this
+         * knob, every pair of rows of a station's local block that both took the exact
+         * route gets that term in @f$\Sigma_{ik}@f$ (@ref couplingExactCross), after the
+         * harvested conditional covariances and before the young-arc congruence; a row on
+         * card 1d's route adds none.  The cross-station half of the same covariance stays
+         * out.  Inert without the whitened local block (counted at the run end).
+         *
+         * Requires @ref networkCarryCouplingExactUpdate (hard error at load).
+         * Fingerprinted.  Default false = the per-row form (byte-identical).
+         */
+        bool networkCarryCouplingExactCross() const { return network_carry_coupling_exact_cross_; }
 
         /**
          * @brief Fully marginalize the SH-VTEC coefficient terms of every coupling
@@ -8871,6 +8892,7 @@ namespace GnssProcessor {
         bool   network_carry_coupling_gauge_project_{false};   ///< Hold each (constellation,kind) coefficient sum of a truncated coupling row at its harvest value (card 1f), so a departed/re-realized column stops pinning the current datum gauge at the old realization (without it the null eigenvalue rose from 1e-11 to 9.43e-3 in one epoch, causing spurious over-specified withholds); requires carry_conditional_coupling.  Off = byte-identical.
         bool   network_carry_coupling_reinit_sources_{false};  ///< Key the coupling reinit history (kind,sat,signal) with an empty-signal sat-wide wildcard, feed it from the phase-anchor / eq34 / datum-slip re-reference sets, and honour it independently of carry_coupling_time_update (card 1g), so a re-realized column takes the departed route instead of folding a retired-frame ŝ_prev at full weight; requires carry_conditional_coupling.  Off = byte-identical.
         bool   network_carry_coupling_time_update_{false};  ///< Apply the border time update to each coupling row at injection (card 1d): shrink every present coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder equal to the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, card 1c).  Requires carry_conditional_coupling (hard error otherwise).  Off = raw harvested rows (byte-identical).
+        bool   network_carry_coupling_exact_cross_{false};   ///< Add the exact time update's within-station row covariance M_i'BM_k to the whitened local block (card WSX).  Requires carry_coupling_exact_update.  Off = the per-row form (byte-identical).
         bool   network_carry_coupling_exact_update_{false};  ///< Replace the card 1d scalar kappa by the exact conditional time update of the coupling rows (card CTU): M_new = (P_SS+Q_S)^-1 P_S,K M_K over the stashed dense border block with the fold's own inflation, the bracket variance added per row (the per-row form: no time-update covariance between rows), departed/decoupled columns re-attributed through P, the clock-family deficit onto the pinned pivot.  Requires carry_coupling_time_update and shared_carry_full_cov, refuses carry_coupling_joint_whiten.  Off = card 1d rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< Carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (B9; via addStationPrior, alongside the ambiguity carry); off = per-epoch white-noise ZWD (byte-identical).  FALSIFIED for continuous runs of the standard posture (consumer 0.204 → 0.723 m rms: an information double count against the station filter's own persistence); its seam value is delivered by network.zwd_seam_reseed instead.
         bool   network_carry_zwd_in_block_{false};         ///< Carry the station ZWD column inside the F3 jointly whitened local block (B9-in-block; harvested (N_rr⁻¹) cross terms against every carried ambiguity column) instead of as a separate diagonal coupling row, which makes the ZWD carry exact along the station-common directions the diagonal row over-counts (SPEC_amb_iono_split_overcount §7 item 17).  Requires network.carry_zwd and network.phase_leveling_local_block (the loader warns and disables otherwise).  Off = byte-identical.
