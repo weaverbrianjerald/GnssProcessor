@@ -408,9 +408,11 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   ANSWERED: short scales are the stations' time-correlated phase errors seen through thin coverage
   (the sim's noise is white); long scales mostly the field's fractional wind-up staircase
   (accumulating it removes 45 % of the hour-scale excess, consumer-neutral under the phase-clock hold).
-- [SOI](SOI_second_order_ionosphere_leak_2026-10-01.md): open, 2026-10-01: pre-registered (the outside
+- [SOI](SOI_second_order_ionosphere_leak_2026-10-01.md): closed, 2026-10-01: pre-registered (the outside
   review's note after card FWS): is the second-order ionospheric term, which the ionosphere-free
   combination keeps and which changes sign with the line of sight's angle to the geomagnetic field,
   what leaks from the field stations into the satellites' phase-visible clocks? A truth-free test on
   existing traces: the term predicted from the estimator's own slant ionosphere and the dipole field
   against the signed post-fit residuals and the walk share's changes, the sim as the null.
+  FALSIFIED: the term is 0.7 mm rms in its unabsorbable part against 4.1 mm of slow residual, no
+  slope at the residual level (-0.02 +/- 0.08) and no correlation with the walk share at any lag.

@@ -4,8 +4,8 @@
 
 - **id:** SOI
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** PRE-REGISTERED 2026-10-01 (the outside review's note after card FWS). The leak card FWS found is per line of sight and the same on both frequencies in metres; the second-order ionospheric term fits that signature (the ionosphere-free combination keeps a 1/f^3 residual, it changes sign with the line of sight's angle to the geomagnetic field, it is largest at low latitudes in daylight). A truth-free test on existing traces, no build: the per-line-of-sight term predicted from the estimator's own slant ionosphere and the dipole field of `MagneticField.cpp`, against the signed post-fit ionosphere-free phase residuals (T1) and against the per-satellite walk share's changes (T2), on the field with the sim as the null.
+- **status:** closed
+- **summary:** FALSIFIED 2026-10-01 (sections 4 and 5): the second-order term is not the leak. In the ionosphere-free combination it is 1.4 mm at the median line of sight (4.7 mm at p90) and 0.7 mm rms in the part the estimator cannot absorb, against 4.1 mm of slow residual; the residual slope on it is -0.02 +/- 0.08 (full size would read +1 at t about 13), placebo and sim the same, and its satellite-mean change correlates with the walk share's at no lag (r^2 0.000 at 120 epochs). S1, S2 and S4 fail, S3 holds. The engine's sign convention stays unadjudicated. Owed: the outside review's fallback (a per-line-of-sight Gauss-Markov nuisance state, registry work, the author's call) and the long-scale remainder's bisection (station-set changes, tropical troposphere). PRE-REGISTERED 2026-10-01 (the outside review's note after card FWS). The leak card FWS found is per line of sight and the same on both frequencies in metres; the second-order ionospheric term fits that signature (the ionosphere-free combination keeps a 1/f^3 residual, it changes sign with the line of sight's angle to the geomagnetic field, it is largest at low latitudes in daylight). A truth-free test on existing traces, no build: the per-line-of-sight term predicted from the estimator's own slant ionosphere and the dipole field of `MagneticField.cpp`, against the signed post-fit ionosphere-free phase residuals (T1) and against the per-satellite walk share's changes (T2), on the field with the sim as the null.
 - **source:** [FWS](FWS_field_walk_share_sources_2026-10-01.md) sections 2.1, 4 and 5; [PAC](PAC_common_drift_pivot_clock_2026-10-01.md); `include/atmosphere/HigherOrderIonosphere.hpp`, `src/core/atmosphere/MagneticField.cpp` (the dipole); `src/core/filter/NetworkIonoDiag.cpp` (the slant ionosphere trace, `iono_total_m` on L1 in metres); `src/core/filter/NetworkFrameDiag.cpp` (the post-fit rows, signed v = y - A x)
 - **knobs / posture:** none; traces only
 - **dates in the text:** 2026-10-01
@@ -86,3 +86,57 @@ the estimator absorbs it elsewhere; it is not the walk share's source. Both fail
 review's fallback, a per-line-of-sight ionosphere-free Gauss-Markov nuisance state in the station
 blocks separated from the ambiguity by its time constant, is registry work (card PRM) and the
 author's call.
+
+## 4. The test (2026-10-01)
+
+`scripts/clock_level/soi_test.py` on the three 6 h runs (about 340 000 lines of sight each, 1 111 to
+1 126 arcs of at least 40 epochs):
+
+| | field primary (`fws_wuacc6_f`) | field control (`rev1_blk6_f`) | sim (`rev1_blk6_s`, the null) |
+| --- | --- | --- | --- |
+| \|B.k\| p50 / p90 | 20.6 / 36.4 uT | 20.6 / 36.4 uT | 17.7 / 33.5 uT |
+| slant TEC p10 / p50 / p90 | 11 / 40 / 110 TECU | 11 / 41 / 109 TECU | 25 / 55 / 127 TECU |
+| \|p\| p50 / p90 | 1.40 / 4.72 mm | 1.39 / 4.73 mm | 1.86 / 4.39 mm |
+| rms of p in the absorbed form; its 20-epoch block means | 0.68; 0.67 mm | 0.67; 0.66 mm | 0.62; 0.61 mm |
+| rms of the residual's 20-epoch block means | 4.09 mm | 4.64 mm | 4.77 mm |
+| T1 slope (clustered se, t), r | -0.017 (0.077, -0.2), -0.003 | +0.027 (0.078, +0.3), +0.004 | +0.028 (0.071, +0.4), +0.004 |
+| T1 placebo slope (se), r | +0.092 (0.091), +0.012 | -0.107 (0.133), -0.012 | -0.051 (0.073), -0.005 |
+| T1 epoch-level slope (se) | -0.010 (0.077) | +0.049 (0.079) | +0.061 (0.069) |
+| arcs with a positive / negative within-arc slope (p block rms at least 0.3 mm) | 290 / 257 | 273 / 267 | 295 / 282 |
+| rank correlation, residual persistence with p's size | +0.221 | +0.223 | +0.169 |
+| T2 r at lag 5 / 20 / 60 / 120 | +0.008 / -0.005 / -0.017 / -0.015 | +0.005 / -0.008 / -0.052 / -0.123 | -0.007 / -0.002 / -0.004 / -0.017 |
+| T2 slope at lag 60 / 120 (se) | -0.19 (0.68) / -0.13 (0.96) | -0.82 (0.86) / -1.38 (1.27) | -0.03 (0.37) / -0.08 (0.42) |
+| T2 rms of the satellite-mean change of p / of the walk share, lag 60 | 0.56 / 6.27 mm | 0.55 / 8.62 mm | 0.54 / 4.44 mm |
+| the same, lag 120 | 1.05 / 8.83 mm | 1.02 / 11.39 mm | 1.06 / 5.08 mm |
+
+**S1 fails**: the slope is -0.02 with a standard error of 0.08, where the term at full size would
+read +1 at a t of about 13; the term is absent from the residuals at the level of a fifth of its
+predicted size, and the placebo and the null read the same. **S2 fails**: r is -0.02 at 60 and 120
+epochs on the primary (r^2 0.000); the control's -0.12 at 120 epochs sits within its own standard
+error (slope -1.4 +/- 1.3). **S3 holds**, trivially. **S4 fails** (r^2 0.000 against 0.25). The
+secondary rank correlation is +0.22 on the field and +0.17 on the sim, which has no such term: the
+confound section 3 named (larger residuals and larger slant TEC share low elevations and the
+tropics), not the term.
+
+## 5. Reading (2026-10-01)
+
+**The second-order ionospheric term is not the field stations' leak.** It is too small to be: in the
+ionosphere-free combination it is 1.4 mm at the median line of sight on this day (4.7 mm at p90),
+and the part the estimator cannot absorb into clocks and ambiguities is 0.7 mm rms, a sixth of the
+residuals' slow part (4.1 mm); averaged over a satellite's stations its change over two hours is
+1 mm against the walk share's 8.8 mm. The data agree: no slope at the residual level and no
+correlation with the walk share at any lag, on either field run. Its time scale also rules it out
+for the short-scale colour, as section 1 expected. The term is real physics at the millimetre level
+and a consistency item for the observation model, not a lever on this card's question.
+
+**The sign question of section 1 stays open.** The test could not see the term, so it does not
+adjudicate the engine's convention (the receiver-to-satellite vector with a positive code
+coefficient, the opposite of the derivation here); the term is off on every posture.
+
+**What follows.** Section 3's third branch: the outside review's fallback, a per-line-of-sight
+ionosphere-free Gauss-Markov nuisance state in the station blocks, separated from the ambiguity by
+its time constant (card FWS's colour decorrelates within about 10 minutes; the sim arm that
+reproduced it used 15 minutes), is registry work (card PRM) and the author's call. The long-scale
+remainder card FWS left is not this term; its two remaining candidates (station-set changes as
+satellites rise and set, and daytime tropospheric variability at the tropical stations) are the
+next bisection.
