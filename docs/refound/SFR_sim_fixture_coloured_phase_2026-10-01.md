@@ -149,3 +149,49 @@ sim's below). Two candidates, run together:
 
 The candidate that meets C1 in more classes becomes the regeneration recipe (ties to the one with the
 smaller summed lag-5 miss).
+
+## 4. The calibration (2026-10-01)
+
+Candidates by `sfr_calib.py genp` with `gnss_simulator_sfr1.exe`; 2 h sim golden arms from
+00:30:15 on `gnss_processor_wup2.exe`; `phase_acf.py`. `k0` (the current recipe, the same exe)
+is the control the ladder is read against, not the archived fixture (section 2.1).
+
+| candidate | class | rms | acf 1 / 2 / 5 / 20 / 60 | GM share, tau | sigma GM / white |
+| --- | --- | --- | --- | --- | --- |
+| field golden (the target) | tropical | 7.20 mm | 0.74 / 0.58 / 0.32 / 0.07 / -0.01 | 0.94, 121 s | 6.99 / 1.72 mm |
+| | mid | 5.12 mm | 0.64 / 0.47 / 0.23 / 0.02 / -0.02 | 0.87, 97 s | 4.77 / 1.86 mm |
+| | high | 5.39 mm | 0.61 / 0.46 / 0.21 / 0.00 / -0.03 | 0.79, 112 s | 4.79 / 2.46 mm |
+| `k0` (control) | tropical | 14.48 mm | 0.14 / 0.12 / 0.06 / -0.01 / -0.01 | 0.15, 289 s | 5.63 / 13.34 mm |
+| | mid | 12.72 mm | 0.13 / 0.10 / 0.04 / 0.01 / -0.04 | 0.17, 110 s | 5.22 / 11.60 mm |
+| | high | 14.13 mm | 0.11 / 0.12 / 0.02 / -0.00 / -0.01 | | |
+| `k1` (white 0.5 mm) | tropical | 7.20 mm | 0.72 / 0.58 / 0.28 / -0.02 / -0.05 | 0.89, 141 s | 6.81 / 2.36 mm |
+| | mid | 6.26 mm | 0.69 / 0.53 / 0.20 / 0.01 / -0.08 | 0.90, 112 s | 5.94 / 1.99 mm |
+| | high | 7.30 mm | 0.70 / 0.55 / 0.23 / 0.02 / -0.07 | 0.90, 124 s | 6.92 / 2.34 mm |
+| `k2` (white 0.5 mm, multipath phase 0, colour 5 / 3.5 / 3.5 mm at 120 / 100 / 110 s) | tropical | 7.58 mm | 0.63 / 0.43 / 0.09 / 0.00 / -0.05 | 0.92, 80 s | 7.26 / 2.20 mm |
+| | mid | 5.27 mm | 0.58 / 0.38 / 0.05 / 0.05 / -0.06 | 0.88, 71 s | 4.95 / 1.81 mm |
+| | high | 5.77 mm | 0.58 / 0.37 / 0.02 / 0.09 / -0.09 | 0.90, 68 s | 5.48 / 1.81 mm |
+| `k3` (white 0.5 mm, multipath phase 0, colour 4.75 / 3.4 / 3.26 mm at 181 / 137 / 181 s) | tropical | 6.99 mm | 0.67 / 0.51 / 0.17 / 0.00 / -0.06 | 0.89, 108 s | 6.58 / 2.37 mm |
+| | mid | 5.08 mm | 0.61 / 0.42 / 0.08 / 0.05 / -0.07 | 0.88, 81 s | 4.77 / 1.75 mm |
+| | high | 5.36 mm | 0.60 / 0.42 / 0.06 / 0.10 / -0.10 | 0.85, 85 s | 4.95 / 2.07 mm |
+
+**K1 half holds, half fails.** Cutting the white noise alone lifts the lag-1 autocorrelation to 0.69
+to 0.72 (at least 0.6, as predicted), but the fitted time constant reads 112 to 141 s, inside the
+field's range rather than above 150 s: the estimator absorbs the slow part of the 300 s multipath, so
+its post-fit colour is shorter than the injected one. `k1` is already within C1 in the tropical and
+mid classes and misses only the high class's rms (+35 % against the 30 % bar); it has no class
+structure (every class 6 to 7 mm where the field's tropics are 40 % above its other stations).
+**K2 fails**: the rms is within 7 % in every class but the colour decays too fast (post-fit tau 68
+to 80 s, lag-5 autocorrelation 0.02 to 0.09 against 0.21 to 0.32), for the same reason: a post-fit
+time constant is about two-thirds of the injected one. The rule of section 3.1 sets `k3`: sigma by
+the rms ratio, tau by the ratio of the fitted time constants (tropical 4.75 mm, 181 s; mid 3.4 mm,
+137 s; high 3.26 mm, 181 s).
+
+**`k3`** matches the rms within 3 % and the autocorrelation at 1 and 2 epochs within 0.07 in every class
+and reads 0.15 low at 5 epochs in every class (C1 fails at lag 5 only): the field's colour has a heavier
+tail than one exponential. Section 3.2 sets two more rungs.
+
+**C2 on `k1`** (the program posture's block-clone instrument, `gnss_processor_wsx1.exe`, 2 h, `wsf_persist.py`,
+ratio at 5 / 20 / 60 / 120 epochs): `k0` 1.09 / 1.09 / 0.84 / 0.60 (card FWS's control `wsx_ctl_s` 1.10 /
+1.09 / 0.85 / 0.66), `k1` 1.60 / 1.82 / 1.49 / 1.01, the field's 2 h control 1.47 / 1.66 / 1.83 / 2.23. The
+field's colour alone brings the field's short-lag persistence to the sim (C2's direction), and it reverts
+by 120 epochs (C3's), as card FWS's 30 mm sinusoid arm did.
