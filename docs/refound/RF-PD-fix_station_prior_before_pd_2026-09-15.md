@@ -267,3 +267,13 @@ without it, and RF-PD §3.1 certified it solve-byte-identical on these exact two
    decision, invariant #7's decoupling edge, and needs its own card.
 6. **Ledger / golden promotion is the author's call** and nothing was written: no config under `config/golden/` was touched,
    `docs/CONFIG_promotion_ledger.{md,json}` were not touched, and the knob is default OFF in the loader.
+
+## 8. Annotation, 2026-10-01 (card RPD)
+
+The within-epoch RAIM replay (`resolve_dropping`, `src/core/filter/NetworkSolveGlue.cpp`) re-added
+each station without the `StationPrior` of section 1.1, so with this knob armed no replay carried the
+RXCB-DATUM rows: a station that needed them was rejected inside the replay (aborting it), and the
+others re-solved without the datum. The arms of section 6 adapted on 14 epochs (13 on
+`_rfpdfix_rf0g_field6`, 1 on `_rfpdfix_field6_both`, none rejected), each re-solved without the rows;
+the primary solves and the PD census above are unaffected. Fixed in card
+[RPD](RPD_replay_station_prior_2026-10-01.md).

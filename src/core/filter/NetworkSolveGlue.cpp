@@ -1659,6 +1659,18 @@ if (within_epoch_armed && carry_warm) {
                 continue;
             }
             const StationAssembly& R = asm_res[i];
+            // The station's own pre-PD datum rows (card RPD).  The primary solve hands
+            // addStation R.prior_* (network.station_prior_before_pd, card RF-PD-fix),
+            // and those rows are in neither A_r nor R.carry_cols, so a re-add without
+            // them drops every station's receiver-DCB datum row (RXCB-DATUM): a block
+            // that needs the row to be positive-definite is then rejected and aborts the
+            // whole replay, and the others solve without the datum the primary solve
+            // had.  The rows sit on receiver-DCB columns only, never on an ambiguity
+            // column, so the refloat edits below cannot touch them, and every branch
+            // passes them unchanged.  Empty when the knob is off, so the call is then
+            // the plain re-add.
+            const NetworkNormalEquations::StationPrior station_prior{
+                R.prior_cols, R.prior_dNrr, R.prior_dur};
             // De-weight the culprit satellites' code rows (σ×10) in a per-station
             // copy (WE-CI); `*wr` binds R.w itself when WE-CI is off and whenever no
             // row matches, so the default numbers are unchanged.
@@ -1735,7 +1747,7 @@ if (within_epoch_armed && carry_warm) {
                     rw.tail(nk).setOnes();
                     ry.tail(nk) = z;
                 }
-                est_index_of[i] = static_cast<int>(est.addStation(As, Ar, rw, ry));
+                est_index_of[i] = static_cast<int>(est.addStation(As, Ar, rw, ry, station_prior));
             } else if (carry_cpl_cond && !refloat_cols.empty() && R.cpl_row_start >= 0) {
                 Eigen::MatrixXd As = R.A_s, Ar = R.A_r;
                 Eigen::VectorXd rw = *wr, ry = R.y;
@@ -1789,9 +1801,10 @@ if (within_epoch_armed && carry_warm) {
                         As.row(row).setZero(); Ar.row(row).setZero();
                         rw(row) = 0.0; ry(row) = 0.0;
                     }
-                est_index_of[i] = static_cast<int>(est.addStation(As, Ar, rw, ry));
+                est_index_of[i] = static_cast<int>(est.addStation(As, Ar, rw, ry, station_prior));
             } else {
-                est_index_of[i] = static_cast<int>(est.addStation(R.A_s, R.A_r, *wr, R.y));
+                est_index_of[i] = static_cast<int>(
+                    est.addStation(R.A_s, R.A_r, *wr, R.y, station_prior));
             }
             // Re-inject the pivot's ZWD carry as well (its R.carry_cols is empty unless
             // network.carry_zwd), so the within-epoch re-solve matches the primary

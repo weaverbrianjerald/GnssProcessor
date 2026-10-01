@@ -476,3 +476,12 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   sight instead of being phase-stiff, which keeps the colour state from carrying the colour. A
   trace-class instrument reads the ambiguity's variance before and after each epoch to place the
   loss at the inject or in the solve.
+- [RPD](RPD_replay_station_prior_2026-10-01.md): closed, 2026-10-01: the within-epoch RAIM replay
+  (`resolve_dropping`) re-added each station without its pre-PD datum rows
+  (`network.station_prior_before_pd`, card RF-PD-fix), so no replay carried a receiver-DCB datum row.
+  FIXED: a station positive-definite only with the row (the first assessed epoch, a station returning
+  without a carry) aborted the replay and its restore (30 consecutive epochs on a forced field arm
+  with a station outage, the estimator holding 7 of 57 stations, none of it in the run-end counters);
+  elsewhere the culprit-free replay missed the solve it replays by up to 7.9 mm (field) and 10.6 mm
+  (sim) in phase bias. The same prior now passes at all three re-add sites; byte-identical where the
+  tier does not adapt (the goldens), the unit suite passes.
