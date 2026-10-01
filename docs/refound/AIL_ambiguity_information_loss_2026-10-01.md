@@ -5,7 +5,7 @@
 - **id:** AIL
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** PRE-REGISTERED 2026-10-01 (card LGM section 5.3): the float vehicle's carried ionosphere-free ambiguity moves by 6.6 mm per epoch per line of sight on the golden posture and 3.3 mm on the program posture (station-common and satellite-common parts removed), decaying with the arc's age (12.7 mm at 5 to 10 epochs, 1.6 mm at 160 to 400 on the program posture); held at phase precision it would move 20 to 40 times less. That loose ambiguity is what keeps card LGM's colour state from carrying the colour. A trace-class instrument (`network.trace_amb_if`) reads, per line of sight and epoch, the variance of the ionosphere-free ambiguity before the solve (the block the inject folded) and after it (the harvest block), conditional on the border, with and without the station's common mode; the question is whether the information is lost at the inject (the time update) or never gained in the solve. READ 2026-10-01 (section 4): the instrument is trace class (identity on all arms); the golden posture's inject discards a young arc's information every epoch (75 to 157 mm below 20 epochs, card CTU's legacy clock q in card 1d's kappa) and loses little at maturity; the program posture (the exact update) loses 2 to 3 mm per epoch steadily, the exact conditional growth of the anchored clock's walk through each row's border regression; the estimator states the looseness it shows. Neither posture keeps the ambiguity stiff enough for card LGM's state.
+- **summary:** PRE-REGISTERED 2026-10-01 (card LGM section 5.3): the float vehicle's carried ionosphere-free ambiguity moves by 6.6 mm per epoch per line of sight on the golden posture and 3.3 mm on the program posture (station-common and satellite-common parts removed), decaying with the arc's age (12.7 mm at 5 to 10 epochs, 1.6 mm at 160 to 400 on the program posture); held at phase precision it would move 20 to 40 times less. That loose ambiguity is what keeps card LGM's colour state from carrying the colour. A trace-class instrument (`network.trace_amb_if`) reads, per line of sight and epoch, the variance of the ionosphere-free ambiguity before the solve (the block the inject folded) and after it (the harvest block), conditional on the border, with and without the station's common mode; the question is whether the information is lost at the inject (the time update) or never gained in the solve. READ 2026-10-01 (section 4): the instrument is trace class (identity on all arms); the golden posture's inject discards a young arc's information every epoch (75 to 157 mm below 20 epochs, card CTU's legacy clock q in card 1d's kappa) and loses little at maturity; the program posture (the exact update) loses 2 to 3 mm per epoch steadily, the exact conditional growth of the anchored clock's walk through each row's border regression; the estimator states the looseness it shows. Neither posture keeps the ambiguity stiff enough for card LGM's state. Section 4.1: with the anchor's rate near zero on the sim the program posture's loss falls 8 to 10 times and the state carries the colour (10.0 against 12.0 mm, G1 0.71 on mature arcs, no consumer penalty) while the clock level suffers; the anchor's walk is the channel.
 - **source:** [LGM](LGM_los_phase_nuisance_2026-10-01.md) section 5.3; [CTU](CTU_coupling_time_update_2026-09-28.md) (the coupling time update; the legacy clock q in card 1d's kappa); [RF-1 design](RF-1_float_ambiguities_design.md) (the float vehicle); `src/core/filter/NetworkCoupling.cpp` (`buildLocalBlock`, `scalarRowIngredients`, `exactRowIngredients`); `src/core/app/NetworkRunContext.cpp` (`networkHarvestLocalCarries`)
 - **knobs / posture:** `network.trace_amb_if` (trace class, default off); no solve change in this card's instrument
 - **dates in the text:** 2026-10-01
@@ -129,3 +129,55 @@ Owed: whether the conditional growth on the program posture is the whole of the 
 read with the anchor's q set to 0 on a sim arm, the clock then a constant); whether a joint carry of
 the border and the station's ambiguities (no conditioning) keeps the ionosphere-free ambiguity
 phase-stiff, which is a design question for card PRM's traversal and the author.
+
+## 4.1 The anchor's walk as the program posture's loss (2026-10-01)
+
+The read owed by section 4: the program posture's sim arms with card Q3's anchor rate at 1e-14
+instead of 2.9e-8 m2/s (the satellite clock a constant in the fold), exe `_ail`, 2 h:
+`_rap_ail_q0_ps` (the control), `_rap_lgm_pcq0_ps` (card LGM's state), `_rap_lgm_pcwq0_ps` (the
+state with the white sigma 0.0005 m).
+
+| reading | `_rap_ail_ps` (2.9e-8) | `_rap_ail_q0_ps` (1e-14) |
+| --- | --- | --- |
+| demeaned loss at the inject, 80 to 160 / 160 and over epochs | 2.6 / 1.8 mm | 0.28 / 0.23 mm |
+| demeaned posterior sd, 80 to 160 / 160 and over epochs | 9.1 / 7.8 mm | 3.0 / 2.5 mm |
+| demeaned loss at the inject, under 20 epochs | 4.7 mm | 0.34 mm |
+| consumer p50 hours 1 / 2 | 0.232 / 0.098 m | 0.226 / 0.099 m |
+
+The steady loss is the anchor's walk: with the clock a constant it falls by a factor of 8 to 10 at
+every age, and the carried ionosphere-free ambiguity at maturity is known to 2.5 mm (the
+one-line-of-sight filter's ideal is about 3 to 4 mm against the sim's colour).
+
+Card LGM's state with the ambiguity stiff:
+
+| reading | state (3 mm white) | state, anchor 1e-14 | state + 0.5 mm | state + 0.5 mm, anchor 1e-14 |
+| --- | --- | --- | --- | --- |
+| G1 tropical, arcs at least 10 min: estimate rms against truth 12.0 mm; ratio; corr | 2.5 mm; 0.901; +0.57 | 4.6 mm; 0.813; +0.64 | 4.5 mm; 0.854; +0.55 | 10.0 mm; 0.856; +0.58 |
+| G1 tropical, arcs at least 80 min: ratio; ratio de-meaned; corr | 0.873; 0.730; +0.61 | 0.774; 0.652; +0.69 | 0.809; 0.654; +0.61 | 0.710; 0.542; +0.71 |
+| post-fit acf(1), tropical | 0.53 | 0.62 | -0.01 | +0.07 |
+| consumer p50 hours 1 / 2 (control 0.232 / 0.098 m) | 0.232 / 0.096 | 0.226 / 0.099 | 0.372 / 0.115 | 0.251 / 0.097 |
+| sim datum-free level at 16 / 60 / 120 epochs (control 0.09 / 0.04 / 0.03 m) | | | | 0.15 / 0.13 / 0.12 |
+| anchor trips; withheld epochs | | | | 42; 4 |
+
+With the clock a constant, the state with the white sigma carries the colour at close to its full
+size (10.0 mm rms against 12.0, correlation +0.71 on mature arcs, G1's 0.7 bar reached in the
+tropical class on mature arcs) and the consumer penalty of section 5.3 of card LGM is gone (0.251 /
+0.097 against 0.372 / 0.115 m). It disturbs the clock level instead (0.12 against 0.03 m at 120
+epochs, 42 anchor trips): with the colour modelled and the white sigma at the white level, the
+phase rows hold the level the anchor no longer lets move. The walk-share instrument does not apply
+at this rate (the clone's walk is the anchor's walk, about 0.001 mm per epoch).
+
+**Reading.** The anchor's rate is the satellite clock's allowed walk, and through the conditional
+representation it is also each carried ambiguity's per-epoch dilution and the channel through which
+a station's coloured phase reaches the border: with it near zero the colour stays in the station
+(the state carries it), with the field's 2.9e-8 it is shared between the state, the ambiguity and the
+clock. On the field the walk is physical (the a priori clock product's error, card QPV), so the
+dilution there is real information, not a representation defect; a better-determined clock walk
+(more stations per satellite, or a better a priori product) is what would stiffen the ambiguity.
+
+Owed, the author's decisions:
+- the golden posture's young-arc loss (section 4, card CTU's root) is removed by card CTU's exact
+  update, which is built and not armed (its gates G4 and G5 open); this card adds a reason to
+  close them;
+- card LGM's state stays default off; on a posture where the clock's walk is small against the
+  colour it carries the colour, and on the field posture it is limited by the anchor's walk.
