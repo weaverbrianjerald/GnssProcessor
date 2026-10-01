@@ -129,3 +129,12 @@ none; card ATX's radome fallback names the stations whose calibration is approxi
 long-period multipath (the sim's multipath is a 5-minute process). Either is a fixture ingredient
 for the sim re-base, and either answers to the same estimator-side response card SOI section 5
 named, the per-line-of-sight Gauss-Markov nuisance state (registry work, the author's call).
+
+## 7. Annotation (2026-10-01, card SFR section 5.2)
+
+The remainder this card could not attribute is mostly the slow tail of the field stations' coloured phase
+error. The sim re-based with that error (calibrated per station class on the post-fit residual, capped at
+20 degrees of elevation) reads 1.58 / 1.75 / 1.48 / 1.18 at 5 / 20 / 60 / 120 epochs on the same 6 h
+instrument, against the field's accumulated-wind-up arm at 1.45 / 1.51 / 1.54 / 1.53 and the old sim's
+1.05 / 0.93 / 0.68 / 0.54: the field's persistence out to an hour and two-thirds of its two-hour excess.
+Section 6's untested candidates are reduced to the third left at two hours.

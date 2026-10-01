@@ -4,8 +4,8 @@
 
 - **id:** SFR
 - **topic:** sim-bed
-- **status:** open
-- **summary:** RE-BASED 2026-10-01 (sections 4 and 5): the simulator's band-common per-line-of-sight Gauss-Markov phase colour (default off, byte-identical), calibrated in six rungs; the colour must be capped at 20 degrees of elevation (with the white noise's 1 / sin e to 5 degrees the estimator absorbs its slow part). The recipe (white 0.5 mm, multipath phase off, colour 300 s, 6.0 / 4.9 / 4.4 mm by latitude class) matches the field's post-fit residual in every class; the regenerated fixture `runs/simnet60_quiet_col_24h` is the sim golden's from this card (baseline `runs/_rf0hv13_sim6`), and every persistence-sensitive sim number on the old fixture is superseded. Open: whether the colour also carries the field's long-scale walk-share remainder (C3 failed on a 2 h arm; the 6 h test is section 5.1). PRE-REGISTERED 2026-10-01 (the outside review's decision after card FWS: a re-base, sequenced before any hold work for the real-time posture). The sim's phase error is the wrong shape for every persistence-sensitive result: its ionosphere-free post-fit phase residual is about 80 % white (14 mm) with a weak 5-minute multipath, where the field's is about 90 % a Gauss-Markov process (5 to 7 mm, tau 80 to 120 s, strongest in the tropics) over about 2 mm of white noise (section 1). The re-base adds a per-line-of-sight, band-common Gauss-Markov phase error to the simulator, calibrated per station class on the post-fit instrument (the field's raw error is not observable), and cuts the white phase noise to the field's level in the same regeneration. The old fixture's numbers become superseded, not wrong.
+- **status:** closed
+- **summary:** RE-BASED 2026-10-01 (sections 4 and 5): the simulator's band-common per-line-of-sight Gauss-Markov phase colour (default off, byte-identical), calibrated in six rungs; the colour must be capped at 20 degrees of elevation (with the white noise's 1 / sin e to 5 degrees the estimator absorbs its slow part). The recipe (white 0.5 mm, multipath phase off, colour 300 s, 6.0 / 4.9 / 4.4 mm by latitude class) matches the field's post-fit residual in every class; the regenerated fixture `runs/simnet60_quiet_col_24h` is the sim golden's from this card (baseline `runs/_rf0hv13_sim6`), and every persistence-sensitive sim number on the old fixture is superseded. On the 6 h walk-share instrument the colour reproduces the field's persistence out to an hour (1.48 against 1.54 at 60 epochs) and two-thirds of its two-hour excess: the long-scale remainder of cards FWS and LSR is mostly this colour's slow tail (section 5.2). PRE-REGISTERED 2026-10-01 (the outside review's decision after card FWS: a re-base, sequenced before any hold work for the real-time posture). The sim's phase error is the wrong shape for every persistence-sensitive result: its ionosphere-free post-fit phase residual is about 80 % white (14 mm) with a weak 5-minute multipath, where the field's is about 90 % a Gauss-Markov process (5 to 7 mm, tau 80 to 120 s, strongest in the tropics) over about 2 mm of white noise (section 1). The re-base adds a per-line-of-sight, band-common Gauss-Markov phase error to the simulator, calibrated per station class on the post-fit instrument (the field's raw error is not observable), and cuts the white phase noise to the field's level in the same regeneration. The old fixture's numbers become superseded, not wrong.
 - **source:** [FWS](FWS_field_walk_share_sources_2026-10-01.md) sections 2.1, 5 and 6; [LSR](LSR_long_scale_remainder_2026-10-01.md) section 6; `config/sim/simnet60_quiet_24h.json` (the current recipe, commit `2306134`); `include/sim/SimConfig.hpp` (the noise and multipath blocks); `docs/refound/GRB_golden_rebase_2026-09-22.md` (the golden re-base recipe)
 - **knobs / posture:** the simulator's new phase-colour block (default amplitude 0, byte-identical); `noise.phase_sigma_zen_m`; the sim golden's base re-pointed at the new fixture
 - **dates in the text:** 2026-10-01
@@ -314,3 +314,39 @@ colour truth; `synth-network` log in the directory). The sim golden re-points th
 
 The sim numbers listed in section 5 are superseded from here; the 6 h program-posture test of section 4.3
 (`runs/_rap_sfr_col6_p`) is recorded below when it lands.
+
+### 5.2 The colour and the long-scale remainder, 6 h (2026-10-01)
+
+Card REV's 6 h sim program-posture arm re-pointed at the new fixture (`runs/_rap_sfr_col6_p`,
+`gnss_processor_rev1.exe`, with `network.cycle_slip.windup_restart_refloat` as on the field arm), against
+the same instrument on the same window (`wsf_persist.py`, ratio at 5 / 20 / 60 / 120 epochs):
+
+| run (6 h) | ratio | rms step |
+| --- | --- | --- |
+| sim, old fixture (`rev1_blk6_s`) | 1.05 / 0.93 / 0.68 / 0.54 | 0.873 mm |
+| sim, re-based fixture (`sfr_col6_p`) | 1.58 / 1.75 / 1.48 / 1.18 | 0.376 mm |
+| field, accumulated wind-up (`fws_wuacc6_f`) | 1.45 / 1.51 / 1.54 / 1.53 | 0.542 mm |
+| field, fractional (`rev1_blk6_f`) | 1.54 / 1.83 / 1.98 / 1.84 | 0.593 mm |
+
+**C3 fails at 60 epochs and holds at 120.** The field's coloured phase error, seen through the sim's
+coverage, reproduces the field's walk-share persistence at 5 to 60 epochs (1.48 against 1.54 at an hour)
+and two-thirds of the field's excess over the old sim at two hours (1.18 against 1.53, from 0.54). The
+long-scale remainder of cards FWS and LSR is therefore mostly the slow tail of the same per-line-of-sight
+coloured error, not a separate source; what is left is about a third of the two-hour excess (0.35 in the
+ratio), on a sim whose coverage differs from the field's (a near-uniform 60-station lattice against a
+clustered 58-station roster). **C4 stands**: every persistence-sensitive sim number moves, as section 5
+lists.
+
+## 6. Reading (2026-10-01)
+
+The sim now carries the field's phase error: a frequency-common, per-line-of-sight Gauss-Markov colour
+whose amplitude stops growing below 20 degrees of elevation, larger at tropical stations, over a white
+noise a sixth of the old fixture's. Calibrated on the post-fit instrument it matches the field's residual
+colour in every class, and it brings the field's walk-share persistence to the sim out to an hour: the
+motion the hold family's members pass (cards SMH, SMD, FWS) is now present on the bed that validates them.
+The sim golden reads the re-based fixture; the old fixture's numbers are superseded, not wrong.
+
+Owed: the re-capture of the superseded sim numbers when each card is next used; the third of the two-hour
+excess left (coverage or a further slow ingredient: cards LSR section 6's phase-centre and long-period
+multipath candidates); the per-line-of-sight nuisance state of card SOI section 5 now has a sim bed that
+carries the error it would model.

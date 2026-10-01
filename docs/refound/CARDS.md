@@ -427,6 +427,7 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   FALSIFIED: the posture re-estimates the wet delay every epoch (the q arm is byte-identical),
   gradients worsen the persistence, and set changes add no walk; untested: phase-centre and
   long-period multipath errors.
+  ANNOTATED (card SFR): the remainder is mostly the slow tail of the stations' coloured phase error.
 - [WUP](WUP_windup_accumulated_promotion_2026-10-01.md): closed, 2026-10-01: pre-registered (the outside
   review's decision after card FWS): accumulated phase wind-up for the field lineages by the
   promotion path. The restart response it needs walked the live ambiguity map and so never reached a
@@ -435,7 +436,7 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   ARMED: every gate passed; 27 of 28 field restarts answered, the staircase gone, the census with
   accumulating consumers 2.6 cm better at the median site (the consumers' own mode); baseline pair
   `runs/_rf0hv12_{field,sim}6`.
-- [SFR](SFR_sim_fixture_coloured_phase_2026-10-01.md): open, 2026-10-01: pre-registered (the outside
+- [SFR](SFR_sim_fixture_coloured_phase_2026-10-01.md): closed, 2026-10-01: pre-registered (the outside
   review's decision after card FWS): the sim fixture re-based with the field's coloured phase error.
   The field's post-fit ionosphere-free phase residual is about 90 % a Gauss-Markov process (5 to 7 mm,
   tau 80 to 120 s) over 2 mm of white noise, the sim's about 80 % white (14 mm); a band-common
@@ -443,3 +444,4 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   instrument, and the white noise cut, in one regeneration (C1 to C4).
   RE-BASED: six calibration rungs (the colour capped at 20 degrees of elevation is what matches); the
   sim golden reads `runs/simnet60_quiet_col_24h` (baseline `runs/_rf0hv13_sim6`); old sim numbers superseded.
+  The colour also carries the field's walk-share persistence out to an hour on the sim (6 h).
