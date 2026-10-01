@@ -10,6 +10,7 @@ gen : python scripts/clock_level/sfr_calib.py gen <tag> --sim-exe <gnss_simulato
       fixture into runs/_sfr_<tag>/fix with `synth-network`.
 genp: python scripts/clock_level/sfr_calib.py genp <tag> --sim-exe <exe> [--jobs 8] [--hours 2.75]
           [--white <m>] [--mp-phase <m>] [--sigma <m>] [--tau <s>] [--class <name>=<sigma_m>,<tau_s>]
+          [--pc-floor <deg>]
       The calibration path: the 24 h fixture's own per-station child configs (station, seed salt,
       biases) with the span, the white phase noise, the multipath phase amplitude (its code
       amplitude and draw untouched) and the phase-colour block changed, synthesised per station
@@ -103,6 +104,8 @@ def genp(a):
         k = klass(c['trajectory']['lat0_deg'])
         if k in cls:
             sig, tau = cls[k]
+        if a.pc_floor is not None and sig:
+            c.setdefault('phase_colour', {})['elev_factor_floor_deg'] = a.pc_floor
         if sig is not None or tau is not None:
             pc = c.setdefault('phase_colour', {})
             if sig is not None:
@@ -168,6 +171,7 @@ if __name__ == '__main__':
     gp.add_argument('--white', type=float); gp.add_argument('--sigma', type=float); gp.add_argument('--tau', type=float)
     gp.add_argument('--class', dest='cls', action='append')
     gp.add_argument('--mp-phase', dest='mp_phase', type=float)
+    gp.add_argument('--pc-floor', dest='pc_floor', type=float)
     m = sp.add_parser('arm')
     m.add_argument('tag'); m.add_argument('posture', choices=['golden', 'program'])
     m.add_argument('--hours', type=float, default=2.0)

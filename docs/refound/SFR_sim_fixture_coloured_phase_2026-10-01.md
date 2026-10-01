@@ -195,3 +195,32 @@ ratio at 5 / 20 / 60 / 120 epochs): `k0` 1.09 / 1.09 / 0.84 / 0.60 (card FWS's c
 1.09 / 0.85 / 0.66), `k1` 1.60 / 1.82 / 1.49 / 1.01, the field's 2 h control 1.47 / 1.66 / 1.83 / 2.23. The
 field's colour alone brings the field's short-lag persistence to the sim (C2's direction), and it reverts
 by 120 epochs (C3's), as card FWS's 30 mm sinusoid arm did.
+
+### 4.1 `k4`, `k5` and the elevation shape (2026-10-01)
+
+| candidate | class | rms | acf 1 / 2 / 5 / 20 / 60 | GM share, tau |
+| --- | --- | --- | --- | --- |
+| `k4` | tropical | 7.03 mm | 0.68 / 0.53 / 0.19 / -0.00 / -0.06 | 0.88, 117 s |
+| | mid | 5.04 mm | 0.62 / 0.44 / 0.11 / 0.05 / -0.07 | 0.88, 87 s |
+| | high | 5.28 mm | 0.60 / 0.43 / 0.08 / 0.11 / -0.10 | 0.83, 92 s |
+| `k5` | tropical | 7.29 mm | 0.68 / 0.52 / 0.18 / -0.02 / -0.04 | 0.90, 109 s |
+| | mid | 5.47 mm | 0.65 / 0.47 / 0.13 / 0.03 / -0.08 | 0.91, 90 s |
+| | high | 6.00 mm | 0.65 / 0.49 / 0.14 / 0.06 / -0.08 | 0.87, 104 s |
+
+**K4 fails**: lengthening the time constant moves the post-fit acf(5) by 0.02 to 0.03, not 0.08; the
+estimator absorbs the slow part of a band-common error. **K5 fails**: it meets C1 in the mid (lag 5
+at exactly -0.10) and high classes and misses the tropical lag 5 by 0.14. Across the ladder the shape
+is best in `k1` (lag 5 within 0.04 in every class), whose colour is the sim's existing multipath
+(per band, 300 s, its amplitude capped at 20 degrees of elevation), and worst wherever the new block
+carries the colour with the white noise's elevation shape (1 / sin e down to 5 degrees, 5.8 times at
+the 10 degree mask): the large low-elevation part of the block's error is what the estimator absorbs
+and what shortens the post-fit colour. That is the review's caution (section 2.1) measured.
+
+**`k6`, predicted before it ran:** the block with the multipath's elevation shape and time constant
+(`phase_colour.elev_factor_floor_deg` 20, tau 300 s), the multipath phase off, the white noise at
+0.5 mm, and sigma per class from `k1`'s rms ratios (the IF equivalent of 2 mm per band is about 6 mm
+band-common): tropical 6.0 mm, mid 4.9 mm, high 4.4 mm. **K6:** it meets C1 in every class.
+
+The recipe is the candidate that meets C1 in the most classes over the whole ladder, ties to the
+smaller summed lag-5 miss (section 3.2's rule, extended from `k4` and `k5` to every candidate):
+today `k1` and `k5` tie at two classes and `k1` has the smaller lag-5 miss (0.09 against 0.31).
