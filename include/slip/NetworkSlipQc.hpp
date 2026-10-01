@@ -602,6 +602,31 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                const CommonBandEpoch* common_band = nullptr);
 
 /**
+ * @brief The arcs a wind-up accumulator restart of (station @p i, satellite
+ *        @p sat) steps, as (ambiguity key, signal) pairs (card WUP).
+ *
+ * The satellite's live ambiguity columns in @p sm, in the map's order, when it
+ * has any.  Otherwise, a re-entering arc whose column was pruned with the gap:
+ * the (station, satellite)'s leveling carry entries in @p local_carry whose age
+ * (@p pl_now_s minus @c last_seen_s) lies in [0, @p pl_max_gap_s], on the
+ * synthesised key (@c StateKeys::makeAmbiguityKey) the PASS-B inject reads.
+ * Empty when neither exists, which is the restart with nothing to free.
+ *
+ * @param sm            The station's state manager (read-only).
+ * @param i             App station index (the carry map's first key).
+ * @param sat           Satellite id.
+ * @param local_carry   The leveling carry map; null reaches live columns only.
+ * @param pl_now_s      This epoch's continuous GPS seconds (the carry's clock).
+ * @param pl_max_gap_s  @c network.phase_leveling_max_gap_s.
+ * @param via_carry     Set to true when the targets came from the carry (may be null).
+ * @return The targets, live columns first-and-only when any exist.
+ */
+std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
+        const StateManager& sm, int i, const std::string& sat,
+        const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* local_carry,
+        double pl_now_s, double pl_max_gap_s, bool* via_carry = nullptr);
+
+/**
  * @brief Drain the wind-up accumulator-restart ledgers and refloat the stepped
  *        arcs (SPEC_phase_windup_sign §10.4): the wired response that standing
  *        invariant #1 requires before any @c accumulate_phase_windup arm.
@@ -628,6 +653,24 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * No-op unless @c network.cycle_slip.windup_restart_refloat.  The loader
  * disarms that knob without @c estimation.accumulate_phase_windup (the restart
  * verdict exists only in accumulated mode) and without @c network.phase_leveling.
+ *
+ * ## The re-entering arc (card WUP)
+ *
+ * A restart is a return after a gap longer than the wind-up horizon, so the arc
+ * has usually left the model set: its ambiguity column was pruned with the gap and
+ * PASS B re-creates it only after this drain.  The live columns of the satellite
+ * are the target when they exist; otherwise the target is the (station, satellite)'s
+ * leveling carry entries inside the carry horizon (@p local_carry, @p pl_now_s,
+ * @p pl_max_gap_s), freed on the synthesised key the PASS-B inject reads, as
+ * @ref networkSlipDrainGapReentry does.  Only a live column takes the
+ * pending-reseed mark.  Counted: @c wu_restart_carry_arcs (arcs reached through the
+ * carry) and @c wu_restart_no_arc (a warm, in-horizon restart with nothing to
+ * free), which is outside @c wu_restart_refloated.  Without @p local_carry the
+ * drain reaches live columns only, the behaviour before the card.
+ *
+ * @param local_carry   The leveling carry map, read-only; null reaches live columns only.
+ * @param pl_now_s      This epoch's continuous GPS seconds (the carry's clock).
+ * @param pl_max_gap_s  @c network.phase_leveling_max_gap_s.
  */
 void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    std::vector<NetStation>& stations,
@@ -642,7 +685,10 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    std::map<std::tuple<int, std::string, std::string>,
                                             RelevelPend>* relevel_pend = nullptr,
                                    NetworkSlipOracle* oracle = nullptr,
-                                   const RawSlipEpoch* bscope_raw = nullptr);
+                                   const RawSlipEpoch* bscope_raw = nullptr,
+                                   const std::map<std::tuple<int, std::string, std::string>,
+                                                  LocalCarry>* local_carry = nullptr,
+                                   double pl_now_s = 0.0, double pl_max_gap_s = 0.0);
 
 /**
  * @brief Gap re-entry response: mark the arcs that re-entered across a tracking

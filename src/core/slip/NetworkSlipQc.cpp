@@ -1778,6 +1778,35 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
     }
 }
 
+std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
+        const StateManager& sm, int i, const std::string& sat,
+        const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* local_carry,
+        double pl_now_s, double pl_max_gap_s, bool* via_carry) {
+    std::vector<std::pair<std::string, std::string>> targets;
+    for (const auto& [ak, si] : sm.getAmbiguities()) {
+        (void)si;
+        const auto pp = StateKeys::parseAmbiguityKey(ak);
+        if (pp && pp->satellite == sat) targets.emplace_back(ak, pp->signal);
+    }
+    bool carry = false;
+    if (targets.empty() && local_carry != nullptr) {
+        // The map key is (station index, satellite, signal) and orders
+        // lexicographically, so one lower_bound walks this station-satellite group.
+        for (auto it = local_carry->lower_bound(std::make_tuple(i, sat, std::string{}));
+             it != local_carry->end() && std::get<0>(it->first) == i
+                 && std::get<1>(it->first) == sat;
+             ++it) {
+            const double age_s = pl_now_s - it->second.last_seen_s;
+            if (age_s < 0.0 || age_s > pl_max_gap_s) continue;
+            const std::string& sig = std::get<2>(it->first);
+            targets.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
+        }
+        carry = !targets.empty();
+    }
+    if (via_carry) *via_carry = carry;
+    return targets;
+}
+
 void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    std::vector<NetStation>& stations,
                                    const std::vector<bool>& present,
@@ -1791,7 +1820,10 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    std::map<std::tuple<int, std::string, std::string>,
                                             RelevelPend>* relevel_pend,
                                    NetworkSlipOracle* oracle,
-                                   const RawSlipEpoch* bscope_raw) {
+                                   const RawSlipEpoch* bscope_raw,
+                                   const std::map<std::tuple<int, std::string, std::string>,
+                                                  LocalCarry>* local_carry,
+                                   double pl_now_s, double pl_max_gap_s) {
     if (!config_.networkCycleSlipWindupRestartRefloat()) return;
     // The whole-satellite site of the band scope (§Z rule): an accumulator restart
     // steps every signal of the satellite, so the implicated set is the whole arc,
@@ -1835,17 +1867,30 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             }
             StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
             int matched = 0;
-            // Band scope (§Z rule): the implicated set is every live band of the
-            // satellite, built here from the arc itself; it equals the live set
-            // the helper resolves internally.
+            // The arcs the restart stepped, as (ambiguity key, signal).  A restart is
+            // a return after a gap longer than the wind-up horizon, so the arc has
+            // usually left the model set: its ambiguity column was pruned with the
+            // gap, and PASS B's pre-pass re-creates it only after this drain.  A walk
+            // of the live ambiguity map alone then matches nothing while the PASS-B
+            // inject folds the leveling carry across the step (card WUP section 1:
+            // on the 6 h field arm all 28 restarts inside the carry horizon matched
+            // no live column).  The live columns stay the target when the arc kept
+            // them; otherwise the target is the (station, satellite)'s leveling carry
+            // entries still inside the carry horizon, on the synthesised key the
+            // PASS-B inject reads, as the gap re-entry drain does
+            // (gapReentryRespondArc).  Live-column order is the map's, as before.
+            bool via_carry = false;
+            const std::vector<std::pair<std::string, std::string>> targets =
+                networkWindupRestartTargets(sm, i, sat, local_carry, pl_now_s,
+                                            pl_max_gap_s, &via_carry);
+            // Band scope (§Z rule): the implicated set is every target band of the
+            // satellite.  On the live path it equals the live set the helper
+            // resolves internally; on the carry path no band is live, and the
+            // helper's scope does not act.
             std::string bs_keep;
             if (bscope_on) {
                 std::set<std::string> impl;
-                for (const auto& [ak, si] : sm.getAmbiguities()) {
-                    (void)si;
-                    const auto pp = StateKeys::parseAmbiguityKey(ak);
-                    if (pp && pp->satellite == sat) impl.insert(pp->signal);
-                }
+                for (const auto& tg : targets) impl.insert(tg.second);
                 bs_keep = bandScopeKeepAt(true, stations[static_cast<std::size_t>(i)],
                                           i, sat, impl, bscope_raw, relevel,
                                           &carry_slipped_ambs, qc_cnt);
@@ -1857,15 +1902,13 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             // oracle does not handle fall through to the normal refloat.
             bool orc_h = false, orc_r = false, orc_freed = false;
             std::string orc_detail;
-            for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
-                const auto parts = StateKeys::parseAmbiguityKey(amb_key);
-                if (!parts || parts->satellite != sat) continue;
-                if (!bs_keep.empty() && parts->signal == bs_keep) continue;  // kept (§Z rule)
+            for (const auto& [amb_key, signal] : targets) {
+                if (!bs_keep.empty() && signal == bs_keep) continue;  // kept (§Z rule)
                 ++matched;
                 if (oracle) {
                     OracleOutcome oc = OracleOutcome::NotHandled;
                     std::string det;
-                    if (networkSlipOracleHandle(*oracle, i, sat, parts->signal,
+                    if (networkSlipOracleHandle(*oracle, i, sat, signal,
                                                 now_s, RelevelEpochState::kCauseWindup,
                                                 det, oc)) {
                         orc_h = true;
@@ -1886,7 +1929,12 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                 if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                 if (carry_warm) {
                     orc_freed = true;
-                    sm.markAmbiguityPendingReseed(amb_key);
+                    // Only a live column takes the pending-reseed mark: a mark on an
+                    // absent key would sit in the set until some later epoch's
+                    // pre-pass consumed it (the gap re-entry drain's rule).  The
+                    // free-epoch latch is keyed on the string and reaches the inject
+                    // either way.
+                    if (!via_carry) sm.markAmbiguityPendingReseed(amb_key);
                     if (relevel) {
                         relevel->free_ambs.insert({i, amb_key});
                         relevel->free_cause[{i, amb_key}] |=
@@ -1911,23 +1959,29 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             if (carry_warm && matched > 0) {
                 ++qc_cnt.wu_restart_refloated;
                 qc_cnt.wu_restart_arcs += matched;
+                if (via_carry) qc_cnt.wu_restart_carry_arcs += matched;
                 if (++n_resp <= 12)
                     detail += fmt::format("{}{}/{}", detail.empty() ? "" : ", ",
                                           stations[static_cast<std::size_t>(i)].name, sat);
             } else if (!carry_warm) {
                 ++qc_cnt.wu_restart_cold;
             } else {
-                // Warm, but no live ambiguity matched the satellite: the arc is
-                // not in this epoch's estimation set.  It is counted under
-                // wu_restart_refloated with zero arcs and the event row's action
-                // is "no_arc", so the counters still partition wu_restart_events.
-                ++qc_cnt.wu_restart_refloated;
+                // Warm, inside the carry horizon, and nothing to free: no live
+                // column and no leveling carry entry inside the horizon (an arc
+                // that never reached the carry, or one the band scope kept whole).
+                // Counted apart from the responses, so a run whose restarts all
+                // land here reads as unanswered rather than answered (invariant
+                // #4; card WUP section 1).
+                ++qc_cnt.wu_restart_no_arc;
             }
             traces.emitEvent(se.time, "T0_windup", "wu_restart", sat,
                              stations[static_cast<std::size_t>(i)].name,
                              rec.gap_s, carry_gap_s,
                              orc_h ? (orc_r ? "oracle_repair" : "oracle_keep")
-                                   : (carry_warm ? (matched > 0 ? "refloat" : "no_arc")
+                                   : (carry_warm ? (matched > 0
+                                                        ? (via_carry ? "refloat_carry"
+                                                                     : "refloat")
+                                                        : "no_arc")
                                                  : "diagnostic"),
                              (orc_h ? fmt::format("accumulator restart; {} arc(s); {}",
                                                   matched, orc_detail)

@@ -2299,13 +2299,17 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // pair enters this epoch's freed set (and its lane response is measured under
     // cause=WU like every other).  No-op unless
     // network.cycle_slip.windup_restart_refloat (disarmed by the loader outside
-    // accumulated mode).
+    // accumulated mode).  It receives the leveling carry for the reason the gap
+    // re-entry drain below does: a restart is a return after a gap, so the arc
+    // usually has no ambiguity column yet at this point and its carry entry is the
+    // target (card WUP).
     networkSlipDrainWindupRestart(config_, stations, present, i_lo, n_sta_total,
                                   carry_invariant, carry_warm,
                                   carry_slipped_ambs, qc.counters, se, traces,
                                   log, relevel_ptr, &ctx.carry.relevel_pend,
                                   ctx.carry.slip_oracle.get(),    // simulation-only oracle
-                                  bscope_on ? &qc.epoch : nullptr);  // band-scope evidence (§Z)
+                                  bscope_on ? &qc.epoch : nullptr,  // band-scope evidence (§Z)
+                                  &local_carry, pl_now_s, ctx.knobs.pl_max_gap_s);
 
     // ---- Gap re-entry refloat (card G response) ------------------------------
     // (docs/SPEC_slip_qc_hardening.md §G3/W1.)  An arc that re-appears within

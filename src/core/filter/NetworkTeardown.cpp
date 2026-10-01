@@ -2793,21 +2793,31 @@ int networkTeardown(
     // counters are the ON-path telemetry (invariant #4).
     if (config_.networkCycleSlipWindupRestartRefloat()) {
         const auto& qcc = slip_qc.counters;
-        const long long closure = qcc.wu_restart_refloated + qcc.wu_restart_cold
-                                + qcc.wu_restart_beyond_carry + qcc.wu_restart_stale;
+        const long long closure = qcc.wu_restart_refloated + qcc.wu_restart_no_arc
+                                + qcc.wu_restart_cold + qcc.wu_restart_beyond_carry
+                                + qcc.wu_restart_stale;
         log->info("Network (wind-up restart response, SPEC_phase_windup_sign §10.4): "
-                  "{} restart event(s) drained → {} RESPONDED ({} arc(s) refloated), "
-                  "{} cold (diagnostic), {} beyond the carry horizon (carry died with "
-                  "the gap — no response owed), {} STALE refused (ledger from an "
-                  "earlier epoch — never respond to history).  CLOSURE {} vs events "
-                  "{} ({}).  0 responded on an accumulated run whose census counts "
-                  "restarts = dead wiring (invariant #4); the lane observatory grades "
-                  "this response under cause=WU.",
+                  "{} restart event(s) drained → {} RESPONDED ({} arc(s) refloated, {} "
+                  "of them re-entering arcs reached through the leveling carry), {} "
+                  "inside the carry horizon with NO arc to free (no live column, no "
+                  "carry entry), {} cold (diagnostic), {} beyond the carry horizon "
+                  "(carry died with the gap — no response owed), {} STALE refused "
+                  "(ledger from an earlier epoch — never respond to history).  "
+                  "CLOSURE {} vs events {} ({}).  0 arcs refloated on an accumulated "
+                  "run with in-horizon restarts = dead wiring (invariant #4; card "
+                  "WUP); the lane observatory grades this response under cause=WU.",
                   qcc.wu_restart_events, qcc.wu_restart_refloated,
-                  qcc.wu_restart_arcs, qcc.wu_restart_cold,
+                  qcc.wu_restart_arcs, qcc.wu_restart_carry_arcs,
+                  qcc.wu_restart_no_arc, qcc.wu_restart_cold,
                   qcc.wu_restart_beyond_carry, qcc.wu_restart_stale,
                   closure, qcc.wu_restart_events,
                   closure == qcc.wu_restart_events ? "OK" : "*** MISWIRE ***");
+        if (qcc.wu_restart_arcs == 0
+            && qcc.wu_restart_refloated + qcc.wu_restart_no_arc > 0)
+            log->warn("Network (wind-up restart response): {} restart(s) inside the carry "
+                      "horizon and ZERO arcs refloated — the response did not act on this "
+                      "run (invariant #4).",
+                      qcc.wu_restart_refloated + qcc.wu_restart_no_arc);
     }
 
     // ---- Anchor-slip handover (docs/SPEC_event_harness.md §12.7) ------------

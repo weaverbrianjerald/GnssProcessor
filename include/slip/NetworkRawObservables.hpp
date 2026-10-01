@@ -851,14 +851,16 @@ struct SlipQcCounters {
     long long relevel_free_marked{0};      ///< (station, amb key) free-epoch latches.
     // Wind-up restart response (network.cycle_slip.windup_restart_refloat;
     // SPEC_phase_windup_sign §10.4, built in §11).
-    // Closure: wu_restart_events == wu_restart_refloated + wu_restart_cold
-    //          + wu_restart_beyond_carry + wu_restart_stale.
+    // Closure: wu_restart_events == wu_restart_refloated + wu_restart_no_arc
+    //          + wu_restart_cold + wu_restart_beyond_carry + wu_restart_stale.
     long long wu_restart_events{0};        ///< (station, sat) restart ledger entries drained.
-    long long wu_restart_refloated{0};     ///< ...responded: arcs marked + free-epoch latched (carry warm, gap within the carry horizon).
+    long long wu_restart_refloated{0};     ///< ...responded: at least one arc marked + free-epoch latched (carry warm, gap within the carry horizon).
+    long long wu_restart_no_arc{0};        ///< ...warm and inside the carry horizon with nothing to free: no live column and no carry entry in the horizon (card WUP; before it these were counted as responded).
     long long wu_restart_cold{0};          ///< ...carry not warm: diagnostic only (nothing stale to refloat yet).
     long long wu_restart_beyond_carry{0};  ///< ...gap exceeded the carry horizon: the carry ended with the gap, so no response is needed.
     long long wu_restart_stale{0};         ///< ...ledger entry from an earlier epoch (the station was absent at its restart): refused, since a response must not act on history.
     long long wu_restart_arcs{0};          ///< individual ambiguities refloated across all responses.
+    long long wu_restart_carry_arcs{0};    ///< ...of those, arcs reached through the leveling carry (a re-entering arc with no live column; card WUP).
     long long relevel_free_skips{0};       ///< Inject-site skips actually taken (arc had a live carry).
     // Band-scoped detector refloat (network.cycle_slip.refloat_band_scope =
     // implicated; docs/SPEC_event_harness.md §Z, study 3).  Every whole-satellite
