@@ -4,12 +4,12 @@
 
 - **id:** PAC
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Opened 2026-10-01 (the author's question after card FXA; the outside review asked for one check, the slope of the fleet-common clock across the pivot handover). Card FXA found the field's excess phase-visible motion common to the constellation and read it, unverified, as the pinned clock pivot's a priori clock error. The traces of card REV's 6 h arms answer the question without a run (section 2): the pivot's own phase-visible clock moves with the fleet, and so do the smoothest receiver clocks, which an a priori error of the pivot cannot produce; the drift is the network's phase-visible time scale, which floats on the pivot's phase-bias estimate because only the pivot's clock column is pinned. On the field that pivot (G01) is broadcast-unhealthy, tracked by 1 to 6 stations and misfit by 0.4 to 1.1 m in its ionosphere-free code. One 2 h field arm with a well-tracked pivot pinned (section 3, predicted before it ran) tests whether that weak tie is what lets the field's time scale float.
+- **status:** closed
+- **summary:** ANSWERED 2026-10-01 (sections 2, 4 and 5): the constellation-common drift is NOT the clock pivot's a priori clock. The pivot's own phase-visible clock moves with the fleet, the wire's D contrast stays flat while the clock contrast moves, and two hydrogen masers (PTBB, WTZR) carry the drift one for one; G01's a priori drift is bounded at about 3 cm over two hours. It is the pinned pivot's LEVEL converging: the pin holds only the pivot's clock column, so its code-determined clock/phase-bias split moves its phase biases and the phase data carry that to every satellite and receiver; it appears only on card CTU's posture, which frees the levels. On the field the unhealthy, sparsely tracked, code-misfit G01 makes it large; one 2 h arm with G14 pinned (24 to 29 stations) cuts the hour-2 drift from -0.180 to -0.063 m/h, the sim's size, consumer unchanged. The outside review's handover check is null (the drift is over by 04:42:30, and the emitted clocks cannot show it under card CLK-R's frame hold). Harmless to a float consumer; the pivot election (card HLT's health rule, a tracked-count rule, or the sum-to-zero datum) is the lever when the clock product is the target. Nothing armed.
 - **source:** [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md) sections 4 to 6; [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) section 5; card CLK-R (the emission frame hold); card HLT (the satellite health latch and the pivot); `NetworkSbasis.cpp` 466 to 501 (the pivot pin); the outside review's note of 2026-10-01
 - **knobs / posture:** `network.clock_datum_satellite` on one arm only (the field's 2 h control `runs/_rap_wsx_ctl_f` with the pivot pinned on G14); nothing armed
 - **dates in the text:** 2026-10-01
-- **hashes / run dirs:** traces of `runs/_rap_rev1_blk6_{f,s}` and `runs/_rap_wsx_ctl_f`; the arm `runs/_rap_pac_g14_f` (section 4)
+- **hashes / run dirs:** traces of `runs/_rap_rev1_blk6_{f,s}` and `runs/_rap_wsx_ctl_f`; the arm `runs/_rap_pac_g14_f` (`gnss_processor_wsx1.exe` `e3d6c4955054e1f9`); scripts `scripts/clock_level/pac_slope.py`, `pac_arm.py`
 
 ## 1. The two readings and what each predicts
 
@@ -71,3 +71,59 @@ unhealthy, sparsely tracked pivot:
 If P1 fails, the float is a generic property of the pinned-code-clock datum on this posture, its
 field size not set by G01, and the sum-to-zero clock datum (validated on the sim, its field arm owed)
 is the candidate when the clock product is the target.
+
+## 4. The arm and the re-grades (2026-10-01)
+
+`runs/_rap_pac_g14_f` (`gnss_processor_wsx1.exe` `e3d6c4955054e1f9`; the S line reads `G:G14`, no
+handover in 2 h) against `runs/_rap_wsx_ctl_f` (G01), both 2 h on the field:
+
+| | control, pivot G01 | pivot G14 |
+| --- | --- | --- |
+| common D slope, hour 1 (ignition) | +0.210 m/h (sum +12.1 cm) | +0.174 m/h (sum -40.7 cm) |
+| common D slope, hour 2 | -0.180 m/h (sum -15.3 cm) | -0.063 m/h (sum -5.6 cm) |
+| the pivot's own D, hour 1 / 2 | -19.6 / -10.5 cm | -44.1 / -5.2 cm |
+| the pivot's IF code residual, hour 1 / 2 (others' median) | -607 / -433 mm (+54 / +42) | +149 / +16 mm (+30 / +41) |
+| IF code spread hour 2, trips, re-floats | 0.164 m, 0, 7 / 23 | 0.163 m, 0, 7 / 23 |
+| WTZZ00DEU hours 1 / 2 | 0.109 / 0.022 m | 0.106 / 0.019 m |
+
+**P1 holds**: the hour-2 drift falls to a third of the control's (bar a half), the sim's size (its
+hour 2 +0.066 m/h). **P2 holds in hour 2 and fails in hour 1**: the new pivot's own D still moves with
+the fleet (the time scale still floats on the pivot) and its code fits from hour 2 (+16 mm), but not
+during ignition (+149 mm against the 0.1 m bar). Hour 1 is ignition under either pivot and larger
+with G14.
+
+The re-grades of section 2's two load-bearing numbers: the maser clocks against the drift depend on
+the detrending, and only a matched one is meaningful (a quadratic on the clock against a line on the
+drift strips the drift's curvature from one side: PTBB +0.46). Matched: PTBB00DEU r +0.99, slope
+1.10 (linear on both) and +0.96, 1.01 (quadratic on both); WTZR00DEU +0.98 / 1.01 and +0.91 / 0.95;
+BOR100POL, SVTL00RUS, STJO00CAN, CEBR00ESP +0.95 to +0.98 (linear). G01's carried L2W ambiguities on
+the field number 5.5, 5.1, 2.9, 1.6, 1.0 and 3.7 per epoch by hour (`network_amb_state.csv`; section
+2's 6.5 to 1.8 counted post-fit phase rows), G14's 24 to 29.
+
+## 5. Reading and decision (2026-10-01)
+
+**The common drift is not the pivot's a priori clock.** An a priori error of the pivot would move
+the pivot-against-fleet phase-visible contrast and leave the pivot's D still; the pivot's D moves with
+the fleet, the wire's D contrast stays flat while the clock contrast moves, and two hydrogen masers
+carry the drift one for one. That bounds G01's a priori drift at about 3 cm over hours 1.25 to 3.25.
+
+**It is the pinned pivot's level converging.** The pin holds the pivot's clock column at its a priori
+(`Pin{clockColumn(pivot), 0.0}`), so the code-determined split of the pivot's clock and phase biases
+can only move its phase biases; that moves its D, and the phase data carry the move to every
+satellite's D and every receiver's phase-side clock. It is the clock-level convergence card CTU freed
+(the exact update), seen through a pin that holds the code clock alone: the drift appears in every
+arm on CTU's posture and in none on the control and golden postures, where the levels are frozen. Its
+size is set by the pivot's code tie. The field's G01 is broadcast-unhealthy, carried by 1 to 5 field
+stations and misfit by 0.4 to 0.6 m in its ionosphere-free code; a healthy pivot carried by 24 to 29
+stations cuts the settled drift to the sim's size.
+
+**What it reaches.** Every satellite and receiver moves alike, so a float consumer absorbs it (card
+SMC; WTZZ00DEU unchanged here) and card CLK-R's emission frame hold removes it from the wire's clocks.
+It reaches the clock product's own time scale and every instrument that is not datum-invariant (card
+REV section 8, card FXA's raw structure).
+
+**The decision.** Nothing is armed. When the clock product is the target, the pivot election is the
+lever: a rule that elects a healthy, well-tracked pivot (card HLT's `network.sat_health` in its pivot
+mode, built and not armed, elects G02 on DOY 129; a tracked-count rule would elect G14 or G22) or the
+sum-to-zero clock datum (validated on the sim, its field arm owed), which fixes the fleet's mean
+instead of one satellite's code. The election is the author's product decision.

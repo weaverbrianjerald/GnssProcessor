@@ -386,15 +386,18 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   FALSIFIED the same day: the common drift is not in the walk share (the smoother books it as
   revision), the wire moves by at most 3 mm and the census not at all; what card SMD's member
   passes is per-satellite. The hold family is closed on this estimator; the phase-clock hold stays.
-- [WSL](WSL_walk_share_stations_link_2026-10-01.md): open, 2026-10-01: pre-registered (the outside
+- [WSL](WSL_walk_share_stations_link_2026-10-01.md): closed, 2026-10-01: pre-registered (the outside
   review's note after cards WSX, FXA and SMC): whether the field's larger walk share (25 against
   9 mm between satellites) is card WSX's carry defect seen through the hold, tested from existing
   traces and the unit network: the stated contrast and the walk share against the stations
   observing each satellite, with clone age as the rival, on both beds. If it holds, the augmented
-  previous border is the critical path.
-- [PAC](PAC_common_drift_pivot_clock_2026-10-01.md): open, 2026-10-01: the author's question after
+  previous border is the critical path. FALSIFIED the same day: the field's satellites are not seen
+  by more stations (median 12 against 15), the stated contrast does not tighten with the count,
+  matched counts leave the beds 1.5 apart; the augmented border is not the critical path.
+- [PAC](PAC_common_drift_pivot_clock_2026-10-01.md): closed, 2026-10-01: the author's question after
   card FXA, whether the constellation-common drift is the clock pivot's a priori clock. The traces
   say no: the pivot's own phase-visible clock and the smoothest receiver clocks move with the
   fleet, so the drift is the network's phase-visible time scale floating on the pinned code clock;
   one 2 h field arm with a well-tracked pivot pinned tests whether the unhealthy, sparsely tracked
-  G01 is what lets the field's float grow.
+  G01 is what lets the field's float grow. ANSWERED: the drift is the pinned pivot's level converging
+  on card CTU's posture; G14 pinned cuts the settled drift to the sim's size, consumer unchanged.

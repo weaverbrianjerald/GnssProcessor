@@ -4,12 +4,12 @@
 
 - **id:** WSL
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Pre-registered 2026-10-01 (the outside review's note after cards WSX, FXA and SMC). Card SMC found that what card SMD's member passes is per-satellite walk share, with a between-satellite spread of 25 mm on the field against 9 mm on the sim, although the total per-satellite motion of D is the sim's size on the field. Card WSX's unit network shows the shipped carry stating between-satellite phase-visible contrasts too tightly, more so the more stations see a satellite (0.885 / 0.661 / 0.336 of the exact variance at 8 / 16 / 48 stations). The share of a satellite's motion the smoother books as walk is about sum q / (stated variance + sum q), so a tighter stated variance gives a larger walk share for the same q. The review's prediction: the field's clustered roster sees its satellites with more stations, and the field's larger walk share is card WSX's defect showing through the hold. Tested from existing traces and the unit network, before any build: the walk share against the stations observing the satellite, with clone age as the rival explanation, on both beds; the unit network at the beds' station profiles. If the link holds, the augmented previous border is the exact fix for a measured defect in the quantity a consumer uses, and the critical path.
+- **status:** closed
+- **summary:** FALSIFIED 2026-10-01 (sections 4 and 5): L1, L3 and L4 fail, L2 is not shown. The field's satellites are not seen by more stations (median 12 against the sim's 15, a wider spread 7 to 25), the stated contrast does not tighten with the station count on either bed (pooled slopes +0.34 and +0.41 against the bar -0.5), at a matched count the field's walk share is still 1.50 times the sim's, and the unit network at the beds' medians predicts the opposite direction (0.91). The field's larger walk share is not card WSX's carry defect seen through the stations per satellite; it is something at the field's stations themselves. The augmented previous border stays owed for the estimator's consistency, behind that investigation. Nothing armed.
 - **source:** [WSX](WSX_within_station_cross_terms_2026-09-30.md) sections 6 to 8; [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) sections 4 and 5; [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md); [SMD](SMD_smoothed_hold_block_member_2026-09-30.md) section 8; [PVN](PVN_phase_visible_nees_2026-09-29.md) (the stated contrast variance with every cross term); [REV](REV_revision_member_replay_2026-09-30.md) section 6 (the trace columns); the outside review's note of 2026-10-01
 - **knobs / posture:** none; the traces of `runs/_rap_rev1_blk6_{f,s}` (card REV's instrument build, card SMD's exact-update posture, 6 h) and the unit network of `tests/test_coupling_exact_update.cpp`; nothing armed
 - **dates in the text:** 2026-10-01
-- **hashes / run dirs:** to be filled at the read (section 5)
+- **hashes / run dirs:** traces of `runs/_rap_rev1_blk6_{f,s}`; grader `scripts/clock_level/wsl_link.py`; the unit network at 12 and 15 stations (by hand, `tests/test_coupling_exact_update.cpp` restored to 3)
 
 ## 1. The quantities
 
@@ -53,3 +53,46 @@ augmented border stays owed for the estimator's consistency and moves behind tha
 
 The grader (`scripts/clock_level/wsl_link.py`), the read on both beds, the unit network at the two
 profiles, the verdicts. No run, no build, nothing armed.
+
+## 4. The read (2026-10-01)
+
+`scripts/clock_level/wsl_link.py runs/_rap_rev1_blk6_f runs/_rap_rev1_blk6_s` (station counts from
+`network_amb_state.csv`, L2W; the stated contrast from `network_phase_visible.csv`); the unit network
+of card WSX at 12 and 15 stations (3 satellites, `runRecursion` mode 3).
+
+| | field | sim |
+| --- | --- | --- |
+| stations carrying the satellite on L2W, p10 / p50 / p90 per satellite-epoch | 7 / 12 / 25 | 13 / 15 / 16 |
+| L1: slope of log stated contrast sd on log n, run hours 2 to 6 | -0.01, +0.03, +0.52, +0.78, +0.48 (pooled +0.34 +- 0.01) | -0.65, +0.20, -0.12, +1.09, +1.45 (pooled +0.41 +- 0.05) |
+| clones at age 1 h; their n-bar p10 / p50 / p90 | 71; 7.3 / 11.4 / 25.1 | 72; 13.4 / 14.5 / 15.4 |
+| L2: slope of log \|Phi_D\| on log n-bar; of log f | +0.73 +- 0.44; -0.74 +- 0.90 | -0.74 +- 3.38; +3.79 +- 7.09 (n-bar too narrow) |
+| median \|Phi_D\| at age 1 h | 5.2 mm | 3.3 mm |
+
+L3: the unmatched ratio of the median walk share at age 1 h is 1.55 (the clone-level counterpart of
+card SMC's late spread ratio 2.8); in the one bin that holds both beds (n-bar 12 to 16) it is 1.50
+(17 field clones, 71 sim). L4: the unit network's smallest generalized eigenvalue is 0.744 at 12
+stations and 0.679 at 15, so it predicts the field's walk share at 0.91 of the sim's.
+
+**L1 FAILS** (the stated contrast does not tighten with the station count on either bed; the slopes
+are near zero or positive). **L2 is not shown** (+0.73 +- 0.44 on the field, the structural share
+flat, the sim's range too narrow to test). **L3 FAILS** on both clauses: the field's satellites are
+not seen by more stations (median 12 against 15; the field's spread is wider), and matching the
+station count leaves the beds 1.50 apart. **L4 FAILS**: the unit network predicts the opposite
+direction.
+
+## 5. Reading and decision (2026-10-01)
+
+The field's larger walk share is not card WSX's carry defect seen through the stations per
+satellite. The clustered roster gives the field's satellites a wider spread of station counts but a
+lower median than the sim's evenly spread network, the stated contrast does not tighten with the
+count, and the beds stay 1.5 apart at a matched count. The unit network's dependence on the station
+count stands (card WSX section 6), but on these beds it would make the sim's contrasts the more
+over-stated.
+
+**The decision (the pre-registered rule, the L3 branch).** The field's extra walk share is something
+at the field's stations themselves, not the carry's station-count arithmetic. The augmented previous
+border stays owed for the estimator's consistency (card WSX's over-statement is real in the unit
+network) and moves behind that investigation; it is not the critical path for the consumer's loss
+from hour 3. Card PAC found one field-specific contribution to the phase-visible frame (the
+unhealthy pivot's slow level), which is common-mode and does not reach the walk share; what makes the
+field's per-satellite walk share larger remains open. Nothing is armed.

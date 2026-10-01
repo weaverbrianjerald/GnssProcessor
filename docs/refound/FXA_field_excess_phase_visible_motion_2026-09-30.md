@@ -133,3 +133,11 @@ as revision, not as walk share, so card SMD's member does not carry it and remov
 neither the wire's between-satellite spread nor the census. The common drift itself stands, and so
 does the reading that it is harmless to a float consumer on a wire that passes it commonly; card
 REV's field revision NEES of 4 to 18 was this drift (card REV section 8).
+
+## 7. Annotation (2026-10-01): the common drift's source
+
+Card PAC answered section 5's open read. The common drift is not the clock pivot's a priori clock
+(the pivot's own D moves with the fleet and two hydrogen masers carry the drift one for one): it is
+the pinned pivot's level converging on card CTU's posture, which the pin, holding only the pivot's
+clock column, turns into a phase-visible motion of every satellite and receiver. The field's
+unhealthy, sparsely tracked pivot G01 makes it large; a well-tracked pivot cuts it to the sim's size.
