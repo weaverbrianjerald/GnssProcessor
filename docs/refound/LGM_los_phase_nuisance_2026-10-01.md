@@ -1,0 +1,160 @@
+# LGM: a per-line-of-sight Gauss-Markov phase nuisance state (the stations' coloured phase error, modelled)
+
+**STATUS**
+
+- **id:** LGM
+- **topic:** network-vehicle
+- **status:** open
+- **summary:** PRE-REGISTERED 2026-10-01 (the ranking recorded after cards SOI, I2S, LSR, SFR and WUP: the per-line-of-sight nuisance state first, built through card PRM's registry, the phase-weight inflation as its one-knob control arm). The field's post-fit ionosphere-free phase residual is about 90 % a Gauss-Markov process (card SFR section 1); the network states every phase row white, so each station's coloured error enters the satellites' phase-visible clocks as persistent steps (card FWS), which the re-based sim now reproduces out to an hour (card SFR section 5.2). This card models the error: one band-common, phase-only Gauss-Markov state per station and satellite, carried epoch to epoch. Control arm C0 (the phase sigma times 2.2, the effective-sample-size correction) is predicted in section 3 and runs first; the build (section 4) follows card PRM's phase 0 and phase 1 and adds the family as the registry's first new kind; gates in section 5, truth-graded on the sim fixture's own colour realization.
+- **source:** [SFR](SFR_sim_fixture_coloured_phase_2026-10-01.md) sections 1, 4 and 5.2; [FWS](FWS_field_walk_share_sources_2026-10-01.md) sections 2 to 5; [LSR](LSR_long_scale_remainder_2026-10-01.md) section 7; [SOI](SOI_second_order_ionosphere_leak_2026-10-01.md) section 6 (the fallback named there); [PRM](PRM_parameter_registry_2026-09-29.md) sections 4 and 8; [PVN](PVN_phase_visible_nees_2026-09-29.md) section 5; [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md) (the increment reads)
+- **knobs / posture:** C0 is config only (`filter.measurement_noise.phase_std_m`); the build adds a default-off block (names fixed in section 4.1 before code); no golden, ledger or posture change in this card
+- **dates in the text:** 2026-10-01
+- **hashes / run dirs:** exe `build/x64-Release/gnss_processor_lgm0.exe` (main `17fbb0c`, sha256[:16] `0601c7d08d4f0ed6`); arms `runs/_rap_lgm_*`; the sim colour truth `runs/simnet60_quiet_col_24h/<station>/truth_phase_colour.csv`
+
+## 1. Why
+
+Three readings of 2026-10-01 put the cause in one place.
+
+- **The error is coloured.** Card SFR section 1 (`phase_acf.py`, 6 h): per station, the
+  ionosphere-free post-fit phase residual on the field is 5 to 7 mm rms with lag-1 autocorrelation
+  0.61 to 0.74, about 90 % a Gauss-Markov process with a post-fit time constant of 80 to 120 s over
+  about 2 mm of white noise. The estimator states every phase row independent (2 mm per band on the
+  field, 3 mm on the sim, elevation power 1).
+- **The colour is what leaks.** Card FWS: the field's walk share is larger than the sim's because
+  its steps persist, not because they are larger, and the persistence reaches a satellite in
+  proportion to how few stations see it. Card SFR section 5.2: once the sim fixture carries a
+  calibrated colour (300 s, 6.0 / 4.9 / 4.4 mm by latitude class, capped at 20 degrees of
+  elevation), the sim's walk-share persistence ratio over 6 h reads 1.58 / 1.75 / 1.48 / 1.18 at
+  5 / 20 / 60 / 120 epochs against the field's 1.45 / 1.51 / 1.54 / 1.53 and the white fixture's
+  1.05 / 0.93 / 0.68 / 0.54. About a third of the field's 2 h excess is left unexplained.
+- **Nothing else in the model absorbs it.** The error is band-common (it does not enter the
+  geometry-free combination, so the slant ionosphere cannot take it), line-of-sight specific (the
+  station's wet delay and clock cannot take it), and phase-only (no code row sees it). The carried
+  float ambiguities take its mean over an arc; what varies inside the arc is left in the phase rows,
+  stated white, and the solve spreads it into whatever border parameter the few stations of a thinly
+  seen satellite share.
+
+A filter that states correlated errors as independent overcounts their information by the
+effective-sample-size factor. For a Gauss-Markov process with lag-1 correlation phi the variance of
+an n-sample mean is about sigma^2 (1 + phi) / ((1 - phi) n): at phi 0.74 (tau 100 s at 30 s epochs)
+the factor is 6.7, at 90 % coloured share about 6.1, a sigma factor of about 2.5. The ranking named
+2.2.
+
+## 2. The model
+
+Per station r and satellite s, one state x_rs (metres):
+
+- **Observation.** +1 on every phase row of (r, s), both bands; 0 on code rows. It enters the
+  ionosphere-free phase with coefficient 1 and the geometry-free phase with 0.
+- **Dynamics.** x_k = phi x_(k-1) + w_k, phi = exp(-dt / tau), var(w_k) = sigma(e)^2 (1 - phi^2),
+  stationary variance sigma(e)^2. The elevation law is the fixture's (card SFR section 4.2):
+  sigma(e) = sigma_zen / sin(max(e, e_floor)), e_floor 20 degrees.
+- **Birth.** At an arc's first epoch, x ~ N(0, sigma(e)^2). After a gap longer than a few tau the
+  state is re-born (its carried value has decayed to nothing).
+- **Identification.** Within one epoch x_rs is confounded with the band-common direction of the two
+  float ambiguities of (r, s) and is identified only by its prior. Across epochs the constant
+  ambiguity takes the arc mean and x the deviation from it, on the time scale tau. No new datum
+  direction: the state is station-local and its prior is proper.
+- **Parameters.** The estimator needs the process's own parameters, not the post-fit ones. The
+  post-fit time constant (80 to 120 s) is shorter than the process's because the estimator absorbs
+  the slow part; the fixture's calibrated recipe (tau 300 s, sigma 4.4 to 6.0 mm by class)
+  reproduces the field's post-fit colour in every class (card SFR section 4.2), so it is the first
+  candidate on both beds: sigma_zen 5 mm, tau 300 s, e_floor 20 degrees.
+
+## 3. Control arm C0: the phase sigma inflated (predicted before it runs)
+
+One knob: `filter.measurement_noise.phase_std_m` times 2.2 on each bed's own value (field 0.002 to
+0.0044 m, sim 0.003 to 0.0066 m). It accounts for the overcounting on average and models nothing.
+Eight 2 h arms from exe `_lgm0`: the program posture (the golden plus the nine knobs of the
+clock-level program: the exact coupling update, the smoothed block hold and the monitors; bases
+`runs/_rap_wup_prog_f/arm.json` and `runs/_rap_sfr_col6_p/arm.json`) and the golden posture, each bed,
+each with its own control (`_rap_lgm_{ctl,rinf}_{pf,ps,gf,gs}`); the sim from 00:30:15.
+
+Predictions (each read against its own control):
+
+- **C0-1, colour.** The post-fit ionosphere-free phase residual's lag-1 autocorrelation moves by
+  less than 0.05 in every station class (`phase_acf.py`): inflation does not model the colour.
+- **C0-2, persistence.** The walk-share persistence ratio at 5 and 20 epochs (`wsf_persist.py`, the
+  program arms; a 2 h arm reads clone ages 30 min to 1.5 h) moves by less than 0.15: the correlation
+  of the steps is a property of the data.
+- **C0-3, consistency.** Card PVN's NIS mean (`pvnees.py`) falls on both beds (the stated update
+  variance grows faster than the update); card FXA's increment lag-1 correlation of the revision
+  (`fxa_attrib.py`) moves by less than 0.05.
+- **C0-4, consumer.** The golden arms' held-out consumer p50 in hours 1 and 2 moves by less than
+  3 cm on each bed (the 2 h lottery band).
+
+Reading rule: if C0-2 and C0-3's lag correlation hold, inflation leaves the leak untouched and the
+state of section 2 is the remaining lever; if the persistence falls by more than 0.15, inflation does
+part of the state's job and the state's gates (section 5) are read against C0 as well as against
+the control.
+
+## 4. The build
+
+In the order card PRM section 8 fixes, one commit each, each gated:
+
+1. **PRM P0, the harness.** A same-build A/B script (`scripts/prm_ab.py`): 2 h arms from both
+   goldens on two exes, compared on `products.txt` without comments, `closed_loop_trace.csv` and
+   `network_epoch_status.csv`. Gate: two builds of the same source are identical.
+2. **PRM P1, the registry.** Card PRM sections 4.1 to 4.4 and 6: the parameter kinds, one
+   descriptor per kind built once from the config, the single process-noise source, the
+   disposition on the carried prior and the "model as armed" table. Gate: byte-identical on both
+   beds and both postures; the unit test of the armed values.
+3. **The nuisance kind.** The registry's first new entry (kind, descriptor, Gauss-Markov q rule),
+   its local column, its carry and its responses, default off. The concrete design (the column's
+   place in the station block, the carry's form, the responses to a slip, a gap and a drop, the
+   counters at both edges of every event, invariants 1 and 7) is appended as section 4.1 before
+   code, from a read of the ambiguity carry's lifecycle.
+
+## 5. Gates for the nuisance state (2 h unless stated; sim from 00:30:15)
+
+- **G0, identity.** Off: byte-identical to the pre-build exe, both beds, both postures.
+- **G1, the state carries the colour (sim, truth).** Against `truth_phase_colour.csv`, the pooled
+  rms of x_hat - x_true over arcs older than 10 minutes is at most 0.7 of the truth's rms (at least
+  half the colour's variance recovered), in every station class.
+- **G2, whitening (both beds).** The post-fit ionosphere-free phase residual, formed with the
+  state, has lag-1 autocorrelation at most 0.35 in every class (from 0.6 to 0.7).
+- **G3, persistence (both beds, program posture).** The walk-share persistence ratio at 5 and 20
+  epochs at most 1.2, and at most the control's minus 0.25.
+- **G4, consistency (both beds, program posture).** Card PVN's NIS mean within 0.5 to 2 on the sim
+  and not below half the control's on the field; card FXA's increment lag-1 correlation at most the
+  control's; on the sim, the clock-level grade (`ctugrade.py`, the datum-free level rms at the run's
+  end) no worse than the control's by more than 2 cm.
+- **G5, consumer (both beds, golden posture).** The held-out consumer p50 in hours 1 and 2 no worse
+  than the control by more than 3 cm. Adoption (golden, ledger) is a separate decision on 6 h pairs
+  and the multi-site census, not this card's.
+
+## 3.1 C0 read (2026-10-01, exe `_lgm0`, 2 h, the sim from 00:30:15)
+
+| reading | sim control | sim C0 | field control | field C0 |
+| --- | --- | --- | --- | --- |
+| post-fit IF phase acf(1), tropical / mid / high (golden) | 0.73 / 0.68 / 0.66 | 0.68 / 0.61 / 0.58 | 0.60 / 0.56 / 0.53 | 0.67 / 0.61 / 0.58 |
+| post-fit IF phase rms, tropical (golden) | 7.50 mm | 9.13 mm | 4.66 mm | 5.59 mm |
+| walk-share persistence at 5 / 20 / 60 / 120 epochs (program) | 1.56 / 1.77 / 1.61 / 1.28 | 1.22 / 1.39 / 1.27 / 1.11 | 1.48 / 1.73 / 1.89 / 2.02 | 1.64 / 2.20 / 2.70 / 2.93 |
+| rms one-epoch walk-share step; median walk share at 1 h (program) | 0.366 mm; 3.0 mm | 0.318 mm; 2.1 mm | 0.530 mm; 6.1 mm | 0.269 mm; 3.6 mm |
+| PVN NIS mean; within-arc NEES (program) | 0.82; 0.3 | 0.74; 0.3 | 0.12; 0.5 | 0.10; 0.5 |
+| FXA increment NIS; lag-1 correlation, ignition clones (program) | 0.877; +0.102 | 0.833; +0.095 | 0.350; +0.414 | 0.340; +0.425 |
+| consumer p50 hours 1 / 2 (golden) | 0.734 / 0.084 m | 0.846 / 0.120 m | 0.559 / 0.059 m | 0.525 / 0.170 m |
+| consumer p50 hours 1 / 2 (program) | 0.232 / 0.098 m | 0.221 / 0.107 m | 0.116 / 0.020 m | 0.101 / 0.051 m |
+
+- **C0-1 fails narrowly, in opposite directions.** The lag-1 autocorrelation moves by -0.05 to
+  -0.08 on the sim and by +0.05 to +0.07 on the field; the residual stays 0.5 to 0.7 correlated at
+  one epoch on both beds. Inflation does not whiten it, as predicted; the size of the move was
+  under-predicted.
+- **C0-2 fails, in opposite directions.** The sim's persistence falls by 0.34 and 0.38 at 5 and 20
+  epochs; the field's rises by 0.16 and 0.47 and by 0.8 to 0.9 at 60 and 120. On both beds the
+  steps shrink (sim by 13 %, field by half) and the walk share at an hour shrinks with them. A
+  lower phase weight changes how the estimator filters the coloured error, and the two beds'
+  errors are filtered differently at hour scales: the field's long-lag persistence is not the
+  sim's colour alone (card SFR section 5.2 left a third of the 2 h excess unexplained).
+- **C0-3 holds.** NIS falls on both beds; the revision increments' lag-1 correlation moves by less
+  than 0.01. The field's increment correlation (+0.41 in the ignition clones, +0.72 after) is
+  card FXA's constellation-common drift; the sim's (+0.10) is near white although the sim now
+  carries the colour, so this instrument does not read the per-satellite colour.
+- **C0-4 fails.** Hour 2 is worse on both beds and both postures (golden +3.6 cm sim, +11.1 cm
+  field; program +0.9 cm sim, +3.1 cm field).
+
+Reading: the effective-sample-size inflation is not a substitute for the state. It costs the
+consumer in hour 2 on both beds, it does not whiten the residual, and its effect on the leak's
+persistence has opposite signs on the two beds. The state of section 2 remains the lever. The gate
+set is revised before the build in one respect: the increment lag correlation (G4, second clause)
+does not see the colour on the sim and is kept only as a no-harm check.

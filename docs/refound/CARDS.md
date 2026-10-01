@@ -460,3 +460,10 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   sign test added; no network result depends on the term.
   ANNOTATED (section 9): the knob cannot act on the network posture (the network dispatch precedes
   the GIM, the real-time consumer skips the term); left off on the goldens by the author's decision.
+- [LGM](LGM_los_phase_nuisance_2026-10-01.md): open, 2026-10-01: pre-registered (the ranking recorded
+  after cards SOI, I2S, LSR, SFR and WUP): a band-common, phase-only Gauss-Markov state per station and
+  satellite, carried epoch to epoch, so that the stations' coloured phase error (90 % of the field's
+  post-fit residual, card SFR) is modelled instead of stated white; built through card PRM's
+  registry as its first new kind, truth-graded on the sim fixture's own colour realization.
+  C0 READ: the phase sigma times 2.2 is not a substitute (hour 2 worse on both beds, the residual
+  still coloured, the persistence moved in opposite directions on the two beds).
