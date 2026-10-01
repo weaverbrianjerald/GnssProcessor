@@ -3010,6 +3010,13 @@ int Application::runNetwork() {
                     traces.phase_colour_trace << row;
             ctx.carry.pc_trace_rows.clear();
         }
+        // Card AIL: the same drain for the ambiguity information trace.
+        if (!ctx.carry.amb_if_rows.empty()) {
+            if (traces.amb_if_trace.is_open())
+                for (const std::string& row : ctx.carry.amb_if_rows)
+                    traces.amb_if_trace << row;
+            ctx.carry.amb_if_rows.clear();
+        }
         subEnd(SB_STASH_STATUS);   // close the stash and epoch-status tail, before the readout (D0b)
 
         // Per-epoch section-timer readout, emitted-epoch path (D0).  Deltas of the

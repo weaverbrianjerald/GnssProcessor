@@ -185,6 +185,7 @@ namespace GnssProcessor {
         double pc_floor_deg{};       ///< network.phase_colour_elev_floor_deg (deg)
         double pc_max_gap_s{};       ///< network.phase_colour_max_gap_s (s)
         bool   pc_trace{};           ///< network.trace_phase_colour (and pc_on)
+        bool   amb_if_trace{};       ///< network.trace_amb_if (card AIL; trace class)
         /// The state's stationary variance at elevation @p elev_deg:
         /// (sigma_zen / sin(max(e, floor)))^2.  An unknown elevation (NaN) takes the floor.
         double pcStationaryVar(double elev_deg) const {
@@ -1921,6 +1922,9 @@ namespace GnssProcessor {
         /// Card LGM: formatted rows of network_phase_colour.csv buffered at the harvest
         /// and written by the driver after it (empty unless network.trace_phase_colour).
         std::vector<std::string> pc_trace_rows;
+        /// Card AIL: formatted rows of network_amb_if.csv buffered at the harvest and
+        /// written by the driver after it (empty unless network.trace_amb_if).
+        std::vector<std::string> amb_if_rows;
         // rx-CB carry run counters (armed-only run-end line).
         long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,
                   rx_cb_harvested_total = 0;

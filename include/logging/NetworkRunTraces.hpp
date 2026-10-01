@@ -781,6 +781,15 @@ namespace GnssProcessor {
         /// the sim fixture's @c truth_phase_colour.csv.  Off by default (no file).
         std::ofstream phase_colour_trace;
         const std::filesystem::path phase_colour_trace_path;
+        /// Card AIL: the ionosphere-free ambiguity information trace
+        /// (@c network.trace_amb_if): `week,tow,station,sat,age_ep,n_los,prior_var_m2,
+        /// post_var_m2,prior_var_dm_m2,post_var_dm_m2`, one row per line of sight whose two
+        /// bands are carried in the station's block.  `prior` is the block the inject
+        /// folded this epoch (NaN when the line of sight was not in it), `post` the harvest
+        /// block; `_dm` with the station's common mode over its traced lines of sight
+        /// projected out.  All conditional on the border.
+        std::ofstream amb_if_trace;
+        const std::filesystem::path amb_if_trace_path;
         /// One row per gauge-pinned ambiguity per processed epoch (S1;
         /// @c network.trace_phase_anchor): @c week,tow,cons,signal,sat,anchor_sta.  It is
         /// the (constellation, signal, satellite) -> anchoring station map that realizes

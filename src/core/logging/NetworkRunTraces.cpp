@@ -78,6 +78,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
       amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
       phase_colour_trace_path(log_dir_ / "network_phase_colour.csv"),
+      amb_if_trace_path(log_dir_ / "network_amb_if.csv"),
       arc_ledger_trace_path(log_dir_ / "network_arc_ledger.csv"),
       phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
       sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
@@ -637,6 +638,16 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open ambiguity carry-state trace {}",
                       amb_state_trace_path.string());
+    }
+    // Card AIL: the ionosphere-free ambiguity information trace.
+    if (nc.trace_amb_if) {
+        amb_if_trace.open(amb_if_trace_path);
+        if (amb_if_trace)
+            amb_if_trace << "week,tow,station,sat,age_ep,n_los,prior_var_m2,post_var_m2,"
+                            "prior_var_dm_m2,post_var_dm_m2\n";
+        else
+            log->warn("Network: failed to open ambiguity information trace {}",
+                      amb_if_trace_path.string());
     }
     // Card LGM: the per-line-of-sight phase-colour state trace.
     if (nc.phase_colour_state && nc.trace_phase_colour) {
@@ -2616,6 +2627,7 @@ void NetworkRunTraces::closeAll() {
     // instrument that step 2 exists to produce, so its tail must be flushed at teardown.
     if (amb_state_trace.is_open()) amb_state_trace.close();
     if (phase_colour_trace.is_open()) phase_colour_trace.close();   // card LGM
+    if (amb_if_trace.is_open()) amb_if_trace.close();               // card AIL
 }
 
 } // namespace GnssProcessor

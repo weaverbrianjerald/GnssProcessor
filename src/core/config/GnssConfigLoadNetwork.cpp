@@ -4482,6 +4482,8 @@ namespace GnssProcessor {
             jval<double>(json, "network.phase_colour_max_gap_s", "phase_colour_max_gap_s", 900.0);
         network_config_.trace_phase_colour =
             jval<bool>(json, "network.trace_phase_colour", "trace_phase_colour", false);
+        network_config_.trace_amb_if =
+            jval<bool>(json, "network.trace_amb_if", "trace_amb_if", false);   // card AIL
         if (!(network_config_.phase_colour_sigma_zen_m > 0.0)
             || !(network_config_.phase_colour_tau_s > 0.0)
             || !(network_config_.phase_colour_max_gap_s > 0.0)

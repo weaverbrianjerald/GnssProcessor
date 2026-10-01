@@ -476,6 +476,10 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   sight instead of being phase-stiff, which keeps the colour state from carrying the colour. A
   trace-class instrument reads the ambiguity's variance before and after each epoch to place the
   loss at the inject or in the solve.
+  READ: the golden posture discards a young arc's information every epoch (card CTU's root) and
+  loses little at maturity; the exact update loses 2 to 3 mm per epoch steadily (the anchored
+  clock's walk through each row's regression). Owed: the anchor-q-0 read; a joint, unconditioned
+  carry of the border and the station's ambiguities as a design question.
 - [RPD](RPD_replay_station_prior_2026-10-01.md): closed, 2026-10-01: the within-epoch RAIM replay
   (`resolve_dropping`) re-added each station without its pre-PD datum rows
   (`network.station_prior_before_pd`, card RF-PD-fix), so no replay carried a receiver-DCB datum row.

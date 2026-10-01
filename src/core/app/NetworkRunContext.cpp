@@ -91,6 +91,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pc_floor_deg = nc.phase_colour_elev_floor_deg;
     k.pc_max_gap_s = nc.phase_colour_max_gap_s;
     k.pc_trace     = nc.phase_colour_state && nc.trace_phase_colour;
+    k.amb_if_trace = nc.trace_amb_if;   // card AIL
     k.amb_drop_var_floor  = k.amb_float_kf
                                 ? config_.getNetworkConfig().amb_float_drop_var_m2 : 0.0;
     // The drop floor's warm-up gate (RF-3c) has no meaning without the floor, so it
@@ -5272,6 +5273,85 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 // non-finite value keeps the mark, so the stale pre-slip carry is not
                 // trusted again.  No-op when unmarked.
                 stations[i].sm->clearPendingReseed(pa.amb_key);
+            }
+            // Card AIL (network.trace_amb_if, trace class): the ionosphere-free ambiguity's
+            // variance before and after this epoch, per line of sight whose two bands are
+            // both carried in the block.  Prior: the joint covariance the inject folded
+            // (R.pl_blk.Sigma, rows keyed by local column); posterior: the harvest block
+            // just filled (rows a of R.pl_amb).  Both are conditional on the border.  The
+            // demeaned versions project out the station's common mode over the traced lines
+            // of sight (the direction the free receiver clock leaves to the code).  Reads
+            // only; nothing the solve uses is written.
+            if (ctx.knobs.amb_if_trace && hblk && !R.pl_amb.empty()) {
+                constexpr double kF1 = 1575.42e6, kF2 = 1227.60e6;
+                const double ca = kF1 * kF1 / (kF1 * kF1 - kF2 * kF2);
+                const double cb = -kF2 * kF2 / (kF1 * kF1 - kF2 * kF2);
+                std::map<std::string, std::pair<int, int>> los;   // sat -> (a band 1, a band 2)
+                for (std::size_t a = 0; a < R.pl_amb.size(); ++a) {
+                    const std::string& sig = R.pl_amb[a].signal;
+                    if (sig.size() < 2) continue;
+                    auto& lp = los.try_emplace(R.pl_amb[a].sat, -1, -1).first->second;
+                    if (sig[1] == '1' && lp.first < 0) lp.first = static_cast<int>(a);
+                    else if (sig[1] == '2' && lp.second < 0) lp.second = static_cast<int>(a);
+                }
+                std::map<Eigen::Index, Eigen::Index> prow;   // local column -> prior block row
+                for (std::size_t k = 0; k < R.pl_blk.rows.size(); ++k)
+                    prow[R.pl_blk.rows[k].local_col] = static_cast<Eigen::Index>(k);
+                std::vector<std::string> sats;
+                std::vector<std::array<int, 2>> idx;
+                for (const auto& [sat, lp] : los)
+                    if (lp.first >= 0 && lp.second >= 0) {
+                        sats.push_back(sat);
+                        idx.push_back({lp.first, lp.second});
+                    }
+                const Eigen::Index n = static_cast<Eigen::Index>(sats.size());
+                if (n > 0) {
+                    const auto post = [&](int a, int b) {
+                        const double u = hblk->C(a, b), v = hblk->C(b, a);
+                        return std::isfinite(u) && std::isfinite(v) ? 0.5 * (u + v)
+                             : std::numeric_limits<double>::quiet_NaN();
+                    };
+                    const auto prior = [&](int a, int b) {
+                        const auto ia = prow.find(R.pl_amb[static_cast<std::size_t>(a)].col);
+                        const auto ib = prow.find(R.pl_amb[static_cast<std::size_t>(b)].col);
+                        if (ia == prow.end() || ib == prow.end())
+                            return std::numeric_limits<double>::quiet_NaN();
+                        return R.pl_blk.Sigma(ia->second, ib->second);
+                    };
+                    const auto ifcov = [&](const auto& c, Eigen::Index i, Eigen::Index j) {
+                        const auto& p = idx[static_cast<std::size_t>(i)];
+                        const auto& q = idx[static_cast<std::size_t>(j)];
+                        return ca * ca * c(p[0], q[0]) + ca * cb * c(p[0], q[1])
+                             + cb * ca * c(p[1], q[0]) + cb * cb * c(p[1], q[1]);
+                    };
+                    Eigen::MatrixXd Vpo(n, n), Vpr(n, n);
+                    for (Eigen::Index r2 = 0; r2 < n; ++r2)
+                        for (Eigen::Index c2 = 0; c2 < n; ++c2) {
+                            Vpo(r2, c2) = ifcov(post, r2, c2);
+                            Vpr(r2, c2) = ifcov(prior, r2, c2);
+                        }
+                    const Eigen::MatrixXd Pm = Eigen::MatrixXd::Identity(n, n)
+                        - Eigen::MatrixXd::Constant(n, n, 1.0 / static_cast<double>(n));
+                    const bool po_ok = Vpo.allFinite(), pr_ok = Vpr.allFinite();
+                    const Eigen::MatrixXd Dpo = po_ok ? Eigen::MatrixXd(Pm * Vpo * Pm) : Vpo;
+                    const Eigen::MatrixXd Dpr = pr_ok ? Eigen::MatrixXd(Pm * Vpr * Pm) : Vpr;
+                    const double t_week = std::floor(pl_now_s / 604800.0);
+                    const double t_tow  = pl_now_s - 604800.0 * t_week;
+                    for (Eigen::Index r2 = 0; r2 < n; ++r2) {
+                        const auto lit = local_carry.find(std::make_tuple(
+                            static_cast<int>(i), sats[static_cast<std::size_t>(r2)],
+                            R.pl_amb[static_cast<std::size_t>(idx[static_cast<std::size_t>(r2)][0])].signal));
+                        const long long age = (lit != local_carry.end() && lit->second.birth_ep > 0)
+                            ? static_cast<long long>(ctx.counters.n_loop_epochs) - lit->second.birth_ep
+                            : -1;
+                        ctx.carry.amb_if_rows.push_back(fmt::format(
+                            "{:.0f},{:.1f},{},{},{},{},{:.6e},{:.6e},{:.6e},{:.6e}\n",
+                            t_week, t_tow, stations[i].name, sats[static_cast<std::size_t>(r2)],
+                            age, n, Vpr(r2, r2), Vpo(r2, r2),
+                            pr_ok ? Dpr(r2, r2) : std::numeric_limits<double>::quiet_NaN(),
+                            po_ok ? Dpo(r2, r2) : std::numeric_limits<double>::quiet_NaN()));
+                    }
+                }
             }
             // Card LGM: stash each phase-colour column's posterior (the estimate, its pure
             // conditional variance, its border regression) and its row of the station's
