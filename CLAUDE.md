@@ -378,6 +378,14 @@ Card PBF (2026-09-28): the consumer answers a held phase bias's presence edges
 (`network.closed_loop.pb_hold_presence_flip`), armed in the bases and pinned in the goldens (32 pins,
 `--verify` 63 armed); baseline pair `runs/_rf0hv11_{field,sim}6`, byte-identical to the post-OWD references
 `runs/_rap_owd_{field,sim}6f` (0 presence edges at either held-out consumer, so no baseline number moved).
+Card WUP (2026-10-01): accumulated phase wind-up with its restart response (`estimation.accumulate_phase_windup`
+on the field, where it was the wu93 open card; `network.cycle_slip.windup_restart_refloat` on both), armed by the
+promotion path at the outside review's decision and pinned in the goldens (34 pins, `--verify` 65 armed); the
+response was dead wiring until this card (it walked the live ambiguity map, which a re-entering arc no longer has)
+and is fixed.  Baseline pair `runs/_rf0hv12_{field,sim}6` (exe `gnss_processor_wup2.exe`): field WTZZ00DEU 0.559
+0.059 0.029 0.033 0.038 0.041 m by hour, sim 0.601 0.104 0.096 0.055 0.055 0.049 m; the field census with
+accumulating consumers 2.6 cm better at the median site in hours 2 to 6, none worse.  ⚠ A producer and its
+consumers belong on the SAME wind-up mode: the gain is the consumers' own (the wire alone is neutral).
 
 They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
 + `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base
@@ -629,6 +637,11 @@ a BLOCKING prerequisite.  ⚠ Sharper than §9.5's algebra implies: accumulation
 not zero the defect, it trades ~306 fractional wraps/day for ~120 UNCOMPENSATED
 restarts/day — a ~2.5× reduction that moves the problem to an uninstrumented
 channel.  Build the response, not the flip.
+⚠ **UPDATE 2026-10-01 (card WUP): ARMED on the goldens.**  The response built on 2026-08-23 never acted: it
+walked the live ambiguity map, and every restart is a return after a gap whose column was pruned (6 h field arm:
+28 in-horizon restarts, 0 arcs, 3 carries bridged).  Fixed (`networkWindupRestartTargets`: the leveling carry
+inside the horizon is the target, as in the gap re-entry drain); 27 of 28 answered, none bridged; the staircase's
+100 steps per 6 h are gone; both knobs armed and pinned (`docs/refound/WUP_windup_accumulated_promotion_2026-10-01.md`).
 
 **5. THE RE-ADMISSION EDGE (2026-09-05/06, SPEC_amb_iono §6.10/§6.11, SPEC_synthetic
 §18.13/§18.14).**  A satellite's eclipse return was one edge behind three open items.

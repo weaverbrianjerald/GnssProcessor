@@ -4,7 +4,10 @@
 make : python scripts/clock_level/census6h.py make <key> <wire run dir, bare> <exe> [key.path=value ...]
        Consumer-only replays (runs/_msc/site_list.json sites plus WTZZ), tags msc6_<site>_<key>,
        6 h, base arm runs/_rf0hv10_field6/arm.json; PBF (closed_loop.pb_hold_presence_flip) is ON
-       by default, as on the goldens.
+       by default, as on the goldens.  The base's consumers wrap their phase wind-up (fractional
+       mode); since card WUP (2026-10-01) the golden's consumer accumulates, so a census of the
+       golden consumer passes estimation.accumulate_phase_windup=true (card WUP's key `wup`), and
+       keys made with and without it are not compared with each other.
 grade: python scripts/clock_level/census6h.py grade <refkey> <key> [<key> ...]
        Per hour: the median over sites of the site p50, and the paired change against the reference
        (median, better / worse at 1 cm), split by the site's latched band-1 code.

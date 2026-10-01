@@ -427,11 +427,14 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   FALSIFIED: the posture re-estimates the wet delay every epoch (the q arm is byte-identical),
   gradients worsen the persistence, and set changes add no walk; untested: phase-centre and
   long-period multipath errors.
-- [WUP](WUP_windup_accumulated_promotion_2026-10-01.md): open, 2026-10-01: pre-registered (the outside
+- [WUP](WUP_windup_accumulated_promotion_2026-10-01.md): closed, 2026-10-01: pre-registered (the outside
   review's decision after card FWS): accumulated phase wind-up for the field lineages by the
   promotion path. The restart response it needs walked the live ambiguity map and so never reached a
   re-entering arc; fixed first (the drain reaches it through the leveling carry), then gates G0 to
   G3 (byte-identity off, the fix on the program posture, the golden pair, the multi-site census).
+  ARMED: every gate passed; 27 of 28 field restarts answered, the staircase gone, the census with
+  accumulating consumers 2.6 cm better at the median site (the consumers' own mode); baseline pair
+  `runs/_rf0hv12_{field,sim}6`.
 - [SFR](SFR_sim_fixture_coloured_phase_2026-10-01.md): open, 2026-10-01: pre-registered (the outside
   review's decision after card FWS): the sim fixture re-based with the field's coloured phase error.
   The field's post-fit ionosphere-free phase residual is about 90 % a Gauss-Markov process (5 to 7 mm,

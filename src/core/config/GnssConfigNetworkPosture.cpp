@@ -488,6 +488,31 @@ namespace GnssProcessor {
               "re-entries 21 -> 0, gross post-fit code rows at full weight 507 -> 101 (12 h "
               "759 -> 261), consumer, census and clock wire unchanged; byte-identical on the "
               "sim" },
+            // --- Accumulated phase wind-up and its restart response (card WUP).  In
+            //     fractional mode each half-cycle crossing steps the applied wind-up by one
+            //     cycle on both bands (MW-blind, half of them under the IF-TD floor), about
+            //     half the field's hour-scale walk-share excess (card FWS).  Accumulated,
+            //     every return after a gap above the wind-up horizon restarts the unwrap,
+            //     which the response answers by freeing the arc's leveling carry (invariant
+            //     #1).  Regime: the float vehicle on the phase-leveling carry, the posture
+            //     both were graded on; the response also needs accumulation (the loader
+            //     disarms it otherwise).
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && network_phase_leveling_,
+              accumulate_phase_windup_,
+              Tier::SCOPED, false, "estimation.accumulate_phase_windup",
+              "unwrap the phase wind-up instead of wrapping it: the fractional staircase is 100 "
+              "one-cycle steps in 6 h on the field golden (107 mm each in the ionosphere-free "
+              "combination, MW-blind), IF-TD flags 111 -> 70; accumulating consumers on the "
+              "census 2.6 cm better at the median site in hours 2 to 6 (9 of 17 by more than "
+              "2 cm, none worse); needs network.cycle_slip.windup_restart_refloat" },
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && network_phase_leveling_
+                  && accumulate_phase_windup_,
+              network_cycle_slip_windup_restart_refloat_,
+              Tier::SCOPED, false, "network.cycle_slip.windup_restart_refloat",
+              "free the leveling carry of an arc whose wind-up accumulator restarted (a return "
+              "after a gap above 300 s): unanswered, the carry folds across an integer-cycle "
+              "step; 6 h field golden 27 of 28 in-horizon restarts answered (52 arcs), sim 14 "
+              "of 15, none bridged, consumers unchanged" },
             // --- The canonical-signal latch (card CSL).  A value knob, and the only
             //     processing.* row in this table: the default string "count" is truthy, so
             //     the armed test is an explicit comparison on canonical_signal_rule_ (a

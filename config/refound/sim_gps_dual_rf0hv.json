@@ -96,7 +96,17 @@
     "ARHT00ATA (490 m in one epoch, above 400 m in hour 1 on 14 of 90 census keys).  Armed: the 8 census edges answered (ARHT00ATA 3,",
     "QUIN00USA 5), 15 of 17 sites byte-identical, ARHT00ATA 803.9 to 0.762 m and QUIN00USA 0.790 to 0.584 m in hour 2 on the CLV wire.",
     "Baseline pair: runs/_rf0hv11_{field,sim}6, exe gnss_processor_pbf2.exe (0 presence edges at WTZZ00DEU and SZZ000SIM in 6 h: products,",
-    "closed loop and epoch status byte-identical to runs/_rap_owd_{field,sim}6f, the post-OWD references of the same code)."
+    "closed loop and epoch status byte-identical to runs/_rap_owd_{field,sim}6f, the post-OWD references of the same code).",
+    "2026-10-01 (card WUP, docs/refound/WUP_windup_accumulated_promotion_2026-10-01.md): ACCUMULATED PHASE WIND-UP WITH ITS",
+    "RESTART RESPONSE, armed by the promotion path (the outside review's decision after card FWS) --",
+    "estimation.accumulate_phase_windup: true (the field; the sim already accumulated) and",
+    "network.cycle_slip.windup_restart_refloat: true (both).  DEFECT CLASS: in fractional mode each half-cycle crossing steps the",
+    "applied wind-up by one cycle on both bands (107 mm in the ionosphere-free combination, MW-blind, half of them unflagged by",
+    "IF-TD): 100 such steps in 6 h on this field posture, and about half the field's hour-scale walk-share excess (card FWS).",
+    "Accumulated, every return after a gap above 300 s restarts the unwrap; the response (fixed in card WUP: it reaches a",
+    "re-entering arc through its leveling carry) frees the arcs whose carry would fold across the restart.  6 h: 69 restarts,",
+    "27 answered (52 arcs), 1 with nothing to free, 0 bridged; IF-TD flags 111 to 70; WTZZ00DEU within 3 mm in every hour;",
+    "census section 5 of the card.  Baseline pair: runs/_rf0hv12_{field,sim}6, exe gnss_processor_wup2.exe."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -306,6 +316,7 @@
     "emit_ura": true,
     "code_bias_disc_jump_test": true,
     "cycle_slip": {
+      "windup_restart_refloat": true,
       "mw_detect": true,
       "if_phase_td": true,
       "relevel_free_epoch": true,
