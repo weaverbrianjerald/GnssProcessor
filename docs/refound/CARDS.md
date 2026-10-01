@@ -401,3 +401,7 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   one 2 h field arm with a well-tracked pivot pinned tests whether the unhealthy, sparsely tracked
   G01 is what lets the field's float grow. ANSWERED: the drift is the pinned pivot's level converging
   on card CTU's posture; G14 pinned cuts the settled drift to the sim's size, consumer unchanged.
+- [FWS](FWS_field_walk_share_sources_2026-10-01.md): open, 2026-10-01: the author's question after
+  card WSL. The field's walk share is larger because its per-satellite phase-visible steps are
+  persistent (correlated over minutes to an hour), not larger; four trace reads and seven one-change
+  bisection arms on both beds attribute the persistence; the station side is the leading candidate.
