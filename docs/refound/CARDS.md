@@ -458,3 +458,5 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   field-validated wind-up model, Ginan and PRIDE PPP-AR agree; POINT carries the same inversion with
   nothing compensating it. Engine and oracle fixed together, the four I2 goldens flip sign, a direct
   sign test added; no network result depends on the term.
+  ANNOTATED (section 9): the knob cannot act on the network posture (the network dispatch precedes
+  the GIM, the real-time consumer skips the term); left off on the goldens by the author's decision.

@@ -211,3 +211,30 @@ verified.
 - POINT lives outside the repository and is not modified.
 - Owed: nothing on the network path. A field grade of the term's sign is not possible with the
   instruments of card SOI, which could not see the term at all.
+
+## 9. The knob on the network posture (2026-10-01)
+
+Arming `model_corrections.enable_higher_order_ionosphere` on a golden was considered after the fix
+and refused. On the network posture the knob cannot act, so the arm would be the case of standing
+invariant 4 (a flag that reads on while nothing acts). Verified in the code:
+
+- `Application::run` (`src/core/app/Application.cpp`) returns `runNetwork()` for
+  `PPP_RTK_Network` before the block that constructs the GIM for `ionosphere_weighting` and for
+  this term. No GIM is constructed for the term on the network path.
+- The producer's per-station `PppModel` instances (`ApplicationNetworkSetup.cpp`, PASS A) never
+  receive `setGim`, and `PppModel::computeHigherOrderIonoCorrection` returns 0 without a GIM.
+- The closed-loop consumer is a `RealTimeEngine` built from `deriveClosedLoopConsumerConfig`. Its
+  initialization (`RealTimeEngineInit.cpp`) skips the term with a warning.
+
+Armed, the knob would change no product and add only the loader's "ENABLED" log line. It stays
+off on both goldens and is not pinned in the manifest. No arms were run: with the dispatch above,
+a sim or field arm with the knob on is byte-identical to its control by construction.
+
+Two routes would make the term act on the network path. A GIM would be load-bearing external data,
+which the standing directive excludes. A self-contained build would take STEC from the
+estimator's own slant ionosphere and B from the dipole, in both the producer and the real-time
+consumer, and would add the term to the simulator so the sim bed carries it (the simulator
+generates none today, so a modelled term would inject an error there). Card SOI sized the term on
+DOY-129 at 1.4 mm at the median line of sight in the ionosphere-free combination, 0.7 mm rms in
+the part the estimator cannot absorb. The author's decision (2026-10-01): leave the term off and
+record why; the self-contained build is not pre-registered.
