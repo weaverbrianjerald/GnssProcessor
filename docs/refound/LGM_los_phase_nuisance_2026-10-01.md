@@ -5,7 +5,7 @@
 - **id:** LGM
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** PRE-REGISTERED 2026-10-01 (the ranking recorded after cards SOI, I2S, LSR, SFR and WUP: the per-line-of-sight nuisance state first, built through card PRM's registry, the phase-weight inflation as its one-knob control arm). The field's post-fit ionosphere-free phase residual is about 90 % a Gauss-Markov process (card SFR section 1); the network states every phase row white, so each station's coloured error enters the satellites' phase-visible clocks as persistent steps (card FWS), which the re-based sim now reproduces out to an hour (card SFR section 5.2). This card models the error: one band-common, phase-only Gauss-Markov state per station and satellite, carried epoch to epoch. Control arm C0 (the phase sigma times 2.2, the effective-sample-size correction) is predicted in section 3 and runs first; the build (section 4) follows card PRM's phase 0 and phase 1 and adds the family as the registry's first new kind; gates in section 5, truth-graded on the sim fixture's own colour realization.
+- **summary:** PRE-REGISTERED 2026-10-01 (the ranking recorded after cards SOI, I2S, LSR, SFR and WUP: the per-line-of-sight nuisance state first, built through card PRM's registry, the phase-weight inflation as its one-knob control arm). The field's post-fit ionosphere-free phase residual is about 90 % a Gauss-Markov process (card SFR section 1); the network states every phase row white, so each station's coloured error enters the satellites' phase-visible clocks as persistent steps (card FWS), which the re-based sim now reproduces out to an hour (card SFR section 5.2). This card models the error: one band-common, phase-only Gauss-Markov state per station and satellite, carried epoch to epoch. Control arm C0 (the phase sigma times 2.2, the effective-sample-size correction) is predicted in section 3 and runs first; the build (section 4) follows card PRM's phase 0 and phase 1 and adds the family as the registry's first new kind; gates in section 5, truth-graded on the sim fixture's own colour realization. BUILT AND READ 2026-10-01 (sections 4.1, 5.1 to 5.3), default off, NOT ARMED: with the posture's white sigma the state passes G0, G4 and G5 (field golden consumer hour 1 0.559 to 0.440 m) and moves G1 to G3 the right way but not far enough; with the white sigma at the white level it whitens the residual completely (G2) and costs the sim consumer up to 14 cm. The state cannot separate the colour from the carried ambiguity, which moves 3 to 7 mm per epoch per line of sight (the float vehicle loses information every epoch); open behind card AIL.
 - **source:** [SFR](SFR_sim_fixture_coloured_phase_2026-10-01.md) sections 1, 4 and 5.2; [FWS](FWS_field_walk_share_sources_2026-10-01.md) sections 2 to 5; [LSR](LSR_long_scale_remainder_2026-10-01.md) section 7; [SOI](SOI_second_order_ionosphere_leak_2026-10-01.md) section 6 (the fallback named there); [PRM](PRM_parameter_registry_2026-09-29.md) sections 4 and 8; [PVN](PVN_phase_visible_nees_2026-09-29.md) section 5; [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md) (the increment reads)
 - **knobs / posture:** C0 is config only (`filter.measurement_noise.phase_std_m`); the build adds a default-off block (names fixed in section 4.1 before code); no golden, ledger or posture change in this card
 - **dates in the text:** 2026-10-01
@@ -281,3 +281,60 @@ Predictions:
 If W1 and W2 hold and W3 holds, the white sigma and the state are adopted as one change for the 6 h
 pair and the census (a separate decision). If W3 fails (the sigma cut alone is as good), the state
 is not the lever and the sigma is.
+
+## 5.3 The white sigma read, and the bottleneck it exposes (2026-10-01)
+
+Arms `runs/_rap_lgm_pcw_*` (the state, white phase sigma 0.0005 m) and `runs/_rap_lgm_w_*` (the same
+sigma without the state), exe `_lgm1`, 2 h.
+
+| reading | sim control | sim state | sim state + 0.5 mm | sim 0.5 mm alone | field control | field state | field state + 0.5 mm | field 0.5 mm alone |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| emitted epochs (golden) | 241 | 241 | 241 | **0** | 240 | 240 | 240 | 187 |
+| post-fit acf(1), tropical (golden) | 0.73 | 0.58 | **+0.02** | (none) | 0.60 | 0.43 | **+0.02** | 0.28 |
+| G1 ratio, tropical (golden) | | 0.885 | 0.870 | | | | | |
+| persistence 5 / 20 epochs (program) | 1.56 / 1.77 | 1.31 / 1.33 | 0.96 / 0.78 | 1.36 / 1.27 | 1.48 / 1.73 | 1.30 / 1.39 | 1.13 / 1.28 | 1.17 / 1.15 |
+| rms walk-share step (program) | 0.37 mm | 0.35 mm | 0.71 mm | 1.14 mm | 0.53 mm | 0.43 mm | 1.36 mm | 1.56 mm |
+| consumer p50 h1 / h2 (golden) | 0.734 / 0.084 | 0.727 / 0.074 | 0.905 / 0.177 | (none) | 0.559 / 0.059 | 0.440 / 0.049 | 0.563 / 0.078 | 0.445 / 0.067 |
+| consumer p50 h1 / h2 (program) | 0.232 / 0.098 | 0.232 / 0.096 | 0.372 / 0.115 | 0.227 / 0.145 | 0.116 / 0.020 | 0.100 / 0.030 | 0.138 / 0.023 | 0.094 / 0.034 |
+
+- **W1 half holds.** With the state and the white sigma at the white level, the residual is white on
+  both beds (acf(1) -0.06 to +0.02 in every class, rms about 1 mm), so G2 passes. G1 still fails
+  (0.85 to 0.93).
+- **W2 fails.** The persistence falls below 1 on the sim and the steps double on both beds: the
+  estimator now over-corrects at the epoch scale.
+- **W3 half holds.** The sigma cut without the state withholds every sim golden epoch (the rank gate)
+  and 53 of 240 on the field, and costs the program sim's hour 2 4.7 cm; but its persistence falls
+  rather than rises.
+- **W4 fails.** With the state, the cut costs the sim golden 9.3 cm in hour 2 and the program sim
+  14 cm in hour 1.
+
+**Why the state cannot carry the colour.** Three reads, the last one decisive:
+
+1. On the sim the estimate is aligned with the truth (correlation peaks at lag 0) but holds 20 % of
+   its amplitude (slope 0.20) and loses its correlation with the truth within 4 epochs: it carries
+   the colour's fast part only.
+2. Traced with `network.trace_amb_state` (1.5 h sim arms `_rap_lgm_{ctl,pc,pcw}amb_gs`,
+   `_rap_lgm_{ctl,pc}amb_ps`), the carried ionosphere-free ambiguity of a line of sight, with each
+   epoch's station-common and satellite-common parts removed (a two-way median polish), moves by
+   6.6 mm per epoch on the golden posture and 3.3 mm on the program posture, with or without the state;
+   the colour itself moves 4.4 mm per epoch. The motion decays with the arc's age (program posture:
+   12.7 mm at 5 to 10 epochs, 3.2 mm at 40 to 80, 1.6 mm at 160 to 400). A float ambiguity held at
+   phase precision would move 20 to 40 times less. Half of the golden posture's motion goes away with
+   card CTU's exact coupling update (the scalar update ages the clock term at the legacy 1e-3 m2/s).
+3. A one-line-of-sight filter with the fixture's own model (colour 300 s, white 0.15 of the colour's
+   sigma) reaches 0.74, 0.54, 0.42 and 0.34 at 20, 60, 120 and 200 epochs, its stated sd falling with
+   it; give its ambiguity a random walk of 3.5 mm per epoch and the ratio stays at 0.78 to 0.80 and
+   the stated sd at 0.88 of the prior at every age. That is the network's signature exactly (the
+   state's stated sd stays at 0.87 to 1.0 of its prior at every age).
+
+The colour state is consistent and correctly wired; what it cannot do is separate the colour from an
+ambiguity that is itself loose. The float vehicle's carried ambiguity loses information every epoch,
+more on the golden posture than on the program posture and most in the first half hour of an arc.
+That loss caps any per-line-of-sight model, and it is also a candidate share of the walk itself.
+
+**Disposition.** No arm passes the pre-registered gate set; nothing is armed. The state with the
+posture's white sigma (section 5.1) is the only no-harm variant (G0, G4 and G5 pass, the field golden
+consumer's hour 1 0.559 to 0.440 m, the persistence down on both beds) and stays default off. The card
+stays open behind a new card, AIL (the float vehicle's ambiguity information loss), which is
+pre-registered next: until the carried ambiguity is phase-stiff on mature arcs, the state's gates are
+not reachable on either posture.

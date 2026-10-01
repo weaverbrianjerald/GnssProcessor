@@ -467,3 +467,7 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   registry as its first new kind, truth-graded on the sim fixture's own colour realization.
   C0 READ: the phase sigma times 2.2 is not a substitute (hour 2 worse on both beds, the residual
   still coloured, the persistence moved in opposite directions on the two beds).
+  BUILT AND READ (sections 4.1, 5.1 to 5.3), default off, not armed: no-harm with the posture's white
+  sigma (field golden consumer hour 1 0.559 to 0.440 m) but starved; whitening with the white sigma
+  at the white level and a sim consumer cost. The carried ambiguity moves 3 to 7 mm per epoch per
+  line of sight, so the colour cannot be separated from it: open behind card AIL.
