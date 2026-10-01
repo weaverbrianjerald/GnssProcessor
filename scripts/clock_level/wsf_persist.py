@@ -5,7 +5,7 @@
 From logs/network_pb_hold_clone.csv (each satellite's L2W block clone, card REV's columns): over
 clone rows of age at least 30 minutes, the rms change of the walk share Phi_D over a lag of k epochs
 against the white expectation sqrt(k) * rms(one-epoch step) (the persistence ratio; 1 for
-independent steps, card FWS section 1), at k = 5, 20 and 60; the rms one-epoch step; and the median
+independent steps, card FWS section 1), at k = 5, 20, 60 and 120; the rms one-epoch step; and the median
 |Phi_D| at clone age 1 h.  A 2 h arm reads run time 0.6 to 2 h.
 """
 import importlib.util, math, os, statistics as st, sys
@@ -15,7 +15,7 @@ _spec = importlib.util.spec_from_file_location('rev_wire', os.path.join(HERE, 'r
 rw = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rw)
 
-LAGS = (5, 20, 60)
+LAGS = (5, 20, 60, 120)
 
 
 def persist(run):
@@ -50,7 +50,7 @@ def persist(run):
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         sys.exit(__doc__)
-    print('run: rms step (mm) | persistence ratio at lag 5 / 20 / 60 epochs (rows) | median |Phi_D| at age 1 h (clones)')
+    print('run: rms step (mm) | persistence ratio at lag 5 / 20 / 60 / 120 epochs (rows) | median |Phi_D| at age 1 h (clones)')
     for r in sys.argv[1:]:
         out = persist(r)
         if out is None:
