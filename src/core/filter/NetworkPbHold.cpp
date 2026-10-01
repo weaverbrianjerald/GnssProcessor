@@ -340,7 +340,9 @@ void networkPbHold(NetworkRunContext& ctx,
                     if (traces.pb_hold_clone_trace.is_open()) {
                         // Card SMD: the key's block clone beside the writing member (the
                         // split of its passed motion on its own birth), empty when not live.
-                        std::string bcols = ",,,,,,,";
+                        // Card REV: then the revision, the step, the stated variance of D(t0)
+                        // (now and at birth), the filtered variance of D and the epoch's walk.
+                        std::string bcols = ",,,,,,,,,,,,,";
                         const auto bit = ctx.carry.smh_block.find(key);
                         if (bit != ctx.carry.smh_block.end() && bit->second.generation == st.generation
                             && bit->second.alive && bit->second.updated_ep == loop_ep
@@ -354,7 +356,9 @@ void networkPbHold(NetworkRunContext& ctx,
                                                 b.phi, b.pv_phi, b.phi - b.pv_phi, b.pv_W, b.pv_vpost)
                                     + (b.pv_w_valid && bden > 0.0
                                            ? fmt::format("{:.4f}", b.pv_phi * b.pv_phi / bden) : std::string{})
-                                    + ',' + pair;
+                                    + ',' + pair
+                                    + fmt::format(",{:.6f},{:.6f},{:.9e},{:.9e},{:.9e},{:.9e}", b.pv_rev,
+                                                  b.pv_sd, b.pv_vd0, b.pv_vd0_birth, b.pv_pd, b.pv_dw);
                         }
                         traces.pb_hold_clone_trace
                             << sol.epoch_time.week << ',' << fmt::format("{:.3f}", sol.epoch_time.tow) << ','

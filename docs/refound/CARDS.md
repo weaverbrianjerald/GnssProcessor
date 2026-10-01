@@ -341,7 +341,7 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   hour-3 loss. READ: the rule gives 3.1 times the floor (Q1 fails); at that q the census loss
   stays and the producer pays (Q3 holds); the anchor's q stays at the floor; the shrinkage read
   scales the hour-1 gain and the later loss together.
-- [REV](REV_revision_member_replay_2026-09-30.md): open, 2026-09-30: pre-registered (the outside
+- [REV](REV_revision_member_replay_2026-09-30.md): closed, 2026-09-30: pre-registered (the outside
   review's note after card QPV, on QPV's last lever): the revision member of the hold family, the
   wire's phase side at D(t0|t) (the smoothed generation-start value of the phase-visible clock), so
   the hold passes the revision R = D(t0|t) - D(t0|t0) instead of card SMD's walk share, frozen per
@@ -349,4 +349,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   Replayed offline from card SMD's 6 h block arms on both beds (the rebuilt-wire trick) with five
   trace columns added and the arms re-run; no member built. Predictions: the hour-1 gain above card
   SMD's; unfrozen, more late wander than card SMD; frozen, the phase-clock hold from the freeze on;
-  a timing model expects the freeze late on the sim and not within 6 h on the field.
+  a timing model expects the freeze late on the sim and not within 6 h on the field. FALSIFIED the
+  same day: R1 fails (hour-1 change +1.2 m on the field and +1.3 m on the sim against the phase-clock
+  hold), R3 fails, R2 and E hold; the ignition convergence is nearly all revision and passing it
+  reproduces the plain hold; a float consumer absorbs any constant phase-side value and pays for
+  every change. Not built; the declared-record alternative loses its premise; lever 1 remains.

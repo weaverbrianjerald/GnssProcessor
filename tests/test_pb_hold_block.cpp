@@ -5,7 +5,8 @@
  *
  * 1. The phase-visible row, advanced by @ref pbHoldCloneAdvanceRow and re-harvested by
  *    @ref pbHoldCloneRebase, equals the fixed-point smoother of D = c - sum_j w_j p_j (an
- *    augmented filter carrying D(t0) as a zero-noise state) at every epoch.
+ *    augmented filter carrying D(t0) as a zero-noise state) at every epoch; card REV's
+ *    @ref pbHoldCloneRowValueVar is that filter's variance of D(t0), non-increasing.
  * 2. The row is the functional of the three single-key rows, its time-update variance the
  *    block's with every cross term (@ref couplingExactCross), and its fold inflation g'Qg
  *    with the seam's off-diagonal noise.
@@ -211,6 +212,7 @@ TEST(PbHoldBlockTest, ThePhaseVisibleRowIsTheFixedPointSmootherOfD) {
     Eigen::MatrixXd Pa;
     std::vector<PbHoldCloneTerm> terms;
     double value = 0.0, var = 0.0, stamp = 0.0;
+    double v_prev = 0.0;   // card REV: the row's V at its previous update
     bool born = false;
     const int T = 40, t0 = 3;
     for (int t = 1; t <= T; ++t) {
@@ -242,6 +244,12 @@ TEST(PbHoldBlockTest, ThePhaseVisibleRowIsTheFixedPointSmootherOfD) {
             for (const auto& tm : st.terms)
                 if (tm.col >= 0 && tm.p_prev > 0.0) m(tm.col) += tm.coeff;
             EXPECT_TRUE(nearRel(st.var + m.dot(P * m), Pa(5, 5), 1e-8)) << "epoch " << t;
+            // Card REV: the helper the trace's V comes from is that variance, and the
+            // smoother never raises it (the freeze's "rise" cause is not the smoother's).
+            const double v_rev = pbHoldCloneRowValueVar(st.terms, st.var, P);
+            EXPECT_TRUE(nearRel(v_rev, Pa(5, 5), 1e-8)) << "epoch " << t << ": card REV's V";
+            EXPECT_LE(v_rev, v_prev * (1.0 + 1e-10)) << "epoch " << t << ": V non-increasing";
+            v_prev = v_rev;
             // The increment D(t) - D(t0) = (g + m)'x + const.
             const Eigen::VectorXd gi = g + m;
             const double vinc = g.dot(Pa.topLeftCorner(5, 5) * g) + Pa(5, 5)
@@ -268,6 +276,9 @@ TEST(PbHoldBlockTest, ThePhaseVisibleRowIsTheFixedPointSmootherOfD) {
             Pa.block(0, 5, 5, 1) = Pg;
             Pa.block(5, 0, 1, 5) = Pg.transpose();
             Pa(5, 5) = g.dot(Pg);
+            // Card REV: V at birth is the filtered variance of D at the stash.
+            v_prev = pbHoldCloneRowValueVar(terms, 0.0, P);
+            EXPECT_TRUE(nearRel(v_prev, Pa(5, 5), 1e-12)) << "V at birth";
         }
     }
     ASSERT_TRUE(born);

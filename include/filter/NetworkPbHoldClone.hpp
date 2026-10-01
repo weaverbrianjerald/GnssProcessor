@@ -170,6 +170,17 @@ struct PbHoldClone {
     bool        pv_w_valid{true};              ///< false once a key of the functional left S
     double      pv_vpost{0.0};                 ///< posterior variance of @f$D(t) - D(t_0)@f$ (m^2)
     double      pv_step_d{0.0};                ///< this epoch's frame-free step of D (m), read at the hold against the emitter's bar
+    // Card REV: the instruments of the revision member's replay (trace only).
+    /// The revision @f$R = D(t_0|t) - D(t_0|t_0)@f$ since birth: the sum of the changes of
+    /// @ref pv_value, frame-free as @ref pv_phi, so @f$\Phi_D + R = S_D@f$ (@ref pv_sd).
+    double      pv_rev{0.0};
+    double      pv_sd{0.0};                    ///< @f$S_D@f$, the sum of @ref pv_step_d since birth (m)
+    /// The row's stated variance of its own value, @f$V = \mathrm{Var}(D(t_0)\,|\,t)@f$
+    /// (@ref pbHoldCloneRowValueVar), m^2.
+    double      pv_vd0{0.0};
+    double      pv_vd0_birth{0.0};             ///< @f$V@f$ at birth, the filtered variance of D at the stash (m^2)
+    double      pv_pd{0.0};                    ///< the filtered variance of D now, @f$g'\Sigma g@f$ (m^2)
+    double      pv_dw{0.0};                    ///< this epoch's fold inflation along D (0 with a key of the functional outside S) (m^2)
     PbHoldFollow follow{PbHoldFollow::None};   ///< the step a @c Followed death followed
     long long   died_ep{-1};                   ///< n_loop_epochs of the death
 };
@@ -256,6 +267,24 @@ PbHoldPair pbHoldClonePickPair(const std::string& sat, const std::map<std::strin
 
 /// Card SMD: the functional of a block clone's phase-visible row, {clock: 1, pair: -w_j}.
 std::vector<PbHoldCloneOwn> pbHoldCloneOwnPv(const PbHoldPair& pair);
+
+/**
+ * @brief Card REV: the stated variance of a clone row's own value, the smoothed
+ *        @f$x_0@f$ (for the phase-visible row, @f$D(t_0|t)@f$).
+ *
+ * @f$\sigma^2 + m'\Sigma m@f$, with @f$m@f$ the row's coefficients on the epoch's columns
+ * (terms with a column and a dense prior; a datum-pinned term carries no variance): the
+ * quantity card SMD's U0 checks against an augmented filter that carries the functional at
+ * @f$t_0@f$ as a zero-noise state.  A column at or beyond @p Sig's dimension is skipped, as
+ * in the posterior variance of the increment.  The revision member's freeze reads its fall
+ * per epoch against the stated walk (card REV section 2).
+ * @param terms  the row's terms with this epoch's columns (after an advance, or at birth).
+ * @param var    the row's residual variance @f$\sigma^2@f$ (m^2).
+ * @param Sig    the shared border's posterior covariance this epoch.
+ * @return the variance (m^2).
+ */
+double pbHoldCloneRowValueVar(const std::vector<PbHoldCloneTerm>& terms, double var,
+                              const Eigen::MatrixXd& Sig);
 
 /**
  * @brief The epoch's exact inputs restricted to the keys the final solve folded.

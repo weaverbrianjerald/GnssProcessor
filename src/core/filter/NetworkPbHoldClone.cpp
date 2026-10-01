@@ -286,6 +286,23 @@ std::vector<PbHoldCloneOwn> pbHoldCloneOwnPv(const PbHoldPair& pair) {
     return own;
 }
 
+double pbHoldCloneRowValueVar(const std::vector<PbHoldCloneTerm>& terms, double var,
+                              const Eigen::MatrixXd& Sig) {
+    std::map<Eigen::Index, double> m;
+    for (const PbHoldCloneTerm& t : terms)
+        if (t.col >= 0 && t.p_prev > 0.0) m[t.col] += t.coeff;
+    const Eigen::Index ns = Sig.rows();
+    double q = 0.0;
+    for (const auto& [a, ma] : m) {
+        if (a >= ns) continue;
+        for (const auto& [b, mb] : m) {
+            if (b >= ns) continue;
+            q += ma * mb * Sig(a, b);
+        }
+    }
+    return var + q;
+}
+
 std::vector<PbHoldCloneTerm> pbHoldCloneRebase(
     const std::vector<PbHoldCloneTerm>& terms,
     const std::map<std::string, std::pair<double, double>>& stash,
@@ -690,6 +707,9 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
         c.terms      = sc.terms;
         c.pv_phi    += step_d - (sd.value - c.pv_value);
         c.pv_phi_ok  = true;
+        // Card REV: the revision of D(t0) and the step it splits from (Phi_D + R = S_D).
+        c.pv_rev    += sd.value - c.pv_value;
+        c.pv_sd     += step_d;
         c.pv_value   = sd.value;
         c.pv_var     = sd.var;
         c.pv_terms   = sd.terms;
@@ -717,6 +737,14 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
             if (t.col >= 0 && t.p_prev > 0.0) gd[t.col] += t.coeff;
         c.vpost    = c.var + quad(gc);
         c.pv_vpost = c.pv_var + quad(gd);
+        // Card REV: the row's stated variance of D(t0), the filtered variance of D now
+        // (the functional alone) and the walk this epoch added along D.
+        c.pv_vd0 = pbHoldCloneRowValueVar(c.pv_terms, c.pv_var, Sig);
+        std::map<Eigen::Index, double> gown;
+        if (pcol >= 0 && pcol < nx) gown[pcol] += 1.0;
+        for (std::size_t j = 0; j < np; ++j) gown[pb_col[j]] -= c.pv_pair.w[j];
+        c.pv_pd = quad(gown);
+        c.pv_dw = sd.parent_in_s ? sd.dW : 0.0;
     }
 }
 
@@ -962,6 +990,14 @@ void networkPbHoldCloneHarvest(NetworkRunContext& ctx, const NetworkEstimator& e
         c.pv_w_valid = true;
         c.pv_vpost   = 0.0;
         c.pv_step_d  = 0.0;
+        // Card REV: the revision starts at zero; V at birth is the filtered variance of D
+        // at the stash (the row's coefficients are the functional, sigma2 = 0).
+        c.pv_rev       = 0.0;
+        c.pv_sd        = 0.0;
+        c.pv_vd0_birth = pbHoldCloneRowValueVar(c.pv_terms, 0.0, est.sharedCovariance());
+        c.pv_vd0       = c.pv_vd0_birth;
+        c.pv_pd        = c.pv_vd0_birth;
+        c.pv_dw        = 0.0;
         c.block      = true;
         c.t0_s       = now_s;
         c.stamp_s    = now_s;

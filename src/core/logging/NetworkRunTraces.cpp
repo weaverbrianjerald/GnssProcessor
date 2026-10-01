@@ -541,7 +541,8 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         if (pb_hold_clone_trace)
             pb_hold_clone_trace << "week,tow,sat,sig,gen,age_s,xfer_m,xfer_lah_m,phi_m,w_m2,"
                                    "vpost_m2,var_m2,r,pd0_m2,f0,member,b_age_s,b_phic_m,"
-                                   "b_phid_m,b_lvl_m,b_wd_m2,b_vpostd_m2,b_rd,b_pair\n";
+                                   "b_phid_m,b_lvl_m,b_wd_m2,b_vpostd_m2,b_rd,b_pair,"
+                                   "b_revd_m,b_sd_m,b_vd0_m2,b_vd0b_m2,b_pd_m2,b_dwd_m2\n";
         else
             log->warn("Network: failed to open pb-hold clone trace {}",
                       pb_hold_clone_trace_path.string());
