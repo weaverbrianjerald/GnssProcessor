@@ -298,3 +298,21 @@ difference is visible on the wire, so the registry has to be able to say it:
   hold passes the walk only when the anchor's q states it (97 % passed with q matched, 46 % hidden
   with the golden q). Card Q3's q is therefore a statement about the a priori product's error,
   and it belongs in the registry as such, with the product it was derived for.
+
+## 13. Phase 0, the harness (2026-10-01)
+
+`scripts/prm_ab.py` (`make`, `run`, `cmp`): four 2 h arms per tag, all from the committed goldens
+(`config/golden/golden_{field,sim}_refound.json`) as generated (`_gf`, `_gs`) and with the nine
+knobs of the clock-level program posture (`_pf`, `_ps`: the exact coupling update, the smoothed
+block hold and the monitors, as listed in the script), the sim from 00:30:15. `cmp` compares
+`products.txt` without its comment lines, `logs/closed_loop_trace.csv` and
+`logs/network_epoch_status.csv` byte for byte, and with `--all-csv` every other CSV under `logs/`
+that both arms wrote. The executable is a parameter; a Debug path is refused.
+
+Self-identity (tags `g0a` and `g0b`, both run with exe `gnss_processor_lgm0.exe`, main `17fbb0c`,
+sha256[:16] `0601c7d08d4f0ed6`): the three gate files identical on all four arms, and 132 of 135
+other CSV comparisons identical. The three that differ do so only in wall-clock columns
+(`network_datum_graph.csv` column `ms`, `network_run_summary.csv` columns `loop_ms` and
+`ms_per_epoch`, `network_service_health.csv` column `ms_per_epoch_window`); the script drops those
+columns by header name (`VOLATILE_COLS`), after which all 145 comparisons are identical. Gate passed.
+The references for phase 1 are `runs/_rap_prm_g0a_{gf,gs,pf,ps}`.
