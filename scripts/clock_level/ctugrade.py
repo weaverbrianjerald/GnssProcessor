@@ -11,7 +11,7 @@ import csv, os, re, statistics as st, sys
 from collections import defaultdict
 import importlib.util
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'
 T0 = 259230.0
 F1 = 1575.42e6; F2 = 1227.60e6; A = F1 * F1 / (F1 * F1 - F2 * F2); B = F2 * F2 / (F1 * F1 - F2 * F2)

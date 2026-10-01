@@ -11,7 +11,7 @@ grade: python scripts/clock_level/census6h.py grade <refkey> <key> [<key> ...]
 """
 import csv, json, os, statistics as st, subprocess, sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'; T0 = 259200.0; NH = 6
 SL = json.load(open(RUNS + '/_msc/site_list.json'))['sites']
 if os.environ.get('CENSUS_SITES'):

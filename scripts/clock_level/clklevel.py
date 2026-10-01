@@ -7,7 +7,7 @@ by hour and the count below 0.1 m.
     python scripts/clock_level/clklevel.py <run dir> [<run dir> ...] [--datumfree]"""
 import csv, os, statistics as st, sys
 from collections import defaultdict
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 T0 = 259200.0
 F1 = 1575.42e6; F2 = 1227.60e6; A = F1 * F1 / (F1 * F1 - F2 * F2); B = F2 * F2 / (F1 * F1 - F2 * F2)
 EPOCHS = [0, 3, 7, 15, 59, 119, 239, 479, 719]

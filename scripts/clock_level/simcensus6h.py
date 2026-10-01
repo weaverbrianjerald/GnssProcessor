@@ -12,7 +12,7 @@ grade: python scripts/clock_level/simcensus6h.py grade <refkey> <key> [<key> ...
 """
 import csv, json, os, statistics as st, subprocess, sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'; T0 = 259200.0; NH = 6
 BASE = f'{RUNS}/_rf0hv11_sim6/arm.json'
 _ST = json.load(open(BASE))['network']['stations']

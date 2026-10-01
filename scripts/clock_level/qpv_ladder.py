@@ -9,7 +9,7 @@ x = 1 (linear in log q between the bracketing rungs).
 """
 import collections, csv, math, os
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'
 RUNGS = [(7.25e-9, 'qpv_q025'), (1.45e-8, 'qpv_q05'), (2.9e-8, 'smd2_ex6'), (5.8e-8, 'qpv_q2'),
          (1.16e-7, 'qpv_q4')]

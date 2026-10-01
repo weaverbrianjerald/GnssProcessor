@@ -8,7 +8,7 @@ clone-age hour, the rows, the level part |Phi_c - Phi_D| p50 / p90, the phase-vi
 """
 import collections, csv, os, sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 T0 = 259200.0
 
 

@@ -201,7 +201,7 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
-| `clock_level/` | Graders and census drivers of the clock-level cards (CLV, CTU2, LAH, PVN, SMH, SMD, QPV): the 16-site field and sim 6 h censuses, the one-screen arm grade, the PVN NIS / NEES, the SMD split and rebuilt wires, the QPV ladder rule. See `clock_level/README.md`. Added 2026-09-30. | cards |
+| `clock_level/` | 31 graders, census drivers and offline wire tools of the clock-level cards (CLV, CLV2, HLT, CTU, CTU2, LAH, PVN, SMH, SMD, QPV, PRM): the 2 h and 6 h consumer censuses, the level and anchor graders, the hold rewrite tools, run identity, the SMH G3 walk. See `clock_level/README.md`. Added 2026-09-30. | cards |
 | `clk_step_episodes.py` | CLK_STEP episode census over network_events.csv. The per-mark count is a bad discriminator (SPEC_pivot_visibility_gauge_defect §5.0.1: 9 of 16 marks … | 2 |
 | `clkr_grade_g3.py` | Card CLK-R G3 grader (docs/SPEC_clock_emit_rebase.md §4). Grades the 12 h A/B (runs/clkr_12h_ctl vs runs/clkr_12h_on) against the stored denominator … | ⚠ 0 |
 | `clkr_run_arm.ps1` | Card CLK-R arm runner: serialized producer run + trace harvest. Usage: .\clkr_run_arm.ps1 -Config <config.json> -RunDir <runs/name> Redirects console… | ⚠ 0 |

@@ -10,7 +10,7 @@ comparison).  Also compares closed_loop_trace.csv byte for byte.
 import os, sys
 from collections import Counter
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'
 
 

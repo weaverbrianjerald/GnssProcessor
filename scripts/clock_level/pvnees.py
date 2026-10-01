@@ -18,7 +18,7 @@ Per run, after the first 15 epochs:
 import csv, math, os, sys
 from collections import defaultdict
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'
 
 
