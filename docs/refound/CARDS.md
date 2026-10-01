@@ -367,3 +367,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   contrast (0.885 / 0.661 / 0.336 of the exact variance at 8 / 16 / 48 stations), the dropped
   cross-station half, which the within-station half worsens. Card PVN's contrast statistics cannot
   see an over-statement of this size; the deciding read is the augmented previous border's.
+- [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md): open, 2026-09-30: pre-registered
+  (lever 1 after cards REV and WSX): the field's excess phase-visible motion (clones born after
+  convergence revised 2 to 4 times beyond their stated variance, absent on the 60-station sim)
+  tested on card REV's traces with the martingale property of the smoothed generation-start value:
+  steps at declared events, increments larger than stated, or a drift. Prediction: a drift.
