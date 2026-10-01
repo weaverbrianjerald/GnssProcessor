@@ -354,6 +354,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   hold), R3 fails, R2 and E hold; the ignition convergence is nearly all revision and passing it
   reproduces the plain hold; a float consumer absorbs any constant phase-side value and pays for
   every change. Not built; the declared-record alternative loses its premise; lever 1 remains.
+  Section 8 (2026-10-01): the field revision NEES of 4 to 18 read a constellation-common drift
+  (with the common step removed, 0.04 to 1.19, the sim's size).
 - [WSX](WSX_within_station_cross_terms_2026-09-30.md): closed, 2026-09-30: pre-registered (lever 1
   after card REV, the first step of the joint-covariance sequence): the exact time update's
   covariance between two carried rows of one station, M_i' B M_k, dropped by the shipped form,
@@ -376,8 +378,11 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   their base rate), stationary and common to the constellation (the per-satellite remainder is the
   sim's size): a clock-datum drift that the smoothed hold's per-clone walk share makes
   between-satellite, a candidate for the census's C1W loss from hour 3.
-- [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md): open, 2026-10-01: pre-registered
+- [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md): closed, 2026-10-01: pre-registered
   (card FXA's amended decision): card SMD's member replayed offline with each epoch's
   constellation-common step removed from its walk share, so a common drift the clones' different
   births made between-satellite no longer reaches the wire as a difference. Predictions: the C1W
   loss from hour 3 disappears, the hour-1 gain keeps half its size, the sim does not get worse.
+  FALSIFIED the same day: the common drift is not in the walk share (the smoother books it as
+  revision), the wire moves by at most 3 mm and the census not at all; what card SMD's member
+  passes is per-satellite. The hold family is closed on this estimator; the phase-clock hold stays.

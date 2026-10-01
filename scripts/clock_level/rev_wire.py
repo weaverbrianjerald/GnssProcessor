@@ -10,6 +10,8 @@ wire : python scripts/clock_level/rev_wire.py wire <lah_run> <blk_run> <out_dir>
                   V(prev) - V(row) < k (W(row) - W(prev)), V = b_vd0_m2 (b_vd0b_m2 at birth),
                   W = b_wd_m2 (0 at birth); k = 1 is the member, 10 and 100 the ladder
          both     X = S_D (b_sd_m) = Phi_D + R
+         phidc    X = Phi_D with each epoch's constellation-common step of its increments removed
+                  (card SMC; use with satwise), and the wire read of the between-satellite spread
        frozen is the sum of the final X of the key's earlier block clones in the same hold
        generation (the bridge keeps what a clone reached, card SMH section 12); an epoch with no
        live block carries that sum, as in smd_ctlwire.py.
@@ -96,10 +98,18 @@ def freeze(cl, k):
     return None, None
 
 
-def xseries(cl, rule):
-    """X on each row of one clone under a rule."""
+def xseries(cl, rule, common=None):
+    """X on each row of one clone under a rule (@p common: tow -> the constellation-common step of
+    the walk share, rule phidc)."""
     if rule == 'phi':
         return [x['phi'] for x in cl]
+    if rule == 'phidc':
+        out, acc, prev = [], 0.0, 0.0
+        for x in cl:
+            acc += (x['phi'] - prev) - (common.get(x['tow'], 0.0) if common else 0.0)
+            prev = x['phi']
+            out.append(acc)
+        return out
     if rule == 'rev':
         return [x['rev'] for x in cl]
     if rule == 'both':
@@ -119,6 +129,21 @@ def wire(lah, blk, out, rule, satwise=False):
     combines carry one frozen sum (the per-key bridge lets them differ, card REV section 6)."""
     lah, blk = rundir(lah), rundir(blk)
     rows = load(blk)
+    common = None
+    if rule == 'phidc':
+        # Card SMC: each epoch's constellation-common step of the walk share, the median over the
+        # satellites (their L2W key's clone) of the increment of Phi_D (four or more).
+        import statistics
+        steps = collections.defaultdict(list)
+        for (sat, sig), lst in rows.items():
+            if sig != 'L2W':
+                continue
+            for cl in clones(lst):
+                prev = 0.0
+                for x in cl:
+                    steps[x['tow']].append(x['phi'] - prev)
+                    prev = x['phi']
+        common = {t: statistics.median(v) for t, v in steps.items() if len(v) >= 4}
     # Per key, the value to subtract at each row's tow and the frozen sum carried after it.
     events, towlists = {}, {}
     for key, lst in rows.items():
@@ -126,7 +151,7 @@ def wire(lah, blk, out, rule, satwise=False):
         for cl in clones(lst):
             if cl[0]['gen'] != gen:
                 frozen, gen = 0.0, cl[0]['gen']
-            xs = xseries(cl, rule)
+            xs = xseries(cl, rule, common)
             for x, v in zip(cl, xs):
                 seq.append((x['tow'], x['gen'], frozen + v))
             frozen += xs[-1]
@@ -182,6 +207,29 @@ def wire(lah, blk, out, rule, satwise=False):
             fo.write(ln)
     print(f'{rule}: {n} P records moved, {len(events)} keys; |P - P_LAH| p50 / p90 / max '
           f'{1000*q(moved,.5):.1f} / {1000*q(moved,.9):.1f} / {1000*max(moved, default=0):.1f} mm')
+    if rule == 'phidc':
+        # The wire read of card SMC: per epoch in run hours 3 to 6, the standard deviation over the
+        # satellites (L2W keys) of the subtracted amount, this rule against card SMD's (phi).
+        import statistics
+        t_start = run_start(blk)
+        def spreads(r):
+            by_tow = collections.defaultdict(list)
+            for (sat, sig), lst in rows.items():
+                if sig != 'L2W':
+                    continue
+                fz, gen = 0.0, None
+                for cl in clones(lst):
+                    if cl[0]['gen'] != gen:
+                        fz, gen = 0.0, cl[0]['gen']
+                    xs = xseries(cl, r, common)
+                    for x, v in zip(cl, xs):
+                        if 2.0 <= (x['tow'] - t_start) / 3600.0 < 6.0:
+                            by_tow[x['tow']].append(fz + v)
+                    fz += xs[-1]
+            return sorted(statistics.pstdev(v) for v in by_tow.values() if len(v) >= 4)
+        a, b = spreads('phi'), spreads('phidc')
+        print(f'  between-satellite sd of the subtracted amount, run hours 3 to 6, median over epochs: '
+              f'phi {1000*a[len(a)//2]:.1f} mm, phidc {1000*b[len(b)//2]:.1f} mm (ratio {b[len(b)//2]/a[len(a)//2]:.2f})')
     if rule == 'phi':
         def pvals(path):
             o, tw = {}, None

@@ -258,6 +258,44 @@ def common_split(blk, lags=(5, 20, 60, 120)):
         print(f'    lag {k:4d} ep ({k * EP / 60:6.1f} min): {a[0]:7.1f} | {b[0]:7.1f}   (n={a[1]} / {b[1]})')
 
 
+def revision_nees_dc(blk):
+    """The block clones' revision NEES R^2 / (V0 - V) by clone age, raw and with each epoch's
+    constellation-common revision step (the median over the satellites' L2W clones of the
+    increment of R, four or more) removed before accumulating (card SMC section 5, the
+    correction to card REV's field instrument)."""
+    import statistics as st
+    d = rw.rundir(blk)
+    rows = rw.load(d)
+    t_start = rw.run_start(d)
+    cls = [(sat, cl) for (sat, sig), lst in rows.items() if sig == 'L2W' for cl in rw.clones(lst)]
+    steps = collections.defaultdict(list)
+    for sat, cl in cls:
+        prev = 0.0
+        for x in cl:
+            steps[x['tow']].append(x['rev'] - prev)
+            prev = x['rev']
+    com = {t: (st.median(v) if len(v) >= 4 else 0.0) for t, v in steps.items()}
+    tab = collections.defaultdict(lambda: ([], []))
+    for sat, cl in cls:
+        later = (cl[0]['t0'] - t_start) >= 3600.0
+        prev, rdc = 0.0, 0.0
+        for x in cl:
+            rdc += (x['rev'] - prev) - com[x['tow']]
+            prev = x['rev']
+            den = x['vb'] - x['v']
+            if den > 0.0:
+                h = min(int(x['age'] // 3600), 3)
+                tab[(later, h)][0].append(x['rev'] ** 2 / den)
+                tab[(later, h)][1].append(rdc ** 2 / den)
+    print(os.path.basename(d) + ': revision NEES mean by clone age 0 / 1 / 2 / 3 h, raw -> common step removed')
+    for later in (False, True):
+        cells = []
+        for h in range(4):
+            a, b = tab[(later, h)]
+            cells.append(f'{sum(a) / len(a):6.2f} -> {sum(b) / len(b):5.2f}' if a else '      -')
+        print(f'    {"later" if later else "ignition":8s} ' + '  '.join(cells))
+
+
 def pers1h_done(pers1h, sat, cl):
     """One age-1-h reading per clone."""
     return any(s == sat and t0 == cl[0]['t0'] for s, t0, _ in pers1h)
@@ -273,3 +311,4 @@ if __name__ == '__main__':
         structure(b, pop='later', min_age_s=1800.0)          # later clones past it
         structure(b, pop='ignition', min_age_s=5400.0)       # ignition clones long converged
         common_split(b)                                      # the constellation-common part
+        revision_nees_dc(b)                                  # card SMC's correction to card REV
