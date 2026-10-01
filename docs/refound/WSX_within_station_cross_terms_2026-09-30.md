@@ -5,7 +5,7 @@
 - **id:** WSX
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** KEEP_OFF 2026-09-30 (sections 6 and 7): on the current posture the within-station term is harmless and almost invisible (G0 to G5 pass on 2 h arms of both beds: no drift, the CTU section 13.4 (c) drift belonged to the earlier posture; census paired change at most +0.006 m; satellite-side instruments within a few hundredths); X1's ordering and X4's code-bias half fail. The unit network's size study is the finding: the shipped per-row form keeps the level with the exact batch but over-states a between-satellite phase-visible contrast, 0.885 / 0.661 / 0.336 of the exact variance at 8 / 16 / 48 stations (the dropped cross-station half), and the within-station half makes it worse at every size. Next: a measure-only contrast instrument on the full network, then the augmented previous border. Nothing armed. Pre-registered 2026-09-30 (lever 1 after card REV: the phase-visible wander at its source, the first step of the joint-covariance sequence named in the outside review of cards CTU and CTU2). Card CTU's exact time update adds each carried row's own inflation M_i' B M_i and drops the covariance M_i' B M_k between two rows of one station; a first build that added it drifted the sim level (0.97 m at epoch 240, CTU section 13.4 (c)) and was removed before commit. That arm predates four changes of the posture (the clean sim start, `network.rank_gate_tol` 1e-11, the receiver code bias in the block, `network.dense_fold_kappa` 1e-12). The term is re-built behind `network.carry_coupling_exact_cross` (default off) in the station's whitened local block, which the float vehicle keeps live; the unit gate gains the shipped form beside the removed one against the exact batch. Predictions: in the unit network the shipped form states the level tighter than the form with the cross terms and both stay within a factor 2 of the batch; on the current posture the cross terms do not drift the level; they leave the level and phase-visible innovation instruments within 0.1.
+- **summary:** KEEP_OFF 2026-09-30 (sections 6 and 7): on the current posture the within-station term is harmless and almost invisible (G0 to G5 pass on 2 h arms of both beds: no drift, the CTU section 13.4 (c) drift belonged to the earlier posture; census paired change at most +0.006 m; satellite-side instruments within a few hundredths); X1's ordering and X4's code-bias half fail. The unit network's size study is the finding: the shipped per-row form keeps the level with the exact batch but over-states a between-satellite phase-visible contrast, 0.885 / 0.661 / 0.336 of the exact variance at 8 / 16 / 48 stations (the dropped cross-station half), and the within-station half makes it worse at every size. Section 8: card PVN's contrast statistics exist and cannot see an over-statement of this size (the per-epoch update is about 1 % of the stated prior), so the deciding read is the augmented previous border's stated contrast variance beside the shipped form's. Nothing armed. Pre-registered 2026-09-30 (lever 1 after card REV: the phase-visible wander at its source, the first step of the joint-covariance sequence named in the outside review of cards CTU and CTU2). Card CTU's exact time update adds each carried row's own inflation M_i' B M_i and drops the covariance M_i' B M_k between two rows of one station; a first build that added it drifted the sim level (0.97 m at epoch 240, CTU section 13.4 (c)) and was removed before commit. That arm predates four changes of the posture (the clean sim start, `network.rank_gate_tol` 1e-11, the receiver code bias in the block, `network.dense_fold_kappa` 1e-12). The term is re-built behind `network.carry_coupling_exact_cross` (default off) in the station's whitened local block, which the float vehicle keeps live; the unit gate gains the shipped form beside the removed one against the exact batch. Predictions: in the unit network the shipped form states the level tighter than the form with the cross terms and both stay within a factor 2 of the batch; on the current posture the cross terms do not drift the level; they leave the level and phase-visible innovation instruments within 0.1.
 - **source:** [CTU](CTU_coupling_time_update_2026-09-28.md) sections 4, 11 and 13.4 (c); [CTU2](CTU2_level_recursion_followup_2026-09-29.md) (the clean start, the receiver code bias in the block, the rank gate); [PVN](PVN_phase_visible_nees_2026-09-29.md); [REV](REV_revision_member_replay_2026-09-30.md) sections 6 and 7 (the revision NEES); [PRM](PRM_parameter_registry_2026-09-29.md) (the sequence after CTU2); the outside review of cards CTU and CTU2 (2026-09-29: the within-station terms re-tested first, then the local block, then the augmented previous border)
 - **knobs / posture:** `network.carry_coupling_exact_cross` (new, default off; requires `network.carry_coupling_exact_update` and the whitened local block); arms on card REV's exact-update posture (`runs/_rap_rev1_blk6_{f,s}`, 2 h, the sim from 00:30:15); nothing armed, no golden or ledger change
 - **dates in the text:** 2026-09-30
@@ -209,3 +209,35 @@ the between-satellite phase-visible contrast on the full network (its stated var
 shared border's posterior against its within-arc scatter on the sim, whose truth has none), with the
 unit network's prediction (a contrast NEES above 1 on the 60-station sim) pre-registered. Nothing is
 armed and no default moves.
+
+## 8. Annotation (2026-09-30, the same night): the contrast instrument exists and is blind to this
+
+Section 7 asked for a measure-only instrument of the between-satellite phase-visible contrast.
+Card PVN's statistics are already taken on the constellation contrast (each satellite's D against
+the constellation median, with contrast-projected prior and posterior variances), and on these
+arms the sim reads NIS 1.04 and within-arc NEES 0.4 / 0.1. That does not contradict the unit
+network, because neither statistic can see a state over-statement of this size here:
+
+- The NIS of an update compares the realized update with S- - S+. For a scalar with true prior
+  variance S_t, stated S_f and per-epoch noise R, its mean is (S_t + R) / (S_f + R). On the sim the
+  per-epoch update along D is about 1 % of the stated prior (predicted update sd 3.7 mm against a
+  stated sd of 39 mm, so R is about 100 times S_f), and a threefold over-statement moves the NIS by
+  about 2 %.
+- The within-arc NEES removes each arc's mean, which is where a slowly decorrelating error lives;
+  it is a lower bound by construction (card PVN section 2 (b)).
+
+Two further checks of the unit network the same night: with 6 satellites at 16 stations the
+shipped form's smallest eigenvalue is 0.663 (0.661 with 3), along a contrast between two
+non-pivot satellites, so the effect is not a small-constellation artifact; it follows the
+stations per satellite. And the exact recursion meets the batch to about 1e-8 relative at every
+size tried, so the comparison stands.
+
+Correction to section 7's last paragraph: no truth-free full-network statistic available today
+reads the stated contrast variance against the exact one. The read that decides it is the stated
+contrast variance of an exact recursion beside the shipped one on the same data, which needs the
+augmented previous border itself (its stated variance against the shipped form's, a ratio near 2
+to 3 at 60 stations by the unit network), or a unit network at the full network's size. The
+augmented border remains the joint-covariance path's next step; whether it is lever 1's next step
+depends on whether this over-statement is what the consumer pays for, which the field's excess
+phase-visible motion (present on the field, absent on the sim, though both carry about 60
+stations) argues against as the whole story.

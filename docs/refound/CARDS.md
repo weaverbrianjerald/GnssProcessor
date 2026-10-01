@@ -365,5 +365,5 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   and almost invisible on 2 h arms of both beds (no drift, consumer within 0.006 m); the unit
   network's size study shows the shipped form over-stating a between-satellite phase-visible
   contrast (0.885 / 0.661 / 0.336 of the exact variance at 8 / 16 / 48 stations), the dropped
-  cross-station half, which the within-station half worsens. Next: a contrast instrument on the
-  full network, then the augmented previous border.
+  cross-station half, which the within-station half worsens. Card PVN's contrast statistics cannot
+  see an over-statement of this size; the deciding read is the augmented previous border's.
