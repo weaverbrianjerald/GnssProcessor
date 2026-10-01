@@ -33,6 +33,7 @@
 
 #include "atmosphere/Gpt3.hpp"
 #include "atmosphere/HigherOrderIonosphere.hpp"
+#include "atmosphere/MagneticField.hpp"
 #include "atmosphere/Troposphere.hpp"
 #include "atmosphere/Vmf3.hpp"
 #include "common/Constants.hpp"
@@ -290,7 +291,7 @@ TEST(NiellMappingTest, MatchesCanonicalReference) {
 // derives the coefficients from first principles and the POINT reference
 // (higher_order_iono/Class_Iono.cpp).  The dipole B-field constants are shared
 // with the engine (MagneticField); the I₂/I₃ coefficients are derived
-// independently, so two conventions are fixed here:
+// independently, so three conventions are fixed here:
 //
 //   1. The I₂ group (code) coefficient is 7527·c, not 7527·c/2.  The /2 form is
 //      the phase coefficient; using it for code makes both code and phase I₂ a
@@ -298,6 +299,12 @@ TEST(NiellMappingTest, MatchesCanonicalReference) {
 //      L1 on such a regression, about 4e6 times the 1e-9 m tolerance.
 //   2. The I₃ group (code) term scales with ∫N_e²dl = η·N_max·STEC, not
 //      η·STEC².  The STEC² form is about 2.3e5 times too large.
+//   3. The I₂ sign: B is projected on the propagation direction k̂ (satellite
+//      to receiver), not on the receiver-to-satellite line of sight (card I2S,
+//      docs/refound/I2S_second_order_iono_sign_2026-10-01.md).  Here B points
+//      north and down at the 40° N pierce point and k̂ points mostly down, so
+//      B·k̂ > 0 and the code I₂ is a positive delay; the line-of-sight form
+//      flips every I₂ golden below.
 //
 // Internal consistency the goldens also encode: phase = −½·I₂code and
 // −⅓·I₃code; L2/L1 ratios are (f₁/f₂)³ for I₂ and (f₁/f₂)⁴ for I₃.
@@ -316,10 +323,10 @@ TEST(HigherOrderIonosphereTest, MatchesCanonicalReference) {
 
     struct Case { const char* band; char meas; double freq; double stec; double i2; double i3; };
     const std::vector<Case> cases = {
-        { "L1", 'C', f_l1,  50.0, -0.007714137670442714,  0.000288285519644309   },
-        { "L1", 'L', f_l1,  50.0,  0.003857068835221357, -9.609517321476967e-05  },
-        { "L2", 'C', f_l2,  50.0, -0.016304437097686218,  0.0007819531397965047  },
-        { "L1", 'C', f_l1, 120.0, -0.018513930409062514,  0.00166052459315122    },
+        { "L1", 'C', f_l1,  50.0,  0.007714137670442714,  0.000288285519644309   },
+        { "L1", 'L', f_l1,  50.0, -0.003857068835221357, -9.609517321476967e-05  },
+        { "L2", 'C', f_l2,  50.0,  0.016304437097686218,  0.0007819531397965047  },
+        { "L1", 'C', f_l1, 120.0,  0.018513930409062514,  0.00166052459315122    },
     };
 
     for (const auto& c : cases) {
@@ -329,6 +336,57 @@ TEST(HigherOrderIonosphereTest, MatchesCanonicalReference) {
         EXPECT_NEAR(comp.i2_m, c.i2, 1e-9) << "case " << c.band << "/" << c.meas << " (I2)";
         EXPECT_NEAR(comp.i3_m, c.i3, 1e-9) << "case " << c.band << "/" << c.meas << " (I3)";
     }
+}
+
+// The I₂ sign stated as physics, without an oracle (card I2S).  A right-hand
+// circularly polarized signal travelling along B is the R (extraordinary)
+// mode: extra group delay on code (I₂ > 0) and half as much phase advance.
+// Travelling against B it is the L mode and both signs reverse.  The geometry
+// places the receiver and the satellite on the field line through the pierce
+// point, so the propagation direction is ±B̂ exactly and |I₂| = 7527·c·STEC·|B|/f³.
+// A shared-convention oracle cannot catch a flipped direction vector; this can.
+TEST(HigherOrderIonosphereTest, SignFollowsPropagationAlongField) {
+    const HigherOrderIonosphere hoi;
+
+    const double ipp_lat = 0.70;                       // rad
+    const double ipp_lon = 0.18;                       // rad
+    const double ipp_radius = (6371.0 + 450.0) * 1.0e3;  // m
+    const Eigen::Vector3d ipp(ipp_radius * std::cos(ipp_lat) * std::cos(ipp_lon),
+                              ipp_radius * std::cos(ipp_lat) * std::sin(ipp_lon),
+                              ipp_radius * std::sin(ipp_lat));
+    const Eigen::Vector3d B = MagneticField::fieldAtEcef(ipp);
+    const Eigen::Vector3d b_hat = B.normalized();
+
+    const double stec_tecu = 50.0;
+    const double f = Constants::GPS_L1_FREQ;
+    const double expected = 7527.0 * Constants::SPEED_OF_LIGHT
+                          * stec_tecu * 1.0e16 * B.norm() / (f * f * f);
+
+    // Along B: the satellite up-field, the receiver down-field of the pierce point.
+    const Eigen::Vector3d sat_up = ipp - 2.0e7 * b_hat;
+    const Eigen::Vector3d rx_dn  = ipp + 4.0e5 * b_hat;
+    const auto along_c = hoi.slantHigherOrderComponents(
+        rx_dn, sat_up, ipp_lat, ipp_lon, ipp_radius, stec_tecu, f, 'C');
+    const auto along_l = hoi.slantHigherOrderComponents(
+        rx_dn, sat_up, ipp_lat, ipp_lon, ipp_radius, stec_tecu, f, 'L');
+    ASSERT_TRUE(along_c.valid);
+    ASSERT_TRUE(along_l.valid);
+    EXPECT_GT(along_c.i2_m, 0.0) << "code I2 along B must be a delay";
+    EXPECT_LT(along_l.i2_m, 0.0) << "phase I2 along B must be an advance";
+    EXPECT_NEAR(along_c.i2_m, expected, 1e-12);
+    EXPECT_NEAR(along_l.i2_m, -0.5 * expected, 1e-12);
+
+    // Against B: the same field line, the path reversed.
+    const Eigen::Vector3d sat_dn = ipp + 2.0e7 * b_hat;
+    const Eigen::Vector3d rx_up  = ipp - 4.0e5 * b_hat;
+    const auto against_c = hoi.slantHigherOrderComponents(
+        rx_up, sat_dn, ipp_lat, ipp_lon, ipp_radius, stec_tecu, f, 'C');
+    ASSERT_TRUE(against_c.valid);
+    EXPECT_LT(against_c.i2_m, 0.0) << "code I2 against B must be an advance";
+    EXPECT_NEAR(against_c.i2_m, -expected, 1e-12);
+
+    // I₃ does not depend on the direction.
+    EXPECT_NEAR(along_c.i3_m, against_c.i3_m, 1e-15);
 }
 
 }  // namespace

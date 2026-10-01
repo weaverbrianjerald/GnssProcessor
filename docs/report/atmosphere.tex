@@ -673,8 +673,13 @@ I_2^{\,\phaseo} = -\tfrac12\,I_2^{\,\code},
 \label{eq:atmos-i2}
 \end{empheq}
 where $\stec$ is in $\mathrm{el\,m^{-2}}$, $\Bvec$ is the geomagnetic flux
-density in tesla at the IPP, $\khat$ the receiver$\to$satellite unit
-vector, and $c$ the speed of light.  The constant $7527\,c =
+density in tesla at the IPP, $\khat$ the unit propagation vector
+(satellite$\to$receiver), and $c$ the speed of light.  The code term is a
+delay when the signal travels along the field and an advance when it
+travels against it: GPS is right-hand circularly polarized about $\khat$
+(IEEE), the electrons gyrate right-handedly about $\Bvec$, so a signal
+along $\Bvec$ is the extraordinary (R) mode with the larger index
+deviation.  The receiver$\to$satellite vector inverts $I_2$.  The constant $7527\,c =
 e\,A/(2\pi m_e) \approx 2.2564\times10^{12}$ combines the electron
 charge, the first-order refractivity constant $A$, and the electron
 mass.  The constants and the $-\tfrac12$ phase factor are both in

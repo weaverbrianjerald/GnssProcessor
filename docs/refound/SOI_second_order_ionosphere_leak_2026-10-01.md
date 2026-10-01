@@ -140,3 +140,15 @@ reproduced it used 15 minutes), is registry work (card PRM) and the author's cal
 remainder card FWS left is not this term; its two remaining candidates (station-set changes as
 satellites rise and set, and daytime tropospheric variability at the tropical stations) are the
 next bisection.
+
+## 6. Annotation (2026-10-01, card I2S)
+
+The sign question section 5 left open is adjudicated in card
+[I2S](I2S_second_order_iono_sign_2026-10-01.md): section 1's derivation is correct and the engine's
+convention was inverted. The engine projected B on the receiver-to-satellite line of sight with a
+positive code coefficient, and POINT carries the same inversion with nothing in its application to
+compensate it. A first-principles eigenmode solve, the literature read with its own direction
+conventions, a handedness anchor from the field-validated wind-up model, and Ginan and PRIDE PPP-AR
+all give the code term +7527 c STEC (B.k) / f^3 with k from satellite to receiver. The engine and its
+oracle were fixed together. This card's prediction already used the propagation direction
+(`scripts/clock_level/soi_test.py`), so sections 4 and 5 stand unchanged.

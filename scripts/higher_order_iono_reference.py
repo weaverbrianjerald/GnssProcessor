@@ -12,6 +12,17 @@ Fixes the second/third-order ionosphere coefficients (May 2026):
      is not proportional to STEC^2; the STEC^2 form is about 2.3e5 times
      too large (hundreds of metres instead of millimetres).
 
+Fixes the I2 sign (October 2026, card I2S,
+docs/refound/I2S_second_order_iono_sign_2026-10-01.md):
+
+  3. theta is the angle between B and the PROPAGATION direction k_hat
+     (satellite to receiver), not the receiver-to-satellite line of sight.
+     GPS is right-hand circularly polarized about k_hat (IEEE) and the
+     electrons gyrate right-handedly about B, so for k_hat along B the
+     signal is the R (extraordinary) mode: more phase advance, more group
+     delay.  The line-of-sight vector, which this oracle and the engine
+     both used before (after POINT's Project_Vector), inverts I2.
+
 Methodology note (matches scripts/solid_tide_reference.py, nmf_reference.py):
 the dipole magnetic-field constants are parsed straight out of
 MagneticField.cpp so the B-field geometry matches the engine bit for bit
@@ -23,7 +34,9 @@ so reverting either engine coefficient breaks the gtest.
 First principles (quasi-longitudinal Appleton-Hartree):
     n_ph = 1 - X/2 - (1/2) X Y_L - (1/8) X^2 - ...
     X = A * N_e / f^2          (A = e^2/(4 pi^2 eps0 m_e) = 80.6 m^3/s^2)
-    Y_L = (e B cos(theta)) / (2 pi m_e f)
+    Y_L = (e B cos(theta)) / (2 pi m_e f),  cos(theta) = B_hat . k_hat
+    (k_hat = satellite -> receiver; the expansion is that of the mode
+     right-handed about k_hat, the R mode when k_hat is along B)
   group delay term k -> (1-k) * phase term:
     I2_code = +(A e / (2 pi m_e)) * B.k_hat * STEC / f^3   = 7527*c * (...)
             (k=3 => group = -2*phase; phase coeff = A e/(4 pi m_e) = 7527*c/2)
@@ -96,9 +109,9 @@ def higher_order_components(rx, sat, ipp_lat, ipp_lon, ipp_radius, stec_tecu, fr
            ipp_radius * math.sin(ipp_lat))
     B = field_at_ecef(ipp, mf)
 
-    los = tuple(sat[i] - rx[i] for i in range(3))           # receiver -> satellite
-    n = math.sqrt(sum(x * x for x in los))
-    khat = tuple(x / n for x in los)
+    path = tuple(rx[i] - sat[i] for i in range(3))          # satellite -> receiver (propagation)
+    n = math.sqrt(sum(x * x for x in path))
+    khat = tuple(x / n for x in path)
     b_dot_k = sum(B[i] * khat[i] for i in range(3))
 
     stec_el = stec_tecu * TECU_TO_ELECTRONS

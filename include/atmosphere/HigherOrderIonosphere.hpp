@@ -9,8 +9,12 @@
  * Higher-order terms of the Appleton-Hartree refractive-index expansion
  * enter the observable with other frequency dependences:
  *
- *  - Second order (magnetic-field-dependent): @c I₂ ∝ STEC·B·cos(θ_B)/f³,
- *    typically 0–2 cm at GPS L1 at high TEC.  The IF combination does not
+ *  - Second order (magnetic-field-dependent): @c I₂ ∝ STEC·B·cos(θ_k)/f³,
+ *    with @c θ_k the angle between the geomagnetic field @c B and the
+ *    propagation direction @c k̂ (satellite to receiver), so the code term
+ *    is a delay when the signal travels along @c B and an advance when it
+ *    travels against it.  Typically 0–2 cm at GPS L1 at high TEC.  The IF
+ *    combination does not
  *    cancel an f⁻³ term.  Its residual is
  *    @c f₁²/(f₁²-f₂²) · I₂(f₁) − @c f₂²/(f₁²-f₂²) · I₂(f₂)
  *    = −f₁²/(f₂·(f₁+f₂)) · I₂(f₁), about −0.72·I₂(L1) for GPS L1/L2.
@@ -24,7 +28,13 @@
  *
  * Sign convention (the same as in the rest of the engine):
  *  - For code observables, the correction is added to the modeled
- *    value (positive group delay).
+ *    value: @c +7527·c·STEC·(B·k̂)/f³ for @c I₂ (signed, positive
+ *    when @c B·k̂ > 0) and a positive group delay for @c I₃.  GPS is
+ *    right-hand circularly polarized about @c k̂ (IEEE), which makes it the
+ *    R (extraordinary) magnetoionic mode when @c k̂ is along @c B.  Using
+ *    the receiver-to-satellite vector instead of @c k̂ inverts @c I₂; the
+ *    engine did so until card I2S
+ *    (docs/refound/I2S_second_order_iono_sign_2026-10-01.md).
  *  - For carrier-phase observables, the correction has the opposite sign
  *    and is scaled by @c -1/2 (I₂) or @c -1/3 (I₃), from the ratio of
  *    phase to group delay at each order of the expansion.
@@ -61,7 +71,8 @@ namespace GnssProcessor {
          * The correction is referenced to a single-layer thin-shell
          * model: the magnetic field is evaluated at the ionospheric
          * pierce point on the IONEX shell and projected onto the
-         * line-of-sight unit vector.
+         * propagation unit vector @c k̂ (from @p sat_pos_ecef to
+         * @p rx_pos_ecef).
          *
          * Returns 0 when an input is degenerate (frequency ≤ 0, non-finite
          * STEC, IPP radius ≤ 0 or non-finite, receiver-satellite distance
@@ -81,8 +92,8 @@ namespace GnssProcessor {
          * @param ipp_radius_m      Distance of the IPP from geocentre (m).
          * @param stec_tecu         Absolute slant TEC at the IPP (TECU).
          * @param frequency_hz      Carrier frequency the correction is wanted at (Hz).
-         * @param meas_type         @c 'C' for code (group delay, positive
-         *                          for I₂ and I₃) or @c 'L' for phase
+         * @param meas_type         @c 'C' for code (group delay: I₂ signed by
+         *                          @c B·k̂, I₃ positive) or @c 'L' for phase
          *                          (advance, sign flipped and scaled by
          *                          1/2 and 1/3 for I₂ and I₃ respectively).
          *                          Any other character returns 0.

@@ -418,6 +418,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   against the signed post-fit residuals and the walk share's changes, the sim as the null.
   FALSIFIED: the term is 0.7 mm rms in its unabsorbable part against 4.1 mm of slow residual, no
   slope at the residual level (-0.02 +/- 0.08) and no correlation with the walk share at any lag.
+  ANNOTATED (card I2S): the sign question it left open is settled for section 1's derivation; the
+  engine's convention was inverted and is fixed.
 - [LSR](LSR_long_scale_remainder_2026-10-01.md): closed, 2026-10-01: pre-registered (the outside
   review's note after cards FWS and SOI): the field's walk-share persistence that remains at an hour
   and two hours with the wind-up staircase removed, against its two remaining candidates
@@ -445,3 +447,14 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   RE-BASED: six calibration rungs (the colour capped at 20 degrees of elevation is what matches); the
   sim golden reads `runs/simnet60_quiet_col_24h` (baseline `runs/_rf0hv13_sim6`); old sim numbers superseded.
   The colour also carries the field's walk-share persistence out to an hour on the sim (6 h).
+- [I2S](I2S_second_order_iono_sign_2026-10-01.md): closed, 2026-10-01: the sign of the engine's
+  second-order ionospheric term (`model_corrections.enable_higher_order_ionosphere`, default off),
+  left unadjudicated by card SOI: the engine and POINT project B on the receiver-to-satellite line of
+  sight with a positive code coefficient, card SOI section 1 derives the opposite sign from the
+  signal's polarization. Checked against first principles, the literature, a wind-up handedness
+  anchor and independent implementations.
+  FIXED: the propagation direction (satellite to receiver) is correct; a cold-plasma eigenmode solve
+  (32 of 32 checks), IERS 2010 eqs. 9.19 to 9.46, Moore and Morton 2011, Petrie et al. 2011, the
+  field-validated wind-up model, Ginan and PRIDE PPP-AR agree; POINT carries the same inversion with
+  nothing compensating it. Engine and oracle fixed together, the four I2 goldens flip sign, a direct
+  sign test added; no network result depends on the term.

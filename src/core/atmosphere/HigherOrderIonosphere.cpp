@@ -22,6 +22,19 @@ namespace GnssProcessor {
         // slantHigherOrderComponents).  Matches POINT Iono_Second_Order
         // (const1 = e·A/(2π·m_e·f³), no factor of ½) and Hernández-Pajares
         // et al. 2007 / Petrie et al. 2010.  e·A/(2π·m_e) = 2.2564e12 ≈ 7527·c.
+        //
+        // Sign: θ is the angle between B and the PROPAGATION direction k̂
+        // (satellite to receiver), as in IERS Conventions 2010 eqs. 9.19 to
+        // 9.23 and 9.46, Moore & Morton 2011 and Petrie et al. 2011.  GPS is
+        // right-hand circularly polarized in the IEEE sense (right-handed
+        // about k̂) and the electrons gyrate right-handedly about B, so for
+        // k̂ along B the signal is the R (extraordinary) mode, with
+        // n_ph = 1 − X/2 − X·Y_L/2: more phase advance and more group delay.
+        // The code term is therefore +7527·c·STEC·(B·k̂)/f³ and changes sign
+        // with B·k̂.  POINT (Project_Vector, BtJ) dots B with the receiver-to-
+        // satellite vector and carries the opposite sign; card I2S
+        // (docs/refound/I2S_second_order_iono_sign_2026-10-01.md) has the
+        // derivation, a numerical eigenmode check and the references.
         constexpr double kI2CodeCoeff = 7527.0 * Constants::SPEED_OF_LIGHT;
 
         // 1 TECU in electrons per square metre.
@@ -76,11 +89,13 @@ namespace GnssProcessor {
 
         const Eigen::Vector3d B = MagneticField::fieldAtEcef(ipp_ecef);  // Tesla
 
-        // Signal direction k̂: from receiver to satellite, unit vector.
-        const Eigen::Vector3d los = sat_pos_ecef - rx_pos_ecef;
-        const double los_norm = los.norm();
-        if (los_norm < 1.0) return out;
-        const Eigen::Vector3d k_hat = los / los_norm;
+        // Propagation direction k̂: from satellite to receiver, unit vector.
+        // Not the receiver-to-satellite line of sight, which flips the
+        // sign of I₂ (card I2S).
+        const Eigen::Vector3d path = rx_pos_ecef - sat_pos_ecef;
+        const double path_norm = path.norm();
+        if (path_norm < 1.0) return out;
+        const Eigen::Vector3d k_hat = path / path_norm;
 
         const double B_dot_k = B.dot(k_hat);              // Tesla
         const double stec_el = stec_tecu * kTecuToElectrons;  // el/m²
@@ -89,7 +104,8 @@ namespace GnssProcessor {
         const double f3 = f2 * frequency_hz;
         const double f4 = f2 * f2;
 
-        // Code (group delay): I₂ signed by B·cosθ; I₃ positive; additive to modeled.
+        // Code (group delay): I₂ signed by B·k̂ (positive when the signal
+        // travels along B); I₃ positive; additive to modeled.
         const double ne_max  = kNmaxPerStec * stec_el;        // F2-peak density, el/m³
         const double i2_code = kI2CodeCoeff * stec_el * B_dot_k / f3;
         const double i3_code = kI3CodeBase * kI3ShapeEta * ne_max * stec_el / f4;
