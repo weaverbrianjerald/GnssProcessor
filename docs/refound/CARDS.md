@@ -354,3 +354,11 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   hold), R3 fails, R2 and E hold; the ignition convergence is nearly all revision and passing it
   reproduces the plain hold; a float consumer absorbs any constant phase-side value and pays for
   every change. Not built; the declared-record alternative loses its premise; lever 1 remains.
+- [WSX](WSX_within_station_cross_terms_2026-09-30.md): open, 2026-09-30: pre-registered (lever 1
+  after card REV, the first step of the joint-covariance sequence): the exact time update's
+  covariance between two carried rows of one station, M_i' B M_k, dropped by the shipped form,
+  re-built behind `network.carry_coupling_exact_cross` in the whitened local block the float vehicle
+  keeps live; the CTU section 13.4 (c) drift arm predates four posture changes. The unit gate gains
+  the shipped form against the exact batch. Predictions: the shipped form states the level tighter
+  than the form with the cross terms, both within a factor 2 of the batch; no drift on the current
+  posture; the satellite-side instruments move by less than 0.1.
