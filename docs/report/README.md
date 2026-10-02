@@ -121,6 +121,10 @@ docs/report/
                             (one chord) carried end to end.
   pipeline_diagrams.tex     Curated TikZ process diagrams.
   generated_tables.tex      Appendix subfile; \input's the generated/ tables.
+  linear_algebra.tex        Appendix subfile: linear algebra supplement (norms,
+                            Hermitian matrices, SVD, pseudoinverse) with thirteen
+                            numerical examples, every number printed by
+                            scripts/linalg_supplement_examples.py.
 
   generated/                Auto-generated reference tables (see below).
     processing_modes.tex      ProcessingMode/AppMode/DataSource/DifferencingMode.
@@ -209,6 +213,8 @@ not churning code:
 - Real-time SSR-to-observation correction mapping.
 - Real-time streaming engine (transport, decode, synchronisation).
 - Network-mode PPP-RTK estimation (the correction producer).
+- Linear algebra supplement (study material: norms, SVD, pseudoinverse,
+  with reproducible numerical examples).
 
 Empirical thresholds and tuning (MAD/Welford/EWMA gates, per-arc
 calibration) are deliberately left to the code and cited, not
