@@ -532,8 +532,21 @@ key is ignored without a word, so such an arm is silently its base).
 | --- | --- | --- |
 | references | `gnss_processor_prm1b2.exe` `77ab7c95d714bc4c` (HEAD code) | tags `b0h6` and `b0` (phase 1b); new tags `x0` (clv, eq34, dho, 1 h) and `x0r` (relevel, 2.1 h) |
 | step 1, the check beside the lists | `gnss_processor_prm2a.exe` `0e2bca9d4ee1d2f6` | byte-identical on all 16 arms, every CSV (556 comparisons); the count check 0 mismatches on every call: handover 1 per 6 h golden, card CLV 121 per bed, the re-level 30 (field) and 29 (sim), the eq34 shift 46 (field: 2 095 values and 88 228 coupling terms, the probe's run-end counters), the declared handover 1 per bed |
+| step 2, the lists replaced | `gnss_processor_prm2b.exe` `a1dd6aa00ce2e51f` | byte-identical on all 16 arms, every CSV (556 comparisons); each mechanism ran on its own arms through the traversal: handover 1 call per 6 h golden, card CLV 121 per bed, the re-level 30 / 29, the eq34 shift 46 / 41, the declared handover 1 per bed |
 
 Unit suite 2769 passed, 1 fixture-gated skip; suite `CarrySites` (10 cases: the table, every site
 moved by 1 m through the walk, the site mask, the scan of `NetworkCarryState`'s declaration for
 local carry maps without a site and of the run types for any other holder of regression terms,
 the mechanism table, each mechanism's walk against its hand walk or its rule written out).
+
+**16.4 Step 2, the hand-written lists replaced.** The five hand walks are deleted; each mechanism
+calls its walk through the traversal (`clockLevelShiftCarry`, `ephCutoverShiftCarry`,
+`applyClockStransform` on the run's carried state, `eq34ShiftCarry`, `declaredHandoverShiftCarry`).
+The two phase-bias shifts share one rule, `phaseBiasShiftOf`, which replaces
+`rebaseCouplingPhaseBiasSprev` (it had no other caller; its tests now run through the
+traversal). The dry mode and the count check are retired with the lists; the run end keeps each
+mechanism's calls and the moved counts per site. The card's recipe migrates one caller per commit;
+the five are one commit here, because the gate already separates them: each mechanism runs on its
+own posture's arms (card CLV on `clv`, the re-level on `relevel`, the eq34 shift on `eq34`, the
+declared handover on `dho`, the S-transform on the 6 h goldens), and every arm is compared byte for
+byte with its reference. Unit suite 2769 passed, 1 fixture-gated skip.

@@ -288,38 +288,19 @@ ClockLevelConfirm clockLevelConfirmStep(ClockLevelSat& ls, int break_sign, doubl
 /// @param cb_moved  optional out: (satellite, signal) -> the code-bias step applied (m).
 /// @param cb_direct optional (satellite, signal) -> a code-bias column's own step (m).
 /// @param cb_held   optional (satellite, signal) columns that do not follow the level.
+/// @param counts    optional out: per-site tallies of the walk (accumulated).
 /// @return the number of carried references moved.
+///
+/// The walk is the traversal of carried references (card PRM phase 2,
+/// @ref forEachCarriedReference) over the sites of @c CarryMechanism::ClockLevel, with the
+/// phase hold's keys read for the transfer; the sites the re-base does not move are declared
+/// with their reason in the mechanism table (card LGM's @c pc_carry among them).
 long long clockLevelShiftCarry(
     NetworkCarryState& carry, const std::map<std::string, double>& shift,
     const std::map<std::string, ClockLevelCbFollow>* cb_follow = nullptr,
     std::map<std::pair<std::string, std::string>, double>* cb_moved = nullptr,
     const std::map<std::pair<std::string, std::string>, double>* cb_direct = nullptr,
-    const std::set<std::pair<std::string, std::string>>* cb_held = nullptr);
-
-/**
- * @brief @ref clockLevelShiftCarry through the traversal of carried references (card PRM
- *        phase 2, @ref forEachCarriedReference): the same rule on every site of
- *        @c CarryMechanism::ClockLevel, with the phase hold's keys read for the transfer.
- *
- * With @p dry nothing is written (no carried value, no transfer, no declaration, no
- * @p cb_moved entry) and the return value is the number of references the re-base would
- * move: the step-1 check against the hand-written walk.
- * @param carry     the run's carried state.
- * @param shift     satellite -> shift along its level direction (m).
- * @param cb_follow optional satellite -> code-bias follow (null = none).
- * @param cb_moved  optional out: (satellite, signal) -> the code-bias step applied (m).
- * @param cb_direct optional (satellite, signal) -> a code-bias column's own step (m).
- * @param cb_held   optional (satellite, signal) columns that do not follow the level.
- * @param dry       count only.
- * @param counts    optional out: per-site visited and moved tallies (accumulated).
- * @return the number of carried references moved (or that would be moved).
- */
-long long clockLevelShiftThroughSites(
-    NetworkCarryState& carry, const std::map<std::string, double>& shift,
-    const std::map<std::string, ClockLevelCbFollow>* cb_follow,
-    std::map<std::pair<std::string, std::string>, double>* cb_moved,
-    const std::map<std::pair<std::string, std::string>, double>* cb_direct,
-    const std::set<std::pair<std::string, std::string>>* cb_held, bool dry,
+    const std::set<std::pair<std::string, std::string>>* cb_held = nullptr,
     CarrySiteCounts* counts = nullptr);
 
 /// @brief The re-base seam: measure, filter and apply (see the file banner).

@@ -6359,20 +6359,11 @@ int networkTeardown(
                 jx += fmt::format("{}{{\"site\":\"{}\",\"reason\":\"{}\"}}", jx.empty() ? "" : ",",
                                   carrySiteSpec(s).name, ms.reason);
             }
-            log->info("Network (param model, run end): mechanism {}: {} call(s); step-1 check "
-                      "{} call(s), {} mismatch(es); not moved: {}.",
-                      carryMechanismName(mech), C.prm_ref_calls[m], C.prm_ref_check[m],
-                      C.prm_ref_check_mismatch[m], exempt.empty() ? std::string("none") : exempt);
-            js += fmt::format("{}{{\"mechanism\":\"{}\",\"calls\":{},\"check\":{},"
-                              "\"check_mismatch\":{},\"exempt\":[{}]}}",
-                              m ? "," : "", carryMechanismName(mech), C.prm_ref_calls[m],
-                              C.prm_ref_check[m], C.prm_ref_check_mismatch[m], jx);
-            if (C.prm_ref_check_mismatch[m] > 0)
-                log->warn("Network (card PRM phase 2): mechanism {}: {} of {} call(s) moved a "
-                          "different set of references from the traversal's selection; the "
-                          "site table or the mechanism's visitor is wrong.",
-                          carryMechanismName(mech), C.prm_ref_check_mismatch[m],
-                          C.prm_ref_check[m]);
+            log->info("Network (param model, run end): mechanism {}: {} call(s); not moved: {}.",
+                      carryMechanismName(mech), C.prm_ref_calls[m],
+                      exempt.empty() ? std::string("none") : exempt);
+            js += fmt::format("{}{{\"mechanism\":\"{}\",\"calls\":{},\"exempt\":[{}]}}",
+                              m ? "," : "", carryMechanismName(mech), C.prm_ref_calls[m], jx);
         }
         js += "]}";
         traces.appendRunManifestRecord(config_.getNetworkConfig(), js);

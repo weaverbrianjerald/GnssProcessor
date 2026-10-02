@@ -3807,11 +3807,9 @@ namespace GnssProcessor {
         long long prm_reexpressed = 0, prm_reexpressed_epochs = 0, prm_undecided_at_fold = 0;
         double    prm_reexpressed_max_dvar = 0.0;
         // Card PRM phase 2: the carried references each mechanism moved, per site, through
-        // forEachCarriedReference (filter/NetworkCarrySites), and the step-1 count check of
-        // each mechanism's hand-written list against the traversal's selection.
+        // forEachCarriedReference (filter/NetworkCarrySites), and the mechanism's calls.
         long long prm_ref_moved[kCarrySites][kCarryMechanisms]{};
         long long prm_ref_calls[kCarryMechanisms]{};
-        long long prm_ref_check[kCarryMechanisms]{}, prm_ref_check_mismatch[kCarryMechanisms]{};
         // Card CTU level monitor and raise.  Ratios are counted for a satellite from its
         // second epoch of code information on (its first solve is the code-only batch).
         long long clm_epochs = 0, clm_skip_datum = 0, clm_rows = 0, clm_below1 = 0,

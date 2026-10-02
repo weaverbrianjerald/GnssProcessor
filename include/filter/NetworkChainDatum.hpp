@@ -81,7 +81,6 @@ struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp o
  * @param shift_sat (satellite, signal) -> @f$\Delta b_s@f$.
  * @param shift_rxg (station, constellation, signal) -> @f$\Delta\delta_r@f$.
  * @param shift_rpb (station, receiver phase-bias key) -> @f$\Delta\delta_r@f$.
- * @param dry       count only (nothing is written).
  * @param n_values  out: carried values moved (ambiguities, receiver and satellite phase biases).
  * @param n_terms   out: coupling terms moved.
  * @param counts    optional out: per-site tallies (accumulated).
@@ -90,7 +89,7 @@ void eq34ShiftCarry(NetworkCarryState& carry,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
                     const std::map<std::tuple<int, char, std::string>, double>& shift_rxg,
                     const std::map<std::pair<int, std::string>, double>& shift_rpb,
-                    bool dry, long long& n_values, long long& n_terms,
+                    long long& n_values, long long& n_terms,
                     CarrySiteCounts* counts = nullptr);
 
 /**

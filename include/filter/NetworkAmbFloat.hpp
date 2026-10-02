@@ -235,14 +235,13 @@ namespace GnssProcessor {
      * @param sat     the family's satellite.
      * @param sig     the family's signal.
      * @param delta   the incoming anchor's carried level (m), read before anything moves.
-     * @param dry     count only (nothing is written).
      * @param n_shift out: carried ambiguities moved.
      * @param n_pb    out: carried phase biases moved.
      * @param n_cpl   out: coupling terms moved.
      * @param counts  optional out: per-site tallies (accumulated).
      */
     void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
-                                    const std::string& sig, double delta, bool dry,
+                                    const std::string& sig, double delta,
                                     long long& n_shift, long long& n_pb, long long& n_cpl,
                                     CarrySiteCounts* counts = nullptr);
 

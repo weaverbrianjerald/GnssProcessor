@@ -32,17 +32,15 @@ void eq34ShiftCarry(NetworkCarryState& carry,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
                     const std::map<std::tuple<int, char, std::string>, double>& shift_rxg,
                     const std::map<std::pair<int, std::string>, double>& shift_rpb,
-                    bool dry, long long& n_values, long long& n_terms,
-                    CarrySiteCounts* counts) {
+                    long long& n_values, long long& n_terms, CarrySiteCounts* counts) {
     n_values = 0;
     n_terms  = 0;
     if (shift_sat.empty() && shift_rxg.empty()) return;
+    // A carried satellite phase bias and every coupling term on it take the same step,
+    // the one rule of a phase-bias shift (phaseBiasShiftOf: finite and nonzero).
     const auto satStep = [&](const std::string& sat, const std::string& sig, double& s) {
-        const auto bs = shift_sat.find({sat, sig});
-        if (bs == shift_sat.end() || !std::isfinite(bs->second) || bs->second == 0.0)
-            return false;
-        s = bs->second;
-        return true;
+        s = phaseBiasShiftOf(shift_sat, sat, sig);
+        return s != 0.0;
     };
     forEachCarriedReference(
         carry, carryMechanismSites(CarryMechanism::Eq34Shift),
@@ -79,7 +77,7 @@ void eq34ShiftCarry(NetworkCarryState& carry,
                     ++n_terms;
                     break;
             }
-            if (!dry) *r.value += d;
+            *r.value += d;
             return true;
         },
         counts);
@@ -928,69 +926,16 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // are mutually exclusive by construction at the population site, so the shifted
     // keys are exactly those whose carries survive.  With coupling off the stashes
     // are empty and the walk leaves the output byte-identical.
-    // Card PRM phase 2, step 1: the traversal's selection counted beside the hand-written
-    // walk (dry: nothing written), before the walk moves anything.
-    CarrySiteCounts prm_cc;
-    long long prm_values = 0, prm_terms = 0;
-    eq34ShiftCarry(ctx.carry, shift_sat, shift_rxg, shift_rpb, /*dry=*/true, prm_values,
-                   prm_terms, &prm_cc);
-    long long prm_hand_values = 0, prm_hand_terms = 0;
+    // The walk is the traversal of carried references (card PRM phase 2): the ambiguities,
+    // the receiver phase biases and the satellite phase biases, then the s_prev of the
+    // phase-bias coupling terms in the ambiguity, receiver phase-bias and wet-delay carries.
     if (!shift_sat.empty() || !shift_rxg.empty()) {
-        long long n_shifted = 0;
-        for (auto& [key, lc] : local_carry) {
-            const int idx          = std::get<0>(key);
-            const std::string& sat = std::get<1>(key);
-            const std::string& sig = std::get<2>(key);
-            double d = 0.0;
-            auto bs = shift_sat.find({sat, sig});
-            if (bs != shift_sat.end()) d -= bs->second;
-            if (!sat.empty()) {
-                auto dr = shift_rxg.find(
-                    std::make_tuple(idx, sat.front(), sig));
-                if (dr != shift_rxg.end()) d -= dr->second;
-            }
-            if (d != 0.0 && std::isfinite(d)) {
-                lc.value_abs += d;
-                ++n_shifted;
-            }
-        }
-        for (auto& [key, lc] : rpb_carry) {
-            auto it = shift_rpb.find(key);
-            if (it != shift_rpb.end() && std::isfinite(it->second)
-                && it->second != 0.0) {
-                lc.value_abs += it->second;
-                ++n_shifted;
-            }
-        }
-        for (auto& cp : prev_carry) {
-            if (cp.kind != SharedParamKind::PhaseBias) continue;
-            auto bs = shift_sat.find({cp.sat, cp.signal});
-            if (bs != shift_sat.end() && std::isfinite(bs->second)
-                && bs->second != 0.0) {
-                cp.value += bs->second;
-                ++n_shifted;
-            }
-        }
-        if (!shift_sat.empty()) {
-            long long n_cpl = 0;
-            for (auto& kv : local_carry)
-                n_cpl += rebaseCouplingPhaseBiasSprev(kv.second.coupling, shift_sat);
-            for (auto& kv : rpb_carry)
-                n_cpl += rebaseCouplingPhaseBiasSprev(kv.second.coupling, shift_sat);
-            for (auto& kv : zwd_carry)
-                n_cpl += rebaseCouplingPhaseBiasSprev(kv.second.coupling, shift_sat);
-            eq34_cpl_sprev_total += n_cpl;
-            prm_hand_terms = n_cpl;
-        }
+        CarrySiteCounts prm_cc;
+        long long n_shifted = 0, n_cpl = 0;
+        eq34ShiftCarry(ctx.carry, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc);
+        if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
-        prm_hand_values = n_shifted;
-    }
-    if (!shift_sat.empty() || !shift_rxg.empty()) {
-        const int m = static_cast<int>(CarryMechanism::Eq34Shift);
-        ++ctx.counters.prm_ref_calls[m];
-        ++ctx.counters.prm_ref_check[m];
-        if (prm_values != prm_hand_values || prm_terms != prm_hand_terms)
-            ++ctx.counters.prm_ref_check_mismatch[m];
+        ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Eq34Shift)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Eq34Shift, prm_cc);
     }
     // Sticky baselines for next epoch: this epoch's tree becomes the

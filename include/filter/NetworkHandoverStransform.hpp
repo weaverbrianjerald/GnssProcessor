@@ -123,52 +123,38 @@ struct ClockStransformResult {
 inline constexpr double kStsExactTolM = 1e-9;
 
 /**
- * @brief The pure rank-1 S-transform kernel (§8.1); no context, no I/O.
+ * @brief The rank-1 S-transform kernel (§8.1) through the traversal of carried references
+ *        (card PRM phase 2, @ref forEachCarriedReference); no context, no I/O.
  *
  * Applies @f$x_i \leftarrow x_i - v_c[i] c_0@f$ and @f$\mathrm{var}_i \leftarrow
- * \mathrm{var}_i + v_c[i]^2 \mathrm{var}_q@f$ to every @c SharedParamKind::Clock
- * entry of @p carry whose satellite appears in @p v_c, with
- * @f$c_0 = x_q/v_c[q]@f$.  Entries of other kinds are not touched: their
+ * \mathrm{var}_i + v_c[i]^2 \mathrm{var}_q@f$, with @f$c_0 = x_q/v_c[q]@f$ and @c var_q read
+ * from the incoming pivot's carried clock entry before anything moves, to the satellite-clock
+ * references of the sites of @p mech.  Entries of other kinds are not touched: their
  * component along the clock null direction is zero (see
- * @ref NetworkSbasis::clockNullDirection).  Membership is read from @p v_c, not
- * inferred from the satellite id, so a stale carry row for a satellite outside
- * this epoch's registered set is left alone.
+ * @ref NetworkSbasis::clockNullDirection).
  *
- * @param carry Carried shared priors, mutated in place.
- * @param v_c   The structural direction's nonzero (satellite, coefficient) entries.
- * @param q     The incoming pivot satellite.
- * @return What was done; @c applied false leaves @p carry untouched.
+ * With @c CarryMechanism::Handover (the transform after PASS B) the sites are the carried
+ * clock entries (@c prev_carry), and membership is read from @p v_c, not inferred from the
+ * satellite id, so a stale carry row for a satellite outside this epoch's registered set is
+ * left alone.  With @c CarryMechanism::HandoverBeforeRows (the transform before the coupling
+ * rows are built) the sites are every clock reference of the incoming pivot's constellation
+ * the rows read: the carried clocks, an unregistered or parked satellite of the constellation
+ * included at the structural direction's common coefficient 1; the s_prev of every coupling
+ * term on them, and the term's p_prev by @f$v_i^2\mathrm{var}_q@f$ when the term is free
+ * (@c p_prev > 0; a pinned term keeps its pinned route); and the stash's pinned pivot value.
+ *
+ * @param carry  The run's carried state, mutated in place.
+ * @param v_c    The structural direction's nonzero (satellite, coefficient) entries.
+ * @param q      The incoming pivot satellite.
+ * @param mech   @c Handover or @c HandoverBeforeRows.
+ * @param counts Optional out: per-site tallies of the walk (accumulated).
+ * @return What was done; @c applied false leaves @p carry untouched.  @c rows counts the
+ *         carried clock entries re-expressed.
  */
 ClockStransformResult applyClockStransform(
-    std::vector<CarryPrior>& carry,
-    const std::vector<std::pair<std::string, double>>& v_c,
-    const std::string& q);
-
-/**
- * @brief The S-transform through the traversal of carried references (card PRM phase 2,
- *        @ref forEachCarriedReference).
- *
- * The same rule as @ref applyClockStransform on the sites of @p mech: with
- * @c CarryMechanism::Handover the satellite clocks of @p v_c in @c prev_carry (the transform
- * after PASS B); with @c CarryMechanism::HandoverBeforeRows every clock reference of the
- * incoming pivot's constellation that the coupling rows read: the carried clocks (an
- * unregistered or parked satellite of the constellation included, at the structural
- * direction's common coefficient 1), the s_prev of every coupling term on them (and the
- * term's p_prev by @f$v_i^2\sigma_q^2@f$ when the term is free, @c p_prev > 0), and the
- * stash's pinned pivot value.  @c c0 and @c var_q are read from the incoming pivot's carried
- * entry before anything moves.  @c rows counts the @c prev_carry entries re-expressed.
- * @param carry  the run's carried state.
- * @param v_c    the structural direction's (satellite, coefficient) entries.
- * @param q      the incoming pivot satellite.
- * @param mech   @c Handover or @c HandoverBeforeRows.
- * @param dry    count only: nothing is written and the self-check is not run.
- * @param counts optional out: per-site tallies (accumulated).
- * @return what was done (or would be done); @c applied false leaves @p carry untouched.
- */
-ClockStransformResult applyClockStransformThroughSites(
     NetworkCarryState& carry,
     const std::vector<std::pair<std::string, double>>& v_c,
-    const std::string& q, CarryMechanism mech, bool dry,
+    const std::string& q, CarryMechanism mech = CarryMechanism::Handover,
     CarrySiteCounts* counts = nullptr);
 
 /**

@@ -27,7 +27,7 @@
 namespace GnssProcessor {
 
 long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat, double d,
-                               bool cpl_cond, bool dry, CarrySiteCounts* counts) {
+                               bool cpl_cond, CarrySiteCounts* counts) {
     return forEachCarriedReference(
         carry, carryMechanismSites(CarryMechanism::EphRelevel),
         [&](const CarriedRef& r) -> bool {
@@ -43,7 +43,7 @@ long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
                 default:                              // the D2 clock carry, the jump baseline
                     break;
             }
-            if (!dry) *r.value -= d;
+            *r.value -= d;
             return true;
         },
         counts);
@@ -58,11 +58,6 @@ void networkEphCutoverRelevel(NetworkRunContext& ctx,
     // --- Alias preamble (byte-copies of the SolveGlue run-TU alias block). ---
     auto& relevel_iode = ctx.carry.relevel_iode;
     auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
-    auto& clock_osc = ctx.carry.clock_osc;
-    auto& prev_carry = ctx.carry.prev_carry;
-    auto& prev_clk = ctx.carry.prev_clk;
-    auto& local_carry = ctx.carry.local_carry;
-    auto& zwd_carry = ctx.carry.zwd_carry;
     const bool carry_cpl_cond = ctx.knobs.carry_cpl_cond;
     auto emitEvent = [&](const char* tier, const char* event,
                          const std::string& sat, const std::string& station,
@@ -124,43 +119,20 @@ if (brdc_rts) {
             // Re-base the carried clock state by −Δ_eph.  Only the offset / level term
             // moves; the drift (c1) and the 2×2 covariance are frame-invariant.
             const double d = *shift;
-            // Card PRM phase 2, step 1: the traversal's selection counted beside the
-            // hand-written walk (dry: nothing written), and the walk's own moves counted.
+            // Every carried reference of the satellite's clock through the one traversal
+            // (card PRM phase 2): the oscillator's offset (clock_model), the D2 clock carry,
+            // the clock-monitor jump baseline, and under the conditional coupling the s_prev of
+            // the clock terms (card 1).  The coupling rows reference this clock through those
+            // terms, and a row's functional u = r + Mᵀs is frame-consistent only when all
+            // carried references move together.  The cut-over epoch's own rows were built in
+            // PASS B, before this point, on the references before the shift (the structure
+            // card PRM section 15.3 records for the handover); every later epoch reads them
+            // moved.  The sites the re-level does not move are declared in the mechanism table
+            // (card CLV section 6.4 item 6).
             CarrySiteCounts prm_cc;
-            const long long prm_n = ephCutoverShiftCarry(ctx.carry, sat, d, carry_cpl_cond,
-                                                         /*dry=*/true, &prm_cc);
-            long long hand_n = 0;
-            if (auto oit = clock_osc.find(sat); oit != clock_osc.end() && oit->second.init) {
-                oit->second.x0 -= d;                          // two-state offset (clock_model)
-                ++hand_n;
-            }
-            for (CarryPrior& cp : prev_carry)                 // scalar clock carry (D2, model off)
-                if (cp.kind == SharedParamKind::Clock && cp.sat == sat) { cp.value -= d; ++hand_n; }
-            if (auto jit = prev_clk.find(sat); jit != prev_clk.end()) {
-                jit->second.first -= d;                       // clock-monitor jump baseline
-                ++hand_n;
-            }
-            // The coupling stash references this clock through ŝ_prev terms (card 1).
-            // Re-level them into the new frame as well; otherwise every coupling row's
-            // RHS is off by M·Δ_eph after a cutover (the row's functional u = r + Mᵀs
-            // is frame-consistent only when all carried references move together).
-            if (carry_cpl_cond) {
-                for (auto& [lk, lcv] : local_carry)
-                    for (CoupledShared& cs2 : lcv.coupling)
-                        if (cs2.kind == SharedParamKind::Clock && cs2.sat == sat)
-                            { cs2.s_prev -= d; ++hand_n; }
-                for (auto& [zk, zcv] : zwd_carry)
-                    for (CoupledShared& cs2 : zcv.coupling)
-                        if (cs2.kind == SharedParamKind::Clock && cs2.sat == sat)
-                            { cs2.s_prev -= d; ++hand_n; }
-            }
-            {
-                const int m = static_cast<int>(CarryMechanism::EphRelevel);
-                ++ctx.counters.prm_ref_calls[m];
-                ++ctx.counters.prm_ref_check[m];
-                if (prm_n != hand_n) ++ctx.counters.prm_ref_check_mismatch[m];
-                carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::EphRelevel, prm_cc);
-            }
+            ephCutoverShiftCarry(ctx.carry, sat, d, carry_cpl_cond, &prm_cc);
+            ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::EphRelevel)];
+            carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::EphRelevel, prm_cc);
             log->info("Network (Card 6): {} eph cutover IODE {}->{} — re-leveled carried "
                       "clock by {:.4f} m (−Δ_eph); no discontinuity bump.",
                       sat, old_iode, new_iode, -d);

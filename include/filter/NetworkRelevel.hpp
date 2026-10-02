@@ -18,9 +18,10 @@
  *          carried clock untouched, so the re-level is deferred with relevel_iode in
  *          lock-step) and before the D2 / clock-osc prior injection and the solve.
  *          Shifting the prior is exact for any prior weight; a post-solve x_s shift is
- *          not.  Mutates ctx.carry.{relevel_iode, eph_cutover_disc_pending, clock_osc,
- *          prev_carry, prev_clk, local_carry, zwd_carry}.  Acts only when brdc_rts is
- *          true, the only mode in which relevel_iode is meaningful.
+ *          not.  Mutates ctx.carry.{relevel_iode, eph_cutover_disc_pending} and, through
+ *          @ref ephCutoverShiftCarry, the sites of CarryMechanism::EphRelevel (clock_osc,
+ *          prev_carry, prev_clk, the local_carry and zwd_carry coupling).  Acts only when
+ *          brdc_rts is true, the only mode in which relevel_iode is meaningful.
  */
 
 #include "rinex/MultiRinexSync.hpp"   // MultiRinexSync::SyncedEpoch (bare SyncedEpoch)
@@ -50,12 +51,11 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  * @param sat      the satellite whose broadcast version rolled.
  * @param d        the shift Delta_eph (m); every reference moves by -d.
  * @param cpl_cond @c network.carry_conditional_coupling.
- * @param dry      count only (nothing is written).
  * @param counts   optional out: per-site tallies (accumulated).
- * @return the number of references moved (or that would be moved).
+ * @return the number of references moved.
  */
 long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat, double d,
-                               bool cpl_cond, bool dry, CarrySiteCounts* counts = nullptr);
+                               bool cpl_cond, CarrySiteCounts* counts = nullptr);
 
 /**
  * @brief Apply the ephemeris-cutover re-level for this epoch (card 6).

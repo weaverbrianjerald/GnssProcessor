@@ -345,24 +345,22 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                              std::map<std::pair<char,int>, std::pair<long long,double>>*
                                  cpl_orphan_fam_total = nullptr);
 
-/// Re-base the coupling references that live on D4-S-transformed satellite phase-bias
-/// columns; see SPEC_card1_coupling_carry §14 (card 3, eq34, combined with card 1).
-/// @c CoupledShared::s_prev and @c CarryPrior::value are the same number for the same
-/// identity (both are @f$x_s(j)@f$ at harvest), so the D4 v2-shift that moves the carry
-/// values must move the matching coupling @c s_prev by the same amount.  Otherwise the
-/// row's two carried references are in different frames and the coupling row injects
-/// the frame step as row bias: the row's functional @f$u = r + M^\top s@f$ is
-/// frame-consistent only if all carried references move together (the card 6 eph
-/// cutover in NetworkRelevel.cpp applies the same principle to clock columns).  Only
-/// @c PhaseBias entries whose (sat, signal) is in @p shift_sat are touched:
-/// Clock/CodeBias/VtecSh columns are not moved by the D4 shift, and receiver-side
-/// columns have no @c SharedParamKind image.  Zero and non-finite shifts are skipped,
-/// with the same guards as the prev_carry walk.
-/// @param coupling  one carried local's regression stash, mutated in place.
-/// @param shift_sat the D4 v2-shift set, (sat, signal-group) → shift (m).
-/// @return number of coupling terms re-based (a counter input; 0 = none matched).
-long long rebaseCouplingPhaseBiasSprev(
-    std::vector<CoupledShared>& coupling,
-    const std::map<std::pair<std::string, std::string>, double>& shift_sat);
+/// The step a satellite phase-bias shift applies to one carried reference of the column
+/// (sat, signal): its carried value or a coupling term's @c s_prev (SPEC_card1_coupling_carry
+/// §14; card 3, eq34, combined with card 1; and the float vehicle's declared anchor
+/// handover).  @c CoupledShared::s_prev and @c CarryPrior::value are the same number for the
+/// same identity (both are @f$x_s(j)@f$ at harvest), so a shift that moves the carried value
+/// must move the matching coupling @c s_prev by the same amount; otherwise the row's two
+/// carried references are in different frames and the coupling row injects the frame step
+/// as row bias (the row's functional @f$u = r + M^\top s@f$ is frame-consistent only if all
+/// carried references move together).  The one rule of both phase-bias shifts, applied to
+/// every reference they move through the traversal of carried references (card PRM phase 2).
+/// @param shift_sat the shift set, (sat, signal) -> shift (m).
+/// @param sat       the reference's satellite.
+/// @param sig       the reference's signal.
+/// @return the step (m); 0 when the column is not in the set or its shift is zero or not
+///         finite (the reference does not move).
+double phaseBiasShiftOf(const std::map<std::pair<std::string, std::string>, double>& shift_sat,
+                        const std::string& sat, const std::string& sig);
 
 } // namespace GnssProcessor

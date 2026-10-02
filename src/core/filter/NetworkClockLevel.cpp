@@ -292,153 +292,7 @@ long long clockLevelShiftCarry(
     const std::map<std::string, ClockLevelCbFollow>* cb_follow,
     std::map<std::pair<std::string, std::string>, double>* cb_moved,
     const std::map<std::pair<std::string, std::string>, double>* cb_direct,
-    const std::set<std::pair<std::string, std::string>>* cb_held) {
-    long long n = 0;
-    const bool any_direct = cb_direct && !cb_direct->empty();
-    if (shift.empty() && !any_direct) return n;
-    auto shiftOf = [&](SharedParamKind kind, const std::string& sat) -> double {
-        if (kind != SharedParamKind::Clock && kind != SharedParamKind::PhaseBias) return 0.0;
-        const auto it = shift.find(sat);
-        return (it == shift.end()) ? 0.0 : it->second;
-    };
-    // R-A: the step a free same-band code-bias column of the satellite follows; CLV2 R-A2:
-    // plus the column's own step, and no follow for a column its own filter holds.
-    auto cbShiftOf = [&](SharedParamKind kind, const std::string& sat,
-                         const std::string& signal) -> double {
-        if (kind != SharedParamKind::CodeBias) return 0.0;
-        double x = 0.0;
-        if (any_direct) {
-            const auto dit = cb_direct->find({sat, signal});
-            if (dit != cb_direct->end()) x += dit->second;
-        }
-        if (!cb_follow || (cb_held && cb_held->count({sat, signal}))) return x;
-        const auto fit = cb_follow->find(sat);
-        if (fit == cb_follow->end() || fit->second.factor == 0.0) return x;
-        if (!clockLevelIsFreeSameBand(signal, fit->second.pin1, fit->second.pin2)) return x;
-        const auto it = shift.find(sat);
-        return (it == shift.end()) ? x : x + fit->second.factor * it->second;
-    };
-    // The carried border values (parked entries included: a re-admitted satellite's
-    // seed must be in the same frame as the rest of its carry).
-    std::map<std::string, std::set<std::string>> sigs;   // sat -> its phase-bias signals
-    std::map<std::pair<std::string, std::string>, double> cb_step;   // (sat, signal) -> step
-    for (CarryPrior& cp : carry.prev_carry) {
-        if (cp.kind == SharedParamKind::CodeBias) {
-            const double x = cbShiftOf(cp.kind, cp.sat, cp.signal);
-            if (x == 0.0) continue;
-            cp.value += x;
-            ++n;
-            cb_step[{cp.sat, cp.signal}] = x;
-            continue;
-        }
-        const double d = shiftOf(cp.kind, cp.sat);
-        if (d == 0.0) continue;
-        cp.value += d;
-        ++n;
-        if (cp.kind == SharedParamKind::PhaseBias) sigs[cp.sat].insert(cp.signal);
-    }
-    // Every carried row keeps its residual: u = r + M^T s with the right-hand side
-    // built from s_prev, so the s_prev of each term on a moved column moves with it.
-    auto shiftCoupling = [&](LocalCarry& lc) {
-        for (CoupledShared& cs : lc.coupling) {
-            const double d = (cs.kind == SharedParamKind::CodeBias)
-                                 ? cbShiftOf(cs.kind, cs.sat, cs.signal)
-                                 : shiftOf(cs.kind, cs.sat);
-            if (d == 0.0) continue;
-            cs.s_prev += d;
-            ++n;
-        }
-    };
-    for (auto& kv : carry.local_carry)      shiftCoupling(kv.second);
-    for (auto& kv : carry.zwd_carry)        shiftCoupling(kv.second);
-    for (auto& kv : carry.iono_carry)       shiftCoupling(kv.second);
-    for (auto& kv : carry.iono_blk_carry)   shiftCoupling(kv.second);
-    for (auto& kv : carry.gl_hold_amb)      shiftCoupling(kv.second);
-    for (auto& kv : carry.gl_hold_iono)     shiftCoupling(kv.second);
-    for (auto& kv : carry.gl_hold_iono_blk) shiftCoupling(kv.second);
-    for (auto& kv : carry.rx_clk_carry)     shiftCoupling(kv.second);
-    for (auto& kv : carry.rpb_carry)        shiftCoupling(kv.second);
-    for (auto& kv : carry.rx_cb_carry)      shiftCoupling(kv.second);
-    // The clock-jump baselines: a re-base is not a clock step.
-    for (const auto& [sat, d] : shift) {
-        if (d == 0.0) continue;
-        if (auto it = carry.prev_clk.find(sat); it != carry.prev_clk.end()) {
-            it->second.first += d;
-            ++n;
-        }
-        if (auto it = carry.cb_exc_prev_clk.find(sat); it != carry.cb_exc_prev_clk.end()) {
-            it->second += d;
-            ++n;
-        }
-        if (auto it = carry.pb_hold_prev_clock_m.find(sat);
-            it != carry.pb_hold_prev_clock_m.end()) {
-            it->second += d;
-            ++n;
-        }
-    }
-    // The last solved phase bias and the open pin bridges ("SAT_SIGNAL").
-    for (auto& [key, v] : carry.pb_level_prev) {
-        std::string sat, sig;
-        if (!splitSatSignal(key, sat, sig)) continue;
-        const double d = shiftOf(SharedParamKind::PhaseBias, sat);
-        if (d == 0.0) continue;
-        v += d;
-        ++n;
-    }
-    for (auto& [key, br] : carry.pin_bridge) {
-        std::string sat, sig;
-        if (!splitSatSignal(key, sat, sig)) continue;
-        const double d = shiftOf(SharedParamKind::PhaseBias, sat);
-        if (d == 0.0) continue;
-        br.value += d;
-        ++n;
-    }
-    // The emit-side transfer: every phase-bias signal the satellite has in the carry
-    // or in the hold ("SAT|SIGNAL") follows the shift.
-    for (const auto& [key, st] : carry.pb_hold) {
-        (void)st;
-        const std::size_t bar = key.find('|');
-        if (bar == std::string::npos) continue;
-        const std::string sat = key.substr(0, bar);
-        if (shift.count(sat)) sigs[sat].insert(key.substr(bar + 1));
-    }
-    for (const auto& [sat, d] : shift) {
-        if (d == 0.0) continue;
-        ClockLevelSat& ls = carry.clk_level.sat[sat];
-        for (const std::string& sig : sigs[sat]) ls.xfer[sig] += d;
-        ls.pending_step += d;   // declared on the satellite's next C record
-    }
-    // R-A: the time-linked code-bias datum references ("<constellation>|<signal>" ->
-    // satellite -> previous solved value) of the moved columns, so the veteran-referenced
-    // sum-to-zero row reads the same frame as the carry; then the B-record declarations.
-    if (cb_follow || any_direct) {
-        for (auto& [fam, per_sat] : carry.code_bias_prev_) {
-            const std::size_t bar = fam.find('|');
-            if (bar == std::string::npos) continue;
-            const std::string sig = fam.substr(bar + 1);
-            for (auto& [sat, v] : per_sat) {
-                const double x = cbShiftOf(SharedParamKind::CodeBias, sat, sig);
-                if (x == 0.0) continue;
-                v += x;
-                ++n;
-                cb_step[{sat, sig}] = x;
-            }
-        }
-        for (const auto& [key, x] : cb_step) {
-            carry.clk_level.sat[key.first].cb_pending[key.second] += x;
-            if (cb_moved) (*cb_moved)[key] = x;
-        }
-    }
-    return n;
-}
-
-long long clockLevelShiftThroughSites(
-    NetworkCarryState& carry, const std::map<std::string, double>& shift,
-    const std::map<std::string, ClockLevelCbFollow>* cb_follow,
-    std::map<std::pair<std::string, std::string>, double>* cb_moved,
-    const std::map<std::pair<std::string, std::string>, double>* cb_direct,
-    const std::set<std::pair<std::string, std::string>>* cb_held, bool dry,
-    CarrySiteCounts* counts) {
+    const std::set<std::pair<std::string, std::string>>* cb_held, CarrySiteCounts* counts) {
     const bool any_direct = cb_direct && !cb_direct->empty();
     if (shift.empty() && !any_direct) return 0;
     const bool cb_on = cb_follow || any_direct;
@@ -468,7 +322,7 @@ long long clockLevelShiftThroughSites(
     std::map<std::pair<std::string, std::string>, double> cb_step;   // (sat, signal) -> step
     const auto move = [&](const CarriedRef& r, double d) {
         if (d == 0.0) return false;
-        if (!dry) *r.value += d;
+        *r.value += d;
         return true;
     };
     // Every reference along the level direction, once (card PRM phase 2): the carried border
@@ -517,7 +371,6 @@ long long clockLevelShiftThroughSites(
             }
         },
         counts);
-    if (dry) return n;
     // The emit-side transfer: every phase-bias signal the satellite has in the carry or in
     // the hold follows the shift, and the step is declared on the satellite's next C record.
     for (const auto& [sat, d] : shift) {
@@ -1177,29 +1030,13 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
 
     // (4) Apply, then book-keep and trace.
     std::map<std::pair<std::string, std::string>, double> cb_moved;
-    // Card PRM phase 2, step 1: the traversal's selection counted beside the hand-written
-    // walk (dry: nothing written), before the walk moves anything.
+    // Every carried reference along the level, through the one traversal (card PRM phase 2).
     CarrySiteCounts prm_cc;
-    const long long prm_n = clockLevelShiftThroughSites(
-        ctx.carry, shift, cb_follow.empty() ? nullptr : &cb_follow, nullptr,
-        fcb_step.empty() ? nullptr : &fcb_step, fcb_held.empty() ? nullptr : &fcb_held,
-        /*dry=*/true, &prm_cc);
-    long long hand_n = 0;
-    if (cb_follow.empty() && fcb_step.empty() && fcb_held.empty()) {
-        hand_n = clockLevelShiftCarry(ctx.carry, shift);
-    } else {
-        hand_n = clockLevelShiftCarry(
-            ctx.carry, shift, cb_follow.empty() ? nullptr : &cb_follow, &cb_moved,
-            fcb_step.empty() ? nullptr : &fcb_step, fcb_held.empty() ? nullptr : &fcb_held);
-    }
-    ctx.counters.clv_refs_shifted += hand_n;
-    {
-        const int m = static_cast<int>(CarryMechanism::ClockLevel);
-        ++ctx.counters.prm_ref_calls[m];
-        ++ctx.counters.prm_ref_check[m];
-        if (prm_n != hand_n) ++ctx.counters.prm_ref_check_mismatch[m];
-        carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::ClockLevel, prm_cc);
-    }
+    ctx.counters.clv_refs_shifted += clockLevelShiftCarry(
+        ctx.carry, shift, cb_follow.empty() ? nullptr : &cb_follow, &cb_moved,
+        fcb_step.empty() ? nullptr : &fcb_step, fcb_held.empty() ? nullptr : &fcb_held, &prm_cc);
+    ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::ClockLevel)];
+    carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::ClockLevel, prm_cc);
     for (const auto& [key, x] : cb_moved) {
         if (fcb_step.count(key) || fcb_held.count(key)) continue;   // CLV2 R-A2's own steps
         ++ctx.counters.clv_cb_follow_moves;

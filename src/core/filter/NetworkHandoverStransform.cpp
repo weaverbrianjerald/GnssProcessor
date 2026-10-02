@@ -14,62 +14,9 @@
 namespace GnssProcessor {
 
 ClockStransformResult applyClockStransform(
-    std::vector<CarryPrior>& carry,
-    const std::vector<std::pair<std::string, double>>& v_c,
-    const std::string& q) {
-    ClockStransformResult out;
-    if (v_c.empty() || q.empty()) return out;
-
-    // Membership and coefficients come from the structural direction alone.
-    std::map<std::string, double> coeff;
-    for (const auto& e : v_c) coeff.emplace(e.first, e.second);
-
-    const auto qit = coeff.find(q);
-    if (qit == coeff.end() || !(std::abs(qit->second) > 0.0)) return out;
-    const double vq = qit->second;
-
-    // x_q_pre / var_q: the incoming pivot's carried level in the outgoing frame.
-    // If it is absent there is nothing to re-reference from (a first sighting, or a
-    // vanish-return whose carry aged out); the caller counts this no-op and writes
-    // an event.
-    const CarryPrior* qrow = nullptr;
-    for (const auto& cp : carry)
-        if (cp.kind == SharedParamKind::Clock && cp.sat == q) { qrow = &cp; break; }
-    if (qrow == nullptr) return out;
-
-    out.c0    = qrow->value / vq;
-    out.var_q = qrow->var;
-
-    // x <- x - v_c*c0 ; var <- var + v_c[i]^2 * var_q.  Clocks only: every other
-    // shared family has a zero component along this direction because its gauge is
-    // realized independently (NetworkSbasis::clockNullDirection documents the
-    // measurement).
-    for (auto& cp : carry) {
-        if (cp.kind != SharedParamKind::Clock) continue;
-        const auto cit = coeff.find(cp.sat);
-        if (cit == coeff.end()) continue;
-        const double vi = cit->second;
-        cp.value -= vi * out.c0;
-        cp.var   += vi * vi * out.var_q;
-        ++out.rows;
-    }
-    if (out.rows == 0) return out;
-    out.applied = true;
-
-    // Exactness self-check (§8.4 INC-3): the incoming pivot's carried level must now
-    // equal its pinned value (0) within kStsExactTolM, and re-deriving the coefficient
-    // must also give 0 (idempotence).  A failure is reported, not thrown.
-    for (const auto& cp : carry)
-        if (cp.kind == SharedParamKind::Clock && cp.sat == q) { out.x_q_post = cp.value; break; }
-    out.selfcheck_ok = std::abs(out.x_q_post) <= kStsExactTolM
-                    && std::abs(out.x_q_post / vq) <= kStsExactTolM;
-    return out;
-}
-
-ClockStransformResult applyClockStransformThroughSites(
     NetworkCarryState& carry,
     const std::vector<std::pair<std::string, double>>& v_c,
-    const std::string& q, CarryMechanism mech, bool dry, CarrySiteCounts* counts) {
+    const std::string& q, CarryMechanism mech, CarrySiteCounts* counts) {
     ClockStransformResult out;
     if (v_c.empty() || q.empty()) return out;
 
@@ -116,7 +63,6 @@ ClockStransformResult applyClockStransformThroughSites(
             if (r.kind != SharedParamKind::Clock) return false;
             double vi = 0.0;
             if (!coeffOf(r.sat, vi)) return false;
-            if (dry) return true;
             *r.value -= vi * c0;
             if (r.site == CarrySite::PrevCarry) *r.var += vi * vi * var_q;
             else if (r.var && *r.var > 0.0) *r.var += vi * vi * var_q;   // a free term's p_prev
@@ -126,7 +72,6 @@ ClockStransformResult applyClockStransformThroughSites(
     out.rows = c.moved[static_cast<int>(CarrySite::PrevCarry)] - before;
     if (out.rows == 0) return out;
     out.applied = true;
-    if (dry) return out;
 
     // Exactness self-check (§8.4 INC-3).
     bool q_seen = false;
@@ -180,21 +125,13 @@ void networkHandoverStransform(NetworkRunContext& ctx,
         const auto v_c = NetworkSbasis::clockNullDirection(registered_clock_sats, key);
         if (v_c.empty()) continue;
 
-        // Card PRM phase 2, step 1: the traversal's selection counted beside the
-        // hand-written kernel (dry: nothing written), before the kernel moves anything.
+        // Every carried clock of the constellation through the one traversal (card PRM
+        // phase 2).
         CarrySiteCounts prm_cc;
-        const ClockStransformResult prm_r = applyClockStransformThroughSites(
-            ctx.carry, v_c, q, CarryMechanism::Handover, /*dry=*/true, &prm_cc);
-        const ClockStransformResult r = applyClockStransform(ctx.carry.prev_carry, v_c, q);
-        {
-            const int m = static_cast<int>(CarryMechanism::Handover);
-            ++ctx.counters.prm_ref_calls[m];
-            ++ctx.counters.prm_ref_check[m];
-            if (prm_r.applied != r.applied || prm_r.rows != r.rows
-                || (r.applied && (prm_r.c0 != r.c0 || prm_r.var_q != r.var_q)))
-                ++ctx.counters.prm_ref_check_mismatch[m];
-            carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, prm_cc);
-        }
+        const ClockStransformResult r =
+            applyClockStransform(ctx.carry, v_c, q, CarryMechanism::Handover, &prm_cc);
+        ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
+        carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, prm_cc);
         if (!r.applied) {
             ++ctx.counters.sts_noop_no_carry;
             traces.emitEvent(t, "STRANSFORM", "sts_noop", q, "", std::nullopt, std::nullopt,

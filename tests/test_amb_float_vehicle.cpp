@@ -35,6 +35,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
+#include "app/NetworkRunContext.hpp"
 #include "filter/NetworkAmbFloat.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
 #include "filter/NetworkCoupling.hpp"
@@ -937,23 +938,31 @@ TEST(AmbFloatVehicleTest, AnchorStransformShiftsEveryCarryByTheIncomingAnchorsLe
 }
 
 // Latent defect (i): the coupling s_prev on the shifted phase-bias column must move with
-// the levels, and only on that column.  D4 and this transform both call
-// rebaseCouplingPhaseBiasSprev, so the rule cannot drift between them.
+// the levels, and only on that column.  D4 and this transform both apply phaseBiasShiftOf
+// through the traversal of carried references (card PRM phase 2), so the rule cannot drift
+// between them.
 TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBiasColumn) {
     using GnssProcessor::CoupledShared;
     using GnssProcessor::SharedParamKind;
     const double delta = -3.5;
-    std::vector<CoupledShared> coupling = {
+    GnssProcessor::NetworkCarryState carry;
+    GnssProcessor::LocalCarry lc{0.0, 1e-4, 100.0};
+    lc.coupling = {
         CoupledShared{SharedParamKind::PhaseBias, "G07", "L1C", 0, 0, 'C', 0, 1.0, 20.0, 0.1},
         CoupledShared{SharedParamKind::PhaseBias, "G07", "L2W", 0, 0, 'C', 0, 1.0, 30.0, 0.1},
         CoupledShared{SharedParamKind::Clock,     "G07", "",    0, 0, 'C', 0, 0.8,  5.0, 0.1},
     };
-    const std::map<std::pair<std::string, std::string>, double> shift{{{"G07", "L1C"}, +delta}};
-    const long long n = GnssProcessor::rebaseCouplingPhaseBiasSprev(coupling, shift);
-    EXPECT_EQ(n, 1);
+    const std::tuple<int, std::string, std::string> other{4, "G09", "L1C"};   // another family
+    carry.local_carry[other] = lc;
+    long long n_shift = 0, n_pb = 0, n_cpl = 0;
+    GnssProcessor::declaredHandoverShiftCarry(carry, "G07", "L1C", delta, n_shift, n_pb, n_cpl);
+    EXPECT_EQ(n_cpl, 1);
+    EXPECT_EQ(n_shift, 0);
+    const auto& coupling = carry.local_carry[other].coupling;
     EXPECT_DOUBLE_EQ(coupling[0].s_prev, 20.0 + delta);   // the shifted PB column
     EXPECT_DOUBLE_EQ(coupling[1].s_prev, 30.0);           // a different signal: untouched
     EXPECT_DOUBLE_EQ(coupling[2].s_prev,  5.0);           // the clock: never moved by this
+    EXPECT_DOUBLE_EQ(carry.local_carry[other].value_abs, 0.0);   // another family's level stays
 }
 
 // The transform is idempotent: a second application, with Δ read from the already

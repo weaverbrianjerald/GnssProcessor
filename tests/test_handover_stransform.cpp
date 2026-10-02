@@ -45,6 +45,7 @@
 #include <vector>
 
 #include "config/GnssConfig.hpp"
+#include "app/NetworkRunContext.hpp"
 #include "filter/NetworkHandoverStransform.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkSbasis.hpp"
@@ -90,6 +91,18 @@ std::vector<CarryPrior> makeCarry() {
         bias(SharedParamKind::PhaseBias, "G05", "L1C", -0.480, 4.0e-3),
         bias(SharedParamKind::CodeBias,  "E03", "C1C", +0.012, 1.0e-4),
     };
+}
+
+/// The kernel on a carried clock list: it walks the run's carried state (card PRM phase 2),
+/// so the list is moved into a NetworkCarryState's prev_carry and back.
+ClockStransformResult applyTo(std::vector<CarryPrior>& c,
+                              const std::vector<std::pair<std::string, double>>& v_c,
+                              const std::string& q) {
+    NetworkCarryState state;
+    state.prev_carry = std::move(c);
+    const ClockStransformResult r = applyClockStransform(state, v_c, q);
+    c = std::move(state.prev_carry);
+    return r;
 }
 
 double levelOf(const std::vector<CarryPrior>& c, const std::string& sat) {
@@ -178,7 +191,7 @@ TEST(HandoverStransform, LandsIncomingPivotOnZeroAndShiftsTheConstellationRigidl
     const double g32_pre = levelOf(carry, "G32");
 
     const auto v_c = NetworkSbasis::clockNullDirection(kRegistered, "G");
-    const auto r   = applyClockStransform(carry, v_c, "G02");
+    const auto r   = applyTo(carry, v_c, "G02");
 
     ASSERT_TRUE(r.applied);
     EXPECT_EQ(r.rows, 4);                       // exactly the four GPS clocks
@@ -208,7 +221,7 @@ TEST(HandoverStransform, BetweenSatelliteDifferencesAreUnchanged) {
     auto before = makeCarry();
     auto carry  = makeCarry();
     const auto v_c = NetworkSbasis::clockNullDirection(kRegistered, "G");
-    ASSERT_TRUE(applyClockStransform(carry, v_c, "G02").applied);
+    ASSERT_TRUE(applyTo(carry, v_c, "G02").applied);
 
     const std::vector<std::pair<std::string, std::string>> pairs{
         {"G01", "G02"}, {"G01", "G05"}, {"G02", "G32"}, {"G05", "G32"}};
@@ -229,7 +242,7 @@ TEST(HandoverStransform, OtherConstellationAndBiasFamiliesAreUntouched) {
     auto before = makeCarry();
     auto carry  = makeCarry();
     const auto v_c = NetworkSbasis::clockNullDirection(kRegistered, "G");
-    ASSERT_TRUE(applyClockStransform(carry, v_c, "G02").applied);
+    ASSERT_TRUE(applyTo(carry, v_c, "G02").applied);
 
     // Galileo has its own clock gauge; a GPS handover does not move it.
     EXPECT_DOUBLE_EQ(levelOf(carry, "E02"), levelOf(before, "E02"));
@@ -257,7 +270,7 @@ TEST(HandoverStransform, VarianceBumpIsNonNegativeAndEqualsVarQ) {
     const double var_q = varOf(before, "G02");
 
     const auto v_c = NetworkSbasis::clockNullDirection(kRegistered, "G");
-    const auto r   = applyClockStransform(carry, v_c, "G02");
+    const auto r   = applyTo(carry, v_c, "G02");
     ASSERT_TRUE(r.applied);
     EXPECT_DOUBLE_EQ(r.var_q, var_q);
 
@@ -282,7 +295,7 @@ TEST(HandoverStransform, NoOpPathsLeaveTheCarryBitIdentical) {
     //     vanish-return whose carry aged out), so there is nothing to re-reference from.
     {
         auto carry = makeCarry();
-        const auto r = applyClockStransform(carry, v_c, "G99");
+        const auto r = applyTo(carry, v_c, "G99");
         EXPECT_FALSE(r.applied);
         EXPECT_EQ(r.rows, 0);
         for (std::size_t i = 0; i < before.size(); ++i) {
@@ -293,7 +306,7 @@ TEST(HandoverStransform, NoOpPathsLeaveTheCarryBitIdentical) {
     // (b) an empty direction (constellation not registered this epoch).
     {
         auto carry = makeCarry();
-        EXPECT_FALSE(applyClockStransform(carry, {}, "G02").applied);
+        EXPECT_FALSE(applyTo(carry, {}, "G02").applied);
         for (std::size_t i = 0; i < before.size(); ++i)
             EXPECT_DOUBLE_EQ(carry[i].value, before[i].value);
     }
@@ -302,7 +315,7 @@ TEST(HandoverStransform, NoOpPathsLeaveTheCarryBitIdentical) {
     {
         auto carry = makeCarry();
         carry.push_back(clk("G77", +7.0, 1.0e-3));   // not in kRegistered
-        ASSERT_TRUE(applyClockStransform(carry, v_c, "G02").applied);
+        ASSERT_TRUE(applyTo(carry, v_c, "G02").applied);
         EXPECT_DOUBLE_EQ(levelOf(carry, "G77"), +7.0);
         EXPECT_DOUBLE_EQ(varOf(carry, "G77"), 1.0e-3);
     }
@@ -315,10 +328,10 @@ TEST(HandoverStransform, NoOpPathsLeaveTheCarryBitIdentical) {
 TEST(HandoverStransform, SecondApplicationIsANoOp) {
     auto carry = makeCarry();
     const auto v_c = NetworkSbasis::clockNullDirection(kRegistered, "G");
-    ASSERT_TRUE(applyClockStransform(carry, v_c, "G02").applied);
+    ASSERT_TRUE(applyTo(carry, v_c, "G02").applied);
     const auto snapshot = carry;
 
-    const auto again = applyClockStransform(carry, v_c, "G02");
+    const auto again = applyTo(carry, v_c, "G02");
     EXPECT_DOUBLE_EQ(again.c0, 0.0);        // the pivot already sits at its pinned value
     for (std::size_t i = 0; i < snapshot.size(); ++i)
         EXPECT_DOUBLE_EQ(carry[i].value, snapshot[i].value)

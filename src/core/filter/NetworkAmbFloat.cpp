@@ -9,7 +9,7 @@
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
-#include "filter/NetworkCoupling.hpp"          // rebaseCouplingPhaseBiasSprev (the D4 s_prev walk)
+#include "filter/NetworkCoupling.hpp"          // phaseBiasShiftOf (the phase-bias shift rule)
 #include "filter/NetworkHandoverStransform.hpp" // kStsExactTolM (one exactness tolerance)
 #include "filter/StateKeySchema.hpp"
 #include "logging/NetworkRunTraces.hpp"
@@ -224,10 +224,13 @@ void networkAmbFloatApplyDrops(
 }
 
 void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
-                                const std::string& sig, double delta, bool dry,
+                                const std::string& sig, double delta,
                                 long long& n_shift, long long& n_pb, long long& n_cpl,
                                 CarrySiteCounts* counts) {
     n_shift = n_pb = n_cpl = 0;
+    // The phase-bias shift of the family, under the one rule of a phase-bias shift
+    // (phaseBiasShiftOf), as the eq34 D4 shift applies it.
+    const std::map<std::pair<std::string, std::string>, double> shift_sat{{{sat, sig}, +delta}};
     forEachCarriedReference(
         carry, carryMechanismSites(CarryMechanism::DeclaredHandover),
         [&](const CarriedRef& r) -> bool {
@@ -235,18 +238,20 @@ void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat
                 return false;
             switch (r.site) {
                 case CarrySite::AmbiguityValue:
-                    if (!dry) *r.value -= delta;   // variances untouched: an exact basis change
+                    *r.value -= delta;             // variances untouched: an exact basis change
                     ++n_shift;
                     return true;
                 case CarrySite::PrevCarry:
-                    if (!dry) *r.value += delta;   // pinning N_{r_in} = 0 means b'_s = b_s + Δ
+                    *r.value += delta;             // pinning N_{r_in} = 0 means b'_s = b_s + Δ
                     ++n_pb;
                     return true;
-                default:                           // a coupling term on the family's phase bias
-                    if (!std::isfinite(delta) || delta == 0.0) return false;
-                    if (!dry) *r.value += delta;
+                default: {                         // a coupling term on the family's phase bias
+                    const double s = phaseBiasShiftOf(shift_sat, r.sat, r.signal);
+                    if (s == 0.0) return false;
+                    *r.value += s;
                     ++n_cpl;
                     return true;
+                }
             }
         },
         counts);
@@ -264,7 +269,6 @@ long long networkAmbFloatDeclaredHandover(
     if (!ctx.knobs.amb_float_kf || !ctx.knobs.amb_float_declared_handover) return 0;
     if (handovers.empty()) return 0;
     auto& local_carry = ctx.carry.local_carry;
-    auto& prev_carry  = ctx.carry.prev_carry;
     auto& counters    = ctx.counters;
 
     long long n_shift_total = 0;
@@ -300,43 +304,18 @@ long long networkAmbFloatDeclaredHandover(
             ++counters.n_amb_sts_identity;
             continue;
         }
-        // Card PRM phase 2, step 1: the traversal's selection counted beside the
-        // hand-written walk (dry: nothing written), before the walk moves anything.
+        // ---- The transform.  All three references on this identity move together, through
+        //      the traversal of carried references (card PRM phase 2): every carried ambiguity
+        //      of the family by -Δ, and the satellite phase bias by the opposite shift
+        //      (pinning N_{r_in} = 0 means b'_s = b_s + Δ), its carried prior and every
+        //      coupling s_prev that references it, or the frame step is injected as row bias
+        //      (the filed latent defect at the D4 carry S-transformation in
+        //      NetworkChainDatum.cpp, SPEC_card1_coupling_carry §14).
         CarrySiteCounts prm_cc;
-        long long prm_shift = 0, prm_pb = 0, prm_cpl = 0;
-        declaredHandoverShiftCarry(ctx.carry, sat, sig, delta, /*dry=*/true, prm_shift, prm_pb,
-                                   prm_cpl, &prm_cc);
-        // ---- The transform.  All three references on this identity move together.
-        long long n_shift = 0;
-        for (auto& [key, lc] : local_carry) {
-            if (std::get<1>(key) != sat || std::get<2>(key) != sig) continue;
-            lc.value_abs -= delta;          // variances untouched: an exact basis change
-            ++n_shift;
-        }
-        // The satellite phase bias absorbs the opposite shift: pinning N_{r_in} = 0 means
-        // b'_s = b_s + Δ.  Its carried prior and every coupling s_prev that references it
-        // move with it, or the frame step is injected as row bias (the filed latent
-        // defect at the D4 carry S-transformation in NetworkChainDatum.cpp,
-        // SPEC_card1_coupling_carry §14).
-        const std::map<std::pair<std::string, std::string>, double> shift_sat{
-            {{sat, sig}, +delta}};
-        long long n_pb = 0, n_cpl = 0;
-        for (auto& cp : prev_carry) {
-            if (cp.kind != SharedParamKind::PhaseBias) continue;
-            if (cp.sat != sat || cp.signal != sig) continue;
-            cp.value += delta;
-            ++n_pb;
-        }
-        for (auto& kv : local_carry)
-            n_cpl += rebaseCouplingPhaseBiasSprev(kv.second.coupling, shift_sat);
-        {
-            const int m = static_cast<int>(CarryMechanism::DeclaredHandover);
-            ++counters.prm_ref_calls[m];
-            ++counters.prm_ref_check[m];
-            if (prm_shift != n_shift || prm_pb != n_pb || prm_cpl != n_cpl)
-                ++counters.prm_ref_check_mismatch[m];
-            carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);
-        }
+        long long n_shift = 0, n_pb = 0, n_cpl = 0;
+        declaredHandoverShiftCarry(ctx.carry, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc);
+        ++counters.prm_ref_calls[static_cast<int>(CarryMechanism::DeclaredHandover)];
+        carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);
         // ---- Exactness self-check (the sts_selfcheck_ok pattern).  The incoming
         //      anchor's column now reads 0, which is what its w = 1e10 pin asserts.
         const double x_post = in_it->second.value_abs;
