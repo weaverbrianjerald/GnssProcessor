@@ -489,3 +489,9 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   elsewhere the culprit-free replay missed the solve it replays by up to 7.9 mm (field) and 10.6 mm
   (sim) in phase bias. The same prior now passes at all three re-add sites; byte-identical where the
   tier does not adapt (the goldens), the unit suite passes.
+- [EXL](EXL_exact_update_lah_promotion_2026-10-01.md): open, 2026-10-01: pre-registered (the author's
+  decision after cards LGM and AIL): card CTU's exact coupling update and its four companions armed on
+  the goldens together with card LAH's phase-clock hold as an interim hold, by card WUP's promotion
+  path. Fresh 2 h evidence: under the plain hold the exact update costs the field consumer 3.3 m in
+  hour 1; under the phase-clock hold it reads 0.108 / 0.024 m. Gates in section 3 (G4 and G8 re-stated
+  relative, G5 disclosed).
