@@ -489,6 +489,11 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   elsewhere the culprit-free replay missed the solve it replays by up to 7.9 mm (field) and 10.6 mm
   (sim) in phase bias. The same prior now passes at all three re-add sites; byte-identical where the
   tier does not adapt (the goldens), the unit suite passes.
+  RESTORE PATH HARDENED (section 7): a failed re-solve is undone exactly to the last landed state,
+  attributed to a station and counted; the undo leaves out a station it cannot re-add (the primary's
+  own rule) and only an undo that still cannot complete skips the epoch. Against the card's own
+  defect: 30 epochs on a partly rebuilt estimator unhardened, 80 withheld by a skip-only first
+  build, 2 failures and 240 of 240 epochs emitted as committed.
 - [EXL](EXL_exact_update_lah_promotion_2026-10-01.md): open, 2026-10-01: pre-registered (the author's
   decision after cards LGM and AIL): card CTU's exact coupling update and its four companions armed on
   the goldens together with card LAH's phase-clock hold as an interim hold, by card WUP's promotion

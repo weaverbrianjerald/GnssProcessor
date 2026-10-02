@@ -4247,6 +4247,16 @@ namespace GnssProcessor {
         double      we_clk_move_max_m   = 0.0; ///< largest |final − primary| clock move (m)
         double      we_clk_move_max_tow = 0.0; ///< TOW of that move
         std::string we_clk_move_max_sat;       ///< satellite of that move
+        // Failed within-epoch re-solves (card RPD section 7).  n_adapt counts landed
+        // re-solves only, so a failed one appeared in no counter before the card.  A
+        // failure is undone to the last landed state; the undo drops, for the epoch, a
+        // station it cannot re-add, and an undo that still cannot complete skips the
+        // epoch.  The first failure's identity is kept (invariant #7).
+        long long   we_resolve_failed   = 0;   ///< re-solves that failed and were undone to the last landed state
+        long long   we_undo_sta_dropped = 0;   ///< station-epochs the undo could not re-add and left out of the final solve
+        long long   we_restore_failed   = 0;   ///< undos that could not complete (epoch skipped)
+        double      we_resolve_fail_tow = 0.0; ///< TOW of the first failed re-solve
+        std::string we_resolve_fail_at;        ///< where it failed: a station name, or "shared system"
 
         // Split-cadence fast-clock telemetry (FC-1, network.fast_clock).  Standing
         // invariant #4 matters most here: the fast tier runs on epochs the full pipeline

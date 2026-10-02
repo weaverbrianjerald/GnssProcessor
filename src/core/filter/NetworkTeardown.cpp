@@ -643,6 +643,19 @@ int networkTeardown(
                   sc.we_clk_move_max_m,
                   sc.we_clk_move_max_sat.empty() ? "none" : sc.we_clk_move_max_sat,
                   sc.we_clk_move_max_tow);
+        // Failed re-solves (card RPD section 7), on a line of their own so the line above
+        // keeps the shape scripts/cm_grade.py parses.  A failure is a replay that could
+        // not rebuild a system the primary solve admitted, so any count is a warning.
+        if (sc.we_resolve_failed == 0)
+            log->info("Network (T2 within-epoch re-solve failures): 0 re-solve(s) failed; "
+                      "0 station-epoch(s) dropped by an undo; 0 undo(s) incomplete.");
+        else
+            log->warn("Network (T2 within-epoch re-solve failures): {} re-solve(s) failed and "
+                      "were undone to the last landed state (first at TOW {:.1f}, {}); {} "
+                      "station-epoch(s) the undo could not re-add were left out of the final "
+                      "solve; {} undo(s) could not complete, each epoch skipped.",
+                      sc.we_resolve_failed, sc.we_resolve_fail_tow, sc.we_resolve_fail_at,
+                      sc.we_undo_sta_dropped, sc.we_restore_failed);
     }
     if (config_.networkCbKaulaPrior())
         log->info("Network (Card KP): admitted-OSB physical-bound prior folded on {} epoch(s), "

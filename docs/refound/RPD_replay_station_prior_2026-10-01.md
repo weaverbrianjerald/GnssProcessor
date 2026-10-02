@@ -5,11 +5,11 @@
 - **id:** RPD
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** FIXED 2026-10-01. Under `network.station_prior_before_pd` (card RF-PD-fix, armed on both goldens) a station's RXCB-DATUM rows reach the primary solve only through the `StationPrior` that `addStation` folds before its positive-definiteness test; the within-epoch RAIM replay (`resolve_dropping`) re-added every station without it, so no replay carried a receiver-DCB datum row. Two failure modes, both measured with a temporary diagnostic (section 2). (1) Where a station's block is positive-definite only with that row (the first assessed epoch, and the first epoch back of a station returning without a carry), the replay is rejected at that station, which aborts the whole replay, and the restore replay fails the same way: on a forced-adapt field arm with a 20-minute station outage this repeated on 30 consecutive epochs, the estimator holding 7 of 57 stations, and the run-end counters recorded none of it. (2) Elsewhere the replay admits every station and solves without the datum: with no culprit at all it misses the solve it replays by up to 7.9 mm (field) and 10.6 mm (sim) in the phase-bias columns, and on forced arms the products diverge from the first adapted epoch (field between-satellite clock 2 mm, phase bias 10 mm). The fix passes the same `StationPrior` at all three re-add sites; the fixed replay reproduces the primary solve to 8 µm and was never rejected. Gates: byte-identical on the four PRM arms (145 of 145, where the tier does not adapt), the committed exe identical to the diagnostic's fixed mode on five forced arms, the unit suite passes. Latent on the goldens as armed (σ̂0 sits at its floor of 1.0 against a trigger of 3.0; the 6 h baselines `_rf0hv11_{field,sim}6`, `_rf0hv12_{field,sim}6` and `_rf0hv13_sim6` never adapted); card RF-PD-fix's own field arms adapted on 14 epochs, each re-solved without the rows.
+- **summary:** RESTORE PATH HARDENED 2026-10-01 (section 7): a re-solve that fails is undone to the last landed state (exactly: the culprit sets, the detail and the WE-CI choice counters), attributed to the station the replay was re-adding, counted and evented; the undo leaves out, for the epoch, a station it cannot re-add (the primary assembly's own rule, at most five), and only an undo that still cannot complete skips the epoch, after the culprit-set aliases are retired. Replayed against this card's own defect on the outage arm, the unhardened restore ran 30 epochs on a partly rebuilt estimator and a skip-only first build withheld 80 (no harvest, so no recovery); the build as committed fails twice, leaves the returning station out of those two epochs and emits all 240. An injection test exercises every branch (undo bit-identical to the landed state; culprit-free undo 7.7 µm from the primary; a station dropped; the shared-stage and budget skips). FIXED 2026-10-01. Under `network.station_prior_before_pd` (card RF-PD-fix, armed on both goldens) a station's RXCB-DATUM rows reach the primary solve only through the `StationPrior` that `addStation` folds before its positive-definiteness test; the within-epoch RAIM replay (`resolve_dropping`) re-added every station without it, so no replay carried a receiver-DCB datum row. Two failure modes, both measured with a temporary diagnostic (section 2). (1) Where a station's block is positive-definite only with that row (the first assessed epoch, and the first epoch back of a station returning without a carry), the replay is rejected at that station, which aborts the whole replay, and the restore replay fails the same way: on a forced-adapt field arm with a 20-minute station outage this repeated on 30 consecutive epochs, the estimator holding 7 of 57 stations, and the run-end counters recorded none of it. (2) Elsewhere the replay admits every station and solves without the datum: with no culprit at all it misses the solve it replays by up to 7.9 mm (field) and 10.6 mm (sim) in the phase-bias columns, and on forced arms the products diverge from the first adapted epoch (field between-satellite clock 2 mm, phase bias 10 mm). The fix passes the same `StationPrior` at all three re-add sites; the fixed replay reproduces the primary solve to 8 µm and was never rejected. Gates: byte-identical on the four PRM arms (145 of 145, where the tier does not adapt), the committed exe identical to the diagnostic's fixed mode on five forced arms, the unit suite passes. Latent on the goldens as armed (σ̂0 sits at its floor of 1.0 against a trigger of 3.0; the 6 h baselines `_rf0hv11_{field,sim}6`, `_rf0hv12_{field,sim}6` and `_rf0hv13_sim6` never adapted); card RF-PD-fix's own field arms adapted on 14 epochs, each re-solved without the rows.
 - **source:** [RF-PD-fix](RF-PD-fix_station_prior_before_pd_2026-09-15.md) sections 1.1 and 1.2; [RF-PD](RF-PD_station_rejection_2026-09-15.md) section 5 (the null the row cures); [PRM](PRM_parameter_registry_2026-09-29.md) section 13 (the A/B harness and its references); found while building card [LGM](LGM_los_phase_nuisance_2026-10-01.md)
-- **knobs / posture:** no new knob; the forced arms set `network.raim_sigma0_trigger` 0.5 and `network.raim_k_sigma` 3.0 or 1.5 on the goldens (diagnostic arms only); no golden, ledger, posture or loader default changed
+- **knobs / posture:** no new knob; the forced arms set `network.raim_sigma0_trigger` 0.5 and `network.raim_k_sigma` 3.0 or 1.5 on the goldens (diagnostic arms only); no golden, ledger, posture or loader default changed; section 7 adds no knob (the injection switches were temporary)
 - **dates in the text:** 2026-10-01
-- **hashes / run dirs:** main `1b2b081`; exes `build/x64-Release/gnss_processor_rpd_diag.exe` `3cc905390dcd3e37` (the diagnostic, not committed) and `gnss_processor_rpd1.exe` `0005034ac63bd236` (the fix as committed); arms `runs/_rap_rpd_*` and `runs/_rap_prm_rpd_{gf,gs,pf,ps}`
+- **hashes / run dirs:** main `1b2b081`; exes `build/x64-Release/gnss_processor_rpd_diag.exe` `3cc905390dcd3e37` (the diagnostic, not committed) and `gnss_processor_rpd1.exe` `0005034ac63bd236` (the fix as committed); arms `runs/_rap_rpd_*` and `runs/_rap_prm_rpd_{gf,gs,pf,ps}`; section 7: main `cf1c20a`, exes `gnss_processor_rpd7_inj2.exe` `c56d9a9ad4cdafc3` (the injector, not committed) and `gnss_processor_rpd7b.exe` `a9a6654048dd8b4d` (section 7 as committed), arms `runs/_rap_rpd7*` and `runs/_rap_prm_rpd7b_{gf,gs,pf,ps}`
 
 ## 1. The defect, read from the code
 
@@ -145,6 +145,9 @@ leaves the estimator partly rebuilt if a replay throws. With the rows the replay
 the primary admitted (the refloat edits keep each refloated column's data rows), and no fixed replay
 was rejected in 519 adaptation re-solves and 703 culprit-free replays (sections 3.1 to 3.3).
 
+ANNOTATED 2026-10-01: the restore path is hardened in section 7; the line references in sections 1
+and 4 are those of commit `21d1e4f`.
+
 ## 5. Gates
 
 1. **Byte identity where the tier does not adapt.** `python scripts/prm_ab.py make rpd`,
@@ -170,3 +173,106 @@ was rejected in 519 adaptation re-solves and 703 culprit-free replays (sections 
 - Mode 1's micrometre residual (section 3.1).
 - Long beds with real outages: the 2 h goldens have no returning station, and a station returning
   without a carry is where mode 0 failed.
+
+## 7. The restore path, hardened (2026-10-01)
+
+### 7.1 What the restore did
+
+When a re-solve threw, the adaptation loop's catch (`NetworkSolveGlue.cpp:2043-2054` at `21d1e4f`):
+
+- cleared the three culprit sets and replayed with no culprit, which discarded every re-solve that
+  had landed earlier in the epoch while `n_adapt` still counted them; the run-end response counters
+  then read the cleared sets, σ̂0 for the A4 ceiling described the last landed state rather than the
+  one emitted, and the WE-CI code de-weights stayed applied, so the replay was not the clean solve
+  either;
+- swallowed a failure of that replay, leaving the estimator partly rebuilt for the emit and the
+  harvest (section 3.3: 7 of 57 stations reconstructed, 30 epochs);
+- counted nothing (`n_adapt` counts landed re-solves only), and its warning named no station (the
+  `addStation` rejection message names none).
+
+### 7.2 What it does now
+
+1. Each iteration keeps the last landed state: the culprit sets, the WE-CI de-weight set, the detail
+   string and the two WE-CI choice counters, which are incremented at the choice
+   (`NetworkSolveGlue.cpp:1959-1969`). A failed re-solve restores it and replays it
+   (`:2077-2150`). For an iteration after the first, that replay repeats one that succeeded earlier
+   in the epoch on the same inputs; for the first, it is the culprit-free replay of the primary solve
+   (section 3.1). The adaptation stops there, and σ̂0, the counters and the events describe the
+   landed state.
+2. The replay names the station it was re-adding when it threw, or the shared system
+   (`replay_fail_at` / `replay_fail_idx`, `:1660-1668`). Each failure is logged, counted
+   (`we_resolve_failed`, with the first failure's TOW and station, `include/app/NetworkRunContext.hpp`)
+   and evented (`T2_within_epoch`, `we_resolve_failed`).
+3. The undo re-adds under the primary assembly's admission rule: a station it cannot re-add is left
+   out of the epoch's final solve and the undo is repeated without it (`we_undo_sta_dropped`,
+   event `we_undo_station_dropped`), at most `kMaxAdapt` (5) stations, the tier's own budget. The
+   legacy pivot carries the datum, so its rejection is not survivable there, as in the primary. The
+   drop is scoped to the epoch: the next primary solve rebuilds the estimator with the station in it.
+4. An undo that still cannot complete (a throw in the shared system or the solve, a rejected legacy
+   pivot, the budget spent) leaves a partial rebuild that no consumer may read. The epoch then takes
+   the failed-solve disposition (no emit, no stash; status `we_restore_failed`, counter
+   `we_restore_failed`, an event and an error line), after the block has retired its culprit-set
+   aliases (`:2253-2274`); a return from inside the block would leave them dangling for the next
+   epoch's primary `buildCarryDdPriors`.
+5. Run end: a line of its own, `Network (T2 within-epoch re-solve failures)`, a warning when any
+   count is non-zero (`NetworkTeardown.cpp:646-658`). The T2 response line keeps the shape that
+   `scripts/cm_grade.py` parses.
+
+### 7.3 Why the undo drops a station rather than skipping the epoch
+
+The first build skipped the epoch whenever the undo failed. Replayed against this card's own defect
+(the replay without the rows, on the outage arm of section 3.3) it skipped 80 consecutive epochs,
+TOW 264000 to the end of the run: a skipped epoch harvests nothing and runs no post-fit tier, so the
+returning station never got its carry, the culprit was never refloated, and the failure repeated
+every epoch. The unhardened restore had run 30 epochs on a partly rebuilt estimator; the skip made
+the defect loud but cost the rest of the run.
+
+The build as committed drops the station instead. On the same arm (`runs/_rap_rpd7v2_s4_gf`) the
+re-solve fails twice (TOW 264000, culprit arc BOGT00COL/G32; TOW 264030, culprit station
+BOGT00COL), each undo leaves CUSV00THA out of that epoch's final solve, every epoch emits (240 of
+240), and the run recovers on the next epoch. Against the fixed replay (`runs/_rap_rpd_out1_gf`) the
+code bias then stays within 7.5 mm (95.5 mm for the unhardened restore) and the consumer within
+1.1 mm; what remains is the datum-free re-solves of section 3.2, which the arm re-introduces on
+purpose.
+
+### 7.4 Injection test (temporary, not committed)
+
+An environment-gated injector in the replay (exe `gnss_processor_rpd7_inj2.exe` `c56d9a9ad4cdafc3`)
+throws while the replay re-adds its eighth station (a genuine partial rebuild), in a chosen attempt
+or in the undo, on the field arm forced at `raim_k_sigma` 1.5, at TOW 259410, where three re-solves
+land unperturbed (arc BSHM00ISR/G05, arc BSHM00ISR/G07, station BSHM00ISR). Arms
+`runs/_rap_rpd7v2_{s1,s2,s5,s6,s7,s4,tie}_gf`.
+
+| arm | injected | at TOW 259410 | over the run |
+| --- | --- | --- | --- |
+| S1 | re-solve 2 fails | undone to arc G05: 58 of 58 stations, solution identical to the landed one (largest difference 0.0) | 240 of 240 emitted; 1 failure |
+| S2 | re-solve 1 fails | undone to the culprit-free replay: 58 of 58 stations, 7.7 µm from the primary solve | 240 emitted; 1 failure |
+| S5 | re-solve 1 fails; the undo cannot re-add CUSV00THA | CUSV00THA left out, the undo completes: receiver states for 57 stations | 240 emitted; 1 failure, 1 drop |
+| S6 | re-solve 1 fails; the undo fails in the shared stage | epoch skipped (`we_restore_failed`) | 239 emitted, the next epoch normal (57 stations); 1 failure, 1 skip |
+| S7 | re-solve 1 fails; every undo fails at its eighth station | five stations left out (the budget), the sixth failure skips the epoch | 239 emitted; 1 failure, 5 drops, 1 skip |
+| S4 | the replay without the rows, outage arm | (section 7.3) | 240 emitted; 2 failures, 2 drops |
+
+Every count above matches its event rows in `network_events.csv` and the run-end line.
+
+### 7.5 Gates
+
+1. **Byte identity where no re-solve fails.** `python scripts/prm_ab.py make rpd7b`,
+   `run rpd7b --exe build/x64-Release/gnss_processor_rpd7b.exe`, `cmp g0a rpd7b --all-csv`: RESULT
+   IDENTICAL, 145 of 145 over the four arms. The five forced arms on the same exe
+   (`runs/_rap_rpd7bF_{frc,k15}_{gf,gs}`, `runs/_rap_rpd7bF_out_gf`) against their section 3
+   references (`rpd_frc1`, `rpd_k151`, `rpd_out1`): 33 of 33 files identical on each, and the new
+   run-end line reads 0 failed re-solves on all five, so the hardening acts only when a re-solve fails.
+2. **The injector build without injection against the build as committed** (`rpd7v2_tie_gf` against
+   `rpd7bF_k15_gf`): 33 of 33 files identical, so the outcomes of section 7.4 are the committed
+   code's.
+3. **Unit suite**, Debug `gnss_tests.exe`: 2752 tests from 350 test suites, 2751 passed, 1 skipped
+   (`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, the standing fixture-gated skip), 0 failed. The
+   test binary does not link the solve-glue seam; the injection test of section 7.4 is its instrument.
+4. **Build.** `src/core/app/NetworkRunContext.cpp` gets `/bigobj` in `CMakeLists.txt`, beside the
+   existing per-file entries. The Debug build of main `cf1c20a` stops at that file with C1128 (number
+   of sections exceeded) with or without this section's header change, which was checked by compiling
+   it against HEAD's own header; card AIL's instrument (`0f9b2a5`, 80 lines added to the file) tipped
+   it over. Release was unaffected.
+
+Both section 7 exes were built while the shared tree also held a concurrent session's uncommitted
+posture-table rows (`src/core/config/GnssConfigNetworkPosture.cpp`, card EXL); gate 1 covers them.

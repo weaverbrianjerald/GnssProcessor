@@ -274,6 +274,10 @@ if(MSVC)
     # covariance against the batch tipped it over the Debug section limit (C1128).
     set_source_files_properties(tests/test_coupling_exact_update.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # src/core/app/NetworkRunContext.cpp: card AIL's ambiguity-information instrument
+    # (0f9b2a5) tipped it over the Debug section limit (C1128); Release was unaffected.
+    set_source_files_properties(src/core/app/NetworkRunContext.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
 if(WIN32)

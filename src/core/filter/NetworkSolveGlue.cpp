@@ -1377,12 +1377,18 @@ networkClockAnchorGuard(ctx, config_, log, traces, se.time, est, plan, x_s, ws,
 // rows de-weighted network-wide) or a whole station (excluded), re-solve this epoch
 // over a fresh beginEpoch() replay of the captured shared system, and repeat until
 // σ̂0 falls below the trigger or a cap is reached.  Only the (rare, already
-// contaminated) trigger epochs pay for the re-solve; try/catch reverts to the last
-// good solve on any failure.  Attribution uses the same robust median polish as the
-// RAIM refloat.
+// contaminated) trigger epochs pay for the re-solve; a re-solve that fails is undone
+// to the last landed state (card RPD section 7).  Attribution uses the same robust
+// median polish as the RAIM refloat.
 int  n_adapt = 0;
 bool we_adapt_attempted = false;   // a within-epoch re-solve was launched (est layout was rebuilt)
 double sigma0_adapt = 0.0;         // final within-epoch σ̂0; 0 = adaptation did not run this epoch (A4)
+// A failed re-solve whose undo could not complete: est then holds a partial rebuild that
+// no consumer may read, so the epoch is skipped once the within-epoch block has closed
+// (card RPD section 7).  Declared here, like sigma0_adapt, because the skip happens
+// after the block retires its culprit-set aliases.
+bool we_restore_failed = false;
+std::string we_restore_what;       // why the undo could not complete, for the skip report
 // Withhold-era continuity, resolved once per epoch (SPEC_withhold_era_release; the
 // census-freshness idiom): the era is live if and only if the immediately previous
 // loop epoch was the last A4-withheld decision, so any bypass or skip epoch breaks
@@ -1651,13 +1657,27 @@ if (within_epoch_armed && carry_warm) {
     // drop) but withholds its carry prior, so the re-solve lets it find its new value
     // and absorb the slip locally; the harvest then stashes that corrected value (a
     // self-contained reinit that does not rely on the post-fit refloat).
+    // replay_fail_at / replay_fail_idx name the station being re-added while the station
+    // loop runs and are cleared after it, so a throw out of the replay can be attributed:
+    // a station, or (empty, -1) the shared system and the solve.  The addStation
+    // rejection message names no station (card RPD section 7).
+    std::string replay_fail_at;
+    int replay_fail_idx = -1;
+    // Stations the undo of a failed re-solve could not re-add, left out of the epoch's
+    // final solve (card RPD section 7).  Empty except inside that undo.
+    std::set<int> undo_dropped;
     auto resolve_dropping = [&]() -> Eigen::VectorXd {
+        replay_fail_at.clear();
+        replay_fail_idx = -1;
         est.beginEpoch();
         for (size_t i = 0; i < stations.size(); ++i) {
-            if (!orig_added[i] || drop_stations.count(static_cast<int>(i))) {
+            if (!orig_added[i] || drop_stations.count(static_cast<int>(i))
+                || undo_dropped.count(static_cast<int>(i))) {
                 est_index_of[i] = -1;
                 continue;
             }
+            replay_fail_at  = stations[i].name;
+            replay_fail_idx = static_cast<int>(i);
             const StationAssembly& R = asm_res[i];
             // The station's own pre-PD datum rows (card RPD).  The primary solve hands
             // addStation R.prior_* (network.station_prior_before_pd, card RF-PD-fix),
@@ -1851,6 +1871,8 @@ if (within_epoch_armed && carry_warm) {
                 }
             }
         }
+        replay_fail_at.clear();   // every station is in: a throw below is the shared system's
+        replay_fail_idx = -1;
         est.attribTag("replay_refold");
         if (cap_has_constraint) est.addSharedConstraintRows(cap_H, cap_z, cap_constraint_weight);
         // Re-apply the constraint-realized clock gauge rows (sum-to-zero or
@@ -1934,6 +1956,17 @@ if (within_epoch_armed && carry_warm) {
          && (sigma0 > trig
              || (we_ci && (s0_code_we > trig_code || s0_iono_we > trig_iono)));
          ++iter) {
+        // The last landed state: everything the culprit choice below changes, kept so
+        // that a re-solve that fails can be undone exactly (card RPD section 7).  The
+        // WE-CI choice counters are incremented at the choice, before the re-solve, so
+        // they are part of it.
+        const std::set<std::string>                landed_sats     = drop_sats;
+        const std::set<int>                        landed_stations = drop_stations;
+        const std::map<int, std::set<std::string>> landed_arcs     = drop_arcs;
+        const std::set<std::string>                landed_dw       = dw_code_sats;
+        const std::string                          landed_detail   = adapt_detail;
+        const std::size_t landed_ci_sta_excl = ctx.counters.we_ci_sta_excl;
+        const std::size_t landed_ci_sat_dw   = ctx.counters.we_ci_sat_dw;
         // Best new culprit per granularity (all gated on effect/σ̂0 > raim_k).  An
         // isolated arc is the finest and least destructive removal; a whole station is
         // the coarsest (it discards good arcs too) and is de-rated by sta_bias, so it
@@ -2042,14 +2075,77 @@ if (within_epoch_armed && carry_warm) {
         we_adapt_attempted = true;
         try { x_try = resolve_dropping(); }
         catch (const std::exception& ex) {
-            // Not expected to be reachable (the per-station full-weight retry uses the
-            // known-PD original assembly).  Last resort: restore the clean no-drop
-            // solve so the emit / harvest run on a consistent estimator rather than a
-            // half-rebuilt one (keeping the prior solve would leave est mid-rebuild).
-            log->warn("Network[RAIM within-epoch]: re-solve failed ({}); restoring clean solve.",
-                      ex.what());
-            drop_sats.clear(); drop_stations.clear(); drop_arcs.clear();
-            try { x_s = resolve_dropping(); } catch (...) {}
+            // A re-solve can fail where the primary solve did not: the replay re-adds
+            // edited blocks, and a replay that rebuilds a block differently from the
+            // primary rejects a station the primary admitted (card RPD).  The throw
+            // leaves est partly rebuilt, so the attempt is undone (card RPD section 7):
+            // the culprit sets, the detail and the WE-CI choice counters return to the
+            // last landed state, and that state is replayed.  For iter > 0 the replay
+            // repeats one that already succeeded this epoch on the same inputs; for
+            // iter == 0 it is the culprit-free replay, which reproduces the primary
+            // solve.  The adaptation stops here, and the A4 ceiling below judges the
+            // landed state.
+            std::string tried =
+                adapt_detail.substr(std::min(landed_detail.size(), adapt_detail.size()));
+            if (!tried.empty() && tried.front() == ',') tried.erase(0, 1);
+            const std::string at = replay_fail_at.empty() ? std::string("the shared system")
+                                                          : "station " + replay_fail_at;
+            drop_sats     = landed_sats;
+            drop_stations = landed_stations;
+            drop_arcs     = landed_arcs;
+            dw_code_sats  = landed_dw;
+            adapt_detail  = landed_detail;
+            ctx.counters.we_ci_sta_excl = landed_ci_sta_excl;
+            ctx.counters.we_ci_sat_dw   = landed_ci_sat_dw;
+            if (ctx.counters.we_resolve_failed++ == 0) {   // the first failure's identity
+                ctx.counters.we_resolve_fail_tow = se.time.tow;
+                ctx.counters.we_resolve_fail_at  =
+                    replay_fail_at.empty() ? std::string("shared system") : replay_fail_at;
+            }
+            log->warn("Network[RAIM within-epoch]: TOW {:.1f} re-solve {} [{}] failed at {} "
+                      "({}); undone to the last landed state ({} re-solve(s) landed).",
+                      se.time.tow, iter + 1, tried, at, ex.what(), n_adapt);
+            emitEvent("T2_within_epoch", "we_resolve_failed", "", replay_fail_at, sigma0, trig,
+                      "undo", fmt::format("attempt={};tried={};{}", iter + 1, tried, ex.what()));
+            // The undo re-adds the landed state under the primary assembly's own
+            // admission rule: a station the replay cannot re-add is dropped for the epoch
+            // and the undo is repeated without it.  The legacy pivot carries the datum,
+            // so its rejection is not survivable (as in the primary), and at most
+            // kMaxAdapt stations are dropped.  A drop is scoped to this epoch: the next
+            // primary solve rebuilds est with the station in it.  A throw in the shared
+            // system or the solve, a rejected legacy pivot or the budget spent leaves est
+            // partly rebuilt, which no consumer may read, and the epoch is skipped once
+            // this block has retired its culprit-set aliases.  The undo fails only
+            // through a replay that cannot rebuild a system the estimator held earlier in
+            // the epoch, which is a defect of the replay.
+            for (;;) {
+                try {
+                    x_s = resolve_dropping();
+                    break;
+                } catch (const std::exception& ex2) {
+                    const int bad = replay_fail_idx;
+                    if (bad >= 0 && (phase_datum_prioritized || !stations[bad].is_pivot)
+                        && static_cast<int>(undo_dropped.size()) < kMaxAdapt) {
+                        undo_dropped.insert(bad);
+                        ++ctx.counters.we_undo_sta_dropped;
+                        log->warn("Network[RAIM within-epoch]: TOW {:.1f} the undo could not "
+                                  "re-add station {} ({}); dropping it for this epoch.",
+                                  se.time.tow, stations[bad].name, ex2.what());
+                        emitEvent("T2_within_epoch", "we_undo_station_dropped", "",
+                                  stations[bad].name, sigma0, trig, "drop", ex2.what());
+                        continue;
+                    }
+                    we_restore_failed = true;
+                    we_restore_what = fmt::format(
+                        "{} at {}", ex2.what(),
+                        replay_fail_at.empty() ? std::string("the shared system")
+                                               : "station " + replay_fail_at);
+                    ++ctx.counters.we_restore_failed;
+                    emitEvent("T2_within_epoch", "we_restore_failed", "", replay_fail_at,
+                              sigma0, trig, "skip_epoch", we_restore_what);
+                    break;
+                }
+            }
             break;
         }
         x_s = x_try;
@@ -2153,6 +2249,29 @@ if (within_epoch_armed && carry_warm) {
 // §3 at the alias site).
 carry_we_drop_sats = nullptr;
 carry_we_drop_arcs = nullptr;
+
+// --- A failed re-solve that could not be undone (card RPD section 7) -------------------
+// The undo could not complete (a throw in the shared system or the solve, a rejected
+// legacy pivot, or more stations to drop than the budget allows), so est holds a partial
+// rebuild: the stations re-added before the throw, under indices that est_index_of no
+// longer matches.  Neither the emit nor the carry harvest may read it, so the epoch takes
+// the failed-solve disposition (no emit, no stash, epoch skipped); the counter and the
+// event were written at the failure.  The next epoch's primary assembly rebuilds est and
+// est_index_of from scratch.
+if (we_restore_failed) {
+    log->error("Network[RAIM within-epoch]: TOW {:.1f} the undo of a failed re-solve could "
+               "not complete ({}); the estimator is partly rebuilt, skipping epoch.",
+               se.time.tow, we_restore_what);
+    ++n_skipped;
+    { EpochStatusRow es; es.sigma0 = sigma0_adapt; es.n_adapt = n_adapt;
+      es.n_present = n_present; es.n_clock_sats = n_clock;
+      es.datum_changed = datum_changed ? 1 : 0;
+      if (ctx.carry.ep_sigma0_first >= 0.0) es.sigma0_first = ctx.carry.ep_sigma0_first;
+      emitEpochStatus("we_restore_failed", es); }
+    prev_week = se.time.week; prev_tow = se.time.tow;
+    result.action = EpochAction::SkipEpoch;
+    return result;
+}
 
 // Reduce-once invariant (design §3.5): the carried prior is injected before the gate,
 // so the single gate reduce() must be the only per-station Schur recompute this
