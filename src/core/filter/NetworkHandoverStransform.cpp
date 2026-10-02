@@ -66,6 +66,82 @@ ClockStransformResult applyClockStransform(
     return out;
 }
 
+ClockStransformResult applyClockStransformThroughSites(
+    NetworkCarryState& carry,
+    const std::vector<std::pair<std::string, double>>& v_c,
+    const std::string& q, CarryMechanism mech, bool dry, CarrySiteCounts* counts) {
+    ClockStransformResult out;
+    if (v_c.empty() || q.empty()) return out;
+
+    // Membership and coefficients come from the structural direction alone.
+    std::map<std::string, double> coeff;
+    for (const auto& e : v_c) coeff.emplace(e.first, e.second);
+
+    const auto qit = coeff.find(q);
+    if (qit == coeff.end() || !(std::abs(qit->second) > 0.0)) return out;
+    const double vq = qit->second;
+
+    // x_q_pre / var_q: the incoming pivot's carried level in the outgoing frame (the first
+    // carried clock entry of q).  Absent: nothing to re-reference from.
+    const CarryPrior* qrow = nullptr;
+    forEachCarriedReference(carry, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
+        if (!qrow && r.kind == SharedParamKind::Clock && r.sat == q) qrow = r.prior;
+        return false;
+    });
+    if (qrow == nullptr) return out;
+    out.c0    = qrow->value / vq;
+    out.var_q = qrow->var;
+    const double c0 = out.c0, var_q = out.var_q;
+
+    // Before the rows, the transform also reaches the satellites of the constellation that
+    // are not registered this epoch (a parked entry, a coupling term on an absent clock): the
+    // structural direction is the constellation's common shift, coefficient 1
+    // (NetworkSbasis::clockNullDirection).
+    const bool wide = (mech == CarryMechanism::HandoverBeforeRows);
+    const std::string cq = NetworkSbasis::constellationOf(q);
+    const auto coeffOf = [&](const std::string& sat, double& vi) {
+        const auto cit = coeff.find(sat);
+        if (cit != coeff.end()) { vi = cit->second; return true; }
+        if (wide && !sat.empty() && NetworkSbasis::constellationOf(sat) == cq) { vi = 1.0; return true; }
+        return false;
+    };
+    // x <- x - v_c*c0 ; var <- var + v_c[i]^2 * var_q.  Clocks only: every other shared
+    // family has a zero component along this direction.
+    CarrySiteCounts local;
+    CarrySiteCounts& c = counts ? *counts : local;
+    const long long before = c.moved[static_cast<int>(CarrySite::PrevCarry)];
+    forEachCarriedReference(
+        carry, carryMechanismSites(mech),
+        [&](const CarriedRef& r) -> bool {
+            if (r.kind != SharedParamKind::Clock) return false;
+            double vi = 0.0;
+            if (!coeffOf(r.sat, vi)) return false;
+            if (dry) return true;
+            *r.value -= vi * c0;
+            if (r.site == CarrySite::PrevCarry) *r.var += vi * vi * var_q;
+            else if (r.var && *r.var > 0.0) *r.var += vi * vi * var_q;   // a free term's p_prev
+            return true;
+        },
+        &c);
+    out.rows = c.moved[static_cast<int>(CarrySite::PrevCarry)] - before;
+    if (out.rows == 0) return out;
+    out.applied = true;
+    if (dry) return out;
+
+    // Exactness self-check (§8.4 INC-3).
+    bool q_seen = false;
+    forEachCarriedReference(carry, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
+        if (!q_seen && r.kind == SharedParamKind::Clock && r.sat == q) {
+            out.x_q_post = *r.value;
+            q_seen = true;
+        }
+        return false;
+    });
+    out.selfcheck_ok = std::abs(out.x_q_post) <= kStsExactTolM
+                    && std::abs(out.x_q_post / vq) <= kStsExactTolM;
+    return out;
+}
+
 void networkHandoverStransform(NetworkRunContext& ctx,
                                const GnssConfig& config_,
                                const std::shared_ptr<spdlog::logger>& log,
@@ -104,7 +180,21 @@ void networkHandoverStransform(NetworkRunContext& ctx,
         const auto v_c = NetworkSbasis::clockNullDirection(registered_clock_sats, key);
         if (v_c.empty()) continue;
 
+        // Card PRM phase 2, step 1: the traversal's selection counted beside the
+        // hand-written kernel (dry: nothing written), before the kernel moves anything.
+        CarrySiteCounts prm_cc;
+        const ClockStransformResult prm_r = applyClockStransformThroughSites(
+            ctx.carry, v_c, q, CarryMechanism::Handover, /*dry=*/true, &prm_cc);
         const ClockStransformResult r = applyClockStransform(ctx.carry.prev_carry, v_c, q);
+        {
+            const int m = static_cast<int>(CarryMechanism::Handover);
+            ++ctx.counters.prm_ref_calls[m];
+            ++ctx.counters.prm_ref_check[m];
+            if (prm_r.applied != r.applied || prm_r.rows != r.rows
+                || (r.applied && (prm_r.c0 != r.c0 || prm_r.var_q != r.var_q)))
+                ++ctx.counters.prm_ref_check_mismatch[m];
+            carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, prm_cc);
+        }
         if (!r.applied) {
             ++ctx.counters.sts_noop_no_carry;
             traces.emitEvent(t, "STRANSFORM", "sts_noop", q, "", std::nullopt, std::nullopt,

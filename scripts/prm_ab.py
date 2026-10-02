@@ -16,12 +16,16 @@
   _rap_prm_<tag>_df / _ds   the golden on the diagonal border fold (DIAG below: no dense carried
                             covariance, so no conditional coupling, no exact update and the level
                             vehicle)
+  _rap_prm_<tag>_c? / r? / q? / o?   card PRM phase 2: card CLV's level re-base, the
+                            ephemeris cut-over re-level, the eq34 D4 shift and the declared
+                            anchor handover (CLV, RELEVEL, EQ34, DHO below)
 The sim arms start at 00:30:15 (the fixture-start convention); every arm runs --hours (default 2).
 
 `run` runs the arms of one tag with the given executable (a renamed copy of the Release build;
 never the Debug tree).
 
-`cmp` compares two tags arm by arm on the rules of card PRM section 8: products.txt without its
+`cmp` compares two tags arm by arm (with --map X=Y, tag A's posture-X arms against tag B's
+posture-Y arms) on the rules of card PRM section 8: products.txt without its
 '#' comment lines, logs/closed_loop_trace.csv and logs/network_epoch_status.csv, byte for byte.
 With --all-csv it also compares every other CSV under logs/ that both arms wrote, with the
 wall-clock columns of VOLATILE_COLS dropped (the only columns that differ between two runs of one
@@ -65,7 +69,29 @@ DIAG = [
     'network.phase_datum_held_basis=false',
     'network.shared_carry_full_cov=false',
 ]
-POSTURES = {'golden': [], 'program': PROGRAM, 'scalar': SCALAR, 'diag': DIAG}
+# Card PRM phase 2: the postures on which each carry re-base mechanism the goldens leave inert
+# actually runs (the probes of 2026-10-02, card PRM section 16).  Card CLV's level re-base
+# (with the code-bias follow; the loader refuses the level carry with card LAH's hold); the
+# ephemeris cut-over re-level (broadcast a priori from the brdc-only data root, without the
+# satellite code bias the loader refuses there without the SH field; the field needs 2.1 h to
+# reach the 02:00 navigation batch); the eq34 chain datum's D4 carry shift; the float vehicle's
+# declared anchor handover.
+CLV = [
+    'network.emit_pb_hold_phase_clock=false',
+    'network.clock_level_carry=true',
+    'network.clock_level_free_cb_follow=if',
+]
+RELEVEL = [
+    'network.apriori_source=brdc_rts',
+    'files.internal_data_root=' + ROOT + '/data_brdc_rts',
+    'network.estimate_sat_code_bias=false',
+]
+EQ34 = ['network.phase_datum_eq34=true', 'network.phase_datum_eq34_carry_shift=true']
+DHO = ['network.amb_float_declared_handover=true']
+# name -> (arm letter, knobs); the arm suffix is the letter and the bed.
+POSTURES = {'golden': ('g', []), 'program': ('p', PROGRAM), 'scalar': ('s', SCALAR),
+            'diag': ('d', DIAG), 'clv': ('c', CLV), 'relevel': ('r', RELEVEL),
+            'eq34': ('q', EQ34), 'dho': ('o', DHO)}
 CORE = ('products.txt', 'logs/closed_loop_trace.csv', 'logs/network_epoch_status.csv')
 # Wall-clock columns, by file and header name: the only differences between two runs of one
 # executable on the four arms (the phase 0 self-identity check of 2026-10-01, card PRM section
@@ -78,17 +104,32 @@ VOLATILE_COLS = {
 
 
 def arms(tag):
-    return sorted(os.path.basename(p)[len('_rap_'):] for p in glob.glob(f'{RUNS}/_rap_prm_{tag}_[gpsd][fs]'))
+    letters = ''.join(v[0] for v in POSTURES.values())
+    return sorted(os.path.basename(p)[len('_rap_'):]
+                  for p in glob.glob(f'{RUNS}/_rap_prm_{tag}_[{letters}][fs]'))
+
+
+def loader_reads(key):
+    """Whether the config loader reads `key` (a quoted literal in src/core/config): the loader
+    ignores an unknown key without a word, so an arm that sets one is silently the base."""
+    src = ''.join(io.open(f, encoding='utf-8', errors='replace').read()
+                  for f in glob.glob(ROOT + '/src/core/config/*.cpp'))
+    return f'"{key}"' in src
 
 
 def make(a):
     postures = a.postures.split(',')
+    unread = sorted({k.split('=')[0] for post in postures for k in POSTURES[post][1]
+                     if not loader_reads(k.split('=')[0])})
+    if unread:
+        sys.exit('refusing knobs the loader does not read: ' + ', '.join(unread))
     for post in postures:
         for bed in ('f', 's'):
-            name = f'prm_{a.tag}_{post[0]}{bed}'
+            letter, knobs = POSTURES[post]
+            name = f'prm_{a.tag}_{letter}{bed}'
             cmd = [sys.executable, ROOT + '/scripts/rapid_arm.py', 'make', '--base', GOLDEN[bed],
                    '--tag', name, '--hours', str(a.hours)]
-            sets = POSTURES[post] + (
+            sets = knobs + (
                 [f'network.start_offset_hours={SIM_START_H}'] if bed == 's' else [])
             for s in sets:
                 cmd += ['--set', s]
@@ -126,10 +167,14 @@ def digest(ls):
 
 def cmp(a):
     ok = True
-    for suffix in [p[0] + b for p in POSTURES for b in 'fs']:
-        da, db = f'{RUNS}/_rap_prm_{a.tag_a}_{suffix}', f'{RUNS}/_rap_prm_{a.tag_b}_{suffix}'
+    remap = dict(m.split('=') for m in a.map)
+    pairs = 0
+    for suffix in [v[0] + b for v in POSTURES.values() for b in 'fs']:
+        suffix_b = remap.get(suffix[0], suffix[0]) + suffix[1]
+        da, db = f'{RUNS}/_rap_prm_{a.tag_a}_{suffix}', f'{RUNS}/_rap_prm_{a.tag_b}_{suffix_b}'
         if not (os.path.isdir(da) and os.path.isdir(db)):
             continue
+        pairs += 1
         files = list(CORE)
         if a.all_csv:
             ca = {os.path.relpath(p, da).replace(os.sep, '/') for p in glob.glob(da + '/logs/*.csv')}
@@ -157,6 +202,10 @@ def cmp(a):
             if not same and first is not None:
                 print('     A:', (la[first] if first < len(la) else '<eof>')[:150])
                 print('     B:', (lb[first] if first < len(lb) else '<eof>')[:150])
+    if pairs == 0:
+        print('no arm pairs to compare')
+        ok = False
+    print(f'{pairs} arm pair(s) compared')
     print('RESULT', 'IDENTICAL' if ok else 'DIFFERENT')
     return 0 if ok else 1
 
@@ -165,11 +214,14 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='cmd', required=True)
     m = sub.add_parser('make'); m.add_argument('tag')
-    m.add_argument('--postures', default='golden,program'); m.add_argument('--hours', type=float, default=2.0)
+    m.add_argument('--postures', default='golden,program')
+    m.add_argument('--hours', type=float, default=2.0)
     r = sub.add_parser('run'); r.add_argument('tag'); r.add_argument('--exe', required=True)
     r.add_argument('--jobs', type=int, default=4)
     c = sub.add_parser('cmp'); c.add_argument('tag_a'); c.add_argument('tag_b')
     c.add_argument('--all-csv', action='store_true')
+    c.add_argument('--map', action='append', default=[],
+                   help="X=Y: compare tag A's posture-X arms with tag B's posture-Y arms")
     a = p.parse_args()
     if a.cmd == 'make':
         make(a)

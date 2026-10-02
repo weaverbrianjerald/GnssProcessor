@@ -460,3 +460,80 @@ the mechanism that decides it (principle 5 already holds); the registry's snapsh
 2. The election and the handover test could move before PASS B without a byte change (both are
 pure), which would let the decision know the retired-datum clause; the S-transform cannot move
 without changing the handover epoch's rows. Neither is done.
+
+## 16. Phase 2, the traversal of carried references (2026-10-02)
+
+**16.1 The sites.** `include/filter/NetworkCarrySites.hpp` declares 26 sites, one per container
+and reference role of `NetworkCarryState` that holds a reference of a border parameter: the
+carried value and variance (`prev_carry`, READMIT's parked entries included), the stash's pinned
+pivot (`cxu_pivot`), the oscillator's offset (`clock_osc`), five baselines (`prev_clk`,
+`cb_exc_prev_clk`, `pb_hold_prev_clock_m`, `pb_level_prev`, `code_bias_prev_`), two held values
+(`pin_bridge`, `pb_hold`), and the eleven local carry maps, each as its regression terms and, where
+its value is expressed in a border frame, as that value (the ambiguity, the gross screen's held
+ambiguity, the receiver clock, the receiver phase bias, the receiver code bias). Each row states
+the key form, what the reference is, how a shift applies, and the snapshot record that restores it
+or why it is cold-started. `forEachCarriedReference` walks a site mask in a fixed order, hands each
+reference to a visitor and counts per site what the visitor moved.
+
+The read corrected section 5's list in four places. The local carry maps are eleven, not ten: card
+LGM's `pc_carry` holds regression terms and is in no hand-written list. `clock_osc` is a site (the
+ephemeris re-level moves it). `anchor_pin_target` is an ambiguity's pin target, not a border
+reference; it is listed with the non-sites in the header's file comment, beside `phase_basis`, the
+eq34 targets and the handover ledger, each rebuilt by its own election. Card CLV's `xfer` is a
+declaration derived from the moved references and written after the walk, not a site.
+
+**16.2 The mechanisms.** Six callers: card CLV's level re-base, the ephemeris re-level, the
+clock-pivot handover S-transform after PASS B, the same transform before the rows (step 3), the
+eq34 D4 shift, and the float vehicle's declared anchor handover (`networkAmbFloatDeclaredHandover`,
+a seventh hand-written list the card did not name). Two of section 5's six are not callers. The
+READMIT park, seed and datum drop touch one container (`prev_carry`) and enumerate no other site;
+their rule is the park stamp, which each mechanism's visitor reads as the reference's `parked`
+attribute. The snapshot's serialize and restore stay per record: each record has its own capture
+knob, screens and encoding, the file format is fixed, and the I/O module may not include filter
+types (`NetworkStateSnapshot.hpp` 183), so a table-driven writer would re-encode the same per-record
+code. The table records each site's record instead (section 9: the membership as it is).
+
+Each mechanism declares the sites it moves and, for every other site its direction reaches, the
+reason it does not move it (`carryMechanismSite`). The exemptions are the hand lists' gaps, named:
+
+| mechanism | not moved, with the reason |
+| --- | --- |
+| card CLV's re-base | `pc_carry` (card LGM postdates card CLV's list; never armed together); `cxu_pivot`; `clock_osc` (CLV is resolved off with the clock model); `pb_hold` (by design: the re-base accumulates the emit-side transfer instead) |
+| the ephemeris re-level | eight of the ten coupling maps, `cb_exc_prev_clk`, `pb_hold_prev_clock_m` (card CLV section 6.4 item 6), `cxu_pivot` |
+| the handover after PASS B | every coupling map and `cxu_pivot` (the rows of the handover epoch are built before it); the baselines and `clock_osc` (by design: erased, suppressed or stepping by the datum delta); the receiver clock carry (off the transform's direction) |
+| the eq34 D4 shift | seven coupling maps, `pb_level_prev`, `pb_hold`, the gross screen's held ambiguity; `pin_bridge` (by design: a bridged satellite is a zero-shift root) |
+| the declared anchor handover | every coupling map but the ambiguities', `pb_level_prev`, `pin_bridge`, `pb_hold`, the gross screen's held ambiguity |
+
+Phase 2 keeps every mechanism's set as it was; each owed exemption is a one-line change behind its
+own arm (phase 3b). The section 10 question of which local carry maps are live on the RF-0hv
+posture is answered by the run-end table: at the end of the 6 h goldens the ambiguities hold
+192 209 (field) and 146 629 (sim) regression terms on 894 and 946 carried values, and the receiver
+code bias's in-block route 21 113 and 9 299 terms on 98 and 60 values; the wet delay's carry is
+filled only when a snapshot path is set (none on the harness arms); the ionosphere, gross-screen
+hold, receiver clock, receiver phase-bias and phase-colour maps are empty, and so are `prev_clk`,
+`cb_exc_prev_clk`, `clock_osc` and `pin_bridge` (their mechanisms are off on the goldens).
+
+**16.3 Step 1, the traversal beside the hand-written lists.** Each mechanism's walk through the
+traversal was written beside its hand-written walk (`clockLevelShiftThroughSites`,
+`ephCutoverShiftCarry`, `applyClockStransformThroughSites`, `eq34ShiftCarry`,
+`declaredHandoverShiftCarry`), run dry (nothing written) before the hand walk, and its count
+compared with the hand walk's (the S-transform's also on c0 and var_q, bit for bit). The run end
+writes one line per site (references held, moved by each mechanism, the snapshot record) and one
+per mechanism (calls, the check, the sites not moved), and the same rows to the run manifest as a
+`param_sites` record. The goldens leave four of the mechanisms inert, so the harness gained four
+postures that run them (`scripts/prm_ab.py`, from the probes of 2026-10-02): card CLV with its
+code-bias follow (`clv`; card LAH's hold off, which the loader refuses with the level carry), the
+ephemeris re-level (`relevel`; broadcast a priori from the brdc-only data root, the satellite code
+bias off, 2.1 h so the field reaches the 02:00 navigation batch), the eq34 D4 shift (`eq34`) and the
+declared anchor handover (`dho`). `make` now refuses a knob the loader does not read (an unknown
+key is ignored without a word, so such an arm is silently its base).
+
+| gate | executable | result |
+| --- | --- | --- |
+| references | `gnss_processor_prm1b2.exe` `77ab7c95d714bc4c` (HEAD code) | tags `b0h6` and `b0` (phase 1b); new tags `x0` (clv, eq34, dho, 1 h) and `x0r` (relevel, 2.1 h) |
+| step 1, the check beside the lists | `gnss_processor_prm2a.exe` `0e2bca9d4ee1d2f6` | byte-identical on all 16 arms, every CSV (556 comparisons); the count check 0 mismatches on every call: handover 1 per 6 h golden, card CLV 121 per bed, the re-level 30 (field) and 29 (sim), the eq34 shift 46 (field: 2 095 values and 88 228 coupling terms, the probe's run-end counters), the declared handover 1 per bed |
+
+Unit suite 2769 passed, 1 fixture-gated skip; suite `CarrySites` (10 cases: the table, every site
+moved by 1 m through the walk, the site mask, the scan of `NetworkCarryState`'s declaration for
+local carry maps without a site and of the run types for any other holder of regression terms,
+the mechanism table, each mechanism's walk against its hand walk or its rule written out).

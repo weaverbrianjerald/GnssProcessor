@@ -24,6 +24,7 @@
  */
 
 #include "rinex/MultiRinexSync.hpp"   // MultiRinexSync::SyncedEpoch (bare SyncedEpoch)
+#include "filter/NetworkCarrySites.hpp" // CarrySiteCounts (card PRM phase 2)
 
 #include <memory>
 #include <string>
@@ -35,6 +36,26 @@ namespace GnssProcessor {
 
 struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
+
+/**
+ * @brief Re-base one satellite's carried clock references by -@p d through the traversal
+ *        of carried references (card PRM phase 2, @c CarryMechanism::EphRelevel).
+ *
+ * The rule of the cut-over: the two-state oscillator's offset (when initialized), the
+ * satellite's carried clock entries in @c prev_carry (parked ones included), the clock
+ * monitor's jump baseline, and, under the conditional coupling (@p cpl_cond), the s_prev of
+ * every clock term of the satellite in the ambiguity and wet-delay carries.  The sites the
+ * re-level does not move are declared with their reason in the mechanism table.
+ * @param carry    the run's carried state.
+ * @param sat      the satellite whose broadcast version rolled.
+ * @param d        the shift Delta_eph (m); every reference moves by -d.
+ * @param cpl_cond @c network.carry_conditional_coupling.
+ * @param dry      count only (nothing is written).
+ * @param counts   optional out: per-site tallies (accumulated).
+ * @return the number of references moved (or that would be moved).
+ */
+long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat, double d,
+                               bool cpl_cond, bool dry, CarrySiteCounts* counts = nullptr);
 
 /**
  * @brief Apply the ephemeris-cutover re-level for this epoch (card 6).

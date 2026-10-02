@@ -223,6 +223,35 @@ void networkAmbFloatApplyDrops(
                    tow, n, n_free, n_stale, n_idem);
 }
 
+void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
+                                const std::string& sig, double delta, bool dry,
+                                long long& n_shift, long long& n_pb, long long& n_cpl,
+                                CarrySiteCounts* counts) {
+    n_shift = n_pb = n_cpl = 0;
+    forEachCarriedReference(
+        carry, carryMechanismSites(CarryMechanism::DeclaredHandover),
+        [&](const CarriedRef& r) -> bool {
+            if (r.kind != SharedParamKind::PhaseBias || r.sat != sat || r.signal != sig)
+                return false;
+            switch (r.site) {
+                case CarrySite::AmbiguityValue:
+                    if (!dry) *r.value -= delta;   // variances untouched: an exact basis change
+                    ++n_shift;
+                    return true;
+                case CarrySite::PrevCarry:
+                    if (!dry) *r.value += delta;   // pinning N_{r_in} = 0 means b'_s = b_s + Δ
+                    ++n_pb;
+                    return true;
+                default:                           // a coupling term on the family's phase bias
+                    if (!std::isfinite(delta) || delta == 0.0) return false;
+                    if (!dry) *r.value += delta;
+                    ++n_cpl;
+                    return true;
+            }
+        },
+        counts);
+}
+
 long long networkAmbFloatDeclaredHandover(
     NetworkRunContext& ctx,
     const std::shared_ptr<spdlog::logger>& log,
@@ -271,6 +300,12 @@ long long networkAmbFloatDeclaredHandover(
             ++counters.n_amb_sts_identity;
             continue;
         }
+        // Card PRM phase 2, step 1: the traversal's selection counted beside the
+        // hand-written walk (dry: nothing written), before the walk moves anything.
+        CarrySiteCounts prm_cc;
+        long long prm_shift = 0, prm_pb = 0, prm_cpl = 0;
+        declaredHandoverShiftCarry(ctx.carry, sat, sig, delta, /*dry=*/true, prm_shift, prm_pb,
+                                   prm_cpl, &prm_cc);
         // ---- The transform.  All three references on this identity move together.
         long long n_shift = 0;
         for (auto& [key, lc] : local_carry) {
@@ -294,6 +329,14 @@ long long networkAmbFloatDeclaredHandover(
         }
         for (auto& kv : local_carry)
             n_cpl += rebaseCouplingPhaseBiasSprev(kv.second.coupling, shift_sat);
+        {
+            const int m = static_cast<int>(CarryMechanism::DeclaredHandover);
+            ++counters.prm_ref_calls[m];
+            ++counters.prm_ref_check[m];
+            if (prm_shift != n_shift || prm_pb != n_pb || prm_cpl != n_cpl)
+                ++counters.prm_ref_check_mismatch[m];
+            carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);
+        }
         // ---- Exactness self-check (the sts_selfcheck_ok pattern).  The incoming
         //      anchor's column now reads 0, which is what its w = 1e10 pin asserts.
         const double x_post = in_it->second.value_abs;

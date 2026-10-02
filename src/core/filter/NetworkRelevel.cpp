@@ -26,6 +26,29 @@
 
 namespace GnssProcessor {
 
+long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat, double d,
+                               bool cpl_cond, bool dry, CarrySiteCounts* counts) {
+    return forEachCarriedReference(
+        carry, carryMechanismSites(CarryMechanism::EphRelevel),
+        [&](const CarriedRef& r) -> bool {
+            if (r.kind != SharedParamKind::Clock || r.sat != sat) return false;
+            switch (r.site) {
+                case CarrySite::ClockOsc:
+                    if (!r.osc->init) return false;   // the two-state offset (clock_model)
+                    break;
+                case CarrySite::AmbiguityCoupling:
+                case CarrySite::ZwdCoupling:
+                    if (!cpl_cond) return false;      // the coupling stash (card 1)
+                    break;
+                default:                              // the D2 clock carry, the jump baseline
+                    break;
+            }
+            if (!dry) *r.value -= d;
+            return true;
+        },
+        counts);
+}
+
 void networkEphCutoverRelevel(NetworkRunContext& ctx,
                               const std::shared_ptr<spdlog::logger>& log,
                               NetworkRunTraces& traces,
@@ -101,12 +124,22 @@ if (brdc_rts) {
             // Re-base the carried clock state by −Δ_eph.  Only the offset / level term
             // moves; the drift (c1) and the 2×2 covariance are frame-invariant.
             const double d = *shift;
-            if (auto oit = clock_osc.find(sat); oit != clock_osc.end() && oit->second.init)
+            // Card PRM phase 2, step 1: the traversal's selection counted beside the
+            // hand-written walk (dry: nothing written), and the walk's own moves counted.
+            CarrySiteCounts prm_cc;
+            const long long prm_n = ephCutoverShiftCarry(ctx.carry, sat, d, carry_cpl_cond,
+                                                         /*dry=*/true, &prm_cc);
+            long long hand_n = 0;
+            if (auto oit = clock_osc.find(sat); oit != clock_osc.end() && oit->second.init) {
                 oit->second.x0 -= d;                          // two-state offset (clock_model)
+                ++hand_n;
+            }
             for (CarryPrior& cp : prev_carry)                 // scalar clock carry (D2, model off)
-                if (cp.kind == SharedParamKind::Clock && cp.sat == sat) cp.value -= d;
-            if (auto jit = prev_clk.find(sat); jit != prev_clk.end())
+                if (cp.kind == SharedParamKind::Clock && cp.sat == sat) { cp.value -= d; ++hand_n; }
+            if (auto jit = prev_clk.find(sat); jit != prev_clk.end()) {
                 jit->second.first -= d;                       // clock-monitor jump baseline
+                ++hand_n;
+            }
             // The coupling stash references this clock through ŝ_prev terms (card 1).
             // Re-level them into the new frame as well; otherwise every coupling row's
             // RHS is off by M·Δ_eph after a cutover (the row's functional u = r + Mᵀs
@@ -115,11 +148,18 @@ if (brdc_rts) {
                 for (auto& [lk, lcv] : local_carry)
                     for (CoupledShared& cs2 : lcv.coupling)
                         if (cs2.kind == SharedParamKind::Clock && cs2.sat == sat)
-                            cs2.s_prev -= d;
+                            { cs2.s_prev -= d; ++hand_n; }
                 for (auto& [zk, zcv] : zwd_carry)
                     for (CoupledShared& cs2 : zcv.coupling)
                         if (cs2.kind == SharedParamKind::Clock && cs2.sat == sat)
-                            cs2.s_prev -= d;
+                            { cs2.s_prev -= d; ++hand_n; }
+            }
+            {
+                const int m = static_cast<int>(CarryMechanism::EphRelevel);
+                ++ctx.counters.prm_ref_calls[m];
+                ++ctx.counters.prm_ref_check[m];
+                if (prm_n != hand_n) ++ctx.counters.prm_ref_check_mismatch[m];
+                carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::EphRelevel, prm_cc);
             }
             log->info("Network (Card 6): {} eph cutover IODE {}->{} — re-leveled carried "
                       "clock by {:.4f} m (−Δ_eph); no discontinuity bump.",

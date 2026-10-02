@@ -145,6 +145,33 @@ ClockStransformResult applyClockStransform(
     const std::string& q);
 
 /**
+ * @brief The S-transform through the traversal of carried references (card PRM phase 2,
+ *        @ref forEachCarriedReference).
+ *
+ * The same rule as @ref applyClockStransform on the sites of @p mech: with
+ * @c CarryMechanism::Handover the satellite clocks of @p v_c in @c prev_carry (the transform
+ * after PASS B); with @c CarryMechanism::HandoverBeforeRows every clock reference of the
+ * incoming pivot's constellation that the coupling rows read: the carried clocks (an
+ * unregistered or parked satellite of the constellation included, at the structural
+ * direction's common coefficient 1), the s_prev of every coupling term on them (and the
+ * term's p_prev by @f$v_i^2\sigma_q^2@f$ when the term is free, @c p_prev > 0), and the
+ * stash's pinned pivot value.  @c c0 and @c var_q are read from the incoming pivot's carried
+ * entry before anything moves.  @c rows counts the @c prev_carry entries re-expressed.
+ * @param carry  the run's carried state.
+ * @param v_c    the structural direction's (satellite, coefficient) entries.
+ * @param q      the incoming pivot satellite.
+ * @param mech   @c Handover or @c HandoverBeforeRows.
+ * @param dry    count only: nothing is written and the self-check is not run.
+ * @param counts optional out: per-site tallies (accumulated).
+ * @return what was done (or would be done); @c applied false leaves @p carry untouched.
+ */
+ClockStransformResult applyClockStransformThroughSites(
+    NetworkCarryState& carry,
+    const std::vector<std::pair<std::string, double>>& v_c,
+    const std::string& q, CarryMechanism mech, bool dry,
+    CarrySiteCounts* counts = nullptr);
+
+/**
  * @brief Re-express the carried shared state of each changed constellation in the
  *        incoming clock datum, and mark those constellations for fold release.
  *

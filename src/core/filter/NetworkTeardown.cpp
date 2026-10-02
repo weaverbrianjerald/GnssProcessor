@@ -6317,6 +6317,66 @@ int networkTeardown(
                       "decision this epoch and were decided there; the coupling rows did not "
                       "read a decision for them.", C.prm_undecided_at_fold);
     }
+    // Card PRM phase 2 (sections 5 and 6): the carried references of the border per site,
+    // held at the run's end and moved by each mechanism over the run through the one
+    // traversal; then, per mechanism, the sites it does not move with the reason.  The
+    // same rows go to the run manifest as a `param_sites` record.
+    {
+        const auto& C = ctx.counters;
+        long long held[kCarrySites]{};
+        carrySiteHeld(ctx.carry, held);
+        std::string js = "{\"record\":\"param_sites\",\"sites\":[";
+        for (int i = 0; i < kCarrySites; ++i) {
+            const CarrySiteSpec& sp = carrySiteSpec(static_cast<CarrySite>(i));
+            std::string moved, jm;
+            for (int m = 0; m < kCarryMechanisms; ++m) {
+                const auto mech = static_cast<CarryMechanism>(m);
+                const long long n = C.prm_ref_moved[i][m];
+                if (carryMechanismSite(mech, sp.site).moves || n > 0)
+                    moved += fmt::format("{}{} {}", moved.empty() ? "" : ", ",
+                                         carryMechanismName(mech), n);
+                jm += fmt::format("{}\"{}\":{}", m ? "," : "", carryMechanismName(mech), n);
+            }
+            log->info("Network (param model, run end): site {} ({}, {}): {} held; moved: {}; "
+                      "snapshot {}.",
+                      sp.name, sp.container, carryRefRoleName(sp.role), held[i],
+                      moved.empty() ? std::string("by no mechanism") : moved,
+                      sp.record ? sp.record : "none (cold-started)");
+            js += fmt::format("{}{{\"site\":\"{}\",\"container\":\"{}\",\"role\":\"{}\","
+                              "\"held\":{},\"moved\":{{{}}},\"snapshot\":\"{}\"}}",
+                              i ? "," : "", sp.name, sp.container, carryRefRoleName(sp.role),
+                              held[i], jm, sp.record ? sp.record : "");
+        }
+        js += "],\"mechanisms\":[";
+        for (int m = 0; m < kCarryMechanisms; ++m) {
+            const auto mech = static_cast<CarryMechanism>(m);
+            std::string exempt, jx;
+            for (int i = 0; i < kCarrySites; ++i) {
+                const auto s = static_cast<CarrySite>(i);
+                const CarryMechanismSite ms = carryMechanismSite(mech, s);
+                if (!ms.reason) continue;
+                exempt += fmt::format("{}{}", exempt.empty() ? "" : ", ", carrySiteSpec(s).name);
+                jx += fmt::format("{}{{\"site\":\"{}\",\"reason\":\"{}\"}}", jx.empty() ? "" : ",",
+                                  carrySiteSpec(s).name, ms.reason);
+            }
+            log->info("Network (param model, run end): mechanism {}: {} call(s); step-1 check "
+                      "{} call(s), {} mismatch(es); not moved: {}.",
+                      carryMechanismName(mech), C.prm_ref_calls[m], C.prm_ref_check[m],
+                      C.prm_ref_check_mismatch[m], exempt.empty() ? std::string("none") : exempt);
+            js += fmt::format("{}{{\"mechanism\":\"{}\",\"calls\":{},\"check\":{},"
+                              "\"check_mismatch\":{},\"exempt\":[{}]}}",
+                              m ? "," : "", carryMechanismName(mech), C.prm_ref_calls[m],
+                              C.prm_ref_check[m], C.prm_ref_check_mismatch[m], jx);
+            if (C.prm_ref_check_mismatch[m] > 0)
+                log->warn("Network (card PRM phase 2): mechanism {}: {} of {} call(s) moved a "
+                          "different set of references from the traversal's selection; the "
+                          "site table or the mechanism's visitor is wrong.",
+                          carryMechanismName(mech), C.prm_ref_check_mismatch[m],
+                          C.prm_ref_check[m]);
+        }
+        js += "]}";
+        traces.appendRunManifestRecord(config_.getNetworkConfig(), js);
+    }
     // Card LGM: the phase-colour state's edges (invariant #4: the run-end counters are the
     // ON-path telemetry).
     if (ctx.knobs.pc_on) {

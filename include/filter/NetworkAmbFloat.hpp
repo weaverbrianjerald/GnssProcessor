@@ -44,6 +44,7 @@
 #pragma once
 
 #include "filter/NetworkRunTypes.hpp"
+#include "filter/NetworkCarrySites.hpp"   // CarrySiteCounts (card PRM phase 2)
 
 #include <map>
 #include <memory>
@@ -219,6 +220,31 @@ namespace GnssProcessor {
         const std::vector<NetStation>& stations,
         const std::vector<std::map<std::string, double>>& elev_of,
         long long week, double tow, double pl_now_s);
+
+    /**
+     * @brief The declared anchor handover's transform of one (satellite, signal) family
+     *        through the traversal of carried references (card PRM phase 2,
+     *        @c CarryMechanism::DeclaredHandover).
+     *
+     * Every carried ambiguity of the family moves by @f$-\Delta@f$, the satellite's carried
+     * phase bias of that signal by @f$+\Delta@f$, and the s_prev of every phase-bias coupling
+     * term on it in the ambiguity carry by @f$+\Delta@f$ (variances untouched: an exact basis
+     * change).  The sites the transform does not move are declared with their reason in the
+     * mechanism table.
+     * @param carry   the run's carried state.
+     * @param sat     the family's satellite.
+     * @param sig     the family's signal.
+     * @param delta   the incoming anchor's carried level (m), read before anything moves.
+     * @param dry     count only (nothing is written).
+     * @param n_shift out: carried ambiguities moved.
+     * @param n_pb    out: carried phase biases moved.
+     * @param n_cpl   out: coupling terms moved.
+     * @param counts  optional out: per-site tallies (accumulated).
+     */
+    void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
+                                    const std::string& sig, double delta, bool dry,
+                                    long long& n_shift, long long& n_pb, long long& n_cpl,
+                                    CarrySiteCounts* counts = nullptr);
 
     /**
      * @brief Declared anchor S-transform (design §3.6), replacing the network-wide

@@ -48,9 +48,13 @@
 
 #include "filter/NetworkRunTypes.hpp"   // NetStation / PhaseDatumCandidates
 #include "filter/NetworkAnchorHygiene.hpp"   // AnchorHygiene (eq34 reattach hygiene)
+#include "filter/NetworkCarrySites.hpp"      // CarrySiteCounts (card PRM phase 2)
 
+#include <map>
 #include <memory>
 #include <set>
+#include <tuple>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -61,6 +65,33 @@ namespace GnssProcessor {
 class GnssConfig;
 class LogManager;
 struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
+
+/**
+ * @brief The eq34 chain datum's D4 carry shift through the traversal of carried references
+ *        (card PRM phase 2, @c CarryMechanism::Eq34Shift).
+ *
+ * The rule of the D4 apply: a carried ambiguity moves by
+ * @f$-\Delta b_s - \Delta\delta_r@f$ (its satellite's and its receiver's chain steps, formed in
+ * that order and added once), a carried receiver phase bias by its own
+ * @f$\Delta\delta_r@f$, a carried satellite phase bias by @f$\Delta b_s@f$, and the s_prev of
+ * every phase-bias coupling term on a shifted satellite column (in the ambiguity, receiver
+ * phase-bias and wet-delay carries) by @f$\Delta b_s@f$.  A non-finite or zero step moves
+ * nothing.
+ * @param carry     the run's carried state.
+ * @param shift_sat (satellite, signal) -> @f$\Delta b_s@f$.
+ * @param shift_rxg (station, constellation, signal) -> @f$\Delta\delta_r@f$.
+ * @param shift_rpb (station, receiver phase-bias key) -> @f$\Delta\delta_r@f$.
+ * @param dry       count only (nothing is written).
+ * @param n_values  out: carried values moved (ambiguities, receiver and satellite phase biases).
+ * @param n_terms   out: coupling terms moved.
+ * @param counts    optional out: per-site tallies (accumulated).
+ */
+void eq34ShiftCarry(NetworkCarryState& carry,
+                    const std::map<std::pair<std::string, std::string>, double>& shift_sat,
+                    const std::map<std::tuple<int, char, std::string>, double>& shift_rxg,
+                    const std::map<std::pair<int, std::string>, double>& shift_rpb,
+                    bool dry, long long& n_values, long long& n_terms,
+                    CarrySiteCounts* counts = nullptr);
 
 /**
  * @brief Elect the Card-3 eq34 chain datum for this epoch.
