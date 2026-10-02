@@ -5497,6 +5497,20 @@ namespace GnssProcessor {
          */
         bool   networkClockLevelRestoreRaise() const { return network_clock_level_restore_raise_; }
         /**
+         * @brief Admit a warm resume from a snapshot written WITHOUT card CTU's tokens into a
+         *        run that arms them (@c network.ctu_switch_on_resume; card CTU G5, card EXL).
+         *
+         * The resume gate then also accepts the live fingerprint with the exact update, the
+         * bound raise, the in-block receiver code-bias carry, the drop decouple and the
+         * phase-space guard tokens removed: the switch-on seam card CTU2 section 8 graded
+         * (G5 FAILED: the restored ambiguities hold the frozen level).  Off (the default),
+         * a snapshot written without those knobs does not resume into a run that arms them,
+         * which is the "fresh convergence only" rule of the ledger rows of card EXL.
+         * Default false; a resume-path decision only, so a cold run is byte-identical.
+         * @return True when the switch-on direction is admitted.
+         */
+        bool   networkCtuSwitchOnResume() const { return network_ctu_switch_on_resume_; }
+        /**
          * @brief Epochs of code information the level restored by a warm resume is
          *        credited with (@c network.clock_level_restore_credit_ep; card CTU G5).
          *
@@ -9115,6 +9129,7 @@ namespace GnssProcessor {
         int    network_clock_level_innov_window_ep_{60};  ///< Window (epochs) of the level innovation instrument of the monitor (card CTU section 14).
         bool   network_phase_visible_monitor_{false};     ///< Card PVN measure-only phase-visible consistency instrument (the ionosphere-free phase-visible clock's normalized update and posterior contrast); requires raim_within_epoch.
         int    network_phase_visible_window_ep_{60};      ///< Window (epochs) of the phase-visible instrument's run-end means (card PVN).
+        bool   network_ctu_switch_on_resume_{false};       ///< Admit a warm resume from a snapshot written without card CTU's tokens into a run that arms them (card CTU G5; off = fresh convergence only, card EXL).
         bool   network_clock_level_restore_raise_{false};    ///< Raise the restored border along each satellite's level to its code-only variance at the first leg epoch (card CTU G5).
         int    network_clock_level_restore_credit_ep_{0};     ///< Epochs of code information the restored level is credited with (card CTU G5); 0 = all.
         double network_clock_level_sigma_floor_m_{0.01};   ///< Floor (m) on the level standard deviation, V_L = max(1 / I_L, floor^2) (card CLV). Inert unless network_clock_level_carry_.

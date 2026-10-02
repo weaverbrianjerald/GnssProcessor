@@ -36,14 +36,17 @@
   "pinned here on the SAME frozen bases; solve-affecting.  Baseline pair runs/_rf0hv12_{field,sim}6 (exe gnss_processor_wup2.exe).",
   "2026-10-01 (card SFR): the SIM golden re-based on the re-generated fixture runs/simnet60_quiet_col_24h (the field's",
   "coloured phase error, white noise cut), through a new frozen base config/refound/sim_gps_dual_rf0hv_golden_2026-10-01.json",
-  "that differs from the 2026-09-22 one in its RINEX paths only; every sim number on the old fixture is superseded."
+  "that differs from the 2026-09-22 one in its RINEX paths only; every sim number on the old fixture is superseded.",
+  "2026-10-01 (card EXL): card CTU's exact coupling update with its four companions and card LAH's phase-clock",
+  "hold (interim: precise a priori clock only) armed by the promotion path and pinned here on the SAME frozen bases;",
+  "solve-affecting, fresh convergence only.  Baseline pair runs/_rf0hv14_{field,sim}6 (exe gnss_processor_exl.exe)."
  ],
  "goldens": [
   {
    "name": "golden_sim_refound",
    "out": "config/golden/golden_sim_refound.json",
    "base": "config/refound/sim_gps_dual_rf0hv_golden_2026-10-01.json",
-   "description": "SIM bed of the RF-0hv WORKING POSTURE (docs/refound/RF-0hv_working_posture_2026-09-15.md and the cards it lists; re-based off RF-0g on 2026-09-22, card GRB): the 60-station synthetic truth bed (runs/simnet60_quiet_col_24h since card SFR, 2026-10-01: the field's coloured phase error by latitude class, white phase noise 0.5 mm), GPS-only L1/L2 (no lanes, no F3, no seams), SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (sat_gf_datum broadcast_tgd, time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH); the FLOAT VEHICLE (network.ambiguity_vehicle float_kf with network.phase_datum_held_basis, cards RF-1 / RF-2b) carried on phase_leveling with carry_coupling_gauge_project and the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum; SZZ000SIM held-out cold consumer.  Armed on this posture by the author's decision and pinned here: cycle_slip.gap_reentry_relevel (card AB2), cycle_slip.gap_reentry_per_signal (card GRS), processing.canonical_signal_rule priority (card CSL), phase_datum_gate_drop_erase (card EV7), station_marker_to_arp (card UPO), second_code_channel with second_code_sigma_scale 10 (card SCC), cycle_slip.tracker_modeled_first (card GRK), gross_los_screen with gross_los_min_rows_rule available and gross_los_emit_exclude (card RF-3, 2026-09-22), closed_loop.pb_hold_presence_flip (card PBF, 2026-09-28), estimation.accumulate_phase_windup with cycle_slip.windup_restart_refloat (card WUP, 2026-10-01).  Same posture as golden_field_refound; only the bed differs.  Validated 6 h cold on the re-based fixture (runs/_rf0hv13_sim6, exe gnss_processor_wup2.exe, card SFR): 720/720 emitted, consumer 3D p50 by hour 0.656 / 0.167 / 0.042 / 0.030 / 0.026 / 0.025 m, 515 of 720 epochs below a decimetre (the previous fixture's runs/_rf0hv12_sim6 is superseded).",
+   "description": "SIM bed of the RF-0hv WORKING POSTURE (docs/refound/RF-0hv_working_posture_2026-09-15.md and the cards it lists; re-based off RF-0g on 2026-09-22, card GRB): the 60-station synthetic truth bed (runs/simnet60_quiet_col_24h since card SFR, 2026-10-01: the field's coloured phase error by latitude class, white phase noise 0.5 mm), GPS-only L1/L2 (no lanes, no F3, no seams), SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (sat_gf_datum broadcast_tgd, time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH); the FLOAT VEHICLE (network.ambiguity_vehicle float_kf with network.phase_datum_held_basis, cards RF-1 / RF-2b) carried on phase_leveling with carry_coupling_gauge_project and the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum; SZZ000SIM held-out cold consumer.  Armed on this posture by the author's decision and pinned here: cycle_slip.gap_reentry_relevel (card AB2), cycle_slip.gap_reentry_per_signal (card GRS), processing.canonical_signal_rule priority (card CSL), phase_datum_gate_drop_erase (card EV7), station_marker_to_arp (card UPO), second_code_channel with second_code_sigma_scale 10 (card SCC), cycle_slip.tracker_modeled_first (card GRK), gross_los_screen with gross_los_min_rows_rule available and gross_los_emit_exclude (card RF-3, 2026-09-22), closed_loop.pb_hold_presence_flip (card PBF, 2026-09-28), estimation.accumulate_phase_windup with cycle_slip.windup_restart_refloat (card WUP, 2026-10-01), carry_coupling_exact_update with carry_rx_code_bias_in_block, amb_float_drop_decouple_always, clock_anchor_guard_space phase and rank_gate_tol 1e-11, and emit_pb_hold_phase_clock as an interim hold (card EXL, 2026-10-01; fresh convergence only).  Same posture as golden_field_refound; only the bed differs.  Validated 6 h cold on the re-based fixture with card EXL's exact update and phase-clock hold (runs/_rf0hv14_sim6, exe gnss_processor_exl.exe, byte-identical to the gate arm runs/_rap_exl_on6_s): 720/720 emitted, consumer 3D p50 by hour 0.510 / 0.112 / 0.031 / 0.021 / 0.028 / 0.027 m, 535 of 720 epochs below a decimetre (before card EXL runs/_rf0hv13_sim6: 0.655 / 0.164 / 0.042 / 0.030 / 0.026 / 0.025 m, 515; the previous fixture's runs/_rf0hv12_sim6 is superseded).  The golden starts inside the fixture's start artifact: grade the sim from 00:30:15.",
    "pins": {
     "processing.frequency_mode": "dual",
     "processing.active_systems": [
@@ -82,7 +85,14 @@
     "network.closed_loop.pb_hold_presence_flip": true,
 
     "estimation.accumulate_phase_windup": true,
-    "network.cycle_slip.windup_restart_refloat": true
+    "network.cycle_slip.windup_restart_refloat": true,
+
+    "network.carry_coupling_exact_update": true,
+    "network.carry_rx_code_bias_in_block": true,
+    "network.amb_float_drop_decouple_always": true,
+    "network.clock_anchor_guard_space": "phase",
+    "network.rank_gate_tol": 1e-11,
+    "network.emit_pb_hold_phase_clock": true
    },
    "unset": [],
    "exceptions": {
@@ -98,7 +108,7 @@
    "name": "golden_field_refound",
    "out": "config/golden/golden_field_refound.json",
    "base": "config/refound/field_gps_dual_rf0hv_golden_2026-09-22.json",
-   "description": "FIELD bed of the RF-0hv WORKING POSTURE (docs/refound/RF-0hv_working_posture_2026-09-15.md and the cards it lists; re-based off RF-0g on 2026-09-22, card GRB): DOY-129, 58 stations (the 61-station roster minus the two C2X-only stations INEG00MEX / OAFA00ARG of card RF-0g, minus MIZU00JPN of card SCU), GPS-only L1/L2 with the X channels cut (C/L/D/S 1X and 2X), WTZZ00DEU held-out cold consumer; SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH), no external biases; the FLOAT VEHICLE (network.ambiguity_vehicle float_kf with network.phase_datum_held_basis, cards RF-1 / RF-2b) carried on phase_leveling with carry_coupling_gauge_project and the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum.  Armed on this posture by the author's decision and pinned here: cycle_slip.gap_reentry_relevel (card AB2), cycle_slip.gap_reentry_per_signal (card GRS), processing.canonical_signal_rule priority (card CSL), phase_datum_gate_drop_erase (card EV7), station_marker_to_arp (card UPO), second_code_channel with second_code_sigma_scale 10 (card SCC), cycle_slip.tracker_modeled_first (card GRK), gross_los_screen with gross_los_min_rows_rule available and gross_los_emit_exclude (card RF-3, 2026-09-22), closed_loop.pb_hold_presence_flip (card PBF, 2026-09-28), estimation.accumulate_phase_windup with cycle_slip.windup_restart_refloat (card WUP, 2026-10-01).  Validated 6 h cold (runs/_rf0hv12_field6, exe gnss_processor_wup2.exe, byte-identical to card WUP's gate arm runs/_rap_wup_field6): 720/720 emitted, consumer 3D p50 by hour 0.559 / 0.059 / 0.029 / 0.033 / 0.038 / 0.041 m, 611 of 720 epochs below a decimetre.",
+   "description": "FIELD bed of the RF-0hv WORKING POSTURE (docs/refound/RF-0hv_working_posture_2026-09-15.md and the cards it lists; re-based off RF-0g on 2026-09-22, card GRB): DOY-129, 58 stations (the 61-station roster minus the two C2X-only stations INEG00MEX / OAFA00ARG of card RF-0g, minus MIZU00JPN of card SCU), GPS-only L1/L2 with the X channels cut (C/L/D/S 1X and 2X), WTZZ00DEU held-out cold consumer; SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH), no external biases; the FLOAT VEHICLE (network.ambiguity_vehicle float_kf with network.phase_datum_held_basis, cards RF-1 / RF-2b) carried on phase_leveling with carry_coupling_gauge_project and the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum.  Armed on this posture by the author's decision and pinned here: cycle_slip.gap_reentry_relevel (card AB2), cycle_slip.gap_reentry_per_signal (card GRS), processing.canonical_signal_rule priority (card CSL), phase_datum_gate_drop_erase (card EV7), station_marker_to_arp (card UPO), second_code_channel with second_code_sigma_scale 10 (card SCC), cycle_slip.tracker_modeled_first (card GRK), gross_los_screen with gross_los_min_rows_rule available and gross_los_emit_exclude (card RF-3, 2026-09-22), closed_loop.pb_hold_presence_flip (card PBF, 2026-09-28), estimation.accumulate_phase_windup with cycle_slip.windup_restart_refloat (card WUP, 2026-10-01), carry_coupling_exact_update with carry_rx_code_bias_in_block, amb_float_drop_decouple_always, clock_anchor_guard_space phase and rank_gate_tol 1e-11, and emit_pb_hold_phase_clock as an interim hold (card EXL, 2026-10-01; fresh convergence only).  Validated 6 h cold (runs/_rf0hv14_field6, exe gnss_processor_exl.exe, byte-identical to card EXL's gate arm runs/_rap_exl_on6_f): 720/720 emitted, consumer 3D p50 by hour 0.108 / 0.024 / 0.016 / 0.020 / 0.030 / 0.026 m, 657 of 720 epochs below a decimetre (before card EXL runs/_rf0hv12_field6: 0.559 / 0.059 / 0.029 / 0.033 / 0.038 / 0.041 m, 611).",
    "pins": {
     "processing.frequency_mode": "dual",
     "processing.active_systems": [
@@ -137,7 +147,14 @@
     "network.closed_loop.pb_hold_presence_flip": true,
 
     "estimation.accumulate_phase_windup": true,
-    "network.cycle_slip.windup_restart_refloat": true
+    "network.cycle_slip.windup_restart_refloat": true,
+
+    "network.carry_coupling_exact_update": true,
+    "network.carry_rx_code_bias_in_block": true,
+    "network.amb_float_drop_decouple_always": true,
+    "network.clock_anchor_guard_space": "phase",
+    "network.rank_gate_tol": 1e-11,
+    "network.emit_pb_hold_phase_clock": true
    },
    "unset": [],
    "exceptions": {

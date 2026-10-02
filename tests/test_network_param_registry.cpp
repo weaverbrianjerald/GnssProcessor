@@ -7,7 +7,7 @@
  * snapshot, the byte-identity contract), and its descriptors must state the goldens'
  * armed model: the satellite clock anchored at card Q3's rate and loose at the legacy
  * rate, the phase and code biases at their pinned rates, the float ambiguities in the
- * station's whitened local block, the receiver code bias carried as a diagonal prior,
+ * station's whitened local block, the receiver code bias carried in that block (card EXL),
  * and the wet delay, slant ionosphere and receiver clock re-estimated every epoch.
  */
 #include <gtest/gtest.h>
@@ -77,7 +77,7 @@ void expectGoldenModel(const std::string& bed) {
 
     const ParamSpec& rxcb = r.spec(NetworkParamKind::RxCodeBias);
     EXPECT_TRUE(rxcb.carried);
-    EXPECT_EQ(rxcb.route, ParamRoute::DiagonalStationPrior);
+    EXPECT_EQ(rxcb.route, ParamRoute::LocalBlock);   // in the station block since card EXL
 
     EXPECT_FALSE(r.spec(NetworkParamKind::PhaseColour).estimated);   // card LGM, off
     EXPECT_EQ(r.spec(NetworkParamKind::PhaseColour).route, ParamRoute::NotCarried);

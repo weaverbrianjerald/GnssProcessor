@@ -330,6 +330,46 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.carry_coupling_time_update",
               "else the coupling rows re-assert the harvest-epoch border at full strength (~5.8 "
               "cyc, 1.5e4x weight lie)" },
+            // --- The exact coupling update and its companions (card CTU, promoted by card
+            //     EXL).  Card 1d's scalar update ages each row's satellite clock term at the
+            //     legacy sat_clock_q while card Q3's anchor folds the same clock at its own q,
+            //     so a young arc's ambiguity information is discarded every epoch (card AIL)
+            //     and the clock level freezes (card CTU's root); the exact update re-expresses
+            //     each row on the moved border with the fold's own Q.  Its companions are each
+            //     measured necessary on this posture (card CTU2 sections 2, 5 and 6); the
+            //     guard space (phase) and rank_gate_tol 1e-11 are value companions of the same
+            //     ledger row.  Regime: the float vehicle on the leveling carry with the card 1
+            //     coupling trio, which the loader requires.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && network_phase_leveling_
+                  && network_carry_coupling_time_update_ && network_shared_carry_full_cov_
+                  && !network_carry_coupling_joint_whiten_,
+              network_carry_coupling_exact_update_ && network_clock_anchor_guard_space_ == 2
+                  && network_rank_gate_tol_ <= 1e-11,
+              Tier::SCOPED, true , "network.carry_coupling_exact_update",
+              "re-express each coupling row on the moved border with the fold's own Q, not "
+              "the legacy clock q (a young arc's ambiguity information was discarded every "
+              "epoch, 75 mm sim / 157 mm field below 20 epochs, card AIL): sim clock level "
+              "0.16 -> 0.02 m, IF code spread sim 0.143 -> 0.057 m, field 0.266 -> 0.164 m; "
+              "ships only with the phase-clock hold (field consumer 3.878 / 2.245 m in hours "
+              "1 / 2 under the plain hold, 0.108 / 0.024 m under the phase-clock hold); armed "
+              "only with guard space phase and rank_gate_tol 1e-11; fresh convergence only "
+              "(network.ctu_switch_on_resume off)" },
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && network_phase_leveling_
+                  && network_carry_rx_code_bias_ && network_carry_conditional_coupling_
+                  && !network_carry_coupling_joint_whiten_ && !network_rx_cb_carry_demean_
+                  && !network_rx_cb_carry_demean_within_ && !network_rx_cb_carry_step_gate_
+                  && !network_rx_cb_harvest_demean_,
+              network_carry_rx_code_bias_in_block_,
+              Tier::SCOPED, true , "network.carry_rx_code_bias_in_block",
+              "fold the receiver code-bias carry inside the station's whitened block as card 1 "
+              "coupling rows (the diagonal fold at the conditional variance doubled the border "
+              "information every epoch, card CTU2 section 2); a companion of the exact update" },
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
+              network_amb_float_drop_decouple_always_,
+              Tier::SCOPED, true , "network.amb_float_drop_decouple_always",
+              "a drop clears the arc's border regression and block row even at birth strength "
+              "(without it the field level jumps by metres at the first fold under the exact "
+              "update, card CTU2 section 6); a companion of the exact update" },
             { !network_carry_invariant_ && network_phase_leveling_,
               network_shared_carry_full_cov_,
               Tier::SCOPED, false, "network.shared_carry_full_cov",
@@ -662,6 +702,26 @@ namespace GnssProcessor {
               "a float consumer: 0.0467 m of within-arc RMS on the field against the clock's "
               "0.0274 m, first differences uncorrelated with the clock's): adopted 2026-09-20, "
               "all five PBH-1 bars pass; the solve is untouched" },
+            // --- The phase-clock hold (card LAH, promoted by card EXL with the exact update).
+            //     The plain hold freezes each emitted phase bias while the exact update moves
+            //     the clock and the phase biases together as the level converges, so the
+            //     convergence lands on the consumer's phase rows; this hold transfers each
+            //     held satellite's level step to its phase bias.  An INTERIM hold: it is valid
+            //     only with a precise a priori clock product (the loader warns under
+            //     apriori_source brdc_rts).  Emit-only (wire token pbhold=2).  Regime: the
+            //     plain hold's, with the hold armed.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                  && nc.closed_loop.enable && nc.emit_pb_hold
+                  && network_apriori_source_ != NetworkAprioriSource::BrdcRts
+                  && !network_clock_level_carry_ && !nc.fast_clock.enable
+                  && !nc.emit_pb_hold_smoothed,
+              nc.emit_pb_hold_phase_clock,
+              Tier::SCOPED, false, "network.emit_pb_hold_phase_clock",
+              "transfer each held satellite's level step to its phase bias (the plain hold "
+              "puts the exact update's level convergence on the consumer's phase rows: field "
+              "consumer 3.878 / 2.245 m in hours 1 / 2 under the plain hold, 0.108 / 0.024 m "
+              "with this hold); armed with network.carry_coupling_exact_update; interim, "
+              "precise a priori clock only; the solve is untouched" },
             // --- The consumer's answer to a held bias's presence edges (card PBF).  Under the
             //     hold, a bias that appears on a phase row the consumer already uses, or leaves
             //     it, steps the row by the whole bias; the hold seam claims the key and, without

@@ -628,3 +628,13 @@ block; the monitor carries a truth-free level instrument; the guard has a level-
 statistic; the field's first-fold jump was a drop that did not decouple. On a clean sim start G1 and
 G2 pass; G4 misses by 1.7 cm on the field; G5 fails, held by the restored ambiguities; the consumer
 is worse with the exact update under every hold setting.
+
+## 15. Annotation (2026-10-01): armed on the goldens by card EXL
+
+The exact update (`network.carry_coupling_exact_update`) with the companions of card CTU2 section 7
+(`carry_rx_code_bias_in_block`, `amb_float_drop_decouple_always`, `clock_anchor_guard_space` phase,
+`rank_gate_tol` 1e-11) is armed on the goldens together with card LAH's phase-clock hold, the
+author's decision after card AIL ([EXL](EXL_exact_update_lah_promotion_2026-10-01.md)). G4 and G8 of
+section 10 were re-stated relative to the golden (field IF spread 0.164 against 0.266 m; epoch time
++8.2 % field, +4.5 % sim) and G5 is disclosed (fresh convergence only). The `dense_fold_kappa`
+default these sections quote as 1e-6 has been 1e-12 since card SMH section 9.

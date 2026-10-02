@@ -6,15 +6,18 @@ so these replays are IN-NETWORK consumers (optimistic in absolute terms; the pai
 between two wires of one solve is what is read).  Stations S01, S05, ..., S57 and S60.
 
 make : python scripts/clock_level/simcensus6h.py make <key> <wire run dir, bare> <exe>
-       tags smc6_<station>_<key>, base runs/_rf0hv11_sim6/arm.json (the sim golden's consumer,
-       PBF on), 6 h.
+       tags smc6_<station>_<key>, base runs/_rf0hv13_sim6/arm.json (the sim golden's consumer on
+       the re-based fixture, PBF on; $SIMCENSUS_BASE overrides it), 6 h.
 grade: python scripts/clock_level/simcensus6h.py grade <refkey> <key> [<key> ...]
 """
 import csv, json, os, statistics as st, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'; T0 = 259200.0; NH = 6
-BASE = f'{RUNS}/_rf0hv11_sim6/arm.json'
+# The consumers' base: the sim golden's baseline on the re-based fixture (card SFR, 2026-10-01).
+# Keys made before card SFR used runs/_rf0hv11_sim6/arm.json (the superseded fixture); set
+# SIMCENSUS_BASE to re-make or re-read one of them.
+BASE = os.environ.get('SIMCENSUS_BASE', f'{RUNS}/_rf0hv13_sim6/arm.json')
 _ST = json.load(open(BASE))['network']['stations']
 PICK = [f'S{i:02d}000SIM' for i in list(range(1, 58, 4)) + [60]]
 SL = [s for s in _ST if s['name'] in PICK]

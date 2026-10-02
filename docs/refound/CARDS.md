@@ -500,3 +500,6 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   path. Fresh 2 h evidence: under the plain hold the exact update costs the field consumer 3.3 m in
   hour 1; under the phase-clock hold it reads 0.108 / 0.024 m. Gates in section 3 (G4 and G8 re-stated
   relative, G5 disclosed).
+  ARMED: every gate passed (the field census at its limit: ARHT00ATA and KOKB00USA worse); four
+  ledger rows (A15), baseline pair `runs/_rf0hv14_{field,sim}6`; the pre-commit review found the
+  switch-on resume ungated, now behind the default-off `network.ctu_switch_on_resume`.

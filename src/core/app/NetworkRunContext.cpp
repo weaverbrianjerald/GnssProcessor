@@ -1309,8 +1309,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // phase-space guard ON can resume from a snapshot written without them (the
         // switch-on seam the card's G5 grades).  The reverse direction is not accepted:
         // a snapshot written with them holds the card's state, which a run without them
-        // would read under the old rules.
-        {
+        // would read under the old rules.  Only under network.ctu_switch_on_resume: the
+        // seam failed G5, and card EXL's ledger rows (the knobs armed on the goldens) are
+        // fresh convergence only.  Off, the twin is 0 and the resume gate compares the
+        // live fingerprint alone.
+        ctx.carry.live_fingerprint_ctu_off = 0;
+        if (config_.networkCtuSwitchOnResume()) {
             std::string off = fp;
             for (const std::string& tok : {std::string("carrycplexact=true"),
                                            std::string("clmraise=true"),

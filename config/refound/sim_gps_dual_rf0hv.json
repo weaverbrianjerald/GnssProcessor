@@ -107,7 +107,8 @@
     "re-entering arc through its leveling carry) frees the arcs whose carry would fold across the restart.  6 h: 69 restarts,",
     "27 answered (52 arcs), 1 with nothing to free, 0 bridged; IF-TD flags 111 to 70; WTZZ00DEU within 3 mm in every hour;",
     "census section 5 of the card.  Baseline pair: runs/_rf0hv12_{field,sim}6, exe gnss_processor_wup2.exe.",
-    "2026-10-01 (card SFR, docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md): RE-POINTED at the re-based fixture runs/simnet60_quiet_col_24h (recipe config/sim/simnet60_quiet_col_24h.json: white phase noise 0.5 mm, a band-common Gauss-Markov phase colour by latitude class calibrated on the field's post-fit residual, the multipath phase off), the RINEX paths changed and nothing else."
+    "2026-10-01 (card SFR, docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md): RE-POINTED at the re-based fixture runs/simnet60_quiet_col_24h (recipe config/sim/simnet60_quiet_col_24h.json: white phase noise 0.5 mm, a band-common Gauss-Markov phase colour by latitude class calibrated on the field's post-fit residual, the multipath phase off), the RINEX paths changed and nothing else.",
+    "2026-10-01 (card EXL, docs/refound/EXL_exact_update_lah_promotion_2026-10-01.md): card CTU's EXACT COUPLING UPDATE armed with its four companions (network.carry_coupling_exact_update, carry_rx_code_bias_in_block, amb_float_drop_decouple_always, clock_anchor_guard_space phase, rank_gate_tol 1e-11) and card LAH's phase-clock hold (network.emit_pb_hold_phase_clock, an INTERIM hold valid only with a precise a priori clock product).  The scalar coupling update discarded a young arc's ambiguity information every epoch and froze the clock level (cards AIL, CTU); under the plain hold the exact update costs the field consumer metres in hours 1 and 2, so the two ship together.  6 h field WTZZ00DEU 0.108 0.024 0.016 0.020 0.030 0.026 m by hour; census medians better in every hour on both beds, with ARHT00ATA and KOKB00USA worse (card LAH's named regressions).  Fresh convergence only: a snapshot written without these knobs is not resumed into them."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -390,6 +391,11 @@
     "carry_conditional_coupling": true,
     "shared_carry_full_cov": true,
     "carry_coupling_time_update": true,
+    "carry_coupling_exact_update": true,
+    "carry_rx_code_bias_in_block": true,
+    "amb_float_drop_decouple_always": true,
+    "clock_anchor_guard_space": "phase",
+    "rank_gate_tol": 1e-11,
     "carry_invariant": false,
     "carry_coupling_gauge_project": true,
     "carry_coupling_reinit_sources": true,
@@ -1042,6 +1048,7 @@
     "trace_amb_state": true,
     "phase_datum_held_mark_cold": true,
     "phase_datum_held_cold_release": true,
-    "emit_pb_hold": true
+    "emit_pb_hold": true,
+    "emit_pb_hold_phase_clock": true
   }
 }

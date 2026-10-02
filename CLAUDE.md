@@ -394,6 +394,18 @@ on the field's post-fit ionosphere-free phase residual) through the frozen base
 0.656 0.167 0.042 0.030 0.026 0.025 m by hour.  ⚠ Every persistence-sensitive sim number on the old fixture
 (`simnet60_quiet_wu93_24h`) is SUPERSEDED (PVN, SMH G2/G3, SMD, QPV, REV/SMC, CTU/CTU2, FWS, the sim census):
 re-capture, never compare across the two fixtures.  The old fixture cannot be regenerated from current source.
+Card EXL (2026-10-01): card CTU's EXACT COUPLING UPDATE armed on the goldens with its four companions
+(`network.carry_coupling_exact_update`, `carry_rx_code_bias_in_block`, `amb_float_drop_decouple_always`,
+`clock_anchor_guard_space` phase, `rank_gate_tol` 1e-11) and card LAH's phase-clock hold
+(`network.emit_pb_hold_phase_clock`, INTERIM: valid only with a precise a priori clock product), by the promotion
+path (ledger A15, 69 armed in regime).  The scalar coupling update discarded a young arc's ambiguity information
+every epoch and froze the clock level (cards AIL, CTU); under the plain hold the exact update leaves the field
+consumer at 3.9 m in hour 1, so the two ship together.  Baseline pair `runs/_rf0hv14_{field,sim}6` (exe
+`gnss_processor_exl.exe`): field WTZZ00DEU 0.108 0.024 0.016 0.020 0.030 0.026 m by hour, sim 0.510 0.112 0.031
+0.021 0.028 0.027 m; census medians better in every hour on both beds, ARHT00ATA and KOKB00USA worse (card LAH's
+named regressions).  ⚠ FRESH CONVERGENCE ONLY: a snapshot written without these knobs is not resumed into a run that
+arms them unless `network.ctu_switch_on_resume` (default off; that seam failed card CTU's G5).  ⚠ The sim golden
+starts inside the fixture's start artifact: grade the sim from 00:30:15 (`start_offset_hours` 0.504167).
 
 They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
 + `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base

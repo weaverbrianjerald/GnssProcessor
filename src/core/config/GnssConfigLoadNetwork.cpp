@@ -9356,6 +9356,17 @@ namespace GnssProcessor {
                       network_phase_visible_window_ep_);
         network_clock_level_restore_raise_ =
             jval<bool>(json, "network.clock_level_restore_raise", "clock_level_restore_raise", false);
+        // Card CTU G5 / card EXL: the switch-on resume direction (a snapshot written without
+        // the card's tokens resumed into a run that arms them) is admitted only on request;
+        // card CTU2 section 8 graded that seam and it failed G5.
+        network_ctu_switch_on_resume_ =
+            jval<bool>(json, "network.ctu_switch_on_resume", "ctu_switch_on_resume", false);
+        if (network_ctu_switch_on_resume_)
+            log->warn("Network (card CTU G5): network.ctu_switch_on_resume ON: a snapshot written "
+                      "without the exact update, the bound raise, the in-block receiver code-bias "
+                      "carry, the drop decouple or the phase-space guard is resumed into a run that "
+                      "arms them.  That seam FAILED card CTU's G5 (the restored ambiguities hold the "
+                      "frozen level); a measurement lineage only.");
         network_clock_level_restore_credit_ep_ =
             jval<int>(json, "network.clock_level_restore_credit_ep", "clock_level_restore_credit_ep", 0);
         if (network_clock_level_restore_credit_ep_ < 0) {

@@ -337,3 +337,11 @@ as measured, the smoothed member's regression of D(t0) on D(t) stays near 1 for 
 beds it would behave like the phase-clock hold while passing the modelled walk, and would adapt to a
 broadcast a priori through the walk's own q. The rejection in section 2 therefore stands only for the
 offline proxy (rho = 1 / (1 + n / 60)); the smoothed member itself is owed a build.
+
+## Annotation (2026-10-01): armed on the goldens by card EXL, as an interim hold
+
+`network.emit_pb_hold_phase_clock` is armed on the goldens with card CTU's exact update
+([EXL](EXL_exact_update_lah_promotion_2026-10-01.md)): under the plain hold the exact update costs the
+field consumer 3.878 / 2.245 m in hours 1 / 2, with this hold 0.108 / 0.024 m. Interim: valid only
+with a precise a priori clock product. Its named regressions stand on the 6 h census of card EXL
+section 4: ARHT00ATA +0.404 m over hours 2 to 6, KOKB00USA hour 2 0.22 to 1.48 m, QUIN00USA +0.041 m.
