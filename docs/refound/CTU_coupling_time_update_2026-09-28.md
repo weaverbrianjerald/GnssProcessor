@@ -638,3 +638,16 @@ author's decision after card AIL ([EXL](EXL_exact_update_lah_promotion_2026-10-0
 section 10 were re-stated relative to the golden (field IF spread 0.164 against 0.266 m; epoch time
 +8.2 % field, +4.5 % sim) and G5 is disclosed (fresh convergence only). The `dense_fold_kappa`
 default these sections quote as 1e-6 has been 1e-12 since card SMH section 9.
+
+## 16. Annotation (2026-10-02): the mirror retired by card PRM phase 1b
+
+The mirror of section 13.1 (`networkCouplingExactPrepare`'s clause chain and `clockAnchorFoldPeek`)
+is replaced by the fold's own decision, made once before PASS B (`networkCarryDecide`) and read by
+the rows and by the fold ([PRM](PRM_parameter_registry_2026-09-29.md) section 15). Before its
+removal the decision matched the mirror and the fold bit for bit on every key of ten same-build
+arms, the 6 h goldens across the clock-pivot handover included, and the run is byte-identical with
+it removed. The handover clause the mirror could not see is the S-transform: its 31 inflation
+mismatches at TOW 276150 are the 31 re-expressed GPS clocks, with the largest |dQ| equal to the
+transform's `var_q`. The run-end fold line now counts the keys of S a handover re-expressed or
+retired after the rows were built; those rows are still not conditioned on the re-expressed
+variance (owed to card PRM phase 2).

@@ -3779,18 +3779,18 @@ namespace GnssProcessor {
         size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, n_cpl_harvest_fail = 0;
         long long n_cpl_terms_present = 0, n_cpl_terms_departed = 0, n_cpl_terms_shrunk = 0;
         // Card CTU run totals (invariant 4): the per-station row and term counts folded
-        // serially after PASS B, the epoch builds, and the D2 fold's check of the mirror
-        // the rows read (keys whose S/D disposition or inflation differ from what the fold
-        // applied; the mirror cannot see a clock-datum handover, which is decided later
-        // in the epoch, so those epochs are counted separately).
+        // serially after PASS B, the epoch builds, and what the fold changed after the rows
+        // were built from the shared decision (card PRM phase 1b): keys in S that a
+        // clock-pivot handover re-expressed (the S-transform) or retired, on the handover
+        // epochs the fold counts.
         CouplingExactCounters cxu{};
         long long cxu_epochs = 0, cxu_epochs_built = 0, cxu_epochs_unfactored = 0,
                   cxu_epochs_nostash = 0;
         long long cxu_keys_s = 0, cxu_keys_d[kCouplingExactRoutes]{};
-        long long cxu_q_negative = 0;          ///< mirrored inflations below 0 (a VCE factor < 1), clamped to 0
-        long long cxu_fold_checked = 0, cxu_fold_mismatch_set = 0, cxu_fold_mismatch_q = 0,
-                  cxu_fold_handover_epochs = 0, cxu_fold_diag_fallback = 0;
-        double    cxu_fold_max_dq = 0.0;       ///< largest |Q_fold - Q_mirror| over checked keys (m^2)
+        long long cxu_q_negative = 0;          ///< row inflations below 0 (a VCE factor < 1), clamped to 0
+        long long cxu_fold_handover_epochs = 0, cxu_fold_diag_fallback = 0;
+        long long cxu_fold_reexpressed_in_s = 0;   ///< keys in S folded on a variance a handover re-expressed after the rows
+        long long cxu_fold_retired_in_s = 0;       ///< keys in S the fold retired at a handover (the rows carried them)
         long long cxu_pivot_missing = 0;       ///< built epochs with a clock constellation and no recorded pivot
         // Card PRM phase 1b: the decided-once fold disposition (networkCarryDecide before
         // PASS B, read by the rows and the fold).  prm_disp counts key-epochs by
@@ -3805,11 +3805,6 @@ namespace GnssProcessor {
         long long prm_departed[4]{};
         long long prm_reexpressed = 0, prm_reexpressed_epochs = 0, prm_undecided_at_fold = 0;
         double    prm_reexpressed_max_dvar = 0.0;
-        // The check of the decision against card CTU's mirror and the fold, kept for one
-        // build (card PRM section 4.4): bitwise equality of the rows' inflations and the
-        // fold's variances, and the fold's disposition against the decided one.
-        long long prm_chk_rows = 0, prm_chk_rows_mismatch = 0, prm_chk_fold = 0,
-                  prm_chk_fold_var_mismatch = 0, prm_chk_fold_disp_mismatch = 0;
         // Card CTU level monitor and raise.  Ratios are counted for a satellite from its
         // second epoch of code information on (its first solve is the code-only batch).
         long long clm_epochs = 0, clm_skip_datum = 0, clm_rows = 0, clm_below1 = 0,
@@ -4687,12 +4682,13 @@ namespace GnssProcessor {
      * Called by the driver after the epoch's shared columns are registered and before
      * PASS B, whose parallel produce reads the result.  The coupling rows are built before
      * @ref networkInjectD2CarryPrior runs, so the inflation each stashed key will receive
-     * is taken from a mirror of that fold's dense branch, clause for clause (the frame
-     * re-reference skips, the clock model, the reinit decorrelation, the Q3 anchor through
-     * @ref clockAnchorFoldPeek, the B4 floors, the VCE factor, the var_eff screen), and a
-     * key the fold will not carry, or whose column left the layout, goes to D.  The one
-     * clause the mirror cannot see is a clock-datum handover, decided later in the epoch;
-     * the fold checks every key against this mirror and counts both kinds of disagreement.
+     * is the fold's own decision, made once before PASS B by @ref networkCarryDecide and
+     * read here and by the fold (card PRM phase 1b): a key the fold folds is in S at the
+     * variance the decision forms on its stashed variance (@ref carryFoldVarEff, the dense
+     * fold's chain), and a key the fold will not carry, or whose column left the layout,
+     * goes to D with its route.  The one clause no point before PASS B can know is a
+     * clock-pivot handover, decided later in the epoch; the fold counts the keys in S that
+     * the handover re-expressed or retired after these rows were built.
      * Then @f$P_{SS}+Q_S@f$ is factored.  A no-op (with @c ok false) when the knob is off,
      * when no dense block was stashed, or when the stash stamp is not valid (the epoch
      * after a warm resume).

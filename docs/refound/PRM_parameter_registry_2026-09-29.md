@@ -359,3 +359,104 @@ Owed (phase 1b): the disposition on `CarryPrior` (section 4.4) set by the fold a
 coupling builder, the exact update and the snapshot writer, with card CTU's mirror
 (`networkCouplingExactPrepare`, `clockAnchorFoldPeek`) kept as the check until its mismatch counter
 reads 0 and then removed. Card LGM's nuisance kind does not need it and is sequenced first.
+
+## 15. Phase 1b, the border's fold decided once (2026-10-02)
+
+**15.1 The order of the epoch decides where the disposition is set.** Section 4.4 has the
+disposition set by the fold and read by the coupling builder. The fold
+(`networkInjectD2CarryPrior`, in `networkSolveGlue`) runs after PASS B, and PASS B builds the
+coupling rows, so a disposition the fold sets is one epoch late for the rows; the snapshot writer
+and the teardown run after the stash, which rebuilds every live entry. Card CTU solved the first
+half with a mirror of the fold before PASS B. The decision therefore has to be made where the
+mirror ran: after the shared columns are registered and the switch-on seam's level noise is set,
+before PASS B. Between that point and the fold, four things happen to the carry (a read of every
+writer in the window): the clock datum election and the handover test (`buildSharedDatum`,
+`pivotHandoverSignalled`, pure), the ephemeris cut-over re-level (values only, `brdc_rts` only,
+inert on the goldens), the clock-pivot handover S-transform (values and variances of the changed
+constellation's clocks; `prev_carry_cov` untouched), and, inside the fold, the anchor's begin-epoch
+reset and the READMIT erase of parked entries on a datum change. No writer of the reference sets,
+the anchor state, the seam noise or the VCE factors runs in the window.
+
+**15.2 The build.** `networkCarryDecide` (new seam `filter/NetworkCarryDisposition`) decides
+every carried border entry once per epoch before PASS B and records the decision on the entry
+(`CarryPrior::fold`, a `CarryFoldDecision`). The record holds the route and the process-noise
+increment, not the folded variance: `carryFoldVarEff` forms the variance from the carried
+variance its caller holds (the fold's chain in its order: the reinit variance, or the variance
+plus the increment through the anchor's floor, the B4 floor, the VCE factor, and on the dense
+fold the seam noise). The coupling rows read the record on the stashed variance; the fold reads
+it on the variance it folds. The dispositions: Folded, Anchored, Loose, Reinit, Seeded, Reref,
+Held, OnOscillator, Parked, Screened, Retired, plus a departed flag. The card's Skipped is split
+into Held, OnOscillator, Screened and Retired; its Departed is the flag (a foldable entry whose
+column left the layout, which the estimator marginalizes); Folded and Seeded were not listed.
+The fold applies the one clause no earlier point can know: a clock-pivot handover retires the
+changed constellations' datum unless the S-transform re-expressed their carry (Retired). It
+records Screened when the variance it forms is not positive, commits the anchor's bookkeeping and
+tallies what it applied per (kind, disposition).
+
+The Q3 anchor's `clockAnchorFoldVariance` is split into `clockAnchorFoldDecide` (pure, with the
+increment), `clockAnchorFoldAt` (the floor on a given variance, the one implementation of it) and
+`clockAnchorFoldCommit` (the per-satellite state and counters, called by the fold only, so an epoch
+that ends before the fold advances nothing). `clockAnchorFoldVariance` remains as the two halves in
+one call. Card CTU's mirror (`networkCouplingExactPrepare`'s clause chain and
+`clockAnchorFoldPeek`) is removed; the prepare forms the rows' epoch from the record. The fold's
+own clause chain is removed too: both branches read the record through one per-key function. The
+column-presence test of the decision and of READMIT's park is one function, `carryColumnPresent`.
+
+**15.3 The mirror's handover mismatches were the S-transform.** Card EXL disclosed 31 inflation
+mismatches between the mirror and the fold, at one epoch per 6 h bed. They are the 31 GPS clocks
+the S-transform re-expressed at the clock-pivot handover (TOW 276150, incoming pivot G02, on both
+beds), and the largest |dQ| equals the transform's `var_q` exactly (field 1.124e-03 m², sim
+4.473e-04 m²): the transform adds `v_i² var_q` to each clock's variance after the rows were built
+on the variance before it. The mirror was not wrong; the rows and the fold see two variances of
+one decision. The run-end line now counts these keys as re-expressed after the rows were built (31
+on each 6 h golden, with the largest variance change), and the CTU line counts the keys in S that
+a handover re-expressed or retired. Those rows are still not conditioned on the re-expressed
+variance at that epoch. Making them so is a re-expression of the rows' border references at the
+handover, which is phase 2's traversal (the S-transform is one of its callers), not a phase 1
+change.
+
+**15.4 The gates.** Same build flags; the references are the HEAD executable
+`gnss_processor_prm1b0.exe` (`45183c6e51e9c729`, main `d241f27`, tags `b0h6` and `b0`). The
+harness's 2 h arms contain no clock-pivot handover, so the goldens run 6 h (`--hours 6`, the
+handover at 4.7 h); the program posture (with card LAH's phase-clock hold off, which the loader
+refuses with the smoothed hold), the scalar coupling update and the diagonal border fold (reached
+only on the level vehicle) run 2 h, the three postures the goldens no longer exercise.
+
+| step | executable | result |
+| --- | --- | --- |
+| 1, the decision beside the mirror (`dec3101`) | `gnss_processor_prm1b1.exe` `733c20fc106b44bc` | byte-identical on all ten arms (284 comparisons, every CSV); the decision against the mirror bit for bit, 0 mismatches (153 437 / 113 194 keys on the 6 h field / sim goldens, 51 229 / 37 860 on the program posture; the mirror does not run on the scalar and diagonal postures); against the fold bit for bit, 0 variance and 0 disposition mismatches (151 725 / 111 777 variances on the 6 h goldens, 37 399 to 50 897 on the 2 h arms); 31 keys re-expressed in 1 epoch on each 6 h golden; 0 entries undecided at the fold |
+| 2, the mirror removed, the fold reading the decision | `gnss_processor_prm1b2.exe` `77ab7c95d714bc4c` | byte-identical on all ten arms (284 comparisons); the CTU line counts 1 handover epoch on each 6 h golden with 31 keys of S folded on the re-expressed variance and 0 retired; 0 entries undecided at the fold |
+
+The check of step 1 is bitwise (`==` on the doubles), not the mirror's relative 1e-12 tolerance,
+and it covers the leftovers' inflations and the departed flag as well as the dense keys. Unit
+suite 2759 passed, 1 fixture-gated skip, after each step; suite `CarryDisposition` (5 cases: the clauses in the fold's order, the
+variance against the rule written out, a re-expressed variance keeping the decision, the anchor's
+decide, at and commit against the rule in the six states, the pass overwriting a stale record and
+writing nothing else).
+
+**15.5 The tally.** The run-end table now states what the fold applied. On the 6 h field golden:
+the satellite clocks 21 579 key-epochs anchored, 256 loose, 4 seeded, 341 parked; the code biases
+67 660 folded, 16 seeded, 1 348 parked; the phase biases 62 210 folded, 23 re-referenced; departed
+4, 16 and 12. Nothing is held (no phase hold, no SH prior on this posture) and nothing retired (the
+S-transform released the one handover). The same counts go to the run manifest as a
+`param_dispositions` record.
+
+**15.6 What phase 1b does not change.** Five sites still re-derive part of the fold's decision,
+each with a formula that differs from the fold by design or by omission; moving them onto the
+record changes outputs, so they are owed to phase 3 or to their own cards:
+
+- the VCE innovation feed and the prior-residual census (`NetworkStashStatus`): run after the stash
+  (the record is gone), omit the seam noise, and the feed needs the variance before the VCE factor;
+- the clock-level monitor's walk (`NetworkClockLevel`): its own dt, no anchor floor, no reinit, no
+  seam noise;
+- the scalar coupling route (card 1d's kappa, `couplingQ`): the loose clock rate over the row's own
+  gap, for rows off the exact route (167 per 6 h on the field) and every row with the exact update
+  off: card CTU's root in scalar form;
+- the card 1d reinit history (`tu_reinit_hist`): a cross-epoch history the stale rows read.
+
+The snapshot writer reads no per-epoch decision: the record does not survive the stash, and the
+writer's membership rule is the park stamp (`t_park_s`), a persistent instance property set by
+the mechanism that decides it (principle 5 already holds); the registry's snapshot field is phase
+2. The election and the handover test could move before PASS B without a byte change (both are
+pure), which would let the decision know the retired-datum clause; the S-transform cannot move
+without changing the handover epoch's rows. Neither is done.

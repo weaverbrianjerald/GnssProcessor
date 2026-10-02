@@ -205,7 +205,7 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
 inline constexpr std::array<double, 8> kCtaELadder{0.005, 0.01, 0.02, 0.05, 0.10, 0.30, 1.00, 2.00};
 
 /// Disposition of one satellite's clock carry for one epoch, as decided by
-/// @ref clockAnchorFoldVariance.
+/// @ref clockAnchorFoldDecide and re-formed on a carried variance by @ref clockAnchorFoldAt.
 struct ClockAnchorFold {
     double var_eff{0.0};      ///< the variance to fold (already floored)
     bool   anchored{false};   ///< folded at the anchor rate (false = LOOSE, legacy rate)
@@ -220,11 +220,15 @@ struct ClockAnchorFold {
 };
 
 /// @brief Decide the satellite clock's carried-prior variance for this epoch, and
-///        advance the per-satellite anchor bookkeeping (card Q3).
+///        advance the per-satellite anchor bookkeeping (card Q3): @ref clockAnchorFoldDecide
+///        followed by @ref clockAnchorFoldCommit.
 ///
-/// Called from both D2 fold branches (the diagonal one and the C1 dense block's
-/// `cov_eff` diagonal), so the marginal prior on the clock is the same either way;
-/// that makes the guard statistic independent of the fold path.
+/// The D2 fold no longer calls it: since card PRM phase 1b the decision is made before
+/// PASS B (@ref networkCarryDecide), read by the coupling rows and by both fold branches
+/// (the diagonal one and the C1 dense block's `cov_eff` diagonal, so the marginal prior on
+/// the clock is the same either way, which makes the guard statistic independent of the
+/// fold path), and committed at the fold.  This call is the two halves together, for a
+/// caller that decides and folds at one point.
 ///
 /// @param ctx        run context (knobs and the per-satellite anchor state, mutated)
 /// @param sat        satellite id
@@ -248,29 +252,17 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
                                         double pl_now_s, double value,
                                         double seed_horizon_s = 0.0);
 
-/// @brief The variance @ref clockAnchorFoldVariance will return for this satellite this
-///        epoch, read from the current anchor state without advancing it (card CTU).
-///
-/// The coupling rows are built in PASS B, before the D2 fold runs, and the exact time
-/// update (network.carry_coupling_exact_update) has to use the fold's own inflation.
-/// This twin evaluates the same expressions on a copy of the per-satellite state, with
-/// `stale_pending` taken as cleared (@ref clockAnchorBeginEpoch clears it before the
-/// fold), and writes nothing: no state, no counter.  Its agreement with the fold is
-/// checked every armed epoch by the fold itself (the run-end mirror-mismatch count) and
-/// by the unit gate.
-/// @param ctx run context (read only); the other parameters as for the fold.
-ClockAnchorFold clockAnchorFoldPeek(const NetworkRunContext& ctx, const std::string& sat,
-                                    double prev_var, double dt_epoch, double pl_now_s,
-                                    double seed_horizon_s = 0.0);
-
 /// @brief The anchor's decision for this satellite this epoch, read from the current state
 ///        without advancing it (card PRM phase 1b): the decision half of
 ///        @ref clockAnchorFoldVariance.
 ///
-/// Evaluates the fold's expressions on a copy of the per-satellite state with
-/// `stale_pending` taken as cleared (@ref clockAnchorBeginEpoch clears it before the fold)
-/// and returns the decision with its increment (@ref ClockAnchorFold::inc_m2) and the
-/// variance on @p prev_var.  Writes nothing.  @ref clockAnchorFoldCommit applies it.
+/// The coupling rows are built in PASS B, before the D2 fold runs, and the exact time update
+/// (network.carry_coupling_exact_update) has to use the fold's own inflation, so the decision
+/// is made there and committed at the fold.  Evaluates the anchor's rule on a copy of the
+/// per-satellite state with `stale_pending` taken as cleared (@ref clockAnchorBeginEpoch
+/// clears it before the fold) and returns the decision with its increment
+/// (@ref ClockAnchorFold::inc_m2) and the variance on @p prev_var.  Writes nothing: no state,
+/// no counter.  @ref clockAnchorFoldCommit applies it.
 /// @param ctx run context (read only); the other parameters as for the fold.
 ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::string& sat,
                                       double prev_var, double dt_epoch, double pl_now_s,

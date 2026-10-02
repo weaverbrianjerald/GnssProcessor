@@ -258,113 +258,32 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
                                         double prev_var, double dt_epoch,
                                         double pl_now_s, double value,
                                         double seed_horizon_s) {
-    ClockAnchorFold out;
-    const double dt_leg = std::max(0.0, dt_epoch);
-    // Off path: the legacy expression, character for character, so an unarmed run
-    // cannot differ in the last bit.
-    out.var_eff = prev_var + ctx.params.q(SharedParamKind::Clock) * dt_leg;
-    if (!ctx.knobs.cta_on) return out;
-
-    ClockAnchorSat& st = ctx.carry.clk_anchor.sat[sat];
-
-    // Per-satellite elapsed time, not the driver's dt: every skip path advances
-    // prev_tow while this carry survives untouched, so dt understates a stale
-    // carry's age without bound.  A first sighting has no elapsed time and falls
-    // back to dt (it is LOOSE in any case).
-    const double dt_sat = (st.t_last > 0.0) ? (pl_now_s - st.t_last) : dt_leg;
-    // Re-admission continuity: a parked pre-gap realization seeding a re-registered
-    // column is stale only beyond the seed horizon.  The gap it spans is the evidence
-    // gap the park holds, and the guard (not the staleness bound) re-validates it.
-    const double gap_bound = (seed_horizon_s > ctx.knobs.cta_max_gap_s)
-                                 ? seed_horizon_s : ctx.knobs.cta_max_gap_s;
-    const bool stale = !(dt_sat > 0.0)
-                    || (ctx.knobs.cta_max_gap_s > 0.0 && dt_sat > gap_bound);
-    // A LOOSE seed inflates over the true gap, not the driver's dt (the legacy loose
-    // expression is kept character for character when nothing is seeding).
-    if (seed_horizon_s > 0.0 && dt_sat > 0.0)
-        out.var_eff = prev_var + ctx.params.q(SharedParamKind::Clock) * dt_sat;
-    if (stale && st.anchored) {
-        // Detected here because it decides the variance.  The state transition,
-        // the event and the wire mark belong to the guard, so every decoupling edge
-        // goes through one path with one identity.
-        st.stale_pending = true;
-        out.decoupled    = true;
-    }
-
-    if (st.anchored && !st.stale_pending) {
-        out.var_eff  = prev_var + ctx.knobs.cta_q * dt_sat;
-        out.anchored = true;
-        if (ctx.knobs.cta_var_floor > 0.0 && out.var_eff < ctx.knobs.cta_var_floor) {
-            out.var_eff   = ctx.knobs.cta_var_floor;
-            out.floor_hit = true;
-            ++ctx.counters.cta_floor_hits;
-        }
-        ++ctx.counters.cta_folded_anchored;
-        // The same count per constellation letter, for the run-end readout only
-        // (card GAL).
-        ++ctx.counters.mgnss.anchor_folds_anchored[sat.substr(0, 1)];
-    } else {
-        // LOOSE folds at the legacy rate over the legacy dt, the behaviour without
-        // the anchor (a re-admission seed inflates over its true gap, above).  That
-        // bounds a decoupled satellite (standing invariant #7): it is not
-        // unconstrained, it is on the carry that the existing clock_runaway_check
-        // monitor already bounds.
-        ++ctx.counters.cta_folded_loose;
-        ++ctx.counters.mgnss.anchor_folds_loose[sat.substr(0, 1)];   // per constellation (card GAL)
-    }
-
-    st.t_last          = pl_now_s;
-    st.last_value      = value;
-    st.last_var_eff    = out.var_eff;
-    st.folded          = true;
-    st.folded_anchored = out.anchored;
-    return out;
-}
-
-ClockAnchorFold clockAnchorFoldPeek(const NetworkRunContext& ctx, const std::string& sat,
-                                    double prev_var, double dt_epoch, double pl_now_s,
-                                    double seed_horizon_s) {
-    // The expressions of clockAnchorFoldVariance, in the same order, on a copy of the
-    // state.  A satellite with no entry yet is a default-constructed one (born LOOSE),
-    // which is what the fold's operator[] would create.
-    ClockAnchorFold out;
-    const double dt_leg = std::max(0.0, dt_epoch);
-    out.var_eff = prev_var + ctx.params.q(SharedParamKind::Clock) * dt_leg;
-    if (!ctx.knobs.cta_on) return out;
-    ClockAnchorSat st;
-    const auto it = ctx.carry.clk_anchor.sat.find(sat);
-    if (it != ctx.carry.clk_anchor.sat.end()) st = it->second;
-    st.stale_pending = false;   // clockAnchorBeginEpoch clears it before the fold
-    const double dt_sat = (st.t_last > 0.0) ? (pl_now_s - st.t_last) : dt_leg;
-    const double gap_bound = (seed_horizon_s > ctx.knobs.cta_max_gap_s)
-                                 ? seed_horizon_s : ctx.knobs.cta_max_gap_s;
-    const bool stale = !(dt_sat > 0.0)
-                    || (ctx.knobs.cta_max_gap_s > 0.0 && dt_sat > gap_bound);
-    if (seed_horizon_s > 0.0 && dt_sat > 0.0)
-        out.var_eff = prev_var + ctx.params.q(SharedParamKind::Clock) * dt_sat;
-    if (stale && st.anchored) {
-        st.stale_pending = true;
-        out.decoupled    = true;
-    }
-    if (st.anchored && !st.stale_pending) {
-        out.var_eff  = prev_var + ctx.knobs.cta_q * dt_sat;
-        out.anchored = true;
-        if (ctx.knobs.cta_var_floor > 0.0 && out.var_eff < ctx.knobs.cta_var_floor) {
-            out.var_eff   = ctx.knobs.cta_var_floor;
-            out.floor_hit = true;
-        }
-    }
+    // The decision and the bookkeeping, in one call (card PRM phase 1b split them so the
+    // decision can be made before PASS B and the bookkeeping at the fold).  Off: the legacy
+    // expression prev_var + q_clock * dt, and nothing is written.
+    const ClockAnchorFold out =
+        clockAnchorFoldDecide(ctx, sat, prev_var, dt_epoch, pl_now_s, seed_horizon_s);
+    clockAnchorFoldCommit(ctx, sat, out, pl_now_s, value);
     return out;
 }
 
 ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::string& sat,
                                       double prev_var, double dt_epoch, double pl_now_s,
                                       double seed_horizon_s) {
-    // The decisions of clockAnchorFoldVariance, in the same order, on a copy of the state;
-    // the increment is the product the fold adds to the carried variance, so the variance
-    // re-formed on that variance by clockAnchorFoldAt is the fold's bit for bit.  A
-    // satellite with no entry yet is a default-constructed one (born LOOSE), which is what
-    // the fold's operator[] would create.
+    // The anchor's rule, on a copy of the state.  The per-satellite elapsed time, not the
+    // driver's dt: every skip path advances prev_tow while this carry survives untouched, so
+    // dt understates a stale carry's age without bound (a first sighting has no elapsed time
+    // and falls back to dt; it is LOOSE in any case).  A re-admission seed is stale only
+    // beyond the seed horizon: the gap it spans is the evidence gap the park holds, and the
+    // guard (not the staleness bound) re-validates it; a LOOSE seed inflates over the true
+    // gap.  A stale anchored carry decouples: detected here because it decides the variance,
+    // while the state transition, the event and the wire mark belong to the guard, so every
+    // decoupling edge goes through one path with one identity.  LOOSE folds at the legacy
+    // rate, which bounds a decoupled satellite (standing invariant #7: it is on the carry the
+    // clock_runaway_check monitor already bounds).  The increment is the product the fold
+    // adds to the carried variance, so clockAnchorFoldAt re-forms the variance on any carried
+    // variance bit for bit.  A satellite with no entry yet is a default-constructed one (born
+    // LOOSE), which is what the commit's operator[] creates.
     ClockAnchorFold out;
     const double dt_leg = std::max(0.0, dt_epoch);
     out.inc_m2 = ctx.params.q(SharedParamKind::Clock) * dt_leg;

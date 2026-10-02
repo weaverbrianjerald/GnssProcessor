@@ -801,9 +801,10 @@ TEST(CouplingExactUpdateTest, WithinStationCrossTermsAgainstTheBatch) {
 }
 
 // The rows are built before the fold runs, so the exact update reads the anchor's
-// decision from a side-effect-free twin.  The twin must return what the fold will
-// return, in every state the fold distinguishes, and must not advance the state.
-TEST(CouplingExactUpdateTest, AnchorPeekIsTheFoldWithoutItsSideEffects) {
+// decision, made before PASS B without side effects (card PRM phase 1b, which replaced card
+// CTU's twin of the fold with it).  The decision must be what the fold applies, in every
+// state the fold distinguishes, and must not advance the state.
+TEST(CouplingExactUpdateTest, AnchorDecisionIsTheFoldWithoutItsSideEffects) {
     Loaded L("peek");
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
     ASSERT_TRUE(ctx.knobs.cta_on);
@@ -811,7 +812,7 @@ TEST(CouplingExactUpdateTest, AnchorPeekIsTheFoldWithoutItsSideEffects) {
                           double seed) {
         const ClockAnchorSat before = ctx.carry.clk_anchor.sat.count(sat)
                                           ? ctx.carry.clk_anchor.sat[sat] : ClockAnchorSat{};
-        const ClockAnchorFold pk = clockAnchorFoldPeek(ctx, sat, var, dt, now, seed);
+        const ClockAnchorFold pk = clockAnchorFoldDecide(ctx, sat, var, dt, now, seed);
         const ClockAnchorSat after_peek = ctx.carry.clk_anchor.sat.count(sat)
                                               ? ctx.carry.clk_anchor.sat[sat] : ClockAnchorSat{};
         EXPECT_EQ(after_peek.t_last, before.t_last);

@@ -5972,9 +5972,9 @@ int networkTeardown(
     }
     if (ctx.knobs.carry_cpl_exact) {
         // Card CTU run-end telemetry (invariant 4).  `rows exact = 0` means the rule never
-        // ran and every row took card 1d's kappa, however clean the rest reads.  The
-        // mirror line is the check that the rows used the inflation the fold applied: a
-        // nonzero `set` or `q` count outside handover epochs is a mirror defect.
+        // ran and every row took card 1d's kappa, however clean the rest reads.  The rows
+        // and the fold read one decision per key (card PRM phase 1b); the fold line counts
+        // what a clock-pivot handover changed after the rows were built.
         const auto& c  = ctx.counters;
         const auto& X  = c.cxu;
         using Rt = CouplingExactDRoute;
@@ -5997,13 +5997,13 @@ int networkTeardown(
                   X.terms_out_scalar, X.terms_out_departed, X.terms_out_sh, X.terms_emitted,
                   X.gauge_held, X.gauge_spread, X.gauge_orphan, X.var_add_sum, X.var_negative,
                   X.shrink_abs_sum, X.sprev_mismatch);
-        log->info("Network (card CTU): fold check — {} key(s) checked, {} set mismatch(es), "
-                  "{} inflation mismatch(es) (largest |dQ| {:.3e} m^2), {} handover epoch(s) "
-                  "the mirror could not see, {} dense-fold diagonal fallback(s), {} epoch(s) "
+        log->info("Network (card CTU): the rows and the fold read one decision per key (card "
+                  "PRM phase 1b); {} handover epoch(s), on which {} key(s) in S were folded on "
+                  "a variance the S-transform re-expressed after the rows were built and {} "
+                  "key(s) in S were retired; {} dense-fold diagonal fallback(s), {} epoch(s) "
                   "with no recorded clock pivot.",
-                  c.cxu_fold_checked, c.cxu_fold_mismatch_set, c.cxu_fold_mismatch_q,
-                  c.cxu_fold_max_dq, c.cxu_fold_handover_epochs, c.cxu_fold_diag_fallback,
-                  c.cxu_pivot_missing);
+                  c.cxu_fold_handover_epochs, c.cxu_fold_reexpressed_in_s,
+                  c.cxu_fold_retired_in_s, c.cxu_fold_diag_fallback, c.cxu_pivot_missing);
         if (X.rows_exact == 0)
             log->warn("Network (card CTU): network.carry_coupling_exact_update is ARMED but no "
                       "row took the exact route: the card is INERT for this run.");
@@ -6027,11 +6027,13 @@ int networkTeardown(
                           "pair took the term (no whitened local block, or no two exact rows in "
                           "one): the knob is INERT for this run.");
         }
-        if (c.cxu_fold_mismatch_set > 0 || c.cxu_fold_mismatch_q > 0)
-            log->warn("Network (card CTU): the fold disagreed with the rows' mirror on {} key "
-                      "disposition(s) and {} inflation(s); outside handover epochs this is a "
-                      "mirror defect, and those rows were not conditioned on the fold's Q.",
-                      c.cxu_fold_mismatch_set, c.cxu_fold_mismatch_q);
+        if (c.cxu_fold_reexpressed_in_s > 0 || c.cxu_fold_retired_in_s > 0)
+            log->warn("Network (card CTU): at a clock-pivot handover the fold folded {} key(s) "
+                      "of S on a re-expressed variance and retired {}, after the coupling rows "
+                      "were built on the decided ones; those rows were not conditioned on the "
+                      "fold's Q at that epoch (the rows' re-expression at a handover is owed to "
+                      "card PRM phase 2).",
+                      c.cxu_fold_reexpressed_in_s, c.cxu_fold_retired_in_s);
     }
     // Gauge-free shared carry readout (card C-GF), placed outside the Card-Q3 `cta_on`
     // block above on purpose: the downdate can be armed by the carry
@@ -6310,16 +6312,10 @@ int networkTeardown(
                   "met undecided at the fold.",
                   C.prm_decide_epochs, C.prm_reexpressed, C.prm_reexpressed_epochs,
                   C.prm_reexpressed_max_dvar, C.prm_undecided_at_fold);
-        log->info("Network (card PRM phase 1b check): the decision against card CTU's mirror, "
-                  "{} key(s) checked, {} mismatch(es); against the fold, {} variance(s) "
-                  "checked, {} variance mismatch(es), {} disposition mismatch(es) (bit for "
-                  "bit).",
-                  C.prm_chk_rows, C.prm_chk_rows_mismatch, C.prm_chk_fold,
-                  C.prm_chk_fold_var_mismatch, C.prm_chk_fold_disp_mismatch);
-        if (C.prm_chk_rows_mismatch > 0 || C.prm_chk_fold_var_mismatch > 0
-            || C.prm_chk_fold_disp_mismatch > 0 || C.prm_undecided_at_fold > 0)
-            log->warn("Network (card PRM phase 1b check): the decided-once disposition disagrees "
-                      "with the mirror or the fold; the decision is not yet the fold's.");
+        if (C.prm_undecided_at_fold > 0)
+            log->warn("Network (card PRM phase 1b): {} entr(ies) reached the fold with no "
+                      "decision this epoch and were decided there; the coupling rows did not "
+                      "read a decision for them.", C.prm_undecided_at_fold);
     }
     // Card LGM: the phase-colour state's edges (invariant #4: the run-end counters are the
     // ON-path telemetry).

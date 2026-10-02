@@ -44,6 +44,15 @@ inline bool carryDispositionFolds(CarryDisposition d) {
 }
 
 /**
+ * @brief Whether a carried border entry's shared column is in this epoch's layout (a
+ *        satellite clock, phase bias or code bias; false for any other kind).
+ *
+ * The one predicate for the decision's departed flag and READMIT's park and seed; the
+ * estimator's column lookups throw on an absent column.
+ */
+bool carryColumnPresent(const NetworkEstimator& est, const CarryPrior& cp);
+
+/**
  * @brief Decide one carried border entry's fold for this epoch, without side effects.
  *
  * The clauses in the fold's order: a VtecSh entry and a phase bias under the phase hold are

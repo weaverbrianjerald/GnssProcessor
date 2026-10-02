@@ -14,11 +14,7 @@
 
 namespace GnssProcessor {
 
-namespace {
-
-/// Whether the entry's shared column is in this epoch's layout (the estimator throws on an
-/// absent column).
-bool columnPresent(const NetworkEstimator& est, const CarryPrior& cp) {
+bool carryColumnPresent(const NetworkEstimator& est, const CarryPrior& cp) {
     try {
         switch (cp.kind) {
             case SharedParamKind::Clock:     return est.clockColumn(cp.sat) >= 0;
@@ -30,8 +26,6 @@ bool columnPresent(const NetworkEstimator& est, const CarryPrior& cp) {
         return false;
     }
 }
-
-}  // namespace
 
 CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEstimator& est,
                                   const CarryPrior& cp, double dt, double cta_now_s,
@@ -62,7 +56,7 @@ CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEst
     const double readmit_h = k.readmit_seed_horizon_s;
     double seed_gap = 0.0;
     if (cp.t_park_s > 0.0) {
-        if (!(readmit_h > 0.0) || !columnPresent(est, cp)) {
+        if (!(readmit_h > 0.0) || !carryColumnPresent(est, cp)) {
             d.disposition = CarryDisposition::Parked;
             return d;
         }
@@ -97,7 +91,7 @@ CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEst
             }
         }
     }
-    d.departed = !columnPresent(est, cp);
+    d.departed = !carryColumnPresent(est, cp);
     return d;
 }
 
@@ -125,7 +119,11 @@ double carryFoldVarEff(const NetworkRunContext& ctx, const CarryPrior& cp,
                        : (cp.kind == SharedParamKind::CodeBias)  ? k.cb_var_floor
                                                                  : 0.0;
     if (floor > 0.0) var_eff = std::max(var_eff, floor);
-    // The VCE apply factor (M2 v2), the same expression as the fold's vce_scale_shared.
+    // The VCE apply factor (M2 v2): the LASER 5-95 variance factor, applied after the hand
+    // model has formed the variance (q over the gap, then the B4 floor).  A reinit is
+    // excluded above: it is a deliberate soft refloat, not the hand carry model, and the
+    // monitor skips those rows too, so there is no measured factor for them.  An unarmed
+    // family's factor is 1.
     if (k.vce_apply_on) {
         const int slot = (cp.kind == SharedParamKind::PhaseBias) ? NetworkCarryVceApply::kPb
                        : (cp.kind == SharedParamKind::CodeBias)  ? NetworkCarryVceApply::kCb

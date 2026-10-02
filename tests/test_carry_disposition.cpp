@@ -180,9 +180,11 @@ TEST(CarryDisposition, VarEffIsTheFoldsExpression) {
         double want = pb.var + ctx.params.q(SharedParamKind::PhaseBias) * std::max(0.0, dt);
         want = std::max(want, ctx.knobs.pb_var_floor);
         EXPECT_EQ(carryFoldVarEff(ctx, pb, dp, pb.var, true), want);
-        // Clock: the anchor's own fold, on a fresh state each time (anchored half the time).
+        // Clock: the anchor's rule written out, on a fresh state each time (anchored half the
+        // time; an anchored carry older than the anchor's 120 s gap decouples to LOOSE).
         ctx.carry.clk_anchor.sat.clear();
-        if (i % 2) {
+        const bool anchored = (i % 2) != 0;
+        if (anchored) {
             ctx.carry.clk_anchor.sat["G02"].anchored = true;
             ctx.carry.clk_anchor.sat["G02"].t_last   = now - dt;
         }
@@ -190,12 +192,17 @@ TEST(CarryDisposition, VarEffIsTheFoldsExpression) {
         const CarryFoldDecision dc = carryFoldDecide(ctx, est, ck, dt, now, now);
         ClockAnchorFold af;
         const double got = carryFoldVarEff(ctx, ck, dc, ck.var, true, &af);
-        clockAnchorBeginEpoch(ctx);
-        const ClockAnchorFold fd = clockAnchorFoldVariance(ctx, "G02", ck.var, dt, now, ck.value);
-        EXPECT_EQ(got, fd.var_eff) << "i=" << i;
-        EXPECT_EQ(af.var_eff, fd.var_eff);
-        EXPECT_EQ(af.anchored, fd.anchored);
-        EXPECT_EQ(af.floor_hit, fd.floor_hit);
+        const double dt_sat = now - (now - dt);              // the anchor's own elapsed time
+        const bool held = anchored && !(dt_sat > ctx.knobs.cta_max_gap_s);
+        double want_c = held ? ck.var + ctx.knobs.cta_q * dt_sat
+                             : ck.var + ctx.params.q(SharedParamKind::Clock) * std::max(0.0, dt);
+        const bool floor_hit = held && want_c < ctx.knobs.cta_var_floor;
+        if (floor_hit) want_c = ctx.knobs.cta_var_floor;
+        EXPECT_EQ(got, want_c) << "i=" << i;
+        EXPECT_EQ(af.var_eff, want_c);
+        EXPECT_EQ(af.anchored, held);
+        EXPECT_EQ(af.floor_hit, floor_hit);
+        EXPECT_EQ(dc.decoupled, anchored && !held);
     }
 }
 
@@ -225,16 +232,21 @@ TEST(CarryDisposition, AReexpressedVarianceKeepsTheDecision) {
     }
 }
 
-// The anchor's decide / at / commit is clockAnchorFoldVariance, in the six states the fold
-// distinguishes: the same result bit for bit, the same state after, the same counters; and
-// the decision alone advances nothing.
-TEST(CarryDisposition, AnchorDecideAndCommitAreTheFold) {
+// The anchor's decide / at / commit in the six states the fold distinguishes, against the
+// anchor's rule written out: the decision alone advances nothing, the commit stamps the
+// satellite's last fold and counts it, and clockAnchorFoldVariance is the two together.
+TEST(CarryDisposition, AnchorDecideAndCommitFollowTheRule) {
     Loaded La("anchor_a"), Lb("anchor_b");
     ASSERT_TRUE(La.ok && Lb.ok);
-    NetworkRunContext a(La.cfg, La.cfg.getNetworkConfig());   // decide + commit
-    NetworkRunContext b(Lb.cfg, Lb.cfg.getNetworkConfig());   // the fold's single call
+    NetworkRunContext a(La.cfg, La.cfg.getNetworkConfig());   // decide + at + commit
+    NetworkRunContext b(Lb.cfg, Lb.cfg.getNetworkConfig());   // clockAnchorFoldVariance
+    const double q = a.params.q(SharedParamKind::Clock), qa = a.knobs.cta_q;
+    const double fl = a.knobs.cta_var_floor;
+    ASSERT_GT(fl, 0.0);
+    long long n_anch = 0, n_loose = 0, n_floor = 0;
     const auto step = [&](const std::string& sat, double var, double dt, double now,
-                          double seed) {
+                          double seed, double want, bool want_anch, bool want_floor,
+                          bool want_dec) {
         const ClockAnchorSat before = a.carry.clk_anchor.sat.count(sat)
                                           ? a.carry.clk_anchor.sat[sat] : ClockAnchorSat{};
         const ClockAnchorFold dd = clockAnchorFoldDecide(a, sat, var, dt, now, seed);
@@ -242,40 +254,55 @@ TEST(CarryDisposition, AnchorDecideAndCommitAreTheFold) {
                                        ? a.carry.clk_anchor.sat[sat] : ClockAnchorSat{};
         EXPECT_EQ(mid.t_last, before.t_last);              // the decision writes nothing
         EXPECT_EQ(mid.anchored, before.anchored);
+        EXPECT_EQ(mid.stale_pending, before.stale_pending);
         clockAnchorBeginEpoch(a);
         const ClockAnchorFold fa = clockAnchorFoldAt(a, dd, var);
         clockAnchorFoldCommit(a, sat, fa, now, 0.1);
         clockAnchorBeginEpoch(b);
         const ClockAnchorFold fb = clockAnchorFoldVariance(b, sat, var, dt, now, 0.1, seed);
-        EXPECT_EQ(dd.var_eff, fb.var_eff) << sat << " at " << now;
-        EXPECT_EQ(fa.var_eff, fb.var_eff);
-        EXPECT_EQ(fa.anchored, fb.anchored);
-        EXPECT_EQ(fa.floor_hit, fb.floor_hit);
-        EXPECT_EQ(fa.decoupled, fb.decoupled);
-        const ClockAnchorSat& sa = a.carry.clk_anchor.sat[sat];
-        const ClockAnchorSat& sb = b.carry.clk_anchor.sat[sat];
-        EXPECT_EQ(sa.t_last, sb.t_last);
-        EXPECT_EQ(sa.last_value, sb.last_value);
-        EXPECT_EQ(sa.last_var_eff, sb.last_var_eff);
-        EXPECT_EQ(sa.folded, sb.folded);
-        EXPECT_EQ(sa.folded_anchored, sb.folded_anchored);
-        EXPECT_EQ(sa.stale_pending, sb.stale_pending);
-        EXPECT_EQ(a.counters.cta_folded_anchored, b.counters.cta_folded_anchored);
-        EXPECT_EQ(a.counters.cta_folded_loose, b.counters.cta_folded_loose);
-        EXPECT_EQ(a.counters.cta_floor_hits, b.counters.cta_floor_hits);
+        EXPECT_EQ(dd.var_eff, want) << sat << " at " << now;   // bit equality with the rule
+        EXPECT_EQ(fa.var_eff, want);
+        EXPECT_EQ(fb.var_eff, want);
+        EXPECT_EQ(fa.anchored, want_anch);
+        EXPECT_EQ(fa.floor_hit, want_floor);
+        EXPECT_EQ(fa.decoupled, want_dec);
+        EXPECT_EQ(fb.anchored, want_anch);
+        EXPECT_EQ(fb.decoupled, want_dec);
+        n_anch += want_anch ? 1 : 0;
+        n_loose += want_anch ? 0 : 1;
+        n_floor += want_floor ? 1 : 0;
+        for (NetworkRunContext* c : {&a, &b}) {
+            const ClockAnchorSat& st = c->carry.clk_anchor.sat[sat];
+            EXPECT_EQ(st.t_last, now);
+            EXPECT_EQ(st.last_value, 0.1);
+            EXPECT_EQ(st.last_var_eff, want);
+            EXPECT_TRUE(st.folded);
+            EXPECT_EQ(st.folded_anchored, want_anch);
+            EXPECT_EQ(st.stale_pending, want_dec);
+            EXPECT_EQ(c->counters.cta_folded_anchored, n_anch);
+            EXPECT_EQ(c->counters.cta_folded_loose, n_loose);
+            EXPECT_EQ(c->counters.cta_floor_hits, n_floor);
+        }
     };
     const auto anchor = [&](const std::string& sat) {
         a.carry.clk_anchor.sat[sat].anchored = true;
         b.carry.clk_anchor.sat[sat].anchored = true;
     };
-    step("G01", 1e-3, 30.0, 1000.0, 0.0);                    // first sighting: LOOSE
+    // First sighting: LOOSE at the legacy rate over the driver's step.
+    step("G01", 1e-3, 30.0, 1000.0, 0.0, 1e-3 + q * 30.0, false, false, false);
     anchor("G01");
-    step("G01", 1e-3, 30.0, 1030.0, 0.0);                    // anchored
-    step("G01", 1e-7, 30.0, 1060.0, 0.0);                    // anchored, at the floor
-    step("G01", 1e-3, 30.0, 1400.0, 0.0);                    // anchored and stale: decoupled
+    // Anchored, 30 s after the last fold: the anchor's rate over the satellite's own gap.
+    step("G01", 1e-3, 30.0, 1030.0, 0.0, 1e-3 + qa * 30.0, true, false, false);
+    // Anchored at the consistency floor.
+    step("G01", 1e-7, 30.0, 1060.0, 0.0, fl, true, true, false);
+    // Anchored and stale (340 s > the 120 s gap): decoupled, LOOSE over the driver's step.
+    step("G01", 1e-3, 30.0, 1400.0, 0.0, 1e-3 + q * 30.0, false, false, true);
     anchor("G01");
-    step("G01", 1e-3, 30.0, 4900.0, 3900.0);                 // a re-admission seed
-    step("G02", 2e-3, 0.0, 5000.0, 0.0);                     // no elapsed time
+    // A re-admission seed 3500 s after the last fold, inside the 3900 s horizon: anchored
+    // over the true gap.
+    step("G01", 1e-3, 30.0, 4900.0, 3900.0, 1e-3 + qa * 3500.0, true, false, false);
+    // No elapsed time on a first sighting: LOOSE, no inflation.
+    step("G02", 2e-3, 0.0, 5000.0, 0.0, 2e-3 + q * 0.0, false, false, false);
 }
 
 // The pass decides every entry, parked ones included, and writes nothing else: a record left

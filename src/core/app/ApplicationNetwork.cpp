@@ -2436,11 +2436,10 @@ int Application::runNetwork() {
         }
         // --- Exact coupling time update, per-epoch inputs (card CTU) ---------------
         // After the columns are registered (the layout the rows resolve against) and
-        // before PASS B, whose parallel produce reads the result.  It mirrors this
-        // epoch's D2 fold, which runs later in networkSolveGlue and checks the mirror.
+        // before PASS B, whose parallel produce reads the result.  The rows read this
+        // epoch's D2 fold decision, which card PRM phase 1b makes once here (after the
+        // seam's level noise is set) and the fold, later in networkSolveGlue, reads too.
         // Inside the SB_PREASM bracket for the reason networkSdEwlAr gives.  No-op off.
-        // Card PRM phase 1b: the border's fold disposition is decided once here, after the
-        // seam's level noise is set and before the rows that read it (the fold reads it too).
         networkClockLevelRestoreRaise(ctx, log);   // card CTU G5: once, the first leg epoch after a warm resume
         networkCarryDecide(ctx, est, se.time, dt);
         networkCouplingExactPrepare(ctx, est, se.time, dt, log);
