@@ -630,6 +630,11 @@ namespace GnssProcessor {
         /// it, instead of skipping it for one epoch.  The loader forces it false without
         /// scoped_handover and under an anchor-free clock datum.
         bool handover_stransform{};
+        /// network.handover_stransform_before_rows (card PRM phase 2): the handover's
+        /// S-transform runs before the fold decision and PASS B, through the traversal of
+        /// carried references, so the coupling rows read the re-expressed carry.  The loader
+        /// forces it false without handover_stransform.
+        bool handover_stransform_before_rows{};
         bool pb_excl_unmatched{};
         bool emit_gen_time{};
         bool emit_gen_id{};
@@ -1443,6 +1448,35 @@ namespace GnssProcessor {
         /// The coefficient applied per constellation this epoch (constellation char -> c0,
         /// metres), for the PIVOT event row and traces (queue item 1(b)).
         std::map<char, double> sts_c0;
+        /// Card PRM phase 2 (network.handover_stransform_before_rows): what the handover
+        /// preview before PASS B did for each changed constellation this epoch, read by the
+        /// solve glue's transform for its bookkeeping.  Rebuilt every epoch by
+        /// networkHandoverStransformBeforeRows; empty with the knob off.
+        struct StsBeforeRows {
+            std::string pivot;              ///< the incoming pivot the preview elected
+            bool        already{false};     ///< the carry was already in that pivot's datum (a re-detection after a skipped epoch)
+            bool        applied{false};     ///< the transform moved the carry
+            double      c0{0.0};            ///< the coefficient applied (m)
+            double      var_q{0.0};         ///< the incoming pivot's carried variance (m^2)
+            long long   rows{0};            ///< carried clock entries re-expressed
+            double      x_q_post{0.0};      ///< the incoming pivot's carried level after it (expected 0)
+            bool        selfcheck_ok{true}; ///< the exactness self-check
+        };
+        std::map<char, StsBeforeRows> sts_pre;
+        /// Card PRM phase 2: per constellation, the transform the preview applied to the
+        /// carry (the incoming pivot, c0, var_q), held until the next stash, which re-expresses
+        /// the carry in the solve's datum and clears the record.  A skipped epoch leaves it set:
+        /// the next preview keeps the carry when it elects the same pivot (the handover is
+        /// released without a second transform) and undoes the transform when it elects
+        /// another (the outgoing pivot again, or a third one, which is then transformed to from
+        /// the outgoing datum).  Cold-started on a warm resume (not snapshotted): a snapshot is
+        /// written after the stash, which has cleared it.
+        struct StsCarryDatum {
+            std::string pivot;     ///< the pivot whose datum the carry is in
+            double      c0{0.0};   ///< the coefficient the transform applied (m)
+            double      var_q{0.0};///< the variance it added to every clock (m^2)
+        };
+        std::map<char, StsCarryDatum> sts_carry_pivot;
 
         // Per-satellite clock sanity monitor (network.clock_monitor): the previous emitted
         // clock value and the continuous-GPS second it was stashed, per satellite, for the
@@ -2913,6 +2947,10 @@ namespace GnssProcessor {
         long long sts_applied = 0;           ///< carried rows whose mean/var the transform re-expressed
         long long sts_rows_retained = 0;     ///< carry rows folded that the baseline skip would have dropped
         long long sts_noop_no_carry = 0;     ///< edges skipped: the incoming pivot had no carried clock level
+        long long sts_pre_edges = 0;         ///< card PRM phase 2: edges re-expressed before the coupling rows
+        long long sts_pre_redetected = 0;    ///< card PRM phase 2: re-detections after a skipped epoch, released without a second transform
+        long long sts_pre_mismatch = 0;      ///< card PRM phase 2: changed constellations the solve glue elected differently from the preview (the transform ran after PASS B instead)
+        long long sts_pre_undone = 0;        ///< card PRM phase 2: previewed transforms undone after a skipped epoch, the next election having chosen another pivot
         long long sts_selfcheck_fail = 0;    ///< post-transform |x_q| or re-derived c0 above tolerance (§8.4 INC-3)
         double    sts_max_abs_c0 = 0.0;      ///< largest |c0| applied over the run (m)
         double    sts_last_c0 = 0.0;         ///< the last c0 applied (m)

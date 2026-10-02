@@ -41,15 +41,21 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "config/GnssConfig.hpp"
 #include "app/NetworkRunContext.hpp"
 #include "filter/NetworkHandoverStransform.hpp"
+#include "filter/NetworkEstimator.hpp"
+#include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "logging/LogManager.hpp"
+
+#include <spdlog/sinks/null_sink.h>
+#include <spdlog/spdlog.h>
 
 using namespace GnssProcessor;
 namespace fs = std::filesystem;
@@ -372,4 +378,207 @@ TEST(HandoverStransformConfig, DefaultsOffArmsFromJsonAndInterlocksDisarm) {
                    "    \"handover_stransform\": true,\n");
         EXPECT_FALSE(s2z.cfg.networkHandoverStransform());
     }
+}
+
+// ===========================================================================
+// 9: card PRM phase 2, the transform before the coupling rows
+// ===========================================================================
+
+// The knob needs the transform it moves, and refuses the broadcast a priori (the ephemeris
+// cut-over re-level runs in the solve glue and must precede the transform).
+TEST(HandoverStransformConfig, BeforeRowsNeedsTheTransformAndRefusesBrdcRts) {
+    {
+        Loaded off("rows_off", "");
+        EXPECT_FALSE(off.cfg.networkHandoverStransformBeforeRows());
+    }
+    {
+        Loaded inert("rows_inert", "    \"handover_stransform_before_rows\": true,\n");
+        EXPECT_FALSE(inert.cfg.networkHandoverStransformBeforeRows());
+    }
+    {
+        Loaded on("rows_on",
+                  "    \"scoped_handover_response\": true,\n"
+                  "    \"handover_stransform\": true,\n"
+                  "    \"handover_stransform_before_rows\": true,\n");
+        EXPECT_TRUE(on.cfg.networkHandoverStransform());
+        EXPECT_TRUE(on.cfg.networkHandoverStransformBeforeRows());
+    }
+    // The same block loads with the broadcast a priori alone and fails with the knob.
+    const auto loads = [](const std::string& tag, const std::string& extra) {
+        const std::string body = std::string("{\n") +
+            "  \"processing\": { \"mode\": \"ppp-rtk-network\", \"active_systems\": [ \"GPS\" ],\n"
+            "                    \"signal_priorities\": { \"GPS\": \"WC\" } },\n"
+            "  \"network\": {\n"
+            "    \"clock_datum_station\": \"AAAA\",\n"
+            "    \"apriori_source\": \"brdc_rts\",\n"
+            "    \"scoped_handover_response\": true,\n"
+            "    \"handover_stransform\": true,\n" + extra +
+            "    \"stations\": [\n"
+            "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
+            "      { \"name\": \"BBBB\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n"
+            "    ]\n"
+            "  }\n"
+            "}\n";
+        const fs::path path = fs::temp_directory_path() / ("sts_rows_" + tag + ".json");
+        { std::ofstream f(path); f << body; }
+        LogManager log;
+        GnssConfig cfg;
+        const bool ok = cfg.loadFromJson(path, log);
+        std::error_code ec;
+        fs::remove(path, ec);
+        return ok;
+    };
+    EXPECT_TRUE(loads("brdc", ""));
+    EXPECT_FALSE(loads("brdc_rows", "    \"handover_stransform_before_rows\": true,\n"));
+}
+
+// The preview before PASS B, on a GPS network whose pivot G01 has left: G02, G05 and G32
+// registered, G07 parked (absent).  Dyadic values, so a transform and its undo are exact.
+struct PreviewBed {
+    Loaded L;
+    fs::path trace_dir;
+    std::unique_ptr<NetworkRunTraces> traces;
+    std::unique_ptr<NetworkRunContext> ctx;
+    std::unique_ptr<NetworkEstimator> est;
+    std::vector<std::string> registered;
+    const NetworkSbasis::SatHealth health{};
+    explicit PreviewBed(const std::string& tag, bool armed = true)
+        : L(tag, std::string("    \"scoped_handover_response\": true,\n"
+                             "    \"handover_stransform\": true,\n")
+                     + (armed ? "    \"handover_stransform_before_rows\": true,\n" : "")) {
+        static auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
+        const auto log = std::make_shared<spdlog::logger>("sts_rows_test", sink);
+        trace_dir = fs::temp_directory_path() / ("sts_rows_traces_" + tag);
+        fs::create_directories(trace_dir);
+        traces = std::make_unique<NetworkRunTraces>(trace_dir);
+        traces->openAll(L.cfg, L.cfg.getNetworkConfig(), L.cfg.getGlobalVtecShConfig(),
+                        /*sh_model=*/nullptr, /*cl_trace_armed=*/false, log);
+        ctx = std::make_unique<NetworkRunContext>(L.cfg, L.cfg.getNetworkConfig());
+        ctx->carry.prev_pivot["G"] = "G01";
+        ctx->carry.last_pivot["G"] = "G01";
+        ctx->carry.prev_carry = {clk("G02", -2.0, 0.25), clk("G05", -0.75, 0.5),
+                                 clk("G32", 1.25, 0.125), clk("G07", 0.5, 0.0625)};
+        ctx->carry.prev_carry[3].t_park_s = 1000.0;
+        ctx->carry.cxu_pivot['G'] = {"G01", 0.0};
+        LocalCarry lc{3.0, 1e-4, 100.0};
+        lc.coupling = {CoupledShared{SharedParamKind::Clock, "G05", "", 0, 0, 'C', 0, 0.5, -0.75, 0.5},
+                       CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, -0.5, 0.0, 0.0}};
+        ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))] = lc;
+        layout({"G02", "G05", "G32"});
+    }
+    ~PreviewBed() {
+        traces.reset();
+        std::error_code ec;
+        fs::remove_all(trace_dir, ec);
+    }
+    void layout(const std::vector<std::string>& sats) {
+        est = std::make_unique<NetworkEstimator>();
+        registered = sats;
+        for (const auto& s : sats) est->registerClock(s);
+    }
+    void preview() {
+        networkHandoverStransformBeforeRows(*ctx, L.cfg, nullptr, *traces, health, *est,
+                                            GnssTime{2313, 276150.0}, registered, 3.0);
+    }
+    const CoupledShared& term(int i) {
+        return ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))]
+            .coupling[static_cast<std::size_t>(i)];
+    }
+};
+
+// The transform: the elected incoming pivot lands on 0, every clock reference of the
+// constellation the rows read moves by -c0 (the parked G07 included), the variances of the
+// carried clocks and of a free term gain var_q, a pinned term keeps p_prev = 0.  Detected again
+// after a skipped epoch with the same pivot, the carry does not move a second time.
+TEST(HandoverStransformBeforeRows, PreviewReExpressesOnceAndKeepsItOnTheSamePivot) {
+    PreviewBed B("rows_once");
+    B.preview();
+    ASSERT_EQ(B.ctx->carry.sts_pre.count('G'), 1u);
+    const auto pre = B.ctx->carry.sts_pre.at('G');
+    ASSERT_TRUE(pre.applied);
+    ASSERT_EQ(pre.pivot, "G02");   // the lexically first registered clock (no sticky incumbent)
+    EXPECT_EQ(pre.c0, -2.0);
+    EXPECT_EQ(pre.var_q, 0.25);
+    EXPECT_EQ(pre.rows, 4);
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G02"), 0.0);
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G05"), 1.25);
+    EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G05"), 0.75);
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G07"), 2.5);
+    EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G07"), 0.3125);
+    EXPECT_EQ(B.ctx->carry.cxu_pivot['G'].second, 2.0);
+    EXPECT_EQ(B.term(0).s_prev, 1.25);
+    EXPECT_EQ(B.term(0).p_prev, 0.75);
+    EXPECT_EQ(B.term(1).s_prev, 2.0);
+    EXPECT_EQ(B.term(1).p_prev, 0.0) << "a pinned term keeps its pinned route";
+    ASSERT_EQ(B.ctx->carry.sts_carry_pivot.count('G'), 1u);
+    EXPECT_EQ(B.ctx->carry.sts_carry_pivot.at('G').pivot, "G02");
+    EXPECT_EQ(B.ctx->counters.sts_pre_edges, 1);
+
+    // Skipped: the pivot is not adopted and the same pivot is elected again.
+    const std::vector<CarryPrior> after = B.ctx->carry.prev_carry;
+    B.preview();
+    ASSERT_EQ(B.ctx->carry.sts_pre.count('G'), 1u);
+    EXPECT_TRUE(B.ctx->carry.sts_pre.at('G').already);
+    EXPECT_EQ(B.ctx->counters.sts_pre_redetected, 1);
+    EXPECT_EQ(B.ctx->counters.sts_pre_undone, 0);
+    for (std::size_t i = 0; i < after.size(); ++i) {
+        EXPECT_EQ(B.ctx->carry.prev_carry[i].value, after[i].value) << i;
+        EXPECT_EQ(B.ctx->carry.prev_carry[i].var, after[i].var) << i;
+    }
+}
+
+// Skipped, and the next election goes back to the outgoing pivot (it is registered again): the
+// transform is undone, every reference back where it was, and the record cleared.
+TEST(HandoverStransformBeforeRows, PreviewUndoesWhenTheOutgoingPivotReturns) {
+    PreviewBed B("rows_undo");
+    B.preview();
+    ASSERT_TRUE(B.ctx->carry.sts_pre.at('G').applied);
+    B.layout({"G01", "G02", "G05", "G32"});
+    B.preview();
+    EXPECT_TRUE(B.ctx->carry.sts_pre.empty()) << "no handover: G01 is elected again";
+    EXPECT_TRUE(B.ctx->carry.sts_carry_pivot.empty());
+    EXPECT_EQ(B.ctx->counters.sts_pre_undone, 1);
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G02"), -2.0);
+    EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G02"), 0.25);
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G05"), -0.75);
+    EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G05"), 0.5);
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G07"), 0.5);
+    EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G07"), 0.0625);
+    EXPECT_EQ(B.ctx->carry.cxu_pivot['G'].second, 0.0);
+    EXPECT_EQ(B.term(0).s_prev, -0.75);
+    EXPECT_EQ(B.term(0).p_prev, 0.5);
+    EXPECT_EQ(B.term(1).s_prev, 0.0);
+}
+
+// Skipped, and the next election chooses a third pivot: the first transform is undone before the
+// handover to the third is applied from the outgoing datum, so var_q is not added twice.
+TEST(HandoverStransformBeforeRows, PreviewUndoesBeforeTransformingToAThirdPivot) {
+    PreviewBed B("rows_third");
+    B.preview();
+    ASSERT_EQ(B.ctx->carry.sts_pre.at('G').pivot, "G02");
+    B.layout({"G05", "G32"});   // G02 has left as well
+    B.preview();
+    EXPECT_EQ(B.ctx->counters.sts_pre_undone, 1);
+    ASSERT_EQ(B.ctx->carry.sts_pre.count('G'), 1u);
+    const auto pre = B.ctx->carry.sts_pre.at('G');
+    ASSERT_TRUE(pre.applied);
+    EXPECT_EQ(pre.pivot, "G05");
+    EXPECT_EQ(pre.c0, -0.75);       // G05's level in the outgoing datum
+    EXPECT_EQ(pre.var_q, 0.5);      // G05's variance in the outgoing datum, not with G02's var_q
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G05"), 0.0);
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G02"), -1.25);
+    EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G02"), 0.75);
+    EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G32"), 0.625);
+    EXPECT_EQ(B.ctx->carry.sts_carry_pivot.at('G').pivot, "G05");
+}
+
+// Off, the seam only clears its record.
+TEST(HandoverStransformBeforeRows, OffClearsTheRecordAndMovesNothing) {
+    PreviewBed B("rows_off", /*armed=*/false);
+    B.ctx->carry.sts_pre['G'].pivot = "G02";   // a stale record
+    B.preview();
+    EXPECT_TRUE(B.ctx->carry.sts_pre.empty());
+    EXPECT_TRUE(B.ctx->carry.sts_carry_pivot.empty());
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G02"), -2.0);
+    EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G05"), -0.75);
 }

@@ -248,6 +248,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cb_time_linked = config_.networkCodeDatumTimeLinked();
     k.scoped_handover = config_.networkScopedHandoverResponse();
     k.handover_stransform = config_.networkHandoverStransform();
+    k.handover_stransform_before_rows = config_.networkHandoverStransformBeforeRows();
     k.pb_excl_unmatched = config_.networkPhaseBiasExcludeUnmatchedAntenna();
     k.emit_gen_time = config_.networkEmitGenerationTime();
     k.emit_gen_id = config_.networkEmitGenerationId();
@@ -919,6 +920,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // phase_datum_ensemble and phase_leveling_los_scale, so the off path keeps its
         // fingerprint.  When armed, the lineage needs a fresh convergence.
         if (ctx.knobs.handover_stransform) add("sts:1");
+        // Card PRM phase 2: the transform before the coupling rows changes the handover
+        // epoch's rows (armed-only token, so every existing fingerprint is unchanged).
+        if (ctx.knobs.handover_stransform_before_rows) add("stsrows:1");
         add(fmt::format("{}", emit_gen_id));
         add(fmt::format("{}", config_.estimateNetworkSatCodeBias()));
         add(fmt::format("{}", config_.estimateNetworkIonoSh()));
@@ -6828,6 +6832,10 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                        const std::set<std::string>& shared_phase_keys,
                        const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
                        const std::shared_ptr<spdlog::logger>& log) {
+    // Card PRM phase 2: the stash re-expresses the carry in the solve's datum, so a transform
+    // the handover preview applied before PASS B is no longer a pending record (empty with
+    // network.handover_stransform_before_rows off).
+    ctx.carry.sts_carry_pivot.clear();
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
     auto& prev_carry = ctx.carry.prev_carry;

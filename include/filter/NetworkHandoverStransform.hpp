@@ -158,6 +158,67 @@ ClockStransformResult applyClockStransform(
     CarrySiteCounts* counts = nullptr);
 
 /**
+ * @brief Undo a transform @ref applyClockStransform applied with
+ *        @c CarryMechanism::HandoverBeforeRows (card PRM phase 2): every clock reference of the
+ *        constellation moves back by @p c0 and every re-expressed variance (a carried clock's,
+ *        a free coupling term's p_prev) gives back @p var_q.  The structural direction's
+ *        coefficient is 1 for every clock of the constellation, so the membership is the
+ *        constellation's, as the forward transform's before the rows.
+ * @param carry         The run's carried state.
+ * @param constellation The constellation's leading character.
+ * @param c0            The coefficient the transform applied (m).
+ * @param var_q         The variance it added (m^2).
+ * @param counts        Optional out: per-site tallies (accumulated).
+ * @return the number of references moved back.
+ */
+long long undoClockStransform(NetworkCarryState& carry, char constellation, double c0,
+                              double var_q, CarrySiteCounts* counts = nullptr);
+
+/**
+ * @brief The handover's S-transform before the coupling rows (card PRM phase 2,
+ *        @c network.handover_stransform_before_rows).
+ *
+ * Call once per epoch before the fold decision (@ref networkCarryDecide) and PASS B.  The
+ * call always clears @c NetworkCarryState::sts_pre first.  With the knob armed it previews
+ * this epoch's clock datum election and handover test (both pure: the election reads only
+ * the registered clock columns, the declaration, the sticky baseline and the health
+ * filter, which PASS B does not change; @ref networkClockDatumDeclaration is the one
+ * declaration) and, for each constellation whose pivot changed, re-expresses through
+ * @ref applyClockStransform with @c CarryMechanism::HandoverBeforeRows every clock reference
+ * of the constellation the rows read.  The fold decision, the exact update's prepare and the
+ * rows then read the re-expressed carry.  The solve glue's @ref networkHandoverStransform
+ * does the bookkeeping (counters, events, the fold release) from the record and does not
+ * transform again.
+ *
+ * The transform is recorded (@c sts_carry_pivot) until the next stash re-expresses the carry
+ * in the solve's datum.  A skipped epoch leaves the pivot unadopted and the record set: when
+ * the next election chooses the same pivot, the handover is detected again and released
+ * without a second transform; when it chooses another (the outgoing pivot again, or a third
+ * one), the transform is undone first (@ref undoClockStransform), so the carry is back in the
+ * outgoing datum before anything else moves it.  A failing election (an exception) is left to
+ * the solve glue, which skips the epoch.
+ *
+ * @param ctx                   Run context (carry, counters, knobs).
+ * @param config_               Config (the declaration).
+ * @param log                   Logger (unused; the seam signature).
+ * @param traces                Event sink (STRANSFORM sts_undone rows).
+ * @param sat_health            The broadcast health the election passes over (card HLT).
+ * @param est                   This epoch's estimator, columns registered.
+ * @param t                     This epoch's time.
+ * @param registered_clock_sats This epoch's registered satellite clocks.
+ * @param clk_anchor_sigma      The resolved broadcast anchor sigma (m; the declaration).
+ */
+void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
+                                         const GnssConfig& config_,
+                                         const std::shared_ptr<spdlog::logger>& log,
+                                         NetworkRunTraces& traces,
+                                         const NetworkSbasis::SatHealth& sat_health,
+                                         const NetworkEstimator& est,
+                                         const GnssTime& t,
+                                         const std::vector<std::string>& registered_clock_sats,
+                                         double clk_anchor_sigma);
+
+/**
  * @brief Re-express the carried shared state of each changed constellation in the
  *        incoming clock datum, and mark those constellations for fold release.
  *

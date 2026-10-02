@@ -136,8 +136,9 @@ constexpr const char* kStsCbExc = "the excursion test is suppressed at a datum c
 constexpr const char* kStsHoldClock =
     "the emitted clock steps by the datum delta at a handover, by design";
 constexpr const char* kStsRxClock =
-    "the transform's direction spans the satellite clocks (the receiver clock carry is not "
-    "on it; owed where network.carry_rx_clock_in_block arms that carry)";
+    "the transform's direction spans the satellite clocks; the receiver clock is on the "
+    "datum's direction too, so the transform before the rows is refused with "
+    "network.carry_rx_clock_in_block (owed)";
 constexpr const char* kD4BridgeRoot =
     "a bridged satellite is a root of the chain with a known zero shift (by construction)";
 

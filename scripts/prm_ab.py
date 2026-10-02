@@ -16,9 +16,10 @@
   _rap_prm_<tag>_df / _ds   the golden on the diagonal border fold (DIAG below: no dense carried
                             covariance, so no conditional coupling, no exact update and the level
                             vehicle)
-  _rap_prm_<tag>_c? / r? / q? / o?   card PRM phase 2: card CLV's level re-base, the
-                            ephemeris cut-over re-level, the eq34 D4 shift and the declared
-                            anchor handover (CLV, RELEVEL, EQ34, DHO below)
+  _rap_prm_<tag>_c? / r? / q? / o? / h?   card PRM phase 2: card CLV's level re-base, the
+                            ephemeris cut-over re-level, the eq34 D4 shift, the declared anchor
+                            handover, and the handover S-transform before the rows (CLV,
+                            RELEVEL, EQ34, DHO, HANDOVER below)
 The sim arms start at 00:30:15 (the fixture-start convention); every arm runs --hours (default 2).
 
 `run` runs the arms of one tag with the given executable (a renamed copy of the Release build;
@@ -75,7 +76,8 @@ DIAG = [
 # ephemeris cut-over re-level (broadcast a priori from the brdc-only data root, without the
 # satellite code bias the loader refuses there without the SH field; the field needs 2.1 h to
 # reach the 02:00 navigation batch); the eq34 chain datum's D4 carry shift; the float vehicle's
-# declared anchor handover.
+# declared anchor handover; and the clock-pivot handover's S-transform before the coupling rows
+# (step 3: behaviour-changing at the 6 h goldens' handover, compared with --map g=h).
 CLV = [
     'network.emit_pb_hold_phase_clock=false',
     'network.clock_level_carry=true',
@@ -88,10 +90,11 @@ RELEVEL = [
 ]
 EQ34 = ['network.phase_datum_eq34=true', 'network.phase_datum_eq34_carry_shift=true']
 DHO = ['network.amb_float_declared_handover=true']
+HANDOVER = ['network.handover_stransform_before_rows=true']
 # name -> (arm letter, knobs); the arm suffix is the letter and the bed.
 POSTURES = {'golden': ('g', []), 'program': ('p', PROGRAM), 'scalar': ('s', SCALAR),
             'diag': ('d', DIAG), 'clv': ('c', CLV), 'relevel': ('r', RELEVEL),
-            'eq34': ('q', EQ34), 'dho': ('o', DHO)}
+            'eq34': ('q', EQ34), 'dho': ('o', DHO), 'handover': ('h', HANDOVER)}
 CORE = ('products.txt', 'logs/closed_loop_trace.csv', 'logs/network_epoch_status.csv')
 # Wall-clock columns, by file and header name: the only differences between two runs of one
 # executable on the four arms (the phase 0 self-identity check of 2026-10-01, card PRM section
@@ -221,7 +224,8 @@ def main():
     c = sub.add_parser('cmp'); c.add_argument('tag_a'); c.add_argument('tag_b')
     c.add_argument('--all-csv', action='store_true')
     c.add_argument('--map', action='append', default=[],
-                   help="X=Y: compare tag A's posture-X arms with tag B's posture-Y arms")
+                   help="X=Y: compare tag A's posture-X arms with tag B's posture-Y arms "
+                        "(e.g. g=h: the goldens against the handover posture)")
     a = p.parse_args()
     if a.cmd == 'make':
         make(a)

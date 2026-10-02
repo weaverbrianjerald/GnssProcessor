@@ -6258,6 +6258,37 @@ namespace GnssProcessor {
         bool networkHandoverStransform() const { return network_handover_stransform_; }
 
         /**
+         * @brief Whether the clock-pivot handover's S-transform runs before the coupling rows
+         *        are built (@c network.handover_stransform_before_rows, card PRM phase 2).
+         *
+         * By default the transform runs in the solve glue, after PASS B has built the
+         * coupling rows on the stashed variance, and only on the carried clocks, so the
+         * handover epoch's rows are conditioned on the variance before the transform while
+         * the fold uses @f$\mathrm{var}_i + v_i^2\mathrm{var}_q@f$ (card PRM section 15.3:
+         * 31 GPS clocks at the 6 h goldens' handover).  With this knob the election and the
+         * handover test are previewed before the fold decision and PASS B (both pure), and the
+         * transform re-expresses, through the traversal of carried references, every clock
+         * reference of the changed constellation the rows read: the carried clocks (an
+         * unregistered or parked satellite of the constellation included), the s_prev and the
+         * free p_prev of every coupling term on them, and the stash's pivot value.  The
+         * decision, the exact update's prepare and the rows then read the re-expressed carry,
+         * and the solve glue's transform does only the bookkeeping (counters, events, the fold
+         * release).  A handover re-detected after a skipped epoch finds the carry already in
+         * the incoming datum and is released without a second transform.
+         *
+         * Requires @ref networkHandoverStransform (inert and warned otherwise).  Refused with
+         * @c network.apriori_source brdc_rts: the ephemeris cut-over re-level runs in the solve
+         * glue and would then follow the transform it must precede.  Refused with
+         * @c network.carry_rx_clock_in_block: the receiver clock is on the clock datum's
+         * direction and its carried value is not re-expressed.  Fingerprinted when armed
+         * (armed-only token): fresh convergence only.  Default false = the transform after
+         * PASS B (byte-identical).
+         */
+        bool networkHandoverStransformBeforeRows() const {
+            return network_handover_stransform_before_rows_;
+        }
+
+        /**
          * @brief Producer: stamp a solution-generation id on every emitted epoch
          *        (@c network.emit_generation_id, RTA-3).
          *
@@ -9069,6 +9100,7 @@ namespace GnssProcessor {
         bool   network_code_datum_time_linked_{false};     ///< Impose the code-bias datum (per-sat IF pin + per-(const,signal) sum-to-zero) as a time datum (card 2, W6 only): pin the change from the previous epoch's solved values (veteran-referenced sum-to-zero RHS Σ b̂_prev, IF-pin RHS a1·b̂_prev(σ1)+a2·b̂_prev(σ2)) instead of the level to zero. Same row count (rank unchanged), so no set-mean wander/relaxation and no conflict between gauge and carry weights; a no-veteran channel or first split re-seeds at 0 with a per-sat disc bump (value step ↔ signalled discontinuity). The prev-value map crosses a warm resume only with state_snapshot_datum_capture + resume_datum_restore; otherwise a warm resume re-seeds, signalled. Mutually exclusive with clock_signal_basis_hold (both re-target the IF-pin row; fail-loud). Requires estimate_sat_code_bias (inert and warned otherwise). Off = legacy zero-target datum (byte-identical).
         bool   network_scoped_handover_response_{false};   ///< Scope the producer's internal pivot-handover response (RTA-2; D2 carry skip, clock-oscillator clear, clock-monitor jump suppression) to the constellation(s) whose datum changed; off = global response (byte-identical).
         bool   network_handover_stransform_{false};        ///< At a clock-pivot handover, transform the changed constellation's carried shared means along NetworkSbasis::clockNullDirection (c0 = x_q/v_c[q]; x -= v_c*c0; var += v_c^2*var_q) and then fold them instead of skipping (queue 1(b)); the carried information is valid, only expressed in the retired datum. Requires scoped_handover_response (inert and warned otherwise); inert under an anchor-free clock datum. Fingerprinted when armed (armed-only token) ⇒ fresh convergence only. Off = the legacy one-epoch drop (byte-identical).
+        bool   network_handover_stransform_before_rows_{false};  ///< Run the handover S-transform before the fold decision and PASS B, through the traversal of carried references, so the coupling rows read the re-expressed carry (card PRM phase 2).  Requires handover_stransform (inert and warned otherwise); refused with apriori_source brdc_rts.  Fingerprinted when armed.  Off = the transform after PASS B (byte-identical).
         bool   network_phase_datum_prioritized_{false};    ///< Realize the phase-bias gauge by a per-(sat,signal) prioritized anchor receiver (highest-coverage tracker) instead of pinning only the single clock-pivot station; removes the low-elevation gauge jump and the pivot-absent SPOF, with anchor handovers disc-signalled. Off = legacy single-pivot pins (byte-identical).
         bool   network_phase_datum_ensemble_{false};       ///< Realize the phase-bias gauge by an anchor-free sum-to-zero over the tracking receivers' ambiguities (Fix A; Σ_r zˢ_{r,σ}=0, kernel Schur-projected fold) instead of a single-anchor pin: no pivot, no handover (so no moving-datum churn), no SPOF, and every satellite referenced to the same receiver ensemble (the user DD stays integer, so AR is not contaminated). Reuses the prioritized machinery that removes the SPOF but elects no anchor; supersedes phase_datum_prioritized. Off = anchor-pin datum (byte-identical).
         double network_phase_datum_hold_sigma_m_{0.0};     ///< Seed-once + time-lock (Fix A): hold the ensemble satellite phase bias with a stiff prior of this sigma (m) after seeding Σ_r zˢ=0 once per (sat,signal); removes the ~metre/epoch churn of the un-held ensemble (the emitted absolute bias references a per-epoch re-realized float-ambiguity mean → dynamic datum on a static product). 0 = re-realize every epoch. Inert unless network_phase_datum_ensemble_.

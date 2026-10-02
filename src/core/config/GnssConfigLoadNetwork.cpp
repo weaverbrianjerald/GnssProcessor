@@ -8010,6 +8010,9 @@ namespace GnssProcessor {
         network_handover_stransform_ =
             jval<bool>(json, "network.handover_stransform",
                        "network_handover_stransform", false);
+        network_handover_stransform_before_rows_ =
+            jval<bool>(json, "network.handover_stransform_before_rows",
+                       "network_handover_stransform_before_rows", false);
         // Phase-bias gauge: single clock-pivot station (legacy) vs per-(sat,signal)
         // prioritized anchor receiver.  The two sub-knobs (coverage-preference
         // elevation, per-(sat,signal) stickiness) are inert unless the master toggle
@@ -10117,6 +10120,37 @@ namespace GnssProcessor {
                           "still steps by the datum delta BY DESIGN; this is producer-internal "
                           "continuity.  ⚠ FINGERPRINTED: fresh convergence only — never flip it "
                           "mid-chain.");
+            }
+        }
+        // Card PRM phase 2: the handover's S-transform before the coupling rows.
+        if (network_handover_stransform_before_rows_) {
+            if (!network_handover_stransform_) {
+                log->warn("Network: network.handover_stransform_before_rows is INERT without "
+                          "an armed network.handover_stransform (it moves that transform before "
+                          "PASS B).");
+                network_handover_stransform_before_rows_ = false;
+            } else if (network_carry_rx_clock_in_block_) {
+                throw std::runtime_error(
+                    "network.handover_stransform_before_rows refuses "
+                    "network.carry_rx_clock_in_block: the receiver clock is on the clock datum's "
+                    "direction, and the transform before the rows moves its coupling terms but not "
+                    "its carried value, so its block row would be off by c0 at the handover epoch "
+                    "(card PRM section 16.6)");
+            } else if (network_apriori_source_ == NetworkAprioriSource::BrdcRts) {
+                throw std::runtime_error(
+                    "network.handover_stransform_before_rows refuses network.apriori_source "
+                    "brdc_rts: the ephemeris cut-over re-level runs in the solve glue, after "
+                    "PASS B, and must precede the handover's S-transform (the two re-bases "
+                    "compose in the order the carry experienced them; card PRM section 16)");
+            } else {
+                log->info("Network producer (card PRM phase 2): handover S-transform BEFORE THE "
+                          "ROWS: at a clock-pivot handover the election and the handover test are "
+                          "previewed before the fold decision and PASS B, and the transform "
+                          "re-expresses every clock reference of the changed constellation the "
+                          "coupling rows read (the carried clocks, parked ones included, the "
+                          "coupling terms' s_prev and free p_prev, the stash's pivot value), so the "
+                          "rows are conditioned on the re-expressed variance.  FINGERPRINTED: fresh "
+                          "convergence only.");
             }
         }
         // Card-4 dependency (M1): the DD cycle-basis carry lives on the eq34 chain datum

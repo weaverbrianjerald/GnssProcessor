@@ -83,6 +83,24 @@ struct NetworkSolveGlueResult {
 };
 
 /**
+ * @brief The clock datum's declaration the epoch's election reads
+ *        (@ref NetworkSbasis::buildSharedDatum): the reference receiver, the self-described
+ *        code-bias and phase-bias frames, and the clock gauge (broadcast-anchored,
+ *        sum-to-zero, or a configured pivot satellite).
+ *
+ * One implementation, read by the election in @ref networkSolveGlue and by the handover
+ * preview before PASS B (@ref networkHandoverStransformBeforeRows, card PRM phase 2), so the
+ * two elect from the same declaration.
+ * @param ctx              the run context (the knobs).
+ * @param config_          the configuration (the network block).
+ * @param clk_anchor_sigma the resolved broadcast anchor sigma (m).
+ * @return the declaration.
+ */
+SbasisDeclaration networkClockDatumDeclaration(const NetworkRunContext& ctx,
+                                               const GnssConfig& config_,
+                                               double clk_anchor_sigma);
+
+/**
  * @brief Run the datum build, solve and within-epoch RAIM adaptation for this epoch.
  * @see the file banner for the EpochAction and result-struct contract.  @p buildEnsembleGauges
  *      and @p buildCarryDdPriors are the run-TU wrapper lambdas (re-invoked on re-solve).

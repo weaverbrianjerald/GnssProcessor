@@ -5835,6 +5835,22 @@ int networkTeardown(
                           ? "  ⚠ DEAD WIRING: edges were transformed but NOTHING folded "
                             "— the INC-1 skip release is not reaching the fold sites."
                           : "");
+            if (ctx.knobs.handover_stransform_before_rows) {
+                log->info("Network (card PRM phase 2): the handover S-transform ran BEFORE THE "
+                          "ROWS: {} edge(s) re-expressed before the fold decision and PASS B "
+                          "(the rows of those epochs read the re-expressed carry), {} "
+                          "re-detection(s) after a skipped epoch released without a second "
+                          "transform, {} transform(s) undone after a skipped epoch (the next "
+                          "election chose another pivot), {} edge(s) the preview did not see "
+                          "(transformed after the rows).",
+                          sc.sts_pre_edges, sc.sts_pre_redetected, sc.sts_pre_undone,
+                          sc.sts_pre_mismatch);
+                if (sc.sts_pre_mismatch > 0)
+                    log->warn("Network (card PRM phase 2): {} handover edge(s) were elected "
+                              "differently by the preview before PASS B and by the solve glue; "
+                              "the preview's declaration or inputs diverged.",
+                              sc.sts_pre_mismatch);
+            }
         }
     }
     if (clk_runaway_on && n_runaway_epochs > 0)

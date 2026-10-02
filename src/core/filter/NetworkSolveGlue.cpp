@@ -52,6 +52,46 @@
 
 namespace GnssProcessor {
 
+SbasisDeclaration networkClockDatumDeclaration(const NetworkRunContext& ctx,
+                                               const GnssConfig& config_,
+                                               double clk_anchor_sigma) {
+    const auto& nc = config_.getNetworkConfig();
+    const bool phase_datum_ensemble = ctx.knobs.phase_datum_ensemble;
+    const bool phase_datum_eq34     = ctx.knobs.phase_datum_eq34;
+    const bool clock_brdc_anchored  = ctx.knobs.clock_brdc_anchored;
+    const bool clock_sum_to_zero    = ctx.knobs.clock_sum_to_zero;
+    SbasisDeclaration decl;
+    decl.reference_receiver_id = nc.clock_datum_station;
+    decl.emit_code_bias = config_.estimateNetworkSatCodeBias();  // self-describe the OSB datum (W6)
+    // Self-describe the anchor-free ensemble phase-bias frame, so a consumer knows the
+    // emitted bias references the receiver ensemble (Σ_r z = 0), not a single pivot
+    // receiver's ambiguity (fix A).
+    if (phase_datum_ensemble)
+        decl.amb_datum = SbasisDeclaration::AmbDatum::SumToZeroPerReceiver;
+    // Self-describe the Eq-34 single-receiver-chain phase-bias frame, so a consumer knows
+    // the emitted between-satellite reference is integer-consistent (each chain hop is an
+    // integer).  The wire value is 2, on the existing v2 S line (card 3).
+    else if (phase_datum_eq34)
+        decl.amb_datum = SbasisDeclaration::AmbDatum::SingleReceiverChain;
+    if (clock_brdc_anchored) {
+        // Broadcast-anchored clock gauge: buildSharedDatum branches on this to emit
+        // one anchor row per satellite (Δδtˢ → 0, toward its own broadcast a-priori)
+        // at weight 1/σ².  The anchors are the datum (no pivot, empty datum, declared
+        // dimension 0), and unlike sum-to-zero the frame does not redistribute when
+        // membership changes.
+        decl.isb_datum = SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite;
+        decl.broadcast_anchor_sigma_m = clk_anchor_sigma;  // D6-resolved (brdc_rts auto = 3.0 m; load-validated binding)
+    } else if (clock_sum_to_zero) {
+        // Anchor-free clock gauge: buildSharedDatum branches on this to emit
+        // per-constellation sum-to-zero constraint rows (no pivot, empty datum).
+        decl.isb_datum = SbasisDeclaration::IsbDatum::SumToZeroPerConstellation;
+    } else if (!nc.clock_datum_satellite.empty()) {
+        decl.clock_pivot_sat[NetworkSbasis::constellationOf(nc.clock_datum_satellite)]
+            = nc.clock_datum_satellite;
+    }
+    return decl;
+}
+
 NetworkSolveGlueResult networkSolveGlue(
     NetworkRunContext& ctx,
     const GnssConfig& config_,
@@ -593,35 +633,9 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
 
 // --- Datum + null-space gate + solve --------------------------------
 NetworkSbasis sb;
-SbasisDeclaration decl;
-decl.reference_receiver_id = nc.clock_datum_station;
-decl.emit_code_bias = config_.estimateNetworkSatCodeBias();  // self-describe the OSB datum (W6)
-// Self-describe the anchor-free ensemble phase-bias frame, so a consumer knows the
-// emitted bias references the receiver ensemble (Σ_r z = 0), not a single pivot
-// receiver's ambiguity (fix A).
-if (phase_datum_ensemble)
-    decl.amb_datum = SbasisDeclaration::AmbDatum::SumToZeroPerReceiver;
-// Self-describe the Eq-34 single-receiver-chain phase-bias frame, so a consumer knows
-// the emitted between-satellite reference is integer-consistent (each chain hop is an
-// integer).  The wire value is 2, on the existing v2 S line (card 3).
-else if (phase_datum_eq34)
-    decl.amb_datum = SbasisDeclaration::AmbDatum::SingleReceiverChain;
-if (clock_brdc_anchored) {
-    // Broadcast-anchored clock gauge: buildSharedDatum branches on this to emit
-    // one anchor row per satellite (Δδtˢ → 0, toward its own broadcast a-priori)
-    // at weight 1/σ².  The anchors are the datum (no pivot, empty datum, declared
-    // dimension 0), and unlike sum-to-zero the frame does not redistribute when
-    // membership changes.
-    decl.isb_datum = SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite;
-    decl.broadcast_anchor_sigma_m = clk_anchor_sigma;  // D6-resolved (brdc_rts auto = 3.0 m; load-validated binding)
-} else if (clock_sum_to_zero) {
-    // Anchor-free clock gauge: buildSharedDatum branches on this to emit
-    // per-constellation sum-to-zero constraint rows (no pivot, empty datum).
-    decl.isb_datum = SbasisDeclaration::IsbDatum::SumToZeroPerConstellation;
-} else if (!nc.clock_datum_satellite.empty()) {
-    decl.clock_pivot_sat[NetworkSbasis::constellationOf(nc.clock_datum_satellite)]
-        = nc.clock_datum_satellite;
-}
+// The declaration the election reads (one implementation, shared with the handover preview
+// before PASS B, card PRM phase 2).
+const SbasisDeclaration decl = networkClockDatumDeclaration(ctx, config_, clk_anchor_sigma);
 
 NetworkSbasis::Plan plan;
 try {

@@ -2441,6 +2441,14 @@ int Application::runNetwork() {
         // seam's level noise is set) and the fold, later in networkSolveGlue, reads too.
         // Inside the SB_PREASM bracket for the reason networkSdEwlAr gives.  No-op off.
         networkClockLevelRestoreRaise(ctx, log);   // card CTU G5: once, the first leg epoch after a warm resume
+        // Card PRM phase 2 (network.handover_stransform_before_rows): a clock-pivot handover's
+        // S-transform before the decision and PASS B, through the traversal of carried
+        // references, so the fold decision, the exact update's prepare and the coupling rows
+        // read the re-expressed carry; the solve glue's transform then does the bookkeeping.
+        // After the restore raise, so the two compose in the order the solve glue applied
+        // them.  No-op off (it clears its per-epoch record and returns).
+        networkHandoverStransformBeforeRows(ctx, config_, log, traces, setup.sat_health, est,
+                                            se.time, registered_clock_sats, clk_anchor_sigma);
         networkCarryDecide(ctx, est, se.time, dt);
         networkCouplingExactPrepare(ctx, est, se.time, dt, log);
         subEnd(SB_PREASM);   // close pre-assembly; the assembly wall below is timed separately (D0b)

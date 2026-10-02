@@ -533,6 +533,10 @@ key is ignored without a word, so such an arm is silently its base).
 | references | `gnss_processor_prm1b2.exe` `77ab7c95d714bc4c` (HEAD code) | tags `b0h6` and `b0` (phase 1b); new tags `x0` (clv, eq34, dho, 1 h) and `x0r` (relevel, 2.1 h) |
 | step 1, the check beside the lists | `gnss_processor_prm2a.exe` `0e2bca9d4ee1d2f6` | byte-identical on all 16 arms, every CSV (556 comparisons); the count check 0 mismatches on every call: handover 1 per 6 h golden, card CLV 121 per bed, the re-level 30 (field) and 29 (sim), the eq34 shift 46 (field: 2 095 values and 88 228 coupling terms, the probe's run-end counters), the declared handover 1 per bed |
 | step 2, the lists replaced | `gnss_processor_prm2b.exe` `a1dd6aa00ce2e51f` | byte-identical on all 16 arms, every CSV (556 comparisons); each mechanism ran on its own arms through the traversal: handover 1 call per 6 h golden, card CLV 121 per bed, the re-level 30 / 29, the eq34 shift 46 / 41, the declared handover 1 per bed |
+| step 3, knob off | `gnss_processor_prm2c.exe` `788c46b2fde5165e` | byte-identical on all 16 arms, every CSV (558 comparisons) |
+| step 3 after the review (the undo, the receiver-clock refusal, the re-detection's bookkeeping) | `gnss_processor_prm2d.exe` `67a9f988dd141dc0` | knob off: byte-identical on all 16 arms (558 comparisons); knob on: byte-identical to the `prm2c` knob-on arms (0 re-detections, 0 undos on the goldens), so the read of section 16.6 stands |
+| step 3, the warm-resume seam (section 8's P2 gate) | `gnss_processor_prm2c.exe` and `gnss_processor_prm2d.exe` against `gnss_processor_prm1b2.exe` | `event_leg.py` seeds of 2 h on both goldens (snapshots every 120 epochs) and null legs of 118 epochs resumed from the 1 h snapshot (`.ep0122`; `resume_rxcb_lin_restore` off, which the loader refuses with `rx_code_bias_datum`): byte-identical, products, every CSV and every snapshot file with the M line's wall-clock field masked (156 comparisons); both legs resumed (209 / 154 border entries, 930 / 982 ambiguities, 58 / 60 wet delays) |
+| step 3, `network.handover_stransform_before_rows` on (6 h goldens, `cmp b0h6 p2ch --map g=h`) | the same | every file identical up to TOW 276150 (the handover) and different from that epoch on; one edge per bed, re-expressed before PASS B: 31 GPS clocks, the stash's pivot, 27 264 (field) / 31 168 (sim) ambiguity coupling terms and 3 136 / 1 920 receiver code-bias terms; the CTU line counts 0 keys of S folded on a variance re-expressed after the rows (31 in phase 1b); the handover's own counters unchanged (1 edge, 31 rows, 214 retained) |
 
 Unit suite 2769 passed, 1 fixture-gated skip; suite `CarrySites` (10 cases: the table, every site
 moved by 1 m through the walk, the site mask, the scan of `NetworkCarryState`'s declaration for
@@ -550,3 +554,74 @@ the five are one commit here, because the gate already separates them: each mech
 own posture's arms (card CLV on `clv`, the re-level on `relevel`, the eq34 shift on `eq34`, the
 declared handover on `dho`, the S-transform on the 6 h goldens), and every arm is compared byte for
 byte with its reference. Unit suite 2769 passed, 1 fixture-gated skip.
+
+**16.5 Step 3, the handover's S-transform before the rows.** `network.handover_stransform_before_rows`
+(default off, requires `handover_stransform`, refused with the broadcast a priori, fingerprinted
+when armed). `networkHandoverStransformBeforeRows` previews the clock datum election and the
+handover test before the fold decision and PASS B (both pure, section 15.6; one declaration,
+`networkClockDatumDeclaration`, now shared with the solve glue's election) and applies the
+S-transform through the traversal on the mechanism `handover_before_rows`: every clock reference
+of the changed constellation the rows read (the carried clocks, an absent or parked satellite of
+the constellation at the structural direction's common coefficient 1, the coupling terms' s_prev
+and, for a free term, p_prev, and the stash's pivot value). The fold decision, the exact update's
+prepare and the rows then read the re-expressed carry, and the solve glue's transform keeps the
+bookkeeping (the counters, the STRANSFORM row, now with `before_rows=1`, the fold release).
+
+The preview runs before two skip sites the transform after PASS B never preceded (PASS B's own
+skip and the null-space gate's withhold), so the transform is recorded (`sts_carry_pivot`: the
+pivot, c0, var_q) until the next stash re-expresses the carry in the solve's datum. When an epoch
+is skipped after the preview, the next preview keeps the carry if it elects the same pivot (the
+handover is detected again and released without a second transform, counted as an edge with
+c0 = 0, as the transform after PASS B counts a re-detection), and undoes the transform if it
+elects another: the outgoing pivot again (the sticky incumbent's return) or a third one, which is
+then transformed to from the outgoing datum, so var_q is never added twice (`undoClockStransform`,
+a STRANSFORM `sts_undone` row and a run-end count). The review of the first build found the three
+cases (2026-10-02); the unit cases pin them with dyadic values, so the undo is exact. The
+transform after PASS B keeps its own gap: a skip after it (`solve_failed`, `we_restore_failed`,
+`sigma0_withheld`) re-detects the handover and runs the kernel again, which moves nothing (c0 = 0)
+and adds var_q to every clock once more, and a re-election of the outgoing pivot after such a skip
+leaves the carry in the incoming datum (recorded here, not changed: knob-off byte identity).
+
+The knob is refused with `network.carry_rx_clock_in_block`: the receiver clock is on the clock
+datum's direction, the transform moves its coupling terms and not its carried value, and its
+block row would be off by c0 at the handover epoch (the ambiguity, wet-delay, ionosphere and
+receiver code-bias rows have a family sum of 0 on the direction and are unaffected). Unit suite
+2774 passed, 1 fixture-gated skip (the knob's loader rules; the preview's transform, its
+re-detection, its undo on the outgoing pivot's return and before a third pivot).
+
+**16.6 The read: neutral to slightly worse, because the rows were already exact.** With the knob on
+the 6 h goldens, the emitted clock and phase bias move together after the handover by 0.4 mm rms
+(field) and 2.3 mm rms (sim), at most 8 mm, and the code bias by less than 0.03 mm, for the rest of
+the run. The consumer is unchanged on the field to 0.1 mm and changes by at most 0.1 mm on the sim.
+Against the sim's truth (clock_level/clklevel.py's datum-free rule) the GPS clock error is 0.39 mm
+worse in the half hour after the handover and 0.15 to 0.17 mm worse in the hour after that, on an
+error of 19 to 24 mm.
+
+The read of the rows (2026-10-02) explains the sign. A coupling row is gauge-invariant: its clock
+coefficients keep the harvest's family sum, and when the outgoing pivot has left the layout its
+deficit is spread over the present clocks of the constellation, so the row built before the
+transform, in the outgoing datum, states the same conditional relation as the row of the exactly
+transformed prior. The diagonal re-expression the fold uses (var_i + v_i^2 var_q with the cross
+term dropped, SPEC_pivot_visibility_gauge_defect section 8.1) is the approximation. Moving the rows
+onto it adds var_q to every changed clock's time update in the rows, which loosens their hold on
+the clocks at the handover epoch by the measured amount. The algebra is derived, not proven; the
+measurement agrees with it.
+
+The knob stays default off and is not recommended. The consistent cure runs the other way: the
+fold should match the rows, by re-expressing the dense border covariance itself
+(S P S^T, deferred by SPEC_pivot_visibility_gauge_defect section 8.8), which the traversal now makes
+a single-site change (`prev_carry` with `prev_carry_cov`). It is owed to phase 3b or its own card.
+
+**16.7 What phase 2 leaves open.**
+
+- The mechanism table's owed exemptions (section 16.2), each a one-line change behind its own arm
+  in phase 3b: the ephemeris re-level's eight coupling maps and two baselines (card CLV section 6.4
+  item 6), card CLV's `pc_carry`, the phase-bias shifts' remaining coupling maps, `pb_level_prev`,
+  `pb_hold` and the gross screen's held ambiguity, and the receiver clock carry under the handover.
+- The parked clocks of an absent satellite are not re-expressed by the transform after PASS B
+  (its membership is this epoch's registered set); a seed after a handover reads them in the
+  outgoing datum. The transform before the rows reaches them. Not exercised on the 6 h goldens.
+- The snapshot's records are declared per site (`record`, `snapshot_note`), not generated from the
+  table; the warm-resume seam arm is the check that nothing in the phase moved them.
+- The run end's site table answers section 10's second owed read (which local carry maps are live
+  on the RF-0hv posture, section 16.2).
