@@ -357,6 +357,73 @@ ClockAnchorFold clockAnchorFoldPeek(const NetworkRunContext& ctx, const std::str
     return out;
 }
 
+ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::string& sat,
+                                      double prev_var, double dt_epoch, double pl_now_s,
+                                      double seed_horizon_s) {
+    // The decisions of clockAnchorFoldVariance, in the same order, on a copy of the state;
+    // the increment is the product the fold adds to the carried variance, so the variance
+    // re-formed on that variance by clockAnchorFoldAt is the fold's bit for bit.  A
+    // satellite with no entry yet is a default-constructed one (born LOOSE), which is what
+    // the fold's operator[] would create.
+    ClockAnchorFold out;
+    const double dt_leg = std::max(0.0, dt_epoch);
+    out.inc_m2 = ctx.params.q(SharedParamKind::Clock) * dt_leg;
+    if (!ctx.knobs.cta_on) {
+        out.var_eff = prev_var + out.inc_m2;
+        return out;
+    }
+    ClockAnchorSat st;
+    const auto it = ctx.carry.clk_anchor.sat.find(sat);
+    if (it != ctx.carry.clk_anchor.sat.end()) st = it->second;
+    const double dt_sat = (st.t_last > 0.0) ? (pl_now_s - st.t_last) : dt_leg;
+    const double gap_bound = (seed_horizon_s > ctx.knobs.cta_max_gap_s)
+                                 ? seed_horizon_s : ctx.knobs.cta_max_gap_s;
+    const bool stale = !(dt_sat > 0.0)
+                    || (ctx.knobs.cta_max_gap_s > 0.0 && dt_sat > gap_bound);
+    if (seed_horizon_s > 0.0 && dt_sat > 0.0)
+        out.inc_m2 = ctx.params.q(SharedParamKind::Clock) * dt_sat;
+    if (stale && st.anchored) out.decoupled = true;   // stale_pending, cleared by BeginEpoch
+    if (st.anchored && !out.decoupled) {
+        out.inc_m2   = ctx.knobs.cta_q * dt_sat;
+        out.anchored = true;
+    }
+    return clockAnchorFoldAt(ctx, out, prev_var);
+}
+
+ClockAnchorFold clockAnchorFoldAt(const NetworkRunContext& ctx, const ClockAnchorFold& f,
+                                  double prev_var) {
+    ClockAnchorFold out = f;
+    out.var_eff   = prev_var + f.inc_m2;
+    out.floor_hit = false;
+    if (f.anchored && ctx.knobs.cta_var_floor > 0.0 && out.var_eff < ctx.knobs.cta_var_floor) {
+        out.var_eff   = ctx.knobs.cta_var_floor;
+        out.floor_hit = true;
+    }
+    return out;
+}
+
+void clockAnchorFoldCommit(NetworkRunContext& ctx, const std::string& sat,
+                           const ClockAnchorFold& f, double pl_now_s, double value) {
+    if (!ctx.knobs.cta_on) return;
+    ClockAnchorSat& st = ctx.carry.clk_anchor.sat[sat];
+    // The decoupling edge is detected by the decision because it decides the variance; the
+    // state transition, the event and the wire mark belong to the guard.
+    if (f.decoupled) st.stale_pending = true;
+    if (f.anchored) {
+        if (f.floor_hit) ++ctx.counters.cta_floor_hits;
+        ++ctx.counters.cta_folded_anchored;
+        ++ctx.counters.mgnss.anchor_folds_anchored[sat.substr(0, 1)];   // per constellation (card GAL)
+    } else {
+        ++ctx.counters.cta_folded_loose;
+        ++ctx.counters.mgnss.anchor_folds_loose[sat.substr(0, 1)];      // per constellation (card GAL)
+    }
+    st.t_last          = pl_now_s;
+    st.last_value      = value;
+    st.last_var_eff    = f.var_eff;
+    st.folded          = true;
+    st.folded_anchored = f.anchored;
+}
+
 // ---------------------------------------------------------------------------
 // Guard side.
 // ---------------------------------------------------------------------------

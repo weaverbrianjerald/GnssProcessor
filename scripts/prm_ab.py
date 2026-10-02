@@ -5,11 +5,17 @@
     python scripts/prm_ab.py run  <tag> --exe <Release exe> [--jobs 4]
     python scripts/prm_ab.py cmp  <tag A> <tag B> [--all-csv]
 
-`make` writes up to four arms with scripts/rapid_arm.py, all from the committed goldens:
+`make` writes two arms per posture with scripts/rapid_arm.py, all from the committed goldens:
   _rap_prm_<tag>_gf / _gs   config/golden/golden_{field,sim}_refound.json as generated
-  _rap_prm_<tag>_pf / _ps   the same plus the nine knobs of the clock-level program posture
-                            (PROGRAM below: the exact coupling update, the smoothed block hold and
-                            the monitors), the posture of cards CTU2, SMD, REV and LGM
+  _rap_prm_<tag>_pf / _ps   the same plus the knobs of the clock-level program posture
+                            (PROGRAM below: the smoothed block hold and the monitors, with card
+                            LAH's phase-clock hold off, which the loader refuses with the
+                            smoothed hold), the posture of cards CTU2, SMD, REV and LGM
+  _rap_prm_<tag>_sf / _ss   the golden with the scalar coupling update (SCALAR below: card CTU's
+                            exact update off), the route the goldens ran before card EXL
+  _rap_prm_<tag>_df / _ds   the golden on the diagonal border fold (DIAG below: no dense carried
+                            covariance, so no conditional coupling, no exact update and the level
+                            vehicle)
 The sim arms start at 00:30:15 (the fixture-start convention); every arm runs --hours (default 2).
 
 `run` runs the arms of one tag with the given executable (a renamed copy of the Release build;
@@ -40,6 +46,26 @@ PROGRAM = [
     'network.phase_visible_monitor=true',
     'network.rank_gate_tol=1e-11',
 ]
+# Since card EXL (2026-10-01) the goldens arm the exact update with its companions and card LAH's
+# phase-clock hold; the smoothed hold is refused with the phase-clock hold, so the program posture
+# switches the latter off.  The remaining entries are already in the goldens and stay listed as
+# the posture's statement.
+PROGRAM = ['network.emit_pb_hold_phase_clock=false'] + PROGRAM
+SCALAR = ['network.carry_coupling_exact_update=false']
+# The float vehicle's fold is the conditional coupling, which needs the dense carry, so the diagonal
+# border fold is reached only on the level vehicle (and without the held phase datum it needs).
+DIAG = [
+    'network.ambiguity_vehicle=level',
+    'network.carry_conditional_coupling=false',
+    'network.carry_coupling_gauge_project=false',
+    'network.carry_coupling_reinit_sources=false',
+    'network.carry_coupling_exact_update=false',
+    'network.carry_coupling_time_update=false',
+    'network.carry_rx_code_bias_in_block=false',
+    'network.phase_datum_held_basis=false',
+    'network.shared_carry_full_cov=false',
+]
+POSTURES = {'golden': [], 'program': PROGRAM, 'scalar': SCALAR, 'diag': DIAG}
 CORE = ('products.txt', 'logs/closed_loop_trace.csv', 'logs/network_epoch_status.csv')
 # Wall-clock columns, by file and header name: the only differences between two runs of one
 # executable on the four arms (the phase 0 self-identity check of 2026-10-01, card PRM section
@@ -52,7 +78,7 @@ VOLATILE_COLS = {
 
 
 def arms(tag):
-    return sorted(os.path.basename(p)[len('_rap_'):] for p in glob.glob(f'{RUNS}/_rap_prm_{tag}_[gp][fs]'))
+    return sorted(os.path.basename(p)[len('_rap_'):] for p in glob.glob(f'{RUNS}/_rap_prm_{tag}_[gpsd][fs]'))
 
 
 def make(a):
@@ -62,7 +88,7 @@ def make(a):
             name = f'prm_{a.tag}_{post[0]}{bed}'
             cmd = [sys.executable, ROOT + '/scripts/rapid_arm.py', 'make', '--base', GOLDEN[bed],
                    '--tag', name, '--hours', str(a.hours)]
-            sets = (PROGRAM if post == 'program' else []) + (
+            sets = POSTURES[post] + (
                 [f'network.start_offset_hours={SIM_START_H}'] if bed == 's' else [])
             for s in sets:
                 cmd += ['--set', s]
@@ -100,7 +126,7 @@ def digest(ls):
 
 def cmp(a):
     ok = True
-    for suffix in ('gf', 'gs', 'pf', 'ps'):
+    for suffix in [p[0] + b for p in POSTURES for b in 'fs']:
         da, db = f'{RUNS}/_rap_prm_{a.tag_a}_{suffix}', f'{RUNS}/_rap_prm_{a.tag_b}_{suffix}'
         if not (os.path.isdir(da) and os.path.isdir(db)):
             continue

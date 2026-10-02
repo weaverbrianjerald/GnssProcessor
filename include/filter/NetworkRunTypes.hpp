@@ -340,6 +340,81 @@ struct SdEwlFix {
     bool        measured{ false };
 };
 
+/// What the D2 fold does with one carried border entry this epoch (card PRM phase 1b,
+/// section 4.4).  Decided once per epoch, before PASS B, by
+/// @ref networkCarryDecide, and read by every consumer of the decision: the exact
+/// coupling update's rows (through @c cxu_epoch), the fold itself and the run-end
+/// tally.  The card's seven names map as: Anchored and Loose (a satellite clock under
+/// the Q3 anchor), Reinit, Reref and Parked as named; the card's Skipped is split into
+/// @c Held, @c OnOscillator, @c Screened and @c Retired; the card's Departed is the
+/// decision's @c departed flag (a foldable entry whose column left the layout, which the
+/// estimator marginalizes); @c Folded (a bias at its kind's process noise, or a clock with
+/// the anchor disarmed) and @c Seeded (READMIT) are the two the card did not list.
+enum class CarryDisposition : int {
+    Undecided = 0,  ///< not decided this epoch (a fresh stash or restore entry)
+    Folded,         ///< folded at its kind's process noise over the gap
+    Anchored,       ///< a satellite clock folded at the Q3 anchor's rate (card Q3)
+    Loose,          ///< a satellite clock the armed anchor does not hold: the legacy rate
+    Reinit,         ///< folded at the clock monitor's reinit variance, decorrelated (inflate_q)
+    Seeded,         ///< a parked pre-gap realization seeding its re-registered column (READMIT)
+    Reref,          ///< marginalized this epoch: its phase-bias frame was re-referenced
+    Held,           ///< folded by another prior: the phase hold (a phase bias), the SH inject (VtecSh)
+    OnOscillator,   ///< a satellite clock carried by the clock oscillator model instead
+    Parked,         ///< a departed satellite's realization, not folded (column absent or past the seed horizon)
+    Screened,       ///< not folded: the effective variance came out non-positive
+    Retired,        ///< not folded: a clock-pivot handover retired its datum (decided by the fold)
+};
+
+/// Number of @ref CarryDisposition values (array sizing of the run-end tally).
+inline constexpr int kCarryDispositions = 12;
+
+/// Short lower-case name of a disposition, for the run-end table and the manifest.
+inline const char* carryDispositionName(CarryDisposition d) {
+    switch (d) {
+        case CarryDisposition::Undecided:    return "undecided";
+        case CarryDisposition::Folded:       return "folded";
+        case CarryDisposition::Anchored:     return "anchored";
+        case CarryDisposition::Loose:        return "loose";
+        case CarryDisposition::Reinit:       return "reinit";
+        case CarryDisposition::Seeded:       return "seeded";
+        case CarryDisposition::Reref:        return "reref";
+        case CarryDisposition::Held:         return "held";
+        case CarryDisposition::OnOscillator: return "on_oscillator";
+        case CarryDisposition::Parked:       return "parked";
+        case CarryDisposition::Screened:     return "screened";
+        case CarryDisposition::Retired:      return "retired";
+    }
+    return "?";
+}
+
+/**
+ * @brief One carried border entry's fold decision for this epoch (card PRM phase 1b).
+ *
+ * Holds the route and the process-noise increment, not the folded variance: a consumer
+ * forms the variance from the carried variance it holds with
+ * @ref carryFoldVarEff, so a re-expression of the carry between the decision and a
+ * consumer (the clock-pivot handover S-transform adds @f$v_i^2\sigma_q^2@f$ to a clock's
+ * variance after the coupling rows are built) changes the base and not the decision.
+ * Every member has a default, because the stash and the warm resume default-construct
+ * @ref CarryPrior; the decision pass overwrites every entry, parked ones included,
+ * before any reader runs.
+ */
+struct CarryFoldDecision {
+    CarryDisposition disposition{CarryDisposition::Undecided};
+    /// The increment over the carried variance before any floor (m^2): q·gap of the kind,
+    /// or for a clock under the armed anchor its own increment (cta_q·dt_sat anchored,
+    /// the legacy q over the gap loose).  0 for the dispositions that do not fold.
+    double q_applied_m2{0.0};
+    double seed_gap_s{0.0};     ///< Seeded: the time since the park (s); 0 otherwise
+    bool   anchored{false};     ///< the anchor holds this clock (its floor applies)
+    bool   decoupled{false};    ///< the anchor found an anchored clock's carry stale this epoch
+    bool   departed{false};     ///< a foldable entry whose shared column is absent from this epoch's layout
+    bool   has_seam{false};     ///< card CTU G5: a switch-on seam's level noise applies (dense fold only)
+    double seam_q_m2{0.0};      ///< that noise (m^2)
+    double var_decided_m2{0.0};   ///< the carried variance when decided
+    double value_decided_m{0.0};  ///< the carried value when decided
+};
+
 /// One shared parameter carried across epochs (D2): its value and posterior
 /// variance, re-keyed by (kind, sat, signal) identity so it survives layout
 /// changes (a satellite blinking in/out).
@@ -365,6 +440,11 @@ struct CarryPrior {
     /// true gap instead of tripping `gap` into a code-only loose re-draw, which the
     /// anchor's own re-coupling would then freeze into a tail.
     double          t_park_s{0.0};
+    /// This epoch's fold decision (card PRM phase 1b): written by
+    /// @ref networkCarryDecide before PASS B, read by the coupling rows and the fold.  It
+    /// lives from the decision to the stash, which rebuilds the entries; a parked entry is
+    /// copied whole by the stash and re-decided at the next epoch's pass.
+    CarryFoldDecision fold{};
 };
 
 /// Re-admission continuity constants (READMIT).  @c kReadmitMinGapEp: the

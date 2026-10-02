@@ -18,6 +18,7 @@
 #include "filter/NetworkAmbFloat.hpp"       // ambFloatBirthFloor (RF-1 step 4)
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkClockAnchor.hpp"      // guarded temporal clock anchor (card Q3)
+#include "filter/NetworkCarryDisposition.hpp" // the decided-once fold disposition (card PRM phase 1b)
 #include "filter/NetworkPriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkInvariantCarryDriver.hpp"   // branch-faithful carry (de)serialization (RTB-7(c))
 #include "products/NetworkClockEmitRebase.hpp"       // CLK-R held frame, restored on warm resume (§18.10)
@@ -39,6 +40,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -3635,6 +3637,53 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                                               : -1;
         return var * vce_apply.factor(slot, sat);
     };
+    // Card PRM phase 1b: every entry was decided once before PASS B (networkCarryDecide,
+    // filter/NetworkCarryDisposition).  The fold records the two dispositions it decides
+    // itself (a retired datum, a non-positive variance), tallies what it applied per
+    // (kind, disposition), counts the entries a handover re-expressed after the decision,
+    // and, for this build, checks its own disposition and variance against the decision bit
+    // for bit: the check the decision must pass before the fold reads it (section 4.4).
+    bool prm_reexpressed_epoch = false;
+    const auto prmTally = [&](CarryPrior& cp, CarryDisposition disp) {
+        cp.fold.disposition = disp;
+        const int kk = static_cast<int>(cp.kind);
+        ++ctx.counters.prm_disp[kk][static_cast<int>(disp)];
+        if (carryDispositionFolds(disp) && cp.fold.departed) ++ctx.counters.prm_departed[kk];
+    };
+    const auto prmExpect = [&](const CarryPrior& cp, CarryDisposition rule) {
+        if (cp.fold.disposition == CarryDisposition::Undecided)
+            ++ctx.counters.prm_undecided_at_fold;
+        if (cp.fold.disposition != rule) ++ctx.counters.prm_chk_fold_disp_mismatch;
+    };
+    const auto prmSkip = [&](CarryPrior& cp, CarryDisposition rule) {
+        prmExpect(cp, rule);
+        prmTally(cp, rule);
+    };
+    const auto prmFolded = [&](CarryPrior& cp, CarryDisposition rule, double var_eff, bool dense,
+                               const ClockAnchorFold* cf) {
+        prmExpect(cp, rule);
+        ++ctx.counters.prm_chk_fold;
+        ClockAnchorFold af;
+        const double v = carryFoldVarEff(ctx, cp, cp.fold, cp.var, dense, &af);
+        bool bad = !(v == var_eff);
+        if (cf)
+            bad = bad || !(af.var_eff == cf->var_eff) || af.anchored != cf->anchored
+               || af.floor_hit != cf->floor_hit || af.decoupled != cf->decoupled;
+        if (bad) ++ctx.counters.prm_chk_fold_var_mismatch;
+        if (cp.var != cp.fold.var_decided_m2 || cp.value != cp.fold.value_decided_m) {
+            ++ctx.counters.prm_reexpressed;
+            prm_reexpressed_epoch = true;
+            ctx.counters.prm_reexpressed_max_dvar = std::max(
+                ctx.counters.prm_reexpressed_max_dvar, std::abs(cp.var - cp.fold.var_decided_m2));
+        }
+        prmTally(cp, (var_eff > 0.0) ? rule : CarryDisposition::Screened);
+    };
+    const auto prmRule = [&](const CarryPrior& cp, double seed_gap, const ClockAnchorFold* cf) {
+        if (cp.inflate_q) return CarryDisposition::Reinit;
+        if (seed_gap > 0.0) return CarryDisposition::Seeded;
+        if (cf) return cf->anchored ? CarryDisposition::Anchored : CarryDisposition::Loose;
+        return CarryDisposition::Folded;
+    };
     auto& cap_priors = ws.cap_priors;
     auto& cap_dense_keys = ws.cap_dense_keys;
     auto& cap_dense_cov = ws.cap_dense_cov;
@@ -3703,17 +3752,17 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     if ((!datum_changed || scoped_handover) && !prev_carry.empty() && !fullcov_on) {
         std::vector<NetworkEstimator::SharedPrior> priors;
         priors.reserve(prev_carry.size());
-        for (const CarryPrior& cp : prev_carry) {
-            if (cp.kind == SharedParamKind::VtecSh) continue;  // SH prior is folded before the gate
+        for (CarryPrior& cp : prev_carry) {
+            if (cp.kind == SharedParamKind::VtecSh) { prmSkip(cp, CarryDisposition::Held); continue; }  // SH prior is folded before the gate
             // Fix A hold: the held phase-bias prior is injected unconditionally by
             // networkInjectPhaseHoldPrior (before the gate).  The phase-ensemble datum is
             // orthogonal to the clock pivot handover this clock-frame carry is gated on,
             // so a clock datum change does not drop it (otherwise a held satellite, whose
             // Σz=0 fold buildEnsembleGauges skipped, would be left without a datum and the
             // epoch would withhold).
-            if (phase_hold_on && cp.kind == SharedParamKind::PhaseBias) continue;
+            if (phase_hold_on && cp.kind == SharedParamKind::PhaseBias) { prmSkip(cp, CarryDisposition::Held); continue; }
             if (handover_affects(cp.sat)) {
-                if (!sts_released(cp.sat)) continue;   // retired-datum key, scoped mode only (RTA-2)
+                if (!sts_released(cp.sat)) { prmTally(cp, CarryDisposition::Retired); continue; }   // retired-datum key, scoped mode only (RTA-2)
                 ++ctx.counters.sts_rows_retained;      // re-expressed ⇒ folds instead (queue 1(b))
             }
             // eq34 D4 hygiene (card 3): a re-referenced (sat,σ) stepped its b_s frame at
@@ -3722,14 +3771,14 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // to the full re-level).  Mirrors the RTA-2 scoped skip; always empty when eq34
             // is off.
             if (cp.kind == SharedParamKind::PhaseBias
-                && eq34_reref.count({cp.sat, cp.signal})) continue;
+                && eq34_reref.count({cp.sat, cp.signal})) { prmSkip(cp, CarryDisposition::Reref); continue; }
             // The same marginalization for the anchored election's handovers (queue item
             // 1(d); SPEC_pivot_visibility_gauge_defect §5.07.5 R1): the skip above,
             // extended to the election whose untransformed carry the satellite clock was
             // absorbing.  Always empty when the knob is off.
             if (cp.kind == SharedParamKind::PhaseBias
-                && pa_reref.count({cp.sat, cp.signal})) continue;
-            if (clk_model_on && cp.kind == SharedParamKind::Clock) continue;  // clock is on clock_osc
+                && pa_reref.count({cp.sat, cp.signal})) { prmSkip(cp, CarryDisposition::Reref); continue; }
+            if (clk_model_on && cp.kind == SharedParamKind::Clock) { prmSkip(cp, CarryDisposition::OnOscillator); continue; }  // clock is on clock_osc
             const double q = params.q(cp.kind);   // VtecSh skipped above
             // READMIT (E2 seed-first re-admission): a parked entry is a departed
             // satellite's pre-gap realization.  Column still absent ⇒ nothing to fold
@@ -3741,9 +3790,9 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // the legacy one, character for character.
             double seed_gap = 0.0;
             if (cp.t_park_s > 0.0) {
-                if (!(readmit_h > 0.0) || !readmitColumnPresent(est, cp)) continue;
+                if (!(readmit_h > 0.0) || !readmitColumnPresent(est, cp)) { prmSkip(cp, CarryDisposition::Parked); continue; }
                 seed_gap = now_s - cp.t_park_s;
-                if (!(seed_gap > 0.0) || seed_gap > readmit_h) continue;
+                if (!(seed_gap > 0.0) || seed_gap > readmit_h) { prmSkip(cp, CarryDisposition::Parked); continue; }
             }
             // A clock-monitor-flagged satellite folds with the large reinit variance (a
             // soft large-q reinitialization): the weak prior still anchors the parameter
@@ -3758,12 +3807,14 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // and a stiff anchor on it would re-freeze what the monitor just loosened.
             // Off ⇒ var_eff is the expression above, character for character.
             bool seed_anchored = false;
+            std::optional<ClockAnchorFold> prm_cf;   // card PRM phase 1b check
             if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q) {
                 const ClockAnchorFold cf = clockAnchorFoldVariance(
                     ctx, cp.sat, cp.var, dt, cta_now_s, cp.value,
                     seed_gap > 0.0 ? readmit_h : 0.0);
                 var_eff       = cf.var_eff;
                 seed_anchored = cf.anchored;
+                prm_cf        = cf;
             }
             // Floor the D2 phase-bias / code-bias carry variance (B4), which caps Λ so a
             // stiff zero-q carry cannot lock in a biased product, mirroring the
@@ -3777,6 +3828,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 if (floor > 0.0) var_eff = std::max(var_eff, floor);
             }
             var_eff = vce_scale_shared(cp.kind, cp.sat, cp.inflate_q, var_eff);  // VCE apply factor (M2 v2)
+            prmFolded(cp, prmRule(cp, seed_gap, prm_cf ? &*prm_cf : nullptr), var_eff,
+                      /*dense=*/false, prm_cf ? &*prm_cf : nullptr);
             if (!(var_eff > 0.0)) continue;
             NetworkEstimator::SharedPrior p;
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
@@ -3824,31 +3877,31 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         drow.reserve(prev_carry.size());
         dvar_eff.reserve(prev_carry.size());
         dinflate.reserve(prev_carry.size());
-        for (const CarryPrior& cp : prev_carry) {
-            if (cp.kind == SharedParamKind::VtecSh) continue;  // SH prior is folded before the gate
-            if (phase_hold_on && cp.kind == SharedParamKind::PhaseBias) continue;  // Fix A hold: injected separately (datum-change-independent)
+        for (CarryPrior& cp : prev_carry) {
+            if (cp.kind == SharedParamKind::VtecSh) { prmSkip(cp, CarryDisposition::Held); continue; }  // SH prior is folded before the gate
+            if (phase_hold_on && cp.kind == SharedParamKind::PhaseBias) { prmSkip(cp, CarryDisposition::Held); continue; }  // Fix A hold: injected separately (datum-change-independent)
             if (handover_affects(cp.sat)) {
-                if (!sts_released(cp.sat)) continue;   // retired-datum key, scoped mode only (RTA-2)
+                if (!sts_released(cp.sat)) { prmTally(cp, CarryDisposition::Retired); continue; }   // retired-datum key, scoped mode only (RTA-2)
                 ++ctx.counters.sts_rows_retained;      // re-expressed ⇒ folds instead (queue 1(b))
             }
             // eq34 D4 hygiene (card 3): marginalize re-referenced PB keys for this epoch
             // (retired frame); see the diagonal branch above.
             if (cp.kind == SharedParamKind::PhaseBias
-                && eq34_reref.count({cp.sat, cp.signal})) continue;
+                && eq34_reref.count({cp.sat, cp.signal})) { prmSkip(cp, CarryDisposition::Reref); continue; }
             // Anchored-election handovers (queue item 1(d)), same treatment (see the
             // diagonal branch above).
             if (cp.kind == SharedParamKind::PhaseBias
-                && pa_reref.count({cp.sat, cp.signal})) continue;
-            if (clk_model_on && cp.kind == SharedParamKind::Clock) continue;  // clock is on clock_osc
+                && pa_reref.count({cp.sat, cp.signal})) { prmSkip(cp, CarryDisposition::Reref); continue; }
+            if (clk_model_on && cp.kind == SharedParamKind::Clock) { prmSkip(cp, CarryDisposition::OnOscillator); continue; }  // clock is on clock_osc
             const double q = params.q(cp.kind);   // VtecSh skipped above
             // READMIT (E2): the same parked-entry disposition as the diagonal branch above
             // (a parked entry has no dense row, since it was never in the stashed block,
             // so a seed always folds through the diagonal leftovers below).
             double seed_gap = 0.0;
             if (cp.t_park_s > 0.0) {
-                if (!(readmit_h > 0.0) || !readmitColumnPresent(est, cp)) continue;
+                if (!(readmit_h > 0.0) || !readmitColumnPresent(est, cp)) { prmSkip(cp, CarryDisposition::Parked); continue; }
                 seed_gap = now_s - cp.t_park_s;
-                if (!(seed_gap > 0.0) || seed_gap > readmit_h) continue;
+                if (!(seed_gap > 0.0) || seed_gap > readmit_h) { prmSkip(cp, CarryDisposition::Parked); continue; }
             }
             double var_eff = cp.inflate_q ? clk_mon_reinit_var
                                           : cp.var + q * (seed_gap > 0.0 ? seed_gap
@@ -3860,12 +3913,14 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // so the anchor does not re-create the independence assumption C1 removed on
             // the state it makes stiffest (SPEC §2.1, assessment deviation #1).
             bool seed_anchored = false;
+            std::optional<ClockAnchorFold> prm_cf;   // card PRM phase 1b check
             if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q) {
                 const ClockAnchorFold cf = clockAnchorFoldVariance(
                     ctx, cp.sat, cp.var, dt, cta_now_s, cp.value,
                     seed_gap > 0.0 ? readmit_h : 0.0);
                 var_eff       = cf.var_eff;
                 seed_anchored = cf.anchored;
+                prm_cf        = cf;
             }
             if (!cp.inflate_q) {
                 const double floor = (cp.kind == SharedParamKind::PhaseBias) ? pb_var_floor
@@ -3881,6 +3936,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 const auto sq = ctx.carry.clm_seam_q.find(cp.sat);
                 if (sq != ctx.carry.clm_seam_q.end()) var_eff += sq->second;
             }
+            prmFolded(cp, prmRule(cp, seed_gap, prm_cf ? &*prm_cf : nullptr), var_eff,
+                      /*dense=*/true, prm_cf ? &*prm_cf : nullptr);
             if (!(var_eff > 0.0)) continue;
             NetworkEstimator::SharedPrior p;
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
@@ -4040,6 +4097,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), leftovers.begin(), leftovers.end());
     }
+    if (prm_reexpressed_epoch) ++ctx.counters.prm_reexpressed_epochs;   // card PRM phase 1b
     // Card CTU G5: the seam's level noise is one epoch's process noise.
     ctx.carry.clm_seam_q.clear();
     // The partial-support skip tally (card C-GF) is run-scoped on the estimator and is
@@ -4136,6 +4194,33 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
         } catch (...) {}
         return -1;
     };
+    // Card PRM phase 1b check: the rows' view of each key formed from the decision recorded
+    // before PASS B (networkCarryDecide), against this mirror, bit for bit.  Read-only.
+    const auto recRoute = [&](const CarryPrior& cp, double& v) -> CouplingExactDRoute {
+        v = std::numeric_limits<double>::quiet_NaN();
+        switch (cp.fold.disposition) {
+            case CarryDisposition::Reref:  return CouplingExactDRoute::Reref;
+            case CarryDisposition::Reinit: return CouplingExactDRoute::Reinit;
+            case CarryDisposition::Folded:
+            case CarryDisposition::Anchored:
+            case CarryDisposition::Loose:  break;
+            default:                       return CouplingExactDRoute::Skipped;
+        }
+        v = carryFoldVarEff(ctx, cp, cp.fold, cp.var, /*dense=*/true);
+        if (!(v > 0.0)) {
+            v = std::numeric_limits<double>::quiet_NaN();
+            return CouplingExactDRoute::Skipped;
+        }
+        return CouplingExactDRoute::Present;
+    };
+    const auto recCheck = [&](const CarryPrior& cp, CouplingExactDRoute route, double v) {
+        double vr;
+        const CouplingExactDRoute rr = recRoute(cp, vr);
+        ++ctx.counters.prm_chk_rows;
+        const bool fin = std::isfinite(v), finr = std::isfinite(vr);
+        if (fin != finr || (fin && !(v == vr)) || (!fin && rr != route))
+            ++ctx.counters.prm_chk_rows_mismatch;
+    };
     const int np = static_cast<int>(pcc.P.rows());
     ep.P = pcc.P;
     ep.p_of_key.clear();
@@ -4153,6 +4238,7 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
             // of the rows' terms on it.
             CouplingExactDRoute r;
             const double v = foldVar(cp, r);
+            recCheck(cp, r, v);   // card PRM phase 1b
             if (std::isfinite(v)) ep.q_outside[key] = std::max(0.0, v - cp.var);
             continue;
         }
@@ -4168,11 +4254,13 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
         ep.cc_p[static_cast<std::size_t>(p)]  = cp->sat.empty() ? '\0' : cp->sat[0];
         CouplingExactDRoute route;
         const double var_eff = foldVar(*cp, route);
+        recCheck(*cp, route, var_eff);   // card PRM phase 1b
         if (!std::isfinite(var_eff)) {
             ep.route_p[static_cast<std::size_t>(p)] = static_cast<int>(route);
             continue;
         }
         const Eigen::Index col = columnOf(*cp);
+        if ((col < 0) != cp->fold.departed) ++ctx.counters.prm_chk_rows_mismatch;   // card PRM phase 1b
         if (col < 0) {
             ep.route_p[static_cast<std::size_t>(p)] = static_cast<int>(CouplingExactDRoute::Departed);
             continue;

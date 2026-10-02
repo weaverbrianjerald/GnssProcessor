@@ -6271,6 +6271,55 @@ int networkTeardown(
                   ctx.carry.iono_carry.size(), ctx.carry.iono_blk_carry.size(),
                   ctx.carry.rx_clk_carry.size(), ctx.carry.rpb_carry.size(),
                   ctx.carry.rx_cb_carry.size());
+        // Card PRM phase 1b: what the fold applied to the carried border over the run, per
+        // kind and disposition (key-epochs), decided once before PASS B; the same counts go
+        // to the run manifest as a `param_dispositions` record.
+        const auto& C = ctx.counters;
+        static const char* const kKindName[4] = {"sat_clock", "sat_code_bias", "sat_phase_bias",
+                                                 "vtec_sh"};
+        std::string js = "{\"record\":\"param_dispositions\",\"decide_epochs\":"
+                       + std::to_string(C.prm_decide_epochs) + ",\"kinds\":[";
+        for (int kk = 0; kk < 4; ++kk) {
+            std::string line;
+            std::string jk = fmt::format("{}{{\"kind\":\"{}\",\"departed\":{}", kk ? "," : "",
+                                         kKindName[kk], C.prm_departed[kk]);
+            long long tot = 0;
+            for (int dd = 1; dd < kCarryDispositions; ++dd) {
+                const long long n = C.prm_disp[kk][dd];
+                jk += fmt::format(",\"{}\":{}", carryDispositionName(static_cast<CarryDisposition>(dd)), n);
+                tot += n;
+                if (n > 0)
+                    line += fmt::format("{}{} {}", line.empty() ? "" : ", ",
+                                        carryDispositionName(static_cast<CarryDisposition>(dd)), n);
+            }
+            js += jk + "}";
+            if (tot > 0)
+                log->info("Network (param model, run end): {} fold dispositions over the run: {}"
+                          " ({} of the folded with the column departed).",
+                          kKindName[kk], line, C.prm_departed[kk]);
+        }
+        js += fmt::format("],\"reexpressed_after_decision\":{},\"reexpressed_epochs\":{},"
+                          "\"reexpressed_max_dvar_m2\":{:.6e},\"undecided_at_fold\":{}}}",
+                          C.prm_reexpressed, C.prm_reexpressed_epochs,
+                          C.prm_reexpressed_max_dvar, C.prm_undecided_at_fold);
+        traces.appendRunManifestRecord(config_.getNetworkConfig(), js);
+        log->info("Network (card PRM phase 1b): the border's fold decided once before PASS B "
+                  "over {} epoch(s); {} key-epoch(s) re-expressed between the decision and the "
+                  "fold in {} epoch(s) (largest variance change {:.3e} m^2: a clock-pivot "
+                  "handover's S-transform, after the coupling rows were built); {} entr(ies) "
+                  "met undecided at the fold.",
+                  C.prm_decide_epochs, C.prm_reexpressed, C.prm_reexpressed_epochs,
+                  C.prm_reexpressed_max_dvar, C.prm_undecided_at_fold);
+        log->info("Network (card PRM phase 1b check): the decision against card CTU's mirror, "
+                  "{} key(s) checked, {} mismatch(es); against the fold, {} variance(s) "
+                  "checked, {} variance mismatch(es), {} disposition mismatch(es) (bit for "
+                  "bit).",
+                  C.prm_chk_rows, C.prm_chk_rows_mismatch, C.prm_chk_fold,
+                  C.prm_chk_fold_var_mismatch, C.prm_chk_fold_disp_mismatch);
+        if (C.prm_chk_rows_mismatch > 0 || C.prm_chk_fold_var_mismatch > 0
+            || C.prm_chk_fold_disp_mismatch > 0 || C.prm_undecided_at_fold > 0)
+            log->warn("Network (card PRM phase 1b check): the decided-once disposition disagrees "
+                      "with the mirror or the fold; the decision is not yet the fold's.");
     }
     // Card LGM: the phase-colour state's edges (invariant #4: the run-end counters are the
     // ON-path telemetry).

@@ -211,6 +211,12 @@ struct ClockAnchorFold {
     bool   anchored{false};   ///< folded at the anchor rate (false = LOOSE, legacy rate)
     bool   floor_hit{false};  ///< the consistency floor bound this fold
     bool   decoupled{false};  ///< this fold found an anchored satellite's carry stale; the guard emits the decouple event and the mark
+    /// The increment over the carried variance before the floor (m^2): cta_q·dt_sat
+    /// anchored, the legacy rate over the driver's step (or over the true gap for a
+    /// re-admission seed) loose.  @c var_eff is the carried variance plus this, floored
+    /// when anchored (card PRM phase 1b: the decision is the increment, the base is the
+    /// caller's, @ref clockAnchorFoldAt).
+    double inc_m2{0.0};
 };
 
 /// @brief Decide the satellite clock's carried-prior variance for this epoch, and
@@ -256,6 +262,48 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
 ClockAnchorFold clockAnchorFoldPeek(const NetworkRunContext& ctx, const std::string& sat,
                                     double prev_var, double dt_epoch, double pl_now_s,
                                     double seed_horizon_s = 0.0);
+
+/// @brief The anchor's decision for this satellite this epoch, read from the current state
+///        without advancing it (card PRM phase 1b): the decision half of
+///        @ref clockAnchorFoldVariance.
+///
+/// Evaluates the fold's expressions on a copy of the per-satellite state with
+/// `stale_pending` taken as cleared (@ref clockAnchorBeginEpoch clears it before the fold)
+/// and returns the decision with its increment (@ref ClockAnchorFold::inc_m2) and the
+/// variance on @p prev_var.  Writes nothing.  @ref clockAnchorFoldCommit applies it.
+/// @param ctx run context (read only); the other parameters as for the fold.
+ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::string& sat,
+                                      double prev_var, double dt_epoch, double pl_now_s,
+                                      double seed_horizon_s = 0.0);
+
+/// @brief The anchor's decision @p f re-formed on the carried variance @p prev_var: the
+///        variance is @p prev_var plus the decision's increment, floored at
+///        `clock_anchor_var_floor_m2` when anchored (card PRM phase 1b).
+///
+/// The one implementation of the anchor's floor: the decision applies it on the variance it
+/// was made on, and the fold on the variance it folds (a clock-pivot handover re-expresses
+/// the variance in between).
+/// @param ctx      run context (read only: the floor)
+/// @param f        the decision (its increment and flags are kept)
+/// @param prev_var the carried variance (m^2)
+/// @return @p f with @c var_eff and @c floor_hit on @p prev_var.
+ClockAnchorFold clockAnchorFoldAt(const NetworkRunContext& ctx, const ClockAnchorFold& f,
+                                  double prev_var);
+
+/// @brief Apply the anchor's fold decision @p f to the per-satellite state and counters,
+///        the bookkeeping half of @ref clockAnchorFoldVariance (card PRM phase 1b).
+///
+/// Marks a decoupling (`stale_pending`, which the guard turns into the edge), counts the fold
+/// (anchored or loose, the floor hits, per constellation) and stamps the satellite's last
+/// fold (time, value, variance, folded, folded anchored).  Called by the fold only, so an
+/// epoch that ends before the fold advances nothing.  A no-op with the anchor disarmed.
+/// @param ctx      run context (state and counters mutated)
+/// @param sat      satellite id
+/// @param f        the fold on the variance the fold folds (@ref clockAnchorFoldAt)
+/// @param pl_now_s continuous GPS seconds of this epoch
+/// @param value    the carried value being folded (recorded for the guard)
+void clockAnchorFoldCommit(NetworkRunContext& ctx, const std::string& sat,
+                           const ClockAnchorFold& f, double pl_now_s, double value);
 
 /// @brief Mark every satellite as not yet folded for a new epoch, and clear the
 ///        previous epoch's trip set (card Q3).

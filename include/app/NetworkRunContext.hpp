@@ -3792,6 +3792,24 @@ namespace GnssProcessor {
                   cxu_fold_handover_epochs = 0, cxu_fold_diag_fallback = 0;
         double    cxu_fold_max_dq = 0.0;       ///< largest |Q_fold - Q_mirror| over checked keys (m^2)
         long long cxu_pivot_missing = 0;       ///< built epochs with a clock constellation and no recorded pivot
+        // Card PRM phase 1b: the decided-once fold disposition (networkCarryDecide before
+        // PASS B, read by the rows and the fold).  prm_disp counts key-epochs by
+        // (SharedParamKind, the disposition the fold applied); prm_departed the foldable
+        // ones whose column had left the layout (the estimator marginalizes them).  A key
+        // re-expressed between the decision and the fold (the handover S-transform, the
+        // ephemeris cut-over re-level) is counted with its largest variance change: the rows
+        // were built on the decided variance.  prm_undecided_at_fold: entries the fold met
+        // with no decision this epoch (0 unless a path skips the pass).
+        long long prm_decide_epochs = 0;
+        long long prm_disp[4][kCarryDispositions]{};
+        long long prm_departed[4]{};
+        long long prm_reexpressed = 0, prm_reexpressed_epochs = 0, prm_undecided_at_fold = 0;
+        double    prm_reexpressed_max_dvar = 0.0;
+        // The check of the decision against card CTU's mirror and the fold, kept for one
+        // build (card PRM section 4.4): bitwise equality of the rows' inflations and the
+        // fold's variances, and the fold's disposition against the decided one.
+        long long prm_chk_rows = 0, prm_chk_rows_mismatch = 0, prm_chk_fold = 0,
+                  prm_chk_fold_var_mismatch = 0, prm_chk_fold_disp_mismatch = 0;
         // Card CTU level monitor and raise.  Ratios are counted for a satellite from its
         // second epoch of code information on (its first solve is the code-only batch).
         long long clm_epochs = 0, clm_skip_datum = 0, clm_rows = 0, clm_below1 = 0,

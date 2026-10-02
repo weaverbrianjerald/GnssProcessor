@@ -124,6 +124,7 @@
 #include "filter/NetworkTeardown.hpp"
 #include "filter/NetworkPhaseVisibleDiag.hpp"  // phase-visible consistency instrument (card PVN)
 #include "filter/NetworkPbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
+#include "filter/NetworkCarryDisposition.hpp"  // the decided-once fold disposition (card PRM phase 1b)
 #include "filter/NetworkProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkCanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
@@ -2438,7 +2439,10 @@ int Application::runNetwork() {
         // before PASS B, whose parallel produce reads the result.  It mirrors this
         // epoch's D2 fold, which runs later in networkSolveGlue and checks the mirror.
         // Inside the SB_PREASM bracket for the reason networkSdEwlAr gives.  No-op off.
+        // Card PRM phase 1b: the border's fold disposition is decided once here, after the
+        // seam's level noise is set and before the rows that read it (the fold reads it too).
         networkClockLevelRestoreRaise(ctx, log);   // card CTU G5: once, the first leg epoch after a warm resume
+        networkCarryDecide(ctx, est, se.time, dt);
         networkCouplingExactPrepare(ctx, est, se.time, dt, log);
         subEnd(SB_PREASM);   // close pre-assembly; the assembly wall below is timed separately (D0b)
 
