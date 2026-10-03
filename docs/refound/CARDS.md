@@ -503,3 +503,11 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   ARMED: every gate passed (the field census at its limit: ARHT00ATA and KOKB00USA worse); four
   ledger rows (A15), baseline pair `runs/_rf0hv14_{field,sim}6`; the pre-commit review found the
   switch-on resume ungated, now behind the default-off `network.ctu_switch_on_resume`.
+- [SCL](SCL_self_contained_clock_level_2026-10-03.md): open, 2026-10-03: pre-registered (the
+  author's card: a producer whose satellite clock does not need a precise a priori clock product).
+  On a bed with SP3 orbits and the broadcast clock as the a priori, card SMH's smoothed hold with a
+  broadcast-grade anchor q restores the phase side (WTZZ00DEU 0.099 / 0.021 m; census 0.550 / 0.157
+  against COD's 0.417 / 0.110), but the clock level locks as q grows (sim 0.104 m against 0.023):
+  card CTU's per-row time update drops the cross-station covariance, which the producer's
+  per-satellite phase anchors make harmful (unit network 6-fold over-confident at 16 stations).
+  Build B1, a one-epoch clock clone in the border, then B2, the handover's dense S P S^T.
