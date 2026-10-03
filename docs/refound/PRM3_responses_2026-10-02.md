@@ -102,3 +102,37 @@ byte-identical on all 16 arms (`--all-csv`), 0 declaration errors on every arm; 
 
 Still uncounted (owed): the hard clock refloat (`clock_monitor_reinit_sigma_m` <= 0 skips the stash,
 an erase of the border entry), the extra-band hold's return, the oscillator's finite-screen re-seed.
+
+## 6. Phase 3b, pre-registered (2026-10-03)
+
+One implementation per policy, then the owed responses behind knobs, in this order:
+
+1. Byte-identical: each local kind's gap horizon declared in the registry (`ParamSpec::gap_horizon_s`,
+   from the knobs that set it today), and the gap policies through one implementation each: the eight
+   gap prunes through `carryGapPrune`, the inject gap skips through `carryPastHorizon`. Gate: the 16
+   harness arms byte-identical, every response count equal.
+2. Behaviour-changing, one default-off knob each, graded on the posture that exercises it (2 h, both
+   beds, against its own reference; the level and consumer bars of card CTU section 10): the ephemeris
+   re-level moving every coupling map and the two baselines it skips (card CLV section 6.4 item 6; the
+   receiver code-bias coupling terms are live on the goldens' route), and the phase-bias shifts (eq34,
+   the declared handover) moving the coupling maps, `pb_level_prev`, `pb_hold` and the gross screen's
+   held ambiguity.
+3. Then the erase family: whether one EraseAndRebirth (an arc's local carry with its line of sight's
+   ionosphere and phase colour) replaces the per-site subsets.
+
+## 7. Phase 3b step 1, the gap policies through one implementation (2026-10-03)
+
+`ParamSpec::gap_horizon_s` declares each local kind's gap horizon from the knob its sites read (the
+ambiguity, wet delay and receiver phase bias `phase_leveling_max_gap_s`; the phase colour, the receiver
+clock and the slant ionosphere their own, the ionosphere by the carry in force, the registry refusing
+both ionosphere carries at once; the receiver code bias the one constant `kRxCbMaxGapS`, which replaces
+six literals and two local copies of 900 s); the border kinds declare none (their gap response is
+READMIT's park). The eight gap prunes go through `carryGapPrune` (in order, the site's side effects in
+a callback before each erase) on the declared horizon, and the inject gap skips through
+`carryPastHorizon`, the sites' own strict comparison; the fold tests that also refuse a negative or
+NaN gap are kept as they were. The model table gains a `gap_s` column and `param_model` a
+`gap_horizon_s` field (trace class: the run log and manifest change, not the gate's files).
+
+Gate: exe `gnss_processor_prm3c.exe` `460e4a652e0e91b9`, tags `r3ah6`, `r3a`, `r3ax`, `r3axr`:
+byte-identical on all 16 arms, 0 declaration errors, the gap response counts equal to phase 3a's
+(ambiguity prunes 1251 field / 1302 sim on the 6 h goldens). Unit suite 2784 passed, 1 fixture skip.

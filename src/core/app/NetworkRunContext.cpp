@@ -4262,7 +4262,7 @@ void networkRxCbDemeanPrepass(NetworkRunContext& ctx,
     // emitter to publish under this epoch's timestamp.
     ctx.carry.rx_cb_demean_last.clear();
     if (rx_cb_carry.empty()) return;                   // cold start: nothing to average
-    constexpr double kRxCbMaxGapS = 900.0;             // the inject's own horizon
+    // The horizon is the inject's own, kRxCbMaxGapS (filter/NetworkRunTypes.hpp).
 
     std::map<std::string, double> sum_lam, sum_lam_innov;
     std::map<std::string, int> n_sta;
@@ -4409,7 +4409,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // Off ⇒ `cols` is untouched and PlHarvestBlock::C keeps its dimension
     // (byte-identical).
     const bool   iono_blk_on = ctx.knobs.iono_blk && pl_local_block && carry_cpl_cond;
-    const double iono_blk_gap_s = ctx.knobs.iono_blk_max_gap_s;
     // Receiver clock in the local block (network.carry_rx_clock_in_block): the
     // receiver-clock (and ISB) columns join the same harvest block, on the same live
     // predicate, for the same reason.  Off ⇒ `cols` is untouched and PlHarvestBlock::C
@@ -5615,28 +5614,29 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
 
         // Card LGM: prune phase-colour entries past the maximum gap.  Such an entry would
         // not be folded anyway (the inject re-births the line of sight); the prune keeps
-        // the map to the live lines of sight and counts the edge.
+        // the map to the live lines of sight and counts the edge.  The horizon is the
+        // registry's (network.phase_colour_max_gap_s, the same double; card PRM phase 3b).
         if (ctx.knobs.pc_on)
-            for (auto it = ctx.carry.pc_carry.begin(); it != ctx.carry.pc_carry.end();) {
-                if (pl_now_s - it->second.last_seen_s > ctx.knobs.pc_max_gap_s) {
-                    it = ctx.carry.pc_carry.erase(it);
-                    ++ctx.counters.n_pc_gap_prune;
-                    prmRespond(ctx.counters.prm_resp, ResponseSite::PcGapPrune);   // card PRM phase 3a
-                } else {
-                    ++it;
-                }
-            }
+            carryGapPrune(ctx.carry.pc_carry, pl_now_s,
+                          ctx.params.spec(NetworkParamKind::PhaseColour).gap_horizon_s,
+                          [&](const auto&) {
+                              ++ctx.counters.n_pc_gap_prune;
+                              prmRespond(ctx.counters.prm_resp, ResponseSite::PcGapPrune);   // card PRM phase 3a
+                          });
 
         // Carry-retirement census.  This prune is the mechanism behind the fleet-scale
         // carry loss that §1.3 calls the "cliff".  It reads only last_seen_s (it selects
         // on elapsed time and nothing else), so any claim that it improves quality has
         // to be measured against the quality-selected retirement paths, not assumed.
         // The fleet size is captured before the loop, so "fleet-scale" is a ratio.
+        // The horizon is the registry's (network.phase_leveling_max_gap_s, the same double
+        // as pl_max_gap_s; card PRM phase 3b).
         {
             const long long fleet_before = static_cast<long long>(local_carry.size());
-            long long n_pruned = 0;
-            for (auto it = local_carry.begin(); it != local_carry.end();) {
-                if (pl_now_s - it->second.last_seen_s > pl_max_gap_s) {
+            const long long n_pruned = carryGapPrune(
+                local_carry, pl_now_s,
+                ctx.params.spec(NetworkParamKind::Ambiguity).gap_horizon_s,
+                [&](const auto& it) {
                     // Capture before the erase (RF-1 §7.4, D3).  This is the one
                     // retirement path that design §3.4 keeps as an erase ("this is a
                     // different arc"), so its inventory is the control against which
@@ -5668,12 +5668,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         && it->second.dropped_ep
                                == static_cast<long long>(ctx.counters.n_loop_epochs))
                         ++ctx.counters.prm_pruned_after_drop;
-                    it = local_carry.erase(it);
-                    ++n_pruned;
-                } else {
-                    ++it;
-                }
-            }
+                });
             if (n_pruned > 0) {
                 ctx.counters.n_cr_gap_prune += n_pruned;
                 prmRespond(ctx.counters.prm_resp, ResponseSite::AmbGapPrune, n_pruned);   // card PRM phase 3a
@@ -5786,14 +5781,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             // Decoupling edge (invariants #1 and #7): a LOS unseen past the horizon is
             // dropped, not aged into a fold.  It is counted, because this is the
             // eclipse / set edge, and a run whose count is 0 over a full day did not
-            // exercise it.
-            for (auto it = iono_blk_carry.begin(); it != iono_blk_carry.end();) {
-                if (pl_now_s - it->second.last_seen_s > iono_blk_gap_s) {
-                    it = iono_blk_carry.erase(it);
-                    ++ctx.counters.n_iono_blk_gap_drop;
-                    prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);   // card PRM phase 3a
-                } else ++it;
-            }
+            // exercise it.  The horizon is the registry's: under the block carry it is
+            // network.carry_iono_in_block_max_gap_s, the same double
+            // (ctx.knobs.iono_blk_max_gap_s) this prune read before card PRM phase 3b.
+            carryGapPrune(iono_blk_carry, pl_now_s,
+                          ctx.params.spec(NetworkParamKind::SlantIono).gap_horizon_s,
+                          [&](const auto&) {
+                              ++ctx.counters.n_iono_blk_gap_drop;
+                              prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);   // card PRM phase 3a
+                          });
         }
         // --- In-block receiver-clock carry (network.carry_rx_clock_in_block): harvest
         //     each station's receiver-clock (and ISB) posteriors through the same
@@ -5980,15 +5976,16 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             // Decoupling edge (invariants #1 and #7): a station unseen past the horizon
             // is dropped, not aged into a fold, and its drift state goes with it, because
             // extrapolating a rate across an unobserved hour is the stale-prior failure
-            // the carry is designed to avoid.  Counted.
-            for (auto it = rx_clk_carry.begin(); it != rx_clk_carry.end();) {
-                if (pl_now_s - it->second.last_seen_s > rxclk_gap_s) {
-                    rx_clk_rate.erase(it->first);
-                    it = rx_clk_carry.erase(it);
-                    ++ctx.counters.n_rxclk_carry_gap_drop;
-                    prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapPrune);   // card PRM phase 3a
-                } else ++it;
-            }
+            // the carry is designed to avoid.  Counted.  The horizon is the registry's
+            // (network.carry_rx_clock_max_gap_s, the same double as rxclk_gap_s; card PRM
+            // phase 3b).
+            carryGapPrune(rx_clk_carry, pl_now_s,
+                          ctx.params.spec(NetworkParamKind::RxClock).gap_horizon_s,
+                          [&](const auto& it) {
+                              rx_clk_rate.erase(it->first);
+                              ++ctx.counters.n_rxclk_carry_gap_drop;
+                              prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapPrune);   // card PRM phase 3a
+                          });
             ctx.carry.rxclk_prev_now_s = pl_now_s;
         }
         // --- RXCB-IN-BLOCK (card CTU section 14): harvest the receiver code biases -
@@ -6037,7 +6034,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         const auto sit = rx_cb_carry.find(key);
                         if (sit != rx_cb_carry.end()) {
                             const double sgap = pl_now_s - sit->second.last_seen_s;
-                            if (sgap >= 0.0 && sgap <= 900.0) {
+                            if (sgap >= 0.0 && sgap <= kRxCbMaxGapS) {
                                 const double sv = var + sit->second.var
                                                   + ctx.knobs.rx_cb_q * sgap + 0.25;
                                 if (std::abs(value_abs - sit->second.value_abs)
@@ -6223,14 +6220,14 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     zent.blk_idx = static_cast<int>(zrow);
                 }
             }
-            for (auto it = zwd_carry.begin(); it != zwd_carry.end();) {
-                if (pl_now_s - it->second.last_seen_s > pl_max_gap_s) {
-                    it = zwd_carry.erase(it);
-                    ++ctx.counters.n_cr_zwd_gap_prune;   // same predicate, same census
-                    prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapPrune);   // card PRM phase 3a
-                }
-                else ++it;
-            }
+            // The horizon is the registry's (network.phase_leveling_max_gap_s, the same
+            // double as pl_max_gap_s; card PRM phase 3b).
+            carryGapPrune(zwd_carry, pl_now_s,
+                          ctx.params.spec(NetworkParamKind::Zwd).gap_horizon_s,
+                          [&](const auto&) {
+                              ++ctx.counters.n_cr_zwd_gap_prune;   // same predicate, same census
+                              prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapPrune);   // card PRM phase 3a
+                          });
             // Seam-window bookkeeping (network.zwd_seam_reseed): count this epoch's
             // actual folds (R.pl_zwd_injected is the injector's own record), advance the
             // retirement clock, and log the decoupling edge when the horizon is
@@ -6294,13 +6291,14 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         LocalCarry{value_abs, var, pl_now_s};
                 }
             }
-            for (auto it = rpb_carry.begin(); it != rpb_carry.end();) {
-                if (pl_now_s - it->second.last_seen_s > pl_max_gap_s) {
-                    it = rpb_carry.erase(it);
-                    ++ctx.counters.n_cr_rpb_gap_prune;   // same predicate, same census
-                    prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);   // card PRM phase 3a
-                } else ++it;
-            }
+            // The horizon is the registry's (network.phase_leveling_max_gap_s, the same
+            // double as pl_max_gap_s; card PRM phase 3b).
+            carryGapPrune(rpb_carry, pl_now_s,
+                          ctx.params.spec(NetworkParamKind::RxPhaseBias).gap_horizon_s,
+                          [&](const auto&) {
+                              ++ctx.counters.n_cr_rpb_gap_prune;   // same predicate, same census
+                              prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);   // card PRM phase 3a
+                          });
         }
         // --- Slant-iono carry (queue 8b): harvest the posterior per-LOS iono, stash
         //     and prune.  Mirrors the RPB harvest (several columns, diagonal conditional
@@ -6381,13 +6379,16 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         LocalCarry{value_abs, var, pl_now_s};
                 }
             }
-            for (auto it = iono_carry.begin(); it != iono_carry.end();) {
-                if (pl_now_s - it->second.last_seen_s > iono_max_gap_s) {
-                    it = iono_carry.erase(it);
-                    ++ctx.counters.n_iono_carry_evicted;
-                    prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);   // card PRM phase 3a
-                } else ++it;
-            }
+            // The horizon is the registry's: under the diagonal carry it is
+            // network.iono_carry_max_gap_s, the same double as iono_max_gap_s (the loader
+            // refuses network.carry_iono with network.carry_iono_in_block; card PRM
+            // phase 3b).
+            carryGapPrune(iono_carry, pl_now_s,
+                          ctx.params.spec(NetworkParamKind::SlantIono).gap_horizon_s,
+                          [&](const auto&) {
+                              ++ctx.counters.n_iono_carry_evicted;
+                              prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);   // card PRM phase 3a
+                          });
         }
     }
 
@@ -6421,7 +6422,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // cycle is race-free by construction.
     if (ctx.knobs.rx_cb_on) {
         auto& rx_cb_carry = ctx.carry.rx_cb_carry;
-        constexpr double kRxCbMaxGapS = 900.0;   // spec §3: housekeeping horizon
+        // The horizon is kRxCbMaxGapS (filter/NetworkRunTypes.hpp; spec §3: housekeeping
+        // horizon), the one definition the inject, this harvest and the registry read.
         // This epoch's invariant steps (card LV-4), collected during the station walk
         // and judged after it: the screen needs the whole population to build a robust,
         // peer-relative scale (rxCbStepScale).  Empty unless armed.
@@ -6600,12 +6602,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                            static_cast<long long>(prm_n_cb));
             }
         }
-        for (auto it = rx_cb_carry.begin(); it != rx_cb_carry.end();) {
-            if (pl_now_s - it->second.last_seen_s > kRxCbMaxGapS) {
-                it = rx_cb_carry.erase(it);
-                prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapPrune);   // card PRM phase 3a
-            } else ++it;
-        }
+        // The horizon is the registry's (kRxCbMaxGapS, the same constant; card PRM phase 3b).
+        carryGapPrune(rx_cb_carry, pl_now_s,
+                      ctx.params.spec(NetworkParamKind::RxCodeBias).gap_horizon_s,
+                      [&](const auto&) {
+                          prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapPrune);   // card PRM phase 3a
+                      });
         // --- S-consistent harvest (card S2H; serial, all stations) --------------
         // docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1.  Runs after the
         // LV-4 erase pass and the gap prune, so the member set is exactly the set that

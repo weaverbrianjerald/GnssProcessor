@@ -8,7 +8,9 @@
  * The phase changes no number; the byte-identity A/B (scripts/prm_ab.py) is the end-to-end
  * gate, and the run end's declaration check (a site that responded on a run where it is not
  * declared armed) is the run-time one.  These cases pin the table's structure, the goldens'
- * declared posture, and the two tallies the table reads.
+ * declared posture, and the two tallies the table reads.  Phase 3b step 1 adds the gap
+ * policies' one implementation (carryPastHorizon, carryGapPrune) and the registry's declared
+ * gap horizon.
  */
 #include <gtest/gtest.h>
 
@@ -20,10 +22,15 @@
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 
+#include <cmath>
 #include <filesystem>
+#include <limits>
+#include <map>
 #include <memory>
 #include <set>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace GnssProcessor;
 
@@ -292,4 +299,92 @@ TEST(ParamResponses, SiteCountReadsItsDeclaredSource) {
     EXPECT_EQ(responseSiteCount(C, ResponseSite::ClkSeed), 4);
     EXPECT_EQ(responseSiteCount(C, ResponseSite::CbSeed), 0);
     EXPECT_EQ(responseSiteCount(C, ResponseSite::PbDeparted), 12);
+}
+
+// Card PRM phase 3b: the GapPrune policy's one implementation erases exactly the entries past
+// the horizon (a gap equal to the horizon is inside it), calls on_erase once for each while the
+// entry is still in the map, in the map's order, and returns the count.  A NaN horizon prunes
+// nothing (the comparison is false).
+TEST(ParamResponses, CarryGapPruneErasesExactlyTheEntriesPastTheHorizon) {
+    const double now = 10000.0;
+    const double horizon = 900.0;
+    const auto seenAt = [](double t) {
+        LocalCarry lc{};
+        lc.last_seen_s = t;
+        return lc;
+    };
+    std::map<int, LocalCarry> m;
+    m[1] = seenAt(now - 30.0);      // inside
+    m[2] = seenAt(now - 900.0);     // on the horizon: inside (strict >)
+    m[3] = seenAt(now - 900.5);     // past
+    m[4] = seenAt(now);             // seen this epoch
+    m[5] = seenAt(now - 5000.0);    // past
+    m[6] = seenAt(now + 30.0);      // a negative gap: never past
+    std::vector<int> erased;
+    std::size_t expect_size = m.size();   // a call after its erase would see one fewer
+    const long long n = carryGapPrune(m, now, horizon, [&](const auto& it) {
+        EXPECT_EQ(m.size(), expect_size) << "on_erase runs before the erase";
+        --expect_size;
+        EXPECT_TRUE(carryPastHorizon(now, it->second.last_seen_s, horizon));
+        erased.push_back(it->first);
+    });
+    EXPECT_EQ(n, 2);
+    EXPECT_EQ(erased, (std::vector<int>{3, 5}));
+    EXPECT_EQ(m.size(), 4u);
+    for (const int key : {1, 2, 4, 6}) EXPECT_EQ(m.count(key), 1u) << key;
+    for (const int key : {3, 5}) EXPECT_EQ(m.count(key), 0u) << key;
+
+    // The predicate is the sites' comparison: strict, gap = now - last_seen.
+    EXPECT_FALSE(carryPastHorizon(now, now - 900.0, horizon));
+    EXPECT_TRUE(carryPastHorizon(now, now - 900.5, horizon));
+    EXPECT_FALSE(carryPastHorizon(now, now + 30.0, horizon));
+
+    // A NaN horizon (a kind with no gap horizon) erases nothing and calls nothing.
+    int calls = 0;
+    const long long n_nan = carryGapPrune(m, now, std::numeric_limits<double>::quiet_NaN(),
+                                          [&](const auto&) { ++calls; });
+    EXPECT_EQ(n_nan, 0);
+    EXPECT_EQ(calls, 0);
+    EXPECT_EQ(m.size(), 4u);
+}
+
+// Card PRM phase 3b: the goldens' registry declares the ambiguity's gap horizon at 900 s, the
+// knob snapshot's own double (the prune reads the registry in place of the knob, so the two
+// must be the same double), the receiver code bias at the fixed kRxCbMaxGapS, and no gap
+// horizon for a border kind.
+TEST(ParamResponses, GoldensDeclareTheAmbiguityGapHorizon) {
+    for (const char* bed : {"field", "sim"}) {
+        GnssConfig cfg;
+        ASSERT_TRUE(loadGolden(bed, cfg)) << bed;
+        const NetworkKnobs k = NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig());
+        const NetworkParamRegistry r = NetworkParamRegistry::build(k, cfg);
+        using K = NetworkParamKind;
+        EXPECT_EQ(r.spec(K::Ambiguity).gap_horizon_s, 900.0) << bed;
+        EXPECT_EQ(r.spec(K::Ambiguity).gap_horizon_s, k.pl_max_gap_s) << bed;
+        EXPECT_EQ(r.spec(K::Zwd).gap_horizon_s, k.pl_max_gap_s) << bed;
+        EXPECT_EQ(r.spec(K::RxPhaseBias).gap_horizon_s, k.pl_max_gap_s) << bed;
+        EXPECT_EQ(r.spec(K::RxClock).gap_horizon_s, k.rxclk_max_gap_s) << bed;
+        EXPECT_EQ(r.spec(K::PhaseColour).gap_horizon_s, k.pc_max_gap_s) << bed;
+        EXPECT_EQ(r.spec(K::RxCodeBias).gap_horizon_s, kRxCbMaxGapS) << bed;
+        for (const K kind : {K::SatClock, K::SatPhaseBias, K::SatCodeBias, K::VtecSh})
+            EXPECT_TRUE(std::isnan(r.spec(kind).gap_horizon_s)) << bed << " " << paramKindName(kind);
+        // Neither slant-ionosphere carry is armed on the goldens: no carry in force, no horizon.
+        EXPECT_TRUE(std::isnan(r.spec(K::SlantIono).gap_horizon_s)) << bed;
+        // Each slant-ionosphere route declares its own horizon (the two prunes read it), and
+        // the two knobs differ on the goldens, so the routes are told apart.
+        ASSERT_NE(k.iono_max_gap_s, k.iono_blk_max_gap_s) << bed;
+        NetworkKnobs kd = k;
+        kd.iono_on = true;
+        kd.iono_blk = false;
+        EXPECT_EQ(NetworkParamRegistry::build(kd, cfg).spec(K::SlantIono).gap_horizon_s,
+                  k.iono_max_gap_s) << bed;
+        NetworkKnobs kb = k;
+        kb.iono_on = false;
+        kb.iono_blk = true;
+        EXPECT_EQ(NetworkParamRegistry::build(kb, cfg).spec(K::SlantIono).gap_horizon_s,
+                  k.iono_blk_max_gap_s) << bed;
+        NetworkKnobs kx = k;
+        kx.iono_on = kx.iono_blk = true;
+        EXPECT_THROW(NetworkParamRegistry::build(kx, cfg), std::logic_error) << bed;
+    }
 }

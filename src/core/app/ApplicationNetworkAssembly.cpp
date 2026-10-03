@@ -3605,7 +3605,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                             rc->second.value_abs - x0);
                                         pin_w.push_back(1.0 / v);
                                     }
-                                } else if (gap > pl_max_gap_s) {
+                                } else if (carryPastHorizon(pl_now_s, rc->second.last_seen_s,
+                                                            pl_max_gap_s)) {
                                     // Card PRM phase 3a: a carried receiver phase
                                     // bias past the horizon, not time-linked this
                                     // epoch (per station: the parallel produce).
@@ -4021,7 +4022,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         std::make_tuple(i, parts->satellite, parts->signal));
                     if (cit == local_carry.end()) continue;       // no carry yet (new arc)
                     const double gap = pl_now_s - cit->second.last_seen_s;
-                    if (gap > pl_max_gap_s) {
+                    if (carryPastHorizon(pl_now_s, cit->second.last_seen_s, pl_max_gap_s)) {
                         // The gap cliff (SPEC_withhold_era_release §8).  The entry is
                         // not erased here, only not injected, so this arc solves free
                         // this epoch and the harvest re-stashes it from one epoch of
@@ -4135,7 +4136,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         const auto iit = iono_blk_carry.find({static_cast<int>(i), isat});
                         if (iit == iono_blk_carry.end()) continue;  // first sighting / post-erase: cold by design
                         const double igap = pl_now_s - iit->second.last_seen_s;
-                        if (igap > iono_blk_gap_s) {
+                        if (carryPastHorizon(pl_now_s, iit->second.last_seen_s, iono_blk_gap_s)) {
                             // Invariant #1's absent-satellite edge: a stale LOS is refused,
                             // never aged into a fold.  The harvest prune erases it.
                             ++R.pl_blk_iono_gap_drop;
@@ -4230,7 +4231,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         const auto rit = rx_clk_carry.find(rkey);
                         if (rit == rx_clk_carry.end()) continue;  // first sighting / post-jump: cold by design
                         const double rgap = pl_now_s - rit->second.last_seen_s;
-                        if (rgap > rxclk_gap_s) {
+                        if (carryPastHorizon(pl_now_s, rit->second.last_seen_s, rxclk_gap_s)) {
                             // Invariant #1's absent-station edge: a stale carry is refused,
                             // never aged into a fold.  The harvest prune erases it.
                             ++R.pl_blk_rxclk_gap_drop;
@@ -4305,14 +4306,14 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (!cbit->second.blk) { ++R.pl_rxcb_restored_skip; continue; }
                         double cb_var_eff = 0.0;
                         const RxCbInjectAction act = rxCbInjectGate(
-                            pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/900.0,
+                            pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/kRxCbMaxGapS,
                             cbit->second.var, rx_cb_q, cbit->second.value_abs - x_lin(cb_idx),
                             /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
                             /*innov_test=*/false);
                         if (act != RxCbInjectAction::Fold) {
                             // Card PRM phase 3a: the horizon's skip only, not the gate's
                             // variance guard (which returns the same action).
-                            if (pl_now_s - cbit->second.last_seen_s > 900.0)
+                            if (carryPastHorizon(pl_now_s, cbit->second.last_seen_s, kRxCbMaxGapS))
                                 ++R.prm_rxcb_gap_skip;
                             continue;
                         }
@@ -4802,7 +4803,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                             if (zwd_blk_on && R.pl_zwd_injected)
                                                 ++R.pl_blk_zwd_fallback_diag;
                                         }
-                                    } else if (zgap > pl_max_gap_s) {
+                                    } else if (carryPastHorizon(pl_now_s, zit->second.last_seen_s,
+                                                                pl_max_gap_s)) {
                                         // Card PRM phase 3a: a carried wet delay past the
                                         // horizon, not folded.  Counted here once for both
                                         // routes: an in-block gap refusal above leaves
@@ -4853,7 +4855,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         const auto iit = iono_carry.find({static_cast<int>(i), isat});
                         if (iit == iono_carry.end()) continue;  // first sighting: no carry yet
                         const double igap = pl_now_s - iit->second.last_seen_s;
-                        if (igap > iono_max_gap_s) {            // stale: harvest housekeeping drops it
+                        if (carryPastHorizon(pl_now_s, iit->second.last_seen_s, iono_max_gap_s)) {   // stale: harvest housekeeping drops it
                             ++R.prm_iono_gap_skip;              // card PRM phase 3a
                             continue;
                         }
@@ -4996,13 +4998,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         // evaluated, only to count what it would have withheld, so the
                         // A/B happens inside one run instead of across two.
                         const RxCbInjectAction act = rxCbInjectGate(
-                            pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/900.0,
+                            pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/kRxCbMaxGapS,
                             cbit->second.var, rx_cb_q, cb_innov,
                             /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
                             /*innov_test=*/!rx_cb_step_gate);
                         if (rx_cb_step_gate && act == RxCbInjectAction::Fold) {
                             double shadow_var = 0.0;
-                            if (rxCbInjectGate(pl_now_s - cbit->second.last_seen_s, 900.0,
+                            if (rxCbInjectGate(pl_now_s - cbit->second.last_seen_s, kRxCbMaxGapS,
                                                cbit->second.var, rx_cb_q, cb_innov,
                                                10.0, 0.25, shadow_var, true)
                                 == RxCbInjectAction::SkipInnov)
@@ -5016,7 +5018,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (act != RxCbInjectAction::Fold) {
                             // Card PRM phase 3a: the horizon's skip only, not the gate's
                             // variance guard (which returns the same action).
-                            if (pl_now_s - cbit->second.last_seen_s > 900.0)
+                            if (carryPastHorizon(pl_now_s, cbit->second.last_seen_s, kRxCbMaxGapS))
                                 ++R.prm_rxcb_gap_skip;
                             continue;
                         }

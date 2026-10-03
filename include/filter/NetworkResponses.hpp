@@ -23,6 +23,9 @@
  * (@ref carryMechanismArmed declares when each can act).
  *
  * Phase 3a changes no number: the counters are increments beside the existing actions.
+ * Phase 3b gives a policy one implementation where the sites already agree, byte for byte:
+ * the gap test (@ref carryPastHorizon) and the gap prune (@ref carryGapPrune), against the
+ * horizon the registry declares per kind (@c ParamSpec::gap_horizon_s).
  * Not responses, and not in the table: the q rule's time update (the registry's q), the
  * numerical guards that decorrelate or skip a carried prior that fails a positive-definite
  * or finite screen, the coupling terms' re-attribution to a border key's disposition (card
@@ -198,6 +201,64 @@ bool carrySiteLocalKind(CarrySite s, NetworkParamKind& kind);
 /// Add @p n responses at site @p s to a run-scope counter array.
 inline void prmRespond(long long (&counts)[kResponseSites], ResponseSite s, long long n = 1) {
     counts[static_cast<int>(s)] += n;
+}
+
+/**
+ * @brief Whether a carried instance last seen at @p last_seen_s is past its gap horizon at
+ *        @p now_s: the one gap test of the GapSkip and GapPrune policies (card PRM phase 3b).
+ *
+ * Exactly the comparison the gap sites made before phase 3b, operand for operand: the gap
+ * @c now_s - @c last_seen_s, then a strict @c > against the horizon.  A gap equal to the
+ * horizon is inside it.  There is no guard on a negative or non-finite gap: a negative gap
+ * is never past a non-negative horizon, and a NaN gap or a NaN horizon compares false, so
+ * the test never fires on one.  A site whose fold test also refuses a negative gap (the
+ * receiver phase bias's time link) keeps that guard on its fold branch.
+ *
+ * @param now_s       The current epoch time (s; the harvest's or the inject's @c pl_now_s).
+ * @param last_seen_s The instance's stash time (s; @c LocalCarry::last_seen_s).
+ * @param horizon_s   The kind's gap horizon (s; @c ParamSpec::gap_horizon_s, or the knob
+ *                    the site reads).
+ * @return @c true when the gap exceeds the horizon.
+ */
+inline bool carryPastHorizon(double now_s, double last_seen_s, double horizon_s) {
+    return now_s - last_seen_s > horizon_s;
+}
+
+/**
+ * @brief The GapPrune policy, one implementation (card PRM phase 3b): erase every carried
+ *        instance of @p m that is past the horizon.
+ *
+ * Walks @p m from @c begin() to @c end() in the map's order.  For an entry that is
+ * @ref carryPastHorizon at @p now_s it calls @p on_erase with the entry's iterator, then
+ * erases the entry; any other entry is kept.  @p on_erase carries what the site does
+ * beside the erase (its counters, its traces, the erase of a companion map's entry), and
+ * runs while the entry is still in the map, so it may read the key and the value.  It must
+ * not insert into or erase from @p m.
+ *
+ * @tparam Map     An associative container whose @c erase(iterator) returns the next
+ *                 iterator and whose mapped type has a @c last_seen_s member (s), e.g.
+ *                 @c std::map<Key, LocalCarry>.
+ * @tparam OnErase Callable as @c on_erase(const typename Map::iterator&).
+ * @param m         The carry map.
+ * @param now_s     The current epoch time (s).
+ * @param horizon_s The kind's gap horizon (s).
+ * @param on_erase  Called once per pruned entry, before its erase.
+ * @return The number of entries erased.
+ */
+template <class Map, class OnErase>
+long long carryGapPrune(Map& m, double now_s, double horizon_s, OnErase on_erase) {
+    long long n = 0;
+    for (auto it = m.begin(); it != m.end();) {
+        if (carryPastHorizon(now_s, it->second.last_seen_s, horizon_s)) {
+            const auto& entry = it;   // the callback reads the entry; the walk owns the cursor
+            on_erase(entry);
+            it = m.erase(it);
+            ++n;
+        } else {
+            ++it;
+        }
+    }
+    return n;
 }
 
 /**

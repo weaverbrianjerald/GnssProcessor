@@ -7,11 +7,13 @@
 #include "app/NetworkRunContext.hpp"     // NetworkKnobs
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkResponses.hpp"   // the declared response sites (card PRM phase 3a)
+#include "filter/NetworkRunTypes.hpp"    // kRxCbMaxGapS
 
 #include <fmt/format.h>
 
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 
 namespace GnssProcessor {
 
@@ -110,6 +112,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         if (k.cta_on) s.q_anchored = k.cta_q;
         s.var_floor_m2 = k.cta_on ? k.cta_var_floor : 0.0;
         s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = kNaN;   // a border kind: a departed column is READMIT's park, not a prune
         s.route = borderRoute(k);
         s.source = "filter.process_noise.sat_clock_q";
         if (k.cta_on)
@@ -126,6 +129,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.q_rule = ParamQRule::RandomWalk;
         s.var_floor_m2 = k.pb_var_floor;
         s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = kNaN;
         s.route = borderRoute(k);
         s.source = "filter.process_noise.sat_phase_bias_q; floor network.shared_carry_var_floor_pb_m2";
         set(NetworkParamKind::SatPhaseBias, std::move(s));
@@ -137,6 +141,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.q_rule = s.carried ? ParamQRule::RandomWalk : ParamQRule::None;
         s.var_floor_m2 = k.cb_var_floor;
         s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = kNaN;
         s.route = s.carried ? borderRoute(k) : ParamRoute::NotCarried;
         s.source = "filter.process_noise.sat_code_bias_q; floor network.shared_carry_var_floor_cb_m2; "
                    "network.estimate_sat_code_bias";
@@ -150,6 +155,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.q_rule = s.carried ? ParamQRule::RandomWalkPerDegree : ParamQRule::None;
         s.var_floor_m2 = 0.0;
         s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = kNaN;
         s.route = s.carried ? ParamRoute::DiagonalBorder : ParamRoute::NotCarried;
         s.source = "estimation.global_vtec_sh.q_per_degree; network.estimate_iono_sh";
         set(NetworkParamKind::VtecSh, std::move(s));
@@ -164,6 +170,9 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.q_rule = s.carried ? ParamQRule::RandomWalk : ParamQRule::None;
         s.var_floor_m2 = k.pl_var_floor;
         s.birth_var_m2 = k.amb_birth_var_floor;
+        // Card PRM phase 3b: the gap prune's horizon (and the leveling vehicle's inject
+        // skip's), the knob snapshot's double whether or not the kind is carried.
+        s.gap_horizon_s = k.pl_max_gap_s;
         if (!s.carried)
             s.route = ParamRoute::NotCarried;
         else if (k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint)
@@ -171,7 +180,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         else
             s.route = localRowRoute(k);
         s.source = "network.phase_leveling_q_amb; floor network.phase_leveling_var_floor_m2; "
-                   "birth network.amb_float_birth_var_m2";
+                   "birth network.amb_float_birth_var_m2; gap network.phase_leveling_max_gap_s";
         if (k.carry_invariant)
             s.source += "; network.carry_invariant: the invariant DD carry, not this route";
         set(NetworkParamKind::Ambiguity, std::move(s));
@@ -184,12 +193,19 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.q_rule = s.carried ? ParamQRule::RandomWalk : ParamQRule::None;
         s.var_floor_m2 = 0.0;
         s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = k.pl_max_gap_s;   // the ZWD carry rides the leveling carry's horizon
         s.route = !s.carried ? ParamRoute::NotCarried
                 : k.zwd_in_block ? ParamRoute::LocalBlock : localRowRoute(k);
-        s.source = "network.zwd_carry_q; network.carry_zwd, network.carry_zwd_in_block";
+        s.source = "network.zwd_carry_q; network.carry_zwd, network.carry_zwd_in_block; "
+                   "gap network.phase_leveling_max_gap_s";
         set(NetworkParamKind::Zwd, std::move(s));
     }
     {
+        // The two slant-ionosphere carries are exclusive (the loader refuses both); the
+        // horizon declared here is the one carry in force, and both prunes read it.
+        if (k.iono_blk && k.iono_on)
+            throw std::logic_error("NetworkParamRegistry: carry_iono and carry_iono_in_block "
+                                   "are both armed; the loader refuses this configuration");
         ParamSpec s;
         s.estimated = true;
         s.carried = k.iono_blk || k.iono_on;
@@ -198,18 +214,23 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
             s.q_units = "m^2/epoch";
             s.q_rule = ParamQRule::RandomWalkPerEpoch;
             s.var_floor_m2 = 0.0;
+            s.gap_horizon_s = k.iono_blk_max_gap_s;
             s.route = ParamRoute::LocalBlock;
-            s.source = "network.carry_iono_in_block_q_m2 (L1 slant delay)";
+            s.source = "network.carry_iono_in_block_q_m2 (L1 slant delay); "
+                       "gap network.carry_iono_in_block_max_gap_s";
         } else if (k.iono_on) {
             s.q = k.iono_q;
             s.q_rule = ParamQRule::RandomWalk;
             s.var_floor_m2 = k.iono_var_floor;
+            s.gap_horizon_s = k.iono_max_gap_s;
             s.route = ParamRoute::DiagonalStationPrior;
-            s.source = "network.iono_carry_q; floor network.iono_carry_var_floor";
+            s.source = "network.iono_carry_q; floor network.iono_carry_var_floor; "
+                       "gap network.iono_carry_max_gap_s";
         } else {
             s.q = 0.0;
             s.q_rule = ParamQRule::None;
             s.var_floor_m2 = 0.0;
+            s.gap_horizon_s = kNaN;
             s.route = ParamRoute::NotCarried;
             s.source = "network.carry_iono, network.carry_iono_in_block (both off)";
         }
@@ -225,8 +246,10 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.q_rule = s.carried ? ParamQRule::RandomWalkPerEpoch : ParamQRule::None;
         s.var_floor_m2 = 0.0;
         s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = k.rxclk_max_gap_s;
         s.route = s.carried ? ParamRoute::LocalBlock : ParamRoute::NotCarried;
-        s.source = "network.carry_rx_clock_q_m2; network.carry_rx_clock_in_block";
+        s.source = "network.carry_rx_clock_q_m2; network.carry_rx_clock_in_block; "
+                   "gap network.carry_rx_clock_max_gap_s";
         set(NetworkParamKind::RxClock, std::move(s));
     }
     {
@@ -237,8 +260,10 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.q_rule = s.carried ? ParamQRule::RandomWalk : ParamQRule::None;
         s.var_floor_m2 = 0.0;
         s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = k.pl_max_gap_s;   // the RPB carry rides the leveling carry's horizon
         s.route = s.carried ? ParamRoute::PriorRow : ParamRoute::NotCarried;
-        s.source = "network.phase_datum_eq34_rpb_q_m2s; network.phase_datum_eq34";
+        s.source = "network.phase_datum_eq34_rpb_q_m2s; network.phase_datum_eq34; "
+                   "gap network.phase_leveling_max_gap_s";
         set(NetworkParamKind::RxPhaseBias, std::move(s));
     }
     {
@@ -249,10 +274,11 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.q_rule = s.carried ? ParamQRule::RandomWalk : ParamQRule::None;
         s.var_floor_m2 = 0.0;
         s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = kRxCbMaxGapS;   // a constant (SPEC_rx_cb_carry section 3), not a knob
         s.route = !s.carried ? ParamRoute::NotCarried
                 : k.rxcb_blk ? ParamRoute::LocalBlock : ParamRoute::DiagonalStationPrior;
         s.source = "network.rx_cb_carry_q; network.carry_rx_code_bias, "
-                   "network.carry_rx_code_bias_in_block";
+                   "network.carry_rx_code_bias_in_block; gap kRxCbMaxGapS (fixed)";
         set(NetworkParamKind::RxCodeBias, std::move(s));
     }
     {
@@ -266,10 +292,11 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.tau_s = k.pc_on ? k.pc_tau_s : kNaN;
         s.var_floor_m2 = 0.0;
         s.birth_var_m2 = k.pc_on ? s.q : kNaN;
+        s.gap_horizon_s = k.pc_max_gap_s;
         s.route = k.pc_on ? ParamRoute::LocalBlock : ParamRoute::NotCarried;
         s.source = "network.phase_colour_sigma_zen_m, network.phase_colour_tau_s; sigma(e) = "
                    "sigma_zen / sin(max(e, network.phase_colour_elev_floor_deg)); "
-                   "network.phase_colour_state";
+                   "network.phase_colour_state; gap network.phase_colour_max_gap_s";
         set(NetworkParamKind::PhaseColour, std::move(s));
     }
 
@@ -340,15 +367,16 @@ double NetworkParamRegistry::q(SharedParamKind kind) const {
 
 std::vector<std::string> NetworkParamRegistry::modelTable() const {
     std::vector<std::string> out;
-    out.push_back(fmt::format("{:<15} {:>3} {:>3} {:>10} {:<9} {:<14} {:>10} {:>6} {:>9} {:>9} {:<22} {}",
+    out.push_back(fmt::format("{:<15} {:>3} {:>3} {:>10} {:<9} {:<14} {:>10} {:>6} {:>9} {:>9} {:>7} {:<22} {}",
                               "kind", "est", "car", "q", "units", "q_rule", "q_anchored",
-                              "tau_s", "floor_m2", "birth_m2", "route", "source"));
+                              "tau_s", "floor_m2", "birth_m2", "gap_s", "route", "source"));
     for (const auto& s : specs_) {
-        out.push_back(fmt::format("{:<15} {:>3} {:>3} {:>10} {:<9} {:<14} {:>10} {:>6} {:>9} {:>9} {:<22} {}",
+        out.push_back(fmt::format("{:<15} {:>3} {:>3} {:>10} {:<9} {:<14} {:>10} {:>6} {:>9} {:>9} {:>7} {:<22} {}",
                                   s.name, s.estimated ? "yes" : "no", s.carried ? "yes" : "no",
                                   num(s.q), s.q_units, paramQRuleName(s.q_rule),
                                   num(s.q_anchored), num(s.tau_s), num(s.var_floor_m2),
-                                  num(s.birth_var_m2), paramRouteName(s.route), s.source));
+                                  num(s.birth_var_m2), num(s.gap_horizon_s),
+                                  paramRouteName(s.route), s.source));
     }
     return out;
 }
@@ -368,13 +396,13 @@ std::string NetworkParamRegistry::modelJson() const {
         const auto& s = specs_[i];
         j += fmt::format("{}{{\"kind\":\"{}\",\"estimated\":{},\"carried\":{},\"q\":{},"
                          "\"q_units\":\"{}\",\"q_rule\":\"{}\",\"q_anchored\":{},\"tau_s\":{},"
-                         "\"var_floor_m2\":{},\"birth_var_m2\":{},\"route\":\"{}\","
-                         "\"source\":\"{}\",\"on\":{{",
+                         "\"var_floor_m2\":{},\"birth_var_m2\":{},\"gap_horizon_s\":{},"
+                         "\"route\":\"{}\",\"source\":\"{}\",\"on\":{{",
                          i ? "," : "", s.name, s.estimated ? "true" : "false",
                          s.carried ? "true" : "false", jnum(s.q), s.q_units,
                          paramQRuleName(s.q_rule), jnum(s.q_anchored), jnum(s.tau_s),
-                         jnum(s.var_floor_m2), jnum(s.birth_var_m2), paramRouteName(s.route),
-                         esc(s.source));
+                         jnum(s.var_floor_m2), jnum(s.birth_var_m2), jnum(s.gap_horizon_s),
+                         paramRouteName(s.route), esc(s.source));
         // Card PRM phase 3a: the armed response policies per event.
         for (std::size_t e = 0; e < kParamEvents; ++e) {
             std::string list;

@@ -2005,6 +2005,17 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
     return {d_post, p_pred * (U + floor2) / (U + a)};
 }
 
+/// @brief The gap horizon of the receiver code-bias carry (s; docs/SPEC_rx_cb_carry.md
+///        section 3): a carried receiver code bias unseen longer than this is not folded
+///        (@ref rxCbInjectGate's @c max_gap_s on both routes), does not vote in the de-mean
+///        pre-pass, is not judged by the block harvest's step test, and is pruned at the
+///        harvest.
+///
+/// A constant, not a knob.  The one definition read by every one of those sites and by
+/// the parameter registry (@c ParamSpec::gap_horizon_s of the receiver code bias, card PRM
+/// phase 3b); before phase 3b it was two function-local constants and six literals.
+inline constexpr double kRxCbMaxGapS = 900.0;
+
 /// Inject-time decision for one carried receiver code-bias prior (rx-CB carry,
 /// docs/SPEC_rx_cb_carry.md).  Read-only with respect to the carry map: the produce
 /// phase is parallel, so a breach is answered by withholding the fold, and the serial

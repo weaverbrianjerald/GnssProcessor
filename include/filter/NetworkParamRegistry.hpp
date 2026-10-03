@@ -167,6 +167,22 @@ struct ParamSpec {
     double       tau_s{std::numeric_limits<double>::quiet_NaN()};
     double       var_floor_m2{0.0}; ///< Variance floor of the carried instance (m²; 0 = none).
     double       birth_var_m2{std::numeric_limits<double>::quiet_NaN()};  ///< Variance floor at an instance's birth (m²; 0 = none, NaN = the kind has no birth rule).
+    /// The gap horizon of a carried instance of the kind (s): the time unseen past which
+    /// it is no longer folded and is pruned (card PRM phase 3b; the test is
+    /// @c carryPastHorizon, the prune @c carryGapPrune, both in
+    /// @c filter/NetworkResponses.hpp).  The double the kind's gap sites read, set from
+    /// the same knob whether or not the kind is carried on this run (as @ref q is), so a
+    /// site reads it in place of the knob: network.phase_leveling_max_gap_s for the
+    /// ambiguity, the wet delay and the receiver phase bias;
+    /// network.phase_colour_max_gap_s for the phase colour; for the slant ionosphere the
+    /// horizon of the carry in force (network.carry_iono_in_block_max_gap_s under the
+    /// block carry, network.iono_carry_max_gap_s under the diagonal carry; the loader
+    /// refuses both at once); network.carry_rx_clock_max_gap_s for the receiver clock;
+    /// the constant @c kRxCbMaxGapS for the receiver code bias.  NaN for a kind with no
+    /// gap horizon declared here: the slant ionosphere with neither carry armed, and the
+    /// border kinds, whose gap response is READMIT's park (its expiry, a GapPrune of the
+    /// parked entry, runs on network.readmit_seed_horizon_s against the park time).
+    double       gap_horizon_s{std::numeric_limits<double>::quiet_NaN()};
     ParamRoute   route{ParamRoute::NotCarried};
     std::string  source;            ///< The knob(s) behind q, the floor and the route.
     /// The response policies armed for this kind on this run, per @ref ParamEvent (a mask of
@@ -227,8 +243,9 @@ public:
      *        section 6).
      *
      * Columns: kind, estimated, carried, q with its units and rule, the anchored rate,
-     * the Gauss-Markov time constant, the variance floor, the birth floor, the route and
-     * the knob sources.  Trace class: written at run start
+     * the Gauss-Markov time constant, the variance floor, the birth floor, the gap
+     * horizon (@ref ParamSpec::gap_horizon_s), the route and the knob sources.  Trace
+     * class: written at run start
      * and in the run-end tail, never read by the solve.
      *
      * @return The lines, without trailing newlines.
