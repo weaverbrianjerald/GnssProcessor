@@ -205,6 +205,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkClockAnchor.cpp
     src/core/filter/NetworkCarryDisposition.cpp
     src/core/filter/NetworkCarrySites.cpp
+    src/core/filter/NetworkResponses.cpp
     src/core/filter/NetworkClockLevel.cpp
     src/core/filter/NetworkFrameDiag.cpp
     src/core/filter/NetworkGrossLos.cpp
@@ -512,6 +513,7 @@ add_executable(gnss_tests
     tests/test_exl_switch_on_resume.cpp
     tests/test_carry_disposition.cpp
     tests/test_carry_sites.cpp
+    tests/test_param_responses.cpp
     tests/test_lane_observatory_config.cpp
     tests/test_zwd_seam_reseed_config.cpp
     tests/test_zwd_seam_reseed_q.cpp

@@ -1306,6 +1306,20 @@ struct StationAssembly {
     /// Accumulated per station in the parallel produce phase and folded into the run
     /// counters serially afterwards, like @c relevel_free_skips.
     long long                 inject_stale_skips{0};
+    /// Card PRM phase 3a (filter/NetworkResponses.hpp): the carried-instance responses
+    /// taken in the parallel produce phase, one per @c ResponseSite, accumulated per
+    /// station and folded into @c NetworkServiceCounters::prm_resp serially afterwards,
+    /// like @c relevel_free_skips.  Count-only: no decision reads them.
+    long long                 prm_amb_free_latch{0};          ///< AmbFreeEpochLatch: arcs with a carried entry that the latched free set kept out of the fold, latched by anything but a re-entry response alone (a slip detector, a T4 bit, an unknown bit, or no recorded cause) (leveling vehicle only; under float_kf the arc folds at birth strength).
+    long long                 prm_amb_free_latch_reentry{0};  ///< AmbFreeEpochLatchReentry: as @c prm_amb_free_latch, for an arc whose recorded latch cause is non-zero and has no bit outside @c RelevelEpochState::kCauseGap | @c kCauseWindup (gap re-entry, wind-up restart).
+    long long                 prm_amb_pending_reseed_skip{0}; ///< AmbPendingReseedSkip: arcs with a carried entry not folded for a pending-reseed mark at the inject (either vehicle).
+    long long                 prm_amb_gap_skip{0};            ///< AmbGapSkip: carried arcs past @c phase_leveling_max_gap_s not folded (leveling vehicle only); the subset of @c inject_stale_skips that skipped.
+    long long                 prm_rxcb_gap_skip{0};           ///< RxcbGapSkip: carried receiver code biases past the 900 s horizon not folded, on either route (RXCB-IN-BLOCK, or the diagonal fold); the gate's variance guard is not counted.
+    long long                 prm_rxcb_jump_skip{0};          ///< RxcbJumpSkip: diagonal-route carried receiver code biases withheld by the inject's innovation test (the instances of @c pl_cb_innov_skips).
+    long long                 prm_iono_gap_skip{0};           ///< IonoGapSkip: carried slant ionospheres past their horizon not folded: the I-in-block refusal past @c iono_blk_max_gap_s (the instances of @c pl_blk_iono_gap_drop) and the diagonal carry's stale skip past @c iono_max_gap_s (a scope=relevel LOS reaches it only when re-leveling).
+    long long                 prm_rxclk_gap_skip{0};          ///< RxclkGapSkip: carried receiver clocks (and ISBs) past @c rxclk_max_gap_s refused by the RX-CLK-in-block walk (the instances of @c pl_blk_rxclk_gap_drop).
+    long long                 prm_zwd_gap_skip{0};            ///< ZwdGapSkip: a carried wet delay past @c phase_leveling_max_gap_s not folded, counted once at the diagonal B9 gate, which an in-block (B9-in-block) gap refusal always reaches with the same entry and the same test.
+    long long                 prm_rpb_gap_skip{0};            ///< RpbGapSkip: carried eq34 receiver phase biases past @c phase_leveling_max_gap_s whose local time-linking prior was not built (a negative gap is not counted).
     /// Sim-only oracle ambiguity pin (filter/NetworkOraclePin.hpp): this station-epoch's
     /// pin accounting, accumulated in the parallel produce phase and folded into the run
     /// counters serially afterwards, like @c relevel_free_skips.  All four are 0 on every
@@ -1726,6 +1740,7 @@ struct ClockAnchorSat {
     double last_var_eff{0.0};  ///< prior variance folded this epoch (the guard's P⁻; marginal, so it is identical on the diagonal and dense D2 branches)
     int    in_band{0};         ///< consecutive in-band epochs accumulated while LOOSE
     bool   anchored{false};    ///< false = LOOSE (born LOOSE; re-validation required)
+    bool   ever_anchored{false};  ///< the guard has anchored this satellite before (measure-only: separates a re-coupling from the first engagement in card PRM phase 3a's response count)
     bool   folded{false};      ///< a clock prior is folded for this satellite this epoch and is still standing (guard eligibility; cleared when the guard withdraws it)
     bool   folded_anchored{false};  ///< …and it was the ANCHORED variance
     bool   stale_pending{false};    ///< the fold found the carry older than the staleness bound and fell back to the LOOSE variance; the guard owns the state transition, event and mark, so every decoupling edge goes through one path

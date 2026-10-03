@@ -6,6 +6,7 @@
 
 #include "app/NetworkRunContext.hpp"     // NetworkKnobs
 #include "config/GnssConfig.hpp"
+#include "filter/NetworkResponses.hpp"   // the declared response sites (card PRM phase 3a)
 
 #include <fmt/format.h>
 
@@ -271,7 +272,66 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
                    "network.phase_colour_state";
         set(NetworkParamKind::PhaseColour, std::move(s));
     }
+
+    // Card PRM phase 3a: the responses armed per kind and event.  A declared response site
+    // (filter/NetworkResponses.hpp) whose own gate holds on this snapshot contributes its
+    // policy to its kind's event; an armed datum mechanism of card PRM phase 2 contributes
+    // Stransform to the handover of every kind whose carried value it moves (a border kind
+    // through prev_carry, a station-local kind through its value site).
+    for (int i = 0; i < kResponseSites; ++i) {
+        const auto site = static_cast<ResponseSite>(i);
+        if (!responseSiteArmed(site, k, config)) continue;
+        const ResponseSiteSpec& rs = responseSiteSpec(site);
+        r.specs_[static_cast<std::size_t>(rs.kind)].on[static_cast<std::size_t>(rs.event)] |=
+            responsePolicyBit(rs.policy);
+    }
+    const auto onHandover = [&](NetworkParamKind kind) -> std::uint32_t& {
+        return r.specs_[static_cast<std::size_t>(kind)]
+            .on[static_cast<std::size_t>(ParamEvent::Handover)];
+    };
+    for (int m = 0; m < kCarryMechanisms; ++m) {
+        const auto mech = static_cast<CarryMechanism>(m);
+        if (!carryMechanismArmed(mech, k, config)) continue;
+        const std::uint32_t border = carryMechanismBorderKinds(mech, k);
+        for (int b = 0; b < 4; ++b)
+            if (border & (std::uint32_t{1} << b))
+                onHandover(paramKindOf(static_cast<SharedParamKind>(b))) |=
+                    responsePolicyBit(ResponsePolicy::Stransform);
+        for (int c = 0; c < kCarrySites; ++c) {
+            NetworkParamKind lk;
+            if (carryMechanismSite(mech, static_cast<CarrySite>(c)).moves
+                && carrySiteLocalKind(static_cast<CarrySite>(c), lk))
+                onHandover(lk) |= responsePolicyBit(ResponsePolicy::Stransform);
+        }
+    }
     return r;
+}
+
+static std::string paramPolicyList(std::uint32_t mask, const char* sep) {
+    std::string out;
+    for (std::size_t p = 0; p < kResponsePolicies; ++p)
+        if (mask & (std::uint32_t{1} << p))
+            out += fmt::format("{}{}", out.empty() ? "" : sep,
+                               responsePolicyName(static_cast<ResponsePolicy>(p)));
+    return out;
+}
+
+std::vector<std::string> NetworkParamRegistry::responseTable() const {
+    std::vector<std::string> out;
+    for (const auto& s : specs_) {
+        std::string line = fmt::format("{:<15}", s.name);
+        bool any = false;
+        for (std::size_t e = 0; e < kParamEvents; ++e) {
+            if (!s.on[e]) continue;
+            line += fmt::format("{}{}: {}", any ? "; " : " ",
+                                paramEventName(static_cast<ParamEvent>(e)),
+                                paramPolicyList(s.on[e], "+"));
+            any = true;
+        }
+        if (!any) line += " none";
+        out.push_back(std::move(line));
+    }
+    return out;
 }
 
 double NetworkParamRegistry::q(SharedParamKind kind) const {
@@ -309,12 +369,23 @@ std::string NetworkParamRegistry::modelJson() const {
         j += fmt::format("{}{{\"kind\":\"{}\",\"estimated\":{},\"carried\":{},\"q\":{},"
                          "\"q_units\":\"{}\",\"q_rule\":\"{}\",\"q_anchored\":{},\"tau_s\":{},"
                          "\"var_floor_m2\":{},\"birth_var_m2\":{},\"route\":\"{}\","
-                         "\"source\":\"{}\"}}",
+                         "\"source\":\"{}\",\"on\":{{",
                          i ? "," : "", s.name, s.estimated ? "true" : "false",
                          s.carried ? "true" : "false", jnum(s.q), s.q_units,
                          paramQRuleName(s.q_rule), jnum(s.q_anchored), jnum(s.tau_s),
                          jnum(s.var_floor_m2), jnum(s.birth_var_m2), paramRouteName(s.route),
                          esc(s.source));
+        // Card PRM phase 3a: the armed response policies per event.
+        for (std::size_t e = 0; e < kParamEvents; ++e) {
+            std::string list;
+            for (std::size_t p = 0; p < kResponsePolicies; ++p)
+                if (s.on[e] & (std::uint32_t{1} << p))
+                    list += fmt::format("{}\"{}\"", list.empty() ? "" : ",",
+                                        responsePolicyName(static_cast<ResponsePolicy>(p)));
+            j += fmt::format("{}\"{}\":[{}]", e ? "," : "",
+                             paramEventName(static_cast<ParamEvent>(e)), list);
+        }
+        j += "}}";
     }
     j += "]}";
     return j;

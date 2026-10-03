@@ -217,6 +217,9 @@ void networkLeveling(
                     ctx.counters.n_cr_sh_conv_flush +=
                         static_cast<long long>(local_carry.size());
                     ++ctx.counters.n_cr_sh_conv_flushes;
+                    // Card PRM phase 3a: one count per carried arc flushed.
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFleetFlush,
+                               static_cast<long long>(local_carry.size()));
                     local_carry.clear();   // one-shot flush ⇒ ambiguities refloat next epoch
                 }
             }

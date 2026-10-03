@@ -836,12 +836,18 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                     ctx.carry.gl_hold_amb[lk] = h;
                     lit->second = h;
                     ++tal.bound_amb_held;
+                    prmRespond(ctx.counters.prm_resp,
+                               ResponseSite::AmbGrossHold);   // card PRM phase 3a
                 }
                 // No pending-reseed under the hold: the state is pinned, not
                 // refloated.  Marking it would give the next assembly a free column,
                 // which is what the hold exists to prevent.
             } else {
-                if (ctx.carry.local_carry.erase(lk)) ++ctx.counters.n_cr_gross_los;
+                if (ctx.carry.local_carry.erase(lk)) {
+                    ++ctx.counters.n_cr_gross_los;
+                    prmRespond(ctx.counters.prm_resp,
+                               ResponseSite::AmbGrossErase);   // card PRM phase 3a
+                }
                 // Under carry_invariant this mark is bookkeeping; on the
                 // phase-leveling vehicle it is the actuator (the same asymmetry the
                 // RAIM erase documents).
@@ -878,6 +884,8 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 ctx.carry.gl_hold_iono[ik] = h;
                 it1->second = h;
                 ++tal.bound_iono_held;
+                prmRespond(ctx.counters.prm_resp,
+                           ResponseSite::IonoGrossHold);   // card PRM phase 3a
             }
             const auto it2 = ctx.carry.iono_blk_carry.find(ik);
             if (it2 != ctx.carry.iono_blk_carry.end()) {
@@ -885,13 +893,25 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 ctx.carry.gl_hold_iono_blk[ik] = h;
                 it2->second = h;
                 ++tal.bound_iono_held;
+                prmRespond(ctx.counters.prm_resp,
+                           ResponseSite::IonoGrossHold);   // card PRM phase 3a
             }
         } else {
-            if (ctx.carry.iono_carry.erase(ik))     ++tal.iono_erased;
-            if (ctx.carry.iono_blk_carry.erase(ik)) ++tal.iono_erased;
+            // Card PRM phase 3a: each erase that removed an entry is counted.
+            if (ctx.carry.iono_carry.erase(ik)) {
+                ++tal.iono_erased;
+                prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGrossErase);
+            }
+            if (ctx.carry.iono_blk_carry.erase(ik)) {
+                ++tal.iono_erased;
+                prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGrossErase);
+            }
             // Card LGM: a gross line of sight's phase-colour entry re-starts from its
             // birth prior as well (the gross phase rows wrote into it).
-            if (ctx.carry.pc_carry.erase(ik)) ++ctx.counters.n_pc_erase_gross;
+            if (ctx.carry.pc_carry.erase(ik)) {
+                ++ctx.counters.n_pc_erase_gross;
+                prmRespond(ctx.counters.prm_resp, ResponseSite::PcGrossErase);
+            }
         }
     };
 

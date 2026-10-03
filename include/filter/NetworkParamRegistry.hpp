@@ -31,6 +31,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
@@ -87,6 +88,63 @@ enum class ParamRoute {
 };
 
 /**
+ * @brief The events a carried instance responds to (card PRM section 4.2, the descriptor's
+ *        @c on_slip, @c on_gap, @c on_handover, @c on_decouple and @c on_readmit).
+ */
+enum class ParamEvent : int {
+    Slip = 0,   ///< A discontinuity detected in the carried quantity: a cycle slip, a RAIM attribution, a receiver jump, the clock monitor's flag.
+    Gap,        ///< Absence: the column leaves the layout or goes unseen, and the horizon it is carried across.
+    Handover,   ///< A datum move: an anchor or pivot re-election, a frame re-reference, a declared re-base.
+    Decouple,   ///< A guard separates the instance from its data or its anchor: the gross line-of-sight screen, a withheld epoch, the clock anchor's guard.
+    Readmit,    ///< A departed border column returns, or a decoupled instance is re-validated.
+};
+
+/// Number of @ref ParamEvent values (array sizing).
+inline constexpr std::size_t kParamEvents = 5;
+
+/**
+ * @brief The named responses (card PRM section 4.5), one value per thing a response does
+ *        to a carried instance.
+ *
+ * Phase 3a declares which of these each kind uses on the run and counts every response at
+ * its site (@c filter/NetworkResponses.hpp); phase 3b gives each one implementation.
+ */
+enum class ResponsePolicy : int {
+    Drop = 0,          ///< Variance back to birth strength, border regression and block row cleared, value kept (the float vehicle).
+    EraseAndRebirth,   ///< Entry erased; the next harvest re-creates it with fresh birth stamps.
+    FreeEpoch,         ///< Not folded for one epoch (or one replay); the entry is kept and re-stashed from that epoch's data.
+    GapSkip,           ///< Not folded while the gap since it was last seen exceeds the horizon; re-stashed from that epoch.
+    GapPrune,          ///< Erased once unseen past the horizon.
+    Marginalize,       ///< A border column left the layout: its prior is folded and the estimator marginalizes it.
+    Rereference,       ///< A border entry whose frame was re-referenced: not folded for one epoch, re-stashed in the new frame.
+    Retire,            ///< A border entry of a changed clock datum that was not re-expressed: not folded.
+    Stransform,        ///< Re-expressed by a declared datum move (the value moved; the variance where the transform states it).
+    Park,              ///< Kept past the column's departure, not folded, until it returns or the horizon expires.
+    SeedAtVarPlusQGap, ///< A parked entry seeds its returned column at var + q times the gap.
+    Discard,           ///< A parked or held entry dropped without a fold (a datum change, a return it was not consumed by).
+    Loosen,            ///< Folded at the loose rate until a guard re-validates it (card Q3's anchor).
+    Recouple,          ///< The guard re-validated a loosened instance: it folds at its anchored rate again.
+    Reinit,            ///< Folded at the re-initialization variance (the clock monitor's flag).
+    Retap,             ///< Value kept, variance inflated.
+    Hold,              ///< Frozen and re-applied while a guard holds it.
+    ReanchorAtTarget,  ///< A carried time link re-anchored at its absolute target.
+};
+
+/// Number of @ref ResponsePolicy values (array sizing).
+inline constexpr std::size_t kResponsePolicies = 18;
+
+/// @brief Table name of an event (e.g. "slip").
+const char* paramEventName(ParamEvent e);
+
+/// @brief Table name of a response policy (e.g. "erase_and_rebirth").
+const char* responsePolicyName(ResponsePolicy p);
+
+/// @brief Bit of @p p in a policy mask (@ref ParamSpec::on).
+inline constexpr std::uint32_t responsePolicyBit(ResponsePolicy p) {
+    return std::uint32_t{1} << static_cast<int>(p);
+}
+
+/**
  * @brief The declared properties of one parameter kind on this run.
  *
  * Built once from the knob snapshot.  A value that a kind does not have on this run is
@@ -111,6 +169,12 @@ struct ParamSpec {
     double       birth_var_m2{std::numeric_limits<double>::quiet_NaN()};  ///< Variance floor at an instance's birth (m²; 0 = none, NaN = the kind has no birth rule).
     ParamRoute   route{ParamRoute::NotCarried};
     std::string  source;            ///< The knob(s) behind q, the floor and the route.
+    /// The response policies armed for this kind on this run, per @ref ParamEvent (a mask of
+    /// @ref responsePolicyBit): the union of the policies of this kind's response sites whose
+    /// arming condition holds on the knob snapshot, and Stransform where an armed datum
+    /// mechanism moves a carried value of the kind (card PRM phase 3a,
+    /// @c filter/NetworkResponses.hpp).  Zero for an event the kind does not respond to.
+    std::array<std::uint32_t, kParamEvents> on{};
 };
 
 /**
@@ -172,8 +236,19 @@ public:
     std::vector<std::string> modelTable() const;
 
     /**
+     * @brief The response policies armed per kind, one line per kind: the kind, then each
+     *        event it responds to with its policies (card PRM phase 3a, @ref ParamSpec::on).
+     *
+     * Trace class: written at run start beside @ref modelTable.
+     *
+     * @return The lines, without trailing newlines.
+     */
+    std::vector<std::string> responseTable() const;
+
+    /**
      * @brief The same table as one JSON object (the run manifest's @c param_model
-     *        record): @c {"record":"param_model","kinds":[{...}, ...]}.
+     *        record): @c {"record":"param_model","kinds":[{...}, ...]}, each kind with its
+     *        armed response policies per event under @c "on".
      * @return The JSON text, one line.
      */
     std::string modelJson() const;

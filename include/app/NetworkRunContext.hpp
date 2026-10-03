@@ -26,6 +26,7 @@
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkParamRegistry.hpp" // NetworkParamRegistry: one declared property set per parameter kind (card PRM)
 #include "filter/NetworkCarrySites.hpp"     // CarrySite / CarryMechanism: the carried references of the border (card PRM phase 2)
+#include "filter/NetworkResponses.hpp"      // ResponseSite: the declared responses of the carried instances (card PRM phase 3a)
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactCounters (card CTU)
 #include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone (card SMH)
 #include "filter/NetworkYoungInflate.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
@@ -3846,8 +3847,20 @@ namespace GnssProcessor {
         double    prm_reexpressed_max_dvar = 0.0;
         // Card PRM phase 2: the carried references each mechanism moved, per site, through
         // forEachCarriedReference (filter/NetworkCarrySites), and the mechanism's calls.
-        long long prm_ref_moved[kCarrySites][kCarryMechanisms]{};
+        CarryMovedTally prm_ref_moved{};
         long long prm_ref_calls[kCarryMechanisms]{};
+        // Card PRM phase 3a: the responses of the carried instances, per site of the
+        // declared table (filter/NetworkResponses.hpp; the sites whose count source is
+        // Increment), and the free-epoch latch per cause (keys latched with the bit set; of
+        // those, keys with a carried entry at the response), the unique latched keys, the
+        // keys with more than one cause, and the ambiguities the gap prune erased in the
+        // epoch the stale-gap drop dropped them.
+        long long prm_resp[kResponseSites]{};
+        long long prm_latch_keys[kLatchCauses]{};
+        long long prm_latch_carried[kLatchCauses]{};
+        long long prm_latch_unique = 0, prm_latch_unique_carried = 0, prm_latch_multi = 0;
+        long long prm_latch_epochs = 0;
+        long long prm_pruned_after_drop = 0;
         // Card CTU level monitor and raise.  Ratios are counted for a satellite from its
         // second epoch of code information on (its first solve is the code-only batch).
         long long clm_epochs = 0, clm_skip_datum = 0, clm_rows = 0, clm_below1 = 0,

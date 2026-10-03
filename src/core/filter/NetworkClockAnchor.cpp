@@ -12,6 +12,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey
+#include "filter/NetworkResponses.hpp"       // prmRespond / ResponseSite (card PRM phase 3a)
 #include "common/SignalBand.hpp"             // phase-space statistic: band wavelengths (card CTU section 14)
 
 #include <spdlog/spdlog.h>
@@ -360,6 +361,9 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     st.anchored = false;
     st.in_band  = 0;
     if (!was_anchored) return false;   // already LOOSE: no edge, nothing to mark
+    // Card PRM phase 3a: one ANCHORED -> LOOSE edge of one satellite, whatever the cause
+    // (gap, datum, ext, statistic): every decoupling edge goes through this path.
+    prmRespond(ctx.counters.prm_resp, ResponseSite::ClkAnchorDecouple);
     ctx.carry.clk_anchor.tripped.insert(sat);
     ++ctx.counters.mgnss.anchor_trips[sat.substr(0, 1)];   // per constellation (card GAL)
     // Re-admission continuity: a trip within the verify window of a clock seed is the
@@ -645,9 +649,18 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (bad_nis || bad_abs) { st.in_band = 0; continue; }
                 ++st.in_band;
                 if (st.in_band >= std::max(1, ctx.knobs.cta_recouple_ep)) {
+                    // Card PRM phase 3a: a re-coupling is a LOOSE -> ANCHORED edge of a
+                    // satellite the guard anchored before.  A satellite is born LOOSE, so
+                    // its first engagement takes this path too (cta_recouples counts it)
+                    // and is not a response; ever_anchored separates the two and is read
+                    // by nothing else.
+                    const bool prm_recouple = st.ever_anchored && !st.anchored;
+                    st.ever_anchored = true;
                     st.anchored = true;
                     st.in_band  = 0;
                     ++ctx.counters.cta_recouples;
+                    if (prm_recouple)
+                        prmRespond(ctx.counters.prm_resp, ResponseSite::ClkAnchorRecouple);
                     // Not marked on the wire: re-engaging a prior whose mean is the
                     // last posterior adds information without stepping the emitted
                     // value, so a consumer has nothing to reset.  It is an event with

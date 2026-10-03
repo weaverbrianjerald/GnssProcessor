@@ -486,6 +486,9 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ctx.counters.n_if_level_sats  += static_cast<std::size_t>(cbd.n_if_level_sats);
             ctx.counters.n_sat_gf_carried += static_cast<std::size_t>(cbd.n_sat_gf_carried);
             ctx.counters.n_sat_gf_anchored+= static_cast<std::size_t>(cbd.n_sat_gf_anchored);
+            // Card PRM phase 3a: the anchored rows of satellites seen before (row-epochs).
+            prmRespond(ctx.counters.prm_resp, ResponseSite::CbTimeLinkReanchor,
+                       cbd.n_sat_gf_reanchored);
             ctx.counters.n_isc_observed += static_cast<std::size_t>(cbd.n_isc_observed);
             ctx.counters.n_isc_pinned   += static_cast<std::size_t>(cbd.n_isc_pinned);
             // The same counters per constellation letter (card GAL, R3 iii).
@@ -1403,6 +1406,10 @@ double sigma0_adapt = 0.0;         // final within-epoch σ̂0; 0 = adaptation d
 // after the block retires its culprit-set aliases.
 bool we_restore_failed = false;
 std::string we_restore_what;       // why the undo could not complete, for the skip report
+// Card PRM phase 3a: the landed replay's withheld carried priors, folded into the response
+// count once the epoch is past the A4 ceiling (a withheld epoch harvests nothing, so its
+// replay changed no carried instance).
+long long prm_we_free_landed = 0;
 // Withhold-era continuity, resolved once per epoch (SPEC_withhold_era_release; the
 // census-freshness idiom): the era is live if and only if the immediately previous
 // loop epoch was the last A4-withheld decision, so any bypass or skip epoch breaks
@@ -1680,9 +1687,13 @@ if (within_epoch_armed && carry_warm) {
     // Stations the undo of a failed re-solve could not re-add, left out of the epoch's
     // final solve (card RPD section 7).  Empty except inside that undo.
     std::set<int> undo_dropped;
+    // Card PRM phase 3a: the carried arcs whose prior the current replay withholds.  Reset
+    // by every replay, so after the adaptation loop it holds the landed replay's count.
+    long long we_free_replay = 0;
     auto resolve_dropping = [&]() -> Eigen::VectorXd {
         replay_fail_at.clear();
         replay_fail_idx = -1;
+        we_free_replay = 0;
         est.beginEpoch();
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!orig_added[i] || drop_stations.count(static_cast<int>(i))
@@ -1748,6 +1759,35 @@ if (within_epoch_armed && carry_warm) {
                 if (drop_sats.count(pa.sat) ||
                     (dai != drop_arcs.end() && dai->second.count(pa.sat)))
                     refloat_cols.insert(pa.col);
+            // Card PRM phase 3a: a refloated column counts when it is a carried arc (a
+            // local_carry entry under its (station, satellite, signal) key) whose prior
+            // the branches below withhold: a diagonal carry_cols prior, or a coupling row
+            // (the joint branch's raw rows, or the scalar branch's per-row columns, which
+            // include the local block's rows).  The local_carry test keeps a column whose
+            // only diagonal prior is an oracle pin out of the count.  Read-only (find and
+            // count only).
+            if (!refloat_cols.empty()) {
+                const bool joint_br = carry_cpl_cond && carry_cpl_joint
+                                      && !R.cpl_raw.empty() && R.cpl_row_start >= 0;
+                const bool rows_br  = !joint_br && carry_cpl_cond && R.cpl_row_start >= 0;
+                for (const auto& pa : R.pl_amb) {
+                    const Eigen::Index rc = pa.col;
+                    if (refloat_cols.count(rc) == 0) continue;
+                    if (ctx.carry.local_carry.count(std::make_tuple(
+                            static_cast<int>(i), pa.sat, pa.signal)) == 0)
+                        continue;
+                    bool carried = std::find(R.carry_cols.begin(), R.carry_cols.end(), rc)
+                                   != R.carry_cols.end();
+                    if (!carried && joint_br)
+                        carried = std::any_of(R.cpl_raw.begin(), R.cpl_raw.end(),
+                                              [rc](const CplRowRaw& cr) { return cr.local_col == rc; });
+                    if (!carried && rows_br)
+                        carried = std::find(R.cpl_row_local_cols.begin(),
+                                            R.cpl_row_local_cols.end(), rc)
+                                  != R.cpl_row_local_cols.end();
+                    if (carried) ++we_free_replay;
+                }
+            }
             // Under the conditional carry, a refloated ambiguity's carry is a coupling
             // row inside A_s/A_r (not a carry_cols diagonal prior), so withholding it
             // means zeroing that row before re-adding the block: the coupling-row
@@ -2166,6 +2206,11 @@ if (within_epoch_armed && carry_warm) {
         ++n_adapt;
         assess(x_s, sigma0, sat_eff, sta_eff, arc_eff);
     }
+    // Card PRM phase 3a: the landed replay's withheld carried priors.  The last replay
+    // built the solve this epoch keeps (a replay that threw was replaced by the undo's own
+    // replay); an undo that could not complete skips the epoch, so its partial count is
+    // not a response.  0 when no replay ran.  Folded past the A4 ceiling below.
+    if (!we_restore_failed) prm_we_free_landed = we_free_replay;
     // The settled clock displacement of this epoch's re-solves, (final − primary) per
     // satellite: the §5.07.2 impulse-channel meter (R0).  Identically 0 when no
     // re-solve ran (x_s is unchanged), so only adapted epochs pay for the comparison
@@ -2505,14 +2550,19 @@ if (a4_over_ceiling && !perconst_active) {
             const auto parts = StateKeys::parseAmbiguityKey(fa.second);
             if (!parts) continue;
             if (ctx.carry.local_carry.erase(
-                    std::make_tuple(fa.first, parts->satellite, parts->signal)))
+                    std::make_tuple(fa.first, parts->satellite, parts->signal))) {
                 ++ctx.counters.n_wh_free_erases;
+                prmRespond(ctx.counters.prm_resp,
+                           ResponseSite::AmbWithholdErase);   // card PRM phase 3a
+            }
         }
     }
     prev_week = se.time.week; prev_tow = se.time.tow;
     result.action = EpochAction::SkipEpoch;
     return result;
 }
+// Card PRM phase 3a: the epoch is kept, so the landed replay's withheld priors are responses.
+prmRespond(ctx.counters.prm_resp, ResponseSite::AmbT2ReplayFree, prm_we_free_landed);
 
 
     // --- SH-field health gate verdict (SPEC_day129_frame_guards Phase 2.2) -----

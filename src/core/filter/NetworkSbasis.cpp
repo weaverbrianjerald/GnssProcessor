@@ -1108,6 +1108,13 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                         } else {
                             ++out.n_sat_gf_anchored;   // first sighting: absolute
                             ++gcc.anchored;
+                            // Card PRM phase 3a: a satellite seen before and absent at
+                            // the last kept epoch (a return, not a first sighting and not
+                            // a link cut on a present satellite) re-anchors at its absolute
+                            // target.  Measure-only.
+                            if (code_bias_sat_seen_.count(sat) != 0
+                                && code_bias_ifpin_pair_.count(sat) == 0)
+                                ++out.n_sat_gf_reanchored;
                         }
                     }
                     rows.push_back(std::move(srow));
@@ -1302,6 +1309,11 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                                     k_target = abs_target;
                                     ++out.n_sat_gf_anchored;
                                     ++gcc.anchored;
+                                    // Card PRM phase 3a: a re-anchor of a satellite seen
+                                    // before; see the pair row.  Measure-only.
+                                    if (code_bias_sat_seen_.count(sat) != 0
+                                        && code_bias_ifpin_pair_.count(sat) == 0)
+                                        ++out.n_sat_gf_reanchored;
                                 }
                             }
                             rows.push_back(std::move(krow));

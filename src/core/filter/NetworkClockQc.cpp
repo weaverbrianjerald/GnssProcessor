@@ -15,6 +15,7 @@
 #include "app/NetworkRunContext.hpp"          // ctx.* + networkRetroUraBookkeeping
 #include "config/GnssConfig.hpp"              // config_.getNetworkConfig() (nc.trace_clock_full)
 #include "filter/NetworkPivotHandover.hpp"    // datumChangeAffectsKey
+#include "filter/NetworkResponses.hpp"        // prmRespond / ResponseSite (card PRM phase 3a)
 #include "logging/NetworkRunTraces.hpp"       // clk_mon_trace + emitEvent
 
 #include <spdlog/spdlog.h>
@@ -106,6 +107,9 @@ void networkClockQc(NetworkRunContext& ctx,
     // instead of freezing.  On a pivot handover the models are re-seeded (the datum moved).
     if (clk_model_warm) {
         if (datum_changed && !scoped_handover) {
+            // Card PRM phase 3a: the entries the wipe removes.
+            prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe,
+                       static_cast<long long>(clock_osc.size()));
             clock_osc.clear();   // datum moved: every carried offset is in the retired frame (t_last dropped with it)
             // Record the datum-change oscillator wipe as an event; nothing else reports it (T5, V2).
             emitEvent("T5_clock_model", "datum_osc_wipe", "", "", std::nullopt, std::nullopt,
@@ -121,9 +125,10 @@ void networkClockQc(NetworkRunContext& ctx,
             // update block.
             if (datum_changed) {
                 for (auto oit = clock_osc.begin(); oit != clock_osc.end();) {
-                    if (datumChangeAffectsKey(oit->first, changed_consts, /*scoped=*/true))
+                    if (datumChangeAffectsKey(oit->first, changed_consts, /*scoped=*/true)) {
                         oit = clock_osc.erase(oit);
-                    else
+                        prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe);   // card PRM phase 3a
+                    } else
                         ++oit;
                 }
                 std::string consts;
@@ -183,6 +188,16 @@ void networkClockQc(NetworkRunContext& ctx,
                     // from the solved value, zero drift, loose covariance; no fault test
                     // until it has a prediction.  Stamp t_last so the next epoch's drift
                     // finite difference and prediction use the true per-sat interval.
+                    // Card PRM phase 3a: a carried oscillator re-seeded past its maximum
+                    // gap is the gap response (the prediction step's stale test, repeated
+                    // on the same t_last, pl_now_s and dt; a first sighting is not
+                    // counted, and neither is a prediction dropped by its finite screen).
+                    if (osc.init) {
+                        const double prm_gap_dt = (osc.t_last > 0.0) ? (pl_now_s - osc.t_last)
+                                                                     : std::max(0.0, dt);
+                        if (prm_gap_dt > clk_model_max_gap)
+                            prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscGapReset);
+                    }
                     osc.x0 = z; osc.x1 = 0.0;
                     osc.p00 = 1.0; osc.p01 = 0.0; osc.p11 = 1e-6;
                     osc.t_last = pl_now_s; osc.init = true;
@@ -217,6 +232,15 @@ void networkClockQc(NetworkRunContext& ctx,
                 const double sat_dt   = (osc.t_last > 0.0) ? (pl_now_s - osc.t_last) : dt;
                 const bool contiguous = (osc.t_last > 0.0) && sat_dt > 0.0
                                         && sat_dt <= clk_model_max_gap;   // R11
+                // Card PRM phase 3a: the drift reset past the maximum gap (not the reset of
+                // a zero or unstamped interval).  The prediction step drops a stale
+                // oscillator's prediction on the same test, so a stale return normally
+                // re-seeds above; this counts the branch should it ever act.
+                if (!contiguous && osc.t_last > 0.0 && sat_dt > clk_model_max_gap)
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscGapReset);
+                // Card PRM phase 3a: the fault response re-initializes this oscillator.
+                if (flagged)
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscReinit);
                 osc.x1  = contiguous ? (z - x0_prev) / sat_dt : 0.0;
                 osc.x0  = z;
                 osc.p00 = flagged ? ((clk_mon_reinit_var > 0.0) ? clk_mon_reinit_var : (30.0 * 30.0))

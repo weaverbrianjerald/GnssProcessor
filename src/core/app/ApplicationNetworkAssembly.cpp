@@ -2234,6 +2234,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     }
     const CommonBandEpoch* common_band_ptr = common_band.armed ? &common_band : nullptr;
 
+    // Card PRM phase 3a: the datum-station slip re-reference's carry erases, read off the
+    // drain's own counter around the call (serial: between the two parallel regions).
+    const long long dse0 = qc.counters.datum_slip_carry_erases;
     networkSlipDrainMwRefloat(pa, config_, stations, present, modeled, i_lo,
                               n_sta_total, carry_invariant, mw_carry_warm,
                               carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
@@ -2251,6 +2254,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               // (structurally byte-identical, invariant #6).
                               ctx.carry.slip_oracle.get(),
                               common_band_ptr);
+    prmRespond(ctx.counters.prm_resp, ResponseSite::AmbDatumSlipErase,
+               qc.counters.datum_slip_carry_erases - dse0);
 
     // The mark sink is passed only when armed (Edge-1 piece 2), so the off path
     // passes nullptr and the driver's insert is never reached (byte-identical).
@@ -3133,8 +3138,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             if (!sparts) continue;
             const std::pair<int, std::string> los{sk.first, sparts->satellite};
             if (freed_los.count(los)) continue;   // kept; counted above
-            if (iono_carry.erase(los))
+            if (iono_carry.erase(los)) {
                 ++ctx.counters.n_iono_carry_erased_slip;
+                prmRespond(ctx.counters.prm_resp, ResponseSite::IonoSlipErase);   // card PRM phase 3a
+            }
         }
     }
     if (sh_dev_on) {
@@ -3598,6 +3605,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                             rc->second.value_abs - x0);
                                         pin_w.push_back(1.0 / v);
                                     }
+                                } else if (gap > pl_max_gap_s) {
+                                    // Card PRM phase 3a: a carried receiver phase
+                                    // bias past the horizon, not time-linked this
+                                    // epoch (per station: the parallel produce).
+                                    ++R.prm_rpb_gap_skip;
                                 }
                             }
                             R.pl_rpb.emplace_back(
@@ -3953,7 +3965,15 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // predicate on state that survives to this read point; bridged
                     // bands are removed from it (their carry is already shifted to the
                     // post-slip level and should inject).
-                    if (st.sm->isAmbiguityPendingReseed(key)) continue;
+                    if (st.sm->isAmbiguityPendingReseed(key)) {
+                        // Card PRM phase 3a: counted only for an arc with a carried entry
+                        // (read-only find; a new arc has no prior to skip).  Per station:
+                        // this is the parallel produce phase.
+                        if (local_carry.find(std::make_tuple(i, parts->satellite, parts->signal))
+                            != local_carry.end())
+                            ++R.prm_amb_pending_reseed_skip;
+                        continue;
+                    }
                     if (relevel_free_on
                         && ctx.carry.relevel.free_ambs.count(
                                {static_cast<int>(i), key})) {
@@ -3968,7 +3988,32 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         // steps in R10); a bounded drop reduces it to a stated level.
                         // The counter above still names the population, so the two
                         // vehicles' response loads stay comparable.
-                        if (!amb_float_kf) continue;
+                        if (!amb_float_kf) {
+                            // Card PRM phase 3a: the leveling vehicle's free epoch, counted
+                            // for an arc with a carried entry (read-only find), by what
+                            // latched it.  A recorded cause that is non-zero and has no bit
+                            // outside the re-entry responses (gap re-entry, wind-up
+                            // restart) is the re-entry row; any other cause, or none, is the
+                            // slip row.  free_cause is written only by the serial PASS A
+                            // drains, so this find reads a settled map.
+                            if (local_carry.find(std::make_tuple(i, parts->satellite,
+                                                                 parts->signal))
+                                != local_carry.end()) {
+                                constexpr unsigned kReentryBits =
+                                    RelevelEpochState::kCauseGap
+                                    | RelevelEpochState::kCauseWindup;
+                                const auto fc = ctx.carry.relevel.free_cause.find(
+                                    {static_cast<int>(i), key});
+                                const unsigned fbits =
+                                    (fc != ctx.carry.relevel.free_cause.end()) ? fc->second
+                                                                               : 0u;
+                                if (fbits != 0u && (fbits & ~kReentryBits) == 0u)
+                                    ++R.prm_amb_free_latch_reentry;
+                                else
+                                    ++R.prm_amb_free_latch;
+                            }
+                            continue;
+                        }
                     }
                     if (!std::isfinite(x_lin(amb_idx))) continue;  // non-finite state → don't inject
 
@@ -3991,7 +4036,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         // dropping the column's memory entirely for an epoch.  The
                         // post-harvest prune still erases the arcs that are really gone,
                         // which is the one remaining erase case of §3.4.
-                        if (!amb_float_kf) continue;
+                        if (!amb_float_kf) {
+                            ++R.prm_amb_gap_skip;   // card PRM phase 3a (the leveling vehicle's skip)
+                            continue;
+                        }
                     }
                     if (iono_on) iono_sats_carried.insert(parts->satellite);
                     // var_eff = var + q·gap, floored by the optional lock-in guard
@@ -4091,6 +4139,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             // Invariant #1's absent-satellite edge: a stale LOS is refused,
                             // never aged into a fold.  The harvest prune erases it.
                             ++R.pl_blk_iono_gap_drop;
+                            ++R.prm_iono_gap_skip;   // card PRM phase 3a
                             continue;
                         }
                         const double gap_ep =
@@ -4185,6 +4234,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             // Invariant #1's absent-station edge: a stale carry is refused,
                             // never aged into a fold.  The harvest prune erases it.
                             ++R.pl_blk_rxclk_gap_drop;
+                            ++R.prm_rxclk_gap_skip;   // card PRM phase 3a
                             continue;
                         }
                         const double gap_ep =
@@ -4259,7 +4309,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             cbit->second.var, rx_cb_q, cbit->second.value_abs - x_lin(cb_idx),
                             /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
                             /*innov_test=*/false);
-                        if (act != RxCbInjectAction::Fold) continue;
+                        if (act != RxCbInjectAction::Fold) {
+                            // Card PRM phase 3a: the horizon's skip only, not the gate's
+                            // variance guard (which returns the same action).
+                            if (pl_now_s - cbit->second.last_seen_s > 900.0)
+                                ++R.prm_rxcb_gap_skip;
+                            continue;
+                        }
                         rxcb_bc.push_back(LocalBlockCol{
                             static_cast<Eigen::Index>(cbhit->second), x_lin(cb_idx),
                             &cbit->second, cb_var_eff,
@@ -4446,6 +4502,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                                     zwd_pushed = true;
                                                 }
                                             }
+                                            // Card PRM phase 3a: a gap refusal here is
+                                            // counted at the diagonal B9 gate below, which
+                                            // it always reaches (ZwdGapSkip, once per entry).
                                         }
                                     }
                                 }
@@ -4743,6 +4802,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                             if (zwd_blk_on && R.pl_zwd_injected)
                                                 ++R.pl_blk_zwd_fallback_diag;
                                         }
+                                    } else if (zgap > pl_max_gap_s) {
+                                        // Card PRM phase 3a: a carried wet delay past the
+                                        // horizon, not folded.  Counted here once for both
+                                        // routes: an in-block gap refusal above leaves
+                                        // pl_zwd_in_block false, so it always reaches this
+                                        // gate with the same entry and the same test.
+                                        ++R.prm_zwd_gap_skip;
                                     }
                                 }
                             }
@@ -4787,7 +4853,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         const auto iit = iono_carry.find({static_cast<int>(i), isat});
                         if (iit == iono_carry.end()) continue;  // first sighting: no carry yet
                         const double igap = pl_now_s - iit->second.last_seen_s;
-                        if (igap > iono_max_gap_s) continue;    // stale: harvest housekeeping drops it
+                        if (igap > iono_max_gap_s) {            // stale: harvest housekeeping drops it
+                            ++R.prm_iono_gap_skip;              // card PRM phase 3a
+                            continue;
+                        }
                         // var_eff = max(var + q·gap, floor).  The floor is load-bearing
                         // (invariant #1): the harvested marginal is tiny mid-arc (locked
                         // to the phase), and an unfloored prior outweighs the fresh GF
@@ -4941,9 +5010,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         }
                         if (act == RxCbInjectAction::SkipInnov) {
                             ++R.pl_cb_innov_skips;   // receiver-reset response: withhold, harvest re-seeds
+                            ++R.prm_rxcb_jump_skip;  // card PRM phase 3a
                             continue;
                         }
-                        if (act != RxCbInjectAction::Fold) continue;
+                        if (act != RxCbInjectAction::Fold) {
+                            // Card PRM phase 3a: the horizon's skip only, not the gate's
+                            // variance guard (which returns the same action).
+                            if (pl_now_s - cbit->second.last_seen_s > 900.0)
+                                ++R.prm_rxcb_gap_skip;
+                            continue;
+                        }
                         const double cb_lambda = 1.0 / cb_var_eff;
                         const double cb_eta = cb_lambda * cb_innov;
                         if (!std::isfinite(cb_eta)) continue;
@@ -5126,6 +5202,21 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     if (relevel_free_on)
         for (const StationAssembly& Rc : asm_res)
             ctx.counters.n_relevel_free_skips += Rc.relevel_free_skips;
+    // Card PRM phase 3a: the produce phase's per-station response counts, folded into the
+    // run's response table (serial, the same discipline; zero where a site is unarmed).
+    for (const StationAssembly& Rc : asm_res) {
+        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFreeEpochLatch,    Rc.prm_amb_free_latch);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFreeEpochLatchReentry,
+                   Rc.prm_amb_free_latch_reentry);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbPendingReseedSkip, Rc.prm_amb_pending_reseed_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbGapSkip,           Rc.prm_amb_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapSkip,          Rc.prm_rxcb_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbJumpSkip,         Rc.prm_rxcb_jump_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapSkip,          Rc.prm_iono_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapSkip,         Rc.prm_rxclk_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapSkip,           Rc.prm_zwd_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapSkip,           Rc.prm_rpb_gap_skip);
+    }
     // Simulation-only oracle ambiguity pin: fold this epoch's per-station pin
     // accounting into the run-scope counters (serial, post-produce, the same
     // discipline).  Null pointer when off, so this is unreachable on an unarmed run.

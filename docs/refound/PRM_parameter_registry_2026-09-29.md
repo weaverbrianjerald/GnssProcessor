@@ -625,3 +625,9 @@ a single-site change (`prev_carry` with `prev_carry_cov`). It is owed to phase 3
   table; the warm-resume seam arm is the check that nothing in the phase moved them.
 - The run end's site table answers section 10's second owed read (which local carry maps are live
   on the RF-0hv posture, section 16.2).
+
+## 17. Phase 3a, the responses declared and counted (2026-10-02)
+
+Continued in [PRM3](PRM3_responses_2026-10-02.md): 69 response sites declared with their arming
+conditions and counted, the registry's policies per event, the free-epoch latch per cause;
+byte-identical on all 16 harness arms, 0 declaration errors.

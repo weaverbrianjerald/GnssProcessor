@@ -155,6 +155,11 @@ void networkAmbFloatApplyDrops(
     const double drop_base = ambFloatDropFloorNow(drop_base_knob, now_ep,
                                                   ctx.knobs.amb_drop_floor_after_ep);
     const bool   pre_gate  = (drop_base_knob > 0.0) && !(drop_base > 0.0);
+    // Card PRM phase 3a: whether the last dropAt call's idempotent drop cleared the arc's
+    // regression and block row (network.amb_float_drop_decouple_always), the second way a
+    // drop changes the carried prior.  Count-only: the loops below read it beside the
+    // value dropAt returns, which is unchanged.
+    bool last_decoupled_idem = false;
     // One lambda, so the two populations below cannot take the drop at different
     // floors.  Both floors are mapped at this line of sight's elevation (RF-3a A1).
     const auto dropAt = [&](LocalCarry& lc, int sta, const std::string& sat) {
@@ -164,10 +169,17 @@ void networkAmbFloatApplyDrops(
             ambFloatBirthFloor(drop_base,  e, elev_power), pl_now_s, now_ep,
             ctx.knobs.amb_drop_decouple_always);
         if (o.decoupled_idem) ++counters.n_amb_drop_decoupled_idem;
+        last_decoupled_idem = o.decoupled_idem;
         if (o.from_drop_floor) ++n_dropfloor;
         if (pre_gate)          ++n_pregate;
         return o.acted;
     };
+    // Card PRM phase 3a: the latch causes of the re-entry responses (gap re-entry, wind-up
+    // restart).  A latch is a re-entry only when its recorded cause is non-zero and has no
+    // bit outside these two; a slip detector's bit, a T4 bit (the event harness tags its
+    // free_epoch response with one), an unknown bit or no recorded cause is the slip row.
+    constexpr unsigned kReentryBits =
+        RelevelEpochState::kCauseGap | RelevelEpochState::kCauseWindup;
     // (1) The latched free-epoch set.  The set itself is not consumed, per §4.1: the lane
     //     observatory, the phase-datum candidacy screen, the anchor-slip handover staging
     //     and the harvest's own statistics guards all read it, and re-pointing them is a
@@ -186,8 +198,19 @@ void networkAmbFloatApplyDrops(
         const auto it = local_carry.find(
             std::make_tuple(sta, parts->satellite, parts->signal));
         if (it == local_carry.end()) continue;      // nothing carried ⇒ nothing to drop
-        if (dropAt(it->second, sta, parts->satellite)) ++n_free;
-        else                                           ++n_idem;
+        const bool acted = dropAt(it->second, sta, parts->satellite);
+        if (acted) ++n_free;
+        else       ++n_idem;
+        // Card PRM phase 3a: a drop that changed the carried prior (the variance moved,
+        // or the idempotent drop decoupled it), by what latched the arc (kReentryBits).
+        // The two rows sum to n_free plus this loop's idempotent decouples.
+        if (acted || last_decoupled_idem) {
+            const auto cz = relevel.free_cause.find({sta, amb_key});
+            const unsigned cbits = (cz == relevel.free_cause.end()) ? 0u : cz->second;
+            const bool reentry = cbits != 0u && (cbits & ~kReentryBits) == 0u;
+            prmRespond(counters.prm_resp, reentry ? ResponseSite::AmbDropLatchReentry
+                                                  : ResponseSite::AmbDropLatchSlip);
+        }
         note(it->first, it->second, AmbDropCause::kReLevelFree);
     }
     // (2) The gap cliff.  An arc present this epoch whose sighting gap already exceeds the
@@ -201,8 +224,13 @@ void networkAmbFloatApplyDrops(
     for (auto it = local_carry.begin(); it != local_carry.end(); ++it) {
         const double gap = pl_now_s - it->second.last_seen_s;
         if (!(gap > max_gap_s)) continue;
-        if (dropAt(it->second, std::get<0>(it->first), std::get<1>(it->first))) ++n_stale;
-        else                                                                    ++n_idem;
+        const bool acted =
+            dropAt(it->second, std::get<0>(it->first), std::get<1>(it->first));
+        if (acted) ++n_stale;
+        else       ++n_idem;
+        // Card PRM phase 3a: a drop that changed the carried prior (as in loop (1)).
+        if (acted || last_decoupled_idem)
+            prmRespond(counters.prm_resp, ResponseSite::AmbDropStaleGap);
         note(it->first, it->second, AmbDropCause::kStaleGap);
     }
 

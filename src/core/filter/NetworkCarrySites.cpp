@@ -295,7 +295,10 @@ long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
         if (counts) ++counts->visited[i];
         if (visit(r)) {
             ++moved;
-            if (counts) ++counts->moved[i];
+            if (counts) {
+                ++counts->moved[i];
+                if (r.site == S::PrevCarry) ++counts->moved_border[static_cast<int>(r.kind)];
+            }
         }
     };
     if (on(S::PrevCarry))

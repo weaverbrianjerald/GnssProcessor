@@ -13,6 +13,7 @@
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkCoupling.hpp"
+#include "filter/NetworkResponses.hpp"   // prmRespond / ResponseSite (card PRM phase 3a)
 #include "filter/StateKeySchema.hpp"
 #include "common/PppUtils.hpp"
 #include "logging/LogManager.hpp"
@@ -841,11 +842,13 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 } else {
                     const int idx =
                         static_cast<int>(std::stoul(v.substr(1)));
-                    if (!k)
+                    if (!k) {
                         // Unknown frame step: the carried δ̂_{r,σ}
                         // belongs to an unrecoverable retired frame.
-                        rpb_carry.erase({idx, rpb_key});
-                    else if (s != 0.0) {
+                        // Card PRM phase 3a: counted only when an entry was erased.
+                        if (rpb_carry.erase({idx, rpb_key}) != 0)
+                            prmRespond(ctx.counters.prm_resp, ResponseSite::RpbEq34Erase);
+                    } else if (s != 0.0) {
                         shift_rxg[std::make_tuple(idx, grp_cons,
                                                   grp_sig)] = s;
                         shift_rpb[{idx, rpb_key}] = s;
@@ -889,6 +892,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 it = local_carry.erase(it);
                 ++n_erased;
                 ++ctx.counters.n_cr_eq34_reref;   // carry-retirement census: frame step
+                prmRespond(ctx.counters.prm_resp, ResponseSite::AmbEq34Erase);   // card PRM phase 3a
             } else {
                 ++it;
             }

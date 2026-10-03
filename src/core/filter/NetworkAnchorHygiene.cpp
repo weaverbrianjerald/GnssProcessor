@@ -9,6 +9,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
+#include "filter/NetworkResponses.hpp"   // prmRespond / ResponseSite (card PRM phase 3a)
 #include "filter/StateKeySchema.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"   // GnssTime (event stamps)
@@ -224,7 +225,10 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
         if (was_bridged) {
             const char* drop = nullptr;
             if (slipped_any)            { drop = "slip";  ++ctr.hyg.bridge_drop_slip; }
-            else if (datum_retired)     { drop = "datum"; ++ctr.hyg.bridge_drop_datum; }
+            else if (datum_retired)     { drop = "datum"; ++ctr.hyg.bridge_drop_datum;
+                                          // Card PRM phase 3a: the bridge erased below.
+                                          prmRespond(ctr.prm_resp,
+                                                     ResponseSite::PbPinBridgeDiscard); }
             else if (br->second.folds >= bridge_max)
                                         { drop = "stale"; ++ctr.hyg.bridge_drop_stale; }
             else if (eligible_exists && min_arc_ep > 0)

@@ -1035,6 +1035,10 @@ int networkTeardown(
                   "(retirement census family [C], the same one-solve refloat the T4 attribution "
                   "erase performs — the arc stays tracked and the next harvest re-stashes it).",
                   ctx.counters.n_cr_gross_los);
+        if (ctx.knobs.amb_float_kf)
+            log->info("Network (gross-LOS screen): on the float vehicle the T4 attribution "
+                      "drops a carried arc instead of erasing it, so the gross screen's erase is "
+                      "the stronger response of the two (card PRM phase 3a).");
         // --- Per-rule readout (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 B5,
         //     requirement F6; RF-3b).  Every line prints in both states of the sub-knob
         //     it reports on.  The populations a rule targets (B1's short-row count over
@@ -2709,6 +2713,11 @@ int networkTeardown(
                   config_.networkRaimAttribution() ? "ARMED" : "off",
                   C.n_cr_eq34_reref, C.n_cr_phase_datum_reref,
                   slip_qc.counters.datum_slip_carry_erases, C.n_wh_free_erases);
+        if (ctx.knobs.amb_float_kf)
+            log->info("Network (leveling-carry retirement census) [C]: on the float vehicle "
+                      "the T4 and T3 responses are bounded drops (value kept, variance back to "
+                      "birth strength, regression cleared), not erases; the counts above are "
+                      "drops (card PRM phase 3a, the response table).");
     }
 
     // ---- Phase wind-up census (estimation.trace_windup_census) -------------
@@ -6347,7 +6356,7 @@ int networkTeardown(
             std::string moved, jm;
             for (int m = 0; m < kCarryMechanisms; ++m) {
                 const auto mech = static_cast<CarryMechanism>(m);
-                const long long n = C.prm_ref_moved[i][m];
+                const long long n = C.prm_ref_moved.site[i][m];
                 if (carryMechanismSite(mech, sp.site).moves || n > 0)
                     moved += fmt::format("{}{} {}", moved.empty() ? "" : ", ",
                                          carryMechanismName(mech), n);
@@ -6383,6 +6392,110 @@ int networkTeardown(
         }
         js += "]}";
         traces.appendRunManifestRecord(config_.getNetworkConfig(), js);
+    }
+    // Card PRM phase 3a (section 4.5): the responses of the carried instances over the run,
+    // one row per declared site (kind, event, policy) with its count; the Stransform
+    // responses of the datum mechanisms, from the traversal's moved values per kind; the
+    // free-epoch latch per cause (card RF-1 section 1.5's untraced latches); and the
+    // declaration check: a site that responded on a run where it is not declared armed.  The
+    // same rows go to the run manifest as a `param_responses` record.
+    {
+        const auto& C = ctx.counters;
+        long long n_undeclared = 0, n_armed = 0, n_quiet = 0;
+        std::string jr;
+        for (int i = 0; i < kResponseSites; ++i) {
+            const auto site = static_cast<ResponseSite>(i);
+            const ResponseSiteSpec& rs = responseSiteSpec(site);
+            const bool armed = responseSiteArmed(site, ctx.knobs, config_);
+            const long long n = responseSiteCount(C, site);
+            n_armed += armed ? 1 : 0;
+            jr += fmt::format("{}{{\"site\":\"{}\",\"kind\":\"{}\",\"event\":\"{}\","
+                              "\"policy\":\"{}\",\"armed\":{},\"count\":{}}}",
+                              jr.empty() ? "" : ",", rs.name, paramKindName(rs.kind),
+                              paramEventName(rs.event), responsePolicyName(rs.policy),
+                              armed ? "true" : "false", n);
+            if (!armed && n == 0) { ++n_quiet; continue; }
+            log->info("Network (param responses, run end): {} {} -> {} at {}: {} {} ({}; {}).",
+                      paramKindName(rs.kind), paramEventName(rs.event),
+                      responsePolicyName(rs.policy), rs.name, n, rs.unit,
+                      armed ? "armed" : "NOT ARMED", rs.where);
+            if (!armed && n > 0) {
+                ++n_undeclared;
+                log->warn("Network (param responses, run end): site {} responded {} time(s) on a "
+                          "run where it is not declared armed (filter/NetworkResponses.cpp "
+                          "responseSiteArmed): the declaration is wrong.", rs.name, n);
+            }
+        }
+        std::string jm;
+        for (int m = 0; m < kCarryMechanisms; ++m) {
+            const auto mech = static_cast<CarryMechanism>(m);
+            const bool armed = carryMechanismArmed(mech, ctx.knobs, config_);
+            std::string moved;
+            long long total = 0;
+            for (int b = 0; b < 4; ++b) {
+                const long long n = C.prm_ref_moved.border[b][m];
+                if (n == 0 && !(armed && (carryMechanismBorderKinds(mech, ctx.knobs) >> b & 1u)))
+                    continue;
+                moved += fmt::format("{}{} {}", moved.empty() ? "" : ", ",
+                                     paramKindName(paramKindOf(static_cast<SharedParamKind>(b))), n);
+                total += n;
+            }
+            for (int s = 0; s < kCarrySites; ++s) {
+                NetworkParamKind lk;
+                if (!carrySiteLocalKind(static_cast<CarrySite>(s), lk)) continue;
+                const long long n = C.prm_ref_moved.site[s][m];
+                if (n == 0 && !(armed && carryMechanismSite(mech, static_cast<CarrySite>(s)).moves))
+                    continue;
+                moved += fmt::format("{}{} ({}) {}", moved.empty() ? "" : ", ", paramKindName(lk),
+                                     carrySiteSpec(static_cast<CarrySite>(s)).name, n);
+                total += n;
+            }
+            jm += fmt::format("{}{{\"mechanism\":\"{}\",\"armed\":{},\"calls\":{},\"values\":{}}}",
+                              m ? "," : "", carryMechanismName(mech), armed ? "true" : "false",
+                              C.prm_ref_calls[m], total);
+            if (!armed && total == 0 && C.prm_ref_calls[m] == 0) continue;
+            log->info("Network (param responses, run end): handover -> stransform by {}: {} "
+                      "call(s), carried values moved: {} ({}).",
+                      carryMechanismName(mech), C.prm_ref_calls[m],
+                      moved.empty() ? std::string("none") : moved,
+                      armed ? "armed" : "NOT ARMED");
+            if (!armed && (total > 0 || C.prm_ref_calls[m] > 0)) {
+                ++n_undeclared;
+                log->warn("Network (param responses, run end): mechanism {} ran on a run where "
+                          "it is not declared armed (carryMechanismArmed): the declaration is "
+                          "wrong.", carryMechanismName(mech));
+            }
+        }
+        std::string latch, jl;
+        for (int c = 0; c < kLatchCauses; ++c) {
+            jl += fmt::format("{}{{\"cause\":\"{}\",\"keys\":{},\"carried\":{}}}", c ? "," : "",
+                              latchCauseName(c), C.prm_latch_keys[c], C.prm_latch_carried[c]);
+            if (C.prm_latch_keys[c] == 0) continue;
+            latch += fmt::format("{}{} {} ({} carried)", latch.empty() ? "" : ", ",
+                                 latchCauseName(c), C.prm_latch_keys[c], C.prm_latch_carried[c]);
+        }
+        log->info("Network (param responses, run end): free-epoch latch over {} epoch(s): {} "
+                  "(station, ambiguity) key-epoch(s) latched, {} holding a carried entry at the "
+                  "response, {} with more than one cause; by cause: {}.",
+                  C.prm_latch_epochs, C.prm_latch_unique, C.prm_latch_unique_carried,
+                  C.prm_latch_multi, latch.empty() ? std::string("none") : latch);
+        if (C.prm_resp[static_cast<int>(ResponseSite::AmbDropStaleGap)] > 0)
+            log->info("Network (param responses, run end): {} stale-gap drop(s) changed a "
+                      "prior; {} arc(s) dropped in an epoch (any outcome) were erased by the gap "
+                      "prune in the same epoch (absent arcs: the drop preceded the erase).",
+                      C.prm_resp[static_cast<int>(ResponseSite::AmbDropStaleGap)],
+                      C.prm_pruned_after_drop);
+        log->info("Network (param responses, run end): {} of {} declared site(s) armed on this "
+                  "run, {} not armed and quiet; {} declaration error(s).",
+                  n_armed, kResponseSites, n_quiet, n_undeclared);
+        traces.appendRunManifestRecord(
+            config_.getNetworkConfig(),
+            fmt::format("{{\"record\":\"param_responses\",\"sites\":[{}],\"mechanisms\":[{}],"
+                        "\"latch\":{{\"epochs\":{},\"unique\":{},\"carried\":{},\"multi\":{},"
+                        "\"causes\":[{}]}},\"pruned_after_drop\":{},\"declaration_errors\":{}}}",
+                        jr, jm, C.prm_latch_epochs, C.prm_latch_unique,
+                        C.prm_latch_unique_carried, C.prm_latch_multi, jl,
+                        C.prm_pruned_after_drop, n_undeclared));
     }
     // Card LGM: the phase-colour state's edges (invariant #4: the run-end counters are the
     // ON-path telemetry).

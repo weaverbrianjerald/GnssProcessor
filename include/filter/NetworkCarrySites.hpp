@@ -223,6 +223,17 @@ using CarryRefVisitor = std::function<bool(const CarriedRef&)>;
 struct CarrySiteCounts {
     long long visited[kCarrySites]{};   ///< references handed to the visitor
     long long moved[kCarrySites]{};     ///< references the visitor reported moved
+    long long moved_border[4]{};        ///< of the @c PrevCarry moves, per @c SharedParamKind (card PRM phase 3a)
+};
+
+/**
+ * @brief The run-scope moved tallies: per [site][mechanism], and the @c PrevCarry moves per
+ *        [@c SharedParamKind][mechanism] (the Stransform responses of the border kinds,
+ *        card PRM phase 3a).
+ */
+struct CarryMovedTally {
+    long long site[kCarrySites][kCarryMechanisms]{};
+    long long border[4][kCarryMechanisms]{};
 };
 
 /**
@@ -246,10 +257,10 @@ long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
                                   const CarryRefVisitor& visit,
                                   CarrySiteCounts* counts = nullptr);
 
-/// Add one walk's moved tallies to a run-scope [site][mechanism] table.
-inline void carryTallyMoved(long long (&moved)[kCarrySites][kCarryMechanisms],
-                            CarryMechanism m, const CarrySiteCounts& c) {
-    for (int i = 0; i < kCarrySites; ++i) moved[i][static_cast<int>(m)] += c.moved[i];
+/// Add one walk's moved tallies to the run-scope table.
+inline void carryTallyMoved(CarryMovedTally& moved, CarryMechanism m, const CarrySiteCounts& c) {
+    for (int i = 0; i < kCarrySites; ++i) moved.site[i][static_cast<int>(m)] += c.moved[i];
+    for (int k = 0; k < 4; ++k) moved.border[k][static_cast<int>(m)] += c.moved_border[k];
 }
 
 /**

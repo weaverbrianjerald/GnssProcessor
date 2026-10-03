@@ -641,6 +641,9 @@ int Application::runNetwork() {
     // never read by the solve.
     for (const auto& line : ctx.params.modelTable())
         log->info("Network (param model): {}", line);
+    // Card PRM phase 3a: each kind's armed response policies per event.
+    for (const auto& line : ctx.params.responseTable())
+        log->info("Network (param responses): {}", line);
     traces.appendRunManifestRecord(nc, ctx.params.modelJson());
     auto& prev_tow = ctx.counters.prev_tow;
     auto& prev_week = ctx.counters.prev_week;
@@ -2299,6 +2302,8 @@ int Application::runNetwork() {
                     }
                     ctx.carry.pa_reref_erase_total += n_erased;
                     ctx.counters.n_cr_phase_datum_reref += n_erased;   // retirement census: frame step
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::AmbAnchorRerefErase,
+                               n_erased);   // card PRM phase 3a
                     log->debug("Network[1(d)]: {} marked (sat,signal) family(ies) "
                                "marginalized ({} new this election); {} phase-"
                                "leveling local carry(ies) erased — refloat next "
@@ -2431,6 +2436,8 @@ int Application::runNetwork() {
                     for (const auto& mo : modeled[mi])
                         amb_elev_of[mi][mo.satellite] = mo.elevation;
             }
+            // Card PRM phase 3a: the latch per cause, before the response reads it.
+            networkResponseLatchTally(ctx);
             networkAmbFloatApplyDrops(ctx, config_, log, stations, amb_elev_of,
                                       se.time.week, se.time.tow, pl_now_s);
         }

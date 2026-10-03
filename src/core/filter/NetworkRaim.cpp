@@ -1002,10 +1002,20 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                         (now_s - streak.first <= 120.0) ? streak.second + 1 : 1;
                                     streak.first = now_s;
                                     if (streak.second < retap_streak_max) {
+                                        // Card PRM phase 3a: whether the retap changes the
+                                        // entry (raises its variance or clears a regression);
+                                        // a pure read before the assignments, so an
+                                        // idempotent second visit is not counted.
+                                        const bool retap_moves =
+                                            it->second.var < retap_var
+                                            || !it->second.coupling.empty();
                                         it->second.var = std::max(it->second.var, retap_var);
                                         it->second.coupling.clear();
                                         ctx.carry.relevel_retapped_prev.insert(key);
                                         ++ctx.counters.n_relevel_retap_kept;
+                                        if (retap_moves)
+                                            prmRespond(ctx.counters.prm_resp,
+                                                       ResponseSite::AmbRaimRetap);
                                         if (retap_corr)
                                             ++ctx.counters.n_relevel_retap_corr_kept;
                                         ++n;
@@ -1080,6 +1090,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                         ++ctx.counters.n_amb_drop_floored;
                                     if (amb_drop_pre_gate_)
                                         ++ctx.counters.n_amb_drop_pre_gate;
+                                    // Card PRM phase 3a: a drop that changed the prior (its
+                                    // variance moved, or the idempotent branch cleared the
+                                    // regression and the block row); a re-drop that changed
+                                    // nothing is not a response of this site.
+                                    if (o_t4.acted || o_t4.decoupled_idem)
+                                        prmRespond(ctx.counters.prm_resp,
+                                                   ResponseSite::AmbRaimDrop);
                                     ambStateNoteDrop(ctx, se.time.week, se.time.tow,
                                                      stations[i].name, pa.sat, pa.signal,
                                                      lane_lit->second,
@@ -1091,6 +1108,8 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                                   stations[i].name, pa.sat, pa.signal,
                                                   lane_lit->second, "t4_attrib");
                                 local_carry.erase(lane_lit);
+                                prmRespond(ctx.counters.prm_resp,
+                                           ResponseSite::AmbRaimErase);   // card PRM phase 3a
                                 }
                                 ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 attribution refloat
                             }
@@ -1103,8 +1122,11 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         // kept by the retap above never reaches this line (kept level,
                         // kept iono carry).
                         if (inj_iono && ctx.knobs.iono_on &&
-                            ctx.carry.iono_carry.erase({i, pa.sat}))
+                            ctx.carry.iono_carry.erase({i, pa.sat})) {
                             ++ctx.counters.n_iono_carry_erased_t4;
+                            prmRespond(ctx.counters.prm_resp,
+                                       ResponseSite::IonoRaimErase);   // card PRM phase 3a
+                        }
                         // Iono in the carried block (network.carry_iono_in_block,
                         // I-in-block): the same edge for the in-block vehicle, and its
                         // wired response under invariant #1.  The T4 statistic reads level
@@ -1115,14 +1137,20 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         // Separate map and counter: the two carries are mutually exclusive
                         // vehicles, so a run's erase count is never split across them.
                         if (ctx.knobs.iono_blk &&
-                            ctx.carry.iono_blk_carry.erase({i, pa.sat}))
+                            ctx.carry.iono_blk_carry.erase({i, pa.sat})) {
                             ++ctx.counters.n_iono_blk_erased_t4;
+                            prmRespond(ctx.counters.prm_resp,
+                                       ResponseSite::IonoRaimErase);   // card PRM phase 3a
+                        }
                         // Card LGM: the line of sight's phase-colour entry with them.  The
                         // T4 statistic reads its error in the same sum, so a level that is
                         // no longer trusted cannot vouch for it either; it re-starts from
                         // its birth prior next epoch.
-                        if (ctx.knobs.pc_on && ctx.carry.pc_carry.erase({i, pa.sat}))
+                        if (ctx.knobs.pc_on && ctx.carry.pc_carry.erase({i, pa.sat})) {
                             ++ctx.counters.n_pc_erase_raim;
+                            prmRespond(ctx.counters.prm_resp,
+                                       ResponseSite::PcRaimErase);   // card PRM phase 3a
+                        }
                         // The receiver clock in the carried block (RX-CLK-in-block) has no
                         // T4 edge here, by a triaged decision rather than an omission.
                         // Invariant #1 requires a wired event response for every stiff
@@ -1303,6 +1331,11 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                     ++ctx.counters.n_amb_drop_floored;
                                 if (amb_drop_pre_gate_)
                                     ++ctx.counters.n_amb_drop_pre_gate;
+                                // Card PRM phase 3a: a drop that changed the prior; see
+                                // the attribution site.
+                                if (o_t3.acted || o_t3.decoupled_idem)
+                                    prmRespond(ctx.counters.prm_resp,
+                                               ResponseSite::AmbRaimDrop);
                                 ambStateNoteDrop(ctx, se.time.week, se.time.tow,
                                                  stations[i].name, pa.sat, pa.signal,
                                                  lane_lit->second,
@@ -1314,6 +1347,8 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                               stations[i].name, pa.sat, pa.signal,
                                               lane_lit->second, "t3_consensus");
                             local_carry.erase(lane_lit);
+                            prmRespond(ctx.counters.prm_resp,
+                                       ResponseSite::AmbRaimErase);   // card PRM phase 3a
                             }
                             ++ctx.counters.n_cr_raim_consensus;   // census (C): T3 consensus refloat
                         }

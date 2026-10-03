@@ -1685,6 +1685,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 st.last_var_eff = ca.last_var_eff;
                                 st.in_band      = ca.in_band;
                                 st.anchored     = ca.anchored;
+                                st.ever_anchored = ca.anchored;   // card PRM phase 3a, measure-only
                                 ctx.carry.clk_anchor.sat[sat] = st;
                                 ++ctx.counters.n_resume_frame_cta;
                                 if (ca.anchored) ++ctx.counters.n_resume_frame_cta_anchored;
@@ -3380,6 +3381,14 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 if (cp.kind == SharedParamKind::VtecSh)
                     sh_carry.emplace(
                         std::make_tuple(cp.sh_layer, cp.sh_n, cp.sh_m, cp.sh_trig), &cp);
+        // Card PRM phase 3a: the carried SH entries this datum change leaves unfolded this
+        // epoch (key-epochs; a skipped epoch keeps them for the next).
+        if (datum_changed) {
+            long long prm_n_sh = 0;
+            for (const CarryPrior& cp : prev_carry)
+                if (cp.kind == SharedParamKind::VtecSh) ++prm_n_sh;
+            prmRespond(ctx.counters.prm_resp, ResponseSite::ShRetire, prm_n_sh);
+        }
 
         // Dual-layer (Iono-2): the same mean-reverting prior recipe per shell, with a
         // per-layer Kaula scale, q and a₀₀ anchor.  The layer-2 a₀₀ anchor is tight on
@@ -3652,12 +3661,22 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         ctx.carry.readmit_seed_check.clear();
         if (datum_changed) {
             const auto before = prev_carry.size();
+            const auto parked_retired = [&](const CarryPrior& cp) {
+                return cp.t_park_s > 0.0
+                    && handover_affects(cp.sat)
+                    && !sts_released(cp.sat);
+            };
+            // Card PRM phase 3a: the parked entries the drop below removes, per kind (the
+            // same pure predicate, read-only, ahead of the erase).
+            for (const CarryPrior& cp : prev_carry) {
+                if (!parked_retired(cp)) continue;
+                if (cp.kind == SharedParamKind::Clock)
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::ClkParkDiscardDatum);
+                else if (cp.kind == SharedParamKind::CodeBias)
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::CbParkDiscardDatum);
+            }
             prev_carry.erase(std::remove_if(prev_carry.begin(), prev_carry.end(),
-                                            [&](const CarryPrior& cp) {
-                                                return cp.t_park_s > 0.0
-                                                    && handover_affects(cp.sat)
-                                                    && !sts_released(cp.sat);
-                                            }),
+                                            parked_retired),
                              prev_carry.end());
             ctx.counters.n_readmit_dropped_datum +=
                 static_cast<long long>(before - prev_carry.size());
@@ -5593,6 +5612,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (pl_now_s - it->second.last_seen_s > ctx.knobs.pc_max_gap_s) {
                     it = ctx.carry.pc_carry.erase(it);
                     ++ctx.counters.n_pc_gap_prune;
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::PcGapPrune);   // card PRM phase 3a
                 } else {
                     ++it;
                 }
@@ -5631,6 +5651,14 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     // stays empty and nothing reads it.
                     if (ctx.roster.armed)
                         ctx.carry.sid_carry_prune_deaths.push_back(it->first);
+                    // Card PRM phase 3a: an arc the float vehicle's drop already dropped
+                    // this epoch (networkAmbFloatApplyDrops stamps dropped_ep with this
+                    // epoch's n_loop_epochs before PASS B; this harvest runs later in the
+                    // same epoch, and the counter does not move in between).
+                    if (it->second.dropped_ep > 0
+                        && it->second.dropped_ep
+                               == static_cast<long long>(ctx.counters.n_loop_epochs))
+                        ++ctx.counters.prm_pruned_after_drop;
                     it = local_carry.erase(it);
                     ++n_pruned;
                 } else {
@@ -5639,6 +5667,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             }
             if (n_pruned > 0) {
                 ctx.counters.n_cr_gap_prune += n_pruned;
+                prmRespond(ctx.counters.prm_resp, ResponseSite::AmbGapPrune, n_pruned);   // card PRM phase 3a
                 ++ctx.counters.n_cr_gap_prune_epochs;
                 if (n_pruned > ctx.counters.n_cr_gap_prune_max) {
                     ctx.counters.n_cr_gap_prune_max       = n_pruned;
@@ -5753,6 +5782,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (pl_now_s - it->second.last_seen_s > iono_blk_gap_s) {
                     it = iono_blk_carry.erase(it);
                     ++ctx.counters.n_iono_blk_gap_drop;
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);   // card PRM phase 3a
                 } else ++it;
             }
         }
@@ -5877,9 +5907,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                     // sighting is a cold rebirth whose rate prior is
                                     // uninformative again, so the two epochs after a jump
                                     // inject a nearly free prior rather than a stale one.
-                                    rx_clk_carry.erase(key);
+                                    const std::size_t prm_n_clk = rx_clk_carry.erase(key);
                                     rx_clk_rate.erase(key);
                                     ++ctx.counters.n_rxclk_carry_refused;
+                                    // Card PRM phase 3a: the carried clock the jump erased.
+                                    prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkJumpErase,
+                                               static_cast<long long>(prm_n_clk));
                                     continue;
                                 }
                                 // Scalar Kalman update of the drift from this increment.
@@ -5944,6 +5977,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     rx_clk_rate.erase(it->first);
                     it = rx_clk_carry.erase(it);
                     ++ctx.counters.n_rxclk_carry_gap_drop;
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapPrune);   // card PRM phase 3a
                 } else ++it;
             }
             ctx.carry.rxclk_prev_now_s = pl_now_s;
@@ -6001,6 +6035,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                     > 10.0 * std::sqrt(sv)) {
                                     rx_cb_carry.erase(sit);
                                     ++ctx.counters.n_rxcb_blk_step_reset;
+                                    prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbStepErase);   // card PRM phase 3a
                                     continue;
                                 }
                             }
@@ -6183,6 +6218,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (pl_now_s - it->second.last_seen_s > pl_max_gap_s) {
                     it = zwd_carry.erase(it);
                     ++ctx.counters.n_cr_zwd_gap_prune;   // same predicate, same census
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapPrune);   // card PRM phase 3a
                 }
                 else ++it;
             }
@@ -6253,6 +6289,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (pl_now_s - it->second.last_seen_s > pl_max_gap_s) {
                     it = rpb_carry.erase(it);
                     ++ctx.counters.n_cr_rpb_gap_prune;   // same predicate, same census
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);   // card PRM phase 3a
                 } else ++it;
             }
         }
@@ -6339,6 +6376,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (pl_now_s - it->second.last_seen_s > iono_max_gap_s) {
                     it = iono_carry.erase(it);
                     ++ctx.counters.n_iono_carry_evicted;
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);   // card PRM phase 3a
                 } else ++it;
             }
         }
@@ -6546,14 +6584,18 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 ctx.carry.lv4_max_scale_m =
                     std::max(ctx.carry.lv4_max_scale_m, sc->second.sigma);
                 if (!sv.jumped) continue;
-                rx_cb_carry.erase({p.station, p.key});
+                const std::size_t prm_n_cb = rx_cb_carry.erase({p.station, p.key});
                 ++ctx.carry.lv4_step_resets;
+                // Card PRM phase 3a: the carried receiver code bias the step gate erased.
+                prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbPeerStepErase,
+                           static_cast<long long>(prm_n_cb));
             }
         }
         for (auto it = rx_cb_carry.begin(); it != rx_cb_carry.end();) {
-            if (pl_now_s - it->second.last_seen_s > kRxCbMaxGapS)
+            if (pl_now_s - it->second.last_seen_s > kRxCbMaxGapS) {
                 it = rx_cb_carry.erase(it);
-            else ++it;
+                prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapPrune);   // card PRM phase 3a
+            } else ++it;
         }
         // --- S-consistent harvest (card S2H; serial, all stations) --------------
         // docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1.  Runs after the
@@ -7189,8 +7231,24 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                     // Already parked.  Column back but not re-stashed (skip-stash,
                     // pinned, non-finite) ⇒ the memory is dropped with the skip; past the
                     // horizon ⇒ drop.
-                    if (present) { ++ctx.counters.n_readmit_dropped_stale; continue; }
-                    if (now_s - oc.t_park_s > readmit_h) { ++ctx.counters.n_readmit_expired; continue; }
+                    // Card PRM phase 3a: each drop counted per kind of the parked entry
+                    // (a Clock, or a CodeBias under readmit_seed_cb: the filter above).
+                    if (present) {
+                        ++ctx.counters.n_readmit_dropped_stale;
+                        prmRespond(ctx.counters.prm_resp,
+                                   oc.kind == SharedParamKind::Clock
+                                       ? ResponseSite::ClkParkDiscard
+                                       : ResponseSite::CbParkDiscard);
+                        continue;
+                    }
+                    if (now_s - oc.t_park_s > readmit_h) {
+                        ++ctx.counters.n_readmit_expired;
+                        prmRespond(ctx.counters.prm_resp,
+                                   oc.kind == SharedParamKind::Clock
+                                       ? ResponseSite::ClkParkExpire
+                                       : ResponseSite::CbParkExpire);
+                        continue;
+                    }
                     prev_carry.push_back(oc);
                     continue;
                 }
@@ -7204,6 +7262,9 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 cp.inflate_q = false;
                 prev_carry.push_back(std::move(cp));
                 ++ctx.counters.n_readmit_parked;
+                prmRespond(ctx.counters.prm_resp,   // card PRM phase 3a, per kind
+                           oc.kind == SharedParamKind::Clock ? ResponseSite::ClkPark
+                                                             : ResponseSite::CbPark);
                 ++parked_now[oc.sat];
             }
             for (const auto& [sat, n] : parked_now) {

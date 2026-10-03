@@ -1,0 +1,79 @@
+# PRM3: card PRM phase 3, the responses of the carried parameters (phase 3a: declared and counted)
+
+**STATUS**
+
+- **id:** PRM3
+- **topic:** network-vehicle
+- **status:** open
+- **summary:** Phase 3a of card PRM (section 8): every site at which a carried instance responds to an event is declared once (kind, event, policy, code site, count source, arming condition), counted, and written at the run end with a declaration check; the registry's descriptor gains the armed policies per event. Byte-identical on all 16 harness arms; 0 declaration errors. Phase 3b (one implementation per policy, behind default-off knobs) is open. Continues [PRM](PRM_parameter_registry_2026-09-29.md) in its own file (the card is near the 60 KB bar).
+- **source:** [PRM](PRM_parameter_registry_2026-09-29.md) sections 4.5 and 8; [RF-1 design](RF-1_float_ambiguities_design.md) section 1.5
+- **knobs / posture:** none; trace class (run-start and run-end log lines, manifest records `param_model.on` and `param_responses`)
+- **hashes / run dirs:** exe `gnss_processor_prm3a.exe` `0e815e61c291ec6b`; tags `p3ah6` (6 h goldens), `p3a` (program, scalar, diag, 2 h), `p3ax` (clv, eq34, dho, 1 h), `p3axr` (relevel, 2.1 h) under `runs/_rap_prm_*`
+- **dates in the text:** 2026-10-02
+
+## 1. The build
+
+`include/filter/NetworkResponses.hpp` declares 69 response sites (`ResponseSite`), one row per (kind,
+event, policy, code site): the event (`ParamEvent`: slip, gap, handover, decouple, readmit), the
+policy (`ResponsePolicy`, 18 values, in `filter/NetworkParamRegistry.hpp`), the unit of a count, and
+its source (an increment at the site into `prm_resp`, or the fold's disposition tally of phase 1b).
+`responseSiteArmed` states when each site can act on a run, from the knob snapshot and the
+configuration. The datum mechanisms of phase 2 are the Stransform responses, counted from the
+traversal's moved values per kind (`CarryMovedTally`, now with the border kinds). The registry
+builds `ParamSpec::on` (armed policies per event) from the table; it is printed at run start
+(`Network (param responses)`) and written into `param_model`. The run end writes each armed or
+responding row with its count, the Stransform rows, the free-epoch latch per cause
+(`networkResponseLatchTally`, before the response reads the latch), and the check: a site that
+responded on a run where it is not declared armed is a declaration error.
+
+The sites were found by an inventory of the code (six readers, two critics), placed in two rounds,
+each reviewed for behaviour changes, races and miscounts. Excluded by design (stated in the header):
+the q rule's time update, numerical guards on a non-positive or non-finite prior, the coupling terms'
+re-attribution (card CTU's line), and marks that only re-seed a linearization point.
+
+## 2. RF-1 section 1.5 on the float vehicle
+
+The four ambiguity reset paths, read again on the goldens (6 h field):
+
+| path | on the float vehicle | rows, field 6 h |
+| --- | --- | --- |
+| pending-reseed | still dead: PASS B's measurement pre-pass consumes the mark, which only re-seeds x_lin (a solve no-op) | `amb_pending_reseed_skip` 0 |
+| free-epoch latch | ends in a Drop (the serial drop pass); the inject then folds the arc at birth strength, so the old "inject-site skips" counter counts folds | `amb_drop_latch_slip` 306, `amb_drop_latch_reentry` 130 |
+| T4 / T3 | a Drop, not an erase; T3 is unreachable while the attribution acts | `amb_raim_drop` 48 |
+| gap cliff | the stale-gap drop; every such arc on the goldens was absent and erased by the prune in the same epoch, so the drop is a no-op ahead of the erase | `amb_drop_stale_gap` 1248, `amb_gap_prune` 1251 |
+
+The latch, now traced per cause: 480 latched key-epochs over 190 epochs, 446 with a carried entry,
+132 with more than one cause; by cause MW 26, LLI 261, IF-TD 129, wind-up 52, gap re-entry 144. The
+other responses on the field: the anchor re-reference erased 138 arcs, the gross screen 5; the clock
+anchor 33 decouples and 32 re-couplings; READMIT parked and seeded 4 clocks and 16 code biases; 23
+phase-bias re-references; one handover S-transform of 31 clocks. Sim 6 h: 10 latch drops, 1302
+stale-gap drops and prunes, 203 re-reference erases, 30 re-couplings.
+
+Declared on the goldens: the ambiguity drops on a slip and erases on a handover and a gross
+declaration; the satellite clock is marginalized and parked across a gap, seeded on return,
+loosened and re-coupled by the anchor, S-transformed or retired at a handover; the receiver code bias
+is erased on a step and skipped and pruned on a gap; the wet delay, ionosphere, receiver clock,
+receiver phase bias and phase colour declare nothing (not carried).
+
+## 3. The gate
+
+`prm_ab.py cmp --all-csv`: `b0h6`/`p3ah6`, `b0`/`p3a`, `x0`/`p3ax`, `x0r`/`p3axr` all IDENTICAL. The
+run end of every arm reports 0 declaration errors (31 to 35 of 69 sites armed). Unit suite 2781
+passed, 1 fixture-gated skip; suite `ParamResponses` (7 cases: the table, the registry's masks, the
+goldens' declared posture, the Stransform declaration, the per-kind traversal tally, the latch tally,
+the count sources). Two run-end lines that described T4 as an erase now state the drop on the float
+vehicle.
+
+## 4. Found by the read, not changed (owed to phase 3b or their own cards)
+
+- The stale-gap drop of absent arcs is a counted no-op before the prune.
+- `relevel_free_marked` counts attempts (two admitted MW candidates per satellite); the latch tally
+  counts keys.
+- An idempotent drop under `amb_float_drop_decouple_always` changes the instance (regression and
+  block row cleared); the drop rows now count it.
+- The Q3 anchor commits its fold state before the solve; a failed solve skips the guard and loses
+  the gap decouple edge (rare path).
+- Uncounted: the extra-band hold's return response, the oscillator's finite-screen re-seed, the
+  re-couplings of a satellite restored LOOSE after a warm resume (the snapshot does not carry the
+  history bit). The declaration review of the 69 arming conditions was stopped before it finished;
+  the run-time check covers the 16 harness postures only.
