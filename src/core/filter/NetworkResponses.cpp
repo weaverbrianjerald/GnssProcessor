@@ -25,7 +25,9 @@ using Src = ResponseCountSource;
 constexpr int kNoDisp = -1;
 constexpr int dispOf(CarryDisposition d) { return static_cast<int>(d); }
 
-/// The table, in @ref ResponseSite order (checked at first use and by the unit test).
+/// The table, in @ref ResponseSite order (checked by the unit test).  The PASS B skip rows
+/// (free epoch, gap skip, the jump skip) count the refusals of the fold offered to a solve,
+/// including an epoch the A4 ceiling later withholds.
 const std::array<ResponseSiteSpec, kResponseSites> kTable{{
     // --- Ambiguity ---------------------------------------------------------------------
     {R::AmbDropLatchSlip, "amb_drop_latch_slip", K::Ambiguity, E::Slip, P::Drop, Src::Increment, kNoDisp,
@@ -222,8 +224,16 @@ const ResponseSiteSpec& responseSiteSpec(ResponseSite s) {
 bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& config) {
     const NetworkConfig& nc = config.getNetworkConfig();
     const bool readmit = k.readmit_seed_horizon_s > 0.0;
-    const bool clockReinit = (k.clk_mon_on || config.networkClockMonitorCoupleRaim())
-                             && k.clk_mon_reinit_sig > 0.0;
+    // inflate_q (a soft reinit) needs a positive reinit sigma and a clock refloat flag: the
+    // clock monitor (its RAIM couple implies it) or the clock model's fault test.  The
+    // clock itself is stashed only off the clock model.
+    const bool reinitSoft = k.clk_mon_reinit_sig > 0.0;
+    const bool reinitFlags = k.clk_mon_on || k.clk_model_on;
+    const bool cbEst = config.estimateNetworkSatCodeBias();
+    const bool clkCarried = !k.clk_model_on;
+    const bool pbCarried = !k.carry_invariant && !k.phase_hold_on;   // not stashed / Held first
+    // A clock-pivot datum change is possible only with a pivot clock datum.
+    const bool pivotDatum = !k.clock_sum_to_zero && !k.clock_brdc_anchored;
     const bool relevelFree = config.networkCycleSlipRelevelFreeEpoch();
     const bool reentry = nc.slip_qc.gap_reentry || config.networkCycleSlipWindupRestartRefloat();
     // The leveling vehicle's local inject (carry_warm implies phase_leveling; the column is
@@ -231,57 +241,69 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
     const bool levelInject = k.pl_on && !k.carry_invariant && !k.amb_float_kf;
     // RAIM's T4 block: entered on the attribution's action, or on an event-harness arc erase
     // in an erase mode (network.inject, arc_erase).
-    bool injectArcErase = false;
+    bool injectArcErase = false, injectFreeEpoch = false;
     if (nc.inject.enable)
-        for (const auto& ev : nc.inject.events)
-            if (ev.kind == "arc_erase" && ev.mode != "free_epoch") injectArcErase = true;
+        for (const auto& ev : nc.inject.events) {
+            if (ev.kind != "arc_erase") continue;
+            if (ev.mode == "free_epoch") injectFreeEpoch = true;
+            else                         injectArcErase = true;
+        }
+    // A latch with a slip-detector cause (MW, LLI, IF-TD) or the harness's free-epoch tag.
+    const bool slipLatch = config.networkCycleSlipMwDetect() || config.networkCycleSlipIfPhaseTd()
+                           || injectFreeEpoch;
+    // local_carry is structurally empty under carry_invariant (the free-ambiguity lineage).
+    const bool ambCarried = k.pl_on && !k.carry_invariant;
     const bool t4 = config.networkRaimAttribution() || injectArcErase;
     switch (s) {
         // The border's fold dispositions (carryFoldDecide and the fold's Retired clause).
-        case R::ClkDeparted:
-        case R::CbDeparted:
-        case R::PbDeparted:  return true;                       // a column can always leave
-        case R::ClkSeed:     return readmit;
-        case R::CbSeed:      return readmit && k.readmit_seed_cb;
+        case R::ClkDeparted: return clkCarried;                 // a column can always leave
+        case R::CbDeparted:  return cbEst;
+        case R::PbDeparted:  return pbCarried;
+        case R::ClkSeed:     return readmit && clkCarried;
+        case R::CbSeed:      return readmit && k.readmit_seed_cb && cbEst;
         // inflate_q: a clock refloat flag (the clock monitor, or RAIM's and the within-epoch
         // replay's satellite culprits under clock_monitor_couple_raim) on all three kinds,
         // stashed soft only with a positive reinit sigma; and the code-bias excursion guard.
-        case R::ClkReinit:
-        case R::PbReinit:    return clockReinit;
-        case R::CbReinit:    return clockReinit || config.getNetworkConfig().cb_excursion_reinit;
-        // The retired-datum clause: a clock-pivot handover in scoped mode whose carry the
-        // S-transform did not re-express.
-        case R::ClkRetire:
-        case R::CbRetire:
-        case R::PbRetire:    return k.scoped_handover;
-        case R::PbReref:     return config.networkPhaseAnchorCarryReref() || k.phase_datum_eq34;
+        case R::ClkReinit:   return k.clk_mon_on && clkCarried && reinitSoft;
+        case R::PbReinit:    return reinitFlags && reinitSoft && pbCarried;
+        case R::CbReinit:
+            return cbEst && ((reinitFlags && reinitSoft) || nc.cb_excursion_reinit);
+        // The retired datum: a clock-pivot handover whose carry the S-transform did not
+        // re-express (scoped mode), or every entry at a handover in legacy (unscoped) mode.
+        case R::ClkRetire:   return pivotDatum && clkCarried;
+        case R::CbRetire:    return pivotDatum && cbEst;
+        case R::PbRetire:    return pivotDatum && pbCarried;
+        case R::PbReref:
+            return pbCarried
+                && ((k.pa_carry_reref && (!k.pd_held_basis || k.pd_held_cold_release))
+                    || (k.phase_datum_eq34 && !k.phase_datum_ensemble));
 
         // --- The ambiguity: the float vehicle's drop, the leveling vehicle's skips.  The
         // latch exists only under relevel_free_epoch (the loader disarms it without
         // phase_leveling and under carry_invariant); float_kf implies phase_leveling.
-        case R::AmbDropLatchSlip:     return k.amb_float_kf && relevelFree;
+        case R::AmbDropLatchSlip:     return k.amb_float_kf && relevelFree && slipLatch;
         case R::AmbDropLatchReentry:  return k.amb_float_kf && relevelFree && reentry;
         case R::AmbDropStaleGap:      return k.amb_float_kf;
-        case R::AmbFreeEpochLatch:    return levelInject && relevelFree;
+        case R::AmbFreeEpochLatch:    return levelInject && relevelFree && slipLatch;
         case R::AmbFreeEpochLatchReentry: return levelInject && relevelFree && reentry;
         case R::AmbPendingReseedSkip: return k.pl_on && !k.carry_invariant;
         case R::AmbT2ReplayFree:
             return k.pl_on && !k.carry_invariant && config.networkRaimWithinEpoch();
         case R::AmbGapSkip:           return levelInject;
-        case R::AmbGapPrune:          return k.pl_on;
+        case R::AmbGapPrune:          return ambCarried;
         case R::AmbRaimDrop:          return k.raim_on && k.pl_on && k.amb_float_kf;
-        case R::AmbRaimErase:         return k.raim_on && k.pl_on && !k.amb_float_kf;
+        case R::AmbRaimErase:         return k.raim_on && ambCarried && !k.amb_float_kf;
         case R::AmbRaimRetap:
             return k.raim_on && k.pl_on && t4 && config.networkCycleSlipRelevelRetapStatistical();
         case R::AmbDatumSlipErase:    return k.datum_station_detect && k.pl_on;   // forced off without mw_detect and under the prioritized datum
-        case R::AmbGrossErase:        return k.gl_on && !k.gl_bound && k.pl_on;
-        case R::AmbGrossHold:         return k.gl_on && k.gl_bound && k.pl_on;
+        case R::AmbGrossErase:        return k.gl_on && !k.gl_bound && ambCarried;
+        case R::AmbGrossHold:         return k.gl_on && k.gl_bound && ambCarried;
         case R::AmbWithholdErase:     return k.wh_free_erase && k.raim_withhold > 0.0 && k.pl_on;
         case R::AmbAnchorRerefErase:
             return k.pl_on && k.pa_carry_reref && (!k.pd_held_basis || k.pd_held_cold_release);
-        case R::AmbEq34Erase:         return k.phase_datum_eq34 && !k.phase_datum_ensemble && k.pl_on;
+        case R::AmbEq34Erase:         return k.phase_datum_eq34 && !k.phase_datum_ensemble && ambCarried;
         case R::AmbFleetFlush:
-            return k.pl_on && k.pl_refloat_on_conv && config.estimateNetworkIonoSh();
+            return ambCarried && k.pl_refloat_on_conv && config.estimateNetworkIonoSh();
         // --- The slant ionosphere and the phase colour (erased with their line of sight).
         case R::IonoSlipErase:        return k.iono_on;
         case R::IonoRaimErase:        return k.raim_on && k.pl_on && t4 && (k.iono_on || k.iono_blk);
@@ -314,30 +336,30 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
             return k.pl_on && k.rxclk_blk && k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint;
         case R::RpbEq34Erase:
             return k.phase_datum_eq34 && !k.phase_datum_ensemble && k.pl_on && k.eq34_rpb_q > 0.0;
-        case R::RpbGapSkip:           return k.phase_datum_eq34 && k.eq34_rpb_q > 0.0;
+        case R::RpbGapSkip:           return k.pl_on && k.eq34_rpb_q > 0.0;
         case R::RpbGapPrune:          return k.pl_on && k.eq34_rpb_q > 0.0;
         case R::ZwdGapSkip:           return k.pl_on && (k.zwd_on || k.zwd_seam_on);
         case R::ZwdGapPrune:          return k.pl_on && (k.zwd_on || k.zwd_capture || k.zwd_seam_on);
         // --- The border's READMIT, anchor and oscillator responses.
         case R::ClkPark:
         case R::ClkParkExpire:
-        case R::ClkParkDiscard:
-        case R::ClkParkDiscardDatum:  return readmit;
+        case R::ClkParkDiscard:       return readmit && clkCarried;
+        case R::ClkParkDiscardDatum:  return readmit && clkCarried && pivotDatum;
         case R::CbPark:
         case R::CbParkExpire:
-        case R::CbParkDiscard:
-        case R::CbParkDiscardDatum:   return readmit && k.readmit_seed_cb;
+        case R::CbParkDiscard:        return readmit && k.readmit_seed_cb && cbEst;
+        case R::CbParkDiscardDatum:   return readmit && k.readmit_seed_cb && cbEst && pivotDatum;
         case R::ClkAnchorDecouple:
         case R::ClkAnchorRecouple:    return k.cta_on;
-        case R::ClkOscWipe:
+        case R::ClkOscWipe:           return k.clk_model_on && pivotDatum;
         case R::ClkOscReinit:
         case R::ClkOscGapReset:       return k.clk_model_on;
         case R::CbTimeLinkReanchor:
             return config.estimateNetworkSatCodeBias() && k.cb_time_linked
                 && config.getNetworkConfig().sat_gf_datum != NetworkSatGfDatum::NoneMode
                 && config.getNetworkConfig().sat_gf_datum_time_linked;
-        case R::PbPinBridgeDiscard:   return k.pin_bridge_on;
-        case R::ShRetire:             return config.estimateNetworkIonoSh();
+        case R::PbPinBridgeDiscard:   return k.pin_bridge_on && pivotDatum;
+        case R::ShRetire:             return config.estimateNetworkIonoSh() && pivotDatum;
     }
     return false;
 }
@@ -349,8 +371,13 @@ bool carryMechanismArmed(CarryMechanism m, const NetworkKnobs& k, const GnssConf
             return config.networkAprioriSource() == NetworkAprioriSource::BrdcRts;
         case CarryMechanism::Handover:           return k.handover_stransform;
         case CarryMechanism::HandoverBeforeRows: return k.handover_stransform_before_rows;
-        case CarryMechanism::Eq34Shift:          return k.phase_datum_eq34 && k.eq34_shift_on;
-        case CarryMechanism::DeclaredHandover:   return k.amb_float_declared_handover;
+        // The D4 shift also runs for the seed-round re-host's frame-shiftable edges.
+        case CarryMechanism::Eq34Shift:
+            return k.phase_datum_eq34 && (k.eq34_shift_on || k.eq34_seed_round_rehost);
+        // Called only for a continuous handover of a re-referenced family.
+        case CarryMechanism::DeclaredHandover:
+            return k.amb_float_kf && k.amb_float_declared_handover && k.pa_carry_reref
+                && k.pd_handover_continuous;
     }
     return false;
 }

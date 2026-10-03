@@ -297,7 +297,8 @@ long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
             ++moved;
             if (counts) {
                 ++counts->moved[i];
-                if (r.site == S::PrevCarry) ++counts->moved_border[static_cast<int>(r.kind)];
+                if (r.site == S::PrevCarry || r.site == S::ClockOsc)
+                    ++counts->moved_border[static_cast<int>(r.kind)];
             }
         }
     };

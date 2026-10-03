@@ -83,21 +83,71 @@ TEST(ParamResponses, TableIsInEnumOrderWithUniqueNamesAndValidSources) {
     EXPECT_EQ(static_cast<int>(names.size()), kResponseSites);
 }
 
-// The registry's per-event policies are the union of the armed sites' policies: every armed
-// site's policy is in its kind's mask for its event.
-TEST(ParamResponses, RegistryDeclaresEveryArmedSitesPolicy) {
+// The registry's per-event policies are exactly the union of the armed sites' policies and
+// the armed mechanisms' Stransform: rebuilt here from the table and compared both ways.
+TEST(ParamResponses, RegistryMasksAreExactlyTheArmedSitesAndMechanisms) {
     for (const char* bed : {"field", "sim"}) {
         GnssConfig cfg;
         ASSERT_TRUE(loadGolden(bed, cfg)) << bed;
         const NetworkKnobs k = NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig());
         const NetworkParamRegistry r = NetworkParamRegistry::build(k, cfg);
+        std::uint32_t expect[kNetworkParamKindCount][kParamEvents]{};
         for (int i = 0; i < kResponseSites; ++i) {
             const auto site = static_cast<ResponseSite>(i);
             if (!responseSiteArmed(site, k, cfg)) continue;
             const ResponseSiteSpec& rs = responseSiteSpec(site);
-            EXPECT_TRUE(has(on(r, rs.kind, rs.event), rs.policy)) << bed << " " << rs.name;
+            expect[static_cast<int>(rs.kind)][static_cast<int>(rs.event)] |=
+                responsePolicyBit(rs.policy);
         }
+        const auto ho = static_cast<int>(ParamEvent::Handover);
+        const std::uint32_t st = responsePolicyBit(ResponsePolicy::Stransform);
+        for (int m = 0; m < kCarryMechanisms; ++m) {
+            const auto mech = static_cast<CarryMechanism>(m);
+            if (!carryMechanismArmed(mech, k, cfg)) continue;
+            for (int b = 0; b < 4; ++b)
+                if ((carryMechanismBorderKinds(mech, k) >> b) & 1u)
+                    expect[static_cast<int>(paramKindOf(static_cast<SharedParamKind>(b)))][ho] |= st;
+            for (int c = 0; c < kCarrySites; ++c) {
+                NetworkParamKind lk;
+                if (carryMechanismSite(mech, static_cast<CarrySite>(c)).moves
+                    && carrySiteLocalKind(static_cast<CarrySite>(c), lk))
+                    expect[static_cast<int>(lk)][ho] |= st;
+            }
+        }
+        for (std::size_t kind = 0; kind < kNetworkParamKindCount; ++kind)
+            for (std::size_t e = 0; e < kParamEvents; ++e)
+                EXPECT_EQ(r.spec(static_cast<NetworkParamKind>(kind)).on[e], expect[kind][e])
+                    << bed << " " << paramKindName(static_cast<NetworkParamKind>(kind)) << " "
+                    << paramEventName(static_cast<ParamEvent>(e));
     }
+}
+
+// Arming cases the goldens do not exercise: the clock model's fault test flags satellites
+// with no clock monitor, so the phase-bias and code-bias reinit rows are armed (the clock
+// itself is on the oscillator, not stashed); the seed-round re-host runs the eq34 shift with
+// the shift knob off.
+TEST(ParamResponses, ArmingFollowsTheCodesOwnGates) {
+    GnssConfig cfg;
+    NetworkKnobs k{};
+    k.clk_model_on = true;
+    k.clk_mon_reinit_sig = 30.0;
+    EXPECT_TRUE(responseSiteArmed(ResponseSite::PbReinit, k, cfg));
+    EXPECT_FALSE(responseSiteArmed(ResponseSite::ClkReinit, k, cfg));   // no clock in prev_carry
+    EXPECT_FALSE(responseSiteArmed(ResponseSite::ClkDeparted, k, cfg));
+    EXPECT_TRUE(responseSiteArmed(ResponseSite::ClkOscReinit, k, cfg));
+    NetworkKnobs q{};
+    q.phase_datum_eq34 = true;
+    q.eq34_seed_round_rehost = true;
+    EXPECT_TRUE(carryMechanismArmed(CarryMechanism::Eq34Shift, q, cfg));
+    q.eq34_seed_round_rehost = false;
+    EXPECT_FALSE(carryMechanismArmed(CarryMechanism::Eq34Shift, q, cfg));
+    // The free-ambiguity lineage carries no local ambiguity: nothing to prune or erase.
+    NetworkKnobs ci{};
+    ci.pl_on = true;
+    ci.carry_invariant = true;
+    ci.raim_on = true;
+    EXPECT_FALSE(responseSiteArmed(ResponseSite::AmbGapPrune, ci, cfg));
+    EXPECT_FALSE(responseSiteArmed(ResponseSite::AmbRaimErase, ci, cfg));
 }
 
 // The goldens' declared posture (the float vehicle with RAIM's attribution, the gross screen,
@@ -124,6 +174,7 @@ TEST(ParamResponses, GoldensDeclareTheFloatVehiclesResponses) {
         // The satellite clock: parked and seeded across a departure, loosened and re-coupled
         // by the anchor's guard, re-expressed at a pivot handover.
         EXPECT_TRUE(has(on(r, K::SatClock, E::Gap), P::Marginalize)) << bed;
+        EXPECT_FALSE(has(on(r, K::SatClock, E::Slip), P::Reinit)) << bed;   // no clock monitor
         EXPECT_TRUE(has(on(r, K::SatClock, E::Gap), P::Park)) << bed;
         EXPECT_TRUE(has(on(r, K::SatClock, E::Readmit), P::SeedAtVarPlusQGap)) << bed;
         EXPECT_TRUE(has(on(r, K::SatClock, E::Readmit), P::Recouple)) << bed;
@@ -132,7 +183,7 @@ TEST(ParamResponses, GoldensDeclareTheFloatVehiclesResponses) {
         EXPECT_TRUE(has(on(r, K::SatClock, E::Handover), P::Retire)) << bed;
         // The phase bias: a re-referenced frame is not folded for one epoch; it is not parked.
         EXPECT_TRUE(has(on(r, K::SatPhaseBias, E::Handover), P::Rereference)) << bed;
-        EXPECT_FALSE(has(on(r, K::SatPhaseBias, E::Gap), P::Park)) << bed;
+        EXPECT_FALSE(has(on(r, K::SatPhaseBias, E::Slip), P::Reinit)) << bed;
         EXPECT_TRUE(has(on(r, K::SatCodeBias, E::Readmit), P::SeedAtVarPlusQGap)) << bed;
         // The receiver code bias in the block: erased on a step, skipped and pruned on a gap.
         EXPECT_TRUE(has(on(r, K::RxCodeBias, E::Slip), P::EraseAndRebirth)) << bed;

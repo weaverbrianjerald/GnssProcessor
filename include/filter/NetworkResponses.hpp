@@ -135,6 +135,9 @@ enum class ResponseSite : int {
 /// Number of @ref ResponseSite values (array sizing).
 inline constexpr int kResponseSites = 69;
 
+static_assert(static_cast<int>(ResponseSite::ShRetire) + 1 == kResponseSites,
+              "kResponseSites must follow the ResponseSite enum");
+
 /// Where a site's count comes from.
 enum class ResponseCountSource : int {
     Increment = 0,   ///< @c NetworkServiceCounters::prm_resp, incremented at the site

@@ -163,7 +163,7 @@ enum class CarryMechanism : int {
     EphRelevel,           ///< the ephemeris cut-over re-level (@c networkEphCutoverRelevel): one clock by -Δ_eph
     Handover,             ///< the clock-pivot handover S-transform after PASS B (@c applyClockStransform)
     HandoverBeforeRows,   ///< the same transform before PASS B, over every clock reference of the constellation
-    Eq34Shift,            ///< the eq34 chain datum's D4 carry shift (@c eq34ShiftCarry): phase biases and receiver phase biases
+    Eq34Shift,            ///< the eq34 chain datum's D4 carry shift (@c eq34ShiftCarry): phase biases and receiver phase biases (also for the seed-round re-host's edges)
     DeclaredHandover,     ///< the float vehicle's declared anchor handover (@c networkAmbFloatDeclaredHandover)
 };
 
@@ -223,7 +223,7 @@ using CarryRefVisitor = std::function<bool(const CarriedRef&)>;
 struct CarrySiteCounts {
     long long visited[kCarrySites]{};   ///< references handed to the visitor
     long long moved[kCarrySites]{};     ///< references the visitor reported moved
-    long long moved_border[4]{};        ///< of the @c PrevCarry moves, per @c SharedParamKind (card PRM phase 3a)
+    long long moved_border[4]{};        ///< the carried border values moved (@c PrevCarry and the clock oscillator's @c ClockOsc), per @c SharedParamKind (card PRM phase 3a)
 };
 
 /**

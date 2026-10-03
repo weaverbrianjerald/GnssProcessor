@@ -6439,6 +6439,13 @@ int networkTeardown(
                 moved += fmt::format("{}{} {}", moved.empty() ? "" : ", ",
                                      paramKindName(paramKindOf(static_cast<SharedParamKind>(b))), n);
                 total += n;
+                if (n > 0 && !((carryMechanismBorderKinds(mech, ctx.knobs) >> b) & 1u)) {
+                    ++n_undeclared;
+                    log->warn("Network (param responses, run end): mechanism {} moved {} {} "
+                              "value(s), a kind it does not declare (carryMechanismBorderKinds).",
+                              carryMechanismName(mech), n,
+                              paramKindName(paramKindOf(static_cast<SharedParamKind>(b))));
+                }
             }
             for (int s = 0; s < kCarrySites; ++s) {
                 NetworkParamKind lk;

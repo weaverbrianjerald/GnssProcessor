@@ -77,3 +77,28 @@ vehicle.
   re-couplings of a satellite restored LOOSE after a warm resume (the snapshot does not carry the
   history bit). The declaration review of the 69 arming conditions was stopped before it finished;
   the run-time check covers the 16 harness postures only.
+
+## 5. The declaration review, completed (2026-10-03)
+
+The review stopped in section 4 was resumed and finished: every row's arming condition traced against
+the gates on the path to its increments (the knob snapshot, the vehicle, the routes, the loader's
+interlocks). Three conditions were too narrow, each a false declaration error on a posture the harness
+does not run: the phase-bias and code-bias reinit rows under the clock model's fault test with no
+clock monitor; the eq34 shift under the seed-round re-host with the shift knob off; and the clock
+oscillator's moves at the ephemeris re-level, which the Stransform rows did not count (they now count
+`clock_osc` with `prev_carry`, and a moved border kind outside the mechanism's declared kinds is a
+declaration error too). The legacy unscoped handover, which retires every carried border entry by
+skipping the fold, is now tallied as Retired. About thirty conditions were too broad (rows armed where
+nothing can act: the local ambiguity under `carry_invariant`, a clock under the clock model, a code bias
+without satellite code-bias estimation, a datum change under an anchor-free clock datum) and are
+narrowed. `kResponseSites` is tied to the enum by a static assertion; the registry test now rebuilds
+the masks from the table and compares both ways, and a new case pins the gates the goldens do not
+exercise. The PASS B skip rows count the fold refusals offered to a solve, including an epoch the A4
+ceiling later withholds (stated in the table).
+
+Gate: exe `gnss_processor_prm3b.exe` `cc68a5125f13f2e7`, tags `q3ah6`, `q3a`, `q3ax`, `q3axr`:
+byte-identical on all 16 arms (`--all-csv`), 0 declaration errors on every arm; suite `ParamResponses`
+8 cases.
+
+Still uncounted (owed): the hard clock refloat (`clock_monitor_reinit_sigma_m` <= 0 skips the stash,
+an erase of the border entry), the extra-band hold's return, the oscillator's finite-screen re-seed.

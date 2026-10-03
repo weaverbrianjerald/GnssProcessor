@@ -3988,6 +3988,15 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), leftovers.begin(), leftovers.end());
     }
+    // Card PRM phase 3a: a clock-pivot handover in legacy (unscoped) mode skips both fold
+    // branches, retiring every carried entry for the epoch; tallied here (counters only, the
+    // entries' records are not written).  A held entry keeps its Held tally.
+    if (datum_changed && !scoped_handover)
+        for (const CarryPrior& cp : prev_carry) {
+            const bool held = cp.fold.disposition == CarryDisposition::Held;
+            ++ctx.counters.prm_disp[static_cast<int>(cp.kind)][static_cast<int>(
+                held ? CarryDisposition::Held : CarryDisposition::Retired)];
+        }
     if (prm_reexpressed_epoch) ++ctx.counters.prm_reexpressed_epochs;   // card PRM phase 1b
     // Card CTU G5: the seam's level noise is one epoch's process noise.
     ctx.carry.clm_seam_q.clear();
