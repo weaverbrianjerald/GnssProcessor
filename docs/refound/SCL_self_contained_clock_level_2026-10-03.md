@@ -135,6 +135,20 @@ smoothed arm's clock error stays at 0.105 to 0.097 m through all six hours (COD 
 SZZ000SIM reads 0.219 0.075 0.046 0.033 0.017 0.030 (COD 0.223 0.099 0.081 0.019 0.020 0.027). No
 clock-pivot handover occurs in 6 h on the bed: with G01 out, G02 is the pivot throughout.
 
+**3.7 The locked level is an ignition draw** (field, q 5e-6, the smoothed hold). The golden posture
+with G01 kept as the GPS clock pivot (`runs/_rap_scl10_hq5_{f,s}`, 6 h, COD a priori; the "before"
+arms of gate G7): field WTZZ00DEU 0.741 0.312 0.217 0.053 0.047 0.041 m, IF code spread 0.378 m in
+hour 2, 31 anchor trips (all at the 04:42:30 handover); sim 0.276 0.080 0.070 0.043 0.018 0.025. Two
+2 h field arms separate the pivot from the a priori (`runs/_rap_scl11_*`): COD with G01 dropped,
+0.673 / 0.286 m, IF spread 0.353; the golden root with card HLT's `network.sat_health pivot` (G02
+elected, G01 processed), 0.731 / 0.311 m, IF spread 0.372. The pivot does not decide it, and the
+broadcast bed's 0.099 / 0.021 m with an IF spread of 0.119 (section 3.6) is not a property of the
+broadcast a priori: at q 5e-6 the level does not converge, so its error is whatever the first epochs
+drew (field 0.35 m with COD, 0.12 m with the broadcast clock; sim 0.065 and 0.104 m), and the
+consumer inherits the draw. The field consumer of section 3.1 is therefore one draw, not a result;
+the census (section 3.2) is the read. B1's gate G1 reads the level against truth on the sim and G3
+the field's IF spread, on both a priori.
+
 ## 4. The reading
 
 **The phase side is not the open problem.** Card SMH's smoothed hold passes the clock walk the
@@ -322,6 +336,13 @@ One Release exe built from main after card PRM phase 3b step 2 grades every arm 
 | G6 (the precise posture) | The golden posture (COD, q 2.9e-8) with B1 on: WTZZ00DEU, SZZ000SIM and the 2 h census within 0.005 m of the control in every hour, level and IF spread no worse (the dropped term is small there). |
 | G7, the handover (B2) | On a 6 h arm with a clock-pivot handover (the goldens have one at 04:42:30): with B2 and the anchor kept, 0 datum decouples, and the level and phase-visible errors in the 10 epochs after the handover within the run's p95 of the other epochs (sim truth). |
 | G8 (cost) | 6 h loop time within 15 % of the same-exe control. |
+
+Amendment (2026-10-03, 13:10, written while B1 was being built and before any B1 result): G1 is
+also read on the COD a priori at q 5e-6 (the sim, `runs/_rap_scl6_codq5_s` as the control, no true
+walk), with the same bars against the golden-q COD control (0.043 / 0.030 / 0.027 m); and G3 on the
+field's COD a priori at q 5e-6 (control `runs/_rap_scl11_codq5_f`, IF spread 0.353 m): the IF spread
+in hour 2 within 0.010 m of the golden-q COD control's 0.105 m. Section 3.7 is why: the locked level
+is an ignition draw, so a single a priori can pass by luck.
 
 If G1 or G2 fails with U2 passing, the reading is recorded and the remaining inexactness is attributed before any
 further build. Arming is the author's decision after G4 and G5.
