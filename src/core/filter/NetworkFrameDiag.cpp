@@ -443,12 +443,15 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
                            const SyncedEpoch& se, NetworkEstimator& est,
                            int declared_dim,
                            const std::vector<std::string>& registered_clock_sats,
-                           double ev_max, bool gate_over_withheld) {
+                           double ev_max, bool gate_over_withheld,
+                           const Eigen::MatrixXd* N_gate) {
     // The gate writes ev_max < 0 on any exit that computed no spectrum (empty
     // normals, non-square, solver failure).  There is then nothing to measure
     // against, and a cutoff reconstructed from a guess would mislead.
     if (!(ev_max >= 0.0) || declared_dim <= 0) return;
-    const Eigen::MatrixXd& N = est.reducedSharedNormals();
+    // Card SCL: the gate's own view when it judged one (the clock clones marginalized;
+    // the clock columns keep their indices); the reduced normals otherwise.
+    const Eigen::MatrixXd& N = N_gate ? *N_gate : est.reducedSharedNormals();
     const Eigen::Index n = N.rows();
     if (n == 0 || N.cols() != n) return;
 

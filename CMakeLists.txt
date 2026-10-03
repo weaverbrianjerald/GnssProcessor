@@ -247,6 +247,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkOraclePin.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkCouplingExact.cpp
+    src/core/filter/NetworkClockClone.cpp
     src/core/filter/NetworkPhaseVisibleDiag.cpp
     src/core/filter/NetworkPbHoldClone.cpp
     src/core/filter/NetworkParamRegistry.cpp
@@ -276,6 +277,10 @@ if(MSVC)
     # tests/test_coupling_exact_update.cpp: card WSX's generalized eigen-solve of the border
     # covariance against the batch tipped it over the Debug section limit (C1128).
     set_source_files_properties(tests/test_coupling_exact_update.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_handover_stransform_dense.cpp (card SCL B2): the run-context headers plus the
+    # explicit eigen-solve and inverse references cross the Debug section limit (C1128).
+    set_source_files_properties(tests/test_handover_stransform_dense.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
     # src/core/app/NetworkRunContext.cpp: card AIL's ambiguity-information instrument
     # (0f9b2a5) tipped it over the Debug section limit (C1128); Release was unaffected.
@@ -536,6 +541,7 @@ add_executable(gnss_tests
     tests/test_anchor_slip_handover.cpp
     tests/test_phase_gate_drop_edge.cpp
     tests/test_handover_stransform.cpp
+    tests/test_handover_stransform_dense.cpp
     tests/test_mw_evidence_refloat.cpp
     tests/test_mw_pivot_reset.cpp
     tests/test_common_band_scope.cpp
@@ -559,6 +565,7 @@ add_executable(gnss_tests
     tests/test_galileo_network.cpp
     tests/test_clock_level_carry.cpp
     tests/test_coupling_exact_update.cpp
+    tests/test_network_clock_clone.cpp
     tests/test_ctu_level_guard.cpp
     tests/test_owd_wire_contract.cpp
     tests/test_reinflate_never_shrinks.cpp

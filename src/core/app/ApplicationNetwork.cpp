@@ -2762,7 +2762,7 @@ int Application::runNetwork() {
         const std::size_t fc_n_emitted_before = ctx.counters.n_emitted;
         // The smoothed hold's clock clones (card SMH): advanced over this epoch before the
         // hold reads them at emit.  No-op off.
-        networkPbHoldCloneUpdate(ctx, log, est, x_s, ws);
+        networkPbHoldCloneUpdate(ctx, log, est, x_s, ws, plan.shared_datum);
         subBegin(SB_EMITSTORE); // block 7: re-base + PB-emit filter + store push + solution CSV (D0b)
         networkEmitStore(ctx, config_, log, traces, setup, se, est, x_s, pl_now_s,
                          datum_changed, sigma0_adapt, sol, epoch_withheld_consts, global_bump,

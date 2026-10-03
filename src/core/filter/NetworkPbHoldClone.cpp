@@ -221,7 +221,12 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
     out.var   = var + xr.var_add + dep_var + tu_var;
     // The fold's inflation along the functional, g'Qg over the own keys, when every one of
     // them is in S (for the clock alone, its q).  The seam's off-diagonal noise lists pairs
-    // of distinct S columns only; its diagonal is in q_s.
+    // of distinct S columns only; its diagonal is in q_s.  Card SCL: on the clone epoch a
+    // cloned clock's walk is the walk factor's, not a Q of the rows' epoch, so Q is read
+    // from card CTU's epoch over the same S index space (W stays the modelled walk since
+    // birth).
+    const CouplingExactEpoch* xw =
+        (in.xe_walk && in.xe_walk->nS() == xe->nS()) ? in.xe_walk : xe;
     std::vector<int> own_s(own.size(), -1);
     bool all_s = !own.empty();
     for (std::size_t i = 0; i < own.size(); ++i) {
@@ -232,9 +237,9 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
     if (all_s) {
         double dW = 0.0;
         for (std::size_t i = 0; i < own.size(); ++i)
-            dW += own[i].g * own[i].g * xe->q_s(own_s[i]);
+            dW += own[i].g * own[i].g * xw->q_s(own_s[i]);
         if (own.size() > 1) {
-            for (const auto& [ia, ib, v] : xe->q_off) {
+            for (const auto& [ia, ib, v] : xw->q_off) {
                 if (ia == ib) continue;
                 for (std::size_t a = 0; a < own.size(); ++a) {
                     if (own_s[a] != ia) continue;
@@ -377,10 +382,120 @@ CouplingExactEpoch pbHoldCloneRestrictEpoch(const CouplingExactEpoch& xe,
     return out;
 }
 
+CouplingExactEpoch pbHoldCloneOnClones(const CouplingExactEpoch& xe,
+                                       const std::map<int, Eigen::Index>& clone_of_p) {
+    CouplingExactEpoch out = xe;
+    if (!xe.ok || clone_of_p.empty()) return out;
+    const Eigen::Index nS = xe.nS();
+    out.clone_s.assign(static_cast<std::size_t>(nS), 0);
+    bool any = false;
+    for (Eigen::Index s = 0; s < nS; ++s) {
+        const auto it = clone_of_p.find(xe.p_of_s[static_cast<std::size_t>(s)]);
+        if (it == clone_of_p.end() || it->second < 0) continue;
+        out.col_of_s[static_cast<std::size_t>(s)] = it->second;
+        out.q_s(s) = 0.0;
+        out.clone_s[static_cast<std::size_t>(s)] = 1;
+        any = true;
+    }
+    if (!any) {
+        out.clone_s.clear();
+        return out;
+    }
+    // A pair touching a moved key would put a walk on a clone (the seam's level noise; a
+    // seam satellite is never cloned, so this is a guard).
+    out.q_off.erase(std::remove_if(out.q_off.begin(), out.q_off.end(),
+                                   [&](const std::tuple<int, int, double>& t) {
+                                       const int a = std::get<0>(t), b = std::get<1>(t);
+                                       return (a >= 0 && a < nS && out.clone_s[static_cast<std::size_t>(a)])
+                                           || (b >= 0 && b < nS && out.clone_s[static_cast<std::size_t>(b)]);
+                                   }),
+                    out.q_off.end());
+    couplingExactFactor(out);
+    return out;
+}
+
+PbHoldCloneMarg pbHoldCloneMarginalizeClones(
+    std::vector<PbHoldCloneTerm>& terms, double& var, const Eigen::MatrixXd& K,
+    const Eigen::MatrixXd& B, Eigen::Index n0,
+    const std::function<bool(Eigen::Index, PbHoldCloneTerm&)>& term_of_col,
+    const std::map<char, PbHoldCloneTerm>& pin) {
+    PbHoldCloneMarg out;
+    const Eigen::Index nc = B.rows();
+    const auto is_clone = [&](Eigen::Index col) { return nc > 0 && col >= n0 && col < n0 + nc; };
+    bool has_clone = false;
+    for (const PbHoldCloneTerm& t : terms)
+        if (is_clone(t.col)) { has_clone = true; break; }
+    if (!has_clone) return out;
+    if (n0 < 0 || B.cols() != nc || K.rows() != nc || K.cols() != n0 + nc || !term_of_col) {
+        out.ok = false;
+        return out;
+    }
+    // The row's clone coefficients, and the clock-family sum they hold per constellation.
+    Eigen::VectorXd rc = Eigen::VectorXd::Zero(nc);
+    std::map<char, double> deficit;
+    std::vector<PbHoldCloneTerm> rest;
+    rest.reserve(terms.size());
+    for (const PbHoldCloneTerm& t : terms) {
+        if (is_clone(t.col)) {
+            rc(t.col - n0) += t.coeff;
+            if (t.kind == SharedParamKind::Clock && !t.sat.empty()) deficit[t.sat[0]] += t.coeff;
+            ++out.n_clone;
+            continue;
+        }
+        rest.push_back(t);
+    }
+    // E[c | s'] = c_hat + K (s' - s_hat'): the clone terms re-attributed onto the border.
+    const Eigen::VectorXd moved = K.transpose() * rc;   // zero on the clone and pinned columns
+    std::map<std::string, std::size_t> at;              // a free term's key -> its index in rest
+    for (std::size_t i = 0; i < rest.size(); ++i)
+        if (rest[i].p_prev > 0.0 && rest[i].col >= 0) at[termKey(rest[i])] = i;
+    for (Eigen::Index j = 0; j < n0; ++j) {
+        const double m = moved(j);
+        if (m == 0.0) continue;
+        PbHoldCloneTerm t;
+        if (!term_of_col(j, t)) {
+            ++out.n_dropped;
+            out.mass_dropped += std::abs(m);
+            continue;
+        }
+        if (t.kind == SharedParamKind::Clock && !t.sat.empty()) deficit[t.sat[0]] -= m;
+        const std::string key = termKey(t);
+        const auto it = at.find(key);
+        if (it != at.end() && rest[it->second].col == j) {
+            rest[it->second].coeff += m;
+            continue;
+        }
+        t.coeff = m;
+        t.col   = j;
+        at[key] = rest.size();
+        rest.push_back(t);
+        ++out.n_moved;
+    }
+    // The clock-family deficit onto the constellation's pinned clock (exactly known: no
+    // revision, no variance), the harvest's gauge restore.
+    for (const auto& [cc, d] : deficit) {
+        if (d == 0.0) continue;
+        const auto pv = pin.find(cc);
+        if (pv == pin.end()) {
+            ++out.n_orphan;
+            continue;
+        }
+        addPinnedClock(rest, pv->second.sat, d, pv->second.s_prev, pv->second.col);
+        ++out.n_held;
+    }
+    const double add = rc.dot(B * rc);
+    if (std::isfinite(add) && add > 0.0) {
+        var += add;
+        out.var_add = add;
+    }
+    terms = std::move(rest);
+    return out;
+}
+
 void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
                               const std::shared_ptr<spdlog::logger>& log,
                               const NetworkEstimator& est, const Eigen::VectorXd& x_s,
-                              const EpochWorkspace& ws) {
+                              const EpochWorkspace& ws, const NetworkEstimator::Datum& datum) {
     (void)log;
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
     auto& clones = ctx.carry.smh_clone;
@@ -471,10 +586,12 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
     // refloat) and the diagonal ones.  Their means are the prior means the solve used,
     // after any in-place frame transform of this epoch.
     std::map<std::string, double> folded, diag;
+    // A clock clone of card SCL is not its clock: skipped (the clone fold keeps its joint
+    // prior in a capture of its own, so none reaches these two; the test is a guard).
     for (const auto& sp : ws.cap_dense_keys)
-        if (sp.kind != SharedParamKind::VtecSh) folded[sharedCarryKey(sp.kind, sp.sat, sp.signal)] = sp.value;
+        if (sp.kind != SharedParamKind::VtecSh && !sp.clone) folded[sharedCarryKey(sp.kind, sp.sat, sp.signal)] = sp.value;
     for (const auto& sp : ws.cap_priors)
-        if (sp.kind != SharedParamKind::VtecSh) diag[sharedCarryKey(sp.kind, sp.sat, sp.signal)] = sp.value;
+        if (sp.kind != SharedParamKind::VtecSh && !sp.clone) diag[sharedCarryKey(sp.kind, sp.sat, sp.signal)] = sp.value;
 
     PbHoldCloneInputs in;
     in.desc_of_p.assign(static_cast<std::size_t>(std::max<Eigen::Index>(0, xe0.P.rows())), PbHoldCloneTerm{});
@@ -488,13 +605,34 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
         d.sat    = cp.sat;
         d.signal = cp.signal;
     }
+    // Card SCL: the clocks whose clones stood in at this epoch's fold (P row -> clone
+    // column).  Empty off, and on an epoch with no stand-in (no clone epoch, a fold
+    // fallback), which leaves every step below as before.
+    std::map<int, Eigen::Index> clone_of_p;
+    if (ctx.knobs.carry_cpl_clone && xe0.ok) {
+        const ClockCloneEpoch& E = ctx.carry.ccl;
+        for (const std::string& sat : E.standin) {
+            const auto a = E.active.find(sat);
+            if (a == E.active.end() || a->second.p < 0 || a->second.col < 0) continue;
+            clone_of_p[a->second.p] = a->second.col;
+        }
+    }
     // An S key the solve did not fold took no carried prior: the Reinit route for the
     // clones (a withdrawn clock, a constellation skipped at an un-transformed handover).
+    // Card SCL: a clock whose clone stood in keeps it (card Q3's refloat withdraws the walk
+    // factor and keeps the clone with its stand-in prior), so its rows' terms stay on it.
     std::vector<int> unfolded;
+    long long kept_unfolded = 0;
     for (Eigen::Index s = 0; s < xe0.nS(); ++s) {
         const int p = xe0.p_of_s[static_cast<std::size_t>(s)];
         if (p < 0 || static_cast<std::size_t>(p) >= in.desc_of_p.size()) continue;
-        if (!folded.count(termKey(in.desc_of_p[static_cast<std::size_t>(p)]))) unfolded.push_back(p);
+        if (!folded.count(termKey(in.desc_of_p[static_cast<std::size_t>(p)]))) {
+            if (clone_of_p.count(p)) {
+                ++kept_unfolded;
+                continue;
+            }
+            unfolded.push_back(p);
+        }
     }
     CouplingExactEpoch xe_r;
     const CouplingExactEpoch* xe = &xe0;
@@ -504,6 +642,20 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
         ++ctx.counters.smh_epochs_restricted;
         ctx.counters.smh_keys_unfolded += static_cast<long long>(unfolded.size());
     }
+    // Card SCL: the rows advance on the clone epoch (the stood-in clocks on their clones at
+    // Q = 0), and the walk share reads the epoch they were moved from.
+    CouplingExactEpoch xe_c;
+    if (!clone_of_p.empty()) {
+        ClockCloneCounters& CC = ctx.counters.ccl;
+        xe_c = pbHoldCloneOnClones(*xe, clone_of_p);
+        in.xe_walk = xe;
+        xe = &xe_c;
+        ++CC.smh_epochs;
+        CC.smh_moved += static_cast<long long>(clone_of_p.size());
+        if (clone_of_p.size() < ctx.carry.ccl.active.size()) ++CC.smh_partial;
+        CC.smh_kept_unfolded += kept_unfolded;
+        if (!xe_c.ok) ++CC.smh_unfactored;
+    }
     in.xe = xe;
     const Eigen::Index nS = xe->nS();
     in.post_s.setZero(nS);
@@ -512,6 +664,10 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
         const Eigen::Index col = xe->col_of_s[static_cast<std::size_t>(s)];
         in.post_s(s)  = (col >= 0 && col < nx) ? x_s(col) : xe->shat_s(s);
         in.prior_s(s) = xe->shat_s(s);
+        // Card SCL: a clone's prior mean is the stashed value the fold centred it on (the
+        // rows' shat), not its clock's fold-time mean, which the walk factor carries.
+        if (static_cast<std::size_t>(s) < xe->clone_s.size() && xe->clone_s[static_cast<std::size_t>(s)])
+            continue;
         const int p = xe->p_of_s[static_cast<std::size_t>(s)];
         if (p >= 0 && static_cast<std::size_t>(p) < in.desc_of_p.size()) {
             const auto it = folded.find(termKey(in.desc_of_p[static_cast<std::size_t>(p)]));
@@ -542,12 +698,77 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
 
     const Eigen::MatrixXd& Sig = est.sharedCovariance();
     const Eigen::Index     ns  = Sig.rows();
+
+    // Card SCL: a clone lives one epoch, so an advanced row's terms on the clones are
+    // marginalized through the solve's posterior regression of the clones on the rest of
+    // the border (the coupling rows' harvest regression, formed here on the final solve),
+    // with the clock-family deficit onto the datum-pinned clock of the constellation.
+    Eigen::MatrixXd ccl_K, ccl_B;
+    bool ccl_reg = false;
+    std::map<char, PbHoldCloneTerm> ccl_pin;
+    const Eigen::Index ccl_n0 = est.numShared() - est.numClockClones();
+    if (!clone_of_p.empty()) {
+        ccl_reg = est.cloneConditional(datum, ccl_K, ccl_B)
+               && ccl_K.cols() == est.numShared() && ccl_B.rows() == est.numClockClones();
+        ClockCloneEpoch& E = ctx.carry.ccl;
+        if (ccl_reg) {
+            E.smh_reg = true;
+            E.smh_K   = ccl_K;
+            E.smh_B   = ccl_B;
+        } else {
+            ++ctx.counters.ccl.smh_noreg;
+        }
+        for (const NetworkEstimator::Pin& pn : datum) {
+            PbHoldCloneTerm t;
+            if (!est.sharedColumnIdentity(pn.column, t.kind, t.sat, t.signal)
+                || t.kind != SharedParamKind::Clock || t.sat.empty()) continue;
+            t.col    = pn.column;
+            t.s_prev = (pn.column >= 0 && pn.column < nx) ? x_s(pn.column) : pn.value;
+            t.p_prev = 0.0;
+            ccl_pin[t.sat[0]] = t;
+        }
+    }
+    const auto ccl_term_of_col = [&](Eigen::Index j, PbHoldCloneTerm& t) {
+        if (!est.sharedColumnIdentity(j, t.kind, t.sat, t.signal)) return false;
+        t.s_prev = (j >= 0 && j < nx) ? x_s(j) : 0.0;
+        const double v = (j >= 0 && j < ns) ? Sig(j, j) : 0.0;
+        t.p_prev = v > 0.0 ? v : 1e-12;
+        return true;
+    };
+    // Re-express one advanced row; false (the row is then killed RowFailed) when it has clone
+    // terms and the regression is unavailable.  A no-op off (clone_of_p empty).
+    const auto ccl_marg = [&](PbHoldCloneStep& st) {
+        if (clone_of_p.empty()) return true;
+        bool has_clone = false;
+        for (const PbHoldCloneTerm& t : st.terms)
+            if (t.col >= ccl_n0 && t.col < est.numShared()) { has_clone = true; break; }
+        if (!has_clone) return true;
+        if (!ccl_reg) return false;
+        const PbHoldCloneMarg mg = pbHoldCloneMarginalizeClones(st.terms, st.var, ccl_K, ccl_B,
+                                                                ccl_n0, ccl_term_of_col, ccl_pin);
+        if (!mg.ok) return false;
+        ClockCloneCounters& CC = ctx.counters.ccl;
+        ++CC.smh_rows;
+        CC.smh_clone_terms  += mg.n_clone;
+        CC.smh_moved_terms  += mg.n_moved;
+        CC.smh_dropped      += mg.n_dropped;
+        CC.smh_mass_dropped += mg.mass_dropped;
+        CC.smh_gauge_held   += mg.n_held;
+        CC.smh_gauge_orphan += mg.n_orphan;
+        CC.smh_var_add      += mg.var_add;
+        return true;
+    };
+
     for (auto& [key, c] : clones) {
         (void)key;
         if (!c.alive) continue;
-        const PbHoldCloneStep st = pbHoldCloneAdvance(in, c);
+        PbHoldCloneStep st = pbHoldCloneAdvance(in, c);
         if (!st.ok) {
             killClone(ctx, c, st.death);
+            continue;
+        }
+        if (!ccl_marg(st)) {
+            killClone(ctx, c, PbHoldCloneDeath::RowFailed);
             continue;
         }
         // A row that had dense terms and lost every one of them carries nothing: the
@@ -642,14 +863,14 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
     };
     for (auto& [key, c] : blocks) {
         if (!c.alive) continue;
-        const PbHoldCloneStep sc = pbHoldCloneAdvance(in, c);
+        PbHoldCloneStep sc = pbHoldCloneAdvance(in, c);
         if (!sc.ok) {
             killBlock(ctx, c, sc.death, ep);
             continue;
         }
         const std::vector<PbHoldCloneOwn> own = pbHoldCloneOwnPv(c.pv_pair);
-        const PbHoldCloneStep sd = pbHoldCloneAdvanceRow(in, c.sat, own, c.pv_terms, c.pv_value,
-                                                         c.pv_var, c.stamp_s);
+        PbHoldCloneStep sd = pbHoldCloneAdvanceRow(in, c.sat, own, c.pv_terms, c.pv_value,
+                                                   c.pv_var, c.stamp_s);
         if (!sd.ok) {
             if (sd.death == PbHoldCloneDeath::ParentOutside && sd.outside_own > 0) {
                 killBlock(ctx, c, PbHoldCloneDeath::PairLost, ep);
@@ -657,6 +878,11 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
             } else {
                 killBlock(ctx, c, sd.death, ep);
             }
+            continue;
+        }
+        // Card SCL: both rows re-expressed off the clones (no-op off).
+        if (!ccl_marg(sc) || !ccl_marg(sd)) {
+            killBlock(ctx, c, PbHoldCloneDeath::RowFailed, ep);
             continue;
         }
         if (unlinked(sc) || unlinked(sd)) {

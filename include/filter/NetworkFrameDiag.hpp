@@ -244,11 +244,17 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
  *                     spectrum on this exit, and this function is a no-op).
  * @param gate_over_withheld True when this epoch was withheld as over-specified; the
  *                     coincidence counter that makes the run-end advice actionable.
+ * @param N_gate       The normals the gate judged when it did not judge
+ *                     @c est.reducedSharedNormals(): card SCL's view with the clock
+ *                     clones marginalized (filter/NetworkClockClone), over the non-clone
+ *                     columns, whose indices are those of the layout.  Null (the default)
+ *                     reads the reduced normals, as before.
  */
 void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
                            const SyncedEpoch& se, NetworkEstimator& est,
                            int declared_dim,
                            const std::vector<std::string>& registered_clock_sats,
-                           double ev_max, bool gate_over_withheld);
+                           double ev_max, bool gate_over_withheld,
+                           const Eigen::MatrixXd* N_gate = nullptr);
 
 }  // namespace GnssProcessor

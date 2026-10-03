@@ -2805,6 +2805,11 @@ EpochAction Application::networkAssemblyRegisterColumns_(const SyncedEpoch& se,
                 est.registerVtecCoeff(c.n, c.m, c.trig, lay.layer);
     }
 
+    // Card SCL (network.carry_coupling_clock_clone): the one-epoch clock clones, after every
+    // other registration so that no existing column index moves (the clones are the last
+    // columns), and before the label map and beginEpoch.  No-op off.
+    networkClockCloneRegister(ctx, est, registered_clock_sats);
+
     n_clock = static_cast<int>(registered_clock_sats.size());
     n_pb    = static_cast<int>(shared_phase_keys.size());
     n_cb    = static_cast<int>(registered_code_keys.size());
@@ -2842,6 +2847,8 @@ EpochAction Application::networkAssemblyRegisterColumns_(const SyncedEpoch& se,
                         fmt::format("{}|{}|{}|{}", lay.layer > 0 ? "SH2" : "SH",
                                     c.n, c.m, c.trig);
         }
+        for (const auto& [sat, col] : ctx.carry.ccl.col)   // card SCL clones; empty off
+            col_desc[static_cast<size_t>(col)] = "CLKC|" + sat;
     }
 
     if (est.numShared() == 0) {
@@ -3826,7 +3833,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 // Card CTU: the exact time update's epoch inputs (built serially before this
                 // loop by networkCouplingExactPrepare; read-only here).
                 if (ctx.knobs.carry_cpl_exact) {
-                    cb.cxu       = &ctx.carry.cxu_epoch;
+                    // Card SCL: the rows read the copy with each cloned clock on its clone
+                    // when it was built this epoch (rows_on is false off and on any epoch it
+                    // was not); card CTU's own epoch otherwise.
+                    cb.cxu       = ctx.carry.ccl.rows_on ? &ctx.carry.ccl.rows_epoch
+                                                         : &ctx.carry.cxu_epoch;
                     cb.cxu_cross = ctx.knobs.carry_cpl_exact_cross;   // card WSX
                 }
                 if (legacy_local_inject) {

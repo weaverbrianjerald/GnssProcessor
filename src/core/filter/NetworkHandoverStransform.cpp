@@ -92,6 +92,177 @@ ClockStransformResult applyClockStransform(
     return out;
 }
 
+ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, char c,
+                                                     const std::string& q,
+                                                     const std::string& p_out) {
+    ClockStransformDenseResult out;
+    SharedCarryCov& pcc = carry.prev_carry_cov;
+    const Eigen::Index k = pcc.P.rows();
+    if (k == 0 || pcc.P.cols() != k || pcc.row.empty()) {
+        out.reason = "empty_block";
+        return out;
+    }
+    if (q.empty() || q == p_out) {
+        out.reason = "q_is_p";
+        return out;
+    }
+    // c0: the incoming pivot's carried level (the structural direction's coefficient is 1).
+    const CarryPrior* qcp = nullptr;
+    for (const CarryPrior& cp : carry.prev_carry)
+        if (cp.kind == SharedParamKind::Clock && cp.sat == q) {
+            qcp = &cp;
+            break;
+        }
+    if (qcp == nullptr) {
+        out.reason = "no_q_entry";
+        return out;
+    }
+    const auto qit = pcc.row.find(sharedCarryKey(SharedParamKind::Clock, q, ""));
+    if (qit == pcc.row.end() || static_cast<Eigen::Index>(qit->second) >= k) {
+        out.reason = "no_q_row";
+        return out;
+    }
+    const Eigen::Index iq = static_cast<Eigen::Index>(qit->second);
+    const double c0 = qcp->value;
+
+    // u: every clock row of the constellation in the block (its key is "<sat>|CLK").
+    std::vector<char> u(static_cast<std::size_t>(k), 0);
+    std::vector<Eigen::Index> U;
+    for (const auto& [key, row] : pcc.row) {
+        if (static_cast<Eigen::Index>(row) >= k) continue;
+        if (key.size() > 4 && key.front() == c && key.compare(key.size() - 4, 4, "|CLK") == 0) {
+            u[row] = 1;
+            U.push_back(static_cast<Eigen::Index>(row));
+        }
+    }
+    std::sort(U.begin(), U.end());
+    const Eigen::VectorXd r = pcc.P.col(iq);   // a copy: P is updated in place below
+    const double pqq = r(iq);
+    out.c0    = c0;
+    out.pqq   = pqq;
+    out.k_old = static_cast<std::size_t>(k);
+    out.iq    = static_cast<int>(iq);
+
+    // The constellation's block before, for the contrast check (the update touches only its
+    // rows and columns).
+    const Eigen::Index nu = static_cast<Eigen::Index>(U.size());
+    Eigen::MatrixXd Puu(nu, nu);
+    for (Eigen::Index a = 0; a < nu; ++a)
+        for (Eigen::Index b = 0; b < nu; ++b) Puu(a, b) = pcc.P(U[a], U[b]);
+
+    // P' = P - u r' - r u' + P_qq u u', on the upper triangle of every (i, j) with u_i or u_j
+    // nonzero, then mirrored; a pair with u = 0 on both sides is not touched.
+    for (Eigen::Index i = 0; i < k; ++i) {
+        for (Eigen::Index j = i; j < k; ++j) {
+            const bool ui = u[static_cast<std::size_t>(i)] != 0;
+            const bool uj = u[static_cast<std::size_t>(j)] != 0;
+            if (!ui && !uj) continue;
+            double v = pcc.P(i, j);
+            if (ui && uj)  v = v - r(j) - r(i) + pqq;
+            else if (ui)   v = v - r(j);
+            else           v = v - r(i);
+            pcc.P(i, j) = v;
+            pcc.P(j, i) = v;
+        }
+    }
+    pcc.P.row(iq).setZero();
+    pcc.P.col(iq).setZero();
+
+    // Values: every carried clock of the constellation moves by -c0 (q lands on 0); one with
+    // a block row takes P'_ii, one without (parked) the diagonal rule.
+    std::set<std::string> carried_clk;
+    long long n_rows = 0, n_parked = 0;
+    double var_saved = 0.0;
+    const std::string cs(1, c);
+    forEachCarriedReference(
+        carry, carryMechanismSites(CarryMechanism::Handover),
+        [&](const CarriedRef& ref) -> bool {
+            if (ref.kind != SharedParamKind::Clock || ref.site != CarrySite::PrevCarry) return false;
+            if (ref.sat.empty() || NetworkSbasis::constellationOf(ref.sat) != cs) return false;
+            carried_clk.insert(ref.sat);
+            *ref.value -= c0;
+            const auto rit = pcc.row.find(sharedCarryKey(SharedParamKind::Clock, ref.sat, ""));
+            if (rit != pcc.row.end() && static_cast<Eigen::Index>(rit->second) < k) {
+                const Eigen::Index i = static_cast<Eigen::Index>(rit->second);
+                if (ref.sat != q) var_saved += (*ref.var + pqq) - pcc.P(i, i);
+                *ref.var = pcc.P(i, i);
+                ++n_rows;
+            } else {
+                *ref.var += pqq;
+                ++n_parked;
+            }
+            return true;
+        },
+        &out.counts);
+    out.rows      = n_rows;
+    out.parked    = n_parked;
+    out.var_saved = var_saved;
+
+    // The outgoing pivot: exact in the outgoing frame, so its row in the incoming frame is
+    // -r_j + P_qq u_j and its value -c0.
+    Eigen::Index ip = -1;
+    if (!p_out.empty() && NetworkSbasis::constellationOf(p_out) == cs
+        && !pcc.row.count(sharedCarryKey(SharedParamKind::Clock, p_out, ""))
+        && !carried_clk.count(p_out)) {
+        ip = k;
+        pcc.P.conservativeResize(k + 1, k + 1);
+        for (Eigen::Index j = 0; j < k; ++j) {
+            const double v = (j == iq) ? 0.0
+                           : (u[static_cast<std::size_t>(j)] ? -r(j) + pqq : -r(j));
+            pcc.P(k, j) = v;
+            pcc.P(j, k) = v;
+        }
+        pcc.P(k, k) = pqq;
+        pcc.row[sharedCarryKey(SharedParamKind::Clock, p_out, "")] = static_cast<std::size_t>(k);
+        CarryPrior cp;
+        cp.kind  = SharedParamKind::Clock;
+        cp.sat   = p_out;
+        cp.value = -c0;
+        cp.var   = pqq;
+        carry.prev_carry.push_back(std::move(cp));
+        out.p_added = true;
+    }
+    out.applied = true;
+
+    // Self-check: the incoming pivot lands on 0, its row is exactly 0, the block is finite and
+    // symmetric, and every clock contrast keeps its variance (the outgoing pivot's included,
+    // whose outgoing-frame row is the zero row).
+    for (const CarryPrior& cp : carry.prev_carry)
+        if (cp.kind == SharedParamKind::Clock && cp.sat == q) {
+            out.x_q_post = cp.value;
+            break;
+        }
+    const bool zero_row = pcc.P.row(iq).cwiseAbs().maxCoeff() == 0.0
+                       && pcc.P.col(iq).cwiseAbs().maxCoeff() == 0.0;
+    const bool finite = pcc.P.allFinite();
+    // Symmetric on the rows and columns the update wrote (the constellation's clocks and the
+    // appended outgoing pivot).  The rest of the block is left as the stash wrote it, which
+    // is symmetric only to rounding (the solve's covariance), and is not the kernel's to judge.
+    bool symmetric = true;
+    for (Eigen::Index a = 0; a < nu && symmetric; ++a)
+        symmetric = (pcc.P.row(U[a]).transpose() - pcc.P.col(U[a])).cwiseAbs().maxCoeff() == 0.0;
+    if (ip >= 0 && symmetric)
+        symmetric = (pcc.P.row(ip).transpose() - pcc.P.col(ip)).cwiseAbs().maxCoeff() == 0.0;
+    double dev = 0.0, scale = 0.0;
+    for (Eigen::Index a = 0; a < nu; ++a) {
+        scale = std::max(scale, std::abs(Puu(a, a)));
+        for (Eigen::Index b = a + 1; b < nu; ++b) {
+            const double before = Puu(a, a) + Puu(b, b) - 2.0 * Puu(a, b);
+            const double after  = pcc.P(U[a], U[a]) + pcc.P(U[b], U[b]) - 2.0 * pcc.P(U[a], U[b]);
+            dev = std::max(dev, std::abs(after - before));
+        }
+        if (ip >= 0) {   // x_p - x_j: before, Var(x_j) (x_p exact); after, the appended row
+            const double after = pcc.P(ip, ip) + pcc.P(U[a], U[a]) - 2.0 * pcc.P(ip, U[a]);
+            dev = std::max(dev, std::abs(after - Puu(a, a)));
+        }
+    }
+    scale = std::max(scale, std::abs(pqq));
+    out.contrast_maxdev = dev;
+    out.selfcheck_ok = std::abs(out.x_q_post) <= kStsExactTolM && zero_row && finite && symmetric
+                    && dev <= kStsDenseContrastTolRel * std::max(scale, 1e-300);
+    return out;
+}
+
 long long undoClockStransform(NetworkCarryState& carry, char constellation, double c0,
                               double var_q, CarrySiteCounts* counts) {
     return forEachCarriedReference(
@@ -227,6 +398,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
     // byte-identical regardless of call order.
     ctx.carry.sts_consts.clear();
     ctx.carry.sts_c0.clear();
+    ctx.carry.sts_dense.clear();   // card SCL B2: empty unless a dense edge applies below
 
     if (!datum_changed || changed_consts.empty()) return;
 
@@ -285,7 +457,85 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                           key, q);
             }
         }
-        if (!before_rows) {
+        // Card SCL B2: the exact S P S^T over the values and the dense block together; an edge
+        // the dense kernel cannot apply takes the diagonal kernel below (counted).
+        std::string dense_detail;
+        bool dense_done = false;
+        if (!before_rows && ctx.knobs.handover_stransform_dense) {
+            // The outgoing pivot is the frame the stashed block is in: the stash's pinned clock
+            // (card CTU's record), else the last pivot the wire declared.
+            std::string p_out;
+            const auto cx = ctx.carry.cxu_pivot.find(c);
+            if (cx != ctx.carry.cxu_pivot.end()) {
+                p_out = cx->second.first;
+            } else {
+                const auto lp = ctx.carry.last_pivot.find(key);
+                if (lp != ctx.carry.last_pivot.end()) p_out = lp->second;
+            }
+            // The constellation's carried clocks that nothing moved between their fold decision
+            // (before PASS B, the carry the rows were built on) and this transform.
+            std::set<std::string> clean;
+            for (const CarryPrior& cp : ctx.carry.prev_carry)
+                if (cp.kind == SharedParamKind::Clock && !cp.sat.empty() && cp.sat.front() == c
+                    && cp.fold.disposition != CarryDisposition::Undecided
+                    && cp.value == cp.fold.value_decided_m && cp.var == cp.fold.var_decided_m2)
+                    clean.insert(cp.sat);
+            const ClockStransformDenseResult d = applyClockStransformDense(ctx.carry, c, q, p_out);
+            if (d.applied) {
+                ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
+                carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, d.counts);
+                r.applied      = true;
+                r.c0           = d.c0;
+                r.var_q        = d.pqq;
+                r.rows         = d.rows + d.parked;
+                r.x_q_post     = d.x_q_post;
+                r.selfcheck_ok = std::abs(d.x_q_post) <= kStsExactTolM;
+                NetworkCarryState::StsDense& rec = ctx.carry.sts_dense[c];
+                rec.q            = q;
+                rec.p            = p_out;
+                rec.c0           = d.c0;
+                rec.pqq          = d.pqq;
+                rec.k_old        = d.k_old;
+                rec.iq           = d.iq;
+                rec.p_added      = d.p_added;
+                rec.selfcheck_ok = d.selfcheck_ok;
+                for (const auto& [rk, row] : ctx.carry.prev_carry_cov.row) {
+                    (void)row;
+                    if (rk.size() > 4 && rk.front() == c
+                        && rk.compare(rk.size() - 4, 4, "|CLK") == 0)
+                        rec.row_sats.insert(rk.substr(0, rk.size() - 4));
+                }
+                rec.clean = std::move(clean);
+                ++ctx.counters.sts_dense_edges;
+                ctx.counters.sts_dense_rows   += d.rows;
+                ctx.counters.sts_dense_parked += d.parked;
+                if (d.p_added) ++ctx.counters.sts_dense_p_added;
+                ctx.counters.sts_dense_var_saved += d.var_saved;
+                ctx.counters.sts_dense_contrast_maxdev =
+                    std::max(ctx.counters.sts_dense_contrast_maxdev, d.contrast_maxdev);
+                if (!d.selfcheck_ok) {
+                    ++ctx.counters.sts_dense_selfcheck_fail;
+                    log->warn("Network (card SCL B2): the dense S-transform's self-check FAILED for "
+                              "{} (incoming pivot {}): |x_q| {:.3e} m, contrast change {:.3e} m^2.  "
+                              "The block is re-expressed but the clone fold and the anchor keep "
+                              "will not use it.",
+                              key, q, d.x_q_post, d.contrast_maxdev);
+                }
+                dense_detail = fmt::format(";dense=1;p={};p_added={};parked={};dvar_saved={:.6e};"
+                                           "contrast_dev={:.3e};dense_ok={}",
+                                           p_out.empty() ? std::string("none") : p_out,
+                                           d.p_added ? 1 : 0, d.parked, d.var_saved,
+                                           d.contrast_maxdev, d.selfcheck_ok ? 1 : 0);
+                dense_done = true;
+            } else {
+                ++ctx.counters.sts_dense_fallback;
+                traces.emitEvent(t, "STRANSFORM", "sts_dense_fallback", q, "", std::nullopt,
+                                 std::nullopt, "fallback",
+                                 fmt::format("const={};reason={};p={}", key, d.reason,
+                                             p_out.empty() ? std::string("none") : p_out));
+            }
+        }
+        if (!before_rows && !dense_done) {
             // Every carried clock of the constellation through the one traversal (card PRM
             // phase 2).
             CarrySiteCounts prm_cc;
@@ -326,9 +576,9 @@ void networkHandoverStransform(NetworkRunContext& ctx,
         // run-end clause.
         traces.emitEvent(t, "STRANSFORM", "sts_applied", q, "", r.c0, std::nullopt,
                          "transform",
-                         fmt::format("const={};c0={:.6f};rows={};var_q={:.6e};nv={}{}",
+                         fmt::format("const={};c0={:.6f};rows={};var_q={:.6e};nv={}{}{}",
                                      key, r.c0, r.rows, r.var_q, v_c.size(),
-                                     before_rows ? ";before_rows=1" : ""));
+                                     before_rows ? ";before_rows=1" : "", dense_detail));
     }
 }
 

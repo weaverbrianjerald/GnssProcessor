@@ -96,6 +96,26 @@ public:
     /// shell: 0 = legacy single layer, keyed "SH|n|m|t"; 1 = the dual-layer second
     /// shell, keyed "SH2|n|m|t", so both shells coexist on the border.
     Eigen::Index registerVtecCoeff(int n, int m, char trig, int layer = 0);
+    /**
+     * @brief Register the one-epoch clock clone column of @p sat (card SCL,
+     *        @c network.carry_coupling_clock_clone); idempotent; returns its column.
+     *
+     * The clone is the satellite's previous-epoch clock @f$c_s(t-1)@f$ carried for one
+     * epoch in the shared border: the coupling rows keep their harvested clock
+     * coefficients on it, and the walk @f$c_s(t)-c_s(t-1)@f$ enters once, in the border
+     * prior (@ref addCloneWalk), instead of once per row (the per-row form of card CTU
+     * drops the time-update covariance between rows).  Keyed @c "sat|CLKC" (disjoint
+     * from the clock's @c "sat|CLK") and labelled @c "CLKC:<sat>".  Its descriptor
+     * carries @ref SharedParamKind::Clock with a clone flag, so no switch over the kind
+     * meets a new value; every reader that tests the kind for a satellite clock also
+     * tests the flag.  The driver registers clones after every other column, so no
+     * existing column index moves and the clones occupy the last
+     * @ref numClockClones columns.  A clone is never emitted (@ref toSolutionEpoch),
+     * never counted as a satellite clock by the gauge-free closure, and never
+     * marginalized by card Q3's clock refloat (@ref refoldSharedPriorDenseDroppingClocks).
+     * @throws std::logic_error after @ref beginEpoch, like every registration.
+     */
+    Eigen::Index registerClockClone(const std::string& sat);
 
     /// @return The clock column for @p sat. @throws std::out_of_range if absent.
     Eigen::Index clockColumn(const std::string& sat) const;
@@ -106,6 +126,30 @@ public:
     /// @return The SH-VTEC coefficient column for (n,m,trig) of @p layer.
     /// @throws if absent.
     Eigen::Index vtecCoeffColumn(int n, int m, char trig, int layer = 0) const;
+    /// @return The clock clone column of @p sat (card SCL, @ref registerClockClone).
+    /// @throws std::out_of_range if absent.
+    Eigen::Index clockCloneColumn(const std::string& sat) const;
+    /// @return Whether shared column @p col is a clock clone (card SCL); false when
+    ///         @p col is out of range.
+    bool isClockClone(Eigen::Index col) const;
+    /**
+     * @brief The identity of a satellite shared column (card SCL): the reverse of
+     *        @ref clockColumn / @ref phaseBiasColumn / @ref codeBiasColumn.
+     *
+     * Read by card SMH's clone marginalization, which spreads a row's clone coefficients
+     * over the border through a column-indexed regression and re-keys them by identity.
+     * @param col          the shared column.
+     * @param[out] kind    its kind (Clock, PhaseBias or CodeBias).
+     * @param[out] sat     its satellite.
+     * @param[out] signal  its signal (empty for a clock).
+     * @return false (outputs untouched) for a column out of range, an SH-VTEC column or a
+     *         clock clone.
+     */
+    bool sharedColumnIdentity(Eigen::Index col, SharedParamKind& kind, std::string& sat,
+                              std::string& signal) const;
+    /// @return The number of clock clone columns registered this epoch (card SCL); they
+    ///         are the last columns of the layout.  0 whenever the knob is off.
+    Eigen::Index numClockClones() const { return n_clones_; }
 
     /// @return Number of registered shared columns.
     Eigen::Index numShared() const { return static_cast<Eigen::Index>(columns_.size()); }
@@ -116,7 +160,8 @@ public:
      * Format by kind: @c "CLK:<sat>" (satellite clock), @c "CB:<sat>:<signal>"
      * (satellite code bias), @c "PB:<sat>:<signal>" (satellite phase bias),
      * @c "SH:<C|S>:<n>:<m>" (SH-VTEC coefficient; @c "SH2:<C|S>:<n>:<m>" on the
-     * second shell).  Intended for the NEQ export and other offline attribution
+     * second shell), @c "CLKC:<sat>" (a clock clone, card SCL; no "CLK:" prefix
+     * parser matches it).  Intended for the NEQ export and other offline attribution
      * tooling; labels are stable across epochs for an unchanged registration order.
      *
      * @throws std::out_of_range if @p col is not a registered column.
@@ -656,6 +701,10 @@ public:
         int             sh_layer{0}; ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
         double          value{0.0};  ///< prior mean
         double          info{0.0};   ///< information weight = 1 / prior-variance (>0)
+        /// Card SCL: the prior is on the clock clone column of @c sat
+        /// (@ref registerClockClone, key @c "sat|CLKC"), with @c kind Clock.  False (the
+        /// default) = the column of (kind, sat, signal), as before.
+        bool            clone{false};
     };
 
     /**
@@ -733,6 +782,65 @@ public:
                                     Eigen::VectorXd* lambda_diag = nullptr,
                                     bool clock_gauge_free = false,
                                     bool require_closure = false);
+
+    /// One clock clone's walk factor (card SCL): the pseudo-observation
+    /// @f$c_s(t) - c_s(t-1) = \text{mean}@f$ with variance @c q, between the satellite's
+    /// clock column and its clone column.
+    struct CloneWalk {
+        std::string sat;    ///< satellite id (its clock and its clone must both be registered)
+        double mean{0.0};   ///< the factor's mean (m): the fold-time carried clock minus the clone's prior mean, 0 unless the carry moved after the rows were built
+        double q{0.0};      ///< the walk's variance over the epoch (m^2): the fold's var_eff minus the stashed variance
+        /// Card SCL B2: across a clock-pivot handover the dense S-transform re-expressed, the
+        /// clock column is in the incoming frame and the clones in the outgoing one, so the
+        /// factor is @f$c_s(t) - c_s(t-1) + c_q(t-1) = \text{mean}@f$ with @c ref the incoming
+        /// pivot q (its clone must be registered).  Empty (the default): no third term.
+        std::string ref;
+    };
+
+    /**
+     * @brief Fold (or withdraw) the walk factors of the clock clones (card SCL).
+     *
+     * In information form: for each factor, @f$w=1/q@f$ is added to
+     * @f$N_{cc}@f$ and @f$N_{kk}@f$ and subtracted from @f$N_{ck}@f$, @f$N_{kc}@f$ (clock
+     * column c, clone column k), with @f$\pm w\,\text{mean}@f$ on the right-hand side.
+     * Together with the stashed block folded over the stand-ins (each cloned clock stood
+     * in for by its clone at the stashed variance, @ref addSharedPriorDense with
+     * @ref SharedPrior::clone), this is the joint prior of the moved border and the clones
+     * with covariance @f$[[P+Q, P], [P, P]]@f$ on each clock and its clone, formed without
+     * inverting that ill-conditioned block.  A factor with a @c ref (card SCL B2) adds the
+     * reference clone with coefficient +1: @f$a = e_c - e_k + e_r@f$, information
+     * @f$a a^\top/q@f$, right-hand side @f$a\,\text{mean}/q@f$.  A factor whose clock, clone
+     * or reference clone is absent from the layout, or whose @c q is not positive and
+     * finite, is skipped.
+     * @param sign +1 folds, -1 withdraws exactly what +1 folded (card Q3's refloat, which
+     *             may call it after @ref solve, as it calls @ref withdrawSharedPrior, and
+     *             folds a factor back with +1 when its re-solve throws).
+     * @return The number of factors applied.
+     * @throws std::logic_error before @ref beginEpoch.
+     */
+    std::size_t addCloneWalk(const std::vector<CloneWalk>& walks, double sign = 1.0);
+
+    /**
+     * @brief The posterior regression of the clock clones on the rest of the border
+     *        (card SCL), the ingredient of the harvest's clone marginalization.
+     *
+     * After @ref solve, with @f$J@f$ the reduced shared normals the solve factored (every
+     * prior folded, before the datum pins), @f$C@f$ the clone columns and @f$S'@f$ the
+     * other columns outside @p datum: @f$B' = J_{CC}^{-1} = \mathrm{Var}(c\mid s',
+     * \text{data})@f$ and @f$K = -B'J_{CS'}@f$, the coefficients of @f$E[c\mid s']@f$.
+     * This is the information form of @f$K=\Sigma_{CS'}\Sigma_{S'S'}^{-1}@f$,
+     * @f$B'=\Sigma_{CC}-K\Sigma_{S'C}@f$ over the solve's covariance, free of the
+     * cancellation in the latter (B' is orders of magnitude below @f$\Sigma_{CC}@f$).  A
+     * datum-pinned column is exactly known in the solve's frame: it gets no coefficient
+     * (the conditional mean does not move with it), and the caller restores a row's
+     * identity along the declared clock gauge on it (the harvest's clock-family deficit).
+     * @param datum The datum the solve applied.
+     * @param[out] K  @c numClockClones × @ref numShared, zero on the clone and pinned columns.
+     * @param[out] Bc @c numClockClones square.
+     * @return false (outputs untouched) when no clone is registered, the epoch is not
+     *         solved, or @f$J_{CC}@f$ is not positive definite.
+     */
+    bool cloneConditional(const Datum& datum, Eigen::MatrixXd& K, Eigen::MatrixXd& Bc) const;
 
     /**
      * @brief Fold diagonal shared priors with the per-constellation
@@ -863,7 +971,9 @@ public:
      *
      * @param keys      The keys the original fold used (order defines @p cov).
      * @param cov       The covariance the original fold used (P_prev + Q).
-     * @param drop_sats Satellites whose clock key is to be marginalized.
+     * @param drop_sats Satellites whose clock key is to be marginalized (a clock clone
+     *                  key of the same satellite is kept, card SCL: the rows still
+     *                  reference the clone).
      * @param restore   Fold the inverse delta (Λ_old − Λ_new) instead: the exact
      *                  undo of a previous call with the same arguments, used when
      *                  the re-solve throws and the caller must put the epoch's
@@ -1108,7 +1218,8 @@ public:
      *        datum (byte-identical).
      * @return One epoch of satellite-side solutions (clock C0 + per-signal code /
      *         phase bias) keyed by RINEX sat id, ready for `NetworkProductEmitter`.
-     *         SH-VTEC columns are not mapped.
+     *         SH-VTEC columns are not mapped, nor are clock clone columns (card SCL:
+     *         a border-internal state, never a product).
      */
     NetworkSolutionEpoch toSolutionEpoch(const Eigen::VectorXd& x_s,
                                          const GnssTime& epoch_time, int iod_ssr = 0,
@@ -1166,12 +1277,16 @@ private:
         int  sh_m{-1};         ///< VtecSh order  (VtecSh only)
         char sh_trig{0};       ///< VtecSh 'C'/'S' (VtecSh only)
         int  sh_layer{0};      ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
+        bool clone{false};     ///< card SCL: a clock clone column (kind Clock, @ref registerClockClone)
     };
 
     Eigen::Index registerColumn_(const std::string& sat, SharedParamKind kind,
                                  const std::string& signal);
     static std::string key_(const std::string& sat, SharedParamKind kind,
                             const std::string& signal);
+    /// The layout key of a prior: the SH key for VtecSh, @c "sat|CLKC" for a clock clone
+    /// (card SCL), @ref key_ otherwise (the same string as before for every non-clone prior).
+    static std::string priorKey_(const SharedPrior& p);
     /// Throw unless the epoch is open and not yet solved (guards @ref addStation).
     void requireAccumulating_() const;
 
@@ -1198,6 +1313,7 @@ private:
 
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
+    Eigen::Index n_clones_{0};                    ///< clock clone columns registered this epoch (card SCL); cleared by reset()
     /// Partial-support skip tally (Card C-GF).  @c mutable because @ref denseFoldTerms_
     /// is const and observational: the skip decision reads the layout, it does not change it.
     mutable std::size_t gf_partial_skipped_{0};

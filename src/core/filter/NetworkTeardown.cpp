@@ -12,6 +12,7 @@
 #include "filter/NetworkTeardown.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "filter/NetworkClockClone.hpp"   // networkClockCloneTeardown (card SCL)
 #include "filter/NetworkChannelAll.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "measurement/MeasurementModel.hpp"   // complete type for NetStation::mm
@@ -5860,6 +5861,31 @@ int networkTeardown(
                               "the preview's declaration or inputs diverged.",
                               sc.sts_pre_mismatch);
             }
+            // Card SCL B2: the dense kernel's on-path counters (invariant #4: handovers with 0
+            // dense edges mean the kernel never ran).
+            if (ctx.knobs.handover_stransform_dense) {
+                log->info("Network (card SCL B2, dense handover S-transform): {} edge(s) "
+                          "re-expressed by S P S^T ({} carried clock(s) with a block row, {} "
+                          "parked clock(s) by the diagonal rule, {} outgoing pivot(s) appended), "
+                          "{} fallback(s) to the diagonal kernel, {} self-check failure(s); "
+                          "variance the diagonal bump would have over-stated, summed {:.4e} m^2; "
+                          "largest clock-contrast variance change {:.3e} m^2.{}",
+                          sc.sts_dense_edges, sc.sts_dense_rows, sc.sts_dense_parked,
+                          sc.sts_dense_p_added, sc.sts_dense_fallback,
+                          sc.sts_dense_selfcheck_fail, sc.sts_dense_var_saved,
+                          sc.sts_dense_contrast_maxdev,
+                          (sc.sts_edges > 0 && sc.sts_dense_edges == 0)
+                              ? "  DEAD WIRING: edges were transformed and the dense kernel "
+                                "applied to none."
+                              : "");
+                if (ctx.knobs.cta_datum_keep)
+                    log->info("Network (card SCL B2, anchor kept across the handover): {} "
+                              "anchored clock(s) kept engaged at a dense-transformed handover "
+                              "(no datum decouple, no disc mark), {} datum decouple(s) the keep "
+                              "rule refused (no dense edge, no block row, or a loose fold), {} "
+                              "datum decouple(s) in all.",
+                              sc.cta_datum_kept, sc.cta_datum_kept_refused, sc.cta_trip_datum);
+            }
         }
     }
     if (clk_runaway_on && n_runaway_epochs > 0)
@@ -6052,6 +6078,7 @@ int networkTeardown(
                           "pair took the term (no whitened local block, or no two exact rows in "
                           "one): the knob is INERT for this run.");
         }
+        networkClockCloneTeardown(ctx, log);   // card SCL: its run-end line and INERT warning; no-op off
         if (c.cxu_fold_reexpressed_in_s > 0 || c.cxu_fold_retired_in_s > 0)
             log->warn("Network (card CTU): at a clock-pivot handover the fold folded {} key(s) "
                       "of S on a re-expressed variance and retired {}, after the coupling rows "
@@ -6934,6 +6961,26 @@ int networkTeardown(
                 if (k.smh_updates == 0)
                     log->warn("Network (card SMH): network.emit_pb_hold_smoothed is ARMED but no "
                               "clone was advanced: every held key wrote the phase-clock transfer.");
+                // Card SCL: the smoothed hold's rows on the clone epoch (invariant 4).  `0
+                // epoch(s)` with the clone armed means the rows read card CTU's epoch only.
+                if (ctx.knobs.carry_cpl_clone) {
+                    const ClockCloneCounters& cc = k.ccl;
+                    log->info("  pb hold, smoothed (SMH) on the clock clones (SCL): {} epoch(s) on "
+                              "the clone epoch ({} clock(s) moved, {} with fewer stand-ins than "
+                              "the rows' clones, {} refloat-unfolded clock(s) kept on their clone, "
+                              "{} unfactored); regression unavailable on {} epoch(s); {} row(s) "
+                              "re-expressed: {} clone term(s) marginalized, {} new term(s), {} "
+                              "coefficient(s) without an identity dropped (|m| {:.4e}), {} clock "
+                              "deficit(s) onto the pinned clock ({} orphan), variance added "
+                              "{:.4e} m^2; harvest regression identical to the hold's on {} of "
+                              "{} epoch(s) (max |diff| {:.3e})",
+                              cc.smh_epochs, cc.smh_moved, cc.smh_partial, cc.smh_kept_unfolded,
+                              cc.smh_unfactored, cc.smh_noreg, cc.smh_rows, cc.smh_clone_terms,
+                              cc.smh_moved_terms, cc.smh_dropped, cc.smh_mass_dropped,
+                              cc.smh_gauge_held, cc.smh_gauge_orphan, cc.smh_var_add,
+                              cc.smh_reg_checked - cc.smh_reg_mismatch, cc.smh_reg_checked,
+                              cc.smh_reg_maxdiff);
+                }
                 // Card SMD: the block clones (carried whenever the smoothed hold is armed).
                 // `0 update(s)` under network.emit_pb_hold_smoothed_block means the wire was the
                 // phase-clock transfer throughout.

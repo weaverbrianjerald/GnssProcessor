@@ -57,6 +57,9 @@
  *     dominant common-mode case, so omitting the cross term overstates the
  *     variance.  The full @f$S D S^\top@f$ on the carry blob is deferred by §8.8;
  *     §8.7 gate 6 watches for the failure signature the omission would produce.
+ *     Card SCL build B2 (@c network.handover_stransform_dense, default off) is that
+ *     full transform: @ref applyClockStransformDense re-expresses the values and the
+ *     dense block together by @f$S P S^\top@f$, with the diagonal kernel as its fallback.
  *
  * ## The release (§8.4 INC-1)
  *
@@ -122,6 +125,12 @@ struct ClockStransformResult {
 /// wiring fault.
 inline constexpr double kStsExactTolM = 1e-9;
 
+/// Self-check tolerance of the dense kernel's contrast invariance (card SCL B2), relative to
+/// the largest clock variance of the constellation's block.  The update is three
+/// subtractions per entry, so the change of a contrast variance is a few roundings of that
+/// scale; a value above this is a wiring fault.
+inline constexpr double kStsDenseContrastTolRel = 1e-10;
+
 /**
  * @brief The rank-1 S-transform kernel (§8.1) through the traversal of carried references
  *        (card PRM phase 2, @ref forEachCarriedReference); no context, no I/O.
@@ -156,6 +165,75 @@ ClockStransformResult applyClockStransform(
     const std::vector<std::pair<std::string, double>>& v_c,
     const std::string& q, CarryMechanism mech = CarryMechanism::Handover,
     CarrySiteCounts* counts = nullptr);
+
+/// Outcome of @ref applyClockStransformDense.
+struct ClockStransformDenseResult {
+    bool        applied{false};       ///< false: nothing was changed (see @c reason); the caller falls back to the diagonal kernel
+    const char* reason{""};           ///< why it was not applied: "empty_block", "no_q_entry", "no_q_row", "q_is_p"
+    double      c0{0.0};              ///< the incoming pivot's carried level before (m)
+    double      pqq{0.0};             ///< the incoming pivot's block variance before, P_qq (m^2)
+    std::size_t k_old{0};             ///< block size before the outgoing pivot was appended
+    int         iq{-1};               ///< the incoming pivot's block row
+    long long   rows{0};              ///< carried clocks with a block row re-expressed (q included)
+    long long   parked{0};            ///< carried clocks of the constellation without a block row (the diagonal rule)
+    bool        p_added{false};       ///< the outgoing pivot was appended (value -c0, variance P_qq)
+    double      x_q_post{0.0};        ///< the incoming pivot's carried level after (expected 0)
+    double      var_saved{0.0};       ///< summed (var_i + P_qq) - P'_ii over the re-expressed clocks other than q (m^2): what the diagonal bump over-states
+    double      contrast_maxdev{0.0}; ///< largest |change| of a clock-contrast variance P_ii + P_jj - 2 P_ij over the constellation's rows (m^2)
+    bool        selfcheck_ok{true};   ///< |x'_q|, the zero row, finite, symmetric, contrast invariance
+    CarrySiteCounts counts{};         ///< the traversal's tallies of the value moves (card PRM phase 2)
+};
+
+/**
+ * @brief The exact clock-pivot S-transform of the carried values and the dense block
+ *        together (card SCL build B2, @c network.handover_stransform_dense); no context, no
+ *        I/O.
+ *
+ * The diagonal kernel (@ref applyClockStransform) moves the carried clock values and adds
+ * @f$\mathrm{var}_q@f$ to each carried clock variance, and leaves the dense side-car
+ * @c prev_carry_cov in the outgoing frame.  This kernel applies @f$S = I - u e_q^\top@f$ to
+ * both, with @f$u_i = 1@f$ on every clock row of constellation @p c in the block (registered
+ * or not, because a block held in two frames is not a covariance) and 0 on every other row
+ * (phase biases, code biases, other constellations):
+ *
+ * @f[
+ *   r = P e_q,\quad c_0 = x_q,\quad
+ *   x' = x - u\,c_0,\quad
+ *   P' = P - u r^\top - r u^\top + P_{qq}\,u u^\top .
+ * @f]
+ *
+ * The update is formed on the upper triangle and mirrored, so @f$P'@f$ is exactly symmetric;
+ * rows with @f$u = 0@f$ on both sides are not touched (bitwise unchanged); the incoming
+ * pivot's row and column are set to exactly 0.  The outgoing pivot @p p_out, pinned at the
+ * stash and so without a row, is exact in the outgoing frame (value 0, zero row): when it has
+ * neither a block row nor a carried entry it is appended with value @f$-c_0@f$, variance
+ * @f$P_{qq}@f$ and covariance @f$P'_{pj} = -r_j + P_{qq} u_j@f$, as a fresh @c CarryPrior
+ * (its fold decision is made at the fold, which counts it as undecided).  A carried clock of
+ * the constellation with a block row takes @f$\mathrm{var} = P'_{ii}@f$; one without (a
+ * parked READMIT entry) takes the diagonal rule @f$x - c_0@f$, @f$\mathrm{var} + P_{qq}@f$.
+ * The value moves go through the traversal of carried references
+ * (@ref forEachCarriedReference, the @c Handover sites), so card PRM's tallies count them.
+ *
+ * Every between-satellite contrast @f$a@f$ with @f$a^\top u = 0@f$ keeps its variance
+ * exactly (up to rounding): the diagonal kernel over-states a clock contrast by
+ * @f$2\,\mathrm{var}_q@f$ and leaves the clock-bias cross-covariances stale by
+ * @f$-P_{bq}@f$.  The kernel is idempotent: a second call finds @f$c_0 = 0@f$,
+ * @f$r = 0@f$ and the outgoing pivot present, and changes nothing.  It is singular (the
+ * incoming pivot's row is lost), so it cannot be undone without the saved block: the loader
+ * refuses it with @c network.handover_stransform_before_rows, the only path with an undo.
+ *
+ * Not applied (nothing changed, @c reason set): an empty block, no carried clock entry for
+ * @p q, no block row for @p q, or @p q equal to @p p_out.
+ *
+ * @param carry The run's carried state: @c prev_carry and @c prev_carry_cov, mutated in place.
+ * @param c     The constellation's leading character.
+ * @param q     The incoming pivot.
+ * @param p_out The outgoing pivot (the frame the block is in); empty: nothing is appended.
+ * @return What was done.
+ */
+ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, char c,
+                                                     const std::string& q,
+                                                     const std::string& p_out);
 
 /**
  * @brief Undo a transform @ref applyClockStransform applied with

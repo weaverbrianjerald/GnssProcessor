@@ -2425,6 +2425,42 @@ namespace GnssProcessor {
         bool networkCarryCouplingExactCross() const { return network_carry_coupling_exact_cross_; }
 
         /**
+         * @brief Carry the previous epoch's satellite clocks as one-epoch clone columns
+         *        in the shared border (@c network.carry_coupling_clock_clone, card SCL,
+         *        docs/refound/SCL_self_contained_clock_level_2026-10-03.md, section 5).
+         *
+         * The exact update (@ref networkCarryCouplingExactUpdate) re-expresses each
+         * station's carried row on the moved border separately and drops the time-update
+         * covariance between rows, @f$M_a^\top B M_b@f$.  With per-satellite phase anchors
+         * and a clock walk at the broadcast grade (anchor q about 5e-6 m^2/s) that states
+         * the satellite clock level several times too tight in variance and locks it (card
+         * SCL section 4.1).  With this knob each satellite clock that has a row in the
+         * stashed dense block gets a clone column @f$c_s(t-1)@f$ for one epoch, registered
+         * after every other column: the rows keep their harvested clock coefficients on the
+         * clone (a second copy of card CTU's epoch with each cloned clock on its clone at
+         * Q = 0; card SMH's rows advance on the same construction over the clones that
+         * stood in, and marginalize them after the solve), the border prior is
+         * folded over the stand-ins (each cloned clock stood in for by its clone at the
+         * stashed variance) with the walk @f$c_s(t)-c_s(t-1)@f$ added once per clock at the
+         * fold's own variance @f$Q_s = \mathrm{var}_{\mathrm{eff}} - P_{ss}@f$, the rank
+         * gate and the S-basis completion judge the border with the clones marginalized
+         * (an idle clone dropped), and the harvest marginalizes the clones out of every
+         * carried row through the posterior regression (the per-station form: the
+         * cross-station half of the clone's conditional covariance is dropped, the
+         * second-order term).  A clone is never stashed, snapshotted or emitted.  Run-end
+         * telemetry and an INERT warning in the card CTU block.
+         *
+         * Requires @ref networkCarryCouplingExactUpdate and
+         * @ref networkSharedCarryFullCov; refuses @c network.clock_model (no clock in the
+         * carried border), @c network.clock_anchor_gauge_free and
+         * @c network.shared_carry_gauge_free (the gauge-free downdate's clock direction
+         * would have to include the clones); hard errors at load.  Fingerprinted (armed-only
+         * token).  Default false = card CTU's per-row form (byte-identical).
+         * UNVALIDATED: built for the broadcast-grade clock walk; not recommended.
+         */
+        bool networkCarryCouplingClockClone() const { return network_carry_coupling_clock_clone_; }
+
+        /**
          * @brief Fully marginalize the SH-VTEC coefficient terms of every coupling
          *        row instead of shrink-carrying them
          *        (@c network.carry_coupling_sh_marginalize, card 1d-SH).
@@ -6289,6 +6325,64 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Whether the clock-pivot handover's S-transform re-expresses the stashed
+         *        dense border exactly, by @f$S P S^\top@f$, instead of the diagonal bump
+         *        (@c network.handover_stransform_dense, card SCL build B2).
+         *
+         * The transform after PASS B (@ref networkHandoverStransform) moves the carried
+         * clock values by @f$-c_0@f$ and adds @f$\mathrm{var}_q@f$ to each carried clock
+         * variance, while the dense side-car @c prev_carry_cov keeps its off-diagonals in
+         * the outgoing frame.  The fold then combines bumped diagonals with stale
+         * off-diagonals: every between-satellite clock contrast is over-stated by
+         * @f$2\,\mathrm{var}_q@f$ and every clock-bias cross-covariance is stale by
+         * @f$-P_{bq}@f$ (card PRM section 16.6's owed cure).  With this knob the values
+         * and the block are re-expressed together: @f$S = I - u e_q^\top@f$ over the
+         * constellation's clock family @f$u@f$ (every clock row of the constellation in the
+         * block, registered or not), @f$x' = S x@f$, @f$P' = S P S^\top@f$; the incoming
+         * pivot's row and column become exactly 0, and the outgoing pivot (pinned at the
+         * stash, so it has no row) is appended with value @f$-c_0@f$, variance
+         * @f$P_{qq}@f$ and covariance @f$-P_{qj} + P_{qq}u_j@f$.  A clock of the
+         * constellation without a block row (a parked entry) takes the diagonal rule.  An
+         * edge the dense kernel cannot apply (the incoming pivot has no block row, an empty
+         * block) falls back to the diagonal kernel, counted.  The kernel is idempotent.
+         *
+         * Inert (forced false, warned) without @ref networkHandoverStransform or without
+         * @ref networkSharedCarryFullCov.  Refused (a load error) with
+         * @ref networkHandoverStransformBeforeRows (the exact transform zeroes the incoming
+         * pivot's row, which before the rows would put a pinned column into card CTU's S
+         * and swap the pinned route of every row, and the undo of a skipped preview would
+         * need the saved block) and with @c network.carry_rx_clock_in_block (the receiver
+         * clock sits on the clock direction and its carried value is not re-expressed).
+         * Fingerprinted when armed (armed-only token): fresh convergence only.  Default
+         * false = the diagonal kernel (byte-identical).
+         */
+        bool networkHandoverStransformDense() const { return network_handover_stransform_dense_; }
+
+        /**
+         * @brief Whether card Q3's anchor stays engaged at a clock-pivot handover whose
+         *        carry the dense S-transform re-expressed exactly
+         *        (@c network.clock_anchor_datum_keep, card SCL build B2).
+         *
+         * By default the anchor's guard decouples every anchored clock of the changed
+         * constellation at a handover (reason datum): four LOOSE epochs follow, a
+         * per-satellite clock disc mark is written for each, and the smoothed hold's clones
+         * die with the withdrawal.  With this knob the guard skips that decouple for a
+         * satellite when all of these hold: the constellation was re-expressed this epoch by
+         * the dense kernel (@ref networkHandoverStransformDense) with its self-check passed;
+         * the satellite has a row in the re-expressed block; and its fold this epoch was the
+         * anchored one, on the re-expressed entry.  The guard's statistic then tests the
+         * satellite as usual (a genuine fault still trips), the PIVOT datum bump on the wire
+         * stays the consumer's signal, and each kept satellite is counted
+         * (@c cta_datum_kept) and written as a CLK_ANCHOR cta_datum_kept event.  Under the
+         * diagonal kernel the decouple stays: that fold is not exact.
+         *
+         * Inert (forced false, warned) without @ref networkHandoverStransformDense or
+         * without @ref networkClockTemporalAnchor.  Fingerprinted when armed (armed-only
+         * token).  Default false = the decouple (byte-identical).
+         */
+        bool networkClockAnchorDatumKeep() const { return network_clock_anchor_datum_keep_; }
+
+        /**
          * @brief Whether each carry re-base mechanism also moves the carried references its
          *        exemption table marks as owed (@c network.carry_rebase_complete, card PRM
          *        phase 3b step 2).
@@ -8968,6 +9062,7 @@ namespace GnssProcessor {
         bool   network_carry_coupling_gauge_project_{false};   ///< Hold each (constellation,kind) coefficient sum of a truncated coupling row at its harvest value (card 1f), so a departed/re-realized column stops pinning the current datum gauge at the old realization (without it the null eigenvalue rose from 1e-11 to 9.43e-3 in one epoch, causing spurious over-specified withholds); requires carry_conditional_coupling.  Off = byte-identical.
         bool   network_carry_coupling_reinit_sources_{false};  ///< Key the coupling reinit history (kind,sat,signal) with an empty-signal sat-wide wildcard, feed it from the phase-anchor / eq34 / datum-slip re-reference sets, and honour it independently of carry_coupling_time_update (card 1g), so a re-realized column takes the departed route instead of folding a retired-frame ŝ_prev at full weight; requires carry_conditional_coupling.  Off = byte-identical.
         bool   network_carry_coupling_time_update_{false};  ///< Apply the border time update to each coupling row at injection (card 1d): shrink every present coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder equal to the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, card 1c).  Requires carry_conditional_coupling (hard error otherwise).  Off = raw harvested rows (byte-identical).
+        bool   network_carry_coupling_clock_clone_{false};   ///< Card SCL: carry the previous epoch's satellite clocks as one-epoch clone columns in the shared border (the rows keep their clock coefficients on the clone, the walk enters once in the border prior, the harvest marginalizes the clones).  Requires carry_coupling_exact_update and shared_carry_full_cov; refuses clock_model, clock_anchor_gauge_free and shared_carry_gauge_free.  Off = card CTU's per-row form (byte-identical).
         bool   network_carry_coupling_exact_cross_{false};   ///< Add the exact time update's within-station row covariance M_i'BM_k to the whitened local block (card WSX).  Requires carry_coupling_exact_update.  Off = the per-row form (byte-identical).
         bool   network_carry_coupling_exact_update_{false};  ///< Replace the card 1d scalar kappa by the exact conditional time update of the coupling rows (card CTU): M_new = (P_SS+Q_S)^-1 P_S,K M_K over the stashed dense border block with the fold's own inflation, the bracket variance added per row (the per-row form: no time-update covariance between rows), departed/decoupled columns re-attributed through P, the clock-family deficit onto the pinned pivot.  Requires carry_coupling_time_update and shared_carry_full_cov, refuses carry_coupling_joint_whiten.  Off = card 1d rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< Carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (B9; via addStationPrior, alongside the ambiguity carry); off = per-epoch white-noise ZWD (byte-identical).  FALSIFIED for continuous runs of the standard posture (consumer 0.204 → 0.723 m rms: an information double count against the station filter's own persistence); its seam value is delivered by network.zwd_seam_reseed instead.
@@ -9132,6 +9227,8 @@ namespace GnssProcessor {
         bool   network_scoped_handover_response_{false};   ///< Scope the producer's internal pivot-handover response (RTA-2; D2 carry skip, clock-oscillator clear, clock-monitor jump suppression) to the constellation(s) whose datum changed; off = global response (byte-identical).
         bool   network_handover_stransform_{false};        ///< At a clock-pivot handover, transform the changed constellation's carried shared means along NetworkSbasis::clockNullDirection (c0 = x_q/v_c[q]; x -= v_c*c0; var += v_c^2*var_q) and then fold them instead of skipping (queue 1(b)); the carried information is valid, only expressed in the retired datum. Requires scoped_handover_response (inert and warned otherwise); inert under an anchor-free clock datum. Fingerprinted when armed (armed-only token) ⇒ fresh convergence only. Off = the legacy one-epoch drop (byte-identical).
         bool   network_handover_stransform_before_rows_{false};  ///< Run the handover S-transform before the fold decision and PASS B, through the traversal of carried references, so the coupling rows read the re-expressed carry (card PRM phase 2).  Requires handover_stransform (inert and warned otherwise); refused with apriori_source brdc_rts.  Fingerprinted when armed.  Off = the transform after PASS B (byte-identical).
+        bool   network_handover_stransform_dense_{false};  ///< Card SCL B2: at a clock-pivot handover re-express the stashed border by the exact S P S^T (values and prev_carry_cov together; the incoming pivot's row zeroed, the outgoing pivot appended at -c0) instead of the diagonal bump.  Inert without handover_stransform or shared_carry_full_cov; refused with handover_stransform_before_rows and carry_rx_clock_in_block.  Fingerprinted when armed.  Off = the diagonal kernel (byte-identical).
+        bool   network_clock_anchor_datum_keep_{false};    ///< Card SCL B2: card Q3's guard does not decouple (reason datum) an anchored clock whose constellation the dense S-transform re-expressed this epoch with its self-check passed, when the clock has a block row and folded anchored.  Inert without handover_stransform_dense or clock_temporal_anchor.  Fingerprinted when armed.  Off = the decouple (byte-identical).
         bool   network_carry_rebase_complete_{false};      ///< Each carry re-base mechanism (card CLV's level re-base, the ephemeris re-level, the eq34 D4 shift, the declared anchor handover) also moves the carried references its exemption table marks as owed, the phase hold's held value excepted (card PRM phase 3b step 2).  Inert and disarmed without such a mechanism.  Fingerprinted when armed.  Off = the phase 2 site sets (byte-identical).
         bool   network_phase_datum_prioritized_{false};    ///< Realize the phase-bias gauge by a per-(sat,signal) prioritized anchor receiver (highest-coverage tracker) instead of pinning only the single clock-pivot station; removes the low-elevation gauge jump and the pivot-absent SPOF, with anchor handovers disc-signalled. Off = legacy single-pivot pins (byte-identical).
         bool   network_phase_datum_ensemble_{false};       ///< Realize the phase-bias gauge by an anchor-free sum-to-zero over the tracking receivers' ambiguities (Fix A; Σ_r zˢ_{r,σ}=0, kernel Schur-projected fold) instead of a single-anchor pin: no pivot, no handover (so no moving-datum churn), no SPOF, and every satellite referenced to the same receiver ensemble (the user DD stays integer, so AR is not contaminated). Reuses the prioritized machinery that removes the SPOF but elects no anchor; supersedes phase_datum_prioritized. Off = anchor-pin datum (byte-identical).

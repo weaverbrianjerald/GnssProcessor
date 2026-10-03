@@ -104,3 +104,14 @@ Scripts that the older cards CLV, CLV2 and HLT cite (`census_pooled.py`, `uservi
 `cstdiff.py`, `armsteps.py`, `ra2_premise.py`, `g3_recovery.py`, `clv_*.py`) and card CTU2's
 `wf/` analyses remain in the scratchpads of the sessions that wrote them. `wires4.py` (card LAH)
 is not in any scratchpad.
+
+## Card SCL (the self-contained clock level)
+
+| script | cards | purpose |
+| --- | --- | --- |
+| `scl_brdc_clk.py` | SCL | `stats`: the broadcast GPS clock against a CLK product, de-commoned (increment rms at 1 / 10 / 120 / 240 epochs, the ephemeris-switch steps); `write`: a CLK file of the broadcast clock. |
+| `scl_brdc_apriori.py` | SCL | The bed's a priori product: every GPS AS record of a CLK file replaced by the broadcast clock (`--continuous` removes each switch's step, `--drop` drops satellites), plus the error file (sat, tow, e_m) for the truth grade. |
+| `scl_grade.py` | SCL | One line per arm: the pivot-frame level error with e^2/(1/I_L) at epochs 60 / 120 / 239 (sim, the a priori error added), the de-commoned per-epoch clock-error step, the hidden broadcast motion (`g3grade.py`), the IF spread and trips (`ctugrade.py`), card PVN's NIS, the consumer by hour. Takes the error file in `g3_walk.py`'s format (column `w_m`) or `none`. |
+| `scl_levelnees_w.py` | SCL | `levelnees.py` with the a priori error added. |
+| `scl_lvl_events.py` | SCL | The level error's per-epoch change at the satellite's phase-datum events against the other epochs. |
+| `scl_hybrid_wire.py` | SCL | A products file with the code side (C) of one run and the phase side (C - P) of another, for consumer replays that split a wire difference between the two sides. |

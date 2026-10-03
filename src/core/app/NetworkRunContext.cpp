@@ -133,6 +133,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_tu = config_.networkCarryCouplingTimeUpdate();
     k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov + !joint
     k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // card WSX; loader guarantees exact
+    k.carry_cpl_clone = config_.networkCarryCouplingClockClone();   // card SCL; loader guarantees exact + fullcov
     k.clm_on    = config_.networkClockLevelMonitor();      // card CTU monitor (trace class)
     k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
     k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
@@ -249,6 +250,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.scoped_handover = config_.networkScopedHandoverResponse();
     k.handover_stransform = config_.networkHandoverStransform();
     k.handover_stransform_before_rows = config_.networkHandoverStransformBeforeRows();
+    k.handover_stransform_dense = config_.networkHandoverStransformDense();   // card SCL B2
     k.rebase_complete = config_.networkCarryRebaseComplete();   // card PRM phase 3b step 2
     k.pb_excl_unmatched = config_.networkPhaseBiasExcludeUnmatchedAntenna();
     k.emit_gen_time = config_.networkEmitGenerationTime();
@@ -280,6 +282,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // fold and reads as off (the loader reports an error on the combination).
     k.clk_model_on = config_.networkClockModel();
     k.cta_on             = config_.networkClockTemporalAnchor() && !k.clk_model_on;
+    k.cta_datum_keep     = config_.networkClockAnchorDatumKeep() && k.cta_on;   // card SCL B2
     k.cta_q              = config_.networkClockAnchorQ();
     k.cta_var_floor      = config_.networkClockAnchorVarFloorM2();
     k.cta_max_gap_s      = config_.networkClockAnchorMaxGapS();
@@ -924,6 +927,11 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Card PRM phase 2: the transform before the coupling rows changes the handover
         // epoch's rows (armed-only token, so every existing fingerprint is unchanged).
         if (ctx.knobs.handover_stransform_before_rows) add("stsrows:1");
+        // Card SCL B2: the exact S P S^T and the anchor kept across the handover change the
+        // handover epoch's fold and the anchor's state (armed-only tokens, so every existing
+        // fingerprint is unchanged).
+        if (ctx.knobs.handover_stransform_dense) add("stsdense:1");
+        if (ctx.knobs.cta_datum_keep) add("ctakeep:1");
         // Card PRM phase 3b step 2: the re-base mechanisms also move their owed sites, which
         // changes the carry they hand on (armed-only token, so every existing fingerprint is
         // unchanged).
@@ -1179,6 +1187,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Card WSX: the within-station bracket changes the rows' joint weight; armed only.
         if (ctx.knobs.carry_cpl_exact_cross)
             add(fmt::format("carrycplexactx={}", ctx.knobs.carry_cpl_exact_cross));
+        // Card SCL: the clock clone changes the rows, the fold and the carry each epoch hands
+        // on (the harvest marginalizes the clones); armed-only token, so every existing
+        // fingerprint is unchanged.
+        if (ctx.knobs.carry_cpl_clone) add("ccl:1");
         // The bound raise (card CTU) moves the carried border block; the monitor alone is
         // trace class and stays out of the fingerprint.
         if (ctx.knobs.clm_raise)
@@ -3628,6 +3640,9 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     auto& cap_dense_cov = ws.cap_dense_cov;
     auto& clk_prior_info = ws.clk_prior_info;
     auto& anchor_info_trace = traces.anchor_info_trace;
+    // Card SCL: which clones carry row information, read before any prior is folded on a
+    // clone column (filter/NetworkClockClone).  No-op off.
+    networkClockCloneFoldBegin(ctx, est);
     // The guarded temporal clock anchor sets the clock rows' fold variance in both
     // branches below.  The per-satellite elapsed time it inflates over is continuous
     // GPS seconds, not the driver's inter-epoch dt (see the seam header: every skip path
@@ -3928,14 +3943,23 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             try {
                 Eigen::VectorXd lam;
                 est.attribTag("dense_c1");
-                est.addSharedPriorDense(dkeys, cov_eff,
-                                        anchor_info_trace.is_open() ? &lam : nullptr,
-                                        ctx.knobs.carry_gauge_free,
-                                        ctx.knobs.carry_gauge_free_closure);
-                if (anchor_info_trace.is_open())
-                    for (std::size_t a = 0; a < kd; ++a)
-                        if (dkeys[a].kind == SharedParamKind::Clock)
-                            clk_prior_info[dkeys[a].sat] = lam(static_cast<Eigen::Index>(a));  // folded Λ(c,c) (B7)
+                // Card SCL: the joint fold over the stand-ins (each cloned clock stood in for
+                // by its clone) and the clones' walk factors when a clone stands in this
+                // epoch, which also writes the B7 information; card CTU's fold otherwise.
+                // Off, the clone fold returns false at once and the fold below is unchanged.
+                const bool ccl_fold = networkClockCloneDenseFold(
+                    ctx, ws, est, dkeys, drow, dvar_eff, dinflate, dreexp, cov_eff,
+                    within_epoch_armed, anchor_info_trace.is_open() ? &clk_prior_info : nullptr);
+                if (!ccl_fold) {
+                    est.addSharedPriorDense(dkeys, cov_eff,
+                                            anchor_info_trace.is_open() ? &lam : nullptr,
+                                            ctx.knobs.carry_gauge_free,
+                                            ctx.knobs.carry_gauge_free_closure);
+                    if (anchor_info_trace.is_open())
+                        for (std::size_t a = 0; a < kd; ++a)
+                            if (dkeys[a].kind == SharedParamKind::Clock)
+                                clk_prior_info[dkeys[a].sat] = lam(static_cast<Eigen::Index>(a));  // folded Λ(c,c) (B7)
+                }
                 if (ctx.knobs.carry_gauge_free) {
                     std::size_t nclk = 0;
                     for (std::size_t a = 0; a < kd; ++a)
@@ -3959,6 +3983,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                           e.what());   // non-PD, non-finite or conditioning budget; emitEvent sanitizes commas
                 // Card CTU: the rows of this epoch were updated against the dense block.
                 if (ctx.knobs.carry_cpl_exact) ++ctx.counters.cxu_fold_diag_fallback;
+                networkClockCloneNoteFallback(ctx);   // card SCL: the clones are then free or isolated
                 for (std::size_t a = 0; a < kd; ++a) {
                     if (anchor_info_trace.is_open() &&
                         dkeys[a].kind == SharedParamKind::Clock)
@@ -4005,6 +4030,10 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     if (prm_reexpressed_epoch) ++ctx.counters.prm_reexpressed_epochs;   // card PRM phase 1b
     // Card CTU G5: the seam's level noise is one epoch's process noise.
     ctx.carry.clm_seam_q.clear();
+    // Card SCL: a clone that did not stand in is free when rows reference it and takes an
+    // isolated prior when none does (a solve no-op on every other state), whichever branch
+    // above ran, including none.  No-op off.
+    networkClockCloneFoldEnd(ctx, ws, est, within_epoch_armed);
     // The partial-support skip tally (card C-GF) is run-scoped on the estimator and is
     // read once at teardown; reading it here would miss the withdraw and
     // within-epoch-replay folds, which run after this point in the epoch.
@@ -4020,6 +4049,9 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
     CouplingExactEpoch& ep = ctx.carry.cxu_epoch;
     ep = CouplingExactEpoch{};
     if (!ctx.knobs.carry_cpl_exact) return;
+    // Card SCL: forget the previous epoch's rows' copy (rebuilt at the end once this epoch's
+    // inputs are built).  No-op off.
+    networkClockClonePrepare(ctx, {});
     ++ctx.counters.cxu_epochs;
     const SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
     if (!ctx.carry.cxu_stash_valid || pcc.P.rows() == 0 || pcc.row.empty()) {
@@ -4173,6 +4205,10 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
         return;
     }
     ++ctx.counters.cxu_epochs_built;
+    // Card SCL: the rows' copy of this epoch with each cloned clock on its clone at Q = 0
+    // (filter/NetworkClockClone).  This epoch itself stays as built: card SMH and the fold's
+    // counters read it.  No-op off.
+    networkClockClonePrepare(ctx, cp_of_p);
 }
 
 void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
@@ -4518,6 +4554,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         // Empty and unused on the legacy diagonal path → byte-identical.
         std::map<Eigen::Index, CoupledShared> col2desc;
         Eigen::MatrixXd cov_df;   // shared covariance, datum-pinned + ensemble-gauge cols zeroed
+        // Card SCL: the clones' posterior regression on the rest of the border, once per
+        // epoch (filter/NetworkClockClone).  Inert off and when no clone is registered.
+        ClockCloneHarvest ccl_h;
         if (carry_cpl_cond) {
             auto regcol = [&](CoupledShared d, Eigen::Index col) {
                 if (col >= 0 && col < est.numShared()) col2desc.emplace(col, std::move(d));
@@ -4558,6 +4597,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     cov_df.row(p.column).setZero(); cov_df.col(p.column).setZero();
                 }
             est.zeroPhaseGaugeColumns(cov_df);
+            ccl_h = networkClockCloneHarvestBegin(ctx, est, plan.shared_datum, col2desc);
         }
         // Harvest one carried column's pure conditional variance (N_rr⁻¹)_cc and its
         // regression on the free shared border (identity-keyed, sparsified).
@@ -4574,6 +4614,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             try { reg = est.stationRegression(est_idx, col, /*carry_aware=*/false, cross_cols); }
             catch (...) { return {-1.0, {}}; }
             if (cross) *cross = std::move(reg.cross);
+            // Card SCL: the row's coefficients on the clock clones regressed onto the rest of
+            // the border and the clones' conditional variance added (the clone columns are
+            // not in col2desc, so without this the loop below would drop them).  No-op off.
+            networkClockCloneHarvestRow(ccl_h, ctx, est_idx, col, reg.row, reg.cond_var);
             std::vector<CoupledShared> cpl;
             const Eigen::Index ns = reg.row.size();
             if (ns > 0) {
@@ -4812,6 +4856,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     cblk_cols_of_sta[i] = cols;
                     cblk_row0_of_sta[i] = rxcb_row0;
                 }
+                // Card SCL: the block takes the within-station half of the clones'
+                // conditional covariance once every column is harvested.  No-op off.
+                networkClockCloneHarvestBlock(ccl_h, est_idx, hblk, cols);
             }
             for (size_t a = 0; a < R.pl_amb.size(); ++a) {
                 const PlAmb& pa = R.pl_amb[a];
@@ -6262,6 +6309,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
             }
         }
+        // Card SCL: every carried column of every station is harvested; add the clones'
+        // within-station conditional covariance to the F3 blocks.  No-op off.
+        networkClockCloneHarvestEnd(ccl_h, ctx);
         // --- RPB carry (card 3, eq34): harvest δ̂_{r,σ}, stash and prune ----------
         // Mirrors the ZWD harvest.  There is no card-1 coupling harvest for RPB
         // columns, on purpose: coupling rows would give the RPB a de facto

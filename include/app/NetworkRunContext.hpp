@@ -29,6 +29,7 @@
 #include "filter/NetworkResponses.hpp"      // ResponseSite: the declared responses of the carried instances (card PRM phase 3a)
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactCounters (card CTU)
 #include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone (card SMH)
+#include "filter/NetworkClockClone.hpp"     // ClockCloneEpoch / ClockCloneCounters (card SCL)
 #include "filter/NetworkYoungInflate.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
 #include "filter/NetworkAnchorHygiene.hpp" // NetworkAnchorTallies (eq34 reattach hygiene)
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
@@ -254,6 +255,9 @@ namespace GnssProcessor {
         /// network.carry_coupling_exact_cross (card WSX): the exact update's bracket between
         /// two rows of a station, added in the whitened local block.
         bool carry_cpl_exact_cross{};
+        /// network.carry_coupling_clock_clone (card SCL): the previous epoch's satellite
+        /// clocks as one-epoch clone columns in the shared border (filter/NetworkClockClone).
+        bool carry_cpl_clone{};
         bool clm_on{};      ///< network.clock_level_monitor (card CTU): the level monitor, measure-only
         bool clm_raise{};   ///< network.clock_level_bound_raise (card CTU): raise the stashed block to the level bound
         int  clm_restore_credit_ep{};   ///< network.clock_level_restore_credit_ep (card CTU G5): epochs of code information the restored level is credited with (0 = all the snapshot's)
@@ -636,6 +640,15 @@ namespace GnssProcessor {
         /// carried references, so the coupling rows read the re-expressed carry.  The loader
         /// forces it false without handover_stransform.
         bool handover_stransform_before_rows{};
+        /// network.handover_stransform_dense (card SCL B2): the handover's S-transform
+        /// re-expresses the carried values and the dense block together by S P S^T
+        /// (applyClockStransformDense), the diagonal kernel the fallback.  The loader forces it
+        /// false without handover_stransform or shared_carry_full_cov.
+        bool handover_stransform_dense{};
+        /// network.clock_anchor_datum_keep (card SCL B2): card Q3's guard keeps an anchored
+        /// clock engaged at a handover the dense kernel re-expressed exactly.  Resolved with
+        /// the anchor (cta_on); the loader forces it false without handover_stransform_dense.
+        bool cta_datum_keep{};
         /// network.carry_rebase_complete (card PRM phase 3b step 2): each carry re-base
         /// mechanism's walk (card CLV's level re-base, the ephemeris re-level, the eq34 D4
         /// shift, the declared anchor handover) also moves the sites its exemption table
@@ -1019,6 +1032,7 @@ namespace GnssProcessor {
         bool   cxu_stash_valid{false};                      ///< the stash was taken this run with the dense block present
         std::map<char, std::pair<std::string, double>> cxu_pivot;  ///< constellation -> (pinned clock sat, pinned value) at the stash
         CouplingExactEpoch cxu_epoch;                       ///< this epoch's inputs; ok = false when off or unbuilt
+        ClockCloneEpoch    ccl;                             ///< card SCL: this epoch's clock clones and the rows' copy of cxu_epoch (filter/NetworkClockClone); rebuilt every armed epoch, empty off
         std::map<std::string, double> clm_info;             ///< card CTU monitor: satellite -> accumulated code-only level information I_L (1/m^2), undecayed
         std::map<std::string, int>    clm_n;                ///< card CTU monitor: satellite -> epochs of code information accumulated
         std::map<std::string, double> clm_info_c;           ///< card CTU G5: satellite -> code-only level information in the constellation contrast, 1/(s0^2 Q) summed (1/m^2)
@@ -1455,6 +1469,24 @@ namespace GnssProcessor {
         /// The coefficient applied per constellation this epoch (constellation char -> c0,
         /// metres), for the PIVOT event row and traces (queue item 1(b)).
         std::map<char, double> sts_c0;
+        /// Card SCL B2 (network.handover_stransform_dense): what the dense kernel did for each
+        /// constellation it re-expressed this epoch, read by card SCL's clone fold (B1) and by
+        /// card Q3's anchor keep.  Rebuilt every epoch by networkHandoverStransform (cleared
+        /// beside sts_c0, and only an applied dense edge writes an entry), so it is empty on
+        /// every epoch without a dense edge and whenever the knob is off.
+        struct StsDense {
+            std::string q;                    ///< the incoming pivot
+            std::string p;                    ///< the outgoing pivot (the frame the block was in)
+            double      c0{0.0};              ///< the incoming pivot's carried level before (m)
+            double      pqq{0.0};             ///< its block variance before, P_qq (m^2)
+            std::size_t k_old{0};             ///< block size before the outgoing pivot was appended
+            int         iq{-1};               ///< the incoming pivot's block row
+            bool        p_added{false};       ///< the outgoing pivot was appended
+            bool        selfcheck_ok{true};   ///< the kernel's self-check
+            std::set<std::string> row_sats;   ///< the constellation's clocks with a block row (q included)
+            std::set<std::string> clean;      ///< ...whose carried entry equalled its fold decision before the transform
+        };
+        std::map<char, StsDense> sts_dense;
         /// Card PRM phase 2 (network.handover_stransform_before_rows): what the handover
         /// preview before PASS B did for each changed constellation this epoch, read by the
         /// solve glue's transform for its bookkeeping.  Rebuilt every epoch by
@@ -2961,6 +2993,18 @@ namespace GnssProcessor {
         long long sts_selfcheck_fail = 0;    ///< post-transform |x_q| or re-derived c0 above tolerance (§8.4 INC-3)
         double    sts_max_abs_c0 = 0.0;      ///< largest |c0| applied over the run (m)
         double    sts_last_c0 = 0.0;         ///< the last c0 applied (m)
+        // Card SCL B2 (network.handover_stransform_dense; invariant #4: armed with 0 dense edges
+        // on a run with a handover means the kernel is mis-wired).
+        long long sts_dense_edges = 0;          ///< edges the dense kernel re-expressed (S P S^T)
+        long long sts_dense_fallback = 0;       ///< edges the dense kernel could not apply (the diagonal kernel ran)
+        long long sts_dense_rows = 0;           ///< carried clocks with a block row re-expressed
+        long long sts_dense_parked = 0;         ///< carried clocks without a block row moved by the diagonal rule
+        long long sts_dense_p_added = 0;        ///< outgoing pivots appended to the block and the carry
+        long long sts_dense_selfcheck_fail = 0; ///< dense edges whose self-check failed
+        double    sts_dense_var_saved = 0.0;    ///< summed (diagonal kernel's variance - dense variance) over the re-expressed clocks (m^2)
+        double    sts_dense_contrast_maxdev = 0.0; ///< largest |change| of a between-clock contrast variance over the run (m^2; rounding)
+        long long cta_datum_kept = 0;           ///< card SCL B2: anchored clocks kept engaged at a dense-transformed handover (no datum decouple)
+        long long cta_datum_kept_refused = 0;   ///< card SCL B2: armed datum decouples the keep rule refused (no dense edge, no row, a loose fold)
         /// The baseline that increment 0 named as missing: clock-pivot handovers per
         /// constellation over the run.  Counted whenever pivotHandoverSignalled raises the
         /// edge, transform armed or not, so an off run states the population an on run
@@ -3838,6 +3882,7 @@ namespace GnssProcessor {
         long long cxu_fold_reexpressed_in_s = 0;   ///< keys in S folded on a variance a handover re-expressed after the rows
         long long cxu_fold_retired_in_s = 0;       ///< keys in S the fold retired at a handover (the rows carried them)
         long long cxu_pivot_missing = 0;       ///< built epochs with a clock constellation and no recorded pivot
+        ClockCloneCounters ccl{};              ///< card SCL run totals (filter/NetworkClockClone)
         // Card PRM phase 1b: the decided-once fold disposition (networkCarryDecide before
         // PASS B, read by the rows and the fold).  prm_disp counts key-epochs by
         // (SharedParamKind, the disposition the fold applied); prm_departed the foldable

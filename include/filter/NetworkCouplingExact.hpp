@@ -91,6 +91,9 @@ struct CouplingExactCounters {
     long long cross_rho_hist[2][kCrossRhoBins]{};
     double    cross_rho_max[2]{};
     double    cross_abs_sum{0.0};    ///< summed |M_i'BM_k| over the pairs (m^2)
+    // Card SCL (network.carry_coupling_clock_clone): the rows' terms on the clock clones.
+    long long rows_clone{0};         ///< exact rows with at least one term on a clock clone
+    long long terms_clone{0};        ///< coefficients written onto clock clone columns
 
     /// The |rho| bin of card WSX's histogram.
     static int crossRhoBin(double r) {
@@ -113,6 +116,7 @@ struct CouplingExactCounters {
         var_add_sum += o.var_add_sum; shrink_abs_sum += o.shrink_abs_sum;
         cross_blocks += o.cross_blocks; cross_pairs += o.cross_pairs;
         cross_pairs_skipped += o.cross_pairs_skipped; cross_abs_sum += o.cross_abs_sum;
+        rows_clone += o.rows_clone; terms_clone += o.terms_clone;
         for (int c = 0; c < 2; ++c) {
             for (int b = 0; b < kCrossRhoBins; ++b) cross_rho_hist[c][b] += o.cross_rho_hist[c][b];
             if (o.cross_rho_max[c] > cross_rho_max[c]) cross_rho_max[c] = o.cross_rho_max[c];
@@ -160,6 +164,10 @@ struct CouplingExactEpoch {
     /// clock and phase-bias columns, whose diagonal is in @c q_s).  Empty on every other
     /// epoch, which leaves Q_S diagonal as before.
     std::vector<std::tuple<int, int, double>> q_off;
+    /// Card SCL (network.carry_coupling_clock_clone): S index -> 1 when the column is a
+    /// clock clone (the rows' copy of the epoch puts a cloned clock on its clone at Q = 0).
+    /// Empty on card CTU's own epoch and whenever the knob is off; read only by the counters.
+    std::vector<char> clone_s;
 
     /// Number of S columns.
     Eigen::Index nS() const { return static_cast<Eigen::Index>(p_of_s.size()); }

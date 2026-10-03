@@ -17,6 +17,7 @@
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkChainDatum.hpp"
 #include "filter/NetworkClockAnchor.hpp"   // guarded temporal clock anchor (card Q3)
+#include "filter/NetworkClockClone.hpp"    // the one-epoch clock clone (card SCL)
 #include "filter/NetworkDatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "filter/NetworkFrameDiag.hpp"   // networkDatumInfoRatio (invariant #7)
 #include "filter/NetworkHandoverStransform.hpp"   // the clock-pivot handover S-transform (queue 1(b))
@@ -895,9 +896,16 @@ if (ctx.knobs.sbasis_complete_on) {
             }
         }
     }
+    // Card SCL: with clock clones registered, the completion judges the border with the
+    // clones marginalized (filter/NetworkClockClone); the non-clone columns keep their
+    // indices, so the targets are the leading part and the rows are padded below.  Off,
+    // the view is not formed and the call is the one before.
+    Eigen::MatrixXd ccl_sbc_N;
+    const bool ccl_sbc = networkClockCloneGateView(ctx, est, ccl_sbc_N);
+    if (ccl_sbc) sbc_x_prev.conservativeResize(ccl_sbc_N.rows());
+    const Eigen::MatrixXd* sbc_N = ccl_sbc ? &ccl_sbc_N : &est.reducedSharedNormals();
     const auto sbc = sb.completeSbasisDimension(
-        est.reducedSharedNormals(), plan.declared_dimension, est.rankGateTol(),
-        sbc_x_prev,
+        *sbc_N, plan.declared_dimension, est.rankGateTol(), sbc_x_prev,
         [&est](Eigen::Index c) { return est.sharedColumnLabel(c); },
         ctx.knobs.sbasis_complete_max);
     // --- Datum graph census hand-off (docs/SPEC_datum_graph_census.md) -----
@@ -976,10 +984,14 @@ if (ctx.knobs.sbasis_complete_on) {
         // re-coupling that did not happen.
     } else if (sbc.n_extra > 0) {
         est.attribTag("sbasis_complete");
-        est.addSharedConstraintRows(sbc.H, sbc.z,
+        // Card SCL: rows formed over the clone-free view take zero clone columns (off, the
+        // completion's own rows, value for value).
+        const Eigen::MatrixXd sbc_H =
+            ccl_sbc ? networkClockClonePadRows(sbc.H, est.numShared()) : sbc.H;
+        est.addSharedConstraintRows(sbc_H, sbc.z,
                                     NetworkSbasis::kSbasisCompleteWeight);
         if (within_epoch_armed) {   // RAIM-replay capture (EpochWorkspace contract)
-            cap_sbc_H = sbc.H;
+            cap_sbc_H = sbc_H;
             cap_sbc_z = sbc.z;
         }
         ++ctx.counters.n_sbc_epochs;
@@ -1031,8 +1043,16 @@ int gate_observed       = -1;   // the last evaluation this epoch (after the hea
 int gate_first_observed = -1;   // this epoch's first evaluation: the DG6 min/max sample
 double gate_ev_max      = -1.0; // λmax of the first evaluation, which sets the gate's own cutoff (invariant #7)
 ++ctx.counters.n_gate_evaluated;
+// Card SCL: with clock clones registered, the gate judges the border with the clones
+// marginalized and the idle ones dropped (filter/NetworkClockClone): a clone has a prior
+// and coupling rows, not observations, and an idle clone is not a gauge.  The view is
+// re-formed at every evaluation (the heal below folds priors first).  Off, no view is
+// formed and every evaluation reads the reduced normals as before.
+Eigen::MatrixXd ccl_gate_N;
+bool ccl_gate = networkClockCloneGateView(ctx, est, ccl_gate_N);
 try {
-    sb.assertNullSpaceRank(est.reducedSharedNormals(), plan.declared_dimension,
+    const Eigen::MatrixXd* gate_N = ccl_gate ? &ccl_gate_N : &est.reducedSharedNormals();
+    sb.assertNullSpaceRank(*gate_N, plan.declared_dimension,
                            est.rankGateTol(), &gate_observed, &gate_ev_max);
     gate_first_observed = gate_observed;
 } catch (const std::exception& ex) {
@@ -1077,7 +1097,10 @@ try {
             ctx.counters.n_heal_attempt_cols += static_cast<size_t>(healed);
         }
         if (healed > 0) {
-            sb.assertNullSpaceRank(est.reducedSharedNormals(),
+            // Card SCL: the view again, on the healed normals (off: not formed).
+            ccl_gate = networkClockCloneGateView(ctx, est, ccl_gate_N);
+            const Eigen::MatrixXd* heal_N = ccl_gate ? &ccl_gate_N : &est.reducedSharedNormals();
+            sb.assertNullSpaceRank(*heal_N,
                                    plan.declared_dimension,
                                    est.rankGateTol(), &gate_observed);
             recovered = true;
@@ -1168,7 +1191,8 @@ if (gate_first_observed >= 0) {
 networkDatumInfoRatio(ctx, traces, se, est, plan.declared_dimension,
                       registered_clock_sats, gate_ev_max,
                       /*gate_over_withheld=*/!gate_ok && gate_observed >= 0
-                          && gate_observed < plan.declared_dimension);
+                          && gate_observed < plan.declared_dimension,
+                      ccl_gate ? &ccl_gate_N : nullptr);   // card SCL: the gate's own view
 // Datum graph census: the fallback spectral hand-off, for runs without SBC.  The
 // gate's own first evaluation is then the only realized near-null count, a count
 // with no direction identities, which the census labels `obs_src=count` rather
@@ -1960,7 +1984,10 @@ if (within_epoch_armed && carry_warm) {
         // and the re-solve sees the identical shared system.  The capture is
         // non-empty only when the primary dense fold succeeded (its fallback went
         // through cap_priors above), so this cannot throw where the primary did not.
-        if (!cap_dense_keys.empty())
+        // Card SCL: the joint fold over the stand-ins and the walk factors (and the idle
+        // clones' isolated priors) when captured; cap_dense_* then hold its marginal for
+        // their readers.  Off, the clone replay folds nothing and returns false.
+        if (!networkClockCloneReplayFold(ctx, ws, est) && !cap_dense_keys.empty())
             est.addSharedPriorDense(cap_dense_keys, cap_dense_cov, nullptr,
                                     ctx.knobs.carry_gauge_free,
                                     ctx.knobs.carry_gauge_free_closure);   // same fold as the primary solve (card C-GF)

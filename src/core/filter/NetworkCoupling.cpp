@@ -472,6 +472,15 @@ bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
         rhs += m * xe.shat_s(s);
         X.shrink_abs_sum += std::abs(xr.m_s(s) - m);
     }
+    // Card SCL: the row's terms on the clock clones (the rows' copy of the epoch has the
+    // cloned clocks in S on their clones, at Q = 0).  Empty, and nothing counted, off.
+    if (!xe.clone_s.empty()) {
+        long long nt = 0;
+        for (Eigen::Index s = 0; s < xe.nS(); ++s)
+            if (xe.clone_s[static_cast<std::size_t>(s)] && xr.m_new(s) != 0.0) ++nt;
+        X.terms_clone += nt;
+        if (nt > 0) ++X.rows_clone;
+    }
     // The clock-family deficit onto the constellation's pinned pivot: the row keeps its
     // harvest identity along the declared clock gauge (the only null direction the rank
     // gate declares here), so the gate sees the same null space as without the card.

@@ -2584,10 +2584,17 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 ///     anchor.
 ///   - cap_dense_keys / cap_dense_cov: the C1 dense shared-carry fold
 ///     (networkInjectD2CarryPrior_, dense-success branch only; its non-PD fallback
-///     routes through cap_priors like every diagonal prior).
+///     routes through cap_priors like every diagonal prior).  On a card SCL clone epoch
+///     they hold the marginal of the joint fold over the epoch's own columns, which is
+///     the fold without the clones (the prior card Q3's phase statistic, card PVN and
+///     card SMH read), and the replay folds cap_ccl_* instead.
+///   - cap_ccl_on / cap_ccl_keys / cap_ccl_cov / cap_ccl_walk / cap_ccl_idle: card SCL's
+///     joint fold (the stand-in block, the clones' walk factors) and the idle clones'
+///     isolated priors (filter/NetworkClockClone); empty and false when off.
 /// The Q3 clock-anchor guard (NetworkClockAnchor) also edits the capture: before its
 /// re-solve it removes the withdrawn satellites' clock priors from cap_priors and
-/// marginalizes them out of cap_dense_keys / cap_dense_cov.
+/// marginalizes them out of cap_dense_keys / cap_dense_cov (and, on a card SCL clone
+/// epoch, removes their walk factors from cap_ccl_walk).
 struct EpochWorkspace {
     Eigen::MatrixXd cap_H;
     Eigen::VectorXd cap_z;
@@ -2598,6 +2605,11 @@ struct EpochWorkspace {
     std::vector<NetworkEstimator::SharedPrior> cap_priors;
     std::vector<NetworkEstimator::SharedPrior> cap_dense_keys;
     Eigen::MatrixXd cap_dense_cov;
+    bool cap_ccl_on = false;                                       ///< card SCL: the joint fold below was captured (the replay folds it in place of cap_dense_*)
+    std::vector<NetworkEstimator::SharedPrior> cap_ccl_keys;       ///< card SCL: the stand-in block's keys (the cloned clocks as their clones)
+    Eigen::MatrixXd cap_ccl_cov;                                   ///< card SCL: the stand-in block's covariance
+    std::vector<NetworkEstimator::CloneWalk> cap_ccl_walk;         ///< card SCL: the walk factors
+    std::vector<NetworkEstimator::SharedPrior> cap_ccl_idle;       ///< card SCL: the idle clones' isolated priors
     /// Two-state clock-model predictions stashed by the prior fold
     /// (networkInjectClockOscPrior_), consumed by the post-solve normalized-
     /// innovation test (T5) later in the same epoch.

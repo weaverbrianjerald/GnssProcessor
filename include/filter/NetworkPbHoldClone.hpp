@@ -188,6 +188,12 @@ struct PbHoldClone {
 /// The epoch-level inputs of @ref pbHoldCloneAdvance, built once per epoch.
 struct PbHoldCloneInputs {
     const CouplingExactEpoch* xe{nullptr};
+    /// Card SCL: the epoch whose inflation @c q_s / @c q_off is the fold's walk, read only
+    /// by the walk-share instrument (@c PbHoldCloneStep::dW).  Set when @c xe carries clocks
+    /// on their clones at @f$Q=0@f$ (@ref pbHoldCloneOnClones): it is then card CTU's epoch
+    /// over the same S index space, so W keeps its meaning (the modelled walk since birth).
+    /// Null: @c xe itself.
+    const CouplingExactEpoch* xe_walk{nullptr};
     std::vector<PbHoldCloneTerm> desc_of_p;   ///< P row -> its key (kind, sat, signal)
     Eigen::VectorXd post_s;                   ///< S index -> this epoch's posterior value (m)
     Eigen::VectorXd prior_s;                  ///< S index -> the prior mean the solve used (m)
@@ -303,6 +309,74 @@ CouplingExactEpoch pbHoldCloneRestrictEpoch(const CouplingExactEpoch& xe,
                                             const std::vector<int>& unfolded);
 
 /**
+ * @brief Card SCL: the epoch's exact inputs with the given clocks on their clones.
+ *
+ * Under @c network.carry_coupling_clock_clone the solve's prior is the joint one over the
+ * stand-ins (each cloned clock stood in for by its clone @f$c_s(t-1)@f$ at the stashed
+ * covariance) plus the walk factor @f$c_s(t) - c_s(t-1)@f$, and the coupling rows reference
+ * the clone.  The new data then inform @f$c_s(t-1)@f$ directly, through the rows, and not
+ * only through @f$c_s(t)@f$, so a row with no observations (card SMH's) is conditionally
+ * independent of the epoch's data given the stand-ins, not given @f$s(t)@f$.  Each S key
+ * whose P row is in @p clone_of_p moves onto its clone: column = the clone, @f$Q = 0@f$, its
+ * mean the stashed value (unchanged), @c clone_s set; the off-diagonal process noise pairs
+ * touching a moved key are dropped; @f$P_{SS}+Q_S@f$ is refactored (@c ok false if it does
+ * not factor).  The S index space is unchanged, so @p xe stays the walk-share epoch
+ * (@c PbHoldCloneInputs::xe_walk).  With the moved set equal to the clones the rows were
+ * built on, the result equals @c ClockCloneEpoch::rows_epoch.
+ * @param xe          the epoch's inputs on the epoch's own columns (card CTU's, restricted to
+ *                    the folded keys when the solve did not fold some).
+ * @param clone_of_p  P row -> clone column, for each clock whose clone stood in at the fold.
+ * @return the inputs on the clones (a copy of @p xe when nothing moves).
+ */
+CouplingExactEpoch pbHoldCloneOnClones(const CouplingExactEpoch& xe,
+                                       const std::map<int, Eigen::Index>& clone_of_p);
+
+/// Outcome of @ref pbHoldCloneMarginalizeClones (card SCL).
+struct PbHoldCloneMarg {
+    bool   ok{true};          ///< false: the regression was not usable (a row with clone terms is then not re-expressed)
+    int    n_clone{0};        ///< terms on clone columns marginalized
+    int    n_moved{0};        ///< new terms the regression wrote (a coefficient onto an existing key is merged, not counted)
+    int    n_dropped{0};      ///< regression coefficients on columns with no identity (SH-VTEC), dropped
+    double mass_dropped{0.0}; ///< sum of their |coefficient|
+    int    n_held{0};         ///< clock-family deficits restored on the constellation's pinned clock
+    int    n_orphan{0};       ///< clock-family deficits with no pinned clock of the constellation (dropped)
+    double var_add{0.0};      ///< @f$r_C^\top B' r_C@f$ added to the row's variance (m^2)
+};
+
+/**
+ * @brief Card SCL: marginalize a clone row's clock-clone terms through the solve's
+ *        posterior regression, so the row carries no term on a clone into the next epoch.
+ *
+ * A clone lives one epoch.  An advanced row on @ref pbHoldCloneOnClones's epoch has its
+ * clocks' terms on the clones, @f$x_0 = v - m_{S'}^\top(s' - \hat s') - r_C^\top(c - \hat c)
+ * + e@f$.  With @f$c \mid s' = \hat c + K(s' - \hat s') + \epsilon@f$,
+ * @f$\epsilon \sim N(0, B')@f$ (@c NetworkEstimator::cloneConditional, the same regression as
+ * the coupling rows' harvest), the row becomes @f$m_{S'} \mathrel{+}= K^\top r_C@f$,
+ * @f$\sigma^2 \mathrel{+}= r_C^\top B' r_C@f$, the clone terms removed; the row's value and
+ * the variance of @f$x_0@f$ given the data are unchanged.  A regression coefficient onto a key
+ * the row already carries on the same column is merged into it; a new one takes the column's
+ * identity from @p term_of_col (with its posterior value and variance, which the re-harvest
+ * replaces by the stash's).  Per constellation the clock-family deficit (the clones'
+ * coefficients minus what the regression put on the constellation's clocks) goes onto the
+ * pinned clock in @p pin, as the harvest's gauge restore does: the row keeps its identity
+ * along the declared clock gauge.  No-op (ok) when the row has no clone term.
+ * @param terms       the row's terms (clone terms are those on columns [n0, n0 + nc)).
+ * @param var         the row's residual variance, raised in place.
+ * @param K           nc x (n0 + nc): E[c | s'] coefficients, zero on the clone and pinned columns.
+ * @param B           nc x nc: Var(c | s', data).
+ * @param n0          the first clone column (the clones are the last nc columns).
+ * @param term_of_col column -> a term with its identity, value and variance; false when the
+ *                    column has none (the coefficient is dropped, counted).
+ * @param pin         constellation -> its datum-pinned clock (p_prev 0, with its column and value).
+ * @return the counts; @c ok false (row untouched) when @p K / @p B are not shaped for @p n0.
+ */
+PbHoldCloneMarg pbHoldCloneMarginalizeClones(
+    std::vector<PbHoldCloneTerm>& terms, double& var, const Eigen::MatrixXd& K,
+    const Eigen::MatrixXd& B, Eigen::Index n0,
+    const std::function<bool(Eigen::Index, PbHoldCloneTerm&)>& term_of_col,
+    const std::map<char, PbHoldCloneTerm>& pin);
+
+/**
  * @brief Re-express an advanced clone on a new stash (the re-harvest).
  *
  * A term whose key is in the new stash with a dense row takes the stash's value and
@@ -343,16 +417,31 @@ std::vector<PbHoldCloneTerm> pbHoldCloneRebase(
  * the clock row as above and the phase-visible row over its functional, with a pair phase
  * bias lacking a column or a folded prior the death @c PairLost.  No-op unless
  * @c network.emit_pb_hold_smoothed.
- * @param ctx  the run context.
- * @param log  the network logger.
- * @param est  the estimator after this epoch's final solve.
- * @param x_s  the shared-border solution.
- * @param ws   the epoch's workspace (the fold's capture).
+ *
+ * Card SCL (@c network.carry_coupling_clock_clone), on an epoch where a clone stood in at
+ * the fold: every row advances on @ref pbHoldCloneOnClones's epoch (the stood-in clocks on
+ * their clones at @f$Q=0@f$; a refloat's unfolded clock whose clone stood in stays there,
+ * since the clone keeps its stand-in prior), the revision reads each clone's posterior
+ * against its prior mean (the stashed value the fold centred it on), the walk share reads
+ * card CTU's epoch, and the clone terms are then marginalized
+ * (@ref pbHoldCloneMarginalizeClones) through the regression the coupling rows' harvest uses,
+ * evaluated here on this epoch's final solve (the update precedes the harvest; the harvest
+ * compares its own regression with this one, counted).  A row with clone terms and no
+ * regression dies @c RowFailed.  Off, or with no clone stood in, the update is the one
+ * above, byte for byte.
+ * @param ctx   the run context.
+ * @param log   the network logger.
+ * @param est   the estimator after this epoch's final solve.
+ * @param x_s   the shared-border solution.
+ * @param ws    the epoch's workspace (the fold's capture).
+ * @param datum the datum the final solve applied (card SCL's regression; unread otherwise,
+ *              so a caller without the knob may leave it empty).
  */
 void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
                               const std::shared_ptr<spdlog::logger>& log,
                               const NetworkEstimator& est, const Eigen::VectorXd& x_s,
-                              const EpochWorkspace& ws);
+                              const EpochWorkspace& ws,
+                              const NetworkEstimator::Datum& datum = NetworkEstimator::Datum{});
 
 /**
  * @brief Card SMH, after the stash: re-harvest the advanced clones on the new stash and

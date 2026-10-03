@@ -67,6 +67,13 @@ std::string NetworkEstimator::key_(const std::string& sat, SharedParamKind kind,
     return sat; // unreachable
 }
 
+std::string NetworkEstimator::priorKey_(const SharedPrior& p) {
+    if (p.kind == SharedParamKind::VtecSh)
+        return StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer);
+    if (p.clone) return p.sat + "|CLKC";   // card SCL: the clock clone column
+    return key_(p.sat, p.kind, p.signal);
+}
+
 Eigen::Index NetworkEstimator::registerColumn_(const std::string& sat,
                                                SharedParamKind kind,
                                                const std::string& signal) {
@@ -118,6 +125,46 @@ Eigen::Index NetworkEstimator::registerVtecCoeff(int n, int m, char trig, int la
     return col;
 }
 
+Eigen::Index NetworkEstimator::registerClockClone(const std::string& sat) {
+    if (epoch_open_) {
+        throw std::logic_error(
+            "NetworkEstimator: cannot register shared parameters after "
+            "beginEpoch(); finalize the layout first");
+    }
+    const std::string k = sat + "|CLKC";   // disjoint from the clock's "sat|CLK"
+    auto it = index_.find(k);
+    if (it != index_.end()) return it->second;
+    const Eigen::Index col = static_cast<Eigen::Index>(columns_.size());
+    index_.emplace(k, col);
+    ColumnDesc d;
+    d.sat   = sat;
+    d.kind  = SharedParamKind::Clock;
+    d.clone = true;
+    columns_.push_back(std::move(d));
+    ++n_clones_;
+    return col;
+}
+
+Eigen::Index NetworkEstimator::clockCloneColumn(const std::string& sat) const {
+    return index_.at(sat + "|CLKC");
+}
+
+bool NetworkEstimator::isClockClone(Eigen::Index col) const {
+    return col >= 0 && col < static_cast<Eigen::Index>(columns_.size())
+        && columns_[static_cast<std::size_t>(col)].clone;
+}
+
+bool NetworkEstimator::sharedColumnIdentity(Eigen::Index col, SharedParamKind& kind,
+                                            std::string& sat, std::string& signal) const {
+    if (col < 0 || col >= static_cast<Eigen::Index>(columns_.size())) return false;
+    const ColumnDesc& d = columns_[static_cast<std::size_t>(col)];
+    if (d.clone || d.kind == SharedParamKind::VtecSh) return false;
+    kind   = d.kind;
+    sat    = d.sat;
+    signal = d.signal;
+    return true;
+}
+
 Eigen::Index NetworkEstimator::clockColumn(const std::string& sat) const {
     return index_.at(key_(sat, SharedParamKind::Clock, ""));
 }
@@ -142,6 +189,7 @@ std::string NetworkEstimator::sharedColumnLabel(Eigen::Index col) const {
                                 "column index out of range");
     }
     const ColumnDesc& d = columns_[static_cast<std::size_t>(col)];
+    if (d.clone) return "CLKC:" + d.sat;   // card SCL: a clock clone
     switch (d.kind) {
         case SharedParamKind::Clock:     return "CLK:" + d.sat;
         case SharedParamKind::CodeBias:  return "CB:" + d.sat + ":" + d.signal;
@@ -161,6 +209,7 @@ void NetworkEstimator::reset() {
     // so a fresh register → beginEpoch sequence is valid.
     index_.clear();
     columns_.clear();
+    n_clones_ = 0;              // card SCL: the clones are per-epoch columns too
     shared_cov_.resize(0, 0);   // match a freshly-constructed estimator exactly
     phase_sumzero_gauges_.clear();  // the ensemble datum is per-epoch (Fix A)
     dd_priors_.clear();             // the DD priors are per-epoch too (Card 4, M1)
@@ -503,9 +552,7 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
     Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
     for (const SharedPrior& p : priors) {
         if (!(p.info > 0.0)) continue;
-        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
-            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
-            : key_(p.sat, p.kind, p.signal);
+        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
         const Eigen::Index c = it->second;
@@ -539,10 +586,10 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
     col.reserve(keys.size());
     for (Eigen::Index i = 0; i < nk; ++i) {
         const SharedPrior& p = keys[static_cast<std::size_t>(i)];
-        if (p.kind == SharedParamKind::Clock && skip.count(p.sat)) continue;  // Q3 refloat
-        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
-            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
-            : key_(p.sat, p.kind, p.signal);
+        // Q3 refloat.  A clock clone of the same satellite is kept (card SCL): the rows
+        // still reference it, and the refloat frees the clock, not its previous value.
+        if (p.kind == SharedParamKind::Clock && !p.clone && skip.count(p.sat)) continue;
+        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // not in this epoch's layout → marginalized
         in_idx.push_back(i);
@@ -630,7 +677,7 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
         std::map<char, std::vector<Eigen::Index>> grp;   // constellation -> rows of Λ
         for (Eigen::Index a = 0; a < k; ++a) {
             const SharedPrior& p = keys[static_cast<std::size_t>(in_idx[static_cast<std::size_t>(a)])];
-            if (p.kind == SharedParamKind::Clock && !p.sat.empty())
+            if (p.kind == SharedParamKind::Clock && !p.clone && !p.sat.empty())   // a clone is not a clock of the gauge (card SCL)
                 grp[p.sat[0]].push_back(a);
         }
         // Support closure (Card C-GF).  U = v|_C is the datum direction v restricted
@@ -649,7 +696,7 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
         if (require_closure) {
             std::map<char, std::size_t> registered;
             for (const ColumnDesc& d : columns_)
-                if (d.kind == SharedParamKind::Clock && !d.sat.empty())
+                if (d.kind == SharedParamKind::Clock && !d.clone && !d.sat.empty())   // clones are not clocks of the gauge (card SCL)
                     ++registered[d.sat[0]];
             for (auto it = grp.begin(); it != grp.end();) {
                 const auto rit = registered.find(it->first);
@@ -755,6 +802,101 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
     return static_cast<std::size_t>(k);
 }
 
+std::size_t NetworkEstimator::addCloneWalk(const std::vector<CloneWalk>& walks, double sign) {
+    if (walks.empty()) return 0;
+    // Like withdrawSharedPrior, the call may follow solve(): card Q3's refloat withdraws a
+    // factor and, when its re-solve throws, folds it back before restoring the solve.
+    if (!epoch_open_) {
+        throw std::logic_error("NetworkEstimator::addCloneWalk: call beginEpoch() first");
+    }
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    std::size_t applied = 0;
+    for (const CloneWalk& w : walks) {
+        if (!(w.q > 0.0) || !std::isfinite(w.q) || !std::isfinite(w.mean)) continue;
+        const auto ic = index_.find(key_(w.sat, SharedParamKind::Clock, ""));
+        const auto ik = index_.find(w.sat + "|CLKC");
+        if (ic == index_.end() || ik == index_.end()) continue;
+        const Eigen::Index c = ic->second, k = ik->second;
+        const double info = sign / w.q;
+        if (!w.ref.empty()) {
+            // Card SCL B2: c - k + r = mean across a dense-transformed handover,
+            // a = e_c - e_k + e_r, information a a'/q.
+            const auto ir = index_.find(w.ref + "|CLKC");
+            if (ir == index_.end() || ir->second == k) continue;
+            const Eigen::Index idx[3] = {c, k, ir->second};
+            const double coef[3] = {1.0, -1.0, 1.0};
+            for (int a = 0; a < 3; ++a) {
+                for (int b = 0; b < 3; ++b) delta_info(idx[a], idx[b]) += info * coef[a] * coef[b];
+                delta_rhs(idx[a]) += info * coef[a] * w.mean;
+            }
+            ++applied;
+            continue;
+        }
+        // The pseudo-observation c - k = mean with weight 1/q: (e_c - e_k)(e_c - e_k)'/q.
+        delta_info(c, c) += info;
+        delta_info(k, k) += info;
+        delta_info(c, k) -= info;
+        delta_info(k, c) -= info;
+        delta_rhs(c) += info * w.mean;
+        delta_rhs(k) -= info * w.mean;
+        ++applied;
+    }
+    if (applied == 0) return 0;
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return applied;
+}
+
+bool NetworkEstimator::cloneConditional(const Datum& datum, Eigen::MatrixXd& K,
+                                        Eigen::MatrixXd& Bc) const {
+    if (n_clones_ == 0 || !solved_) return false;
+    const Eigen::MatrixXd& J = neq_.reducedSharedNormals();
+    const Eigen::Index n = numShared();
+    if (J.rows() != n || J.cols() != n) return false;
+    // A datum-pinned column is exactly known in the solve's frame (the Dirichlet pin), so
+    // the conditional mean of the clones does not move with it: no coefficient.
+    std::vector<Eigen::Index> cc, ss;
+    std::vector<char> pinned(static_cast<std::size_t>(n), 0);
+    for (const Pin& p : datum)
+        if (p.column >= 0 && p.column < n) pinned[static_cast<std::size_t>(p.column)] = 1;
+    for (Eigen::Index c = 0; c < n; ++c) {
+        if (columns_[static_cast<std::size_t>(c)].clone) cc.push_back(c);
+        else if (!pinned[static_cast<std::size_t>(c)]) ss.push_back(c);
+    }
+    const Eigen::Index nc = static_cast<Eigen::Index>(cc.size());
+    if (nc == 0) return false;
+    Eigen::MatrixXd Jcc(nc, nc);
+    for (Eigen::Index a = 0; a < nc; ++a)
+        for (Eigen::Index b = 0; b < nc; ++b)
+            Jcc(a, b) = 0.5 * (J(cc[a], cc[b]) + J(cc[b], cc[a]));
+    // Correlation scaling, as the dense fold inverts its block: a clone tied to its clock
+    // by the walk factor and to tens of rows can carry information far above another
+    // clone's.
+    Eigen::VectorXd dinv(nc);
+    for (Eigen::Index a = 0; a < nc; ++a) {
+        if (!(Jcc(a, a) > 0.0) || !std::isfinite(Jcc(a, a))) return false;
+        dinv(a) = 1.0 / std::sqrt(Jcc(a, a));
+    }
+    const Eigen::MatrixXd Cn = dinv.asDiagonal() * Jcc * dinv.asDiagonal();
+    const Eigen::LDLT<Eigen::MatrixXd> f(Cn);
+    if (f.info() != Eigen::Success || !f.isPositive()) return false;
+    const Eigen::VectorXd dv = f.vectorD();
+    if (!(dv.minCoeff() > 1e-14 * dv.cwiseAbs().maxCoeff())) return false;
+    Eigen::MatrixXd B = dinv.asDiagonal() * f.solve(Eigen::MatrixXd::Identity(nc, nc))
+                        * dinv.asDiagonal();
+    B = (0.5 * (B + B.transpose())).eval();
+    Eigen::MatrixXd Jcs = Eigen::MatrixXd::Zero(nc, n);
+    for (Eigen::Index a = 0; a < nc; ++a)
+        for (const Eigen::Index s : ss) Jcs(a, s) = J(cc[a], s);
+    Eigen::MatrixXd Kout = -B * Jcs;
+    if (!B.allFinite() || !Kout.allFinite()) return false;
+    K  = std::move(Kout);
+    Bc = std::move(B);
+    return true;
+}
+
 std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
     const std::vector<SharedPrior>& priors, bool require_closure) {
     if (priors.empty()) return 0;
@@ -769,13 +911,11 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
     std::map<char, std::vector<ClkRow>> grp;
     for (const SharedPrior& p : priors) {
         if (!(p.info > 0.0)) continue;
-        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
-            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
-            : key_(p.sat, p.kind, p.signal);
+        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
         const Eigen::Index c = it->second;
-        if (p.kind == SharedParamKind::Clock && !p.sat.empty()) {
+        if (p.kind == SharedParamKind::Clock && !p.clone && !p.sat.empty()) {   // a clone folds plainly (card SCL)
             grp[p.sat[0]].push_back({c, p.info, p.value});
         } else {
             delta_info(c, c) += p.info;
@@ -795,7 +935,7 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
     std::map<char, std::size_t> registered;
     if (require_closure)
         for (const ColumnDesc& d : columns_)
-            if (d.kind == SharedParamKind::Clock && !d.sat.empty())
+            if (d.kind == SharedParamKind::Clock && !d.clone && !d.sat.empty())   // clones are not clocks of the gauge (card SCL)
                 ++registered[d.sat[0]];
 
     std::size_t downdated = 0;
@@ -850,7 +990,7 @@ std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
     struct ClkRow { Eigen::Index col; double info, value; bool drop; };
     std::map<char, std::vector<ClkRow>> grp;
     for (const SharedPrior& p : priors) {
-        if (p.kind != SharedParamKind::Clock || p.sat.empty() || !(p.info > 0.0)) continue;
+        if (p.kind != SharedParamKind::Clock || p.clone || p.sat.empty() || !(p.info > 0.0)) continue;
         const auto it = index_.find(key_(p.sat, p.kind, p.signal));
         if (it == index_.end()) continue;
         grp[p.sat[0]].push_back({it->second, p.info, p.value, drop_sats.count(p.sat) > 0});
@@ -889,7 +1029,7 @@ std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
     std::map<char, std::size_t> registered;
     if (require_closure)
         for (const ColumnDesc& d : columns_)
-            if (d.kind == SharedParamKind::Clock && !d.sat.empty())
+            if (d.kind == SharedParamKind::Clock && !d.clone && !d.sat.empty())   // clones are not clocks of the gauge (card SCL)
                 ++registered[d.sat[0]];
 
     std::size_t dropped = 0;
@@ -937,9 +1077,7 @@ void NetworkEstimator::withdrawSharedPrior(const std::vector<SharedPrior>& prior
     // be the arithmetic inverse of the fold, not an independent recomputation.
     for (const SharedPrior& p : priors) {
         if (!(p.info > 0.0)) continue;
-        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
-            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
-            : key_(p.sat, p.kind, p.signal);
+        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
         const Eigen::Index c = it->second;
@@ -1053,6 +1191,9 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
         // The driver reads them from x_s via vtecCoeffColumn for the trace; their
         // product serialization (IGS-SSR VTEC) is a later stage.
         if (d.kind == SharedParamKind::VtecSh) continue;
+        // A clock clone (card SCL) is the previous epoch's clock carried inside the border
+        // for one epoch: never a product, and never the satellite's clock.
+        if (d.clone) continue;
         NetworkSatSolution& s = slotFor(d.sat);
         switch (d.kind) {
             case SharedParamKind::Clock:

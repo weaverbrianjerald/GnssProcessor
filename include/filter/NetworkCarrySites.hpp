@@ -39,7 +39,7 @@
  * Containers that hold a border-frame quantity and are deliberately not sites (each
  * either rebuilt every epoch, cleared at a datum change, re-based by its own mechanism,
  * or holding no value): the per-epoch scratch (@c cxu_epoch, @c readmit_seed_check,
- * @c sts_c0, @c oracle_pin), the clock-level declarations card CLV accumulates
+ * @c sts_c0, @c sts_dense, @c oracle_pin), the clock-level declarations card CLV accumulates
  * (@c clk_level: @c xfer, @c pending_step, @c cb_pending; derived from the moved
  * references, not carried references themselves), the smoothed hold's clones
  * (@c smh_clone, @c smh_block and their pending maps: their own re-base,

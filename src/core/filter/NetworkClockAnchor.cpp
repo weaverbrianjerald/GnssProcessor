@@ -11,6 +11,7 @@
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
+#include "filter/NetworkClockClone.hpp"      // networkClockCloneRefloat (card SCL)
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey
 #include "filter/NetworkResponses.hpp"       // prmRespond / ResponseSite (card PRM phase 3a)
 #include "common/SignalBand.hpp"             // phase-space statistic: band wavelengths (card CTU section 14)
@@ -103,7 +104,7 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
     for (std::size_t a = 0; a < keys.size(); ++a) {
         const auto& p = keys[a];
         if (p.sat.empty()) continue;
-        if (p.kind == SharedParamKind::Clock) by[p.sat].ic = static_cast<int>(a);
+        if (p.kind == SharedParamKind::Clock && !p.clone) by[p.sat].ic = static_cast<int>(a);   // a clone is not the clock (card SCL)
         else if (p.kind == SharedParamKind::PhaseBias) {
             by[p.sat].ip.push_back(static_cast<int>(a));
             by[p.sat].sig.push_back(p.signal);
@@ -421,6 +422,30 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             if (it == anchor.sat.end() || !it->second.anchored) continue;
             if (!datumChangeAffectsKey(sat, changed_consts, ctx.knobs.scoped_handover))
                 continue;
+            // Card SCL B2 (network.clock_anchor_datum_keep): the constellation's carry was
+            // re-expressed exactly this epoch (the dense kernel, its self-check passed), this
+            // clock has a row in that block, and its fold was the anchored one on the
+            // re-expressed entry: the carry is in the incoming frame, so the frame did not
+            // retire and the anchor stays engaged.  The statistic below still tests it.
+            if (ctx.knobs.cta_datum_keep) {
+                const auto rec = ctx.carry.sts_dense.find(sat.front());
+                const bool keep = rec != ctx.carry.sts_dense.end()
+                               && ctx.carry.sts_consts.count(sat.front()) > 0
+                               && rec->second.selfcheck_ok
+                               && rec->second.row_sats.count(sat) > 0
+                               && it->second.folded && it->second.folded_anchored;
+                if (keep) {
+                    ++ctx.counters.cta_datum_kept;
+                    traces.emitEvent(se_time, "CLK_ANCHOR", "cta_datum_kept", sat, "",
+                                     std::nullopt, std::nullopt, "keep",
+                                     fmt::format("reason=datum;q={};p={};dense=1",
+                                                 rec->second.q,
+                                                 rec->second.p.empty() ? std::string("none")
+                                                                       : rec->second.p));
+                    continue;
+                }
+                ++ctx.counters.cta_datum_kept_refused;
+            }
             ++ctx.counters.cta_trip_datum;
             decouple(ctx, traces, se_time, sat, "datum", std::nullopt, std::nullopt,
                      "retired clock frame");
@@ -699,7 +724,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         // instead of recomputing them.
         std::set<std::string> dense_drop;
         for (const auto& kk : ws.cap_dense_keys)
-            if (kk.kind == SharedParamKind::Clock && trip_resolve.count(kk.sat))
+            if (kk.kind == SharedParamKind::Clock && !kk.clone && trip_resolve.count(kk.sat))
                 dense_drop.insert(kk.sat);
         std::vector<NetworkEstimator::SharedPrior> diag_drop;
         for (const auto& p : ws.cap_priors)
@@ -723,11 +748,15 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         try {
             if (!dense_drop.empty()) {
                 est.attribTag("cta_refloat");
+                // Card SCL: on a clone epoch the fold was the joint one, so its walk factors
+                // are withdrawn (the clones stay; filter/NetworkClockClone).  Off, the clone
+                // refloat does nothing and returns false.
                 // The gauge-free flag has to match the fold, or the withdrawn block
                 // is not the block that was applied.
-                est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
-                                                         ws.cap_dense_cov, dense_drop,
-                                                         /*restore=*/false, gf, gfc);
+                if (!networkClockCloneRefloat(ctx, ws, est, dense_drop, /*restore=*/false))
+                    est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
+                                                             ws.cap_dense_cov, dense_drop,
+                                                             /*restore=*/false, gf, gfc);
                 folded_dense = true;
             }
             if (!diag_drop.empty()) {
@@ -753,7 +782,8 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                       "decoupled and marked — only the same-epoch VALUE correction is lost.",
                       se_time.tow, ex.what(), trip_resolve.size());
             try {
-                if (folded_dense)
+                if (folded_dense
+                    && !networkClockCloneRefloat(ctx, ws, est, dense_drop, /*restore=*/true))
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
                                                              /*restore=*/true, gf, gfc);
@@ -797,7 +827,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             keep.reserve(ws.cap_dense_keys.size());
             for (std::size_t i = 0; i < ws.cap_dense_keys.size(); ++i) {
                 const auto& kk = ws.cap_dense_keys[i];
-                if (kk.kind == SharedParamKind::Clock && dense_drop.count(kk.sat)) continue;
+                if (kk.kind == SharedParamKind::Clock && !kk.clone && dense_drop.count(kk.sat)) continue;
                 keep.push_back(static_cast<Eigen::Index>(i));
             }
             std::vector<NetworkEstimator::SharedPrior> nk;
@@ -812,6 +842,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             ws.cap_dense_keys = std::move(nk);
             ws.cap_dense_cov  = std::move(nc);
+            networkClockCloneRefloatTrim(ws, dense_drop);   // card SCL; no-op off
         }
         log->info("Network (Card Q3): TOW {:.1f} clock-anchor refloat — {} satellite(s) [{}] "
                   "withdrawn and the epoch RE-SOLVED before emission (pass {}).",

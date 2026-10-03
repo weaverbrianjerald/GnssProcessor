@@ -5,9 +5,9 @@
 - **id:** SCL
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** PRE-REGISTERED 2026-10-03 (the author's card: the field golden's hour-1 consumer, 0.108 m on `runs/_rf0hv14_field6`, rests on card LAH's phase-clock hold, valid only with a precise a priori clock product; the goal is a producer whose satellite clock does not need one). A bed with SP3 orbits and the broadcast clock as the a priori (no code change) and 2 h arms on the current goldens give the split: card SMH's smoothed hold with the anchor's q at the broadcast grade carries the broadcast clock's motion to the phase side (WTZZ00DEU 0.099 / 0.021 m against 1.191 / 0.743 under the phase-clock hold; 16-site census 0.550 / 0.157 against COD's 0.417 / 0.110), but the satellite clock LEVEL locks as q grows, with or without a priori error (sim truth 0.104 m broadcast and 0.065 m COD at q 5e-6, against 0.023 m at the golden q), its standard deviation stated about 4 times too tight. U1 (section 4.1): card CTU's per-row time update drops the cross-station time-update covariance, harmless when one station holds every satellite's phase datum and over-confident on the level by a factor of 6 in variance at q 5e-6 with the producer's per-satellite anchors (16 stations; 3 stations 1.3); a one-epoch clock clone in the border removes most of it in the unit network (variance ratio 0.163 to 0.915). Build B1 (the clock clone) pre-registered in section 5; B2 (the handover's S P S^T) after it; gates in section 6.
+- **summary:** OPEN, built 2026-10-03, not armed. The goal: a producer whose satellite clock does not need a precise a priori clock product (the field golden's hour-1 consumer, 0.108 m, rests on card LAH's phase-clock hold, valid only with one). On a bed with SP3 orbits and the broadcast clock as the a priori, card SMH's smoothed hold at a broadcast-grade anchor q (5e-6 m2/s) carries the broadcast clock's motion to the phase side, but the satellite clock level then locks (sim 0.104 m against 0.023 at the golden q; with the COD a priori too, 0.065 m: q alone), stated about 4 times too tight in standard deviation. Cause (U1, section 4.1): card CTU's per-row time update drops the cross-station time-update covariance, harmful only under per-satellite phase anchors as the producer elects them (unit network: level variance over-stated 6-fold at 16 stations). BUILT: B1, a one-epoch clock clone in the shared border (`network.carry_coupling_clock_clone`), with card SMH made consistent with it, and B2, the handover's dense S P S^T (`network.handover_stransform_dense`) with `network.clock_anchor_datum_keep`; B1 requires B2 (an interlock found by B2's runs). Off byte-identical; suite passes. Read (sections 9, 10): on the COD bed at q 5e-6 B1 returns the field consumer from 0.673 / 0.286 m to the golden's 0.107 / 0.024; on the broadcast bed the level halves (6 h 0.105 to 0.042 m, not converging further) and the 6 h field census goes from a median +2.8 cm and 10 sites worse against COD to +0.3 cm and 5 worse (sim census +0.5 cm, 2 worse); B2 removes the handover's 31 datum decouples and is consumer-invisible on the golden posture. Gate failures recorded: G1's level bars at epochs 120 / 239, G2's hidden fraction, G4's site count. Owed: the remaining level residue, the native broadcast posture, a per-satellite q.
 - **source:** [CTU](CTU_coupling_time_update_2026-09-28.md) sections 4, 9 and 13; [CTU2](CTU2_level_recursion_followup_2026-09-29.md); [LAH](LAH_level_aware_hold_2026-09-29.md) sections 2, 4 and 10; [PVN](PVN_phase_visible_nees_2026-09-29.md); [SMH](SMH_smoothed_hold_clone_2026-09-29.md) sections 9 and 10; [REV](REV_revision_member_replay_2026-09-30.md); [WSX](WSX_within_station_cross_terms_2026-09-30.md) sections 6 and 7; [PRM](PRM_parameter_registry_2026-09-29.md) section 16.6; [EXL](EXL_exact_update_lah_promotion_2026-10-01.md); `docs/cards/clock/Q3-PHYSICAL-FLOOR.md` section 7
-- **knobs / posture:** the bed (section 2) is a data root, not a knob; arms vary `network.clock_anchor_q`, `network.emit_pb_hold_phase_clock` / `network.emit_pb_hold_smoothed`, with the monitors `network.clock_level_monitor` and `network.phase_visible_monitor`; the build of section 5 adds default-off knobs named there
+- **knobs / posture:** new, default off: `network.carry_coupling_clock_clone` (B1; requires `network.carry_coupling_exact_update`, `network.shared_carry_full_cov` and an active `network.handover_stransform_dense`; refuses `network.clock_model`, `network.clock_anchor_gauge_free`, `network.shared_carry_gauge_free`), `network.handover_stransform_dense` (B2; INERT without `network.handover_stransform` or the dense carry; refuses `network.handover_stransform_before_rows`, `network.carry_rx_clock_in_block`), `network.clock_anchor_datum_keep` (INERT without B2 or the anchor). The bed (section 2) is a data root; arms vary `network.clock_anchor_q` and the hold, with `network.clock_level_monitor` / `network.phase_visible_monitor`. Nothing armed; no golden, ledger or posture change
 - **dates in the text:** 2026-10-03
 - **hashes / run dirs:** exe `gnss_processor_scl0.exe` (a copy of `gnss_processor_prm3b.exe`, sha256[:16] `cc68a5125f13f2e7`) for section 3; data roots `runs/_scl_data_bc` (CLK sha256[:16] `d8683e16e7fcdfcd`) and `runs/_scl_data_cod` (`c5ce95d511850634`); arms `runs/_rap_scl0_*` (superseded, section 2), `runs/_rap_scl1_*` to `runs/_rap_scl8_*` (2 h; `scl4` 6 h); data roots `runs/_scl_data_pivtruth`, `runs/_scl_data_pivonly`; census keys `s1c`, `s1bqs`, `s1b`; unit-network reads in a worktree at main `3959f24` (section 4.1)
 
@@ -337,7 +337,7 @@ One Release exe built from main after card PRM phase 3b step 2 grades every arm 
 | G7, the handover (B2) | On a 6 h arm with a clock-pivot handover (the goldens have one at 04:42:30): with B2 and the anchor kept, 0 datum decouples, and the level and phase-visible errors in the 10 epochs after the handover within the run's p95 of the other epochs (sim truth). |
 | G8 (cost) | 6 h loop time within 15 % of the same-exe control. |
 
-Amendment (2026-10-03, 13:10, written while B1 was being built and before any B1 result): G1 is
+Amendment (2026-10-03, 12:55, written while B1 was being built and before any B1 result): G1 is
 also read on the COD a priori at q 5e-6 (the sim, `runs/_rap_scl6_codq5_s` as the control, no true
 walk), with the same bars against the golden-q COD control (0.043 / 0.030 / 0.027 m); and G3 on the
 field's COD a priori at q 5e-6 (control `runs/_rap_scl11_codq5_f`, IF spread 0.353 m): the IF spread
@@ -361,8 +361,142 @@ further build. Arming is the author's decision after G4 and G5.
 
 ## 8. Tools
 
-Scratchpad tools of 2026-10-03, to be moved to `scripts/clock_level/` with the build:
-`brdc_clk.py` (the broadcast clock against a CLK product, statistics), `brdc_apriori.py` (the bed's
-CLK files and the error file), `g3grade_col.py` (card SMH's G3 grader on the re-based fixture),
-`levelnees_w.py` (`levelnees.py` with the a priori error added), `lvl_events.py` (level-error steps
-at phase-datum events against other epochs).
+In `scripts/clock_level/` (moved from the session scratchpad with the code commit):
+`scl_brdc_clk.py` (the broadcast clock against a CLK product: statistics, and a broadcast CLK
+file), `scl_brdc_apriori.py` (the bed's CLK files and the a priori error file), `scl_grade.py` (the
+one-line scorecard per arm: the pivot-frame level against truth and its bound, the per-epoch clock
+error step de-commoned, the hidden broadcast motion through `g3grade.py`, the IF spread and trips,
+card PVN's NIS, the consumer), `scl_levelnees_w.py` (`levelnees.py` with the a priori error added),
+`scl_lvl_events.py` (level-error steps at phase-datum events against other epochs),
+`scl_hybrid_wire.py` (a wire with the code side of one run and the phase side of another, for the
+consumer replays of section 9). `g3grade.py` grades the re-based fixture unchanged (its truth OSB
+file is identical in GPS to the new fixture's).
+
+## 9. B1 built and read (2026-10-03)
+
+**The build** (worktree at main `3959f24`, uncommitted at the time of this section; exes
+`gnss_processor_sclbase.exe` `d7d3fc72b17a17aa` = the base, `gnss_processor_scl1.exe` `2724cb1856a41608` =
+B1, `gnss_processor_scl2.exe` `ecdeb8198b0a9093` = B1 with card SMH made consistent with it). A new
+seam `filter/NetworkClockClone.{hpp,cpp}`; the clone is a flag on the estimator's column descriptor
+(key `sat|CLKC`, label `CLKC:sat`), registered after every other column; the rows read a copy of
+card CTU's epoch with the cloned clocks on their clones; the joint fold is in information form
+(stand-ins at the stashed variance, the walk factor at Q = var_eff - P); the gate, the S-basis
+completion and the datum ratio read a view with the clones marginalized (a principal submatrix
+would break the declared clock gauge); the harvest regresses clone coefficients onto the border
+through the solve's reduced normals and adds their conditional variance, the clock-family deficit
+restored on the pinned clock. Deviations from section 5, each in the build's notes: the capture
+keeps the marginal over s(t) for card Q3, PVN and SMH and adds a companion joint capture for the
+within-epoch replay; `network.shared_carry_gauge_free` is also refused.
+
+**The smoothed hold had to follow.** With B1 alone the solve improved and the consumer under card
+SMH degraded (sim 0.219 / 0.075 to 1.172 / 0.511 m, field 0.099 / 0.021 to 0.337 / 0.132): hybrid
+wires replayed through the consumer put the whole loss on the wire's phase side (B1's code side with
+the base phase side 0.150 / 0.108 m, the base code side with B1's phase side 0.461 / 0.116, base
+0.136 / 0.107), the phase-clock hold was unchanged by B1, and with no hold B1 improved the consumer
+(1.332 / 0.953 to 0.682 / 0.345). Card SMH's clone rows advanced on card CTU's epoch and missed the
+revision the solve now puts on the previous clock through its clone. Fixed (exe `_scl2`): the
+smoothed rows advance on the clone epoch, read the clones' revision, and are re-expressed through the
+same regression as the coupling rows (unit test: the joint form equals the batch's fixed-point
+smoother to 7e-9 m; the production row is within the per-station residue, +0.26 sigma at q 5e-6 with
+rotated anchors, against +1.76 sigma for card CTU's row).
+
+**Gates** (2 h unless stated; sim from 00:30:15):
+
+| gate | reading | verdict |
+| --- | --- | --- |
+| U0 | Debug suite 2805 tests, 2788 passed, 17 data-fixture skips (empty `data/` in the worktree), 0 failed; `make_golden_config.py --verify` PASS (69 armed); `config_posture_check.py --verify-loader` 0 gaps; `docs_index_check.py` OK | PASS |
+| U1 | committed form: mode 3 variance ratio 0.7492 at 5e-6, 1.0010 at 2.9e-8 (rotated anchors, 3 stations) | PASS |
+| U2 | mode 4 = batch within 1e-7 at both q and both datums; mode 5 0.9636 / 0.109 sigma; estimator clone tests (7) | PASS |
+| G0 | knob off byte-identical to the base exe: golden field, golden sim, broadcast bed sim and field (products, consumer trace, epoch status); `_scl2` again on the goldens; B1 with the phase-clock hold `_scl2` = `_scl1` | PASS |
+| ON | clones 29.4 per epoch (sim), 28.6 referenced, 0.8 idle; 220 474 rows with clone terms; 0 fold fallbacks, 0 gate-view failures; harvest 221 304 rows marginalized; clone posterior sd p50 4.4 mm, max 12.2 mm | PASS |
+| G1, broadcast bed | level rms at epochs 60 / 120 / 239: 0.042 / 0.072 / 0.056 m (off 0.100 / 0.116 / 0.107; bar 0.065 / 0.045 / 0.041); e2/(1/I_L) at 239 3.6 (bar 1.5); IF spread 0.064 m (bar 0.070); 6 h de-commoned clock error 0.049 0.043 0.044 0.040 0.039 0.042 m (off 0.105 to 0.097, COD 0.048 to 0.016) | FAIL (120, 239, e2); IF spread PASS |
+| G1, COD at q 5e-6 (amendment) | 0.041 / 0.052 / 0.042 m (off 0.068 / 0.072 / 0.065); e2 1.3; IF spread 0.064 | FAIL at 120 and 239 by 7 and 1 mm; e2 and IF PASS |
+| G2 | hidden broadcast motion 0.283 (off 0.180; bar 0.10); per-epoch clock-error step, de-commoned, 7.3 mm (off 9.5, COD 5.6; bar 8) | hidden FAIL; step PASS (see below) |
+| G3 | field IF spread, broadcast 0.096 m (off 0.119; bar 0.115); COD at q 5e-6 0.109 (off 0.353; bar 0.115); phase-visible NIS 1.47 on the broadcast field arm (6 h) | PASS |
+| G4, 2 h | per-site hour-2 change against COD with the phase-clock hold: median -0.003 m (off +0.060), 4 sites worse by more than 2 cm (off 11), 4 better | median PASS, sites FAIL by one |
+| G4, 6 h | median of the site p50 by hour: COD 0.417 0.110 0.044 0.055 0.038 0.044; broadcast off 0.550 0.157 0.126 0.079 0.063 0.070; broadcast with B1 0.501 0.121 0.086 0.071 0.055 0.072. Per-site change of the mean over hours 2 to 6: median +0.003 m (off +0.028), 5 worse by more than 2 cm (off 10), 4 better | median PASS, sites FAIL |
+| G5, 6 h sim census | per-station change over hours 2 to 5 against COD: median +0.005 m with B1 (off +0.006), 2 worse (off 3), 0 better | PASS |
+| G6 | golden posture with B1 (phase-clock hold): consumer identical to the millimetre on both beds; sim level at 239 0.033 against 0.025 m; IF spread +0.001 | consumer PASS; level slightly worse (the mode-5 residue at the golden q) |
+| G7 | B2, section 10 | |
+| G8 | not measured (concurrent arms) | owed |
+
+Notes on the reading. G2's step metric as written in section 6 was taken in the pivot frame without
+removing the per-epoch common mode; card CLK-R's frame hold removes the common step from the emitted
+clocks, so the pivot's own broadcast walk (about 12 mm per epoch) read as error on every satellite
+(the 14 mm "before" figure). Recomputed de-commoned: COD 5.6 mm, broadcast 9.5, broadcast with B1
+7.3; the bar of 8 mm is read on that. The sim census grader bins hours from the day start, and the
+sim census replays start at 01:01:30 and run past the wire's end at 06:30:15 (their sixth hour has
+no products); hours 2 to 5 are read. The field consumer at WTZZ00DEU is worse with B1 (6 h 0.233
+0.093 0.038 0.026 0.034 0.046 m against 0.099 0.021 0.015 0.009 0.017 0.024) while the census
+improves; WTZZ is one site (card MSC).
+
+**Reading.** B1 is the mechanism's cure in production: on the COD bed at q 5e-6 the field consumer
+returns from 0.673 / 0.286 m to the golden's 0.107 / 0.024 and the IF spread from 0.353 to 0.109 m;
+on the broadcast bed the level halves and the field census goes from a median +2.8 cm and 10 sites
+worse against COD to +0.3 cm and 5 sites worse. A residue remains: the level settles near 4 cm
+instead of converging (stated about 2 times too tight in standard deviation), the per-station
+harvest's second-order term (the clone's posterior sd, 4.4 mm p50, shared by every row of a
+satellite) being the leading candidate; at the golden q it costs 8 mm of level at epoch 239 (G6).
+The self-contained wire (broadcast clock, smoothed hold, q 5e-6, B1) is at the COD posture's median
+on both censuses with a tail of 5 field sites; it is not armed.
+
+## 10. B2 built and read (2026-10-03)
+
+**The build** (exe `gnss_processor_scl3.exe` `6b5b827c33bbcfea` in the worktree; on main as part of this
+card's code commit). `applyClockStransformDense` in `NetworkHandoverStransform.{hpp,cpp}`: at a
+clock-pivot handover the stashed border is re-expressed by S P S^T over the constellation's clock
+family (u = 1 on every clock row of the constellation in the block), the incoming pivot's row and
+column zeroed, the outgoing pivot appended at -c0 with its old-frame row; values through the carry
+traversal; a parked clock without a row takes the diagonal rule; an edge the kernel cannot apply
+falls back to the diagonal kernel (counted). The seam records the edge for B1's fold, which then
+stands the clones in across the edge in the outgoing frame with walks referencing the incoming
+pivot's clone (c_s(t) - c_s(t-1) + c_q(t-1)). `network.clock_anchor_datum_keep` leaves card Q3's
+anchor engaged for every clock the dense edge re-expressed with its self-check passed. The first
+build's self-check judged symmetry over the whole stashed block, which is symmetric only to
+rounding, so every dense edge read failed and the keep and the clone stand-in silently refused; the
+armed-only counters showed it (invariant 4), the check now reads the written rows, and every arm was
+rerun on the fixed exe.
+
+**A defect of B1 found here, and the interlock.** With B1 and the diagonal kernel, the golden
+handover (G01 to G02, 04:42:30) left the constellation's 31 clones free while the rows still
+referenced them; their common mode was a null direction the clock datum does not remove, and the
+solve failed for 30 epochs (690 of 720 emitted; both beds). The 2 h arms of section 9 never met a
+handover. The loader now refuses `network.carry_coupling_clock_clone` unless
+`network.handover_stransform_dense` is armed and active (with `network.handover_stransform` and
+`network.shared_carry_full_cov`); unit test case `nodense`.
+
+**Gates.**
+
+| gate | reading | verdict |
+| --- | --- | --- |
+| U2 (B2) | `HandoverStransformDense`, 9 tests: every entry of the kernel's block equals the explicit S P+ S^T (Eigen) to 1e-12 of max abs P, values to 1e-12 m; x'_q = 0 and a zero row; every clock contrast and every bias against a contrast unchanged to 1e-12; a second call the identity; the result positive semi-definite; the diagonal kernel over-states a clock contrast by exactly 2 var_q; the not-applied paths and the knob-off seam bitwise; B1's joint fold across the edge equals the explicit joint law to 1e-7 | PASS |
+| U0 | Debug suite 2814 tests, 2797 passed, 17 data-fixture skips, 0 failed (worktree); on main after the interlock, section 11 | PASS |
+| G0 | all new knobs off, `_scl3` against the base on the 2 h goldens: identical (the same hashes as section 9); B1 on and B2 off, `_scl3` against `_scl2`: identical | PASS |
+| ON | golden 6 h, both beds: 1 dense edge each (31 clocks, the outgoing pivot appended, 0 fallbacks, 0 self-check failures; variance the diagonal bump would have over-stated 3.7e-2 m2 field, 1.4e-2 m2 sim; largest contrast change below 1e-18 m2); with the keep 31 anchored clocks kept, 0 refused | PASS |
+| G7 | datum decouples at the edge 31 to 0 on both beds and in the SCL regime; card SMH's clones killed by the withdrawal 62 to 0 (sim), 98 to 6 (field, the 6 from two phase-guard trips); sim truth, the datum-free level in the 10 epochs after the edge: 0.020 m against the run's p95 of 0.029 (golden posture), 0.041 against 0.045 (SCL regime with B1); the per-epoch level change at the edge 3.2 to 0.9 mm (golden posture). The phase-visible half of the bar was not computed | PASS on the level and the decouples; phase-visible half owed |
+
+**Consumer.** On the golden posture B2 alone and with the keep is invisible: WTZZ00DEU and SZZ000SIM
+are identical by hour to three decimals, the products differing from the edge on by at most 3.8 mm
+in the clocks (card PRM section 16.6's prediction: the rows were already exact). In the SCL regime on
+the golden root (G01 kept, q 5e-6, the smoothed hold, 6 h): with B1, B2 and the keep the field reads
+0.126 0.027 0.023 0.018 0.029 0.042 m and the sim 0.233 0.132 0.105 0.051 0.017 0.027, against
+0.741 0.312 0.217 0.053 0.047 0.041 and 0.276 0.080 0.070 0.043 0.018 0.025 without B1 (section 3.7):
+the lock's field cost removed in hours 1 to 3. Hours 4 and 5 against B1 alone mostly measure B1's
+30-epoch outage, not B2's covariance.
+
+**Open.** Under B2 card SMH's orphaned clock-family deficits rise from 2 to 64 (sim) and 94 (field):
+at the edge epoch the hold's row update still routes deficits to the outgoing pivot, which has left
+the layout (not localized per epoch, not fixed). The one-epoch common term Q_q of the walk frame
+across the edge is not added (about 12 mm at q 5e-6, documented in the headers). The appended
+outgoing pivot is parked at the stash and seeds on its return (G01 at 279420) at a loose 3.27 m2,
+where the controls return it cold. A skipped epoch right after a dense edge (the carry in the
+incoming frame while the stash's pivot still names the outgoing one) is untested.
+
+## 11. Landed on main (2026-10-03)
+
+The worktree's code with the B1-requires-B2 interlock applied to main (`e3482f0` + this card's code
+commit). Main's Release exe `gnss_processor_scl.exe` `8a1aa9255f3321d8`: 2 h goldens with every new
+knob off byte-identical to the base exe on both beds (products a19e503fded57b5d field, d77b703c7c54a914
+sim; consumer trace and epoch status likewise); B1 + B2 + keep on the broadcast sim bed byte-identical
+to the worktree's `_scl3`. Main's Debug suite 2814 tests: 2813 passed, 1 fixture-gated skip, 0
+failed. `make_golden_config.py --verify` PASS; `config_posture_check.py --verify-loader` 0 gaps.

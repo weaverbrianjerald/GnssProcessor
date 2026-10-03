@@ -4782,6 +4782,50 @@ namespace GnssProcessor {
                       "block (the cross-station half stays out); inert without the local "
                       "block, counted at the run end.");
         }
+        // The clock clone (card SCL): the previous epoch's satellite clocks as one-epoch
+        // border columns, so the exact rule's rows keep their clock coefficients and the
+        // walk enters the border prior once.  It is a mode of the exact rule over the dense
+        // block, so both must be armed.  The clock model carries no clock in the border, and
+        // the gauge-free fold's direction would have to span the clones; both are refused.
+        // The two refused keys are read raw here: their own sections load later.
+        network_carry_coupling_clock_clone_ =
+            jval<bool>(json, "network.carry_coupling_clock_clone",
+                       "carry_coupling_clock_clone", false);
+        if (network_carry_coupling_clock_clone_) {
+            if (!network_carry_coupling_exact_update_)
+                throw std::runtime_error(
+                    "network.carry_coupling_clock_clone requires "
+                    "network.carry_coupling_exact_update = true (card SCL: the clone is a mode "
+                    "of the exact coupling time update).");
+            if (!network_shared_carry_full_cov_)
+                throw std::runtime_error(
+                    "network.carry_coupling_clock_clone requires network.shared_carry_full_cov "
+                    "= true (card SCL: the clones stand in for the clocks of the stashed dense "
+                    "border block).");
+            if (jval<bool>(json, "network.clock_model", "network_clock_model", false))
+                throw std::runtime_error(
+                    "network.carry_coupling_clock_clone refuses network.clock_model (card SCL: "
+                    "the clock model carries no satellite clock in the dense border, so there is "
+                    "nothing to clone).");
+            if (jval<bool>(json, "network.clock_anchor_gauge_free",
+                           "network_clock_anchor_gauge_free", false))
+                throw std::runtime_error(
+                    "network.carry_coupling_clock_clone refuses network.clock_anchor_gauge_free "
+                    "(card SCL: the gauge-free fold's clock direction would have to include the "
+                    "clone columns).");
+            if (network_shared_carry_gauge_free_)
+                throw std::runtime_error(
+                    "network.carry_coupling_clock_clone refuses network.shared_carry_gauge_free "
+                    "(card SCL: the same gauge-free downdate, armed by the dense carry; its clock "
+                    "direction would have to include the clone columns).");
+            log->info("Network producer (card SCL): network.carry_coupling_clock_clone = true: "
+                      "each satellite clock with a row in the stashed dense block gets a one-epoch "
+                      "clone column c(t-1) in the shared border; the coupling rows keep their "
+                      "harvested clock coefficients on the clone, the walk enters the border prior "
+                      "once at the fold's own variance, the rank gate judges the border with the "
+                      "clones marginalized, and the harvest marginalizes them out of every row.  "
+                      "UNVALIDATED; run-end line in the card CTU block.");
+        }
         // Full marginalization of the coupling rows' SH-VTEC terms (card 1d-SH).  The SH
         // border is a mean-reverting GM (climatology-anchored), not the pure random walk
         // the κ update models, so shrink-carrying its terms compounds row weight against
@@ -8055,6 +8099,14 @@ namespace GnssProcessor {
         network_handover_stransform_before_rows_ =
             jval<bool>(json, "network.handover_stransform_before_rows",
                        "network_handover_stransform_before_rows", false);
+        // Card SCL B2: the exact S P S^T at the handover, and card Q3's anchor kept across it.
+        // Interlocks after the transform's own (below), once clock_temporal_anchor is read.
+        network_handover_stransform_dense_ =
+            jval<bool>(json, "network.handover_stransform_dense",
+                       "network_handover_stransform_dense", false);
+        network_clock_anchor_datum_keep_ =
+            jval<bool>(json, "network.clock_anchor_datum_keep",
+                       "network_clock_anchor_datum_keep", false);
         // Card PRM phase 3b step 2: the re-base mechanisms also move their owed sites.  Its
         // interlock (no re-base mechanism armed) reads the final values at the end of the
         // section, after every mechanism's own knobs and refusals have resolved.
@@ -10199,6 +10251,72 @@ namespace GnssProcessor {
                           "coupling terms' s_prev and free p_prev, the stash's pivot value), so the "
                           "rows are conditioned on the re-expressed variance.  FINGERPRINTED: fresh "
                           "convergence only.");
+            }
+        }
+        // Card SCL B2: the dense S-transform at the handover.
+        if (network_handover_stransform_dense_) {
+            if (!network_handover_stransform_) {
+                log->warn("Network: network.handover_stransform_dense is INERT without an armed "
+                          "network.handover_stransform (it replaces that transform's diagonal "
+                          "kernel).");
+                network_handover_stransform_dense_ = false;
+            } else if (!network_shared_carry_full_cov_) {
+                log->warn("Network: network.handover_stransform_dense is INERT without "
+                          "network.shared_carry_full_cov: there is no dense block to "
+                          "re-express.");
+                network_handover_stransform_dense_ = false;
+            } else if (network_handover_stransform_before_rows_) {
+                throw std::runtime_error(
+                    "network.handover_stransform_dense refuses "
+                    "network.handover_stransform_before_rows: the exact transform zeroes the "
+                    "incoming pivot's row, which before the rows would put a pinned column into "
+                    "card CTU's S and swap the pinned route of every coupling row, and the undo "
+                    "of a skipped preview would need the saved block (card SCL section 5)");
+            } else if (network_carry_rx_clock_in_block_) {
+                throw std::runtime_error(
+                    "network.handover_stransform_dense refuses network.carry_rx_clock_in_block: "
+                    "the receiver clock is on the clock datum's direction and its carried value "
+                    "is not re-expressed, so the block would hold two frames (card PRM section "
+                    "16.6)");
+            } else {
+                log->info("Network producer (card SCL B2): handover S-transform DENSE: at a "
+                          "clock-pivot handover the stashed border is re-expressed exactly, "
+                          "x' = S x and P' = S P S^T with S = I - u e_q' over the constellation's "
+                          "clock family (the incoming pivot's row zeroed, the outgoing pivot "
+                          "appended at -c0), instead of the diagonal bump; a parked clock takes "
+                          "the diagonal rule, and an edge the kernel cannot apply falls back to "
+                          "the diagonal kernel (counted).  FINGERPRINTED: fresh convergence "
+                          "only.");
+            }
+        }
+        // Card SCL B1 needs B2: a clock-pivot handover re-expressed by the diagonal kernel
+        // leaves the constellation's clones free while the rows still reference them, and
+        // their common mode is then a null direction the datum does not remove (card SCL
+        // section 10: 30 epochs of failed solves at the golden handover).  Read here, where
+        // both knobs are resolved.
+        if (network_carry_coupling_clock_clone_ && !network_handover_stransform_dense_)
+            throw std::runtime_error(
+                "network.carry_coupling_clock_clone requires network.handover_stransform_dense "
+                "(armed, with network.handover_stransform and network.shared_carry_full_cov): "
+                "a handover re-expressed by the diagonal kernel leaves the constellation's "
+                "clock clones free and referenced, a null direction the clock datum does not "
+                "remove (card SCL section 10)");
+        if (network_clock_anchor_datum_keep_) {
+            if (!network_handover_stransform_dense_) {
+                log->warn("Network: network.clock_anchor_datum_keep is INERT without an armed "
+                          "network.handover_stransform_dense: only an exactly re-expressed "
+                          "carry may keep the anchor across a handover.");
+                network_clock_anchor_datum_keep_ = false;
+            } else if (!network_clock_temporal_anchor_) {
+                log->warn("Network: network.clock_anchor_datum_keep is INERT without "
+                          "network.clock_temporal_anchor: there is no anchor to keep.");
+                network_clock_anchor_datum_keep_ = false;
+            } else {
+                log->info("Network producer (card SCL B2): the clock anchor is KEPT across a "
+                          "handover whose carry the dense S-transform re-expressed (self-check "
+                          "passed, a block row, an anchored fold): no datum decouple, no disc "
+                          "mark, the guard's statistic still tests the satellite.  "
+                          "FINGERPRINTED: fresh convergence only.");
             }
         }
         // Card-4 dependency (M1): the DD cycle-basis carry lives on the eq34 chain datum
