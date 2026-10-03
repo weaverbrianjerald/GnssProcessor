@@ -249,6 +249,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.scoped_handover = config_.networkScopedHandoverResponse();
     k.handover_stransform = config_.networkHandoverStransform();
     k.handover_stransform_before_rows = config_.networkHandoverStransformBeforeRows();
+    k.rebase_complete = config_.networkCarryRebaseComplete();   // card PRM phase 3b step 2
     k.pb_excl_unmatched = config_.networkPhaseBiasExcludeUnmatchedAntenna();
     k.emit_gen_time = config_.networkEmitGenerationTime();
     k.emit_gen_id = config_.networkEmitGenerationId();
@@ -923,6 +924,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Card PRM phase 2: the transform before the coupling rows changes the handover
         // epoch's rows (armed-only token, so every existing fingerprint is unchanged).
         if (ctx.knobs.handover_stransform_before_rows) add("stsrows:1");
+        // Card PRM phase 3b step 2: the re-base mechanisms also move their owed sites, which
+        // changes the carry they hand on (armed-only token, so every existing fingerprint is
+        // unchanged).
+        if (ctx.knobs.rebase_complete) add("rbc:1");
         add(fmt::format("{}", emit_gen_id));
         add(fmt::format("{}", config_.estimateNetworkSatCodeBias()));
         add(fmt::format("{}", config_.estimateNetworkIonoSh()));

@@ -189,7 +189,8 @@ struct ParamSpec {
     /// @ref responsePolicyBit): the union of the policies of this kind's response sites whose
     /// arming condition holds on the knob snapshot, and Stransform where an armed datum
     /// mechanism moves a carried value of the kind (card PRM phase 3a,
-    /// @c filter/NetworkResponses.hpp).  Zero for an event the kind does not respond to.
+    /// @c filter/NetworkResponses.hpp; with @c network.carry_rebase_complete its owed value
+    /// sites count too, card PRM phase 3b).  Zero for an event the kind does not respond to.
     std::array<std::uint32_t, kParamEvents> on{};
 };
 

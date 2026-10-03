@@ -29,9 +29,12 @@
  *
  * Phase 2 changes no number: every mechanism keeps the set of references it moved
  * before, written as its site set plus declared exemptions.  The exemptions are the
- * gaps the hand lists left, now named: a mechanism's set grows by deleting one line,
- * behind its own arm (phase 3b), and a site added to the carried state is added here or
- * the unit test that scans the carry state's declaration fails.
+ * gaps the hand lists left, now named, and a site added to the carried state is added
+ * here or the unit test that scans the carry state's declaration fails.  Phase 3b step 2
+ * closes the owed gaps behind one default-off knob, @c network.carry_rebase_complete:
+ * with it, each mechanism's walk also moves the sites its row exempts as owed
+ * (@ref carryMechanismOwedSites); the by-design exemptions and the phase hold's held
+ * value stay where they are.
  *
  * Containers that hold a border-frame quantity and are deliberately not sites (each
  * either rebuilt every epoch, cleared at a datum change, re-based by its own mechanism,
@@ -188,6 +191,42 @@ CarryMechanismSite carryMechanismSite(CarryMechanism m, CarrySite s);
 
 /// The mask of the sites @p m moves.
 std::uint32_t carryMechanismSites(CarryMechanism m);
+
+/**
+ * @brief The mask of the sites @p m exempts as owed: the gaps of the hand-written lists
+ *        (card PRM sections 16.2 and 16.7), which @c network.carry_rebase_complete moves.
+ *
+ * A site is owed when its exemption's reason is one of the owed reasons (a gap of the hand
+ * list card PRM phase 2 replaced, card CLV section 6.4 item 6, card LGM's carry after card
+ * CLV's list).  Never in the set: a site the mechanism already moves, a site outside its
+ * direction (no reason), a by-design exemption (card CLV's hold transfer, the oscillator
+ * under the clock model, the D4 shift's bridged root, the handover's reasons, the receiver
+ * clock under the handover included), and @c PbHold for every mechanism: the phase hold's
+ * held value is an emitted value in the emit frame, and moving it needs its own design (card
+ * CLV accumulates an emit-side transfer instead), so it stays exempt with that reason.  The
+ * two handover mechanisms have no owed site (their walks take no knob).
+ * @param m the mechanism.
+ * @return the owed site mask (disjoint from @ref carryMechanismSites).
+ */
+std::uint32_t carryMechanismOwedSites(CarryMechanism m);
+
+/**
+ * @brief The site mask a walk of @p m covers on a run: @ref carryMechanismSites, with the
+ *        owed sites when @p complete (@c network.carry_rebase_complete, card PRM phase 3b).
+ * @param m        the mechanism.
+ * @param complete whether the owed sites are moved.
+ * @return @c carryMechanismSites(m) | (complete ? carryMechanismOwedSites(m) : 0).
+ */
+std::uint32_t carryMechanismSiteMask(CarryMechanism m, bool complete);
+
+/**
+ * @brief Whether @p m moves @p s on a run, with the owed sites when @p complete.
+ * @param m        the mechanism.
+ * @param s        the site.
+ * @param complete @c network.carry_rebase_complete.
+ * @return whether @p s is in @ref carryMechanismSiteMask.
+ */
+bool carryMechanismMoves(CarryMechanism m, CarrySite s, bool complete);
 
 /**
  * @brief One carried reference, as the traversal hands it to a visitor.

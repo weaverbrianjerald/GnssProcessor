@@ -136,3 +136,36 @@ NaN gap are kept as they were. The model table gains a `gap_s` column and `param
 Gate: exe `gnss_processor_prm3c.exe` `460e4a652e0e91b9`, tags `r3ah6`, `r3a`, `r3ax`, `r3axr`:
 byte-identical on all 16 arms, 0 declaration errors, the gap response counts equal to phase 3a's
 (ambiguity prunes 1251 field / 1302 sim on the 6 h goldens). Unit suite 2784 passed, 1 fixture skip.
+
+## 8. Phase 3b step 2, the owed references moved (2026-10-03)
+
+`network.carry_rebase_complete` (default off; fingerprinted when armed; INERT and disarmed when no re-base
+mechanism is armed): each re-base mechanism also moves the sites its exemption table marks owed
+(`carryMechanismOwedSites`): card CLV the stash's pivot and the phase-colour coupling; the ephemeris
+re-level the stash's pivot, two baselines and nine coupling maps; the eq34 shift and the declared
+handover the phase-bias baseline, the gross screen's held ambiguity, the remaining coupling maps (and
+the pin bridge for the handover). Deviations from section 6, recorded: one knob for the four
+mechanisms (each harness posture arms exactly one, so attribution holds per posture); the phase hold's
+held emission (`pb_hold`) stays exempt from both phase-bias shifts, with or without the knob (a held
+emitted value needs its own design; reason `kPbHoldEmit`, a manifest-only text change with the knob
+off), and its unmoved held families at a shift are now counted (`prm_pbhold_unmoved_at_shift`).
+
+Gate (exe `gnss_processor_prm3d.exe` `80db53d9733d3f2f`): knob off byte-identical on all 16 arms
+(tags `s3ah6`, `s3a`, `s3ax`, `s3axr`), 0 declaration errors; unit suite 2791 passed, 1 fixture skip.
+
+Knob on, against knob off on the same exe (tags `k3x2`, 2 h, and `k3r6`, the re-level 6 h across the
+02:00 and 04:00 cut-overs), both beds; no arm INERT, every mechanism ran:
+
+| mechanism | owed references moved | outputs |
+| --- | --- | --- |
+| card CLV | none moved (the pivot is re-derived at every kept stash; no phase colour) | byte-identical |
+| ephemeris re-level (6 h) | the pivot 2 / 3, `pb_hold_prev_clock` 60 / 85; 0 receiver code-bias terms (their regression carries no clock term) | byte-identical |
+| declared handover | 91 receiver code-bias terms, `pb_level_prev` 1 (field) | byte-identical |
+| eq34 shift | 24 489 / 10 341 receiver code-bias terms, `pb_level_prev` 257 / 188 | field: consumer within 0.1 mm, emitted clock within 5.7 mm and phase bias within 7.6 mm from 1 h on; sim identical |
+
+The read: the owed exemptions are inert or at the millimetre level on these postures. Card CTU's exact
+update forms its rows on the carried values, not the terms' stored `s_prev`, so a regression's
+reference matters only on the stale (card 1d) route; and the receiver code bias regresses on no
+clock. The knob stays default off and is not recommended; the complete walks remain available. The
+held emission under a phase-bias shift (257 / 188 family-epochs on the eq34 posture) is the one open
+item of this step. Phase 3b step 3 (the erase family) is parked.

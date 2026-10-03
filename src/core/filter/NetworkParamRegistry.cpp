@@ -304,7 +304,8 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
     // (filter/NetworkResponses.hpp) whose own gate holds on this snapshot contributes its
     // policy to its kind's event; an armed datum mechanism of card PRM phase 2 contributes
     // Stransform to the handover of every kind whose carried value it moves (a border kind
-    // through prev_carry, a station-local kind through its value site).
+    // through prev_carry, a station-local kind through its value site, the owed value sites
+    // included under network.carry_rebase_complete: card PRM phase 3b).
     for (int i = 0; i < kResponseSites; ++i) {
         const auto site = static_cast<ResponseSite>(i);
         if (!responseSiteArmed(site, k, config)) continue;
@@ -326,7 +327,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
                     responsePolicyBit(ResponsePolicy::Stransform);
         for (int c = 0; c < kCarrySites; ++c) {
             NetworkParamKind lk;
-            if (carryMechanismSite(mech, static_cast<CarrySite>(c)).moves
+            if (carryMechanismMoves(mech, static_cast<CarrySite>(c), k.rebase_complete)
                 && carrySiteLocalKind(static_cast<CarrySite>(c), lk))
                 onHandover(lk) |= responsePolicyBit(ResponsePolicy::Stransform);
         }

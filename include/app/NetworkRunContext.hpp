@@ -636,6 +636,12 @@ namespace GnssProcessor {
         /// carried references, so the coupling rows read the re-expressed carry.  The loader
         /// forces it false without handover_stransform.
         bool handover_stransform_before_rows{};
+        /// network.carry_rebase_complete (card PRM phase 3b step 2): each carry re-base
+        /// mechanism's walk (card CLV's level re-base, the ephemeris re-level, the eq34 D4
+        /// shift, the declared anchor handover) also moves the sites its exemption table
+        /// marks as owed (carryMechanismOwedSites; the phase hold's held value excepted).
+        /// The loader forces it false when none of those mechanisms is armed.
+        bool rebase_complete{};
         bool pb_excl_unmatched{};
         bool emit_gen_time{};
         bool emit_gen_id{};
@@ -3861,6 +3867,11 @@ namespace GnssProcessor {
         long long prm_latch_unique = 0, prm_latch_unique_carried = 0, prm_latch_multi = 0;
         long long prm_latch_epochs = 0;
         long long prm_pruned_after_drop = 0;
+        // Card PRM phase 3b step 2: held phase-bias emissions (pb_hold) of a (satellite,
+        // signal) family that a phase-bias shift moved (the eq34 D4 shift, the declared anchor
+        // handover) and that stayed in the old frame: PbHold is exempt from both shifts with or
+        // without network.carry_rebase_complete (its own design is owed).  Measure-only.
+        long long prm_pbhold_unmoved_at_shift = 0;
         // Card CTU level monitor and raise.  Ratios are counted for a satellite from its
         // second epoch of code information on (its first solve is the code-only batch).
         long long clm_epochs = 0, clm_skip_datum = 0, clm_rows = 0, clm_below1 = 0,

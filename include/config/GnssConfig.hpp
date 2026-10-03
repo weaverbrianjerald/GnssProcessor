@@ -6289,6 +6289,37 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Whether each carry re-base mechanism also moves the carried references its
+         *        exemption table marks as owed (@c network.carry_rebase_complete, card PRM
+         *        phase 3b step 2).
+         *
+         * The mechanisms that move a border parameter's frame walk the carried references
+         * through one traversal (card PRM phase 2, @c filter/NetworkCarrySites.hpp), each over
+         * its own site set; the references its hand-written list never moved are declared as
+         * owed exemptions (card PRM sections 16.2 and 16.7).  With this knob the four walks
+         * that carry such gaps also move them, each with its own rule: card CLV's level
+         * re-base (the stash's pinned pivot value, card LGM's phase-colour coupling terms), the
+         * ephemeris cut-over re-level (the stash's pivot value, the code-bias excursion and
+         * phase-hold clock baselines, and every other coupling map's clock terms under the
+         * conditional coupling; card CLV section 6.4 item 6), the eq34 D4 shift and the float
+         * vehicle's declared anchor handover (the last solved phase bias, the gross screen's
+         * held ambiguity, every other coupling map's phase-bias terms, and for the declared
+         * handover an open pin bridge).  The by-design exemptions stay, and so does the phase
+         * hold's held value (an emitted value: card CLV accumulates an emit-side transfer
+         * instead).  The clock-pivot handover's two transforms are unaffected.
+         *
+         * Inert, warned and disarmed when no such mechanism is armed (card CLV's
+         * @c network.clock_level_carry without the clock model, @c network.apriori_source
+         * brdc_rts, the eq34 chain datum's carry shift or seed-round re-host, the float
+         * vehicle's declared anchor handover).  Fingerprinted when armed (armed-only token):
+         * fresh convergence only.  Default false = each mechanism's phase 2 site set
+         * (byte-identical).
+         *
+         * @return @c network.carry_rebase_complete as resolved by the loader's interlock.
+         */
+        bool networkCarryRebaseComplete() const { return network_carry_rebase_complete_; }
+
+        /**
          * @brief Producer: stamp a solution-generation id on every emitted epoch
          *        (@c network.emit_generation_id, RTA-3).
          *
@@ -9101,6 +9132,7 @@ namespace GnssProcessor {
         bool   network_scoped_handover_response_{false};   ///< Scope the producer's internal pivot-handover response (RTA-2; D2 carry skip, clock-oscillator clear, clock-monitor jump suppression) to the constellation(s) whose datum changed; off = global response (byte-identical).
         bool   network_handover_stransform_{false};        ///< At a clock-pivot handover, transform the changed constellation's carried shared means along NetworkSbasis::clockNullDirection (c0 = x_q/v_c[q]; x -= v_c*c0; var += v_c^2*var_q) and then fold them instead of skipping (queue 1(b)); the carried information is valid, only expressed in the retired datum. Requires scoped_handover_response (inert and warned otherwise); inert under an anchor-free clock datum. Fingerprinted when armed (armed-only token) ⇒ fresh convergence only. Off = the legacy one-epoch drop (byte-identical).
         bool   network_handover_stransform_before_rows_{false};  ///< Run the handover S-transform before the fold decision and PASS B, through the traversal of carried references, so the coupling rows read the re-expressed carry (card PRM phase 2).  Requires handover_stransform (inert and warned otherwise); refused with apriori_source brdc_rts.  Fingerprinted when armed.  Off = the transform after PASS B (byte-identical).
+        bool   network_carry_rebase_complete_{false};      ///< Each carry re-base mechanism (card CLV's level re-base, the ephemeris re-level, the eq34 D4 shift, the declared anchor handover) also moves the carried references its exemption table marks as owed, the phase hold's held value excepted (card PRM phase 3b step 2).  Inert and disarmed without such a mechanism.  Fingerprinted when armed.  Off = the phase 2 site sets (byte-identical).
         bool   network_phase_datum_prioritized_{false};    ///< Realize the phase-bias gauge by a per-(sat,signal) prioritized anchor receiver (highest-coverage tracker) instead of pinning only the single clock-pivot station; removes the low-elevation gauge jump and the pivot-absent SPOF, with anchor handovers disc-signalled. Off = legacy single-pivot pins (byte-identical).
         bool   network_phase_datum_ensemble_{false};       ///< Realize the phase-bias gauge by an anchor-free sum-to-zero over the tracking receivers' ambiguities (Fix A; Σ_r zˢ_{r,σ}=0, kernel Schur-projected fold) instead of a single-anchor pin: no pivot, no handover (so no moving-datum churn), no SPOF, and every satellite referenced to the same receiver ensemble (the user DD stays integer, so AR is not contaminated). Reuses the prioritized machinery that removes the SPOF but elects no anchor; supersedes phase_datum_prioritized. Off = anchor-pin datum (byte-identical).
         double network_phase_datum_hold_sigma_m_{0.0};     ///< Seed-once + time-lock (Fix A): hold the ensemble satellite phase bias with a stiff prior of this sigma (m) after seeding Σ_r zˢ=0 once per (sat,signal); removes the ~metre/epoch churn of the un-held ensemble (the emitted absolute bias references a per-epoch re-realized float-ambiguity mean → dynamic datum on a static product). 0 = re-realize every epoch. Inert unless network_phase_datum_ensemble_.

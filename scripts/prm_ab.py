@@ -20,6 +20,10 @@
                             ephemeris cut-over re-level, the eq34 D4 shift, the declared anchor
                             handover, and the handover S-transform before the rows (CLV,
                             RELEVEL, EQ34, DHO, HANDOVER below)
+  _rap_prm_<tag>_k? / l? / e? / u?   card PRM phase 3b step 2: the same four re-base postures
+                            with network.carry_rebase_complete (each mechanism also moves its
+                            owed sites; postures clvc, relevelc, eq34c, dhoc, graded against
+                            clv, relevel, eq34, dho with --map k=c, l=r, e=q, u=o)
 The sim arms start at 00:30:15 (the fixture-start convention); every arm runs --hours (default 2).
 
 `run` runs the arms of one tag with the given executable (a renamed copy of the Release build;
@@ -91,10 +95,17 @@ RELEVEL = [
 EQ34 = ['network.phase_datum_eq34=true', 'network.phase_datum_eq34_carry_shift=true']
 DHO = ['network.amb_float_declared_handover=true']
 HANDOVER = ['network.handover_stransform_before_rows=true']
+# Card PRM phase 3b step 2: each re-base posture with the owed sites moved too (behaviour-changing
+# on its own posture; graded against the posture without the knob, --map k=c and so on).
+COMPLETE = ['network.carry_rebase_complete=true']
 # name -> (arm letter, knobs); the arm suffix is the letter and the bed.
 POSTURES = {'golden': ('g', []), 'program': ('p', PROGRAM), 'scalar': ('s', SCALAR),
             'diag': ('d', DIAG), 'clv': ('c', CLV), 'relevel': ('r', RELEVEL),
-            'eq34': ('q', EQ34), 'dho': ('o', DHO), 'handover': ('h', HANDOVER)}
+            'eq34': ('q', EQ34), 'dho': ('o', DHO), 'handover': ('h', HANDOVER),
+            'clvc': ('k', CLV + COMPLETE), 'relevelc': ('l', RELEVEL + COMPLETE),
+            'eq34c': ('e', EQ34 + COMPLETE), 'dhoc': ('u', DHO + COMPLETE)}
+# Every arm letter names one posture (an arm's suffix is its letter and its bed).
+assert len({v[0] for v in POSTURES.values()}) == len(POSTURES)
 CORE = ('products.txt', 'logs/closed_loop_trace.csv', 'logs/network_epoch_status.csv')
 # Wall-clock columns, by file and header name: the only differences between two runs of one
 # executable on the four arms (the phase 0 self-identity check of 2026-10-01, card PRM section

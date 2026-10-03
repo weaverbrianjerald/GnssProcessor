@@ -719,6 +719,48 @@ namespace GnssProcessor {
                           ? "detector-freed carry erase at the withhold branch"
                           : "");
 
+        // Card PRM phase 3b step 2 (network.carry_rebase_complete), on the final values: the
+        // knob widens the walks of the four re-base mechanisms that carry owed exemptions, so
+        // without any of them armed it is a structural zero (invariant #4) and is disarmed,
+        // which also keeps its fingerprint token off.  Each condition is the one
+        // NetworkKnobs::snapshot resolves for the mechanism (carryMechanismArmed).
+        if (network_carry_rebase_complete_) {
+            const bool clv = network_clock_level_carry_ && !network_clock_model_;
+            const bool relevel = network_apriori_source_ == NetworkAprioriSource::BrdcRts;
+            const bool eq34 = network_phase_datum_eq34_
+                && ((network_phase_datum_eq34_carry_shift_ && !network_carry_invariant_)
+                    || (network_phase_datum_eq34_seed_round_
+                        && network_phase_datum_eq34_seed_round_rehost_frame_));
+            const bool anchored = network_phase_datum_prioritized_ && !network_phase_datum_ensemble_
+                && !network_phase_datum_eq34_;
+            const bool dho = network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                && network_config_.amb_float_declared_handover && anchored
+                && network_phase_anchor_carry_reref_ && network_phase_datum_handover_continuous_;
+            if (!clv && !relevel && !eq34 && !dho) {
+                log->warn("Network: network.carry_rebase_complete is INERT: no carry re-base "
+                          "mechanism with owed sites is armed (card CLV's "
+                          "network.clock_level_carry without network.clock_model, "
+                          "network.apriori_source brdc_rts, the eq34 chain datum's carry shift or "
+                          "seed-round re-host, the float vehicle's declared anchor handover) "
+                          "-- disabled.");
+                network_carry_rebase_complete_ = false;
+            } else {
+                log->info("Network producer (card PRM phase 3b): carry re-base COMPLETE ({}{}{}{}): "
+                          "each armed re-base mechanism also moves the carried references its "
+                          "exemption table marks as owed (the stash's pivot value, the clock "
+                          "baselines, the last solved phase bias, an open pin bridge, the gross "
+                          "screen's held ambiguity, every coupling map's terms), each with the "
+                          "mechanism's own rule; the by-design exemptions and the phase hold's "
+                          "held value stay.  FINGERPRINTED: fresh convergence only.",
+                          clv ? "clock level" : "",
+                          relevel ? (clv ? ", ephemeris re-level" : "ephemeris re-level") : "",
+                          eq34 ? ((clv || relevel) ? ", eq34 shift" : "eq34 shift") : "",
+                          dho ? ((clv || relevel || eq34) ? ", declared handover"
+                                                          : "declared handover")
+                              : "");
+            }
+        }
+
         logNetworkPosture_(log);
         return true;
     }
@@ -8013,6 +8055,12 @@ namespace GnssProcessor {
         network_handover_stransform_before_rows_ =
             jval<bool>(json, "network.handover_stransform_before_rows",
                        "network_handover_stransform_before_rows", false);
+        // Card PRM phase 3b step 2: the re-base mechanisms also move their owed sites.  Its
+        // interlock (no re-base mechanism armed) reads the final values at the end of the
+        // section, after every mechanism's own knobs and refusals have resolved.
+        network_carry_rebase_complete_ =
+            jval<bool>(json, "network.carry_rebase_complete",
+                       "network_carry_rebase_complete", false);
         // Phase-bias gauge: single clock-pivot station (legacy) vs per-(sat,signal)
         // prioritized anchor receiver.  The two sub-knobs (coverage-preference
         // elevation, per-(sat,signal) stickiness) are inert unless the master toggle

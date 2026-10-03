@@ -20,7 +20,8 @@
  *          Shifting the prior is exact for any prior weight; a post-solve x_s shift is
  *          not.  Mutates ctx.carry.{relevel_iode, eph_cutover_disc_pending} and, through
  *          @ref ephCutoverShiftCarry, the sites of CarryMechanism::EphRelevel (clock_osc,
- *          prev_carry, prev_clk, the local_carry and zwd_carry coupling).  Acts only when
+ *          prev_carry, prev_clk, the local_carry and zwd_carry coupling; with
+ *          network.carry_rebase_complete also its owed sites).  Acts only when
  *          brdc_rts is true, the only mode in which relevel_iode is meaningful.
  */
 
@@ -47,15 +48,26 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  * monitor's jump baseline, and, under the conditional coupling (@p cpl_cond), the s_prev of
  * every clock term of the satellite in the ambiguity and wet-delay carries.  The sites the
  * re-level does not move are declared with their reason in the mechanism table.
+ *
+ * With @p complete (@c network.carry_rebase_complete, card PRM phase 3b) the walk also moves
+ * the sites the table exempts as owed (card CLV section 6.4 item 6), by the same -d on the
+ * satellite's clock references only: the stash's pinned pivot value (when the satellite is
+ * the pivot), the code-bias excursion test's previous solved clock, the emitted clock at the
+ * phase hold's previous emission, and, under the conditional coupling as for the ambiguity
+ * and wet-delay carries, the s_prev of the satellite's clock terms in every other coupling
+ * map (the slant ionosphere and its block, the gross screen's three holds, the receiver
+ * clock, phase bias and code bias, card LGM's phase colour).
  * @param carry    the run's carried state.
  * @param sat      the satellite whose broadcast version rolled.
  * @param d        the shift Delta_eph (m); every reference moves by -d.
  * @param cpl_cond @c network.carry_conditional_coupling.
  * @param counts   optional out: per-site tallies (accumulated).
+ * @param complete also move the owed sites (false = the walk of card PRM phase 2).
  * @return the number of references moved.
  */
 long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat, double d,
-                               bool cpl_cond, CarrySiteCounts* counts = nullptr);
+                               bool cpl_cond, CarrySiteCounts* counts = nullptr,
+                               bool complete = false);
 
 /**
  * @brief Apply the ephemeris-cutover re-level for this epoch (card 6).

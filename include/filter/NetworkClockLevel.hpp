@@ -289,6 +289,12 @@ ClockLevelConfirm clockLevelConfirmStep(ClockLevelSat& ls, int break_sign, doubl
 /// @param cb_direct optional (satellite, signal) -> a code-bias column's own step (m).
 /// @param cb_held   optional (satellite, signal) columns that do not follow the level.
 /// @param counts    optional out: per-site tallies of the walk (accumulated).
+/// @param complete  @c network.carry_rebase_complete (card PRM phase 3b): also move the sites
+///                  the mechanism table exempts as owed (@ref carryMechanismOwedSites): the
+///                  stash's pinned pivot value (@c cxu_pivot, by the pivot satellite's level
+///                  shift, as its carried clock) and card LGM's phase-colour coupling terms
+///                  (the coupling rule above).  The phase hold's held values stay in the emit
+///                  frame either way.  False = the walk of card PRM phase 2.
 /// @return the number of carried references moved.
 ///
 /// The walk is the traversal of carried references (card PRM phase 2,
@@ -301,7 +307,7 @@ long long clockLevelShiftCarry(
     std::map<std::pair<std::string, std::string>, double>* cb_moved = nullptr,
     const std::map<std::pair<std::string, std::string>, double>* cb_direct = nullptr,
     const std::set<std::pair<std::string, std::string>>* cb_held = nullptr,
-    CarrySiteCounts* counts = nullptr);
+    CarrySiteCounts* counts = nullptr, bool complete = false);
 
 /// @brief The re-base seam: measure, filter and apply (see the file banner).
 ///

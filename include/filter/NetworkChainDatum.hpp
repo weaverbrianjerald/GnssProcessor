@@ -77,20 +77,33 @@ struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp o
  * every phase-bias coupling term on a shifted satellite column (in the ambiguity, receiver
  * phase-bias and wet-delay carries) by @f$\Delta b_s@f$.  A non-finite or zero step moves
  * nothing.
+ *
+ * With @p complete (@c network.carry_rebase_complete, card PRM phase 3b) the walk also moves
+ * the sites the mechanism table exempts as owed, each by the same rule: the gross screen's
+ * held ambiguity like the ambiguity (@f$-\Delta b_s - \Delta\delta_r@f$), the last solved
+ * phase bias (@c pb_level_prev, "SAT_SIGNAL") like the carried phase bias
+ * (@f$+\Delta b_s@f$), and the phase-bias coupling terms on a shifted satellite column in
+ * every other coupling map (the slant ionosphere and its block, the gross screen's three
+ * holds, the receiver clock and code bias, card LGM's phase colour) by @f$\Delta b_s@f$.
+ * The phase hold's held value (an emitted value) and an open pin bridge (a root of the chain
+ * with a zero shift) are not moved.
  * @param carry     the run's carried state.
  * @param shift_sat (satellite, signal) -> @f$\Delta b_s@f$.
  * @param shift_rxg (station, constellation, signal) -> @f$\Delta\delta_r@f$.
  * @param shift_rpb (station, receiver phase-bias key) -> @f$\Delta\delta_r@f$.
- * @param n_values  out: carried values moved (ambiguities, receiver and satellite phase biases).
+ * @param n_values  out: carried values moved (ambiguities, receiver and satellite phase
+ *                  biases; the held ambiguity and the last solved phase bias moved under
+ *                  @p complete are counted in @p counts only).
  * @param n_terms   out: coupling terms moved.
  * @param counts    optional out: per-site tallies (accumulated).
+ * @param complete  also move the owed sites (false = the walk of card PRM phase 2).
  */
 void eq34ShiftCarry(NetworkCarryState& carry,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
                     const std::map<std::tuple<int, char, std::string>, double>& shift_rxg,
                     const std::map<std::pair<int, std::string>, double>& shift_rpb,
                     long long& n_values, long long& n_terms,
-                    CarrySiteCounts* counts = nullptr);
+                    CarrySiteCounts* counts = nullptr, bool complete = false);
 
 /**
  * @brief Elect the Card-3 eq34 chain datum for this epoch.

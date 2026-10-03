@@ -33,7 +33,8 @@ void eq34ShiftCarry(NetworkCarryState& carry,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
                     const std::map<std::tuple<int, char, std::string>, double>& shift_rxg,
                     const std::map<std::pair<int, std::string>, double>& shift_rpb,
-                    long long& n_values, long long& n_terms, CarrySiteCounts* counts) {
+                    long long& n_values, long long& n_terms, CarrySiteCounts* counts,
+                    bool complete) {
     n_values = 0;
     n_terms  = 0;
     if (shift_sat.empty() && shift_rxg.empty()) return;
@@ -44,12 +45,13 @@ void eq34ShiftCarry(NetworkCarryState& carry,
         return s != 0.0;
     };
     forEachCarriedReference(
-        carry, carryMechanismSites(CarryMechanism::Eq34Shift),
+        carry, carryMechanismSiteMask(CarryMechanism::Eq34Shift, complete),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::PhaseBias) return false;
             double d = 0.0;
             switch (r.site) {
-                case CarrySite::AmbiguityValue: {
+                case CarrySite::AmbiguityValue:
+                case CarrySite::HoldAmbiguityValue: {   // the held one: network.carry_rebase_complete
                     // -Δb_s - Δδ_r, formed in that order and added once.
                     auto bs = shift_sat.find({r.sat, r.signal});
                     if (bs != shift_sat.end()) d -= bs->second;
@@ -58,9 +60,12 @@ void eq34ShiftCarry(NetworkCarryState& carry,
                         if (dr != shift_rxg.end()) d -= dr->second;
                     }
                     if (!(d != 0.0 && std::isfinite(d))) return false;
-                    ++n_values;
+                    if (r.site == CarrySite::AmbiguityValue) ++n_values;
                     break;
                 }
+                case CarrySite::PbLevelPrev:   // network.carry_rebase_complete: as the carried phase bias
+                    if (!satStep(r.sat, r.signal, d)) return false;
+                    break;
                 case CarrySite::RxPhaseBiasValue: {
                     auto it = shift_rpb.find({r.station, r.signal});
                     if (it == shift_rpb.end() || !std::isfinite(it->second) || it->second == 0.0)
@@ -936,9 +941,20 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         CarrySiteCounts prm_cc;
         long long n_shifted = 0, n_cpl = 0;
-        eq34ShiftCarry(ctx.carry, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc);
+        eq34ShiftCarry(ctx.carry, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
+                       ctx.knobs.rebase_complete);
         if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
+        // Card PRM phase 3b step 2: the held emissions of the shifted families, left in the old
+        // frame (PbHold is exempt from the shift).  Measure-only.
+        for (const auto& [hk, hv] : ctx.carry.pb_hold) {
+            (void)hv;
+            const auto bar = hk.find('|');
+            if (bar == std::string::npos) continue;
+            const auto sh = shift_sat.find({hk.substr(0, bar), hk.substr(bar + 1)});
+            if (sh != shift_sat.end() && sh->second != 0.0)
+                ++ctx.counters.prm_pbhold_unmoved_at_shift;
+        }
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Eq34Shift)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Eq34Shift, prm_cc);
     }

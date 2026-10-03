@@ -27,9 +27,9 @@
 namespace GnssProcessor {
 
 long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat, double d,
-                               bool cpl_cond, CarrySiteCounts* counts) {
+                               bool cpl_cond, CarrySiteCounts* counts, bool complete) {
     return forEachCarriedReference(
-        carry, carryMechanismSites(CarryMechanism::EphRelevel),
+        carry, carryMechanismSiteMask(CarryMechanism::EphRelevel, complete),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::Clock || r.sat != sat) return false;
             switch (r.site) {
@@ -38,9 +38,21 @@ long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
                     break;
                 case CarrySite::AmbiguityCoupling:
                 case CarrySite::ZwdCoupling:
+                // network.carry_rebase_complete (card PRM phase 3b): every other coupling map's
+                // clock terms, on the same gate.
+                case CarrySite::IonoCoupling:
+                case CarrySite::IonoBlockCoupling:
+                case CarrySite::HoldAmbiguityCoupling:
+                case CarrySite::HoldIonoCoupling:
+                case CarrySite::HoldIonoBlockCoupling:
+                case CarrySite::RxClockCoupling:
+                case CarrySite::RxPhaseBiasCoupling:
+                case CarrySite::RxCodeBiasCoupling:
+                case CarrySite::PhaseColourCoupling:
                     if (!cpl_cond) return false;      // the coupling stash (card 1)
                     break;
-                default:                              // the D2 clock carry, the jump baseline
+                default:   // the D2 clock carry, the jump baseline; under the knob the stash's
+                           // pivot value and the excursion and hold clock baselines
                     break;
             }
             *r.value -= d;
@@ -130,7 +142,8 @@ if (brdc_rts) {
             // moved.  The sites the re-level does not move are declared in the mechanism table
             // (card CLV section 6.4 item 6).
             CarrySiteCounts prm_cc;
-            ephCutoverShiftCarry(ctx.carry, sat, d, carry_cpl_cond, &prm_cc);
+            ephCutoverShiftCarry(ctx.carry, sat, d, carry_cpl_cond, &prm_cc,
+                                 ctx.knobs.rebase_complete);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::EphRelevel)];
             carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::EphRelevel, prm_cc);
             log->info("Network (Card 6): {} eph cutover IODE {}->{} — re-leveled carried "

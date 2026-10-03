@@ -10,7 +10,8 @@
  * declared armed) is the run-time one.  These cases pin the table's structure, the goldens'
  * declared posture, and the two tallies the table reads.  Phase 3b step 1 adds the gap
  * policies' one implementation (carryPastHorizon, carryGapPrune) and the registry's declared
- * gap horizon.
+ * gap horizon; step 2 the Stransform declaration of the owed value sites under
+ * network.carry_rebase_complete.
  */
 #include <gtest/gtest.h>
 
@@ -45,6 +46,41 @@ bool loadGolden(const std::string& bed, GnssConfig& cfg) {
 }
 
 bool has(std::uint32_t mask, ResponsePolicy p) { return (mask & responsePolicyBit(p)) != 0; }
+
+/// The registry's per-event policies rebuilt from the tables (the armed response sites, and
+/// the armed mechanisms' Stransform on the kinds whose values they move, the owed value sites
+/// included under network.carry_rebase_complete), compared with @p r both ways.
+void expectMasksFromTheTables(const NetworkParamRegistry& r, const NetworkKnobs& k,
+                              const GnssConfig& cfg, const std::string& tag) {
+    std::uint32_t expect[kNetworkParamKindCount][kParamEvents]{};
+    for (int i = 0; i < kResponseSites; ++i) {
+        const auto site = static_cast<ResponseSite>(i);
+        if (!responseSiteArmed(site, k, cfg)) continue;
+        const ResponseSiteSpec& rs = responseSiteSpec(site);
+        expect[static_cast<int>(rs.kind)][static_cast<int>(rs.event)] |=
+            responsePolicyBit(rs.policy);
+    }
+    const auto ho = static_cast<int>(ParamEvent::Handover);
+    const std::uint32_t st = responsePolicyBit(ResponsePolicy::Stransform);
+    for (int m = 0; m < kCarryMechanisms; ++m) {
+        const auto mech = static_cast<CarryMechanism>(m);
+        if (!carryMechanismArmed(mech, k, cfg)) continue;
+        for (int b = 0; b < 4; ++b)
+            if ((carryMechanismBorderKinds(mech, k) >> b) & 1u)
+                expect[static_cast<int>(paramKindOf(static_cast<SharedParamKind>(b)))][ho] |= st;
+        for (int c = 0; c < kCarrySites; ++c) {
+            NetworkParamKind lk;
+            if (carryMechanismMoves(mech, static_cast<CarrySite>(c), k.rebase_complete)
+                && carrySiteLocalKind(static_cast<CarrySite>(c), lk))
+                expect[static_cast<int>(lk)][ho] |= st;
+        }
+    }
+    for (std::size_t kind = 0; kind < kNetworkParamKindCount; ++kind)
+        for (std::size_t e = 0; e < kParamEvents; ++e)
+            EXPECT_EQ(r.spec(static_cast<NetworkParamKind>(kind)).on[e], expect[kind][e])
+                << tag << " " << paramKindName(static_cast<NetworkParamKind>(kind)) << " "
+                << paramEventName(static_cast<ParamEvent>(e));
+}
 
 std::uint32_t on(const NetworkParamRegistry& r, NetworkParamKind kind, ParamEvent e) {
     return r.spec(kind).on[static_cast<std::size_t>(e)];
@@ -98,34 +134,7 @@ TEST(ParamResponses, RegistryMasksAreExactlyTheArmedSitesAndMechanisms) {
         ASSERT_TRUE(loadGolden(bed, cfg)) << bed;
         const NetworkKnobs k = NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig());
         const NetworkParamRegistry r = NetworkParamRegistry::build(k, cfg);
-        std::uint32_t expect[kNetworkParamKindCount][kParamEvents]{};
-        for (int i = 0; i < kResponseSites; ++i) {
-            const auto site = static_cast<ResponseSite>(i);
-            if (!responseSiteArmed(site, k, cfg)) continue;
-            const ResponseSiteSpec& rs = responseSiteSpec(site);
-            expect[static_cast<int>(rs.kind)][static_cast<int>(rs.event)] |=
-                responsePolicyBit(rs.policy);
-        }
-        const auto ho = static_cast<int>(ParamEvent::Handover);
-        const std::uint32_t st = responsePolicyBit(ResponsePolicy::Stransform);
-        for (int m = 0; m < kCarryMechanisms; ++m) {
-            const auto mech = static_cast<CarryMechanism>(m);
-            if (!carryMechanismArmed(mech, k, cfg)) continue;
-            for (int b = 0; b < 4; ++b)
-                if ((carryMechanismBorderKinds(mech, k) >> b) & 1u)
-                    expect[static_cast<int>(paramKindOf(static_cast<SharedParamKind>(b)))][ho] |= st;
-            for (int c = 0; c < kCarrySites; ++c) {
-                NetworkParamKind lk;
-                if (carryMechanismSite(mech, static_cast<CarrySite>(c)).moves
-                    && carrySiteLocalKind(static_cast<CarrySite>(c), lk))
-                    expect[static_cast<int>(lk)][ho] |= st;
-            }
-        }
-        for (std::size_t kind = 0; kind < kNetworkParamKindCount; ++kind)
-            for (std::size_t e = 0; e < kParamEvents; ++e)
-                EXPECT_EQ(r.spec(static_cast<NetworkParamKind>(kind)).on[e], expect[kind][e])
-                    << bed << " " << paramKindName(static_cast<NetworkParamKind>(kind)) << " "
-                    << paramEventName(static_cast<ParamEvent>(e));
+        expectMasksFromTheTables(r, k, cfg, bed);
     }
 }
 
@@ -223,6 +232,76 @@ TEST(ParamResponses, ArmedMechanismsDeclareStransformOnTheKindsTheyMove) {
     EXPECT_TRUE(has(ho(K::RxPhaseBias), ResponsePolicy::Stransform));
     EXPECT_FALSE(has(ho(K::SatCodeBias), ResponsePolicy::Stransform));
     EXPECT_FALSE(has(ho(K::RxCodeBias), ResponsePolicy::Stransform));
+}
+
+// Card PRM phase 3b step 2: the one owed station-local value is the gross screen's held
+// ambiguity (owed by the eq34 shift and the declared anchor handover), whose kind the two
+// mechanisms already declare through the ambiguity value; so network.carry_rebase_complete adds
+// no kind to the declaration today, and the masks are the same with and without it.
+TEST(ParamResponses, RebaseCompleteAddsNoDeclaredKindToday) {
+    using K = NetworkParamKind;
+    using S = CarrySite;
+    using M = CarryMechanism;
+    // The owed local values of every mechanism: the held ambiguity, under the two phase-bias
+    // shifts, and nothing else.
+    for (int m = 0; m < kCarryMechanisms; ++m)
+        for (int c = 0; c < kCarrySites; ++c) {
+            NetworkParamKind lk;
+            const auto s = static_cast<S>(c);
+            if (!(carryMechanismOwedSites(static_cast<M>(m)) & carrySiteBit(s))
+                || !carrySiteLocalKind(s, lk))
+                continue;
+            EXPECT_EQ(static_cast<int>(s), static_cast<int>(S::HoldAmbiguityValue))
+                << carryMechanismName(static_cast<M>(m));
+            EXPECT_EQ(static_cast<int>(lk), static_cast<int>(K::Ambiguity));
+            EXPECT_TRUE(m == static_cast<int>(M::Eq34Shift)
+                        || m == static_cast<int>(M::DeclaredHandover))
+                << carryMechanismName(static_cast<M>(m));
+        }
+    EXPECT_FALSE(carryMechanismMoves(M::DeclaredHandover, S::HoldAmbiguityValue, false));
+    EXPECT_TRUE(carryMechanismMoves(M::DeclaredHandover, S::HoldAmbiguityValue, true));
+
+    GnssConfig cfg;
+    NetworkKnobs k{};
+    k.amb_float_kf = true;
+    k.amb_float_declared_handover = true;
+    k.pa_carry_reref = true;
+    k.pd_handover_continuous = true;
+    ASSERT_TRUE(carryMechanismArmed(M::DeclaredHandover, k, cfg));
+    for (const bool complete : {false, true}) {
+        k.rebase_complete = complete;
+        const NetworkParamRegistry r = NetworkParamRegistry::build(k, cfg);
+        const auto ho = [&](K kind) { return on(r, kind, ParamEvent::Handover); };
+        EXPECT_TRUE(has(ho(K::Ambiguity), ResponsePolicy::Stransform)) << complete;
+        EXPECT_TRUE(has(ho(K::SatPhaseBias), ResponsePolicy::Stransform)) << complete;
+        expectMasksFromTheTables(r, k, cfg, complete ? "dho complete" : "dho");
+        k.rebase_complete = false;
+        const NetworkParamRegistry r_off = NetworkParamRegistry::build(k, cfg);
+        k.rebase_complete = complete;
+        for (std::size_t kind = 0; kind < kNetworkParamKindCount; ++kind)
+            EXPECT_EQ(r.spec(static_cast<K>(kind)).on, r_off.spec(static_cast<K>(kind)).on)
+                << complete << " " << paramKindName(static_cast<K>(kind));
+        // The held ambiguity is among the sites the knob moves.
+        bool via_hold = false;
+        for (int c = 0; c < kCarrySites; ++c) {
+            NetworkParamKind lk;
+            const auto s = static_cast<S>(c);
+            if (s != S::AmbiguityValue && carrySiteLocalKind(s, lk) && lk == K::Ambiguity
+                && carryMechanismMoves(M::DeclaredHandover, s, k.rebase_complete))
+                via_hold = true;
+        }
+        EXPECT_EQ(via_hold, complete);
+    }
+    // The eq34 shift with the knob: the same masks as the tables, the ambiguity, the phase bias
+    // and the receiver phase bias declared.
+    NetworkKnobs q{};
+    q.phase_datum_eq34 = true;
+    q.eq34_shift_on = true;
+    q.rebase_complete = true;
+    const NetworkParamRegistry rq = NetworkParamRegistry::build(q, cfg);
+    EXPECT_TRUE(has(on(rq, K::Ambiguity, ParamEvent::Handover), ResponsePolicy::Stransform));
+    EXPECT_TRUE(has(on(rq, K::RxPhaseBias, ParamEvent::Handover), ResponsePolicy::Stransform));
+    expectMasksFromTheTables(rq, q, cfg, "eq34 complete");
 }
 
 // The traversal tallies the prev_carry moves per border kind, and the run-scope tally adds

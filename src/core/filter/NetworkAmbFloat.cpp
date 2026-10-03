@@ -254,13 +254,16 @@ void networkAmbFloatApplyDrops(
 void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
                                 const std::string& sig, double delta,
                                 long long& n_shift, long long& n_pb, long long& n_cpl,
-                                CarrySiteCounts* counts) {
+                                CarrySiteCounts* counts, bool complete) {
     n_shift = n_pb = n_cpl = 0;
     // The phase-bias shift of the family, under the one rule of a phase-bias shift
     // (phaseBiasShiftOf), as the eq34 D4 shift applies it.
     const std::map<std::pair<std::string, std::string>, double> shift_sat{{{sat, sig}, +delta}};
+    // With network.carry_rebase_complete (card PRM phase 3b) the owed sites join: the gross
+    // screen's held ambiguity as the ambiguity, the last solved phase bias and an open pin
+    // bridge as the carried phase bias, and every other coupling map's terms on the family.
     forEachCarriedReference(
-        carry, carryMechanismSites(CarryMechanism::DeclaredHandover),
+        carry, carryMechanismSiteMask(CarryMechanism::DeclaredHandover, complete),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::PhaseBias || r.sat != sat || r.signal != sig)
                 return false;
@@ -269,9 +272,16 @@ void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat
                     *r.value -= delta;             // variances untouched: an exact basis change
                     ++n_shift;
                     return true;
+                case CarrySite::HoldAmbiguityValue:   // network.carry_rebase_complete
+                    *r.value -= delta;             // the held ambiguity, as the ambiguity
+                    return true;
                 case CarrySite::PrevCarry:
                     *r.value += delta;             // pinning N_{r_in} = 0 means b'_s = b_s + Δ
                     ++n_pb;
+                    return true;
+                case CarrySite::PbLevelPrev:          // network.carry_rebase_complete
+                case CarrySite::PinBridge:
+                    *r.value += delta;             // the baseline and the bridge, as the phase bias
                     return true;
                 default: {                         // a coupling term on the family's phase bias
                     const double s = phaseBiasShiftOf(shift_sat, r.sat, r.signal);
@@ -341,9 +351,14 @@ long long networkAmbFloatDeclaredHandover(
         //      NetworkChainDatum.cpp, SPEC_card1_coupling_carry §14).
         CarrySiteCounts prm_cc;
         long long n_shift = 0, n_pb = 0, n_cpl = 0;
-        declaredHandoverShiftCarry(ctx.carry, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc);
+        declaredHandoverShiftCarry(ctx.carry, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc,
+                                   ctx.knobs.rebase_complete);
         ++counters.prm_ref_calls[static_cast<int>(CarryMechanism::DeclaredHandover)];
         carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);
+        // Card PRM phase 3b step 2: the family's held emission, left in the old frame (PbHold
+        // is exempt from the shift).  Measure-only.
+        if (delta != 0.0 && ctx.carry.pb_hold.count(sat + "|" + sig))
+            ++counters.prm_pbhold_unmoved_at_shift;
         // ---- Exactness self-check (the sts_selfcheck_ok pattern).  The incoming
         //      anchor's column now reads 0, which is what its w = 1e10 pin asserts.
         const double x_post = in_it->second.value_abs;

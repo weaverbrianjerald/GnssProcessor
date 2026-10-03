@@ -292,7 +292,8 @@ long long clockLevelShiftCarry(
     const std::map<std::string, ClockLevelCbFollow>* cb_follow,
     std::map<std::pair<std::string, std::string>, double>* cb_moved,
     const std::map<std::pair<std::string, std::string>, double>* cb_direct,
-    const std::set<std::pair<std::string, std::string>>* cb_held, CarrySiteCounts* counts) {
+    const std::set<std::pair<std::string, std::string>>* cb_held, CarrySiteCounts* counts,
+    bool complete) {
     const bool any_direct = cb_direct && !cb_direct->empty();
     if (shift.empty() && !any_direct) return 0;
     const bool cb_on = cb_follow || any_direct;
@@ -332,9 +333,12 @@ long long clockLevelShiftCarry(
     // re-base is not a clock step), the last solved phase bias and the open pin bridges, and
     // with the follow or a direct step the time-linked code-bias datum references.  The
     // phase hold's held values stay in the emit frame: their signals are collected for the
-    // emit-side transfer below.
+    // emit-side transfer below.  With network.carry_rebase_complete (card PRM phase 3b) the
+    // owed sites join: the stash's pinned pivot value and card LGM's phase-colour terms.
     const long long n = forEachCarriedReference(
-        carry, carryMechanismSites(CarryMechanism::ClockLevel) | carrySiteBit(CarrySite::PbHold),
+        carry,
+        carryMechanismSiteMask(CarryMechanism::ClockLevel, complete)
+            | carrySiteBit(CarrySite::PbHold),
         [&](const CarriedRef& r) -> bool {
             switch (r.site) {
                 case CarrySite::PrevCarry:
@@ -347,6 +351,7 @@ long long clockLevelShiftCarry(
                     if (!move(r, shiftOf(r.kind, r.sat))) return false;
                     if (r.kind == SharedParamKind::PhaseBias) sigs[r.sat].insert(r.signal);
                     return true;
+                case CarrySite::CxuPivot:   // network.carry_rebase_complete: the pivot's value, as its clock
                 case CarrySite::PrevClk:
                 case CarrySite::CbExcPrevClk:
                 case CarrySite::PbHoldPrevClock:
@@ -364,7 +369,7 @@ long long clockLevelShiftCarry(
                     cb_step[{r.sat, r.signal}] = x;
                     return true;
                 }
-                default:   // a coupling term
+                default:   // a coupling term (card LGM's pc_carry under the knob included)
                     return move(r, (r.kind == SharedParamKind::CodeBias)
                                        ? cbShiftOf(r.kind, r.sat, r.signal)
                                        : shiftOf(r.kind, r.sat));
@@ -1034,7 +1039,8 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
     CarrySiteCounts prm_cc;
     ctx.counters.clv_refs_shifted += clockLevelShiftCarry(
         ctx.carry, shift, cb_follow.empty() ? nullptr : &cb_follow, &cb_moved,
-        fcb_step.empty() ? nullptr : &fcb_step, fcb_held.empty() ? nullptr : &fcb_held, &prm_cc);
+        fcb_step.empty() ? nullptr : &fcb_step, fcb_held.empty() ? nullptr : &fcb_held, &prm_cc,
+        ctx.knobs.rebase_complete);
     ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::ClockLevel)];
     carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::ClockLevel, prm_cc);
     for (const auto& [key, x] : cb_moved) {

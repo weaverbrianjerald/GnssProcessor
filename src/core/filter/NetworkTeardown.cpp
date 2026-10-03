@@ -6357,7 +6357,7 @@ int networkTeardown(
             for (int m = 0; m < kCarryMechanisms; ++m) {
                 const auto mech = static_cast<CarryMechanism>(m);
                 const long long n = C.prm_ref_moved.site[i][m];
-                if (carryMechanismSite(mech, sp.site).moves || n > 0)
+                if (carryMechanismMoves(mech, sp.site, ctx.knobs.rebase_complete) || n > 0)
                     moved += fmt::format("{}{} {}", moved.empty() ? "" : ", ",
                                          carryMechanismName(mech), n);
                 jm += fmt::format("{}\"{}\":{}", m ? "," : "", carryMechanismName(mech), n);
@@ -6373,22 +6373,46 @@ int networkTeardown(
                               held[i], jm, sp.record ? sp.record : "");
         }
         js += "],\"mechanisms\":[";
+        // Card PRM phase 3b: under network.carry_rebase_complete a mechanism's owed sites are
+        // moved, so they leave its "not moved" list for a list of their own (the line and the
+        // record are unchanged with the knob off).
+        const bool complete = ctx.knobs.rebase_complete;
         for (int m = 0; m < kCarryMechanisms; ++m) {
             const auto mech = static_cast<CarryMechanism>(m);
-            std::string exempt, jx;
+            const std::uint32_t owed =
+                (complete && carryMechanismArmed(mech, ctx.knobs, config_))
+                    ? carryMechanismOwedSites(mech) : 0u;
+            std::string exempt, jx, now_moved, jo;
             for (int i = 0; i < kCarrySites; ++i) {
                 const auto s = static_cast<CarrySite>(i);
                 const CarryMechanismSite ms = carryMechanismSite(mech, s);
                 if (!ms.reason) continue;
+                if (owed & carrySiteBit(s)) {
+                    now_moved += fmt::format("{}{}", now_moved.empty() ? "" : ", ",
+                                             carrySiteSpec(s).name);
+                    jo += fmt::format("{}\"{}\"", jo.empty() ? "" : ",", carrySiteSpec(s).name);
+                    continue;
+                }
                 exempt += fmt::format("{}{}", exempt.empty() ? "" : ", ", carrySiteSpec(s).name);
                 jx += fmt::format("{}{{\"site\":\"{}\",\"reason\":\"{}\"}}", jx.empty() ? "" : ",",
                                   carrySiteSpec(s).name, ms.reason);
             }
-            log->info("Network (param model, run end): mechanism {}: {} call(s); not moved: {}.",
-                      carryMechanismName(mech), C.prm_ref_calls[m],
-                      exempt.empty() ? std::string("none") : exempt);
-            js += fmt::format("{}{{\"mechanism\":\"{}\",\"calls\":{},\"exempt\":[{}]}}",
-                              m ? "," : "", carryMechanismName(mech), C.prm_ref_calls[m], jx);
+            if (owed == 0u) {
+                log->info("Network (param model, run end): mechanism {}: {} call(s); not moved: {}.",
+                          carryMechanismName(mech), C.prm_ref_calls[m],
+                          exempt.empty() ? std::string("none") : exempt);
+                js += fmt::format("{}{{\"mechanism\":\"{}\",\"calls\":{},\"exempt\":[{}]}}",
+                                  m ? "," : "", carryMechanismName(mech), C.prm_ref_calls[m], jx);
+            } else {
+                log->info("Network (param model, run end): mechanism {}: {} call(s); not moved: {}; "
+                          "the owed sites moved under network.carry_rebase_complete: {}.",
+                          carryMechanismName(mech), C.prm_ref_calls[m],
+                          exempt.empty() ? std::string("none") : exempt, now_moved);
+                js += fmt::format("{}{{\"mechanism\":\"{}\",\"calls\":{},\"exempt\":[{}],"
+                                  "\"rebase_complete\":[{}]}}",
+                                  m ? "," : "", carryMechanismName(mech), C.prm_ref_calls[m], jx,
+                                  jo);
+            }
         }
         js += "]}";
         traces.appendRunManifestRecord(config_.getNetworkConfig(), js);
@@ -6451,7 +6475,8 @@ int networkTeardown(
                 NetworkParamKind lk;
                 if (!carrySiteLocalKind(static_cast<CarrySite>(s), lk)) continue;
                 const long long n = C.prm_ref_moved.site[s][m];
-                if (n == 0 && !(armed && carryMechanismSite(mech, static_cast<CarrySite>(s)).moves))
+                if (n == 0 && !(armed && carryMechanismMoves(mech, static_cast<CarrySite>(s),
+                                                             ctx.knobs.rebase_complete)))
                     continue;
                 moved += fmt::format("{}{} ({}) {}", moved.empty() ? "" : ", ", paramKindName(lk),
                                      carrySiteSpec(static_cast<CarrySite>(s)).name, n);
@@ -6492,6 +6517,11 @@ int networkTeardown(
                       "prune in the same epoch (absent arcs: the drop preceded the erase).",
                       C.prm_resp[static_cast<int>(ResponseSite::AmbDropStaleGap)],
                       C.prm_pruned_after_drop);
+        if (C.prm_pbhold_unmoved_at_shift > 0)
+            log->info("Network (param responses, run end): {} held phase-bias emission(s) of a "
+                      "shifted family stayed in the old frame at a phase-bias shift (pb_hold is "
+                      "exempt from the eq34 shift and the declared handover).",
+                      C.prm_pbhold_unmoved_at_shift);
         log->info("Network (param responses, run end): {} of {} declared site(s) armed on this "
                   "run, {} not armed and quiet; {} declaration error(s).",
                   n_armed, kResponseSites, n_quiet, n_undeclared);

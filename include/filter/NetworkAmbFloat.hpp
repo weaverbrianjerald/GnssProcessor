@@ -231,19 +231,32 @@ namespace GnssProcessor {
      * term on it in the ambiguity carry by @f$+\Delta@f$ (variances untouched: an exact basis
      * change).  The sites the transform does not move are declared with their reason in the
      * mechanism table.
-     * @param carry   the run's carried state.
-     * @param sat     the family's satellite.
-     * @param sig     the family's signal.
-     * @param delta   the incoming anchor's carried level (m), read before anything moves.
-     * @param n_shift out: carried ambiguities moved.
-     * @param n_pb    out: carried phase biases moved.
-     * @param n_cpl   out: coupling terms moved.
-     * @param counts  optional out: per-site tallies (accumulated).
+     *
+     * With @p complete (@c network.carry_rebase_complete, card PRM phase 3b) the transform
+     * also moves the sites the table exempts as owed, each by the same rule: the gross
+     * screen's held ambiguity of the family by @f$-\Delta@f$ (as the ambiguity), the last
+     * solved phase bias (@c pb_level_prev) and an open pin bridge of the family ("SAT_SIGNAL")
+     * by @f$+\Delta@f$ (as the carried phase bias), and the s_prev of every phase-bias
+     * coupling term on the family's column in every other coupling map (the wet delay, the
+     * slant ionosphere and its block, the gross screen's three holds, the receiver clock,
+     * phase bias and code bias, card LGM's phase colour) by @f$+\Delta@f$.  The phase hold's
+     * held value is an emitted value and is not moved.
+     * @param carry    the run's carried state.
+     * @param sat      the family's satellite.
+     * @param sig      the family's signal.
+     * @param delta    the incoming anchor's carried level (m), read before anything moves.
+     * @param n_shift  out: carried ambiguities moved (the held ambiguity moved under
+     *                 @p complete is counted in @p counts only).
+     * @param n_pb     out: carried phase biases moved (the baseline and the bridge moved under
+     *                 @p complete are counted in @p counts only).
+     * @param n_cpl    out: coupling terms moved (every coupling map's).
+     * @param counts   optional out: per-site tallies (accumulated).
+     * @param complete also move the owed sites (false = the walk of card PRM phase 2).
      */
     void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
                                     const std::string& sig, double delta,
                                     long long& n_shift, long long& n_pb, long long& n_cpl,
-                                    CarrySiteCounts* counts = nullptr);
+                                    CarrySiteCounts* counts = nullptr, bool complete = false);
 
     /**
      * @brief Declared anchor S-transform (design §3.6), replacing the network-wide

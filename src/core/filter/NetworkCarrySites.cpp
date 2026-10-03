@@ -111,7 +111,8 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
 }};
 
 // The reasons an exemption gives.  "Owed" exemptions are the gaps of the hand lists this
-// card replaced (card PRM section 15 and phase 3b); the others are by design.
+// card replaced (card PRM section 15 and phase 3b), which network.carry_rebase_complete moves
+// (owedReason below); the others are by design.
 constexpr const char* kOwed =
     "not moved before card PRM phase 2 (a gap of the hand-written list; owed to phase 3b)";
 constexpr const char* kOwedClv64 =
@@ -141,6 +142,17 @@ constexpr const char* kStsRxClock =
     "network.carry_rx_clock_in_block (owed)";
 constexpr const char* kD4BridgeRoot =
     "a bridged satellite is a root of the chain with a known zero shift (by construction)";
+constexpr const char* kPbHoldEmit =
+    "held_m is a held emitted value in the emit frame: moving it needs its own design (card "
+    "CLV accumulates an emit-side transfer instead), so it is exempt from "
+    "network.carry_rebase_complete too";
+
+/// Whether an exemption's reason is an owed gap (moved under network.carry_rebase_complete,
+/// card PRM phase 3b step 2).  The handover's reasons, the receiver clock's included, are its
+/// own design and its walks take no knob.
+bool owedReason(const char* reason) {
+    return reason == kOwed || reason == kOwedClv64 || reason == kLgmAfterClv;
+}
 
 /// One mechanism's row: the sites it moves and the sites it exempts with a reason.
 struct MechRow {
@@ -208,11 +220,12 @@ MechRow eq34ShiftRow() {
     MechRow r{};
     r.moves = bit(S::PrevCarry) | bit(S::AmbiguityValue) | bit(S::RxPhaseBiasValue)
             | bit(S::AmbiguityCoupling) | bit(S::RxPhaseBiasCoupling) | bit(S::ZwdCoupling);
-    for (S s : {S::PbLevelPrev, S::PbHold, S::HoldAmbiguityValue, S::IonoCoupling,
+    for (S s : {S::PbLevelPrev, S::HoldAmbiguityValue, S::IonoCoupling,
                 S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
                 S::HoldIonoBlockCoupling, S::RxClockCoupling, S::RxCodeBiasCoupling,
                 S::PhaseColourCoupling})
         r.exempt[static_cast<int>(s)] = kOwed;
+    r.exempt[static_cast<int>(S::PbHold)]    = kPbHoldEmit;
     r.exempt[static_cast<int>(S::PinBridge)] = kD4BridgeRoot;
     return r;
 }
@@ -220,12 +233,13 @@ MechRow eq34ShiftRow() {
 MechRow declaredHandoverRow() {
     MechRow r{};
     r.moves = bit(S::PrevCarry) | bit(S::AmbiguityValue) | bit(S::AmbiguityCoupling);
-    for (S s : {S::PbLevelPrev, S::PinBridge, S::PbHold, S::HoldAmbiguityValue,
+    for (S s : {S::PbLevelPrev, S::PinBridge, S::HoldAmbiguityValue,
                 S::ZwdCoupling, S::IonoCoupling, S::IonoBlockCoupling,
                 S::HoldAmbiguityCoupling, S::HoldIonoCoupling, S::HoldIonoBlockCoupling,
                 S::RxClockCoupling, S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling,
                 S::PhaseColourCoupling})
         r.exempt[static_cast<int>(s)] = kOwed;
+    r.exempt[static_cast<int>(S::PbHold)] = kPbHoldEmit;
     return r;
 }
 
@@ -284,6 +298,26 @@ CarryMechanismSite carryMechanismSite(CarryMechanism m, CarrySite s) {
 }
 
 std::uint32_t carryMechanismSites(CarryMechanism m) { return mechRow(m).moves; }
+
+std::uint32_t carryMechanismOwedSites(CarryMechanism m) {
+    const MechRow& r = mechRow(m);
+    std::uint32_t owed = 0;
+    for (int i = 0; i < kCarrySites; ++i) {
+        const auto s = static_cast<S>(i);
+        if (s == S::PbHold) continue;   // a held emitted value: its own design (kPbHoldEmit)
+        if ((r.moves & carrySiteBit(s)) == 0 && owedReason(r.exempt[static_cast<std::size_t>(i)]))
+            owed |= carrySiteBit(s);
+    }
+    return owed;
+}
+
+std::uint32_t carryMechanismSiteMask(CarryMechanism m, bool complete) {
+    return carryMechanismSites(m) | (complete ? carryMechanismOwedSites(m) : 0u);
+}
+
+bool carryMechanismMoves(CarryMechanism m, CarrySite s, bool complete) {
+    return (carryMechanismSiteMask(m, complete) & carrySiteBit(s)) != 0;
+}
 
 long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
                                   const CarryRefVisitor& visit, CarrySiteCounts* counts) {
