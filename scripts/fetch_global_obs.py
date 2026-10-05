@@ -34,6 +34,8 @@ def main() -> int:
     ap.add_argument("--cookies", default=str(_REPO / "data" / "cache" / "_cddis_cookies.txt"))
     ap.add_argument("--crx2rnx", default="C:/GnssProcessorSupport/exe/crx2rnx.exe")
     ap.add_argument("--limit", type=int, default=0, help="process only the first N (0=all)")
+    ap.add_argument("--root", default=str(_REPO / "data"),
+                    help="data root the <YYYY-DOY>/obs tree is written under (default: the repo's data/)")
     args = ap.parse_args()
 
     stations = json.loads(Path(args.stations_json).read_text())
@@ -49,7 +51,7 @@ def main() -> int:
     ok, failed = [], []
     for st in stations:
         long = st["long"]
-        obsdir = _REPO / "data" / datedir / "obs" / long.lower()
+        obsdir = Path(args.root) / datedir / "obs" / long.lower()
         rnx = obsdir / f"{long}_R_{yd}0000_01D_{args.rate}_MO.rnx"
         if rnx.exists():
             ok.append(long); print(f"  cached  {long}"); continue

@@ -512,3 +512,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   made consistent with it), and B2, the handover's dense S P S^T with the anchor kept; B1 requires
   B2. COD bed at q 5e-6: field consumer back to the golden's 0.107 / 0.024 m; broadcast bed: level
   halved, 6 h field census median +0.3 cm against COD (+2.8 cm without B1), 5 sites worse.
+- [MDR](MDR_multiday_replay_2026-10-05.md): open, 2026-10-05: the field golden replayed for 6 h on DOY
+  128, 130, 131 and 132 (and the G5 storm's onset, DOY 131 from 18 UT), graded on WTZZ and the 16-site
+  census against DOY 129. Hours 3 to 6 transfer on every day (census 0.037 to 0.066 m), the in-storm
+  window included; owed: DOY 128's network-wide first two hours (no DOY 127 products), ARHT00ATA's
+  166 m divergence on DOY 131, WTZZ's late drift on DOY 130.
