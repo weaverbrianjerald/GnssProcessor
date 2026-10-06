@@ -6,6 +6,7 @@ make  : python scripts/clock_level/mday_census.py make <doy> <wire run dir name>
         wire's own arm.json (so every knob, the accumulating wind-up and PBF included, is the wire's).
 grade : python scripts/clock_level/mday_census.py grade <doy> [<doy> ...]
         Per day and hour: the median over sites of the site p50 of the 3-D consumer error.
+--prefix P (either verb): tags P_<doy>_<site> instead of mdc_<doy>_<site>, for a second wire of one day.
 """
 import csv, json, os, statistics as st, subprocess, sys
 
@@ -16,8 +17,11 @@ SL = json.load(open(RUNS + '/_msc/site_list.json'))['sites']
 DOW = {128: 2, 129: 3, 130: 4, 131: 5, 132: 6}   # GPS week 2313 day of week
 
 
+PREFIX = 'mdc'   # --prefix P: a second census of one day (another wire) under its own tags
+
+
 def tag(doy, site):
-    return f'mdc_{doy}_{site}'
+    return f'{PREFIX}_{doy}_{site}'
 
 
 def make(doy, wire, exe, obs_root):
@@ -83,7 +87,12 @@ def grade(doys):
 
 
 if __name__ == '__main__':
-    if sys.argv[1] == 'make':
-        make(int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5])
+    argv = sys.argv[1:]
+    if '--prefix' in argv:
+        i = argv.index('--prefix')
+        PREFIX = argv[i + 1]
+        del argv[i:i + 2]
+    if argv[0] == 'make':
+        make(int(argv[1]), argv[2], argv[3], argv[4])
     else:
-        grade([int(x) for x in sys.argv[2:]])
+        grade([int(x) for x in argv[1:]])

@@ -24,6 +24,12 @@ except ImportError:
 _REPO = Path(__file__).resolve().parent.parent
 
 
+def is_rinex(path: Path) -> bool:
+    """True when the file's first line is a RINEX version/type header record."""
+    with open(path, "rb") as f:
+        return b"RINEX VERSION / TYPE" in f.readline()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("stations_json")
@@ -53,13 +59,17 @@ def main() -> int:
         long = st["long"]
         obsdir = Path(args.root) / datedir / "obs" / long.lower()
         rnx = obsdir / f"{long}_R_{yd}0000_01D_{args.rate}_MO.rnx"
-        if rnx.exists():
+        if rnx.exists() and is_rinex(rnx):
             ok.append(long); print(f"  cached  {long}"); continue
+        if rnx.exists():
+            # A cached file that is not RINEX is an archive error page kept by an older
+            # version of this script; set it aside and fetch again.
+            rnx.replace(rnx.with_name(rnx.name + ".not_rinex.html"))
         obsdir.mkdir(parents=True, exist_ok=True)
 
         crxgz = obsdir / f"{long}_R_{yd}0000_01D_{args.rate}_MO.crx.gz"
         url = base + crxgz.name
-        r = subprocess.run(["curl", "-sS", "-L", "--netrc-file", args.netrc,
+        r = subprocess.run(["curl", "-sS", "-f", "-L", "--netrc-file", args.netrc,
                             "-c", args.cookies, "-b", args.cookies, "-o", str(crxgz), url])
         if r.returncode != 0 or not crxgz.exists() or crxgz.stat().st_size < 2000:
             failed.append((long, "download")); print(f"  FAIL dl  {long}")
@@ -76,6 +86,12 @@ def main() -> int:
             continue
         if not rnx.exists():
             failed.append((long, "decompress")); print(f"  FAIL cvt {long}: no .rnx produced"); continue
+        if not is_rinex(rnx):
+            # The archive answers a missing file with an HTML page, which the decompressor
+            # passes through unchanged; it must never be left behind under a .rnx name.
+            rnx.replace(rnx.with_name(rnx.name + ".not_rinex.html"))
+            failed.append((long, "not RINEX")); print(f"  FAIL     {long}: the archive returned a non-RINEX page")
+            continue
         ok.append(long); print(f"  OK      {long}")
 
     print(f"\n=== {len(ok)} ok, {len(failed)} failed ===")
