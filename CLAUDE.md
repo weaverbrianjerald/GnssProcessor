@@ -145,7 +145,10 @@ runs/                 Campaign run outputs.  ⚠️ RELOCATED OFF C: AGAIN on
                       `test_suite_results/`, `out/`, `batch_results*/` and the
                       stray root files moved with them;
                       D:\GnssProcessorSupport\MANIFEST.md maps every old path.
-                      `runs/` is still the git-ignored default output dir; a
+                      Again on 2026-10-06: 4,719 finished run dirs (266 GB)
+                      moved to the same place (MANIFEST addendum); the live
+                      fixtures, baselines and the 2026-10-03+ working set
+                      stayed on C:.  `runs/` is still the git-ignored default output dir; a
                       new campaign recreates it.  Earlier: ARCHIVED on 2026-08-12
                       to D:\GnssProcessor_archive\2026-08-12\runs\ (619 dirs,
                       40.6 GB) along with the pre-VS2026 build/ trees, to
