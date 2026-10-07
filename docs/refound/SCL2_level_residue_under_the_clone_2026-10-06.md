@@ -439,3 +439,69 @@ no cap equal to the batch on both geometries and both q; (c) mode 6 at k = 1 on 
 geometry, stated ratio 1.0000 (above 0.95); (d) the uncapped history width nclk on the static geometry
 and above it on the time-varying one, so that a static pass is never read as evidence for the cap.
 17.7 s in Debug; the worktree's full Debug suite 2801 passed, 17 data-fixture skips, 0 failed.
+
+## 10. X2 built and graded (2026-10-06)
+
+**The build** (session worktree at `2b917a9`, uncommitted at the time of this section; exe
+`gnss_processor_scl2x.exe`, sha256[:16] `da3114428f2bcc5e`). New seam `filter/NetworkSharedHistory.{hpp,cpp}`
+following the map: history columns keyed `HIST|j` after B1's clones, never emitted or stashed, prior N(0, 1);
+B1's regression widened to Y = [clones; history]; the harvest stores each row's Y coefficients and, at its
+end, compresses them across every carried row of the network (Cholesky of Sigma_Y|s, eigen-decomposition of the
+Gram, the kept directions as the next epoch's history coefficients, the remainder per station); the row builder
+emits history terms on card CTU's exact route and marginalizes them on a stale generation or card 1d's route;
+the snapshot writes the marginal variance; an armed-only fingerprint token; the run-end line and an INERT
+warning. Tests `tests/test_network_shared_history.cpp` (suite `NetworkSharedHistoryTest`, 7 cases: U3). Card
+SMH's clone rows are not in the compression (each marginalizes its share per row, as under B1).
+
+**U0, U3, G0, ON.** Debug suite 2825 tests, 2808 passed, 17 data-fixture skips, 0 failed; the golden verify
+PASS; the posture check 0 gaps. Knob off byte-identical to the base exe on the 2 h goldens and the broadcast
+bed's SCL regime, both beds (`runs/_rap_scl2x_g0*`; one pair re-run on the base exe by the manager,
+`runs/_rap_scl2v_g0bs_lres`, identical to both). ON: 29.4 history columns per epoch at k = 1, 0 compression
+failures, 0 rows lost, no INERT warning.
+
+**Production's shared term is full rank.** On every arm the rank equals Y's width (58.8 at k = 1, 88.2 at k = 2),
+so the cap truncates on 712 of 713 epochs: remainder share p50 7.3e-3 at k = 1 and 1.6e-3 at k = 2 (broadcast;
+COD 4.5e-3 and 8.8e-4), far above the fixture's 4e-5, so k = 2 was graded with k = 1 (section 9).
+
+**Gates** (arms `runs/_rap_scl2g_*`; controls the B1-alone runs, same-exe by G0, plus the X2-off re-runs
+`scl2g_b6off_f`, `scl2g_h6off_f`, `scl2g_hk0_s`, identical to the old controls):
+
+| gate | reading, k = 1 | k = 2 | verdict |
+| --- | --- | --- | --- |
+| G1, broadcast | de-commoned level by hour 0.076 0.024 0.021 0.017 0.017 0.017 m (B1 0.077 0.042 0.044 0.040 0.039 0.042); hour 6 over hour 2 0.72; NEES 0.66 / 1.17 | 0.076 0.024 0.020 0.017 0.016 0.017; 0.70; 0.66 / 1.13 | hour-6 bar PASS, ratio FAIL, NEES PASS |
+| G1, COD | 0.075 0.024 0.022 0.018 0.017 0.019 (B1 0.076 0.043 0.048 0.045 0.044 0.045); 0.77; 0.67 / 1.15 | 0.75 ratio; 0.67 / 1.13 | hour-6 bar PASS, ratio FAIL, NEES PASS |
+| G2 | windowed level NEES median 0.32 broadcast, 0.58 COD (B1 3.49, 5.28) | 0.42, 0.49 | PASS |
+| G3 | SZZ000SIM within 0.3 mm, WTZZ00DEU within 0.3 mm of the control in every hour; sim level hour 2 0.0265 m | 0.0262 | PASS |
+| G4, field census 6 h | median +0.0093 m against `s16c`, 7 sites worse by more than 2 cm; against B1 alone (`s16on`) +0.0112 | +0.0108, 5 worse; +0.0093 | FAIL |
+| G5, sim census 6 h | +0.0120 m, 5 stations worse | +0.0120, 4 worse | FAIL |
+| G6, handover | 720 of 720 emitted, 0 datum decouples (31 kept), sim level after the edge 0.024 against the run's p95 0.029 | 0.023 against 0.029 | PASS |
+| G7 | PVN NIS 1.55 sim, 1.46 field; SZZ000SIM +0.078 +0.086 +0.005 +0.034 +0.008 m against B1 alone in hours 2 to 6, WTZZ00DEU +0.012 -0.001 +0.019 +0.026 +0.022 | NIS the same; SZZ up to +0.126, WTZZ up to +0.030 | NIS PASS, consumer FAIL |
+| G8, cost | loop time 1.106 of B1 alone (one job at a time, two interleaved repeats, spread below 1.5 %) | 1.222 | k = 1 PASS, k = 2 FAIL |
+
+The census reads were proven first: card SCL's B1-alone figures reproduce exactly (field +0.0034 m, 5 worse, 4
+better, 16 sites without WTZZ00DEU; sim +0.0049 m, 2 worse, with run-hour bins from the replays' first epoch).
+
+**Reading.**
+
+1. The level: X2 removes the lock of the first hours. The de-commoned level follows the code-only bound through
+   hour 4 (24.1 / 20.8 / 17.2 mm against 26.7 / 20.5 / 17.2) and then flattens near 17 mm while the bound
+   falls to 13.7: a later partial lock (the hour-4 pattern correlates 0.77 to 0.82 with hour 6; hour 2 with hour
+   6 only 0.04 to 0.08, against 0.79 / 0.86 under B1). The rank cap does not cause it: k = 2 cuts the remainder
+   fourfold and moves the level by at most 0.5 mm.
+2. A regression G1 does not grade, found in the manager's re-grade: the pivot-common part (the mean over the
+   non-pivot satellites of the pivot-frame error, minus the pinned pivot's own level) grows under X2 from hour 2
+   on both beds, 0.017 0.026 0.028 0.034 0.038 m (broadcast) and 0.018 0.025 0.023 0.030 0.031 m (COD), where B1
+   alone converges (0.047 to 0.021 broadcast, 0.017 to 0.004 COD). The estimated satellites drift together
+   against the pinned pivot by 3 to 4 cm: a between-satellite error on the pivot that the de-commoned metric
+   hides. Candidate: the clock-family deficit rule under X2 (the history's share moved onto the clocks is
+   restored on the pinned clock), which the fixture, pinning its pivot directly, does not exercise.
+3. The consumer: hybrid wires put the whole loss on the wire's phase side (SZZ000SIM: X2's code side with B1's
+   phase side +0.0014 to +0.0066 m by hour; B1's code side with X2's phase side +0.173 +0.044 +0.006 +0.026
+   +0.026 +0.023, equal to the full X2 replay; WTZZ00DEU likewise), and under the phase-clock hold the consumer
+   does not move (G3). Card SMH's smoothed hold forms the walk share from its clone rows, which marginalize their
+   share of the shared residual per row while the coupling rows now keep theirs in the history: the hold's
+   past-clock estimate misses the revision the history carries. The same pattern as card SCL section 9 (B1
+   before card SMH was made consistent with it).
+
+Section 7's stop rule applies (G1 fails with U2 passing): the late partial lock, the pivot-common drift and the
+smoothed hold's consistency with the history are attributed before any further build.
