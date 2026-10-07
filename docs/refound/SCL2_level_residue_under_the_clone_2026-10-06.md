@@ -363,3 +363,79 @@ the truth; reproduces the section 3 tables) and `scl2_rw_bed.py` (the matched-wa
 for the second). The section 3.5 statistics (persistence, decay, predictors, the common part's
 correlation with the pivot's step) and the fixture probe are in the session scratchpad; the probe's
 cases needed by U1 and U2 move into `tests/test_coupling_exact_update.cpp` with U1.
+
+## 9. The U-stage read and the decision (2026-10-06)
+
+**R1, card SFR's coloured phase** (arms `runs/_rap_scl2r_*`, the three `r1` arms' RINEX re-pointed
+to the pre-SFR fixture `runs/simnet60_quiet_wu93_24h`, 61 paths, the original kept as
+`arm.json.col_orig`; COD bed). With B1 at q 5e-6 the de-commoned level in hours 3 to 6 reads 0.051
+0.049 0.048 0.045 m on that fixture against 0.048 0.045 0.044 0.045 on the coloured one (`d2`), and
+it freezes the same way (statement NEES 14.04 against 13.37 in window 691-720); the golden posture
+reads 0.020 against 0.015 m in hour 6. The pre-SFR fixture is not a colour-free twin (3.0 mm white
+phase and 2.0 mm per-line Gauss-Markov multipath, against 0.5 mm white and a 4.4 mm band-common
+colour) and each fixture is one noise draw: the colour is not the bulk of the plateau; a share of a
+few millimetres is not excluded. On that fixture the truth-free windowed level NEES reads 2.19 for a
+level whose truth NEES is 14: G2's bar is read on the goldens' fixture only, as written.
+
+**R2, the datum's lever.** `network_phase_anchor.csv` (one row per epoch, signal and satellite, the
+station holding the satellite's phase-datum anchor; `NetworkDdFrac.cpp:82-102`): 9 to 12 distinct
+anchor stations per epoch for the 30 GPS satellites, one station holding 5 to 10, 6 to 13
+re-elections per hour, S30000SIM holding 24 to 25 % of the anchor-epochs, median tenure about 230
+epochs. Satellite pairs sharing an anchor station show smaller level differences on three of the
+four q-5e-6 arms (rank partial correlation given co-visibility, p 0.001 to 0.151), also without B1,
+and not at the golden q. The fixture's lever (R 24, S 6, q 5e-6, K 600, 200 seeds; anchors at s
+mod m), mode 5 MSE over the batch's: 1.07 / 1.57 / 2.05 / 3.75 for m = 1 / 2 / 3 / 24 on the static
+geometry and 2.93 / 2.76 / 2.06 / 4.29 on the time-varying one (below). The station-0 datum's
+protection is a property of the static geometry; a datum hub is not a cure. Mode 6 at k = 1 reads
+1.0000 in all eight cells.
+
+**Mode 6, X2's fixture form** (the session probe, dense and arrow-head). With no cap it equals mode 4
+and the batch: 5.5e-9 in variance ratio and 3.1e-8 sigma in value on the static geometry, 9.3e-10 and
+2.0e-8 on the time-varying one; the self-check D0 = Cov(N | s, Y) is block diagonal to a cross-station
+correlation of 1.8e-9.
+
+**A correction to section 4, and an extension of U2.** The "eleven eigenvalues above 1" of section 3.6
+are those of the off-block correlation matrix, not the rank of the shared factor. On the static
+geometry the carried ambiguities depend on the past clocks only through their sum, so the shared
+term has rank nclk exactly and one history column per clock is exact by construction: U2's grid as
+pre-registered cannot separate k. The worker added a time-varying geometry, not pre-registered: every
+row of satellite s at station r scaled by 1 / sin(e) with e sweeping 15 to 75 degrees on a 12 h or 4 h
+cycle, or drawn independently per epoch as a stress bound. The uncapped history then grows to 13 to 40
+columns and the cap truncates.
+
+**U2** (Release probe, 200 seeds per cell at every R, S 6 unless stated, rotated anchors, matched
+truth; MSE over the batch's / mean NEES; k = 1, 2 and 4 agree to four digits wherever run together):
+
+| geometry, cell | epoch | batch NEES | mode 5 | mode 6, k = 1 | dropped mass p50 / max |
+| --- | --- | --- | --- | --- | --- |
+| static, R 24, q 5e-6 | 600 / 2400 | 1.048 / 1.018 | 3.75 / 16.2; 12.4 / 36.6 | 1.0000 / 1.048; 1.0000 / 1.018 | 5e-17 / 3e-16 |
+| static, R 60, q 5e-6 | 600 / 2400 | 0.989 / 0.981 | 4.30 / 30.3; 14.9 / 55.9 | 1.0000 / 0.989; 1.0000 / 0.981 | 4e-17 / 3e-16 |
+| static, R 24, q 2.9e-8 | 600 / 2400 | 1.058 / 0.967 | 8.78 / 43.6; 35.7 / 139 | 1.0000 / 1.058; 1.0000 / 0.967 | 2e-16 / 1e-15 |
+| static, R 60, q 2.9e-8 | 600 / 2400 | 0.998 / 0.982 | 10.3 / 92.1; 38.9 / 227 | 1.0000 / 0.998; 1.0000 / 0.982 | 2e-16 / 1e-15 |
+| static, R 24, station-0 datum, q 5e-6 | 600 | 1.048 | 1.072 / 1.126 | 1.0000 / 1.048 | |
+| 12 h sweep, R 24, q 5e-6 | 600 / 2400 | | 4.29 / 19.7; 15.5 / 45.8 | 1.0000 / 1.053; 0.9999 / 1.003 | 5e-7 / 5e-6 |
+| 12 h sweep, R 24, q 2.9e-8 | 600 / 2400 | | 9.02 / 48.8; 40.2 / 170 | 1.0000 / 1.065; 1.0000 / 0.959 | 2e-6 / 2e-5 |
+| 4 h sweep, R 24 / R 60, q 5e-6 | 2400 / 600 | | 15.4 / 46.0; 4.97 / 37.3 | 1.0001 / 0.990; 1.0000 / 1.020 | up to 9e-6 / 4e-5 |
+| independent per epoch, R 24 and 60, q 5e-6 | 600 and 2400 | | 4.28 / 17.0 to 15.9 / 56.9 | 1.0000 / 0.974 to 0.990 | 2e-7 / 5e-2 |
+| independent per epoch, S 12, R 24 / 60, q 5e-6 | 600 | 1.070 / 1.092 | 4.11 / 12.0; 4.32 / 22.3 | 1.0000 / 1.070; 1.0000 / 1.092 | 3e-6 / 4e-2 |
+
+**Decision (section 6, U2's rule): X2 at k = 1.** `network.carry_coupling_shared_history_rank`
+defaults to 1 (section 5 said 2; the decision replaces it). X1 is not built: it was the fallback, and
+the read-only map scales it to about 15 to 20 s per epoch at 60 stations against 0.82 s today.
+
+**What U2 does not cover.** The fixture has no arc births or ends, set changes, anchor re-elections,
+partial visibility or card CTU's per-row decouple and re-reference routes; at those events the shared
+term's rank enters in jumps. The ON counters' dropped mass per epoch (run-end p50 and max) is read at
+arc edges: if production's is far above the fixture's (p50 at most 4e-5), k = 2 is the documented next
+setting, graded by the same gates. The read-only map projects X2 at k = 1 at about 30 more border
+columns (179 to about 209) and +10 % loop time plus 2 to 4 % for the new algebra, near G8's 15 % bar;
+the lever, if G8 fails, is an X2-gated assembly that skips a history column's zero rows.
+
+**U1** is committed as `tests/test_coupling_long_horizon.cpp` (suite `CouplingLongHorizonTest`; section 8
+named `test_coupling_exact_update.cpp`, and a new file follows the suite-hygiene rule): (a) mode 5's
+worst stated level variance over the batch's 0.2880 (below 0.5), mode 4 equal to the batch to 1.4e-10
+in variance and 1.6e-9 sigma, the golden-q line printed (mode 3 0.4160, mode 5 0.2813); (b) mode 6 with
+no cap equal to the batch on both geometries and both q; (c) mode 6 at k = 1 on the time-varying
+geometry, stated ratio 1.0000 (above 0.95); (d) the uncapped history width nclk on the static geometry
+and above it on the time-varying one, so that a static pass is never read as evidence for the cap.
+17.7 s in Debug; the worktree's full Debug suite 2801 passed, 17 data-fixture skips, 0 failed.

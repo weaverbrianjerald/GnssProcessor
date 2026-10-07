@@ -565,6 +565,7 @@ add_executable(gnss_tests
     tests/test_galileo_network.cpp
     tests/test_clock_level_carry.cpp
     tests/test_coupling_exact_update.cpp
+    tests/test_coupling_long_horizon.cpp
     tests/test_network_clock_clone.cpp
     tests/test_ctu_level_guard.cpp
     tests/test_owd_wire_contract.cpp
