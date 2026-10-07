@@ -532,3 +532,8 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   error halves against X2 and beats B1; the sim census passes (+0.0034 m) and the field census median passes, both at or
   better than B1 alone. Failing: G1's ratio (the code's realization), G4's site count (the posture's, B1 alone worse),
   the in-loop sim consumer in hours 2 and 3. Cost 1.100. X2 with X2b landed default off; nothing armed.
+- [NBP](NBP_native_broadcast_clock_posture_2026-10-07.md): open, 2026-10-07: pre-registered. The self-contained posture
+  of cards SCL, SCL2 and SCL2B built natively: SP3 orbits and the broadcast clock from the navigation file (latest
+  transmitted healthy record), a continuous internal a priori with a per-ephemeris offset table, the wire's clock referred
+  to the stamped IODE, no CLK product. The shipped `brdc_rts` path selects a different record on 99.6 % of
+  satellite-epochs. Gates: equivalence with the bed.
