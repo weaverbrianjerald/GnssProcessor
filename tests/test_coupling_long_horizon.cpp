@@ -35,6 +35,13 @@
  * selected cap keeps the stated level within 5 % of the batch's on the time-varying
  * geometry; and the static geometry's rank property, so that a pass on the static fixture is
  * never read as evidence for the cap.
+ *
+ * Gate U4 (card SCL2 section 11, amendment A1, build X2b): card SMH's hold row, the fixed-point
+ * target c_s(k0) carried with no observations, at R 8 and S 6.  Under mode 6 at the selected
+ * cap, the row projected onto the carried rows' kept history directions ("form p") gives the
+ * walk share Phi = c(t|t) - c(k0|t) of the batch's fixed-point smoother; the per-row form (its
+ * shared term marginalized onto its own variance) loses the history's revision and its walk
+ * share error is many times the batch's.
  */
 
 #include <gtest/gtest.h>
@@ -629,6 +636,323 @@ std::pair<double, double> diffToBatch(const LevelTrace& e, const LevelTrace& b, 
     return {v, x};
 }
 
+// ---------------------------------------------------------------------------------------------
+// Gate U4 (card SCL2 section 11, amendment A1): card SMH's hold row against the shared history.
+// The target is c_s(k0) for every non-pivot satellite, born at the stash of epoch k0 as one row
+// on the border (T = c_s, residual 0) and carried with no observations, as card SMH's row; its
+// walk share is Phi = c(t|t) - c(k0|t).
+// ---------------------------------------------------------------------------------------------
+
+constexpr int kHoldK0    = 20;    ///< the target's birth epoch
+constexpr int kHoldK     = 240;   ///< the graded epoch
+constexpr int kHoldSeeds = 32;    ///< realizations (columns of one right-hand side)
+
+/// The batch with the fixed-point target: the exact filter over [border, every ambiguity]
+/// with the old clocks kept (appended) at the k0 -> k0 + 1 prediction, so c_s(k0 | t) is exact.
+struct HoldBatch {
+    bool have{false};
+    Eigen::MatrixXd Lam, eta, Xclk, Xt;
+    void epoch(const UnitNetwork& g, const std::vector<Eigen::MatrixXd>& rhs, double qdt, int k, bool out) {
+        const int nc = g.nclk;
+        if (!have) {
+            Lam = Eigen::MatrixXd::Zero(g.nb + g.nN, g.nb + g.nN);
+            eta = Eigen::MatrixXd::Zero(g.nb + g.nN, rhs[0].cols());
+        } else if (k == kHoldK0 + 1) {
+            const int nn = static_cast<int>(Lam.rows());
+            const auto mp = [&](int i) { return i < nc ? nn + i : i; };
+            Eigen::MatrixXd Le = Eigen::MatrixXd::Zero(nn + nc, nn + nc), Ee = Eigen::MatrixXd::Zero(nn + nc, eta.cols());
+            for (int i = 0; i < nn; ++i) {
+                for (int j = 0; j < nn; ++j) Le(mp(i), mp(j)) = Lam(i, j);
+                Ee.row(mp(i)) = eta.row(i);
+            }
+            const double w = 1.0 / qdt;
+            for (int p = 0; p < nc; ++p) {
+                Le(p, p) += w; Le(nn + p, nn + p) += w; Le(p, nn + p) -= w; Le(nn + p, p) -= w;
+            }
+            Lam = Le;
+            eta = Ee;
+        } else {
+            const Eigen::MatrixXd Lc = Lam.leftCols(nc);
+            Eigen::MatrixXd D = Lam.topLeftCorner(nc, nc);
+            D.diagonal().array() += 1.0 / qdt;
+            const Eigen::MatrixXd LcDi = Lc * spdInverse(D);
+            const Eigen::MatrixXd etac = eta.topRows(nc);
+            Lam.noalias() -= LcDi * Lc.transpose();
+            eta.noalias() -= LcDi * etac;
+            Lam = (0.5 * (Lam + Lam.transpose())).eval();
+        }
+        g.addObs(rhs, g.nb, Lam, eta);
+        have = true;
+        if (out && k > kHoldK0) {
+            const Eigen::MatrixXd X = spdInverse(Lam) * eta;
+            Xclk = X.topRows(nc);
+            Xt = X.middleRows(g.nb + g.nN, nc);
+        }
+    }
+};
+
+/// The hold row in the recursion's convention: T = That + g (s_prev-terms) + f (history terms).
+struct HoldTarget {
+    bool on{false};
+    Eigen::MatrixXd That;   ///< nclk x columns
+    Eigen::MatrixXd g;      ///< nclk x nb: coefficients on the previous border
+    Eigen::MatrixXd f;      ///< nclk x nh: coefficients on the history columns of the last compression
+    void birth(const Eigen::MatrixXd& sprev, int nb, int nclk, int nh) {
+        on = true;
+        That = sprev.topRows(nclk);
+        g = Eigen::MatrixXd::Zero(nclk, nb);
+        for (int p = 0; p < nclk; ++p) g(p, p) = 1.0;
+        f = Eigen::MatrixXd::Zero(nclk, nh);
+    }
+};
+
+/**
+ * @brief Mode 6 (X2) at a cap, with two hold rows: the per-row form (production X2 with card
+ *        SMH before amendment A1: the row's Y coefficients regressed onto the border, its
+ *        conditional term marginalized onto its own variance, no history kept) and form p (the
+ *        row's F_T = Cov(T, Y | s) Sigma_Y|s^(-1/2) projected onto the carried rows' kept
+ *        directions V_kt, its history coefficients F_T V_kt revised with the history columns
+ *        next epoch; the compression unchanged).
+ *
+ * The carried ambiguities' prior is block diagonal by station (D0 plus the remainder's
+ * within-station blocks), so each station's block is eliminated onto u = [border, clones,
+ * history] exactly; the covariance blocks the harvest reads (per station: Cov(N_r, u),
+ * Cov(N_r)) follow from the elimination.  Mode 6's dense algebra above is the reference for
+ * the recursion itself; the target's values are linear in the data, so only they are carried.
+ */
+struct HoldX2 {
+    int cap;
+    bool have{false};
+    int nh{0};
+    Eigen::MatrixXd sprev, Pprev, Xclk;
+    std::vector<Eigen::MatrixXd> nhat, G, C, Fh;   ///< per station
+    HoldTarget ta, tp;                             ///< the per-row form, form p
+    double tdrop_max{0.0};                         ///< form p: the largest remainder share of a target row
+    int kt_max{0};
+
+    explicit HoldX2(int cap_) : cap(cap_) {}
+
+    void epoch(const UnitNetwork& g, const std::vector<Eigen::MatrixXd>& rhs, double qdt, int k) {
+        const int nb = g.nb, nclk = g.nclk, R = g.R, ncols = static_cast<int>(rhs[0].cols());
+        const int ncl = have ? nclk : 0;
+        const int nhh = have ? nh : 0;
+        const int n0 = nb + ncl + nhh, ny = ncl + nhh;
+        const auto vcol = [&](int p) { return (have && p < nclk) ? nb + p : p; };
+        Eigen::MatrixXd Luu = Eigen::MatrixXd::Zero(n0, n0), Eu = Eigen::MatrixXd::Zero(n0, ncols);
+        std::vector<Eigen::MatrixXd> Arr(R), Aru(R), Er(R);
+        for (int r = 0; r < R; ++r) {
+            const int m = g.m(r);
+            Luu.topLeftCorner(nb, nb) += g.Lam[r].topLeftCorner(nb, nb);
+            Aru[r] = Eigen::MatrixXd::Zero(m, n0);
+            Aru[r].leftCols(nb) = g.Lam[r].bottomLeftCorner(m, nb);
+            Arr[r] = g.Lam[r].bottomRightCorner(m, m);
+            Eu.topRows(nb) += rhs[r].topRows(nb);
+            Er[r] = rhs[r].bottomRows(m);
+        }
+        if (have) {
+            const Eigen::MatrixXd Lm = spdInverse(Pprev);
+            const Eigen::MatrixXd LmS = Lm * sprev;
+            for (int a = 0; a < nb; ++a) {
+                for (int c = 0; c < nb; ++c) Luu(vcol(a), vcol(c)) += Lm(a, c);
+                Eu.row(vcol(a)) += LmS.row(a);
+            }
+            const double w = 1.0 / qdt;
+            for (int p = 0; p < nclk; ++p) {
+                Luu(p, p) += w; Luu(nb + p, nb + p) += w; Luu(p, nb + p) -= w; Luu(nb + p, p) -= w;
+            }
+            for (int j = 0; j < nhh; ++j) Luu(nb + ncl + j, nb + ncl + j) += 1.0;   // N(0, I)
+            for (int r = 0; r < R; ++r) {
+                const int m = g.m(r);
+                Eigen::MatrixXd Mu = Eigen::MatrixXd::Zero(m, n0);
+                for (int p = 0; p < nb; ++p) Mu.col(vcol(p)) -= G[r].col(p);
+                if (nhh > 0) Mu.middleCols(nb + ncl, nhh) = -Fh[r];
+                Eigen::MatrixXd Y = nhat[r];
+                Y.noalias() -= G[r] * sprev;
+                const Eigen::MatrixXd W = spdInverse(C[r]);
+                const Eigen::MatrixXd WMu = W * Mu;
+                Luu.noalias() += Mu.transpose() * WMu;
+                Aru[r] += WMu;
+                Arr[r] += W;
+                Eu.noalias() += WMu.transpose() * Y;
+                Er[r].noalias() += W * Y;
+            }
+        }
+        std::vector<Eigen::MatrixXd> F(R), Ai(R);
+        Eigen::MatrixXd Ls = Luu, Es = Eu;
+        for (int r = 0; r < R; ++r) {
+            Ai[r] = spdInverse(Arr[r]);
+            F[r] = Ai[r] * Aru[r];
+            Ls.noalias() -= Aru[r].transpose() * F[r];
+            Es.noalias() -= F[r].transpose() * Er[r];
+        }
+        const Eigen::MatrixXd Suu = spdInverse(Ls);
+        const Eigen::MatrixXd Xu = Suu * Es;
+        // The targets' value update: no observations, so the revision of the border they hold.
+        Eigen::MatrixXd aTa, aTp;
+        const auto advance = [&](HoldTarget& tg, Eigen::MatrixXd& aT) {
+            if (!tg.on) return;
+            aT = Eigen::MatrixXd::Zero(nclk, n0);
+            Eigen::MatrixXd up = Eigen::MatrixXd::Zero(n0, ncols);
+            for (int p = 0; p < nb; ++p) {
+                aT.col(vcol(p)) += tg.g.col(p);
+                up.row(vcol(p)) = sprev.row(p);
+            }
+            if (nhh > 0 && tg.f.cols() == nhh) aT.middleCols(nb + ncl, nhh) += tg.f;
+            tg.That.noalias() += aT * (Xu - up);
+        };
+        advance(ta, aTa);
+        advance(tp, aTp);
+        sprev = Xu.topRows(nb);
+        Pprev = Suu.topLeftCorner(nb, nb);
+        const Eigen::MatrixXd Pinv = spdInverse(Pprev);
+        // The harvest: Y = [clones; history], F_full = Cov(N, Y | s) Sigma_Y|s^(-1/2).
+        Eigen::MatrixXd SsY, PiSsY, Syy, Bm;
+        if (ny > 0) {
+            SsY = Suu.block(0, nb, nb, ny);
+            PiSsY = Pinv * SsY;
+            Syy = Suu.block(nb, nb, ny, ny) - SsY.transpose() * PiSsY;
+            const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(0.5 * (Syy + Syy.transpose()));
+            const Eigen::VectorXd ev = es.eigenvalues();
+            Eigen::VectorXd isq(ny);
+            for (int i = 0; i < ny; ++i) isq(i) = ev(i) > 1e-15 * ev.maxCoeff() ? 1.0 / std::sqrt(ev(i)) : 0.0;
+            Bm = es.eigenvectors() * isq.asDiagonal();
+        }
+        std::vector<Eigen::MatrixXd> Ff(R);
+        Eigen::MatrixXd Gm = Eigen::MatrixXd::Zero(ny, ny);
+        nhat.assign(R, {});
+        G.assign(R, {});
+        C.assign(R, {});
+        for (int r = 0; r < R; ++r) {
+            const Eigen::MatrixXd SNu = -F[r] * Suu;                 // Cov(N_r, u)
+            const Eigen::MatrixXd Snb = SNu.leftCols(nb);
+            G[r] = Snb * Pinv;
+            C[r] = Ai[r];                                             // Cov(N_r | s)
+            C[r].noalias() -= SNu * F[r].transpose();
+            C[r].noalias() -= G[r] * Snb.transpose();
+            nhat[r] = Ai[r] * Er[r];
+            nhat[r].noalias() -= F[r] * Xu;
+            if (ny > 0) {
+                Ff[r] = (SNu.middleCols(nb, ny) - Snb * PiSsY) * Bm;
+                C[r].noalias() -= Ff[r] * Ff[r].transpose();         // D0_r = Cov(N_r | s, Y)
+                Gm.noalias() += Ff[r].transpose() * Ff[r];
+            }
+        }
+        int kt = 0;
+        Eigen::MatrixXd Vk(ny, 0), Vr(ny, ny);
+        if (ny > 0) {
+            const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(0.5 * (Gm + Gm.transpose()));
+            const Eigen::VectorXd ev = es.eigenvalues().reverse();
+            const Eigen::MatrixXd V = es.eigenvectors().rowwise().reverse();
+            const double emax = std::max(ev(0), 0.0);
+            int rank = 0;
+            for (int i = 0; i < ny; ++i)
+                if (emax > 0.0 && ev(i) > 1e-14 * emax) ++rank;
+            kt = std::min(cap, rank);
+            Vk = V.leftCols(kt);
+            Vr = V.rightCols(ny - kt);
+        }
+        Fh.assign(R, {});
+        for (int r = 0; r < R; ++r) {
+            if (ny > 0) {
+                Fh[r] = Ff[r] * Vk;
+                const Eigen::MatrixXd Rem = Ff[r] * Vr;
+                C[r].noalias() += Rem * Rem.transpose();
+            } else {
+                Fh[r] = Eigen::MatrixXd::Zero(g.m(r), 0);
+            }
+        }
+        nh = kt;
+        kt_max = std::max(kt_max, kt);
+        // The targets re-expressed on the new border: the per-row form drops its Y residual
+        // (onto its own variance), form p keeps its coordinates on the kept directions.
+        const auto reexpress = [&](HoldTarget& tg, const Eigen::MatrixXd& aT, bool formp) {
+            if (!tg.on) return;
+            Eigen::MatrixXd gn = aT.leftCols(nb);
+            tg.f = Eigen::MatrixXd::Zero(nclk, kt);
+            if (ny > 0) {
+                const Eigen::MatrixXd aY = aT.middleCols(nb, ny);
+                gn.noalias() += aY * SsY.transpose() * Pinv;
+                if (formp) {
+                    const Eigen::MatrixXd FT = aY * Syy * Bm;
+                    tg.f = FT * Vk;
+                    const double tt = FT.squaredNorm();
+                    if (tt > 0.0) tdrop_max = std::max(tdrop_max, (FT * Vr).squaredNorm() / tt);
+                }
+            }
+            tg.g = gn;
+        };
+        reexpress(ta, aTa, false);
+        reexpress(tp, aTp, true);
+        have = true;
+        if (k == kHoldK0) {
+            ta.birth(sprev, nb, nclk, kt);
+            tp.birth(sprev, nb, nclk, kt);
+        }
+        Xclk = sprev.topRows(nclk);
+    }
+};
+
+/// U4's readings at one geometry: the walk share's MSE over the batch's (mean over the
+/// non-pivot satellites) for both hold forms, and the current clock's.
+struct HoldReading {
+    double phi_rowform{0.0}, phi_formp{0.0}, clk{0.0}, tdrop_max{0.0};
+    int kt_max{0};
+};
+
+/**
+ * @brief Runs U4's scenario once per process: R 8, S 6, rotated anchors, q 5e-6, K 240, the
+ *        target born at epoch 20, static (@p tv false) or swept weights; the batch and X2 at
+ *        gate U2's selected cap with both hold forms on the same data.
+ */
+const HoldReading& holdScenario(bool tv) {
+    static std::map<bool, HoldReading> cache;
+    const auto hit = cache.find(tv);
+    if (hit != cache.end()) return hit->second;
+    const auto t0 = std::chrono::steady_clock::now();
+    UnitNetwork g(8, 6, /*rotated=*/true, tv);
+    HoldBatch batch;
+    HoldX2 x2(kSelectedHistoryPerClock * g.nclk);
+    std::mt19937_64 rng(12345);
+    std::normal_distribution<double> nd(0.0, 1.0);
+    const double qdt = kQBroadcast * kDt;
+    Eigen::MatrixXd ctrue = Eigen::MatrixXd::Zero(g.nclk, kHoldSeeds), ttrue;
+    std::vector<Eigen::MatrixXd> rhs(g.R);
+    for (int k = 1; k <= kHoldK; ++k) {
+        if (k >= 2)
+            for (int i = 0; i < g.nclk; ++i)
+                for (int j = 0; j < kHoldSeeds; ++j) ctrue(i, j) += std::sqrt(qdt) * nd(rng);
+        if (k == kHoldK0) ttrue = ctrue;
+        g.setEpoch(k);
+        for (int r = 0; r < g.R; ++r) {
+            Eigen::MatrixXd zo(4 * g.S, kHoldSeeds);
+            for (int i = 0; i < 4 * g.S; ++i)
+                for (int j = 0; j < kHoldSeeds; ++j) zo(i, j) = g.sigr[r](i) * nd(rng);
+            rhs[r] = g.THc[r] * ctrue + g.T[r] * zo;
+        }
+        batch.epoch(g, rhs, qdt, k, k == kHoldK);
+        x2.epoch(g, rhs, qdt, k);
+    }
+    HoldReading out;
+    const Eigen::MatrixXd phit = ctrue - ttrue;
+    const Eigen::MatrixXd eb = (batch.Xclk - batch.Xt) - phit;
+    const Eigen::MatrixXd ea = (x2.Xclk - x2.ta.That) - phit;
+    const Eigen::MatrixXd ep = (x2.Xclk - x2.tp.That) - phit;
+    for (int p = 0; p < g.nclk; ++p) {
+        const double b = eb.row(p).squaredNorm();
+        out.phi_rowform += ea.row(p).squaredNorm() / b;
+        out.phi_formp += ep.row(p).squaredNorm() / b;
+        out.clk += (x2.Xclk.row(p) - ctrue.row(p)).squaredNorm() / (batch.Xclk.row(p) - ctrue.row(p)).squaredNorm();
+    }
+    out.phi_rowform /= g.nclk;
+    out.phi_formp /= g.nclk;
+    out.clk /= g.nclk;
+    out.tdrop_max = x2.tdrop_max;
+    out.kt_max = x2.kt_max;
+    std::printf("[U4] hold scenario (R 8, S 6, tv %d, q 5e-6, K %d, %d seeds) ran in %.1f s\n", tv ? 1 : 0, kHoldK,
+                kHoldSeeds, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    return cache.emplace(tv, out).first->second;
+}
+
 }  // namespace
 
 // U1 (a): the per-station harvest (mode 5) states the level too tightly at the broadcast-grade
@@ -692,4 +1016,22 @@ TEST(CouplingLongHorizonTest, StaticGeometryLimitsTheSharedTermToOneColumnPerClo
     std::printf("[U1d] history width with no cap, R 8 S 3, K 240: static %d, time-varying %d (nclk 2)\n", kt_static, kt_tv);
     EXPECT_EQ(kt_static, 2);
     EXPECT_GT(kt_tv, 2);
+}
+
+// U4 (card SCL2 section 11, amendment A1): card SMH's hold row in X2's shared history.  At gate
+// U2's selected cap (k = 1), R 8, S 6, q 5e-6, K 240, static and swept weights, the hold row
+// projected onto the carried rows' kept directions (form p) gives the walk share within 2 % of
+// the batch's fixed-point smoother, while the per-row form (the row's Y residual marginalized
+// onto its own variance, production X2 before the amendment) is at least 5 times the batch's.
+TEST(CouplingLongHorizonTest, HoldRowProjectedOntoTheHistoryIsTheFixedPointSmoother) {
+    for (const bool tv : {false, true}) {
+        const HoldReading& h = holdScenario(tv);
+        std::printf("[U4] %s, k = %d: walk-share MSE over the batch's at epoch %d: form p %.4f, per-row form %.2f; "
+                    "current clock %.4f; history width max %d; target remainder share max %.2e\n",
+                    tv ? "swept weights" : "static", kSelectedHistoryPerClock, kHoldK, h.phi_formp, h.phi_rowform,
+                    h.clk, h.kt_max, h.tdrop_max);
+        EXPECT_NEAR(h.phi_formp, 1.0, 0.02);
+        EXPECT_GE(h.phi_rowform, 5.0);
+        EXPECT_EQ(h.kt_max, kSelectedHistoryPerClock * 5);
+    }
 }

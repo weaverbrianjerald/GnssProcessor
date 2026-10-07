@@ -116,6 +116,25 @@ public:
      * @throws std::logic_error after @ref beginEpoch, like every registration.
      */
     Eigen::Index registerClockClone(const std::string& sat);
+    /**
+     * @brief Register shared-history column @p j (card SCL2 X2,
+     *        @c network.carry_coupling_shared_history); idempotent; returns its column.
+     *
+     * A history column is one constant direction of the clones' shared conditional
+     * carried across stations (docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md,
+     * sections 4, 5 and 9): the harvest compresses the carried rows' terms on the clones
+     * and on the previous history into at most k columns per cloned clock, each row keeps
+     * its coefficients on them, and the next epoch folds each column with the prior
+     * N(0, 1), independent of the border.  Keyed @c "HIST|j", labelled @c "HIST:j".  Its
+     * descriptor carries @ref SharedParamKind::Clock with an empty satellite and a history
+     * flag, so every reader that tests the kind for a satellite clock (and a non-empty
+     * satellite) skips it without a new enum value.  The driver registers history columns
+     * after every other column, the clones included, so no existing index moves and the
+     * clones and the history occupy the last @ref numBorderNuisance columns.  A history
+     * column is never emitted (@ref toSolutionEpoch), never stashed and never snapshotted.
+     * @throws std::logic_error after @ref beginEpoch, like every registration.
+     */
+    Eigen::Index registerHistoryColumn(int j);
 
     /// @return The clock column for @p sat. @throws std::out_of_range if absent.
     Eigen::Index clockColumn(const std::string& sat) const;
@@ -132,6 +151,12 @@ public:
     /// @return Whether shared column @p col is a clock clone (card SCL); false when
     ///         @p col is out of range.
     bool isClockClone(Eigen::Index col) const;
+    /// @return The shared-history column @p j (card SCL2 X2, @ref registerHistoryColumn).
+    /// @throws std::out_of_range if absent.
+    Eigen::Index historyColumn(int j) const;
+    /// @return Whether shared column @p col is a shared-history column (card SCL2 X2);
+    ///         false when @p col is out of range.
+    bool isHistoryColumn(Eigen::Index col) const;
     /**
      * @brief The identity of a satellite shared column (card SCL): the reverse of
      *        @ref clockColumn / @ref phaseBiasColumn / @ref codeBiasColumn.
@@ -142,14 +167,22 @@ public:
      * @param[out] kind    its kind (Clock, PhaseBias or CodeBias).
      * @param[out] sat     its satellite.
      * @param[out] signal  its signal (empty for a clock).
-     * @return false (outputs untouched) for a column out of range, an SH-VTEC column or a
-     *         clock clone.
+     * @return false (outputs untouched) for a column out of range, an SH-VTEC column, a
+     *         clock clone or a shared-history column (card SCL2 X2).
      */
     bool sharedColumnIdentity(Eigen::Index col, SharedParamKind& kind, std::string& sat,
                               std::string& signal) const;
     /// @return The number of clock clone columns registered this epoch (card SCL); they
     ///         are the last columns of the layout.  0 whenever the knob is off.
     Eigen::Index numClockClones() const { return n_clones_; }
+    /// @return The number of shared-history columns registered this epoch (card SCL2 X2);
+    ///         they follow the clones.  0 whenever the knob is off.
+    Eigen::Index numHistoryColumns() const { return n_hist_; }
+    /// @return The border's nuisance columns, the clones and the history (card SCL2 X2):
+    ///         @ref numClockClones + @ref numHistoryColumns, the trailing columns of the
+    ///         layout that the gate view marginalizes and the harvest regresses away.
+    ///         Equals @ref numClockClones whenever the shared history is off.
+    Eigen::Index numBorderNuisance() const { return n_clones_ + n_hist_; }
 
     /// @return Number of registered shared columns.
     Eigen::Index numShared() const { return static_cast<Eigen::Index>(columns_.size()); }
@@ -161,7 +194,7 @@ public:
      * (satellite code bias), @c "PB:<sat>:<signal>" (satellite phase bias),
      * @c "SH:<C|S>:<n>:<m>" (SH-VTEC coefficient; @c "SH2:<C|S>:<n>:<m>" on the
      * second shell), @c "CLKC:<sat>" (a clock clone, card SCL; no "CLK:" prefix
-     * parser matches it).  Intended for the NEQ export and other offline attribution
+     * parser matches it), @c "HIST:<j>" (a shared-history column, card SCL2 X2).  Intended for the NEQ export and other offline attribution
      * tooling; labels are stable across epochs for an unchanged registration order.
      *
      * @throws std::out_of_range if @p col is not a registered column.
@@ -705,6 +738,11 @@ public:
         /// (@ref registerClockClone, key @c "sat|CLKC"), with @c kind Clock.  False (the
         /// default) = the column of (kind, sat, signal), as before.
         bool            clone{false};
+        /// Card SCL2 X2: the prior is on shared-history column @c hist_idx
+        /// (@ref registerHistoryColumn, key @c "HIST|j"), with @c kind Clock and an empty
+        /// @c sat.  False (the default) = as before.
+        bool            hist{false};
+        int             hist_idx{-1};   ///< the history column's index j (with @c hist)
     };
 
     /**
@@ -824,6 +862,11 @@ public:
      * @brief The posterior regression of the clock clones on the rest of the border
      *        (card SCL), the ingredient of the harvest's clone marginalization.
      *
+     * Card SCL2 X2: with shared-history columns registered, the regressed set is
+     * Y = [clones; history] (@ref numBorderNuisance rows, in column order), so @c K is
+     * @f$K_Y = -J_{YY}^{-1}J_{YS'}@f$ and @c Bc is @f$\Sigma_{Y\mid s} = J_{YY}^{-1}@f$, the
+     * ingredients of the history compression.  Off, Y is the clones alone (unchanged).
+     *
      * After @ref solve, with @f$J@f$ the reduced shared normals the solve factored (every
      * prior folded, before the datum pins), @f$C@f$ the clone columns and @f$S'@f$ the
      * other columns outside @p datum: @f$B' = J_{CC}^{-1} = \mathrm{Var}(c\mid s',
@@ -835,9 +878,10 @@ public:
      * (the conditional mean does not move with it), and the caller restores a row's
      * identity along the declared clock gauge on it (the harvest's clock-family deficit).
      * @param datum The datum the solve applied.
-     * @param[out] K  @c numClockClones × @ref numShared, zero on the clone and pinned columns.
-     * @param[out] Bc @c numClockClones square.
-     * @return false (outputs untouched) when no clone is registered, the epoch is not
+     * @param[out] K  @c numBorderNuisance × @ref numShared, zero on the clone, history and
+     *                pinned columns.
+     * @param[out] Bc @c numBorderNuisance square.
+     * @return false (outputs untouched) when no clone or history column is registered, the epoch is not
      *         solved, or @f$J_{CC}@f$ is not positive definite.
      */
     bool cloneConditional(const Datum& datum, Eigen::MatrixXd& K, Eigen::MatrixXd& Bc) const;
@@ -1219,7 +1263,8 @@ public:
      * @return One epoch of satellite-side solutions (clock C0 + per-signal code /
      *         phase bias) keyed by RINEX sat id, ready for `NetworkProductEmitter`.
      *         SH-VTEC columns are not mapped, nor are clock clone columns (card SCL:
-     *         a border-internal state, never a product).
+     *         a border-internal state, never a product) or shared-history columns
+     *         (card SCL2 X2: the same).
      */
     NetworkSolutionEpoch toSolutionEpoch(const Eigen::VectorXd& x_s,
                                          const GnssTime& epoch_time, int iod_ssr = 0,
@@ -1278,14 +1323,17 @@ private:
         char sh_trig{0};       ///< VtecSh 'C'/'S' (VtecSh only)
         int  sh_layer{0};      ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
         bool clone{false};     ///< card SCL: a clock clone column (kind Clock, @ref registerClockClone)
+        bool hist{false};      ///< card SCL2 X2: a shared-history column (kind Clock, empty sat, @ref registerHistoryColumn)
+        int  hist_idx{-1};     ///< card SCL2 X2: its history index j
     };
 
     Eigen::Index registerColumn_(const std::string& sat, SharedParamKind kind,
                                  const std::string& signal);
     static std::string key_(const std::string& sat, SharedParamKind kind,
                             const std::string& signal);
-    /// The layout key of a prior: the SH key for VtecSh, @c "sat|CLKC" for a clock clone
-    /// (card SCL), @ref key_ otherwise (the same string as before for every non-clone prior).
+    /// The layout key of a prior: the SH key for VtecSh, @c "HIST|j" for a shared-history
+    /// column (card SCL2 X2), @c "sat|CLKC" for a clock clone (card SCL), @ref key_
+    /// otherwise (the same string as before for every other prior).
     static std::string priorKey_(const SharedPrior& p);
     /// Throw unless the epoch is open and not yet solved (guards @ref addStation).
     void requireAccumulating_() const;
@@ -1314,6 +1362,7 @@ private:
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
     Eigen::Index n_clones_{0};                    ///< clock clone columns registered this epoch (card SCL); cleared by reset()
+    Eigen::Index n_hist_{0};                      ///< shared-history columns registered this epoch (card SCL2 X2); cleared by reset()
     /// Partial-support skip tally (Card C-GF).  @c mutable because @ref denseFoldTerms_
     /// is const and observational: the skip decision reads the layout, it does not change it.
     mutable std::size_t gf_partial_skipped_{0};

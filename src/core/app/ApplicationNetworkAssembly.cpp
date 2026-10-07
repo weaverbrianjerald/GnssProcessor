@@ -2809,6 +2809,9 @@ EpochAction Application::networkAssemblyRegisterColumns_(const SyncedEpoch& se,
     // other registration so that no existing column index moves (the clones are the last
     // columns), and before the label map and beginEpoch.  No-op off.
     networkClockCloneRegister(ctx, est, registered_clock_sats);
+    // Card SCL2 X2 (network.carry_coupling_shared_history): the shared-history columns, after
+    // the clones (filter/NetworkSharedHistory).  No-op off.
+    networkSharedHistoryRegister(ctx, est);
 
     n_clock = static_cast<int>(registered_clock_sats.size());
     n_pb    = static_cast<int>(shared_phase_keys.size());
@@ -2849,6 +2852,9 @@ EpochAction Application::networkAssemblyRegisterColumns_(const SyncedEpoch& se,
         }
         for (const auto& [sat, col] : ctx.carry.ccl.col)   // card SCL clones; empty off
             col_desc[static_cast<size_t>(col)] = "CLKC|" + sat;
+        for (std::size_t j = 0; j < ctx.carry.shx.col.size(); ++j)   // card SCL2 X2 history; empty off
+            if (ctx.carry.shx.col[j] >= 0)
+                col_desc[static_cast<size_t>(ctx.carry.shx.col[j])] = "HIST|" + std::to_string(j);
     }
 
     if (est.numShared() == 0) {
@@ -3839,6 +3845,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     cb.cxu       = ctx.carry.ccl.rows_on ? &ctx.carry.ccl.rows_epoch
                                                          : &ctx.carry.cxu_epoch;
                     cb.cxu_cross = ctx.knobs.carry_cpl_exact_cross;   // card WSX
+                    if (ctx.knobs.carry_cpl_shx) cb.shx = &ctx.carry.shx;   // card SCL2 X2
                 }
                 if (legacy_local_inject) {
                 // Ambiguity carry.  Legacy: the whole pivot station is skipped (all its
@@ -4369,6 +4376,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         LocalCarry& pr = pc_pred.back();
                         pr.value_abs *= phi;
                         for (CoupledShared& cs : pr.coupling) cs.coeff *= phi;
+                        for (double& c : pr.shx_coef) c *= phi;   // card SCL2 X2: empty off
                         LocalBlockCol pcol{static_cast<Eigen::Index>(phit->second), x_lin(pidx),
                                            &pr, pvar, std::max(0.0, pgap), /*vce_fac=*/1.0};
                         pcol.phi   = phi;

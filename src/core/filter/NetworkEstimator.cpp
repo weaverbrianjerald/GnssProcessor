@@ -70,6 +70,7 @@ std::string NetworkEstimator::key_(const std::string& sat, SharedParamKind kind,
 std::string NetworkEstimator::priorKey_(const SharedPrior& p) {
     if (p.kind == SharedParamKind::VtecSh)
         return StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer);
+    if (p.hist) return "HIST|" + std::to_string(p.hist_idx);   // card SCL2 X2: a shared-history column
     if (p.clone) return p.sat + "|CLKC";   // card SCL: the clock clone column
     return key_(p.sat, p.kind, p.signal);
 }
@@ -145,6 +146,35 @@ Eigen::Index NetworkEstimator::registerClockClone(const std::string& sat) {
     return col;
 }
 
+Eigen::Index NetworkEstimator::registerHistoryColumn(int j) {
+    if (epoch_open_) {
+        throw std::logic_error(
+            "NetworkEstimator: cannot register shared parameters after "
+            "beginEpoch(); finalize the layout first");
+    }
+    const std::string k = "HIST|" + std::to_string(j);   // disjoint from every satellite key
+    auto it = index_.find(k);
+    if (it != index_.end()) return it->second;
+    const Eigen::Index col = static_cast<Eigen::Index>(columns_.size());
+    index_.emplace(k, col);
+    ColumnDesc d;
+    d.kind     = SharedParamKind::Clock;
+    d.hist     = true;
+    d.hist_idx = j;
+    columns_.push_back(std::move(d));
+    ++n_hist_;
+    return col;
+}
+
+Eigen::Index NetworkEstimator::historyColumn(int j) const {
+    return index_.at("HIST|" + std::to_string(j));
+}
+
+bool NetworkEstimator::isHistoryColumn(Eigen::Index col) const {
+    return col >= 0 && col < static_cast<Eigen::Index>(columns_.size())
+        && columns_[static_cast<std::size_t>(col)].hist;
+}
+
 Eigen::Index NetworkEstimator::clockCloneColumn(const std::string& sat) const {
     return index_.at(sat + "|CLKC");
 }
@@ -158,7 +188,7 @@ bool NetworkEstimator::sharedColumnIdentity(Eigen::Index col, SharedParamKind& k
                                             std::string& sat, std::string& signal) const {
     if (col < 0 || col >= static_cast<Eigen::Index>(columns_.size())) return false;
     const ColumnDesc& d = columns_[static_cast<std::size_t>(col)];
-    if (d.clone || d.kind == SharedParamKind::VtecSh) return false;
+    if (d.clone || d.hist || d.kind == SharedParamKind::VtecSh) return false;
     kind   = d.kind;
     sat    = d.sat;
     signal = d.signal;
@@ -190,6 +220,7 @@ std::string NetworkEstimator::sharedColumnLabel(Eigen::Index col) const {
     }
     const ColumnDesc& d = columns_[static_cast<std::size_t>(col)];
     if (d.clone) return "CLKC:" + d.sat;   // card SCL: a clock clone
+    if (d.hist) return "HIST:" + std::to_string(d.hist_idx);   // card SCL2 X2: a shared-history column
     switch (d.kind) {
         case SharedParamKind::Clock:     return "CLK:" + d.sat;
         case SharedParamKind::CodeBias:  return "CB:" + d.sat + ":" + d.signal;
@@ -210,6 +241,7 @@ void NetworkEstimator::reset() {
     index_.clear();
     columns_.clear();
     n_clones_ = 0;              // card SCL: the clones are per-epoch columns too
+    n_hist_   = 0;              // card SCL2 X2: and so are the history columns
     shared_cov_.resize(0, 0);   // match a freshly-constructed estimator exactly
     phase_sumzero_gauges_.clear();  // the ensemble datum is per-epoch (Fix A)
     dd_priors_.clear();             // the DD priors are per-epoch too (Card 4, M1)
@@ -851,7 +883,7 @@ std::size_t NetworkEstimator::addCloneWalk(const std::vector<CloneWalk>& walks, 
 
 bool NetworkEstimator::cloneConditional(const Datum& datum, Eigen::MatrixXd& K,
                                         Eigen::MatrixXd& Bc) const {
-    if (n_clones_ == 0 || !solved_) return false;
+    if (n_clones_ + n_hist_ == 0 || !solved_) return false;   // card SCL2 X2: Y = clones and history
     const Eigen::MatrixXd& J = neq_.reducedSharedNormals();
     const Eigen::Index n = numShared();
     if (J.rows() != n || J.cols() != n) return false;
@@ -862,7 +894,8 @@ bool NetworkEstimator::cloneConditional(const Datum& datum, Eigen::MatrixXd& K,
     for (const Pin& p : datum)
         if (p.column >= 0 && p.column < n) pinned[static_cast<std::size_t>(p.column)] = 1;
     for (Eigen::Index c = 0; c < n; ++c) {
-        if (columns_[static_cast<std::size_t>(c)].clone) cc.push_back(c);
+        if (columns_[static_cast<std::size_t>(c)].clone
+            || columns_[static_cast<std::size_t>(c)].hist) cc.push_back(c);   // card SCL2 X2: the history joins Y
         else if (!pinned[static_cast<std::size_t>(c)]) ss.push_back(c);
     }
     const Eigen::Index nc = static_cast<Eigen::Index>(cc.size());
@@ -1194,6 +1227,7 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
         // A clock clone (card SCL) is the previous epoch's clock carried inside the border
         // for one epoch: never a product, and never the satellite's clock.
         if (d.clone) continue;
+        if (d.hist) continue;   // card SCL2 X2: a shared-history column, the same
         NetworkSatSolution& s = slotFor(d.sat);
         switch (d.kind) {
             case SharedParamKind::Clock:

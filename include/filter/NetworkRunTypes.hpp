@@ -700,6 +700,16 @@ struct LocalCarry {
     /// every other RF-1 stamp: a restored entry reads 0, which means no drop pending
     /// (the conservative direction).
     int drop_walk_ph{0};
+    /// Card SCL2 X2 (network.carry_coupling_shared_history, filter/NetworkSharedHistory):
+    /// this row's coefficients on the shared-history columns of the compression stamped
+    /// @ref shx_stash_s (m; history column j has the prior N(0, 1)).  Valid only when
+    /// @ref shx_stash_s equals @ref last_seen_s (the row was stashed at that compression);
+    /// a re-stash without history terms leaves them stale and ignored.  @ref var then
+    /// excludes the kept share (the squared norm of @ref shx_coef): the row's marginal variance is
+    /// @c var plus that norm (what the snapshot writes).  Empty off and for a restored
+    /// entry.
+    std::vector<double> shx_coef{};
+    double shx_stash_s{0.0};   ///< Card SCL2 X2: the compression (harvest second) @ref shx_coef belongs to (0 = none)
 };
 
 /// The route through which the PASS-B inject folded a carried ambiguity column this
@@ -2591,6 +2601,7 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 ///   - cap_ccl_on / cap_ccl_keys / cap_ccl_cov / cap_ccl_walk / cap_ccl_idle: card SCL's
 ///     joint fold (the stand-in block, the clones' walk factors) and the idle clones'
 ///     isolated priors (filter/NetworkClockClone); empty and false when off.
+///   - cap_shx: card SCL2 X2's history priors (filter/NetworkSharedHistory); empty off.
 /// The Q3 clock-anchor guard (NetworkClockAnchor) also edits the capture: before its
 /// re-solve it removes the withdrawn satellites' clock priors from cap_priors and
 /// marginalizes them out of cap_dense_keys / cap_dense_cov (and, on a card SCL clone
@@ -2610,6 +2621,7 @@ struct EpochWorkspace {
     Eigen::MatrixXd cap_ccl_cov;                                   ///< card SCL: the stand-in block's covariance
     std::vector<NetworkEstimator::CloneWalk> cap_ccl_walk;         ///< card SCL: the walk factors
     std::vector<NetworkEstimator::SharedPrior> cap_ccl_idle;       ///< card SCL: the idle clones' isolated priors
+    std::vector<NetworkEstimator::SharedPrior> cap_shx;            ///< card SCL2 X2: the history columns' N(0, 1) priors (filter/NetworkSharedHistory)
     /// Two-state clock-model predictions stashed by the prior fold
     /// (networkInjectClockOscPrior_), consumed by the post-solve normalized-
     /// innovation test (T5) later in the same epoch.

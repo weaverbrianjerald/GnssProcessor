@@ -54,6 +54,7 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 struct GlobalVtecShConfig;   // config/GnssConfigTypes.hpp; reference member only (q_per_degree read in the .cpp)
+struct SharedHistoryState;   // filter/NetworkSharedHistory.hpp; pointer member only (card SCL2 X2)
 
 /// One pending scalar-path conditional coupling row (card 1): the present shared
 /// terms are kept as ordinary @f$A_s@f$ coefficients, and the departed terms are
@@ -218,6 +219,12 @@ struct CouplingRowBuilder {
     /// bracket between two rows of a station's local block (@ref buildLocalBlock).  False
     /// = the per-row form (byte-identical).
     bool                                     cxu_cross{false};
+    /// Card SCL2 X2 (network.carry_coupling_shared_history): the held compression and this
+    /// epoch's history columns (filter/NetworkSharedHistory), read-only here.  A row on the
+    /// exact route emits its history terms on the registered columns; every other row
+    /// (card 1d's route, a stale generation) marginalizes them into its variance.  Null =
+    /// off (byte-identical).
+    const SharedHistoryState*                shx{nullptr};
 
     /// True (and counted) when @p cs sits on a satellite inside its re-admission window.
     bool readmitDiverted(const CoupledShared& cs);

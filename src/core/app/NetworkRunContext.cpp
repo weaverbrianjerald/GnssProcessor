@@ -134,6 +134,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov + !joint
     k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // card WSX; loader guarantees exact
     k.carry_cpl_clone = config_.networkCarryCouplingClockClone();   // card SCL; loader guarantees exact + fullcov
+    k.carry_cpl_shx   = config_.networkCarryCouplingSharedHistory();       // card SCL2 X2; loader guarantees B1
+    k.shx_rank        = config_.networkCarryCouplingSharedHistoryRank();   // card SCL2 X2; loader guarantees [1, 8]
     k.clm_on    = config_.networkClockLevelMonitor();      // card CTU monitor (trace class)
     k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
     k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
@@ -1191,6 +1193,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // on (the harvest marginalizes the clones); armed-only token, so every existing
         // fingerprint is unchanged.
         if (ctx.knobs.carry_cpl_clone) add("ccl:1");
+        // Card SCL2 X2: the shared history changes the rows, the fold and the carried
+        // variances (the remainder only); armed-only token with its rank.
+        if (ctx.knobs.carry_cpl_shx) add(fmt::format("shx:{}", ctx.knobs.shx_rank));
         // The bound raise (card CTU) moves the carried border block; the monitor alone is
         // trace class and stays out of the fingerprint.
         if (ctx.knobs.clm_raise)
@@ -2929,14 +2934,21 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
         // optional trailing L field, filled only when the ratio ceiling is armed, so a
         // default snapshot's L rows stay byte-identical.
         const bool l_var_first = ctx.knobs.pd_handover_max_var_ratio > 0.0;
+        // Card SCL2 X2: the history is not snapshotted, so a row is written with its marginal
+        // variance (var plus its history coefficients' squared norm); off, var as before.
+        const bool shx_marg = ctx.knobs.carry_cpl_shx;
         for (const auto& [key, lc] : local_carry) {
-            NetworkStateSnapshot::Local L{lc.value_abs, lc.var, lc.last_seen_s};
+            NetworkStateSnapshot::Local L{lc.value_abs,
+                                          shx_marg ? sharedHistoryMarginalVar(lc) : lc.var,
+                                          lc.last_seen_s};
             if (l_var_first) L.var_first = lc.var_first;
             snap.local_carry[key] = L;
         }
         for (const auto& [idx, lc] : zwd_carry)
             snap.zwd_carry[idx] =
-                NetworkStateSnapshot::Local{lc.value_abs, lc.var, lc.last_seen_s};
+                NetworkStateSnapshot::Local{lc.value_abs,
+                                            shx_marg ? sharedHistoryMarginalVar(lc) : lc.var,
+                                            lc.last_seen_s};
         snap.ura_refloat_horizon = ura_refloat_horizon;
         snap.ura_retro_sats      = ura_retro_sats;
         snap.retro_active        = retro_active;
@@ -4034,6 +4046,9 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // isolated prior when none does (a solve no-op on every other state), whichever branch
     // above ran, including none.  No-op off.
     networkClockCloneFoldEnd(ctx, ws, est, within_epoch_armed);
+    // Card SCL2 X2: the registered shared-history columns' N(0, 1) priors, independent of
+    // the border (filter/NetworkSharedHistory).  No-op off.
+    networkSharedHistoryFold(ctx, ws, est, within_epoch_armed);
     // The partial-support skip tally (card C-GF) is run-scoped on the estimator and is
     // read once at teardown; reading it here would miss the withdraw and
     // within-epoch-replay folds, which run after this point in the epoch.
@@ -4599,6 +4614,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             est.zeroPhaseGaugeColumns(cov_df);
             ccl_h = networkClockCloneHarvestBegin(ctx, est, plan.shared_datum, col2desc);
         }
+        // Card SCL2 X2: where each harvested row's entry is written, for the compression at
+        // the end (filter/NetworkSharedHistory).  Inert off.
+        SharedHistoryHarvest shx_h = networkSharedHistoryHarvestBegin(ctx, ccl_h);
         // Harvest one carried column's pure conditional variance (N_rr⁻¹)_cc and its
         // regression on the free shared border (identity-keyed, sparsified).
         // Returns {cond_var, coupling}; cond_var ≤ 0 on failure → the caller skips.
@@ -5238,6 +5256,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     }
                     nlc.n_folds = nlc_n_folds;
                     local_carry[lkey] = std::move(nlc);
+                    networkSharedHistoryNoteEntry(shx_h, est_idx, pa.col, SharedHistoryMap::Amb,
+                                                  static_cast<int>(i), pa.sat, pa.signal);   // card SCL2 X2; no-op off
                 }
                 if (hblk && cross.size() == hblk->C.rows()) {
                     // Local block (F3): row a of the station's harvest block is this
@@ -5365,6 +5385,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         ent.blk_idx = static_cast<int>(prow);
                     }
                     ctx.carry.pc_carry[{static_cast<int>(i), pp.sat}] = std::move(ent);
+                    networkSharedHistoryNoteEntry(shx_h, est_idx, pp.col, SharedHistoryMap::Pc,
+                                                  static_cast<int>(i), pp.sat);   // card SCL2 X2; no-op off
                     ++ctx.counters.n_pc_stash;
                     ctx.counters.pc_abs_sum += std::abs(value_abs);
                     ctx.counters.pc_sq_sum  += value_abs * value_abs;
@@ -5828,6 +5850,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         }
                     }
                     iono_blk_carry[key] = std::move(ent);
+                    networkSharedHistoryNoteEntry(shx_h, est_idx, icol, SharedHistoryMap::Iono,
+                                                  static_cast<int>(i), isat);   // card SCL2 X2; no-op off
                 }
             }
             // Decoupling edge (invariants #1 and #7): a LOS unseen past the horizon is
@@ -6023,6 +6047,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         }
                     }
                     rx_clk_carry[key] = std::move(ent);
+                    networkSharedHistoryNoteEntry(shx_h, est_idx, pr.col, SharedHistoryMap::RxClk,
+                                                  static_cast<int>(i), pr.kind);   // card SCL2 X2; no-op off
                 }
             }
             // Decoupling edge (invariants #1 and #7): a station unseen past the horizon
@@ -6120,6 +6146,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     }
                     if (!in_blk) ++ctx.counters.n_rxcb_blk_no_block;
                     rx_cb_carry[key] = std::move(ent);
+                    networkSharedHistoryNoteEntry(shx_h, est_idx, ccol, SharedHistoryMap::RxCb,
+                                                  static_cast<int>(i), cb_key);   // card SCL2 X2; no-op off
                     ++ctx.counters.n_rxcb_blk_harvested;
                     ++ctx.carry.rx_cb_harvested_total;
                 }
@@ -6255,6 +6283,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
                 zwd_carry[static_cast<int>(i)] =
                     LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
+                networkSharedHistoryNoteEntry(shx_h, est_idx, R.pl_zwd.col, SharedHistoryMap::Zwd,
+                                              static_cast<int>(i));   // card SCL2 X2; no-op off
                 // ZWD in the local block: row n of the station's harvest block is the
                 // ZWD column's own n_c read at every carried column (its last entry
                 // equals `var`, the pure conditional).  The entry then points at the same
@@ -6312,6 +6342,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         // Card SCL: every carried column of every station is harvested; add the clones'
         // within-station conditional covariance to the F3 blocks.  No-op off.
         networkClockCloneHarvestEnd(ccl_h, ctx);
+        // Card SCL2 X2: with every carried row of the network harvested, compress the rows'
+        // shared conditional term into the history and add each row's remainder (B1's end
+        // above returns at once under X2).  No-op off.
+        networkSharedHistoryHarvestEnd(shx_h, ccl_h, ctx, pl_now_s);
         // --- RPB carry (card 3, eq34): harvest δ̂_{r,σ}, stash and prune ----------
         // Mirrors the ZWD harvest.  There is no card-1 coupling harvest for RPB
         // columns, on purpose: coupling rows would give the RPB a de facto

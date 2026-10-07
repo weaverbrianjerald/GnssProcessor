@@ -4826,6 +4826,39 @@ namespace GnssProcessor {
                       "clones marginalized, and the harvest marginalizes them out of every row.  "
                       "UNVALIDATED; run-end line in the card CTU block.");
         }
+        // The shared history (card SCL2 X2): the clones' shared conditional, which B1's
+        // per-station harvest drops across stations, kept as at most k constant border
+        // columns per cloned clock.  It is a mode of B1's harvest, so B1 must be armed (and
+        // with it, transitively, the exact update, the dense carry and B2).  The rank is
+        // checked whether or not the knob is armed: an out-of-range value is a typo.
+        network_carry_coupling_shared_history_ =
+            jval<bool>(json, "network.carry_coupling_shared_history",
+                       "carry_coupling_shared_history", false);
+        network_carry_coupling_shared_history_rank_ =
+            jval<int>(json, "network.carry_coupling_shared_history_rank",
+                      "carry_coupling_shared_history_rank", 1);
+        if (network_carry_coupling_shared_history_rank_ < 1
+            || network_carry_coupling_shared_history_rank_ > 8)
+            throw std::runtime_error(fmt::format(
+                "network.carry_coupling_shared_history_rank = {} is outside [1, 8] (card SCL2 X2: "
+                "history columns kept per cloned clock).",
+                network_carry_coupling_shared_history_rank_));
+        if (network_carry_coupling_shared_history_) {
+            if (!network_carry_coupling_clock_clone_)
+                throw std::runtime_error(
+                    "network.carry_coupling_shared_history requires "
+                    "network.carry_coupling_clock_clone = true (card SCL2 X2: the history is the "
+                    "clones' shared conditional, kept at B1's harvest).");
+            log->info("Network producer (card SCL2 X2): network.carry_coupling_shared_history = "
+                      "true, rank {}: at the harvest each carried row's terms on the clones and "
+                      "the previous history are regressed onto the free border and compressed "
+                      "across stations into at most {} history column(s) per cloned clock "
+                      "(prior N(0, 1), never emitted or stashed); the remainder is added per "
+                      "station and its cross-station part dropped (counted).  UNVALIDATED; "
+                      "run-end line in the card CTU block.",
+                      network_carry_coupling_shared_history_rank_,
+                      network_carry_coupling_shared_history_rank_);
+        }
         // Full marginalization of the coupling rows' SH-VTEC terms (card 1d-SH).  The SH
         // border is a mean-reverting GM (climatology-anchored), not the pure random walk
         // the κ update models, so shrink-carrying its terms compounds row weight against

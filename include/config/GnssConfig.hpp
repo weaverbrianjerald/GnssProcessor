@@ -2461,6 +2461,45 @@ namespace GnssProcessor {
         bool networkCarryCouplingClockClone() const { return network_carry_coupling_clock_clone_; }
 
         /**
+         * @brief Carry the clock clones' shared conditional as history columns
+         *        (@c network.carry_coupling_shared_history, card SCL2 build X2,
+         *        docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md).
+         *
+         * Card SCL's harvest marginalizes the clones out of every carried row one station at
+         * a time and drops the cross-station half of their conditional covariance; the exact
+         * recursion accumulates those pieces into a cross-station correlation of the carried
+         * ambiguities, so the per-station form freezes the satellite clock level at long
+         * horizons while its statement keeps shrinking (card SCL2 section 3).  With this knob
+         * the harvest regresses each row's terms on Y (the clones and the previous history)
+         * onto the free border, and at the harvest's end compresses the rows' shared term
+         * @f$R\,\Sigma_{Y\mid s}R^\top@f$ to its leading directions across stations, at most
+         * @ref networkCarryCouplingSharedHistoryRank per cloned clock: each row keeps its
+         * coefficients on those directions, the next epoch registers them as border columns
+         * after the clones (key @c "HIST|j", prior N(0, 1) independent of the border, read by
+         * the gate view as nuisance, never emitted, stashed or snapshotted), and the rows on
+         * card CTU's exact route emit them.  The remainder is added per row and within a
+         * station; its cross-station part is dropped and counted.  Exact when the shared
+         * term's rank is within the cap.  A row of an older compression marginalizes its
+         * history terms; the snapshot writes each row's marginal variance.
+         *
+         * Requires @ref networkCarryCouplingClockClone (hard error at load).  Fingerprinted
+         * (armed-only token with the rank); fresh convergence only.  Default false = card
+         * SCL's per-station harvest (byte-identical).  UNVALIDATED.
+         */
+        bool networkCarryCouplingSharedHistory() const { return network_carry_coupling_shared_history_; }
+
+        /**
+         * @brief History columns kept per cloned clock by
+         *        @ref networkCarryCouplingSharedHistory
+         *        (@c network.carry_coupling_shared_history_rank, card SCL2 X2).
+         *
+         * The compression keeps at most this many directions times the clones registered in
+         * the epoch.  Default 1, gate U2's decision (card SCL2 section 9); range [1, 8],
+         * checked at load whether or not the knob is armed.
+         */
+        int networkCarryCouplingSharedHistoryRank() const { return network_carry_coupling_shared_history_rank_; }
+
+        /**
          * @brief Fully marginalize the SH-VTEC coefficient terms of every coupling
          *        row instead of shrink-carrying them
          *        (@c network.carry_coupling_sh_marginalize, card 1d-SH).
@@ -9062,6 +9101,8 @@ namespace GnssProcessor {
         bool   network_carry_coupling_gauge_project_{false};   ///< Hold each (constellation,kind) coefficient sum of a truncated coupling row at its harvest value (card 1f), so a departed/re-realized column stops pinning the current datum gauge at the old realization (without it the null eigenvalue rose from 1e-11 to 9.43e-3 in one epoch, causing spurious over-specified withholds); requires carry_conditional_coupling.  Off = byte-identical.
         bool   network_carry_coupling_reinit_sources_{false};  ///< Key the coupling reinit history (kind,sat,signal) with an empty-signal sat-wide wildcard, feed it from the phase-anchor / eq34 / datum-slip re-reference sets, and honour it independently of carry_coupling_time_update (card 1g), so a re-realized column takes the departed route instead of folding a retired-frame ŝ_prev at full weight; requires carry_conditional_coupling.  Off = byte-identical.
         bool   network_carry_coupling_time_update_{false};  ///< Apply the border time update to each coupling row at injection (card 1d): shrink every present coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder equal to the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, card 1c).  Requires carry_conditional_coupling (hard error otherwise).  Off = raw harvested rows (byte-identical).
+        bool   network_carry_coupling_shared_history_{false};    ///< Card SCL2 X2: the clones' shared conditional carried as history columns.  Requires carry_coupling_clock_clone.  Off = card SCL's per-station harvest (byte-identical).
+        int    network_carry_coupling_shared_history_rank_{1};   ///< Card SCL2 X2: history columns per cloned clock, [1, 8].
         bool   network_carry_coupling_clock_clone_{false};   ///< Card SCL: carry the previous epoch's satellite clocks as one-epoch clone columns in the shared border (the rows keep their clock coefficients on the clone, the walk enters once in the border prior, the harvest marginalizes the clones).  Requires carry_coupling_exact_update and shared_carry_full_cov; refuses clock_model, clock_anchor_gauge_free and shared_carry_gauge_free.  Off = card CTU's per-row form (byte-identical).
         bool   network_carry_coupling_exact_cross_{false};   ///< Add the exact time update's within-station row covariance M_i'BM_k to the whitened local block (card WSX).  Requires carry_coupling_exact_update.  Off = the per-row form (byte-identical).
         bool   network_carry_coupling_exact_update_{false};  ///< Replace the card 1d scalar kappa by the exact conditional time update of the coupling rows (card CTU): M_new = (P_SS+Q_S)^-1 P_S,K M_K over the stashed dense border block with the fold's own inflation, the bracket variance added per row (the per-row form: no time-update covariance between rows), departed/decoupled columns re-attributed through P, the clock-family deficit onto the pinned pivot.  Requires carry_coupling_time_update and shared_carry_full_cov, refuses carry_coupling_joint_whiten.  Off = card 1d rows (byte-identical).

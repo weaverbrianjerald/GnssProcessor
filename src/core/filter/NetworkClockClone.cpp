@@ -114,10 +114,12 @@ bool networkClockCloneGateView(NetworkRunContext& ctx, NetworkEstimator& est,
                                Eigen::MatrixXd& out) {
     if (!ctx.knobs.carry_cpl_clone) return false;
     ClockCloneEpoch& E = ctx.carry.ccl;
-    if (E.col.empty()) return false;
+    // Card SCL2 X2: the shared-history columns follow the clones and are marginalized with
+    // them (numBorderNuisance; 0 history columns off, so this is the clones as before).
+    if (E.col.empty() && est.numHistoryColumns() == 0) return false;
     const Eigen::MatrixXd& N = est.reducedSharedNormals();
     const Eigen::Index n  = N.rows();
-    const Eigen::Index nc = est.numClockClones();
+    const Eigen::Index nc = est.numBorderNuisance();
     const Eigen::Index n0 = n - nc;
     if (nc <= 0 || n0 < 0 || N.cols() != n) return false;
     std::vector<Eigen::Index> ref;
@@ -536,13 +538,17 @@ ClockCloneHarvest networkClockCloneHarvestBegin(NetworkRunContext& ctx,
                                                 const NetworkEstimator::Datum& datum,
                                                 const std::map<Eigen::Index, CoupledShared>& col2desc) {
     ClockCloneHarvest h;
-    if (!ctx.knobs.carry_cpl_clone || est.numClockClones() == 0) return h;
+    // Card SCL2 X2: Y = the clones and the shared-history columns (numBorderNuisance equals
+    // numClockClones off), and the rows' conditional variance is deferred to the history's
+    // compression (filter/NetworkSharedHistory).
+    if (!ctx.knobs.carry_cpl_clone || est.numBorderNuisance() == 0) return h;
+    h.shx = ctx.knobs.carry_cpl_shx;
     ClockCloneCounters& C = ctx.counters.ccl;
     ++C.harvest_epochs;
     h.n_shared = est.numShared();
-    h.n0       = h.n_shared - est.numClockClones();
+    h.n0       = h.n_shared - est.numBorderNuisance();
     if (!est.cloneConditional(datum, h.K, h.B) || h.K.cols() != h.n_shared
-        || h.B.rows() != est.numClockClones()) {
+        || h.B.rows() != est.numBorderNuisance()) {
         ++C.harvest_noreg;
         h.noreg = true;
         return h;
@@ -624,11 +630,15 @@ void networkClockCloneHarvestRow(ClockCloneHarvest& h, NetworkRunContext& ctx,
         ++C.harvest_gauge_held;
         C.harvest_gauge_abs += std::abs(d);
     }
-    const double add = rc.dot(h.B * rc);
-    if (std::isfinite(add) && add > 0.0) cond_var += add;
     ++C.harvest_rows;
     C.harvest_reg_mass += moved.cwiseAbs().sum();
-    C.harvest_var_mass += std::max(0.0, add);
+    // Card SCL2 X2: the shared conditional term is not added per row; the compression at the
+    // harvest's end keeps it in the history and adds each row's remainder.
+    if (!h.shx) {
+        const double add = rc.dot(h.B * rc);
+        if (std::isfinite(add) && add > 0.0) cond_var += add;
+        C.harvest_var_mass += std::max(0.0, add);
+    }
     h.rc[{est_idx, local_col}] = rc;
 }
 
@@ -645,6 +655,7 @@ void networkClockCloneHarvestBlock(ClockCloneHarvest& h, std::size_t est_idx,
 
 void networkClockCloneHarvestEnd(ClockCloneHarvest& h, NetworkRunContext& ctx) {
     if (!h.on || h.rc.empty()) return;
+    if (h.shx) return;   // card SCL2 X2: the history's compression adds the within-station term
     long long pairs = 0;
     for (const ClockCloneHarvest::Blk& b : h.blocks) {
         Eigen::MatrixXd& Cb = b.blk->C;

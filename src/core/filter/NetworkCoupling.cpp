@@ -14,6 +14,7 @@
 #include "filter/NetworkYoungInflate.hpp"
 
 #include "filter/NetworkEstimator.hpp"   // est.clockColumn / phaseBiasColumn / codeBiasColumn / vtecCoeffColumn
+#include "filter/NetworkSharedHistory.hpp"   // sharedHistoryRowTerms (card SCL2 X2)
 #include "config/GnssConfigTypes.hpp"    // GlobalVtecShConfig::q_per_degree (couplingQ)
 #include "filter/StateKeySchema.hpp"     // StateKeys::parseSatPhaseBiasKey (card 1d dump)
 
@@ -357,6 +358,9 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
             rhs += e.m_shr * e.s_prev;
         }
     }
+    // Card SCL2 X2: off card CTU's exact route the history columns are not this row's
+    // generation, so its history terms are marginalized at their harvest variance.
+    if (shx) sharedHistoryRowTerms(*shx, lc, nullptr, dep_var, R.cxu);
     sigma2 = var_eff + dep_var + tu_var;
     if (!(sigma2 > 0.0) || !std::isfinite(rhs)) return false;  // skip: σ² ≤ 0 or non-finite RHS
     row.y = rhs;
@@ -517,6 +521,10 @@ bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
         rhs += d * pv->second.second;
         ++X.gauge_held;
     }
+    // Card SCL2 X2: the row's terms on the shared-history columns (constant, no walk, prior
+    // mean 0, so the right-hand side does not move; no gauge member, so no deficit); a stale
+    // generation or a column not registered marginalizes them.  No-op off.
+    if (shx) sharedHistoryRowTerms(*shx, lc, &emit, dep_var, X);
     if (xr.var_raw < 0.0) ++X.var_negative;
     X.var_add_sum += xr.var_add;
     ++X.rows_exact;

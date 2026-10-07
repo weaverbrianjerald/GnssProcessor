@@ -70,6 +70,7 @@ namespace GnssProcessor {
 
 struct NetworkRunContext;   // app/NetworkRunContext.hpp defines it as a struct
 struct EpochWorkspace;      // filter/NetworkRunTypes.hpp
+struct SharedHistoryState;  // filter/NetworkSharedHistory.hpp (card SCL2 X2)
 
 /// One term of a clone row: the coupling-row convention of @c CoupledShared.
 struct PbHoldCloneTerm {
@@ -123,6 +124,29 @@ struct PbHoldCloneOwn {
 struct PbHoldPair {
     std::vector<std::string> sig;   ///< one phase-bias signal per band, in band order
     std::vector<double>      w;     ///< the weights: sum 1, and sum w lambda^2 = 0
+};
+
+/**
+ * @brief Card SCL2 X2b (amendment A1): one clone row's terms in card SCL2's shared history.
+ *
+ * Under @c network.carry_coupling_shared_history with the smoothed hold armed, a clone row is
+ * not marginalized per row at the update: its coefficients @f$r_T@f$ on Y (the clock clones and
+ * the history columns) are kept pending (@ref rc) and projected at the harvest's end onto the
+ * coupling rows' kept directions of that epoch's compression ("form p"): with
+ * @f$F_T = r_T^\top L@f$ the row keeps @f$F_T V_{k_t}@f$ as its history coefficients (@ref coef,
+ * revised with the history columns at the next epoch's update) and adds
+ * @f$\lVert F_T V_{\text{rest}}\rVert^2@f$ to its own variance; the compression is unchanged.
+ * Empty off.
+ */
+struct PbHoldCloneShx {
+    std::vector<double> coef;   ///< history coefficients of the compression at @ref stash_s (m)
+    double stash_s{0.0};        ///< the compression (harvest second) @ref coef belongs to
+    Eigen::VectorXd rc;         ///< pending: the row's coefficients on Y at the update (m / m)
+    double rc_var{0.0};         ///< pending: @f$r_T^\top \Sigma_{Y\mid s} r_T@f$, the per-row term a failed projection adds (m^2)
+    long long rc_ep{-1};        ///< n_loop_epochs of the pending update (-1: none pending)
+
+    /// @return The pending share of the row's variance at epoch @p ep (0 when none is pending).
+    double pendingVar(long long ep) const { return rc_ep == ep ? rc_var : 0.0; }
 };
 
 /// The clone of one hold key.
@@ -183,6 +207,9 @@ struct PbHoldClone {
     double      pv_dw{0.0};                    ///< this epoch's fold inflation along D (0 with a key of the functional outside S) (m^2)
     PbHoldFollow follow{PbHoldFollow::None};   ///< the step a @c Followed death followed
     long long   died_ep{-1};                   ///< n_loop_epochs of the death
+    // Card SCL2 X2b: the rows' terms in the shared history (empty unless X2 is armed).
+    PbHoldCloneShx shx;                        ///< the clock row's
+    PbHoldCloneShx pv_shx;                     ///< card SMD: the phase-visible row's
 };
 
 /// The epoch-level inputs of @ref pbHoldCloneAdvance, built once per epoch.
@@ -368,13 +395,49 @@ struct PbHoldCloneMarg {
  * @param term_of_col column -> a term with its identity, value and variance; false when the
  *                    column has none (the coefficient is dropped, counted).
  * @param pin         constellation -> its datum-pinned clock (p_prev 0, with its column and value).
+ * @param defer_rc    card SCL2 X2b: non-null defers the conditional variance: the row's
+ *                    coefficients on the trailing block (Y = the clones and the shared
+ *                    history) are written here, @p var is not raised, and @c var_add reports
+ *                    the term that was not added (the harvest's end projects it,
+ *                    @ref PbHoldCloneShx).  Null (the default): the form above, byte for byte.
  * @return the counts; @c ok false (row untouched) when @p K / @p B are not shaped for @p n0.
  */
 PbHoldCloneMarg pbHoldCloneMarginalizeClones(
     std::vector<PbHoldCloneTerm>& terms, double& var, const Eigen::MatrixXd& K,
     const Eigen::MatrixXd& B, Eigen::Index n0,
     const std::function<bool(Eigen::Index, PbHoldCloneTerm&)>& term_of_col,
-    const std::map<char, PbHoldCloneTerm>& pin);
+    const std::map<char, PbHoldCloneTerm>& pin, Eigen::VectorXd* defer_rc = nullptr);
+
+/// Card SCL2 X2b: the counts of @ref pbHoldCloneAttachHistory.
+struct PbHoldCloneHistAttach {
+    int    n_terms{0};     ///< history terms attached on registered columns
+    int    n_marg{0};      ///< history terms marginalized (a stale generation or a column not registered)
+    double marg_var{0.0};  ///< their squared coefficients, added to the row's variance (m^2)
+};
+
+/**
+ * @brief Card SCL2 X2b: a clone row's history terms at the epoch after their compression.
+ *
+ * A history column is a constant of the epoch with the prior N(0, 1), so a term needs no time
+ * update: with the compression @p sh belongs to equal to the one whose columns are registered
+ * this epoch (@c shx.on and equal stamps), each nonzero coefficient becomes a term on its
+ * column (p_prev 1, s_prev 0) and the row's value takes its revision,
+ * @f$x_0 \mathrel{-}= h_j \hat z_j@f$; any other coefficient (a stale generation, a column not
+ * registered or outside @p x_s) is marginalized into @p var at its prior,
+ * @f$\sigma^2 \mathrel{+}= h_j^2@f$.  The coefficients are consumed (@c sh.coef cleared).  No-op
+ * on a row with no coefficient.
+ * @param shx    this epoch's shared-history state (registered columns and their compression).
+ * @param sh     the row's shared-history record.
+ * @param x_s    the shared-border solution.
+ * @param terms  the advanced row's terms (history terms appended).
+ * @param value  the row's value @f$x_0@f$, revised in place.
+ * @param var    the row's residual variance, raised in place by marginalized terms.
+ * @return the counts.
+ */
+PbHoldCloneHistAttach pbHoldCloneAttachHistory(const SharedHistoryState& shx, PbHoldCloneShx& sh,
+                                               const Eigen::VectorXd& x_s,
+                                               std::vector<PbHoldCloneTerm>& terms,
+                                               double& value, double& var);
 
 /**
  * @brief Re-express an advanced clone on a new stash (the re-harvest).

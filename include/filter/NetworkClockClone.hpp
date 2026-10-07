@@ -210,6 +210,9 @@ void networkClockClonePrepare(NetworkRunContext& ctx,
  * dropped.  The marginalization keeps the declared clock gauge null (the joint shift of
  * the clocks, the clones and the receiver clocks projects onto the clocks' shift), which a
  * principal sub-matrix would not.  The census (referenced, idle) is counted once per epoch.
+ * Card SCL2 X2: the shared-history columns, registered after the clones, are marginalized
+ * with them (the trailing @c numBorderNuisance columns), and an epoch with history columns
+ * and no clone forms the view too.
  * @param[out] out the view (left untouched when false is returned).
  * @return false when off, when no clone is registered, or when the eigensolve fails; the
  *         caller then reads @c est.reducedSharedNormals() as before.
@@ -322,14 +325,15 @@ void networkClockCloneRefloatTrim(EpochWorkspace& ws, const std::set<std::string
 struct ClockCloneHarvest {
     bool on{false};            ///< the regression is available: rows are marginalized
     bool noreg{false};         ///< clones are registered but the regression is not: clone terms are dropped (counted)
+    bool shx{false};           ///< card SCL2 X2: Y includes the shared history and the rows' conditional variance is deferred to its compression
     Eigen::Index n_shared{0};  ///< width of a regression row
-    Eigen::Index n0{0};        ///< first clone column
-    Eigen::MatrixXd K;         ///< clones x n_shared: E[c | s'] coefficients
-    Eigen::MatrixXd B;         ///< clones x clones: Var(c | s', data)
+    Eigen::Index n0{0};        ///< first clone column (card SCL2 X2: first column of Y = clones and history)
+    Eigen::MatrixXd K;         ///< clones x n_shared: E[c | s'] coefficients (X2: rows over Y)
+    Eigen::MatrixXd B;         ///< clones x clones: Var(c | s', data) (X2: Sigma_Y|s)
     std::vector<char> col_cc;  ///< per non-clone column: the constellation of a satellite clock column, '\0' otherwise
-    std::vector<char> clone_cc;///< per clone (column n0 + i): its constellation
+    std::vector<char> clone_cc;///< per clone (column n0 + i): its constellation ('\0' for a history column, card SCL2 X2)
     std::map<char, Eigen::Index> pin_col;   ///< constellation -> its datum-pinned clock column
-    std::map<std::pair<std::size_t, Eigen::Index>, Eigen::VectorXd> rc;   ///< (station, local column) -> the row's clone coefficients
+    std::map<std::pair<std::size_t, Eigen::Index>, Eigen::VectorXd> rc;   ///< (station, local column) -> the row's clone coefficients (X2: its Y coefficients)
     /// One station's F3 block, for the within-station term.
     struct Blk {
         std::size_t est_idx{0};
@@ -367,7 +371,11 @@ ClockCloneHarvest networkClockCloneHarvestBegin(NetworkRunContext& ctx,
  *        with @c p_prev = 0) restores the identity without moving the row's value, as card
  *        CTU's deficit rule does.  Without the regression the clone terms are dropped (as
  *        the identity-keyed harvest drops every column it does not know) and counted.
- *        No-op when @p h is inert or the row has no clone term.
+ *        No-op when @p h is inert or the row has no clone term.  Card SCL2 X2
+ *        (@c h.shx): Y is the clones and the shared history, a history column takes no
+ *        part in the clock-family deficit (it is no gauge member), and
+ *        @f$r_Y^\top \Sigma_{Y\mid s} r_Y@f$ is not added (the history's compression keeps
+ *        it shared and adds the row's remainder).
  */
 void networkClockCloneHarvestRow(ClockCloneHarvest& h, NetworkRunContext& ctx,
                                  std::size_t est_idx, Eigen::Index local_col,
@@ -382,7 +390,8 @@ void networkClockCloneHarvestBlock(ClockCloneHarvest& h, std::size_t est_idx,
 /// Add the within-station half of the clones' conditional covariance to each registered
 /// F3 block (card SCL): @f$C(a,b) \mathrel{+}= r_{C,a}^\top B' r_{C,b}@f$ over the pairs
 /// whose rows both had clone terms (the diagonal is the stashed variance, already raised
-/// by @ref networkClockCloneHarvestRow).  No-op when @p h is inert.
+/// by @ref networkClockCloneHarvestRow).  No-op when @p h is inert, and under card SCL2 X2
+/// (@c h.shx), whose compression adds the remainder's within-station term instead.
 void networkClockCloneHarvestEnd(ClockCloneHarvest& h, NetworkRunContext& ctx);
 
 /// The run-end line of card SCL and its INERT warning (invariant 4).  No-op off.

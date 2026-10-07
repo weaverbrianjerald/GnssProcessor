@@ -610,3 +610,8 @@ exactly reads 0.90 for hour 6 over hour 2 on this realization, and the mirrored 
 0.79 to 0.70. The level grade that separates a lock from code-consistency is d_e minus the code-following
 prediction, with z^2 against the code-only bound; it is the instrument for the next level card. Owed: whether the
 readmission seed's pre-park prior (variance 1.2e-2 to 1.8e-2 m^2) is consistent with a 12 to 55 min gap.
+
+## 13. Continued in card SCL2B (2026-10-07)
+
+Amendment A1's build (X2b), its grade against the section 11 table and the landing of X2 with X2b are recorded in
+[SCL2B](SCL2B_shared_history_with_the_hold_2026-10-07.md), this file being near the 60 KB bar.

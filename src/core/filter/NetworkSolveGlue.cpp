@@ -18,6 +18,7 @@
 #include "filter/NetworkChainDatum.hpp"
 #include "filter/NetworkClockAnchor.hpp"   // guarded temporal clock anchor (card Q3)
 #include "filter/NetworkClockClone.hpp"    // the one-epoch clock clone (card SCL)
+#include "filter/NetworkSharedHistory.hpp" // the shared history (card SCL2 X2)
 #include "filter/NetworkDatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "filter/NetworkFrameDiag.hpp"   // networkDatumInfoRatio (invariant #7)
 #include "filter/NetworkHandoverStransform.hpp"   // the clock-pivot handover S-transform (queue 1(b))
@@ -1991,6 +1992,9 @@ if (within_epoch_armed && carry_warm) {
             est.addSharedPriorDense(cap_dense_keys, cap_dense_cov, nullptr,
                                     ctx.knobs.carry_gauge_free,
                                     ctx.knobs.carry_gauge_free_closure);   // same fold as the primary solve (card C-GF)
+        // Card SCL2 X2: the shared-history columns' N(0, 1) priors, as the primary fold
+        // folded them after the clones'.  No-op off.
+        networkSharedHistoryReplayFold(ctx, ws, est);
         // Rebuild the ensemble phase-bias gauges on the fresh arrowhead (fix A):
         // beginEpoch reopened the layout, est_index_of was rebuilt above and
         // excluded stations may have dropped out, so the stored gauges' station

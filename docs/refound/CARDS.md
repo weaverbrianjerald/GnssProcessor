@@ -526,3 +526,9 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   2400); the dropped cross-station term compounds with the horizon. Build chosen by a fixture gate:
   the clone's shared conditional kept as bounded history columns, or the exact joint carry of the
   carried station-local columns on the dense border route.
+- [SCL2B](SCL2B_shared_history_with_the_hold_2026-10-07.md): open, 2026-10-07: card SCL2's continuation.
+  Amendment A1 (card SMH's hold rows projected onto X2's shared history) built and graded: the solve is X2's (hour-6
+  de-commoned level 0.017 / 0.019 m against B1 alone's 0.042 / 0.045, the statement consistent); the hold's walk-share
+  error halves against X2 and beats B1; the sim census passes (+0.0034 m) and the field census median passes, both at or
+  better than B1 alone. Failing: G1's ratio (the code's realization), G4's site count (the posture's, B1 alone worse),
+  the in-loop sim consumer in hours 2 and 3. Cost 1.100. X2 with X2b landed default off; nothing armed.

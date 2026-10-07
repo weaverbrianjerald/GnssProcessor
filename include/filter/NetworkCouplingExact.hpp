@@ -94,6 +94,12 @@ struct CouplingExactCounters {
     // Card SCL (network.carry_coupling_clock_clone): the rows' terms on the clock clones.
     long long rows_clone{0};         ///< exact rows with at least one term on a clock clone
     long long terms_clone{0};        ///< coefficients written onto clock clone columns
+    // Card SCL2 X2 (network.carry_coupling_shared_history): the rows' terms on the history.
+    long long rows_hist{0};          ///< exact rows with at least one term on a shared-history column
+    long long terms_hist{0};         ///< coefficients written onto shared-history columns
+    long long rows_hist_marg{0};     ///< rows whose history terms were marginalized (stale generation, card 1d route, column absent)
+    long long terms_hist_marg{0};    ///< history coefficients marginalized
+    double    hist_marg_var{0.0};    ///< their summed squares (m^2), added to the rows' variance
 
     /// The |rho| bin of card WSX's histogram.
     static int crossRhoBin(double r) {
@@ -117,6 +123,9 @@ struct CouplingExactCounters {
         cross_blocks += o.cross_blocks; cross_pairs += o.cross_pairs;
         cross_pairs_skipped += o.cross_pairs_skipped; cross_abs_sum += o.cross_abs_sum;
         rows_clone += o.rows_clone; terms_clone += o.terms_clone;
+        rows_hist += o.rows_hist; terms_hist += o.terms_hist;
+        rows_hist_marg += o.rows_hist_marg; terms_hist_marg += o.terms_hist_marg;
+        hist_marg_var += o.hist_marg_var;
         for (int c = 0; c < 2; ++c) {
             for (int b = 0; b < kCrossRhoBins; ++b) cross_rho_hist[c][b] += o.cross_rho_hist[c][b];
             if (o.cross_rho_max[c] > cross_rho_max[c]) cross_rho_max[c] = o.cross_rho_max[c];

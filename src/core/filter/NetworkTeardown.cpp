@@ -13,6 +13,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "filter/NetworkClockClone.hpp"   // networkClockCloneTeardown (card SCL)
+#include "filter/NetworkSharedHistory.hpp" // networkSharedHistoryTeardown (card SCL2 X2)
 #include "filter/NetworkChannelAll.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "measurement/MeasurementModel.hpp"   // complete type for NetStation::mm
@@ -6079,6 +6080,7 @@ int networkTeardown(
                           "one): the knob is INERT for this run.");
         }
         networkClockCloneTeardown(ctx, log);   // card SCL: its run-end line and INERT warning; no-op off
+        networkSharedHistoryTeardown(ctx, log);   // card SCL2 X2: its run-end line and INERT warning; no-op off
         if (c.cxu_fold_reexpressed_in_s > 0 || c.cxu_fold_retired_in_s > 0)
             log->warn("Network (card CTU): at a clock-pivot handover the fold folded {} key(s) "
                       "of S on a re-expressed variance and retired {}, after the coupling rows "

@@ -418,7 +418,7 @@ PbHoldCloneMarg pbHoldCloneMarginalizeClones(
     std::vector<PbHoldCloneTerm>& terms, double& var, const Eigen::MatrixXd& K,
     const Eigen::MatrixXd& B, Eigen::Index n0,
     const std::function<bool(Eigen::Index, PbHoldCloneTerm&)>& term_of_col,
-    const std::map<char, PbHoldCloneTerm>& pin) {
+    const std::map<char, PbHoldCloneTerm>& pin, Eigen::VectorXd* defer_rc) {
     PbHoldCloneMarg out;
     const Eigen::Index nc = B.rows();
     const auto is_clone = [&](Eigen::Index col) { return nc > 0 && col >= n0 && col < n0 + nc; };
@@ -484,11 +484,52 @@ PbHoldCloneMarg pbHoldCloneMarginalizeClones(
         ++out.n_held;
     }
     const double add = rc.dot(B * rc);
-    if (std::isfinite(add) && add > 0.0) {
+    if (defer_rc) {
+        // Card SCL2 X2b: the shared term stays with the row's Y coefficients, projected onto
+        // the history at the harvest's end; the per-row term is only reported.
+        *defer_rc = rc;
+        if (std::isfinite(add) && add > 0.0) out.var_add = add;
+    } else if (std::isfinite(add) && add > 0.0) {
         var += add;
         out.var_add = add;
     }
     terms = std::move(rest);
+    return out;
+}
+
+PbHoldCloneHistAttach pbHoldCloneAttachHistory(const SharedHistoryState& shx, PbHoldCloneShx& sh,
+                                               const Eigen::VectorXd& x_s,
+                                               std::vector<PbHoldCloneTerm>& terms,
+                                               double& value, double& var) {
+    PbHoldCloneHistAttach out;
+    if (sh.coef.empty()) return out;
+    const Eigen::Index nx = x_s.size();
+    // The registered columns are this compression's only when the stamps agree (the
+    // coupling rows' test, sharedHistoryRowTerms); any other coefficient is marginalized.
+    const bool gen = shx.on && std::abs(shx.stash_s - sh.stash_s) <= kSharedHistoryStampTol;
+    for (std::size_t j = 0; j < sh.coef.size(); ++j) {
+        const double h = sh.coef[j];
+        if (h == 0.0) continue;
+        const Eigen::Index col = (gen && j < shx.col.size()) ? shx.col[j] : Eigen::Index{-1};
+        if (col >= 0 && col < nx && std::isfinite(x_s(col))) {
+            // A constant of the epoch with the prior N(0, 1): no time update; the revision is
+            // its posterior against the prior mean 0.
+            PbHoldCloneTerm t;
+            t.kind   = SharedParamKind::Clock;   // empty satellite: no clock family (no deficit)
+            t.coeff  = h;
+            t.s_prev = 0.0;
+            t.p_prev = 1.0;
+            t.col    = col;
+            terms.push_back(t);
+            value -= h * x_s(col);
+            ++out.n_terms;
+        } else {
+            var += h * h;
+            out.marg_var += h * h;
+            ++out.n_marg;
+        }
+    }
+    sh.coef.clear();
     return out;
 }
 
@@ -500,6 +541,10 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
     auto& clones = ctx.carry.smh_clone;
     const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+    // Card SCL2 X2b (amendment A1): a row still pending from an earlier epoch never reached
+    // its compression; it takes the per-row term before it advances (no-op off).
+    const bool shx_on = ctx.knobs.carry_cpl_shx;
+    if (shx_on) networkSharedHistoryFinalizeHoldRows(ctx, ep - 1);
 
     // The clone lives while its parent's anchor is engaged (section 9).  A clock card Q3's
     // guard decoupled this epoch (a trip, a gap, a retired frame), or one whose fold this
@@ -706,10 +751,17 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
     Eigen::MatrixXd ccl_K, ccl_B;
     bool ccl_reg = false;
     std::map<char, PbHoldCloneTerm> ccl_pin;
-    const Eigen::Index ccl_n0 = est.numShared() - est.numClockClones();
-    if (!clone_of_p.empty()) {
+    // Card SCL2 X2: the regression is over Y = the clones and the shared history (equal to the
+    // clones off); these rows hold no history term, and r_C' B' r_C over Y's clone block is
+    // Var(c | s') with the history marginalized, the correct per-row marginal.
+    const Eigen::Index ccl_n0 = est.numShared() - est.numBorderNuisance();
+    // Card SCL2 X2b: with history columns registered this epoch the rows carry history terms
+    // (pbHoldCloneAttachHistory), which the same regression re-expresses, so it is formed
+    // whenever either kind of Y term can be present (the clones alone off).
+    const bool ccl_need = !clone_of_p.empty() || (shx_on && ctx.carry.shx.on);
+    if (ccl_need) {
         ccl_reg = est.cloneConditional(datum, ccl_K, ccl_B)
-               && ccl_K.cols() == est.numShared() && ccl_B.rows() == est.numClockClones();
+               && ccl_K.cols() == est.numShared() && ccl_B.rows() == est.numBorderNuisance();
         ClockCloneEpoch& E = ctx.carry.ccl;
         if (ccl_reg) {
             E.smh_reg = true;
@@ -736,16 +788,20 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
         return true;
     };
     // Re-express one advanced row; false (the row is then killed RowFailed) when it has clone
-    // terms and the regression is unavailable.  A no-op off (clone_of_p empty).
-    const auto ccl_marg = [&](PbHoldCloneStep& st) {
-        if (clone_of_p.empty()) return true;
+    // terms and the regression is unavailable.  A no-op off (clone_of_p empty).  Card SCL2 X2b:
+    // the row's Y coefficients (clones and history) are kept pending in @p sh, projected onto
+    // the history at the harvest's end, instead of adding r' B' r to the row now.
+    const auto ccl_marg = [&](PbHoldCloneStep& st, PbHoldCloneShx& sh) {
+        if (!ccl_need) return true;
         bool has_clone = false;
         for (const PbHoldCloneTerm& t : st.terms)
             if (t.col >= ccl_n0 && t.col < est.numShared()) { has_clone = true; break; }
         if (!has_clone) return true;
         if (!ccl_reg) return false;
+        Eigen::VectorXd rcY;
         const PbHoldCloneMarg mg = pbHoldCloneMarginalizeClones(st.terms, st.var, ccl_K, ccl_B,
-                                                                ccl_n0, ccl_term_of_col, ccl_pin);
+                                                                ccl_n0, ccl_term_of_col, ccl_pin,
+                                                                shx_on ? &rcY : nullptr);
         if (!mg.ok) return false;
         ClockCloneCounters& CC = ctx.counters.ccl;
         ++CC.smh_rows;
@@ -755,8 +811,31 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
         CC.smh_mass_dropped += mg.mass_dropped;
         CC.smh_gauge_held   += mg.n_held;
         CC.smh_gauge_orphan += mg.n_orphan;
-        CC.smh_var_add      += mg.var_add;
+        if (shx_on) {
+            sh.rc     = rcY;
+            sh.rc_var = mg.var_add;
+            sh.rc_ep  = ep;
+            ++ctx.counters.shx.hold_pending;
+        } else {
+            CC.smh_var_add += mg.var_add;
+        }
         return true;
+    };
+    // Card SCL2 X2b: the row's history terms of the previous compression (no-op off).
+    const auto shx_attach = [&](PbHoldCloneStep& st, PbHoldCloneShx& sh) {
+        if (!shx_on) return;
+        const PbHoldCloneHistAttach a =
+            pbHoldCloneAttachHistory(ctx.carry.shx, sh, x_s, st.terms, st.value, st.var);
+        SharedHistoryCounters& HC = ctx.counters.shx;
+        if (a.n_terms > 0) {
+            ++HC.hold_rows_hist;
+            HC.hold_terms_hist += a.n_terms;
+        }
+        if (a.n_marg > 0) {
+            ++HC.hold_rows_stale;
+            HC.hold_terms_stale += a.n_marg;
+            HC.hold_stale_var += a.marg_var;
+        }
     };
 
     for (auto& [key, c] : clones) {
@@ -767,7 +846,8 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
             killClone(ctx, c, st.death);
             continue;
         }
-        if (!ccl_marg(st)) {
+        shx_attach(st, c.shx);
+        if (!ccl_marg(st, c.shx)) {
             killClone(ctx, c, PbHoldCloneDeath::RowFailed);
             continue;
         }
@@ -830,7 +910,7 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
                 q += ga * gb * Sig(a, b);
             }
         }
-        c.vpost = c.var + q;
+        c.vpost = c.var + c.shx.pendingVar(ep) + q;   // X2b: the pending share is the row's
     }
 
     // Card SMD: the block clones, both rows on one lifetime.  The clock row takes card SMH's
@@ -880,8 +960,11 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
             }
             continue;
         }
-        // Card SCL: both rows re-expressed off the clones (no-op off).
-        if (!ccl_marg(sc) || !ccl_marg(sd)) {
+        // Card SCL: both rows re-expressed off the clones (no-op off); card SCL2 X2b: each
+        // row's history terms first.
+        shx_attach(sc, c.shx);
+        shx_attach(sd, c.pv_shx);
+        if (!ccl_marg(sc, c.shx) || !ccl_marg(sd, c.pv_shx)) {
             killBlock(ctx, c, PbHoldCloneDeath::RowFailed, ep);
             continue;
         }
@@ -961,11 +1044,11 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
             if (t.col >= 0 && t.p_prev > 0.0) gc[t.col] += t.coeff;
         for (const PbHoldCloneTerm& t : c.pv_terms)
             if (t.col >= 0 && t.p_prev > 0.0) gd[t.col] += t.coeff;
-        c.vpost    = c.var + quad(gc);
-        c.pv_vpost = c.pv_var + quad(gd);
+        c.vpost    = c.var + c.shx.pendingVar(ep) + quad(gc);
+        c.pv_vpost = c.pv_var + c.pv_shx.pendingVar(ep) + quad(gd);
         // Card REV: the row's stated variance of D(t0), the filtered variance of D now
         // (the functional alone) and the walk this epoch added along D.
-        c.pv_vd0 = pbHoldCloneRowValueVar(c.pv_terms, c.pv_var, Sig);
+        c.pv_vd0 = pbHoldCloneRowValueVar(c.pv_terms, c.pv_var + c.pv_shx.pendingVar(ep), Sig);
         std::map<Eigen::Index, double> gown;
         if (pcol >= 0 && pcol < nx) gown[pcol] += 1.0;
         for (std::size_t j = 0; j < np; ++j) gown[pb_col[j]] -= c.pv_pair.w[j];
@@ -977,6 +1060,10 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
 void networkPbHoldCloneHarvest(NetworkRunContext& ctx, const NetworkEstimator& est,
                                const Eigen::VectorXd& x_s, double now_s) {
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
+    // Card SCL2 X2b (amendment A1): the harvest's end, earlier in the epoch, projected every
+    // row the update kept pending; a row it did not reach takes the per-row term here, before
+    // the re-harvest (no-op off and when every row was projected).
+    networkSharedHistoryFinalizeHoldRows(ctx, static_cast<long long>(ctx.counters.n_loop_epochs));
     auto& clones  = ctx.carry.smh_clone;
     auto& pending = ctx.carry.smh_pending;
     if (clones.empty() && pending.empty() && ctx.carry.smh_block.empty()

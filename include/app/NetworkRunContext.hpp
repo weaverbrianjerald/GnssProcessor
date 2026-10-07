@@ -30,6 +30,7 @@
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactCounters (card CTU)
 #include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone (card SMH)
 #include "filter/NetworkClockClone.hpp"     // ClockCloneEpoch / ClockCloneCounters (card SCL)
+#include "filter/NetworkSharedHistory.hpp"  // SharedHistoryState / SharedHistoryCounters (card SCL2 X2)
 #include "filter/NetworkYoungInflate.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
 #include "filter/NetworkAnchorHygiene.hpp" // NetworkAnchorTallies (eq34 reattach hygiene)
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
@@ -258,6 +259,12 @@ namespace GnssProcessor {
         /// network.carry_coupling_clock_clone (card SCL): the previous epoch's satellite
         /// clocks as one-epoch clone columns in the shared border (filter/NetworkClockClone).
         bool carry_cpl_clone{};
+        /// network.carry_coupling_shared_history (card SCL2 X2): the clones' shared
+        /// conditional carried as history columns (filter/NetworkSharedHistory).
+        bool carry_cpl_shx{};
+        /// network.carry_coupling_shared_history_rank (card SCL2 X2): history columns kept
+        /// per cloned clock (1 to 8).
+        int  shx_rank{1};
         bool clm_on{};      ///< network.clock_level_monitor (card CTU): the level monitor, measure-only
         bool clm_raise{};   ///< network.clock_level_bound_raise (card CTU): raise the stashed block to the level bound
         int  clm_restore_credit_ep{};   ///< network.clock_level_restore_credit_ep (card CTU G5): epochs of code information the restored level is credited with (0 = all the snapshot's)
@@ -1033,6 +1040,7 @@ namespace GnssProcessor {
         std::map<char, std::pair<std::string, double>> cxu_pivot;  ///< constellation -> (pinned clock sat, pinned value) at the stash
         CouplingExactEpoch cxu_epoch;                       ///< this epoch's inputs; ok = false when off or unbuilt
         ClockCloneEpoch    ccl;                             ///< card SCL: this epoch's clock clones and the rows' copy of cxu_epoch (filter/NetworkClockClone); rebuilt every armed epoch, empty off
+        SharedHistoryState shx;                             ///< card SCL2 X2: the held compression and this epoch's history columns (filter/NetworkSharedHistory); not snapshotted, empty off
         std::map<std::string, double> clm_info;             ///< card CTU monitor: satellite -> accumulated code-only level information I_L (1/m^2), undecayed
         std::map<std::string, int>    clm_n;                ///< card CTU monitor: satellite -> epochs of code information accumulated
         std::map<std::string, double> clm_info_c;           ///< card CTU G5: satellite -> code-only level information in the constellation contrast, 1/(s0^2 Q) summed (1/m^2)
@@ -3883,6 +3891,7 @@ namespace GnssProcessor {
         long long cxu_fold_retired_in_s = 0;       ///< keys in S the fold retired at a handover (the rows carried them)
         long long cxu_pivot_missing = 0;       ///< built epochs with a clock constellation and no recorded pivot
         ClockCloneCounters ccl{};              ///< card SCL run totals (filter/NetworkClockClone)
+        SharedHistoryCounters shx{};           ///< card SCL2 X2 run totals (filter/NetworkSharedHistory)
         // Card PRM phase 1b: the decided-once fold disposition (networkCarryDecide before
         // PASS B, read by the rows and the fold).  prm_disp counts key-epochs by
         // (SharedParamKind, the disposition the fold applied); prm_departed the foldable

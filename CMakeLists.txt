@@ -248,6 +248,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkCouplingExact.cpp
     src/core/filter/NetworkClockClone.cpp
+    src/core/filter/NetworkSharedHistory.cpp
     src/core/filter/NetworkPhaseVisibleDiag.cpp
     src/core/filter/NetworkPbHoldClone.cpp
     src/core/filter/NetworkParamRegistry.cpp
@@ -281,6 +282,10 @@ if(MSVC)
     # tests/test_handover_stransform_dense.cpp (card SCL B2): the run-context headers plus the
     # explicit eigen-solve and inverse references cross the Debug section limit (C1128).
     set_source_files_properties(tests/test_handover_stransform_dense.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_network_shared_history.cpp (card SCL2 X2b, gate U5): the smoothed hold's
+    # clone types and the projection cases cross the Debug section limit (C1128).
+    set_source_files_properties(tests/test_network_shared_history.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
     # src/core/app/NetworkRunContext.cpp: card AIL's ambiguity-information instrument
     # (0f9b2a5) tipped it over the Debug section limit (C1128); Release was unaffected.
@@ -567,6 +572,7 @@ add_executable(gnss_tests
     tests/test_coupling_exact_update.cpp
     tests/test_coupling_long_horizon.cpp
     tests/test_network_clock_clone.cpp
+    tests/test_network_shared_history.cpp
     tests/test_ctu_level_guard.cpp
     tests/test_owd_wire_contract.cpp
     tests/test_reinflate_never_shrinks.cpp
