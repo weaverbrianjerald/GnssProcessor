@@ -5,7 +5,7 @@
 - **id:** NBP
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** PRE-REGISTERED 2026-10-07. Cards SCL, SCL2 and SCL2B measured the self-contained posture on a bed that writes the broadcast clock into a CLK product with each ephemeris cut-over's step removed. This card builds the posture natively: the producer reads SP3 orbits and the broadcast clock from the navigation file, selects the ephemeris by the bed's rule (the latest record transmitted at or before the epoch, healthy only), and keeps its a priori continuous with a per-ephemeris offset table, while the wire's clock refers to the stamped ephemeris (IODE) so a consumer holding that record reconstructs the same continuous clock. Nothing moves in the solve. Finding before the build: the shipped `apriori_source brdc_rts` path selects by the closest toe and differs from the bed's rule on 99.6 % of satellite-epochs (a priori difference p50 87 mm, max 1.12 m), so a real-time version of the measured posture needs this card's rule. Gates in section 5. BUILT, GRADED AND LANDED 2026-10-07 (sections 7 and 8): every gate passed; the native posture equals the bed to the print resolution (estimate, level, counters, consumers within 0.1 mm, both censuses median 0) at no cost; findings: the store's freshest-toe rule rejected the records the ttom rule stamps (a transmission-time insert added), the wire's C steps at the cut-overs so graders read C - O (an O trace), and the consumer's fallback for a satellite without a C record differs (did not act). Landed default off; nothing armed. MULTI-DAY READ (section 10): the self-contained native posture does not hold against the COD golden on DOY 130 to 132 (pooled median +0.017 m over hours 2 to 6, 40 % of site-days worse by more than 0.02 m; DOY 129 was its most favourable day), while it prevents ARHT00ATA's divergence; the attribution is owed.
+- **summary:** PRE-REGISTERED 2026-10-07. Cards SCL, SCL2 and SCL2B measured the self-contained posture on a bed that writes the broadcast clock into a CLK product with each ephemeris cut-over's step removed. This card builds the posture natively: the producer reads SP3 orbits and the broadcast clock from the navigation file, selects the ephemeris by the bed's rule (the latest record transmitted at or before the epoch, healthy only), and keeps its a priori continuous with a per-ephemeris offset table, while the wire's clock refers to the stamped ephemeris (IODE) so a consumer holding that record reconstructs the same continuous clock. Nothing moves in the solve. Finding before the build: the shipped `apriori_source brdc_rts` path selects by the closest toe and differs from the bed's rule on 99.6 % of satellite-epochs (a priori difference p50 87 mm, max 1.12 m), so a real-time version of the measured posture needs this card's rule. Gates in section 5. BUILT, GRADED AND LANDED 2026-10-07 (sections 7 and 8): every gate passed; the native posture equals the bed to the print resolution (estimate, level, counters, consumers within 0.1 mm, both censuses median 0) at no cost; findings: the store's freshest-toe rule rejected the records the ttom rule stamps (a transmission-time insert added), the wire's C steps at the cut-overs so graders read C - O (an O trace), and the consumer's fallback for a satellite without a C record differs (did not act). Landed default off; nothing armed. MULTI-DAY READ (section 10): the self-contained native posture does not hold against the COD golden on DOY 130 to 132 (pooled median +0.017 m over hours 2 to 6, 40 % of site-days worse by more than 0.02 m; DOY 129 was its most favourable day), while it prevents ARHT00ATA's divergence. ATTRIBUTED (section 12): the cost is the broadcast clock's information (+0.010 m pooled over hours 2 to 6, +0.077 m in hour 1); the regime on the COD a priori is near neutral (+0.002 m) and is what prevents ARHT00ATA's divergence, a candidate for the golden on its own.
 - **source:** [SCL](SCL_self_contained_clock_level_2026-10-03.md) sections 2 and 5 ("Not in this card"); [SCL2B](SCL2B_shared_history_with_the_hold_2026-10-07.md) (the posture as graded); the read-only map `runs/_scl2_handoff/threads/rep_nbp_map.md` (2026-10-07, main `6655ba4`)
 - **knobs / posture:** proposed, default off, fingerprinted (fresh convergence only): `network.apriori_source` value `sp3_brdc_clock` (with the sp3 posture's anchor sigma, not `brdc_rts`'s 3 m), `network.brdc_select` (`ttom`, the only rule at first). The loader requires card SMH's smoothed hold under the new value and refuses card LAH's phase-clock hold (valid only with a precise a priori, card SCL section 3.1). Nothing armed
 - **dates in the text:** 2026-10-07
@@ -200,3 +200,33 @@ health) -> native (n). On DOY 129 to 132 (c and c0 new on every day; DOY 129's g
 the 16-site census per arm. Read: the pooled median paired change over hours 2 to 6 of each step (c - g: the regime; c0 - c:
 G01; n - c0: the a priori's information, broadcast against COD), and the share of site-days worse by more than 0.02 m per
 step; the hour-1 change per step. No bar: an attribution, recorded before the next build is chosen.
+
+## 12. The attribution read (2026-10-07)
+
+Arms `runs/_rap_nbpa_{129,130,131,132}_{c,c0}` (6 h, the same exe), the G01-free COD root `runs/_nbpa_cod_nog01` (its DOY
+128 to 130 CLK files byte-identical to card SCL's `_scl_data_cod`), censuses `nbpac`, `nbpac0` (136 replays, all exit 0). The
+three steps add up to section 10's native-minus-golden per site-day exactly.
+
+| step (median, hours 2 to 6; worse / better at 0.02 m) | DOY 129 | DOY 130 | DOY 131 | DOY 132 | pooled 130 to 132 |
+| --- | --- | --- | --- | --- | --- |
+| c - g: the self-contained regime on the COD a priori | +0.0020 (3/3) | +0.0035 (3/2) | +0.0031 (1/3) | +0.0001 (2/2) | +0.0024, 12.5 % worse (7 better) |
+| c0 - c: G01 removed | -0.0011 (1/2) | -0.0004 (1/0) | -0.0004 (1/2) | -0.0019 (1/2) | -0.0007, 6.2 % (4) |
+| n - c0: the broadcast clock against COD (native) | +0.0034 (3/2) | +0.0115 (6/0) | +0.0061 (4/0) | +0.0180 (8/1) | **+0.0099, 37.5 % (1)** |
+| n - g (section 10) | +0.0030 (4/4) | +0.0191 (7/2) | +0.0090 (5/2) | +0.0171 (7/2) | +0.0171, 39.6 % (6) |
+
+Hour 1 alone, pooled over DOY 130 to 132: c - g +0.0155 m, c0 - c -0.0068, n - c0 +0.0765 (73 % of site-days worse).
+
+**Reading.** The cost of the self-contained posture is the broadcast clock's information, not the regime: n - c0 is the
+largest step on 14 of the 19 worse site-days, and carries the sites worse on every day (ASCG +0.100 / +0.058 / +0.031 /
++0.051 m, HARB +0.045 / +0.041 / +0.033 / +0.097 on DOY 129 to 132). The regime on COD is near neutral over hours 2 to 6
+and on its own prevents ARHT00ATA's divergence on DOY 131 (c - g -33.3 m; n - c0 +0.006 m): section 10's credit for ARHT
+belongs to the regime, not to the native posture. The chain is one ordering of two interacting factors (the broadcast
+clock under the golden's regime costs metres, card SCL section 3.1), and on DOY 130 to 132 the native machinery is equal to
+the bed only by construction (shown on DOY 129).
+
+Two consequences, both for the author. (1) The self-contained posture costs about 1 cm at the median over hours 2 to 6 and
+about 8 cm in hour 1 against a COD-based wire: the price of the broadcast clock under the present estimator, the target of
+the next level card. (2) The regime itself (q 5e-6, card SMH's smoothed hold, B1, B2, the keep, X2 with X2b) on the COD a
+priori is census-neutral against the golden over four days and removes ARHT00ATA's divergence, which card LAH's
+phase-clock hold (the golden's interim hold, valid only with a precise a priori) does not: a candidate for the golden on its
+own, outside this card's question, with its hour-1 change (+0.016 m pooled) to read first.
