@@ -1,16 +1,18 @@
-# CS — clock step signalling — 0 unsignalled steps, the 55.8 m consumer excursion gone
+# CS: clock step signalling
 
 **STATUS**
 
 - **id:** CS
 - **topic:** clock
 - **status:** closed
-- **summary:** clock step signalling — 0 unsignalled steps, the 55.8 m consumer excursion gone
+- **summary:** `network.clock_disc_jump_test` VALIDATED as the M4-contract fix: 0 unsignalled steps > 2 m and a byte-identical solve; the consumer's 55.8 m excursion falls to 2.7 m, missing its hour-4 bar.
 - **dates in the text:** 2026-09-14
-- **knobs / posture:** `network.clock_disc_jump_test`
-- **hashes named in the text** (commit / exe / byte-cert): `7a1cb9bf`, `b2f2587`, `58822e3`
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.20
+- **knobs / posture:** `network.clock_disc_jump_test` (default threshold 1.5 m); arm cs1 = the `_cm_c10` config, arm cs2 = the `_gl_on6` config (with the gross-LOS screen)
+- **hashes named in the text** (commit / exe / byte-cert): `7a1cb9bf` (GL worker exe), `b2f2587` (LV-SEED commit, R9), `58822e3` (GL worker commit, the part-B read)
+- **run dirs named in the text:** none as `runs/` paths; arms `_cm_c10`, `_gl_on6`, `_gl_rxoff6`, cs1, cs2
+- **source:** `docs/archive/SPEC_event_harness.md` §24.20 (with the §24.19 R9 results)
+
+**Outcome.** The questions: does arming the existing step test close the M4 contract, and did the 43 unsignalled steps sit on the satellite's elected phase anchor? (A) The contract holds with no mark storm, but after the marked G17 step the hour-4 consumer p50 (2.43 m) missed the 1.5 m bar. (B) 18 of 43 steps were on-anchor: the marking rule is the complete fix, the anchor election a partial lever. The knob is in the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) frozen posture and pinned in the goldens ([RF-3-prep](../../refound/RF-3-prep_golden_rebase_2026-09-15.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

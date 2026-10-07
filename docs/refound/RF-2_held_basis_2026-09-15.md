@@ -1,6 +1,20 @@
-# RF-2 — the phase datum as a HELD S-basis with every handover declared (2026-09-15)
+# RF-2: the phase datum as a held S-basis, every handover declared (2026-09-15)
 
-**STATUS:** open — **the central claim is validated on the field (the within-arc phase wire below RF-0 in every hour), the sim fails on a
+**STATUS**
+
+- **id:** RF-2
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** The held S-basis holds the field's phase wire below RF-0 in every hour; the sim FAILS (WL integers 99.0 % to 35.2 %) on one election defect, fixed by RF-2b.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** `network.phase_datum_held_basis` (default false) + `phase_anchor_min_age_ep` 10 + `phase_anchor_flag_quiet_ep` 5; interlocks: requires `float_kf` and `phase_datum_prioritized`; arms A3 + RF-2 on the RF-0 configs, 6 h cold; tests `tests/test_phase_held_basis.cpp` (15 cases)
+- **hashes named in the text:** commit `37e3a5c` on worker branch `worktree-agent-a2915f195d8518bf6`, merged; combined tree `89e78b4`; exe `4a084ad1…`; OFF smoke `47bc4e5a…`
+- **run dirs named in the text:** none
+- **source:** [RF-1-steps345](RF-1_steps345_mechanism_2026-09-15.md) (the pre-registration, bars and frozen reading)
+
+**Outcome.** The question: does holding each phase-datum basis ambiguity at its elected value, with every handover declared, stop the churn RF-1 exposed. The field passes I2 with 0 erases and 0 value drift, but its consumer FAILS I1 from hour 2, tracking a clock-level ramp (0.70 to 2.29 m), and PB marks reach 5.3× RF-0's count against a 1.5× bar. The authorized election fix and clock-ramp read were done by [RF-2b](RF-2b_election_fix_2026-09-15.md), which restored the sim and removed the ramp; the held basis with the float vehicle is the goldens' posture since 2026-09-22 ([GRB](GRB_golden_rebase_2026-09-22.md)).
+
+**Status as recorded (2026-09-15):** open — **the central claim is validated on the field (the within-arc phase wire below RF-0 in every hour), the sim fails on a
 single measured election defect (mine to authorize, one predicate), and the field's consumer now tracks a clock-level ramp that needs its own
 read**; the fix and the read are pre-registered below.  Worker branch `worktree-agent-a2915f195d8518bf6` (`37e3a5c` — one commit sectioned per
 item: items 1 / 3 / 4 are branches of one election function sharing one predicate and do not split into building intermediates), merged.

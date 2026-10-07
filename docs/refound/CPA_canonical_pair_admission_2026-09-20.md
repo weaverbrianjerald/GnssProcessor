@@ -5,11 +5,13 @@
 - **id:** CPA
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** CLOSED 2026-09-20, KEEP_OFF: built exactly (16 244 records withheld against the emulation's 16 014, 15 986 shared) and it does not reproduce the emulation, because the RINEX emulation also moved the producer's first-epoch canonical-signal latch at 13 stations; the gain belongs to that latch (section 5). Original summary: Build card, pre-registered 2026-09-20. A (station, satellite) epoch without the station's canonical phase and code on bands 1 and 2 is harmful to the network solve on both postures: a rising satellite tracked on its civil signals, a long stretch without the semi-codeless pair, the tail of a setting arc. Removed from the RINEX files by a rule a filter can run, the dual field network goes from 203 to 627 epochs below a decimetre of 720, its first hour from 0.53 to 0.19 m, and the triple network with L5 at all 59 stations from 6 to 461. The build moves the rule into the producer.
+- **summary:** CLOSED 2026-09-20, KEEP_OFF: canonical-pair admission is built exactly and FALSIFIED as the cause; the emulation's gain belonged to the first-epoch canonical-signal latch (card CSL).
 - **source:** [GRS](GRS_gap_reentry_per_signal_2026-09-20.md) sections 5 and 6; [AB2](AB2_l5_third_frequency_2026-09-20.md) sections 11 and 12; standing invariants 4, 6, 7
 - **knobs / posture:** new `network.canonical_pair_admission` (default false) and `network.canonical_pair_keep_epochs` (default 3); RF-0hv working bases with `gap_reentry_relevel` armed, dual and triple
 - **dates in the text:** 2026-09-20
-- **hashes / run dirs:** evidence arms `runs/_rap_{hH_dual_causal3,hI_dual_causal0,hG_tri_causal3,hJ_tri_causal0,hE_dual_edge,hA_tri_edge,hD_tri_noalt}`
+- **hashes / run dirs:** evidence arms `runs/_rap_{hH_dual_causal3,hI_dual_causal0,hG_tri_causal3,hJ_tri_causal0,hE_dual_edge,hA_tri_edge,hD_tri_noalt}`; exe `gnss_processor_cpa.exe`
+
+**Outcome.** The card asks whether admitting a (station, satellite) epoch only with its canonical band-1 and band-2 pair reproduces a RINEX emulation's gain (dual field 203 to 627 of 720 epochs below a decimetre, triple 6 to 461). The built rule withholds the same records (16 244 against 16 014, 15 986 shared) yet gives 16 epochs against 162 with no rule: B1 and B2 FAIL, B3 passes. The emulation had also moved the first-epoch latch at 13 stations, and that latch alone gives 601. Ledger row KEEP_OFF; the lever became [CSL](CSL_canonical_signal_latch_2026-09-20.md).
 
 ## 1. The rule
 

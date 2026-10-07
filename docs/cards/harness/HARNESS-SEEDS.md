@@ -1,16 +1,18 @@
-# harness seeds — seed hygiene and the fingerprint rule — every seed re-write and why the old snapshots stop being usable
+# harness seeds: seed hygiene, the ZWD seam reseed and the fingerprint rule
 
 **STATUS**
 
 - **id:** harness seeds
 - **topic:** harness
 - **status:** reference
-- **summary:** seed hygiene and the fingerprint rule — every seed re-write and why the old snapshots stop being usable
-- **dates in the text:** 2026-09-11 → 2026-09-12
-- **knobs / posture:** `network.zwd_seam_reseed`, `network.scoped_handover_response`, `network.handover_stransform`
-- **hashes named in the text** (commit / exe / byte-cert): `e90086f`, `c5b5df834d185ac8`, `ce8f64cbd3f77ace`, `d76a3d0709aeeaf2`, `542af66dcc9a7198`
+- **summary:** Reference: every harness leg arms `network.zwd_seam_reseed`, and each fingerprinted promotion forces a seed re-write; the `_v3` seeds replaced `_v2`, whose snapshots the promoted golden refuses.
+- **dates in the text:** 2026-09-11 to 2026-09-12
+- **knobs / posture:** `network.zwd_seam_reseed`, `network.scoped_handover_response`, `network.handover_stransform` (both fingerprinted); seed bases `golden_sim_tri_w6` and the campaign `zwdblk` configs
+- **hashes named in the text** (commit / exe / byte-cert): `e90086f` (main at the `_v2` exe `gnss_processor_seedv2.exe`, 3FDC5F8D…); seed fingerprints `c5b5df834d185ac8` and `ce8f64cbd3f77ace` (`_v2`), `d76a3d0709aeeaf2` and `542af66dcc9a7198` (`_v3`, exe `gnss_processor_stspromo.exe`, C2F2B297…)
 - **run dirs named in the text:** `runs/evleg_zwdseam_null`, `runs/evseed_quiet6h_v2`, `runs/simnet60_quiet_wu93_24h`, `runs/evseed_slipped6h_v2`, `runs/simnet60_campaign_wu93`, `runs/evseed_quiet6h`, `runs/evseed_quiet6h_v3`, `runs/evseed_slipped6h_v3`
-- **source:** `docs/archive/SPEC_event_harness.md` — 18, 18.1, 18.2
+- **source:** `docs/archive/SPEC_event_harness.md` §18 (18.1, 18.2)
+
+**Outcome.** A standing reference for seed hygiene. Every leg before 2026-09-11 (evening) restarted the ZWD channel at the seam: the null leg's ZWD truth rms read 0.061 to 0.081 m against the seed's 0.0076 m, and 0.0108 m with the reseed armed. Event-minus-null differences are unaffected; absolute ZWD levels read off old legs are superseded. A seed is paired with the exe and golden it was written under. `golden_sim_tri_w6`, the base of the `_v3` seeds, was RETIRED on 2026-09-15 ([RF-3-prep](../../refound/RF-3-prep_golden_rebase_2026-09-15.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,16 +1,18 @@
-# W6+SH arm — the W6+SH arm and its minimum-n ladder — the two-band wall is n-invariant, posture is the 16× lever
+# W6+SH arm: the W6+SH sim arm and its minimum-n ladder
 
 **STATUS**
 
 - **id:** W6+SH arm
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** the W6+SH arm and its minimum-n ladder — the two-band wall is n-invariant, posture is the 16× lever
+- **summary:** Built and graded: the two-band wall is one n-invariant L2W phase-bias near-null, not station support, and the satellite code-bias formal σ is optimistic (vf ~4.9e+05).
 - **dates in the text:** 2026-08-12
 - **knobs / posture:** `network.rank_gate_tol`, `network.cb_kaula_prior`, `network.trace_sat_bias_states`, `network.trace_rx_states`
 - **hashes named in the text** (commit / exe / byte-cert): `6bf857bb`, `521512b6`, `7aaa21eb`
 - **run dirs named in the text:** `runs/simnet300_wsh`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.7, 12.6
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.7, 12.6
+
+**Outcome.** On synthetic truth the near-null persists at 300 stations (8.97e-06 against 9.78e-06 at 50), so scaling the roster is FALSIFIED as the lever. The 4 h graded arm confirms the clock, receiver-DCB and iono exchange at 0.97× of ideal, with the pre-registered sign wrong. Rungs 2 and 6 were later re-read as SH-gate withholds ([chain-pin audit](../network-vehicle/CHAIN-PIN-AUDIT.md)). Posture proved the lever: the slant datum cut the code-bias vf about 16× on the triple-band bed ([slant + triple](../sim-bed/SIMNET-SLANT-TRIPLE.md)); the re-founding dropped SH ([program](../../refound/NETWORK_REFOUNDING_2026-09-14.md)). §12.6's two owed items are discharged nowhere later.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

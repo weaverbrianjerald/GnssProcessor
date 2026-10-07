@@ -1,16 +1,18 @@
-# FIELD harness — the 6 h field seed, the owed field legs for the sim-validated slip cards, and FP-1 / FP-2
+# FIELD harness: the 6 h field seed, the field legs for three slip cards, FP-1 and FP-2
 
 **STATUS**
 
 - **id:** FIELD harness
 - **topic:** harness
 - **status:** closed
-- **summary:** the 6 h field seed, the owed field legs for the sim-validated slip cards, and FP-1 / FP-2
-- **dates in the text:** 2026-09-11 → 2026-09-13
-- **knobs / posture:** `network.cycle_slip.mw_evidence_refloat`, `network.cycle_slip.common_band_scope`, `network.cycle_slip.if_phase_td_pairs`, `network.trace_rx_states`, `network.trace_zwd`, `network.trace_ionosphere`
-- **hashes named in the text** (commit / exe / byte-cert): `8d5dad6`, `e90086f`, `109a6b2`, `2587a51`, `545b8bdd2b638231`, `fb6f063ea23adf10`, `e6071f43`
-- **run dirs named in the text:** `runs/evseed_field6h`, `runs/evseed_field6h_on`, `runs/evseed_field6h_ev`, `runs/evleg_fp1_`
-- **source:** `docs/archive/SPEC_event_harness.md` — 20, 20.1, 20.2, 20.3
+- **summary:** `mw_evidence_refloat` gets a FIELD PIN; the common-band scope, `if_phase_td_pairs = all` and their two fixes stay FIELD EXCEPTIONS, because FP-2's 6 h twin FAILS on the slip-response cost.
+- **dates in the text:** 2026-09-11 to 2026-09-13
+- **knobs / posture:** `network.cycle_slip.mw_evidence_refloat`, `network.cycle_slip.common_band_scope`, `network.cycle_slip.if_phase_td_pairs`, the §22 reference-arc clause, `if_phase_td_ref_arm_all` (FP-2); trace extras `network.trace_rx_states`, `network.trace_zwd`, `network.trace_ionosphere`, `logging.enable_mw_slip_detector`; field golden `golden_field_gps_dual`
+- **hashes named in the text** (commit / exe / byte-cert): `8d5dad6` (main HEAD at the seed), `e90086f` (last code commit), `109a6b2` (main at the §20.1 exe), `2587a51` (write-seed `--extra`), `545b8bdd2b638231` and `fb6f063ea23adf10` (warm-resume fingerprints), `e6071f43` (FP-2 harness); exes `gnss_processor_fld.exe` (3FDC5F8D…), `gnss_processor_rs7.exe` (23C628B3…), FP-2 `AF418A9F…`
+- **run dirs named in the text:** `runs/evseed_field6h`, `runs/evseed_field6h_on`, `runs/evseed_field6h_ev`, `runs/evleg_fp1_*`; seeds `evseed_field6h_v5`, `evseed_field6h_v8`, twin `evseed_field6h_v8fp2`
+- **source:** `docs/archive/SPEC_event_harness.md` §20 (20.1 to 20.3)
+
+**Outcome.** The card asked whether three slip knobs pinned on the sim golden hold on the field, each priced by one injected event against a null. The evidence rule's feared population inverted (the L5 lanes are 0 % BIA-corrected) and its 6 h twin passed every bar. The legs found two defects (a seed that could not warm-resume, an untested IF-TD reference arc) and FP-1 a third, the reference-slip fan-out. With all three fixed, FP-2's 60-epoch matrix passed every gradeable gate but its twin FAILED (consumer rms +31 % against a 5 % bar). The re-run is owed as [REF-FAN](../slip/REF-FAN.md)'s field pin ([OPEN_ITEMS](../../status/OPEN_ITEMS.md) section D).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

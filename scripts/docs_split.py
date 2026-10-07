@@ -11,6 +11,9 @@ Usage
 -----
     python scripts/docs_split.py --sizes            # dry run: target sizes only
     python scripts/docs_split.py --build            # write cards + archive + stub
+                                                    #   (an existing card keeps its
+                                                    #   header; only the body is
+                                                    #   re-rendered)
     python scripts/docs_split.py --verify           # hash proof (prints hashes)
     python scripts/docs_split.py --tables           # markdown mapping tables
                                                     #   (for docs/REORG_PLAN.md)
@@ -101,6 +104,14 @@ def write_lf(path: str, text: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8', newline='\n') as fh:
         fh.write(text)
+
+
+def write_if_changed(path: str, text: str) -> None:
+    """write_lf, skipped when the content (line endings aside) is unchanged,
+    so a rebuild does not turn a CRLF checkout into a tree of spurious diffs."""
+    if os.path.exists(path) and read_lf(path) == text:
+        return
+    write_lf(path, text)
 
 
 def sha(text: str) -> str:
@@ -323,17 +334,33 @@ def do_build(maps, dry):
             by_target.setdefault(e['target'], []).append(e)
 
         sizes = []
+        marker = MARKER.format(doc=doc)
         for tgt, entries in by_target.items():
             content = build_target(doc, topic, tgt, entries, text)
+            # Since 2026-10-07 the header above the marker (title, STATUS,
+            # Outcome) is maintained by hand, and rule 2 appends results
+            # below the body.  An existing card is never re-rendered; one
+            # whose body no longer matches the archive is reported for
+            # --verify.
+            p = os.path.join(DOCS, tgt)
+            if os.path.exists(p):
+                old = read_lf(p)
+                if old.count(marker) == 1:
+                    old_after = old.split(marker, 1)[1]
+                    new_after = content[content.index(marker) + len(marker):]
+                    if not old_after.startswith(new_after):
+                        print(f'!! {tgt}: body differs from the archive; '
+                              f'left unchanged (see --verify)')
+                    content = old
             sizes.append((len(content.encode('utf-8')), tgt))
             if not dry:
-                write_lf(os.path.join(DOCS, tgt), content)
+                write_if_changed(p, content)
 
         stub = build_stub(doc, topic, m['title'], ordered)
         arch = ARCHIVE_BANNER + '\n' + text
         if not dry:
-            write_lf(os.path.join(DOCS, 'archive', doc), arch)
-            write_lf(src, stub)
+            write_if_changed(os.path.join(DOCS, 'archive', doc), arch)
+            write_if_changed(src, stub)
 
         sizes.sort(reverse=True)
         report.append((doc, len(text.encode('utf-8')), len(by_target),
@@ -407,17 +434,20 @@ def do_verify(maps):
             cursors[tgt] += n
         rebuilt = ''.join(rebuilt)
 
+        # Text after a card's verbatim body is a result appended under rule 2
+        # (docs/INDEX.md). The hash below proves every verbatim byte, so an
+        # appended tail is reported, not failed.
         tail = {t: len(b) - cursors[t] for t, b in bodies.items()
                 if len(b) != cursors[t]}
         h_arch, h_cards = sha(original), sha(rebuilt)
-        ok = (h_arch == h_cards) and not tail
+        ok = h_arch == h_cards
         print(f'{"PASS" if ok else "FAIL"}  {doc}')
         print(f'      archive sha256 {h_arch}')
         print(f'      cards   sha256 {h_cards}   '
               f'({len(set(e["target"] for e in ordered))} files, '
               f'{len(original)} chars)')
         if tail:
-            print(f'      trailing bytes not accounted for: {tail}')
+            print(f'      appended below the verbatim body (rule 2): {tail}')
         if not ok:
             bad += 1
     return 1 if bad else 0

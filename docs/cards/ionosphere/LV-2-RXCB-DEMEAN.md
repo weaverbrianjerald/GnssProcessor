@@ -1,16 +1,18 @@
-# LV-2 — rx-CB carry common-mode de-mean — works as designed, but the de-mean is NOT frame-invariant
+# LV-2: rx-CB carry common-mode de-mean
 
 **STATUS**
 
 - **id:** LV-2
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** rx-CB carry common-mode de-mean — works as designed, but the de-mean is NOT frame-invariant
-- **dates in the text:** —
-- **knobs / posture:** `network.rx_cb_carry_demean`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 4
+- **summary:** Do NOT arm for settled work: the de-mean is NOT frame-invariant, re-pinning the common mode to the frozen first-epoch `mean_λ(x_lin)`, and the level ramps +15 to +21 TECU past hour 2.
+- **dates in the text:** none (built and graded 2026-08-05, per [LV impl](../ionosphere/LV-IMPL-RECORD.md))
+- **knobs / posture:** `network.rx_cb_carry_demean` (+ `_min_stations`, default 8), loader default OFF, fingerprint `rxcbdemean:<min_sta>` nested in the conditional `rxcb:1`; counter `lv2_mu_frozen`; μ traced on `network_events.csv` (tier `lv2`)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none as `runs/` paths; arm `_ext63_gps_dual_20ep_a00gim_sl` ± de-mean
+- **source:** `docs/archive/SPEC_level_information_budget.md` §4; outcomes in §10.3, §10.4, §13 and §14 ([LV impl](../ionosphere/LV-IMPL-RECORD.md), [LV correction](../ionosphere/LV-CORRECTION-AND-12H.md))
+
+**Outcome.** The card asked whether a lag-1 Λ-weighted de-mean of the rx-CB carry's innovations frees the level's common mode while keeping the load-bearing difference rigidity. At 1 h, LV-1 + LV-2 lifted the a00 mean 16.36 → 35.09 TECU (GIM 32.24); the predicted skip-rate collapse MISSED (56.5 → 48.1 %). Σλ(innov−μ) = 0 holds in delta coordinates only, so a rolling memory became a frozen one (§13.2); at 12 h the LV stack averaged +13.85 TECU against the canonical −8.38 (§14). Verdict: do NOT arm ([LV](../ionosphere/LV-REF.md)); the harvest-side de-mean [S2H](../code-bias/S2H-HARVEST.md) later recorded LV-2 as superseded and forces it off.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

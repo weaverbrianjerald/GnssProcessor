@@ -1,16 +1,18 @@
-# queue 1(b) — the handover S-transform spec — the transform, its rank-1 specialization to a pin swap, INC-0..3 and the gates
+# queue 1(b): the clock-pivot handover S-transform spec
 
 **STATUS**
 
 - **id:** queue 1(b)
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the handover S-transform spec — the transform, its rank-1 specialization to a pin swap, INC-0..3 and the gates
-- **dates in the text:** 2026-08-04 → 2026-08-15
-- **knobs / posture:** `network.handover_stransform`, `network.handover_stransform_scope`, `network.handover_stransform_pb_shadow`, `network.handover_var_bump`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` — 8, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9
+- **summary:** Spec of the rank-1 clock-pivot carry S-transform (INC-0..3, six known-answer gates), unbuilt here; later built as specified and PROMOTED as `network.handover_stransform` on 2026-09-12.
+- **dates in the text:** 2026-08-04 (spec'd) → 2026-08-15 (absorbed into the pivot gauge SPEC)
+- **knobs / posture:** `network.handover_stransform`, `network.handover_stransform_scope`, `network.handover_stransform_pb_shadow`, `network.handover_var_bump` (all default OFF)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` §8, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9 (absorbed from `docs/SPEC_handover_stransform.md`, now in `docs/attic/`)
+
+**Outcome.** A clock-pivot handover skips the fold of every affected carried prior for one epoch, and that free fall re-levels the stiff states: the product discontinuity. The spec re-expresses the carry in the new datum instead, by a rank-1 update along the structural null direction (`c₀ = x_q_pre / v_c[q]`, a conservative diagonal variance bump). [Queue item 2](../network-vehicle/PIVOT-ELECTION-QUEUE2.md) §11 priced its target population near-empty and kept it deferred (2026-08-21). [PIVOT DEPARTURE](../network-vehicle/PIVOT-DEPARTURE.md) §19.6 built and PROMOTED it: wire gates pass at 250 to 575× back to control, gate 6 never fired. It runs on the current goldens ([PRM](../../refound/PRM_parameter_registry_2026-09-29.md) section 16.3).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

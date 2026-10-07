@@ -1,16 +1,18 @@
-# meas admission impl — the 2026-08-01 implementation record — every deviation from the spec, the gates as run, and the adversarial review
+# meas admission impl: the admission screen's implementation record
 
 **STATUS**
 
 - **id:** meas admission impl
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the 2026-08-01 implementation record — every deviation from the spec, the gates as run, and the adversarial review
+- **summary:** Admission screen: gates 1 to 4 PASS (BSHM00ISR G07, G16 refused at birth; the 83-epoch era-2 withhold era gone); gate 1b cannot pass in this tree; 5 to 7 ungraded.
 - **dates in the text:** 2026-07-31 → 2026-08-12
-- **knobs / posture:** `network.write_run_manifest`
-- **hashes named in the text** (commit / exe / byte-cert): `15629c86`, `0458c09a`
-- **run dirs named in the text:** `runs/ft63_adm_birth`, `runs/ft63_adm_birthoff`, `runs/ft63_adm_break`, `runs/ft63_adm_breakoff`, `runs/ft63_leg19_dwrat`
-- **source:** `docs/archive/SPEC_measurement_admission.md` — 9, 9.0b, 9.1, 9.2, 9.3, 9.4, 9.5, 9.5b, 9.6, 9.7, 9.8, 9.9, 9.10, 9.11, 9.12, 9.13, 9.13b, 9.13c, 9.14, 9.15
+- **knobs / posture:** `network.adm_screen`, `network.adm_trace` (measure-only, solve-inert), `adm_bound_m` (1000 m), `adm_min_sats` (4), `adm_max_frac`; not fingerprinted; `network.write_run_manifest` (six conditional fields); `tests/test_measurement_admission.cpp` (12 cases after the review)
+- **hashes named in the text** (commit / exe / byte-cert): `0458c09a` (`network_solution.csv` md5, census arm = OFF arm), `15629c86` (gate-1 smoke md5, unchanged by the unconditional refloat); exes `gnss_processor_adm.exe`, `gnss_processor_adm2.exe` (the fixed binary)
+- **run dirs named in the text:** `ft63_adm_{off,census,screen}` (smoke), `runs/ft63_adm_birth`, `runs/ft63_adm_birthoff`, `runs/ft63_adm_break`, `runs/ft63_adm_breakoff`, `runs/ft63_leg19_dwrat` (need not be re-run)
+- **source:** `docs/archive/SPEC_measurement_admission.md` §9, 9.0b, 9.1, 9.2, 9.3, 9.4, 9.5, 9.5b, 9.6, 9.7, 9.8, 9.9, 9.10, 9.11, 9.12, 9.13, 9.13b, 9.13c, 9.14, 9.15
+
+**Outcome.** The build record for the spec's §7 gates; the statistic is observed minus the state-free modeled value. The review's two confirmed defects were fixed, and every field number reproduced on the fixed binary. Gate 2 hit both predicted births within 0.1 %, with nothing between the worst healthy |z| (54.3 m) and the corrupt class; gate 3 kept a00 at 32 to 37 TECU through the break and retired the `dwrat` hunt. Gate 1b (OFF byte-identity) fails on two divergences that predate the card. Continued in [INC-4](../raim-qc/MEAS-ADMISSION-INC4-REENTRY.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

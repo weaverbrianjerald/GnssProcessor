@@ -5,18 +5,8 @@
 - **id:** HLT
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-09-25, NOT ARMED (section 4): default OFF and byte-identical (H0), both modes act as designed (H1); on 2 h arms of four beds and the 16-site census neither mode is consistently better, because any change of the satellite set or the pivot re-draws the ignition-frozen clock levels of card CLV (1.2 m rms per satellite on the sim); the pre-registered rule selects "exclude" but the GPS+Galileo sim loses 0.056 m in hour 2 with it, "pivot" leaves the wire's code level against CODE unchanged, and G01's data are usable (CODE carries it); the mode decision is the author's, sequenced behind card CLV. Original summary: Build card, pre-registered 2026-09-25 at the author's direction to make the network
-  path check the broadcast satellite-health flag (the health item card OWD sequenced in its
-  section 4). Health is consulted nowhere on the network path; on DOY 129 three processed
-  satellites are flagged all day, G01 (health 63 in all 14 records, the lexically first GPS
-  satellite and therefore the GPS clock pivot until its eclipse) and E14 and E18 (F/NAV 16,
-  I/NAV 130), while CODE's final products carry all three at full rate. Built default OFF as
-  `network.sat_health` with two modes measured side by side: "pivot" (the clock-pivot election
-  passes over an unhealthy satellite, whose observations stay) and "exclude" (the observations
-  of a satellite flagged at an epoch are removed at the synced-epoch door). The status at an
-  epoch is the record in force (latest clock epoch at or before it), per Galileo message
-  source, masked to the processed bands.
-- **source:** [OWD](OWD_owed_defects_2026-09-22.md) section 4 (health on the network path) and
+- **summary:** BUILT 2026-09-25, NOT ARMED: neither health mode is consistently better at 2 h, because any satellite-set or pivot change re-draws the ignition-frozen clock levels; the mode decision is the author's.
+- **source:** the author's direction of 2026-09-25 (the network path checks the broadcast health flag); [OWD](OWD_owed_defects_2026-09-22.md) section 4 (health on the network path) and
   section 1 (O3, the latch's healthy records); [CLV](CLV_clock_level_2026-09-22.md) section 8
   (the pivot as the clock level's reference)
 - **knobs / posture:** new `network.sat_health` (string `off` | `pivot` | `exclude`, default
@@ -24,11 +14,13 @@
   or loader default changed
 - **dates in the text:** 2026-09-25
 - **hashes / run dirs:** code in the session worktree on main `335f640` beside card CLV's
-  uncommitted return plan (default OFF); exe `gnss_processor_hlt.exe` sha256
+  uncommitted return plan (default OFF; both landed on main later in `a104614`, 2026-09-28); exe `gnss_processor_hlt.exe` sha256
   `52d9f74ddce0895535468492bc26356fdf36d7eb1dfaba4957ef9ca2d8ea4aad`; arms
   `runs/_rap_hlt_{f,s,fg,sg}_{g0,pv,ex}` (2 h); bases `runs/_rf0hv10_{field,sim}6`,
   `runs/_rap_gal_g5s_field6`, `runs/_rap_gal_g2b_sim6`; census keys `hltpv`, `hltex`
   (`runs/_rap_msc_<site>_hlt{pv,ex}_d`), paired against `rp1g0`
+
+**Outcome.** The question: whether the network should honour the broadcast health flag, set all day on DOY 129 for G01 (the GPS clock pivot), E14 and E18, which CODE carries at full rate. H0 and H1 PASS. The pre-registered rule selects "exclude" ("pivot" fails two bars), but "exclude" costs the GPS+Galileo sim 0.056 m in hour 2; NOT ARMED, sequenced behind card CLV, a 6 h pair owed for "pivot". Card [PAC](PAC_common_drift_pivot_clock_2026-10-01.md) later named the pivot mode a clock-product lever; card [SCL](SCL_self_contained_clock_level_2026-10-03.md) section 3.7 found the pivot does not decide the field's locked level.
 
 ## 1. The survey (measured before the build)
 

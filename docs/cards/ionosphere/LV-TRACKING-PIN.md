@@ -1,16 +1,18 @@
-# LV tracking pin — the tracking-pin fix, tested and FALSIFIED
+# LV tracking pin: the tracking-pin fix (a looser rx-CB carry), FALSIFIED
 
 **STATUS**
 
 - **id:** LV tracking pin
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the tracking-pin fix, tested and FALSIFIED
+- **summary:** FALSIFIED: loosening `network.rx_cb_carry_q` from 1e-9 to 1e-6 m²/s made the LV stack's ionosphere level drift worse and sooner instead of tracking.
 - **dates in the text:** 2026-08-05
-- **knobs / posture:** `network.rx_cb_carry_q`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 15, 15.1, 15.2
+- **knobs / posture:** `network.rx_cb_carry_q`; arm 29 (`_ext63_gps_dual_12h_lv125_q6.json`), single knob against arm 25 (the LV stack)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_level_information_budget.md`, sections 15, 15.1, 15.2
+
+**Outcome.** The question was whether letting the LV stack's frozen rx-CB pin decay on a physical timescale (tau about 2.8 h) would flatten its 12 h level ramp. Arm 29 did the opposite: the +20 TECU plateau arrived at hour 3 instead of hour 5 and the run ended at +25.5 TECU, still climbing, with carry mechanics healthy. FALSIFIED: the frozen pin was resisting the drift, and [card LV residual](../ionosphere/LV-RESIDUAL-EXTRAPOLATION.md) section 18.1 closes the q axis. The per-epoch data-derived level authority it called for moved, through [card S2H](../code-bias/S2H-HARVEST.md) section 31, to LV-6 ([SPEC_level_authority_internal.md](../../SPEC_level_authority_internal.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

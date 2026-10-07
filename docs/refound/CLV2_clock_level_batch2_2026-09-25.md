@@ -1,36 +1,33 @@
-# CLV2: the clock level, return-plan batch 2 (the free column's own level, the consumer's response)
+# CLV2: clock level return-plan batch 2 (free-column re-base, consumer response)
 
 **STATUS**
 
 - **id:** CLV2
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** NOT MERGED (section 6.8, 2026-09-28): the section 6 code stays on branch `wip/clv2-station-share` (`8d33b73`) as the record; the author chose a consistent recursion (the coupling rows' time update of card CLV section 6.4 item 1, confirmed as the lock by a switch-off test) over further out-of-solve level corrections. PHASE-EXACT RE-BASE READ (section 6, 2026-09-28): the estimator gives each level step back rigidly (clock and phase biases together) because every station's ambiguities and the held phase datum keep the ionosphere share of the old level, and because the arm lands on a still-loose level; moving the station states with the level (`network.clock_level_station_kappa` 0.713, built, default off) and arming on a settled level (arm after 20 epochs) make the wire phase-exact through hour 1 (0.001 to 0.005 m against 0.076 to 0.091) and remove the census cost (all 16 sites +0.007 / +0.001 m against +0.279 / +0.047; WTZZ00DEU 0.546 / 0.063 m); the sim level stays fixed (0.13 m) with its first hour worse (0.780 m), the split emulation fails its recovery with the delay (0.285 m), QUIN00USA and ARHT00ATA regress. Next: an arm gate on the carried variance. BATCH 3 READ (section 5, 2026-09-28): the census loss is in the wire's PHASE rows. A hybrid wire with the batch-1 base's code rows only costs the census nothing (C1W sites -0.001 / +0.001 m); with its phase rows only it reproduces the loss (+0.418 / +0.151 m, WTZZ00DEU 0.977 m in hour 1). The hold transfers each declared level step to the phase bias, the estimator keeps only part of it in the clock (median kept fraction 0.54 at the arm, 0.89 at 2 h), and the phase row moves by the remainder, exactly (0.07 to 0.09 m rms, band-common). ARHT00ATA's divergence is a consumer defect (card PBF). Revised batch 3: a phase-exact re-base. Earlier summary: BUILT 2026-09-25, NOT ARMED (section 4): C0 passes (default off byte-identical, the consumer knob never reaches the producer); R-A2 moves the wire's C1W - C1C bias to the dual-tracking stations (effect 0.182 to 0.055 m, against CODE 0.155 to 0.110 m) but see-saws with the solve (0.058 m per epoch, 340 breaks) and costs the census C1W sites hour 1; the consumer response repairs the split emulation's hour 1 (0.516 to 0.222 m) and does nothing at the census; the candidate fails C3 (census +0.32 / +0.11 m against the no-CLV wire, all of it at the 10 C1W sites). The field's cost is the C1W users', not in the consumer's phase-blind direction and not in the ionosphere-free code; batch 3 proposed. Original summary: Build card, pre-registered 2026-09-25 at the author's direction to continue card
-  CLV's return plan with batch 2 (card CLV section 8.6; the CLV file is near the size bar). Two
-  builds, default OFF: R-A2, each free same-band code-bias column (GPS C1W, Galileo C1X) re-based
-  from the same-band code difference at the stations that track both codes
-  (`network.clock_level_free_cb_rebase`); and the consumer's response to a declared level step,
-  a variance inflation along the stepped satellite's phase-blind ionosphere-ambiguity direction
-  (`network.closed_loop.level_step_inflate`). R-C's declaration of the pivot-referenced common
-  shift is sequenced again (section 2.3); R-B's datum pause is kept, its confirmation arm
-  dropped.
-- **source:** [CLV](CLV_clock_level_2026-09-22.md) sections 7 and 8 (the return plan and batch 1);
+- **status:** superseded
+- **summary:** SUPERSEDED (section 6.8) by card CTU's consistent recursion: R-A2 and the consumer response FAIL; a phase-exact re-base removed the field census cost but stays unmerged on a branch.
+- **source:** [CLV](CLV_clock_level_2026-09-22.md) sections 7 and 8 (the return plan and batch 1; pre-registered 2026-09-25 at the author's direction to continue it with batch 2, card CLV section 8.6, the CLV file being near the size bar);
   [GAL](GAL_gps_galileo_dual_2026-09-22.md) (the adoption this card unblocks)
 - **knobs / posture:** new `network.clock_level_free_cb_rebase` (bool, default false; inert
   unless `network.clock_level_carry`; fingerprinted `clv2:fcb`); new
   `network.closed_loop.level_step_inflate` (bool, default false) with
   `network.closed_loop.level_step_inflate_k` (default 1), derived into the consumer as
-  `processing.ssr_level_step_inflate` and `processing.ssr_level_step_inflate_k`; no golden,
-  ledger row or loader default changed
+  `processing.ssr_level_step_inflate` and `processing.ssr_level_step_inflate_k`; section 6:
+  `network.clock_level_station_kappa` (0.713 graded; branch only, default off); R-B's datum pause
+  kept, its confirmation arm dropped; R-C's common-shift declaration sequenced (section 2.3); no
+  golden, ledger row or loader default changed
 - **dates in the text:** 2026-09-25, 2026-09-28
 - **hashes / run dirs:** code in the session worktree on main `335f640` beside card CLV's batch 1
-  and card HLT (all uncommitted, default OFF); arms `runs/_rap_clv2_<bed>_<arm>` (2 h); census
+  and card HLT (all uncommitted, default OFF; landed on main later in `a104614`, 2026-09-28); arms `runs/_rap_clv2_<bed>_<arm>` (2 h); census
   keys `c2<arm>` (`runs/_rap_msc_<site>_c2<arm>_d`); result: exe `gnss_processor_clv2.exe` sha256
   prefix `9d2d7cb13ea9f886`; section 5: exe `gnss_processor_clv3.exe` sha256 prefix
   `77643cd1db6677d9`, census keys `t3g0`, `t3b1`, `gtg0`, `gtb1`, `hbb`, `hbc`, `hbp`, hybrid
   wires `runs/_hyb_g0_b1{code,phase,both}`; section 6: exes `gnss_processor_pxr.exe` `0e50c36f`,
   `gnss_processor_sk.exe` `7a52f580`, arms `runs/_rap_{pxr,sk,skc10,skc20,skc40,skc20cr}_*`,
-  census keys `sk20`, `sk20p`, `sk20pcr`
+  census keys `sk20`, `sk20p`, `sk20pcr`; section 6.8: the section 6 code kept on branch
+  `wip/clv2-station-share` (`8d33b73`), not merged
+
+**Outcome.** The question: whether batch 2 of card CLV's return plan removes the level re-base's cost to a cold consumer. C0 PASS; C1, C2 and C3 FAIL (the candidate costs the 10 C1W census sites +0.593 / +0.185 m). Section 5 places the loss in the wire's phase rows; section 6's phase-exact re-base takes the census to +0.007 / +0.001 m and meets section 5.5's bar through hour 1 only, but fails the split emulation's recovery (0.285 m) and costs the sim's first hour. NOT ARMED. The author chose a consistent recursion instead (section 6.8): card [CTU](CTU_coupling_time_update_2026-09-28.md), armed on the goldens by card [EXL](EXL_exact_update_lah_promotion_2026-10-01.md) on 2026-10-01.
 
 ## 1. What batch 1 left, and what was measured before this build
 

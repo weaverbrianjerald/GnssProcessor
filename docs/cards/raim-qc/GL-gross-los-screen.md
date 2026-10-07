@@ -1,16 +1,18 @@
-# GL — the gross line-of-sight screen
+# GL: the gross line-of-sight screen
 
 **STATUS**
 
 - **id:** GL
 - **topic:** raim-qc
-- **status:** open
-- **summary:** the gross line-of-sight screen
+- **status:** closed
+- **summary:** BUILT default OFF: the screen collapses the station code-rms tail 13 to 16× but FAILS the 5 m, drift and hour-4 consumer bars; RF-3 later completed it, now ARMED.
 - **dates in the text:** 2026-09-14
-- **knobs / posture:** `network.gross_los_screen`
-- **hashes named in the text** (commit / exe / byte-cert): `87a33bf0`, `7702af1`, `8a018a3`, `2997163e`
-- **run dirs named in the text:** `runs/_gl_on6`, `runs/_gl`
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.18
+- **knobs / posture:** `network.gross_los_screen` with 9 companions (guards `gross_los_warmup_epochs` 120 and `gross_los_max_station_frac` 0.5, plus the deweight undo in the screen's statistic); arm = c10's posture plus the screen, 6 h, against `_cm_c10`
+- **hashes named in the text** (commit / exe / byte-cert): `7702af1`, `8a018a3` (worker commits, merged), `2997163e` (exe), `87a33bf0` (smoke, OFF and ON identical)
+- **run dirs named in the text:** `runs/_gl_on6`, `runs/_gl` (the diagnosis)
+- **source:** `docs/archive/SPEC_event_harness.md` §24.18
+
+**Outcome.** The question: why post-fit RAIM never acted on the gross code rows at DJIG/G06 and BSHM00ISR (every acting tier pools phase rows only), and whether a code-row screen stops the hours 3 to 6 drift. The station max fell to 5.4 to 6.8 m (bar 5 m, control 84 to 91 m); the hour-4 consumer p50 was 25.5 m (control 1.41 m) after ten G17 lines of sight were declared at once. The stand-down and the second drift channel went to [GL-2](../raim-qc/GL-2-whole-satellite-standdown.md); [RF-3](../../refound/RF-3_code_row_qc_2026-09-22.md) completed the screen, ARMED 2026-09-22 ([ledger A11](../../CONFIG_promotion_ledger.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -5,11 +5,13 @@
 - **id:** AB1
 - **topic:** ionosphere
 - **status:** parked
-- **summary:** First add-back on the held-wire posture, PARKED 2026-09-20: the frozen rule fails (on the sim, with truth, a causal global SH product beats the dual-frequency consumer's own ionosphere knowledge for 2 epochs only), so the consumer constraint is KEEP_OFF. The field is SPECIFIED as a product in its own right (causal, degree 6, 25 degree mask, per-satellite and per-station bias terms, 0.45 m vertical sigma) and not built. The slant ionosphere of BSHM00ISR is gross and poisons any field fit.
+- **summary:** PARKED: the frozen rule FAILS (sim with truth: a causal SH product beats the consumer's own ionosphere only through arc age 2), so the consumer constraint is KEEP_OFF and the field is SPECIFIED, not built.
 - **source:** [NETWORK_REFOUNDING](NETWORK_REFOUNDING_2026-09-14.md) (the add-back list); [PBH](PBH_phase_bias_hold_2026-09-19.md) section 8 (the baseline pair); code census of 2026-09-20
-- **knobs / posture:** none yet; RF-0hv working bases at main `bbb2663`; baseline pair `runs/_rf0hv3_{field,sim}6`
+- **knobs / posture:** none built; `closed_loop.consume_network_iono` stays armed and dead (no supply without `sh_model`); RF-0hv working bases at main `bbb2663`; baseline pair `runs/_rf0hv3_{field,sim}6`. The product as specified: causal, degree 6, 25 degree mask, per-satellite and per-station bias terms, 0.45 m vertical sigma
 - **dates in the text:** 2026-09-20
-- **hashes / run dirs:** `runs/_rf0hv3_{field,sim}6` (wire `bbaa7fd6...` field, `ea3a646f...` sim); `runs/_ab1_proto_20260920/`
+- **hashes / run dirs:** `runs/_rf0hv3_{field,sim}6` (wire `bbaa7fd6...` field, `ea3a646f...` sim); `runs/_ab1_proto_20260920/`; diagnostic arm `runs/_diag_field6_noBSHM` (exe `gnss_processor_pbh1.exe`)
+
+**Outcome.** The first add-back on the held-wire posture asked whether a post-solve SH VTEC field beats the dual-frequency consumer's own ionosphere for the first 10 epochs of an arc on both beds. The best causal variant loses on the sim from arc age 3 and never wins on arcs born after hour 1. The per-satellite bias term is decisive (field withheld-station error 0.296 m, 0.968 m without it). BSHM00ISR's gross slant ionosphere poisons any field fit; dropping that station brings the clock wire 2.6 times closer to COD within arcs but worsens the cold consumer's 3D median. PARKED until a consumer for the product exists ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)).
 
 ## 1. What the census found (2026-09-20)
 

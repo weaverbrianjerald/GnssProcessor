@@ -1,16 +1,18 @@
-# W6+SH brief — the design brief for the W6+SH synthetic arm — superseded by the arm itself
+# W6+SH brief: design brief for the W6+SH synthetic arm
 
 **STATUS**
 
 - **id:** W6+SH brief
 - **topic:** sim-bed
 - **status:** superseded
-- **summary:** the design brief for the W6+SH synthetic arm — superseded by the arm itself
+- **summary:** Design brief superseded by the built arm: item 1 (scale the roster to ~300) FALSIFIED, item 3 MOOT, items 2, 4 and 5 implemented as written.
 - **dates in the text:** 2026-08-12
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `estimate_iono_sh`, `estimate_sat_code_bias`, `corrections.signal_bias`, `cycle_slip.if_phase_td`, `cycle_slip.datum_station_detect`
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/cbq_elcut25`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §11
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §11
+
+**Outcome.** The brief planned to run the field's wander-bearing W6+SH posture on synthetic truth so the clock, code-bias and ionosphere exchanges decompose exactly. The arm was built and measured the same day ([W6+SH arm](../sim-bed/SIMNET-W6SH-ARM.md)): the 50-station wall is one uncounted, n-invariant L2W phase-bias near-null, not station support, and under `estimate_iono_sh` the external GIM is never loaded. Item 4's elevation-cutoff truth A/B ran in [elev-cutoff A/B](../ionosphere/ELEV-CUTOFF-AB.md); item 1's fallback, a third sim band, is what worked ([slant + triple](../sim-bed/SIMNET-SLANT-TRIPLE.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,16 +1,18 @@
-# 60-sta campaign — the first long / multi-GNSS / realistic-slip grade — full record in the slip re-level walk card
+# 60-sta campaign: the first long, multi-GNSS, realistic-slip grade
 
 **STATUS**
 
 - **id:** 60-sta campaign
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** the first long / multi-GNSS / realistic-slip grade — full record in the slip re-level walk card
+- **summary:** Slip detection passes at 60 stations (94.1 % of 2,486 slips), but each refloat re-levels from one epoch of code and the level channels walk to metres unseen.
 - **dates in the text:** 2026-08-20
-- **knobs / posture:** —
+- **knobs / posture:** `raim_arc_persist_epochs`; 60 sta + consumer, GPS+GAL triple+triple, field-N, 720 epochs
 - **hashes named in the text** (commit / exe / byte-cert): `1b9e157`
 - **run dirs named in the text:** `runs/simnet60_campaign`, `runs/simnet60_quiet`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §16
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §16; full record `docs/SPEC_slip_relevel_walk.md`
+
+**Outcome.** The card holds the headlines of the first 6 h, multi-GNSS, field-N truth grade with a natural slip population; the full record is [SPEC_slip_relevel_walk](../../SPEC_slip_relevel_walk.md). The levels random-walk √t to ~6.5 m ZWD and 14 m clock contrast while σ̂₀, the rank gate, A4 and R stay silent; the quiet twin converges (ZWD 0.15 m). The `raim_arc_persist_epochs` spike premise is falsified on this error class. That record's §8 kills the walk under `network.cycle_slip.relevel_free_epoch`, which CLAUDE.md (wu93 amendment 2) arms on slipped sim postures.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

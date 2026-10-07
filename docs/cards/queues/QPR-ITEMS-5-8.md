@@ -1,16 +1,18 @@
-# QPR 5–8 — items 5–8: the level contract, the half-epoch back-off ritual, the SH health-gate release policy, and the per-LOS ionosphere representation
+# QPR 5–8: level contract, half-epoch back-off, SH-gate release, per-LOS iono
 
 **STATUS**
 
 - **id:** QPR 5–8
 - **topic:** queues
 - **status:** open
-- **summary:** items 5–8: the level contract, the half-epoch back-off ritual, the SH health-gate release policy, and the per-LOS ionosphere representation
+- **summary:** Item 8's ionosphere error PERSISTS with SH on and 8(b) is FALSIFIED; item 7's A4 escalation VALIDATED, promotion REFUSED; items 5, 6 and 7's SH-gate half stay owed.
 - **dates in the text:** 2026-08-14 → 2026-08-21
 - **knobs / posture:** `network.level_authority_csgf`, `network.raim_withhold_adapt_escalate`, `network.estimate_iono_sh`, `network.carry_iono`
 - **hashes named in the text** (commit / exe / byte-cert): `65ba362`, `a4b3eee9`
 - **run dirs named in the text:** `runs/t3iono`, `runs/q8a_ctl`, `runs/q8a_sh`, `runs/camp60_refprod`, `runs/camp60_f4`
-- **source:** `docs/archive/QUEUE_principled_replacements.md` — 5, 6, 7, 8
+- **source:** `docs/archive/QUEUE_principled_replacements.md`, items 5, 6, 7, 8
+
+**Outcome.** With the SH field on, item 8(a) moved the per-LOS interaction only 5 % (0.7061 to 0.6691 m), so the root is the representation; 8(b)'s carry family failed at all four arms (interaction 3.181 to 3.800 m; the CS-GF pre-registration required ≤ 2.0), and the 8-family closed on 2026-08-21 with the O2 accumulator unbuilt. Item 7's escalation cut the A4 era from 29 withheld epochs to 1, but the settled-σ̂₀ gate FAILED (2.42 against ≤ 1.35). Item 5's LV-6 census later failed both gates, so its fold stage did not open ([SPEC_level_authority_internal.md](../../SPEC_level_authority_internal.md) §6.3); item 6 is unbuilt.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

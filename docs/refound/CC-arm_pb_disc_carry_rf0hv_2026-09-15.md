@@ -1,6 +1,20 @@
-# CC-arm — `pb_disc_carry` on RF-0hv, both beds: the carry is EXACT and it kills the ramp, but it FAILS two of the five bars because a reset the wire deserved was also dumping error (2026-09-15)
+# CC-arm: `pb_disc_carry` armed on RF-0hv, both beds (2026-09-15)
 
-**STATUS:** open — **one config-only knob armed on both beds, two runs spent, no code built, no golden and no ledger touched, nothing promoted.**
+**STATUS**
+
+- **id:** CC-arm
+- **topic:** consumer
+- **status:** superseded
+- **summary:** FAIL (C1, C3): the declared-step carry is exact, leaves the wire byte-identical and kills the hour-6 ramp, but misses the event-window bar and worsens hours 4 and 5; not adopted.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** `network.closed_loop.pb_disc_carry` (derived onto the consumer as `processing.ssr_phase_bias_disc_carry`), graded with the `network.trace_consumer_sat` instrument; RF-0hv working posture, no code change
+- **hashes named in the text:** exe `build/x64-Release/gnss_processor_ccarm.exe` `5D8AA185319293F0` (main `1ee5204`); `products.txt` `4F513E762F292337` (field) and `D9280279A6BBCCD8` (sim), both equal to the baseline
+- **run dirs named in the text:** `runs/_ccarm_field6_both`, `runs/_ccarm_sim6_both`; baselines `runs/_rfpdfix_field6_both`, `runs/_rfpdfix_sim6_both`; instrument bed `runs/_cst_field6_both`; grader `scripts/cc_arm_grade.py`
+- **source:** [CST](CST_consumer_sat_trace_2026-09-15.md) section 7.1 (the experiment and its bars); card [CC](../cards/consumer/CC-declared-step-carry.md) (the mechanism)
+
+**Outcome.** The card asks whether card CC's declared-step carry joins the RF-0hv posture under CST section 7.1's bars. C0, C2, C4 and C5 PASS and hour 6 falls from 3.65 to 1.92 m; C1 FAILS at 1.404 m against 1.0, the residual being the undeclared `G32 L1W` step no carry can reach, and C3 FAILS on hours 4 and 5 because two mass resets that had been dumping ambiguity error are no longer taken. The section 7.1 plus 7.3 pair it handed off failed in [JT](JT_pb_jump_test_decommon_2026-09-15.md). [PBT](PBT_consumer_pb_translate_2026-09-15.md)'s every-step translate superseded the carry and was adopted 2026-09-19 ([ALC2](ALC2_restart_policy_adoption_2026-09-19.md)), then switched off under the [PBH](PBH_phase_bias_hold_2026-09-19.md) hold.
+
+**Status as recorded (2026-09-15):** open — **one config-only knob armed on both beds, two runs spent, no code built, no golden and no ledger touched, nothing promoted.**
 CST §7.1 pre-registered the cheapest experiment the card ladder had: `network.closed_loop.pb_disc_carry: true` on the RF-0hv working posture,
 no new code at all.  It was run on both beds.  **The mechanism does exactly what card CC said it does and the wire never moves**: FIELD
 `events 390 → pb_disc_carried 390 / resets 0, closure HOLDS`, the per-cell trace goes `{none 11228, reset_disc 390}` → `{none 11228,

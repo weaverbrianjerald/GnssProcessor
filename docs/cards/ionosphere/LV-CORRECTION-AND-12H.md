@@ -1,16 +1,18 @@
-# LV correction — what LV-2 actually does and what LV-1 is really for — and the 12 h verdict that made the 1 h result an ignition transient
+# LV correction: what LV-2 pins, what LV-1 is for, and the 12 h verdict
 
 **STATUS**
 
 - **id:** LV correction
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** what LV-2 actually does and what LV-1 is really for — and the 12 h verdict that made the 1 h result an ignition transient
+- **summary:** LV-2 re-pins the common mode to the frozen epoch-1 `mean_λ(x_lin)`; at 12 h the LV stack ramps (a₀₀ − GIM mean +13.85 TECU, canonical −8.38): do NOT arm for settled work.
 - **dates in the text:** 2026-08-05
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 13, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 14, 14.1, 14.2, 14.3, 14.4
+- **knobs / posture:** none new (the arms combine the LV-1, LV-2, LV-4 and LV-5 knobs); grading tool `scripts/gim_global_mean_series.py`
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none (arms are named by config: `_ext63_gps_dual_1h_lv245`, `_ext63_gps_dual_1h_lv45{_lv1,}.json`)
+- **source:** `docs/archive/SPEC_level_information_budget.md` §13 (13.1 to 13.6) and §14 (14.1, 14.2, 14.3, 14.4)
+
+**Outcome.** Arms 23 and 27 showed LV-1 moving the level about 9 TECU with an identical fold set. LV-2 is the channel: its de-meaned targets average to the frozen epoch-1 linearization points, and LV-1 puts the receiver GF bias into that frame. Over 12 h (time-matched GIM), the stack's best-on-ladder ignition (+4.2) ramps to +15 to +21 TECU, and the canonical's DEFECT 2 is about half an ignition transient. The h0 and h11 target (≲ 4 TECU) went unmet: [LV tracking pin](LV-TRACKING-PIN.md) was FALSIFIED and [S2H](../code-bias/S2H-HARVEST.md) §31 moved the level authority to LV-6, whose census FAILED both gates ([QPR-ITEMS-5-8](../queues/QPR-ITEMS-5-8.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

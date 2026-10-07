@@ -1,16 +1,18 @@
-# Study 3 — band-scoped slip responses, the production knobs — the combined arm FAILS at storm scale
+# Study 3: band-scoped slip responses, the production knobs
 
 **STATUS**
 
 - **id:** Study 3
 - **topic:** slip
 - **status:** closed
-- **summary:** band-scoped slip responses, the production knobs — the combined arm FAILS at storm scale
+- **summary:** Both knobs KEEP_OFF: the detector scope is FALSIFIED on a genuine all-band slip, and the T4 erase scope alone collapses the integers at storm scale (settled WL down 28 points).
 - **dates in the text:** 2026-09-10
 - **knobs / posture:** `network.raim_erase_band_scope`, `network.cycle_slip.refloat_band_scope`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/evleg_z_slip3_on`, `runs/evseed_quiet6h`, `runs/evleg_z_`, `runs/simnet60_campaign_wu93`, `runs/golden_sim_campaign_zwdblk_bscope`, `runs/golden_sim_campaign_zwdblk_bscope_t4`
-- **source:** `docs/archive/SPEC_event_harness.md` — Z, Z.1, Z.2, Z.3, Z.4, Z.6, Z.5, Z.7
+- **source:** `docs/archive/SPEC_event_harness.md`, sections Z, Z.1, Z.2, Z.3, Z.4, Z.6, Z.5, Z.7
+
+**Outcome.** The study built the production form of Study 1's band-scoped responses: spare one band on a T4 attribution erase (`min_keep_one`) and on a detector refloat (`implicated`). On quiet-seed legs the erase scope cut the level floor 9x to 64x, while the detector scope made a genuine all-band slip 15x worse. The combined storm arm FAILED, and the T4-only arm (Z.7) reproduced the collapse (consumer settled p50 2.0x worse): a band kept by post-fit residual carries a wrong level about half the time. The band-scope twin of [Study 4](../slip/STUDY-4-slip-dose.md) (section 12.5) also FAILED; [Study 6](../slip/STUDY-6-common-band-scope.md) chose the band on set-theoretic evidence instead.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

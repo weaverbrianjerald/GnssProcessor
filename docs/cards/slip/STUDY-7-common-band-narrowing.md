@@ -1,16 +1,18 @@
-# Study 7 — the common-band scope's 3 cm is ONE wrong narrowing at 4.99 h
+# Study 7: the common-band scope's wrong narrowing at 4.99 h
 
 **STATUS**
 
 - **id:** Study 7
 - **topic:** slip
 - **status:** closed
-- **summary:** the common-band scope's 3 cm is ONE wrong narrowing at 4.99 h
+- **summary:** `common_band_scope` and `if_phase_td_pairs: all` RECOMMEND_ON together on the sim storm bed (settled consumer p50 0.174 to 0.120 m), over one missed "nothing worse than cbscope4" sub-gate.
 - **dates in the text:** 2026-09-11
 - **knobs / posture:** `network.cycle_slip.if_phase_td_pairs`, `network.clock_datum_broadcast_anchored`, `network.cycle_slip.common_band_scope`
 - **hashes named in the text** (commit / exe / byte-cert): `bbc8273`, `2d499e97`, `b268ac2`, `7dc36758`, `bd97b9b`
 - **run dirs named in the text:** `runs/golden_sim_campaign_zwdblk_cbscope4`, `runs/golden_sim_campaign_zwdblk_cbscope5`
-- **source:** `docs/archive/SPEC_event_harness.md` — 16, 16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 16.8
+- **source:** `docs/archive/SPEC_event_harness.md` §16 (16.1 to 16.8)
+
+**Outcome.** The study asked what carried the common-band scope's +3.3 cm settled consumer cost on the storm bed. The census FALSIFIED the 4.99 h reading: the whole cost sat inside the recovery from a declared pivot handover at 4.6833 h. IF-TD on every pair, with rules F2 and F3 and F3's anchor clause, removed the 4.99 h fallout and every split reference. The sub-gate FAILED on three channels sharing one mechanism (cold handovers 51 to 78, ZWD, L1C) and was overridden on the record. Both knobs were pinned on the since-retired `golden_sim_tri_w6` with a field exception; the current goldens (`config/golden/golden_{sim,field}_refound.json`) set both.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

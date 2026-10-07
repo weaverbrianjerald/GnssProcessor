@@ -1,16 +1,18 @@
-# queue item 2 — the datum-station election formalized as plumbing, and item 1(b)'s precondition priced
+# queue item 2: datum-station election by criterion, and item 1(b) priced
 
 **STATUS**
 
 - **id:** queue item 2
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the datum-station election formalized as plumbing, and item 1(b)'s precondition priced
+- **summary:** Datum-station election by criterion landed as tooling (generator election, config preflight, no producer change); the handover S-transform, item 1(b), stays deferred because its measured target population is near-empty.
 - **dates in the text:** 2026-08-21
-- **knobs / posture:** `network.sticky_pivot`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `network.sticky_pivot` (named as the first response to handover flux); tools `scripts/simnet_make_producer_config.py` (election) and `scripts/datum_gauge_audit.py` (`--config` preflight, `--run` gate)
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/camp60_i3`, `runs/fld63_relevel4h_on`
-- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` — §10, §11
+- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` §10, §11
+
+**Outcome.** The questions: can tooling enforce the gauge-defect card's clean datum election, and is item 1(b)'s one-epoch refloat cost worth a build. The generator elects by fewest mid-arc losses, then the most equatorial station; the run gate reads 0 avoidable removals on the elected sim datum and 12, all unmarked, over 4 h on the field. The pricing found 0 handover edges in 4 h on the sticky field lineage and 3 one-epoch fold-skips in 6 h on the sim. Item 1(b) was later built and PROMOTED as `network.handover_stransform` ([PIVOT DEPARTURE](../network-vehicle/PIVOT-DEPARTURE.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

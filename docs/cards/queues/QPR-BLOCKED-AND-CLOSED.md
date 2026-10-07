@@ -1,16 +1,18 @@
-# QPR blocked — blocked on root cause, leave-alone (falsified or decided), and the queue's maintenance rule
+# QPR blocked: blocked on root cause, leave-alone list, maintenance rule
 
 **STATUS**
 
 - **id:** QPR blocked
 - **topic:** queues
 - **status:** open
-- **summary:** blocked on root cause, leave-alone (falsified or decided), and the queue's maintenance rule
+- **summary:** Register of fixes blocked on a root cause and of falsified or decided approaches not to re-litigate; item 3's churn root was found the day it was filed.
 - **dates in the text:** 2026-08-14
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/QUEUE_principled_replacements.md` — (see body)
+- **knobs / posture:** none
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/QUEUE_principled_replacements.md`, the closing sections (see body)
+
+**Outcome.** The register lists the fixes that wait for a root cause, the approaches not to re-litigate, and the rule that item numbers stay stable. Item 3's clock re-realization churn was RESOLVED on 2026-08-14: the root is phase-bias-datum carry, moved to item 1(d). The triple-frequency runaway survives the INC-1 FREEZE (1720 to 1132 cyc), so the freeze is not the root and a mechanism card comes first; FLOAT stays the track. The D5 hold waited on 8(a), which found that the ionosphere error PERSISTS and so lifts it ([QPR 5–8](../queues/QPR-ITEMS-5-8.md)). The leave-alone list stands.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

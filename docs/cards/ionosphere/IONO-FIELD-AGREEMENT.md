@@ -1,16 +1,18 @@
-# iono-field agreement — cross-station iono-field agreement — coherent where mapped, BROKEN at low–high, plus the elevation-cutoff field A/B
+# iono-field agreement: cross-station iono coherence and the field cutoff A/B
 
 **STATUS**
 
 - **id:** iono-field agreement
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** cross-station iono-field agreement — coherent where mapped, BROKEN at low–high, plus the elevation-cutoff field A/B
-- **dates in the text:** 2026-08-11 → 2026-08-12
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §9.10, 9.10.1
+- **summary:** The GF iono input is coherent between stations both viewing high (median corr 0.981 at 300 to 700 km), BROKEN at low-high; a 25° iono cutoff trims the detrended field wander 8 %.
+- **dates in the text:** 2026-08-11 to 2026-08-12
+- **knobs / posture:** `estimation.ionosphere_weighting.elevation_cutoff_deg` 15 vs 25 (arm config `_cbq_12h_elcut25.json` = the retained control + GIM, 12 h, cold); instrument `scripts/field_iono_pair_agreement.py` (raw observables, settled 10 h)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §9.10, §9.10.1
+
+**Outcome.** Two questions: is the field's GF iono input coherent between stations at the scales the SH model assumes, and does low-elevation incoherence drive the wire's common wander? Coherent when both stations view high (median rel-rms 0.173 at 300 to 700 km); in the low-high configuration it collapses to corr 0.381 and rel-rms 1.130, on only 3 series. The 12 h field A/B at 25° confirmed the direction with availability parity, but about 84 % of the wander variance survived: a cheap trim adopted on the FT63 lineage, not the cure. The truth-graded sim A/B later priced the cut's separability cost ([elev-cutoff A/B](../ionosphere/ELEV-CUTOFF-AB.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

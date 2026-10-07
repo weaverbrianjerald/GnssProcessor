@@ -1,16 +1,18 @@
-# G-B — event injection, satellite-clock step — first class only
+# G-B: satellite-clock step injection (first class only)
 
 **STATUS**
 
 - **id:** G-B
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** event injection, satellite-clock step — first class only
-- **dates in the text:** 2026-08-11 → 2026-08-15
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §9.6
+- **summary:** The 0.5 to 2 m recovery floor is RETRACTED as a window artifact: graded against the null arm, a satellite-clock step is recovered at 92.4 to 92.8 % with no floor.
+- **dates in the text:** 2026-08-11 to 2026-08-15
+- **knobs / posture:** arms `config/sim/simnet5_gb{05,2,10}.json` (5 stations, one step on G14 at epoch 120 of 240), `sat_clock_q = 0.01`; `emit_clock_disc` and `clock_disc_jump_test` NOT armed
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §9.6
+
+**Outcome.** The question: how much of an injected satellite-clock step (0.5, 2 and 10 m) the producer recovers, and whether the step is marked. The original table charged the null arm's own −0.464 m drift between windows to the step; graded differentially the absorption is a uniform ~7.5 %, and a 0.5 m step is not undetected. Marking was untested (marker unarmed, an inert instrument); armed in [G-A 50-sta](../sim-bed/SIMNET-50STA-QC-TIERS.md) §9.7.3, a 10 m step gives a `CLK_STEP` mark. The owed list moved to [injection bench](../sim-bed/SIM-INJECTION-BENCH.md) §15.7; `network.clock_disc_jump_test` was later validated on the field ([CS](../clock/CS-clock-step-signalling.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

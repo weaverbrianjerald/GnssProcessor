@@ -1,15 +1,17 @@
-# WSL: the field's larger walk share against the stations per satellite (card WSX's defect seen through the hold)
+# WSL: the field's larger walk share against the stations per satellite
 
 **STATUS**
 
 - **id:** WSL
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** FALSIFIED 2026-10-01 (sections 4 and 5): L1, L3 and L4 fail, L2 is not shown. The field's satellites are not seen by more stations (median 12 against the sim's 15, a wider spread 7 to 25), the stated contrast does not tighten with the station count on either bed (pooled slopes +0.34 and +0.41 against the bar -0.5), at a matched count the field's walk share is still 1.50 times the sim's, and the unit network at the beds' medians predicts the opposite direction (0.91). The field's larger walk share is not card WSX's carry defect seen through the stations per satellite; it is something at the field's stations themselves. The augmented previous border stays owed for the estimator's consistency, behind that investigation. Nothing armed.
+- **summary:** FALSIFIED 2026-10-01: the field's larger walk share is not card WSX's carry defect seen through the stations per satellite; at a matched station count it is still 1.50 times the sim's.
 - **source:** [WSX](WSX_within_station_cross_terms_2026-09-30.md) sections 6 to 8; [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) sections 4 and 5; [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md); [SMD](SMD_smoothed_hold_block_member_2026-09-30.md) section 8; [PVN](PVN_phase_visible_nees_2026-09-29.md) (the stated contrast variance with every cross term); [REV](REV_revision_member_replay_2026-09-30.md) section 6 (the trace columns); the outside review's note of 2026-10-01
 - **knobs / posture:** none; the traces of `runs/_rap_rev1_blk6_{f,s}` (card REV's instrument build, card SMD's exact-update posture, 6 h) and the unit network of `tests/test_coupling_exact_update.cpp`; nothing armed
 - **dates in the text:** 2026-10-01
 - **hashes / run dirs:** traces of `runs/_rap_rev1_blk6_{f,s}`; grader `scripts/clock_level/wsl_link.py`; the unit network at 12 and 15 stations (by hand, `tests/test_coupling_exact_update.cpp` restored to 3)
+
+**Outcome.** The card asked whether card [WSX](WSX_within_station_cross_terms_2026-09-30.md)'s carry over-statement, which grows with the stations observing a satellite, explains the field's larger walk share. The field's satellites are seen by fewer stations (median 12 against 15), the stated contrast does not tighten with the count (pooled slopes +0.34 and +0.41, bar -0.5), and the unit network predicts the opposite direction (0.91): L1, L3 and L4 FAIL, L2 is not shown. The augmented previous border stays owed for consistency, off the critical path; nothing is armed. Card [FWS](FWS_field_walk_share_sources_2026-10-01.md) then traced the larger walk share to persistent steps: the stations' time-correlated phase errors and the fractional wind-up staircase.
 
 ## 1. The quantities
 

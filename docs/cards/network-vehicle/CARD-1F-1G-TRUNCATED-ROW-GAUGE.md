@@ -1,16 +1,18 @@
-# Cards 1f + 1g — the TRUNCATED-ROW gauge defect and the reinit-source widening — the positive control, the validation ladder, and the 2×2 isolation
+# Cards 1f + 1g: the truncated-row gauge defect and the reinit-source widening
 
 **STATUS**
 
 - **id:** Cards 1f + 1g
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the TRUNCATED-ROW gauge defect and the reinit-source widening — the positive control, the validation ladder, and the 2×2 isolation
+- **summary:** PASS at every rung up to 305 stations: the pair removes every gauge withhold at no cost, 1f owning availability and the datum, 1g the clock and wire gain; both RECOMMEND_SCOPED, C-GF KEEP_OFF.
 - **dates in the text:** 2026-08-15 → 2026-08-19
-- **knobs / posture:** `network.carry_coupling_gauge_project`, `network.carry_coupling_reinit_sources`, `network.mw_wl.bridge_sample_debias`, `network.carry_conditional_coupling`, `network.carry_invariant`, `network.shared_carry_gauge_free`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `network.carry_coupling_gauge_project` (1f), `network.carry_coupling_reinit_sources` (1g), `network.shared_carry_gauge_free` (C-GF); regime `network.carry_conditional_coupling` on, `network.carry_invariant` off; `network.mw_wl.bridge_sample_debias` (the scoping precedent)
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/s24cpl_`, `runs/fld50_`
-- **source:** `docs/archive/SPEC_card1_coupling_carry.md` — 13, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 13.8, 13.8.1, 13.9
+- **source:** `docs/archive/SPEC_card1_coupling_carry.md` §13, 13.1 to 13.9 (with 13.8.1)
+
+**Outcome.** A coupling row whose departed column is deleted observes the current gauge at the old realization (1f); realization steps never reached the reinit history, so retired-frame values folded at full weight (1g). The positive control takes inv-#7 R from 7.1e+06 to 2.1e-03. The 2×2 isolation credits 1g with the sim clock contrast (4.157 to 0.435 m) and a −29 % wire step on top of 1f; 1g alone is contraindicated. Still owed: multi-GNSS orphan attribution, a resume chain with a post-seam breach. Both knobs are armed on the goldens; [CTU](../../refound/CTU_coupling_time_update_2026-09-28.md)'s exact route skips the 1f restore ([SCL](../../refound/SCL_self_contained_clock_level_2026-10-03.md) §4.2: inert).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

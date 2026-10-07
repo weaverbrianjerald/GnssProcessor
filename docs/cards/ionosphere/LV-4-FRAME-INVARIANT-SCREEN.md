@@ -1,16 +1,18 @@
-# LV-4 — the carry screen made frame-invariant — fixed, and it exposed a second defect
+# LV-4: the frame-invariant rx-CB carry step screen
 
 **STATUS**
 
 - **id:** LV-4
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the carry screen made frame-invariant — fixed, and it exposed a second defect
+- **summary:** Correct fix: the step screen closes the frozen-frame screen defect (74 % of withholds were frame artifacts), but it exposed LV-2's lag-1 limit cycle and it costs the data side.
 - **dates in the text:** 2026-08-05
-- **knobs / posture:** `network.rx_cb_carry_step_gate`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 11, 11.1, 11.2, 11.3, 11.4
+- **knobs / posture:** `network.rx_cb_carry_step_gate` (+ `_k_sigma`, default 10.0), default OFF, requires `carry_rx_code_bias`; armed only with LV-5
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none (arms 20 and 21 are named by config: `_ext63_gps_dual_20ep_lv12_ig`, `_ext63_gps_dual_1h_lv12_ig`)
+- **source:** `docs/archive/SPEC_level_information_budget.md` §11 (11.1, 11.2, 11.3, 11.4)
+
+**Outcome.** The legacy inject gate thresholded `|value_abs − x_lin(cb)|` against a frozen linearization point, so it tested where the seed landed and could not see a between-epoch jump. LV-4 moves the test to the post-solve harvest as a robust, median-removed step screen on the invariant difference, erasing outliers. At full admission it exposed LV-2's lag-1 limit cycle (settled a₀₀ sd 4.98 → 15.53 TECU), which [LV-5](LV-5-MU-WITHIN-EPOCH.md) fixed. [LV mask study](LV-MASK-STUDY.md) §23.3 put its data-side cost at +16 to +64 % postfit phase rms (mask-dependent, never paid back): not a promotion candidate ([LV reference page](LV-REF.md), verdict ledger).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

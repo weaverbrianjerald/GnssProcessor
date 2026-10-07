@@ -1,16 +1,18 @@
-# T3 null — the statistic as actually computed, the invariance theorem, the falsified redundancy standardization, the principled replacement, and the validation shape
+# T3 null: the scale-blind T3 statistic and the stratified studentization
 
 **STATUS**
 
 - **id:** T3 null
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the statistic as actually computed, the invariance theorem, the falsified redundancy standardization, the principled replacement, and the validation shape
-- **dates in the text:** 2026-08-14 → 2026-08-15
-- **knobs / posture:** `network.raim_redundancy_normalize`, `network.raim_sigma0_floor`
-- **hashes named in the text** (commit / exe / byte-cert): `79c8e8e1`
-- **run dirs named in the text:** `runs/pareref_on`, `runs/inj_null`, `runs/inj_null_pdp`, `runs/pareref_off`, `runs/simnet24_inject_null`, `runs/t3b2_`, `runs/simnet60_tri`
-- **source:** `docs/archive/SPEC_t3_null_derivation.md` — (preamble), 1, 2, 3, 4, 4.1, 5, 6, 8, 9, 10
+- **summary:** The T3 statistic is scale-blind, so its excess lives in the pool's station heterogeneity; out-of-sample stratification cuts false alarms 4.46 % to 0.97 %, and the redundancy standardization is FALSIFIED.
+- **dates in the text:** 2026-08-14 to 2026-08-15
+- **knobs / posture:** `network.raim_redundancy_normalize` (the B2 A/B; do not arm on this posture, sim-scoped), `network.raim_sigma0_floor` (default 1.0)
+- **hashes named in the text** (commit / exe / byte-cert): `79c8e8e1` (the B2 exe snapshot)
+- **run dirs named in the text:** `runs/pareref_on`, `runs/inj_null`, `runs/inj_null_pdp`, `runs/pareref_off`, `runs/simnet24_inject_null`, `runs/t3b2_{off,on}`, `runs/simnet60_tri`
+- **source:** `docs/archive/SPEC_t3_null_derivation.md` (preamble), §1 to §6 (4.1), §8, §9, §10
+
+**Outcome.** The card asked why T3 flags at 1.86e7× its nominal α. The statistic is a cell max over a pool median, so a common rescale cancels (×1.45 on the rows moved it ×1.025) and the exact per-cell null is only 3.00× the quoted α; what remains is a 4.7× station mixture on a fixture with one error model. The redundancy standardization reshuffled flags (Jaccard 0.622) at +38 % runtime, a sim-scoped verdict. The different-seed verify stayed OWED. [T3 field](../raim-qc/T3-FIELD-AND-COLLATERALS.md) later found the field σ̂₀ floor-pinned (a field B2 arm owed) and built R2 + R4; R1 is held behind queue item 8 ([QPR 4](../queues/QPR-ITEM-4-T3-NULLS.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

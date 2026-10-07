@@ -1,16 +1,18 @@
-# Study 4 — the slip DOSE — the anchor-slip handover cure, validated on the harness and on the storm bed
+# Study 4: the slip dose and the anchor-slip handover cure
 
 **STATUS**
 
 - **id:** Study 4
 - **topic:** slip
 - **status:** closed
-- **summary:** the slip DOSE — the anchor-slip handover cure, validated on the harness and on the storm bed
+- **summary:** The converged network's slip cascade starts from slips on phase-bias ANCHOR arcs; `anchor_slip_handover` removes it and passes every storm-bed gate (ZWD 1.188 → 0.046 m): RECOMMEND_ON.
 - **dates in the text:** 2026-09-10 → 2026-09-11
 - **knobs / posture:** `network.cycle_slip.anchor_slip_handover`, `network.clock_datum_sum_to_zero`
-- **hashes named in the text** (commit / exe / byte-cert): `3760bc71`, `95dc556f`, `ec26de1`
+- **hashes named in the text** (commit / exe / byte-cert): `3760bc71`, `95dc556f`, `ec26de1`, `204736F4`
 - **run dirs named in the text:** `runs/golden_sim_campaign_zwdblk`, `runs/evseed_quiet6h_s2z`, `runs/golden_sim_campaign_zwdblk_ancho`
-- **source:** `docs/archive/SPEC_event_harness.md` — 12, 12.0, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, 12.9, 12.10, 12.11, 12.12, 12.13
+- **source:** `docs/archive/SPEC_event_harness.md` §12, §12.0 to §12.13
+
+**Outcome.** Question: does a converged network survive the campaign's slip rate? A station that anchors no phase-bias family absorbs 27 slips unharmed; the clock-datum and band-scope cascade explanations were FALSIFIED. On the 655-slip dose the handover cuts T4 3 099 → 200 but MISSES four of six full-cure bars: the ZWD rms and 124 of the 200 erases sit at one station whose anchor arc took an undetected L5 slip, the path [Study 5](STUDY-5-detector-coverage-l5.md) closed; its §13.5 refines the mechanism (the pin stays on an arc whose observations moved).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

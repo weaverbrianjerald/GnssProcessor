@@ -1,16 +1,18 @@
-# S-basis contract — the realized basis, what the wire records mean, the realization-transfer contract, and the verification status with its known residues
+# S-basis contract: the realized basis, wire meaning and realization transfer
 
 **STATUS**
 
 - **id:** S-basis contract
 - **topic:** network-vehicle
 - **status:** reference
-- **summary:** the realized basis, what the wire records mean, the realization-transfer contract, and the verification status with its known residues
+- **summary:** Reference for the producer's August 2026 S-basis in Odijk-2016 notation: the realized constraints, what each wire record means, the hold-or-mark transfer contract and the known residues.
 - **dates in the text:** 2026-06-15 → 2026-08-15
-- **knobs / posture:** `network.code_bias_gf_datum`, `network.sticky_pivot`, `network.pivot_vanish_return_signal`
-- **hashes named in the text** (commit / exe / byte-cert): `8e5b04b`
+- **knobs / posture:** `network.code_bias_gf_datum` (the slant GF pin, since retired), `network.sticky_pivot`, `network.pivot_vanish_return_signal`
+- **hashes named in the text** (commit / exe / byte-cert): `8e5b04b` (anchor re-verification)
 - **run dirs named in the text:** `runs/pc305_ggq_cbpin_verify_BEFORE_ambdatum`
-- **source:** `docs/archive/SPEC_sbasis_realization_contract.md` — (preamble), §A, §B, §C, §D
+- **source:** `docs/archive/SPEC_sbasis_realization_contract.md` (preamble), §A, §B, §C, §D
+
+**Outcome.** The card states which S-basis the producer realized in August 2026 (pivot-satellite clock, per-satellite IF pin, sum-to-zero code-bias gauge, eq34 phase datum, slant GF pin), what each wire record means, and the rule that every re-occurring gauge is held or marked. The 2026-08-13 audit fixed two wire under-declarations (`cbpin=` gated on a QC knob; `amb_datum` 0 instead of 2 on eq34 products). Left open as written: the GF datum's run-end telemetry, fingerprint and re-aim mark, and a `NetworkSbasis.hpp` header edit (two clock-gauge ways named, three exist). The re-founding posture sets `phase_datum_eq34: false` ([program](../../refound/NETWORK_REFOUNDING_2026-09-14.md)) and pins GF at broadcast T_GD ([RF-0c](../../refound/RF-0c_gf_pin_2026-09-15.md)); `code_bias_gf_datum` is retired ([GAL](../../refound/GAL_gps_galileo_dual_2026-09-22.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,16 +1,18 @@
-# Q3 design — the guarded temporal clock anchor — the measured basis, stage A/B design, the empirical derivation and the pre-registered gates
+# Q3 design: the guarded temporal clock anchor (CTA)
 
 **STATUS**
 
 - **id:** Q3 design
 - **topic:** clock
 - **status:** closed
-- **summary:** the guarded temporal clock anchor — the measured basis, stage A/B design, the empirical derivation and the pre-registered gates
+- **summary:** Design of the guarded temporal clock anchor: a binding per-satellite clock carry with a variance floor, a common-removed residual guard (withdraw, re-solve, mark) and pre-registered gates G0 to G4.
 - **dates in the text:** 2026-08-10 → 2026-08-15
-- **knobs / posture:** `network.clock_model`, `network.clock_temporal_anchor`, `network.clock_anchor_gauge_free`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/clkr_12h_hold`, `runs/cta_3h_`
-- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` — (preamble), §1, 1.1, §2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, §3, §4, §4.1
+- **knobs / posture:** `network.clock_temporal_anchor` (default OFF, fingerprinted), `clock_anchor_q`, `clock_anchor_var_floor_m2`, `clock_anchor_max_gap_s`, `clock_anchor_k`, `clock_anchor_abs_m`, `clock_anchor_sigma_floor_m`, `clock_anchor_recouple_epochs`, `network.clock_anchor_gauge_free` (built 2026-08-10, default OFF); `network.clock_model` stays NO-GO
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** `runs/clkr_12h_hold`, `runs/cta_3h_{ctl,on}`
+- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` (preamble), §1, 1.1, §2, 2.1 to 2.6, §3, §4, §4.1
+
+**Outcome.** The card designs temporal stiffness for the satellite clock's estimable content. Basis: the 12 h walk (robust σ_w 9.23 cm per 30 s, uniform across 32 satellites) is per-epoch estimation noise, because the armed `sat_clock_q` 1e-3 never binds. The 3 h pair showed the raw-state anchor doing 44 % of the datum's work. Results: [Q3 results](../clock/Q3-ANCHOR-RESULTS.md), [Q3 ladder](../clock/Q3-FLOOR-GOVERNED-LADDER.md), [Q3 G4](../clock/Q3-G4-SIM-HALF.md); the anchor at q 2.9e-8 is in the [re-founding posture](../../refound/NETWORK_REFOUNDING_2026-09-14.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

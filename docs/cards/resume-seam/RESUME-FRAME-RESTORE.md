@@ -1,16 +1,18 @@
-# §18.10/§18.11 — the seam is a FRAME loss — `resume_frame_restore`, built and graded
+# §18.10/§18.11: the seam is a FRAME loss, `resume_frame_restore` built and graded
 
 **STATUS**
 
 - **id:** §18.10/§18.11
 - **topic:** resume-seam
 - **status:** closed
-- **summary:** the seam is a FRAME loss — `resume_frame_restore`, built and graded
+- **summary:** The FRAME-loss mechanism is CONFIRMED and the restore closes the phase side, but 33 of 52 anchored clocks trip at the first fold: KEEP OFF pending the coupling-regressor increment.
 - **dates in the text:** 2026-09-02 → 2026-09-03
-- **knobs / posture:** `network.state_snapshot_frame_capture`, `network.resume_frame_restore`, `network.resume_slip_warmup_ep`
-- **hashes named in the text** (commit / exe / byte-cert): `35860c5f45b8a004`
-- **run dirs named in the text:** `runs/camp60wu_quiet12h_`, `runs/camp60wu_quiet12h_frwriter`, `runs/camp60wu_q12warm_fron`, `runs/camp60wu_q12warm_frctl`, `runs/camp60wu_q12warm_fron_ari`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — 18.10, 18.11
+- **knobs / posture:** `network.state_snapshot_frame_capture` (write side, safe on any writer), `network.resume_frame_restore` (read side), `network.resume_slip_warmup_ep` (5 on the ON leg), `amb_seam_reinflate_var_m2` 0.0025 (rung 3, FALSIFIED as a seam response)
+- **hashes named in the text** (commit / exe / byte-cert): `35860c5f45b8a004` (warm-resume fingerprint, v1 library = v2 writer)
+- **run dirs named in the text:** `runs/camp60wu_quiet12h_frwriter` (v2 writer), `runs/camp60wu_q12warm_fron` (ON), `runs/camp60wu_q12warm_frctl` (OFF control), `runs/camp60wu_q12warm_fron_ari` (rung 3)
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §18.10, §18.11
+
+**Outcome.** The question is whether the sim warm-resume seam is the frame bookkeeping the snapshot omitted (anchor election, Q3 clock anchor, CLK-R held frame, slip history). The restore removes the carry erase (54 erased vs 2862) and the datum mark, but FAILS two frozen bars (clock between-satellite SD 0.28 m against 0.02; `cta_recouple` 33 against 0), and the new clock tails cost the consumer 0.96 m rms at h19; the rung-3 proxy is FALSIFIED. With the regressors ([§18.12](../resume-seam/RESUME-COUPLING-RESTORE.md)) and the dense border ([§18.13/§18.14](../resume-seam/RESUME-DENSE-BORDER-E2.md)) the knob became RECOMMEND_SCOPED on 2026-09-06 ([ledger](../../CONFIG_promotion_ledger.md)); seams are off under the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) scope cut.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

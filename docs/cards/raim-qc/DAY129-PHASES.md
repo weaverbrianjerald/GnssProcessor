@@ -1,16 +1,18 @@
-# DOY-129 phases — phases 0–2: the closed-loop replay, the trigger instrumentation, and the gated guards
+# DOY-129 phases: the closed-loop replay, the trigger traces and the CB-carry guard
 
 **STATUS**
 
 - **id:** DOY-129 phases
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** phases 0–2: the closed-loop replay, the trigger instrumentation, and the gated guards
+- **summary:** Phase 0 and 1 results are not on record; Phase 2.1's guard `network.cb_excursion_reinit` passed gate (ii) mechanically, but D1's pivot-only scope was FALSIFIED and gate (iii) is UNMET: KEEP_OFF.
 - **dates in the text:** 2026-07-28
 - **knobs / posture:** `realtime.network_products_path`, `processing.network_consumer.enable`, `network.trace_sh_spectrum`, `network.trace_dd_fractional`, `network.cb_excursion_reinit`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/day129_cont`, `runs/day129_guards`
-- **source:** `docs/archive/SPEC_day129_frame_guards.md` — (see body)
+- **source:** `docs/archive/SPEC_day129_frame_guards.md`: Phase 0, Phase 1, Phase 2, the pre-flight, the decisions D1 to D3, the practicalities, and the Part C preamble
+
+**Outcome.** The plan: replay the reference products through the closed-loop consumer (Phase 0), trace the a₀₀-collapse trigger (Phase 1), then guard the code-bias carry with a common-mode excursion detector armed on a fresh convergence (Phase 2). The Phase 0 and 1 results are not on record: their report no longer exists. Per the [ledger](../../CONFIG_promotion_ledger.md), the guard fired 5 times with 5 G01 reinits, all seam-coupled, while 130 non-pivot cases refuted the pivot-only scope. The guarded leg's SH gate withheld the 20:47 event ([DOY-129 defects](../raim-qc/DAY129-DEFECTS-ABC.md)); gate (iii) is owed in [DEC-day129-gate-policy](../../decisions/DEC-day129-gate-policy.md) Part F.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

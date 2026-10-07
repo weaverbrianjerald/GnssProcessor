@@ -5,35 +5,13 @@
 - **id:** PBF
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** ARMED 2026-09-28 at the author's instruction (section 5): in the RF-0hv working bases, ledger appendix A13, the loader posture row and the golden pins; baseline pair `runs/_rf0hv11_{field,sim}6`, byte-identical to the post-OWD references (0 presence edges at either held-out consumer in 6 h). Built result (section 4): P0, P1 and P3 pass, P2 fails as frozen with the catastrophe removed (ARHT00ATA 803.9 to 0.762 m in hour 2 on the CLV wire, the rest card CLV2's phase-side cost). Original summary: Build card, pre-registered 2026-09-28 from the read of card CLV2 section 4.6 item 1
-  (the census C1W sites' consumer on the CLV wire). Under the producer's phase-bias hold (card
-  PBH) the consumer answers neither edge of a held bias's presence: a bias that appears on a
-  phase row the consumer already uses, or leaves it, steps the applied correction by the whole
-  bias (G32 L1W appears at 92.4 m at TOW 260130) with no reaction. The Kalman filter's post-fit
-  peel is then the only response; at ARHT00ATA on the CLV wire it resets four innocent
-  satellites, commits nothing, and the next epoch moves the solution 490 m (hour-2 p50 804 m on
-  eight CLV and pre-CLV wires). Built default OFF: `processing.ssr_pb_hold_presence_flip`
-  (harness `network.closed_loop.pb_hold_presence_flip`) lets a held key's A5 edge take the
-  reaction of an unheld key.
-- **source:** [CLV2](CLV2_clock_level_batch2_2026-09-25.md) section 4.6 item 1 (the read);
-  [PBH](PBH_phase_bias_hold_2026-09-19.md) (the hold and its consumer seam);
-  [CST](CST_consumer_sat_trace_2026-09-15.md) (the per-satellite consumer trace);
-  [SID](SID_signal_identity_2026-09-22.md) (the L1W family's coverage: 18 of 58 stations)
-- **knobs / posture:** new `processing.ssr_pb_hold_presence_flip` (bool, default false,
-  byte-identical); new `network.closed_loop.pb_hold_presence_flip` (bool, default false, derived
-  into the consumer, never reaches the producer's solve or its fingerprint); the consumer
-  replay driver now honours `network.trace_consumer_sat` (measure-only); at pre-registration no golden,
-  ledger row or loader default changed; ARMED 2026-09-28 (section 5): `network.closed_loop.pb_hold_presence_flip:
-  true` in `config/refound/{field,sim}_gps_dual_rf0hv.json`, pinned in both goldens, ledger appendix A13 with a
-  loader posture row; the loader default stays false
+- **summary:** ARMED 2026-09-28 (ledger A13): the consumer answers both presence edges of a held phase bias; ARHT00ATA's hour-2 p50 on the CLV wire goes from 804 to 0.762 m, P2 missed as frozen.
+- **source:** [CLV2](CLV2_clock_level_batch2_2026-09-25.md) section 4.6 item 1 (the read); [PBH](PBH_phase_bias_hold_2026-09-19.md) (the hold and its consumer seam); [CST](CST_consumer_sat_trace_2026-09-15.md) (the per-satellite consumer trace); [SID](SID_signal_identity_2026-09-22.md) (the L1W family's coverage: 18 of 58 stations)
+- **knobs / posture:** new `processing.ssr_pb_hold_presence_flip` (bool, default false, byte-identical); new `network.closed_loop.pb_hold_presence_flip` (bool, default false, derived into the consumer, never reaches the producer's solve or its fingerprint); the consumer replay driver now honours `network.trace_consumer_sat` (measure-only); at pre-registration no golden, ledger row or loader default changed; ARMED 2026-09-28 (section 5): `network.closed_loop.pb_hold_presence_flip: true` in `config/refound/{field,sim}_gps_dual_rf0hv.json`, pinned in both goldens, ledger appendix A13 with a loader posture row; the loader default stays false
 - **dates in the text:** 2026-09-28
-- **hashes / run dirs:** main `3ca0626` plus this card's diff (uncommitted at pre-registration; built
-  `ff36b1f`); armed with exe `gnss_processor_pbf2.exe` sha256 prefix `73c47ebd7eb610d0`, baseline pair
-  `runs/_rf0hv11_{field,sim}6`;
-  exe `gnss_processor_pbf.exe` sha256 `3a3c64ea88f8a750b166cc9158cbb61b244210539422dd5b35d08b43b7962ce1`;
-  census keys `t3g0`, `t3b1` (the trace armed, knob absent), `p0g0` (knob off), `pfg0`, `pfb1`
-  (knob on), replays `runs/_rap_msc_<site>_<key>_d`; wires `runs/_rap_clv2_f_g0` (the baseline
-  wire) and `runs/_rap_clv2_f_b1` (card CLV2's batch-1 base)
+- **hashes / run dirs:** main `3ca0626` plus this card's diff (uncommitted at pre-registration; built `ff36b1f`); armed with exe `gnss_processor_pbf2.exe` sha256 prefix `73c47ebd7eb610d0`, baseline pair `runs/_rf0hv11_{field,sim}6`; exe `gnss_processor_pbf.exe` sha256 `3a3c64ea88f8a750b166cc9158cbb61b244210539422dd5b35d08b43b7962ce1`; census keys `t3g0`, `t3b1` (the trace armed, knob absent), `p0g0` (knob off), `pfg0`, `pfb1` (knob on), replays `runs/_rap_msc_<site>_<key>_d`; wires `runs/_rap_clv2_f_g0` (the baseline wire) and `runs/_rap_clv2_f_b1` (card CLV2's batch-1 base)
+
+**Outcome.** A held phase bias that appears on, or leaves, a phase row the consumer already uses went unanswered: the Kalman peel reset innocent satellites, and ARHT00ATA diverged on eight CLV and pre-CLV wires (hour-1 p50 above 400 m on 14 of 90 census keys). The knob answers the edges where they occur (ARHT00ATA 3, QUIN00USA 5) and leaves the 15 edge-free replays byte-identical: P0, P1 and P3 PASS; P2 FAILS its 0.20 m bar, the rest being card CLV2's phase-side cost. Armed, the 6 h baselines are unchanged. Owed ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)): the peel's masking of a bad phase row, the real-time gap tolerance, per-site census bars.
 
 ## 1. What the read found
 

@@ -1,16 +1,18 @@
-# LV impl — the 2026-08-05 implementation record, and the measured outcomes that corrected the mechanism
+# LV impl: the LV-1 and LV-2 implementation record and first measured outcomes
 
 **STATUS**
 
 - **id:** LV impl
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the 2026-08-05 implementation record, and the measured outcomes that corrected the mechanism
+- **summary:** LV-1 and LV-2 built default-OFF with live counters; §1's seed-gradient model FALSIFIED (carry-off arms agree to 0.006 TECU): LV-1 acts only through the rx-CB carry.
 - **dates in the text:** 2026-08-01 → 2026-08-12
-- **knobs / posture:** `network.iono_seed_field_frame`, `network.rx_cb_carry_demean`, `network.a00_prior_from_brdc`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 9, 10, 10.1, 10.2, 10.3, 10.4, 10.5
+- **knobs / posture:** `network.iono_seed_field_frame`, `network.rx_cb_carry_demean` (both default OFF); `network.a00_prior_from_brdc` deliberately not built
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none (arms 12 to 19 are cited by number)
+- **source:** `docs/archive/SPEC_level_information_budget.md` §9, §10 (10.1, 10.2, 10.3, 10.4, 10.5)
+
+**Outcome.** LV-1 (seed reframe) and LV-2 (rx-CB carry de-mean) were built and unit-tested (`LevelInformationBudget`, 13 cases). With the carry off LV-1 has no actuator; with it on, LV-1 changes which carried priors fold through an inject gate that thresholds a frozen frame, a defect [LV-4](LV-4-FRAME-INVARIANT-SCREEN.md) fixed. At 1 h LV-1+LV-2 lifted the a₀₀ mean 16.36 → 35.09 TECU; two predictions MISSED and the deg-1 dipole grew (its card parked, [LV roadmap](LV-ROADMAP.md) §27). [LV correction](LV-CORRECTION-AND-12H.md) §13 corrected the zero-net-force reading (LV-2 pins a frozen frame, which LV-1 sets), and its 12 h verdict retired the stack for settled work.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

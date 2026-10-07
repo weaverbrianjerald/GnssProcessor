@@ -1,6 +1,20 @@
-# RF-0b — a self-contained satellite-DCB datum under free slant iono, GPS dual (2026-09-15)
+# RF-0b: a self-contained satellite-DCB datum under free slant iono, GPS dual (2026-09-15)
 
-**STATUS:** closed — **built, default byte-identical, NOT the baseline**; it names the real datum question and hands it to RF-0c.  Worker branch
+**STATUS**
+
+- **id:** RF-0b
+- **topic:** code-bias
+- **status:** closed
+- **summary:** Built, default byte-identical, NOT the baseline: without the GIM the 31 between-satellite geometry-free directions were closed only by the Kaula prior; the card pre-registers RF-0c's hard datum.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** `network.w6_iono_constraint` (`"auto"` default, `"none"`), armed with `ionosphere_weighting.enable: false`; a hard error with `estimate_iono_sh` or `code_bias_gf_datum`; `cb_kaula_prior` read on and off; RF-0c's `network.sat_gf_datum` pre-registered
+- **hashes named in the text:** commit `f9c6af4` (worker branch `worktree-agent-a0aafda782ef5e7bd`, merged); exe `CF6F2E62…`; smoke `87a33bf0…`; suite 2123 / 288 (`W6IonoConstraintTest` 11/11)
+- **run dirs named in the text:** `runs/_rf0b/read.md`
+- **source:** [RF-0](RF-0_baseline_2026-09-14.md) (the GIM dependence it surfaced); [NETWORK_REFOUNDING_2026-09-14.md](NETWORK_REFOUNDING_2026-09-14.md)
+
+**Outcome.** The card asks whether W6 runs self-contained, without the external GIM, under free slant iono on GPS dual. Under `"none"` with the prior on, both beds emit 720/720, the consumer moves 0.5 to 2.9 m per hour, field D_code reaches 17× RF-0 and the sim clock LEVEL against truth degrades 2.4×; with the prior off the gate sees 39 near-zero directions and nothing is emitted. NOT the baseline; `"none"` stays as the vehicle for [RF-0c](RF-0c_gf_pin_2026-09-15.md)'s datum. The goldens pin `w6_iono_constraint: none` with the prior off ([RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md)).
+
+**Status as recorded (2026-09-15):** closed — **built, default byte-identical, NOT the baseline**; it names the real datum question and hands it to RF-0c.  Worker branch
 `worktree-agent-a0aafda782ef5e7bd` (`f9c6af4`), merged.  Knob `network.w6_iono_constraint: "auto" (default) | "none"` — under `"none"` the
 external-GIM branch is neither forced nor required; hard errors with `estimate_iono_sh` or `code_bias_gf_datum` (one datum per deficiency).
 Suite 2123 / 288 (0 failed; new `W6IonoConstraintTest` 11/11), smokes `auto` = `87a33bf0…` (knob absent and armed), `--verify` PASS, exe

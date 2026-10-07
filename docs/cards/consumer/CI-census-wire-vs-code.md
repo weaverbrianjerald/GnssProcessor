@@ -1,16 +1,18 @@
-# CI census — the wire-vs-CODE consistency census and the CODE-RESIDUAL per-LOS attribution
+# CI census: the wire-vs-CODE census and the per-LOS code-residual attribution
 
 **STATUS**
 
 - **id:** CI census
 - **topic:** consumer
 - **status:** closed
-- **summary:** the wire-vs-CODE consistency census and the CODE-RESIDUAL per-LOS attribution
+- **summary:** W1 and W3 FAIL: the wire wanders 2.8 to 5.0 m rms within arcs through the satellite clock, which inherits a network code model inconsistent with the data by metres.
 - **dates in the text:** 2026-09-14
-- **knobs / posture:** `network.trace_postfit_rows`
+- **knobs / posture:** `network.trace_postfit_rows`; instruments `scripts/wire_vs_code_census.py`, `scripts/pf_rows_attrib.py`
 - **hashes named in the text** (commit / exe / byte-cert): `20377f2`, `e0d234ee`, `7ece11f`, `0dac1cc`, `87a33bf0`
-- **run dirs named in the text:** `runs/evseed_field6h_v8`, `runs/evseed_field6h_v8fp2`, `runs/_ci_ppp_`
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.5, 24.6
+- **run dirs named in the text:** `runs/evseed_field6h_v8`, `runs/evseed_field6h_v8fp2`, `runs/_ci_ppp_*`
+- **source:** `docs/archive/SPEC_event_harness.md` §24.5, §24.6
+
+**Outcome.** The census asks whether the wire is consistent with CODE's products as a float user sees it, and §24.6 where the producer's code residual comes from. Phase and code biases are flat within arcs while the satellite clock wanders; the four slip knobs change nothing (W2); code offsets exceed 1 m on 90 of 106 keys. The code residual is a persistent, non-dispersive per-LOS level (92.3 % of the sum of squares; A2 met only by the letter) absent from standalone PPP on CODE. [CM](../network-vehicle/CM-code-model-consistency.md) followed, and the census became a bar of [the re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

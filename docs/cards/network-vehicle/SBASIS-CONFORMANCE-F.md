@@ -1,16 +1,18 @@
-# S-basis conformance — the per-deficiency conformance table, the implicit S-basis the code adopts per mode, the compatibility audit and the design charter for the network side
+# S-basis conformance: the 2026-06-15 user-side audit and the network charter
 
 **STATUS**
 
 - **id:** S-basis conformance
 - **topic:** network-vehicle
 - **status:** reference
-- **summary:** the per-deficiency conformance table, the implicit S-basis the code adopts per mode, the compatibility audit and the design charter for the network side
+- **summary:** Reference: the user engine is a faithful, S-basis-invariant Odijk PPP-RTK realization through differencing with no declared S-basis; the network charter (§F7) is BUILT, the user-side backlog OPEN.
 - **dates in the text:** 2026-06-15 → 2026-08-15
 - **knobs / posture:** `estimation.ionosphere_weighting`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_sbasis_realization_contract.md` — §F1, §F2, §F3, §F4, §F5, §F7, §F8, §F9
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_sbasis_realization_contract.md` §F1, §F2, §F3, §F4, §F5, §F7, §F8, §F9
+
+**Outcome.** The 2026-06-15 audit asked whether the user engine conforms to Odijk-2016 and what a network producer must add. Every rank deficiency is differenced away, imported or absorbed into the float ambiguity, never pinned by an explicit minimum constraint; only the GF-IF alignment is enforced actively, the rest only through failed AR validation. Named gaps and hazards: SSR yaw fields decoded but unused, the SSR sign pinned to one provider, production AR WL-only. The three network pieces of §F7 are BUILT; the user-side P0 and P1 items and the network's missing `enforcePsd` call (§F8.7) were OPEN at 2026-08-15.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

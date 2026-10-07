@@ -25,7 +25,7 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [S2H](../cards/code-bias/S2H-HARVEST.md) | the S-consistent rx-CB harvest — built, validated through 3 h, and its 12 h tracking ve… | closed | 2026-08-21 |
+| [S2H](../cards/code-bias/S2H-HARVEST.md) | rx-CB harvest de-mean: frame hygiene validated to 3 h, 12 h level bar MISSED, LV-6 next | closed | 2026-08-21 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

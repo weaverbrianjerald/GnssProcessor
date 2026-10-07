@@ -1,16 +1,18 @@
-# G-A — the NULL test — the first absolute grade, measured 2026-08-11
+# G-A: the NULL test, the first absolute grade
 
 **STATUS**
 
 - **id:** G-A
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** the NULL test — the first absolute grade, measured 2026-08-11
+- **summary:** The first absolute grade: the n = 3 network is estimable but not determinable (ZWD +4.31 m systematic, +0.029 m at n = 5), and every internal instrument called it clean.
 - **dates in the text:** 2026-08-11
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §9.5
+- **knobs / posture:** INT posture (GPS-only, quiet, `storm_scale` 0), 240 epochs at 30 s, graded on the settled half; fixtures `config/sim/simnet3_ga.json` / `_simnet5_ga.json`, producer arms `config/test_suite/_simnet3_ga.json` / `_simnet5_ga.json`; bisect arm `_simnet3_bare` (correction stack off)
+- **hashes named in the text** (commit / exe / byte-cert): none (exe `gnss_processor_simnet.exe`, no hash)
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §9.5
+
+**Outcome.** The question: how far the network producer sits from truth on a quiet 2 h sim arc at n = 3 and n = 5. Clock vf is 768.2 and 392.3; over the n = 3 arc the median URA falls from 6.63 to 0.176 m while the median clock error grows to 3.38 m. A bisect arm with the correction stack off reproduces the result to three decimals. Measured later: the n = 50 trend and how to read a clock vf ([G-A 50-sta](../sim-bed/SIMNET-50STA-QC-TIERS.md) §9.7.1), and the code-bias vf, about 4.9e+05 ([W6+SH arm](../sim-bed/SIMNET-W6SH-ARM.md) §12.7).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

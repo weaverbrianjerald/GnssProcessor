@@ -1,8 +1,22 @@
-# RF-2b — the composed election, the column-scoped depose, and the clock-level read (2026-09-15)
+# RF-2b: composed election, column-scoped depose, clock-level read (2026-09-15)
+
+**STATUS**
+
+- **id:** RF-2b
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** The composed election restores the sim (WL integers 99.1 %) and cuts field handovers to 47 / h with the clock ramp gone; the field consumer stays about RF-0's (corrected).
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** RF-1 A3 + RF-2b on the RF-0 configs (GIM): the composed rank (highest elevation among ledger-usable candidates, elevation-only as a counted fallback), the incumbent tested on its own basis-column flag only, every handover traced and only a changed basis value marked; R-CL instrument `scripts/clock_level_read.py`; RF-2c pre-registered (`clock_anchor_gauge_free`, `clock_anchor_k`)
+- **hashes named in the text:** worker branch `worktree-agent-a2915f195d8518bf6` (`d271f4b`), merged; OFF smoke `47bc4e5a…`; suite 2192 / 290
+- **run dirs named in the text:** `runs/_rf2b_field6`, `runs/_rf2b_*field*`
+- **source:** [RF-2](RF-2_held_basis_2026-09-15.md) (the one-predicate fix and the clock-ramp read it authorized)
+
+**Outcome.** The question: does a ledger-usable election rank restore RF-2's sim, and does the field clock-level ramp reset at handovers (R-CL)? The sim passes every bar; the field misses the consumer's settled 0.6× bar (0.93×), is worse than RF-0 in hours 3 and 5, and misses hour 1 of D_phase. R-CL: the level runs through handovers at about 0.69 m per 100 s. The carded field consumer was a ratio column ([RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md) section 1). [RF-3-read](RF-3-read_handover_frame_2026-09-15.md) found the mark predicate inverted (fixed by RF-2d); the vehicle is the goldens' posture since [GRB](GRB_golden_rebase_2026-09-22.md).
 
 > **⚠ CORRECTED 2026-09-15 ([RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md)) — the consumer row below holds RATIOS to RF-0, not metres.**  The worker's own read printed `h0 p50 3.022 -> 2.321 (0.77x)`; the card copied the ratio column.  Measured from `runs/_rf2b_field6/logs/closed_loop_trace.csv` the FIELD consumer p50 by hour is **2.32 / 2.83 / 2.29 / 1.89 / 1.23 / 3.05 m** (ratio to RF-0 0.77 / 0.95 / 1.48 / 0.88 / 1.25 / 0.93 — 4 of 6 hours better, as the row's own "4 of 6 better" says) and the SIM consumer is **1.54 / 2.53 / 3.90 / 4.69 / 6.61 / 1.54 m** (ratios 0.46 / 0.59 / 1.09 / 1.44 / 6.27 / 2.68).  So "the most stable field consumer in the record (0.77–1.48 m every hour)" and "the first field posture with every hour's consumer under 1.5 m" are FALSE: RF-2b's field consumer is about RF-0's.  The wire, integer, marks, rate and contract rows are unaffected (D_phase re-derived from `grade.json` to the digit).  The text below is kept as written.
 
-**STATUS:** closed — **the sim is fully restored (720 / 720, WL integers 99.1 %), the field keeps the phase-wire win at a sane handover rate with the
+**Status as recorded (2026-09-15):** closed — **the sim is fully restored (720 / 720, WL integers 99.1 %), the field keeps the phase-wire win at a sane handover rate with the
 clock ramp gone and the most stable field consumer in the record (0.77–1.48 m every hour), and R-CL names the next term: the clock's own
 level channel.  RF-1 + RF-2b is the vehicle candidate; the goldens' re-base on it is the author's call (on RF-0g's posture once that is the
 baseline).**  Worker branch `worktree-agent-a2915f195d8518bf6` (`d271f4b`), merged.  Suite 2192 / 290 (0 failed; +6 cases, 21 in the suite); OFF

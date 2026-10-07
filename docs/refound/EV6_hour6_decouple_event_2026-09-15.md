@@ -1,6 +1,20 @@
-# EV6 — the hour-6 Q3 mass-decouple event on RF-0hv: the decouple is REAL, its wire defect is REAL, and it is NOT the consumer's channel (2026-09-15)
+# EV6: the hour-6 Q3 mass-decouple event on RF-0hv (2026-09-15)
 
-**STATUS:** open — **a READ.  Nothing was built, no run was spent, no knob was armed.**  RF-0hv §7.3 recommended this as the next event
+**STATUS**
+
+- **id:** EV6
+- **topic:** clock
+- **status:** open
+- **summary:** REFUTED: the Q3 decouple's wire values are not the consumer's channel (size against damage, corr 0.135); the decouple instead carries a real wire-contract defect, its clock-step returns never declared.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** a read, nothing armed; pre-registered and not built `network.clock_anchor_declare_return` + `network.clock_anchor_return_frac`; no-build discriminator `network.clock_anchor_resolve: false`; the arm's `network.clock_anchor_sigma_floor_m: 0.0018`, `clock_anchor_q: 2.9e-8`
+- **hashes named in the text:** baseline exe `build/x64-Release/gnss_processor_rfpdfix.exe` `14578F851F0C22EC`; OFF smoke `9add1d3ab9d70657`
+- **run dirs named in the text:** `runs/_rfpdfix_field6_both` (read, not re-run), `runs/_rfpdfix_sim6_both`; no new run; instrument `scripts/ev6_event_read.py`
+- **source:** [RF-0hv](RF-0hv_working_posture_2026-09-15.md) section 7.3 (the recommended event card and its instrument)
+
+**Outcome.** The question: is the Q3 mass decouple coinciding with both hour-6 consumer events their channel. It is not: the largest decouples are harmless, and no decoupled satellite is in the consumer's sky at TOW 279300. The defect: a median 91 % of each declared clock step reverses the next epoch, 0 of 130 returns declared. [CST](CST_consumer_sat_trace_2026-09-15.md) traced the ramp to the consumer's own reset, triggered by a TOW 279030 decouple's `R` records. [EV7](EV7_all_sat_clock_decouple_2026-09-21.md) later fixed a coverage-gate defect in the same mechanism class. The section 8.1 declare-return fix is unbuilt.
+
+**Status as recorded (2026-09-15):** open — **a READ.  Nothing was built, no run was spent, no knob was armed.**  RF-0hv §7.3 recommended this as the next event
 card and named the instrument it needed: *`CLK_ANCHOR` decouple SIZE vs consumer step, with a size-matched null*.  That instrument now
 exists (`scripts/ev6_event_read.py`) and it **refutes the co-incidence it was built to confirm**.  The hour-6 step at TOW 276810 and the
 ramp from TOW 279300 are both one epoch behind a Q3 clock-anchor mass decouple, but the decouple's own wire signature does not reach the

@@ -1,16 +1,18 @@
-# T3 field — the T3 class and its two collateral defects, the field check, the detection-power gate, the 305-station smoke, and R2 + R4 built and validated
+# T3 field: collateral defects, the field check, the detection gate, R2 + R4
 
 **STATUS**
 
 - **id:** T3 field
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the T3 class and its two collateral defects, the field check, the detection-power gate, the 305-station smoke, and R2 + R4 built and validated
-- **dates in the text:** 2026-08-12 → 2026-08-21
-- **knobs / posture:** `network.raim_carry_invariant`, `network.trace_raim_redundancy`, `network.raim_station_factor`, `network.raim_rate_hygiene`
-- **hashes named in the text** (commit / exe / byte-cert): `65ba362`
-- **run dirs named in the text:** `runs/pareref_on`, `runs/t3fault`, `runs/t3trace305_smoke`, `runs/staf_`
-- **source:** `docs/archive/SPEC_t3_null_derivation.md` — 11, 11.1, 11.2, 12, 12.1, 12.1b, 12.2, 12.3, 13, 13.1, 14, 14.1, 14.2, 14.3, §15
+- **summary:** The field reproduces the station structure but stratification buys only 1.5× with σ̂₀ pinned at its floor; the detection gate PASSED; R2 + R4 BUILT and VALIDATED (corr +0.96).
+- **dates in the text:** 2026-08-12 to 2026-08-21
+- **knobs / posture:** `network.raim_carry_invariant`, `network.trace_raim_redundancy`, `network.raim_station_factor`, `network.raim_rate_hygiene` (R2 and R4: measure-only, default-OFF)
+- **hashes named in the text** (commit / exe / byte-cert): `65ba362` (fld63 OFF byte-identity references)
+- **run dirs named in the text:** `runs/pareref_on`, `runs/t3fault`, `runs/t3trace305_smoke{,2}`, `runs/staf_{ctl,on}`
+- **source:** `docs/archive/SPEC_t3_null_derivation.md` §11 (11.1, 11.2), §12 (12.1, 12.1b, 12.2, 12.3), §13 (13.1), §14 (14.1 to 14.3), §15
+
+**Outcome.** On the field σ̂₀ sat at its 1.0 floor on 88 to 96 % of epochs, and at 303 stations a once-fitted station scale made the flag rate worse (9.57 % to 10.31 %): the slow factor must track, and a field B2 unclamp arm is owed. Fault-fixture detection held at 20/24 with 3.9× fewer flags. The prefit census's phase column reads 1.0e5 σ on clean data (own card owed); at 305 stations post-fit RAIM screened nothing under `carry_invariant` while logging ENABLED (loader fixed). Owed work sits in [QPR 4](../queues/QPR-ITEM-4-T3-NULLS.md); the T1 flag-rate gap was fixed as tier T1r ([AMB-IONO open](../ionosphere/AMB-IONO-OPEN-QUESTIONS.md) item 5).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

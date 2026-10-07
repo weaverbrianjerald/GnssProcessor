@@ -1,16 +1,18 @@
-# Rider A — Baarda reliability numbers (MDB) on the network path — `network.mdb`
+# Rider A: Baarda reliability numbers (MDB) on the network path
 
 **STATUS**
 
 - **id:** Rider A
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** Baarda reliability numbers (MDB) on the network path — `network.mdb`
+- **summary:** `network.mdb` BUILT measure-only and smoke-gated, solve byte-identical: a fault under about 9.4 m (scaled) can hide in the median GPS code row; the converged-window gates stay OWED.
 - **dates in the text:** 2026-08-04
-- **knobs / posture:** `network.mdb`, `network.mdb_event_m`, `network.mdb_event_holdoff_ep`, `network.trace_postfit_sigma0`, `network.raim_redundancy_normalize`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/ft63_mdb_`, `runs/agu305_mdb`, `runs/agu305_gps_`
-- **source:** `docs/archive/SPEC_redundancy_census.md` — 11, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.10
+- **knobs / posture:** `network.mdb` (hard error without an rᵢ source: the RAIM pool with `network.raim_redundancy_normalize`, or the redundancy census), `network.mdb_event_m` (1.0 m), `network.mdb_event_holdoff_ep` (20), `network.trace_postfit_sigma0` (supplies σ̂₀ for the scaled MDB); fingerprint-SAFE; `tests/test_network_mdb.cpp` (21 cases)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** `runs/ft63_mdb_{off,on,raimwarm,raimlive}`, `runs/agu305_mdb`, `runs/agu305_gps_{smoke,1h}` (earlier runs, cited for a pre-existing error)
+- **source:** `docs/archive/SPEC_redundancy_census.md` §11, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.10
+
+**Outcome.** The rider asks how large a fault can hide in a row, in metres. On the cold FT63 smoke the phase σ̂₀ deflates, so phase MDBs are not quotable; the cost was 6.4 ms/epoch, above the 0.2 ms budget and the 1 ms bound. The median code MDB is 2.82 m formal at 303 stations and 2.97 m at 63: row reliability is local. Every number is inside ignition; the BSHM known answer and a converged headline table stay OWED ([redundancy census](../raim-qc/REDUNDANCY-CENSUS.md) §15), and the [ledger](../../CONFIG_promotion_ledger.md) records `network.mdb` as UNVALIDATED.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

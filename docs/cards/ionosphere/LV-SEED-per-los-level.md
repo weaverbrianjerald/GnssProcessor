@@ -1,16 +1,18 @@
-# LV-SEED — where the remaining per-LOS level is born — R1–R9 pre-registered reads
+# LV-SEED: where the remaining per-LOS level is born (pre-registered reads R1 to R9)
 
 **STATUS**
 
 - **id:** LV-SEED
 - **topic:** ionosphere
-- **status:** open
-- **summary:** where the remaining per-LOS level is born — R1–R9 pre-registered reads
+- **status:** closed
+- **summary:** H1 to H3 all REFUTED: the per-LOS level is not born at arc start, not ionospheric, not station geometry; the follow-up reads pointed at the anchor election and the satellite clock.
 - **dates in the text:** 2026-09-14
-- **knobs / posture:** `network.trace_station_block`, `estimation.ionosphere_weighting.elevation_cutoff_deg`, `estimation.require_bia_for_signals`
-- **hashes named in the text** (commit / exe / byte-cert): `cb8e39a`, `ec66d42`, `2c4be49`, `87a33bf0`, `6b75e22`, `8d2ccb2`, `13fd225`, `78d0875`
-- **run dirs named in the text:** `runs/_cm_pvb`
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.13, 24.15
+- **knobs / posture:** `network.trace_station_block` (card ZP's measure-only trace); `estimation.ionosphere_weighting.elevation_cutoff_deg` (arms c7 15.0, c7b 20.0; 25 stays); `estimation.require_bia_for_signals`; arm c3 `apriori_clock_anchor_sigma_m` 0.02
+- **hashes named in the text** (commit / exe / byte-cert): `cb8e39a`, `ec66d42`, `2c4be49` (ZP worker), `87a33bf0` (smoke), `6b75e22` (R5), `8d2ccb2`, `13fd225` (c7 / c7b worker), `78d0875` (main Release); exes `D7D7CFC1…`, `4CD7D664…`
+- **run dirs named in the text:** `runs/_cm_pvb`; arms `_cm_b7`, `_cm_b1`, `_zp_ci`, `_zp_pl`, `_zp_pva1h`
+- **source:** `docs/archive/SPEC_event_harness.md` sections 24.13, 24.15
+
+**Outcome.** The question: where the per-LOS code level left on the leveling vehicle (PV-B) is born. R1 to R4 ([CE](../network-vehicle/CE-chain-era-bisect.md) section 24.13) refuted all three hypotheses: only 0.39 to 0.46 of arcs start within 0.3 m of their settled level (bar 0.7). R5: G06 is an outlier record (1.78 % of the wire's D_phase sum of squares), elected onto a newborn 15° anchor; tie cutoffs of 15° and 20° regressed, so 25° stays. With R7 ([Q3-F](../clock/Q3-F-self-contained-time-link.md)), R9 and R10, [CS](../clock/CS-clock-step-signalling.md) section 24.20 names the wire's within-arc wander as T4-refloat re-realizations of the satellite clock; the owed anchor election rule (elevation, minimum age) was built in [RF-2](../../refound/RF-2_held_basis_2026-09-15.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

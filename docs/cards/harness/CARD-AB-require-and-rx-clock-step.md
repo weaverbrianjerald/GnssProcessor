@@ -1,16 +1,18 @@
-# Cards A+B — the `require` hard-fail and the rx_clock_step event, plus the jump gate in metres
+# Cards A+B: the `require` hard-fail, the rx_clock_step event and the jump gate in metres
 
 **STATUS**
 
 - **id:** Cards A+B
 - **topic:** harness
 - **status:** closed
-- **summary:** the `require` hard-fail and the rx_clock_step event, plus the jump gate in metres
+- **summary:** Card A makes a refused warm resume end with one error line and exit code 1; on Card B's `rx_clock_step` event, `network.carry_rx_clock_in_block` is KEEP_OFF (a scale-linear 0.104 % leak).
 - **dates in the text:** 2026-09-10
-- **knobs / posture:** `network.state_snapshot_require`, `network.carry_rx_clock_jump_k`, `network.carry_rx_clock_in_block`, `network.product_output_path`
-- **hashes named in the text** (commit / exe / byte-cert): `dee2824`, `6a3531a1afb2b40b`, `8a849480e7ef02af`
+- **knobs / posture:** `network.state_snapshot_require`, `network.carry_rx_clock_jump_k`, `network.carry_rx_clock_in_block`, `network.product_output_path`; injector kind `rx_clock_step`; branch `worktree-rxstep`
+- **hashes named in the text** (commit / exe / byte-cert): `dee2824` (the HB-1 hook), `6a3531a1afb2b40b` (OFF seed fingerprint), `8a849480e7ef02af` (ON seed fingerprint); exe `gnss_processor_rxstep.exe`; byte-cert `products.txt` `3BF7831B…` (= main HEAD)
 - **run dirs named in the text:** `runs/_hb1probe`, `runs/evseed_quiet6h`, `runs/evleg_s2b_rxstep50_off`, `runs/evleg_s2b_null_off`, `runs/simnet60_quiet_wu93_24h`
-- **source:** `docs/archive/SPEC_event_harness.md` — 11, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8
+- **source:** `docs/archive/SPEC_event_harness.md` §11 (11.1 to 11.8)
+
+**Outcome.** Card A: a resume refused under `require` logged a false COLD START and died on an uncaught throw (`0xC0000409`) with its reason unprinted; it now ends on one error line naming the reason. Study 2b graded the receiver-clock carry on Card B's event: carry OFF, the free per-epoch receiver clock absorbs 100.000 % of a 0.05 to 10 m step at +0; the settled jump gate (about 3.1 m) refuses only after the solve. KEEP_OFF, outcome (b), per the [ledger](../../CONFIG_promotion_ledger.md); the refusal counter's missing identity (invariant #7) is owed only if the gate is ever armed.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

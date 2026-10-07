@@ -1,16 +1,18 @@
-# global σ̂₀ rider — `network.prior_residual_global_sigma0` — three sums, one ratio, nothing acted on
+# global σ̂₀ rider: the constraint-aware global variance component
 
 **STATUS**
 
 - **id:** global σ̂₀ rider
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** `network.prior_residual_global_sigma0` — three sums, one ratio, nothing acted on
+- **summary:** `network.prior_residual_global_sigma0` BUILT measure-only: OFF byte-identity, fingerprint SAFE, live wiring and cost PASS on a cold smoke; the triangle and the cliff field gates stay OWED.
 - **dates in the text:** 2026-08-04 → 2026-08-15
-- **knobs / posture:** `network.prior_residual_global_sigma0`, `network.raim`, `network.raim_carry_invariant`
-- **hashes named in the text** (commit / exe / byte-cert): `5d3de43ce235d931`
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_prior_residual_census.md` — 14, 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9, 15, 15.1, 15.2, 15.3
+- **knobs / posture:** `network.prior_residual_global_sigma0` (default false, hard error without `prior_residual_census`, WARNs without `phase_leveling`, `network.raim` or `raim_redundancy_normalize`), `network.raim`, `network.raim_carry_invariant`; arms `config/test_suite/_ft63_s0g_{raimlive_off,raimlive,approx}.json`
+- **hashes named in the text** (commit / exe / byte-cert): `5d3de43ce235d931` (resume fingerprint, identical OFF and ON)
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_prior_residual_census.md` §14, 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9, §15, 15.1, 15.2, 15.3
+
+**Outcome.** The rider measures how much of an epoch's weighted misfit lives in the carried priors, which the robust median σ̂₀ cannot see; nothing consumes it. A cold first read, not gradable, put 98 % of the misfit in the carry (tension ratio 55.9). The first arm found the data side dead on a `carry_invariant` lineage without leveling (R-1: 0 data rows; partly relieved by the RAIM pool re-host, not re-measured). The triangle and the cliff (§14.6.2, §14.6.3) need a converged warm leg (§15.3).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

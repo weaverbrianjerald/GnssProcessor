@@ -1,16 +1,18 @@
-# consumer AR — the consumer AR blunder diagnosed and fixed — the innovation screen is the gate that catches it, and the consumer posture was a drag all along
+# consumer AR: the consumer AR blunder, caught by the innovation screen
 
 **STATUS**
 
 - **id:** consumer AR
 - **topic:** consumer
 - **status:** closed
-- **summary:** the consumer AR blunder diagnosed and fixed — the innovation screen is the gate that catches it, and the consumer posture was a drag all along
-- **dates in the text:** —
-- **knobs / posture:** `estimation.state_ambiguity_basis`, `network.closed_loop.consumer_undifferenced`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/cta4_q1e7_`, `runs/cta4_q1e7_ffr2`, `runs/nlwl_guarded`, `runs/logchk`, `runs/cta4_q1e7_bssd_ref`
-- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` — §8.11, §8.11.1, §8.11.2, §8.11.3, §8.11.4, §8.11.5, §8.11.6, §8.11.7, §8.11.8, §8.11.9, §8.11.10
+- **summary:** The 35 m WL-only blunder was a frame mismatch the FFR gate cannot see; the innovation screen catches it, and the undifferenced consumer posture was ADOPTED in the chain.
+- **dates in the text:** none (git log dates the work to 2026-08-10 and 2026-08-11, commits `0bee520` and `fb6ae66`)
+- **knobs / posture:** `wl_only_max_innov_cyc` (default 0.5 cycle), `estimation.state_ambiguity_basis`, `network.closed_loop.consumer_undifferenced` (set in `_agu63.json`)
+- **hashes named in the text** (commit / exe / byte-cert): exe `gnss_processor_ffr2.exe` md5 `1760ABD54E83D1D68BFF6EB8804F0A10`; the stale copy `gnss_processor_ffr4.exe` `8CA08AEB…` against the fixed `88107F4C…`
+- **run dirs named in the text:** `runs/cta4_q1e7_{ffr,ffr2}`, `runs/nlwl_guarded`, `runs/logchk`, `runs/cta4_q1e7_bssd_ref`
+- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` §8.11 (§8.11.1 to §8.11.10)
+
+**Outcome.** The question was why the closed-loop consumer's WL-only AR dragged the position on a fix reported as `ratio = inf`. That value is a no-search sentinel; the bootstrap FFR gate passes the fix at `p_succ = 1.0` because an arc's dispersion cannot see a systematic frame mismatch (.BIA MW widelane against the consumed phase-bias frame); the innovation screen takes the worst epoch to 7.75 m. Both guards now also protect the NlWl sibling, whose unguarded path reached a 1026.71 m median on ALGO00CAN; guarded it is safe, not a working AR posture. The logger test of §8.11.10 (`_logchk3h.json`) is OWED, with no recorded result.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

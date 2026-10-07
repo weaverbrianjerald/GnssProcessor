@@ -1,16 +1,18 @@
-# LV — the ionosphere-level initiative's own reference page — knob ledger, verdict ledger, section map, grading protocol and the problem statement
+# LV: the ionosphere-level initiative's reference page
 
 **STATUS**
 
 - **id:** LV
 - **topic:** ionosphere
 - **status:** reference
-- **summary:** the ionosphere-level initiative's own reference page — knob ledger, verdict ledger, section map, grading protocol and the problem statement
-- **dates in the text:** 2026-08-04 → 2026-08-21
-- **knobs / posture:** `estimation.global_vtec_sh.mean_vtec_prior_tecu`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — (preamble), 0, 1, 2, 6, 7, 8
+- **summary:** Reference page of the LV ladder (LV-1 to LV-5, S2H): knob and verdict ledgers, section map, the binding grading protocol, the problem statement and the do-NOT list.
+- **dates in the text:** 2026-08-04 to 2026-08-21
+- **knobs / posture:** `estimation.global_vtec_sh.mean_vtec_prior_tecu` (the a00 anchor, 32.24 ± 2); the LV knobs in the knob ledger, all loader-default OFF; posture of record: the canonical EXT-CB, no LV level stack
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none as full paths; every cited run resolves under `D:\GnssProcessor_archive\2026-08-12\runs\`
+- **source:** `docs/archive/SPEC_level_information_budget.md` (preamble), sections 0, 1, 2, 6, 7, 8
+
+**Outcome.** The page holds the LV initiative's ledgers and rules: LV-1 diagnostic-keep, LV-2 not for settled work, LV-4 correct but costing the data side in every cell, LV-5 required with LV-4, S2H validated to 3 h, LV-3 not built. Three of the document's own claims were falsified and are corrected in place (sections 1, 4 and the 1 h grading). Later standing: the S2H 12 h verdict listed here as open missed the level bar and moved the level authority to LV-6 ([S2H](../code-bias/S2H-HARVEST.md) section 31), and the re-founding dropped the SH field from the producer ([NETWORK_REFOUNDING](../../refound/NETWORK_REFOUNDING_2026-09-14.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

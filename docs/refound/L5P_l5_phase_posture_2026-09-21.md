@@ -1,15 +1,17 @@
-# L5P: the L5 phase posture (the wide-lane pair scope and the extra-band code weight)
+# L5P: the L5 phase posture (wide-lane pair scope, extra-band code weight)
 
 **STATUS**
 
 - **id:** L5P
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-09-21, NOT ARMED, L5 NOT ADOPTED: the gap between the cured datum (390 epochs below a decimetre) and the band-5-code-removed emulation (535) is the band-5 CODE ROWS (scale 10: 597 and every hour better than the dual pair at WTZZ00DEU), not the wide-lane detector pairs (391); the scale fails the clock-wire bar (0.0099 / 0.0217 m) and does not transfer across the 16 census sites (hours 2 to 6 worse at 9, better at 4; hour 6 median 0.24 against 0.13 m). Original summary: Build card, pre-registered 2026-09-21. With the band-5 code datum cured (B5D) the triple field arm has 390 epochs below a decimetre; with the band-5 code removed at the stations it has 535. The emulation removed two things at once: the band-5 code rows of the solve and the band-5 pairs of the wide-lane slip detector (55 detections, 28 in the first hour). Two default-OFF knobs separate them, and together they define a posture in which the network uses the L5 phase and keeps the band-5 code only for its own bias. Gates, arms, attribution rule and bars frozen here.
+- **summary:** BUILT, NOT ARMED: the triple arm's residual gap is the band-5 CODE ROWS, not the wide-lane detector pairs; the scale-10 deweight fails the clock-wire bar and does not transfer across sites; L5 SEQUENCED.
 - **source:** [B5D](B5D_band5_code_datum_2026-09-20.md) sections 3 and 4; [TBI](TBI_three_band_ignition_2026-09-20.md) section 4 (the L5 adoption bars)
 - **knobs / posture:** new `network.cycle_slip.mw_detect_pairs` (`all`, the default, or `primary`) and `network.extra_band_code_sigma_scale` (default 1.0, network only); on the RF-0hv working bases with `processing.frequency_mode: triple` and `network.sat_gf_extra_band_free: true`
 - **dates in the text:** 2026-09-21
 - **hashes / run dirs:** bases `runs/_rap_b5_tri`, `runs/_rap_b5_simtri`, `runs/_rf0hv5_{field,sim}6`; emulation `runs/_rap_tB_nocode5_net`
+
+**Outcome.** The question was whether the gap from the cured datum (390 epochs below a decimetre) to the emulation (535) is the band-5 code rows or the detector's band-5 wide-lane pairs (55 detections, 28 in hour 1). The code scale recovers it (597 at WTZZ00DEU), the pair scope does not (391), and G2 makes `primary` field-blocking by the letter. B1 FAILS on the clock wire (0.0099 / 0.0217 m); across 16 census sites hours 2 to 6 worsen at 9. Neither knob is recommended; owed: return plan R-1 to R-4 (section 4).
 
 ## 1. What is built (both default to today's behaviour, byte-identical at the default)
 

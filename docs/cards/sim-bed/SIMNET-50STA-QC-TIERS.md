@@ -1,16 +1,18 @@
-# G-A 50-sta — the 50-station global arm — the vf trend, the QC tiers, and the MW null space
+# G-A 50-sta: the 50-station global arm, the QC tiers and the MW null space
 
 **STATUS**
 
 - **id:** G-A 50-sta
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** the 50-station global arm — the vf trend, the QC tiers, and the MW null space
+- **summary:** At 50 stations 4 of 7 QC tiers go live; the datum station had NO slip detection (proven), fixed by `cycle_slip.datum_station_detect` at zero availability cost; MW mid-arc silence left OPEN.
 - **dates in the text:** 2026-08-11
-- **knobs / posture:** `network.clock_model`, `network.phase_datum_prioritized`, `network.trace_slip_raw`, `network.cycle_slip.if_phase_td`, `network.trace_slip_events`, `network.cycle_slip.datum_station_detect`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `network.clock_model`, `network.phase_datum_prioritized`, `network.trace_slip_raw`, `network.cycle_slip.if_phase_td`, `network.trace_slip_events`, `network.cycle_slip.datum_station_detect` (landed default OFF)
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/simnet50_mwblind2`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §9.7, 9.7.1, 9.7.2, 9.7.3, 9.7.4, 9.7.5, 9.7.6, 9.7.7, 9.7.8, 9.7.9, 9.7.10
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §9.7 (9.7.1 to 9.7.10)
+
+**Outcome.** The card asked what a 50-station global roster adds to the n = 3 / 5 grade. The per-satellite clock error converges (5.43 to 0.69 m) while a pivot-relative common level wanders ~1.3 m at every n, and T3 fires 3.7 million times its implied α on clean data. Slips at the sim rate inflate the per-satellite clock 7.6x and leave the common level untouched. IF-TD, once armed, covers the MW null space. The [ledger](../../CONFIG_promotion_ledger.md) records `datum_station_detect` as sim-validated only and runtime-inert under the prioritized datum that the [re-founding goldens](../../refound/RF-3-prep_golden_rebase_2026-09-15.md) pin.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

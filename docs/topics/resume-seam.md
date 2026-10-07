@@ -25,14 +25,14 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [§18.10/§18.11](../cards/resume-seam/RESUME-FRAME-RESTORE.md) | the seam is a FRAME loss — `resume_frame_restore`, built and graded | closed | 2026-09-03 |
-| [§18.12](../cards/resume-seam/RESUME-COUPLING-RESTORE.md) | the coupling-regressor restore verdict — the mechanism works, the wire is 10× better | closed | 2026-09-05 |
-| [§18.13/§18.14](../cards/resume-seam/RESUME-DENSE-BORDER-E2.md) | E2 and the dense border across the seam — pre-registered, then its verdicts | closed | 2026-09-05 |
-| [RS-2](../cards/resume-seam/RS-2-writer-frame-rebase.md) | the restored invariant DD branch is folded in the WRITER's linearization frame — Phase … | closed | 2026-09-12 |
-| [RS-3 … RS-5](../cards/resume-seam/RS-3-to-RS-5-datum-and-emit-layer.md) | both datums continue at the seam, the phase-bias level is the EMIT layer, and the seam … | closed | 2026-09-13 |
-| [RS-6a](../cards/resume-seam/RS-6a-station-layer-memories.md) | the station layer's own memory across the seam — the rx-CB carry and the T5 iono deviat… | closed | 2026-09-13 |
-| [RS-7 … RS-9](../cards/resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md) | the dense border restores exactly and is NOT the residual; the flat 26 % is the rx-CB i… | closed | 2026-09-13 |
-| [RS-8 … RS-10b](../cards/resume-seam/RS-8-to-RS-10b-latch-and-close-out.md) | the canonical-signal latch flips on 23 of 61 stations at a resume; the ZWD step is `zwd… | closed | 2026-09-14 |
+| [§18.10/§18.11](../cards/resume-seam/RESUME-FRAME-RESTORE.md) | frame restore closes the phase side; 33 of 52 clocks trip, KEEP OFF until §18.14 | closed | 2026-09-03 |
+| [§18.12](../cards/resume-seam/RESUME-COUPLING-RESTORE.md) | coupling-regressor restore: wire about 10× better, consumer misses the h12 stop rule | closed | 2026-09-05 |
+| [§18.13/§18.14](../cards/resume-seam/RESUME-DENSE-BORDER-E2.md) | leg D misses the consumer bar; leg E (dense border) PASSES, resume knobs RECOMMEND_SCOPED | closed | 2026-09-05 |
+| [RS-2](../cards/resume-seam/RS-2-writer-frame-rebase.md) | the DD blob is the field seam defect; re-base exact, NECESSARY NOT SUFFICIENT; D5 hold K=1 | closed | 2026-09-12 |
+| [RS-3 … RS-5](../cards/resume-seam/RS-3-to-RS-5-datum-and-emit-layer.md) | both datums continue; the 17.7 m PB step is the cold emit layer; RS-5 closes the PB wire | closed | 2026-09-13 |
+| [RS-6a](../cards/resume-seam/RS-6a-station-layer-memories.md) | station-layer restores: T5 removes the a₀₀ seam transient, rx-CB modest; most bars FAIL | closed | 2026-09-13 |
+| [RS-7 … RS-9](../cards/resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md) | dense border KEEP_OFF (not the residual); rx-CB frame restored, withheld 26.3 % to 9.8 % | closed | 2026-09-13 |
+| [RS-8 … RS-10b](../cards/resume-seam/RS-8-to-RS-10b-latch-and-close-out.md) | latch restore: seam chord births 64 to 1; ZWD reseed OFF without a ZWD carry; v8 seeds | closed | 2026-09-14 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

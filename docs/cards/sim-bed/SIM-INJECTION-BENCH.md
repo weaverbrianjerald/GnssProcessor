@@ -1,16 +1,18 @@
-# injection bench — the G-B event-injection bench — the ambiguity N-regime, the pre-flight, the arms, and the first bench run
+# injection bench: the G-B slip-injection bench and its first run
 
 **STATUS**
 
 - **id:** injection bench
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** the G-B event-injection bench — the ambiguity N-regime, the pre-flight, the arms, and the first bench run
+- **summary:** Slip-injection bench BUILT and validated: 22 of 24 injected slips attributed at latency 0, empirical MDB 2 cycles; its null arm exposed the pivot-visibility gauge defect.
 - **dates in the text:** 2026-08-13 → 2026-08-15
-- **knobs / posture:** `network.carry_invariant`, `network.cycle_slip.if_phase_td`, `network.clock_datum_sum_to_zero`, `network.clock_datum_broadcast_anchored`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** fixture `ambiguity.regime: "field"`, `half_width_cycles: 48` (field-N); `network.carry_invariant`, `network.cycle_slip.if_phase_td`, `network.clock_datum_sum_to_zero`, `network.clock_datum_broadcast_anchored`
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/simnet24_inject_null`, `runs/simnet24_inject_`, `runs/simnet24_inject_fault`, `runs/inj_null`, `runs/inj_fault`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §15, 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §15 (15.1 to 15.8), absorbed from `docs/attic/SPEC_sim_injection_bench.md`
+
+**Outcome.** The card built a truth-graded bench (field-N fixture, pre-flight, arm generator, grader) for asking whether the producer's slip response works. The fault arm left DD integer recovery undegraded; the null arm was not quiet (T3 at 3.78e7x its implied α), and its G15 excursion was the [pivot-visibility gauge defect](../network-vehicle/PIVOT-GAUGE-DEFECT.md). Field-N integers grade worse on WL (30.0 against 54.0 % at the integer), mechanism owed. [STABILITY §18.6](STABILITY-CAMPAIGN.md) reproduced the 2-cycle MDB. Of §15.7's owed list, the RAIM re-host field gates were measured on 2026-09-13 ([SPEC_raim_pool_rehost §7.1](../../SPEC_raim_pool_rehost.md)) and the [event harness](../harness/HARNESS-REF.md) added an `rx_clock_step` injector; the rest has no recorded discharge.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

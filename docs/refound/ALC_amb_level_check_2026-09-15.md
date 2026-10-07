@@ -1,6 +1,20 @@
-# ALC — the consumer RE-VALIDATES its float ambiguities against their own code level (`amb_level_check`), both beds: the hours 4–5 that beat cards CC and PBT are gone, the field is better on FIVE of six hours, and the one bar that fails is a 0.01 m sim clause (2026-09-15)
+# ALC: consumer ambiguity level check against its own code (2026-09-15)
 
-**STATUS:** open — **one knob BUILT (`network.closed_loop.amb_level_check` + three tuning knobs), default OFF, two runs spent, no golden and no ledger touched, nothing promoted.**
+**STATUS**
+
+- **id:** ALC
+- **topic:** consumer
+- **status:** superseded
+- **summary:** The consumer level check (`network.closed_loop.amb_level_check`) BUILT, default OFF: field bar PASS, sim bar FAIL by 0.0096 m; adopted 2026-09-19, then OFF under the phase-bias hold.
+- **dates in the text:** 2026-09-15; corrections appended 2026-09-16 and 2026-09-17
+- **knobs / posture:** `network.closed_loop.amb_level_check` (+ `_window_ep` 20, `_k` 4.0, `_mode` `act` | `observe`), default OFF; arms are the PBT pair plus the one key
+- **hashes named in the text:** exe `gnss_processor_alc.exe` `87923C21E731DDC8` (source main `852f02e` + the card's diff); OFF smoke record stream `333DCB0871E1F5BC`; `products.txt` field `EDAF96CEDB1262B2`, sim `2149CABD1192E610`, byte-identical to the PBT arms
+- **run dirs named in the text:** `runs/_alc_field6`, `runs/_alc_sim6`, `runs/_alc_smoke_off`; references `runs/_pbt_{field,sim}6`, `runs/_rfpdfix_{field,sim}6_both`, `runs/_cst_field6_both`
+- **source:** [PBT](PBT_consumer_pb_translate_2026-09-15.md) sections 7 and 8 (a carried or translated ambiguity is continuous, not correct)
+
+**Outcome.** The card asks whether re-validating the consumer's float ambiguities against its own wide-lane and ionosphere-free code levels repairs the hours that card PBT's translation lost. With the wire byte-identical, field hours 4 and 5 go 1.58 / 1.90 to 0.49 / 0.68 m; sim hour 3 is +0.0596 m against a 0.05 bar. C1 and C3 PASS, C2 FAILS, nothing promoted. [ALC-ARC](ALC-ARC_reset_generation_2026-09-16.md) corrected the window restart and [ALC-STAT](ALC-STAT_statistics_audit_2026-09-17.md) found the 4 sigma bar uncalibrated; [ALC2](ALC2_restart_policy_adoption_2026-09-19.md) adopted the check into the working bases, and [PBH](PBH_phase_bias_hold_2026-09-19.md) turned it OFF as harmful under the phase-bias hold.
+
+**Status as recorded (2026-09-15):** open — **one knob BUILT (`network.closed_loop.amb_level_check` + three tuning knobs), default OFF, two runs spent, no golden and no ledger touched, nothing promoted.**
 PBT §7 named the one thing cards CC and PBT had in common and neither fixed: **a carried or translated ambiguity is CONTINUOUS, not CORRECT**, and
 invariant #7's re-coupling edge has no re-validation.  It measured the cost exactly — over TOW 270900–273000 the reset-only baseline moved its
 ambiguities **3.2416 m** (max cumulative |ΔAMB|) through mass resets at 271050 / 271200 and came out NEARER the truth, while the translated arm

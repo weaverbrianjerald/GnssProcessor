@@ -1,16 +1,18 @@
-# ZP — the station block's parameterization at ignition — pre-registered
+# ZP: the station block's parameterization at ignition
 
 **STATUS**
 
 - **id:** ZP
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** the station block's parameterization at ignition — pre-registered
-- **dates in the text:** —
-- **knobs / posture:** `network.trace_station_block`, `network.zwd_prior_sigma_m`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.10
+- **status:** closed
+- **summary:** The trace found the `carry_invariant` station block singular at 58 of 61 stations (median null dimension 7); the per-epoch ZWD prior was RETIRED, and the field took the leveling vehicle.
+- **dates in the text:** none in this card; the trace results are dated 2026-09-14 (LV-SEED)
+- **knobs / posture:** `network.trace_station_block` (trace-only, built; writes `logs/network_station_block.csv`), `network.zwd_prior_sigma_m` (the pre-registered mechanism; retired, absent from the code)
+- **hashes named in the text** (commit / exe / byte-cert): none in this card; the trace's build is commits `cb8e39a`, `ec66d42`, `2c4be49` (recorded on LV-SEED)
+- **run dirs named in the text:** none in this card; the trace arms `_zp_ci` and `_zp_pl` (recorded on LV-SEED)
+- **source:** `docs/archive/SPEC_event_harness.md` §24.10
+
+**Outcome.** The question: how the station block is parameterized at ignition, and whether a per-epoch ZWD prior repairs it. The trace was built and read on two 1 h cold arms ([LV-SEED](../ionosphere/LV-SEED-per-los-level.md), §24.10 RESULTS): the singularity is permanent under `carry_invariant`, while `phase_leveling` closes the same block to full rank at every station within about 10 epochs. The prior was RETIRED as a candidate by [CM2](CM2-leveling-vehicle.md) §24.12 and never built. The [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) cites this trace and moved the field to the leveling vehicle; the trace stays the standard witness for vehicle and datum cards.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

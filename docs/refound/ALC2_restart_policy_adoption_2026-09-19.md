@@ -1,15 +1,17 @@
-# ALC2: the level-check restart policy refused, and the translate/level-check pair adopted into the working bases
+# ALC2: restart policy refused, translate and level check adopted
 
 **STATUS**
 
 - **id:** ALC2
 - **topic:** consumer
 - **status:** closed
-- **summary:** `amb_level_check_restart: inconsistent` is REFUSED on both beds and its branch stays unmerged as the record; `pb_step_translate`, `amb_level_check` and `trace_consumer_sat` are ADOPTED into the two RF-0hv working bases; the pair is re-based on post-ALC-ARC `main` and reproduces the reference pair byte for byte
+- **summary:** `amb_level_check_restart: inconsistent` REFUSED on both beds (sub-decimetre consumer epochs fall to 0); `pb_step_translate`, `amb_level_check` and `trace_consumer_sat` ADOPTED into the RF-0hv working bases.
 - **source:** [ALC](ALC_amb_level_check_2026-09-15.md) section 7 item 2, [ALC-ARC](ALC-ARC_reset_generation_2026-09-16.md), [ALC-STAT](ALC-STAT_statistics_audit_2026-09-17.md), [ALC-BAND](ALC-BAND_window_scope_review_2026-09-17.md); author's adoption decision
 - **knobs / posture:** ADOPTED into `config/refound/{field,sim}_gps_dual_rf0hv.json`: `network.closed_loop.pb_step_translate`, `network.closed_loop.amb_level_check`, `network.trace_consumer_sat`. REFUSED and not set anywhere: `network.closed_loop.amb_level_check_restart` (stays at the loader default `all`). No loader default, no golden and no ledger row changed.
 - **dates in the text:** 2026-09-19
 - **hashes / run dirs:** new pair `runs/_rf0hv2_field6` and `runs/_rf0hv2_sim6`, exe `build/x64-Release/gnss_processor_rf0hv2.exe` sha256 `A3D62A242C04E545AA2ACD8C3D0747695821A69C216D2BA6D02B1B019C15A9A7`, source `main` `e437b6b`. `products.txt` sha256 FIELD `EDAF96CEDB1262B20CA4FFA57C3CCA1F6E89DCC8B8AB1396AF7073596D660484`, SIM `2149CABD1192E61062FA4AFAAB1A6D6D2995456B32437A6841B05A681DA7F12B`. Refused arms `runs/_alc2_field6` / `runs/_alc2_sim6`, exe `gnss_processor_alc2.exe` sha256 `910122BBBA1EE7C93E3FED6BD4DA4783ED35EDF7F9BA4669FC23E457D2CA443D`. Reference pair `runs/_alc_field6` / `runs/_alc_sim6`, exe `gnss_processor_alc.exe` sha256 `87923C21E731DDC8572D8DF746C2D7CC2089FCD2CB4ECBEF864DA02F383C86B4`. Every `runs/<name>` above resolves under `D:\GnssProcessorSupport\runs\` except the two new ones, which are in the working tree.
+
+**Outcome.** The question was whether restarting the level-check window only on inconsistent writes buys coverage without costing position. Coverage rose (field 0.204 to 0.300, sim 0.302 to 0.733), the extra trips landing almost entirely in the IF channel, and the overall consumer p50 worsened by 0.165 m (field) and 0.286 m (sim): REFUSED, with branch `wip/alc2-restart-policy` kept unmerged. The adopted pair, re-based on post-ALC-ARC `main`, reproduces the reference wire and consumer traces byte for byte. On 2026-09-20 [PBH](PBH_phase_bias_hold_2026-09-19.md) section 8 adopted the phase-bias hold, set the translation and the level check to false in the working bases, and replaced this pair with `runs/_rf0hv3_{field,sim}6`.
 
 ## 1. The ALC2 refusal record
 

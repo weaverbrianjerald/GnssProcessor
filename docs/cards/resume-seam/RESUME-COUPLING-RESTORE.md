@@ -1,16 +1,18 @@
-# §18.12 — the coupling-regressor restore verdict — the mechanism works, the wire is 10× better
+# §18.12: the coupling-regressor restore verdict, the wire 10× better at the seam
 
 **STATUS**
 
 - **id:** §18.12
 - **topic:** resume-seam
 - **status:** closed
-- **summary:** the coupling-regressor restore verdict — the mechanism works, the wire is 10× better
-- **dates in the text:** 2026-09-03 → 2026-09-05
-- **knobs / posture:** `network.resume_coupling_restore`, `network.readmit_seed_horizon_s`
+- **summary:** The serialized Card-1 regressors are VALIDATED on the wire (about 10× better on the aggregate instruments), but the consumer crosses the h12 stop rule at 2.05 m rms: KEEP OFF at the time.
+- **dates in the text:** 2026-09-03 → 2026-09-05 (the RESOLVED / BUILT notes on open items 1 and 2)
+- **knobs / posture:** `network.resume_coupling_restore` (read side; snapshot format v3 with QS / QL / QZ / QR rows), `network.readmit_seed_horizon_s` (E2, named in the open-item note)
 - **hashes named in the text** (commit / exe / byte-cert): `a8aa408`
-- **run dirs named in the text:** `runs/camp60wu_quiet12h_frwriter_sticky`, `runs/camp60wu_quiet24h_sticky`, `runs/cplreg_q12warm_`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — 18.12
+- **run dirs named in the text:** `runs/camp60wu_quiet12h_frwriter_sticky` (v3 writer), `runs/camp60wu_quiet24h_sticky` (continuous truth), `runs/cplreg_q12warm_{a,b,c}` (arms)
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §18.12
+
+**Outcome.** The question is whether serializing the Card-1 coupling regressors stops §18.11's first-fold clock trips. Against the frame-only arm, `nis` trips fall 31 to 2, metre-class clock satellites 12+ to 2, and the consumer ends best (0.108 m); the card's own size estimate was wrong by about 40× (a 15.2 MB snapshot). A consumer-only reading first called it FALSIFIED; the wire reversed that (grade a producer on the wire first). [§18.14](../resume-seam/RESUME-DENSE-BORDER-E2.md) traced the h12 bias to the diagonal border fold, not G20/E31, and leg E made the knob RECOMMEND_SCOPED ([ledger](../../CONFIG_promotion_ledger.md)). Open item 3 (census tail) has no recorded resolution.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

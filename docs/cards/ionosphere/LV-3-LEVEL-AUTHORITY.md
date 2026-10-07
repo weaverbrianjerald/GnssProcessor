@@ -1,16 +1,18 @@
-# LV-3 — the level authority, made explicit — mostly documentation, one optional knob
+# LV-3: the level authority, made explicit
 
 **STATUS**
 
 - **id:** LV-3
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the level authority, made explicit — mostly documentation, one optional knob
-- **dates in the text:** —
-- **knobs / posture:** `network.a00_prior_from_brdc`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 5
+- **summary:** A documentation card: the frames stay as built (EXT-CB keeps the a00 GIM anchor, the self-contained posture the W6 sum-to-zero); the optional broadcast-Klobuchar a00 prior is deliberately NOT built.
+- **dates in the text:** none
+- **knobs / posture:** `network.a00_prior_from_brdc` (optional, NOT built; would feed the `mean_vtec_prior_*` channel at a loose 10 TECU sigma)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_level_information_budget.md` §5; the frame contract it points to is §30 ([LV-3 contract](../wire-contract/LEVEL-CONTRACT.md))
+
+**Outcome.** The card makes the owner of the absolute ionosphere level explicit rather than accidental. The frames stay as built; the normative contract is §30 ([LV-3 contract](../wire-contract/LEVEL-CONTRACT.md)) and its product declaration is `SPEC_product_cbpin_contract.md` §6.6. The broadcast a00 prior was ranked LAST, only for postures without the GIM anchor: its prerequisite (retained Klobuchar coefficients) is VERIFIED, and the remaining blocker is a runtime override of `mean_vtec_prior_tecu`, a design decision of its own (§30.6). The re-founded goldens run free slant iono with no SH field and no GIM ([RF-3-prep](../../refound/RF-3-prep_golden_rebase_2026-09-15.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

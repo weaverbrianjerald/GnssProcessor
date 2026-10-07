@@ -1,15 +1,17 @@
-# GRB: the goldens re-based onto the RF-0hv working posture (the float vehicle, as armed on 2026-09-22)
+# GRB: golden re-base onto the RF-0hv float-vehicle posture (2026-09-22)
 
 **STATUS**
 
 - **id:** GRB
 - **topic:** config-ledger
 - **status:** closed
-- **summary:** RE-BASED 2026-09-22 at the author's instruction ("go ahead with the golden re-base"; Opus config worker, every number re-graded by the manager). The two goldens moved from the 2026-09-15 leveling-vehicle posture (RF-0g: field consumer 3.77 to 1.08 m by hour, sim 6.23 to 0.46 m) onto the RF-0hv float-vehicle posture as armed today (field 0.560 0.059 0.028 0.030 0.036 0.045 m, sim 0.598 0.103 0.096 0.056 0.055 0.049 m). Bases frozen as `config/refound/{field,sim}_gps_dual_rf0hv_golden_2026-09-22.json`; 27 pins (16 carried, 11 added: the vehicle, the held basis, the knobs armed since 2026-09-20 and the phase-bias hold); the same 7 exceptions; `make_golden_config.py --verify` PASS on the first pass (57 recommended knobs armed in regime, from 51: the six float-vehicle rows were out of regime on RF-0g and are armed here); certified by 2 h arms of each generated golden byte-identical to the confirmation pair over the shared window. Owed: ledger rows for four pinned knobs that have none (the vehicle pair, `tracker_modeled_first`, `emit_pb_hold`).
-- **source:** [RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md) section 4 (the previous re-base and its recipe); the author's plan review of 2026-09-22 (the goldens two orders of magnitude behind the working bases)
-- **knobs / posture:** the goldens `config/golden/golden_{field,sim}_refound.json`, generated from `config/golden/golden_manifest.json`; the retired goldens untouched
+- **summary:** RE-BASED 2026-09-22: both goldens moved from the RF-0g leveling posture onto the RF-0hv float-vehicle posture; `make_golden_config.py --verify` PASS, 57 recommended knobs armed in regime (from 51).
+- **source:** [RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md) section 4 (the previous re-base and its recipe); the author's plan review of 2026-09-22 (the goldens two orders of magnitude behind the working bases); the author's instruction of 2026-09-22 ("go ahead with the golden re-base"; a config worker, every number re-graded by the manager)
+- **knobs / posture:** the goldens `config/golden/golden_{field,sim}_refound.json`, generated from `config/golden/golden_manifest.json`; the retired goldens untouched; bases frozen as `config/refound/{field,sim}_gps_dual_rf0hv_golden_2026-09-22.json`; the replaced posture RF-0g of 2026-09-15 (field consumer 3.77 to 1.08 m by hour, sim 6.23 to 0.46 m)
 - **dates in the text:** 2026-09-22
-- **hashes / run dirs:** frozen bases sha256 `35aa24b3...` (field), `893be0d2...` (sim); confirmation pair `runs/_rf0hv9_{field,sim}6`; certification `runs/_rap_grb_field2`, `runs/_rap_grb_sim2`; exe `gnss_processor_grk4.exe` (`CEB14EAB...`)
+- **hashes / run dirs:** frozen bases sha256 `35aa24b3...` (field), `893be0d2...` (sim); confirmation pair `runs/_rf0hv9_{field,sim}6`; certification `runs/_rap_grb_field2`, `runs/_rap_grb_sim2`; exe `gnss_processor_grk4.exe` (`CEB14EAB...`); the owed ledger rows landed at `4dc8687`
+
+**Outcome.** The goldens' validated consumer trailed the working bases by two orders of magnitude at hours 3 to 6, and the generator could not see any float-vehicle ledger row. The re-base pinned 27 knobs (16 carried, 11 added) with the same 7 exceptions, passed `--verify` on the first pass, and 2 h arms of each generated golden are byte-identical to the confirmation pair over the shared window. The ledger rows owed for four pinned knobs (the vehicle pair, `tracker_modeled_first`, `emit_pb_hold`) landed as appendix A10 of the [promotion ledger](../CONFIG_promotion_ledger.md). The goldens have moved on since (latest: card [EXL](EXL_exact_update_lah_promotion_2026-10-01.md), 2026-10-01).
 
 ## 1. Why
 

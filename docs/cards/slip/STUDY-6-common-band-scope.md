@@ -1,16 +1,18 @@
-# Study 6 — the COMMON-BAND scope — free only the band the evidence names
+# Study 6: the common-band scope, free only the band the evidence names
 
 **STATUS**
 
 - **id:** Study 6
 - **topic:** slip
-- **status:** closed
-- **summary:** the COMMON-BAND scope — free only the band the evidence names
+- **status:** superseded
+- **summary:** KEEP_OFF on the pre-registered gates: narrowing leaves every producer channel equal or better but the storm consumer median 3.3 cm worse; Study 7 located that cost and promoted the scope RECOMMEND_ON.
 - **dates in the text:** 2026-09-11
-- **knobs / posture:** `network.cycle_slip.common_band_scope`, `network.parallel_reduce`
+- **knobs / posture:** `network.cycle_slip.common_band_scope` (`common_band_min_arc_epochs` 10), `network.parallel_reduce`
 - **hashes named in the text** (commit / exe / byte-cert): `5fe64c7`, `012ff2d`, `5223dc6`
 - **run dirs named in the text:** `runs/evleg_null_mwevid_main`, `runs/golden_sim_campaign_zwdblk_cbscope`, `runs/golden_sim_campaign_zwdblk_cbscope2`, `runs/golden_sim_campaign_zwdblk_mwevid_preduce`, `runs/golden_sim_campaign_zwdblk_cbscope3`
-- **source:** `docs/archive/SPEC_event_harness.md` — 14, 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9
+- **source:** `docs/archive/SPEC_event_harness.md` §14, §14.1 to §14.9
+
+**Outcome.** The question: does freeing only the bands that no silent MW pair exonerates beat the all-band slip response. Iteration 2 narrowed to exactly the slipped band (level residual 24 to 300× smaller) but split satellites' references across stations; iteration 3's anchor clause put them back together, yet its storm arm MISSED the consumer p50, T4 (86 against ≤ 78), L1C and handover bars. [Study 7](STUDY-7-common-band-narrowing.md) found the whole +3.3 cm inside the recovery from a declared pivot handover at 4.6833 h (§16.5) and, with `if_phase_td_pairs: all` and an anchor clause in rule F3, promoted both knobs RECOMMEND_ON together (§16.8: consumer p50 0.174 → 0.120 m).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

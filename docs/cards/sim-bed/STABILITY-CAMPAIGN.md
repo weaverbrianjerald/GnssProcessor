@@ -1,16 +1,18 @@
-# stability — the settled state must stop moving — targets 1–4, the eclipse-exclusion valve, sticky pivot, and the field transfer
+# stability: the settled state must stop moving (targets 1 to 4)
 
 **STATUS**
 
 - **id:** stability
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** the settled state must stop moving — targets 1–4, the eclipse-exclusion valve, sticky pivot, and the field transfer
+- **summary:** Late drift is the eclipse-exclusion valve's edge response (carry aging FALSIFIED); `sticky_pivot` cuts the sim settled consumer rms 74 % (RECOMMEND_SCOPED); the seam transient is the wire's phase-bias re-convergence.
 - **dates in the text:** 2026-08-13 → 2026-09-02
-- **knobs / posture:** `network.sticky_pivot`, `network.closed_loop.replay_products_path`, `network.consume_ura`, `network.consume_phase_bias_sigma`
+- **knobs / posture:** `network.sticky_pivot`, `network.closed_loop.replay_products_path`, `network.consume_ura`, `network.consume_phase_bias_sigma`, `exclude_eclipsing_satellites`, `amb_seam_reinflate_var_m2`
 - **hashes named in the text** (commit / exe / byte-cert): `fd1d123`, `c799a8b`, `ed170b2`
 - **run dirs named in the text:** `runs/simnet60_quiet_wu93_24h`, `runs/camp60wu_quiet24h_r2q3`, `runs/camp60wu_quiet24h_sticky`, `runs/simnet24_inject_`, `runs/inj24g_`, `runs/camp60wu_q12warm_szv`, `runs/camp60wu_q12warm_ari`, `runs/fld63_stk_` … (+2 more in the text)
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §18, 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8, 18.9
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §18, 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8, 18.9
+
+**Outcome.** The campaign asked why the 60-station sim bed's settled state keeps moving. Metre-class per-satellite clock tails are the clock and C5Q code-bias split re-realizing at eclipse re-admission, and the largest consumer steps ride the eclipsing clock pivots. On the field (GPS dual) the `sticky_pivot` mechanism transfers exactly but the return steps are mm-class, so its recommendation stays scoped (both re-founding goldens arm it). The injection bench re-verifies a 2-cycle MDB (22/24 attributable); `amb_seam_reinflate_var_m2` is a proven NULL. The seam build continued in [frame restore](../resume-seam/RESUME-FRAME-RESTORE.md) and closed in [E2 + dense border](../resume-seam/RESUME-DENSE-BORDER-E2.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

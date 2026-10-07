@@ -1,16 +1,18 @@
-# S2H — the S-consistent rx-CB harvest — built, validated through 3 h, and its 12 h tracking verdict
+# S2H: the S-consistent receiver code-bias harvest
 
 **STATUS**
 
 - **id:** S2H
 - **topic:** code-bias
 - **status:** closed
-- **summary:** the S-consistent rx-CB harvest — built, validated through 3 h, and its 12 h tracking verdict
-- **dates in the text:** 2026-08-07 → 2026-08-21
-- **knobs / posture:** `network.rx_cb_harvest_demean`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/s2h_12h_`
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 28, §31
+- **summary:** S-consistent rx-CB harvest VALIDATED as frame hygiene through 3 h; the 12 h level-tracking bar (within 4 TECU at h0 and h11) MISSED by both arms, so level authority moved to LV-6; default OFF.
+- **dates in the text:** 2026-08-07 to 2026-08-21
+- **knobs / posture:** `network.rx_cb_harvest_demean` (+ `rx_cb_harvest_screen_z`, default 8.0); default OFF, fingerprinted (`rxcbharv:`), forces LV-2 and LV-5 OFF
+- **hashes named in the text** (commit / exe / byte-cert): `gnss_processor_s2h.exe` md5 `82B4450703C551109DCEFB0B6C212559` (the §28 build, superseded for the 12 h pair); exe MD5 `3979C756` (truncated in the text; 2026-08-21, both 12 h arms)
+- **run dirs named in the text:** `runs/s2h_12h_{ctl,on}`, `runs/s2h_*`
+- **source:** `docs/archive/SPEC_level_information_budget.md` §28, §31
+
+**Outcome.** The question: does a per-epoch Λ-weighted de-mean of the harvested receiver code biases carry the frame at no fold-side cost and land the ionosphere level over 12 h. All 1 h and 3 h gates PASS. At 12 h the fold ceilings hold but the σ̂₀-compounding sub-gate FAILS (growth 2.255 vs the control's 1.831): cheap, not free. The ON arm read |a00 - GIM| of 13.6 and 9.6 TECU at h0 and h11; the level authority moved to LV-6 ([SPEC_level_authority_internal.md](../../SPEC_level_authority_internal.md), [QPR-ITEMS-5-8](../queues/QPR-ITEMS-5-8.md)). The harvest stayed default OFF as Edge-3 frame hygiene; since card [EXL](../../refound/EXL_exact_update_lah_promotion_2026-10-01.md) the goldens arm `carry_rx_code_bias_in_block`, whose loader interlock refuses it.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

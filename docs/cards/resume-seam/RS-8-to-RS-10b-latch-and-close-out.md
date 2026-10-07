@@ -1,16 +1,18 @@
-# RS-8 … RS-10b — the canonical-signal latch flips on 23 of 61 stations at a resume; the ZWD step is `zwd_seam_reseed` itself; the night's certification and the v8 seeds
+# RS-8 … RS-10b: the canonical-signal latch, the ZWD seam reseed and the v8 certification
 
 **STATUS**
 
 - **id:** RS-8 … RS-10b
 - **topic:** resume-seam
 - **status:** closed
-- **summary:** the canonical-signal latch flips on 23 of 61 stations at a resume; the ZWD step is `zwd_seam_reseed` itself; the night's certification and the v8 seeds
+- **summary:** RS-8's latch restore RECOMMEND_SCOPED (chord births at the seam 64 to 1); RS-10 turns `zwd_seam_reseed` OFF without a ZWD carry; RS-10b's re-arm candidate REFUSED on the v8 seed.
 - **dates in the text:** 2026-09-13 → 2026-09-14
-- **knobs / posture:** `network.state_snapshot_signal_capture`, `network.resume_signal_canon_restore`, `network.zwd_seam_reseed`, `network.zwd_carry_q`, `network.zwd_seam_reseed_q`
-- **hashes named in the text** (commit / exe / byte-cert): `d4a56fa`, `87a33bf0`, `545b8bdd2b638231`, `e2bf262`, `9cf83b3`, `1bb0039`, `c1d94e8`, `0f510024` … (+2 more in the text)
-- **run dirs named in the text:** `runs/evseed_field6h_v8`, `runs/golden_sim_campaign_`
-- **source:** `docs/archive/SPEC_event_harness.md` — 21.20, 21.21, 21.22
+- **knobs / posture:** `network.state_snapshot_signal_capture` (write, pinned on both goldens of the time, retired 2026-09-15) + `network.resume_signal_canon_restore` (read, harness-armed), `network.zwd_seam_reseed` (OFF on lineages without a ZWD carry; regime narrowed), `network.zwd_carry_q` (fingerprinted, so untunable on a resume leg), `network.zwd_seam_reseed_q` (RECOMMEND_SCOPED; q 2.5e-3 REFUSED on v8); D5-v5 re-test KEEP_OFF stands
+- **hashes named in the text** (commit / exe / byte-cert): commits `d4a56fa`, `e2bf262`, `9cf83b3`, `1bb0039`, `c1d94e8`, `1542441`, `574d1a4`; exes `B3E6D744`, `29952251`, `AF418A9F`; byte-certs `87a33bf0`, `0f510024`, `c7f63437`; fingerprint `545b8bdd2b638231`
+- **run dirs named in the text:** `runs/evseed_field6h_v8`, `runs/golden_sim_campaign_zwdblk_refarm` (vs `_refarc`)
+- **source:** `docs/archive/SPEC_event_harness.md` §21.20, §21.21, §21.22
+
+**Outcome.** The questions: the L2X step at a resume (RS-8); the ZWD step and code re-references left after RS-9 (RS-10). Restoring the latch takes the L2X keys 25.63 to 0.62 m (Q1, Q2, Q4, Q5 PASS); Q3's other-keys clause is missed as written and was rewritten as "no worse". The ZWD step is the reseed itself; the v8 closing legs read 15 code re-references (bar 5, missed). Owed: the consumer's own latch. [CSL](../../refound/CSL_canonical_signal_latch_2026-09-20.md) later replaced the first-epoch count rule on the network stations; seams remain an owed add-back under the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

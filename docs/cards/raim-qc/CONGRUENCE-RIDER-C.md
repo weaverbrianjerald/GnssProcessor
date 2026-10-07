@@ -1,16 +1,18 @@
-# Rider C — the station congruence screen, `network.congruence_screen`
+# Rider C: the station congruence screen (`network.congruence_screen`)
 
 **STATUS**
 
 - **id:** Rider C
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the station congruence screen, `network.congruence_screen`
-- **dates in the text:** 2026-08-04 → 2026-08-15
+- **summary:** BUILT 2026-08-04, measure-only; the wiring smoke PASSED OFF byte-identity, the other field gates are owed, and later runs show it DETECTS held-coordinate errors but cannot MEASURE them.
+- **dates in the text:** 2026-08-04 to 2026-08-15
 - **knobs / posture:** `network.congruence_screen`, `network.congruence_report_sigma`, `network.congruence_event_holdoff_ep`, `network.block_baarda`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_redundancy_census.md` — 13, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 13.8, 13.11
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_redundancy_census.md`: 13, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 13.8, 13.11
+
+**Outcome.** The question: can a station's own post-fit residuals reveal a wrong held coordinate, a fault no other armed tier sees? The 63-station smoke met §13.7.1 only (11 solve traces identical, 1.86 ms per station-sweep, inside the 2× budget); the +5 cm known-answer arm, the MDB table and the co-occurrence table stay owed ([OWED ledger](../raim-qc/REDUNDANCY-CENSUS.md) §15, rows 5 to 8). Armed in the re-founding's runs, it ranked the roster's real coordinate errors and flagged MIZU00JPN at 22 to 29 against a median of 0.9, unread; on the float vehicle its estimate does not carry the error's size ([UPO](../../refound/UPO_consumer_up_offset_2026-09-22.md) §6.2, [SCU](../../refound/SCU_station_coordinates_unknowns_2026-09-22.md) §4).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

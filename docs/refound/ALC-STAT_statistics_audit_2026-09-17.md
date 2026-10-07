@@ -5,11 +5,13 @@
 - **id:** ALC-STAT
 - **topic:** consumer
 - **status:** closed
-- **summary:** Statistical interpretation audited; four new tests and 40 focused tests pass. ALC is not a calibrated ambiguity-correctness test; no tuning or runtime change.
+- **summary:** ALC is not a calibrated ambiguity-correctness test: correlated code noise inflates noise-only rejection (7.5 % at phi 0.5) and a code bias mimics an ambiguity error; no tuning or runtime change.
 - **source:** [ALC](ALC_amb_level_check_2026-09-15.md), user request, 2026-09-17
 - **knobs / posture:** unchanged; window_ep=20, k=4, existing floors; default OFF
 - **hashes / run dirs:** `runs/_alc_stat_20260917/`
 - **dates in the text:** 2026-09-17
+
+**Outcome.** The card asks whether the level check's four-standard-error trip is a calibrated ambiguity test, before k or the window is tuned. Under an iid null (floor inactive) the n = 20 ratio is Student t, 12.10 times the normal tail at 4; with code AR(1) phi 0.9, 68.3 % of noise-only windows trip; the historical 106 field and 26 sim trips are not false-alarm estimates. The calibration order of section 5 is owed before any ALC tuning or promotion ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)); the level check has been off in the working bases since 2026-09-20 ([PBH](PBH_phase_bias_hold_2026-09-19.md) section 8).
 
 ## 1. Registered scope — 2026-09-17
 

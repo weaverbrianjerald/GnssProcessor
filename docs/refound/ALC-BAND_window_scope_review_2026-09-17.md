@@ -1,15 +1,17 @@
-# ALC-BAND: reconsider band-scoped windows
+# ALC-BAND: band-scoped level-check windows reconsidered
 
 **STATUS**
 
 - **id:** ALC-BAND
 - **topic:** consumer
 - **status:** closed
-- **summary:** Reject narrower restarts for unchanged WL/IF; dual-code per-band levels are a possible separately calibrated design. Four new witnesses and 44 focused tests pass; runtime unchanged.
+- **summary:** Band-scoped restart WITHDRAWN: WL and IF both depend on both selected arcs, so paired restarts stay; per-band dual-code levels would need their own calibrated design; runtime unchanged.
 - **source:** [ALC section 7](ALC_amb_level_check_2026-09-15.md), user request, 2026-09-17
 - **knobs / posture:** unchanged; existing paired windows, default OFF
 - **hashes / run dirs:** `runs/_alc_band_20260917/`
 - **dates in the text:** 2026-09-17
+
+**Outcome.** The card asks whether the level check can restart only the band that changed and keep a one-band window (ALC section 7 item 2). Each ambiguity error enters both WL and IF, so neither history belongs to one band; a dual-code per-band level (E1, E2) does separate the arcs, at 2.56 and 3.27 m per sample against 1.49 m for IF. The claim is withdrawn (44 focused tests pass). [ALC2](ALC2_restart_policy_adoption_2026-09-19.md) section 6 leaves coverage to a new calibrated observable; the level check has been off in the working bases since 2026-09-20 ([PBH](PBH_phase_bias_hold_2026-09-19.md) section 8).
 
 ## 1. Registered scope
 

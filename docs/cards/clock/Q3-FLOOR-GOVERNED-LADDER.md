@@ -1,16 +1,18 @@
-# Q3 ladder — the floor-governed ladder — floors derived not tuned, the guard's denominator bisected, and the descent 3e-5 → 1e-7
+# Q3 ladder: the floor-governed clock-anchor ladder, q 3e-5 → 1e-7
 
 **STATUS**
 
 - **id:** Q3 ladder
 - **topic:** clock
 - **status:** closed
-- **summary:** the floor-governed ladder — floors derived not tuned, the guard's denominator bisected, and the descent 3e-5 → 1e-7
-- **dates in the text:** 2026-08-10
-- **knobs / posture:** `network.clock_anchor_gauge_free_stat`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **summary:** Every producer gate improves monotonically to 1e-7 (dev median 5.98 → 1.41 cm) at a cb-carry and code-residual cost; the guard's trip collapse is the denominator, not the gauge-free fold.
+- **dates in the text:** 2026-08-10 → 2026-08-11
+- **knobs / posture:** `network.clock_anchor_gauge_free_stat` (`auto` | `raw` | `post` | `proj`), `clock_anchor_q` rungs 3e-5 / 3e-6 / 3e-7 / 1e-7, derived floors `clock_anchor_var_floor_m2` 1.0e-5 and `clock_anchor_sigma_floor_m` 0.0018, `clock_anchor_k` 6 held; base `_golden63_gps_1h_laneoff`
+- **hashes named in the text** (commit / exe / byte-cert): `gnss_processor_cta4.exe` md5 `94EF4327BABE0E0C9140696AA446D384`; G0c byte-identity `72FCF8E5E34668EA76106FA5C79FAB5E`
 - **run dirs named in the text:** `runs/cta4_`, `runs/cta3_ctl`, `runs/cta_20ep_ctl`, `runs/cta3_on`
-- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` — §8, §8.1, §8.2, §8.3, §8.4, §8.5, §8.6, §8.7, §8.8, §8.9, §8.10
+- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` §8, §8.1 to §8.10
+
+**Outcome.** On one build and chain (four identity gates PASS) the leg derived the floors, bisected the guard's denominator and descended q. Raw guard σ̂₀ reads 1.754 against 1.091 for `proj`; the gauge-free fold alone raises trips 65 → 109. The cost: cb carry vf 9.98 → 13.04, code σ̂₀ 4.046 → 4.212. The variance floor never binds on this chain; at q 2.9e-8 on the leveling vehicle it does ([Q3-F](../clock/Q3-F-self-contained-time-link.md)). The rung-3 consumer excursion was a fail-unsafe consumer AR gate ([consumer AR](../consumer/CONSUMER-AR-BLUNDER.md) §8.11.5). No promotion; G4 stayed the blocker.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

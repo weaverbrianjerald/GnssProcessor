@@ -1,10 +1,24 @@
-# RF-NS — the S-basis null-space read: what the rank gate is actually withholding on (2026-09-15)
+# RF-NS: the S-basis null-space read, what the rank gate withholds on (2026-09-15)
+
+**STATUS**
+
+- **id:** RF-NS
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** Each mid-run withhold is one satellite's `C1W` code-bias column with zero information (the frozen reading's mechanism FALSIFIED); the ignition deficit is a carry-cold completion; fix (a) REJECTED (section 6).
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** the RF-0g golden and the RF-1 + RF-2b + RF-2d vehicle (field); `network.trace_estimability_budget` (default 6) and `network.trace_estimability_deficit_only` (default false), trace-only and byte-identical; `readmit_seed_horizon_s`; `sat_gf_datum: broadcast_tgd`, `code_datum_time_linked`; fix (a) at `NetworkSbasis::buildCodeBiasDatumRows` (REJECTED), fix (b) a cold target for the S-basis completion (not built); instrument `scripts/rf_null_space_read.py`
+- **hashes named in the text:** exe `gnss_processor_rfns.exe` `b8b1cc190e7e5285`; `products.txt` `1b800c79199d6b1b…`, `closed_loop_trace.csv` `c5c7abb73d347faa…`, `network_epoch_status.csv` `45ce089e71a7d5e6…` (identical to the source arm); suite 2217 / 292 (2216 passed, 1 skipped)
+- **run dirs named in the text:** `runs/_rf0g_field6`, `runs/_rf2d_field6_both`, `runs/_rfns_field6_both`
+- **source:** [RF-3-read](RF-3-read_handover_frame_2026-09-15.md) section 7.4 (the read and its frozen reading)
+
+**Outcome.** The question: what the S-basis null-space gate withholds on. Each mid-run stretch (G07 49 epochs, G30 18, G04 5) is a single direction, weight 1.00 on that column, lasting `gap_ep − 1` epochs and closing on the readmission seed; the ignition deficit is 14 to 21 per-satellite clock and phase-bias lumps with no carried level to target. Both read as a declaration fix. Fix (a) then failed its re-coupling gate (the pin outweighs the seed, 3.76 m on G04) and the loss proved station-level ([RF-NS-b](RF-NS-b_vehicle_obs_loss_2026-09-15.md)); [RF-PD-fix](RF-PD-fix_station_prior_before_pd_2026-09-15.md) removed every gate withhold.
 
 ⚠ **See §6 (2026-09-15, appended): fix (a) as pre-registered in §4.1 is REJECTED at its own re-coupling gate, and the
 "satellite absence" framing of the G07 / G30 / G04 stretches is corrected — those satellites are TRACKED throughout; what
 is absent is their tracking STATIONS, rejected by the per-station PD test.  §1–§5 stand as written.**
 
-**STATUS:** closed — **the frozen reading is HALF right, and the half it gets wrong is the one that matters.**  Every mid-run withhold in
+**Status as recorded (2026-09-15):** closed — **the frozen reading is HALF right, and the half it gets wrong is the one that matters.**  Every mid-run withhold in
 both runs — the vehicle's 49-epoch hour-4 and 18-epoch hour-5 stretches AND the golden's own 5-epoch hour-1 cluster — is **ONE satellite's
 `C1W` code-bias column sitting in the shared border with EXACTLY zero information** (eigenvector weight 1.00 on that single column, every
 other component 0.00, eigenvalue 0.0 to 1e-16).  It is not a phase datum, not a held basis without a successor, not a thin satellite: it is

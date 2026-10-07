@@ -1,16 +1,18 @@
-# F3 field (results) — the field F3 arm's results, filled as they landed
+# F3 field (results): the field F3 ladder and the converging leveling posture
 
 **STATUS**
 
 - **id:** F3 field (results)
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the field F3 arm's results, filled as they landed
-- **dates in the text:** 2026-09-09
-- **knobs / posture:** `network.carry_zwd`, `network.carry_coupling_gauge_project`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/fldf3_ci_zwd`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — 6.15.4
+- **summary:** F3 is sound on real data but KEEP OFF on the field: P2 FALSIFIED on the shipped chain, PARTIAL on the converging leveling posture (WL12 R 0.562 vs null 0.450).
+- **dates in the text:** 2026-09-09 (smokes 17:4x to the second round at 19:20)
+- **knobs / posture:** `network.phase_leveling_local_block` (F3); `network.carry_zwd` (arm 0z, KEEP OFF on the shipped vehicle); the converging posture = `network.carry_coupling_gauge_project` plus `phase_datum_eq34: false`, `phase_datum_prioritized`, `phase_datum_handover_continuous`, `phase_anchor_carry_reref`, `phase_datum_min_stations: 2`
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** `runs/fldf3_ci_zwd`; arms `fldf3_ci`, `fldf3_pl`, `fldf3_on`, `_fldf3_pl2`, `_fldf3_on2` and seven 3 h probes `_fldf3_pl_*`
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` §6.15.4
+
+**Outcome.** On the shipped FLD63/EXT63 chain the leveling vehicle diverged (S-basis withholds from epoch 101, ZWD spans of 10² m); F3 fired with 0 fallbacks and mitigated it without a cure, its DD fractions at the null. `carry_zwd` on the shipped vehicle diverged too. Probes found the converging posture: it retires the shipped (I, N, ZWD) trade (DD wander 10.2 → 0.12 cyc) and gives the float consumer 3.8 m against 6.6; F3 on it is PARTIAL, consumer flat. That posture became the vehicle of [card PV](../network-vehicle/PV-vehicle-test.md) and the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) frozen posture (F3 off) until the [float vehicle](../../refound/GRB_golden_rebase_2026-09-22.md) replaced the leveling carry on 2026-09-22.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

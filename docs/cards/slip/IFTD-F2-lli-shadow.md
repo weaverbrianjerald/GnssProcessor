@@ -1,16 +1,18 @@
-# RULE F2 — the LLI shadow — a lane that did not see the flagged epoch is not silent
+# RULE F2: the LLI shadow, a lane that missed the flagged epoch is not silent
 
 **STATUS**
 
 - **id:** RULE F2
 - **topic:** slip
 - **status:** closed
-- **summary:** the LLI shadow — a lane that did not see the flagged epoch is not silent
-- **dates in the text:** —
-- **knobs / posture:** `network.cycle_slip.common_band_scope`
-- **hashes named in the text** (commit / exe / byte-cert): `420634f`
-- **run dirs named in the text:** `runs/evleg_m_s1_fix`, `runs/evleg_m_s1_`, `runs/evleg_r_s1_fix`
-- **source:** `docs/archive/SPEC_event_harness.md` — 14.11, 14.11.1, 14.11.2, 14.11.3, 14.11.4
+- **summary:** Under `common_band_scope`, a MW pair holding a band LLI-flagged at the previous epoch is refused like an immature pair; F2 alone closes the storm shape on leg S1, byte-identical at defaults.
+- **dates in the text:** none
+- **knobs / posture:** `network.cycle_slip.common_band_scope` (the gate; no new knob), with `network.cycle_slip.if_phase_td_pairs` (`first` / `all`); export `EpochPairStatus::lli_shadow`, counter `cb_lli_shadow`; readout `logging.enable_mw_slip_detector` with `logging.levels.mw_slip_detector` at debug
+- **hashes named in the text** (commit / exe / byte-cert): `420634f` (main's Release exe, the G1 reference)
+- **run dirs named in the text:** `runs/evleg_m_s1_fix`, `runs/evleg_m_s1_*`, `m_s3_*`, `runs/evleg_r_s1_fix`
+- **source:** `docs/archive/SPEC_event_harness.md` §14.11 (14.11.1 to 14.11.4)
+
+**Outcome.** The question: why did a silent MW lane exonerate bands one epoch after a receiver loss-of-lock flag? At the LLI epoch the detector withholds every sample but keeps the arc, so the next sample reads the combined jump: +2.13 WL against a 4.16 WL gate, silent. With F2, S1 returns to the OFF baseline; S2, L2 and S3 are unchanged. Both owed items were delivered: [RULE F3](../slip/IFTD-F3-lli-epoch.md) and the [Study 7](../slip/STUDY-7-common-band-narrowing.md) storm arm (§16.8), which made the scope and `if_phase_td_pairs: all` RECOMMEND_ON on the sim golden, with a [field exception](../harness/FIELD-HARNESS.md); the current goldens set both on both beds.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

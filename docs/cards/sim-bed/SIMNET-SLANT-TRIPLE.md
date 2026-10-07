@@ -1,16 +1,18 @@
-# slant + triple — the third band and the slant-ionosphere posture — the ambiguity-integer grade, the settled trio's divergence, and the grading traps
+# slant + triple: the third band and the slant-ionosphere posture on the sim bed
 
 **STATUS**
 
 - **id:** slant + triple
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** the third band and the slant-ionosphere posture — the ambiguity-integer grade, the settled trio's divergence, and the grading traps
-- **dates in the text:** 2026-08-04 → 2026-09-09
+- **summary:** A third band closes the two-band observability wall and the slant datum cuts the code-bias vf about 16× without calibrating it; the settled EWL trio DIVERGES and stays do-NOT-arm.
+- **dates in the text:** 2026-08-04 to 2026-09-09
 - **knobs / posture:** `network.rx_code_bias_datum`, `network.code_bias_gf_datum`, `network.mw_wl.ewl_enable`, `network.trace_dd_fractional_ref`, `network.trace_sat_bias_states`, `network.trace_rx_states`, `network.trace_dd_fractional`, `processing.max_duration_s`
-- **hashes named in the text** (commit / exe / byte-cert): `da2f9ac0`
+- **hashes named in the text** (commit / exe / byte-cert): `da2f9ac0` (`gnss_processor_matrix.exe`), `33052874` (`gnss_processor_slant.exe`), `6B1EF5D6` (sr.exe, the §13.7 trio A/B)
 - **run dirs named in the text:** `runs/simnet60_tri`, `runs/simnet60_tri_slant_trio_480`, `runs/fld63_stk_on`, `runs/simnet60_m_c_tri_slant`, `runs/simnet60_quiet_wu93_24h`, `runs/nonint_losblock24h_hv`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §13, 13.1, 13.2, 13.3, 13.3.1, 13.3.2, 13.5, 13.4, 13.6, 13.7, 13.8
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §13 (13.1 to 13.8)
+
+**Outcome.** The questions: what a third GPS band and free slant ionosphere (geometry-free code-bias datum) do to calibration, the consumer and the integers. Settled, the slant cb vf (s0-corrected) is still 34 900: the 20-epoch "CALIBRATED" was ignition. The third band takes the consumer from 1.126 to 0.290 m but degrades clock and ZWD (§13.8.4 OWED). The EWL is at its true integer 98.2 % of the time at 1 h, 74.7 % settled on the float arm and 5.0 % on the trio; D5 does not cure the runaway; wind-up is FALSIFIED as the band-common DD error. L5 is now a re-founding add-back ([AB2](../../refound/AB2_l5_third_frequency_2026-09-20.md), [L5P](../../refound/L5P_l5_phase_posture_2026-09-21.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

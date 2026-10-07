@@ -1,15 +1,17 @@
-# FXA: the field's excess phase-visible motion: steps at events, oversized updates, or a drift
+# FXA: the source of the field's excess phase-visible motion
 
 **STATUS**
 
 - **id:** FXA
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** READ 2026-09-30 (sections 4 and 5): A1, A2 and A3 hold. The sim's smoothed generation-start value is a martingale (white increments at the stated size); the field's increments are smaller than stated but persistently correlated (lag-1 +0.35, +0.12 at 30 minutes; revision NEES at 1 h 24 times the increment NIS), and the event windows hold only their base-rate share. The drift is stationary, smooth and COMMON TO THE CONSTELLATION: with each epoch's median step removed, the field's per-satellite motion (7.6 mm at 30 minutes) is no larger than the sim's. Reading: consistent with a clock-datum drift (the pivot's a priori clock, not yet verified), harmless when passed commonly, made between-satellite by the smoothed hold's per-clone walk share; the next card replays card SMD's member with the common step removed (section 6: that mechanism falsified by card SMC, the walk share does not carry the drift). Pre-registered 2026-09-30 (lever 1 after cards REV and WSX). On the field, block clones born after convergence are revised 2 to 4 times beyond their own stated variance (card REV's revision NEES 4 to 18, the sim 0.2 to 1.6), and the walk share passes r_D 1.5 to 2.2 against the sim's 0.3 to 0.5 (card SMD); both beds carry about 60 stations, so the cross-station over-statement of card WSX, which would hit both alike, is not the whole story. For a consistent model the smoothed generation-start value D(t0|t) is a martingale in the data: its revision increments are uncorrelated and their variance is the clone's stated variance fall. The card tests, on card REV's 6 h traces with no run and no build, which of three causes carries the field's excess: steps at declared events, increments larger than stated, or a drift (positively correlated increments, a time-correlated error the white model books as revision). Prediction: a drift.
+- **summary:** READ, the prediction held: the field's excess is a smooth drift common to the constellation; with the common step removed, its per-satellite motion is the sim's size (7.6 against 8.7 mm at 30 minutes).
 - **source:** [REV](REV_revision_member_replay_2026-09-30.md) sections 6 and 7 (the revision NEES, the trace columns); [WSX](WSX_within_station_cross_terms_2026-09-30.md) sections 6 to 8; [SMD](SMD_smoothed_hold_block_member_2026-09-30.md) section 8 (r_D); [PVN](PVN_phase_visible_nees_2026-09-29.md) (the field NIS 0.05); [QPV](QPV_anchor_q_phase_visible_2026-09-30.md) section 6 (a larger walk does not serve the consumer)
 - **knobs / posture:** none; the traces of `runs/_rap_rev1_blk6_{f,s}` (card REV's instrument build, card SMD's exact-update posture, 6 h)
-- **dates in the text:** 2026-09-30
+- **dates in the text:** 2026-09-30, 2026-10-01
 - **hashes / run dirs:** traces of `runs/_rap_rev1_blk6_{f,s}` (exe `gnss_processor_rev1.exe` `a59231c8802a14f8`); grader `scripts/clock_level/fxa_attrib.py`
+
+**Outcome.** Question (lever 1 after cards REV and WSX): is the field's excess phase-visible motion (revision NEES 4 to 18 against the sim's 0.2 to 1.6, card REV; r_D 1.5 to 2.2 against 0.3 to 0.5, card SMD) steps at declared events, oversized increments, or a drift? A1, A2 and A3 hold: the sim's increments are white, the field's persistent (lag-1 +0.35), and event windows hold their base-rate share. Card [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) FALSIFIED section 5's mechanism (the smoother books the common drift as revision, not walk share); card [PAC](PAC_common_drift_pivot_clock_2026-10-01.md) traced the drift to the pinned pivot's level converging, not its a priori clock.
 
 ## 1. The test
 

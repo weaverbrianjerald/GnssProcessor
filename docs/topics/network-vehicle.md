@@ -36,35 +36,35 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [Card 1b](../cards/network-vehicle/CARD-1B-JOINT-WHITENING.md) | coupling-row JOINT whitening — PREMISE FALSIFIED, the toggle is a no-op, and what the f… | closed | 2026-07-10 |
-| [datum wander](../cards/network-vehicle/DATUM-WANDER.md) | the common level FOLLOWS the datum station — both remedies measured | closed | 2026-08-11 |
-| [chain-pin audit](../cards/network-vehicle/CHAIN-PIN-AUDIT.md) | rungs 2/6 re-attributed and the field's emission explained — the chain is COMPLETE | closed | 2026-08-12 |
-| [R0 + 1(d)](../cards/network-vehicle/PIVOT-CARRY-REREF-R0-1D.md) | `network.phase_anchor_carry_reref` — the carry re-reference closes the churn, with the … | closed | 2026-08-14 |
-| [Card 1d](../cards/network-vehicle/CARD-1D-COUPLING-CARRY.md) | the border time-update defect, verified four ways — magnitude in the T7 lineage, the ba… | closed | 2026-08-15 |
-| [S-basis conformance](../cards/network-vehicle/SBASIS-CONFORMANCE-F.md) | the per-deficiency conformance table, the implicit S-basis the code adopts per mode, th… | reference | 2026-08-15 |
-| [S-basis contract](../cards/network-vehicle/SBASIS-CONTRACT.md) | the realized basis, what the wire records mean, the realization-transfer contract, and … | reference | 2026-08-15 |
-| [S-basis theory](../cards/network-vehicle/SBASIS-THEORY-E.md) | the estimability spine, the datum-invariance theorem, the rank deficiencies, CC-R vs CC… | reference | 2026-08-15 |
-| [chain-slant](../cards/network-vehicle/CHAIN-SLANT-ODIJK.md) | Odijk rank arithmetic, the global-network chain caveat, the three self-consistent postu… | closed | 2026-08-15 |
-| [pivot gauge defect](../cards/network-vehicle/PIVOT-GAUGE-DEFECT.md) | the single-pivot phase-bias gauge defect — the causal proof, the field evidence, the tw… | closed | 2026-08-15 |
-| [queue 1(b)](../cards/network-vehicle/HANDOVER-STRANSFORM-SPEC.md) | the handover S-transform spec — the transform, its rank-1 specialization to a pin swap,… | closed | 2026-08-15 |
-| [eq34 D4](../cards/network-vehicle/EQ34-D4-S-TRANSFORM-FIX.md) | the eq34 D4 S-transform now re-bases `coupling[].s_prev` | closed | 2026-08-17 |
-| [Cards 1f + 1g](../cards/network-vehicle/CARD-1F-1G-TRUNCATED-ROW-GAUGE.md) | the TRUNCATED-ROW gauge defect and the reinit-source widening — the positive control, t… | closed | 2026-08-19 |
-| [queue item 2](../cards/network-vehicle/PIVOT-ELECTION-QUEUE2.md) | the datum-station election formalized as plumbing, and item 1(b)'s precondition priced | closed | 2026-08-21 |
-| [wind-up sign](../cards/network-vehicle/WINDUP-SIGN-DEFECT.md) | the carrier-phase wind-up sign defect — why nothing caught it, why the fix is both line… | closed | 2026-08-21 |
-| [wind-up field](../cards/network-vehicle/WINDUP-FIELD-LADDER.md) | the three-arm field ladder — the slope lands on 2, never on 0; the 5-station matrix; th… | closed | 2026-08-22 |
-| [R2 sticky](../cards/network-vehicle/PIVOT-R2-STICKY.md) | the sticky continuous target, composed with the pairing — churn dead, consumer 2×, and … | closed | 2026-08-31 |
-| [READMIT](../cards/network-vehicle/READMIT-EDGE.md) | the re-admission edge — `readmit_seed_horizon_s` promoted, the coupling-marginalize and… | closed | 2026-09-06 |
-| [F3 field](../cards/network-vehicle/F3-FIELD-ARM.md) | the field F3 arm — bed, arms, truth-free instruments, and the pre-registered prediction… | closed | 2026-09-09 |
-| [F3 field (results)](../cards/network-vehicle/F3-FIELD-ARM-RESULTS.md) | the field F3 arm's results, filled as they landed | closed | 2026-09-09 |
-| [COLD-FB (iter 2–4)](../cards/network-vehicle/COLD-FB-iterations-2-4.md) | the SATELLITE clause, the datum-invariant consumer census, and the new-golden arm — KEE… | parked | 2026-09-11 |
-| [COLD-FB](../cards/network-vehicle/COLD-FB-anchor-fallbacks.md) | the cold phase-datum anchor fallbacks (`phase_datum_candidacy_usable`) — pre-registrati… | parked | 2026-09-12 |
-| [PIVOT DEPARTURE](../cards/network-vehicle/PIVOT-DEPARTURE.md) | the consumer shock at a pivot handover is producer-internal carry free-fall — `scoped_h… | closed | 2026-09-12 |
-| [D5 v5](../cards/network-vehicle/D5-V5-carried-only.md) | `carry_invariant_innov_carried_only` on the field — KEEP_OFF, the same-realization pair… | parked | 2026-09-13 |
-| [CE](../cards/network-vehicle/CE-chain-era-bisect.md) | the CHAIN-ERA bisect on the leveling vehicle | open | 2026-09-14 |
-| [CM](../cards/network-vehicle/CM-code-model-consistency.md) | CODE-MODEL CONSISTENCY — eleven cold arms clear every estimation knob, and the station … | closed | 2026-09-14 |
-| [CM2](../cards/network-vehicle/CM2-leveling-vehicle.md) | the second defect — the CM knob arms on the LEVELING vehicle | open | 2026-09-14 |
-| [PV](../cards/network-vehicle/PV-vehicle-test.md) | the VEHICLE test — carry_invariant vs leveling, pre-registered | open | 2026-09-14 |
-| [ZP](../cards/network-vehicle/ZP-station-block-parameterization.md) | the station block's parameterization at ignition — pre-registered | open | — |
+| [Card 1b](../cards/network-vehicle/CARD-1B-JOINT-WHITENING.md) | coupling-row joint whitening: premise FALSIFIED, the toggle byte-identical, knob retired | closed | 2026-07-10 |
+| [datum wander](../cards/network-vehicle/DATUM-WANDER.md) | the common clock level follows the datum station; sum-to-zero PASSES, a 25° mask REJECTED | closed | 2026-08-11 |
+| [chain-pin audit](../cards/network-vehicle/CHAIN-PIN-AUDIT.md) | eq34 chain-pin audit: COMPLETE, rungs 2/6 were SH-gate withholds (sim-only artifact) | closed | 2026-08-12 |
+| [R0 + 1(d)](../cards/network-vehicle/PIVOT-CARRY-REREF-R0-1D.md) | phase-anchor carry reref VALIDATED: churn 160.5 to 1.5 m (n = 1); armed in the goldens | closed | 2026-08-14 |
+| [Card 1d](../cards/network-vehicle/CARD-1D-COUPLING-CARRY.md) | scalar κ border time update: BUILT, armed; card CTU's exact update now builds the rows | closed | 2026-08-15 |
+| [S-basis conformance](../cards/network-vehicle/SBASIS-CONFORMANCE-F.md) | user-side Odijk audit: invariant via differencing; network charter BUILT, P0/P1 still open | reference | 2026-08-15 |
+| [S-basis contract](../cards/network-vehicle/SBASIS-CONTRACT.md) | realized S-basis, wire meaning, hold-or-mark contract (2026-08); GF datum residues open | reference | 2026-08-15 |
+| [S-basis theory](../cards/network-vehicle/SBASIS-THEORY-E.md) | S-system canon: re-datuming moves no estimable wander; the Eq-34 gate stays binding | reference | 2026-08-15 |
+| [chain-slant](../cards/network-vehicle/CHAIN-SLANT-ODIJK.md) | Odijk rank arithmetic and the chain caveat: n-invariant near-null, posture C the goal | closed | 2026-08-15 |
+| [pivot gauge defect](../cards/network-vehicle/PIVOT-GAUGE-DEFECT.md) | single-pivot phase-bias gauge defect PROVEN; clean election fixes it, third root named | closed | 2026-08-15 |
+| [queue 1(b)](../cards/network-vehicle/HANDOVER-STRANSFORM-SPEC.md) | clock-pivot handover S-transform spec; built and PROMOTED 2026-09-12 under PIVOT DEPARTURE | closed | 2026-08-15 |
+| [eq34 D4](../cards/network-vehicle/EQ34-D4-S-TRANSFORM-FIX.md) | eq34 D4 carry shift now re-bases coupling s_prev: FIXED 2026-08-17, no live lineage hit | closed | 2026-08-17 |
+| [Cards 1f + 1g](../cards/network-vehicle/CARD-1F-1G-TRUNCATED-ROW-GAUGE.md) | truncated-row gauge + reinit widening: PASS to 305 sta, withholds to 0, wire −29 % | closed | 2026-08-19 |
+| [queue item 2](../cards/network-vehicle/PIVOT-ELECTION-QUEUE2.md) | datum election landed as tooling; handover S-transform deferred, target near-empty | closed | 2026-08-21 |
+| [wind-up sign](../cards/network-vehicle/WINDUP-SIGN-DEFECT.md) | wind-up sign defect FIXED at four sites; a half-fix is worse, all sim validations blind | closed | 2026-08-21 |
+| [wind-up field](../cards/network-vehicle/WINDUP-FIELD-LADDER.md) | wind-up field ladder: slope near 2 in 9/9 components, null rejected; network arm consistent | closed | 2026-08-22 |
+| [R2 sticky](../cards/network-vehicle/PIVOT-R2-STICKY.md) | sticky continuous target VALIDATED: churn dead, consumer 2x; superseded by RF-2 held basis | superseded | 2026-08-31 |
+| [READMIT](../cards/network-vehicle/READMIT-EDGE.md) | re-admission edge: seed horizon PROMOTED (T3 tails cut); window, ratio, age gates KEEP_OFF | closed | 2026-09-06 |
+| [F3 field](../cards/network-vehicle/F3-FIELD-ARM.md) | field F3 ladder pre-registration: control DD ambiguities wander ~10 cyc/arc; P2 FALSIFIED | closed | 2026-09-09 |
+| [F3 field (results)](../cards/network-vehicle/F3-FIELD-ARM-RESULTS.md) | field F3 KEEP OFF (P2 FALSIFIED, WL12 PARTIAL); the converging leveling posture found | closed | 2026-09-09 |
+| [COLD-FB (iter 2–4)](../cards/network-vehicle/COLD-FB-iterations-2-4.md) | satellite clause removes every split; KEEP_OFF, de-biased consumer misses golden by 4 mm | superseded | 2026-09-11 |
+| [COLD-FB](../cards/network-vehicle/COLD-FB-anchor-fallbacks.md) | candidacy screen KEEP_OFF: settled cold handovers 51 → 19, consumer p50 +49 % vs cbscope5 | superseded | 2026-09-12 |
+| [PIVOT DEPARTURE](../cards/network-vehicle/PIVOT-DEPARTURE.md) | pivot-handover shock is carry free-fall: scoped response and clock S-transform PROMOTED | closed | 2026-09-12 |
+| [D5 v5](../cards/network-vehicle/D5-V5-carried-only.md) | carried-only D5 gate KEEP_OFF: born-chord flags gone, same-realization consumer +39 % | superseded | 2026-09-13 |
+| [CE](../cards/network-vehicle/CE-chain-era-bisect.md) | chain-era bisect: c0 = PV-A byte-identical, only the a priori clock pin (c3) moves code | closed | 2026-09-14 |
+| [CM](../cards/network-vehicle/CM-code-model-consistency.md) | eleven cold arms clear every estimation knob; the station block is near-rank-deficient | closed | 2026-09-14 |
+| [CM2](../cards/network-vehicle/CM2-leveling-vehicle.md) | the second defect is not a knob: no arm crosses or halves a bar on the leveling vehicle | closed | 2026-09-14 |
+| [PV](../cards/network-vehicle/PV-vehicle-test.md) | vehicle test: leveling beats carry_invariant on every read, all three bars MISSED | closed | 2026-09-14 |
+| [ZP](../cards/network-vehicle/ZP-station-block-parameterization.md) | station block singular under carry_invariant (58/61); ZWD prior RETIRED; leveling vehicle | closed | — |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

@@ -1,16 +1,18 @@
-# LV item 1 — roadmap item 1 falsified at stage 1 — the cost attributes to LV-4 alone, plus two invariant-#4 holes in the instrument
+# LV item 1: LV-4 alone at stage 1 (FAIL at the old masks, since retracted) and the audit
 
 **STATUS**
 
 - **id:** LV item 1
 - **topic:** ionosphere
-- **status:** closed
-- **summary:** roadmap item 1 falsified at stage 1 — the cost attributes to LV-4 alone, plus two invariant-#4 holes in the instrument
+- **status:** superseded
+- **summary:** LV-4 alone FAILED stage 1 on the SH health gate at obs mask 10 and carries the ladder's data-side cost; the mask study's section 23 retracted the FALSIFIED verdict at the current masks.
 - **dates in the text:** 2026-08-05
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 19, 19.1, 19.2, 19.3, 19.4, 19.5, 19.6
+- **knobs / posture:** `network.rx_cb_carry_step_gate` alone (LV-4; with the de-mean off the loader forces LV-5 off), arm `_ext63_gps_dual_1h_lv45.json`; obs mask 10 / iono cutoff 25
+- **hashes named in the text** (commit / exe / byte-cert): none (the audit arms share the build of Aug 4 2026 23:27:25)
+- **run dirs named in the text:** none as `runs/` paths
+- **source:** `docs/archive/SPEC_level_information_budget.md` sections 19, 19.1, 19.2, 19.3, 19.4, 19.5, 19.6
+
+**Outcome.** The question: does LV-4 alone (de-mean off) pass the 1 h stability gate? Four gates passed; SH health failed (46 of 121 epochs out of band). The section 13.5 audit put the cost on LV-4: every arm carrying it read +64 % postfit phase rms (0.0167 against 0.0102 m), and two instrument holes surfaced (`rxcb`-only prior residuals, no code rows in `pf_keyed`). At obs mask 15 the FAIL does not reproduce, the cost falls to +35 % and stage 2 passes, unpromoted ([LV mask study](../ionosphere/LV-MASK-STUDY.md) sections 23 and 24): FALSIFIED is retracted; the audit split and the holes stand.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

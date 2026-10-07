@@ -1,15 +1,17 @@
-# PVN: the phase-visible consistency instrument (the estimator's phase-visible NEES)
+# PVN: the phase-visible consistency instrument (phase-visible NIS and NEES)
 
 **STATUS**
 
 - **id:** PVN
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** 2026-09-29, pre-registered, built and read the same day, measure-only, default off. The instrument (`network.phase_visible_monitor`) measures the estimator's ionosphere-free phase-visible clock D = c - sum_j w_j p_j per satellite: the truth-free normalized update e^2 / (P- - P+) on both beds and the within-arc state NEES on the sim. Identity with the knob on, both beds. Readings at 2 h: sim NIS 0.87 (control) and 1.03 (exact update), within-arc NEES 0.2 and 0.3 (wander 2 to 5 cm inside a stated 3 to 28 cm); field NIS 0.40 and 0.10, NEES 0.6 and 0.2. The covariance along D is consistent to conservative, not overconfident, which corrects the premise of card LAH's rejection of the smoothed hold (it took D as stated to millimetres): with the actual stated sd the smoothed member's regression on the generation start stays near 1 for hours, so it is owed a build.
+- **summary:** The measure-only instrument (`network.phase_visible_monitor`) reads the estimator's phase-visible clock covariance as consistent to conservative, not overconfident, which refutes card LAH's premise for rejecting the smoothed hold.
 - **source:** [LAH](LAH_level_aware_hold_2026-09-29.md) sections 2, 8 and 9; [CTU2](CTU2_level_recursion_followup_2026-09-29.md) sections 4 and 5 (the level instrument and the phase-space guard statistic this card reuses); [CTU](CTU_coupling_time_update_2026-09-28.md) section 13.4 (h); [PBH](PBH_phase_bias_hold_2026-09-19.md) read 3
 - **knobs / posture:** `network.phase_visible_monitor` (measure-only, default off; requires `network.raim_within_epoch`, whose fold capture supplies P-), `network.phase_visible_window_ep` (default 60); no golden, ledger or posture change
 - **dates in the text:** 2026-09-29
 - **hashes / run dirs:** exe `gnss_processor_pvn2.exe` sha256 prefix `fdcb57464e77e7e8`; arms `runs/_rap_pv_{ctl,ex}_{s,f}`; section 7
+
+**Outcome.** The question: is the estimator's covariance of the ionosphere-free phase-visible clock D = c - sum_j w_j p_j overconfident, as card LAH assumed. On 2 h arms the sim reads NIS 0.87 / 1.03 and within-arc NEES 0.2 / 0.3 (control / exact update), the field NIS 0.40 / 0.10; products and consumer trace are identical with the knob on. The smoothed member was therefore owed a build: card [SMH](SMH_smoothed_hold_clone_2026-09-29.md) built it, not armed, and card [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) closed the hold family. Card [WSX](WSX_within_station_cross_terms_2026-09-30.md) section 8 finds the statistics blind to a threefold contrast over-statement; card [SFR](SFR_sim_fixture_coloured_phase_2026-10-01.md) supersedes the sim readings (re-capture owed).
 
 ## 1. The quantity
 

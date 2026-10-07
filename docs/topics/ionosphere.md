@@ -28,31 +28,31 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [EXT-CB defect 2](../cards/ionosphere/LV-EXTCB-DEFECT2.md) | arm 30 and the 303-station EXT-CB arm — DEFECT 2 is largely a station-support artifact | closed | 2026-08-05 |
-| [LV correction](../cards/ionosphere/LV-CORRECTION-AND-12H.md) | what LV-2 actually does and what LV-1 is really for — and the 12 h verdict that made th… | closed | 2026-08-05 |
-| [LV item 1](../cards/ionosphere/LV-ITEM1-FALSIFIED.md) | roadmap item 1 falsified at stage 1 — the cost attributes to LV-4 alone, plus two invar… | closed | 2026-08-05 |
-| [LV mask study](../cards/ionosphere/LV-MASK-STUDY.md) | the mask study, end to end — the trade is regime-dependent, it flips sign between 61 an… | closed | 2026-08-05 |
-| [LV residual](../cards/ionosphere/LV-RESIDUAL-EXTRAPOLATION.md) | the residual is not an extrapolation artifact, and `rx_cb_carry_q` is not simply too ti… | closed | 2026-08-05 |
-| [LV tracking pin](../cards/ionosphere/LV-TRACKING-PIN.md) | the tracking-pin fix, tested and FALSIFIED | closed | 2026-08-05 |
-| [LV-4](../cards/ionosphere/LV-4-FRAME-INVARIANT-SCREEN.md) | the carry screen made frame-invariant — fixed, and it exposed a second defect | closed | 2026-08-05 |
-| [LV-5](../cards/ionosphere/LV-5-MU-WITHIN-EPOCH.md) | μ computed within the epoch, with the review addendum's requirements | closed | 2026-08-05 |
-| [LV roadmap](../cards/ionosphere/LV-ROADMAP.md) | the continuing session's roadmap, and its refresh at hand-back | open | 2026-08-07 |
-| [LV impl](../cards/ionosphere/LV-IMPL-RECORD.md) | the 2026-08-05 implementation record, and the measured outcomes that corrected the mech… | closed | 2026-08-12 |
-| [elev-cutoff A/B](../cards/ionosphere/ELEV-CUTOFF-AB.md) | the elevation-cutoff A/B WITH TRUTH — the field verdict INVERTS on a coherent field | closed | 2026-08-12 |
-| [iono-field agreement](../cards/ionosphere/IONO-FIELD-AGREEMENT.md) | cross-station iono-field agreement — coherent where mapped, BROKEN at low–high, plus th… | closed | 2026-08-12 |
-| [EXT-CB arms 1–36](../cards/ionosphere/LV-EXTCB-CAMPAIGN.md) | the EXT-CB campaign record, arms 1–36 — root cause, the fix, and the L2-ESCAPE | closed | 2026-08-15 |
-| [LV](../cards/ionosphere/LV-REF.md) | the ionosphere-level initiative's own reference page — knob ledger, verdict ledger, sec… | reference | 2026-08-21 |
-| [AMB-IONO](../cards/ionosphere/AMB-IONO-SPLIT.md) | why the network producer never reaches per-band integers on the quiet sim bed — the fiv… | open | 2026-09-04 |
-| [F3 (pre-reg)](../cards/ionosphere/AMB-IONO-F3-PREDICTIONS.md) | the pre-registered predictions for the F3 station block, and the round-2 / round-4 resu… | closed | 2026-09-04 |
-| [F3 24 h](../cards/ionosphere/AMB-IONO-F3-24H.md) | the 24 h F3 arm — the settled number is NOT met, and the reason is an EDGE, not the mec… | closed | 2026-09-05 |
-| [0910 afternoon](../cards/ionosphere/AMB-IONO-0910-AFTERNOON.md) | the level-memory and T4-persistence ladders, the wire wander, and the continuity card | closed | 2026-09-10 |
-| [0910 morning](../cards/ionosphere/AMB-IONO-0910-MORNING.md) | the same-build control, three truth censuses, two falsified cards, and the field's phas… | closed | 2026-09-10 |
-| [0910 second half](../cards/ionosphere/AMB-IONO-0910-SECOND-HALF.md) | the slipped-bed probe ledger, the continuity closure, the false-alarm isolation, and th… | closed | 2026-09-10 |
-| [AMB-IONO open](../cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | the open-question register — re-cut round 2, with the round-4 closures and items 15–21 | open | 2026-09-10 |
-| [LV-SEED](../cards/ionosphere/LV-SEED-per-los-level.md) | where the remaining per-LOS level is born — R1–R9 pre-registered reads | open | 2026-09-14 |
-| [LV-1](../cards/ionosphere/LV-1-BIAS-FREE-SEEDING.md) | bias-free per-LOS iono seeding — the seed is a FRAME, not an authority | closed | — |
-| [LV-2](../cards/ionosphere/LV-2-RXCB-DEMEAN.md) | rx-CB carry common-mode de-mean — works as designed, but the de-mean is NOT frame-invar… | closed | — |
-| [LV-3](../cards/ionosphere/LV-3-LEVEL-AUTHORITY.md) | the level authority, made explicit — mostly documentation, one optional knob | closed | — |
+| [EXT-CB defect 2](../cards/ionosphere/LV-EXTCB-DEFECT2.md) | station-support artifact: ignition a₀₀ − GIM −1.98 TECU at 303 stations vs −15.83 at 61 | closed | 2026-08-05 |
+| [LV correction](../cards/ionosphere/LV-CORRECTION-AND-12H.md) | de-mean pins a frozen epoch-1 frame; 12 h LV stack ramps +15 to +21 TECU: do NOT arm | closed | 2026-08-05 |
+| [LV item 1](../cards/ionosphere/LV-ITEM1-FALSIFIED.md) | lv-4 alone failed stage 1 at obs mask 10; the FALSIFIED verdict retracted at obs mask 15 | superseded | 2026-08-05 |
+| [LV mask study](../cards/ionosphere/LV-MASK-STUDY.md) | mask study closes on obs mask 15 / iono cutoff 25 at both scales; lv-4 passes stage 2 | closed | 2026-08-05 |
+| [LV residual](../cards/ionosphere/LV-RESIDUAL-EXTRAPOLATION.md) | level residual not an extrapolation artifact; the rx_cb_carry_q axis is exhausted | closed | 2026-08-05 |
+| [LV tracking pin](../cards/ionosphere/LV-TRACKING-PIN.md) | tracking-pin fix FALSIFIED: rx_cb_carry_q 1e-9 to 1e-6 made the level ramp worse, sooner | closed | 2026-08-05 |
+| [LV-4](../cards/ionosphere/LV-4-FRAME-INVARIANT-SCREEN.md) | frame-invariant rx-CB step screen: correct fix; needs LV-5, costs +16 to +64 % phase rms | closed | 2026-08-05 |
+| [LV-5](../cards/ionosphere/LV-5-MU-WITHIN-EPOCH.md) | within-epoch μ: limit cycle gone (sd 15.53 → 4.69 TECU); max \|μ\| prediction MISSED | closed | 2026-08-05 |
+| [LV roadmap](../cards/ionosphere/LV-ROADMAP.md) | lv action list superseded: item 3 built as S2H, level authority moved to LV-6 | superseded | 2026-08-07 |
+| [LV impl](../cards/ionosphere/LV-IMPL-RECORD.md) | built LV-1 and LV-2; seed-gradient model FALSIFIED, LV-1 acts only via the rx-CB carry | closed | 2026-08-12 |
+| [elev-cutoff A/B](../cards/ionosphere/ELEV-CUTOFF-AB.md) | iono cutoff with truth: 15° beats 25° on every clock channel; the field verdict inverts | closed | 2026-08-12 |
+| [iono-field agreement](../cards/ionosphere/IONO-FIELD-AGREEMENT.md) | iono input coherent both-high (corr 0.981), broken low-high; 25° cutoff trims wander 8 % | closed | 2026-08-12 |
+| [EXT-CB arms 1–36](../cards/ionosphere/LV-EXTCB-CAMPAIGN.md) | level defect = receiver GF-bias convention offset + ignition transient; L2-ESCAPE closed | closed | 2026-08-15 |
+| [LV](../cards/ionosphere/LV-REF.md) | reference: lv ladder knob and verdict ledgers, section map, binding grading protocol | reference | 2026-08-21 |
+| [AMB-IONO](../cards/ionosphere/AMB-IONO-SPLIT.md) | ambiguity/iono split over-count: B_fit 3.00 freezes the level; F3 0.217 cyc sim 3 h | open | 2026-09-04 |
+| [F3 (pre-reg)](../cards/ionosphere/AMB-IONO-F3-PREDICTIONS.md) | f3 pre-registration: F3 beat its 3 h line 2.7×, F1 intermediate, var floor FALSIFIED | closed | 2026-09-04 |
+| [F3 24 h](../cards/ionosphere/AMB-IONO-F3-24H.md) | settled quarter FALSIFIED as traced; the episodes were the DD trace's reference satellite | superseded | 2026-09-05 |
+| [0910 afternoon](../cards/ionosphere/AMB-IONO-0910-AFTERNOON.md) | level memory FAILS x4; fewer T4 erases FAIL the consumer at every K; continuity KEEP_OFF | closed | 2026-09-10 |
+| [0910 morning](../cards/ionosphere/AMB-IONO-0910-MORNING.md) | oracle repair FAILS, PB-gauge levelling FALSIFIED; the phase bias is a receiver's float | closed | 2026-09-10 |
+| [0910 second half](../cards/ionosphere/AMB-IONO-0910-SECOND-HALF.md) | eleven probes FAIL with one shape; emission continuity FALSIFIED; producer AR NO-GO | closed | 2026-09-10 |
+| [AMB-IONO open](../cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | open-question register, items 1 to 44: many closed in the text, the rest still owed | open | 2026-09-10 |
+| [LV-SEED](../cards/ionosphere/LV-SEED-per-los-level.md) | all three hypotheses refuted (arc start, iono, geometry); wander is the satellite clock | closed | 2026-09-14 |
+| [LV-1](../cards/ionosphere/LV-1-BIAS-FREE-SEEDING.md) | bias-free iono seeding: stated mechanism FALSIFIED (a solve no-op); kept as a diagnostic | closed | — |
+| [LV-2](../cards/ionosphere/LV-2-RXCB-DEMEAN.md) | rx-CB de-mean: do NOT arm, it re-pins the common mode to a frozen frame (+15 to +21 TECU) | closed | — |
+| [LV-3](../cards/ionosphere/LV-3-LEVEL-AUTHORITY.md) | level authority made explicit: contract is §30; broadcast a00 prior deliberately not built | closed | — |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

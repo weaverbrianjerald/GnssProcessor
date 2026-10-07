@@ -1,16 +1,18 @@
-# QPR 0–3 — items 0–3: the pin bridge, the S-transform re-reference family, datum-station election by criterion, and the clock's re-realization-free posture
+# QPR 0–3: pin bridge, S-transform family, datum election, clock re-realization
 
 **STATUS**
 
 - **id:** QPR 0–3
 - **topic:** queues
 - **status:** open
-- **summary:** items 0–3: the pin bridge, the S-transform re-reference family, datum-station election by criterion, and the clock's re-realization-free posture
+- **summary:** Item 1(d), the phase-anchor carry re-reference, VALIDATED and 1f PROMOTED; item 0 downgraded, 1(b) deferred, 1(c) unwritten, item 2's plumbing landed, item 3 dissolved into 1(d).
 - **dates in the text:** 2026-08-04 → 2026-08-21
 - **knobs / posture:** `network.phase_datum_time_linked`, `network.phase_anchor_carry_reref`, `network.carry_coupling_gauge_project`, `network.carry_coupling_reinit_sources`, `network.shared_carry_gauge_free`
 - **hashes named in the text** (commit / exe / byte-cert): `ca19d0d`
 - **run dirs named in the text:** `runs/agu63_pbv2`, `runs/s24cpl_`
-- **source:** `docs/archive/QUEUE_principled_replacements.md` — 0, 1, 2, 3
+- **source:** `docs/archive/QUEUE_principled_replacements.md`, items 0, 1, 2, 3
+
+**Outcome.** Item 0's pin bridge cut the code-bias channel 1.9× but was a net loss on the clock channel, so it was downgraded. Item 1(d), `network.phase_anchor_carry_reref`, took Σ|dev| from 160.46 to 1.53 m; 1f was PROMOTED to RECOMMEND_ON (field withholds 20 of 121 epochs to 0), 1g is RECOMMEND_SCOPED and C-GF is KEEP_OFF (inert by closure). Item 2's election plumbing landed on 2026-08-21. Still owed: 1(b) (deferred, the handover flux is near-empty) and 1(c). The 2026-09-14 frozen posture arms 1(d), 1f and the clock step test ([NETWORK_REFOUNDING](../../refound/NETWORK_REFOUNDING_2026-09-14.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -22,8 +22,8 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [LV-3 contract](../cards/wire-contract/LEVEL-CONTRACT.md) | the normative contract for the ionosphere LEVEL and receiver-DCB frame of the emitted p… | closed | 2026-08-15 |
-| [level health](../cards/wire-contract/LEVEL-HEALTH-CHANNEL.md) | `network.emit_level_health` — the contract gap, the one-channel three-class mechanism, … | open | 2026-08-23 |
+| [LV-3 contract](../cards/wire-contract/LEVEL-CONTRACT.md) | level contract: W6 sum-to-zero or a00 GIM anchor owns the level; LV-1/2/4/5 SUPERSEDED | closed | 2026-08-15 |
+| [level health](../cards/wire-contract/LEVEL-HEALTH-CHANNEL.md) | level health: Phase A PASS on era-3 (7/7), causal limb misses slides; Phase B build owed | open | 2026-08-23 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

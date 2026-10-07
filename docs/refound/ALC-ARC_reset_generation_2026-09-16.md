@@ -1,15 +1,17 @@
-# ALC-ARC — ambiguity-window reset generations
+# ALC-ARC: ambiguity-window reset generations
 
 **STATUS**
 
 - **id:** ALC-ARC
 - **topic:** consumer
 - **status:** closed
-- **summary:** replace the post-update variance heuristic with explicit ambiguity lifecycle tracking
+- **summary:** Reset-gap fix landed: the level-check window restarts on explicit ambiguity generations instead of a post-update variance heuristic; 82 focused tests pass, ALC-OFF products byte-identical, no accuracy claim.
 - **source:** [ALC](ALC_amb_level_check_2026-09-15.md), September 16 code review
 - **knobs / posture:** existing `processing.amb_level_check`; no new tuning or promotion
 - **dates in the text:** 2026-09-16
 - **hashes / run dirs:** `runs/_alc_arc_20260916/`; OFF products SHA256 `b05f26b1cd0540dbdb3a2601a843e9f88f123aa90281515bc57ddfc89725e090`
+
+**Outcome.** The level check runs after the measurement update, so a reset whose variance the update had already shrunk could leave old-arc samples in the window. Generations owned by `StateManager` now restart the window on every lifecycle event; eight new regressions pass and the ALC-OFF 600 s smoke is byte-identical. The full Debug suite and the six-hour campaigns were deferred; [ALC2](ALC2_restart_policy_adoption_2026-09-19.md) section 3 closed the six-hour validation as a null result (field: 38 fewer checks, all non-trips, position untouched). Since 2026-09-20 the level check is off in the working bases ([PBH](PBH_phase_bias_hold_2026-09-19.md) section 8).
 
 ## Scope and pre-registered checks
 

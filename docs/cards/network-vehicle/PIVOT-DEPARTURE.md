@@ -1,16 +1,18 @@
-# PIVOT DEPARTURE — the consumer shock at a pivot handover is producer-internal carry free-fall — `scoped_handover_response` + `handover_stransform`, both promoted
+# PIVOT DEPARTURE: the consumer shock at a clock-pivot handover
 
 **STATUS**
 
 - **id:** PIVOT DEPARTURE
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the consumer shock at a pivot handover is producer-internal carry free-fall — `scoped_handover_response` + `handover_stransform`, both promoted
+- **summary:** The consumer shock at a clock-pivot handover is producer-internal carry free-fall, not a datum move; `scoped_handover_response` and `handover_stransform` both PROMOTED (RECOMMEND_ON), sim-validated.
 - **dates in the text:** 2026-08-04 → 2026-09-12
-- **knobs / posture:** `network.scoped_handover_response`, `network.readmit_seed_horizon_s`, `network.clock_datum_sum_to_zero`, `network.clock_datum_broadcast_anchored`, `network.handover_stransform`
-- **hashes named in the text** (commit / exe / byte-cert): `6a3531a1afb2b40b`, `cc689d5`, `c5b5df834d185ac8`, `1729cf5a`, `db80fcaa`
-- **run dirs named in the text:** `runs/evseed_pivfresh_off`, `runs/evseed_pivfresh_scoped`, `runs/golden_sim_campaign_zwdblk_scoped`, `runs/evseed_stsg1_`, `runs/evseed_stsg2_off`, `runs/evseed_stsg2_`, `runs/golden_sim_campaign_zwdblk_sts`
-- **source:** `docs/archive/SPEC_event_harness.md` — 19, 19.1, 19.2, 19.3, 19.4, 19.5, 19.6
+- **knobs / posture:** `network.scoped_handover_response` (increment 0, PROMOTED 2026-09-11), `network.handover_stransform` (increment 1, PROMOTED 2026-09-12), both fingerprinted; also named: `network.readmit_seed_horizon_s`, `network.clock_datum_sum_to_zero`, `network.clock_datum_broadcast_anchored`
+- **hashes named in the text** (commit / exe / byte-cert): `6a3531a1afb2b40b` (seed snapshot fingerprint), `c5b5df834d185ac8` (live fingerprint that refused the warm leg), `cc689d5` (main at increment 0), `1729cf5a` and `db80fcaa` (OFF byte-identity `products.txt` hashes)
+- **run dirs named in the text:** `runs/evseed_pivfresh_off`, `runs/evseed_pivfresh_scoped`, `runs/golden_sim_campaign_zwdblk_scoped`, `runs/evseed_stsg1_{off,false}`, `runs/evseed_stsg2_{off,on}`, `runs/golden_sim_campaign_zwdblk_sts`
+- **source:** `docs/archive/SPEC_event_harness.md` §19 to §19.6
+
+**Outcome.** In the 1.30 m shock the GPS clock step is a rigid S-transform the consumer absorbs free; `datum_changed` skipped the D2 shared-carry fold for every constellation. Scoping (increment 0) cut the storm consumer's settled max 1.34 → 0.20 m; the clock S-transform (increment 1) returned the changed constellation's CB/PB steps to control, but its two consumer edge gates FAILED as written (ruled mis-specified). Owed: a graded field arm and increment 2 (per-channel marks later built in [PBT](../../refound/PBT_consumer_pb_translate_2026-09-15.md), not adopted). The GPS-only goldens arm both knobs ([PRM](../../refound/PRM_parameter_registry_2026-09-29.md) §16.3).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

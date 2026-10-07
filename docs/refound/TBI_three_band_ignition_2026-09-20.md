@@ -5,11 +5,13 @@
 - **id:** TBI
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** CLOSED 2026-09-20, H1 STANDS on both beds: the network closes band 5's code datum by asserting a zero inter-signal correction per satellite (22 999 rows in 6 h), the truth is metres with a block structure (raw triple-code combination against the wire's: correlation 0.947 field, 0.962 sim), the network pushes the misfit into band 2, and the WIRE carries the damage (a dual consumer on the triple wire lags; band-5 code removed at the stations alone gives 0.27 0.10 0.05 0.04 0.06 0.02 m and 535 epochs below a decimetre). No config-only cure; the build is card B5D. Original summary: Pre-registered 2026-09-20. With the three knobs of the day armed, GPS L5 is healthy from hour 3 and best in hour 6 (0.03 m) and still not a gain: the triple field arm has 314 epochs below a decimetre of 720 against 603 of the dual pair, because its first two hours are slow (1.47 and 0.21 m against 0.43 and 0.07 m). The manager's set-up read finds the lag Up-dominant, and finds the consumer's band-5 code rows misfitting the wire by about a metre per satellite for hours, in two groups that follow the wire's own band-5 code bias. The leading hypothesis is the band-5 code datum of AB2 section 1: a per-satellite assertion of a zero inter-signal correction. The card freezes the hypotheses, one batch of arms on both beds, the reading, and the L5 adoption bars before any arm is run.
+- **summary:** H1 STANDS on both beds: band 5's code datum asserts a zero inter-signal correction per satellite where the truth is metres, and the WIRE carries the damage; no config-only cure.
 - **source:** [AB2](AB2_l5_third_frequency_2026-09-20.md) sections 1 (Datum), 8 and 11 (`sB_isc`); [CSL](CSL_canonical_signal_latch_2026-09-20.md) sections 4 and 5
 - **knobs / posture:** `processing.frequency_mode: triple` with band-5 codes in the GPS priority list, on the RF-0hv working bases of `8fe757f` (hold, gap re-entry response, per-signal rider, priority latch); no new knob in this card
 - **dates in the text:** 2026-09-20
 - **hashes / run dirs:** `runs/_rf0hv5_{field,sim}6`, `runs/_rap_{lF_tri,lS_tri,gF_tri,hC_tri_all,sB_isc}`; exe `build/x64-Release/gnss_processor_csl.exe`
+
+**Outcome.** The card asked why the triple field arm ignites slowly (314 epochs below a decimetre against 603 for the dual pair). The raw triple-code combination against the wire's reproduces the consumer's misfit (correlation 0.947 field, 0.962 sim). Band-5 code removed at the stations alone gives 535 epochs, at the consumer alone nothing; that emulation still fails the L5 adoption bars (count, clock wire). The build went to [B5D](B5D_band5_code_datum_2026-09-20.md), continued by [L5P](L5P_l5_phase_posture_2026-09-21.md); both are built and NOT armed, and L5 stays SEQUENCED.
 
 ## 1. What is known (every number re-read from the run directories by the manager, 2026-09-20)
 

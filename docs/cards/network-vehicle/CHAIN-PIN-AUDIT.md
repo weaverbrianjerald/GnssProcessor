@@ -1,16 +1,18 @@
-# chain-pin audit — rungs 2/6 re-attributed and the field's emission explained — the chain is COMPLETE
+# chain-pin audit: the eq34 chain is complete, and rungs 2 and 6 re-attributed
 
 **STATUS**
 
 - **id:** chain-pin audit
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** rungs 2/6 re-attributed and the field's emission explained — the chain is COMPLETE
+- **summary:** The eq34 chain is COMPLETE (every declared pin folded and landed); rungs 2 and 6 were SH-gate withholds from cold zero-target pins, a sim-only artifact; `cb_kaula_prior` FALSIFIED as the protection.
 - **dates in the text:** 2026-08-12
-- **knobs / posture:** `network.phase_datum_eq34_seed_round`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §12.8, 12.8.1, 12.8.2, 12.8.3, 12.8.4
+- **knobs / posture:** `network.phase_datum_eq34`, `network.station_pd_pin_aware`; the fix it names, `network.phase_datum_eq34_seed_round`
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none as `runs/` paths; arms `_simnet300_wsh_n50_pinaudit`, `_simnet300_wsh_n50_kaula`, `_simnet300_wsh_n50_eq34kaula`
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §12.8, 12.8.1 to 12.8.4
+
+**Outcome.** The question: do the eq34 chain pins the election declares reach the solve? A log-only audit counts 1558 pins declared, folded and landed per signal group over 19 epochs; the rank gate passes, the L2W common mode lifted ~17×. The 0/19 emission was the SH health gate: cold zero-target pins against the sim's km-scale integer draws drove a₀₀ to −19 000 TECU. Field phase sits within metres of code, so the same chain emits at 303 stations. The named fix was then BUILT and VALIDATED default OFF, not proposed for field lineages ([SPEC_eq34_seed_round](../../SPEC_eq34_seed_round.md)); the re-founding goldens run `phase_datum_eq34` off.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

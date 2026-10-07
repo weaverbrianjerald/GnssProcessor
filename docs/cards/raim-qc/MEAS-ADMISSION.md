@@ -1,16 +1,18 @@
-# meas admission — the product-referenced admission screen — the fault class no differential screen can see, the statistic, INC-1..3, knobs and the known-answer gates
+# meas admission: the product-referenced admission screen (INC-1 to INC-3 spec)
 
 **STATUS**
 
 - **id:** meas admission
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the product-referenced admission screen — the fault class no differential screen can see, the statistic, INC-1..3, knobs and the known-answer gates
-- **dates in the text:** 2026-08-01 → 2026-08-12
-- **knobs / posture:** `network.adm_screen`, `network.adm_trace`, `network.adm_bound_m`, `network.adm_min_sats`, `network.adm_heal_ep`, `network.adm_max_frac`, `network.adm_revet`, `network.adm_revet_gap_ep`, `network.adm_revet_ep`, `network.adm_revet_census` … (+1 more in the text)
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **summary:** Spec of an absolute code screen against SP3 and CLK range (bound 1000 m) refusing corrupt channels at arc birth; birth, break and sweep gates PASS; `adm_screen` is ARMED on the goldens.
+- **dates in the text:** 2026-08-01 to 2026-08-12
+- **knobs / posture:** `network.adm_screen`, `network.adm_trace`, `network.adm_bound_m`, `network.adm_min_sats`, `network.adm_heal_ep`, `network.adm_max_frac`; INC-4: `network.adm_revet`, `network.adm_revet_gap_ep`, `network.adm_revet_ep`, `network.adm_revet_census`, `network.adm_revet_hold`. `adm_screen` and `adm_trace` are true in `config/golden/golden_field_refound.json` and `config/golden/golden_sim_refound.json`
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/ft63_24h_conv`
-- **source:** `docs/archive/SPEC_measurement_admission.md` — (preamble), 1, 2, 3, 4, 5, 6, 7, 8
+- **source:** `docs/archive/SPEC_measurement_admission.md` preamble and sections 1 to 8; build and gates in [meas admission impl](../raim-qc/MEAS-ADMISSION-IMPL.md) (section 9), the re-entry increment in [INC-4](../raim-qc/MEAS-ADMISSION-INC4-REENTRY.md) (section 10)
+
+**Outcome.** The question: how to refuse a channel whose code and phase share one offset of 100 to 200 km (BSHM00ISR G07 and G16 on DOY-129), invisible to every differential check by construction. The [implementation record](../raim-qc/MEAS-ADMISSION-IMPL.md) ran gates 2 to 4: both channels refused at birth, the era-2 SH withhold era gone (window peak |a00| 3380.6 to 36.9 TECU), the same reject set at 300 and 3000 m. Gates 5 to 7 are not recorded as graded. The section 8 re-vet deferral became [INC-4](../raim-qc/MEAS-ADMISSION-INC4-REENTRY.md); [AB2](../../refound/AB2_l5_third_frequency_2026-09-20.md) section 1 lists `adm_screen` as already armed.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

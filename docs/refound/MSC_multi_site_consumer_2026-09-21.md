@@ -5,11 +5,13 @@
 - **id:** MSC
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** RESULT 2026-09-21: controls pass; WTZZ00DEU is not representative (603 epochs below a decimetre against a median of 145 at 16 independent sites; three sites never reach a decimetre); by the frozen count rule no adoption of 2026-09-20 holds across sites (two SITE-SPECIFIC, the latch MIXED) although the three together improve 13 of 16 sites by a median of 0.19 m; the CSL support reading is refuted (both consumer families gain); across sites the L5 phase posture leads by count; the priority latch thinned the wire's C1W code biases (30 to 24 satellites) and a consumer diverges by 70 m on the resulting code-bias dropouts. The census fails its own bar as a standing instrument at 16 sites. Original summary: Pre-registered 2026-09-21. Every adoption of 2026-09-20 (the gap re-entry response, the per-signal rider, the priority canonical-signal latch) and every L5 verdict was graded by one cold consumer at one site (WTZZ00DEU). The consumer replay reproduces a closed loop to 0.002 m per half hour in about 12 s, and 251 stations with observations on the day are outside the 59-station roster. The card replays independent consumers at a frozen list of sites on the recorded wires of the day, and freezes the site rule, the statistics and the reading before any replay is graded.
+- **summary:** WTZZ00DEU is unrepresentative (603 sub-decimetre epochs, site median 145); by the frozen count rule no 2026-09-20 adoption holds across 16 sites; the census FAILS its own standing-instrument bar.
 - **source:** [TBI](TBI_three_band_ignition_2026-09-20.md) section 5 (the replay controls); [CSL](CSL_canonical_signal_latch_2026-09-20.md) sections 4 and 5; [B5D](B5D_band5_code_datum_2026-09-20.md) sections 3 and 4
 - **knobs / posture:** no new knob; `network.closed_loop.replay_products_path` with `network.closed_loop.station` moved to the site; recorded wires only, no producer run
 - **dates in the text:** 2026-09-21
 - **hashes / run dirs:** wires `runs/_rf0hv3_field6`, `runs/_rf0hv4_field6`, `runs/_rap_gD_dual`, `runs/_rf0hv5_field6`, `runs/_rap_lF_tri`, `runs/_rap_b5_tri`, `runs/_rap_tB_nocode5_net`; exe `build/x64-Release/gnss_processor_b5d.exe`
+
+**Outcome.** Question: do WTZZ00DEU verdicts hold for independent consumers replayed on the recorded wires (a replay matches its closed loop to 0.002 m per half hour). Two adoptions read SITE-SPECIFIC and the latch MIXED; together the three improve 13 sites by a median 0.19 m (post hoc). CSL's support reading is refuted: both consumer families gain. The latch thinned the wire's C1W code biases ([SCC](SCC_second_code_channel_2026-09-21.md) restored coverage); a consumer diverges 70 m on the dropouts. Owed: more sites with a pre-frozen paired statistic, and unread KOKB00USA and UTQI00USA; [RXP](RXP_rinex3_blank_prn_2026-09-21.md) explained ANMG00MYS.
 
 ## 1. The instrument and the sites (frozen before any replay is graded)
 

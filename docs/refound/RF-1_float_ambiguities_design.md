@@ -1,6 +1,16 @@
-# RF-1 — ambiguities as float states with covariance
+# RF-1: ambiguities as float states with covariance
 
-**Status:** DESIGN READ, 2026-09-14.  No implementation.  The manager decides the build from this document.
+**STATUS**
+
+- **id:** RF-1
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** Float-ambiguity vehicle (`network.ambiguity_vehicle: float_kf`): built, CORRECT and NOT SUFFICIENT on the field; with RF-2's held basis, the goldens' posture since 2026-09-22.
+- **source:** [NETWORK_REFOUNDING_2026-09-14.md](NETWORK_REFOUNDING_2026-09-14.md)
+
+**Outcome.** The design makes each ambiguity a float state: the joint local block as the carried prior, a floored birth prior, a slip as a bounded drop, a declared anchor S-transform (bars in section 7.6). The build was GO ([RF-1-decision](RF-1_decision_2026-09-14.md)). Steps 3 to 5 passed S4 on both beds and S3 on the sim (DD error 14x smaller) but crossed neither field instrument while the phase datum churned ([steps 3 to 5](RF-1_steps345_mechanism_2026-09-15.md)); the goldens carry it since [GRB](GRB_golden_rebase_2026-09-22.md).
+
+**Status as recorded (2026-09-14):** DESIGN READ, 2026-09-14.  No implementation.  The manager decides the build from this document.
 **Parent:** `docs/refound/NETWORK_REFOUNDING_2026-09-14.md` (the card order; RF-1 is the first replacement card).
 **Baseline:** RF-0's frozen posture — the leveling vehicle as `config/test_suite/_pv_b.json` realizes it
 (`carry_invariant: false`, `phase_leveling: true`, `cycle_slip.relevel_free_epoch: true`,

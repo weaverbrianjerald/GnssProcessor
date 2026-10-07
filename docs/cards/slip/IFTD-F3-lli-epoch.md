@@ -1,16 +1,18 @@
-# RULE F3 — the LLI-EPOCH verdict, and the ANCHOR CLAUSE inside F3
+# RULE F3: the LLI-epoch verdict and its anchor clause
 
 **STATUS**
 
 - **id:** RULE F3
 - **topic:** slip
 - **status:** closed
-- **summary:** the LLI-EPOCH verdict, and the ANCHOR CLAUSE inside F3
-- **dates in the text:** —
-- **knobs / posture:** `network.cycle_slip.common_band_scope`
-- **hashes named in the text** (commit / exe / byte-cert): `fd217f07`, `4e0b5606`, `420634f`, `4c96e34a4aebc4a9`, `4e0b56068e44a862`, `fd217f072a2eaf98`
+- **summary:** At a receiver-flagged epoch with no MW verdict, F3 implicates the flagged bands, so S3's level residual under `all` returns from 0.335 to 0.005 cyc; the anchor clause keeps references together.
+- **dates in the text:** none
+- **knobs / posture:** `network.cycle_slip.common_band_scope` (the gate; no new knob) with `network.cycle_slip.if_phase_td_pairs` (`first` / `all`); counters `cb_lli_verdicts`, `cb_lli_narrowed`, `cb_lli_anchor_colocate`
+- **hashes named in the text** (commit / exe / byte-cert): `420634f` (main's exe, the OFF reference); products `4c96e34a4aebc4a9` (quiet 240-epoch null), `4e0b5606` / `4e0b56068e44a862` (L2 control), `fd217f07` / `fd217f072a2eaf98` (S2); exes `gnss_processor_iftdpairs_v6.exe` (`B94E7600D4159…`), `gnss_processor_iftdpairs_v7.exe` (`35D7DDF8BDFD5…`)
 - **run dirs named in the text:** `runs/evleg_t_s3_fix`, `runs/golden_sim_campaign_zwdblk_cbscope4`, `runs/evleg_u_anch_fix_cl`
-- **source:** `docs/archive/SPEC_event_harness.md` — 14.12, 14.12.1, 14.12.2, 14.12.3, 14.12.4, 14.12.5, 14.12.6
+- **source:** `docs/archive/SPEC_event_harness.md` §14.12 (14.12.1 to 14.12.6)
+
+**Outcome.** The question: under `all`, the IF-TD pairs holding an LLI-flagged band fired unscoped at the LLI epoch, where every MW sample is withheld and no verdict exists; can the receiver's bits form one? F3 implicates only the flagged bands, and S3 and S1 under `all` equal their `first` arms digit for digit. The Study-7 storm arm then found F3 splitting references on anchor arcs (mean 7.6 against 3.5); with the anchor clause the anchor leg matches the null. That arm, re-run with the clause, made both knobs RECOMMEND_ON on the sim golden ([Study 7](../slip/STUDY-7-common-band-narrowing.md) §16.8); the current goldens set both on both beds.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

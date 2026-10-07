@@ -1,16 +1,18 @@
-# rung 3 — the lane-preserving snap — v1/v2 falsified, the SEED SITE deleted as an exact solve no-op, and the v3 carry-domain observatory through its field arm
+# rung 3: lane-preserving snap, seed site deleted, carry-domain observatory built
 
 **STATUS**
 
 - **id:** rung 3
 - **topic:** slip
 - **status:** open
-- **summary:** the lane-preserving snap — v1/v2 falsified, the SEED SITE deleted as an exact solve no-op, and the v3 carry-domain observatory through its field arm
+- **summary:** Seed-site snap v1/v2 is FALSIFIED and deleted (an exact solve no-op); the carry-domain observatory passes on sim (settled mean |δ| 1.18 cycles); the unbuilt apply leg is re-scoped to T4.
 - **dates in the text:** 2026-08-22 → 2026-08-23
 - **knobs / posture:** `network.cycle_slip.relevel_lane_snap`, `network.trace_events`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/camp60wu_f5`, `runs/camp60wu_f5c`, `runs/_wd`, `runs/camp60wu_f6smoke`
-- **source:** `docs/archive/SPEC_lane_slip_response.md` — §6, §7, §7.1, §7.2, §7.3, §7.4, §7.5, §7.6, §7.7, §7.8
+- **source:** `docs/archive/SPEC_lane_slip_response.md`: §6, §7, §7.1, §7.2, §7.3, §7.4, §7.5, §7.6, §7.7, §7.8
+
+**Outcome.** Question: can a refloat keep the lane at the MW-measured jump? The seed-site snap blew its 25-cycle cap on 92 to 97 % of attempts. The v3 observatory's field aggregate was NOT ADJUDICABLE; the re-run found the detector population too thin (22 rows above 30°, the redesign trigger) while T4 refloats typically remove real lane error (de-clustered median 2.94 cycles). The apply leg is specified, not built ([T4 lane restore](T4-LANE-RESTORE-SPEC.md)); [Card ORACLE](CARD-ORACLE-RELEVEL.md) found truth-fed level preservation leaves the sim plateau unmoved, and lanes are now out of scope ([slip topic](../../topics/slip.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

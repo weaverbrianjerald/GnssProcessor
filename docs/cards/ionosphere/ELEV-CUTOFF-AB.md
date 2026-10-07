@@ -1,16 +1,18 @@
-# elev-cutoff A/B — the elevation-cutoff A/B WITH TRUTH — the field verdict INVERTS on a coherent field
+# elev-cutoff A/B: the iono elevation-cutoff A/B graded against sim truth
 
 **STATUS**
 
 - **id:** elev-cutoff A/B
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the elevation-cutoff A/B WITH TRUTH — the field verdict INVERTS on a coherent field
+- **summary:** P-A/B-2 FALSIFIED and the field verdict inverted: on the coherent sim field the 15° iono cutoff beats 25° on every clock-adjacent channel (clock residual 2.09× smaller); the cut feeds the exchange.
 - **dates in the text:** 2026-08-12
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): `cbaefe0a`
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §12.9
+- **knobs / posture:** `estimation.ionosphere_weighting.elevation_cutoff_deg` 15 vs 25 (the one knob between the arm configs), W6+SH posture, 480 epochs per arm, settled half graded
+- **hashes named in the text** (commit / exe / byte-cert): `cbaefe0a` (sha256 of `gnss_processor_wsh3.exe`, one build for both arms)
+- **run dirs named in the text:** none as `runs/` paths; arms `_simnet300_wsh_n50_pin_el15` (15°) and `_simnet300_wsh_n50_pin_el25b` (25° control)
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §12.9 (HANDOFF_wsh_chain_slant T3)
+
+**Outcome.** The pre-registered A/B asked whether the field's 25° iono cutoff (adopted in [iono-field agreement](../ionosphere/IONO-FIELD-AGREEMENT.md)) also wins when graded against truth. It does not: at 15° the clk_common wander is 4.1× smaller, and the clock, receiver-DCB and iono exchange sits at 0.50× of ideal absorption against 0.97× at 25°, because the low-elevation rays carry the obliquity diversity that separates the three. The 25° control reproduced §12.7 to four digits on the same build. The FT63 adoption of 25° stands on field evidence, where removing real low-high incoherence nets a wander trim despite this separability cost; any further raise must count both sides.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

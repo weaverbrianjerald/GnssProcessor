@@ -1,16 +1,18 @@
-# LV roadmap — the continuing session's roadmap, and its refresh at hand-back
+# LV roadmap: the LV initiative's ranked next actions and the hand-back refresh
 
 **STATUS**
 
 - **id:** LV roadmap
 - **topic:** ionosphere
-- **status:** open
-- **summary:** the continuing session's roadmap, and its refresh at hand-back
-- **dates in the text:** 2026-08-05 → 2026-08-07
-- **knobs / posture:** `network.serialize_sbasis_contract`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 17, 27
+- **status:** superseded
+- **summary:** SUPERSEDED action list of the LV ladder: item 3 was built as S2H, the disc channel moved to the edge-response queue, and the level-authority thread moved to LV-6.
+- **dates in the text:** 2026-08-05 to 2026-08-07
+- **knobs / posture:** `network.serialize_sbasis_contract` (item 2a, armed for replayed producers); the LV knobs `iono_seed_field_frame`, `rx_cb_carry_demean`, `rx_cb_carry_step_gate`, `rx_cb_carry_demean_within`, all default OFF; EXT-CB posture of record: the canonical, no LV level stack
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none as `runs/` paths; `ext63_dual_12h_{ref,lv125,lv125_q6}`, `replay_ext63_12h_{ref,lv125}`, `agu63_nolane_30ep_lv125`
+- **source:** `docs/archive/SPEC_level_information_budget.md` sections 17, 27
+
+**Outcome.** The roadmap ranked the LV initiative's next actions after section 15 and refreshed them at hand-back. Item 0 graded the existing runs on invariant quantities: DD fractions identical (0.2503 against 0.2498), the LV stack's postfit σ̂₀ 1.4× louder, both consumers poor. Item 1 (LV-4 alone) passed stage 2 at a +32 % data-side cost; its 12 h stage 3 was staged, with no run of it on record. Item 2a cut last-30 3D RMS by 12.7 %. Standing: S2H's 12 h verdict moved the level authority, and item 0b's design (internally sourced), to LV-6 ([S2H](../code-bias/S2H-HARVEST.md) section 31); the disc channel continues in [HANDOFF_edge_response_queue.md](../../HANDOFF_edge_response_queue.md) edge 1.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,16 +1,18 @@
-# Card 1b — coupling-row JOINT whitening — PREMISE FALSIFIED, the toggle is a no-op, and what the flat σ actually is
+# Card 1b: coupling-row joint whitening (premise FALSIFIED)
 
 **STATUS**
 
 - **id:** Card 1b
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** coupling-row JOINT whitening — PREMISE FALSIFIED, the toggle is a no-op, and what the flat σ actually is
+- **summary:** PREMISE FALSIFIED: `M_w` is empty in 98.4 % of station-epochs and effectively diagonal otherwise, so joint whitening equals the scalar path byte for byte; the knob is RETIRED, default OFF.
 - **dates in the text:** 2026-07-10
 - **knobs / posture:** `network.clock_model`, `network.trace_section_timers`, `network.carry_coupling_time_update`, `network.carry_coupling_joint_whiten`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **hashes named in the text** (commit / exe / byte-cert): none as commits; OFF byte-identity anchor SHA `69C20D38E22B5EBE`
 - **run dirs named in the text:** `runs/t7_joint_lowfloor_12h`, `runs/t7c_jointwhiten_12h`
-- **source:** `docs/archive/SPEC_card1_coupling_carry.md` — 8, 8.1, 9, 10, 11, 12
+- **source:** `docs/archive/SPEC_card1_coupling_carry.md` §8, 8.1, 9, 10, 11, 12
+
+**Outcome.** The card asked whether whitening a station's coupling rows jointly recovers the DD information that scalar marginalization was thought to destroy, the presumed cause of T7's flat DD σ. Its own premise gate failed: the marginalized term is 10 to 1000× smaller than `var_eff`, and the matched 200-epoch A/B is byte-identical over 10 614 rows with 0 LLT fallbacks. The addendum's 10× slowdown was a misread total (439.2 against 434.7 ms/epoch). The flat ~5.6 cyc σ is the current-epoch conditional ambiguity variance, an iono/ambiguity conditioning problem. The [ledger](../../CONFIG_promotion_ledger.md) records the knob RETIRED-negative on the tested lineage (`network.clock_model` off; the ON case is untested).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

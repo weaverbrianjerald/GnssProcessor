@@ -1,16 +1,18 @@
-# CC — the continuity half — the consumer's declared-step carry and warm start, landed default-OFF
+# CC: the consumer's declared-step carry and warm start
 
 **STATUS**
 
 - **id:** CC
 - **topic:** consumer
 - **status:** closed
-- **summary:** the continuity half — the consumer's declared-step carry and warm start, landed default-OFF
-- **dates in the text:** 2026-09-14
-- **knobs / posture:** `network.closed_loop.pb_disc_carry`, `processing.ssr_phase_bias_disc_carry`, `realtime.state_snapshot_path`, `network.closed_loop.state_snapshot`, `network.emit_combined_sigma`
+- **summary:** (A) the declared-step carry is VALIDATED as exact and neutral but stays default OFF and not pinned (its RF-0hv re-grade FAILS 2 of 5 bars); (B) the consumer warm start LANDED as the harness default.
+- **dates in the text:** 2026-09-14; 2026-09-15 (the appended RF-0hv re-grade)
+- **knobs / posture:** `network.closed_loop.pb_disc_carry`, `processing.ssr_phase_bias_disc_carry`, `realtime.state_snapshot_path`, `network.closed_loop.state_snapshot`, `state_snapshot_seam_refloat` (false in the harness default), `network.emit_combined_sigma`
 - **hashes named in the text** (commit / exe / byte-cert): `0f510024`, `87a33bf0`, `ef2b134`, `3f421edb`, `7476f0a0`, `545b8bdd2b638231`, `8ba709ddf9191c8a`, `e0d234ee` … (+2 more in the text)
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.4
+- **run dirs named in the text:** none as `runs/` paths; legs `_cc_smoke_base`, `cc_null_warm`, `_cert4_smoke_base`, `cert4_null_warm`, seed v9
+- **source:** `docs/archive/SPEC_event_harness.md` §24.4, with the §24.7 certification and the §24.3 results of card [CI](../consumer/CI-consumer-instrument.md) that follow it
+
+**Outcome.** The card asks whether the consumer can carry its float ambiguity across a declared phase-bias step (A) and resume warm at a seam (B). (A) is exact, but its benefit is lost in a wire that leaves the consumer at metres; the G4 twin was not run. (B) resumes only with the `full` scope and seam refloat OFF (0.63 m at k = 1 against 14.43 m for the loader's `core` scope). The re-grade, [CC-arm](../../refound/CC-arm_pb_disc_carry_rf0hv_2026-09-15.md), misses the event-window bar (1.404 m against 1.0) and worsens hours 4 and 5. [PBT](../../refound/PBT_consumer_pb_translate_2026-09-15.md)'s every-step translate later replaced the carry and was itself switched off under the [PBH](../../refound/PBH_phase_bias_hold_2026-09-19.md) hold.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

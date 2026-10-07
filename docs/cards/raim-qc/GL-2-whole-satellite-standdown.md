@@ -1,16 +1,18 @@
-# GL-2 + R8 — the whole-satellite stand-down, and R8 — the bulk drift's channel
+# GL-2 + R8: the whole-satellite stand-down and the bulk drift's channel
 
 **STATUS**
 
 - **id:** GL-2 + R8
 - **topic:** raim-qc
-- **status:** open
-- **summary:** the whole-satellite stand-down, and R8 — the bulk drift's channel
+- **status:** closed
+- **summary:** The stand-down FAILED its bars (consumer hour 4 at 22.25 m, bar 1.5 m) and stays unarmed; R8b exonerated the rx-CB carry; R10's unsignalled clock steps went to card CS.
 - **dates in the text:** 2026-09-14
 - **knobs / posture:** `network.carry_rx_code_bias`, `network.gross_los_sat_standdown`, `network.clock_disc_jump_test`
 - **hashes named in the text** (commit / exe / byte-cert): `6a6d73e`, `87a33bf0`, `579ae70`, `f33ce82e`, `1d482b7`, `7a1cb9bf`
 - **run dirs named in the text:** `runs/_gl2_on6`, `runs/_gl_rxoff6`
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.19
+- **source:** `docs/archive/SPEC_event_harness.md`: 24.19
+
+**Outcome.** The questions: does standing a satellite down make the gross-LOS screen consumer-safe, and which channel carries the bulk drift? The stand-down also FAILED the station-max bar; the 55.77 m consumer step blamed on G17 was the producer's own unsignalled 16.7 m G17 clock step. R8 refused both pre-registered channels and the carry-off twin left the drift in place, so its channel stays unnamed (OPEN in card CS). R10 found 43 unsignalled clock steps above 2 m; [CS](../clock/CS-clock-step-signalling.md) armed `network.clock_disc_jump_test`. [RF-3](../../refound/RF-3_code_row_qc_2026-09-22.md) sections 3 and 7 rule the stand-down out.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

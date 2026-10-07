@@ -1,16 +1,18 @@
-# A4 withhold — the withhold-era release policy — the defect named exactly, the v2 design, the pre-registered gates and the first results
+# A4 withhold: withhold-era release policy, v2 design and first results
 
 **STATUS**
 
 - **id:** A4 withhold
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the withhold-era release policy — the defect named exactly, the v2 design, the pre-registered gates and the first results
+- **summary:** Mechanism VALIDATED, promotion REFUSED: the era-gated escalation collapsed the 29-epoch A4 deadlock era to one withheld epoch, but the settled σ̂₀ quality gate G3 FAILED (2.42).
 - **dates in the text:** 2026-08-21
 - **knobs / posture:** `network.raim_withhold_adapt_escalate`, `network.raim_withhold_sigma0`, `network.raim_withhold_free_erase`
-- **hashes named in the text** (commit / exe / byte-cert): `65ba362`
+- **hashes named in the text** (commit / exe / byte-cert): `65ba362`, exe MD5 `E8F81856…`
 - **run dirs named in the text:** `runs/fld63_relevel4h_`, `runs/fld63_relevel4h_wh`
-- **source:** `docs/archive/SPEC_withhold_era_release.md` — (preamble), §1, §2, §3, §4, §5, §6, §7
+- **source:** `docs/archive/SPEC_withhold_era_release.md`: (preamble), §1, §2, §3, §4, §5, §6, §7
+
+**Outcome.** The question was whether a deeper within-epoch peel budget, engaged only inside an A4 withhold era, ends the deadlock without touching the verdict. Armed at 12 with free erase on the certified ON leg: 478/483 emitted, no escalated epoch exhausted (stop rule silent). G1, G2, G5 and G6 PASS, G4 intent PASS (gate mis-specified), G3 FAIL as registered; the free-erase half went unexercised. [withhold cliff](WITHHOLD-CLIFF-RETIREMENT.md) §8 to §10 traced G3 to a retired binary and a cliff-flattered reference, and its same-build re-run exercised free erase twice; promotion waits jointly with `network.emit_level_health` on the open [level health](../wire-contract/LEVEL-HEALTH-CHANNEL.md) card (§12.6).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

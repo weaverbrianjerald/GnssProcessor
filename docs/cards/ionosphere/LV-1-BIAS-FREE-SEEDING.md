@@ -1,16 +1,18 @@
-# LV-1 — bias-free per-LOS iono seeding — the seed is a FRAME, not an authority
+# LV-1: bias-free per-LOS iono seeding
 
 **STATUS**
 
 - **id:** LV-1
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** bias-free per-LOS iono seeding — the seed is a FRAME, not an authority
-- **dates in the text:** —
-- **knobs / posture:** `network.iono_seed_field_frame`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 3
+- **summary:** The stated seed-gradient mechanism is FALSIFIED: the seed is a FRAME, not an authority (the carry-OFF arms agree to 0.006 TECU); diagnostic-keep, since it sets the frame LV-2 pins.
+- **dates in the text:** none (built and graded 2026-08-05, per [LV impl](../ionosphere/LV-IMPL-RECORD.md))
+- **knobs / posture:** `network.iono_seed_field_frame` (+ `_min_sats`, default 5), loader default OFF, conditional fingerprint `lv1seed:<min_sats>`; run-end counters `lv1_seeds_reframed`, `lv1_fallback_raw`
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none as `runs/` paths; arms `_ext63_gps_dual_20ep_a00gim_sl`, `…a00gim_sl_nc`, `_agu63_nolane_30ep` (each + LV-1)
+- **source:** `docs/archive/SPEC_level_information_budget.md` §3; outcomes in §10 and §13 to §14 ([LV impl](../ionosphere/LV-IMPL-RECORD.md), [LV correction](../ionosphere/LV-CORRECTION-AND-12H.md))
+
+**Outcome.** The card asked whether seeding each LOS's iono from the SH field, without the receiver's GF bias, lifts the collapsing ionosphere level. The decisive carry-OFF arm still collapsed to −37.1 TECU: the seed is a linearization point, a solve no-op (§10.1). With the carry on, LV-1 acts through the frame-dependent inject gate (a defect, fixed by LV-4) and by booking the GF bias into the DCB seed that LV-2's de-mean pins (§13.3). The 12 h DD-fraction readout stayed uniform (0.2503). Verdict: diagnostic-keep ([LV](../ionosphere/LV-REF.md)); the LV stack is not armed for settled work (§14).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

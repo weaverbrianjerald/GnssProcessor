@@ -1,16 +1,18 @@
-# RS-3 … RS-5 — both datums continue at the seam, the phase-bias level is the EMIT layer, and the seam closes on the wire
+# RS-3 … RS-5: both datums continue, the phase-bias level is the EMIT layer
 
 **STATUS**
 
 - **id:** RS-3 … RS-5
 - **topic:** resume-seam
 - **status:** closed
-- **summary:** both datums continue at the seam, the phase-bias level is the EMIT layer, and the seam closes on the wire
+- **summary:** Both datums continue at the seam (RS-3), the 17.7 m phase-bias step is the cold EMIT layer (RS-4), and restoring that layer closes the seam on the phase-bias wire (RS-5, P7a and P7b PASS).
 - **dates in the text:** 2026-09-12 → 2026-09-13
-- **knobs / posture:** `network.trace_sat_bias_states`, `network.resume_pb_seam_mark`, `network.serialize_disc_counters`, `network.state_snapshot_emit_capture`, `network.resume_emit_restore`
-- **hashes named in the text** (commit / exe / byte-cert): `794d10e`, `b9da8cc1`, `545b8bdd2b638231`, `83a48de`, `5f671fba`, `87a33bf0`, `265d122`, `dcf04dd` … (+4 more in the text)
+- **knobs / posture:** `network.state_snapshot_datum_capture` / `network.resume_datum_restore` (RS-3), `network.resume_pb_seam_mark` (RS-4), `network.state_snapshot_emit_capture` / `network.resume_emit_restore` (RS-5), all RECOMMEND_SCOPED; `network.trace_sat_bias_states` (the RS-4 instrument, which carries the code bias only); `network.serialize_disc_counters` RECOMMEND_SCOPED, pinned on both goldens at the close-out (goldens since retired)
+- **hashes named in the text** (commit / exe / byte-cert): `794d10e`, `b9da8cc1`, `545b8bdd2b638231`, `83a48de`, `5f671fba`, `87a33bf0` (the field golden's canonical 20-epoch hash from the close-out), `265d122`, `dcf04dd` (harness trap fix) … (+4 more in the text)
 - **run dirs named in the text:** `runs/evseed_field6h_v3`, `runs/evseed_field6h_v3raw`, `runs/evseed_field6h_v3t`, `runs/evseed_field6h_v4`, `runs/evleg_hfix_trap`, `runs/evleg_close2_null_main`
-- **source:** `docs/archive/SPEC_event_harness.md` — 21.9, 21.10, 21.11, 21.12
+- **source:** `docs/archive/SPEC_event_harness.md` §21.9, §21.10, §21.11, §21.12
+
+**Outcome.** The question is what still re-realizes the field wire at a warm resume once the DD branch is restored. RS-3 restores the eq34 tree and code-bias memory (re-seed discs 30 to 0), but `eq34_reref` 8 MISSES its bar of 5 and P5b FAILS on every pooled channel. RS-4 finds the raw estimator moves only 1.7 m and builds the PB seam mark. RS-5 takes the stateful consumer's PB resets at the seam from 19 to 0. The pooled bars were RETIRED as seam instruments at RS-9 ([RS-7 … RS-9](../resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md)); the station layer follows in [RS-6a](../resume-seam/RS-6a-station-layer-memories.md); the re-founding goldens leave `serialize_disc_counters` unarmed ([scope cut](../../refound/NETWORK_REFOUNDING_2026-09-14.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

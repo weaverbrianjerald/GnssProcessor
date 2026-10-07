@@ -1,16 +1,18 @@
-# Card ORACLE — `oracle_relevel`, the sim-only CEILING of a level-preserving re-level — the mechanism is exact and the plateau does not move
+# Card ORACLE: the sim-only ceiling of a level-preserving re-level
 
 **STATUS**
 
 - **id:** Card ORACLE
 - **topic:** slip
 - **status:** closed
-- **summary:** `oracle_relevel`, the sim-only CEILING of a level-preserving re-level — the mechanism is exact and the plateau does not move
+- **summary:** The truth-fed re-level is exact (unrepaired fraction p50 0.005), yet every pre-registered gate FAILS and T4 attribution events rise 77 %: a measured ceiling, KEEP_OFF as a sim-only diagnostic.
 - **dates in the text:** 2026-09-10
-- **knobs / posture:** `network.cycle_slip.oracle_relevel`, `network.cycle_slip.oracle_truth_root`, `network.cycle_slip.oracle_noise_cyc`, `network.cycle_slip.oracle_false_alarm`, `network.cycle_slip.oracle_window_s`, `network.carry_invariant`, `network.phase_leveling`, `network.phase_leveling_q_amb`, `network.phase_leveling_var_floor_m2`, `network.raim_arc_persist_epochs` … (+2 more in the text)
-- **hashes named in the text** (commit / exe / byte-cert): `3dd1284`
-- **run dirs named in the text:** `runs/golden_sim_campaign`, `runs/simnet60_campaign_wu93`, `runs/golden_sim_campaign_plq7`, `runs/golden_sim_campaign_zwdblk_orafa`
-- **source:** `docs/archive/SPEC_slip_qc_hardening.md` — 13, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7
+- **knobs / posture:** `network.cycle_slip.oracle_relevel`, `network.cycle_slip.oracle_truth_root`, `network.cycle_slip.oracle_noise_cyc`, `network.cycle_slip.oracle_false_alarm`, `network.cycle_slip.oracle_window_s`, `network.cycle_slip.oracle_true_slip` (§13.7); interlocks `network.carry_invariant`, `network.phase_leveling`; addendum ladders `network.phase_leveling_q_amb`, `network.phase_leveling_var_floor_m2`, `network.raim_arc_persist_epochs`; named successor `network.carry_iono_in_block`
+- **hashes named in the text** (commit / exe / byte-cert): `3dd1284` (the `oracle_true_slip` commit)
+- **run dirs named in the text:** `runs/golden_sim_campaign`, `runs/simnet60_campaign_wu93`, `runs/golden_sim_campaign_plq7`, `runs/golden_sim_campaign_zwdblk_orafa`, and the `runs/golden_sim_campaign{,_zwdblk}{,_oracle}{,_oracle_e1}` family
+- **source:** `docs/archive/SPEC_slip_qc_hardening.md` §13 (13.1 to 13.7)
+
+**Outcome.** The question: what would a perfect level-preserving response to a detected slip buy, given the true jumps on the slipped sim bed? It repairs 1 161 arcs, yet settled ZWD truth rms reaches only 1.779 m against a 0.5 m gate and the consumer p50 is flat: the per-band errors are a station-wide (range, ionosphere) mis-split that single-arc repair cannot undo. FAIL, a ceiling and not a fix. The addenda FALSIFY the levels' memory knobs and show that keeping the false alarms' levels makes the consumer 2.7 times worse: those re-levels act as a resync. Both oracle knobs are KEEP_OFF in the [ledger](../../CONFIG_promotion_ledger.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

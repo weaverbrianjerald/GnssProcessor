@@ -28,14 +28,14 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [Cards A+B](../cards/harness/CARD-AB-require-and-rx-clock-step.md) | the `require` hard-fail and the rx_clock_step event, plus the jump gate in metres | closed | 2026-09-10 |
-| [HARNESS](../cards/harness/HARNESS-REF.md) | what the harness is, the six injectable events, the files, the leg recipe, the grader, … | reference | 2026-09-10 |
-| [Study 1](../cards/harness/STUDY-1-erase-vs-refloat.md) | erase vs refloat — what actually costs the 0.45-cycle floor | closed | 2026-09-10 |
-| [Study 2](../cards/harness/STUDY-2-rx-clock-carry.md) | the receiver-clock carry under single events | closed | 2026-09-10 |
-| [ORACLE PIN (stub)](../cards/harness/ORACLE-PIN-stub.md) | the ORACLE PIN pre-registration stub — superseded by the card record in SPEC_oracle_pin | superseded | 2026-09-11 |
-| [harness seeds](../cards/harness/HARNESS-SEEDS.md) | seed hygiene and the fingerprint rule — every seed re-write and why the old snapshots s… | reference | 2026-09-12 |
-| [FIELD harness](../cards/harness/FIELD-HARNESS.md) | the 6 h field seed, the owed field legs for the sim-validated slip cards, and FP-1 / FP… | closed | 2026-09-13 |
-| [DEC-field-vehicle](../decisions/DEC-field-vehicle-posture.md) | the field vehicle posture decision and the closing legs | open | 2026-09-14 |
+| [Cards A+B](../cards/harness/CARD-AB-require-and-rx-clock-step.md) | require hard-fail fixed (error line, exit 1); rx_clock_step built; rx-clock carry KEEP_OFF | closed | 2026-09-10 |
+| [HARNESS](../cards/harness/HARNESS-REF.md) | event harness reference: injectable events, leg recipe, event-minus-null grader, gaps | reference | 2026-09-10 |
+| [Study 1](../cards/harness/STUDY-1-erase-vs-refloat.md) | erase-path premise FALSIFIED: band scope buys the 0.45-cycle floor (0.445 to 0.050 scoped) | closed | 2026-09-10 |
+| [Study 2](../cards/harness/STUDY-2-rx-clock-carry.md) | rx-clock carry INERT on slip, erase and handover (at the null floor); KEEP_OFF (Study 2b) | closed | 2026-09-10 |
+| [ORACLE PIN (stub)](../cards/harness/ORACLE-PIN-stub.md) | oracle pin stub, superseded by SPEC_oracle_pin: a complete pin cuts DD-invariant iono 10x | superseded | 2026-09-11 |
+| [harness seeds](../cards/harness/HARNESS-SEEDS.md) | seed hygiene: legs arm zwd_seam_reseed; fingerprinted promotions force _v2, then _v3 seeds | reference | 2026-09-12 |
+| [FIELD harness](../cards/harness/FIELD-HARNESS.md) | field harness: evidence refloat FIELD PIN; scope + pairs all stay exceptions, twin FAILS | closed | 2026-09-13 |
+| [DEC-field-vehicle](../decisions/DEC-field-vehicle-posture.md) | field posture c8b: 6 h twin DRIFTS, G4 INCONCLUSIVE; superseded by the float vehicle | superseded | 2026-09-14 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

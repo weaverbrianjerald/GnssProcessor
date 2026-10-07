@@ -1,16 +1,18 @@
-# lane slip response — the headline decomposition — the lane-integer slip cost is 100 % response-inflicted; the fix ladder, and rung 1′ falsified as armed
+# lane slip response: the lane-integer slip cost is 100 % response-inflicted
 
 **STATUS**
 
 - **id:** lane slip response
 - **topic:** slip
 - **status:** closed
-- **summary:** the headline decomposition — the lane-integer slip cost is 100 % response-inflicted; the fix ladder, and rung 1′ falsified as armed
+- **summary:** The GPS lane-integer slip cost is 100 % response-inflicted (response-virgin EWL chords 98.9 % at their own integer); blanket keep and the corroborated retap (rung 1′) are FALSIFIED as armed.
 - **dates in the text:** 2026-08-21 → 2026-08-22
 - **knobs / posture:** `network.cycle_slip.relevel_retap_corroborate`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/camp60wu_f1`, `runs/camp60wu_f3`, `runs/camp60wu_f4c`
-- **source:** `docs/archive/SPEC_lane_slip_response.md` — (preamble), §1, §2, §3, §4, §5
+- **source:** `docs/archive/SPEC_lane_slip_response.md`: (preamble), §1, §2, §3, §4, §5
+
+**Outcome.** The question was where the ~25-point slip loss at both lane rungs comes from: every refloat-class response re-randomizes the lane level, and T4 `attrib_arc` is the largest source (7 648 of 12 356 events). Keeping the flagged level loses to refloat-always (settled GPS EWL 70.2 %): blanket keep reaches 54.0 %, and the corroborated keep 59.6 %, since the raw MW/GF evidence refuses only 1.5 % (T4 catches drifts, not steps). For T4-flagged arcs the refloat is the better response. Both retap knobs are KEEP_OFF in the [ledger](../../CONFIG_promotion_ledger.md). Rung 2 (band scope) was later KEEP_OFF in [Study 3](STUDY-3-band-scoped-responses.md); rung 3 continues, open, in [rung 3](LANE-SNAP-RUNG3.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

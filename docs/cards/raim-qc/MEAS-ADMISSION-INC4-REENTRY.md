@@ -1,16 +1,18 @@
-# INC-4 — the arc RE-ENTRY vet — there were no mid-arc onsets; `adm_revet_hold` erases the event
+# INC-4: the admission screen's arc re-entry vet
 
 **STATUS**
 
 - **id:** INC-4
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the arc RE-ENTRY vet — there were no mid-arc onsets; `adm_revet_hold` erases the event
+- **summary:** 16 of 17 mid-arc onsets were re-entries inheriting a stale verdict; the re-entry vet at its shipped vet bound CLOSES both classes on two legs, and stays default OFF.
 - **dates in the text:** 2026-08-02
-- **knobs / posture:** `network.adm_revet`, `network.adm_revet_hold`
-- **hashes named in the text** (commit / exe / byte-cert): `15629c86`, `948ffbab`, `ff54584f`, `63ce6174`, `076aaeb2`
-- **run dirs named in the text:** `runs/ft63_24h_conv`, `runs/ft63_adm_bz14`
-- **source:** `docs/archive/SPEC_measurement_admission.md` — 10, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.7b, 10.8, 10.11, 10.9, 10.10
+- **knobs / posture:** `network.adm_revet` (default false, requires `adm_screen`), `network.adm_revet_hold`, `network.adm_revet_bound_scale` (shipped 0.2, a 200 m vet bound), `network.adm_revet_gap_ep`, `network.adm_revet_ep`, `network.adm_revet_census`; none is set in `config/golden/golden_field_refound.json` or `config/golden/golden_sim_refound.json`
+- **hashes named in the text** (commit / exe / byte-cert): gate-1 md5 `15629c86`, `948ffbab`, `ff54584f`, `63ce6174`, `076aaeb2`; exe `gnss_processor_revet.exe`
+- **run dirs named in the text:** `runs/ft63_24h_conv`, `runs/ft63_adm_bz14` (and `bz04`); arms `rv04{off,lbl,on}`, `rv14{off,lbl,hold,on}`, smoke `rvsmoke{,lbl,off}`
+- **source:** `docs/archive/SPEC_measurement_admission.md` section 10 (10.1 to 10.11); the spec is [meas admission](../raim-qc/MEAS-ADMISSION.md)
+
+**Outcome.** The question: should a channel returning after a gap inherit its pre-gap admission verdict. Twelve re-entries were mislabels, relabelled at zero cost. Label and prefit census alone pre-empted G13 and G22 but tied on G16 (its +19.2 TECU excursion kept); `adm_revet_hold` erased it, and the 200 m vet bound refused G16 on its return epoch while admitting 70 of 72 re-entries. The healthy maximum (61.9 m) and the lowest refusal (218.5 m) sit only 3.5× apart, so `adm_revet` stays default OFF and unpromoted, with no ledger row; the 24 h arm owed in section 10.9 is not recorded as run.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

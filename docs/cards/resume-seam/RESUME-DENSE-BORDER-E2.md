@@ -1,16 +1,18 @@
-# §18.13/§18.14 — E2 and the dense border across the seam — pre-registered, then its verdicts
+# §18.13/§18.14: E2 re-admission seeds and the dense border across the seam
 
 **STATUS**
 
 - **id:** §18.13/§18.14
 - **topic:** resume-seam
 - **status:** closed
-- **summary:** E2 and the dense border across the seam — pre-registered, then its verdicts
-- **dates in the text:** 2026-09-05
-- **knobs / posture:** `network.readmit_seed_horizon_s`, `network.readmit_coupling_marg_ep`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/camp60wu_quiet12h_frwriter_sticky`, `runs/camp60wu_quiet24h_sticky`, `runs/frwriter_sticky_v3c`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — 18.13, 18.14
+- **summary:** E2 (leg D) MISSES the consumer bar; the dense-border restore (leg E) PASSES at consumer h12 0.62 m rms and PROMOTES the frame and coupling restores to RECOMMEND_SCOPED for warm-resume lineages.
+- **dates in the text:** 2026-09-05 → 2026-09-06 (the §18.14 verdicts)
+- **knobs / posture:** `network.readmit_seed_horizon_s` 3900, `network.readmit_coupling_marg_ep` 20 (leg D); snapshot v3 QK / QP rows under `state_snapshot_coupling_capture`, read by `resume_coupling_restore` (leg E)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** `runs/camp60wu_quiet12h_frwriter_sticky`, `runs/camp60wu_quiet24h_sticky` (continuous truth), `runs/frwriter_sticky_v3c` (QK/QP writer); legs `cplreg_q12warm_d`, `cplreg_q12warm_e`
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §18.13, §18.14
+
+**Outcome.** The question is whether E2 seed-first re-admission and a dense border restore close the §18.12 residual. Leg D removes the 15 `gap` trips but leaves the consumer equal to arm C to the digit, its bias present before G20/E31 return, so §18.12's attribution to them was WRONG; a wire splice puts the harm in the phase-bias records, an unsignalled drift (SD 0.031 to 0.223 m in 40 min). Leg E folds all 376 border keys densely, and a cold consumer on its wire converges as on the continuous wire. E2 was VALIDATED separately ([READMIT](../network-vehicle/READMIT-EDGE.md)); on the field the border restore is KEEP_OFF ([RS-7 … RS-9](../resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

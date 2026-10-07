@@ -1,16 +1,18 @@
-# Q3 G4 — G4's sim half executed — the anchor truth-graded on the 12 h quiet flagship, and the sim q-ladder
+# Q3 G4: G4's sim half executed, the anchor truth-graded, and the sim q-ladder
 
 **STATUS**
 
 - **id:** Q3 G4
 - **topic:** clock
 - **status:** closed
-- **summary:** G4's sim half executed — the anchor truth-graded on the 12 h quiet flagship, and the sim q-ladder
+- **summary:** On the 12 h quiet sim flagship the Q3 anchor at q 3e-6 is NET-POSITIVE on truth (consumer 3D rms −23 %) while the code-bias carry pays real error; 3e-6 is the local q optimum.
 - **dates in the text:** 2026-08-31 → 2026-09-01
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/camp60wu_quiet12h_r2q3`, `runs/camp60wu_quiet12h_r2`, `runs/camp60wu_quiet12h_r2q35`
-- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` — §9, §9.1
+- **knobs / posture:** the full Q3 arm at the calibrated rung (`clock_anchor_q` 3e-6, derived floors, `proj` denominator, k 6, guard + resolve) over the R2 sticky-handover flagship; q rungs 3e-5 and 3e-7; run-end trip warning moved to `nis + abs` only (`NetworkTeardown.cpp`)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** `runs/camp60wu_quiet12h_r2q3`, `runs/camp60wu_quiet12h_r2`, `runs/camp60wu_quiet12h_r2q35`, `runs/camp60wu_quiet12h_r2q37`
+- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` §9, §9.1
+
+**Outcome.** The question: does the anchor improve truth-graded products, and is its q optimal? ZWD rms fell 0.073 → 0.054 m, but code-bias rms rose 0.538 → 0.609 m: the tension displaced into the cb carry is REAL error, priced by arming, not by q. Zero fault trips left the resolve path unexercised, so the G4 FIELD half stayed the field-lineage blocker. Rungs 3e-5 and 3e-7 both cost consumer accuracy: q CLOSED at 3e-6 on this bed. It does not transfer: on the field leveling vehicle 3e-6 fails the code-side bars and the physical floor q 2.9e-8 passes ([Q3-F](../clock/Q3-F-self-contained-time-link.md)), the q both goldens now arm.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

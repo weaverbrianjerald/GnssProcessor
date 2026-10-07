@@ -1,16 +1,18 @@
-# RS-7 … RS-9 — the dense border restores exactly and is NOT the residual; the flat 26 % is the rx-CB inject gate's frozen frame, closed by RS-9
+# RS-7 … RS-9: the dense border (KEEP_OFF) and the rx-CB inject gate's frozen frame
 
 **STATUS**
 
 - **id:** RS-7 … RS-9
 - **topic:** resume-seam
 - **status:** closed
-- **summary:** the dense border restores exactly and is NOT the residual; the flat 26 % is the rx-CB inject gate's frozen frame, closed by RS-9
+- **summary:** The dense-border restore is exact but not the residual (KEEP_OFF); the flat rx-CB withhold was a re-seeded linearization point, and RS-9's restore cuts it 26.3 % to 9.8 % (RECOMMEND_SCOPED).
 - **dates in the text:** 2026-09-13
-- **knobs / posture:** `network.state_snapshot_signal_capture`, `network.resume_signal_canon_restore`, `network.resume_border_restore`, `network.clock_anchor`, `network.state_snapshot_rxcb_lin_capture`, `network.resume_rxcb_lin_restore`
-- **hashes named in the text** (commit / exe / byte-cert): `87a33bf0`, `0a7efa8`, `c45e52a0`, `3b6459f`, `545b8bdd2b638231`
+- **knobs / posture:** `network.resume_border_restore` (RS-7, KEEP_OFF on the field; the decision names a re-test once the station-layer residual is closed), `network.state_snapshot_rxcb_lin_capture` + `network.resume_rxcb_lin_restore` (RS-9, RECOMMEND_SCOPED), `network.state_snapshot_signal_capture` + `network.resume_signal_canon_restore` (RS-8, pre-registered here, results in the next card), `network.clock_anchor` (not armed, so the first-fold trip counter is vacuous)
+- **hashes named in the text** (commit / exe / byte-cert): `87a33bf0`, `0a7efa8`, `c45e52a0`, `3b6459f`, `545b8bdd2b638231`; exe `23C628B3`
 - **run dirs named in the text:** `runs/evseed_field6h_v6`
-- **source:** `docs/archive/SPEC_event_harness.md` — 21.16, 21.17, 21.18, 21.19
+- **source:** `docs/archive/SPEC_event_harness.md` §21.16, §21.17, §21.18, §21.19
+
+**Outcome.** What holds the seam residual RS-6a left? RS-7 restores the dense border exactly, yet every P9b bar FAILS and the code-bias level worsens (0.460 to 0.804 m), so RS-6a's attribution is FALSIFIED. RS-9 restores the first-epoch `x_lin` that a resume re-seeds for the rx-CB gate: R1 PASS as graded (the share sits 1.2 points below the seed's 11.0 %, outside the ±1 band, favourably), R2 FAIL on every pooled bar (those bars RETIRED as divergence measures). Continued in [RS-8 … RS-10b](RS-8-to-RS-10b-latch-and-close-out.md); the gate's frame-blindness on a continuous run stays [open](../../status/OPEN_ITEMS.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

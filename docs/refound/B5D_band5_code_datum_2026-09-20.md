@@ -5,11 +5,13 @@
 - **id:** B5D
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-09-20, NOT ARMED: the assertion is gone (22 999 rows to 0), the wire carries 2.78 of the 2.97 m per-satellite truth (0.43 before), the network's band-2 contamination is cured (0.740 to 0.119 m) and the triple field consumer goes from 1.47 0.21 0.09 0.11 0.09 0.03 m and 314 epochs below a decimetre to 0.68 0.09 0.06 0.11 0.09 0.04 m and 390, which fails the L5 adoption bars (dual pair 603; the band-5-code-removed emulation 535). The emulation had also removed the band-5 wide-lane detector pair (55 detections, 28 in the first hour), an unread lead. Original summary: Build card, pre-registered 2026-09-20. On a three-band lineage the per-signal extension of the geometry-free pin asserts a zero inter-signal correction between L1 and L5 for every satellite, where the truth is metres and estimable (card TBI). The build leaves an extra-band code-bias column free where the data determine it and closes each signal family with its sum-to-zero row. Default OFF, byte-identical OFF. Requirements, gates and bars frozen here before the build.
+- **summary:** BUILT 2026-09-20, NOT ARMED: a free band-5 code column cures the datum (band-2 contamination 0.740 to 0.119 m), but the triple field consumer fails the L5 adoption bars.
 - **source:** [TBI](TBI_three_band_ignition_2026-09-20.md) section 5; [AB2](AB2_l5_third_frequency_2026-09-20.md) section 1; RF-0d and RF-0f (the per-signal pin and its same-band exception)
 - **knobs / posture:** new `network.sat_gf_extra_band_free` (default false); RF-0hv working bases of `8fe757f` with `processing.frequency_mode: triple`
 - **dates in the text:** 2026-09-20
 - **hashes / run dirs:** bases `runs/_rap_{lF_tri,lS_tri}`, `runs/_rf0hv5_{field,sim}6`; emulation `runs/_rap_tB_nocode5_net`
+
+**Outcome.** The card asks whether a free extra-band code-bias column, closed by its family's sum-to-zero row, can replace the zero inter-signal assertion on band 5 (22 999 rows). G0 and five of seven G1 clauses pass; the wire carries 2.78 of the 2.97 m per-satellite truth. B1, B2 and B3 FAIL: the triple field arm has 390 epochs below a decimetre against a bar of 570. Not armed, no ledger row. [L5P](L5P_l5_phase_posture_2026-09-21.md) placed the remaining gap on the band-5 code rows, not the detector pairs; G28's 1.28 m column and a warm resume across a knob flip stay open.
 
 ## 1. What is built
 

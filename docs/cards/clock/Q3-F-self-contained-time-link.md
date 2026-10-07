@@ -1,16 +1,18 @@
-# Q3-F — the self-contained clock time-link on the leveling vehicle
+# Q3-F: the self-contained clock time-link on the leveling vehicle
 
 **STATUS**
 
 - **id:** Q3-F
 - **topic:** clock
-- **status:** open
-- **summary:** the self-contained clock time-link on the leveling vehicle
+- **status:** closed
+- **summary:** The Q3 clock anchor at the physical floor (q 2.9e-8) PASSES the frozen code-side bars with the campaign's best consumer tail (0.954 m); the sim's q 3e-6 fails all three.
 - **dates in the text:** 2026-09-14
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): `63a2a4a`, `45ac4a3`, `6282c55`, `95caa8e`
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.16
+- **knobs / posture:** the sim golden's 12-key clock-anchor family on base `_pv_b.json`: `clock_temporal_anchor: true`, `clock_anchor_q` 3e-6 (c8) or 2.9e-8 (c8b), `clock_anchor_max_gap_s` 120, `clock_anchor_k` 6, `clock_anchor_abs_m` 2, `clock_anchor_recouple_epochs` 4, `clock_anchor_mark`, `clock_anchor_resolve`, `clock_anchor_var_floor_m2` 1e-5, `clock_anchor_sigma_floor_m` 0.0018, `clock_anchor_gauge_free: false`, `clock_anchor_gauge_free_stat: proj`; c8c = c8 + the c3 external pin
+- **hashes named in the text** (commit / exe / byte-cert): `63a2a4a` (R6 worker commit), `45ac4a3` (R7 worker commit), `6282c55` (Q3-F worker commit, merged as `95caa8e`); exe `4CD7D664…`
+- **run dirs named in the text:** none as `runs/` paths; arms PV-B (control), c3, c8, c8b, c8c
+- **source:** `docs/archive/SPEC_event_harness.md` §24.16 (with the §24.15 R6 and R7 results)
+
+**Outcome.** The question: does the sim golden's clock-anchor family on the leveling vehicle reproduce the external pin's code side? At q 2.9e-8 the variance floor binds on 4575 of 7064 folds and the bars pass (code rms p50 1.09 m, station max 3.46 m, 8 stations). The free per-epoch satellite clock IS the second code-side contributor; the wire's within-arc walk is NOT the clock's. Closed by adoption into the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) frozen posture and the goldens ([RF-3-prep](../../refound/RF-3-prep_golden_rebase_2026-09-15.md)); G4's field half on this posture is the field-lineage blocker named in [Q3 G4](../clock/Q3-G4-SIM-HALF.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

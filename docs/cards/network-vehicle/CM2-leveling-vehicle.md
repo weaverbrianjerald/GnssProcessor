@@ -1,16 +1,18 @@
-# CM2 — the second defect — the CM knob arms on the LEVELING vehicle
+# CM2: the second defect, the CM knob arms on the leveling vehicle
 
 **STATUS**
 
 - **id:** CM2
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** the second defect — the CM knob arms on the LEVELING vehicle
+- **status:** closed
+- **summary:** No knob arm crosses or halves a bar on the leveling vehicle, so the second defect is not a knob; two arms are INERT on the producer and `sat_code_bias_q` 1e-4 regresses.
 - **dates in the text:** 2026-09-14
-- **knobs / posture:** `network.carry_rx_code_bias`, `network.carry_zwd`, `network.zwd_carry_q`, `network.cb_kaula_prior`, `network.estimate_iono_sh`, `network.estimate_sat_code_bias`, `network.representation_sigma_tecu`, `estimation.zwd_constraint.enabled`, `estimation.zwd_constraint`
-- **hashes named in the text** (commit / exe / byte-cert): `310d3ee`, `13c1d7ef`
-- **run dirs named in the text:** `runs/_cm_pvb`
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.12
+- **knobs / posture:** base `config/test_suite/_pv_b.json` (PV-B, the control), one knob per cold 2 h arm: `network.carry_rx_code_bias`, `network.carry_zwd` + `network.zwd_carry_q`, `network.cb_kaula_prior`, `filter.process_noise.sat_code_bias_q`, `network.estimate_iono_sh`, `network.estimate_sat_code_bias` (with `model_corrections.enable_code_phase_bias`), `network.representation_sigma_tecu`, `estimation.zwd_constraint.enabled` (`estimation.zwd_constraint`)
+- **hashes named in the text** (commit / exe / byte-cert): worker `310d3ee`; exe `13c1d7ef…`
+- **run dirs named in the text:** `runs/_cm_pvb` (the control, not re-run)
+- **source:** `docs/archive/SPEC_event_harness.md`, section 24.12
+
+**Outcome.** The card re-ran the [CM](../network-vehicle/CM-code-model-consistency.md) knob arms on the leveling vehicle (PV-B: code rms p50 1.79 m) to name the code-side defect that survives it. The closest approach to a bar is 0.82× (b7, on the code rms). The fourth frozen reading applies and both of its candidates fall: without the rx-CB carry the ZWD outliers remain, and a ZWD random-walk carry no longer diverges yet leaves the code and wire bars unmet. [Q3-F](../clock/Q3-F-self-contained-time-link.md) then named the free per-epoch satellite clock as the second contributor; the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) froze the leveling vehicle with its clock anchor (`clock_anchor_q` 2.9e-8).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

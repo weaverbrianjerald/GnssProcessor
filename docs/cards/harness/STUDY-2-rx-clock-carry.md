@@ -1,16 +1,18 @@
-# Study 2 — the receiver-clock carry under single events
+# Study 2: the receiver-clock carry under single events
 
 **STATUS**
 
 - **id:** Study 2
 - **topic:** harness
 - **status:** closed
-- **summary:** the receiver-clock carry under single events
+- **summary:** `network.carry_rx_clock_in_block` is INERT on all three injectable events (slip, `arc_erase`, cold handover), every OFF-to-ON change at or below the null-vs-null floor; Study 2b later closed it KEEP_OFF.
 - **dates in the text:** 2026-09-10
-- **knobs / posture:** `network.carry_rx_clock_in_block`
+- **knobs / posture:** `network.carry_rx_clock_in_block`; rung `network.phase_leveling_young_inflate_var_m2` (KEEP_OFF confirmed)
 - **hashes named in the text** (commit / exe / byte-cert): `6a3531a1afb2b40b`, `8a849480e7ef02af`
 - **run dirs named in the text:** `runs/evseed_rxclk6h`, `runs/simnet60_quiet_wu93_24h`, `runs/evleg_s2_null_yng`, `runs/evleg_s2_null_off`, `runs/evleg_s2_slip_off`, `runs/evleg_s2_erase_on`, `runs/evleg_s2_null_on`
-- **source:** `docs/archive/SPEC_event_harness.md` — 10, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8
+- **source:** `docs/archive/SPEC_event_harness.md`, sections 10, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8
+
+**Outcome.** The study asked whether carrying the receiver clock in the F3 block holds a station's frame under one injected event (quiet 60-station sim bed). The largest OFF-to-ON change sat 6× below the floor on the frame reaction and 9× below on the clock contrast, at a null cost under one per cent: the carried value already contains the error, so it can only stop a jump, and the designed target (a receiver-clock step) was not injectable. The young-inflate rung made the erase floor 3.3× worse: KEEP_OFF. Study 2b graded the knob on `rx_clock_step`: KEEP_OFF, a scale-linear 0.104 % leak ([Cards A+B](../harness/CARD-AB-require-and-rx-clock-step.md), section 11.7).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

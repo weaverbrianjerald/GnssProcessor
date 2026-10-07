@@ -1,16 +1,18 @@
-# ZWD sink — the ZWD sink census, the slipped-bed golden FAIL, and where the integer information is
+# ZWD sink: sink census, slipped-bed golden FAIL, and the integer information
 
 **STATUS**
 
 - **id:** ZWD sink
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** the ZWD sink census, the slipped-bed golden FAIL, and where the integer information is
+- **summary:** Settled ZWD span is a truth-validated sink proxy; the golden FAILs all three gates on the slipped bed; `carry_zwd_in_block` RECOMMEND_SCOPED (field span p50 1.195 → 0.143 m).
 - **dates in the text:** 2026-09-09 → 2026-09-10
 - **knobs / posture:** `network.raim_arc_persist_epochs`, `estimation.ambiguity_resolution.hold_variance`, `network.product_output_path`, `estimation.ionosphere_weighting.std_scale`, `network.carry_zwd_in_block`, `network.phase_leveling_local_block`, `network.carry_zwd`, `network.phase_leveling_local_block_min_age_ep`, `network.code_datum_time_linked`, `network.cycle_slip.gap_instrument`
 - **hashes named in the text** (commit / exe / byte-cert): `36ace5e`, `966d4fd`, `7b32a74`, `00d5fdf`, `319a6aed`
 - **run dirs named in the text:** `runs/golden_sim_tri_w6`, `runs/fldf3_ci`, `runs/fldf3_pl2`, `runs/fldf3_on2`, `runs/camp60wu_f5c`, `runs/fldf3_pl_gppdp3h`, `runs/golden_sim_campaign`, `runs/simnet60_campaign_wu93` … (+11 more in the text)
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.16, 6.16.1, 6.16.2, 6.16.3, 6.16.4, 6.16.5, 6.16.6, §6.16.7
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` §6.16, 6.16.1, 6.16.2, 6.16.3, 6.16.4, 6.16.5, 6.16.6, §6.16.7
+
+**Outcome.** The card asked where the metre-class ZWD sink sits and whether the emitted wire carries integer information. Dropping the worst station relocates the sink; starving the T4 erase cuts slipped-bed ZWD truth rms 56 % but costs the consumer, so the named fix is bounded identification. Consumer AR on the quiet golden fixes 0 of 2 879 because its own float σ is 0.32 to 0.44 cyc: "no integers on the wire" is not established. `code_datum_time_linked` stays armed. The owed same-build F2 control re-ran byte-identical, so the F2 A/B stands ([0910 morning](../ionosphere/AMB-IONO-0910-MORNING.md) §6.17a); the re-founding goldens keep `carry_zwd` off ([LSR](../../refound/LSR_long_scale_remainder_2026-10-01.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,6 +1,20 @@
-# RF-0d — the per-signal GF pin, the S-line declaration, the thin-satellite phase gauge (2026-09-15)
+# RF-0d: per-signal GF pin, S-line declaration, thin-satellite phase gauge (2026-09-15)
 
-**STATUS:** closed — **the pin is a real datum and closed a shipped defect; NOT the baseline: the field consumer regressed while the wire
+**STATUS**
+
+- **id:** RF-0d
+- **topic:** code-bias
+- **status:** closed
+- **summary:** The per-signal GF pin is a real datum and closed RF-0c's inconsistent sum-to-zero rows; NOT the baseline: the field consumer regressed 4 to 15 m while the wire improved.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** `network.sat_gf_datum: "broadcast_tgd"` extended to every registered code column beyond the IF pair (same-band extras left free); the per-signal sum-to-zero row suppressed for a fully pinned channel; S-line token `sat_gf_datum=<mode>`; `phase_datum_min_stations` 2 against 3; `w6_iono_constraint: none`, GIM off, `cb_kaula_prior: false`; `code_datum_time_linked` armed
+- **hashes named in the text:** commits `9b804bb` (item 1), `9bf00f3` (item 2) (worker branch `worktree-agent-a0aafda782ef5e7bd`, merged); OFF smoke `87a33bf0…`, then `47bc4e5a…` (canonical from this merge on; record stream `333dcb08…`); suite 2154 / 289
+- **run dirs named in the text:** none
+- **source:** [RF-0c](RF-0c_gf_pin_2026-09-15.md) (the pre-registration and its bars)
+
+**Outcome.** The card asks whether a per-signal pin, an S-line declaration and a thin-satellite phase gauge close RF-0c's L2X tail and its ignition withholds. The pin closes the L2X direction and the hour-1 withholds go to 0, but `min_stations 3` makes ignition worse (32 withholds; the residual phase gauges are RF-2's election rule, not coverage), the L2X tail stays at 39.9 m against a 10 m bar, and two of seven bars PASS. The attributed cause, the level anchor lost with the suppressed sum-to-zero rows, is not the term: [RF-0e](RF-0e_level_datum_2026-09-15.md) names the sparse C2X channel. The canonical OFF smoke hash later moved to `9add1d3a…` ([RF-0f](RF-0f_isc_state_2026-09-15.md)).
+
+**Status as recorded (2026-09-15):** closed — **the pin is a real datum and closed a shipped defect; NOT the baseline: the field consumer regressed while the wire
 improved, and the cause is named (the absolute GF rows against the time-linked level datum) — RF-0e below.**  Worker branch
 `worktree-agent-a0aafda782ef5e7bd` (`9b804bb` item 1, `9bf00f3` item 2; item 3 needed no code), merged.  Combined tree certified first
 (suite 2154 / 289, 0 failed; OFF smoke `87a33bf0…`).  After item 2 the OFF smoke hashes **`47bc4e5a…`** — 22 bytes of header LEGEND (the S-line

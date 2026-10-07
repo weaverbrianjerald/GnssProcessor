@@ -1,16 +1,18 @@
-# S-basis theory — the estimability spine, the datum-invariance theorem, the rank deficiencies, CC-R vs CC-S, the four theory-grounded levers and the Eq-34 gate
+# S-basis theory: estimability, the datum-invariance theorem and the Eq-34 gate
 
 **STATUS**
 
 - **id:** S-basis theory
 - **topic:** network-vehicle
 - **status:** reference
-- **summary:** the estimability spine, the datum-invariance theorem, the rank deficiencies, CC-R vs CC-S, the four theory-grounded levers and the Eq-34 gate
+- **summary:** Reference for the S-system canon: no admissible re-datuming moves an estimable quantity, so wire wander needs an estimation-side cure; the Eq-34 integer-recovery gate binds any CC-S-like phase gauge.
 - **dates in the text:** 2026-06-15 → 2026-08-15
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_sbasis_realization_contract.md` — §E0, §E1, §E2, §E3, §E4, §E5, §E6, §E7, §E8
+- **knobs / posture:** none
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_sbasis_realization_contract.md` §E0, §E1, §E2, §E3, §E4, §E5, §E6, §E7, §E8
+
+**Outcome.** The card collects the S-system canon (Odijk-2016, TK-2015, Hou-Zhang-2025, Teunissen's adjustment theory) behind the producer's datum choices. Estimable functionals are invariant in value and variance under any admissible datum, so the differential clock (~47 cm) and phase-bias wander cannot be moved by re-datuming. It names four estimation-side levers (the block product covariance carry ranked first) and a ten-item correctness punch-list. The ensemble gauge's "strongly validates" reading is SUPERSEDED by measurement (the ensemble, s2z and broadcast-anchored datums all A/B'd dead); the theory and the Eq-34 gate stay binding. The realized basis is in [S-basis contract](../network-vehicle/SBASIS-CONTRACT.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

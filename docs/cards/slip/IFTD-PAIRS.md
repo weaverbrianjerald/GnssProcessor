@@ -1,16 +1,18 @@
-# IF-TD pairs — the IF-TD detector watched ONE lane per satellite — `if_phase_td_pairs`
+# IF-TD pairs: `if_phase_td_pairs` evaluates every phase-band pair of a satellite
 
 **STATUS**
 
 - **id:** IF-TD pairs
 - **topic:** slip
 - **status:** closed
-- **summary:** the IF-TD detector watched ONE lane per satellite — `if_phase_td_pairs`
+- **summary:** `if_phase_td_pairs: all` closes the equal-count trap and is inert on a single-band slip, but alone it neither fixes the storm-shape narrowing nor spares the LLI-only leg: rules F2 and F3 follow.
 - **dates in the text:** 2026-09-11
-- **knobs / posture:** `network.cycle_slip.if_phase_td_pairs`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_event_harness.md` — 14.10, 14.10.1, 14.10.2, 14.10.3, 14.10.4
+- **knobs / posture:** `network.cycle_slip.if_phase_td_pairs` = `first` (default, byte-identical) | `all`, with `network.cycle_slip.common_band_scope` (arms OFF / ON / FIX); quiet seed ep0665, S21000SIM / G08
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_event_harness.md` §14.10 (14.10.1 to 14.10.4)
+
+**Outcome.** The question: the scope's IF-TD veto reached one lane of three (one pair per satellite) and at S37000SIM / G20 freed the one band that had not slipped; does evaluating every pair close it? Under `all` each pair has its own chain and all share one reference arm (per-chain arms raised legacy candidates 25 to 5 351). S1 loses its 15 innocent erases but keeps the wrong narrowing; S3 rises to 0.335 cyc. Rules [F2](../slip/IFTD-F2-lli-shadow.md) and [F3](../slip/IFTD-F3-lli-epoch.md) fixed both. RECOMMEND_ON since [Study 7](../slip/STUDY-7-common-band-narrowing.md) §16.8 and set in the current goldens; kept at `all` on the RF-0hv triple field arms ([AB2](../../refound/AB2_l5_third_frequency_2026-09-20.md) section 8).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

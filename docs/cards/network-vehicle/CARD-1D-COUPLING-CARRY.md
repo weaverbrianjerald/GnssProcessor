@@ -1,16 +1,18 @@
-# Card 1d — the border time-update defect, verified four ways — magnitude in the T7 lineage, the batch-exact validation, and the shipped scalar-κ build
+# Card 1d: the coupling-row border time update, with card 1e's gauge restore
 
 **STATUS**
 
 - **id:** Card 1d
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the border time-update defect, verified four ways — magnitude in the T7 lineage, the batch-exact validation, and the shipped scalar-κ build
+- **summary:** BUILT (loader default OFF): a scalar κ time update with card 1e's gauge restore, for a ~1.5e4× coupling-row weight overstatement; armed on the goldens, where card CTU's exact update now builds the rows.
 - **dates in the text:** 2026-07-10 → 2026-08-15
-- **knobs / posture:** `network.trace_estimability`, `network.clock_model`, `network.carry_coupling_time_update`
+- **knobs / posture:** `network.trace_estimability`, `network.clock_model`, `network.carry_coupling_time_update` (requires `carry_conditional_coupling`)
 - **hashes named in the text** (commit / exe / byte-cert): `a8f044f`
 - **run dirs named in the text:** `runs/t7_joint_lowfloor_12h`, `runs/t7c_jointwhiten_12h`
-- **source:** `docs/archive/SPEC_card1_coupling_carry.md` — (preamble), 1, 2, 3, 4, 5, 6, 7
+- **source:** `docs/archive/SPEC_card1_coupling_carry.md` (preamble), §1 to 7
+
+**Outcome.** A Card-1 coupling row ignored the border's motion between epochs (T7: about 1.2 m² of error per row against a 4e-5 m² floor). In NumPy the matrix form equals the batch and the shipped scalar κ is conservative (E3 err/σ 250× to at most 1.6). The T7 12 h falsifier has no result here; the [ledger](../../CONFIG_promotion_ledger.md) records a 200-epoch A/B (step p50 0.550 to 0.103). [CTU](../../refound/CTU_coupling_time_update_2026-09-28.md) traced the goldens' frozen clock level to the κ's legacy clock rate (on a richer fixture the κ claims the level at 2.6 mm against the batch's 94 mm); [EXL](../../refound/EXL_exact_update_lah_promotion_2026-10-01.md) armed CTU's exact update, which requires this knob.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,16 +1,18 @@
-# RNEG — the RNEG re-partition — what a `post_var > fold_var` row is, and the numerator card it leaves open
+# RNEG: the r-negative re-partition of the prior-residual census
 
 **STATUS**
 
 - **id:** RNEG
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the RNEG re-partition — what a `post_var > fold_var` row is, and the numerator card it leaves open
+- **summary:** Readout-only re-partition BUILT: r-negative rows leave the |t| ladders for an RNEG class read in metres, and the worst |t| on the `fldf3_pl2` posture falls from 2.48e8 to 1.26e5.
 - **dates in the text:** 2026-09-09
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): `be523008c181e487`
+- **knobs / posture:** none (readout only; 12 RNEG columns appended to `network_prior_residual.csv`)
+- **hashes named in the text** (commit / exe / byte-cert): `be523008c181e487` (`products.txt` sha256, identical pre and post)
 - **run dirs named in the text:** `runs/fldf3_pl2`, `runs/fldf3_on2`, `runs/fldf3_pl2_ctl_new`
-- **source:** `docs/archive/SPEC_prior_residual_census.md` — 17, 17.1, 17.2, 17.3, 17.4
+- **source:** `docs/archive/SPEC_prior_residual_census.md` §17 (17.1 to 17.4)
+
+**Outcome.** A `post_var > fold_var` row is the coupling-carry case: the harvested posterior is a conditional variance, so r floors at 1e-9 and |t| inflates. On `runs/fldf3_pl2` 927 of the 957 rows above |t| 1e4 were r-negative; on `runs/fldf3_on2` the run's worst |t| row, BSHM00ISR/G22 @271200, was the gap re-entry poison case, a real defect hidden in that population. The re-partition moves rows without changing products. The numerator alignment of §17.4 (the census ê omits the coupling regressor term) is owed as its own solve-adjacent card, which no OPEN_ITEMS row lists.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,6 +1,20 @@
-# RF-3-read — what moves the per-satellite IF correction under the float vehicle; RF-2d, the held-basis handover in its own frame algebra (2026-09-15)
+# RF-3-read: the IF-correction steps at held-basis handovers, and RF-2d (2026-09-15)
 
-**STATUS:** closed — **RF-2d RESULT (§7): the two defects are fixed and the SIM passes its consumer bar decisively** (both knobs: sim cold
+**STATUS**
+
+- **id:** RF-3-read
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** The vehicle's IF-correction dispersion is satellite clock stepping at cold held-basis handovers (two RF-2b defects); RF-2d fixes both: sim consumer PASS, field FAIL (573 / 720 emitted).
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** RF-0g + `network.ambiguity_vehicle` float_kf + `network.phase_datum_held_basis`; RF-2d knobs `network.phase_datum_held_cold_release` (solve-affecting) and `network.phase_datum_held_mark_cold` (wire-affecting), both default OFF and inert without the held basis; instruments `scripts/rf3_if_attrib.py`, `scripts/rf2d_grade.py`
+- **hashes named in the text:** exe `gnss_processor_rf2d.exe` `0D7BA3548BB23D2D` (main `4a9f5de` + the two knobs); OFF smoke `9add1d3ab9d70657`, record stream `333dcb0871e1f5bc`; suite 2217 / 292 (2216 passed, 1 fixture skip)
+- **run dirs named in the text:** `runs/_rf3p_{sim,field}6`, `runs/_rf2d_sim6_{mark,rel,both}`, `runs/_rf2d_field6_both`, `runs/_rf2d_smoke_off`, `runs/_rf0g_{sim,field}6`
+- **source:** [RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md) section 5 (the read as pre-registered)
+
+**Outcome.** The question: what moves the per-satellite IF correction under the float vehicle. Its steps are satellite clock (code-bias part 0.000 m, so the GF-bias direction is not the term); RF-2b's mark predicate is inverted (144 of 145 continuous handovers marked) and RF-2 clears the cold families' retired-frame release. RF-2d: declarations PASS on both beds; the mechanism bar missed (an ignition event per bed, field dispersion p90 1.007 m); the sim consumer PASS; the field FAIL (hour 2 at 3.00 m), so the vehicle was not back in contention. Both knobs are armed in the goldens since [GRB](GRB_golden_rebase_2026-09-22.md); [RF-NS](RF-NS_null_space_read_2026-09-15.md) read the field withholds.
+
+**Status as recorded (2026-09-15):** closed — **RF-2d RESULT (§7): the two defects are fixed and the SIM passes its consumer bar decisively** (both knobs: sim cold
 consumer 3.14 / 0.47 / 0.24 / 0.24 / 0.28 / 0.33 m against the golden's 6.23 / 3.30 / 0.86 / 0.50 / 0.46 / 0.55 m — the best sim consumer on
 the self-contained posture; IF dispersion p90 0.156 → 0.043 m; every declaration correct; the release carries the win, the mark fix the
 hour-6 tail).  **NOT back in contention on the field:** settled hours 3–6 beat the golden (0.84 / 0.65 / 1.37 / 0.60 m against 1.28 /

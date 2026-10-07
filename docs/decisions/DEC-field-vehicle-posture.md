@@ -1,16 +1,18 @@
-# DEC-field-vehicle — the field vehicle posture decision and the closing legs
+# DEC-field-vehicle: the field vehicle posture decision and its closing legs
 
 **STATUS**
 
 - **id:** DEC-field-vehicle
 - **topic:** harness
-- **status:** open
-- **summary:** the field vehicle posture decision and the closing legs
+- **status:** superseded
+- **summary:** c8b (leveling vehicle plus Q3 anchor at the floor) stays the candidate; the 6 h twin DRIFTS, G4 INCONCLUSIVE; frozen by the author 2026-09-14, since superseded by the float vehicle.
 - **dates in the text:** 2026-09-14
-- **knobs / posture:** `network.carry_zwd`, `network.carry_rx_code_bias`
-- **hashes named in the text** (commit / exe / byte-cert): `b3c2bc2`, `b023b06`, `869a2d6`
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.17
+- **knobs / posture:** `network.carry_zwd` with `zwd_carry_q: 1e-7` (c9), `network.carry_rx_code_bias: false` (c9b); the c8b posture = `golden_field_gps_dual` + the 16 vehicle keys of §24.11 + the 12 Q3 keys with `clock_anchor_q: 2.9e-8`
+- **hashes named in the text** (commit / exe / byte-cert): `b3c2bc2`, `b023b06` (worker commits), `869a2d6` (merge), exe `4CD7D664`
+- **run dirs named in the text:** none as `runs/` paths (arms c9, c9b, c10, pvb6, g4a, g4b; control `_cm_pvb`)
+- **source:** `docs/archive/SPEC_event_harness.md` §24.17
+
+**Outcome.** The question: which field posture to name, and whether it holds over 6 h and through the 20:47 event (G4). The ZWD-carry and rx-CB-off stack arms are neutral. Both 6 h arms DRIFT: station code rms rises about 0.25 m/h from hour 2 as gross per-LOS errors are admitted and grow (the worst c10 station reaches 91 m), so the wire is not yet usable. G4's mechanics pass but the event does not express on this bed, so the card's rule keeps the anchor OFF. The author's [re-founding decision](../refound/NETWORK_REFOUNDING_2026-09-14.md) froze vehicle and anchor together; [GRB](../refound/GRB_golden_rebase_2026-09-22.md) later moved the goldens to the float vehicle.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

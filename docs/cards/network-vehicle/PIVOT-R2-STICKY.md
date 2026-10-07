@@ -1,16 +1,18 @@
-# R2 sticky — the sticky continuous target, composed with the pairing — churn dead, consumer 2×, and the trade named
+# R2 sticky: the sticky continuous handover target, composed with the carry reref
 
 **STATUS**
 
 - **id:** R2 sticky
 - **topic:** network-vehicle
-- **status:** closed
-- **summary:** the sticky continuous target, composed with the pairing — churn dead, consumer 2×, and the trade named
+- **status:** superseded
+- **summary:** VALIDATED on the quiet 60-station sim (scoped, default OFF): the sticky continuous target ends the handover churn and halves the consumer's settled error; its pin target is superseded by RF-2's held basis.
 - **dates in the text:** 2026-08-31
-- **knobs / posture:** `network.phase_datum_handover_max_var_m2`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/camp60wu_quiet12h`, `runs/camp60wu_quiet12h_r2`, `runs/camp60wu_quiet12h_r2v1`
-- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` — §5.09, §5.09.1, §5.09.2
+- **knobs / posture:** `network.phase_datum_handover_continuous` composed with `network.phase_anchor_carry_reref`, `network.phase_datum_handover_max_var_m2: 1e-4` (border-exact); armed scoped in `_camp60wu_quiet12h_r2.json`
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** `runs/camp60wu_quiet12h` (baseline), `runs/camp60wu_quiet12h_r2` (R2), `runs/camp60wu_quiet12h_r2v1` (the falsified-ceiling arm)
+- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` §5.09, §5.09.1, §5.09.2
+
+**Outcome.** The question: can a sticky continuous handover target compose with the 1(d) carry reref without erasing valid carries. The first 12 h arm refused 552 of 582 successors because the ceiling read the border-inclusive variance (FALSIFIED); the border-exact variance gave 573 continuous and cut reref erasures 10 236 → 165. The trade, named: code-bias settled rms 0.39 → 0.54 m (level lock-in), clock walk unchanged, AR 0 in both arms. The 1e-4 m² ceiling later refused every honest-σ successor ([AMB-IONO open questions](../ionosphere/AMB-IONO-OPEN-QUESTIONS.md) item 15), and [RF-2](../../refound/RF-2_held_basis_2026-09-15.md)'s held basis supersedes `anchor_pin_target` and retires the reref erase under its knob, armed on the goldens since [GRB](../../refound/GRB_golden_rebase_2026-09-22.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

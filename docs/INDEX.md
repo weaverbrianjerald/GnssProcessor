@@ -72,7 +72,10 @@ is its entry there.
    `summary`, `source`, plus the knobs / hashes / run dirs / date span. `status` is one
    of `open`, `closed`, `parked`, `superseded`, `reference`; the project's own verdict
    vocabulary (PROMOTED, KEEP_OFF, FALSIFIED, RECOMMEND_SCOPED …) belongs in the summary
-   and the text.
+   and the text. Since 2026-10-07 an **Outcome** paragraph follows the block: the
+   question, the decisive result, the verdict (missed bars included) and the current
+   standing with a link to any later card, in about 90 words. The summary is one sentence.
+   Both are revised when a result lands; the text below them never is.
 6. **The monoliths are frozen.** `docs/archive/` is read-only and kept byte-for-byte as
    proof; the file at the old path is a routing stub, not a document. Never edit either.
 7. **`python scripts/docs_index_check.py` must pass before a docs commit.** It checks
@@ -104,14 +107,14 @@ author's memory files, so relocating them is a later pass.
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [Cards A+B](cards/harness/CARD-AB-require-and-rx-clock-step.md) | the `require` hard-fail and the rx_clock_step event, plus the jump gate in metres | closed | 2026-09-10 |
-| [HARNESS](cards/harness/HARNESS-REF.md) | what the harness is, the six injectable events, the files, the leg recipe, the grader, … | reference | 2026-09-10 |
-| [Study 1](cards/harness/STUDY-1-erase-vs-refloat.md) | erase vs refloat — what actually costs the 0.45-cycle floor | closed | 2026-09-10 |
-| [Study 2](cards/harness/STUDY-2-rx-clock-carry.md) | the receiver-clock carry under single events | closed | 2026-09-10 |
-| [ORACLE PIN (stub)](cards/harness/ORACLE-PIN-stub.md) | the ORACLE PIN pre-registration stub — superseded by the card record in SPEC_oracle_pin | superseded | 2026-09-11 |
-| [harness seeds](cards/harness/HARNESS-SEEDS.md) | seed hygiene and the fingerprint rule — every seed re-write and why the old snapshots s… | reference | 2026-09-12 |
-| [FIELD harness](cards/harness/FIELD-HARNESS.md) | the 6 h field seed, the owed field legs for the sim-validated slip cards, and FP-1 / FP… | closed | 2026-09-13 |
-| [DEC-field-vehicle](decisions/DEC-field-vehicle-posture.md) | the field vehicle posture decision and the closing legs | open | 2026-09-14 |
+| [Cards A+B](cards/harness/CARD-AB-require-and-rx-clock-step.md) | require hard-fail fixed (error line, exit 1); rx_clock_step built; rx-clock carry KEEP_OFF | closed | 2026-09-10 |
+| [HARNESS](cards/harness/HARNESS-REF.md) | event harness reference: injectable events, leg recipe, event-minus-null grader, gaps | reference | 2026-09-10 |
+| [Study 1](cards/harness/STUDY-1-erase-vs-refloat.md) | erase-path premise FALSIFIED: band scope buys the 0.45-cycle floor (0.445 to 0.050 scoped) | closed | 2026-09-10 |
+| [Study 2](cards/harness/STUDY-2-rx-clock-carry.md) | rx-clock carry INERT on slip, erase and handover (at the null floor); KEEP_OFF (Study 2b) | closed | 2026-09-10 |
+| [ORACLE PIN (stub)](cards/harness/ORACLE-PIN-stub.md) | oracle pin stub, superseded by SPEC_oracle_pin: a complete pin cuts DD-invariant iono 10x | superseded | 2026-09-11 |
+| [harness seeds](cards/harness/HARNESS-SEEDS.md) | seed hygiene: legs arm zwd_seam_reseed; fingerprinted promotions force _v2, then _v3 seeds | reference | 2026-09-12 |
+| [FIELD harness](cards/harness/FIELD-HARNESS.md) | field harness: evidence refloat FIELD PIN; scope + pairs all stay exceptions, twin FAILS | closed | 2026-09-13 |
+| [DEC-field-vehicle](decisions/DEC-field-vehicle-posture.md) | field posture c8b: 6 h twin DRIFTS, G4 INCONCLUSIVE; superseded by the float vehicle | superseded | 2026-09-14 |
 
 Standing documents (not split this pass):
 
@@ -121,35 +124,35 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [Card 1b](cards/network-vehicle/CARD-1B-JOINT-WHITENING.md) | coupling-row JOINT whitening — PREMISE FALSIFIED, the toggle is a no-op, and what the f… | closed | 2026-07-10 |
-| [datum wander](cards/network-vehicle/DATUM-WANDER.md) | the common level FOLLOWS the datum station — both remedies measured | closed | 2026-08-11 |
-| [chain-pin audit](cards/network-vehicle/CHAIN-PIN-AUDIT.md) | rungs 2/6 re-attributed and the field's emission explained — the chain is COMPLETE | closed | 2026-08-12 |
-| [R0 + 1(d)](cards/network-vehicle/PIVOT-CARRY-REREF-R0-1D.md) | `network.phase_anchor_carry_reref` — the carry re-reference closes the churn, with the … | closed | 2026-08-14 |
-| [Card 1d](cards/network-vehicle/CARD-1D-COUPLING-CARRY.md) | the border time-update defect, verified four ways — magnitude in the T7 lineage, the ba… | closed | 2026-08-15 |
-| [S-basis conformance](cards/network-vehicle/SBASIS-CONFORMANCE-F.md) | the per-deficiency conformance table, the implicit S-basis the code adopts per mode, th… | reference | 2026-08-15 |
-| [S-basis contract](cards/network-vehicle/SBASIS-CONTRACT.md) | the realized basis, what the wire records mean, the realization-transfer contract, and … | reference | 2026-08-15 |
-| [S-basis theory](cards/network-vehicle/SBASIS-THEORY-E.md) | the estimability spine, the datum-invariance theorem, the rank deficiencies, CC-R vs CC… | reference | 2026-08-15 |
-| [chain-slant](cards/network-vehicle/CHAIN-SLANT-ODIJK.md) | Odijk rank arithmetic, the global-network chain caveat, the three self-consistent postu… | closed | 2026-08-15 |
-| [pivot gauge defect](cards/network-vehicle/PIVOT-GAUGE-DEFECT.md) | the single-pivot phase-bias gauge defect — the causal proof, the field evidence, the tw… | closed | 2026-08-15 |
-| [queue 1(b)](cards/network-vehicle/HANDOVER-STRANSFORM-SPEC.md) | the handover S-transform spec — the transform, its rank-1 specialization to a pin swap,… | closed | 2026-08-15 |
-| [eq34 D4](cards/network-vehicle/EQ34-D4-S-TRANSFORM-FIX.md) | the eq34 D4 S-transform now re-bases `coupling[].s_prev` | closed | 2026-08-17 |
-| [Cards 1f + 1g](cards/network-vehicle/CARD-1F-1G-TRUNCATED-ROW-GAUGE.md) | the TRUNCATED-ROW gauge defect and the reinit-source widening — the positive control, t… | closed | 2026-08-19 |
-| [queue item 2](cards/network-vehicle/PIVOT-ELECTION-QUEUE2.md) | the datum-station election formalized as plumbing, and item 1(b)'s precondition priced | closed | 2026-08-21 |
-| [wind-up sign](cards/network-vehicle/WINDUP-SIGN-DEFECT.md) | the carrier-phase wind-up sign defect — why nothing caught it, why the fix is both line… | closed | 2026-08-21 |
-| [wind-up field](cards/network-vehicle/WINDUP-FIELD-LADDER.md) | the three-arm field ladder — the slope lands on 2, never on 0; the 5-station matrix; th… | closed | 2026-08-22 |
-| [R2 sticky](cards/network-vehicle/PIVOT-R2-STICKY.md) | the sticky continuous target, composed with the pairing — churn dead, consumer 2×, and … | closed | 2026-08-31 |
-| [READMIT](cards/network-vehicle/READMIT-EDGE.md) | the re-admission edge — `readmit_seed_horizon_s` promoted, the coupling-marginalize and… | closed | 2026-09-06 |
-| [F3 field](cards/network-vehicle/F3-FIELD-ARM.md) | the field F3 arm — bed, arms, truth-free instruments, and the pre-registered prediction… | closed | 2026-09-09 |
-| [F3 field (results)](cards/network-vehicle/F3-FIELD-ARM-RESULTS.md) | the field F3 arm's results, filled as they landed | closed | 2026-09-09 |
-| [COLD-FB (iter 2–4)](cards/network-vehicle/COLD-FB-iterations-2-4.md) | the SATELLITE clause, the datum-invariant consumer census, and the new-golden arm — KEE… | parked | 2026-09-11 |
-| [COLD-FB](cards/network-vehicle/COLD-FB-anchor-fallbacks.md) | the cold phase-datum anchor fallbacks (`phase_datum_candidacy_usable`) — pre-registrati… | parked | 2026-09-12 |
-| [PIVOT DEPARTURE](cards/network-vehicle/PIVOT-DEPARTURE.md) | the consumer shock at a pivot handover is producer-internal carry free-fall — `scoped_h… | closed | 2026-09-12 |
-| [D5 v5](cards/network-vehicle/D5-V5-carried-only.md) | `carry_invariant_innov_carried_only` on the field — KEEP_OFF, the same-realization pair… | parked | 2026-09-13 |
-| [CE](cards/network-vehicle/CE-chain-era-bisect.md) | the CHAIN-ERA bisect on the leveling vehicle | open | 2026-09-14 |
-| [CM](cards/network-vehicle/CM-code-model-consistency.md) | CODE-MODEL CONSISTENCY — eleven cold arms clear every estimation knob, and the station … | closed | 2026-09-14 |
-| [CM2](cards/network-vehicle/CM2-leveling-vehicle.md) | the second defect — the CM knob arms on the LEVELING vehicle | open | 2026-09-14 |
-| [PV](cards/network-vehicle/PV-vehicle-test.md) | the VEHICLE test — carry_invariant vs leveling, pre-registered | open | 2026-09-14 |
-| [ZP](cards/network-vehicle/ZP-station-block-parameterization.md) | the station block's parameterization at ignition — pre-registered | open | — |
+| [Card 1b](cards/network-vehicle/CARD-1B-JOINT-WHITENING.md) | coupling-row joint whitening: premise FALSIFIED, the toggle byte-identical, knob retired | closed | 2026-07-10 |
+| [datum wander](cards/network-vehicle/DATUM-WANDER.md) | the common clock level follows the datum station; sum-to-zero PASSES, a 25° mask REJECTED | closed | 2026-08-11 |
+| [chain-pin audit](cards/network-vehicle/CHAIN-PIN-AUDIT.md) | eq34 chain-pin audit: COMPLETE, rungs 2/6 were SH-gate withholds (sim-only artifact) | closed | 2026-08-12 |
+| [R0 + 1(d)](cards/network-vehicle/PIVOT-CARRY-REREF-R0-1D.md) | phase-anchor carry reref VALIDATED: churn 160.5 to 1.5 m (n = 1); armed in the goldens | closed | 2026-08-14 |
+| [Card 1d](cards/network-vehicle/CARD-1D-COUPLING-CARRY.md) | scalar κ border time update: BUILT, armed; card CTU's exact update now builds the rows | closed | 2026-08-15 |
+| [S-basis conformance](cards/network-vehicle/SBASIS-CONFORMANCE-F.md) | user-side Odijk audit: invariant via differencing; network charter BUILT, P0/P1 still open | reference | 2026-08-15 |
+| [S-basis contract](cards/network-vehicle/SBASIS-CONTRACT.md) | realized S-basis, wire meaning, hold-or-mark contract (2026-08); GF datum residues open | reference | 2026-08-15 |
+| [S-basis theory](cards/network-vehicle/SBASIS-THEORY-E.md) | S-system canon: re-datuming moves no estimable wander; the Eq-34 gate stays binding | reference | 2026-08-15 |
+| [chain-slant](cards/network-vehicle/CHAIN-SLANT-ODIJK.md) | Odijk rank arithmetic and the chain caveat: n-invariant near-null, posture C the goal | closed | 2026-08-15 |
+| [pivot gauge defect](cards/network-vehicle/PIVOT-GAUGE-DEFECT.md) | single-pivot phase-bias gauge defect PROVEN; clean election fixes it, third root named | closed | 2026-08-15 |
+| [queue 1(b)](cards/network-vehicle/HANDOVER-STRANSFORM-SPEC.md) | clock-pivot handover S-transform spec; built and PROMOTED 2026-09-12 under PIVOT DEPARTURE | closed | 2026-08-15 |
+| [eq34 D4](cards/network-vehicle/EQ34-D4-S-TRANSFORM-FIX.md) | eq34 D4 carry shift now re-bases coupling s_prev: FIXED 2026-08-17, no live lineage hit | closed | 2026-08-17 |
+| [Cards 1f + 1g](cards/network-vehicle/CARD-1F-1G-TRUNCATED-ROW-GAUGE.md) | truncated-row gauge + reinit widening: PASS to 305 sta, withholds to 0, wire −29 % | closed | 2026-08-19 |
+| [queue item 2](cards/network-vehicle/PIVOT-ELECTION-QUEUE2.md) | datum election landed as tooling; handover S-transform deferred, target near-empty | closed | 2026-08-21 |
+| [wind-up sign](cards/network-vehicle/WINDUP-SIGN-DEFECT.md) | wind-up sign defect FIXED at four sites; a half-fix is worse, all sim validations blind | closed | 2026-08-21 |
+| [wind-up field](cards/network-vehicle/WINDUP-FIELD-LADDER.md) | wind-up field ladder: slope near 2 in 9/9 components, null rejected; network arm consistent | closed | 2026-08-22 |
+| [R2 sticky](cards/network-vehicle/PIVOT-R2-STICKY.md) | sticky continuous target VALIDATED: churn dead, consumer 2x; superseded by RF-2 held basis | superseded | 2026-08-31 |
+| [READMIT](cards/network-vehicle/READMIT-EDGE.md) | re-admission edge: seed horizon PROMOTED (T3 tails cut); window, ratio, age gates KEEP_OFF | closed | 2026-09-06 |
+| [F3 field](cards/network-vehicle/F3-FIELD-ARM.md) | field F3 ladder pre-registration: control DD ambiguities wander ~10 cyc/arc; P2 FALSIFIED | closed | 2026-09-09 |
+| [F3 field (results)](cards/network-vehicle/F3-FIELD-ARM-RESULTS.md) | field F3 KEEP OFF (P2 FALSIFIED, WL12 PARTIAL); the converging leveling posture found | closed | 2026-09-09 |
+| [COLD-FB (iter 2–4)](cards/network-vehicle/COLD-FB-iterations-2-4.md) | satellite clause removes every split; KEEP_OFF, de-biased consumer misses golden by 4 mm | superseded | 2026-09-11 |
+| [COLD-FB](cards/network-vehicle/COLD-FB-anchor-fallbacks.md) | candidacy screen KEEP_OFF: settled cold handovers 51 → 19, consumer p50 +49 % vs cbscope5 | superseded | 2026-09-12 |
+| [PIVOT DEPARTURE](cards/network-vehicle/PIVOT-DEPARTURE.md) | pivot-handover shock is carry free-fall: scoped response and clock S-transform PROMOTED | closed | 2026-09-12 |
+| [D5 v5](cards/network-vehicle/D5-V5-carried-only.md) | carried-only D5 gate KEEP_OFF: born-chord flags gone, same-realization consumer +39 % | superseded | 2026-09-13 |
+| [CE](cards/network-vehicle/CE-chain-era-bisect.md) | chain-era bisect: c0 = PV-A byte-identical, only the a priori clock pin (c3) moves code | closed | 2026-09-14 |
+| [CM](cards/network-vehicle/CM-code-model-consistency.md) | eleven cold arms clear every estimation knob; the station block is near-rank-deficient | closed | 2026-09-14 |
+| [CM2](cards/network-vehicle/CM2-leveling-vehicle.md) | the second defect is not a knob: no arm crosses or halves a bar on the leveling vehicle | closed | 2026-09-14 |
+| [PV](cards/network-vehicle/PV-vehicle-test.md) | vehicle test: leveling beats carry_invariant on every read, all three bars MISSED | closed | 2026-09-14 |
+| [ZP](cards/network-vehicle/ZP-station-block-parameterization.md) | station block singular under carry_invariant (58/61); ZWD prior RETIRED; leveling vehicle | closed | — |
 
 Standing documents (not split this pass):
 
@@ -169,14 +172,14 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [§18.10/§18.11](cards/resume-seam/RESUME-FRAME-RESTORE.md) | the seam is a FRAME loss — `resume_frame_restore`, built and graded | closed | 2026-09-03 |
-| [§18.12](cards/resume-seam/RESUME-COUPLING-RESTORE.md) | the coupling-regressor restore verdict — the mechanism works, the wire is 10× better | closed | 2026-09-05 |
-| [§18.13/§18.14](cards/resume-seam/RESUME-DENSE-BORDER-E2.md) | E2 and the dense border across the seam — pre-registered, then its verdicts | closed | 2026-09-05 |
-| [RS-2](cards/resume-seam/RS-2-writer-frame-rebase.md) | the restored invariant DD branch is folded in the WRITER's linearization frame — Phase … | closed | 2026-09-12 |
-| [RS-3 … RS-5](cards/resume-seam/RS-3-to-RS-5-datum-and-emit-layer.md) | both datums continue at the seam, the phase-bias level is the EMIT layer, and the seam … | closed | 2026-09-13 |
-| [RS-6a](cards/resume-seam/RS-6a-station-layer-memories.md) | the station layer's own memory across the seam — the rx-CB carry and the T5 iono deviat… | closed | 2026-09-13 |
-| [RS-7 … RS-9](cards/resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md) | the dense border restores exactly and is NOT the residual; the flat 26 % is the rx-CB i… | closed | 2026-09-13 |
-| [RS-8 … RS-10b](cards/resume-seam/RS-8-to-RS-10b-latch-and-close-out.md) | the canonical-signal latch flips on 23 of 61 stations at a resume; the ZWD step is `zwd… | closed | 2026-09-14 |
+| [§18.10/§18.11](cards/resume-seam/RESUME-FRAME-RESTORE.md) | frame restore closes the phase side; 33 of 52 clocks trip, KEEP OFF until §18.14 | closed | 2026-09-03 |
+| [§18.12](cards/resume-seam/RESUME-COUPLING-RESTORE.md) | coupling-regressor restore: wire about 10× better, consumer misses the h12 stop rule | closed | 2026-09-05 |
+| [§18.13/§18.14](cards/resume-seam/RESUME-DENSE-BORDER-E2.md) | leg D misses the consumer bar; leg E (dense border) PASSES, resume knobs RECOMMEND_SCOPED | closed | 2026-09-05 |
+| [RS-2](cards/resume-seam/RS-2-writer-frame-rebase.md) | the DD blob is the field seam defect; re-base exact, NECESSARY NOT SUFFICIENT; D5 hold K=1 | closed | 2026-09-12 |
+| [RS-3 … RS-5](cards/resume-seam/RS-3-to-RS-5-datum-and-emit-layer.md) | both datums continue; the 17.7 m PB step is the cold emit layer; RS-5 closes the PB wire | closed | 2026-09-13 |
+| [RS-6a](cards/resume-seam/RS-6a-station-layer-memories.md) | station-layer restores: T5 removes the a₀₀ seam transient, rx-CB modest; most bars FAIL | closed | 2026-09-13 |
+| [RS-7 … RS-9](cards/resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md) | dense border KEEP_OFF (not the residual); rx-CB frame restored, withheld 26.3 % to 9.8 % | closed | 2026-09-13 |
+| [RS-8 … RS-10b](cards/resume-seam/RS-8-to-RS-10b-latch-and-close-out.md) | latch restore: seam chord births 64 to 1; ZWD reseed OFF without a ZWD carry; v8 seeds | closed | 2026-09-14 |
 
 Standing documents (not split this pass):
 
@@ -187,14 +190,14 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [Q3 ladder](cards/clock/Q3-FLOOR-GOVERNED-LADDER.md) | the floor-governed ladder — floors derived not tuned, the guard's denominator bisected,… | closed | 2026-08-10 |
-| [Q3 results](cards/clock/Q3-ANCHOR-RESULTS.md) | G0–G3, the binding knee, the FC-1 shadow-hour table, and the relationship to the surrou… | closed | 2026-08-10 |
-| [Q3 floor](cards/clock/Q3-PHYSICAL-FLOOR.md) | the physical floor measured — trap 5 resolved, the FC-1 gate retired, the ladder re-sco… | closed | 2026-08-11 |
-| [field wander probe](cards/clock/FIELD-WANDER-PROBE.md) | the field wire wander is NOT receiver-code-driven; the a-priori CLK common-drift probe … | closed | 2026-08-11 |
-| [Q3 design](cards/clock/Q3-ANCHOR-DESIGN.md) | the guarded temporal clock anchor — the measured basis, stage A/B design, the empirical… | closed | 2026-08-15 |
-| [Q3 G4](cards/clock/Q3-G4-SIM-HALF.md) | G4's sim half executed — the anchor truth-graded on the 12 h quiet flagship, and the si… | closed | 2026-09-01 |
-| [CS](cards/clock/CS-clock-step-signalling.md) | clock step signalling — 0 unsignalled steps, the 55.8 m consumer excursion gone | closed | 2026-09-14 |
-| [Q3-F](cards/clock/Q3-F-self-contained-time-link.md) | the self-contained clock time-link on the leveling vehicle | open | 2026-09-14 |
+| [Q3 ladder](cards/clock/Q3-FLOOR-GOVERNED-LADDER.md) | q ladder to 1e-7: producer gates monotone, trip collapse is the denominator, no promotion | closed | 2026-08-10 |
+| [Q3 results](cards/clock/Q3-ANCHOR-RESULTS.md) | G0 to G2 PASS (σ_w −40 %), knee at q 1.0 to 1.5e-5; FC-1 correlation gate NOT met | closed | 2026-08-10 |
+| [Q3 floor](cards/clock/Q3-PHYSICAL-FLOOR.md) | physical clock floor: q_phys 2.9e-8 m2/s under a 2.7 mm floor, FC-1 gate retired | closed | 2026-08-11 |
+| [field wander probe](cards/clock/FIELD-WANDER-PROBE.md) | field wire wander is estimator-internal: not receiver code, not the a-priori clock frame | closed | 2026-08-11 |
+| [Q3 design](cards/clock/Q3-ANCHOR-DESIGN.md) | guarded temporal clock anchor design: binding carry, residual guard, gates G0 to G4 | closed | 2026-08-15 |
+| [Q3 G4](cards/clock/Q3-G4-SIM-HALF.md) | sim G4 half: anchor NET-POSITIVE (consumer -23 %), cb error real; q 3e-6 CLOSED on sim | closed | 2026-09-01 |
+| [CS](cards/clock/CS-clock-step-signalling.md) | clock step test VALIDATED: 0 unsignalled steps > 2 m, consumer 55.8 → 2.7 m at the event | closed | 2026-09-14 |
+| [Q3-F](cards/clock/Q3-F-self-contained-time-link.md) | anchor at the physical floor (q 2.9e-8) PASSES the code bars; in the re-founding posture | closed | 2026-09-14 |
 
 Standing documents (not split this pass):
 
@@ -207,31 +210,31 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [EXT-CB defect 2](cards/ionosphere/LV-EXTCB-DEFECT2.md) | arm 30 and the 303-station EXT-CB arm — DEFECT 2 is largely a station-support artifact | closed | 2026-08-05 |
-| [LV correction](cards/ionosphere/LV-CORRECTION-AND-12H.md) | what LV-2 actually does and what LV-1 is really for — and the 12 h verdict that made th… | closed | 2026-08-05 |
-| [LV item 1](cards/ionosphere/LV-ITEM1-FALSIFIED.md) | roadmap item 1 falsified at stage 1 — the cost attributes to LV-4 alone, plus two invar… | closed | 2026-08-05 |
-| [LV mask study](cards/ionosphere/LV-MASK-STUDY.md) | the mask study, end to end — the trade is regime-dependent, it flips sign between 61 an… | closed | 2026-08-05 |
-| [LV residual](cards/ionosphere/LV-RESIDUAL-EXTRAPOLATION.md) | the residual is not an extrapolation artifact, and `rx_cb_carry_q` is not simply too ti… | closed | 2026-08-05 |
-| [LV tracking pin](cards/ionosphere/LV-TRACKING-PIN.md) | the tracking-pin fix, tested and FALSIFIED | closed | 2026-08-05 |
-| [LV-4](cards/ionosphere/LV-4-FRAME-INVARIANT-SCREEN.md) | the carry screen made frame-invariant — fixed, and it exposed a second defect | closed | 2026-08-05 |
-| [LV-5](cards/ionosphere/LV-5-MU-WITHIN-EPOCH.md) | μ computed within the epoch, with the review addendum's requirements | closed | 2026-08-05 |
-| [LV roadmap](cards/ionosphere/LV-ROADMAP.md) | the continuing session's roadmap, and its refresh at hand-back | open | 2026-08-07 |
-| [LV impl](cards/ionosphere/LV-IMPL-RECORD.md) | the 2026-08-05 implementation record, and the measured outcomes that corrected the mech… | closed | 2026-08-12 |
-| [elev-cutoff A/B](cards/ionosphere/ELEV-CUTOFF-AB.md) | the elevation-cutoff A/B WITH TRUTH — the field verdict INVERTS on a coherent field | closed | 2026-08-12 |
-| [iono-field agreement](cards/ionosphere/IONO-FIELD-AGREEMENT.md) | cross-station iono-field agreement — coherent where mapped, BROKEN at low–high, plus th… | closed | 2026-08-12 |
-| [EXT-CB arms 1–36](cards/ionosphere/LV-EXTCB-CAMPAIGN.md) | the EXT-CB campaign record, arms 1–36 — root cause, the fix, and the L2-ESCAPE | closed | 2026-08-15 |
-| [LV](cards/ionosphere/LV-REF.md) | the ionosphere-level initiative's own reference page — knob ledger, verdict ledger, sec… | reference | 2026-08-21 |
-| [AMB-IONO](cards/ionosphere/AMB-IONO-SPLIT.md) | why the network producer never reaches per-band integers on the quiet sim bed — the fiv… | open | 2026-09-04 |
-| [F3 (pre-reg)](cards/ionosphere/AMB-IONO-F3-PREDICTIONS.md) | the pre-registered predictions for the F3 station block, and the round-2 / round-4 resu… | closed | 2026-09-04 |
-| [F3 24 h](cards/ionosphere/AMB-IONO-F3-24H.md) | the 24 h F3 arm — the settled number is NOT met, and the reason is an EDGE, not the mec… | closed | 2026-09-05 |
-| [0910 afternoon](cards/ionosphere/AMB-IONO-0910-AFTERNOON.md) | the level-memory and T4-persistence ladders, the wire wander, and the continuity card | closed | 2026-09-10 |
-| [0910 morning](cards/ionosphere/AMB-IONO-0910-MORNING.md) | the same-build control, three truth censuses, two falsified cards, and the field's phas… | closed | 2026-09-10 |
-| [0910 second half](cards/ionosphere/AMB-IONO-0910-SECOND-HALF.md) | the slipped-bed probe ledger, the continuity closure, the false-alarm isolation, and th… | closed | 2026-09-10 |
-| [AMB-IONO open](cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | the open-question register — re-cut round 2, with the round-4 closures and items 15–21 | open | 2026-09-10 |
-| [LV-SEED](cards/ionosphere/LV-SEED-per-los-level.md) | where the remaining per-LOS level is born — R1–R9 pre-registered reads | open | 2026-09-14 |
-| [LV-1](cards/ionosphere/LV-1-BIAS-FREE-SEEDING.md) | bias-free per-LOS iono seeding — the seed is a FRAME, not an authority | closed | — |
-| [LV-2](cards/ionosphere/LV-2-RXCB-DEMEAN.md) | rx-CB carry common-mode de-mean — works as designed, but the de-mean is NOT frame-invar… | closed | — |
-| [LV-3](cards/ionosphere/LV-3-LEVEL-AUTHORITY.md) | the level authority, made explicit — mostly documentation, one optional knob | closed | — |
+| [EXT-CB defect 2](cards/ionosphere/LV-EXTCB-DEFECT2.md) | station-support artifact: ignition a₀₀ − GIM −1.98 TECU at 303 stations vs −15.83 at 61 | closed | 2026-08-05 |
+| [LV correction](cards/ionosphere/LV-CORRECTION-AND-12H.md) | de-mean pins a frozen epoch-1 frame; 12 h LV stack ramps +15 to +21 TECU: do NOT arm | closed | 2026-08-05 |
+| [LV item 1](cards/ionosphere/LV-ITEM1-FALSIFIED.md) | lv-4 alone failed stage 1 at obs mask 10; the FALSIFIED verdict retracted at obs mask 15 | superseded | 2026-08-05 |
+| [LV mask study](cards/ionosphere/LV-MASK-STUDY.md) | mask study closes on obs mask 15 / iono cutoff 25 at both scales; lv-4 passes stage 2 | closed | 2026-08-05 |
+| [LV residual](cards/ionosphere/LV-RESIDUAL-EXTRAPOLATION.md) | level residual not an extrapolation artifact; the rx_cb_carry_q axis is exhausted | closed | 2026-08-05 |
+| [LV tracking pin](cards/ionosphere/LV-TRACKING-PIN.md) | tracking-pin fix FALSIFIED: rx_cb_carry_q 1e-9 to 1e-6 made the level ramp worse, sooner | closed | 2026-08-05 |
+| [LV-4](cards/ionosphere/LV-4-FRAME-INVARIANT-SCREEN.md) | frame-invariant rx-CB step screen: correct fix; needs LV-5, costs +16 to +64 % phase rms | closed | 2026-08-05 |
+| [LV-5](cards/ionosphere/LV-5-MU-WITHIN-EPOCH.md) | within-epoch μ: limit cycle gone (sd 15.53 → 4.69 TECU); max \|μ\| prediction MISSED | closed | 2026-08-05 |
+| [LV roadmap](cards/ionosphere/LV-ROADMAP.md) | lv action list superseded: item 3 built as S2H, level authority moved to LV-6 | superseded | 2026-08-07 |
+| [LV impl](cards/ionosphere/LV-IMPL-RECORD.md) | built LV-1 and LV-2; seed-gradient model FALSIFIED, LV-1 acts only via the rx-CB carry | closed | 2026-08-12 |
+| [elev-cutoff A/B](cards/ionosphere/ELEV-CUTOFF-AB.md) | iono cutoff with truth: 15° beats 25° on every clock channel; the field verdict inverts | closed | 2026-08-12 |
+| [iono-field agreement](cards/ionosphere/IONO-FIELD-AGREEMENT.md) | iono input coherent both-high (corr 0.981), broken low-high; 25° cutoff trims wander 8 % | closed | 2026-08-12 |
+| [EXT-CB arms 1–36](cards/ionosphere/LV-EXTCB-CAMPAIGN.md) | level defect = receiver GF-bias convention offset + ignition transient; L2-ESCAPE closed | closed | 2026-08-15 |
+| [LV](cards/ionosphere/LV-REF.md) | reference: lv ladder knob and verdict ledgers, section map, binding grading protocol | reference | 2026-08-21 |
+| [AMB-IONO](cards/ionosphere/AMB-IONO-SPLIT.md) | ambiguity/iono split over-count: B_fit 3.00 freezes the level; F3 0.217 cyc sim 3 h | open | 2026-09-04 |
+| [F3 (pre-reg)](cards/ionosphere/AMB-IONO-F3-PREDICTIONS.md) | f3 pre-registration: F3 beat its 3 h line 2.7×, F1 intermediate, var floor FALSIFIED | closed | 2026-09-04 |
+| [F3 24 h](cards/ionosphere/AMB-IONO-F3-24H.md) | settled quarter FALSIFIED as traced; the episodes were the DD trace's reference satellite | superseded | 2026-09-05 |
+| [0910 afternoon](cards/ionosphere/AMB-IONO-0910-AFTERNOON.md) | level memory FAILS x4; fewer T4 erases FAIL the consumer at every K; continuity KEEP_OFF | closed | 2026-09-10 |
+| [0910 morning](cards/ionosphere/AMB-IONO-0910-MORNING.md) | oracle repair FAILS, PB-gauge levelling FALSIFIED; the phase bias is a receiver's float | closed | 2026-09-10 |
+| [0910 second half](cards/ionosphere/AMB-IONO-0910-SECOND-HALF.md) | eleven probes FAIL with one shape; emission continuity FALSIFIED; producer AR NO-GO | closed | 2026-09-10 |
+| [AMB-IONO open](cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | open-question register, items 1 to 44: many closed in the text, the rest still owed | open | 2026-09-10 |
+| [LV-SEED](cards/ionosphere/LV-SEED-per-los-level.md) | all three hypotheses refuted (arc start, iono, geometry); wander is the satellite clock | closed | 2026-09-14 |
+| [LV-1](cards/ionosphere/LV-1-BIAS-FREE-SEEDING.md) | bias-free iono seeding: stated mechanism FALSIFIED (a solve no-op); kept as a diagnostic | closed | — |
+| [LV-2](cards/ionosphere/LV-2-RXCB-DEMEAN.md) | rx-CB de-mean: do NOT arm, it re-pins the common mode to a frozen frame (+15 to +21 TECU) | closed | — |
+| [LV-3](cards/ionosphere/LV-3-LEVEL-AUTHORITY.md) | level authority made explicit: contract is §30; broadcast a00 prior deliberately not built | closed | — |
 
 Standing documents (not split this pass):
 
@@ -245,7 +248,7 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [S2H](cards/code-bias/S2H-HARVEST.md) | the S-consistent rx-CB harvest — built, validated through 3 h, and its 12 h tracking ve… | closed | 2026-08-21 |
+| [S2H](cards/code-bias/S2H-HARVEST.md) | rx-CB harvest de-mean: frame hygiene validated to 3 h, 12 h level bar MISSED, LV-6 next | closed | 2026-08-21 |
 
 Standing documents (not split this pass):
 
@@ -259,28 +262,28 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [slip-QC impl](cards/slip/SLIPQC-IMPL-2026-07-21.md) | the 2026-07-21 implementation record — what landed, the five findings that contradicted… | closed | 2026-08-12 |
-| [D5-A](cards/slip/D5A-RETAP-ATTRIBUTION.md) | D5 re-tap attribution as built, the cross-experiment protocol, and the 2026-07-22 valid… | closed | 2026-08-15 |
-| [slip-QC follow-ups](cards/slip/SLIPQC-FOLLOWUPS.md) | the 2026-07-22 follow-up cards D5-A / W / OP / H, and why the D5 lead outranked everyth… | closed | 2026-08-15 |
-| [lane slip response](cards/slip/LANE-SLIP-RESPONSE.md) | the headline decomposition — the lane-integer slip cost is 100 % response-inflicted; th… | closed | 2026-08-22 |
-| [T4 lane restore](cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore v1 (value-only), `network.cycle_slip.relevel_t4_lane_restore` — spec o… | open | 2026-08-23 |
-| [rung 3](cards/slip/LANE-SNAP-RUNG3.md) | the lane-preserving snap — v1/v2 falsified, the SEED SITE deleted as an exact solve no-… | open | 2026-08-23 |
-| [wind-up census](cards/slip/WINDUP-FRACTIONAL-CENSUS.md) | the fractional-mode census — the two continuity horizons are INVERTED, `trace_windup_ce… | open | 2026-08-23 |
-| [IF-TD ref gate](cards/slip/IFTD-REF-GATE.md) | the IF-TD reference gate is 100 % false on the sim bed, and the fix was already in the … | closed | 2026-09-08 |
-| [Card G response](cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md) | `gap_reentry_relevel` — round 1 was inert on the live-state walk, round 2's verdict, an… | closed | 2026-09-09 |
-| [IF-TD ref gate (v2)](cards/slip/IFTD-REF-GATE-FOLLOWUP.md) | abstain while cold, normalize the bar by the reference's elevation, and close the gatin… | closed | 2026-09-09 |
-| [slip-QC](cards/slip/SLIPQC-REF.md) | the slip-QC hardening spec — evidence base, the binding ground rules, cards R / L / E /… | reference | 2026-09-09 |
-| [Card ORACLE](cards/slip/CARD-ORACLE-RELEVEL.md) | `oracle_relevel`, the sim-only CEILING of a level-preserving re-level — the mechanism i… | closed | 2026-09-10 |
-| [Study 3](cards/slip/STUDY-3-band-scoped-responses.md) | band-scoped slip responses, the production knobs — the combined arm FAILS at storm scale | closed | 2026-09-10 |
-| [IF-TD pairs](cards/slip/IFTD-PAIRS.md) | the IF-TD detector watched ONE lane per satellite — `if_phase_td_pairs` | closed | 2026-09-11 |
-| [Study 4](cards/slip/STUDY-4-slip-dose.md) | the slip DOSE — the anchor-slip handover cure, validated on the harness and on the stor… | closed | 2026-09-11 |
-| [Study 5](cards/slip/STUDY-5-detector-coverage-l5.md) | detector coverage — the unflagged GPS L5 slip and `mw_evidence_refloat` | closed | 2026-09-11 |
-| [Study 6](cards/slip/STUDY-6-common-band-scope.md) | the COMMON-BAND scope — free only the band the evidence names | closed | 2026-09-11 |
-| [Study 7](cards/slip/STUDY-7-common-band-narrowing.md) | the common-band scope's 3 cm is ONE wrong narrowing at 4.99 h | closed | 2026-09-11 |
-| [REF-ARC](cards/slip/REF-ARC-CLAUSE.md) | a chain's reference-sat pair is UNTESTED and cannot exonerate — `common_band_ref_arc`, … | closed | 2026-09-13 |
-| [REF-FAN](cards/slip/REF-FAN.md) | the reference-slip fan-out under `if_phase_td_pairs = all` — RECOMMEND_SCOPED, the fiel… | open | 2026-09-13 |
-| [RULE F2](cards/slip/IFTD-F2-lli-shadow.md) | the LLI shadow — a lane that did not see the flagged epoch is not silent | closed | — |
-| [RULE F3](cards/slip/IFTD-F3-lli-epoch.md) | the LLI-EPOCH verdict, and the ANCHOR CLAUSE inside F3 | closed | — |
+| [slip-QC impl](cards/slip/SLIPQC-IMPL-2026-07-21.md) | slip-QC build of cards E/R/L/G: Card E MET, Card R PARTIAL (14 to 4), Card L premise false | closed | 2026-08-12 |
+| [D5-A](cards/slip/D5A-RETAP-ATTRIBUTION.md) | the D5 re-tap instrument: 3.0 % raw-step coincidence, re-tap count a third overstated | closed | 2026-08-15 |
+| [slip-QC follow-ups](cards/slip/SLIPQC-FOLLOWUPS.md) | slip-QC follow-ups: D5-A, H1/H2 landed; Card W never launched, OP untriggered, H3 deferred | closed | 2026-08-15 |
+| [lane slip response](cards/slip/LANE-SLIP-RESPONSE.md) | lane-integer slip cost 100 % response-inflicted; both retap keeps FALSIFIED, KEEP_OFF | closed | 2026-08-22 |
+| [T4 lane restore](cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore of the pre-erase carry after a T4 erase: specified, not built | open | 2026-08-23 |
+| [rung 3](cards/slip/LANE-SNAP-RUNG3.md) | seed-site snap deleted (solve no-op); observatory solve-inert; apply leg re-scoped to T4 | open | 2026-08-23 |
+| [wind-up census](cards/slip/WINDUP-FRACTIONAL-CENSUS.md) | 20 gaps in 4 h between the wind-up and carry horizons; restart response ARMED by card WUP | closed | 2026-08-23 |
+| [IF-TD ref gate](cards/slip/IFTD-REF-GATE.md) | the IF-TD ref gate is 100 % false on the sim bed; Card R takes acting refloats 546 to 0 | closed | 2026-09-08 |
+| [Card G response](cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md) | gap re-entry re-level: bridged arcs 88 to 0, consumer +56 %; KEEP_OFF; armed on float | closed | 2026-09-09 |
+| [IF-TD ref gate (v2)](cards/slip/IFTD-REF-GATE-FOLLOWUP.md) | warm-up abstain removes 118 cold fires, elev_norm adds 2; both UNVALIDATED, fault arm owed | closed | 2026-09-09 |
+| [slip-QC](cards/slip/SLIPQC-REF.md) | slip-QC hardening spec and status ledger: cards R/L/E/G, D5 lead closed, Card W never run | reference | 2026-09-09 |
+| [Card ORACLE](cards/slip/CARD-ORACLE-RELEVEL.md) | sim-only oracle re-level: exact repair, every gate FAILS (T4 +77 %); KEEP_OFF diagnostic | closed | 2026-09-10 |
+| [Study 3](cards/slip/STUDY-3-band-scoped-responses.md) | band-scoped slip responses: both knobs KEEP_OFF, the T4 erase scope alone collapses the WL | closed | 2026-09-10 |
+| [IF-TD pairs](cards/slip/IFTD-PAIRS.md) | all IF-TD pairs per satellite: equal-count trap closed, F2 and F3 finish it; RECOMMEND_ON | closed | 2026-09-11 |
+| [Study 4](cards/slip/STUDY-4-slip-dose.md) | slip dose: anchor-arc slips drive the cascade; anchor-slip handover RECOMMEND_ON | closed | 2026-09-11 |
+| [Study 5](cards/slip/STUDY-5-detector-coverage-l5.md) | unflagged L5 slips dropped by the repair gate; `mw_evidence_refloat` RECOMMEND_ON | closed | 2026-09-11 |
+| [Study 6](cards/slip/STUDY-6-common-band-scope.md) | common-band scope KEEP_OFF (consumer +3.3 cm); superseded by Study 7's RECOMMEND_ON | superseded | 2026-09-11 |
+| [Study 7](cards/slip/STUDY-7-common-band-narrowing.md) | common-band scope + IF-TD on every pair RECOMMEND_ON together, sim p50 0.174 to 0.120 m | closed | 2026-09-11 |
+| [REF-ARC](cards/slip/REF-ARC-CLAUSE.md) | ref-arc clause PROMOTED: an untested reference pair cannot exonerate; sim storm neutral | closed | 2026-09-13 |
+| [REF-FAN](cards/slip/REF-FAN.md) | reference-slip fan-out: RECOMMEND_SCOPED, collateral refloats 6 to 0; field pin still owed | open | 2026-09-13 |
+| [RULE F2](cards/slip/IFTD-F2-lli-shadow.md) | the LLI shadow: a pair holding a band flagged last epoch cannot exonerate; S1 storm closed | closed | — |
+| [RULE F3](cards/slip/IFTD-F3-lli-epoch.md) | the LLI-epoch verdict: S3 residual 0.335 to 0.005 cyc; its anchor clause keeps references | closed | — |
 
 Standing documents (not split this pass):
 
@@ -299,27 +302,27 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [DOY-129 defects](cards/raim-qc/DAY129-DEFECTS-ABC.md) | defects A/B/C from the instrumented leg, the five wiring facts, and the measured policy… | closed | 2026-07-28 |
-| [DOY-129 phases](cards/raim-qc/DAY129-PHASES.md) | phases 0–2: the closed-loop replay, the trigger instrumentation, and the gated guards | closed | 2026-07-28 |
-| [INC-4](cards/raim-qc/MEAS-ADMISSION-INC4-REENTRY.md) | the arc RE-ENTRY vet — there were no mid-arc onsets; `adm_revet_hold` erases the event | closed | 2026-08-02 |
-| [Rider A](cards/raim-qc/MDB-RIDER-A.md) | Baarda reliability numbers (MDB) on the network path — `network.mdb` | closed | 2026-08-04 |
-| [Rider B](cards/raim-qc/BLOCK-BAARDA-RIDER-B.md) | BlockFormal — the (station, sat) LOS block outlier census, `network.block_baarda` | closed | 2026-08-04 |
-| [meas admission](cards/raim-qc/MEAS-ADMISSION.md) | the product-referenced admission screen — the fault class no differential screen can se… | closed | 2026-08-12 |
-| [meas admission impl](cards/raim-qc/MEAS-ADMISSION-IMPL.md) | the 2026-08-01 implementation record — every deviation from the spec, the gates as run,… | closed | 2026-08-12 |
-| [DOY-129 anatomy](cards/raim-qc/DAY129-FRAME-ANATOMY.md) | the answered questions — the pinned pivot's code bias, the a₀₀ collapse anatomy, the qu… | closed | 2026-08-15 |
-| [Rider C](cards/raim-qc/CONGRUENCE-RIDER-C.md) | the station congruence screen, `network.congruence_screen` | closed | 2026-08-15 |
-| [T3 null](cards/raim-qc/T3-NULL-DERIVATION.md) | the statistic as actually computed, the invariance theorem, the falsified redundancy st… | closed | 2026-08-15 |
-| [global σ̂₀ rider](cards/raim-qc/GLOBAL-SIGMA0-RIDER.md) | `network.prior_residual_global_sigma0` — three sums, one ratio, nothing acted on | closed | 2026-08-15 |
-| [prires census](cards/raim-qc/PRIOR-RESIDUAL-CENSUS.md) | the prior-residual census — the binding precedent, INC-0..3, the wiring sites, the buil… | closed | 2026-08-15 |
-| [redundancy census](cards/raim-qc/REDUNDANCY-CENSUS.md) | the row-redundancy and unobservable-local censuses — design, cost model, wiring, build … | closed | 2026-08-15 |
-| [A4 withhold](cards/raim-qc/WITHHOLD-ERA-RELEASE.md) | the withhold-era release policy — the defect named exactly, the v2 design, the pre-regi… | closed | 2026-08-21 |
-| [T3 field](cards/raim-qc/T3-FIELD-AND-COLLATERALS.md) | the T3 class and its two collateral defects, the field check, the detection-power gate,… | closed | 2026-08-21 |
-| [withhold cliff](cards/raim-qc/WITHHOLD-CLIFF-RETIREMENT.md) | the retirement census — every G3 number was on a retired binary; the cliff does not rep… | closed | 2026-08-23 |
-| [RNEG](cards/raim-qc/RNEG-REPARTITION.md) | the RNEG re-partition — what a `post_var > fold_var` row is, and the numerator card it … | closed | 2026-09-09 |
-| [GL](cards/raim-qc/GL-gross-los-screen.md) | the gross line-of-sight screen | open | 2026-09-14 |
-| [GL-2 + R8](cards/raim-qc/GL-2-whole-satellite-standdown.md) | the whole-satellite stand-down, and R8 — the bulk drift's channel | open | 2026-09-14 |
-| [DEC-day129-gate-policy](decisions/DEC-day129-gate-policy.md) | the gate-policy ruling — DEGRADE, DO NOT WITHHOLD; the statistic; the CB-excursion resu… | open | — |
-| [T3 mechanism](cards/raim-qc/T3-IONO-MECHANISM.md) | the per-row census, the falsification ledger, and the MECHANISM FOUND — per-LOS ionosph… | closed | — |
+| [DOY-129 defects](cards/raim-qc/DAY129-DEFECTS-ABC.md) | guarded leg: seam withhold CORRECT, a₀₀ the wrong statistic, one-epoch CB resume window | closed | 2026-07-28 |
+| [DOY-129 phases](cards/raim-qc/DAY129-PHASES.md) | phase 0/1 results unrecorded; CB guard KEEP_OFF (pivot-only FALSIFIED), gate (iii) UNMET | closed | 2026-07-28 |
+| [INC-4](cards/raim-qc/MEAS-ADMISSION-INC4-REENTRY.md) | re-entry vet: 16 of 17 onsets were re-entries; 200 m vet bound closes class B; default OFF | closed | 2026-08-02 |
+| [Rider A](cards/raim-qc/MDB-RIDER-A.md) | network MDB: byte-identical; faults under 9.4 m hide in the median code row; gates OWED | closed | 2026-08-04 |
+| [Rider B](cards/raim-qc/BLOCK-BAARDA-RIDER-B.md) | block-Baarda LOS census: BUILT, unit-gated, measure-only; every §12.8 field gate owed | closed | 2026-08-04 |
+| [meas admission](cards/raim-qc/MEAS-ADMISSION.md) | admission screen: corrupt channels refused at birth, era-2 withhold gone; ARMED on goldens | closed | 2026-08-12 |
+| [meas admission impl](cards/raim-qc/MEAS-ADMISSION-IMPL.md) | admission build: gates 1 to 4 PASS, BSHM births refused; 1b cannot pass; 5 to 7 ungraded | closed | 2026-08-12 |
+| [DOY-129 anatomy](cards/raim-qc/DAY129-FRAME-ANATOMY.md) | pivot CB ratchet (+49 m, no event response), clock wander, datum-only disc counter | closed | 2026-08-15 |
+| [Rider C](cards/raim-qc/CONGRUENCE-RIDER-C.md) | congruence screen: smoke PASS; detects held-coordinate errors, cannot measure them | closed | 2026-08-15 |
+| [T3 null](cards/raim-qc/T3-NULL-DERIVATION.md) | scale-blind statistic; station strata cut 4.46 % to 0.97 %; redundancy fix FALSIFIED (sim) | closed | 2026-08-15 |
+| [global σ̂₀ rider](cards/raim-qc/GLOBAL-SIGMA0-RIDER.md) | global σ̂₀ rider: measure-only, OFF identity and wiring PASS; triangle and cliff OWED | closed | 2026-08-15 |
+| [prires census](cards/raim-qc/PRIOR-RESIDUAL-CENSUS.md) | prior-residual census: smoke gates PASS, power gates 3 to 6 ungraded; armed on goldens | closed | 2026-08-15 |
+| [redundancy census](cards/raim-qc/REDUNDANCY-CENSUS.md) | testability census built and smoke-gated; the leg-19 known-answer gates stay OWED (§15) | closed | 2026-08-15 |
+| [A4 withhold](cards/raim-qc/WITHHOLD-ERA-RELEASE.md) | withhold-era escalation: era 29 to 1, VALIDATED; G3 FAIL later a cross-build artifact | closed | 2026-08-21 |
+| [T3 field](cards/raim-qc/T3-FIELD-AND-COLLATERALS.md) | field check: σ̂₀ floor-pinned, stratification 1.5×; detection gate PASSED; R2 + R4 BUILT | closed | 2026-08-21 |
+| [withhold cliff](cards/raim-qc/WITHHOLD-CLIFF-RETIREMENT.md) | cliff is a timer, not therapy; G3 FAIL did NOT REPRODUCE; promotion waits on level health | closed | 2026-08-23 |
+| [RNEG](cards/raim-qc/RNEG-REPARTITION.md) | r-negative re-partition: worst \|t\| 2.48e8 was a floor artifact; RNEG read in metres | closed | 2026-09-09 |
+| [GL](cards/raim-qc/GL-gross-los-screen.md) | gross-LOS screen: tail 13 to 16× smaller but bars FAILED; completed and ARMED by RF-3 | closed | 2026-09-14 |
+| [GL-2 + R8](cards/raim-qc/GL-2-whole-satellite-standdown.md) | stand-down FAILED (consumer 22.25 m in hour 4), left OFF; rx-CB carry exonerated | closed | 2026-09-14 |
+| [DEC-day129-gate-policy](decisions/DEC-day129-gate-policy.md) | gate rulings: degrade under a 120-epoch cap, rms_ho ratio; unbuilt, grace floor un-derived | open | — |
+| [T3 mechanism](cards/raim-qc/T3-IONO-MECHANISM.md) | per-LOS ionosphere error drives the T3 heterogeneity (corr +0.926) and the DD integers | closed | — |
 
 Standing documents (not split this pass):
 
@@ -331,8 +334,8 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [LV-3 contract](cards/wire-contract/LEVEL-CONTRACT.md) | the normative contract for the ionosphere LEVEL and receiver-DCB frame of the emitted p… | closed | 2026-08-15 |
-| [level health](cards/wire-contract/LEVEL-HEALTH-CHANNEL.md) | `network.emit_level_health` — the contract gap, the one-channel three-class mechanism, … | open | 2026-08-23 |
+| [LV-3 contract](cards/wire-contract/LEVEL-CONTRACT.md) | level contract: W6 sum-to-zero or a00 GIM anchor owns the level; LV-1/2/4/5 SUPERSEDED | closed | 2026-08-15 |
+| [level health](cards/wire-contract/LEVEL-HEALTH-CHANNEL.md) | level health: Phase A PASS on era-3 (7/7), causal limb misses slides; Phase B build owed | open | 2026-08-23 |
 
 Standing documents (not split this pass):
 
@@ -342,28 +345,28 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [CC](cards/consumer/CC-declared-step-carry.md) | the continuity half — the consumer's declared-step carry and warm start, landed default… | closed | 2026-09-14 |
-| [CI](cards/consumer/CI-consumer-instrument.md) | the closed-loop consumer as an INSTRUMENT — what the consumer bars have actually been r… | open | 2026-09-14 |
-| [CI census](cards/consumer/CI-census-wire-vs-code.md) | the wire-vs-CODE consistency census and the CODE-RESIDUAL per-LOS attribution | closed | 2026-09-14 |
-| [consumer AR](cards/consumer/CONSUMER-AR-BLUNDER.md) | the consumer AR blunder diagnosed and fixed — the innovation screen is the gate that ca… | closed | — |
+| [CC](cards/consumer/CC-declared-step-carry.md) | declared-step carry exact, default OFF (re-grade fails 2 of 5 bars); warm start LANDED | closed | 2026-09-14 |
+| [CI](cards/consumer/CI-consumer-instrument.md) | consumer bars SUSPENDED: 6 to 8 m on the network's products, 0.25 m on CODE's | open | 2026-09-14 |
+| [CI census](cards/consumer/CI-census-wire-vs-code.md) | wire-vs-CODE census: W1 and W3 FAIL; the clock carries a metre-level code-model error | closed | 2026-09-14 |
+| [consumer AR](cards/consumer/CONSUMER-AR-BLUNDER.md) | consumer WL-only blunder: a frame mismatch FFR misses, caught by the innovation screen | closed | — |
 
 ### `sim-bed` — [topics/sim-bed.md](topics/sim-bed.md)
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [G-A](cards/sim-bed/SIMNET-GA-NULL-TEST.md) | the NULL test — the first absolute grade, measured 2026-08-11 | closed | 2026-08-11 |
-| [G-A 50-sta](cards/sim-bed/SIMNET-50STA-QC-TIERS.md) | the 50-station global arm — the vf trend, the QC tiers, and the MW null space | closed | 2026-08-11 |
-| [W6+SH arm](cards/sim-bed/SIMNET-W6SH-ARM.md) | the W6+SH arm and its minimum-n ladder — the two-band wall is n-invariant, posture is t… | closed | 2026-08-12 |
-| [W6+SH brief](cards/sim-bed/SIMNET-W6SH-BRIEF.md) | the design brief for the W6+SH synthetic arm — superseded by the arm itself | superseded | 2026-08-12 |
-| [G-B](cards/sim-bed/SIMNET-GB-CLOCK-STEP.md) | event injection, satellite-clock step — first class only | closed | 2026-08-15 |
-| [SIMNET](cards/sim-bed/SIMNET-REF.md) | the truth-graded 3/5/50-station fixture — architecture, truth channels, the estimable-f… | reference | 2026-08-15 |
-| [injection bench](cards/sim-bed/SIM-INJECTION-BENCH.md) | the G-B event-injection bench — the ambiguity N-regime, the pre-flight, the arms, and t… | closed | 2026-08-15 |
-| [60-sta campaign](cards/sim-bed/SIMNET-60STA-CAMPAIGN.md) | the first long / multi-GNSS / realistic-slip grade — full record in the slip re-level w… | closed | 2026-08-20 |
-| [dashboard](cards/sim-bed/SIMNET-DASHBOARD.md) | one-command HTML report over a graded simnet run | closed | 2026-09-01 |
-| [stability](cards/sim-bed/STABILITY-CAMPAIGN.md) | the settled state must stop moving — targets 1–4, the eclipse-exclusion valve, sticky p… | closed | 2026-09-02 |
-| [DD-REF](cards/sim-bed/DD-TRACE-REF-SAT.md) | the post-eclipse network-wide DD episode was the INSTRUMENT'S reference satellite, and … | closed | 2026-09-06 |
-| [slant + triple](cards/sim-bed/SIMNET-SLANT-TRIPLE.md) | the third band and the slant-ionosphere posture — the ambiguity-integer grade, the sett… | closed | 2026-09-09 |
-| [ZWD sink](cards/sim-bed/ZWD-SINK-CENSUS.md) | the ZWD sink census, the slipped-bed golden FAIL, and where the integer information is | closed | 2026-09-10 |
+| [G-A](cards/sim-bed/SIMNET-GA-NULL-TEST.md) | first absolute grade: n = 3 not determinable (ZWD +4.31 m), all internal instruments clean | closed | 2026-08-11 |
+| [G-A 50-sta](cards/sim-bed/SIMNET-50STA-QC-TIERS.md) | 50-sta QC tiers: 4 of 7 live, datum-station slip blind spot fixed, MW mid-arc silence open | closed | 2026-08-11 |
+| [W6+SH arm](cards/sim-bed/SIMNET-W6SH-ARM.md) | the two-band wall is one n-invariant L2W phase-bias near-null; code-bias vf ~4.9e+05 | closed | 2026-08-12 |
+| [W6+SH brief](cards/sim-bed/SIMNET-W6SH-BRIEF.md) | design brief for the W6+SH sim arm: item 1 FALSIFIED, item 3 MOOT, the rest implemented | superseded | 2026-08-12 |
+| [G-B](cards/sim-bed/SIMNET-GB-CLOCK-STEP.md) | clock-step floor RETRACTED: 92.4 to 92.8 % recovered against the null arm, no floor | closed | 2026-08-15 |
+| [SIMNET](cards/sim-bed/SIMNET-REF.md) | sim truth-bed design: per-station processes, truth in the producer basis, trap register | reference | 2026-08-15 |
+| [injection bench](cards/sim-bed/SIM-INJECTION-BENCH.md) | slip-injection bench: 22/24 attributed, MDB 2 cycles; null arm found the gauge defect | closed | 2026-08-15 |
+| [60-sta campaign](cards/sim-bed/SIMNET-60STA-CAMPAIGN.md) | 60-sta slipped grade: detection 94.1 %, but refloat re-levels walk the levels to metres | closed | 2026-08-20 |
+| [dashboard](cards/sim-bed/SIMNET-DASHBOARD.md) | simnet dashboard built; 12 h quiet arms: S0 / BCA not promoted, carry_zwd KEEP_OFF | closed | 2026-09-01 |
+| [stability](cards/sim-bed/STABILITY-CAMPAIGN.md) | late drift is eclipse-valve edge response, not aging; sticky_pivot cuts sim consumer 74 % | closed | 2026-09-02 |
+| [DD-REF](cards/sim-bed/DD-TRACE-REF-SAT.md) | post-eclipse DD episode was the trace's reference satellite; the field histogram is not | closed | 2026-09-06 |
+| [slant + triple](cards/sim-bed/SIMNET-SLANT-TRIPLE.md) | third band closes the wall; slant cuts cb vf ~16× uncalibrated; settled EWL trio DIVERGES | closed | 2026-09-09 |
+| [ZWD sink](cards/sim-bed/ZWD-SINK-CENSUS.md) | slipped-bed golden FAIL x3; carry_zwd_in_block RECOMMEND_SCOPED; consumer AR 0/2879 fixes | closed | 2026-09-10 |
 
 ### `perf` — [topics/perf.md](topics/perf.md)
 
@@ -398,12 +401,12 @@ Standing documents (not split this pass):
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [QPR blocked](cards/queues/QPR-BLOCKED-AND-CLOSED.md) | blocked on root cause, leave-alone (falsified or decided), and the queue's maintenance … | open | 2026-08-14 |
-| [QPR](cards/queues/QPR-00-CHARTER.md) | the charter — why this queue exists, how an item enters and leaves it, and the rank ord… | open | 2026-08-21 |
-| [QPR 0–3](cards/queues/QPR-ITEMS-0-3.md) | items 0–3: the pin bridge, the S-transform re-reference family, datum-station election … | open | 2026-08-21 |
-| [QPR 4](cards/queues/QPR-ITEM-4-T3-NULLS.md) | item 4: T3-class test statistics — correct nulls, not recalibrated constants | open | 2026-08-21 |
-| [QPR 5–8](cards/queues/QPR-ITEMS-5-8.md) | items 5–8: the level contract, the half-epoch back-off ritual, the SH health-gate relea… | open | 2026-08-21 |
-| [CAF](cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) | findings from the whole-repository comment audit: code defects, suspicions, author checks, CLAUDE.md errors… | open | 2026-09-28 |
+| [QPR blocked](cards/queues/QPR-BLOCKED-AND-CLOSED.md) | blocked and leave-alone register: item 3 churn root found same day, D5 hold lifted by 8(a) | open | 2026-08-14 |
+| [QPR](cards/queues/QPR-00-CHARTER.md) | queue charter: fifth ranking 2026-08-20, order superseded by the 2026-09-14 re-founding | open | 2026-08-21 |
+| [QPR 0–3](cards/queues/QPR-ITEMS-0-3.md) | items 0–3: 1(d) carry re-reference validated, 1f promoted, 0 downgraded, 1(b) deferred | open | 2026-08-21 |
+| [QPR 4](cards/queues/QPR-ITEM-4-T3-NULLS.md) | the T3 null: excess is per-LOS iono error; R2 and R4 validated measure-only, R1 held | open | 2026-08-21 |
+| [QPR 5–8](cards/queues/QPR-ITEMS-5-8.md) | items 5–8: iono error persists with SH on, 8(b) falsified, A4 promotion refused; 5, 6 owed | open | 2026-08-21 |
+| [CAF](cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) | comment audit: 14 verified code defects open, 5 fixed; suspicions and author checks listed | open | 2026-09-28 |
 
 Standing documents (not split this pass):
 

@@ -1,16 +1,18 @@
-# REF-ARC — a chain's reference-sat pair is UNTESTED and cannot exonerate — `common_band_ref_arc`, promoted
+# REF-ARC: a chain's reference-satellite pair is untested and cannot exonerate
 
 **STATUS**
 
 - **id:** REF-ARC
 - **topic:** slip
 - **status:** closed
-- **summary:** a chain's reference-sat pair is UNTESTED and cannot exonerate — `common_band_ref_arc`, promoted
+- **summary:** `common_band_ref_arc` PROMOTED (RECOMMEND_ON with the common-band scope): a pair on a chain's reference arc is UNTESTED and refused as an exonerator, closing the GOPE/G24 innocent-band trap.
 - **dates in the text:** 2026-09-12 → 2026-09-13
 - **knobs / posture:** `network.cycle_slip.common_band_ref_arc`
 - **hashes named in the text** (commit / exe / byte-cert): `c8096ee`, `904b89e`, `dcf04dd`, `ee33550`
 - **run dirs named in the text:** `runs/evseed_field6h`, `runs/evleg_cbref_`, `runs/golden_sim_campaign_zwdblk_sts`, `runs/golden_sim_campaign_zwdblk_refarc`
-- **source:** `docs/archive/SPEC_event_harness.md` — 22, 22.1, 22.2, 22.3, 22.4, 22.5
+- **source:** `docs/archive/SPEC_event_harness.md`: 22, 22.1, 22.2, 22.3, 22.4, 22.5
+
+**Outcome.** The common-band scope's IF-TD veto cannot fire on a chain's reference arc (its DD is exactly 0), so an equal-count L1C+L5X slip at G24 narrowed to the innocent band. With the clause, B1 to B3 PASS on the field seed and only 4 of 106 narrowings are forfeited (bar 15 %), all injected. B4 PASS: the sim storm bed matches the control to the digit on every bar, with 29 ref-arc refusals. Pinned in the then-golden `golden_sim_tri_w6`; the field pin of the scope, pairs, clause and reference arm together later failed FP-2's 6 h twin on response cost ([REF-FAN](REF-FAN.md)). Both current goldens arm it (`config/golden/golden_{field,sim}_refound.json`).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

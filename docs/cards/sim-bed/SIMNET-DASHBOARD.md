@@ -1,16 +1,18 @@
-# dashboard — one-command HTML report over a graded simnet run
+# dashboard: the simnet HTML report and the 12 h quiet-bed arms
 
 **STATUS**
 
 - **id:** dashboard
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** one-command HTML report over a graded simnet run
+- **summary:** The one-command simnet dashboard BUILT; on its 12 h quiet flagship S0 and BCA were NOT PROMOTED, the continuous `carry_zwd` re-base FALSIFIED (KEEP_OFF), and seam-scoped ZWD serialization VALIDATED.
 - **dates in the text:** 2026-08-31 → 2026-09-01
 - **knobs / posture:** `network.clock_datum_broadcast_anchored`, `network.carry_zwd`, `realtime.state_snapshot_path`, `network.zwd_seam_reseed`
 - **hashes named in the text** (commit / exe / byte-cert): `87d8629c`, `09da28d2`, `35860c5f45b8a004`
 - **run dirs named in the text:** `runs/camp60wu_quiet12h`, `runs/simnet60_quiet_wu93_12h`, `runs/camp60wu_quiet12h_r2`, `runs/camp60wu_quiet12h_r2q3s0`, `runs/camp60wu_quiet12h_r2q3bca`, `runs/camp60wu_quiet12h_r2q35`, `runs/camp60wu_q6wsnap`, `runs/camp60wu_quiet12h_r2q3rfoff` … (+4 more in the text)
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §17
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §17
+
+**Outcome.** The card built `scripts/simnet_report.py`, an offline HTML report over the grader's own artifacts, and a 12 h quiet flagship. There the clock datum decides who pays for the level: sum-to-zero and the broadcast anchor moved it into the applied code bias (consumer 0.20 to 0.87 m under S0), though the anchor bought the best ignition (snap 4.37 to 1.01 h). `relevel_free_epoch` OFF cost +29 % settled consumer on a zero-slip bed; the seam-scoped ZWD reseed closed the whole settled warm-resume gap ([RS-10](../resume-seam/RS-8-to-RS-10b-latch-and-close-out.md) later turned it OFF without a ZWD carry). The WE-CI detection half and the RT snapshot's venue A/B stay owed in the [ledger](../../CONFIG_promotion_ledger.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

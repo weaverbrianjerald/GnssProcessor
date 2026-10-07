@@ -1,16 +1,18 @@
-# Study 5 — detector coverage — the unflagged GPS L5 slip and `mw_evidence_refloat`
+# Study 5: the unflagged GPS L5 slip and `mw_evidence_refloat`
 
 **STATUS**
 
 - **id:** Study 5
 - **topic:** slip
 - **status:** closed
-- **summary:** detector coverage — the unflagged GPS L5 slip and `mw_evidence_refloat`
+- **summary:** The MW detector caught all five missed unflagged GPS L5 slips but a repair-quality gate dropped them; `mw_evidence_refloat` admits them and passes every storm-bed bar (ZWD 0.046 → 0.0071 m): RECOMMEND_ON.
 - **dates in the text:** 2026-09-11
-- **knobs / posture:** `network.cycle_slip.mw_unknown_integer_refloat`, `network.cycle_slip.mw_evidence_refloat`, `network.phase_leveling`, `network.cycle_slip.mw_detect`
-- **hashes named in the text** (commit / exe / byte-cert): `9935aec`, `0550b58`
+- **knobs / posture:** `network.cycle_slip.mw_evidence_refloat` (`mw_evidence_ratio_min` 3.0, `mw_evidence_min_arc_epochs` 10), `network.cycle_slip.mw_unknown_integer_refloat` (the name proposed under H1; the built knob is `mw_evidence_refloat`), `network.phase_leveling`, `network.cycle_slip.mw_detect`
+- **hashes named in the text** (commit / exe / byte-cert): `9935aec`, `0550b58`, `2490087`, `8A9BEBA1`
 - **run dirs named in the text:** `runs/evleg_doseall`, `runs/evleg_doseall_knob`, `runs/evleg_l5miss_s36`, `runs/evleg_s36only_mwlog`, `runs/evleg_null_main_ancho`, `runs/golden_sim_campaign_zwdblk_mwevid`, `runs/golden_sim_tri_w6_full`, `runs/golden_sim_quiet24_bothcards`
-- **source:** `docs/archive/SPEC_event_harness.md` — 13, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6
+- **source:** `docs/archive/SPEC_event_harness.md` §13, §13.1 to §13.6
+
+**Outcome.** The question: why the L5 slip that wrecked a station in [Study 4](STUDY-4-slip-dose.md) drew no detector response. Only unflagged GPS L5 slips were missed, about 4 % of that class; an L5 MW lane flagged each one, but PASS A applied the 0.15-cycle repair gate to a refloat that never uses the integer. With the knob the dose's T4 falls 200 → 0 and the storm-bed consumer p50 0.278 → 0.174 m; on a pinned anchor arc the refloat alone is a solve no-op and the anchor-slip handover remains the cure. A field pin followed on 2026-09-12 ([field harness](../harness/FIELD-HARNESS.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

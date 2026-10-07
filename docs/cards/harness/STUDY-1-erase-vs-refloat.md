@@ -1,16 +1,18 @@
-# Study 1 — erase vs refloat — what actually costs the 0.45-cycle floor
+# Study 1: erase vs refloat, what costs the 0.45-cycle floor
 
 **STATUS**
 
 - **id:** Study 1
 - **topic:** harness
 - **status:** closed
-- **summary:** erase vs refloat — what actually costs the 0.45-cycle floor
+- **summary:** "The erase path is the expensive one" is FALSIFIED: freeing every band of a LOS buys the floor; scoping either path to two of three bands cuts it 0.445 → 0.050 cyc.
 - **dates in the text:** 2026-09-10
-- **knobs / posture:** `network.inject.events`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `network.inject.events` (`arc_erase` diagnostic `mode` and `signal` band scope, injector-only); new PASS-A drain `networkSlipDrainInjectedFree`
+- **hashes named in the text** (commit / exe / byte-cert): byte-cert `products.txt` `95DC556F…` (`runs/evleg_s1_nullgate` = `runs/evleg_null`), `7027918C…` (`erase`, `erase_keep_iono`, `erase_no_funnel`, byte-identical)
 - **run dirs named in the text:** `runs/evseed_quiet6h`, `runs/evleg_null`, `runs/evleg_s1_nullgate`
-- **source:** `docs/archive/SPEC_event_harness.md` — 9, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7
+- **source:** `docs/archive/SPEC_event_harness.md` §9 (9.1 to 9.7)
+
+**Outcome.** The study asked which action a T4 erase performs, and a detector refloat does not, costs the floor. None does: `free_epoch`, a literal detector refloat, reproduces it (0.496 cyc on arc 1); both paths re-level the LOS from one epoch of code (invariant #1's re-coupling edge). The LOS-iono co-erase and C3c funnel are inert on the sim golden; their `carry_iono` / `carry_invariant` leg is named as owed. The floor scales with elevation (0.130 cyc at 81.3°); no QC tier re-flags the arc. The production knobs built on this, `raim_erase_band_scope` and `cycle_slip.refloat_band_scope`, are both KEEP_OFF ([Study 3](../slip/STUDY-3-band-scoped-responses.md)): the mechanism stands, that cure does not.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

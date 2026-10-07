@@ -1,16 +1,18 @@
-# wind-up census — the fractional-mode census — the two continuity horizons are INVERTED, `trace_windup_census`, and the restart response built default-OFF
+# wind-up census: inverted continuity horizons and the restart response
 
 **STATUS**
 
 - **id:** wind-up census
 - **topic:** slip
-- **status:** open
-- **summary:** the fractional-mode census — the two continuity horizons are INVERTED, `trace_windup_census`, and the restart response built default-OFF
-- **dates in the text:** 2026-08-22 → 2026-08-23
+- **status:** closed
+- **summary:** The census found `gap_wu_to_carry` = 20 in 4 h (nonzero), so the wind-up restart response became BLOCKING; built here default-OFF, it was later fixed and ARMED by card WUP.
+- **dates in the text:** 2026-08-22 to 2026-08-23
 - **knobs / posture:** `estimation.trace_windup_census`, `network.phase_leveling_max_gap_s`, `estimation.phase_windup_max_gap_s`, `network.cycle_slip.windup_restart_refloat`, `estimation.accumulate_phase_windup`, `network.phase_leveling`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/_wd`
-- **source:** `docs/archive/SPEC_phase_windup_sign.md` — §10, §10.1, §10.2, §10.3, §10.4, §10.5, §11
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** `runs/_wd/wucensus`
+- **source:** `docs/archive/SPEC_phase_windup_sign.md` §10 (10.1 to 10.5), §11
+
+**Outcome.** The census asked whether `accumulate_phase_windup` can be flipped while the accumulator's continuity horizon (300 s) sits below the leveling carry's (900 s). The fractional staircase measured 51 one-cycle steps in 4 h; accumulation would trade it for about 120 uncompensated restarts per day, so §11 built `network.cycle_slip.windup_restart_refloat`. That response never reached a re-entering arc; card [WUP](../../refound/WUP_windup_accumulated_promotion_2026-10-01.md) fixed it and ARMED both knobs on the goldens (ledger A14); the loader defaults stay OFF. §10.4's other default-flip prerequisites were not taken up; the re-founding posture runs no warm resume ([program](../../refound/NETWORK_REFOUNDING_2026-09-14.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

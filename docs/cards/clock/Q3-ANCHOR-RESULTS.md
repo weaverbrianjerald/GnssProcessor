@@ -1,16 +1,18 @@
-# Q3 results — G0–G3, the binding knee, the FC-1 shadow-hour table, and the relationship to the surrounding cards
+# Q3 results: gates G0 to G3, the binding knee and the FC-1 score
 
 **STATUS**
 
 - **id:** Q3 results
 - **topic:** clock
 - **status:** closed
-- **summary:** G0–G3, the binding knee, the FC-1 shadow-hour table, and the relationship to the surrounding cards
+- **summary:** G0 to G2 PASS and the binding knee is q 1.0 to 1.5e-5 m²/s, but the FC-1 gate is NOT met: the anchor makes the clock quieter, not more real.
 - **dates in the text:** 2026-08-10
-- **knobs / posture:** `network.clock_model`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `network.clock_temporal_anchor` at `clock_anchor_q` 3e-5, `network.clock_anchor_gauge_free` (G3 third arm); `network.clock_model` stays NO-GO (§6)
+- **hashes named in the text** (commit / exe / byte-cert): `gnss_processor_cta.exe` md5 `F5068BA6707F04708CDB9299893D4F6A`; `gnss_processor_ctagf.exe` md5 `974714FB7174A8C9CE6FB239C71AB9EF`; G0 products md5 `C015A68F73393B3A1C0C02DEEC85E9C1`
 - **run dirs named in the text:** `runs/cta_g0_ctl`, `runs/clkr_20ep_ctl`, `runs/cta_20ep_`, `runs/cta_1h_`, `runs/cta3_`, `runs/cta_3h_`, `runs/clkr_12h_hold`
-- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` — §5, G0, G1, G2, §3, G3, §6
+- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` §5 (G0, G1, G2, §3 pass 1, G3), §6
+
+**Outcome.** The card ran the Q3 anchor's first gates. G0 (OFF-path byte-identity), G1 (453 anchored folds, one guard trip resolved in-epoch) and G2 at 1 h (robust σ_w 8.89 → 5.34 cm, 0 withholds) PASS. In the 3 h three-arm ladder no arm lifted the FC-1 correlation off zero (−0.004), so that gate was NOT met; G4 stayed owed. Later, [Q3 floor](../clock/Q3-PHYSICAL-FLOOR.md) §7 retired the FC-1 gate and put the physical q at 2.9e-8 m²/s; [Q3 ladder](../clock/Q3-FLOOR-GOVERNED-LADDER.md) §8.3 made σ̂₀_clk gauge-aware; [Q3 G4](../clock/Q3-G4-SIM-HALF.md) executed G4's sim half.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,16 +1,18 @@
-# IF-TD ref gate — the IF-TD reference gate is 100 % false on the sim bed, and the fix was already in the goldens
+# IF-TD ref gate: 100 % false on the sim bed, removed by the Card-R gate
 
 **STATUS**
 
 - **id:** IF-TD ref gate
 - **topic:** slip
 - **status:** closed
-- **summary:** the IF-TD reference gate is 100 % false on the sim bed, and the fix was already in the goldens
+- **summary:** The legacy IF-TD reference gate is 100 % false on the slip-free sim bed; Card R's gate, already ARMED in the goldens, takes acting refsat refloats 546 to 0.
 - **dates in the text:** 2026-09-08
 - **knobs / posture:** `network.cycle_slip.if_phase_td_ref_gate`
 - **hashes named in the text** (commit / exe / byte-cert): `2468e875`
 - **run dirs named in the text:** `runs/simnet60_quiet_wu93_24h`, `runs/_partial_ggq_ep11_traces_20260812`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.14, 6.14.1, 6.14.2, 6.14.3, 6.14.4, 6.14.5, 6.14.6
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md`: §6.14, 6.14.1, 6.14.2, 6.14.3, 6.14.4, 6.14.5, 6.14.6
+
+**Outcome.** The question: why the reference gate refloated arcs on a slip-free bed. Its statistic is the reference satellite's own noise (sigma 17.7 mm), so the fixed bar is a 3.02-sigma noise threshold; Card R's gate leaves 118 cold-era diagnostic fires. Two instrument defects were fixed (a missing flag-rate tier, a pool scale deflated 16 %). Still open: the floor sits on the (1,1) jump, so IF-TD's unique reach is (n,n), n ≥ 2, above about 30°. The gate stays armed in the goldens; follow-up in [IF-TD ref gate (v2)](IFTD-REF-GATE-FOLLOWUP.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

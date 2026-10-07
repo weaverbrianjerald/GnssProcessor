@@ -1,16 +1,18 @@
-# F3 field — the field F3 arm — bed, arms, truth-free instruments, and the pre-registered predictions with their pre-data amendments
+# F3 field: pre-registration of the field F3 ladder, with pre-data amendments
 
 **STATUS**
 
 - **id:** F3 field
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the field F3 arm — bed, arms, truth-free instruments, and the pre-registered predictions with their pre-data amendments
-- **dates in the text:** 2024-05-08 → 2026-09-09
-- **knobs / posture:** `network.phase_leveling_local_block`, `network.raim_carry_invariant`, `processing.max_duration_s`, `network.max_duration_s`, `processing.frequency_mode`
-- **hashes named in the text** (commit / exe / byte-cert): `00d5fdf`
-- **run dirs named in the text:** `runs/fld63_stk_on`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.15, 6.15.1, 6.15.2, 6.15.3, 6.15.3a
+- **summary:** Pre-registered field F3 ladder (shipped control, leveling vehicle, leveling plus F3) with truth-free instruments; the amendments find the control's DD ambiguities wandering ~10 cycles (arc MAD), and headline P2 was later FALSIFIED.
+- **dates in the text:** 2024-05-08 (the DOY-129 bed) → 2026-09-09 (pre-registration and amendments)
+- **knobs / posture:** `network.phase_leveling_local_block` (F3, arm 2); arm 1 = `carry_invariant: false` with its sub-family off, the EWL/UWL lanes off, `cycle_slip.relevel_free_epoch: true`; `network.raim_carry_invariant` (left off on arm 0); `processing.max_duration_s` (the smoke clip; `network.max_duration_s` only clips the RINEX parse); `processing.frequency_mode` (dual, so no L5 readout)
+- **hashes named in the text** (commit / exe / byte-cert): `00d5fdf` (source of the one arm exe, `gnss_processor_f3field.exe`)
+- **run dirs named in the text:** `runs/fld63_stk_on` (the field control baseline); arms `fldf3_ci`, `fldf3_pl`, `fldf3_on`
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` §6.15, 6.15.1, 6.15.2, 6.15.3, 6.15.3a
+
+**Outcome.** The card fixes the bed (DOY-129 00 to 12 UT, 61 GPS L1/L2 stations), three arms that switch the vehicle first and arm F3 second, seven instruments and predictions P1 to P7. Its amendments, read on the control, find the per-band DD estimates moving 1:1 in cycles across bands (slope 1.004) and with the estimated DD ionosphere (slope +1.68): a uniform DD fraction here reads as wander. The [results card](../network-vehicle/F3-FIELD-ARM-RESULTS.md) graded P1 PASS, P2 FALSIFIED on this chain, PARTIAL on the converging leveling posture; F3 is KEEP OFF on the field and off in the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) posture.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

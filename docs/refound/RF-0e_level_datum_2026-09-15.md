@@ -1,6 +1,20 @@
-# RF-0e — the level datum (e1 / e2) and the L2X coverage cut (e3) (2026-09-15)
+# RF-0e: the level datum (e1 / e2) and the L2X coverage cut (e3) (2026-09-15)
 
-**STATUS:** closed — **the level datum is NOT the term (the consumer tracks the per-satellite dispersion of the IF correction, not the common
+**STATUS**
+
+- **id:** RF-0e
+- **topic:** code-bias
+- **status:** closed
+- **summary:** The level datum is NOT the term; the sparse C2X / L2X channel is: cutting it gives the best field consumer on record for three hours, then starves two stations.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** `network.sat_if_level_datum` (e1) and `network.sat_gf_datum_time_linked` (e2), both default OFF and refused together; e3 = e2 + the L2X / C2X cut from the canonical set; `broadcast_tgd`, GIM off, `cb_kaula_prior: false`; `code_datum_time_linked` read in `NetworkSbasis.cpp`
+- **hashes named in the text:** commit `895724e` (worker branch `worktree-agent-a0aafda782ef5e7bd`, merged); exe `E2C0BF00…`; OFF smoke `47bc4e5a…`; suite 2175 / 289
+- **run dirs named in the text:** `runs/_rf0e_field6_e3b` (the band-2-only cut)
+- **source:** [RF-0d](RF-0d_per_signal_pin_2026-09-15.md) (the pre-registration, its bars and its frozen reading)
+
+**Outcome.** The card asks whether restoring the IF level datum (e1, or e2's time-linked GF rows) recovers the field consumer RF-0d lost, and what cutting the L2X / C2X channel (e3) costs. Neither e1 nor e2 restores it; the consumer tracks the per-satellite IF-correction dispersion instead (p90 0.300 m on RF-0, 1.527 m on RF-0d). e3 reaches 0.82 m at hour 2 but withholds 215 epochs and collapses after hour 3: INEG00MEX and OAFA00ARG carry C2X as their only band-2 code. [RF-0f](RF-0f_isc_state_2026-09-15.md) found no station tracking both C2W and C2X, and [RF-0g](RF-0g_roster_cut_2026-09-15.md) removed C2X with its two stations; the goldens pin e2 and that cut ([RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md)).
+
+**Status as recorded (2026-09-15):** closed — **the level datum is NOT the term (the consumer tracks the per-satellite dispersion of the IF correction, not the common
 level); the sparse C2X / L2X channel IS the term — cutting it gives the best field consumer on record for three hours and then starves two
 stations of their second frequency.  RF-0f below keeps the channel in the solve and takes its satellite bias out of the pin.**  Worker branch
 `worktree-agent-a0aafda782ef5e7bd` (`895724e`), merged.  Suite 2175 / 289 (0 failed); OFF smoke `47bc4e5a…`; `--verify` PASS; exe `E2C0BF00…`.

@@ -1,6 +1,20 @@
-# Network re-founding — the author's decision of 2026-09-14
+# NETWORK_REFOUNDING: the program and the author's decision (2026-09-14)
 
-**Status:** OPEN — the program that replaces the card-by-card patching of the network producer.  Everything under `docs/refound/` is
+**STATUS**
+
+- **id:** NETWORK_REFOUNDING
+- **topic:** network-vehicle
+- **status:** open
+- **summary:** Decision: freeze one posture on two beds (RF-0), replace the broken mechanisms in order (RF-1 to RF-3), add back singly, grade only the cold 6 h consumer and wire-vs-CODE census.
+- **dates in the text:** 2026-09-14 to 2026-09-20 (the status table)
+- **knobs / posture:** the frozen posture of 2026-09-14: the leveling vehicle (`carry_invariant` off, `cycle_slip.relevel_free_epoch`, `carry_coupling_gauge_project`, `phase_datum_prioritized`), the Q3 clock time-link (`clock_anchor_q: 2.9e-8`), `network.clock_disc_jump_test: true`, `network.estimate_iono_sh: false`; GPS-only L1/L2, no lanes, no F3, no seams; bases `config/golden/golden_field_gps_dual.json` and `golden_sim_tri_w6.json` (both since retired)
+- **hashes named in the text:** per card, in the status table (for example the OFF smoke `9add1d3a…`); each card file carries its own
+- **run dirs named in the text:** per card, in the status table; the last baseline pair named there is `runs/_rf0hv3_{field,sim}6` (2026-09-20)
+- **source:** the author's decision of 2026-09-14 (quoted in the body); the evidence of [SPEC_event_harness](../SPEC_event_harness.md) sections 24.9 to 24.20
+
+**Outcome.** The program replaces card-by-card patching of the network producer; RF-1 rebuilds float ambiguities, RF-2 a held S-basis, RF-3 code-row QC and a declaring wire contract. The status table runs to 2026-09-20; later cards are indexed in [CARDS.md](CARDS.md). The float vehicle with the held basis became the goldens' posture on 2026-09-22 ([GRB](GRB_golden_rebase_2026-09-22.md)); the baseline pair since 2026-10-01, `runs/_rf0hv14_{field,sim}6` ([EXL](EXL_exact_update_lah_promotion_2026-10-01.md)), reads field WTZZ00DEU 0.108 m in hour 1 and 0.026 m in hour 6, sim 0.510 and 0.027 m. Still open: the remaining add-backs ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)) and the open cards in CARDS.md.
+
+**Status as recorded (2026-09-14):** OPEN — the program that replaces the card-by-card patching of the network producer.  Everything under `docs/refound/` is
 graded on the two instruments named below and nothing else.  Entry point for the network from this date on.
 
 ## The decision (author, verbatim)

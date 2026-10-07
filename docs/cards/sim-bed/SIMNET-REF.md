@@ -1,16 +1,18 @@
-# SIMNET — the truth-graded 3/5/50-station fixture — architecture, truth channels, the estimable-function grading map, the gates, the trap register and the build manifest
+# SIMNET: the synthetic minimum network, design and grading reference
 
 **STATUS**
 
 - **id:** SIMNET
 - **topic:** sim-bed
 - **status:** reference
-- **summary:** the truth-graded 3/5/50-station fixture — architecture, truth channels, the estimable-function grading map, the gates, the trap register and the build manifest
-- **dates in the text:** 2026-08-11 → 2026-08-15
+- **summary:** Standing design reference for the truth-graded 3/5/50-station sim network: one process per station, truth channels, truth graded in the producer's basis, gates G-A to G-C, the trap register.
+- **dates in the text:** 2026-08-11 to 2026-08-15
 - **knobs / posture:** `processing.signal_priorities`, `network.closed_loop.replay_products_path`, `network.health_interval_s`, `network.product_flush_per_epoch`, `network.trace_sat_bias_states`, `network.trace_rx_states`, `network.apriori_source`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/simnet300_wsh`, `runs/simnet50_mwblind2`, `runs/simnet60_tri`, `runs/cbq_12h_ctl`, `runs/simnet24_inject_`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — (preamble), §0, §1, 1.1, §2, 2.1, 2.4, 2.2, 2.3, §3, 3.1, §4, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, §5, 5.1, §6, G, §7, §8, §9, §10
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** `runs/simnet300_wsh`, `runs/simnet50_mwblind2`, `runs/simnet60_tri`, `runs/cbq_12h_ctl`, `runs/simnet24_inject_` (the §0 provenance note places every cited `runs/` path under `D:\GnssProcessor_archive\2026-08-12\runs\`)
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` (preamble), §0 to §8, the G-A / G-B / G-C gates of §6, §9, §10
+
+**Outcome.** The document specifies the sim truth bed: N processes with per-station seeds and a station-aware ambiguity hash, truth transformed into the producer's realized basis before any vf, a rank check beyond the self-consistent gate, the QC tiers inert at small n, and a 16-entry trap register. Its §0 error class stands: an instrument's silence is not a negative result until it was armed, had opportunities and records that outcome. The measured record (§9.5 to §15.8) lives in the cards the [routing stub](../../SPEC_synthetic_minimum_network.md) names; the sim golden now runs a 60-station fixture ([SFR](../../refound/SFR_sim_fixture_coloured_phase_2026-10-01.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

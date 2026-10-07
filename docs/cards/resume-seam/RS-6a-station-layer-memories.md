@@ -1,16 +1,18 @@
-# RS-6a — the station layer's own memory across the seam — the rx-CB carry and the T5 iono deviation carry
+# RS-6a: station-layer memories across the seam (rx-CB carry, T5 deviation carry)
 
 **STATUS**
 
 - **id:** RS-6a
 - **topic:** resume-seam
 - **status:** closed
-- **summary:** the station layer's own memory across the seam — the rx-CB carry and the T5 iono deviation carry
+- **summary:** Both knobs RECOMMEND_SCOPED: the T5 deviation half removes the SH a₀₀ seam transient (+4.62 to +0.43 TECU), the rx-CB half helps modestly; most P8a/P8b bars FAIL.
 - **dates in the text:** 2026-09-12 → 2026-09-13
-- **knobs / posture:** `network.state_snapshot_station_capture`, `network.resume_station_restore`, `network.resume_border_restore`
+- **knobs / posture:** `network.state_snapshot_station_capture` (write, pinned on the goldens of the time, retired 2026-09-15), `network.resume_station_restore` (read, harness-armed; sub-switches `resume_station_restore_rxcb` / `_shdev`), `network.resume_border_restore` (pre-registered here as RS-7); probe `zwd_seam_reseed` off (mixed, not the residual's cause)
 - **hashes named in the text** (commit / exe / byte-cert): `ba6be47`, `a726206`, `cb4fca4`, `87a33bf0`, `545b8bdd2b638231`, `c45e52a0`
 - **run dirs named in the text:** `runs/evseed_field6h_v5`, `runs/evseed_field6h_v5raw`, `runs/evleg_close3_null_main`
-- **source:** `docs/archive/SPEC_event_harness.md` — 21.13, 21.14, 21.15
+- **source:** `docs/archive/SPEC_event_harness.md` §21.13, §21.14, §21.15
+
+**Outcome.** The question: do the two station-layer memories a warm resume restarts cold hold the seam residual left after RS-5? The halves partition cleanly: T5 owns the a₀₀ transient (cold seeds 400 to 50), rx-CB the receiver-clock move at +1 (1.21 to 0.91 m). a₀₀ and the PB wire PASS; raw PB, receiver clocks, code bias, clock contrast, ZWD and consumer code re-references (22, bar 5) FAIL, with the rx-CB gate still at 26 %. RS-7 FALSIFIED the dense-border attribution and RS-9 closed the gate's frame ([RS-7 … RS-9](RS-7-to-RS-9-border-and-rxcb-frame.md)); seams remain an owed add-back under the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

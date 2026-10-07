@@ -25,14 +25,14 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [Q3 ladder](../cards/clock/Q3-FLOOR-GOVERNED-LADDER.md) | the floor-governed ladder — floors derived not tuned, the guard's denominator bisected,… | closed | 2026-08-10 |
-| [Q3 results](../cards/clock/Q3-ANCHOR-RESULTS.md) | G0–G3, the binding knee, the FC-1 shadow-hour table, and the relationship to the surrou… | closed | 2026-08-10 |
-| [Q3 floor](../cards/clock/Q3-PHYSICAL-FLOOR.md) | the physical floor measured — trap 5 resolved, the FC-1 gate retired, the ladder re-sco… | closed | 2026-08-11 |
-| [field wander probe](../cards/clock/FIELD-WANDER-PROBE.md) | the field wire wander is NOT receiver-code-driven; the a-priori CLK common-drift probe … | closed | 2026-08-11 |
-| [Q3 design](../cards/clock/Q3-ANCHOR-DESIGN.md) | the guarded temporal clock anchor — the measured basis, stage A/B design, the empirical… | closed | 2026-08-15 |
-| [Q3 G4](../cards/clock/Q3-G4-SIM-HALF.md) | G4's sim half executed — the anchor truth-graded on the 12 h quiet flagship, and the si… | closed | 2026-09-01 |
-| [CS](../cards/clock/CS-clock-step-signalling.md) | clock step signalling — 0 unsignalled steps, the 55.8 m consumer excursion gone | closed | 2026-09-14 |
-| [Q3-F](../cards/clock/Q3-F-self-contained-time-link.md) | the self-contained clock time-link on the leveling vehicle | open | 2026-09-14 |
+| [Q3 ladder](../cards/clock/Q3-FLOOR-GOVERNED-LADDER.md) | q ladder to 1e-7: producer gates monotone, trip collapse is the denominator, no promotion | closed | 2026-08-10 |
+| [Q3 results](../cards/clock/Q3-ANCHOR-RESULTS.md) | G0 to G2 PASS (σ_w −40 %), knee at q 1.0 to 1.5e-5; FC-1 correlation gate NOT met | closed | 2026-08-10 |
+| [Q3 floor](../cards/clock/Q3-PHYSICAL-FLOOR.md) | physical clock floor: q_phys 2.9e-8 m2/s under a 2.7 mm floor, FC-1 gate retired | closed | 2026-08-11 |
+| [field wander probe](../cards/clock/FIELD-WANDER-PROBE.md) | field wire wander is estimator-internal: not receiver code, not the a-priori clock frame | closed | 2026-08-11 |
+| [Q3 design](../cards/clock/Q3-ANCHOR-DESIGN.md) | guarded temporal clock anchor design: binding carry, residual guard, gates G0 to G4 | closed | 2026-08-15 |
+| [Q3 G4](../cards/clock/Q3-G4-SIM-HALF.md) | sim G4 half: anchor NET-POSITIVE (consumer -23 %), cb error real; q 3e-6 CLOSED on sim | closed | 2026-09-01 |
+| [CS](../cards/clock/CS-clock-step-signalling.md) | clock step test VALIDATED: 0 unsignalled steps > 2 m, consumer 55.8 → 2.7 m at the event | closed | 2026-09-14 |
+| [Q3-F](../cards/clock/Q3-F-self-contained-time-link.md) | anchor at the physical floor (q 2.9e-8) PASSES the code bars; in the re-founding posture | closed | 2026-09-14 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

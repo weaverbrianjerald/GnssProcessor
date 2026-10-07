@@ -1,16 +1,18 @@
-# datum wander — the common level FOLLOWS the datum station — both remedies measured
+# datum wander: the common clock level follows the datum station
 
 **STATUS**
 
 - **id:** datum wander
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the common level FOLLOWS the datum station — both remedies measured
+- **summary:** The fleet-common clock wander follows the datum station's geometry; `clock_datum_sum_to_zero` PASSES its first validation, and a 25° producer mask is REJECTED as the remedy.
 - **dates in the text:** 2026-08-11
-- **knobs / posture:** `network.clock_datum_station`, `network.clock_datum_sum_to_zero`, `processing.elevation_mask_deg`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §9.8, 9.8.1
+- **knobs / posture:** `network.clock_datum_station` (S01 polar vs S26 equatorial), `network.clock_datum_sum_to_zero`, `processing.elevation_mask_deg` (10 vs 25); arms `_simnet50_ga_cd{A,B,C,D}.json` and `cd{E,F}` on the quiet 50-station sim fixture
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md`, §9.8, 9.8.1
+
+**Outcome.** On identical data, moving the datum station from polar to equatorial cuts the common wander 0.193 → 0.024 m and the datum-free contrast 2.2×; the consumer follows the contrast, not the wander, so pivot election is a product-quality decision. Sum-to-zero pins the wire mean exactly (wander 0.036 m at the polar pivot) but does not help the PPP consumer. A 25° mask restores the polar pivot's contrast and costs about 5 m of consumer position. The [ledger](../../CONFIG_promotion_ledger.md) keeps sum-to-zero off: it does not graduate on the field consumer. Owed elsewhere: a re-read of the §9.7.1 vf plateau against cdB-class arms.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

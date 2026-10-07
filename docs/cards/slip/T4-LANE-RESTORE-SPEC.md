@@ -1,16 +1,18 @@
-# T4 lane restore — pend-and-restore v1 (value-only), `network.cycle_slip.relevel_t4_lane_restore` — spec only, not built
+# T4 lane restore: pend-and-restore v1 (value-only), spec only
 
 **STATUS**
 
 - **id:** T4 lane restore
 - **topic:** slip
 - **status:** open
-- **summary:** pend-and-restore v1 (value-only), `network.cycle_slip.relevel_t4_lane_restore` — spec only, not built
+- **summary:** Specified 2026-08-23, NOT BUILT: one epoch after a T4 erase, restore the pre-erase carried value where the lane observatory's δ corroborates the lane survived; sim-first gates G0 to G6.
 - **dates in the text:** 2026-08-23
-- **knobs / posture:** `network.cycle_slip.relevel_t4_lane_restore`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_lane_slip_response.md` — §8
+- **knobs / posture:** `network.cycle_slip.relevel_t4_lane_restore` (default OFF, conditionally fingerprinted; rider on `relevel_lane_snap`, requires `phase_leveling` and `relevel_free_epoch`)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_lane_slip_response.md` §8
+
+**Outcome.** The card specifies how to recover the one piece of information a T4 refloat discards, the arc's pre-erase carry, after the decide-time keep-gates were FALSIFIED below refloat-always. The erase stands; one epoch later the pre-erase value returns, at variance max(pre, free), only where δ is within min(2σ_null(el), 1.0 cyc) and the MW, GF and per-band checks pass. A breach of G2 (settled sim EWL at-own-integer must exceed refloat-always's 70.2 %) or G5 closes it DO-NOT-PROMOTE in favour of the 8(b) displacement drain. Not built ([OPEN_ITEMS](../../status/OPEN_ITEMS.md) section D); the re-founding has since cut lanes from scope ([slip topic](../../topics/slip.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

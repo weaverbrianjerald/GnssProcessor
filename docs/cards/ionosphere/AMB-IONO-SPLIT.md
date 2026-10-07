@@ -1,16 +1,18 @@
-# AMB-IONO — why the network producer never reaches per-band integers on the quiet sim bed — the five measurements, the mechanism, the falsified list and the fix ladder
+# AMB-IONO: the ambiguity/iono split over-count on the quiet sim bed
 
 **STATUS**
 
 - **id:** AMB-IONO
 - **topic:** ionosphere
 - **status:** open
-- **summary:** why the network producer never reaches per-band integers on the quiet sim bed — the five measurements, the mechanism, the falsified list and the fix ladder
-- **dates in the text:** 2026-07-30 → 2026-09-04
-- **knobs / posture:** `network.phase_leveling_los_scale`, `network.phase_leveling_local_block`, `processing.max_duration_s`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/camp60wu_quiet24h_sticky`, `runs/nonint_los3h`, `runs/nonint_`, `runs/simnet60_quiet_wu93_24h`, `runs/nonint_losblock3h`, `runs/nonint_base3h_f3exe`, `runs/nonint_base3h`, `runs/nonint_base3h_f1exe`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — (preamble), §0, §1, §2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, §3, 3.1, §4, §5, 5.1, §8
+- **summary:** The diagonal leveling carry re-asserts each LOS's iono direction once per band (B_fit 3.00), freezing the ambiguity level; F3's station block VALIDATED at 3 h (sim, L1C 0.217 cyc).
+- **dates in the text:** 2026-07-30 to 2026-09-04
+- **knobs / posture:** `network.phase_leveling_los_scale` (F1, BUILT and VALIDATED sim 3 h, default OFF), `network.phase_leveling_local_block` (F3, BUILT and VALIDATED sim 3 h, default OFF, fingerprinted); F2 (per-LOS block) RETIRED; 3 h arms set `processing.max_duration_s` 10800; bed posture: `phase_leveling` on, free per-LOS slant iono, FLOAT only
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** `runs/camp60wu_quiet24h_sticky` (24 h bed), `runs/simnet60_quiet_wu93_24h` (fixture), `runs/nonint_base3h`, `runs/nonint_los3h` (F1), `runs/nonint_losblock3h` (F3), `runs/nonint_base3h_f1exe` and `runs/nonint_base3h_f3exe` (OFF twins), `runs/nonint_*` (round-2 arms)
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` (preamble), §0, §1, §2 (2.1 to 2.7), §3, §3.1, §4, §5, §5.1, §8
+
+**Outcome.** The question: why a zero-slip 24 h sim bed never gives per-band integers (settled L1C med|e| 2.87 cyc). The DD ambiguity error is the DD of the per-LOS slant-iono error; responses, multipath, the grader and the seeds are FALSIFIED as causes. At 24 h F3 MISSED its pre-registered settled bar as traced (0.425 against 0.14 to 0.15 cyc, [F3 24 h](../ionosphere/AMB-IONO-F3-24H.md)); the episodes behind the miss were the DD trace's reference satellite ([DD-REF](../sim-bed/DD-TRACE-REF-SAT.md)). Owed work: [AMB-IONO open](../ionosphere/AMB-IONO-OPEN-QUESTIONS.md); F3's joint block now defines the float vehicle ([RF-1 design](../../refound/RF-1_float_ambiguities_design.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

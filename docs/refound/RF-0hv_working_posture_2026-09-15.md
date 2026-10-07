@@ -1,6 +1,20 @@
-# RF-0hv — the WORKING POSTURE for vehicle development, and the harvest-era knob refused on it (2026-09-15)
+# RF-0hv: the working posture for vehicle development (2026-09-15)
 
-**STATUS:** open — **the author deferred the golden re-base, one critical run was spent, and it came back a clean NO.**  RF-PD-fix
+**STATUS**
+
+- **id:** RF-0hv
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** `phase_leveling_warmup_epochs: 76` REFUSED on the float vehicle (IF-dispersion p90 0.201 to 10.908 m); the working posture is RF-0g + the float vehicle + `station_prior_before_pd` at warm-up 6.
+- **dates in the text:** 2026-09-15; 2026-09-19 (section 8); 2026-09-20 (section 9)
+- **knobs / posture:** `network.phase_leveling_warmup_epochs` (76 refused, loader default 6); `network.station_prior_before_pd`; the float vehicle (`ambiguity_vehicle: float_kf`, `phase_datum_held_basis`, RF-2d release / mark); working bases `config/refound/{field,sim}_gps_dual_rf0hv.json`; adopted later: `closed_loop.pb_step_translate`, `closed_loop.amb_level_check`, `trace_consumer_sat` (section 8), `emit_pb_hold` (section 9)
+- **hashes named in the text:** exe `gnss_processor_rf0hv.exe` sha256[:16] `14578F851F0C22EC`; `gnss_processor_rf0hv2.exe` (`A3D62A242C04E545...`, source `e437b6b`); `gnss_processor_pbh1.exe` (`F1D3BDDB...`); branch `wip/alc2-restart-policy` (`f2b0325`, unmerged)
+- **run dirs named in the text:** `runs/_rf0hv_field6_both` (the one run); baseline pairs `runs/_rfpdfix_field6_both` / `runs/_rfpdfix_sim6_both`, then `runs/_rf0hv2_field6` / `runs/_rf0hv2_sim6`, then `runs/_rf0hv3_{field,sim}6`
+- **source:** the author's decision of 2026-09-15 (section 1); [RF-IGN](RF-IGN_ignition_born_levels_2026-09-15.md) (the knob); [RF-PD-fix](RF-PD-fix_station_prior_before_pd_2026-09-15.md) (the cured bed)
+
+**Outcome.** The question: does RF-IGN's harvest-era knob belong in the float vehicle's working posture. One run, one knob: the consumer is worse in all six hours (hour 5 0.45 to 15.40 m) and unsignalled clock steps go 0 to 9, so the frozen rule FAILS on every clause. The card also marks every RF number before `station_prior_before_pd` as an amputated-solve number. The golden re-base it deferred was done on 2026-09-22 ([GRB](GRB_golden_rebase_2026-09-22.md)); its other open items sit with [RF-IGN](RF-IGN_ignition_born_levels_2026-09-15.md), [RF-PD-fix](RF-PD-fix_station_prior_before_pd_2026-09-15.md), [EV6](EV6_hour6_decouple_event_2026-09-15.md), RF-2c and [RF-3](RF-3_code_row_qc_2026-09-22.md). Sections 8 and 9 re-based the section 5 baseline pair; the current pair is `runs/_rf0hv14_{field,sim}6` ([EXL](EXL_exact_update_lah_promotion_2026-10-01.md)).
+
+**Status as recorded (2026-09-15):** open — **the author deferred the golden re-base, one critical run was spent, and it came back a clean NO.**  RF-PD-fix
 (`network.station_prior_before_pd`) cured the per-station PD amputation on all four beds and RF-IGN then showed that the cure's cost on
 the LEVELING vehicle is invariant #1 — zero-q levels born at emitted epoch 7 out of a cold network — with
 `network.phase_leveling_warmup_epochs: 76` recovering 85–95 % of the hour-3/4/5 loss.  The one open question for the FLOAT vehicle was

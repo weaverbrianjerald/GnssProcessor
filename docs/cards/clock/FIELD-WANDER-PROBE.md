@@ -1,16 +1,18 @@
-# field wander probe — the field wire wander is NOT receiver-code-driven; the a-priori CLK common-drift probe exonerates the product frame
+# field wander probe: the field wire wander is estimator-internal
 
 **STATUS**
 
 - **id:** field wander probe
 - **topic:** clock
 - **status:** closed
-- **summary:** the field wire wander is NOT receiver-code-driven; the a-priori CLK common-drift probe exonerates the product frame
+- **summary:** The field wire wander (1.3 m detrended) is NOT receiver-code-driven and NOT the a-priori clock product's drift; with slips, datum geometry and tropo also excluded, it is ESTIMATOR-INTERNAL.
 - **dates in the text:** 2026-08-11
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** none (trace probes on the CB-Q 12 h control: FT63 lineage, W6+SH posture, datum MBAR00UGA)
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/cbq_12h_ctl`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §9.9, 9.9.1
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §9.9, §9.9.1
+
+**Outcome.** The probe asked whether the field wire's common-level wander is driven by a receiver's code errors or by the a-priori clock product. Neither: every station's corr(dw, dmp), the datum station MBAR's included, sits at the noise floor (max |r| 0.053), and the COD CLK's −4.089 m/h common drift is not inherited (detrended slope −0.014). The wander is the LEVEL channel's clock, code-bias and ionosphere common-direction exchange. Caveat: the increment probe covers the 30 s channel only, so an hours-scale driver needs a level-domain instrument.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

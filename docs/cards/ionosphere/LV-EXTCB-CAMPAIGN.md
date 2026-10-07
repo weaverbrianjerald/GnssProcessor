@@ -1,16 +1,18 @@
-# EXT-CB arms 1–36 — the EXT-CB campaign record, arms 1–36 — root cause, the fix, and the L2-ESCAPE
+# EXT-CB arms 1–36: campaign record, root cause, fix and the L2-ESCAPE
 
 **STATUS**
 
 - **id:** EXT-CB arms 1–36
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the EXT-CB campaign record, arms 1–36 — root cause, the fix, and the L2-ESCAPE
+- **summary:** The 19 TECU level defect decomposes into a receiver GF-bias CONVENTION offset (fleet mean ≈ −5 ns against the zero-mean rx datum), an ignition transient and a tracking question; keepers LV-4 and LV-5.
 - **dates in the text:** 2024-05-08 → 2026-08-15
-- **knobs / posture:** `network.external_sat_code_bias`, `network.clock_datum_broadcast_anchored`, `network.rx_code_bias_datum`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 29, 29.1, 29.2, 29.3, 29.4, 29.5, 29.6, 29.7, 29.8
+- **knobs / posture:** `network.external_sat_code_bias`, `network.clock_datum_broadcast_anchored`, `network.rx_code_bias_datum`; canonical EXT-CB posture = single-layer deg-8 + a₀₀ GIM anchor (32.24 ± 2) + `rx_code_bias_datum`
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none (arms are named by config, for example `_ext63_gps_dual_20ep_a00gim.json`)
+- **source:** `docs/archive/SPEC_level_information_budget.md` §29 (29.1, 29.2, 29.3, 29.4, 29.5, 29.6, 29.7, 29.8), absorbed from `docs/attic/HANDOFF_ext_cb_iono_level.md`
+
+**Outcome.** The campaign swapped satellite parameters for COD products one family at a time to isolate the network's failures. DEFECT 1 (no anchor on the rx-DCB common mode) was fixed by `rx_code_bias_datum`, and ten hypotheses were ELIMINATED (§29.4). Arm 9's a₀₀ GIM anchor confirmed the root cause by response, but the tension escaped into the unanchored layer-2 level (L2 a₀₀ −15.9 → −32.8); pinning layer 2, then dropping it, gave the canonical posture. Arm 14 exposed the rx-CB carry as an accidental crutch. The §29.8 receiver-OSB parser defect was later fixed, still unconsumed ([ledger](../../CONFIG_promotion_ledger.md) §A2 F14).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

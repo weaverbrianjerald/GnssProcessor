@@ -5,11 +5,13 @@
 - **id:** GRS
 - **topic:** slip
 - **status:** open
-- **summary:** Build card, pre-registered 2026-09-20. The only response that covers a return epoch keeps its history per (station, satellite); a loss of lock on the primary-pair phases during which another signal (band 5, a fallback signal) keeps the satellite present is therefore never a re-entry, and the slipped ambiguities are folded. This is how GPS L5 damages the L1/L2 wire on the field (AB2 sections 10 to 12) and it is a defect of the dual posture too. The build keys the re-entry on the signal.
+- **summary:** BUILT and ARMED 2026-09-20: the per-signal gap re-entry rider repairs the sim fault completely and passes B2, B3 and the 12 h dual arm; the field triple bar B1 FAILS.
 - **source:** [AB2](AB2_l5_third_frequency_2026-09-20.md) sections 10 to 12; `docs/SPEC_slip_qc_hardening.md` card G (the instrument and the satellite-level response); standing invariants 1, 4, 6, 7
 - **knobs / posture:** new `network.cycle_slip.gap_reentry_per_signal` (default false), rider of `network.cycle_slip.gap_reentry_relevel`; RF-0hv working bases, dual and triple
 - **dates in the text:** 2026-09-20
-- **hashes / run dirs:** evidence arms `runs/_rap_{dC_gapre,fM_gapre,dD_holes_gapre,fN_holes_gapre}`; sim fault arms `runs/_rap_{sI_ds_dual_off,sJ_ds_dual_on,sK_ds_tri_off,sL_ds_tri_on}`
+- **hashes / run dirs:** build main `9edc0ea`, exe `gnss_processor_grs.exe`; evidence arms `runs/_rap_{dC_gapre,fM_gapre,dD_holes_gapre,fN_holes_gapre}`; sim fault arms `runs/_rap_{sI_ds_dual_off,sJ_ds_dual_on,sK_ds_tri_off,sL_ds_tri_on}`
+
+**Outcome.** The card asked whether a re-entry keyed on the signal catches a primary-pair loss of lock while band 5 or a fallback signal tracks through. It does: field dual `T4_attrib` 228 to 92, the sim fault's clock wire 0.0670 to 0.0030 m. B1 misses on the consumer (6 epochs below a decimetre against 250) and is superseded as a question by the latch of [CSL](CSL_canonical_signal_latch_2026-09-20.md); section 8 withdraws the emulation attributions. Pinned in the goldens by [GRB](GRB_golden_rebase_2026-09-22.md), ledger RECOMMEND_SCOPED; still owed: a reading of the rider-only drop in epochs below a decimetre, 203 to 162 ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)).
 
 ## 1. The defect
 

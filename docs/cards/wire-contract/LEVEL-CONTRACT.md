@@ -1,16 +1,18 @@
-# LV-3 contract — the normative contract for the ionosphere LEVEL and receiver-DCB frame of the emitted products
+# LV-3 contract: the ionosphere level and receiver-DCB frame of the products
 
 **STATUS**
 
 - **id:** LV-3 contract
 - **topic:** wire-contract
 - **status:** closed
-- **summary:** the normative contract for the ionosphere LEVEL and receiver-DCB frame of the emitted products
-- **dates in the text:** 2026-08-01 → 2026-08-15
+- **summary:** A normative contract with no code change: the W6 sum-to-zero owns the level when self-contained, the per-epoch a00 GIM anchor under EXT-CB; the LV-1/2/4/5 EXT-CB declaration is SUPERSEDED.
+- **dates in the text:** 2026-08-01 to 2026-08-15
 - **knobs / posture:** `network.estimate_sat_code_bias`, `network.external_sat_code_bias`, `network.rx_code_bias_datum`, `estimation.global_vtec_sh.mean_vtec_prior_tecu`, `network.iono_seed_field_frame`, `network.rx_cb_carry_step_gate`, `network.rx_cb_harvest_demean`, `network.a00_prior_from_brdc`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 30, 30.1, 30.2, 30.3, 30.4, 30.5, 30.6, 30.7
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_level_information_budget.md`: §30, §30.1, §30.2, §30.3, §30.4, §30.5, §30.6, §30.7
+
+**Outcome.** The question was which design element owns the confounded ionosphere level and receiver-DCB common mode in each posture. The rx-CB carry dominates that direction (about 100 information units against 0.25 for the a00 anchor) as memory, not a datum; the zero-mean receiver datum alone pins the level low by the receiver-bias mean (11 to 15 TECU). The claim that the seed stops reaching the level once LV-4 is armed was FALSIFIED (LV-1 acts through x_lin(cb)). The consumer tokens moved, unbuilt, to `SPEC_product_cbpin_contract.md` §6.6. The re-founded goldens run with no SH and no GIM, GF code biases pinned at broadcast T_GD ([RF-3-prep](../../refound/RF-3-prep_golden_rebase_2026-09-15.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

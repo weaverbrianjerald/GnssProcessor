@@ -5,11 +5,13 @@
 - **id:** CSL
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Pre-registered 2026-09-20. The producer decides each station's canonical signal per band from the satellite count of the first processed epoch, which prefers a civil signal whenever one satellite lacks the semi-codeless pair at that epoch. With every station forced onto its priority-first signal (RINEX op `primaryonly`, nothing else changed) the dual field consumer goes from 162 to 601 epochs below a decimetre of 720 in 6 h and from 275 to 983 of 1440 in 12 h. The mechanism is unread. The card builds the decision rule behind a knob so that it can be graded without editing observation files.
+- **summary:** ARMED 2026-09-20 (`processing.canonical_signal_rule: priority`): the dual field consumer goes from 162 to 603 epochs below a decimetre; the mechanism, a station subset, is unread.
 - **source:** [CPA](CPA_canonical_pair_admission_2026-09-20.md) section 5 (where the lever was separated from the admission rule); [GRS](GRS_gap_reentry_per_signal_2026-09-20.md) section 8
-- **knobs / posture:** new `processing.canonical_signal_rule` (`count`, the default and today's behaviour, or `priority`) with `processing.canonical_signal_min_coverage` (default 0.5); RF-0hv working bases with the per-signal rider
-- **dates in the text:** 2026-09-20
-- **hashes / run dirs:** `runs/_rap_{gD_dual,cD_dual_primoff,kA_six,kB_seven,kC_consL1C,hD_tri_noalt,d12_grs,d12_prim}`
+- **knobs / posture:** new `processing.canonical_signal_rule` (`count`, the default and today's behaviour, or `priority`) with `processing.canonical_signal_min_coverage` (default 0.5); RF-0hv working bases with the per-signal rider; the emulation it replaces is RINEX op `primaryonly`; later builds `processing.canonical_signal_priority_stations` (CSL-2) and `processing.canonical_signal_code_follows_phase` (CSL-3), not armed
+- **dates in the text:** 2026-09-20, 2026-09-21
+- **hashes / run dirs:** `runs/_rap_{gD_dual,cD_dual_primoff,kA_six,kB_seven,kC_consL1C,hD_tri_noalt,d12_grs,d12_prim}`; armed baseline pair `runs/_rf0hv5_{field,sim}6`; exe `gnss_processor_csl.exe`
+
+**Outcome.** The card asks whether a priority rule should replace the first-epoch satellite count that latches each station's canonical signal. CSL-1 passes G0, G1, B1, B3 and B4 and splits B2 (994 of 1440 epochs at 12 h, hour 12 over its bar); the consumer gain is complete with four of the six stations moved to L1W. The rule is pinned in the goldens ([GRB](GRB_golden_rebase_2026-09-22.md)). The code half (CSL-3) is NOT recommended and its coverage gap went to [SCC](SCC_second_code_channel_2026-09-21.md); [MSC](MSC_multi_site_consumer_2026-09-21.md) grades the latch MIXED across 16 sites. Owed: the mechanism and the four-station split.
 
 ## 1. What is known (every number re-read from the run directories)
 

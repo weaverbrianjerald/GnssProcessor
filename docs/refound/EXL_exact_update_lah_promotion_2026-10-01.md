@@ -1,15 +1,17 @@
-# EXL: card CTU's exact coupling update armed with card LAH's phase-clock hold (the promotion)
+# EXL: the exact coupling update armed with the phase-clock hold
 
 **STATUS**
 
 - **id:** EXL
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** ARMED 2026-10-01 (sections 4 and 5): every gate passed (G1 and G2 on the sim from 00:30:15 by the fixture-start convention; the field census at its limit, ARHT00ATA and KOKB00USA worse); four ledger rows (A15), the goldens regenerated, baseline pair `runs/_rf0hv14_{field,sim}6` (field WTZZ00DEU 0.108 0.024 0.016 0.020 0.030 0.026 m by hour; census medians better in every hour on both beds). The pre-commit review found the switch-on resume ungated; it is now behind the default-off `network.ctu_switch_on_resume`, so the armed knobs are fresh convergence only. PRE-REGISTERED 2026-10-01 (the author's decision after cards LGM and AIL: arm card CTU's exact update on the goldens, keep card LGM's nuisance state off; then, on fresh evidence that the exact update cannot ship with the goldens' plain phase-bias hold, arm it together with card LAH's phase-clock hold as an interim hold for the precise a-priori-clock posture, with card CTU's failing gates G4 and G8 re-stated as relative and G5 disclosed). Five solve knobs (the exact update and its four measured companions) and one emit knob (the hold), by the promotion path of card WUP; gates in section 3.
+- **summary:** ARMED: every gate passed (the field census at its limit, ARHT00ATA and KOKB00USA worse); ledger A15, the goldens regenerated, baseline pair `runs/_rf0hv14_{field,sim}6`; fresh convergence only.
 - **source:** [CTU](CTU_coupling_time_update_2026-09-28.md) sections 6, 10, 13 and 14; [CTU2](CTU2_level_recursion_followup_2026-09-29.md) sections 2 to 9 and 12; [LAH](LAH_level_aware_hold_2026-09-29.md); [AIL](AIL_ambiguity_information_loss_2026-10-01.md) section 4; [LGM](LGM_los_phase_nuisance_2026-10-01.md) section 5.3; [WUP](WUP_windup_accumulated_promotion_2026-10-01.md) (the promotion template); [SMH](SMH_smoothed_hold_clone_2026-09-29.md) section 9 (the fold kappa default)
-- **knobs / posture:** `network.carry_coupling_exact_update`, `network.carry_rx_code_bias_in_block`, `network.amb_float_drop_decouple_always`, `network.clock_anchor_guard_space` phase, `network.rank_gate_tol` 1e-11, `network.emit_pb_hold_phase_clock`; NOT armed: the smoothed holds, the monitors, `network.carry_coupling_exact_cross`, `network.clock_level_bound_raise`, `network.phase_colour_state`
+- **knobs / posture:** `network.carry_coupling_exact_update`, `network.carry_rx_code_bias_in_block`, `network.amb_float_drop_decouple_always`, `network.clock_anchor_guard_space` phase, `network.rank_gate_tol` 1e-11, `network.emit_pb_hold_phase_clock`; new, default off: `network.ctu_switch_on_resume` (the switch-on resume); NOT armed: the smoothed holds, the monitors, `network.carry_coupling_exact_cross`, `network.clock_level_bound_raise`, `network.phase_colour_state`
 - **dates in the text:** 2026-10-01
-- **hashes / run dirs:** exe `gnss_processor_ctua.exe` (main `3c2969e`, sha256[:16] `7e8196a64cdc3b5c`) for the 2 h evidence of section 2; the gate exe is named in section 4; arms `runs/_rap_ctx_*`, `runs/_rap_exl_*`
+- **hashes / run dirs:** exe `gnss_processor_ctua.exe` (main `3c2969e`, sha256[:16] `7e8196a64cdc3b5c`) for the 2 h evidence of section 2; the gate exe `gnss_processor_exl.exe` (main `cf1c20a`, `c56d9a9ad4cdafc3`); the review fix `gnss_processor_exl2.exe` (`45183c6e51e9c729`); arms `runs/_rap_ctx_*`, `runs/_rap_exl_*`, `runs/_rap_exl2_*`; baseline pair `runs/_rf0hv14_{field,sim}6`
+
+**Outcome.** Question: how to ship card CTU's exact update on the goldens when, under the plain hold, it leaves the field consumer at 3.878 m in hour 1. Answer: with card LAH's phase-clock hold as an interim hold (field WTZZ00DEU 0.108 m in hour 1, control 0.559). The sim is graded from 00:30:15. Owed at promotion: card LAH's regressions, the hold's need for a precise a priori clock, the mirror's handover epoch, the sim golden's start. [PRM](PRM_parameter_registry_2026-09-29.md) section 15 retired the mirror; [SCL](SCL_self_contained_clock_level_2026-10-03.md) and [NBP](NBP_native_broadcast_clock_posture_2026-10-07.md) pursue a producer without that clock.
 
 ## 1. Why
 

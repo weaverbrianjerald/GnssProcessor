@@ -1,16 +1,18 @@
-# IF-TD ref gate (v2) — abstain while cold, normalize the bar by the reference's elevation, and close the gating leak
+# IF-TD ref gate (v2): warm-up abstain, elevation-normalized bar, gating leak
 
 **STATUS**
 
 - **id:** IF-TD ref gate (v2)
 - **topic:** slip
 - **status:** closed
-- **summary:** abstain while cold, normalize the bar by the reference's elevation, and close the gating leak
+- **summary:** On a slip-free bed warm-up abstention removes all 118 cold-era fires and the elevation-normalized bar adds 2; both knobs filed UNVALIDATED (elev_norm: DO NOT ARM) pending a fault arm.
 - **dates in the text:** 2026-09-09
 - **knobs / posture:** `network.cycle_slip.if_phase_td_ref_warmup_abstain`, `network.cycle_slip.if_phase_td_ref_elev_norm`
 - **hashes named in the text** (commit / exe / byte-cert): `2456cdfa`
 - **run dirs named in the text:** `runs/ifsc_new`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.14.6, 6.14.6.1, 6.14.6.2, 6.14.6.3, 6.14.6.4, 6.14.6.5, 6.14.6.6
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md`: §6.14.6, 6.14.6.1, 6.14.6.2, 6.14.6.3, 6.14.6.4, 6.14.6.5, 6.14.6.6
+
+**Outcome.** Four follow-ups to [IF-TD ref gate](IFTD-REF-GATE.md). The gating leak is fixed; the nuisance gate is built with its feed deferred, and the floor_frac card is pre-registered. In the three-arm A/B the OFF control is byte-identical; abstention removes only unactionable diagnostic fires (the acting path was already 0 under Card R), and elev_norm moves in its pre-registered, more sensitive direction at a net cost on this bed. A 0-slip bed cannot test detection power, so the [ledger](../../CONFIG_promotion_ledger.md) files both knobs UNVALIDATED, blocked on the §6.14.6.4 fault arm.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

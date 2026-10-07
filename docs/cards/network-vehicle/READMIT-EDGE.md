@@ -1,16 +1,18 @@
-# READMIT — the re-admission edge — `readmit_seed_horizon_s` promoted, the coupling-marginalize and handover-ratio halves KEEP_OFF
+# READMIT: the satellite re-admission edge
 
 **STATUS**
 
 - **id:** READMIT
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the re-admission edge — `readmit_seed_horizon_s` promoted, the coupling-marginalize and handover-ratio halves KEEP_OFF
+- **summary:** `readmit_seed_horizon_s` (clock plus code-bias seeds) PROMOTED as the T3 clock-tail fix; the re-coupling window, the handover variance ratio and both F3 age-gate modes KEEP_OFF.
 - **dates in the text:** 2026-09-05 → 2026-09-06
-- **knobs / posture:** `network.readmit_seed_horizon_s`, `network.readmit_coupling_marg_ep`, `network.phase_datum_handover_max_var_ratio`, `network.phase_leveling_local_block_min_age_ep`, `network.phase_leveling_local_block_young_mode`
-- **hashes named in the text** (commit / exe / byte-cert): `808a0f91addee887`, `808a0f91`, `b7cea2adc8fc6fb6`
-- **run dirs named in the text:** `runs/nonint_losblock3h_hv`, `runs/nonint_losblock24h_hv`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.10, §6.11
+- **knobs / posture:** `network.readmit_seed_horizon_s` (3900 s, RECOMMEND_SCOPED), `network.readmit_seed_code_bias` (default true, RECOMMEND_SCOPED), `network.readmit_coupling_marg_ep`, `network.phase_datum_handover_max_var_ratio`, `network.phase_leveling_local_block_min_age_ep` (all three KEEP_OFF), the last with its sub-mode `network.phase_leveling_local_block_young_mode` (`free` default, `diagonal` measured harmful)
+- **hashes named in the text** (commit / exe / byte-cert): `gnss_processor_readmit.exe` `808a0f91addee887`, `808a0f91`; OFF-path `products.txt` `b7cea2adc8fc6fb6`
+- **run dirs named in the text:** `runs/nonint_losblock3h_hv`, `runs/nonint_losblock24h_hv` (bases); arms `readmit_off3h`, `ratio3h`, `readmit24h_e2`, `readmit24h_e2clk`, `readmit8h_young`, `readmit8h_youngfree`, `cplreg_q12warm_d`
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` §6.10, §6.11
+
+**Outcome.** The question: does a satellite's eclipse return explain the T3 clock tails, the F3 post-eclipse DD episodes and a seam residual. Seeding the parked clock and code-bias carry cut the T3 tails (G25 6.27 to 1.69 m) and was inert on the seam consumer; a clock-only seed was FALSIFIED. The settled DD bar (0.2 cyc) was MISSED at 0.420 cyc; the DD episodes were the trace's reference satellite returning ([DD-TRACE-REF-SAT](../sim-bed/DD-TRACE-REF-SAT.md)). 3900 s stays armed in `config/golden/golden_{field,sim}_refound.json`; [PIVOT-DEPARTURE](../network-vehicle/PIVOT-DEPARTURE.md) later stopped parked entries being dropped at another constellation's datum change.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

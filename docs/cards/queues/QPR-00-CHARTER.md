@@ -1,16 +1,18 @@
-# QPR — the charter — why this queue exists, how an item enters and leaves it, and the rank order
+# QPR: the principled-replacement queue, its charter and build order
 
 **STATUS**
 
 - **id:** QPR
 - **topic:** queues
 - **status:** open
-- **summary:** the charter — why this queue exists, how an item enters and leaves it, and the rank order
+- **summary:** Charter and build order of the principled-replacement queue (fifth ranking, 2026-08-20); the order is superseded for the network producer by the 2026-09-14 re-founding.
 - **dates in the text:** 2026-08-05 → 2026-08-21
 - **knobs / posture:** `network.cycle_slip.relevel_free_epoch`
 - **hashes named in the text** (commit / exe / byte-cert): `ca19d0d`, `353f99f`, `58f650c`
 - **run dirs named in the text:** `runs/inj_weab_`, `runs/pareref_on`
-- **source:** `docs/archive/QUEUE_principled_replacements.md` — (preamble)
+- **source:** `docs/archive/QUEUE_principled_replacements.md`, the preamble
+
+**Outcome.** The charter ranks the symptom-level patches that have a known principled replacement and sets the order to build them. Its fifth ranking put item 9, the slip re-level walk, first; executed on 2026-08-20, the walk is dead under `network.cycle_slip.relevel_free_epoch` (ZWD hourly rms flat at 2.3 to 3.1 m). R0 and 1(d) were validated on 2026-08-14; 8(b) was FALSIFIED and the 8-family closed on 2026-08-21. Since 2026-09-14 the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) sets the order of work on the network producer ([queues topic](../../topics/queues.md)); the items remain statements of defects.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

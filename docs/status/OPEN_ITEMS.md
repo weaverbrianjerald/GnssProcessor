@@ -33,34 +33,25 @@ the entry point to the register; new section A rows are added to the current-pro
 
 ## B. Open cards
 
-Every card whose STATUS block says `status: open`. Twenty-four at the time of writing.
+Every card whose STATUS block says `status: open`. Twenty-four at the time of writing (2026-09-14); 13 on 2026-10-07.
 
 | topic | card | what is open | source section |
 | --- | --- | --- | --- |
-| `clock` | [Q3-F](../cards/clock/Q3-F-self-contained-time-link.md) | the self-contained clock time-link on the leveling vehicle | `SPEC_event_harness.md` — 24.16 |
 | `consumer` | [CI](../cards/consumer/CI-consumer-instrument.md) | the closed-loop consumer as an INSTRUMENT — what the consumer bars have actually been reading, and the attribution legs | `SPEC_event_harness.md` — 24, 24.1, 24.2, 24.3 |
-| `harness` | [DEC-field-vehicle](../decisions/DEC-field-vehicle-posture.md) | the field vehicle posture decision and the closing legs | `SPEC_event_harness.md` — 24.17 |
 | `ionosphere` | [AMB-IONO](../cards/ionosphere/AMB-IONO-SPLIT.md) | why the network producer never reaches per-band integers on the quiet sim bed — the five measurements, the mechanism, the falsified list and the fix ladder | `SPEC_amb_iono_split_overcount.md` — (preamble), §0, §1, §2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, §3, 3.1, §4, §5, 5.1, §8 |
 | `ionosphere` | [AMB-IONO open](../cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | the open-question register — re-cut round 2, with the round-4 closures and items 15–21 | `SPEC_amb_iono_split_overcount.md` — §7 |
-| `ionosphere` | [LV roadmap](../cards/ionosphere/LV-ROADMAP.md) | the continuing session's roadmap, and its refresh at hand-back | `SPEC_level_information_budget.md` — 17, 27 |
-| `ionosphere` | [LV-SEED](../cards/ionosphere/LV-SEED-per-los-level.md) | where the remaining per-LOS level is born — R1–R9 pre-registered reads | `SPEC_event_harness.md` — 24.13, 24.15 |
-| `network-vehicle` | [CE](../cards/network-vehicle/CE-chain-era-bisect.md) | the CHAIN-ERA bisect on the leveling vehicle | `SPEC_event_harness.md` — 24.14 |
-| `network-vehicle` | [CM2](../cards/network-vehicle/CM2-leveling-vehicle.md) | the second defect — the CM knob arms on the LEVELING vehicle | `SPEC_event_harness.md` — 24.12 |
-| `network-vehicle` | [PV](../cards/network-vehicle/PV-vehicle-test.md) | the VEHICLE test — carry_invariant vs leveling, pre-registered | `SPEC_event_harness.md` — 24.11 |
-| `network-vehicle` | [ZP](../cards/network-vehicle/ZP-station-block-parameterization.md) | the station block's parameterization at ignition — pre-registered | `SPEC_event_harness.md` — 24.10 |
 | `queues` | [QPR](../cards/queues/QPR-00-CHARTER.md) | the charter — why this queue exists, how an item enters and leaves it, and the rank order | `QUEUE_principled_replacements.md` — (preamble) |
 | `queues` | [QPR 0–3](../cards/queues/QPR-ITEMS-0-3.md) | items 0–3: the pin bridge, the S-transform re-reference family, datum-station election by criterion, and the clock's re-realization-free posture | `QUEUE_principled_replacements.md` — 0, 1, 2, 3 |
 | `queues` | [QPR 4](../cards/queues/QPR-ITEM-4-T3-NULLS.md) | item 4: T3-class test statistics — correct nulls, not recalibrated constants | `QUEUE_principled_replacements.md` — 4 |
 | `queues` | [QPR 5–8](../cards/queues/QPR-ITEMS-5-8.md) | items 5–8: the level contract, the half-epoch back-off ritual, the SH health-gate release policy, and the per-LOS ionosphere representation | `QUEUE_principled_replacements.md` — 5, 6, 7, 8 |
 | `queues` | [QPR blocked](../cards/queues/QPR-BLOCKED-AND-CLOSED.md) | blocked on root cause, leave-alone (falsified or decided), and the queue's maintenance rule | `QUEUE_principled_replacements.md` — (see body) |
 | `raim-qc` | [DEC-day129-gate-policy](../decisions/DEC-day129-gate-policy.md) | the gate-policy ruling — DEGRADE, DO NOT WITHHOLD; the statistic; the CB-excursion resume window; the validation gates; and the un-derived grace-floor magnitude | `SPEC_day129_frame_guards.md` — D, E1, E2, E3, E4 |
-| `raim-qc` | [GL](../cards/raim-qc/GL-gross-los-screen.md) | the gross line-of-sight screen | `SPEC_event_harness.md` — 24.18 |
-| `raim-qc` | [GL-2 + R8](../cards/raim-qc/GL-2-whole-satellite-standdown.md) | the whole-satellite stand-down, and R8 — the bulk drift's channel | `SPEC_event_harness.md` — 24.19 |
 | `slip` | [REF-FAN](../cards/slip/REF-FAN.md) | the reference-slip fan-out under `if_phase_td_pairs = all` — RECOMMEND_SCOPED, the field pin still owed | `SPEC_event_harness.md` — 22.6, 22.7 |
 | `slip` | [T4 lane restore](../cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore v1 (value-only), `network.cycle_slip.relevel_t4_lane_restore` — spec only, not built | `SPEC_lane_slip_response.md` — §8 |
 | `slip` | [rung 3](../cards/slip/LANE-SNAP-RUNG3.md) | the lane-preserving snap — v1/v2 falsified, the SEED SITE deleted as an exact solve no-op, and the v3 carry-domain observatory through its field arm | `SPEC_lane_slip_response.md` — §6, §7, §7.1, §7.2, §7.3, §7.4, §7.5, §7.6, §7.7, §7.8 |
-| `slip` | [wind-up census](../cards/slip/WINDUP-FRACTIONAL-CENSUS.md) | the fractional-mode census — the two continuity horizons are INVERTED, `trace_windup_census`, and the restart response built default-OFF | `SPEC_phase_windup_sign.md` — §10, §10.1, §10.2, §10.3, §10.4, §10.5, §11 |
 | `wire-contract` | [level health](../cards/wire-contract/LEVEL-HEALTH-CHANNEL.md) | `network.emit_level_health` — the contract gap, the one-channel three-class mechanism, and the normative consumer contract | `SPEC_withhold_era_release.md` — §12, §12.1, §12.2, §12.3, §12.4, §12.5, §12.6, §12.7, §12.8, §12.9 |
+
+On 2026-10-07 the card-header cleanup changed the status of 11 rows on written evidence, which each card's Outcome paragraph cites: [Q3-F](../cards/clock/Q3-F-self-contained-time-link.md) (closed), [DEC-field-vehicle](../decisions/DEC-field-vehicle-posture.md) (superseded), [LV roadmap](../cards/ionosphere/LV-ROADMAP.md) (superseded), [LV-SEED](../cards/ionosphere/LV-SEED-per-los-level.md) (closed), [CE](../cards/network-vehicle/CE-chain-era-bisect.md) (closed), [CM2](../cards/network-vehicle/CM2-leveling-vehicle.md) (closed), [PV](../cards/network-vehicle/PV-vehicle-test.md) (closed), [ZP](../cards/network-vehicle/ZP-station-block-parameterization.md) (closed), [GL](../cards/raim-qc/GL-gross-los-screen.md) (closed), [GL-2 + R8](../cards/raim-qc/GL-2-whole-satellite-standdown.md) (closed), [wind-up census](../cards/slip/WINDUP-FRACTIONAL-CENSUS.md) (closed).
 
 ---
 

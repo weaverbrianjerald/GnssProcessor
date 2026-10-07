@@ -1,16 +1,18 @@
-# 0910 second half — the slipped-bed probe ledger, the continuity closure, the false-alarm isolation, and the inert receiver clock
+# 0910 second half: probe ledger, false-alarm isolation, continuity closure
 
 **STATUS**
 
 - **id:** 0910 second half
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the slipped-bed probe ledger, the continuity closure, the false-alarm isolation, and the inert receiver clock
+- **summary:** Eleven slipped-bed probes all FAIL with one shape (the station frame walks under arc churn); emission continuity is FALSIFIED as a class and producer AR is NO-GO for Phase 3.
 - **dates in the text:** 2026-09-10
 - **knobs / posture:** `network.carry_iono_in_block`, `network.carry_zwd`, `network.carry_zwd_in_block`, `network.emit_pb_gauge_level`, `network.serialize_disc_counters`, `network.carry_rx_clock_in_block`, `network.ambiguity_resolution`, `network.carry_aware_covariance`, `network.inject`
 - **hashes named in the text** (commit / exe / byte-cert): `bba9a7f2865070bc`, `7311ad0`, `2bf6821`, `3dd1284`, `c48b9a5c`, `525e85c`, `ad0b1d0`, `721dd39` … (+1 more in the text)
 - **run dirs named in the text:** `runs/simnet60_campaign_wu93`, `runs/golden_sim_campaign_zwdblk`, `runs/golden_sim_campaign`, `runs/golden_sim_zwdblk_ionoblk_quiet`, `runs/golden_sim_zwdblk_quiet`, `runs/golden_sim_campaign_zwdblk_orafa`, `runs/fldf3_on2_zwdblk_`, `runs/fldf3_on2_zwdblk` … (+3 more in the text)
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.19, 6.19a, 6.19b, 6.19c, 6.19d, 6.19e, 6.19f
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md`, sections 6.19, 6.19a, 6.19b, 6.19c, 6.19d, 6.19e, 6.19f
+
+**Outcome.** The second half ran `network.carry_iono_in_block` and every remaining config-only probe on the slipped bed, closed field emission continuity and graded Phase-2 producer AR. No probe met its gate pair: each response that reduces re-levelling worsens the consumer, and keeping the detectors' false alarms made it 2.7× worse. Iono-in-block is KEEP_OFF (quiet-bed NEUTRAL), `filter.process_noise.clock_bias_q` is INERT on the producer (its receiver clock has no temporal prior), and 14.48 % of producer-AR fixes were wrong (gate 1 %). Development moved to the [event harness](../harness/HARNESS-REF.md), where the receiver-clock carry later closed KEEP_OFF ([Cards A+B](../harness/CARD-AB-require-and-rx-clock-step.md)); the carry-aware Phase-2 re-grade is item 44 of the [open-question register](../ionosphere/AMB-IONO-OPEN-QUESTIONS.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

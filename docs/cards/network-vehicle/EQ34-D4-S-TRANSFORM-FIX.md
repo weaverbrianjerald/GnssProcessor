@@ -1,16 +1,18 @@
-# eq34 D4 — the eq34 D4 S-transform now re-bases `coupling[].s_prev`
+# eq34 D4: the carry S-transform re-bases `coupling[].s_prev`
 
 **STATUS**
 
 - **id:** eq34 D4
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the eq34 D4 S-transform now re-bases `coupling[].s_prev`
-- **dates in the text:** 2026-08-15 → 2026-08-17
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_card1_coupling_carry.md` — 14
+- **summary:** FIXED 2026-08-17: the eq34 D4 carry shift now moves the shifted columns' phase-bias coupling `s_prev` with the carried value, so a known frame step no longer enters a coupling row as bias.
+- **dates in the text:** 2026-08-15 (filed) → 2026-08-17 (fixed)
+- **knobs / posture:** none new; the defect fires only when the eq34 shift door (`eq34_shift_on`, needs `!carry_invariant`) and `carry_conditional_coupling` are armed together, in-tree only in `config/archive/_dcmp_50sta_10ep_eq34x.json`
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_card1_coupling_carry.md` §14
+
+**Outcome.** The D4 shift moved `lc.value_abs` and `cp.value` but left `coupling[].s_prev` (the same number for the same identity) in the old frame, so a coupling row's two carried references moved inconsistently. The fix, `rebaseCouplingPhaseBiasSprev`, applies the same `+s` to every `PhaseBias` coupling term on a shifted (sat, signal) in the local, rpb and zwd carries, counted by `eq34_cpl_sprev_total`. The defect was latent but live; no live lineage armed the firing set. [PRM](../../refound/PRM_parameter_registry_2026-09-29.md) section 16.4 later replaced the helper with the shared `phaseBiasShiftOf` rule, byte-identical; the eq34 shift is inert on the current goldens (section 16.3).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

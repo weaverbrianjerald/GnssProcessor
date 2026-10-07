@@ -1,16 +1,18 @@
-# Q3 floor — the physical floor measured — trap 5 resolved, the FC-1 gate retired, the ladder re-scoped
+# Q3 floor: the physical clock floor measured, trap 5 resolved, the FC-1 gate retired
 
 **STATUS**
 
 - **id:** Q3 floor
 - **topic:** clock
 - **status:** closed
-- **summary:** the physical floor measured — trap 5 resolved, the FC-1 gate retired, the ladder re-scoped
+- **summary:** The clock corrections beyond the COD a priori walk at q_phys ≈ 2.9e-8 m²/s beneath a 2.7 mm measurement floor: trap 5 resolved, the FC-1 correlation gate RETIRED, the ladder re-scoped.
 - **dates in the text:** 2026-08-10 → 2026-08-11
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `clock_anchor_var_floor_m2` to be set from this measurement (the (2.7 mm)² floor plus margin, ~1e-5 m² class); instrument `scripts/q3_clock_structure_function.py` (32 satellites, 3 h, common mode removed)
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/cta3_ctl`
-- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` — §7
+- **source:** `docs/archive/SPEC_clock_temporal_anchor.md` §7
+
+**Outcome.** The question: how much of the clock correction is walk, and how much floor? The TDCP structure function is flat at 0.26 to 0.27 cm for lags of 30 to 120 s, then grows as √L (0.94 mm per 30 s): both earlier "physical change" figures were the floor. The FC-1 gate is retired as unliftable and the variance floor predicted to bind; it binds at q 2.9e-8 on the field leveling vehicle ([Q3-F](../clock/Q3-F-self-contained-time-link.md)), the goldens' q, which presumes a precise a priori clock ([SCL](../../refound/SCL_self_contained_clock_level_2026-10-03.md) section 1). Standing principle (the author): set stochastic models to measured physics.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

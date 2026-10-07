@@ -1,16 +1,18 @@
-# Rider B — BlockFormal — the (station, sat) LOS block outlier census, `network.block_baarda`
+# Rider B: BlockFormal, the LOS block outlier census (`network.block_baarda`)
 
 **STATUS**
 
 - **id:** Rider B
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** BlockFormal — the (station, sat) LOS block outlier census, `network.block_baarda`
+- **summary:** BUILT and unit-gated 2026-08-04 (BB-INC-0..3), measure-only, loader default OFF; no §12.8 field gate, the decisive smearing fraction included, was run on this card.
 - **dates in the text:** 2026-08-04
 - **knobs / posture:** `network.block_baarda`, `network.block_baarda_report_sigma`, `network.block_baarda_corroborate`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_redundancy_census.md` — 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, 12.9, 12.12
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_redundancy_census.md`: 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, 12.9, 12.12
+
+**Outcome.** The question: does a block test over one (station, satellite) line of sight catch faults that smear below every per-row w-test? The kernel, sweep, corroboration join and `block_only` count were built with 24 unit cases; a toy-network sweep pre-registered the gain as fault-class dependent (about 6× for slip-like faults, about 1 for single-row and LOS-common-mode faults). Every §12.8 gate stays owed as row 4 of the [OWED ledger](../raim-qc/REDUNDANCY-CENSUS.md) (§15). The census is armed, measure-only, in both re-founding goldens; the [F3 field arm](../network-vehicle/F3-FIELD-ARM-RESULTS.md) read block-only fractions of 0.8 to 5.4 %.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

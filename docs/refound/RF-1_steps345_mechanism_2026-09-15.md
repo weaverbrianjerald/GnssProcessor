@@ -1,6 +1,20 @@
-# RF-1 steps 3–5 — the mechanism: joint block, floored birth prior + bounded drop, declared anchor transform (2026-09-15)
+# RF-1-steps345: the float-vehicle mechanism in three armed steps (2026-09-15)
 
-**STATUS:** closed — **the vehicle is CORRECT (S4 / S3 cross decisively on both beds; the sim's consumer and code wire cross) and NOT
+**STATUS**
+
+- **id:** RF-1-steps345
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** The float vehicle is CORRECT (D1 b 1.001 field, 1.028 sim) and NOT SUFFICIENT on the field, where the phase datum's churn dominates; `float_kf` stayed default OFF pending RF-2.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** cumulative arms on the RF-0 configs: A3 `network.ambiguity_vehicle: float_kf` (the joint local block structural), A4 + `amb_float_birth_var_m2: 0.25` with drop semantics (`filter/NetworkAmbFloat.cpp`), A5 + `amb_float_declared_handover: true`; interlocks: `carry_conditional_coupling` required, `carry_coupling_joint_whiten` exclusive
+- **hashes named in the text:** commits `7ccced8` (step 3), `c3a2bf8` (step 4), `ee16ddc` (step 5) on worker branch `worktree-agent-a2915f195d8518bf6`, merged; combined tree `f291dcc`; OFF smoke `87a33bf0…`
+- **run dirs named in the text:** `_rf1_ctl_field6` (the like-for-like control)
+- **source:** [RF-1-steps12](RF-1_steps12_read_2026-09-15.md) (the pre-registration, bars and frozen readings); [RF-1 design](RF-1_float_ambiguities_design.md) section 7.6
+
+**Outcome.** The card arms the mechanism in three cumulative steps (joint block, floored birth prior with a bounded drop, declared anchor S-transform) on both beds. On the sim the DD ambiguity error falls 14× and the consumer settles at 0.30 m; on the field neither I1 nor I2 crosses and PB marks above 2 m rise from 75 to 350, past the storm bar. The frozen reading "correct and not sufficient" applies: the live float state makes the phase datum churn, which [RF-2](RF-2_held_basis_2026-09-15.md) was sharpened to hold. After a KEEP OFF on the RF-0g posture ([RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md)), the vehicle became the goldens' posture on 2026-09-22 ([GRB](GRB_golden_rebase_2026-09-22.md)).
+
+**Status as recorded (2026-09-15):** closed — **the vehicle is CORRECT (S4 / S3 cross decisively on both beds; the sim's consumer and code wire cross) and NOT
 SUFFICIENT on the field, where the phase DATUM's churn dominates**; `float_kf` stays the posture candidate, default OFF, un-armed until RF-2
 makes the phase datum a held S-basis.  Worker branch `worktree-agent-a2915f195d8518bf6` (`7ccced8` step 3, `c3a2bf8` step 4, `ee16ddc` step 5),
 merged.  Suite 2157 / 289 (0 failed; `AmbFloatVehicleTest` 34); the OFF smoke `87a33bf0…` after every step; `--verify` PASS; the combined tree

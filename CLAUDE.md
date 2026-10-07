@@ -211,7 +211,9 @@ The rules — **all seven are enforced or checked**:
 5. **Every card file starts with the STATUS block** (`id`, `topic`, `status`, `summary`,
    `source`, plus the knobs / hashes / run dirs / dates). `status` ∈ {`open`, `closed`,
    `parked`, `superseded`, `reference`}; PROMOTED / KEEP_OFF / FALSIFIED belong in the
-   summary and the text.
+   summary and the text. An **Outcome** paragraph follows the block (2026-10-07): question,
+   decisive result, verdict (missed bars included), current standing with a link, about 90
+   words. The header (title, STATUS, Outcome) is revised as results land; the body never is.
 6. **The monoliths are frozen.** `docs/archive/` is read-only; the old path is a stub.
 7. **`python scripts/docs_index_check.py` must pass before a docs commit** (reachability
    from INDEX, dangling links, STATUS blocks, the 60 KB bar, the archive banners).
@@ -221,7 +223,9 @@ record; a superseded result is annotated, not deleted. A card's history sits bel
 `<!-- BEGIN VERBATIM: … -->` marker; append new results under a dated heading *below* it,
 and do not "fix" the links inside it (they were written against the old location and are
 deliberately not link-checked). `python scripts/docs_split.py --verify` proves the
-existing split is byte-exact; `--build` re-renders it from `scripts/docs_map/*.json`.
+existing split is byte-exact (results appended below a body are reported, not failed);
+`--build` renders missing cards from `scripts/docs_map/*.json` and never re-renders an
+existing card, whose header is maintained by hand.
 
 ⚠ **`docs/CONFIG_promotion_ledger.md` is a LIVING REGISTER — keep it whole, keep it at
 that path.** The `scripts/_*_ledger_oneoff.py` pattern and every future promotion append a

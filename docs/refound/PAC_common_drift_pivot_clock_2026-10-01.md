@@ -1,15 +1,17 @@
-# PAC: is the constellation-common drift the clock pivot's a priori clock?
+# PAC: the constellation-common drift and the clock pivot's a priori clock
 
 **STATUS**
 
 - **id:** PAC
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** ANSWERED 2026-10-01 (sections 2, 4 and 5): the constellation-common drift is NOT the clock pivot's a priori clock. The pivot's own phase-visible clock moves with the fleet, the wire's D contrast stays flat while the clock contrast moves, and two hydrogen masers (PTBB, WTZR) carry the drift one for one; G01's a priori drift is bounded at about 3 cm over two hours. It is the pinned pivot's LEVEL converging: the pin holds only the pivot's clock column, so its code-determined clock/phase-bias split moves its phase biases and the phase data carry that to every satellite and receiver; it appears only on card CTU's posture, which frees the levels. On the field the unhealthy, sparsely tracked, code-misfit G01 makes it large; one 2 h arm with G14 pinned (24 to 29 stations) cuts the hour-2 drift from -0.180 to -0.063 m/h, the sim's size, consumer unchanged. The outside review's handover check is null (the drift is over by 04:42:30, and the emitted clocks cannot show it under card CLK-R's frame hold). Harmless to a float consumer; the pivot election (card HLT's health rule, a tracked-count rule, or the sum-to-zero datum) is the lever when the clock product is the target. Nothing armed.
+- **summary:** ANSWERED: the constellation-common drift is NOT the clock pivot's a priori clock but the pinned pivot's level converging on card CTU's posture; harmless to a float consumer, nothing armed.
 - **source:** [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md) sections 4 to 6; [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) section 5; card CLK-R (the emission frame hold); card HLT (the satellite health latch and the pivot); `NetworkSbasis.cpp` 466 to 501 (the pivot pin); the outside review's note of 2026-10-01
 - **knobs / posture:** `network.clock_datum_satellite` on one arm only (the field's 2 h control `runs/_rap_wsx_ctl_f` with the pivot pinned on G14); nothing armed
 - **dates in the text:** 2026-10-01
 - **hashes / run dirs:** traces of `runs/_rap_rev1_blk6_{f,s}` and `runs/_rap_wsx_ctl_f`; the arm `runs/_rap_pac_g14_f` (`gnss_processor_wsx1.exe` `e3d6c4955054e1f9`); scripts `scripts/clock_level/pac_slope.py`, `pac_arm.py`
+
+**Outcome.** The pivot's own phase-visible clock moves with the fleet in card [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md)'s drift, and two hydrogen masers carry it one for one; the pin holds only the pivot's clock column. The field's unhealthy, sparsely tracked G01 makes it large: G14 pinned cuts the hour-2 drift from -0.180 to -0.063 m/h (P1 holds; P2 fails in hour 1), consumer unchanged. The outside review's handover check is null; the pivot election is left to the author. Card [EXL](EXL_exact_update_lah_promotion_2026-10-01.md) armed CTU's exact update on the goldens without re-reading the drift (its section 5).
 
 ## 1. The two readings and what each predicts
 

@@ -1,16 +1,18 @@
-# LV-5 — μ computed within the epoch, with the review addendum's requirements
+# LV-5: the within-epoch rx-CB de-mean μ, and its review requirements
 
 **STATUS**
 
 - **id:** LV-5
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** μ computed within the epoch, with the review addendum's requirements
+- **summary:** Computing μ within the epoch removed LV-2's lag-1 limit cycle (settled a₀₀ sd 15.53 → 4.69 TECU): the sd gate PASSED, the max |μ| and "LV-1 now inert" predictions MISSED.
 - **dates in the text:** 2026-08-05
-- **knobs / posture:** `network.rx_cb_carry_demean_within`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 12, 12.1, 12.2, 12.3, 12.4, 12.5, 16
+- **knobs / posture:** `network.rx_cb_carry_demean_within`, default OFF, requires `rx_cb_carry_demean` (the loader forces it off otherwise); forced OFF by S2H's `network.rx_cb_harvest_demean`
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none (arms 22 and 23; arm 22 is `_ext63_gps_dual_20ep_lv125`)
+- **source:** `docs/archive/SPEC_level_information_budget.md` §12 (12.1, 12.2, 12.3, 12.4, 12.5) and §16
+
+**Outcome.** LV-2 applied μ one epoch late, a feedback delay that limit-cycled once [LV-4](LV-4-FRAME-INVARIANT-SCREEN.md) admitted the full carry; LV-5 reduces μ in a serial prepass between PASS A and PASS B. It leaves a residual common mode of 0.0208 m against a max |μ| of 8.50 m, with folds unchanged. The missed predictions produced [LV correction](LV-CORRECTION-AND-12H.md) §13, and its 12 h verdict (§14.4) SUPERSEDES §12.5's posture: the LV stack is not armed for settled work. The §16 addendum's robust voter screen was built into [S2H](../code-bias/S2H-HARVEST.md) §28, which forces LV-5 OFF.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

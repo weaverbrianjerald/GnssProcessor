@@ -1,16 +1,18 @@
-# QPR 4 — item 4: T3-class test statistics — correct nulls, not recalibrated constants
+# QPR 4: T3-class test statistics, correct nulls not recalibrated constants
 
 **STATUS**
 
 - **id:** QPR 4
 - **topic:** queues
 - **status:** open
-- **summary:** item 4: T3-class test statistics — correct nulls, not recalibrated constants
+- **summary:** T3's false-alarm excess is per-LOS ionosphere error, not a miscalibrated constant; R2 and R4 BUILT and VALIDATED measure-only, R1 HELD, the redundancy standardization FALSIFIED.
 - **dates in the text:** 2026-08-14 → 2026-08-21
 - **knobs / posture:** `network.raim_station_factor`, `network.raim_rate_hygiene`, `network.raim_redundancy_normalize`, `network.estimate_iono_sh`, `network.trace_ionosphere`, `network.trace_raim_redundancy`
 - **hashes named in the text** (commit / exe / byte-cert): `65ba362`
 - **run dirs named in the text:** `runs/staf_`, `runs/pareref_on`, `runs/t3b2_`, `runs/t3fault`, `runs/t3iono`, `runs/simnet24_mp0`, `runs/t3mp0`, `runs/simnet24_inject_null` … (+3 more in the text)
-- **source:** `docs/archive/QUEUE_principled_replacements.md` — 4
+- **source:** `docs/archive/QUEUE_principled_replacements.md`, item 4
+
+**Outcome.** The item asked for the derived null of the T3-class statistic in place of a recalibrated 6σ constant. The statistic is scale-blind, so its 1.86e7× excess over nominal is pool heterogeneity, traced to per-LOS ionosphere error (datum-free interaction rms 0.764 m); R1 is held so that error is not buried in a variance factor. R2 (`network.raim_station_factor`) and R4 (`network.raim_rate_hygiene`) landed default OFF on 2026-08-21, and the fault-fixture detection gate PASSED (20 of 24 injected slips at k = 6). On the field the structure reproduces but the leverage does not. Owed: the different-seed null verify, the field B2 unclamp arm and a station-fault bench ([T3-FIELD-AND-COLLATERALS](../raim-qc/T3-FIELD-AND-COLLATERALS.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

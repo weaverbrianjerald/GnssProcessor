@@ -1,16 +1,18 @@
-# LV residual — the residual is not an extrapolation artifact, and `rx_cb_carry_q` is not simply too tight
+# LV residual: not an extrapolation artifact, and the `rx_cb_carry_q` axis is exhausted
 
 **STATUS**
 
 - **id:** LV residual
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the residual is not an extrapolation artifact, and `rx_cb_carry_q` is not simply too tight
+- **summary:** The level residual is NOT an extrapolation artifact (about 2× larger over the station footprint than globally), and `rx_cb_carry_q` is not simply too tight: the q axis is exhausted.
 - **dates in the text:** 2026-08-05
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 18, 18.1
+- **knobs / posture:** `network.rx_cb_carry_q` (1e-9 canonical, 1e-6 arm 29); arms 24 (canonical), 25 (LV-1+2+4+5), 29 (LV stack, q = 1e-6); DOY-129, obs mask 10 / iono cutoff 25
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_level_information_budget.md` sections 18, 18.1
+
+**Outcome.** The questions: does `a00 - GIM_mean` mostly measure the SH field's extrapolation away from the network, and is the rx-CB carry's q too tight? `scripts/field_vs_gim_footprint.py` gave 12 h footprint (5°) means of -9.7 TECU canonical and +22.6 for the LV stack, so the metric under-reports and the section 14/15 ranking stands. q moves the level by about 5 TECU (1e-6 is worse, tighter is meaningless) against about 32 for the de-mean plus full admission: the kind of memory matters, not its decay rate. Section 26.1 ([LV mask study](../ionosphere/LV-MASK-STUDY.md)) later showed the footprint-over-global structure is an obs-mask-10 artifact at 303 stations.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

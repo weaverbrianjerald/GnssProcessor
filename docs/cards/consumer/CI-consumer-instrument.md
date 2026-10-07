@@ -1,16 +1,18 @@
-# CI — the closed-loop consumer as an INSTRUMENT — what the consumer bars have actually been reading, and the attribution legs
+# CI: the closed-loop consumer as an instrument, and the attribution legs
 
 **STATUS**
 
 - **id:** CI
 - **topic:** consumer
 - **status:** open
-- **summary:** the closed-loop consumer as an INSTRUMENT — what the consumer bars have actually been reading, and the attribution legs
+- **summary:** Consumer-side bars of §20.3, §21.21 and §23.2 SUSPENDED: the float consumer wanders metres on the network wire, yet converges to 0.25 m on CODE products.
 - **dates in the text:** 2026-09-14
-- **knobs / posture:** `network.closed_loop`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_event_harness.md` — 24, 24.1, 24.2, 24.3
+- **knobs / posture:** `network.closed_loop` (legs: `consume_network_iono`, `consume_network_clock`, `consume_network_products`)
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none as `runs/` paths; seed `evseed_field6h_v8`, legs L0 to L4 from v8 ep0604
+- **source:** `docs/archive/SPEC_event_harness.md` §24, §24.1 to §24.3; the §24.3 results are in the body of [CC](../consumer/CC-declared-step-carry.md)
+
+**Outcome.** The card asks what the consumer bars have been reading and which consumer posture converges. The continuous consumer of seed v8 wanders 3.4 to 8.5 m (hourly p50), a swing wider than the bars it decided, so the consumer-side bars are suspended while the wire-side bars stand; the four slip knobs added no consumer resets. On any combination of the network's products the cold legs sit at 6 to 8 m: the consumer's own modeling is not the defect, and the [CI census](../consumer/CI-census-wire-vs-code.md) located it in the wire. [The re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) grades on the cold 6 h consumer; the suspension has no recorded lift.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

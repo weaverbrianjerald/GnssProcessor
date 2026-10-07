@@ -1,16 +1,18 @@
-# chain-slant — Odijk rank arithmetic, the global-network chain caveat, the three self-consistent postures, and what not to re-litigate
+# chain-slant: Odijk rank arithmetic, the chain caveat and the three postures
 
 **STATUS**
 
 - **id:** chain-slant
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** Odijk rank arithmetic, the global-network chain caveat, the three self-consistent postures, and what not to re-litigate
+- **summary:** Theory brief, plan spent: the near-null is n-invariant by construction, Odijk's chain caveat warrants the eq34 datum, and posture C (slant + triple) is the destination; posture B RETIRED.
 - **dates in the text:** 2026-08-04 → 2026-08-15
 - **knobs / posture:** `network.phase_datum_eq34`, `network.station_pd_pin_aware`, `network.external_sat_code_bias`, `network.code_bias_gf_datum`, `network.sbasis_complete`, `network.trace_sat_bias_states`, `network.trace_rx_states`
 - **hashes named in the text** (commit / exe / byte-cert): `6bf857bb`, `521512b6`, `f7fd36ea`, `cbaefe0a`
 - **run dirs named in the text:** `runs/simnet300_wsh`, `runs/simnet300_wsh_n50_pin`, `runs/simnet60_tri`, `runs/simnet60_m_c_tri_slant`
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` — §14, 14.0, 14.1, 14.2, 14.3, 14.4, 14.5, 14.6
+- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` §14, 14.0 to 14.6
+
+**Outcome.** The brief holds the theory and trap register of the T1 to T4 work order, all executed 2026-08-12. Odijk et al. (2016) Eq. 24 shows the rank deficiency grows with n, so no roster closes it; de Jonge's chain caveat warrants the eq34 datum, and the T1 audit inverted the brief's premise (the chain is complete and lifts the near-null). §13.5 bore out posture C; the exchange ratio to quote is 0.97×, not 0.72×. The re-founding goldens run free slant iono on GPS dual with the satellite geometry-free bias pinned at the broadcast T_GD ([RF-0c](../../refound/RF-0c_gf_pin_2026-09-15.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

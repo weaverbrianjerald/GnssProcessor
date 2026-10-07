@@ -29,27 +29,27 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [DOY-129 defects](../cards/raim-qc/DAY129-DEFECTS-ABC.md) | defects A/B/C from the instrumented leg, the five wiring facts, and the measured policy… | closed | 2026-07-28 |
-| [DOY-129 phases](../cards/raim-qc/DAY129-PHASES.md) | phases 0–2: the closed-loop replay, the trigger instrumentation, and the gated guards | closed | 2026-07-28 |
-| [INC-4](../cards/raim-qc/MEAS-ADMISSION-INC4-REENTRY.md) | the arc RE-ENTRY vet — there were no mid-arc onsets; `adm_revet_hold` erases the event | closed | 2026-08-02 |
-| [Rider A](../cards/raim-qc/MDB-RIDER-A.md) | Baarda reliability numbers (MDB) on the network path — `network.mdb` | closed | 2026-08-04 |
-| [Rider B](../cards/raim-qc/BLOCK-BAARDA-RIDER-B.md) | BlockFormal — the (station, sat) LOS block outlier census, `network.block_baarda` | closed | 2026-08-04 |
-| [meas admission](../cards/raim-qc/MEAS-ADMISSION.md) | the product-referenced admission screen — the fault class no differential screen can se… | closed | 2026-08-12 |
-| [meas admission impl](../cards/raim-qc/MEAS-ADMISSION-IMPL.md) | the 2026-08-01 implementation record — every deviation from the spec, the gates as run,… | closed | 2026-08-12 |
-| [DOY-129 anatomy](../cards/raim-qc/DAY129-FRAME-ANATOMY.md) | the answered questions — the pinned pivot's code bias, the a₀₀ collapse anatomy, the qu… | closed | 2026-08-15 |
-| [Rider C](../cards/raim-qc/CONGRUENCE-RIDER-C.md) | the station congruence screen, `network.congruence_screen` | closed | 2026-08-15 |
-| [T3 null](../cards/raim-qc/T3-NULL-DERIVATION.md) | the statistic as actually computed, the invariance theorem, the falsified redundancy st… | closed | 2026-08-15 |
-| [global σ̂₀ rider](../cards/raim-qc/GLOBAL-SIGMA0-RIDER.md) | `network.prior_residual_global_sigma0` — three sums, one ratio, nothing acted on | closed | 2026-08-15 |
-| [prires census](../cards/raim-qc/PRIOR-RESIDUAL-CENSUS.md) | the prior-residual census — the binding precedent, INC-0..3, the wiring sites, the buil… | closed | 2026-08-15 |
-| [redundancy census](../cards/raim-qc/REDUNDANCY-CENSUS.md) | the row-redundancy and unobservable-local censuses — design, cost model, wiring, build … | closed | 2026-08-15 |
-| [A4 withhold](../cards/raim-qc/WITHHOLD-ERA-RELEASE.md) | the withhold-era release policy — the defect named exactly, the v2 design, the pre-regi… | closed | 2026-08-21 |
-| [T3 field](../cards/raim-qc/T3-FIELD-AND-COLLATERALS.md) | the T3 class and its two collateral defects, the field check, the detection-power gate,… | closed | 2026-08-21 |
-| [withhold cliff](../cards/raim-qc/WITHHOLD-CLIFF-RETIREMENT.md) | the retirement census — every G3 number was on a retired binary; the cliff does not rep… | closed | 2026-08-23 |
-| [RNEG](../cards/raim-qc/RNEG-REPARTITION.md) | the RNEG re-partition — what a `post_var > fold_var` row is, and the numerator card it … | closed | 2026-09-09 |
-| [GL](../cards/raim-qc/GL-gross-los-screen.md) | the gross line-of-sight screen | open | 2026-09-14 |
-| [GL-2 + R8](../cards/raim-qc/GL-2-whole-satellite-standdown.md) | the whole-satellite stand-down, and R8 — the bulk drift's channel | open | 2026-09-14 |
-| [DEC-day129-gate-policy](../decisions/DEC-day129-gate-policy.md) | the gate-policy ruling — DEGRADE, DO NOT WITHHOLD; the statistic; the CB-excursion resu… | open | — |
-| [T3 mechanism](../cards/raim-qc/T3-IONO-MECHANISM.md) | the per-row census, the falsification ledger, and the MECHANISM FOUND — per-LOS ionosph… | closed | — |
+| [DOY-129 defects](../cards/raim-qc/DAY129-DEFECTS-ABC.md) | guarded leg: seam withhold CORRECT, a₀₀ the wrong statistic, one-epoch CB resume window | closed | 2026-07-28 |
+| [DOY-129 phases](../cards/raim-qc/DAY129-PHASES.md) | phase 0/1 results unrecorded; CB guard KEEP_OFF (pivot-only FALSIFIED), gate (iii) UNMET | closed | 2026-07-28 |
+| [INC-4](../cards/raim-qc/MEAS-ADMISSION-INC4-REENTRY.md) | re-entry vet: 16 of 17 onsets were re-entries; 200 m vet bound closes class B; default OFF | closed | 2026-08-02 |
+| [Rider A](../cards/raim-qc/MDB-RIDER-A.md) | network MDB: byte-identical; faults under 9.4 m hide in the median code row; gates OWED | closed | 2026-08-04 |
+| [Rider B](../cards/raim-qc/BLOCK-BAARDA-RIDER-B.md) | block-Baarda LOS census: BUILT, unit-gated, measure-only; every §12.8 field gate owed | closed | 2026-08-04 |
+| [meas admission](../cards/raim-qc/MEAS-ADMISSION.md) | admission screen: corrupt channels refused at birth, era-2 withhold gone; ARMED on goldens | closed | 2026-08-12 |
+| [meas admission impl](../cards/raim-qc/MEAS-ADMISSION-IMPL.md) | admission build: gates 1 to 4 PASS, BSHM births refused; 1b cannot pass; 5 to 7 ungraded | closed | 2026-08-12 |
+| [DOY-129 anatomy](../cards/raim-qc/DAY129-FRAME-ANATOMY.md) | pivot CB ratchet (+49 m, no event response), clock wander, datum-only disc counter | closed | 2026-08-15 |
+| [Rider C](../cards/raim-qc/CONGRUENCE-RIDER-C.md) | congruence screen: smoke PASS; detects held-coordinate errors, cannot measure them | closed | 2026-08-15 |
+| [T3 null](../cards/raim-qc/T3-NULL-DERIVATION.md) | scale-blind statistic; station strata cut 4.46 % to 0.97 %; redundancy fix FALSIFIED (sim) | closed | 2026-08-15 |
+| [global σ̂₀ rider](../cards/raim-qc/GLOBAL-SIGMA0-RIDER.md) | global σ̂₀ rider: measure-only, OFF identity and wiring PASS; triangle and cliff OWED | closed | 2026-08-15 |
+| [prires census](../cards/raim-qc/PRIOR-RESIDUAL-CENSUS.md) | prior-residual census: smoke gates PASS, power gates 3 to 6 ungraded; armed on goldens | closed | 2026-08-15 |
+| [redundancy census](../cards/raim-qc/REDUNDANCY-CENSUS.md) | testability census built and smoke-gated; the leg-19 known-answer gates stay OWED (§15) | closed | 2026-08-15 |
+| [A4 withhold](../cards/raim-qc/WITHHOLD-ERA-RELEASE.md) | withhold-era escalation: era 29 to 1, VALIDATED; G3 FAIL later a cross-build artifact | closed | 2026-08-21 |
+| [T3 field](../cards/raim-qc/T3-FIELD-AND-COLLATERALS.md) | field check: σ̂₀ floor-pinned, stratification 1.5×; detection gate PASSED; R2 + R4 BUILT | closed | 2026-08-21 |
+| [withhold cliff](../cards/raim-qc/WITHHOLD-CLIFF-RETIREMENT.md) | cliff is a timer, not therapy; G3 FAIL did NOT REPRODUCE; promotion waits on level health | closed | 2026-08-23 |
+| [RNEG](../cards/raim-qc/RNEG-REPARTITION.md) | r-negative re-partition: worst \|t\| 2.48e8 was a floor artifact; RNEG read in metres | closed | 2026-09-09 |
+| [GL](../cards/raim-qc/GL-gross-los-screen.md) | gross-LOS screen: tail 13 to 16× smaller but bars FAILED; completed and ARMED by RF-3 | closed | 2026-09-14 |
+| [GL-2 + R8](../cards/raim-qc/GL-2-whole-satellite-standdown.md) | stand-down FAILED (consumer 22.25 m in hour 4), left OFF; rx-CB carry exonerated | closed | 2026-09-14 |
+| [DEC-day129-gate-policy](../decisions/DEC-day129-gate-policy.md) | gate rulings: degrade under a 120-epoch cap, rms_ho ratio; unbuilt, grace floor un-derived | open | — |
+| [T3 mechanism](../cards/raim-qc/T3-IONO-MECHANISM.md) | per-LOS ionosphere error drives the T3 heterogeneity (corr +0.926) and the DD integers | closed | — |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

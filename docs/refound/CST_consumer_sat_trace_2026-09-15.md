@@ -1,6 +1,20 @@
-# CST — the per-satellite closed-loop consumer trace: both hour-6 events are the CONSUMER'S OWN AMBIGUITY RESET, and 30 % of the declarations it resets for are EMPTY (2026-09-15)
+# CST: the per-satellite closed-loop consumer trace (2026-09-15)
 
-**STATUS:** open — **one instrument built (`network.trace_consumer_sat`, bool, default OFF), one field run spent, no knob promoted, no golden and no ledger touched.**
+**STATUS**
+
+- **id:** CST
+- **topic:** consumer
+- **status:** open
+- **summary:** Both hour-6 events are the consumer's own ambiguity reset, and 117 of its 390 declaration-driven resets answer EMPTY declarations; the instrument `network.trace_consumer_sat` was later ADOPTED.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** `network.trace_consumer_sat` (built, default OFF, solve byte-identical); pre-registered fixes `network.closed_loop.pb_disc_carry` (section 7.1), `network.disc_mark_scope` (7.2), `network.disc_jump_test_decommon` (7.3); RF-0hv field posture
+- **hashes named in the text:** exe `build/x64-Release/gnss_processor_cst.exe` `5D8AA185319293F0` (main `0c1a66e` + this card's diff); OFF smoke `9ADD1D3AB9D70657`; trace `45C18707D70BDBDE`; Debug `gnss_tests.exe` 2228 passed + 1 skipped of 2229
+- **run dirs named in the text:** `runs/_cst_field6_both`, `runs/_cst_smoke_off`; baseline `runs/_rfpdfix_field6_both`; reader `scripts/cst_consumer_read.py`; gtest `tests/test_consumer_sat_trace.cpp`
+- **source:** [EV6](EV6_hour6_decouple_event_2026-09-15.md) section 9 item 1 (the owed per-satellite consumer instrument)
+
+**Outcome.** The card builds the per-satellite consumer trace EV6 lacked and reads both hour-6 events with it, the solve byte-identical. At TOW 276810 a real declaration resets 11 of 12 cells and the solution falls onto the code; at TOW 279030 a Q3 clock decouple's `R` records reset 10 of 16 cells while the emitted phase bias moved at most 0.011 m, and the ramp after it is the consumer's own ambiguity and slant-iono states drifting together (r = 0.951). The three pre-registered fixes each FAIL their bars ([CC-arm](CC-arm_pb_disc_carry_rf0hv_2026-09-15.md), [PBT](PBT_consumer_pb_translate_2026-09-15.md), [JT](JT_pb_jump_test_decommon_2026-09-15.md)). The instrument was ADOPTED 2026-09-19 ([ALC2](ALC2_restart_policy_adoption_2026-09-19.md)); its seam-verifier hygiene row stays open ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)).
+
+**Status as recorded (2026-09-15):** open — **one instrument built (`network.trace_consumer_sat`, bool, default OFF), one field run spent, no knob promoted, no golden and no ledger touched.**
 EV6 §9 item 1 named the blocker: `logs/closed_loop_trace.csv` carries position, `n_sats` and the AR columns and nothing else, so a consumer-side
 float re-convergence could not be separated from the slant-iono half of the RF-0b applied pair and an undeclared wire step could not be seen
 landing.  That instrument now exists — `logs/closed_loop_sat_trace.csv`, one row per (satellite, raw phase signal) per consumer epoch carrying

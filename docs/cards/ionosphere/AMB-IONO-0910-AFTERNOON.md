@@ -1,16 +1,18 @@
-# 0910 afternoon — the level-memory and T4-persistence ladders, the wire wander, and the continuity card
+# 0910 afternoon: level-memory and persistence ladders, field continuity card
 
 **STATUS**
 
 - **id:** 0910 afternoon
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the level-memory and T4-persistence ladders, the wire wander, and the continuity card
+- **summary:** Softening the levels FAILS four ways, fewer T4 erases help the producer but FAIL the consumer gate at every K, and field emission continuity is KEEP_OFF on its trigger.
 - **dates in the text:** 2026-09-10
 - **knobs / posture:** `network.phase_leveling_q_amb`, `network.phase_leveling_var_floor_m2`, `network.raim_arc_persist_epochs`, `network.carry_iono_in_block`, `network.emit_pb_gauge_mode`, `network.carry_zwd_in_block`, `network.serialize_disc_counters`
 - **hashes named in the text** (commit / exe / byte-cert): `dd6c81c`, `b5af681`, `4bb799a`, `966d4fd`, `95afa6d9`, `c48b9a5c`, `865904b`, `721dd39` … (+2 more in the text)
 - **run dirs named in the text:** `runs/golden_sim_campaign`, `runs/simnet60_campaign_wu93`, `runs/golden_sim_campaign_zwdblk`, `runs/fldf3_on2_zwdblk_`, `runs/fldf3_on2_zwdblk`, `runs/fldf3_on2_zwdblk_pbcont3`, `runs/golden_sim_pbcont`, `runs/golden_sim_pbgauge_ctl` … (+1 more in the text)
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.18, 6.18a, 6.18b, 6.18c, 6.18d, 6.18e
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md`, sections 6.18, 6.18a, 6.18b, 6.18c, 6.18d, 6.18e
+
+**Outcome.** The afternoon tested the levels' memory and the T4 persistence K against the frozen (ρ, I) split on the slipped bed, and ran the field continuity card. The q arms cost the consumer 57 %; fewer erases helped the producer while the consumer stayed 2.1× worse at K = 1e6, since the anchors' (ρ, I) walk reaches it through the phase-clock. Continuity cut consumer resets by 91 to 95 %, but its trigger's staircase random-walks the emitted level: v1 and v2 KEEP_OFF. Later that day v3 was FALSIFIED, closing the continuity class, and `network.carry_iono_in_block` went KEEP_OFF ([0910 second half](../ionosphere/AMB-IONO-0910-SECOND-HALF.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,16 +1,18 @@
-# Card G response — `gap_reentry_relevel` — round 1 was inert on the live-state walk, round 2's verdict, and bridge v3's flat result
+# Card G response: `gap_reentry_relevel`, the gap re-entry re-level
 
 **STATUS**
 
 - **id:** Card G response
 - **topic:** slip
 - **status:** closed
-- **summary:** `gap_reentry_relevel` — round 1 was inert on the live-state walk, round 2's verdict, and bridge v3's flat result
+- **summary:** `gap_reentry_relevel` removes all 88 shifted-and-bridged arcs, but the field consumer's settled rms rises 56 %: KEEP_OFF on the leveling vehicle; RECOMMEND_SCOPED and armed later on the float vehicle.
 - **dates in the text:** 2026-09-09
-- **knobs / posture:** `network.cycle_slip.gap_reentry_relevel`, `network.phase_leveling`, `network.carry_invariant`
-- **hashes named in the text** (commit / exe / byte-cert): `be523008`
+- **knobs / posture:** `network.cycle_slip.gap_reentry_relevel` (+ `_lli` default true, `_unmeasurable` default false) on the `network.phase_leveling` posture of `runs/fldf3_pl2` (warn-only without `relevel_free_epoch`); `network.carry_invariant` the other vehicle; bridge arm `cycle_slip.relevel_delta_bridge` + `relevel_bridge_gf`
+- **hashes named in the text** (commit / exe / byte-cert): `be523008` (the control's `products.txt` sha256, identical to `runs/fldf3_pl2`); exe `gnss_processor_gapfree2.exe` (`2CAF5A24…`)
 - **run dirs named in the text:** `runs/fldf3_pl2`, `runs/fldf3_pl2_ctl_new`, `runs/fldf3_pl2_gapfree2`, `runs/fldf3_pl2_gapfree`, `runs/fldf3_pl2_bridge`
-- **source:** `docs/archive/SPEC_slip_qc_hardening.md` — 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7
+- **source:** `docs/archive/SPEC_slip_qc_hardening.md` §12 (12.1 to 12.7)
+
+**Outcome.** Does freeing every arc that re-enters after a tracking gap remove the bridged-carry poison counted by Card G? Round 1 was INERT. Keyed on the carry, round 2 removed BSHM00ISR's 2.6 km ZWD excursion, but each freed arc re-levels from one code epoch: the consumer bar P4 FAILED and P2 / P3 split. Bridge v3 was FLAT. The KEEP_OFF stands on the leveling vehicle and under `carry_invariant`; on the float vehicle the knob became RECOMMEND_SCOPED and is pinned in the goldens ([AB2](../../refound/AB2_l5_third_frequency_2026-09-20.md) sections 12 to 15, [GRB](../../refound/GRB_golden_rebase_2026-09-22.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

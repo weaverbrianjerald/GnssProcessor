@@ -1,16 +1,18 @@
-# D5 v5 — `carry_invariant_innov_carried_only` on the field — KEEP_OFF, the same-realization pair refuses the pin
+# D5 v5: `carry_invariant_innov_carried_only` on the field, KEEP_OFF
 
 **STATUS**
 
 - **id:** D5 v5
 - **topic:** network-vehicle
-- **status:** parked
-- **summary:** `carry_invariant_innov_carried_only` on the field — KEEP_OFF, the same-realization pair refuses the pin
-- **dates in the text:** 2026-08-02 → 2026-09-13
-- **knobs / posture:** `network.carry_invariant_innov_carried_only`
-- **hashes named in the text** (commit / exe / byte-cert): `545b8bdd2b638231`, `87a33bf0`, `6439e2bb`, `c45e52a0`, `76861c1`
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_event_harness.md` — 23, 23.2, 23.3
+- **status:** superseded
+- **summary:** KEEP_OFF on the field: testing carried chords only removes every born-chord D5 flag, but the same-realization consumer pair reads +39 % worse and the v8 re-test is indeterminate.
+- **dates in the text:** 2026-08-02 to 2026-09-13
+- **knobs / posture:** `network.carry_invariant_innov_carried_only` (regime: `carry_invariant` with the Card-4 D5 innovation gate; not a warm-resume fingerprint token)
+- **hashes named in the text** (commit / exe / byte-cert): v5 fingerprint `545b8bdd2b638231`; smoke OFF `87a33bf0…`, ON `6439e2bb…`; null leg `c45e52a0…`; worker `76861c1`; exe `gnss_processor_rs7.exe` `23C628B3…`
+- **run dirs named in the text:** none as `runs/` paths; legs `d5v5_{null,e3}_{off,on}`, `d5v5_long_{off,on}`, `d5v5_v8_{off,on}`, 6 h twin `evseed_field6h_v5d5`
+- **source:** `docs/archive/SPEC_event_harness.md`, sections 23, 23.2, 23.3
+
+**Outcome.** The card asked whether the D5 innovation gate should test only CARRIED chords, since a chord born this epoch has no hypothesis to test. The mechanism holds: on the 6 h twin D5 flags fall 730 → 143 and slip refloats by 30 %, with the `pbstep` p90 4.5× better. The consumer does not follow: the twin's settled p50 is +5.3 % against a 5 % bar (FAIL), and the v8 re-test misses the PB wire bar (0.0137 vs 0.01 m). [RF-1](../../refound/RF-1_float_ambiguities_design.md) later retired the `carry_invariant` family and its D5 gates.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

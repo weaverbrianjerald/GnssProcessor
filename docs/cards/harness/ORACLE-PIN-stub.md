@@ -1,16 +1,18 @@
-# ORACLE PIN (stub) — the ORACLE PIN pre-registration stub — superseded by the card record in SPEC_oracle_pin
+# ORACLE PIN (stub): pre-registration for holding the ambiguities at truth
 
 **STATUS**
 
 - **id:** ORACLE PIN (stub)
 - **topic:** harness
 - **status:** superseded
-- **summary:** the ORACLE PIN pre-registration stub — superseded by the card record in SPEC_oracle_pin
+- **summary:** SUPERSEDED by the card record in SPEC_oracle_pin: under a complete truth pin the DD-invariant ionosphere collapses 10×, confirming the 99.3 %-iono root cause.
 - **dates in the text:** 2026-09-11
-- **knobs / posture:** `network.inject.events`, `network.cycle_slip.oracle_relevel`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_event_harness.md` — 17
+- **knobs / posture:** `network.inject.events` (new kind `oracle_pin`, sim-only, never a golden knob), `network.cycle_slip.oracle_relevel`
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_event_harness.md` §17
+
+**Outcome.** The stub pre-registered the question (hold the sim's ambiguities at their true integers and grade where the remaining error goes), the gauge-free design and gates G1 to G4. The card was built and graded the same day in [SPEC_oracle_pin](../../SPEC_oracle_pin.md): G1 and G4 PASS, G2 at 100 % of pinned chords on every band but Galileo L7Q (57.7 %), and the DD-invariant slant ionosphere falls 0.423 → 0.042 m. Its section 12 later WITHDREW the ZWD reading quoted below (0.067 → 0.013 m): the null's ZWD was the harness seam restart, and on a reseeded leg the pin buys the ZWD nothing ([harness seeds](../harness/HARNESS-SEEDS.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

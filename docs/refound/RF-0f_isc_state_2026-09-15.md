@@ -1,6 +1,20 @@
-# RF-0f — C2X in the solve, its ISC a per-satellite state, out of the pin (2026-09-15)
+# RF-0f: the C2X inter-signal correction as a per-satellite state (2026-09-15)
 
-**STATUS:** closed — **the mechanism is right and the network cannot use it: the C2W and C2X station sets are DISJOINT (25 vs 2 stations, no
+**STATUS**
+
+- **id:** RF-0f
+- **topic:** code-bias
+- **status:** closed
+- **summary:** Mechanism right, unusable here: the C2W and C2X station sets are disjoint (25 vs 2 stations), so every ISC stays pinned, C2X leaves the wire and the solve equals e2.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** `network.sat_isc_state` (default OFF, byte-identical; C2X in the solve, out of the pin); the new B-record token `isc=obs`; arms on `broadcast_tgd`, GIM off, prior off, e2, the band-2 cut OFF; `refound_grade.py` gains `if_dispersion`
+- **hashes named in the text:** commit `cb04921` (worker branch `worktree-agent-a0aafda782ef5e7bd`, merged); exe `0DC43C60…`; OFF smoke header `9add1d3a…` (record stream `333dcb08…`)
+- **run dirs named in the text:** none
+- **source:** [RF-0e](RF-0e_level_datum_2026-09-15.md) (the C2X cut e3 and this card's pre-registration)
+
+**Outcome.** The question: can C2X stay in the solve with its inter-signal correction (ISC) estimated per satellite instead of pinned at zero. No station bridges the two codes, so no C2X record is emitted and the field consumer equals e2 to the digit; the IF-correction dispersion p90 of 1.02 m FAILS its 0.55 m bar. Closed with the knob built, default OFF; the next card removed C2X and its two stations ([RF-0g](RF-0g_roster_cut_2026-09-15.md)). Admitting band-2 companions (C2X at 28 stations) would make the bridging roster non-empty ([SCC](SCC_second_code_channel_2026-09-21.md) section 4).
+
+**Status as recorded (2026-09-15):** closed — **the mechanism is right and the network cannot use it: the C2W and C2X station sets are DISJOINT (25 vs 2 stations, no
 receiver tracks both), so the ISC is unobservable for every satellite, C2X leaves the wire, and the solve is e2 to the digit.  The roster's
 verdict: C2X cannot be emitted on this network; and the two C2X-only stations, not the channel, are what e3 showed — RF-0g below.**  Worker
 branch `worktree-agent-a0aafda782ef5e7bd` (`cb04921`), merged.  Suite 2194 / 290 (0 failed); `--verify` PASS; exe `0DC43C60…`.  The OFF smoke

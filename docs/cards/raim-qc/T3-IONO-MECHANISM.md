@@ -1,16 +1,18 @@
-# T3 mechanism — the per-row census, the falsification ledger, and the MECHANISM FOUND — per-LOS ionosphere estimation error, with the DD-integer tie
+# T3 mechanism: per-LOS ionosphere estimation error and the DD-integer tie
 
 **STATUS**
 
 - **id:** T3 mechanism
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the per-row census, the falsification ledger, and the MECHANISM FOUND — per-LOS ionosphere estimation error, with the DD-integer tie
-- **dates in the text:** —
-- **knobs / posture:** `network.trace_raim_redundancy`, `network.trace_ionosphere`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **summary:** MECHANISM FOUND: the per-station T3 residual heterogeneity is per-LOS ionosphere estimation error (corr +0.926), which also explains 68 to 83 % of the per-band DD integer error.
+- **dates in the text:** none (the source spec was written 2026-08-14, per [T3 null](../raim-qc/T3-NULL-DERIVATION.md))
+- **knobs / posture:** `network.trace_raim_redundancy` (built here, solve-neutral), `network.trace_ionosphere` (repaired here: `x_lin_m` and `iono_total_m` appended); both trace-class
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/simnet24_mp0`, `runs/t3mp0`, `runs/simnet24_inject_null`, `runs/pareref_on`, `runs/t3ri`, `runs/t3cmp0`, `runs/t3iono`
-- **source:** `docs/archive/SPEC_t3_null_derivation.md` — 7, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.8.1, 7.8.2, 7.9
+- **source:** `docs/archive/SPEC_t3_null_derivation.md` §7 (7.1 to 7.9, with 7.8.1 and 7.8.2)
+
+**Outcome.** The question was why the post-fit residual spreads 4.7× by station on a fixture with one noise model. Ten candidates were FALSIFIED, multipath and redundancy r_i among them; 89.76 % of the residual variance lies in the iono direction, which is L1-dominant. Graded against truth, the per-arc ambiguity absorbs ~96 % of the iono error, and EWL, with 18× less iono sensitivity, is the only near-integer rung (95.9 %). The fitted DD slope is ~1.85× the predicted one, unexplained. Later, [QPR 5-8](../queues/QPR-ITEMS-5-8.md) item 8 found the error persists with SH on, and FALSIFIED 8(b)'s carry family.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

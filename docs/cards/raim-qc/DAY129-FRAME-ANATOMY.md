@@ -1,16 +1,18 @@
-# DOY-129 anatomy — the answered questions — the pinned pivot's code bias, the a₀₀ collapse anatomy, the quiet-hour wander, and the disc counter as a DATUM channel
+# DOY-129 anatomy: pivot code-bias ratchet, SH collapse, clock wander, disc counter
 
 **STATUS**
 
 - **id:** DOY-129 anatomy
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the answered questions — the pinned pivot's code bias, the a₀₀ collapse anatomy, the quiet-hour wander, and the disc counter as a DATUM channel
-- **dates in the text:** 2026-08-12 → 2026-08-15
+- **summary:** Q2 to Q4 ANSWERED: the hard-pinned pivot's near-static code bias ratchets a one-sided excursion (+49 m), the quiet-hour wander is the clocks, the disc counter is a DATUM channel; Q1's trigger untested.
+- **dates in the text:** 2026-08-12 to 2026-08-15
 - **knobs / posture:** `network.code_datum_time_linked`, `network.cb_kaula_prior`, `estimation.global_vtec_sh`, `estimation.ionosphere_weighting`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/day129_cont`, `runs/day129_guards`, `runs/bytecheck`
-- **source:** `docs/archive/SPEC_day129_frame_guards.md` — (preamble), A1, A2, A2.1, A2.2, A2.3, A3, A3.1, A3.2, A4, A5, A6, A7
+- **source:** `docs/archive/SPEC_day129_frame_guards.md`: (preamble), A1, A2, A2.1, A2.2, A2.3, A3, A3.1, A3.2, A4, A5, A6, A7
+
+**Outcome.** The questions: Q1 to Q4 of the DOY-129 handoff, answered from existing artifacts. The hard pin makes G01's clock/code split a measured quantity, so the excursion lands on near-static CB states (gain 2.2e-3 per epoch, decay τ 3.79 h) with no event response (invariant #1). The SH collapse is a follower of the per-LOS iono states, enabled by a porous phase frame (13.5 % of carried DDs re-tapped per epoch); its trigger needed Phase 1's traces, whose report is lost ([DEC-day129-gate-policy](../../decisions/DEC-day129-gate-policy.md) Part F). The CB response became `network.cb_excursion_reinit` ([DOY-129 phases](../raim-qc/DAY129-PHASES.md)), KEEP_OFF in the [ledger](../../CONFIG_promotion_ledger.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

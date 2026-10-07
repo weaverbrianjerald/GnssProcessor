@@ -1,16 +1,18 @@
-# slip-QC follow-ups — the 2026-07-22 follow-up cards D5-A / W / OP / H, and why the D5 lead outranked everything else
+# slip-QC follow-ups: cards D5-A, W, OP and H of 2026-07-22
 
 **STATUS**
 
 - **id:** slip-QC follow-ups
 - **topic:** slip
 - **status:** closed
-- **summary:** the 2026-07-22 follow-up cards D5-A / W / OP / H, and why the D5 lead outranked everything else
-- **dates in the text:** 2026-07-22 → 2026-08-15
+- **summary:** D5-A and H1/H2 LANDED; the warm validation leg (Card W) was never launched, Card OP stayed untriggered and H3 stayed deferred (W6 unmeasured).
+- **dates in the text:** 2026-07-22 to 2026-08-15
 - **knobs / posture:** `network.mw_wl.d5_dump`, `estimation.global_vtec_sh.rep_error_tau_s`, `processing.max_duration_s`, `network.max_duration_s`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_slip_qc_hardening.md` — 9, 9.0, 9.1, 9.2, 9.3, 9.4, 9.5
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_slip_qc_hardening.md`, sections 9, 9.0, 9.1, 9.2, 9.3, 9.4, 9.5
+
+**Outcome.** The card sequenced four follow-ups to the slip-QC hardening review (PASS, 0 defects), led by D5-A because about 97 % of D5 re-taps showed no raw observable step. D5-A met its falsifier ([D5-A](../slip/D5A-RETAP-ATTRIBUTION.md)); Card W never ran, so W1 to W7 went unmeasured as specified. Later work answered the D5 lead (the flags sit on chords born that epoch, [SPEC_d5_churn_limit_cycle](../../SPEC_d5_churn_limit_cycle.md) section 2b), W1's gap rule ([Card G response](../slip/CARD-G-GAP-REENTRY-RELEVEL.md)) and W2's warm Card R takeover ([IF-TD ref gate](../slip/IFTD-REF-GATE.md)) elsewhere.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

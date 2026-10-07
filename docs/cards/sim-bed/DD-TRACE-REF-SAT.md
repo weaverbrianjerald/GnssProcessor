@@ -1,16 +1,18 @@
-# DD-REF — the post-eclipse network-wide DD episode was the INSTRUMENT'S reference satellite, and the field re-grade that follows from it
+# DD-REF: the DD trace's reference satellite and the field re-grade
 
 **STATUS**
 
 - **id:** DD-REF
 - **topic:** sim-bed
 - **status:** closed
-- **summary:** the post-eclipse network-wide DD episode was the INSTRUMENT'S reference satellite, and the field re-grade that follows from it
+- **summary:** The post-eclipse network-wide DD episode was the trace's single reference satellite returning, not an estimator defect; the field histogram is NOT this artifact; `oldest` is RECOMMEND_SCOPED.
 - **dates in the text:** 2026-08-13 → 2026-09-06
-- **knobs / posture:** `network.trace_dd_fractional_ref`
+- **knobs / posture:** `network.trace_dd_fractional_ref` (`lowest` default; `oldest` built, RECOMMEND_SCOPED, the goldens keep `lowest`)
 - **hashes named in the text** (commit / exe / byte-cert): `fe907a95`
-- **run dirs named in the text:** `runs/nonint_losblock24h_hv`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.12, 6.12.1, 6.12.2, 6.12.3, 6.12.4, 6.12.5, 6.13
+- **run dirs named in the text:** `runs/nonint_losblock24h_hv` (sim base), `fld63_stk_on` (field), A/B arms `_ddref6h_low` / `_ddref6h_old`
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` §6.12 (6.12.1 to 6.12.5), §6.13
+
+**Outcome.** The card asked what re-realizes network-wide after an eclipse re-admission. Nothing in the estimator: every chord is differenced against one satellite (G01 / E02 all day), whose eclipse returns re-referenced the trace to newborn legs; ref-free, the 24 h L1C grade is 0.089 cyc, 86.8 % at the integer. On the field a truth-free re-grade sits at its null (R 0.468 against 0.473). The `oldest` policy improved the as-traced grade 25 to 42 % but FAILED its pre-registered bar (2.1 to 3.4x above ref-free); the [ledger](../../CONFIG_promotion_ledger.md) scopes it and the goldens keep `lowest`.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

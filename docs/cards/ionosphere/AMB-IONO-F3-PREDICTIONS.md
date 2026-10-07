@@ -1,16 +1,18 @@
-# F3 (pre-reg) — the pre-registered predictions for the F3 station block, and the round-2 / round-4 result amendments
+# F3 (pre-reg): sim predictions and results for the var-floor, F1 and F3 arms
 
 **STATUS**
 
 - **id:** F3 (pre-reg)
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the pre-registered predictions for the F3 station block, and the round-2 / round-4 result amendments
+- **summary:** F3 (`network.phase_leveling_local_block`) BEAT its pre-registered 3 h line 2.7× (settled L1C 0.217 cyc); F1 is VALIDATED but intermediate, and the var floor is FALSIFIED as a fix.
 - **dates in the text:** 2026-09-03 → 2026-09-04
-- **knobs / posture:** `network.phase_leveling_var_floor_m2`, `network.phase_leveling_los_scale`, `network.phase_datum_handover_max_var_m2`, `network.phase_leveling_local_block`
-- **hashes named in the text** (commit / exe / byte-cert): `ccfa9eba`, `bd16aca2`, `cdbeaee0`, `b7cea2ad`
+- **knobs / posture:** `network.phase_leveling_var_floor_m2`, `network.phase_leveling_los_scale` (F1), `network.phase_datum_handover_max_var_m2` (1e-4 and 1e-2 m²), `network.phase_leveling_local_block` (F3); quiet 60-station wu93 sim bed, 360 epochs
+- **hashes named in the text** (commit / exe / byte-cert): `ccfa9eba`, `bd16aca2`, `cdbeaee0`, `b7cea2ad`; OFF-arm `products.txt` sha256 `1c1b60c7…29229d` on three exes
 - **run dirs named in the text:** `runs/nonint_base3h`, `runs/nonint_base3h_f1exe`, `runs/nonint_losblock3h`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` §6, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8
+
+**Outcome.** The card pre-registered, then graded, quiet-sim arms against the leveling carry's over-count. The var floor worsened the total (settled L1C 3.46 and 3.64 cyc against base 2.72); F1 reached 1.276 cyc. F3's round0 reached 79.3 %, missing the ≥ 90/93 continuity bar, and its formal-σ floor and elevation predictions were FALSIFIED. The [24 h arm](../ionosphere/AMB-IONO-F3-24H.md) missed its settled number on episodes that [DD-REF](../sim-bed/DD-TRACE-REF-SAT.md) traced to the DD trace's reference satellite; the [field arm](../network-vehicle/F3-FIELD-ARM-RESULTS.md) kept F3 OFF and the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) cut it.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

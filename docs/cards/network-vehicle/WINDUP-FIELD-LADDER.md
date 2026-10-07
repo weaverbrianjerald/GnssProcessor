@@ -1,16 +1,18 @@
-# wind-up field — the three-arm field ladder — the slope lands on 2, never on 0; the 5-station matrix; the network-producer arm
+# wind-up field: the three-arm field ladder and its replications
 
 **STATUS**
 
 - **id:** wind-up field
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the three-arm field ladder — the slope lands on 2, never on 0; the 5-station matrix; the network-producer arm
+- **summary:** NULL REJECTED: the truth-free ladder's slope lands near 2 (the inverted-sign model), never 0, in 9 of 9 components at three stations; the replication and the network-producer arm are consistent with it.
 - **dates in the text:** 2026-08-21 → 2026-08-22
-- **knobs / posture:** `estimation.accumulate_phase_windup`, `network.trace_station_residuals`
-- **hashes named in the text** (commit / exe / byte-cert): `919bb885`, `90e68d3`
-- **run dirs named in the text:** `runs/simnet60_campaign_wu93`, `runs/simnet60_quiet_wu93`, `runs/camp60wu_smoke_mixed`
-- **source:** `docs/archive/SPEC_phase_windup_sign.md` — §9, §9.1, §9.2, §9.3, §9.4, §9.5, §9.6, §9.7, §9.8, §9.9, §9.10
+- **knobs / posture:** `estimation.accumulate_phase_windup` (loader default false: every field lineage ran fractional when this was written), `network.trace_station_residuals` (zero rows on the `carry_invariant` chain); arms = wind-up ON shipped, OFF, ON fixed; `eigen_threads: 1`
+- **hashes named in the text** (commit / exe / byte-cert): `919bb885` (pre-fix byte-cert exe, now an expected-fail baseline), `90e68d3` (the fractional-mode loader warn); ladder exes `D50F4C56…` (shipped) and `4380A2B6…` (fixed); matrix and network-arm exes `727A9E96…` (shipped, built at `3861718`) and `AA472278…` (fixed); fixed simulator `21C2DCD0…`
+- **run dirs named in the text:** `runs/simnet60_campaign_wu93`, `runs/simnet60_quiet_wu93` (regenerated fixtures), `runs/camp60wu_smoke_mixed`; `test_suite_results/windup_ab/`; configs `config/test_suite/manifest_windup.json`, `_wuladder_{corr,off,ship}.json`
+- **source:** `docs/archive/SPEC_phase_windup_sign.md` §9 to §9.10
+
+**Outcome.** The question: does real data separate the shipped (inverted) wind-up sign from the corrected one, by a truth-free ladder? The arc-demeaned phase residual RMS orders fixed < OFF < shipped in 7 of 7 configurations. A five-station replication puts the fixed arm ahead of OFF in horizontal RMS at every station (mean 2.26 → 1.30 cm); the network-producer arm is CONSISTENT, not decisive. Absolute wire-quality re-grades are not certified. The fractional-wrap follow-on (section 9.5) went to [wind-up census](../slip/WINDUP-FRACTIONAL-CENSUS.md); accumulated wind-up was ARMED on the goldens by [WUP](../../refound/WUP_windup_accumulated_promotion_2026-10-01.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

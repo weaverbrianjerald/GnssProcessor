@@ -5,12 +5,14 @@
 - **id:** CAF
 - **topic:** queues
 - **status:** open
-- **summary:** code defects, unverified suspicions, author checks, wrong CLAUDE.md claims and dead code found while every comment in the repository was checked against its code; a checklist, one row per finding
+- **summary:** Checklist of what the comment audit found in the code: 14 verified defects open and 5 fixed, plus unverified suspicions, author checks, wrong CLAUDE.md claims and dead code.
 - **dates in the text:** 2026-09-22 → 2026-09-28
 - **knobs / posture:** `processing.enable_noncausal_slip_bridge`, `model_corrections.apply_phase_shifts`, `network.gross_los_emit_exclude`
 - **hashes named in the text** (commit / exe / byte-cert): `b3a8e48`, `ae53603`, `335f640`
 - **run dirs named in the text:** none
 - **source:** the comment rewrite (commit `b3a8e48`); every comment and docstring was rewritten with its claims checked against the code
+
+**Outcome.** The comment rewrite (`b3a8e48`) changed no code; this checklist holds what it found in the code, plus the findings of the 2026-09-28 report prose passes. Section 2 holds 11 verified open defects, among them a `ProductCache` error-path deadlock and a PPP fix-and-hold that holds nothing; the report passes add a GLONASS ephemeris anchored on the host clock, a chordless-block dimension mismatch in `ddPriorPosteriorMean` and Sun and Moon directions precessed twice. The Sun-frame fix's 2 h on/off run is neutral on the field at the millimetre level and no verdict on the sim; a regenerated sim fixture, the 6 h pair and the census are owed.
 
 > Results are appended TO THIS FILE. An item is closed by ticking its box and adding the commit or the reason.
 

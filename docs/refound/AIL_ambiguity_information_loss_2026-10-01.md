@@ -1,15 +1,17 @@
-# AIL: the float vehicle's ambiguity information loss (why a carried ambiguity is not phase-stiff)
+# AIL: the float vehicle's ambiguity information loss
 
 **STATUS**
 
 - **id:** AIL
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** PRE-REGISTERED 2026-10-01 (card LGM section 5.3): the float vehicle's carried ionosphere-free ambiguity moves by 6.6 mm per epoch per line of sight on the golden posture and 3.3 mm on the program posture (station-common and satellite-common parts removed), decaying with the arc's age (12.7 mm at 5 to 10 epochs, 1.6 mm at 160 to 400 on the program posture); held at phase precision it would move 20 to 40 times less. That loose ambiguity is what keeps card LGM's colour state from carrying the colour. A trace-class instrument (`network.trace_amb_if`) reads, per line of sight and epoch, the variance of the ionosphere-free ambiguity before the solve (the block the inject folded) and after it (the harvest block), conditional on the border, with and without the station's common mode; the question is whether the information is lost at the inject (the time update) or never gained in the solve. READ 2026-10-01 (section 4): the instrument is trace class (identity on all arms); the golden posture's inject discards a young arc's information every epoch (75 to 157 mm below 20 epochs, card CTU's legacy clock q in card 1d's kappa) and loses little at maturity; the program posture (the exact update) loses 2 to 3 mm per epoch steadily, the exact conditional growth of the anchored clock's walk through each row's border regression; the estimator states the looseness it shows. Neither posture keeps the ambiguity stiff enough for card LGM's state. Section 4.1: with the anchor's rate near zero on the sim the program posture's loss falls 8 to 10 times and the state carries the colour (10.0 against 12.0 mm, G1 0.71 on mature arcs, no consumer penalty) while the clock level suffers; the anchor's walk is the channel.
+- **summary:** READ: the golden coupling update discards a young arc's ambiguity information each epoch (CTU's root); the exact update's steady loss is the anchored clock's walk (A2 FAILS, A3 holds).
 - **source:** [LGM](LGM_los_phase_nuisance_2026-10-01.md) section 5.3; [CTU](CTU_coupling_time_update_2026-09-28.md) (the coupling time update; the legacy clock q in card 1d's kappa); [RF-1 design](RF-1_float_ambiguities_design.md) (the float vehicle); `src/core/filter/NetworkCoupling.cpp` (`buildLocalBlock`, `scalarRowIngredients`, `exactRowIngredients`); `src/core/app/NetworkRunContext.cpp` (`networkHarvestLocalCarries`)
 - **knobs / posture:** `network.trace_amb_if` (trace class, default off); no solve change in this card's instrument
 - **dates in the text:** 2026-10-01
-- **hashes / run dirs:** the wander reads `runs/_rap_lgm_{ctl,pc,pcw}amb_gs`, `runs/_rap_lgm_{ctl,pc}amb_ps`; this card's arms `runs/_rap_ail_*`
+- **hashes / run dirs:** exe `gnss_processor_ail.exe`; the wander reads `runs/_rap_lgm_{ctl,pc,pcw}amb_gs`, `runs/_rap_lgm_{ctl,pc}amb_ps`; this card's arms `runs/_rap_ail_*` (controls `runs/_rap_ailc_*`, the anchor-rate arms `runs/_rap_ail_q0_ps`, `runs/_rap_lgm_pcq0_ps`, `runs/_rap_lgm_pcwq0_ps`)
+
+**Outcome.** Question: is the carried ionosphere-free ambiguity's 3.3 to 6.6 mm per-epoch motion lost at the inject or never gained in the solve? At the inject: below 20 epochs the golden posture loses 75 mm (sim) and 157 mm (field), the exact update 4.7 and 5.1 mm. With the anchor's rate near zero the sim's loss falls 8 to 10 times and card LGM's colour state carries the colour, at a cost to the clock level. [EXL](EXL_exact_update_lah_promotion_2026-10-01.md) armed the exact update; [SCL2](SCL2_level_residue_under_the_clone_2026-10-06.md) section 9 left the joint carry unbuilt for cost.
 
 ## 1. The reading that opens the card
 

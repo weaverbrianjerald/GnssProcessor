@@ -1,16 +1,18 @@
-# 0910 morning — the same-build control, three truth censuses, two falsified cards, and the field's phase-bias steps
+# 0910 morning: truth censuses, two falsified cards, field phase-bias steps
 
 **STATUS**
 
 - **id:** 0910 morning
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the same-build control, three truth censuses, two falsified cards, and the field's phase-bias steps
+- **summary:** Oracle slip repair FAILS every gate and PB-gauge levelling is FALSIFIED (KEEP_OFF); the emitted phase bias carries an arbitrary receiver's float, and field phase biases step by metres.
 - **dates in the text:** 2026-09-10
 - **knobs / posture:** `network.phase_datum_prioritized`, `network.cycle_slip.oracle_relevel`, `network.raim_arc_persist_epochs`, `network.emit_pb_gauge_level`, `network.emit_pb_gauge_mode`, `network.ambiguity_resolution`
 - **hashes named in the text** (commit / exe / byte-cert): `319a6aed`, `00d5fdf`, `18aa2854b2575658`, `9b59a2c`
 - **run dirs named in the text:** `runs/simnet60_campaign_wu93`, `runs/fldf3_on2_zwdblk`, `runs/fldf3_on2`, `runs/fldf3_on2_ctl_sb`, `runs/golden_sim_campaign`, `runs/golden_sim_campaign_zwdblk`, `runs/golden_sim_consumer_ar_a`, `runs/golden_sim_pbgauge`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.17, 6.17a, 6.17b, 6.17c, 6.17d, 6.17e, 6.17f, 6.17g, 6.17h
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md`, sections 6.17, 6.17a, 6.17b, 6.17c, 6.17d, 6.17e, 6.17f, 6.17g, 6.17h
+
+**Outcome.** The morning asked what holds the slipped sim bed's metre-class ZWD plateau and why the wire carries no integers. T4 mostly re-erases arcs its own earlier re-level damaged (the first erase made 64.4 % of T4 chains worse), which supersedes bounded T4 identification (item 22). Exact oracle repair FAILED every pre-registered gate, worse still with T4 starved; PB-gauge levelling met its wire gate on 0 of 12 channels; the consumer WL→NL cascade is DEAD ON ARRIVAL. Both in-flight items closed that day: emission continuity FALSIFIED as a class, producer AR NO-GO for Phase 3 ([0910 second half](../ionosphere/AMB-IONO-0910-SECOND-HALF.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

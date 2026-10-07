@@ -1,16 +1,18 @@
-# level health — `network.emit_level_health` — the contract gap, the one-channel three-class mechanism, and the normative consumer contract
+# level health: the `network.emit_level_health` channel and its consumer contract
 
 **STATUS**
 
 - **id:** level health
 - **topic:** wire-contract
 - **status:** open
-- **summary:** `network.emit_level_health` — the contract gap, the one-channel three-class mechanism, and the normative consumer contract
+- **summary:** Phase A replay PASSED on the sharp class (era-3 toxic 7/7 flagged, era-2 clean 16/16 passed), but the causal limb MISSES gradual slides; the Phase B build is owed.
 - **dates in the text:** 2026-08-23
 - **knobs / posture:** `network.emit_level_health`, `network.level_health_dev_tecu`, `network.level_health_ref_epochs`, `network.level_health_ref_max_age_s`, `network.level_health_confirm_epochs`, `network.level_health_relevel_hold_s`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/_wd`
-- **source:** `docs/archive/SPEC_withhold_era_release.md` — §12, §12.1, §12.2, §12.3, §12.4, §12.5, §12.6, §12.7, §12.8, §12.9
+- **hashes named in the text** (commit / exe / byte-cert): exe `92FC13A7…`
+- **run dirs named in the text:** `runs/_wd`, `runs/_wd/whattrib`, `runs/_wd/whescal`
+- **source:** `docs/archive/SPEC_withhold_era_release.md`: §12, §12.1, §12.2, §12.3, §12.4, §12.5, §12.6, §12.7, §12.8, §12.9
+
+**Outcome.** The question: can a self-referenced, flag-only token on the H heartbeat rank level health, which σ̂₀ anti-ranks? At the defaults the offline replay met the HARD gates VA-1 and VA-2 and flagged era-5's 277410, which the T2 class missed; VA-3, VA-5, VA-7 and VA-9 are unreported. VA-4's slide at 276150 was caught only by the centered limb, so `lvlretro` is REQUIRED. Phase B (VB-1 to VB-4) is owed; the [A4 withhold](../raim-qc/WITHHOLD-ERA-RELEASE.md) promotion waits on it. The re-founded goldens pin `network.estimate_iono_sh: false` ([RF-3-prep](../../refound/RF-3-prep_golden_rebase_2026-09-15.md)), where the channel would run all-`na`.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

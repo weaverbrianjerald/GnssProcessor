@@ -1,16 +1,18 @@
-# CM — CODE-MODEL CONSISTENCY — eleven cold arms clear every estimation knob, and the station block is near-rank-deficient at ignition
+# CM: code-model consistency, eleven cold arms and the row-level read
 
 **STATUS**
 
 - **id:** CM
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** CODE-MODEL CONSISTENCY — eleven cold arms clear every estimation knob, and the station block is near-rank-deficient at ignition
+- **summary:** No estimation-side knob names the field golden's code inconsistency (eleven cold arms clear them all); the a-priori code model is right and the station block is near-rank-deficient at ignition.
 - **dates in the text:** 2026-09-14
-- **knobs / posture:** `network.trace_postfit_rows`, `network.carry_rx_code_bias`, `network.estimate_sat_code_bias`, `network.estimate_iono_sh`, `network.cb_kaula_prior`, `network.carry_zwd`, `network.zwd_carry_q`, `estimation.zwd_constraint`, `estimation.global_vtec_sh.representation_sigma_tecu`, `estimation.global_vtec_sh.max_degree` … (+1 more in the text)
-- **hashes named in the text** (commit / exe / byte-cert): `c416761`, `dd1d2c4`, `13c1d7ef`, `87a33bf0`, `98c16e1`, `9247d92`
-- **run dirs named in the text:** `runs/_cm_a0`, `runs/_cm_a10`, `runs/_ci_decomp_net`
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.8, 24.9
+- **knobs / posture:** field golden (`carry_invariant` vehicle) as control A0, one knob per cold 2 h arm: `network.carry_rx_code_bias`, `network.estimate_sat_code_bias` (with `model_corrections.enable_code_phase_bias`), `network.estimate_iono_sh`, `filter.process_noise.sat_code_bias_q`, `network.cb_kaula_prior`, `network.carry_zwd` + `network.zwd_carry_q`, `estimation.zwd_constraint`, a three-station roster (A8), `estimation.global_vtec_sh.representation_sigma_tecu`, `estimation.global_vtec_sh.max_degree`, `network.external_sat_code_bias` (A9); trace `network.trace_postfit_rows`
+- **hashes named in the text** (commit / exe / byte-cert): worker commits `c416761`, `dd1d2c4`, `98c16e1`, `9247d92`; exe `13c1d7ef…`; smoke `87a33bf0…`
+- **run dirs named in the text:** `runs/_cm_a0` to `_cm_a5`, `runs/_cm_a10` / `a10b` / `a11`, `runs/_ci_decomp_net` / `_net2`, `_ci_decomp_phasedw` / `_ctl20`
+- **source:** `docs/archive/SPEC_event_harness.md`, sections 24.8, 24.9
+
+**Outcome.** The card asked whether one estimation-side knob explains the metre-level code inconsistency of the field golden. No arm crosses the three bars: closing the per-epoch ZWD sink diverges the solve at epoch 102, and a three-station network halves the code rms (1.66 m) while deepening the sink. The row-level read finds the a-priori model right, a WROC ZWD of −17.8 m at epoch 1 and 47 of 130 rows uncheckable. The vehicle test ([PV](../network-vehicle/PV-vehicle-test.md)) later halved every bar on the leveling vehicle without crossing one, and the [network re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) froze that posture.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

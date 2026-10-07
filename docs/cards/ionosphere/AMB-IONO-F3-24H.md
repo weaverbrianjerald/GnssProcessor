@@ -1,16 +1,18 @@
-# F3 24 h — the 24 h F3 arm — the settled number is NOT met, and the reason is an EDGE, not the mechanism
+# F3 24 h: the settled-quarter prediction missed on the 24 h F3 arm
 
 **STATUS**
 
 - **id:** F3 24 h
 - **topic:** ionosphere
-- **status:** closed
-- **summary:** the 24 h F3 arm — the settled number is NOT met, and the reason is an EDGE, not the mechanism
+- **status:** superseded
+- **summary:** The settled-quarter prediction is FALSIFIED as written (L1C 0.425 cyc as-traced); its re-admission EDGE reading was later superseded: the episodes were the DD trace's reference satellite.
 - **dates in the text:** 2026-09-05
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** F3 with the handover ceiling 1e-2 (arm 2 at the lineage's 1e-4); F1 24 h control at 1e-2
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/nonint_losblock24h_hv`, `runs/nonint_losblock24h`, `runs/nonint_los24h_hv`
-- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` — §6.9
+- **source:** `docs/archive/SPEC_amb_iono_split_overcount.md`, section 6.9
+
+**Outcome.** The arm tested whether F3 holds its pre-registered 24 h settled grade. Quiet mature chords sat at the CRLB (0.160 cyc, 89 % at the integer), but two network-wide episodes trailing eclipse re-admission clusters spoiled the settled quarter; the ceiling arm and the F1 control placed the cause in a re-admission edge, and F3 stayed default-OFF. [DD-REF](../sim-bed/DD-TRACE-REF-SAT.md) (section 6.12.3) later showed the episodes were the trace's reference satellite reconverging: ref-free, the last quarter grades 0.095 cyc, 85.9 % at the integer. The re-coupling window it named as the next card (`network.readmit_coupling_marg_ep`) is KEEP_OFF ([READMIT](../network-vehicle/READMIT-EDGE.md)), and the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) cut F3 from the posture.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

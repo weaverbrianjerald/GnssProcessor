@@ -1,16 +1,18 @@
-# prires census — the prior-residual census — the binding precedent, INC-0..3, the wiring sites, the build record and the pointer-drift ledger
+# prires census: the prior-residual census of carried priors (INC-0 to INC-3)
 
 **STATUS**
 
 - **id:** prires census
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the prior-residual census — the binding precedent, INC-0..3, the wiring sites, the build record and the pointer-drift ledger
-- **dates in the text:** 2026-08-01 → 2026-08-15
-- **knobs / posture:** `network.prior_residual_global_sigma0`, `network.cycle_slip.gap_instrument`, `network.prior_residual_census`, `network.prior_residual_families`, `network.prior_residual_window_epochs`, `network.prior_residual_min_rows`, `network.prior_residual_report_sigma`, `network.prior_residual_corroborate`, `network.prior_residual_event_holdoff_ep`
-- **hashes named in the text** (commit / exe / byte-cert): `084ba4980fec500b`
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_prior_residual_census.md` — (preamble), 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 13.1, 13.2, 13.4, 13.5, 13.3, 16
+- **summary:** Measure-only per-row screen of carried priors (LASER slide 5-74): built solve byte-identical, smoke gates PASS, power gates 3 to 6 not graded; armed on the goldens as an instrument.
+- **dates in the text:** 2026-08-01 to 2026-08-15
+- **knobs / posture:** `network.prior_residual_census`, `network.prior_residual_families`, `network.prior_residual_window_epochs`, `network.prior_residual_min_rows`, `network.prior_residual_report_sigma`, `network.prior_residual_corroborate`, `network.prior_residual_event_holdoff_ep`, `network.prior_residual_global_sigma0`, `network.cycle_slip.gap_instrument` (auto-armed by INC-3); census, corroboration and rider are true, families `pl,pb,cb,zwd,rxcb`, in `config/golden/golden_field_refound.json` and `config/golden/golden_sim_refound.json`
+- **hashes named in the text** (commit / exe / byte-cert): resume fingerprint `084ba4980fec500b`
+- **run dirs named in the text:** none (arms `config/test_suite/_ft63_prires_{off,on,corrob,smoke,smoke_off}.json`, `_agu305_prires_smoke.json`)
+- **source:** `docs/archive/SPEC_prior_residual_census.md` preamble, sections 1 to 13 (13.1 to 13.5) and 16; the rider (sections 14 and 15) is [global σ̂₀ rider](../raim-qc/GLOBAL-SIGMA0-RIDER.md), section 17 is [RNEG](../raim-qc/RNEG-REPARTITION.md)
+
+**Outcome.** The question: which carried priors hold a stale value, read per row as LASER's residual of prior information. Gates 1, 2 and 7 PASS at 63 stations, 2 and 7 again at 305 (resume fingerprint unchanged, 0.14 ms/epoch); the first cold read put `cb`/CLEAN at 1.61 % beyond 4σ̂₀ against a Gaussian 0.0063 %, the D5 signature. The INC-3 join saturated at 305 stations; its same-day consensus fix is unproven on satellite-level families. Gates 3 to 6 are not recorded as graded. [RNEG](../raim-qc/RNEG-REPARTITION.md) later moved the r-negative rows, whose |t| the 1e-9 floor inflates, out of the ladders.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,16 +1,18 @@
-# DOY-129 defects — defects A/B/C from the instrumented leg, the five wiring facts, and the measured policy counterfactuals
+# DOY-129 defects: defects A, B and C of the guarded leg, and the policy counterfactuals
 
 **STATUS**
 
 - **id:** DOY-129 defects
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** defects A/B/C from the instrumented leg, the five wiring facts, and the measured policy counterfactuals
+- **summary:** The guarded leg withheld 278 of 600 epochs; defects A (seam withhold CORRECT), B (a₀₀ is the wrong statistic) and C (one-epoch CB resume suppression) drive six gate-policy rulings.
 - **dates in the text:** 2026-07-28
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `network.sh_health_gate` (the a₀₀ band, as shipped); the policy knobs named in Part D (`resume_grace_epochs`, `resume_grace_ura_floor_m`, `sh_gate_ratio_*`, `cb_excursion_suppressed_resume`) are not built
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/day129_guards`, `runs/day129_cont`
-- **source:** `docs/archive/SPEC_day129_frame_guards.md` — C1, C2, C3, C4, C5, C6
+- **source:** `docs/archive/SPEC_day129_frame_guards.md`: C1, C2, C3, C4, C5, C6
+
+**Outcome.** The question: what did the SH-gated warm-resume leg ship, and which policy would serve it better? The 239-epoch seam era swallowed the 20:47 event, so Phase 2.1's gate (iii) cannot be read off this leg. Defect A: the field really diverged (a₀₀ 1410.8 TECU at the seam epoch), an estimation defect no emission policy fixes. Defect B: a₀₀ is datum-coupled (invariant #5). Defect C: the CB resume suppression covers one epoch of a shock lasting 10 or more. The six rulings ([DEC-day129-gate-policy](../../decisions/DEC-day129-gate-policy.md)) are still open; the [ledger](../../CONFIG_promotion_ledger.md) holds `network.sh_health_gate` KEEP_OFF.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

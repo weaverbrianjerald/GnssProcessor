@@ -1,6 +1,20 @@
-# RF-PD — the null local column behind the per-station `addStation` rejections, named (2026-09-15)
+# RF-PD: the null behind the per-station `addStation` rejections, named (2026-09-15)
 
-**STATUS:** open — **the drop is ONE structural null, it is the same null on every station and every epoch, and the datum
+**STATUS**
+
+- **id:** RF-PD
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** Null NAMED, signal hypothesis REFUTED: every per-station PD rejection is one zero-eigenvalue null (the receiver-DCB / slant-iono / ambiguity confound) whose gauge row is installed after the test.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** `network.trace_station_pd_null` (bool, default OFF, trace-only, solve byte-identical); the fix pre-registered as `network.station_prior_before_pd` (section 6 (a), built in RF-PD-fix); RF-0g golden and RF-1 + RF-2b + RF-2d vehicle, field, 6 h
+- **hashes named in the text:** exe `gnss_processor_rfpd.exe` sha256[:16] `F953562FD1132B4A` (main `9a779e8` + the knob); OFF smoke `products.txt` `9add1d3ab9d70657`
+- **run dirs named in the text:** `runs/_rfpd_smoke_off`, `runs/_rfpd_rf0g_field6`, `runs/_rfpd_field6_both` (sources `runs/_rf0g_field6`, `runs/_rf2d_field6_both`); reader `scripts/rf_pd_null_read.py`
+- **source:** [RF-NS-b](RF-NS-b_vehicle_obs_loss_2026-09-15.md) sections 2.3 and 4 (the drop and the vehicle's extra rejections)
+
+**Outcome.** The card asks why `addStation` drops a settled median of 29 (golden) and 42 (vehicle) of 59 field stations per epoch. Only a phase-datum anchor pin in the station's own block closed the null (0 of 14 370 anchored station-epochs rejected). Fix (a), built in [RF-PD-fix](RF-PD-fix_station_prior_before_pd_2026-09-15.md), took PD rejections to 0 on all four beds but FAILED the consumer bars of section 6; (b) and (c) were conditional on (a) leaving rejections, so nothing is owed here. The knob joined the [RF-0hv](RF-0hv_working_posture_2026-09-15.md) working posture and, since 2026-09-22, the goldens ([GRB](GRB_golden_rebase_2026-09-22.md)).
+
+**Status as recorded (2026-09-15):** open — **the drop is ONE structural null, it is the same null on every station and every epoch, and the datum
 that would close it is installed one line too late.**  `NetworkNormalEquations::addStation` rejects a station whose local
 block `N_rr_r` fails its relative PD test and the driver drops the station for the epoch.  Armed with the new
 `network.trace_station_pd_null`, all **23 633** golden and **30 340** vehicle rejections now name their null direction, and

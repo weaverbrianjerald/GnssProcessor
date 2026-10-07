@@ -1,16 +1,18 @@
-# slip-QC — the slip-QC hardening spec — evidence base, the binding ground rules, cards R / L / E / G, the shared harness, and what is still owed
+# slip-QC: the slip-QC hardening spec, its ground rules, cards R / L / E / G and the owed list
 
 **STATUS**
 
 - **id:** slip-QC
 - **topic:** slip
 - **status:** reference
-- **summary:** the slip-QC hardening spec — evidence base, the binding ground rules, cards R / L / E / G, the shared harness, and what is still owed
-- **dates in the text:** 2026-07-21 → 2026-09-09
+- **summary:** Reference spec after the 2026-07-21 IF-TD/MW audit: Card E MET, Card R PARTIAL, Card L VOID / NOT ACHIEVABLE on two of three falsifiers, Card G counters MET; the warm leg (Card W) never ran.
+- **dates in the text:** 2026-07-21 to 2026-09-09
 - **knobs / posture:** `network.cycle_slip`, `network.trace_events`, `network.cycle_slip.mw_lli_corroborate`, `network.cycle_slip.gap_instrument`, `network.cycle_slip.if_phase_td_ref_gate`, `network.cycle_slip.gap_reentry_relevel`, `network.mw_wl.d5_dump`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/fldf3_pl2`, `runs/fldf3_pl2_gapfree2`
-- **source:** `docs/archive/SPEC_slip_qc_hardening.md` — (preamble), 0, 1, 2, 3, 4, 5, 6, 7, 11
+- **source:** `docs/archive/SPEC_slip_qc_hardening.md`, sections (preamble), 0, 1, 2, 3, 4, 5, 6, 7, 11
+
+**Outcome.** The spec answers four limitations found around the IF-TD pool detector (L1 to L4) with cards R, L, E and G under binding ground rules (default OFF, empirical thresholds, never hard-exclude). Its status ledger (section 11, 2026-08-14) closes the D5 lead elsewhere (95.3 % of D5 flags sit on chords born that epoch) and leaves Card W, H3, OP and the MW/LLI drain's pruned-ambiguity hole owed. Card R's warm takeover was validated later ([IF-TD ref gate](../slip/IFTD-REF-GATE.md)); the Card G response, KEEP_OFF on its field arm ([Card G response](../slip/CARD-G-GAP-REENTRY-RELEVEL.md)), was armed on the re-founding bases on 2026-09-20 ([AB2](../../refound/AB2_l5_third_frequency_2026-09-20.md) section 14).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

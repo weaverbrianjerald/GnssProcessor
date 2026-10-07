@@ -1,16 +1,18 @@
-# withhold cliff — the retirement census — every G3 number was on a retired binary; the cliff does not reproduce; the level-aware re-grade and era-3
+# withhold cliff: retirement census and the same-build escalation re-grade
 
 **STATUS**
 
 - **id:** withhold cliff
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** the retirement census — every G3 number was on a retired binary; the cliff does not reproduce; the level-aware re-grade and era-3
-- **dates in the text:** 2026-08-21 → 2026-08-23
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): `4f49fa2`, `0d25aa0`
-- **run dirs named in the text:** `runs/fld63_relevel4h_`, `runs/fld63_relevel4h_ctlw`, `runs/_wd`, `runs/fld63_wh_`
-- **source:** `docs/archive/SPEC_withhold_era_release.md` — §8, §8.1, §8.2, §8.3, §8.4, §8.5, §9, §9.1, §10, §10.1, §11, §11.1, §11.2, §11.3, §11.4
+- **summary:** G3 FAIL did NOT REPRODUCE: the cliff is an elapsed-time expiry, not therapy; a same-build 4 h pair shows zero paired cost; the consumer contract is the remaining blocker.
+- **dates in the text:** 2026-08-21 to 2026-08-23
+- **knobs / posture:** `raim_withhold_adapt_escalate`, `raim_withhold_free_erase`, `phase_leveling_max_gap_s`; the always-on leveling-carry retirement census (`n_cr_*` counters, no knob)
+- **hashes named in the text** (commit / exe / byte-cert): `4f49fa2`, `0d25aa0`, exe `92FC13A7…`
+- **run dirs named in the text:** `runs/fld63_relevel4h_`, `runs/fld63_relevel4h_ctlw`, `runs/_wd/whattrib`, `runs/_wd/whescal`, `runs/_wd/whattrib6h`, `runs/_wd/whescal6h`, `runs/fld63_wh_`
+- **source:** `docs/archive/SPEC_withhold_era_release.md`: §8, §8.1, §8.2, §8.3, §8.4, §8.5, §9, §9.1, §10, §10.1, §11, §11.1, §11.2, §11.3, §11.4
+
+**Outcome.** The question was whether the 900 s leveling-carry expiry (the cliff) was therapy the [A4 withhold](WITHHOLD-ERA-RELEASE.md) escalation removed. It is a timer: in the 4 h window the cliff does not occur (the named epoch is a 2-station dropout), and a same-build escalation arm recovers +23 epochs at a paired median σ̂₀ and a00 delta of zero. The 6 h pair limits that PASS: the cliff returns on storm eras, the level contrast widens once reset timing diverges, and instrument-silent level excursions occur in both arms. Promotion waits jointly with `network.emit_level_health` on the open [level health](../wire-contract/LEVEL-HEALTH-CHANNEL.md) card (§12.6).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

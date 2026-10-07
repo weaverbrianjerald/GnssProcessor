@@ -1,16 +1,18 @@
-# R0 + 1(d) — `network.phase_anchor_carry_reref` — the carry re-reference closes the churn, with the adversarial review of the diff
+# R0 + 1(d): `network.phase_anchor_carry_reref`, the PB-anchor carry re-reference
 
 **STATUS**
 
 - **id:** R0 + 1(d)
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** `network.phase_anchor_carry_reref` — the carry re-reference closes the churn, with the adversarial review of the diff
+- **summary:** VALIDATED 2026-08-14 (n = 1): marginalizing the stale PB-anchor carry at each anchor handover closes the clock churn on the 24-sta sim fixture (Σ|dev| 160.457 → 1.529 m); R0's instruments are solve-neutral.
 - **dates in the text:** 2026-08-14
-- **knobs / posture:** `network.phase_anchor_carry_reref`
-- **hashes named in the text** (commit / exe / byte-cert): `7a908e23`
-- **run dirs named in the text:** `runs/pareref_`, `runs/pareref_on`
-- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` — 5.08, 5.08.1, 5.08.2, 5.08.3, 5.08.4, 5.08.5, 5.08.6, 5.1
+- **knobs / posture:** `network.phase_anchor_carry_reref` (default OFF); posture `_simnet24_inj_null_pdp` plus this knob
+- **hashes named in the text** (commit / exe / byte-cert): `7a908e23` (the pre-change exe, the §5.07 snapshot)
+- **run dirs named in the text:** `runs/pareref_{off,on}` (configs `config/test_suite/_simnet24_inj_pareref_{off,on}.json`); `runs/pareref_on` is the null-calibration fixture
+- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` §5.08, 5.08.1, 5.08.2, 5.08.3, 5.08.4, 5.08.5, 5.08.6, 5.1
+
+**Outcome.** R0 adds the missing instruments (unconditional PBGAUGE rows, within-epoch response counters, σ̂₀_first, the clock-impulse meter) with a bit-identical solve. 1(d) marginalizes each handed-over PB key for one epoch and erases the family's leveling carries. On 30/30 identical handovers the datum-free C contrast falls 18.6553 → 0.5035 m (the §4 clean-election bound) and T3 consensus 20.1 → 0.56 %. A review closed two holes. Not established: replication, field reach, transform over delete. [R2 sticky](../network-vehicle/PIVOT-R2-STICKY.md) later composed the disarmed continuous-handover pairing; the knob is in the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) posture and armed in both goldens and working bases ([EV7](../../refound/EV7_all_sat_clock_decouple_2026-09-21.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

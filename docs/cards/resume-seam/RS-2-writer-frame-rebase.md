@@ -1,16 +1,18 @@
-# RS-2 — the restored invariant DD branch is folded in the WRITER's linearization frame — Phase 1/2 and RS-2b
+# RS-2: the restored invariant DD branch in the writer's linearization frame
 
 **STATUS**
 
 - **id:** RS-2
 - **topic:** resume-seam
 - **status:** closed
-- **summary:** the restored invariant DD branch is folded in the WRITER's linearization frame — Phase 1/2 and RS-2b
+- **summary:** The restored DD carry blob is the field seam defect; the RS-2 re-base is exact but NECESSARY NOT SUFFICIENT, and RS-2b's single held D5 epoch is RECOMMEND_SCOPED.
 - **dates in the text:** 2026-08-02 → 2026-09-12
-- **knobs / posture:** `network.carry_coupling_gauge_project`, `network.carry_conditional_coupling`, `network.carry_invariant`, `network.state_snapshot_carry_lin`, `network.resume_carry_rebase`, `network.resume_d5_warmup_ep`, `network.state_snapshot_datum_capture`, `network.resume_datum_restore`, `network.closed_loop.replay_products_path`
-- **hashes named in the text** (commit / exe / byte-cert): `545b8bdd2b638231`, `eb37b24`, `cf08909`, `a35d2254`, `2c62724`, `62303d2`, `b903b66`, `b9da8cc1` … (+9 more in the text)
+- **knobs / posture:** `network.state_snapshot_carry_lin` (write, RECOMMEND_SCOPED, pinned on the field golden, since retired), `network.resume_carry_rebase` (read, RECOMMEND_SCOPED, harness-armed), `network.resume_d5_warmup_ep` (RECOMMEND_SCOPED at 1); context `network.carry_coupling_gauge_project`, `network.carry_conditional_coupling`, `network.carry_invariant`; RS-3 knobs pre-registered `network.state_snapshot_datum_capture`, `network.resume_datum_restore`; `network.closed_loop.replay_products_path`
+- **hashes named in the text** (commit / exe / byte-cert): `545b8bdd2b638231` (fingerprint), `eb37b24`, `cf08909`, `a35d2254`, `2c62724` (Phase 2 merge), `62303d2`, `b903b66`, `b9da8cc1` (smoke products) … (+9 more in the text)
 - **run dirs named in the text:** `runs/evseed_field6h`, `runs/evleg_fld_null_off`, `runs/evseed_field6h_v2`, `runs/evleg_rs_null_`, `runs/evleg_rs2_null_`, `runs/evleg_rs2_null_rebase_d5w`, `runs/evseed_field6h_v3`, `runs/evleg_close_null_main`
-- **source:** `docs/archive/SPEC_event_harness.md` — 21, 21.1, 21.2, 21.3, 21.4, 21.5, 21.6, 21.7, 21.8
+- **source:** `docs/archive/SPEC_event_harness.md` §21 (21.1 to 21.8)
+
+**Outcome.** The question is why the field golden cannot warm-resume (every leg withheld 61/61). §21.1 withdraws §20.1's Card-1f attribution; Phase 1 shows the restored DD blob is the defect (the no-blob leg emits 60/60). The Phase 2 re-base is exact (637 of 701 chords) yet P2a, P2c and P3 FAIL: 301 D5 flags at +1 against a bar of 10. RS-2b holds the gate one epoch: P4a and P4b PASS, P4c FAILS, and the 14 m phase-bias offset is traced to two datum memories, taken up in [RS-3 … RS-5](../resume-seam/RS-3-to-RS-5-datum-and-emit-layer.md). Seams are off under the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) scope cut.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

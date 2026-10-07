@@ -1,15 +1,17 @@
-# SOI: is the second-order ionospheric term what leaks from the field stations into the satellites' phase-visible clocks?
+# SOI: the second-order ionospheric term as the field stations' leak
 
 **STATUS**
 
 - **id:** SOI
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** FALSIFIED 2026-10-01 (sections 4 and 5): the second-order term is not the leak. In the ionosphere-free combination it is 1.4 mm at the median line of sight (4.7 mm at p90) and 0.7 mm rms in the part the estimator cannot absorb, against 4.1 mm of slow residual; the residual slope on it is -0.02 +/- 0.08 (full size would read +1 at t about 13), placebo and sim the same, and its satellite-mean change correlates with the walk share's at no lag (r^2 0.000 at 120 epochs). S1, S2 and S4 fail, S3 holds. The engine's sign convention stays unadjudicated. Owed: the outside review's fallback (a per-line-of-sight Gauss-Markov nuisance state, registry work, the author's call) and the long-scale remainder's bisection (station-set changes, tropical troposphere). PRE-REGISTERED 2026-10-01 (the outside review's note after card FWS). The leak card FWS found is per line of sight and the same on both frequencies in metres; the second-order ionospheric term fits that signature (the ionosphere-free combination keeps a 1/f^3 residual, it changes sign with the line of sight's angle to the geomagnetic field, it is largest at low latitudes in daylight). A truth-free test on existing traces, no build: the per-line-of-sight term predicted from the estimator's own slant ionosphere and the dipole field of `MagneticField.cpp`, against the signed post-fit ionosphere-free phase residuals (T1) and against the per-satellite walk share's changes (T2), on the field with the sim as the null.
-- **source:** [FWS](FWS_field_walk_share_sources_2026-10-01.md) sections 2.1, 4 and 5; [PAC](PAC_common_drift_pivot_clock_2026-10-01.md); `include/atmosphere/HigherOrderIonosphere.hpp`, `src/core/atmosphere/MagneticField.cpp` (the dipole); `src/core/filter/NetworkIonoDiag.cpp` (the slant ionosphere trace, `iono_total_m` on L1 in metres); `src/core/filter/NetworkFrameDiag.cpp` (the post-fit rows, signed v = y - A x)
+- **summary:** FALSIFIED 2026-10-01: the second-order ionospheric term is 0.7 mm rms where the estimator cannot absorb it, against 4.1 mm of slow residual, with no residual slope and no walk-share correlation; it is not the leak.
+- **source:** the outside review's note after card FWS; [FWS](FWS_field_walk_share_sources_2026-10-01.md) sections 2.1, 4 and 5; [PAC](PAC_common_drift_pivot_clock_2026-10-01.md); `include/atmosphere/HigherOrderIonosphere.hpp`, `src/core/atmosphere/MagneticField.cpp` (the dipole); `src/core/filter/NetworkIonoDiag.cpp` (the slant ionosphere trace, `iono_total_m` on L1 in metres); `src/core/filter/NetworkFrameDiag.cpp` (the post-fit rows, signed v = y - A x)
 - **knobs / posture:** none; traces only
 - **dates in the text:** 2026-10-01
 - **hashes / run dirs:** traces of `runs/_rap_fws_wuacc6_f` (field 6 h, accumulated wind-up, the primary), `runs/_rap_rev1_blk6_f` (field 6 h control), `runs/_rap_rev1_blk6_s` (sim 6 h, the null); script `scripts/clock_level/soi_test.py`
+
+**Outcome.** The card asked whether the second-order term, which survives the ionosphere-free combination and changes sign with the line of sight's angle to the geomagnetic field, is the per-line-of-sight leak card FWS found. The residual slope on the predicted term is -0.02 +/- 0.08 where full size would read +1 at t about 13, and the walk-share r^2 at 120 epochs is 0.000 (bar 0.25): S1, S2 and S4 FAIL, S3 holds. Card [I2S](I2S_second_order_iono_sign_2026-10-01.md) settled the sign left open (the engine's convention was inverted, now fixed). The fallback state went to card [LGM](LGM_los_phase_nuisance_2026-10-01.md), the long-scale remainder to card [LSR](LSR_long_scale_remainder_2026-10-01.md).
 
 ## 1. The term and its sign
 

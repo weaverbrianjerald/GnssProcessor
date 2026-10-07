@@ -1,16 +1,18 @@
-# LV mask study — the mask study, end to end — the trade is regime-dependent, it flips sign between 61 and 303 stations, and it closes on one posture
+# LV mask study: observation mask and iono cutoff at 61 and 303 stations, and item 1
 
 **STATUS**
 
 - **id:** LV mask study
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** the mask study, end to end — the trade is regime-dependent, it flips sign between 61 and 303 stations, and it closes on one posture
+- **summary:** The study CLOSES on obs mask 15, iono cutoff 25 at both scales: the cutoff owns the residual cost, the mask the footprint level; LV-4 alone passes stage 2, unpromoted.
 - **dates in the text:** 2026-08-05
-- **knobs / posture:** `estimation.ionosphere_weighting.elevation_cutoff_deg`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `estimation.ionosphere_weighting.elevation_cutoff_deg`, the observation mask (`elevation_mask_deg`); `rx_cb_carry_step_gate` (LV-4, item 1); `serialize_sbasis_contract` (section 25.7); new denominators arm 32 (61 sta) and arm 38 (305 sta)
+- **hashes named in the text** (commit / exe / byte-cert): none; exes `gnss_processor_lv4stage1.exe` and `gnss_processor_f17.exe` (the build of Aug 5 2026 00:09)
 - **run dirs named in the text:** `runs/ext63_dual_3h_m15i25`, `runs/ext63_dual_1h_lv4_m15i25`, `runs/ext305_dual_20min_m30i30`, `runs/ext63_dual_3h_lv4_m15i25`, `runs/ext63_dual_12h_`, `runs/replay_ext63_12h_`
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 21, 21.1, 21.2, 22, 22.1, 22.2, 23, 23.1, 23.2, 23.3, 23.4, 23.5, 23.6, 23.7, 24, 24.1, 24.2, 24.3, 24.4, 24.5, 25, 25.1, 25.2, 25.3, 25.4, 25.5, 25.6, 25.7, 26, 26.1, 26.2, 26.3, 26.4
+- **source:** `docs/archive/SPEC_level_information_budget.md` sections 21, 21.1, 21.2, 22, 22.1, 22.2, 23, 23.1, 23.2, 23.3, 23.4, 23.5, 23.6, 23.7, 24, 24.1, 24.2, 24.3, 24.4, 24.5, 25, 25.1, 25.2, 25.3, 25.4, 25.5, 25.6, 25.7, 26, 26.1, 26.2, 26.3, 26.4
+
+**Outcome.** The question: which observation mask and iono cutoff serve the SH level and the residuals. At 61 stations obs mask 10 to 15 bought 5 to 6 TECU of level and cutoff 25 to 15 cost +27 to 46 % postfit phase rms; at 303 the 15/25 cell tied 10/25 on rms and halved footprint error and breathing. LV-4's cost falls with the mask. Section 25.7 retracts the claim that the consumer has no reaction path. The re-founding later dropped the SH field from the producer ([NETWORK_REFOUNDING](../../refound/NETWORK_REFOUNDING_2026-09-14.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

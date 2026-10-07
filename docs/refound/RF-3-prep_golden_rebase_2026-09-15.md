@@ -1,6 +1,20 @@
-# RF-3-prep — the vehicle on the self-contained posture, a correction to RF-2b, and the goldens re-based on RF-0g (2026-09-15)
+# RF-3-prep: vehicle on RF-0g, RF-2b correction, goldens re-based (2026-09-15)
 
-**STATUS:** closed — **RF-1 + RF-2b on the RF-0g posture FAILS on both beds** (field 564 / 720 emitted, consumer 1.49–3.15 m, the
+**STATUS**
+
+- **id:** RF-3-prep
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** RF-1 + RF-2b on the self-contained RF-0g posture FAILS both beds (field 564 / 720 emitted, sim consumer to 12.98 m), KEEP OFF; the goldens are re-based on RF-0g.
+- **dates in the text:** 2026-09-15
+- **knobs / posture:** the RF-0g deltas (`estimation.ionosphere_weighting.enable` false, `cb_kaula_prior` false, `sat_gf_datum` `broadcast_tgd` time-linked, `w6_iono_constraint` none, the X-channel cut, INEG00MEX / OAFA00ARG off the field roster) + `network.ambiguity_vehicle` float_kf + `network.phase_datum_held_basis`; goldens `config/golden/golden_field_refound.json` / `golden_sim_refound.json` from `config/refound/{field,sim}_gps_dual_rf0g.json` (51 armed in regime, 7 documented exceptions); `golden_sim_tri_w6.json` / `golden_field_gps_dual.json` retired, frozen at their paths
+- **hashes named in the text:** exe `gnss_processor_goldens.exe` `ab07e9ed86f7dc49`; OFF smoke `9add1d3a…`; golden `products.txt` `dbc2713549edc41f36bd` (field), `5df551b23d946447b50b` (sim); suite 2216 passed + 1 fixture skip (293 suites)
+- **run dirs named in the text:** `runs/_rf3p_{field,sim}6`, `runs/_rf3p_baseline.json`, `runs/golden_{field,sim}_refound`, `runs/_rf0g_{field,sim}6`, `runs/_rf2b_*6`
+- **source:** [RF-0g](RF-0g_roster_cut_2026-09-15.md) (RF-3-prep pre-registered) and the author's instruction to put the goldens on the current best configs
+
+**Outcome.** The question: does the float vehicle hold on RF-0g, and what should the goldens carry? It does not: the field IF-correction dispersion p90 grows 6× to 3.03 m. On the record corrected for RF-2b's consumer row (ratios, not metres) RF-0g is best on both beds, though no posture passes the program's bars. [RF-3-read](RF-3-read_handover_frame_2026-09-15.md) traced the dispersion to two RF-2b handover defects; [RF-0hv](RF-0hv_working_posture_2026-09-15.md) records these goldens as amputated-solve postures (about 28 of 59 field stations in the solve); [GRB](GRB_golden_rebase_2026-09-22.md) re-based them on the float vehicle.
+
+**Status as recorded (2026-09-15):** closed — **RF-1 + RF-2b on the RF-0g posture FAILS on both beds** (field 564 / 720 emitted, consumer 1.49–3.15 m, the
 per-satellite IF-correction dispersion p90 0.51 → 3.03 m; sim consumer up to 12.98 m, G29's IF correction 56 m off).  **The RF-2b card's
 consumer row held ratios to RF-0, not metres** — RF-2b's field consumer was 2.32 / 2.83 / 2.29 / 1.89 / 1.23 / 3.05 m, about RF-0's.
 On the corrected record **RF-0g is the best posture on both beds and the only self-contained one**, and at the author's instruction

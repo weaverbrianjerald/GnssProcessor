@@ -1,16 +1,18 @@
-# COLD-FB (iter 2–4) — the SATELLITE clause, the datum-invariant consumer census, and the new-golden arm — KEEP_OFF on all four iterations
+# COLD-FB (iter 2–4): the satellite clause, the invariant census, the new-golden arm
 
 **STATUS**
 
 - **id:** COLD-FB (iter 2–4)
 - **topic:** network-vehicle
-- **status:** parked
-- **summary:** the SATELLITE clause, the datum-invariant consumer census, and the new-golden arm — KEEP_OFF on all four iterations
+- **status:** superseded
+- **summary:** KEEP_OFF on all four iterations: the SATELLITE clause removes every split and the wire gets quieter, yet the de-biased consumer misses the new golden's bar by 4 mm.
 - **dates in the text:** 2026-09-11
-- **knobs / posture:** `network.phase_datum_candidacy_satellite`, `network.phase_datum_candidacy_usable`
-- **hashes named in the text** (commit / exe / byte-cert): `1b80ce25`, `e90086f`
+- **knobs / posture:** `network.phase_datum_candidacy_satellite` (default true under the parent), `network.phase_datum_candidacy_usable`; arms `config/test_suite/_golden_sim_campaign_zwdblk_coldfb2.json` (iteration 2) and `_coldfb3.json` (iteration 4: the `_scoped` golden + the knob)
+- **hashes named in the text** (commit / exe / byte-cert): coldfb2 exe `1b80ce25…`; coldfb3 exe `1B37E94B…` from main `e90086f`; reference exe `F4FF8EF0…`
 - **run dirs named in the text:** `runs/golden_sim_campaign_zwdblk_coldfb3`, `runs/golden_sim_campaign_zwdblk_scoped`
-- **source:** `docs/archive/SPEC_event_harness.md` — 15.8, 15.9, 15.10, 15.11
+- **source:** `docs/archive/SPEC_event_harness.md`, sections 15.8, 15.9, 15.10, 15.11
+
+**Outcome.** Iteration 2 elects one successor per satellite: no split remains and the consumer gets 1.5 cm worse, which FALSIFIES the split as its cost. Iteration 3 (no runs) re-grades on datum-invariant instruments: emitted steps and PB resets fall with the cold count, but cbscope5 stays ahead on de-biased position. Iteration 4 on the new golden passes 12 of 15 gates, FAILING the de-biased consumer and the Galileo pivot edge (0.031 → 0.108 m); iteration 5 is pre-registered with no result recorded. RF-2 of the [network re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) then replaced the coverage-only election and the cold re-realization ([RF-2b](../../refound/RF-2b_election_fix_2026-09-15.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

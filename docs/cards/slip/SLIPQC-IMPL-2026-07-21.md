@@ -1,16 +1,18 @@
-# slip-QC impl — the 2026-07-21 implementation record — what landed, the five findings that contradicted the spec's premises, and the same-build two-arm gate
+# slip-QC impl: build record of cards E, R, L and G (2026-07-21)
 
 **STATUS**
 
 - **id:** slip-QC impl
 - **topic:** slip
 - **status:** closed
-- **summary:** the 2026-07-21 implementation record — what landed, the five findings that contradicted the spec's premises, and the same-build two-arm gate
-- **dates in the text:** 2026-07-21 → 2026-08-12
+- **summary:** Cards E, R, L and G LANDED default OFF; Card R PARTIAL (unsupported refsat flags 14 to 4), two of Card L's three falsifiers VOID or NOT MET; five findings contradicted the spec's premises.
+- **dates in the text:** 2026-07-21 to 2026-08-12
 - **knobs / posture:** `network.cycle_slip.mw_lli_corroborate`, `network.cycle_slip.gap_instrument`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_slip_qc_hardening.md` — 8, 8.1, 8.2, 8.3, 8.4
+- **hashes named in the text** (commit / exe / byte-cert): none
+- **run dirs named in the text:** none
+- **source:** `docs/archive/SPEC_slip_qc_hardening.md`, sections 8, 8.1, 8.2, 8.3, 8.4
+
+**Outcome.** The card records the build of the slip-QC hardening spec ([slip-QC](../slip/SLIPQC-REF.md)) and its same-build two-arm gate on a cold 11-epoch, 150-station run. OFF was byte-identical, Card E MET, and the grader's raw-confirmed rate rose from 71 % to 90 %. F1 (the chatter is LLI bit 2, never acted on) and F2 (the D5 gate dominates the 2 318 carry refloats) left Card L without its assumed population; F3 found about 97 % of D5 re-taps with no raw step; F4 left Card R's station-local hand-off unbuilt. The warm leg (Card W) was never launched; Card R's warm takeover was validated later ([IF-TD ref gate](../slip/IFTD-REF-GATE.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

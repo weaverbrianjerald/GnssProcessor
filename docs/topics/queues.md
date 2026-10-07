@@ -23,12 +23,12 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [QPR blocked](../cards/queues/QPR-BLOCKED-AND-CLOSED.md) | blocked on root cause, leave-alone (falsified or decided), and the queue's maintenance … | open | 2026-08-14 |
-| [QPR](../cards/queues/QPR-00-CHARTER.md) | the charter — why this queue exists, how an item enters and leaves it, and the rank ord… | open | 2026-08-21 |
-| [QPR 0–3](../cards/queues/QPR-ITEMS-0-3.md) | items 0–3: the pin bridge, the S-transform re-reference family, datum-station election … | open | 2026-08-21 |
-| [QPR 4](../cards/queues/QPR-ITEM-4-T3-NULLS.md) | item 4: T3-class test statistics — correct nulls, not recalibrated constants | open | 2026-08-21 |
-| [QPR 5–8](../cards/queues/QPR-ITEMS-5-8.md) | items 5–8: the level contract, the half-epoch back-off ritual, the SH health-gate relea… | open | 2026-08-21 |
-| [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) | findings from the whole-repository comment audit: code defects, suspicions, author checks, CLAUDE.md errors… | open | 2026-09-28 |
+| [QPR blocked](../cards/queues/QPR-BLOCKED-AND-CLOSED.md) | blocked and leave-alone register: item 3 churn root found same day, D5 hold lifted by 8(a) | open | 2026-08-14 |
+| [QPR](../cards/queues/QPR-00-CHARTER.md) | queue charter: fifth ranking 2026-08-20, order superseded by the 2026-09-14 re-founding | open | 2026-08-21 |
+| [QPR 0–3](../cards/queues/QPR-ITEMS-0-3.md) | items 0–3: 1(d) carry re-reference validated, 1f promoted, 0 downgraded, 1(b) deferred | open | 2026-08-21 |
+| [QPR 4](../cards/queues/QPR-ITEM-4-T3-NULLS.md) | the T3 null: excess is per-LOS iono error; R2 and R4 validated measure-only, R1 held | open | 2026-08-21 |
+| [QPR 5–8](../cards/queues/QPR-ITEMS-5-8.md) | items 5–8: iono error persists with SH on, 8(b) falsified, A4 promotion refused; 5, 6 owed | open | 2026-08-21 |
+| [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) | comment audit: 14 verified code defects open, 5 fixed; suspicions and author checks listed | open | 2026-09-28 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

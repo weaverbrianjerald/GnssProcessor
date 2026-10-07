@@ -1,16 +1,18 @@
-# COLD-FB — the cold phase-datum anchor fallbacks (`phase_datum_candidacy_usable`) — pre-registration, G1–G3 and iteration 1
+# COLD-FB: the cold phase-datum anchor fallbacks, G1 to G3 and iteration 1
 
 **STATUS**
 
 - **id:** COLD-FB
 - **topic:** network-vehicle
-- **status:** parked
-- **summary:** the cold phase-datum anchor fallbacks (`phase_datum_candidacy_usable`) — pre-registration, G1–G3 and iteration 1
-- **dates in the text:** 2026-09-11 → 2026-09-12
-- **knobs / posture:** `network.phase_datum_candidacy_usable`, `network.phase_datum_candidacy_min_age_ep`
-- **hashes named in the text** (commit / exe / byte-cert): `cc689d5`, `90566ebf`, `c763c168`, `f3f37bc3`, `852c4dc3`, `690927f6`, `c5b5df834d185ac8`, `6a83728` … (+2 more in the text)
-- **run dirs named in the text:** `runs/evseed_quiet6h_v2`
-- **source:** `docs/archive/SPEC_event_harness.md` — 15, 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7
+- **status:** superseded
+- **summary:** `network.phase_datum_candidacy_usable` KEEP_OFF: the per-family usable-carry screen ends the settled cold handovers from hour 2, but the storm-arm consumer p50 reads 49 % worse than cbscope5.
+- **dates in the text:** 2026-09-11 to 2026-09-12
+- **knobs / posture:** `network.phase_datum_candidacy_usable`, `network.phase_datum_candidacy_min_age_ep` (default 60); storm arm `config/test_suite/_golden_sim_campaign_zwdblk_coldfb.json` (cbscope5 + the knob); the `birth_ep` restored-arc sentinel (FIXED 2026-09-12, no knob)
+- **hashes named in the text** (commit / exe / byte-cert): base main `cc689d5`; base exe `90566ebf…`, card exe `c763c168…`; OFF-null byte-cert `f3f37bc3…` (products), `852c4dc3…` (DD), `690927f6…` (events); seed fingerprint `c5b5df834d185ac8`; `birth_ep` A/B on main `6a83728` (OLD exe `1B37E94BB6DA82FE…`, FIXED `06580E71AA86A37F…`)
+- **run dirs named in the text:** `runs/evseed_quiet6h_v2`; harness legs `coldfb_*` from seed `evseed_quiet6h` ep0665
+- **source:** `docs/archive/SPEC_event_harness.md`, sections 15, 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7
+
+**Outcome.** The card made a usable carried value a candidacy condition of the phase-anchor election. On the harness legs it removes every avoidable cold handover (3 → 0 in six pairs); on the storm arm settled cold handovers fall 51 → 19, but three G3 bars FAIL (both consumer p50s, the split-referenced census) and two MISS. Iteration 2 later FALSIFIED the split as the consumer's cost ([COLD-FB (iter 2–4)](../network-vehicle/COLD-FB-iterations-2-4.md)). RF-2 of the [network re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) replaced the coverage-only election, composed in [RF-2b](../../refound/RF-2b_election_fix_2026-09-15.md) as an elevation rank among ledger-usable candidates.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

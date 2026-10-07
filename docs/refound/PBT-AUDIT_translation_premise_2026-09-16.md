@@ -1,15 +1,17 @@
-# PBT-AUDIT — when a phase-bias update warrants an ambiguity translation
+# PBT-AUDIT: when a phase-bias update warrants an ambiguity translation
 
 **STATUS**
 
 - **id:** PBT-AUDIT
 - **topic:** consumer
 - **status:** closed
-- **summary:** universal translation premise falsified; deterministic datum translations remain valid; seven production-ledger counterexamples/controls pass
+- **summary:** Blanket translation premise FALSIFIED on seven production-ledger counterexamples and controls; deterministic datum translations remain valid; a frame-transfer contract is recommended, runtime unchanged.
 - **source:** [PBT](PBT_consumer_pb_translate_2026-09-15.md), September 16 review
 - **knobs / posture:** existing PBT behavior; no runtime or default change
 - **dates in the text:** 2026-09-16
 - **hashes / run dirs:** `runs/_pbt_audit_20260916/`
+
+**Outcome.** The card tests PBT's claim that every applied phase-bias change must be absorbed by the ambiguity, on the production `PbStepTranslateLedger::react`. Translation is right for a known datum change and wrong for a physical bias change (ambiguity error −0.30 m) or a clock and bias redistribution, so the blanket rule is FALSIFIED; 24/24 tests pass. [PBH](PBH_phase_bias_hold_2026-09-19.md) later found 0.2 % of the translated mass to be a known frame move and re-aimed the contract to an emit-side phase-bias hold, which replaced the translation in the working bases on 2026-09-20.
 
 ## Pre-registered scope
 

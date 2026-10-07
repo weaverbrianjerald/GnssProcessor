@@ -5,11 +5,13 @@
 - **id:** RXP
 - **topic:** build-infra
 - **status:** open
-- **summary:** FIXED 2026-09-21 (unconditional; sim byte-identical; the field with the four stations dropped byte-identical between readers; the census site ANMG00MYS goes from 0 to 256 epochs below a decimetre). The corrected field run is the new baseline `runs/_rap_r6_dual` and is WORSE at WTZZ00DEU (533 epochs against 603, clock wire 0.0107 against 0.0069 m): the loss needs CAS100ATA and LCK400IND together and is one burst of the all-satellite clock-anchor decouple of 05:22 UT (post-fit refloats 21 to 72 in five minutes), an episode the old run already had. Original summary: Defect found 2026-09-21 by the multi-site census. The RINEX 3 path of the observation parser takes the first three characters of a record as the satellite identifier and does not normalize a blank, so a file that writes `G 7` for `G07` loses every satellite numbered below 10, silently. 16 of the 310 observation files of 2024-129 are written that way, four of them in the 59-station roster (CAS100ATA, GOPE00CZE, LCK400IND, LMMF00MTQ): those stations have contributed no satellite below G10 to any field run of the re-founding. The fix is unconditional; gates and the re-baseline reading are frozen here.
+- **summary:** FIXED 2026-09-21: the RINEX 3 reader dropped every satellite below G10 in blank-padded files (16 of 310); the corrected field run, the new baseline, is WORSE at WTZZ00DEU.
 - **source:** [MSC](MSC_multi_site_consumer_2026-09-21.md) section 4 (ANMG00MYS never reaches a decimetre and solves on a median of five satellites)
 - **knobs / posture:** none (a reader defect; no knob)
 - **dates in the text:** 2026-09-21
-- **hashes / run dirs:** `runs/_rf0hv5_field6`, `runs/_rap_msc_anmg_hv5_d`
+- **hashes / run dirs:** `runs/_rf0hv5_field6`, `runs/_rap_msc_anmg_hv5_d`; build main `23ce39b`, exe `gnss_processor_rxp.exe`; new field baseline `runs/_rap_r6_dual`
+
+**Outcome.** The question: why ANMG00MYS never converged in [MSC](MSC_multi_site_consumer_2026-09-21.md). The RINEX 3 path took a record's first three characters as the identifier, so `G 7` never matched `G07` at four roster stations. The fix passes its controls and G1; ANMG00MYS goes from 0 to 256 epochs below a decimetre. WTZZ00DEU falls from 603 to 533 epochs: a larger burst of the 05:22 UT all-satellite clock-anchor decouple already in the old run, which [EV7](EV7_all_sat_clock_decouple_2026-09-21.md) traced to a coverage-gate defect and fixed (armed 2026-09-22). Owed: nine Python scripts with the same comparison ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)).
 
 ## 1. The defect (read by the manager)
 

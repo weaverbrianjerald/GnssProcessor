@@ -1,16 +1,18 @@
-# CE — the CHAIN-ERA bisect on the leveling vehicle
+# CE: the chain-era bisect on the leveling vehicle
 
 **STATUS**
 
 - **id:** CE
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** the CHAIN-ERA bisect on the leveling vehicle
+- **status:** closed
+- **summary:** Bisect run, no named bar crossed: the 17 CHAIN-ERA keys reproduce PV-A byte-identically, the class does not decompose, and only c3 (the a priori clock pin) moves the code side.
 - **dates in the text:** 2026-09-14
 - **knobs / posture:** `processing.frequency_mode`, `estimation.ionosphere_weighting.elevation_cutoff_deg`, `processing.elevation_mask_deg`
 - **hashes named in the text** (commit / exe / byte-cert): `39bcde8`
 - **run dirs named in the text:** `runs/_cm_pvb`
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.14
+- **source:** `docs/archive/SPEC_event_harness.md` §24.14 (its arms' results are in §24.15, now the [LV-SEED](../ionosphere/LV-SEED-per-los-level.md) card)
+
+**Outcome.** The card bisects the 17 CHAIN-ERA keys that separate PV-A from PV-B, whose per-station code rms is 1.79 m; its body holds the §24.13 reads (H1 to H3 REFUTED). Every arm was tried the same day and graded in [LV-SEED](../ionosphere/LV-SEED-per-los-level.md) (§24.14 RESULTS): c0 equals PV-A at 1.19 m on the last-hour read; c1, c5 and c6 cannot run alone; c3 alone reaches 1.08 m; tie cutoffs of 15° and 20° regress, so 25° stays. [RF-0](../../refound/RF-0_baseline_2026-09-14.md) refuted c5's attribution, and the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) posture carries c3's self-contained counterpart, the Q3 clock anchor.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

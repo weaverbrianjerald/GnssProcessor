@@ -1,16 +1,18 @@
-# wind-up sign — the carrier-phase wind-up sign defect — why nothing caught it, why the fix is both lines together, the third site, and what landed
+# wind-up sign: the carrier-phase wind-up sign defect and its four-site fix
 
 **STATUS**
 
 - **id:** wind-up sign
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the carrier-phase wind-up sign defect — why nothing caught it, why the fix is both lines together, the third site, and what landed
+- **summary:** FIXED 2026-08-21: the wind-up model returned −φ_wu, leaving +2φ_wu in every carrier-phase observation; fixed at four sites together, gated by a 10-case test; the `nominal-wu93` token marks the new frame.
 - **dates in the text:** 2026-08-21
-- **knobs / posture:** `estimation.accumulate_phase_windup`
-- **hashes named in the text** (commit / exe / byte-cert): —
+- **knobs / posture:** `estimation.accumulate_phase_windup` (the separate fractional-mode wrap, section 7); no toggle for the fix itself (a product-frame change); `kWindUpYawModelId = "nominal-wu93"` in the product contract and the snapshot fingerprint
+- **hashes named in the text** (commit / exe / byte-cert): none in the text; the fix landed as commit `4f49fa2` (2026-08-21, CLAUDE.md wu93 amendment 1)
 - **run dirs named in the text:** `runs/simnet60_tri_slant_480_ddint`, `runs/sdewl_byteid_off`, `runs/sdewl_on30_RAWFRAME_INVALID`, `runs/rtseam_goldens`
-- **source:** `docs/archive/SPEC_phase_windup_sign.md` — (preamble), §1, §1a, §1b, §1c, §2, §3, §3a, §3b, §3c, §4, §4a, §5, §6, §7, §8, §8.1, §8.2, §8.3, §8.4, §8.5
+- **source:** `docs/archive/SPEC_phase_windup_sign.md` (preamble) and §1 to §8.5
+
+**Outcome.** The question: what was wrong with `computePhaseWindUp`, why nothing caught it, and what a correct fix takes. The `+k×y` sign on both quadrature terms mirrored the wind-up phase; the simulator injects through the same function, so every sim validation cancelled it. A one-line half-fix is worse than the defect (median error 0.20 to 0.25 cycle, matching neither sign), and the velocity-fallback branch needed a reframe, not a flip. Pre-fix products, goldens and snapshots are expected-fail baselines. Field pricing: [WINDUP-FIELD-LADDER](WINDUP-FIELD-LADDER.md). The separate fractional wrap (section 7) went to [wind-up census](../slip/WINDUP-FRACTIONAL-CENSUS.md); accumulated wind-up was ARMED on the goldens by [WUP](../../refound/WUP_windup_accumulated_promotion_2026-10-01.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

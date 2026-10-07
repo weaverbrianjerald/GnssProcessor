@@ -1,16 +1,18 @@
-# D5-A — D5 re-tap attribution as built, the cross-experiment protocol, and the 2026-07-22 validation
+# D5-A: D5 re-tap attribution, the cross-experiment protocol and Card H
 
 **STATUS**
 
 - **id:** D5-A
 - **topic:** slip
 - **status:** closed
-- **summary:** D5 re-tap attribution as built, the cross-experiment protocol, and the 2026-07-22 validation
-- **dates in the text:** 2026-07-21 → 2026-08-15
-- **knobs / posture:** `network.mw_wl.d5_dump`, `network.cycle_slip.gap_instrument`, `network.lane_carry.enable`, `estimation.global_vtec_sh.rep_error_tau_s`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_slip_qc_hardening.md` — 10, 10.2, 10.3, 10.4, 10.5
+- **summary:** Instrument LANDED, byte-identical on the solve, falsifier MET: 3.0 % of D5 re-taps coincide with an exact-epoch raw step, and counting band rows overstated the re-taps by a third.
+- **dates in the text:** 2026-07-21 to 2026-08-15
+- **knobs / posture:** `network.mw_wl.d5_dump` (carries the new `raw_stepped` column), `network.cycle_slip.gap_instrument` (the counters), `network.lane_carry.enable` (the pair block that doubles rows), `estimation.global_vtec_sh.rep_error_tau_s` (arm (ii) of D3); no new toggle; Card H1 `RefGateParams::max_consecutive` default 2 to 1
+- **hashes named in the text** (commit / exe / byte-cert): none; exe `gnss_processor_d5a_run.exe`
+- **run dirs named in the text:** none as `runs/` paths; configs `config/test_suite/_wlver_150sta_1h_d10_allfreq_{sliphard,sliphard_iono2,slipcmp}.json` and the 10-epoch `_wlver_150sta_10ep_d10_allfreq_sliphard.json`
+- **source:** `docs/archive/SPEC_slip_qc_hardening.md` §10 (10.1 to 10.7; absorbed `slip_qc_d5a_report_2026-07-22.md`)
+
+**Outcome.** The question: does the D5 innovation gate re-tap real slips or model tension? On the cold 10-epoch arm the 1 144 arc re-taps are impulsive and flat in `std_innov` across elevation: a cold reading, not a verdict. Card H aligned a gate default and split the Card-G arc ledger three ways. The D3 rule's warm leg (Card W) never ran ([slip-QC follow-ups](../slip/SLIPQC-FOLLOWUPS.md) §9.2); later work decided the question (the flags sit on chords born that epoch, [SPEC_d5_churn_limit_cycle](../../SPEC_d5_churn_limit_cycle.md) §2b), and the re-founding retired the D5 gates ([RF-1](../../refound/RF-1_float_ambiguities_design.md) section 4.1).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

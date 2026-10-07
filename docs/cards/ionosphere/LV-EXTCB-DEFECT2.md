@@ -1,16 +1,18 @@
-# EXT-CB defect 2 — arm 30 and the 303-station EXT-CB arm — DEFECT 2 is largely a station-support artifact
+# EXT-CB defect 2: arm 30 and the 303-station EXT-CB arm
 
 **STATUS**
 
 - **id:** EXT-CB defect 2
 - **topic:** ionosphere
 - **status:** closed
-- **summary:** arm 30 and the 303-station EXT-CB arm — DEFECT 2 is largely a station-support artifact
+- **summary:** DEFECT 2 is largely a STATION-SUPPORT artifact (ignition-hour a₀₀ − GIM −1.98 TECU at 303 stations, −15.83 at 61); arm 30 puts the data-side cost on LV-4, the prior-side cost on LV-2.
 - **dates in the text:** 2026-08-05
-- **knobs / posture:** `processing.elevation_mask_deg`, `estimation.ionosphere_weighting.elevation_cutoff_deg`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** —
-- **source:** `docs/archive/SPEC_level_information_budget.md` — 20, 20.1, 20.2, 20.3
+- **knobs / posture:** `processing.elevation_mask_deg`, `estimation.ionosphere_weighting.elevation_cutoff_deg` (both arms at 10 / 25; changed to 15 / 15 after them, §20.3)
+- **hashes named in the text** (commit / exe / byte-cert): none (build stamp `Aug 4 2026 23:27:25`)
+- **run dirs named in the text:** none (arms are named by config: `_ext63_gps_dual_3h_lv12.json`, `_ext305_gps_dual_1h.json`, replay `_ext63_replay_3h_lv12.json`)
+- **source:** `docs/archive/SPEC_level_information_budget.md` §20 (20.1, 20.2, 20.3)
+
+**Outcome.** Arm 30 (LV-1+2, no LV-4) kept the canonical's postfit phase rms (+3.3 %, the full stack +44 %) but raised prires rxcb σ̂₀ 1.06 → 6.55, so the stack's two costs are separate; two of its four predictions MISSED. With network size the only variable, the 303-station arm cut postfit phase rms 41 % and showed essentially no ignition transient. The §20.3 mask change voided these denominators; [LV mask study](LV-MASK-STUDY.md) §21 FALSIFIED its prediction and §26 settled on obs 15 / iono 25. The written 3 h 303-station arm has no recorded result.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

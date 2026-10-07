@@ -1,16 +1,18 @@
-# HARNESS — what the harness is, the six injectable events, the files, the leg recipe, the grader, byte-identity and the known gaps
+# HARNESS: the event harness reference (events, files, leg recipe, grader, gaps)
 
 **STATUS**
 
 - **id:** HARNESS
 - **topic:** harness
 - **status:** reference
-- **summary:** what the harness is, the six injectable events, the files, the leg recipe, the grader, byte-identity and the known gaps
+- **summary:** Reference for the event harness: one injected fault on a warm resume, graded event minus null; BUILT and VALIDATED on the quiet sim bed, default OFF and byte-identical.
 - **dates in the text:** 2026-09-10
-- **knobs / posture:** `network.inject`, `network.inject.events`, `network.start_offset_hours`, `processing.max_duration_s`
-- **hashes named in the text** (commit / exe / byte-cert): —
-- **run dirs named in the text:** `runs/evseed_quiet6h`, `runs/evleg_slip10`, `runs/evleg_null`, `runs/simnet60_quiet_wu93_24h`, `runs/evleg_`, `runs/evleg_seam`
-- **source:** `docs/archive/SPEC_event_harness.md` — (preamble), 1, 2, 2.1, 2.2, 3, 4, 5, 6, 6b, 7, 8
+- **knobs / posture:** `network.inject`, `network.inject.events`, `network.start_offset_hours`, `processing.max_duration_s`; seed posture `golden_sim_tri_w6` on `simnet60_quiet_wu93_24h`
+- **hashes named in the text** (commit / exe / byte-cert): golden smoke `products.txt` `3BF7831B…` from the new exe and from `gnss_processor_oracle2.exe` (`98B2CB21…`)
+- **run dirs named in the text:** `runs/evseed_quiet6h`, `runs/evleg_slip10`, `runs/evleg_null`, `runs/simnet60_quiet_wu93_24h`, `runs/evleg_<name>`, `runs/evleg_seam`
+- **source:** `docs/archive/SPEC_event_harness.md` preamble and sections 1 to 8 (with 2.1, 2.2, 6b)
+
+**Outcome.** A standing reference: the harness, its event kinds (six on 2026-09-10; `oracle_pin` added 2026-09-11, [ORACLE PIN](../harness/ORACLE-PIN-stub.md)), files, recipe, grader and gaps. The 2026-09-10 validation set the method: a null leg's seam transient reaches 20.5 m on the phase-bias wire, so every leg is graded against a null from the same snapshot. On that footing a detected 10-cycle slip leaves about 0.04 cyc, an unnecessary `arc_erase` a persistent 0.45-cycle floor, and a cold anchor handover 50× the continuous one on the wire. Section 6b's `require` defect was fixed in [Cards A+B](../harness/CARD-AB-require-and-rx-clock-step.md); seed rules are in [harness seeds](../harness/HARNESS-SEEDS.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

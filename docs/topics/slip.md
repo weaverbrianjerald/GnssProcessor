@@ -29,28 +29,28 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [slip-QC impl](../cards/slip/SLIPQC-IMPL-2026-07-21.md) | the 2026-07-21 implementation record — what landed, the five findings that contradicted… | closed | 2026-08-12 |
-| [D5-A](../cards/slip/D5A-RETAP-ATTRIBUTION.md) | D5 re-tap attribution as built, the cross-experiment protocol, and the 2026-07-22 valid… | closed | 2026-08-15 |
-| [slip-QC follow-ups](../cards/slip/SLIPQC-FOLLOWUPS.md) | the 2026-07-22 follow-up cards D5-A / W / OP / H, and why the D5 lead outranked everyth… | closed | 2026-08-15 |
-| [lane slip response](../cards/slip/LANE-SLIP-RESPONSE.md) | the headline decomposition — the lane-integer slip cost is 100 % response-inflicted; th… | closed | 2026-08-22 |
-| [T4 lane restore](../cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore v1 (value-only), `network.cycle_slip.relevel_t4_lane_restore` — spec o… | open | 2026-08-23 |
-| [rung 3](../cards/slip/LANE-SNAP-RUNG3.md) | the lane-preserving snap — v1/v2 falsified, the SEED SITE deleted as an exact solve no-… | open | 2026-08-23 |
-| [wind-up census](../cards/slip/WINDUP-FRACTIONAL-CENSUS.md) | the fractional-mode census — the two continuity horizons are INVERTED, `trace_windup_ce… | open | 2026-08-23 |
-| [IF-TD ref gate](../cards/slip/IFTD-REF-GATE.md) | the IF-TD reference gate is 100 % false on the sim bed, and the fix was already in the … | closed | 2026-09-08 |
-| [Card G response](../cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md) | `gap_reentry_relevel` — round 1 was inert on the live-state walk, round 2's verdict, an… | closed | 2026-09-09 |
-| [IF-TD ref gate (v2)](../cards/slip/IFTD-REF-GATE-FOLLOWUP.md) | abstain while cold, normalize the bar by the reference's elevation, and close the gatin… | closed | 2026-09-09 |
-| [slip-QC](../cards/slip/SLIPQC-REF.md) | the slip-QC hardening spec — evidence base, the binding ground rules, cards R / L / E /… | reference | 2026-09-09 |
-| [Card ORACLE](../cards/slip/CARD-ORACLE-RELEVEL.md) | `oracle_relevel`, the sim-only CEILING of a level-preserving re-level — the mechanism i… | closed | 2026-09-10 |
-| [Study 3](../cards/slip/STUDY-3-band-scoped-responses.md) | band-scoped slip responses, the production knobs — the combined arm FAILS at storm scale | closed | 2026-09-10 |
-| [IF-TD pairs](../cards/slip/IFTD-PAIRS.md) | the IF-TD detector watched ONE lane per satellite — `if_phase_td_pairs` | closed | 2026-09-11 |
-| [Study 4](../cards/slip/STUDY-4-slip-dose.md) | the slip DOSE — the anchor-slip handover cure, validated on the harness and on the stor… | closed | 2026-09-11 |
-| [Study 5](../cards/slip/STUDY-5-detector-coverage-l5.md) | detector coverage — the unflagged GPS L5 slip and `mw_evidence_refloat` | closed | 2026-09-11 |
-| [Study 6](../cards/slip/STUDY-6-common-band-scope.md) | the COMMON-BAND scope — free only the band the evidence names | closed | 2026-09-11 |
-| [Study 7](../cards/slip/STUDY-7-common-band-narrowing.md) | the common-band scope's 3 cm is ONE wrong narrowing at 4.99 h | closed | 2026-09-11 |
-| [REF-ARC](../cards/slip/REF-ARC-CLAUSE.md) | a chain's reference-sat pair is UNTESTED and cannot exonerate — `common_band_ref_arc`, … | closed | 2026-09-13 |
-| [REF-FAN](../cards/slip/REF-FAN.md) | the reference-slip fan-out under `if_phase_td_pairs = all` — RECOMMEND_SCOPED, the fiel… | open | 2026-09-13 |
-| [RULE F2](../cards/slip/IFTD-F2-lli-shadow.md) | the LLI shadow — a lane that did not see the flagged epoch is not silent | closed | — |
-| [RULE F3](../cards/slip/IFTD-F3-lli-epoch.md) | the LLI-EPOCH verdict, and the ANCHOR CLAUSE inside F3 | closed | — |
+| [slip-QC impl](../cards/slip/SLIPQC-IMPL-2026-07-21.md) | slip-QC build of cards E/R/L/G: Card E MET, Card R PARTIAL (14 to 4), Card L premise false | closed | 2026-08-12 |
+| [D5-A](../cards/slip/D5A-RETAP-ATTRIBUTION.md) | the D5 re-tap instrument: 3.0 % raw-step coincidence, re-tap count a third overstated | closed | 2026-08-15 |
+| [slip-QC follow-ups](../cards/slip/SLIPQC-FOLLOWUPS.md) | slip-QC follow-ups: D5-A, H1/H2 landed; Card W never launched, OP untriggered, H3 deferred | closed | 2026-08-15 |
+| [lane slip response](../cards/slip/LANE-SLIP-RESPONSE.md) | lane-integer slip cost 100 % response-inflicted; both retap keeps FALSIFIED, KEEP_OFF | closed | 2026-08-22 |
+| [T4 lane restore](../cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore of the pre-erase carry after a T4 erase: specified, not built | open | 2026-08-23 |
+| [rung 3](../cards/slip/LANE-SNAP-RUNG3.md) | seed-site snap deleted (solve no-op); observatory solve-inert; apply leg re-scoped to T4 | open | 2026-08-23 |
+| [wind-up census](../cards/slip/WINDUP-FRACTIONAL-CENSUS.md) | 20 gaps in 4 h between the wind-up and carry horizons; restart response ARMED by card WUP | closed | 2026-08-23 |
+| [IF-TD ref gate](../cards/slip/IFTD-REF-GATE.md) | the IF-TD ref gate is 100 % false on the sim bed; Card R takes acting refloats 546 to 0 | closed | 2026-09-08 |
+| [Card G response](../cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md) | gap re-entry re-level: bridged arcs 88 to 0, consumer +56 %; KEEP_OFF; armed on float | closed | 2026-09-09 |
+| [IF-TD ref gate (v2)](../cards/slip/IFTD-REF-GATE-FOLLOWUP.md) | warm-up abstain removes 118 cold fires, elev_norm adds 2; both UNVALIDATED, fault arm owed | closed | 2026-09-09 |
+| [slip-QC](../cards/slip/SLIPQC-REF.md) | slip-QC hardening spec and status ledger: cards R/L/E/G, D5 lead closed, Card W never run | reference | 2026-09-09 |
+| [Card ORACLE](../cards/slip/CARD-ORACLE-RELEVEL.md) | sim-only oracle re-level: exact repair, every gate FAILS (T4 +77 %); KEEP_OFF diagnostic | closed | 2026-09-10 |
+| [Study 3](../cards/slip/STUDY-3-band-scoped-responses.md) | band-scoped slip responses: both knobs KEEP_OFF, the T4 erase scope alone collapses the WL | closed | 2026-09-10 |
+| [IF-TD pairs](../cards/slip/IFTD-PAIRS.md) | all IF-TD pairs per satellite: equal-count trap closed, F2 and F3 finish it; RECOMMEND_ON | closed | 2026-09-11 |
+| [Study 4](../cards/slip/STUDY-4-slip-dose.md) | slip dose: anchor-arc slips drive the cascade; anchor-slip handover RECOMMEND_ON | closed | 2026-09-11 |
+| [Study 5](../cards/slip/STUDY-5-detector-coverage-l5.md) | unflagged L5 slips dropped by the repair gate; `mw_evidence_refloat` RECOMMEND_ON | closed | 2026-09-11 |
+| [Study 6](../cards/slip/STUDY-6-common-band-scope.md) | common-band scope KEEP_OFF (consumer +3.3 cm); superseded by Study 7's RECOMMEND_ON | superseded | 2026-09-11 |
+| [Study 7](../cards/slip/STUDY-7-common-band-narrowing.md) | common-band scope + IF-TD on every pair RECOMMEND_ON together, sim p50 0.174 to 0.120 m | closed | 2026-09-11 |
+| [REF-ARC](../cards/slip/REF-ARC-CLAUSE.md) | ref-arc clause PROMOTED: an untested reference pair cannot exonerate; sim storm neutral | closed | 2026-09-13 |
+| [REF-FAN](../cards/slip/REF-FAN.md) | reference-slip fan-out: RECOMMEND_SCOPED, collateral refloats 6 to 0; field pin still owed | open | 2026-09-13 |
+| [RULE F2](../cards/slip/IFTD-F2-lli-shadow.md) | the LLI shadow: a pair holding a band flagged last epoch cannot exonerate; S1 storm closed | closed | — |
+| [RULE F3](../cards/slip/IFTD-F3-lli-epoch.md) | the LLI-epoch verdict: S3 residual 0.335 to 0.005 cyc; its anchor clause keeps references | closed | — |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

@@ -1,16 +1,18 @@
-# PV — the VEHICLE test — carry_invariant vs leveling, pre-registered
+# PV: the vehicle test, carry_invariant against leveling
 
 **STATUS**
 
 - **id:** PV
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** the VEHICLE test — carry_invariant vs leveling, pre-registered
+- **status:** closed
+- **summary:** FAIL on every frozen bar, yet the leveling vehicle (PV-B) beats `carry_invariant` on every read (consumer 7.80 → 1.19 m): the vehicle is the dominant field defect, not the only one.
 - **dates in the text:** 2026-09-09 → 2026-09-14
-- **knobs / posture:** —
-- **hashes named in the text** (commit / exe / byte-cert): `7e9918d`, `eee1b90`, `13c1d7ef`, `c1a13fb`, `87a33bf0`
+- **knobs / posture:** PV-B = the field golden as `_cm_a0` ran it + 16 vehicle keys (`carry_invariant` and its sub-family off, the EWL/UWL lanes off, `relevel_free_epoch`, `carry_coupling_gauge_project`, `phase_datum_eq34: false`, `phase_datum_prioritized`, `phase_datum_handover_continuous`, `phase_anchor_carry_reref`, `phase_datum_min_stations: 2`); PV-A = `_fldf3_pl2` flattened
+- **hashes named in the text** (commit / exe / byte-cert): `7e9918d` → `eee1b90` (worker commits), `13c1d7ef` (exe, main's Release at `c1a13fb`), `87a33bf0` (smoke)
 - **run dirs named in the text:** `runs/_cm_pva`, `runs/_cm_pvb`
-- **source:** `docs/archive/SPEC_event_harness.md` — 24.11
+- **source:** `docs/archive/SPEC_event_harness.md` §24.11
+
+**Outcome.** The question: is the field golden's `carry_invariant` vehicle the wire defect. On 2 h cold arms PV-B cut the code residual rms p50 4.67 → 1.79 m, the stations with |ZWD| > 0.5 m 56 → 13 and D_phase 2.74 → 0.95 m at identical availability, yet MISSED all three bars (< 1.0 m, zero, < 0.5 m). The second frozen reading applies: a code-side defect survives the vehicle; [CM2](../network-vehicle/CM2-leveling-vehicle.md) found it is not a knob. The [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) froze the field posture on PV-B's 16 keys; the goldens left `carry_invariant` at [RF-3-prep](../../refound/RF-3-prep_golden_rebase_2026-09-15.md) and carry the float vehicle on the leveling carry since [GRB](../../refound/GRB_golden_rebase_2026-09-22.md).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -1,16 +1,18 @@
-# pivot gauge defect — the single-pivot phase-bias gauge defect — the causal proof, the field evidence, the two-edge handover, and the THIRD ROOT named
+# pivot gauge defect: the single-pivot phase-bias gauge defect and its third root
 
 **STATUS**
 
 - **id:** pivot gauge defect
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** the single-pivot phase-bias gauge defect — the causal proof, the field evidence, the two-edge handover, and the THIRD ROOT named
+- **summary:** PROVEN with truth: a datum-station satellite loss re-realizes the phase-bias gauge into the satellite clock; clean election is the cheap remedy, `phase_datum_prioritized` NET-HARMFUL here, and a third, carry-side root named.
 - **dates in the text:** 2026-08-12 → 2026-08-15
 - **knobs / posture:** `network.phase_anchor_carry_reref`, `network.phase_datum_prioritized`, `network.emit_clock_disc`, `network.clock_disc_jump_test`, `network.phase_datum_handover_continuous`, `network.phase_datum_handover_max_var_m2`, `network.phase_datum_time_linked`, `network.raim_within_epoch`
-- **hashes named in the text** (commit / exe / byte-cert): `7a908e23`
-- **run dirs named in the text:** `runs/simnet60_tri`, `runs/pc305_ggq_tri_slant_4h`, `runs/pc305_ggq_tri_slant_1h`, `runs/simnet300_tri_slant`, `runs/inj_weab_`, `runs/inj_null`, `runs/inj_null_pdp`, `runs/simnet60_tri_slant_480_ddint` … (+5 more in the text)
-- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` — (preamble), 1, 2, 3, 3.1, 4, 4.1, 4.2, 5, 5.0, 5.0.1, 5.05, 5.06, 5.07, 5.07.1, 5.07.2, 5.07.3, 5.07.4, 5.07.5, 5.07.6, 6, 7
+- **hashes named in the text** (commit / exe / byte-cert): `7a908e23` (the §5.07 A/B exe snapshot)
+- **run dirs named in the text:** `runs/simnet60_tri`, `runs/pc305_ggq_tri_slant_4h`, `runs/pc305_ggq_tri_slant_1h`, `runs/simnet300_tri_slant`, `runs/inj_weab_{on,off}`, `runs/inj_null`, `runs/inj_null_pdp`, `runs/simnet60_tri_slant_480_ddint`, and five more in the text
+- **source:** `docs/archive/SPEC_pivot_visibility_gauge_defect.md` (preamble), §1 to §7 (§5.08 and §5.1 are card R0 + 1(d), §5.09 is card R2 sticky, §8 is card queue 1(b))
+
+**Outcome.** The question: what drives a coherent 12 m clock excursion on a zero-fault fixture. When the datum station alone loses a satellite, that satellite's phase-bias columns leave network-wide and its clock absorbs the step: predicted 3/3 at 24 stations and 6/6 at 60, live and unmarked on the field. A clean datum gives a 5.9× better datum-free clock contrast. The continuous handover was built and does not close it (each episode fires one epoch later). §5.07 names the root: the re-realization reaches the design matrix, never the carry. The carry fix is [R0 + 1(d)](../network-vehicle/PIVOT-CARRY-REREF-R0-1D.md); [RF-2](../../refound/RF-2_held_basis_2026-09-15.md) now declares every handover.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 
