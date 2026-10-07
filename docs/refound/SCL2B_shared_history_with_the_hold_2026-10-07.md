@@ -211,3 +211,15 @@ with six stations held out.)
 `scripts/clock_level/simcensus6h.py` gains `SIMCENSUS_FROM_START=1`, which sets the replays' `start_offset_hours` to 0 so
 that they start with the wire (default unchanged: every existing key stays reproducible). Keys made the two ways are
 different statistics and are compared only with keys made the same way.
+
+## 11. A held-out census from the true start (pre-registered 2026-10-07, before any run)
+
+Section 9 owes the external consumers' read before arming. Twelve stations are held out of the producer (S03, S08, S13,
+S18, S23, S28, S33, S38, S43, S48, S53, S58, spread in longitude and latitude), on three realizations (col, s2, and t2,
+whose multipath seed also differs), broadcast bed, the SCL regime with card SMH's hold, 6 h: X2b and B1 alone, 6 producer
+runs per posture pair. Each held-out station is replayed as a consumer from the wire's first epoch (replay offset 0) on
+its own fixture's RINEX, PBF on. Statistic: per station and realization, X2b minus B1 alone of the mean hourly p50 over
+hours 2 to 6, and separately over hours 2 and 3; pooled over the 36 station-realizations. Reading (no bar changes): no
+external-consumer cost if the pooled median is at most +0.005 m over hours 2 to 6 and at most +0.010 m over hours 2 and
+3, and at most 20 % of station-realizations are worse by more than 0.02 m over hours 2 to 6; a cost otherwise, recorded
+for the arming decision.
