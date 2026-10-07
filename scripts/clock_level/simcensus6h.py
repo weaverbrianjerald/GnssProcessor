@@ -9,6 +9,12 @@ make : python scripts/clock_level/simcensus6h.py make <key> <wire run dir, bare>
        tags smc6_<station>_<key>, base runs/_rf0hv13_sim6/arm.json (the sim golden's consumer on
        the re-based fixture, PBF on; $SIMCENSUS_BASE overrides it), 6 h.
 grade: python scripts/clock_level/simcensus6h.py grade <refkey> <key> [<key> ...]
+
+The replay's start: a replay inherits the base arm's network.start_offset_hours (0.504167 on the sim golden) and the
+replay driver applies it from the wire's first epoch, so by default every replay starts at 01:01:30, an extra half hour
+after a wire that itself starts at 00:30:15 (card SCL2B section 9).  SIMCENSUS_FROM_START=1 sets the replay's offset to 0,
+so the replays start with the wire (byte-identical to the producer's in-loop consumer on the same station).  Keys made
+the two ways are different statistics: compare only keys made the same way.
 """
 import csv, json, os, statistics as st, subprocess, sys
 
@@ -35,6 +41,8 @@ def make(key, wire, exe):
                '--set', f"network.closed_loop.station.name={s['name']}",
                '--set', f"network.closed_loop.station.rinex_path={s['rinex_path']}",
                '--set', 'network.closed_loop.station.position_ecef=' + json.dumps(s['position_ecef'])]
+        if os.environ.get('SIMCENSUS_FROM_START') == '1':
+            cmd += ['--set', 'network.start_offset_hours=0']
         r = subprocess.run(cmd, capture_output=True, text=True)
         assert r.returncode == 0, (tag, r.stdout[-400:], r.stderr[-400:])
         tags.append(tag)

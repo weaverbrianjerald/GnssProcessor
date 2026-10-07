@@ -161,3 +161,53 @@ and 3 in 8 of 8 pairs (mean +0.024 m), and level by hour 4; the replays from 01:
 consumer converging together with the producer in its first hours pays for X2b's early wire; a consumer starting an hour
 later does not. Owed: the early-wire mechanism (the hold rows of the first epochs take the per-row term; the history is
 young).
+
+## 9. The two open threads of section 8, read (2026-10-07)
+
+**The component the noise seed does not change: the code multipath, plus chance.** The simulator's code multipath
+(Gauss-Markov 300 s, 2 / 3 cm at the zenith in L1 / L2, salted per station) has its own seed, so the col and s2 fixtures
+share it exactly; its share of the code-following prediction is 6.0 mm rms at hour 6 (G20 -10.4, G12 -6.3, G04 +8.3 mm).
+A fixture with the white noise and the multipath off (`runs/simnet60_quiet_col_t0`) bounds every deterministic leak of
+the reconstruction at 2.6 mm per row and 0.0 mm in the prediction (the second-order ionosphere is absent from the
+simulator). With the multipath removed from both, the common part's z^2 falls from 2.39 to 1.29, a 6 to 8 % tail of a
+white null; four further realizations with both seeds changed (`runs/simnet60_quiet_col_t2` to `t5`) do not repeat the
+pattern on average (correlation with it +0.25, -0.02, +0.29 at hour 6; G20 -33.5, -22.7, +16.8, -15.4 mm). Card SCL2
+section 12's G20 and G12 are therefore the code multipath and the white noise of this fixture's seeds, not a fixture
+systematic. Consequences for reading the sim level: an independent realization changes `multipath.seed` with
+`noise.seed`; the code-following level's variance is about 1.12 times the white bound (the grader's scale 3.0 is then
+about 3.2); and an exact code follower's hour-6 level ranges over 15.5 to 28.1 mm across six realizations (white null
+median 15.8, 5 to 95 % 12.0 to 23.3), so section 7's prediction 1 (0.020 m on one realization) was not a property of the
+estimator, and any absolute level bar on the sim is stated over several realizations or against the code-following
+prediction (`scl2_codepred.py`), which X2b tracks at 7 to 11 mm on both realizations.
+
+**The in-loop consumer's hours 2 and 3.** (Runs `runs/_rap_scl2t_*`, 303 consumer-only replays and four producer runs
+with six stations held out.)
+
+- The "flat replays" were a start-time artifact: a consumer replay inherits the producer arm's `start_offset_hours`
+  (0.504167 on the sim) and the replay driver applies it from the wire's first epoch, so every sim replay, the census's
+  included, started at 01:01:30, not 00:30:15. With the replay's offset at 0 the replays are byte-identical to the in-loop
+  consumers on all eight wires. The sim census readings of cards SCL, SCL2 and SCL2B were all made from 01:01:30
+  (internally consistent; a from-start census is a different statistic).
+- Which side: of the hours-2-and-3 excess, X2b's code side with B1's phase side carries 0.02 and B1's code side with
+  X2b's phase side 0.98; the difference is the phase-visible clock alone. When: the difference that matters grows from
+  01:01 to 02:31. Mechanism: generation 1 of card SMH's hold holds 31 of 35 arcs born at 00:31; X2b's shared history
+  revises their start clock D(t0 | t) for about 2.5 h, and A1's projection passes the revision into the walk share as
+  phase-side motion (X2b minus B1 9 to 12 mm rms per satellite in hours 2 and 3), constant afterwards. The same component
+  is A1's gain: the walk-share error in those hours is 7.0 to 7.3 mm against B1's 10.9 to 11.0.
+- Who pays: every consumer converging through those hours receives a 2 to 4 cm push, mostly in Up. SZZ000SIM pays
+  because its own Up error in those hours is +4 to +9 cm under B1 and the push adds to it; consumers starting from 01:01
+  on gain. The from-start census of the 16 in-network stations: hour-2 median +0.0006 / -0.0126 / -0.0098 / -0.0141 m
+  (col broadcast, col COD, s2 broadcast, s2 COD), the median p50 3D falling 88 to 80, 78 to 68, 101 to 82, 92 to 76 mm;
+  held out (producers rerun without S05, S13, S21, S29, S45, S57; 7 external consumers): hour 2 / 3 median +0.8 / -5.1
+  mm (col broadcast) and +8.5 / +1.3 mm (col COD), from hour 4 the wires agree.
+- Reading: G7's sim consumer clause failed on one station's convergence sign; across consumers the effect is neutral to
+  positive in-network and mixed within a centimetre held out. No producer cure is supported (not revising the ignition
+  clones is X2's per-row hold, graded worse; a declared edge at the end of the build-up turns a 1 cm drift into a full
+  re-convergence). Owed: a larger held-out census on both realizations before arming, read from the true start (replay
+  offset 0); the replay offset itself, which `scripts/clock_level/simcensus6h.py` now exposes as an option (section 10).
+
+## 10. The replay offset as an option (2026-10-07)
+
+`scripts/clock_level/simcensus6h.py` gains `SIMCENSUS_FROM_START=1`, which sets the replays' `start_offset_hours` to 0 so
+that they start with the wire (default unchanged: every existing key stays reproducible). Keys made the two ways are
+different statistics and are compared only with keys made the same way.
