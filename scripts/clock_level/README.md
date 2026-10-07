@@ -115,3 +115,10 @@ is not in any scratchpad.
 | `scl_levelnees_w.py` | SCL | `levelnees.py` with the a priori error added. |
 | `scl_lvl_events.py` | SCL | The level error's per-epoch change at the satellite's phase-datum events against the other epochs. |
 | `scl_hybrid_wire.py` | SCL | A products file with the code side (C) of one run and the phase side (C - P) of another, for consumer replays that split a wire difference between the two sides. |
+
+## Card SCL2 (the clock level's residue under the clone)
+
+| script | cards | purpose |
+| --- | --- | --- |
+| `scl2_level.py` | SCL2 | The sim level against truth over a whole run, scl_grade.py's definition with the pivot read per epoch. `series`: per epoch, the pivot-frame rms, the pivot-common part, the de-commoned rms and e^2/(1/I_L), and a per-satellite file; `decomp`: per 120-epoch block, the pivot-frame rms, the common part and the de-commoned rms (gate G1); `stated`: per 30-epoch window, the de-commoned error against the producer's prior clock-contrast variance less the walk (gate G1's NEES). |
+| `scl2_rw_bed.py` | SCL2 | A matched-walk bed: every GPS AS record of a data root's three CLK files plus a seeded random walk at a given q, continuous across the days, with optional white noise (uniform or per satellite), and the error file in `g3_walk.py`'s format. |

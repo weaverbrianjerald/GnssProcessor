@@ -500,3 +500,13 @@ knob off byte-identical to the base exe on both beds (products a19e503fded57b5d 
 sim; consumer trace and epoch status likewise); B1 + B2 + keep on the broadcast sim bed byte-identical
 to the worktree's `_scl3`. Main's Debug suite 2814 tests: 2813 passed, 1 fixture-gated skip, 0
 failed. `make_golden_config.py --verify` PASS; `config_posture_check.py --verify-loader` 0 gaps.
+
+## 12. The residue re-read (2026-10-06)
+
+Card [SCL2](SCL2_level_residue_under_the_clone_2026-10-06.md) section 3 re-reads section 9's residue.
+G1's pivot-frame reads on the broadcast bed include the pinned pivot's own broadcast walk through
+card CLK-R's frame hold; de-commoned, the residue is 0.042 to 0.048 m on the COD and broadcast beds
+alike at every q from 1e-6 to 2e-5. "Stated about 2 times too tight" is the epoch-239 value of a
+ratio that grows to 3.3 at 6 h. The per-station harvest's term named in section 9 is the mechanism
+in the unit network at production scale, where it compounds with the horizon (section 4.1's 60-epoch
+read did not reach it).

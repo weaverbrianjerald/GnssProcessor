@@ -517,3 +517,12 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   census against DOY 129. Hours 3 to 6 transfer on every day (census 0.037 to 0.066 m), the in-storm
   window included; owed: DOY 128's network-wide first two hours (no DOY 127 products), ARHT00ATA's
   166 m divergence on DOY 131, WTZZ's late drift on DOY 130.
+- [SCL2](SCL2_level_residue_under_the_clone_2026-10-06.md): open, 2026-10-06: pre-registered (card
+  SCL's owed level residue). With card SCL's clock clone at a broadcast-grade anchor q the sim's
+  between-satellite clock level freezes near 4.5 cm on the COD and broadcast beds alike and at every
+  q from 1e-6 to 2e-5, while the stated level keeps shrinking at the code-only rate (NEES 1.2 to 12
+  over 6 h). The unit network at production scale reproduces it: the clone's per-station harvest
+  plateaus after 120 to 240 epochs while the exact recursion converges (21 against 5.7 mm at epoch
+  2400); the dropped cross-station term compounds with the horizon. Build chosen by a fixture gate:
+  the clone's shared conditional kept as bounded history columns, or the exact joint carry of the
+  carried station-local columns on the dense border route.
