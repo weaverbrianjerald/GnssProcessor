@@ -505,3 +505,84 @@ better, 16 sites without WTZZ00DEU; sim +0.0049 m, 2 worse, with run-hour bins f
 
 Section 7's stop rule applies (G1 fails with U2 passing): the late partial lock, the pivot-common drift and the
 smoothed hold's consistency with the history are attributed before any further build.
+
+## 11. The three readings attributed, and the pre-registered amendment (2026-10-06)
+
+Arms `runs/_rap_scl2a_*` on the X2 exe; the fixtures in the session scratchpad (`scl2a/test_scl_t1_probe.cpp`,
+and `tests/test_scl_event_probe.cpp` in a second worktree at `13c11d3`). No production code changed.
+
+**Reading 3, the consumer: card SMH's per-row form under X2 (attributed).** Card SMH's clone rows are the only
+rows in the network still on B1's per-row form under X2: they move their clone coefficients onto the free border
+and add their conditional variance to their own (0.23 m2 over the run, as under B1), while the coupling rows keep
+their shared term in the history (their per-row variance added: 22.88 m2 under B1, 0 under X2). On the COD sim bed,
+where the true walk share is 0, the hold's past-clock estimate c(t0 | t) is better than the current clock and
+correlated 0.97 with it under B1; under X2 the current clock improves 2.5-fold, the past clock is worse than it in
+every hour (22 to 27 mm against 17 to 24) and their correlation falls to 0.65 to 0.84, so the walk share's error
+grows (1.43 to 1.69 cm de-commoned, against 1.10 to 1.18 under B1). On four bed pairs the X2-minus-B1 change of the
+emitted phase-visible clock's motion within a hold generation equals the change of the walk share to 0.1 mm. In the
+fixture (the hold's row as card SMH's fixed-point smoother target; R 8 and 24, S 6, q 5e-6 and 2.9e-8, static, swept
+and per-epoch weights, 200 seeds), the walk share's MSE over the batch's fixed-point smoother at epochs 240 / 600:
+the per-row form under X2 16 to 43 (B1's per-row form 1.4 to 14); the target inside the compression 0.998 to 1.015;
+the target projected onto the coupling rows' kept directions ("form p", the compression unchanged) 0.998 to 1.014.
+Production pairs: under the phase-clock hold (COD bed, q 5e-6) X2 moves neither consumer (SZZ000SIM within 0.9 mm,
+WTZZ00DEU within 0.1 mm by hour; the 16-station sim census median +0.0000 m, every station within 1 mm); without a
+hold both consumers sit at 0.3 to 1.2 m and the pair is noise.
+
+**Reading 2, the pivot-common part: not a defect of X2.** In the pivot frame the common part is minus the pinned
+pivot's own level error. Under X2 that level follows its code, as every other satellite's does; on this fixture G02's
+ionosphere-free code averages about -4 cm against the truth over hours 2 to 6 (in both arms, and as a non-pivot
+satellite in the golden-root arms), and B1 held an hour-1 value that the code contradicts by 5 to 7 cm. Predicted
+before grading from each pivot's code residual and confirmed with the pivot rotated (`network.clock_datum_satellite`
+G14 and G19, arms `runs/_rap_scl2a_t2_p*`): over 15 pivot-hours X2's common part follows the prediction (correlation
+0.93, residual rms 0.010 m), B1's does not (-0.49, 0.036 m); with G19 as the pivot B1 shows a 2.7 cm common part and
+X2 does not; over the three pivots both arms average 0.018 m. The clock-family deficit identity holds exactly under
+X2 (history columns are linear in the gauge-invariant clone residuals, so their family weight is 0), and with the
+pivot pinned by Dirichlet elimination the deficit cannot move the solve. The level graded over all satellites
+including the pivot: X2 0.024 0.022 0.019 0.018 0.019 m in hours 2 to 6, B1 0.042 0.047 0.045 0.044 0.045. The
+de-commoned metric of section 3.1 leaves the pivot ungraded; it is reported from here on with the all-satellite
+figure beside it (amendment A2 below).
+
+**Reading 1, the late flattening: mostly not a lock, and not X2.** An exact filter's error at hour 6 correlates with
+its hour-4 error at about the ratio of their standard deviations (0.79 on the production bound; 0.70 to 0.77 in
+the fixture's batch); X2 reads 0.81 to 0.83, B1 0.95 to 0.97. The excess over the bound sits in three satellites:
+the top three carry 44 % (broadcast) and 54 % (COD) of the hour-6 mean square. G26 is a bound artifact: readmitted
+at epoch 644, it keeps its pre-park code epochs in the undecayed 1/I_L while the filter restarts correctly (stated sd
+59 mm, NEES 0.53). G20 and G12 hold about -43 and -30 mm from about two hours after their readmissions (epochs 63
+and 223) in every posture: B1 alone, X2 at k = 1 and 2, both beds, and the golden-root arms (G12 differs only under
+the golden-root B1). Two artificial outages through the same production path recover normally, and turning the
+readmission seed off does not free them; their cause is open. Without those three satellites the de-commoned level
+tracks the bound on all four X2 arms (hour 6: 13.9 / 13.3 / 13.6 / 13.2 mm against 13.7; mean z^2 0.93 to 1.02;
+hour 6 over hour 2 0.555 to 0.586). The fixture with events (arc births and ends at 479 rises, outages with the
+phase bias re-realized, 24 anchor moves with an exact S-transform; R 24, S 6, 2400 epochs, 200 seeds): X2 without a
+cap stays exact through all of them; k = 2 stays within 0.12 % of the batch; k = 1 degrades (MSE over the batch's
+1.24 to 3.15) only when a retired border column enters Y (an outage's return, the transform's old phase bias),
+which production does not do in this form (it pins at the anchor's estimate, about 1 % after 20 h) and which would
+show as a k = 1 against k = 2 difference that production does not have (at most 0.5 mm). G1's ratio clause stays
+FAILED as pre-registered; this reading attributes it.
+
+**Amendment A1, the build X2b (pre-registered here, before any code): card SMH's rows in the shared history, form
+p.** When card SMH's smoothed hold is armed with X2, each hold row's Y coefficients r_T (its terms on the clones and
+the current history) are projected onto the coupling rows' kept directions at the harvest's end: with F_T = r_T' L,
+the row keeps F_T V_kt as its history coefficients (emitted with the history columns at the next epoch, as a
+coupling row's are) and adds ||F_T V_rest||^2 to its own variance; the compression itself is unchanged. No new knob:
+it is part of X2 whenever the smoothed hold is armed (X2 has not been armed anywhere). Counters: hold rows
+projected, their kept and remainder shares (run-end p50 and max), hold rows marginalized on a stale generation.
+
+Gates for X2b (the section 6 bars where they exist, unchanged):
+
+| gate | bar |
+| --- | --- |
+| U4 (fixture, committed in `tests/test_coupling_long_horizon.cpp`) | The hold row's walk share in form p within 2 % of the batch's fixed-point smoother at k = 1 (R 8, S 6, q 5e-6, K 240, static and swept weights), and the per-row form at least 5 times the batch's there (printed with its value). |
+| U5 (production unit) | A hold row's projection: history coefficients F_T V_kt and remainder variance ||F_T V_rest||^2 to 1e-12 for given directions; a stale generation marginalizes; X2 off and the smoothed hold off bitwise unchanged. |
+| G0 | X2 off byte-identical to the base exe on the four 2 h arms of section 10. |
+| ON | Hold rows projected above 0 per epoch, 0 projection failures, the counters above. |
+| G1, G2, G3, G6, G8 | Re-run on the X2b exe with the section 6 bars; G1's hour-6 and statement bars must still pass on both beds; G8 within 15 % of B1 alone. |
+| G4, G5, G7 | Re-run on the X2b exe with the section 6 bars unchanged (field census: median at most +0.010 m over hours 2 to 6 against `s16c`, at most 3 sites worse by more than 0.02 m, median no worse than B1 alone; sim census likewise against `s16cs`; PVN NIS in [0.7, 1.6]; SZZ000SIM and WTZZ00DEU no worse than B1 alone by more than 0.005 m in hours 2 to 6). |
+
+**Amendment A2, the grade (reporting only, no bar changes).** G1 is reported also over all satellites including the
+pivot, and with the pivot rotated once (G14) on the COD bed; the per-satellite table names any satellite readmitted
+during the run, whose bound keeps its pre-park epochs.
+
+Owed outside X2b: the frozen G20 and G12 (common to every posture, cause open); the bound's restart at a readmission
+(`network_level_bound.csv` keeps the pre-park information); the G07 and G15 excursions under X2 (2.4 sigma,
+reproduced in every X2 posture, absent under B1).
