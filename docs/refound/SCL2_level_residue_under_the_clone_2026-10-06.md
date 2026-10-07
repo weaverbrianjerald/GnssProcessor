@@ -586,3 +586,27 @@ during the run, whose bound keeps its pre-park epochs.
 Owed outside X2b: the frozen G20 and G12 (common to every posture, cause open); the bound's restart at a readmission
 (`network_level_bound.csv` keeps the pre-park information); the G07 and G15 excursions under X2 (2.4 sigma,
 reproduced in every X2 posture, absent under B1).
+
+## 12. G20, G12, G07 and G15: the level follows the code's realization (2026-10-07)
+
+The fixture has no per-satellite code bias: rebuilt from the simulator's observation equations, the
+ionosphere-free code noise correlates 0.998 per row with the producer's post-fit code residual, is white (lag-1
+autocorrelation 0.004) and matches the producer's weights (w var(n) about 9 in every elevation bin). A prediction
+written before grading (`scl2f/predictions_ck1_preregistered.txt`, a least-squares level per satellite segment
+that follows the code noise's running mean and reads no truth level) matches X2's level over hours 3 to 6 on every
+satellite, the pivot included: correlation 0.91 / 0.92 (COD, k = 1 / 2), 0.94 with the readmission seed off,
+residual 8 to 12 mm rms (z^2 0.12 to 0.32); B1 0.32 to 0.42 (about 40 mm). G20 is a 2.9 to 3.6 sigma draw of its
+own code and its neighbours' through the shared station levels (-28.5 and -22.5 mm of its hour-6 -51 mm), G12
+about 2 sigma. Causal test (arms `runs/_rap_scl2f_flip_{x,b}`, the COD bed, the RINEX of G20, G12, G07 and G15 with
+the ionosphere-free code noise mirrored, `runs/_scl2f_flip_rinex/`, predictions written first): X2's level moves by
+the predicted amount (correlation 0.994, slope 0.87, residual 8.9 mm over 16 satellite-hours; G20 turns to +24 +22
++19 +12 mm); B1 does not follow (G07 flat while its code moves 43 to 80 mm). The readmission seed lags the code (slope
+0.27 to 0.62 against 0.92 without it). The parks are the producer's eclipse exclusion (G20 12 min, G12 52, G25 55);
+the simulator's yaw model is the processor's nominal one and its code has no eclipse term.
+
+Reading: the frozen satellites and the X2-only excursions are the estimator following the data's realization, not a
+lock and not a defect of the readmission path. G1's ratio clause measures that draw: a level that follows its code
+exactly reads 0.90 for hour 6 over hour 2 on this realization, and the mirrored data move the estimator's ratio from
+0.79 to 0.70. The level grade that separates a lock from code-consistency is d_e minus the code-following
+prediction, with z^2 against the code-only bound; it is the instrument for the next level card. Owed: whether the
+readmission seed's pre-park prior (variance 1.2e-2 to 1.8e-2 m^2) is consistent with a 12 to 55 min gap.
