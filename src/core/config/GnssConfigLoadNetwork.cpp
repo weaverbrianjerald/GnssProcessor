@@ -196,6 +196,23 @@ namespace GnssProcessor {
                                      "rate, a datum device the smoother would pass as motion "
                                      "(card SMH section 9)");
 
+        // Card NBP: the native broadcast clock a priori ships with card SMH's smoothed hold
+        // and refuses card LAH's phase-clock hold, which is valid only with a precise a
+        // priori clock product (card SCL section 3.1: LAH under the broadcast clock reads
+        // 1.191 m).  On the resolved values, beside SMH's own refusals.
+        if (network_apriori_source_ == NetworkAprioriSource::Sp3BrdcClock) {
+            if (network_config_.emit_pb_hold_phase_clock)
+                throw std::runtime_error("network.apriori_source sp3_brdc_clock refuses "
+                                         "network.emit_pb_hold_phase_clock: the phase-clock hold "
+                                         "is valid only with a precise a priori clock product "
+                                         "(card SCL section 3.1; card NBP)");
+            if (!(network_config_.emit_pb_hold && network_config_.emit_pb_hold_smoothed))
+                throw std::runtime_error("network.apriori_source sp3_brdc_clock requires "
+                                         "network.emit_pb_hold with network.emit_pb_hold_smoothed "
+                                         "(card SMH's smoothed hold, the hold the posture was "
+                                         "measured with; card NBP)");
+        }
+
         // Feed interlock for network.carry_coupling_reinit_sources (card 1g).  It sits
         // here, at the end of the section, rather than beside the knob's own parse:
         // `phase_datum_eq34` and `phase_anchor_carry_reref` are parsed in later helpers
@@ -4151,12 +4168,41 @@ namespace GnssProcessor {
                 json, "network.apriori_source", "apriori_source", std::string{"sp3"}));
             if (src == "brdc_rts") {
                 network_apriori_source_ = NetworkAprioriSource::BrdcRts;
+            } else if (src == "sp3_brdc_clock") {
+                network_apriori_source_ = NetworkAprioriSource::Sp3BrdcClock;
             } else {
                 if (src != "sp3")
                     log->warn("Unknown network.apriori_source='{}', falling back to 'sp3' "
                               "(precise SP3/CLK a-priori).", src);
                 network_apriori_source_ = NetworkAprioriSource::Sp3;
             }
+        }
+        // Ephemeris selection rule of the native broadcast clock a priori (card NBP).
+        // ttom is the only rule; anything else is a hard error under sp3_brdc_clock and a
+        // warning otherwise (the knob is read only under that value).
+        {
+            std::string sel = jval<std::string>(json, "network.brdc_select", "brdc_select",
+                                                std::string{"ttom"});
+            std::transform(sel.begin(), sel.end(), sel.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            network_brdc_select_ = NetworkBrdcSelect::Ttom;
+            if (sel != "ttom") {
+                if (network_apriori_source_ == NetworkAprioriSource::Sp3BrdcClock) {
+                    log->error("Network (card NBP): network.brdc_select '{}' is not a rule; "
+                               "'ttom' (the latest healthy record transmitted at or before the "
+                               "epoch) is the only one.", sel);
+                    return false;
+                }
+                log->warn("Network (card NBP): network.brdc_select '{}' is unknown and inert "
+                          "(read only under network.apriori_source sp3_brdc_clock).", sel);
+            }
+            if (network_apriori_source_ == NetworkAprioriSource::Sp3BrdcClock)
+                log->info("Network (card NBP): network.apriori_source = sp3_brdc_clock: SP3 "
+                          "orbits and the broadcast clock of the navigation file (rule {}), no "
+                          "CLK product; the a priori is continuous across cut-overs through a "
+                          "per-ephemeris offset table from 00:00 of the observation day, and the "
+                          "wire's clock refers to the stamped ephemeris (C_wire = C_est + O, "
+                          "iode=k).  Fingerprinted; fresh convergence only.", sel);
         }
         // A-priori clock anchor σ (m; D6): 0 = auto (resolved per mode at the
         // producer), an explicit positive value wins.  Parsed and stored only here.

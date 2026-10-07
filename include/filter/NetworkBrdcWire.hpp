@@ -1,0 +1,59 @@
+#pragma once
+/**
+ * @file NetworkBrdcWire.hpp
+ * @brief Emit seam of card NBP: the wire's clock refers to the stamped broadcast
+ *        ephemeris under @c network.apriori_source @c sp3_brdc_clock.
+ *
+ * The producer's a priori is the continuous a_s(t) = brdc_k(t) + O_s,k
+ * (@c BrdcClockApriori), so its estimate C_est is a correction to that.  A consumer holds
+ * the broadcast record k, not the offset table, so each clock record goes out as
+ * C_wire = C_est + O_s,k with @c iode = k: brdc_k(t) + C_wire = a_s(t) + C_est.  Nothing
+ * in the solve moves; the seam runs after the emit-side hold (every reader of C_est,
+ * CLK-R, the holds, CLV, has run) and before the store push and the product write.
+ *
+ * Telemetry: the run-end counters of @c NetworkServiceCounters (@c nbp_*) and the O trace
+ * @c network_brdc_offset.csv, which lets a grader form C - O.
+ */
+
+#include <memory>
+
+namespace spdlog { class logger; }
+
+namespace GnssProcessor {
+
+struct NetworkRunContext;
+class  GnssConfig;
+struct NetworkRunTraces;
+struct NetworkSetupResult;
+struct SyncedEpoch;
+struct NetworkSolutionEpoch;
+
+/**
+ * @brief Stamp this epoch's clock records with the selected ephemeris and add its offset.
+ *
+ * For each clock-bearing satellite of @p sol: @c clock_iode = the IODE of the record the
+ * native selector chose at the epoch, @c clock_c0_m += O_s,k (m); the store's holding of
+ * that record is checked (the in-process consumer reads the same store this epoch); one
+ * O-trace row is written; the run-end counters advance.  A satellite with no selectable
+ * record keeps its value and @c clock_iode -1 (counted as unstamped).
+ *
+ * @param ctx     Run context (counters, the per-satellite previous stamp, knobs).
+ * @param config_ Configuration (unused beyond the knob already in @p ctx; kept for the
+ *                seam contract).
+ * @param log     Logger.
+ * @param traces  Trace streams (the O trace).
+ * @param setup   Setup handoff (the selector).
+ * @param se      This epoch.
+ * @param sol     This epoch's emission, modified in place.
+ *
+ * @note Returns immediately unless @c ctx.knobs.nbp_on and the selector exists.
+ */
+void networkBrdcWire(NetworkRunContext& ctx,
+                     const GnssConfig& config_,
+                     const std::shared_ptr<spdlog::logger>& log,
+                     NetworkRunTraces& traces,
+                     NetworkSetupResult& setup,
+                     const SyncedEpoch& se,
+                     NetworkSolutionEpoch& sol);
+
+} // namespace GnssProcessor

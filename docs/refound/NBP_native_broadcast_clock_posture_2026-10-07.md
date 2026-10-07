@@ -5,7 +5,7 @@
 - **id:** NBP
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** PRE-REGISTERED 2026-10-07. Cards SCL, SCL2 and SCL2B measured the self-contained posture on a bed that writes the broadcast clock into a CLK product with each ephemeris cut-over's step removed. This card builds the posture natively: the producer reads SP3 orbits and the broadcast clock from the navigation file, selects the ephemeris by the bed's rule (the latest record transmitted at or before the epoch, healthy only), and keeps its a priori continuous with a per-ephemeris offset table, while the wire's clock refers to the stamped ephemeris (IODE) so a consumer holding that record reconstructs the same continuous clock. Nothing moves in the solve. Finding before the build: the shipped `apriori_source brdc_rts` path selects by the closest toe and differs from the bed's rule on 99.6 % of satellite-epochs (a priori difference p50 87 mm, max 1.12 m), so a real-time version of the measured posture needs this card's rule. Gates in section 5.
+- **summary:** PRE-REGISTERED 2026-10-07. Cards SCL, SCL2 and SCL2B measured the self-contained posture on a bed that writes the broadcast clock into a CLK product with each ephemeris cut-over's step removed. This card builds the posture natively: the producer reads SP3 orbits and the broadcast clock from the navigation file, selects the ephemeris by the bed's rule (the latest record transmitted at or before the epoch, healthy only), and keeps its a priori continuous with a per-ephemeris offset table, while the wire's clock refers to the stamped ephemeris (IODE) so a consumer holding that record reconstructs the same continuous clock. Nothing moves in the solve. Finding before the build: the shipped `apriori_source brdc_rts` path selects by the closest toe and differs from the bed's rule on 99.6 % of satellite-epochs (a priori difference p50 87 mm, max 1.12 m), so a real-time version of the measured posture needs this card's rule. Gates in section 5. BUILT, GRADED AND LANDED 2026-10-07 (sections 7 and 8): every gate passed; the native posture equals the bed to the print resolution (estimate, level, counters, consumers within 0.1 mm, both censuses median 0) at no cost; findings: the store's freshest-toe rule rejected the records the ttom rule stamps (a transmission-time insert added), the wire's C steps at the cut-overs so graders read C - O (an O trace), and the consumer's fallback for a satellite without a C record differs (did not act). Landed default off; nothing armed.
 - **source:** [SCL](SCL_self_contained_clock_level_2026-10-03.md) sections 2 and 5 ("Not in this card"); [SCL2B](SCL2B_shared_history_with_the_hold_2026-10-07.md) (the posture as graded); the read-only map `runs/_scl2_handoff/threads/rep_nbp_map.md` (2026-10-07, main `6655ba4`)
 - **knobs / posture:** proposed, default off, fingerprinted (fresh convergence only): `network.apriori_source` value `sp3_brdc_clock` (with the sp3 posture's anchor sigma, not `brdc_rts`'s 3 m), `network.brdc_select` (`ttom`, the only rule at first). The loader requires card SMH's smoothed hold under the new value and refuses card LAH's phase-clock hold (valid only with a precise a priori, card SCL section 3.1). Nothing armed
 - **dates in the text:** 2026-10-07
@@ -78,3 +78,60 @@ Arming stays with the decision on card SCL2B's posture.
 2. The build; U0, U3, G0.
 3. G1 on 2 h, then 6 h; G2, G3.
 4. G4, G5; G7.
+
+## 7. Built and graded (2026-10-07)
+
+**The build** (session worktree at `9da0484`; exe `gnss_processor_nbp.exe`, sha256[:16] `38c4e88bd2c4a274`; a first build
+`dd5b68392d47da0a` wrote a malformed S line and is superseded). `RinexNavParser` reads ORBIT-7 (transmission time, fit
+interval, IODC); `products/BrdcClockApriori` holds the selector, the offset table and the wire stamp; the loader adds
+`network.apriori_source` `sp3_brdc_clock` and `network.brdc_select` `ttom` (requires card SMH's smoothed hold, refuses card
+LAH's phase-clock hold, requires SP3, refuses a loaded CLK, GPS only); producer stations take their a priori clock from the
+selector; a new seam `filter/NetworkBrdcWire` writes C_wire = C_est + O with `iode=k` after the hold and an O trace
+(`logs/network_brdc_offset.csv`); the replay driver stages and feeds the navigation file and refuses a CLK-bearing root under
+the native S line; run-end telemetry; tests `tests/test_brdc_clock_apriori.cpp`. Data root `runs/_scl_data_nbp`.
+
+Three findings of the build:
+
+1. The store's freshest-toe rule rejected 43 new-upload records whose toe is 16 s earlier than the held record's, which are
+   the records the ttom rule stamps: with the plain insert only 83 917 of 89 280 stamps were held, so a pinned consumer
+   could not reconstruct the rest. The native feed inserts by transmission time (`LiveEphemerisStore::insertTransmitted`).
+   A live RTCM stream under the ttom rule has the same hazard.
+2. The wire's C is not the bed's C: it steps by up to 0.91 m at the cut-overs, and every grader that reads C must read C - O
+   (the O trace provides it; with C - O every level grader reproduces the bed).
+3. A consumer's fallback for a satellite with no C record differs: on the bed it took the bare CLK a priori as product-grade
+   and kept its phase; natively it is broadcast-grade and code-only. It did not act on any graded window (the field
+   census's satellite sets are identical).
+
+**Gates** (arms `runs/_rap_nbp_*`; the bed arms of card SCL2B as the reference):
+
+| gate | reading | verdict |
+| --- | --- | --- |
+| U0 | Debug suite 2839 tests: 2822 passed, 17 data-fixture skips, 0 failed; the golden verify PASS; the posture check 0 gaps | PASS |
+| U1 | 465 GPS records with ORBIT-7; transmission lead p50 7182 s | PASS |
+| U2 | the selected record equals the ttom pick on 89 280 of 89 280 healthy satellite-nodes (G01 never selected); a_s(t) equals the bed's CLK at every node to one unit of the last printed digit (1.9e-7 m); 414 cut-overs | PASS |
+| U3 | 89 280 records stamped and held; max absolute brdc(iode) + C_wire - (a_s + C_est) 2.9e-11 m | PASS |
+| G0 | knob off byte-identical to the base exe on the 2 h goldens (sim and field) | PASS |
+| G1 sim | 2 h, 6 h and 24 h: emitted epochs, trips, decouples and clone counts equal, every run-end line byte-identical; C_est p99 0.0035 mm (max 0.0047); the de-commoned level equal to 0.0001 mm per hour; SZZ000SIM equal to 0.1 mm; PVN NIS equal | PASS |
+| G1 field | 6 h: every count equal; C_est p99 0.0203 mm (max 0.67 mm at the first epoch); WTZZ00DEU +0.1 mm in hour 1, 0 after; PVN NIS 1.45916 against 1.45915 | PASS |
+| G2 | over 24 h, 94 switch pairs at SZZ000SIM: the consumer's phase-visible change at a switch p50 0.94 mm against 1.27 mm elsewhere, 3 of 94 above the run's p95 (3.2 %); the step's leakage slope +0.0028 plus or minus 0.0027 (bound about 0.8 %); an IODE-blind consumer would show p50 89 mm. One epoch (18:01:00) exceeds the epoch-rms p95, driven by the pivot G02's own motion; the bed gives the identical value there | PASS on the cut-over question |
+| G3 | replays at offset 0 byte-identical to the in-process consumer (2 h, 6 h, 24 h; field census replay of WTZZ00DEU likewise); a native wire replayed on a CLK-bearing root refused | PASS |
+| G4 | field census against `s2xb`: every hour equal, median +0.0000 m, largest per-site change 0.020 mm | PASS |
+| G5 | sim census from the start against the bed made the same way: median +0.00000 m every hour, largest station-hour change 0 | PASS |
+| G6 | 0 rows name G01 in 17 traces and the products (the roster's RINEX hold 4 574 G01 records; 14 unhealthy records not selectable); the unit half (a removed record) not run | run half PASS |
+| G7 | loop time -0.10 % against the bed (two interleaved pairs, one job at a time) | PASS |
+
+**Reading.** The native posture is the bed moved into the producer: estimate, wire after C - O, consumers and censuses equal
+to the bed's to the print resolution, at no cost. Its product is the posture without a CLK file, on the selection rule the
+measurements used, with the stamp a consumer needs. The cut-over steps live only on the wire, where a consumer that honours
+`iode=` sees nothing. Owed: the unit half of G6 (a removed record), a mid-day health flip, a real-time switch delay, the
+consumer fallback of finding 3 on a window where it acts, and multi-day navigation.
+
+## 8. Landed (2026-10-07)
+
+The patch (28 files, `runs/_scl2_handoff/nbp/nbp_full.diff`) is committed on main with this section, default off. Verified
+before the commit on a clean worktree of main `9da0484` with the patch applied: every file byte-identical to the tested
+worktree; Release exe `gnss_processor_nbpL.exe` (sha256[:16] `f1af836195b4af1e`); the Debug suite 2839 tests, 2822
+passed, 17 data-fixture skips, 0 failed; the golden verify PASS, the posture check 0 gaps; the 2 h goldens byte-identical
+to the base exe with the knob off (`runs/_rap_nbpL_g0_{sim,fld}`); the native smoke arm byte-identical to the tested exe's,
+O trace included (`runs/_rap_nbpL_smoke` against `runs/_rap_nbp_smoke_sim`). Another workstream's uncommitted edits in
+`CMakeLists.txt` and `GnssConfigLoadNetwork.cpp` were left out of the commit.

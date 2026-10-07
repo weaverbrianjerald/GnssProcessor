@@ -89,6 +89,20 @@ public:
     void insert(const BroadcastEphemeris& eph, bool from_igs = true);
 
     /**
+     * @brief Insert a record in transmission order (card NBP's store feed).
+     *
+     * The transmission order is authoritative: the record replaces the current one
+     * whatever its toe, and an IODE change keeps the replaced record as "previous", as
+     * @ref insert does.  @ref insert's freshest-toe rule would reject a new upload whose
+     * toe is 16 s earlier than the held record's (43 GPS records on DOY 129, each the
+     * record the transmission-time selection stamps), so a consumer pinned to that IODE
+     * would find no record.  The source-priority gate does not apply (one source).
+     *
+     * @param eph The record (GPS / Galileo / BeiDou / QZSS).
+     */
+    void insertTransmitted(const BroadcastEphemeris& eph);
+
+    /**
      * @brief Compute the satellite ECEF position + velocity at @p time.
      * @param sat  Satellite identifier (e.g. "G01").
      * @param time Query epoch (GPS time scale).
@@ -180,6 +194,19 @@ public:
     /// than its constellation peers as the pivot.  |age| is the broadcast
     /// extrapolation magnitude; smaller is a better pivot anchor.
     std::optional<double> toeAgeSeconds(const std::string& sat, const GnssTime& time) const;
+
+    /**
+     * @brief A record's issue of data in the IGS-SSR matching convention.
+     *
+     * The value the store reports as @c SatelliteClock::iode for @p eph: GPS / QZSS the
+     * 8-bit IODE, Galileo the low 8 bits of IODnav, BeiDou mod(toe / 720, 240).  Exposed
+     * so a caller that selects a record itself (card NBP's broadcast clock a priori) can
+     * stamp the wire with the value the consumer's IODE pin compares against.
+     *
+     * @param eph A decoded broadcast record.
+     * @return Its SSR-convention IODE (-1 when the record carries none).
+     */
+    static int ssrIode(const BroadcastEphemeris& eph);
 
     /// True iff no ephemeris has been inserted.
     bool isEmpty() const;

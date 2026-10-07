@@ -1523,6 +1523,12 @@ int Application::runNetwork() {
                 ++brdc_nav_cursor;
             }
         }
+        // Card NBP: the native broadcast clock a priori feeds the store by transmission
+        // time (healthy records), so the record the wire stamps this epoch is the store's
+        // current one when the consumer reads it.  Null in every other mode.
+        if (setup.brdc_apriori)
+            setup.brdc_apriori->feedStore(LiveEphemerisStore::getInstance(),
+                                          TimeUtils::continuousGpsSeconds(se.time));
 
         // Optional max-duration cutoff (processing.max_duration_s): anchor on the
         // first synced epoch, stop once the elapsed data span reaches the limit.

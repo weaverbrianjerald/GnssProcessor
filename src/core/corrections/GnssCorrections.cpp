@@ -21,6 +21,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/LiveEphemerisStore.hpp"
+#include "products/BrdcClockApriori.hpp"   // card NBP native broadcast clock a priori
 #include "model/SatAttitude.hpp"
 #include <algorithm>
 #include <array>
@@ -159,6 +160,21 @@ namespace GnssProcessor {
         // It is safe to call with clocks_ empty: the clock index is then empty and
         // it returns 0.0, so the broadcast fallback below still applies.
         double clock_corr = interpolateClock(satellite, time, *clocks_);
+
+        // Card NBP (network.apriori_source sp3_brdc_clock, producer stations only): the a
+        // priori is the continuous broadcast clock a_s(t) = brdc_k(t) + O_s,k of the
+        // native selector.  It is the producer's declared a priori (the value the bed's CLK
+        // carried), so it is returned as product-grade, and neither the live store's
+        // closest-toe pick nor an SSR record is consulted (a producer has none).  No
+        // eligible record: 0, and the satellite is dropped like one missing from a CLK.
+        if (brdc_apriori_ && std::abs(clock_corr) < 1e-12) {
+            if (const auto ev = brdc_apriori_->evaluate(satellite, time)) {
+                log->trace("Satellite clock for {} at TOW {:.3f}: {:.3e} s (native broadcast "
+                           "a priori, iode {})", satellite, time.tow, ev->clock_s, ev->iode);
+                return ev->clock_s;
+            }
+            return 0.0;
+        }
 
         // The SSR record is fetched first so that the broadcast baseline and the
         // IODE gate can select the ephemeris version the SSR clock delta was

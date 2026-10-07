@@ -45,7 +45,11 @@
 #include "math/TimeUtils.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
+#include "products/BrdcClockApriori.hpp"     // card NBP: the native wire's broadcast feed
+#include "products/LiveEphemerisStore.hpp"
+#include "products/ProductCache.hpp"
 #include "products/ProductParser.hpp"
+#include "products/RinexNavParser.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "realtime/ConsumerSatTrace.hpp"
 #include "realtime/RealTimeEngine.hpp"
@@ -238,6 +242,39 @@ int Application::runConsumerReplay() {
         log->warn("Consumer replay: {}", why);
     }
 
+    // --- Card NBP: a native broadcast-clock wire ------------------------------
+    // Under an S line "sp3+brdc:<SP3>|<nav>|ttom" every C record refers to the stamped
+    // broadcast ephemeris (iode=k), so the consumer must hold record k: the navigation
+    // file is staged here and fed to the store by transmission time in the loop, as the
+    // producer fed it.  A CLK product would shadow the broadcast clock silently
+    // (interpolateClock takes precedence), so a CLK-bearing root is refused below, after
+    // the engine's product load.
+    const bool nbp_wire = file_contract.present && isNbpAprioriId(file_contract.apriori_product_id);
+    std::unique_ptr<BrdcClockApriori> nbp_feed;
+    if (nbp_wire) {
+        const std::filesystem::path nav_path = config_.getNavigationPath();
+        std::vector<BroadcastEphemeris> nav =
+            nav_path.empty() ? std::vector<BroadcastEphemeris>{} : RinexNavParser::parse(nav_path.string());
+        nav.erase(std::remove_if(nav.begin(), nav.end(),
+                                 [](const BroadcastEphemeris& e) { return e.system != System::GPS; }),
+                  nav.end());
+        if (nav.empty()) {
+            log->error("Consumer replay (card NBP): the product's S line declares a native "
+                       "broadcast clock ('{}'), but no GPS broadcast record was read from the "
+                       "navigation file '{}'.", file_contract.apriori_product_id, nav_path.string());
+            return 1;
+        }
+        const double t_first = TimeUtils::continuousGpsSeconds(records.front().epoch.epoch_time);
+        const double t_last  = TimeUtils::continuousGpsSeconds(records.back().epoch.epoch_time);
+        nbp_feed = std::make_unique<BrdcClockApriori>(std::move(nav),
+                                                      BrdcClockApriori::dayOrigin(t_first),
+                                                      t_last, BrdcSelectRule::Ttom);
+        log->info("Consumer replay (card NBP): native broadcast-clock wire '{}': {} selectable GPS "
+                  "records staged from '{}', fed to the store by transmission time.",
+                  file_contract.apriori_product_id, nbp_feed->stats().n_staged,
+                  nav_path.filename().string());
+    }
+
     // --- Phase 3: the consumer's observations --------------------------------
     // MultiRinexSync with a one-station roster: the consumer is the reference, so
     // synchronize() walks its own epoch schedule and by_station carries its
@@ -310,6 +347,14 @@ int Application::runConsumerReplay() {
         return 1;
     }
     consumer.setArIgnoreMwWl(!consumer_config.getArWlOnly());
+    if (nbp_wire && ProductCache::getInstance().getClockCount() > 0) {
+        log->error("Consumer replay (card NBP): the product's S line declares a native broadcast "
+                   "clock ('{}'), but {} CLK sample(s) were loaded from the data root; a CLK "
+                   "would shadow the broadcast clock the wire refers to.  Use the native data "
+                   "root (no CLK files).", file_contract.apriori_product_id,
+                   ProductCache::getInstance().getClockCount());
+        return 1;
+    }
     // The per-satellite readout (card CST), armed before the product-routing branch as
     // the harness does (ApplicationNetworkSetup), so the baseline arm has it too.
     // Measure-only: the consumer's solve is unchanged with it armed.
@@ -459,6 +504,9 @@ int Application::runConsumerReplay() {
             ++h_cursor;
         }
         if (replayed_here == 0) ++n_no_products;
+        // Card NBP: the broadcast records transmitted by this epoch, so the stamped record
+        // of every replayed C record is held (the producer fed the store the same way).
+        if (nbp_feed) nbp_feed->feedStore(LiveEphemerisStore::getInstance(), now_s);
         // The engine buffers observations that arrived ahead of their corrections;
         // a fresh product epoch must wake that buffer exactly as the RTA-6 tail
         // path does.

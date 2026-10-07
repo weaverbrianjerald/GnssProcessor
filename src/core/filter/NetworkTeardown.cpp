@@ -5989,6 +5989,22 @@ int networkTeardown(
                       phi);
         }
     }
+    if (ctx.knobs.nbp_on) {
+        // The native broadcast clock a priori (card NBP).  `stamped 0` is inert wiring;
+        // `not held > 0` means a consumer pinned to the stamped IODE found no record.
+        const auto& c = ctx.counters;
+        const std::size_t fed = setup.brdc_apriori ? setup.brdc_apriori->fedCount() : 0;
+        const std::size_t table_sw = setup.brdc_apriori ? setup.brdc_apriori->stats().n_switches : 0;
+        log->info("Network (card NBP / native broadcast clock a priori): {} emitted epoch(s) "
+                  "stamped; {} clock record(s) stamped, {} unstamped (no selectable record); "
+                  "{} distinct broadcast records selected on the wire; {} stamp switch(es) "
+                  "between emissions ({} cut-overs in the table); O on the wire [{:.4f}, "
+                  "{:.4f}] m; stamped IODE held by the store at consume {} / {} ({} not held); "
+                  "{} record(s) fed to the store by transmission time.",
+                  c.nbp_epochs, c.nbp_stamped, c.nbp_unstamped, c.nbp_records.size(),
+                  c.nbp_switches, table_sw, c.nbp_offset_min_m, c.nbp_offset_max_m,
+                  c.nbp_held, c.nbp_stamped, c.nbp_not_held, fed);
+    }
     if (ctx.knobs.pv_on) {
         // The phase-visible consistency instrument (card PVN).  An honest covariance of the
         // ionosphere-free phase-visible clock reads NIS mean ~1 and a window ratio ~1 (the

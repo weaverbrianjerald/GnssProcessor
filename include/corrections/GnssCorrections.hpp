@@ -37,6 +37,7 @@ namespace GnssProcessor {
     class GnssConfig;
     class RinexParser;
     class SsrCorrectionStore;
+    class BrdcClockApriori;
 
     /**
      * @class GnssCorrections
@@ -145,6 +146,24 @@ namespace GnssProcessor {
          *        @c nullptr to use the singleton.
          */
         void setOrbitEchoStore(const SsrCorrectionStore* store) { orbit_echo_store_override_ = store; }
+
+        /**
+         * @brief Take the a priori satellite clock from card NBP's native broadcast clock
+         *        a priori instead of a CLK product (@c network.apriori_source
+         *        @c sp3_brdc_clock; producer stations only).
+         *
+         * When set and no CLK sample covers the epoch (the mode refuses a loaded CLK, so
+         * none does), @c getSatelliteClockCorrection returns a_s(t) = brdc_k(t) + O_s,k
+         * from @p apriori and does not consult the live store or an SSR record: it is the
+         * producer's declared a priori, the value the bed's CLK product carried, so it is
+         * not flagged broadcast-grade (the network estimates the clock against it).  A
+         * satellite without an eligible record returns 0 and is dropped, as a satellite
+         * missing from a CLK product.  @c nullptr (the default) leaves the method
+         * byte-identical.
+         *
+         * @param apriori Non-owning pointer (must outlive this object), or @c nullptr.
+         */
+        void setBroadcastClockApriori(const BrdcClockApriori* apriori) { brdc_apriori_ = apriori; }
 
         /**
          * @brief Get satellite clock correction in seconds.
@@ -559,6 +578,7 @@ namespace GnssProcessor {
         const RinexParser* rinex_parser_;                 ///< Optional reference to a RinexParser (may be nullptr)
         const SsrCorrectionStore* ssr_store_override_{ nullptr }; ///< Non-owning SSR store override; nullptr -> process-wide singleton (see setSsrStore).
         const SsrCorrectionStore* orbit_echo_store_override_{ nullptr }; ///< Non-owning orbit-overlay store for the echo check; nullptr -> singleton (see setOrbitEchoStore; Card 7).
+        const BrdcClockApriori* brdc_apriori_{ nullptr }; ///< Non-owning native broadcast clock a priori (card NBP); nullptr -> the CLK / live-store path (see setBroadcastClockApriori).
 
         /// Resolve the active SSR store: the injected override when set, else the
         /// process-wide singleton.  Defined in the .cpp where the full type is visible.

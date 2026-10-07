@@ -724,6 +724,16 @@ namespace GnssProcessor {
         /// sqrt(S- - S+) (empty when not positive), @c nis = e^2 / (S- - S+).
         std::ofstream phase_visible_trace;
         const std::filesystem::path phase_visible_trace_path;
+        /// The native broadcast clock a priori's wire stamp (card NBP,
+        /// @c network.apriori_source @c sp3_brdc_clock): one row per clock record per
+        /// emitted epoch.  @c iode the stamped record (-1: none selectable), @c c_est_m the
+        /// estimate, @c offset_m the offset O of the stamped record, @c c_wire_m the value
+        /// on the wire (c_est_m + offset_m), @c brdc_m c * brdc_k(t), @c held whether the
+        /// store held the record at consume, @c switched whether the stamp changed since
+        /// the satellite's previous emission.  A grader reading the wire's C forms
+        /// C - O (= c_est_m) or brdc_m + c_wire_m (= the a priori plus the estimate).
+        std::ofstream brdc_offset_trace;
+        const std::filesystem::path brdc_offset_trace_path;
         /// The smoothed hold's clock clones (card SMH, @c network.emit_pb_hold_smoothed):
         /// one row per smoothed held emission.  @c age_s the clone's age, @c xfer_m the
         /// key's transfer (the phase-clock transfer minus phi, card SMH section 10),

@@ -537,3 +537,4 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   transmitted healthy record), a continuous internal a priori with a per-ephemeris offset table, the wire's clock referred
   to the stamped IODE, no CLK product. The shipped `brdc_rts` path selects a different record on 99.6 % of
   satellite-epochs. Gates: equivalence with the bed.
+  LANDED 2026-10-07, default off: every gate passed; the native posture equals the bed to the print resolution at no cost.

@@ -506,6 +506,64 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                    "Set navigation_path / products to cover the observation day.");
         return 1;
     }
+    // Card NBP (network.apriori_source sp3_brdc_clock): SP3 orbits (required by the branch
+    // above) and the broadcast clock of the navigation file, with no CLK product.  A loaded
+    // CLK would shadow the broadcast clock silently (interpolateClock takes precedence in
+    // getSatelliteClockCorrection), so it is refused, as brdc_rts refuses one.  The selector
+    // is built here for every GPS satellite of the file, from 00:00 of the observation day
+    // (a fixed origin: the level is an ignition draw, and a run-start origin would change
+    // every satellite's level by its first step), so a warm resume recomputes the same
+    // table.  GPS only: Galileo's I/NAV and F/NAV records carry different clock pairs and
+    // the transmission-time rule alone would alternate between them.
+    if (config_.networkAprioriBrdcClock()) {
+        if (product_cache.getClockCount() > 0) {
+            log->error("Network (card NBP): {} CLK sample(s) are loaded under "
+                       "network.apriori_source sp3_brdc_clock.  A CLK product would shadow the "
+                       "broadcast clock (a silent clock frame split); use a data root without "
+                       "CLK files (e.g. runs/_scl_data_nbp) or apriori_source sp3.",
+                       product_cache.getClockCount());
+            return 1;
+        }
+        for (const std::string& sys : config_.getActiveSystems()) {
+            if (sys != "GPS") {
+                log->error("Network (card NBP): network.apriori_source sp3_brdc_clock is GPS-only "
+                           "(processing.active_systems names '{}').", sys);
+                return 1;
+            }
+        }
+        const std::filesystem::path nav_path = config_.getNavigationPath();
+        if (nav_path.empty()) {
+            log->error("Network (card NBP): network.apriori_source sp3_brdc_clock requires a "
+                       "broadcast navigation file (files.navigation_path is empty).");
+            return 1;
+        }
+        std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
+        nav.erase(std::remove_if(nav.begin(), nav.end(),
+                                 [](const BroadcastEphemeris& e) { return e.system != System::GPS; }),
+                  nav.end());
+        if (nav.empty()) {
+            log->error("Network (card NBP): parsed 0 GPS broadcast records from '{}'.",
+                       nav_path.string());
+            return 1;
+        }
+        const double origin_s = BrdcClockApriori::dayOrigin(setup.window_t0_s);
+        setup.brdc_apriori = std::make_unique<BrdcClockApriori>(
+            std::move(nav), origin_s, setup.window_t1_s, BrdcSelectRule::Ttom);
+        const auto& bs = setup.brdc_apriori->stats();
+        log->info("Network (card NBP): native broadcast clock a priori from '{}' (rule ttom): "
+                  "{} GPS records, {} selectable (healthy, with a transmission time), {} "
+                  "unhealthy, {} without a transmission time; {} satellites; offset table from "
+                  "tow {:.0f} to {:.0f}: {} cut-overs, O range [{:.4f}, {:.4f}] m.",
+                  nav_path.filename().string(), bs.n_records, bs.n_staged, bs.n_unhealthy,
+                  bs.n_no_ttom, bs.n_sats, std::fmod(bs.origin_s, 604800.0),
+                  std::fmod(bs.end_s, 604800.0), bs.n_switches, bs.offset_min_m,
+                  bs.offset_max_m);
+        if (bs.n_staged == 0) {
+            log->error("Network (card NBP): no selectable GPS broadcast record in '{}'.",
+                       nav_path.string());
+            return 1;
+        }
+    }
 
     // --- Phase 3b: ionosphere and code-bias datum inputs (W6) ----------------
     // The satellite DCB (geometry-free code bias) is co-linear with each station's
@@ -933,6 +991,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // below skips it), so the consumer keeps the default gate.  sp3 mode passes
         // false (byte-identical).  (Card 5, RTF-1 / plan D1)
         st.model->setBroadcastPhaseGateSuppressed(brdc_rts);
+        // Card NBP: a producer station's a priori satellite clock is the native broadcast
+        // a priori (null in every other mode, byte-identical).  buildStation never builds
+        // the held-out consumer, which reconstructs brdc(iode) + C from the store.
+        st.model->setBroadcastClockApriori(setup.brdc_apriori.get());
         st.mm = std::make_unique<MeasurementModel>(
             *st.sm, *st.model, config_, log_manager_);
         // Phase-bias float gate: withhold satellite phase-bias states for signals
@@ -1549,7 +1611,22 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             const auto& dl = config_.getDownloadConfig();
             std::string apriori_id =
                 fmt::format("{}{}{:04d}{:03d}", dl.product_source, dl.product_type, dl.year, dl.doy);
-            if (brdc_rts) {
+            if (config_.networkAprioriBrdcClock()) {
+                // Card NBP: the SP3 files in force, the navigation file and the rule
+                // ("sp3+brdc:<SP3>|<nav>|ttom").  A consumer (and the replay driver) reads
+                // this prefix as "the clock refers to the stamped broadcast ephemeris" and
+                // refuses a CLK-bearing root under it.
+                bool named_all = false;
+                std::string sp3 = aprioriIdentityForWindow(
+                    config_.getProductPaths(), setup.window_t0_s, setup.window_t1_s, &named_all);
+                // The helper names "<SP3>+<CLK>" with "?" for a kind that has no file; the
+                // mode loads no CLK, so the CLK half ("+?") is dropped.
+                if (sp3.size() >= 2 && sp3.compare(sp3.size() - 2, 2, "+?") == 0)
+                    sp3.resize(sp3.size() - 2);
+                const std::string nav = config_.getNavigationPath().filename().string();
+                apriori_id = std::string(kNbpAprioriPrefix) + (sp3.empty() ? std::string("?") : sp3)
+                           + "|" + (nav.empty() ? std::string("?") : nav) + "|ttom";
+            } else if (brdc_rts) {
                 // The a-priori is broadcast ephemeris, so the identity is the nav-file
                 // basename ("brdc:<file>").  Once an RTS-orbit source is attached (plan D9
                 // seam / RTF-3), this becomes "brdc+rts:<mount>".  (Card 5, plan D10)

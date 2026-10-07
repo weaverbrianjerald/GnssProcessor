@@ -1865,6 +1865,30 @@ namespace GnssProcessor {
         NetworkAprioriSource networkAprioriSource() const { return network_apriori_source_; }
 
         /**
+         * @brief The native broadcast clock a priori is armed (card NBP):
+         *        @c network.apriori_source @c sp3_brdc_clock.
+         *
+         * SP3 orbits, the broadcast clock of the navigation file selected by
+         * @ref networkBrdcSelect, no CLK product.  The producer's a priori is
+         * continuous across cut-overs (a per-ephemeris offset table) and its wire
+         * refers to the stamped ephemeris.  Fingerprinted; fresh convergence only.
+         *
+         * @return True under @c sp3_brdc_clock.
+         */
+        bool networkAprioriBrdcClock() const {
+            return network_apriori_source_ == NetworkAprioriSource::Sp3BrdcClock;
+        }
+
+        /**
+         * @brief Ephemeris selection rule of the native broadcast clock a priori
+         *        (@c network.brdc_select; card NBP).  Read only under
+         *        @c sp3_brdc_clock; @c ttom is the only rule.
+         *
+         * @return The rule.
+         */
+        NetworkBrdcSelect networkBrdcSelect() const { return network_brdc_select_; }
+
+        /**
          * @brief A-priori satellite-clock anchor pseudo-observation σ (m) for the
          *        network producer (@c network.apriori_clock_anchor_sigma_m).
          *
@@ -9075,6 +9099,7 @@ namespace GnssProcessor {
         int  network_cb_admission_census_epochs_{15};     ///< Census window length K (epochs from the loop start; CB-ADM); clamped to the available span.
         bool network_cold_clock_seed_{false};             ///< Pre-seed a cold per-station receiver clock from the median GPS code residual before the first ambiguity seed (removes the network cold-start clock leak into cold ambiguity seeds).  Default off => byte-identical.
         NetworkAprioriSource network_apriori_source_{NetworkAprioriSource::Sp3}; ///< Producer a-priori orbit/clock source (network.apriori_source; RTF-1); Sp3 (default) = precise SP3/CLK identity (byte-identical), BrdcRts = broadcast eph + external RTS orbits.  Read by the network producer setup.
+        NetworkBrdcSelect network_brdc_select_{NetworkBrdcSelect::Ttom};  ///< Ephemeris selection rule of the native broadcast clock a priori (network.brdc_select; card NBP); read only under apriori_source sp3_brdc_clock.
         double network_apriori_clock_anchor_sigma_m_{0.0};  ///< A-priori satellite-clock anchor pseudo-obs σ (m; RTF-1/D6); 0 (default) = auto (mode-resolved at the producer), explicit positive wins.  Read through resolveNetworkAprioriClockAnchorSigmaM().
         bool   network_phase_leveling_{false};            ///< Carry per-station carrier-phase ambiguities across epochs (phase-leveling, Increment 1); off = byte-identical absolute solve.
         double network_phase_leveling_q_amb_{0.0};        ///< Carried-ambiguity process noise (m²/s) inflating var over the inter-epoch gap; 0 (default) = pure zero-process-noise accumulation (random-constant model).

@@ -759,4 +759,19 @@ std::string aprioriIdentityForWindow(const std::vector<std::filesystem::path>& p
                                      double t0_gps_s, double t1_gps_s,
                                      bool* named_all = nullptr);
 
+/// Prefix of the S line's a priori identity under card NBP's native broadcast clock a
+/// priori (@c network.apriori_source @c sp3_brdc_clock): "sp3+brdc:<SP3>|<nav>|ttom".
+/// Under it every C record's clock refers to the stamped broadcast ephemeris (@c iode=),
+/// so a consumer must hold that record and must not load a CLK product.
+inline constexpr const char* kNbpAprioriPrefix = "sp3+brdc:";
+
+/**
+ * @brief Whether an S line's a priori identity declares card NBP's native broadcast clock.
+ * @param apriori_product_id The S line's a priori identity.
+ * @return True when it starts with @ref kNbpAprioriPrefix.
+ */
+inline bool isNbpAprioriId(const std::string& apriori_product_id) {
+    return apriori_product_id.rfind(kNbpAprioriPrefix, 0) == 0;
+}
+
 } // namespace GnssProcessor

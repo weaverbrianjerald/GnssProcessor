@@ -112,6 +112,22 @@ struct BroadcastEphemeris {
     /// carries no such word (the RTCM decoders).  (Card OWD, O3.)
     int         data_source{-1};
     GnssTime    received_time{0, 0.0};      ///< Wall-clock receive time (GPS scale) for staleness.
+    /// GPS / QZSS issue of data, clock (RINEX ORBIT-6 field 4); −1 for every other
+    /// system and for a record decoded from a stream that carries no such field.
+    /// (Card NBP.)
+    int         iodc{-1};
+    /// Transmission time of the message (RINEX ORBIT-7 field 1), on the record's native
+    /// week scale (BDT for BeiDou), reduced to within half a week of the clock reference
+    /// epoch @c kepler.toc (RINEX permits a value referred to the neighbouring week).
+    /// Valid only when @ref has_transmission_time is true.  (Card NBP: the broadcast
+    /// clock a priori selects the latest record transmitted at or before the epoch.)
+    GnssTime    transmission_time{0, 0.0};
+    /// True when @ref transmission_time was read from the record.  False for the RTCM
+    /// decoders and for the RINEX "unknown" value (0.9999E+09).
+    bool        has_transmission_time{false};
+    /// RINEX ORBIT-7 field 2 as written: the GPS / QZSS fit interval (hours, or the
+    /// fit flag of older writers); 0 when absent.  Parsed for completeness, not used.
+    double      fit_interval{0.0};
 
     KeplerianEphemeris kepler;              ///< Valid when @c system is GPS/Galileo/BeiDou/QZSS.
     GlonassEphemeris   glonass;             ///< Valid when @c system is GLONASS.
@@ -130,6 +146,23 @@ struct BroadcastEphemeris {
 inline double brdcTocGpsSeconds(const BroadcastEphemeris& e) {
     double c = static_cast<double>(e.kepler.toc.week) * 604800.0 + e.kepler.toc.tow;
     if (e.system == System::BeiDou) c += 1356.0 * 604800.0 + 14.0;   // BDT week 0 = GPS week 1356, BDT = GPS − 14 s
+    return c;
+}
+
+/**
+ * @brief A Keplerian record's transmission time on the continuous GPS time scale.
+ *
+ * week x 604800 + seconds of week of @c BroadcastEphemeris::transmission_time, with the
+ * BeiDou shift of @ref brdcTocGpsSeconds.  Meaningful only when
+ * @c has_transmission_time is true.  The availability instant of a record under the
+ * broadcast clock a priori of card NBP (@c network.brdc_select ttom).
+ *
+ * @param e A GPS / Galileo / BeiDou / QZSS record.
+ * @return Its transmission time in continuous GPS seconds.
+ */
+inline double brdcTransmissionGpsSeconds(const BroadcastEphemeris& e) {
+    double c = static_cast<double>(e.transmission_time.week) * 604800.0 + e.transmission_time.tow;
+    if (e.system == System::BeiDou) c += 1356.0 * 604800.0 + 14.0;
     return c;
 }
 

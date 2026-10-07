@@ -442,6 +442,21 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Take the a priori satellite clock from card NBP's native broadcast clock
+         *        a priori (@c network.apriori_source @c sp3_brdc_clock).
+         *
+         * Covers both satellite-clock consumers behind this model (geometry's internal
+         * GnssCorrections and the model's own), as @ref setSsrClockStore does.  Set on
+         * producer stations only; the held-out consumer reconstructs brdc(iode) + C.
+         *
+         * @param apriori Non-owning pointer (must outlive this model), or @c nullptr.
+         */
+        void setBroadcastClockApriori(const BrdcClockApriori* apriori) {
+            geometry_.getCorrections().setBroadcastClockApriori(apriori);
+            gnss_corrections_.setBroadcastClockApriori(apriori);
+        }
+
+        /**
          * @brief Keep carrier phase on broadcast-grade satellites instead of
          *        gating them to code-only.
          *

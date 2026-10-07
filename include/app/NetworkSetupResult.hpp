@@ -26,6 +26,7 @@
 #include "filter/NetworkSbasis.hpp"                 // card HLT: SatHealth
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "products/BroadcastEphemerisTypes.hpp"     // BroadcastEphemeris (brdc_rts nav staging)
+#include "products/BrdcClockApriori.hpp"            // card NBP native broadcast clock a priori
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"            // NetworkProductWriter, SbasisContract
@@ -73,6 +74,13 @@ namespace GnssProcessor {
         /// advances the cursor.  (Card 8)
         std::vector<BroadcastEphemeris> brdc_nav_staged;
         std::size_t brdc_nav_cursor = 0;
+        /// Card NBP (@c network.apriori_source @c sp3_brdc_clock): the native broadcast
+        /// clock a priori (selector, offset table from 00:00 of the observation day,
+        /// transmission-time store feed, wire stamp), built in Phase 3 from the navigation
+        /// file's GPS records.  Every producer station's model reads its a priori clock
+        /// from it; the epoch loop feeds the store from it; the emit seam stamps the wire
+        /// with it.  Null in every other mode.
+        std::unique_ptr<BrdcClockApriori> brdc_apriori;
         /// Per-satellite geometry-free pin target in metres, `c * T_GD` from the
         /// navigation message, for `network.sat_gf_datum: "broadcast_tgd"` (RF-0c).
         /// Latched for the run: read once at setup and never updated, because a

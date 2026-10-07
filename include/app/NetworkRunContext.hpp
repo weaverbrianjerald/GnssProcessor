@@ -271,6 +271,7 @@ namespace GnssProcessor {
         bool clm_restore_raise{};       ///< network.clock_level_restore_raise (card CTU G5): raise the restored border block along each satellite's level to its code-only variance, once, at the first leg epoch
         int  clm_innov_window_ep{60};   ///< network.clock_level_innov_window_ep (card CTU section 14): the level innovation instrument's window, epochs
         bool pv_on{};                   ///< network.phase_visible_monitor (card PVN): the phase-visible consistency instrument, measure-only
+        bool nbp_on{};                  ///< network.apriori_source sp3_brdc_clock (card NBP): the native broadcast clock a priori; the wire refers to the stamped ephemeris
         int  pv_window_ep{60};          ///< network.phase_visible_window_ep (card PVN): its window, epochs
         bool carry_cpl_shmarg{};
         /// network.carry_coupling_gauge_project (card 1f): hold each (constellation, kind)
@@ -1002,6 +1003,10 @@ namespace GnssProcessor {
     /// authoritative docs and the snapshot-exemption record.
     struct NetworkCarryState {
         std::vector<CarryPrior> prev_carry;                 // the D2 stash from the last solve
+        /// Card NBP: each satellite's previous wire stamp (IODE), for the switch flag of
+        /// the O trace and the run-end switch count.  Empty unless the native broadcast
+        /// clock a priori is armed.
+        std::map<std::string, int> nbp_prev_iode;
         // Per-satellite guarded temporal clock anchor.  Empty and untouched unless
         // network.clock_temporal_anchor.  Not snapshotted by default: a warm resume is an
         // invariant-#1 event, so every satellite re-earns the anchor from the loose state
@@ -3947,6 +3952,17 @@ namespace GnssProcessor {
         std::vector<double> clm_win_T;         ///< per window: mean over satellites of T = nubar^2 / var(nubar)
         std::vector<double> clm_win_phi;       ///< per window: split-half noise over the white prediction
         long long clm_win_Tgt{0};              ///< window satellites with T above 6.63
+        // Native broadcast clock a priori (card NBP).  `stamped 0` means the wire was never
+        // stamped (inert wiring); `not_held > 0` means a consumer could not reconstruct.
+        long long nbp_epochs{0};               ///< emitted epochs the wire stamp ran on
+        long long nbp_stamped{0};              ///< clock records stamped (iode=k, C_wire = C_est + O)
+        long long nbp_unstamped{0};            ///< clock records with no selectable record (value unchanged, no iode)
+        long long nbp_held{0};                 ///< stamped records the store held (current or previous) at consume
+        long long nbp_not_held{0};             ///< stamped records the store did not hold
+        long long nbp_switches{0};             ///< stamp changes of a satellite between its emissions (cut-overs seen on the wire)
+        double    nbp_offset_min_m{0.0};       ///< smallest O on the wire (m)
+        double    nbp_offset_max_m{0.0};       ///< largest O on the wire (m)
+        std::set<std::pair<std::string, int>> nbp_records;   ///< distinct (satellite, IODE) stamped
         // Phase-visible consistency instrument (card PVN).  `rows 0` means inert.
         long long pv_epochs{0};                ///< epochs the instrument ran
         long long pv_epochs_nocap{0};          ///< …of which without a dense fold capture (no rows)

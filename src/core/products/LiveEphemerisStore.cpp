@@ -261,6 +261,21 @@ void LiveEphemerisStore::insert(const BroadcastEphemeris& eph, bool from_igs) {
     it->second.current_from_igs = from_igs;
 }
 
+void LiveEphemerisStore::insertTransmitted(const BroadcastEphemeris& eph) {
+    if (eph.satellite.empty() || eph.system == System::Unknown) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = by_sat_.find(eph.satellite);
+    if (it == by_sat_.end()) {
+        by_sat_.emplace(eph.satellite, SatRecord{eph, std::nullopt});
+        return;
+    }
+    // Transmission order is authoritative (card NBP): no freshest-toe test, and the
+    // replaced record is kept as "previous" on an IODE change, as insert() does.
+    if (it->second.current.iode != eph.iode) it->second.previous = it->second.current;
+    it->second.current = eph;
+    it->second.current_from_igs = true;
+}
+
 std::optional<double> LiveEphemerisStore::toeAgeSeconds(const std::string& sat,
                                                         const GnssTime& time) const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -546,6 +561,10 @@ LiveEphemerisStore::ephCutoverShiftMetres(const std::string& sat, const GnssTime
     if (!old || old->iode != old_iode) return std::nullopt;
     if (now->iode == old_iode) return 0.0;                       // no roll (defensive; caller pre-checks)
     return Constants::SPEED_OF_LIGHT * (now->bias - old->bias);
+}
+
+int LiveEphemerisStore::ssrIode(const BroadcastEphemeris& eph) {
+    return ssrMatchIode(eph);
 }
 
 // ---------------------------------------------------------------------------

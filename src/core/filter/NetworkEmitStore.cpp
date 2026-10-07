@@ -19,6 +19,7 @@
 #include "filter/NetworkClockLevel.hpp"        // networkClockLevelDeclare (card CLV)
 #include "filter/NetworkLedgerEmit.hpp"
 #include "filter/NetworkPbHold.hpp"
+#include "filter/NetworkBrdcWire.hpp"      // card NBP wire stamp
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
@@ -457,6 +458,11 @@ void networkEmitStore(
     // in-process store carry the same held values.  Off: immediate return,
     // byte-identical.
     networkPbHold(ctx, config_, log, traces, emitter, se, sol);
+    // Card NBP: the wire refers to the stamped broadcast ephemeris.  After the hold (the
+    // last reader of C_est) and before the store push and the product write, so the file
+    // and the in-process consumer carry C_wire = C_est + O with iode=k.  Off: immediate
+    // return, byte-identical.
+    networkBrdcWire(ctx, config_, log, traces, setup, se, sol);
     // Ledger-emit capture (card SID phase 5a, E1).  It runs between the hold (which
     // stamps the generations into `sol`) and emitToStore (which overwrites the
     // emitter's per-family baselines, after which every key answers "not a first

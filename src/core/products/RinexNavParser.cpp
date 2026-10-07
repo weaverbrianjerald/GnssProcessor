@@ -258,6 +258,28 @@ bool decodeKeplerRecord(const std::string& epoch,
     k.toe = GnssTime{week, toe_s};
     k.toc = GnssTime{week, toc_sow};
 
+    // GPS / QZSS IODC (fourth field of broadcast orbit 6; the second group delay of
+    // Galileo and BeiDou sits there instead).  (Card NBP.)
+    if (sys == System::GPS || sys == System::QZSS)
+        eph.iodc = static_cast<int>(std::lround(tgd1));
+    // Broadcast orbit 7: transmission time of message, fit interval.  The transmission
+    // time is seconds of the record's week, which RINEX allows to be referred to the
+    // neighbouring week (a negative value, or one past the week end); it is reduced to
+    // within half a week of toc.  0.9999E+09 is the RINEX "unknown" value.  (Card NBP:
+    // the broadcast clock a priori selects the latest record transmitted at or before
+    // the epoch.)
+    const double ttom = orb(6, 0);
+    eph.fit_interval  = orb(6, 1);
+    if (std::isfinite(ttom) && std::abs(ttom) < 2.0 * 604800.0) {
+        double tt_c  = static_cast<double>(week) * 604800.0 + ttom;
+        const double toc_c = static_cast<double>(week) * 604800.0 + toc_sow;
+        while (tt_c - toc_c >  302400.0) tt_c -= 604800.0;
+        while (tt_c - toc_c < -302400.0) tt_c += 604800.0;
+        const double wk = std::floor(tt_c / 604800.0);
+        eph.transmission_time     = GnssTime{static_cast<int>(wk), tt_c - wk * 604800.0};
+        eph.has_transmission_time = true;
+    }
+
     out.push_back(std::move(eph));
     return true;
 }

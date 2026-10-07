@@ -937,7 +937,20 @@ namespace GnssProcessor {
      */
     enum class NetworkAprioriSource {
         Sp3,      ///< (default) Resolved precise SP3(+CLK) files; the emitted clock C0 is a delta against the SP3/CLK product identity (the original behaviour, byte-identical).
-        BrdcRts   ///< Broadcast ephemeris (@c LiveEphemerisStore) + external IGS-SSR (4076) orbit corrections; the emitted C0 is a delta against broadcast(IODE) + the applied RTS orbit (the self-sufficient real-time service mode).
+        BrdcRts,  ///< Broadcast ephemeris (@c LiveEphemerisStore) + external IGS-SSR (4076) orbit corrections; the emitted C0 is a delta against broadcast(IODE) + the applied RTS orbit (the self-sufficient real-time service mode).
+        /// SP3 orbits and the broadcast clock of the navigation file, no CLK product (card
+        /// NBP).  The a priori clock is continuous across ephemeris cut-overs through a
+        /// per-ephemeris offset table (@c BrdcClockApriori); the wire's clock refers to the
+        /// stamped ephemeris (C_wire = C_est + O, @c iode=k).  Keeps sp3's anchor-sigma auto.
+        Sp3BrdcClock
+    };
+
+    /**
+     * @brief Ephemeris selection rule of the native broadcast clock a priori
+     *        (@c network.brdc_select, card NBP).
+     */
+    enum class NetworkBrdcSelect {
+        Ttom   ///< The latest healthy record transmitted at or before the epoch (the bed's rule).
     };
 
     /**

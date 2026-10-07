@@ -161,6 +161,7 @@ add_library(gnss_core STATIC
     src/core/products/NetworkProductIO.cpp
     src/core/products/NetworkStateSnapshot.cpp
     src/core/products/LiveEphemerisStore.cpp
+    src/core/products/BrdcClockApriori.cpp
     src/core/realtime/NtripClient.cpp
     src/core/realtime/TcpClient.cpp
     src/core/realtime/RtcmStreamReader.cpp
@@ -223,6 +224,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkSolPrep.cpp
     src/core/filter/NetworkEmitStore.cpp
     src/core/filter/NetworkPbHold.cpp
+    src/core/filter/NetworkBrdcWire.cpp
     src/core/filter/NetworkLedgerEmit.cpp
     src/core/filter/NetworkIonoDiag.cpp
     src/core/filter/NetworkDdFrac.cpp
@@ -385,6 +387,7 @@ add_executable(gnss_tests
     tests/test_network_product_io.cpp
     tests/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
+    tests/test_brdc_clock_apriori.cpp
     tests/test_rinex_zero_sentinel.cpp
     tests/test_rinex3_blank_prn.cpp
     tests/test_rinex3_phase_shift.cpp

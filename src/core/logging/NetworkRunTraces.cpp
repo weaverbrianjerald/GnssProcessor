@@ -74,6 +74,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       level_innov_trace_path(log_dir_ / "network_level_innov.csv"),
       level_innov_win_trace_path(log_dir_ / "network_level_innov_win.csv"),
       phase_visible_trace_path(log_dir_ / "network_phase_visible.csv"),
+      brdc_offset_trace_path(log_dir_ / "network_brdc_offset.csv"),
       pb_hold_clone_trace_path(log_dir_ / "network_pb_hold_clone.csv"),
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
       amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
@@ -536,6 +537,16 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open phase-visible trace {}",
                       phase_visible_trace_path.string());
+    }
+    if (config_.networkAprioriBrdcClock()) {
+        // The native broadcast clock a priori's wire stamp (card NBP); the header
+        // documents the columns.
+        brdc_offset_trace.open(brdc_offset_trace_path);
+        if (brdc_offset_trace)
+            brdc_offset_trace << "week,tow,sat,iode,c_est_m,offset_m,c_wire_m,brdc_m,held,switched\n";
+        else
+            log->warn("Network: failed to open the broadcast offset trace {}",
+                      brdc_offset_trace_path.string());
     }
     if (nc.emit_pb_hold && nc.emit_pb_hold_smoothed) {
         // The smoothed hold's clock clones (card SMH); the header documents the columns.

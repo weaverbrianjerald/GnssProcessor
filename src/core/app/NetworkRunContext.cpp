@@ -140,6 +140,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
     k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
     k.pv_on        = config_.networkPhaseVisibleMonitor();     // card PVN (trace class)
+    k.nbp_on       = config_.networkAprioriBrdcClock();        // card NBP (fingerprinted below)
     k.pv_window_ep = config_.networkPhaseVisibleWindowEp();
     k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();   // card CTU G5
     k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // card CTU G5; loader guarantees clm_on
@@ -1097,6 +1098,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // frame and re-level against a stale baseline.
         add(fmt::format("{}", static_cast<int>(config_.networkAprioriSource())));
         add(fmt::format("{}", config_.networkAprioriClockAnchorSigmaM()));
+        // Card NBP: the selection rule defines which ephemeris the carried clock refers to
+        // through the offset table, so it is part of the frame.  Appended only under
+        // sp3_brdc_clock (whose enum value already differs), so every other fingerprint
+        // is unchanged.
+        if (config_.networkAprioriBrdcClock())
+            add(fmt::format("nbp:sel={}", static_cast<int>(config_.networkBrdcSelect())));
         // The clock-gauge realization defines the frame of the carried clock states (pin,
         // sum-to-zero and broadcast-anchored differ by per-constellation or common-mode
         // constants), so a resume across a realization change has to cold-start.  Appended
