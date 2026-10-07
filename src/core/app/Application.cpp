@@ -400,14 +400,33 @@ bool Application::initializePosition() {
     // more accurate than the RINEX APPROX header and in the products' frame
     // (ITRF2020 / IGS20).  The occupation coordinate is ARP-referenced like the
     // state vector, so no antenna delta is applied.
+    //
+    // The pre-override position confirms a 4-char prefix match (a marker that is
+    // not an exact SIF ID / DOMES): find() accepts the candidate only within
+    // SIF_MAX_PREFIX_DISTANCE_M of it.  Only a RINEX-derived position is passed;
+    // the fallback placeholder above (0, 0, R_earth) carries no station
+    // information, so with it find() applies its no-position rule (a bare
+    // 4-char marker only).
     if (config_.enableStationInfo()) {
         if (const auto sif = config_.getStationInfo()) {
             const std::string marker = rinex_parser_->getHeader().marker_name;
-            if (const StationInfo* si = sif->find(marker)) {
+            const bool rinex_seeded =
+                valid_pos && approx_pos != std::array<double, 3>{0.0, 0.0, 0.0};
+            const Eigen::Vector3d pre_override = initial_position_;
+            if (const StationInfo* si = sif->find(marker, rinex_seeded ? &pre_override : nullptr)) {
                 const GnssTime t0 = rinex_parser_->getTimeOfFirstObs();
                 const double year = TimeUtils::mjdToDecimalYear(TimeUtils::gpsTimeToUtcMjd(t0));
                 const ResolvedStationCoord rc = resolveStationCoordinate(*si, year);
                 if (rc.valid && rc.ecef.allFinite() && rc.ecef.norm() > 1e6) {
+                    if (rc.extrapolated)
+                        log_manager_.getLogger("main_log")->warn(
+                            "SIF a-priori for marker '{}' (matched {}) @ {:.3f} is EXTRAPOLATED "
+                            "{:+.3f} yr outside its occupation segment [{:.3f}, {:.3f}); "
+                            "antenna change in gap: {}; receiver change in gap: {}",
+                            marker, si->id, year, rc.extrapolation_years,
+                            rc.segment_start_year, rc.segment_end_year,
+                            rc.antenna_change_in_gap ? "yes" : "no",
+                            rc.receiver_change_in_gap ? "yes" : "no");
                     const Eigen::Vector3d prev = initial_position_;
                     initial_position_ = rc.ecef;
                     Eigen::VectorXd sv = state_manager_->getStateVector();

@@ -3,7 +3,7 @@
 
 Run from anywhere; it locates the bundled SIF fixtures the same way the tool does.
 
-Three layers of check:
+Layers of check:
   1. ORACLE  - full resolved ECEF + propagated 3x3 covariance for 12 (station,
                epoch) cases, captured from the C++ resolveStationCoordinate itself
                (tests/test_station_info.cpp temp oracle). Exercises periodic (CIT),
@@ -13,13 +13,34 @@ Three layers of check:
                (parsing / unit normalisation / PSD & periodic coefficients).
   3. SELFCHK - internal identities (find() keys, dt=0 -> Cxx, covariance symmetry,
                ENU<->ECEF round-trip, time conversions).
+  4. MODES   - 'covering' vs 'latest' occupation selection (CORV00USA datasheet).
+  5. LOOKUP  - synthetic SIF: exact ID / DOMES unconditional, 4-char prefix
+               candidate vetted by distance (<= 10 km) or by a bare 4-char key;
+               the candidate reference-position cascade.
+  6. EPOCH   - synthetic SIF: per-occupation REFERENCE_EPOCH in the linear term
+               and the covariance; METADATA fallback; periodic phase unchanged.
+  7. EXTRAP  - synthetic SIF: extrapolation flags, gap tolerance (segment side
+               only), window boundaries, equipment-change rules (record-only
+               re-log, firmware-only, before-first-segment), 'latest' mode.
+  8. CLI     - stderr warnings and the appended output columns.
+  9. REAL    - the defects on the shipped SIFs (GAMB00PYF, STHL00GBR, AZAZ00USA,
+               NIUM00NIU, CHUR00CAN); each check skips when its station is absent.
 
-Exit code 0 iff every check passes.
+Sections 5 to 8 need no fixtures.  Exit code 0 iff every check passes; 2 when no
+SIF fixtures are found (the fixture-free sections still run first).
 """
 from __future__ import annotations
 
+import contextlib
+import copy
+import csv
+import inspect
+import io
+import json
+import logging
 import math
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -29,6 +50,20 @@ import sif_propagate as sp  # noqa: E402
 # realised residual far below this.
 TOL_ECEF = 1e-6
 TOL_COV = 5e-12   # covariance entries are ~1e-6 m^2, printed to 12 decimals
+
+# CSV column order before the extrapolation columns were appended.
+HISTORICAL_CSV_COLUMNS = [
+    "requested", "found", "valid", "id", "domes", "description",
+    "reference_frame", "epoch_year",
+    "x", "y", "z", "lat_deg", "lon_deg", "height_m",
+    "sigma_x", "sigma_y", "sigma_z", "sigma_e", "sigma_n", "sigma_u",
+    "in_window", "window_start", "window_end", "source",
+    "occupation_mode",
+]
+EXTRAPOLATION_CSV_COLUMNS = [
+    "extrapolated", "extrapolation_years", "segment_start_year", "segment_end_year",
+    "antenna_change_in_gap", "receiver_change_in_gap",
+]
 
 # --- oracle captured from the C++ engine (tests/test_station_info.cpp) --------- #
 # (station, epoch, full_xyz, lin_xyz, cov3x3_or_None)
@@ -108,10 +143,12 @@ ORACLE = [
 ]
 
 _fail = 0
+_checks = 0
 
 
 def check(cond, msg):
-    global _fail
+    global _fail, _checks
+    _checks += 1
     if not cond:
         _fail += 1
         print(f"  FAIL: {msg}")
@@ -119,11 +156,12 @@ def check(cond, msg):
 
 
 def load_registry():
+    """Registry over the bundled SIF fixtures, or None when none are found."""
     paths = sp.default_sif_paths()
     if not paths:
         print("ERROR: no SIF fixtures found (need data/static/sif/*.json). "
-              "Set $SIF_PATHS to run this test.", file=sys.stderr)
-        sys.exit(2)
+              "Set $SIF_PATHS to run the fixture sections.", file=sys.stderr)
+        return None
     reg = sp.SifRegistry()
     for p in paths:
         reg.load(p)
@@ -254,6 +292,8 @@ def test_occupation_mode(reg):
         check(rl.occupation_mode == "latest", "CORV result reports mode 'latest'")
         check(rl.window[0] > 2019.0, f"latest window starts 2019+, got {rl.window[0]:.3f}")
         check(not rl.in_window, "2010.0 is OUTSIDE the latest window")
+        check(not rl.extrapolated and rl.extrapolation_years == 0.0,
+              "2010.0 is covered by the 1998 window, so the latest result is not extrapolated")
         for k in range(3):
             d = abs(rl.ecef[k] - expect[k])
             check(d <= 2e-4, f"CORV latest ECEF[{k}] d={d*1e3:.3f} mm > 0.2 mm")
@@ -295,7 +335,13 @@ def test_occupation_mode(reg):
     r_cov = sp.resolve_station_coordinate(cit, 2024.36, True, True, occupation="covering")
     check(r_def.ecef == r_cov.ecef, "default occupation kwarg == 'covering'")
     check(r_def.occupation_mode == "covering", "default result reports 'covering'")
-    check(sp._CSV_COLUMNS[-1] == "occupation_mode", "occupation_mode is the LAST CSV column")
+    # occupation_mode keeps its historical position (the last of the original 25
+    # columns); the extrapolation columns are appended after it.
+    check(sp._CSV_COLUMNS[:25] == HISTORICAL_CSV_COLUMNS,
+          "historical CSV column order unchanged")
+    check(sp._CSV_COLUMNS[24] == "occupation_mode", "occupation_mode at its historical index")
+    check(sp._CSV_COLUMNS[25:] == EXTRAPOLATION_CSV_COLUMNS,
+          "extrapolation columns appended after occupation_mode")
     try:
         sp.resolve_station_coordinate(cit, 2024.36, occupation="bogus")
         check(False, "bogus occupation mode should raise")
@@ -303,17 +349,683 @@ def test_occupation_mode(reg):
         pass
 
 
+# --------------------------------------------------------------------------- #
+# Synthetic-SIF helpers (sections 5 to 8)                                      #
+# --------------------------------------------------------------------------- #
+OPEN = "9999-12-31T00:00:00 GPS"
+dy = sp.decimal_year_from_ymd
+
+
+def _ts(y, m=1, d=1):
+    return f"{y:04d}-{m:02d}-{d:02d}T00:00:00 GPS"
+
+
+def _plus(p, d):
+    return (p[0] + d[0], p[1] + d[1], p[2] + d[2])
+
+
+def _occ(start, end, coords, vel=(0.0, 0.0, 0.0), ref=2020.0, dnu=False, cov=None):
+    """One OCCUPATION record; ``ref=None`` omits REFERENCE_EPOCH."""
+    o = {"START": start, "END": end, "COORDINATES": list(coords),
+         "COORDINATE_SIGMAS": [0.002, 0.003, 0.004], "VELOCITY": list(vel),
+         "VELOCITY_SIGMAS": [0.5, 0.6, 0.7], "DO_NOT_USE": dnu}
+    if ref is not None:
+        o["REFERENCE_EPOCH"] = ref
+    if cov is not None:
+        o["6X6_COVARIANCE_MATRIX"] = list(cov)
+    return o
+
+
+def _ant(start, end, typ, serial):
+    return {"START": start, "END": end, "TYPE": typ, "SERIAL_NUMBER": serial}
+
+
+def _rec(start, end, typ, firmware="1.0", serial="R1"):
+    return {"START": start, "END": end, "TYPE": typ, "FIRMWARE": firmware,
+            "SERIAL_NUMBER": serial}
+
+
+def _station(sid, occupations, domes="", approx=None, antennas=None, receivers=None,
+             periodic=None):
+    s = {"ID": sid, "DOMES": domes, "OCCUPATION": occupations}
+    if approx is not None:
+        s["APPROXIMATE_COORDINATES"] = list(approx)
+    if antennas is not None:
+        s["ANTENNA"] = antennas
+    if receivers is not None:
+        s["RECEIVER"] = receivers
+    if periodic is not None:
+        s["NONLINEAR_TERMS"] = {"PERIODIC_TERMS": periodic}
+    return s
+
+
+@contextlib.contextmanager
+def _synthetic_registry(*files):
+    """Yield (registry, paths) over synthetic SIF documents.
+
+    Each file is ``(meta_epoch, stations)``; ``meta_epoch=None`` omits
+    METADATA.REFERENCE_EPOCH.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        reg = sp.SifRegistry()
+        paths = []
+        for i, (meta_epoch, stations) in enumerate(files):
+            meta = {"REFERENCE_FRAME": "ITRF2020"}
+            if meta_epoch is not None:
+                meta["REFERENCE_EPOCH"] = meta_epoch
+            p = Path(td) / f"synthetic_{i}.json"
+            p.write_text(json.dumps({"METADATA": meta, "STATIONS": stations}),
+                         encoding="utf-8")
+            reg.load(p)
+            paths.append(str(p))
+        yield reg, paths
+
+
+class _LogCapture(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.DEBUG)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+    def messages(self):
+        return [r.getMessage() for r in self.records]
+
+
+@contextlib.contextmanager
+def _capture_sif_log():
+    """Capture the tool's logger (and keep it off the console) for the block."""
+    lg = logging.getLogger("sif_propagate")
+    cap = _LogCapture()
+    old_propagate = lg.propagate
+    lg.addHandler(cap)
+    lg.propagate = False
+    try:
+        yield cap
+    finally:
+        lg.removeHandler(cap)
+        lg.propagate = old_propagate
+
+
+def _expect_lookup(reg, cap, key, approx, expect_id, msg, warn_contains=None, **kw):
+    """find() one key; check the match and the warning (exactly one, or none)."""
+    cap.records.clear()
+    if approx is None and not kw:
+        st = reg.find(key)                       # the no-argument form
+    else:
+        st = reg.find(key, approx_ecef=approx, **kw)
+    got = st.id if st is not None else None
+    check(got == expect_id, f"{msg}: find({key!r}) -> {got}, want {expect_id}")
+    if warn_contains is None:
+        check(not cap.records, f"{msg}: unexpected warning {cap.messages()}")
+        return
+    check(len(cap.records) == 1 and cap.records[0].levelno == logging.WARNING,
+          f"{msg}: want exactly one WARNING, got {cap.messages()}")
+    text = cap.records[0].getMessage() if cap.records else ""
+    for s in warn_contains:
+        check(s in text, f"{msg}: warning lacks {s!r}: {text!r}")
+
+
+def _lin(occ, t):
+    """Linear term with the tool's own expression order: x_ref + v * (t - t_ref)."""
+    dt = t - occ.reference_epoch_year
+    return tuple(occ.coordinates[k] + occ.velocity[k] * dt for k in range(3))
+
+
+def _prop_cov(occ, dt):
+    C = occ.covariance
+    return [[C[i][j] + dt * (C[i][3 + j] + C[3 + i][j]) + dt * dt * C[3 + i][3 + j]
+             for j in range(3)] for i in range(3)]
+
+
+def test_lookup_synthetic():
+    print("[5] LOOKUP exact ID / DOMES / vetted 4-char prefix (synthetic SIF)")
+    P_A = (-2491490.0, -4660803.0, 3559129.0)
+    P_E1 = (1608538.0, -4816371.0, -3847798.0)
+    P_E2 = _plus(P_E1, (20000.0, 0.0, 0.0))
+    P_I1 = (-3857171.0, 3108693.0, 4004040.0)
+    P_I2 = _plus(P_I1, (0.0, 20000.0, 0.0))
+    P_Q = (6104817.0, -605828.0, -1740739.0)
+    P_U1 = (4075580.0, 931854.0, 4801568.0)
+    P_U2 = _plus(P_U1, (0.0, 0.0, 20000.0))
+    P_Y0 = (5084625.0, 2670366.0, -2768494.0)
+    P_Y2 = _plus(P_Y0, (20000.0, 0.0, 0.0))
+    P_C = (-3950072.0, 2522415.0, -4311637.0)
+    zero = (0.0, 0.0, 0.0)
+    stations = [
+        _station("ABCD00USA", [_occ(_ts(2000), OPEN, P_A)], domes="12345M001", approx=P_A),
+        # APPROXIMATE_COORDINATES unusable -> first non-DO_NOT_USE occupation (P_E2).
+        _station("EFGH00USA", [_occ(_ts(2000), _ts(2005), P_E1, dnu=True),
+                               _occ(_ts(2005), OPEN, P_E2)], approx=zero),
+        # No APPROXIMATE_COORDINATES and every occupation flagged -> first occupation.
+        _station("IJKL00USA", [_occ(_ts(2000), _ts(2005), P_I1, dnu=True),
+                               _occ(_ts(2005), OPEN, P_I2, dnu=True)]),
+        # Nothing usable at all.
+        _station("MNOP00USA", [], approx=zero),
+        # First non-flagged occupation is a zero placeholder -> first occupation.
+        _station("QRST00USA", [_occ(_ts(2000), _ts(2005), P_Q, dnu=True),
+                               _occ(_ts(2005), OPEN, zero)], approx=zero),
+        # Two usable non-flagged occupations 20 km apart -> the FIRST one (P_U1).
+        _station("UVWX00USA", [_occ(_ts(2000), _ts(2005), P_U1),
+                               _occ(_ts(2005), OPEN, P_U2)], approx=zero),
+        # Only the first non-flagged occupation is consulted: its zero placeholder
+        # falls through to the first occupation (P_Y0), not to the next
+        # non-flagged occupation with usable coordinates (P_Y2).
+        _station("YZAB00USA", [_occ(_ts(2000), _ts(2003), P_Y0, dnu=True),
+                               _occ(_ts(2003), _ts(2006), zero),
+                               _occ(_ts(2006), OPEN, P_Y2)], approx=zero),
+        # Non-zero APPROXIMATE_COORDINATES with norm 1e5 m is not usable -> P_C.
+        _station("CDEF00USA", [_occ(_ts(2000), OPEN, P_C)], approx=(1.0e5, 0.0, 0.0)),
+    ]
+    check(sp.MAX_PREFIX_DISTANCE_M == 10000.0, "MAX_PREFIX_DISTANCE_M is 10 km")
+    check(inspect.signature(sp.SifRegistry.find).parameters["max_prefix_distance_m"].default
+          == sp.MAX_PREFIX_DISTANCE_M, "find() defaults to MAX_PREFIX_DISTANCE_M")
+
+    far = _plus(P_A, (500000.0, 0.0, 0.0))
+    no_pos = "no approximate position"
+    with _synthetic_registry((2020.0, stations)) as (reg, _paths), _capture_sif_log() as cap:
+        L = lambda *a, **k: _expect_lookup(reg, cap, *a, **k)  # noqa: E731
+        # Exact ID and DOMES: unconditional, silent.
+        L("ABCD00USA", None, "ABCD00USA", "exact ID")
+        L("abcd00usa ", None, "ABCD00USA", "exact ID, case-insensitive and trimmed")
+        L("12345M001", None, "ABCD00USA", "exact DOMES")
+        L("ABCD00USA", far, "ABCD00USA", "exact ID wins over a distant position")
+        L("12345m001", far, "ABCD00USA", "exact DOMES wins over a distant position")
+        # No position: a bare 4-char code is accepted, a longer key is not.
+        L("abcd", None, "ABCD00USA", "bare 4-char code, no position")
+        L(" ABCD ", None, "ABCD00USA", "bare 4-char code after trimming")
+        L("ABC", None, None, "3-char key never matches")
+        L("ABCD00XYZ", None, None, "9-char non-exact key rejected without position",
+          warn_contains=["'ABCD00XYZ'", "ABCD00USA", no_pos])
+        check("m from" not in (cap.messages() or [""])[0],
+              "no distance quoted when no position was supplied")
+        # With a position: the 3D distance decides, inclusive at the limit.
+        L("ABCD00XYZ", _plus(P_A, (9999.0, 0.0, 0.0)), "ABCD00USA", "9,999 m accepted")
+        L("ABCD00XYZ", _plus(P_A, (10000.0, 0.0, 0.0)), "ABCD00USA",
+          "exactly 10,000 m accepted (limit inclusive)")
+        L("ABCD00XYZ", _plus(P_A, (10001.0, 0.0, 0.0)), None, "10,001 m rejected",
+          warn_contains=["'ABCD00XYZ'", "ABCD00USA", "10001.0 m", "limit 10000.0 m"])
+        L("ABCD00XYZ", _plus(P_A, (5000.0, 5000.0, 5000.0)), "ABCD00USA",
+          "3D distance 8,660 m accepted")
+        L("ABCD00XYZ", _plus(P_A, (6000.0, 6000.0, 6000.0)), None,
+          "3D distance 10,392 m rejected (per-axis offsets all < 10 km)",
+          warn_contains=["10392.3 m"])
+        L("abcd", _plus(P_A, (10001.0, 0.0, 0.0)), None,
+          "a supplied position also governs a bare 4-char code",
+          warn_contains=["'abcd'", "ABCD00USA", "10001.0 m"])
+        L("ABCD00XYZ", _plus(P_A, (20000.0, 0.0, 0.0)), "ABCD00USA",
+          "max_prefix_distance_m override", max_prefix_distance_m=25000.0)
+        # Unusable positions behave as no position at all.
+        for bad in (zero, (float("nan"), P_A[1], P_A[2]), (float("inf"), 0.0, 0.0),
+                    (1.0e5, 0.0, 0.0), (P_A[0], P_A[1])):
+            L("ABCD00XYZ", bad, None, f"unusable position {bad} = no position (long key)",
+              warn_contains=["ABCD00USA", no_pos])
+            L("ABCD", bad, "ABCD00USA", f"unusable position {bad} = no position (bare code)")
+        # Candidate reference-position fallbacks.
+        L("EFGH00ZZZ", P_E2, "EFGH00USA", "reference = first non-flagged occupation")
+        L("EFGH00ZZZ", P_E1, None, "flagged occupation is not the reference",
+          warn_contains=["EFGH00USA", "20000.0 m"])
+        L("IJKL00ZZZ", P_I1, "IJKL00USA", "all flagged: reference = first occupation")
+        L("IJKL00ZZZ", P_I2, None, "all flagged: second occupation is not the reference",
+          warn_contains=["IJKL00USA", "20000.0 m"])
+        L("QRST00ZZZ", P_Q, "QRST00USA",
+          "zero placeholder on the first non-flagged occupation falls through")
+        L("UVWX00ZZZ", P_U1, "UVWX00USA", "two non-flagged occupations: the first is the reference")
+        L("UVWX00ZZZ", P_U2, None, "two non-flagged occupations: the last is not the reference",
+          warn_contains=["UVWX00USA", "20000.0 m"])
+        L("YZAB00ZZZ", P_Y0, "YZAB00USA",
+          "zero placeholder on the first non-flagged occupation -> first occupation")
+        L("YZAB00ZZZ", P_Y2, None,
+          "a later non-flagged occupation with usable coordinates is not the reference",
+          warn_contains=["YZAB00USA", "20000.0 m"])
+        L("CDEF00ZZZ", P_C, "CDEF00USA",
+          "small non-zero APPROXIMATE_COORDINATES falls through to the occupation")
+        L("MNOP00ZZZ", P_A, None, "candidate with no usable reference rejected",
+          warn_contains=["'MNOP00ZZZ'", "MNOP00USA", "no usable reference position"])
+        L("MNOP", None, "MNOP00USA", "same candidate, bare code, no position")
+
+
+def test_epoch_synthetic():
+    print("[6] EPOCH per-occupation REFERENCE_EPOCH (synthetic SIF)")
+    X0 = (-1981233.59243938, -4990304.17764443, 3431957.6684601)
+    V = (-13.4, 1.2, -6.5)  # mm/yr
+    # 15 off-diagonal terms [mm^2], nonzero position-velocity cross terms.
+    cov15 = [0.8, -0.3, 0.05, -0.02, 0.01, 0.6, 0.03, 0.04, -0.01, 0.02, -0.03, 0.07,
+             0.1, -0.05, 0.08]
+    annual = [{"START": _ts(2000), "END": OPEN,
+               "FREQUENCIES": [{"PERIOD": 1.0, "X_COS": 2.0, "X_SIN": -1.0,
+                                "Y_COS": 0.5, "Y_SIN": 0.25, "Z_COS": -3.0, "Z_SIN": 1.5}]}]
+    file_a = (2020.0, [
+        _station("EPOA00USA", [_occ(_ts(2000), OPEN, X0, V, ref=2010.0, cov=cov15)]),
+        _station("EPOB00USA", [_occ(_ts(2000), OPEN, X0, V, ref=2020.0, cov=cov15)]),
+        _station("EPOC00USA", [_occ(_ts(2000), OPEN, X0, V, ref=None, cov=cov15)]),
+        _station("EPOD00USA", [_occ(_ts(2000), OPEN, X0, V, ref="2010.0", cov=cov15)]),
+        _station("EPOE00USA", [_occ(_ts(2000), OPEN, X0, V, ref=True, cov=cov15)]),
+        _station("EPOM00USA", [_occ(_ts(2000), _ts(2010), X0, V, ref=2010.0, cov=cov15),
+                               _occ(_ts(2010), OPEN, X0, V, ref=2020.0, cov=cov15)]),
+    ])
+    file_b = (2015.0, [
+        _station("EPOF00USA", [_occ(_ts(2000), OPEN, X0, V, ref=None, cov=cov15)]),
+        _station("EPOG00USA", [_occ(_ts(2000), OPEN, X0, V, ref=2010.0, cov=cov15)],
+                 periodic=annual),
+    ])
+    file_c = (None, [_station("EPOH00USA", [_occ(_ts(2000), OPEN, X0, V, ref=None)])])
+
+    t = 2024.35
+    with _synthetic_registry(file_a, file_b, file_c) as (reg, _paths):
+        a = reg.find("EPOA00USA")
+        oa = a.occupations[0]
+        check(oa.reference_epoch_year == 2010.0, "occupation REFERENCE_EPOCH 2010.0 parsed")
+        check(a.reference_epoch_year == 2020.0, "station keeps the METADATA epoch")
+        r = sp.resolve_station_coordinate(a, t, True, True)
+        check(r.valid and r.ecef == _lin(oa, t), "2010.0: x = x_ref + v * (t - 2010.0), exact")
+        check(r.covariance == _prop_cov(oa, t - 2010.0),
+              "2010.0: covariance propagated with dt = t - 2010.0, exact")
+        check(r.covariance != _prop_cov(oa, t - 2020.0),
+              "2010.0: covariance differs from the dt = t - 2020.0 propagation")
+        vnorm = math.sqrt(sum(v * v for v in oa.velocity))
+        moved = math.dist(r.ecef, tuple(oa.coordinates[k] + oa.velocity[k] * (t - 2020.0)
+                                        for k in range(3)))
+        check(abs(moved - 10.0 * vnorm) < 1e-9,
+              f"2010.0 vs 2020.0 linear term differs by |v| * 10 yr ({moved:.4f} m)")
+        r0 = sp.resolve_station_coordinate(a, 2010.0, False, False)
+        check(r0.ecef == oa.coordinates, "2010.0 record at t = 2010.0 returns x_ref exactly")
+        check(r0.covariance == [row[:3] for row in oa.covariance[:3]],
+              "2010.0 record at t = 2010.0 returns Cxx exactly")
+
+        for sid, why in (("EPOB00USA", "explicit 2020.0"), ("EPOC00USA", "absent -> METADATA"),
+                         ("EPOD00USA", "string -> METADATA"), ("EPOE00USA", "bool -> METADATA")):
+            st = reg.find(sid)
+            o = st.occupations[0]
+            check(o.reference_epoch_year == 2020.0, f"{sid} ({why}) reference epoch 2020.0")
+            rr = sp.resolve_station_coordinate(st, t, True, True)
+            check(rr.ecef == tuple(o.coordinates[k] + o.velocity[k] * (t - 2020.0)
+                                   for k in range(3)),
+                  f"{sid}: linear term uses t - 2020.0, exact")
+            check(rr.covariance == _prop_cov(o, t - 2020.0), f"{sid}: covariance dt = t - 2020.0")
+
+        m = reg.find("EPOM00USA")
+        rm1 = sp.resolve_station_coordinate(m, 2005.0, False, False)
+        rm2 = sp.resolve_station_coordinate(m, 2015.0, False, False)
+        check(rm1.ecef == _lin(m.occupations[0], 2005.0) and
+              m.occupations[0].reference_epoch_year == 2010.0,
+              "two occupations: the first uses its own 2010.0")
+        check(rm2.ecef == _lin(m.occupations[1], 2015.0) and
+              m.occupations[1].reference_epoch_year == 2020.0,
+              "two occupations: the second uses its own 2020.0")
+
+        f = reg.find("EPOF00USA")
+        check(f.occupations[0].reference_epoch_year == 2015.0,
+              "absent REFERENCE_EPOCH -> METADATA 2015.0 of its own file")
+        rf = sp.resolve_station_coordinate(f, t, True, True)
+        check(rf.ecef == tuple(f.occupations[0].coordinates[k]
+                               + f.occupations[0].velocity[k] * (t - 2015.0) for k in range(3)),
+              "METADATA 2015.0 fallback drives the linear term")
+
+        g = reg.find("EPOG00USA")
+        og = g.occupations[0]
+        check(og.reference_epoch_year == 2010.0 and g.periodic[0].reference_epoch_year == 2015.0,
+              "periodic block keeps the METADATA phase epoch (2015.0)")
+        rg = sp.resolve_station_coordinate(g, t, True, True)
+        fr = g.periodic[0].freqs[0]
+        w = 2.0 * sp._PI / fr.period_yr
+        c, s = math.cos(w * (t - 2015.0)), math.sin(w * (t - 2015.0))
+        lin = _lin(og, t)
+        expect = (lin[0] + (fr.x_cos * c + fr.x_sin * s),
+                  lin[1] + (fr.y_cos * c + fr.y_sin * s),
+                  lin[2] + (fr.z_cos * c + fr.z_sin * s))
+        check(rg.ecef == expect,
+              "linear term on the occupation epoch, periodic phase on the METADATA epoch")
+
+        h = reg.find("EPOH00USA")
+        check(h.occupations[0].reference_epoch_year == 2020.0 and h.reference_epoch_year == 2020.0,
+              "no REFERENCE_EPOCH anywhere -> 2020.0")
+
+
+def test_extrapolation_synthetic():
+    print("[7] EXTRAP extrapolation flags and equipment changes in the gap (synthetic SIF)")
+    P = (-5937160.9, -1054675.2, -2071386.0)
+    V = (-21.3, 58.4, 33.1)
+    T1, T2 = "TRM59800.00     NONE", "JAVRINGANT_DM   NONE"
+    stations = [
+        # Past the end; antenna TYPE change after the end (windows listed out of
+        # START order); firmware-only receiver update.
+        _station("EXA100USA", [_occ(_ts(2010), _ts(2018), P, V)],
+                 antennas=[_ant(_ts(2019, 6, 1), OPEN, T2, "222"),
+                           _ant(_ts(2005), _ts(2019, 6, 1), T1, "111")],
+                 receivers=[_rec(_ts(2005), _ts(2019, 3, 1), "SEPT POLARX5", "5.3.2", "R1"),
+                            _rec(_ts(2019, 3, 1), OPEN, "SEPT POLARX5", "5.5.0", "R1")]),
+        # Record-only antenna re-log, then a serial swap; serial-only receiver swap.
+        _station("EXA200USA", [_occ(_ts(2010), _ts(2018), P)],
+                 antennas=[_ant(_ts(2005), _ts(2019), T1, "S1"),
+                           _ant(_ts(2019), _ts(2019, 6, 1), T1, "S1"),
+                           _ant(_ts(2019, 6, 1), OPEN, T1, "S9")],
+                 receivers=[_rec(_ts(2005), _ts(2019), "TRIMBLE NETR9", "5.44", "A"),
+                            _rec(_ts(2019), OPEN, "TRIMBLE NETR9", "5.44", "B")]),
+        # Tolerance on the segment side of the end: radome-only change 1 day before
+        # the end counts; receiver TYPE change 7 days before the end does not.
+        _station("EXA300USA", [_occ(_ts(2010), _ts(2018), P)],
+                 antennas=[_ant(_ts(2005), _ts(2017, 12, 31), "TRM59800.00     NONE", "9"),
+                           _ant(_ts(2017, 12, 31), OPEN, "TRM59800.00     SCIS", "9")],
+                 receivers=[_rec(_ts(2005), _ts(2017, 12, 25), "TPS NET-G3A"),
+                            _rec(_ts(2017, 12, 25), OPEN, "SEPT POLARX5")]),
+        # Before the first segment: antenna change before t (outside), antenna
+        # change 1 day after the start (inside), receiver change 4 days after the
+        # start (outside).
+        _station("EXA400USA", [_occ(_ts(2015), OPEN, P)],
+                 antennas=[_ant(_ts(2008), _ts(2011), "ANT0            NONE", "0"),
+                           _ant(_ts(2011), _ts(2015, 1, 2), T1, "1"),
+                           _ant(_ts(2015, 1, 2), OPEN, T2, "2")],
+                 receivers=[_rec(_ts(2008), _ts(2015, 1, 5), "RX-A"),
+                            _rec(_ts(2015, 1, 5), OPEN, "RX-B")]),
+        # Two occupations: in 'latest' mode an epoch covered by the earlier one is
+        # not extrapolated; one in the uncovered gap is measured from the latest.
+        _station("EXA500USA", [_occ(_ts(2010), _ts(2015), P), _occ(_ts(2016), OPEN, P)],
+                 antennas=[_ant(_ts(2005), _ts(2015, 7, 1), T1, "1"),
+                           _ant(_ts(2015, 7, 1), OPEN, T2, "2")]),
+        # The first window (by START) is never a change, even inside the gap.
+        _station("EXA600USA", [_occ(_ts(2015), OPEN, P)],
+                 antennas=[_ant(_ts(2014, 6, 1), OPEN, T1, "1")],
+                 receivers=[_rec(_ts(2014, 6, 1), OPEN, "RX-A")]),
+        # Receiver TYPE change after the end.
+        _station("EXA700USA", [_occ(_ts(2010), _ts(2018), P)],
+                 receivers=[_rec(_ts(2005), _ts(2018, 6, 1), "TPS NET-G3A", "4.7", "X"),
+                            _rec(_ts(2018, 6, 1), OPEN, "SEPT POLARX5", "4.7", "X")]),
+        # Every occupation flagged: no result, diagnostics at their defaults.
+        _station("EXA800USA", [_occ(_ts(2010), OPEN, P, dnu=True)]),
+        # Before the first segment, t side of the gap: antenna and receiver
+        # changes on 2012-01-01, probed 1 day after (outside) and before (inside).
+        _station("EXA900USA", [_occ(_ts(2015), OPEN, P)],
+                 antennas=[_ant(_ts(2008), _ts(2012), T1, "1"),
+                           _ant(_ts(2012), OPEN, T2, "2")],
+                 receivers=[_rec(_ts(2008), _ts(2012), "RX-A"),
+                            _rec(_ts(2012), OPEN, "RX-B")]),
+        # A DO_NOT_USE window covering t does not make t covered.
+        _station("EXC100USA", [_occ(_ts(2010), _ts(2018), P),
+                               _occ(_ts(2018), OPEN, P, dnu=True)]),
+    ]
+
+    def flags(r):
+        return (r.extrapolated, r.extrapolation_years, r.antenna_change_in_gap,
+                r.receiver_change_in_gap)
+
+    def R(reg, sid, t, mode="covering"):
+        return sp.resolve_station_coordinate(reg.find(sid), t, True, True, occupation=mode)
+
+    with _synthetic_registry((2020.0, stations)) as (reg, _paths):
+        check(abs(sp.EQUIPMENT_GAP_TOL_YR - 2.0 / 365.25) == 0.0, "gap tolerance is 2 days")
+        st1 = reg.find("EXA100USA")
+        r = R(reg, "EXA100USA", 2020.0)
+        check(flags(r) == (True, 2.0, True, False),
+              f"past the end: antenna TYPE change in gap, firmware-only ignored {flags(r)}")
+        check((r.segment_start_year, r.segment_end_year) == (2010.0, 2018.0),
+              "segment years of the selected occupation")
+        check(r.ecef == _lin(st1.occupations[0], 2020.0) and not r.in_window,
+              "the coordinate itself is the unchanged extrapolation")
+        r = R(reg, "EXA100USA", 2019.0)
+        check(flags(r) == (True, 1.0, False, False), f"change after t is outside the gap {flags(r)}")
+        r = R(reg, "EXA100USA", 2015.0)
+        check(flags(r) == (False, 0.0, False, False) and r.in_window,
+              "covered epoch: all diagnostics False / 0.0")
+        check((r.segment_start_year, r.segment_end_year) == (2010.0, 2018.0),
+              "covered epoch still reports its segment")
+        # Window boundaries: start <= t < end, so t == end is extrapolated by 0.0 yr.
+        r = R(reg, "EXA100USA", 2018.0)
+        check(flags(r) == (True, 0.0, False, False) and not r.in_window
+              and (r.segment_start_year, r.segment_end_year) == (2010.0, 2018.0),
+              f"t == end: extrapolated, 0.0 yr {flags(r)}")
+        r = R(reg, "EXA400USA", 2015.0)
+        check(flags(r) == (False, 0.0, False, False) and r.in_window,
+              f"t == start: covered {flags(r)}")
+        # Past the end, the gap closes at t itself (no tolerance on the t side).
+        t = dy(2019, 5, 31)
+        r = R(reg, "EXA100USA", t)
+        check(flags(r) == (True, t - 2018.0, False, False),
+              f"past the end: antenna change 1 day after t is outside the gap {flags(r)}")
+        r = R(reg, "EXA100USA", dy(2019, 6, 2))
+        check(flags(r)[2:] == (True, False),
+              f"past the end: antenna change 1 day before t is inside the gap {flags(r)}")
+        r = R(reg, "EXA700USA", dy(2018, 5, 31))
+        check(flags(r)[2:] == (False, False),
+              f"past the end: receiver change 1 day after t is outside the gap {flags(r)}")
+        r = R(reg, "EXA700USA", dy(2018, 6, 2))
+        check(flags(r)[2:] == (False, True),
+              f"past the end: receiver change 1 day before t is inside the gap {flags(r)}")
+        # Before the start, the gap opens at t itself.
+        t = dy(2012, 1, 2)
+        r = R(reg, "EXA900USA", t)
+        check(flags(r) == (True, t - 2015.0, False, False),
+              f"before the start: changes 1 day before t are outside the gap {flags(r)}")
+        t = dy(2011, 12, 31)
+        r = R(reg, "EXA900USA", t)
+        check(flags(r) == (True, t - 2015.0, True, True),
+              f"before the start: changes 1 day after t are inside the gap {flags(r)}")
+
+        r = R(reg, "EXA200USA", 2019.3)
+        check(flags(r)[2:] == (False, False),
+              f"record-only re-log and serial-only receiver swap are not changes {flags(r)}")
+        r = R(reg, "EXA200USA", 2020.0)
+        check(flags(r)[2:] == (True, False), f"antenna SERIAL_NUMBER change counts {flags(r)}")
+
+        r = R(reg, "EXA300USA", 2018.5)
+        check(flags(r)[2:] == (True, False),
+              f"radome-only change 1 day before the end counts; 7 days does not {flags(r)}")
+
+        r = R(reg, "EXA400USA", 2012.0)
+        check(flags(r) == (True, -3.0, True, False),
+              f"before the first segment: negative years, change 1 day after start {flags(r)}")
+        check((r.segment_start_year, r.segment_end_year) == (2015.0, 9999.0),
+              "open segment end reported as the 9999.0 sentinel")
+
+        r = R(reg, "EXA500USA", 2012.0)
+        check(flags(r) == (False, 0.0, False, False), "covering mode: 2012.0 is covered")
+        r = R(reg, "EXA500USA", 2012.0, "latest")
+        check(flags(r) == (False, 0.0, False, False) and r.segment_start_year == 2016.0
+              and not r.in_window,
+              f"latest mode: an epoch covered by the earlier occupation is not extrapolated "
+              f"{flags(r)}")
+        r = R(reg, "EXA500USA", 2015.5)
+        check(r.extrapolated and r.antenna_change_in_gap and r.extrapolation_years == 2015.5 - 2015.0,
+              "covering mode: between segments, nearest-midpoint pick past its end")
+        # The antenna change on 2015-07-01 precedes t = 2015.5, so it lies in the
+        # covering pick's gap [2015 - tol, t] but not in the latest's [t, 2016 + tol].
+        r = R(reg, "EXA500USA", 2015.5, "latest")
+        check(flags(r) == (True, -0.5, False, False) and r.segment_start_year == 2016.0,
+              f"latest mode: uncovered epoch measured from the latest occupation {flags(r)}")
+        r = R(reg, "EXA100USA", 2020.0, "latest")
+        check(flags(r) == (True, 2.0, True, False),
+              f"latest mode, single occupation: same diagnostics as covering {flags(r)}")
+
+        r = R(reg, "EXA600USA", 2014.0)
+        check(flags(r) == (True, 2014.0 - 2015.0, False, False),
+              f"first window inside the gap is not a change {flags(r)}")
+
+        r = R(reg, "EXA700USA", 2019.0)
+        check(flags(r)[2:] == (False, True), f"receiver TYPE change counts {flags(r)}")
+
+        r = R(reg, "EXA800USA", 2020.0)
+        check(not r.valid and flags(r) == (False, 0.0, False, False),
+              "no usable occupation: invalid, diagnostics at defaults")
+
+        r = R(reg, "EXC100USA", 2020.0)
+        check(flags(r) == (True, 2.0, False, False) and r.segment_end_year == 2018.0,
+              f"a flagged window covering t does not count as covered {flags(r)}")
+
+
+def test_cli_synthetic():
+    print("[8] CLI warnings and appended columns (synthetic SIF)")
+    P_A = (-2491490.0, -4660803.0, 3559129.0)
+    stations = [
+        _station("ABCD00USA", [_occ(_ts(2000), OPEN, P_A)], approx=P_A),
+        _station("EXA100USA", [_occ(_ts(2010), _ts(2018), P_A)],
+                 antennas=[_ant(_ts(2005), _ts(2019), "T1              NONE", "1"),
+                           _ant(_ts(2019), OPEN, "T2              NONE", "2")],
+                 receivers=[_rec(_ts(2005), OPEN, "RX")]),
+        _station("EXB100USA", [_occ(_ts(2005), _ts(2015), P_A), _occ(_ts(2016), OPEN, P_A)]),
+    ]
+    with _synthetic_registry((2020.0, stations)) as (_reg, paths):
+        def run(*extra, epoch="2020.0", keys=("EXA100USA", "ABCD00XYZ", "abcd")):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = sp.main(["--sif", *paths, "--epoch", epoch, *extra, *keys])
+            return rc, out.getvalue(), err.getvalue()
+
+        rc, out, err = run()
+        check(rc == 0, "CLI exit code 0")
+        check("# WARNING: SIF lookup: 'ABCD00XYZ'" in err and "ABCD00USA" in err,
+              f"rejected prefix candidate warned on stderr: {err!r}")
+        check("# WARNING: EXA100USA: epoch 2020.000000 is 2.000 yr past the end" in err,
+              f"extrapolated station warned on stderr: {err!r}")
+        check("antenna change in gap: yes; receiver change in gap: no" in err,
+              "extrapolation warning states the equipment changes")
+        check("ABCD00USA: epoch" not in err, "covered station is not warned")
+        check(not logging.getLogger("sif_propagate").handlers,
+              "CLI removes its stderr handler on return")
+
+        rows = list(csv.reader(io.StringIO(out)))
+        check(rows[0] == HISTORICAL_CSV_COLUMNS + EXTRAPOLATION_CSV_COLUMNS,
+              "CSV header: historical columns, then the extrapolation columns")
+        byreq = {row[0]: dict(zip(rows[0], row)) for row in rows[1:]}
+        e = byreq.get("EXA100USA", {})
+        check((e.get("extrapolated"), e.get("extrapolation_years"), e.get("segment_start_year"),
+               e.get("segment_end_year"), e.get("antenna_change_in_gap"),
+               e.get("receiver_change_in_gap"))
+              == ("True", "2.000000", "2010.000000", "2018.000000", "True", "False"),
+              f"CSV extrapolation cells: {e}")
+        check(byreq.get("ABCD00XYZ", {}).get("found") == "False", "rejected key -> found=False")
+        a = byreq.get("abcd", {})
+        check(a.get("found") == "True" and a.get("extrapolated") == "False"
+              and a.get("segment_end_year") == "", "bare code row: covered, open segment blank")
+
+        rc, out, err = run("--format", "json")
+        recs = {r["requested"]: r for r in json.loads(out)["stations"]}
+        e = recs.get("EXA100USA", {})
+        check(e.get("extrapolated") is True and e.get("extrapolation_years") == 2.0
+              and e.get("segment_end_year") == 2018.0 and e.get("antenna_change_in_gap") is True
+              and e.get("receiver_change_in_gap") is False, f"JSON extrapolation fields: {e}")
+        check(recs.get("abcd", {}).get("segment_end_year", "missing") is None,
+              "JSON open segment end is null")
+
+        # --datasheet (latest mode): an epoch covered by an earlier occupation is
+        # not warned; an epoch no window covers is, measured from the latest.
+        rc, out, err = run("--datasheet", epoch="2010.0", keys=("EXB100USA",))
+        rows = list(csv.reader(io.StringIO(out)))
+        b = dict(zip(rows[0], rows[1])) if len(rows) > 1 else {}
+        check(rc == 0 and "EXB100USA: epoch" not in err,
+              f"datasheet run on a covered epoch is not warned: {err!r}")
+        check((b.get("occupation_mode"), b.get("in_window"), b.get("extrapolated"))
+              == ("latest", "False", "False"),
+              f"datasheet row: latest window does not contain t, not extrapolated: {b}")
+        rc, out, err = run("--datasheet", epoch="2015.5", keys=("EXB100USA",))
+        check("# WARNING: EXB100USA: epoch 2015.500000 is 0.500 yr before the start" in err
+              and "(latest)" in err,
+              f"datasheet run on an uncovered epoch is warned: {err!r}")
+
+
+def test_real_files(reg):
+    """[9] The three defects on the shipped SIFs; each check skips if its station is absent."""
+    print("[9] REAL the defects on the shipped SIF files")
+
+    def have(*ids):
+        missing = [i for i in ids if reg.find(i) is None or reg.find(i).id != i]
+        if missing:
+            print(f"    SKIP: {', '.join(missing)} not in the loaded SIF(s)")
+        return not missing
+
+    with _capture_sif_log() as cap:
+        # D1: GAMB00PYF (Gambier, absent) must not resolve to GAMB00USA (7,688 km).
+        if have("GAMB00USA"):
+            gusa = reg.find("GAMB00USA")
+            _expect_lookup(reg, cap, "GAMB00PYF", None, None, "GAMB00PYF without position",
+                           warn_contains=["GAMB00PYF", "GAMB00USA"])
+            _expect_lookup(reg, cap, "GAMB00PYF", gusa.approximate_coordinates, "GAMB00USA",
+                           "GAMB00PYF at GAMB00USA's own position")
+            gambier = (-4147127.4937, -4152221.6682, -2490032.7642)
+            d = math.dist(gambier, gusa.approximate_coordinates)
+            check(7.6e6 < d < 7.8e6, f"Gambier to GAMB00USA {d / 1e3:.0f} km")
+            _expect_lookup(reg, cap, "GAMB00PYF", gambier, None, "GAMB00PYF at Gambier",
+                           warn_contains=["GAMB00USA", f"{d:.1f} m"])
+        # D1: STHL00GBR -> STHL00SHN is a rename on the same monument.
+        if have("STHL00SHN"):
+            shn = reg.find("STHL00SHN")
+            _expect_lookup(reg, cap, "STHL00GBR", None, None, "STHL00GBR without position",
+                           warn_contains=["STHL00GBR", "STHL00SHN"])
+            _expect_lookup(reg, cap, "STHL00GBR", shn.approximate_coordinates, "STHL00SHN",
+                           "STHL00GBR with STHL00SHN's position")
+        if have("P38900USA"):
+            _expect_lookup(reg, cap, "P389", None, "P38900USA", "bare P389")
+        if have("CIT100USA"):
+            _expect_lookup(reg, cap, "cit1", None, "CIT100USA", "bare cit1")
+            _expect_lookup(reg, cap, "CIT100USA", (0.0, 0.0, 6.4e6), "CIT100USA",
+                           "exact CIT100USA ignores a distant position")
+
+    # D3: exactly four occupations sit on 2010.0, all on single-occupation NCN records.
+    off = sorted(s.id for s in reg.stations for o in s.occupations
+                 if o.reference_epoch_year != 2020.0)
+    if have("AZAZ00USA", "AZOR00USA", "AZPL00USA", "FLSI00USA"):
+        check(off == ["AZAZ00USA", "AZOR00USA", "AZPL00USA", "FLSI00USA"],
+              f"occupations off 2020.0: {off}")
+        az = reg.find("AZAZ00USA")
+        o = az.occupations[0]
+        check(o.reference_epoch_year == 2010.0, "AZAZ00USA occupation REFERENCE_EPOCH 2010.0")
+        # The shipped record is DO_NOT_USE, so the unchanged selection rule
+        # yields no coordinate; D3 shows only once the flag is cleared.
+        check(o.do_not_use and not sp.resolve_station_coordinate(az, 2024.35).valid,
+              "AZAZ00USA as shipped: DO_NOT_USE, no resolved coordinate")
+        usable = copy.deepcopy(az)
+        usable.occupations[0].do_not_use = False
+        r = sp.resolve_station_coordinate(usable, 2024.35, True, True)
+        expect = tuple(o.coordinates[k] + o.velocity[k] * (2024.35 - 2010.0) for k in range(3))
+        check(r.valid and r.ecef == expect,
+              "AZAZ00USA (flag cleared) @2024.35 = coords + v * (2024.35 - 2010.0), exact")
+        old = tuple(o.coordinates[k] + o.velocity[k] * (2024.35 - 2020.0) for k in range(3))
+        d = math.dist(r.ecef, old)
+        check(0.11 < d < 0.16, f"AZAZ00USA: the 2020.0 assumption was off by {d * 100:.1f} cm")
+
+    # D2: closed last segments.
+    if have("NIUM00NIU"):
+        r = sp.resolve_station_coordinate(reg.find("NIUM00NIU"), 2024.35, True, True)
+        check(r.valid and r.extrapolated and 0.3 < r.extrapolation_years < 0.35,
+              f"NIUM00NIU @2024.35 extrapolated {r.extrapolation_years:.3f} yr")
+        check(r.antenna_change_in_gap and not r.receiver_change_in_gap,
+              "NIUM00NIU: TRM59800.00 -> JAVRINGANT_DM in the gap, no receiver TYPE change")
+        r = sp.resolve_station_coordinate(reg.find("NIUM00NIU"), 2010.0, True, True)
+        check(r.valid and not r.extrapolated and not r.antenna_change_in_gap,
+              "NIUM00NIU @2010.0 covered")
+    if have("CHUR00CAN"):
+        r = sp.resolve_station_coordinate(reg.find("CHUR00CAN"), 2024.35, True, True)
+        check(r.valid and r.extrapolated and r.receiver_change_in_gap
+              and not r.antenna_change_in_gap,
+              "CHUR00CAN @2024.35: TPS NET-G3A -> SEPT POLARX5 in the gap (2-day tolerance)")
+    if have("CIT100USA"):
+        r = sp.resolve_station_coordinate(reg.find("CIT100USA"), 2024.35, True, True)
+        check(r.valid and not r.extrapolated and r.segment_end_year == 9999.0,
+              "CIT100USA @2024.35 covered by its open segment")
+
+
 def main():
     reg = load_registry()
-    test_oracle(reg)
-    test_anchors(reg)
-    test_selfcheck(reg)
-    test_occupation_mode(reg)
+    if reg is not None:
+        test_oracle(reg)
+        test_anchors(reg)
+        test_selfcheck(reg)
+        test_occupation_mode(reg)
+    test_lookup_synthetic()
+    test_epoch_synthetic()
+    test_extrapolation_synthetic()
+    test_cli_synthetic()
+    if reg is not None:
+        test_real_files(reg)
     print()
     if _fail:
-        print(f"RESULT: FAIL ({_fail} check(s) failed)")
+        print(f"RESULT: FAIL ({_fail} of {_checks} check(s) failed)")
         return 1
-    print("RESULT: PASS (all checks)")
+    if reg is None:
+        print(f"RESULT: INCOMPLETE ({_checks} fixture-free check(s) passed; "
+              "sections 1-4 and 9 need the SIF fixtures)")
+        return 2
+    print(f"RESULT: PASS (all {_checks} checks)")
     return 0
 
 

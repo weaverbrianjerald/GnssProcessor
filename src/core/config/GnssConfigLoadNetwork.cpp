@@ -1034,11 +1034,26 @@ namespace GnssProcessor {
                 const auto rc = resolveRosterCoordinate(*station_info_, s.name, *run_year);
                 if (!rc) {
                     log->error("Network: station '{}' has no position_ecef and could not "
-                               "be resolved from the SIF registry (unknown station or no "
-                               "usable occupation at {:.4f}) — supply position_ecef.",
+                               "be resolved from the SIF registry (unknown station; a 4-char "
+                               "prefix candidate rejected because the name is not an exact "
+                               "SIF ID or DOMES, see the station_info log; or no usable "
+                               "occupation at {:.4f}) — supply position_ecef.",
                                s.name, *run_year);
                     return false;
                 }
+                // The coordinate is extrapolated past (or before) its occupation
+                // segment: an equipment change after a closed segment invalidates
+                // the extrapolated coordinate, so say how far and whether a change
+                // lies in the gap.
+                if (rc->extrapolated)
+                    log->warn("Network roster: station '{}' SIF coordinate at {:.4f} is "
+                              "EXTRAPOLATED {:+.3f} yr outside its occupation segment "
+                              "[{:.4f}, {:.4f}); antenna change in gap: {}; receiver "
+                              "change in gap: {}",
+                              s.name, *run_year, rc->extrapolation_years,
+                              rc->segment_start_year, rc->segment_end_year,
+                              rc->antenna_change_in_gap ? "yes" : "no",
+                              rc->receiver_change_in_gap ? "yes" : "no");
                 s.position_ecef     = { rc->ecef.x(), rc->ecef.y(), rc->ecef.z() };
                 s.has_position      = true;
                 s.position_from_sif = true;

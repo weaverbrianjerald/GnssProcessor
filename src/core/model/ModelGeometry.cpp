@@ -158,10 +158,13 @@ namespace GnssProcessor {
             // components.  Convert the SIF Up/East/North amplitude+phase set to
             // the model's Up/West/South lag convention: Up passes through, and
             // since East = -West and North = -South the horizontals keep their
-            // amplitude and shift phase by 180 deg.
+            // amplitude and shift phase by 180 deg.  The RINEX APPROX position
+            // confirms a 4-char prefix match (find() ignores it when unusable), so
+            // a marker missing from the SIF never borrows a distant station's
+            // coefficients.
             if (config_.enableStationInfo()) {
                 if (const auto sif = config_.getStationInfo()) {
-                    const StationInfo* si = sif->find(station_name);
+                    const StationInfo* si = sif->find(station_name, &station_ecef);
                     if (si && si->has_otl) {
                         OtlStationCoefficients coeffs;
                         coeffs.station_name = si->id;

@@ -514,6 +514,7 @@ add_executable(gnss_tests
     tests/test_orbit_enhancements.cpp
     tests/test_neq_accumulator.cpp
     tests/test_station_info.cpp
+    tests/test_station_info_guards.cpp
     tests/test_antenna_radome_fallback.cpp
     tests/test_antenna_eccentricity.cpp
     tests/test_station_marker_to_arp.cpp

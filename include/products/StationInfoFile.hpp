@@ -22,8 +22,39 @@
  *  - by 4-char station prefix (the @c SSSS of the ID), upper-cased.
  *
  * @c find() tries them in that order, case-insensitively, so a configured
- * "CIT100USA", a RINEX marker "CIT1" and a DOMES "40451S006" all resolve to
+ * "CIT100USA", a RINEX marker "CIT1" and a DOMES "40400S201" all resolve to
  * the same record.
+ *
+ * An exact ID or DOMES match is authoritative.  A 4-char prefix match is only
+ * a CANDIDATE, because a 9-char ID absent from the registry can share its
+ * first four characters with an unrelated station: GAMB00PYF (Gambier, French
+ * Polynesia) is in neither the IGS nor the NCN SIF, while GAMB00USA, 7,688 km
+ * away, is.  Legitimate renames also exist (STHL00GBR is now STHL00SHN, same
+ * monument).  The candidate is therefore accepted only when it is confirmed:
+ * by an approximate position within @c SIF_MAX_PREFIX_DISTANCE_M of the
+ * candidate when the caller supplies one, or, without a position, only for a
+ * bare 4-char key (which carries no conflicting 9-char suffix).  Every
+ * rejection is logged at warning level on the @c station_info logger.
+ *
+ * Known limit of the no-position rule: a bare 4-char key is trusted as is, and
+ * RINEX headers often carry one.  The GAMB00PYF and MELI00ESP files carry the
+ * markers "GAMB" and "MELI"; neither station is in the SIF, so without a usable
+ * position those markers resolve to GAMB00USA (7,688 km away) and MELI00USA
+ * (5,356 km away).  With the RINEX APPROX position supplied, as on the PPP
+ * a-priori, OTL and OPT paths, both candidates are rejected.
+ *
+ * ## Extrapolation
+ *
+ * @c resolveStationCoordinate keeps the established occupation selection
+ * (covering window, else nearest midpoint) but reports when no window covers
+ * the epoch: how far past the selected segment the coordinate is
+ * extrapolated, and whether the antenna or receiver changed in that gap.  A
+ * closed segment does not by itself mean the equipment changed (in the
+ * bundled igs20 SIF, 32 of the 266 closed last segments are followed by an
+ * antenna or receiver change, 6 of them within two days of the END), but an
+ * equipment change after a closed segment invalidates the extrapolated
+ * coordinate (for example NIUM00NIU: last segment ends 2024-01-07, antenna
+ * model change on 2024-02-27), so the flags report it.
  *
  * ## Memory
  *
@@ -44,21 +75,57 @@
 namespace GnssProcessor {
 
     /**
+     * @brief Largest distance [m] between a caller's approximate position and a
+     *        4-char prefix candidate at which @c StationInfoFile::find accepts it.
+     *
+     * 10 km is generous against a RINEX APPROX header (metres to a few hundred
+     * metres off) and a marker-to-ARP offset, yet far below the separation of
+     * any two distinct stations that share a 4-char code across networks
+     * (GAMB00PYF vs GAMB00USA: 7,688 km).
+     */
+    static constexpr double SIF_MAX_PREFIX_DISTANCE_M = 10000.0;
+
+    /**
+     * @brief Tolerance [yr] (2 days) by which the extrapolation gap of
+     *        @c resolveStationCoordinate reaches back inside the selected segment.
+     *
+     * Equipment changes are logged to the minute while occupation windows are
+     * cut at day boundaries, so a change that closed the segment can start a few
+     * minutes to hours BEFORE the segment's END (CHUR00CAN: receiver type change
+     * at 2024-02-13T23:43, segment END 2024-02-13T23:59:30).
+     */
+    static constexpr double SIF_GAP_CHANGE_TOLERANCE_YR = 2.0 / 365.25;
+
+    /**
      * @brief A station coordinate resolved to a specific observation epoch.
      *
      * The position is the full SIF coordinate function evaluated at the query
      * epoch: the reference coordinate of the selected OCCUPATION record,
-     * propagated by the station velocity, plus the optional periodic (seasonal)
-     * and post-seismic terms.  The covariance is the position (3x3) block
-     * propagated from the occupation's 6x6 coordinate/velocity covariance to the
-     * query epoch.  Everything is in the SIF reference frame (typically ITRF2020)
-     * and SI units (m, m^2).
+     * propagated by the station velocity from that record's own reference
+     * epoch, plus the optional periodic (seasonal) and post-seismic terms.  The
+     * covariance is the position (3x3) block propagated from the occupation's
+     * 6x6 coordinate/velocity covariance to the query epoch.  Everything is in
+     * the SIF reference frame (typically ITRF2020) and SI units (m, m^2).
+     *
+     * The extrapolation fields describe how the epoch relates to the selected
+     * occupation window and never change the coordinate.  When a non-flagged
+     * window covers the epoch they are all false / zero (the segment bounds are
+     * still filled).  Otherwise the GAP is the interval between the selected
+     * segment and the epoch, reaching @c SIF_GAP_CHANGE_TOLERANCE_YR inside the
+     * segment: @f$ [t_{end} - \text{tol},\ t] @f$ after the segment,
+     * @f$ [t,\ t_{start} + \text{tol}] @f$ before it.
      */
     struct ResolvedStationCoord {
         Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };       ///< ECEF position at the query epoch [m].
         Eigen::Matrix3d covariance{ Eigen::Matrix3d::Zero() }; ///< Propagated position covariance [m^2].
         bool has_covariance{ false };                          ///< True if @c covariance is meaningful.
         bool valid{ false };                                   ///< True if a usable occupation was found.
+        bool extrapolated{ false };          ///< True iff no non-flagged occupation window covers the query epoch.
+        double extrapolation_years{ 0.0 };   ///< Signed reach outside the selected window [yr]: t - end (t >= end), t - start (< 0, t < start), 0 when covered.
+        double segment_start_year{ 0.0 };    ///< Selected occupation's window start [decimal year].
+        double segment_end_year{ 0.0 };      ///< Selected occupation's window end [decimal year] (9999.0 = open-ended).
+        bool antenna_change_in_gap{ false }; ///< An antenna window starting in the gap differs from its predecessor in TYPE (model + radome) or serial number.
+        bool receiver_change_in_gap{ false };///< A receiver window starting in the gap differs from its predecessor in TYPE (firmware-only and serial-only updates do not count).
     };
 
     /**
@@ -66,18 +133,35 @@ namespace GnssProcessor {
      *
      * Selects the non-flagged OCCUPATION record whose window covers
      * @p decimal_year, or, when none covers it, the non-flagged record whose
-     * window midpoint is nearest.  Then forms
+     * window midpoint is nearest (an open END is capped at 9000 for the
+     * midpoint).  Then forms
      * @f$ x(t) = x_{ref} + v\,(t - t_{ref}) + \sum \text{periodic}(t) + \sum \text{PSD}(t) @f$
-     * following the NGS / M-PAGES convention.  The periodic phase reference and
-     * the post-seismic relaxation models match the SIF generator.
+     * following the NGS / M-PAGES convention, with @f$ t_{ref} @f$ the selected
+     * record's own @c SifOccupation::reference_epoch_year; the covariance is
+     * propagated over the same @f$ t - t_{ref} @f$.  The periodic phase
+     * reference and the post-seismic relaxation models match the SIF generator.
+     *
+     * When no window covers the epoch the nearest record is extrapolated as
+     * before, and the result says so (@c ResolvedStationCoord::extrapolated,
+     * @c extrapolation_years, and the antenna / receiver change flags over the
+     * gap).  Callers that consume the coordinate log a warning in that case.
+     *
+     * Equipment-change rule over the gap: the antenna (respectively receiver)
+     * windows are ordered by start; a window other than the first whose start
+     * lies inside the gap (bounds inclusive) is a change when it differs from
+     * the preceding window in the whitespace-trimmed TYPE string, model and
+     * radome together, or for antennas in the trimmed serial number.  A re-log
+     * of the same equipment (same TYPE and serial; for receivers, a firmware or
+     * serial update) is not a change.
      *
      * @param s              Station record.
      * @param decimal_year   Observation epoch as a decimal year.
      * @param with_periodic  Include the periodic (seasonal) terms, typically annual
      *                       and semiannual.
      * @param with_psd       Include post-seismic deformation terms.
-     * @return Resolved coordinate; @c valid is false if @p s has no usable
-     *         occupation, in which case the caller falls back to its own a-priori.
+     * @return Resolved coordinate with its extrapolation diagnostics; @c valid is
+     *         false if @p s has no usable occupation, in which case the caller
+     *         falls back to its own a-priori.
      */
     ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
                                                   double decimal_year,
@@ -111,18 +195,46 @@ namespace GnssProcessor {
         std::size_t load(const std::filesystem::path& sif_json);
 
         /**
-         * @brief Resolve a station record by identifier.
+         * @brief Resolve a station record by identifier, confirming a prefix match.
          *
          * Tries, in order: full 9-char ID, DOMES number, 4-char station
          * prefix (the first four characters of the key).  Matching is
          * case-insensitive; surrounding whitespace is trimmed.
          *
-         * @param station_key Marker name, station ID/prefix, or DOMES number.
-         * @return Pointer to the matching record, or @c nullptr if not found.
-         *         The pointer stays valid until the next @c load() call, which
-         *         may reallocate the store.
+         * An exact ID or DOMES match is returned whatever @p approx_ecef holds.
+         * A prefix match is a candidate, accepted only if:
+         *  - @p approx_ecef is usable (non-null, all finite, norm > 1e6 m): the
+         *    3D distance from it to the candidate's reference position is at
+         *    most @p max_prefix_distance_m.  The reference position is the
+         *    candidate's @c approximate_coordinates when their norm exceeds
+         *    1e6 m, else the first non-DO_NOT_USE occupation's coordinates,
+         *    else the first occupation's (each subject to the same norm test);
+         *    a candidate with none of these is rejected.
+         *  - no usable position: the trimmed key is exactly 4 characters long
+         *    (a bare code such as "cit1" or "P389").  A longer key that is not an
+         *    exact ID or DOMES (for example "GAMB00PYF") is rejected.  A bare
+         *    code is trusted as is, so a bare RINEX marker of a station absent
+         *    from the SIF still resolves here ("GAMB" to GAMB00USA); only a
+         *    usable @p approx_ecef catches that case.
+         *
+         * Each rejected candidate is logged at warning level on the
+         * @c station_info logger with the query key, the candidate ID and, when
+         * known, the distance.  The one-argument form therefore still resolves
+         * exact IDs, DOMES numbers and bare 4-char codes.
+         *
+         * @param station_key           Marker name, station ID/prefix, or DOMES number.
+         * @param approx_ecef           Optional approximate ECEF position of the station
+         *                              the caller means [m] (for example the RINEX APPROX
+         *                              header); @c nullptr when none is known.
+         * @param max_prefix_distance_m Acceptance radius for a prefix candidate when
+         *                              @p approx_ecef is usable [m].
+         * @return Pointer to the matching record, or @c nullptr if not found or a
+         *         prefix candidate was rejected.  The pointer stays valid until the
+         *         next @c load() call, which may reallocate the store.
          */
-        const StationInfo* find(const std::string& station_key) const;
+        const StationInfo* find(const std::string& station_key,
+                                const Eigen::Vector3d* approx_ecef = nullptr,
+                                double max_prefix_distance_m = SIF_MAX_PREFIX_DISTANCE_M) const;
 
         /** @brief Number of stations currently held. */
         std::size_t size() const { return stations_.size(); }
@@ -134,7 +246,7 @@ namespace GnssProcessor {
         LogManager& log_manager_;
         std::vector<StationInfo> stations_;                 ///< Owning store; pointers from find() index into this.
         std::unordered_map<std::string, std::size_t> by_id_;    ///< Full 9-char ID (upper-case) -> index.
-        std::unordered_map<std::string, std::size_t> by_id4_;   ///< 4-char prefix (upper-case) -> index (first wins).
+        std::unordered_map<std::string, std::size_t> by_id4_;   ///< 4-char prefix (upper-case) -> index (first wins); a match here is only a candidate (see find()).
         std::unordered_map<std::string, std::size_t> by_domes_; ///< DOMES number -> index.
     };
 
@@ -143,11 +255,18 @@ namespace GnssProcessor {
      *
      * Result carrier for @ref resolveRosterCoordinate: the survey-grade ECEF at
      * the requested run date plus that date, which is the propagation epoch a
-     * product contract declares as @c coord_epoch.
+     * product contract declares as @c coord_epoch, and the extrapolation
+     * diagnostics of the underlying @c ResolvedStationCoord (same meaning).
      */
     struct SifRosterCoordinate {
         Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };  ///< ECEF at @ref epoch_year [m], SIF reference frame (typically ITRF2020).
         double          epoch_year{ 0.0 };                ///< Decimal year the coordinate was propagated to.
+        bool   extrapolated{ false };           ///< True iff no non-flagged occupation window covers @ref epoch_year.
+        double extrapolation_years{ 0.0 };      ///< Signed reach outside the selected window [yr] (see @c ResolvedStationCoord).
+        double segment_start_year{ 0.0 };       ///< Selected occupation's window start [decimal year].
+        double segment_end_year{ 0.0 };         ///< Selected occupation's window end [decimal year] (9999.0 = open-ended).
+        bool   antenna_change_in_gap{ false };  ///< Antenna TYPE or serial change inside the extrapolation gap.
+        bool   receiver_change_in_gap{ false }; ///< Receiver TYPE change inside the extrapolation gap.
     };
 
     /**
@@ -162,11 +281,22 @@ namespace GnssProcessor {
      * is absent from the JSON; it is a separate function so the resolution can be
      * unit-tested without the loader.
      *
+     * Such a station has no position to confirm a prefix candidate with, so
+     * @c find() runs without one: an exact ID, a DOMES number or a bare 4-char
+     * code resolves, while a longer name that only shares its first four
+     * characters with a registry ID is rejected (and logged on the
+     * @c station_info logger) rather than silently taking that station's
+     * coordinate.  A bare 4-char roster name is trusted as is (see @c find()),
+     * so a 9-char roster name is the safer key for a station that may be
+     * absent from the SIF.  The extrapolation diagnostics are carried into the
+     * result for the loader to report.
+     *
      * @param registry     Loaded SIF registry.
      * @param station_name Station identifier (marker name, ID/prefix, or DOMES).
      * @param decimal_year Run date to propagate the occupation coordinate to.
-     * @return ECEF + propagation epoch, or @c std::nullopt when the station is
-     *         unknown to the registry or has no usable occupation.
+     * @return ECEF + propagation epoch + extrapolation diagnostics, or
+     *         @c std::nullopt when the station is unknown to the registry, its
+     *         prefix candidate was rejected, or it has no usable occupation.
      */
     std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile& registry,
                                                                const std::string& station_name,

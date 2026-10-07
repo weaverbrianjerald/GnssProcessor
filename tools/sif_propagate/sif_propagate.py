@@ -28,6 +28,11 @@ coordinate/velocity covariance::
 
     Cxx(t) = Cxx + dt * (Cxv + Cxv^T) + dt^2 * Cvv,   dt = t - t_ref
 
+``t_ref`` is the selected occupation's own REFERENCE_EPOCH (the METADATA epoch
+when the occupation carries none).  When no occupation window covers the epoch,
+the nearest one is still evaluated, and the result is flagged ``extrapolated``
+together with whether an antenna or receiver change lies in the uncovered gap.
+
 Port fidelity is verified numerically against the C++ engine's own output
 (see ``test_sif_propagate.py``); the two agree to ~1e-9 m.
 
@@ -48,7 +53,9 @@ Usage
 
 Identifiers may be a 9-char IGS long name (``CIT100USA``), a 4-char marker
 (``CIT1``, case-insensitive), or a DOMES number (``40400S201``), in the same
-resolution order as the C++ ``find()``.
+resolution order as the C++ ``find()``.  A longer key that is neither an exact
+ID nor a DOMES number (``GAMB00PYF``) is NOT resolved through its 4-char prefix
+unless an approximate position confirms the candidate (``SifRegistry.find``).
 """
 from __future__ import annotations
 
@@ -57,6 +64,7 @@ import csv
 import glob
 import io
 import json
+import logging
 import math
 import os
 import re
@@ -81,6 +89,25 @@ WGS84_NOTE = ("lat_deg/lon_deg/height_m are geodetic on the WGS84 ellipsoid "
               "and is sub-mm-equivalent to GRS80/ITRF.")
 _END_SENTINEL = 9999.0        # open-ended SIF "9999-..." window end
 _NEAREST_WINDOW_CAP = 9000.0  # midpoint cap used when picking the nearest occupation
+
+# Station lookup: a 4-char prefix candidate is accepted against a caller-supplied
+# approximate position only within this 3D distance [m].  10 km separates a
+# renamed station on the same monument (STHL00GBR -> STHL00SHN, 0 km) from an
+# unrelated station that shares the 4-char code (GAMB00PYF -> GAMB00USA, 7,688 km).
+MAX_PREFIX_DISTANCE_M = 10000.0
+# A position (caller-supplied, APPROXIMATE_COORDINATES or an occupation's
+# COORDINATES) is usable only if finite and farther than this from the geocentre
+# [m]; an all-zero placeholder therefore never confirms or refutes a candidate.
+_USABLE_POSITION_MIN_NORM_M = 1.0e6
+
+# Extrapolation diagnostics: an equipment change counts as "in the gap" when its
+# START falls within the uncovered span widened by this tolerance on the segment
+# side [yr].  Two days absorbs the usual offset between a log's change time and
+# the solution's segment boundary (CHUR00CAN: receiver change 2024-02-13 23:43,
+# segment end 2024-02-13 23:59:30).
+EQUIPMENT_GAP_TOL_YR = 2.0 / 365.25
+
+_log = logging.getLogger("sif_propagate")
 
 # --------------------------------------------------------------------------- #
 # Time: SIF timestamp / calendar date -> decimal year                          #
@@ -172,6 +199,29 @@ class Occupation:
     velocity_sigmas: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     covariance: Optional[List[List[float]]] = None              # 6x6 [X Y Z Vx Vy Vz]
     do_not_use: bool = False
+    # t_ref of THIS solution's linear term and covariance [yr]: the occupation's
+    # own REFERENCE_EPOCH, else the METADATA epoch.  Every IGS/NCN record is at
+    # 2020.0 except four NCN log-derived records (AZAZ/AZOR/AZPL/FLSI00USA) at 2010.0.
+    reference_epoch_year: float = 2020.0
+
+
+@dataclass
+class AntennaWindow:
+    """One ANTENNA log record (only the fields the extrapolation test reads)."""
+    start_year: float = 0.0
+    end_year: float = 0.0
+    type: str = ""      # "MODEL(16 chars) RADOME", compared whole (radome included)
+    serial: str = ""    # SERIAL_NUMBER
+
+
+@dataclass
+class ReceiverWindow:
+    """One RECEIVER log record (only TYPE takes part in the extrapolation test)."""
+    start_year: float = 0.0
+    end_year: float = 0.0
+    type: str = ""
+    firmware: str = ""
+    serial: str = ""
 
 
 @dataclass
@@ -220,6 +270,10 @@ class Station:
     occupations: List[Occupation] = field(default_factory=list)
     periodic: List[PeriodicBlock] = field(default_factory=list)
     psd: List[PsdBlock] = field(default_factory=list)
+    # Appended after the original fields so positional construction is unchanged.
+    approximate_coordinates: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # ECEF [m]
+    antennas: List[AntennaWindow] = field(default_factory=list)            # file order
+    receivers: List[ReceiverWindow] = field(default_factory=list)          # file order
 
 
 # --------------------------------------------------------------------------- #
@@ -261,6 +315,36 @@ def _upper_trim(s: str) -> str:
     return s.strip().upper()
 
 
+def _usable_position(p) -> bool:
+    """True if ``p`` holds three finite coordinates with norm > 1e6 m."""
+    if p is None:
+        return False
+    try:
+        x, y, z = float(p[0]), float(p[1]), float(p[2])
+    except (TypeError, ValueError, IndexError):
+        return False
+    if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
+        return False
+    return math.sqrt(x * x + y * y + z * z) > _USABLE_POSITION_MIN_NORM_M
+
+
+def _prefix_reference_position(st: "Station") -> Optional[Tuple[float, float, float]]:
+    """Position a 4-char prefix candidate is compared against, or None.
+
+    APPROXIMATE_COORDINATES if usable, else the first non-DO_NOT_USE
+    occupation's COORDINATES if usable, else the first occupation's
+    COORDINATES if usable.
+    """
+    if _usable_position(st.approximate_coordinates):
+        return st.approximate_coordinates
+    first_usable_occ = next((o for o in st.occupations if not o.do_not_use), None)
+    if first_usable_occ is not None and _usable_position(first_usable_occ.coordinates):
+        return first_usable_occ.coordinates
+    if st.occupations and _usable_position(st.occupations[0].coordinates):
+        return st.occupations[0].coordinates
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # SIF registry: parse one or more SIF JSON files, resolve by identifier        #
 # --------------------------------------------------------------------------- #
@@ -269,7 +353,8 @@ class SifRegistry:
 
     Indexing mirrors the C++ ``StationInfoFile``: full 9-char ID, 4-char prefix
     (first wins), and DOMES number, all upper-cased.  ``find()`` tries ID, then
-    DOMES, then 4-char prefix, case-insensitively.
+    DOMES, then a 4-char prefix CANDIDATE that must pass a sanity check,
+    case-insensitively.
     """
 
     def __init__(self) -> None:
@@ -324,7 +409,29 @@ class SifRegistry:
             reference_frame=meta_frame,
             reference_epoch_year=meta_epoch,
             source=source,
+            approximate_coordinates=_jvec3(sj, "APPROXIMATE_COORDINATES"),  # m
         )
+
+        # --- Equipment history (read by the extrapolation diagnostics only) ---
+        ant = sj.get("ANTENNA")
+        if isinstance(ant, list):
+            for aj in ant:
+                st.antennas.append(AntennaWindow(
+                    start_year=decimal_year_from_sif(_jstr(aj, "START")),
+                    end_year=decimal_year_from_sif(_jstr(aj, "END")),
+                    type=_jstr(aj, "TYPE"),
+                    serial=_jstr(aj, "SERIAL_NUMBER"),
+                ))
+        rec = sj.get("RECEIVER")
+        if isinstance(rec, list):
+            for rj in rec:
+                st.receivers.append(ReceiverWindow(
+                    start_year=decimal_year_from_sif(_jstr(rj, "START")),
+                    end_year=decimal_year_from_sif(_jstr(rj, "END")),
+                    type=_jstr(rj, "TYPE"),
+                    firmware=_jstr(rj, "FIRMWARE"),
+                    serial=_jstr(rj, "SERIAL_NUMBER"),
+                ))
 
         # --- Occupations (ITRF coordinate solutions) ---
         occ = sj.get("OCCUPATION")
@@ -341,6 +448,11 @@ class SifRegistry:
                 o.velocity = (vx * 1e-3, vy * 1e-3, vz * 1e-3)
                 svx, svy, svz = _jvec3(oj, "VELOCITY_SIGMAS")
                 o.velocity_sigmas = (svx * 1e-3, svy * 1e-3, svz * 1e-3)
+                # This solution's own t_ref; absent or non-numeric (a JSON bool
+                # included) -> the METADATA epoch.
+                ref = oj.get("REFERENCE_EPOCH")
+                o.reference_epoch_year = (float(ref) if isinstance(ref, (int, float))
+                                          and not isinstance(ref, bool) else meta_epoch)
                 o.covariance = SifRegistry._assemble_covariance(oj, o)
                 st.occupations.append(o)
 
@@ -417,8 +529,30 @@ class SifRegistry:
         return C
 
     # -- lookup ------------------------------------------------------------ #
-    def find(self, station_key: str) -> Optional[Station]:
-        """Resolve a station by full ID, DOMES, then 4-char prefix (case-insensitive)."""
+    def find(self, station_key: str,
+             approx_ecef: Optional[Sequence[float]] = None,
+             max_prefix_distance_m: float = MAX_PREFIX_DISTANCE_M) -> Optional[Station]:
+        """Resolve a station by full ID, DOMES, then a checked 4-char prefix.
+
+        Keys are compared trimmed and case-insensitively.  An exact ID or DOMES
+        match is returned regardless of ``approx_ecef``.  Otherwise the station
+        whose ID starts with the key's first 4 characters is only a CANDIDATE,
+        because a 4-char code is not unique across networks (GAMB00PYF, absent
+        from both SIFs, would otherwise resolve to GAMB00USA, 7,688 km away):
+
+        * ``approx_ecef`` usable (three finite values, norm > 1e6 m): accepted
+          iff its 3D distance to the candidate's reference position
+          (APPROXIMATE_COORDINATES, else the first non-DO_NOT_USE occupation's
+          COORDINATES, else the first occupation's) is <= ``max_prefix_distance_m``.
+          A candidate with no usable reference position is rejected.
+        * no usable ``approx_ecef``: accepted iff the trimmed key is exactly 4
+          characters (a bare marker such as ``cit1`` carries nothing that could
+          contradict the candidate).  A longer key is rejected.
+
+        Every rejected candidate is logged at WARNING level on the
+        ``sif_propagate`` logger with the key, the candidate ID and, when known,
+        the distance.  Returns the matching ``Station``, or None.
+        """
         k = _upper_trim(station_key)
         if not k:
             return None
@@ -426,8 +560,36 @@ class SifRegistry:
             return self.stations[self._by_id[k]]
         if k in self._by_domes:
             return self.stations[self._by_domes[k]]
-        if len(k) >= 4 and k[:4] in self._by_id4:
-            return self.stations[self._by_id4[k[:4]]]
+        if len(k) < 4 or k[:4] not in self._by_id4:
+            return None
+
+        cand = self.stations[self._by_id4[k[:4]]]
+        key = station_key.strip()
+        if _usable_position(approx_ecef):
+            ref = _prefix_reference_position(cand)
+            if ref is None:
+                _log.warning("SIF lookup: '%s' is not an exact station ID or DOMES; 4-char "
+                             "prefix candidate %s rejected: it has no usable reference "
+                             "position to compare with the supplied approximate position",
+                             key, cand.id)
+                return None
+            dx = float(approx_ecef[0]) - ref[0]
+            dy = float(approx_ecef[1]) - ref[1]
+            dz = float(approx_ecef[2]) - ref[2]
+            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if dist <= max_prefix_distance_m:
+                return cand
+            _log.warning("SIF lookup: '%s' is not an exact station ID or DOMES; 4-char "
+                         "prefix candidate %s rejected: %.1f m from the supplied "
+                         "approximate position (limit %.1f m)",
+                         key, cand.id, dist, max_prefix_distance_m)
+            return None
+        if len(k) == 4:
+            return cand  # bare 4-char marker: nothing contradicts the candidate
+        _log.warning("SIF lookup: '%s' is not an exact station ID or DOMES; 4-char prefix "
+                     "candidate %s rejected: the key is longer than a bare 4-char code "
+                     "and no approximate position was supplied to confirm the match",
+                     key, cand.id)
         return None
 
     def __len__(self) -> int:
@@ -506,6 +668,18 @@ class ResolvedCoord:
     in_window: bool = False                              # epoch inside the occupation window?
     window: Tuple[float, float] = (0.0, 0.0)             # (start_year, end_year) of the used occupation
     occupation_mode: str = "covering"                    # selection mode actually applied
+    # Extrapolation diagnostics (no coordinate depends on them).  All False / 0.0
+    # when some non-flagged occupation window covers the epoch; otherwise the
+    # years and the gap are measured from the selected occupation.  In "covering"
+    # mode the selected window covers t exactly when some non-flagged window
+    # does.  In "latest" mode an epoch covered by an earlier occupation is not
+    # extrapolated, although in_window is False for the latest window.
+    extrapolated: bool = False
+    extrapolation_years: float = 0.0     # t - end (>= 0) past the end; t - start (< 0) before the start
+    segment_start_year: float = 0.0      # selected occupation's window (end 9999.0 = open)
+    segment_end_year: float = 0.0
+    antenna_change_in_gap: bool = False  # TYPE (radome included) or SERIAL_NUMBER change in the gap
+    receiver_change_in_gap: bool = False # TYPE change in the gap (firmware/serial-only do not count)
 
 
 OCCUPATION_MODES = ("covering", "latest")
@@ -550,6 +724,48 @@ def _select_occupation(station: Station, year: float,
     return best
 
 
+def _equipment_change_in_gap(windows, lo: float, hi: float, compare_serial: bool) -> bool:
+    """True if a window other than the first (by START) starts in [lo, hi] and
+    differs from its predecessor in TYPE (trimmed, whole string) or, when
+    ``compare_serial``, in SERIAL_NUMBER.  A record-only re-log (same TYPE and
+    serial) is not a change."""
+    ordered = sorted(windows, key=lambda w: w.start_year)  # stable: ties keep file order
+    for prev, cur in zip(ordered, ordered[1:]):
+        if not (lo <= cur.start_year <= hi):
+            continue
+        if cur.type.strip() != prev.type.strip():
+            return True
+        if compare_serial and cur.serial.strip() != prev.serial.strip():
+            return True
+    return False
+
+
+def _set_extrapolation(out: ResolvedCoord, station: Station, occ: Occupation,
+                       year: float) -> None:
+    """Fill the extrapolation diagnostics of ``out`` for ``occ`` evaluated at ``year``.
+
+    ``extrapolated`` is set iff no non-flagged occupation window of ``station``
+    covers ``year``; the signed years and the gap are then measured from ``occ``,
+    the selected occupation.  The uncovered gap is [end - tol, t] past the end and
+    [t, start + tol] before the start, with tol = ``EQUIPMENT_GAP_TOL_YR`` on the
+    segment side.
+    """
+    out.segment_start_year = occ.start_year
+    out.segment_end_year = occ.end_year
+    if any(not o.do_not_use and o.start_year <= year < o.end_year
+           for o in station.occupations):
+        return  # covered: flags stay False / 0.0
+    out.extrapolated = True
+    if year >= occ.end_year:
+        out.extrapolation_years = year - occ.end_year
+        lo, hi = occ.end_year - EQUIPMENT_GAP_TOL_YR, year
+    else:
+        out.extrapolation_years = year - occ.start_year
+        lo, hi = year, occ.start_year + EQUIPMENT_GAP_TOL_YR
+    out.antenna_change_in_gap = _equipment_change_in_gap(station.antennas, lo, hi, True)
+    out.receiver_change_in_gap = _equipment_change_in_gap(station.receivers, lo, hi, False)
+
+
 def _eval_psd_component(comp: PsdComponent, dt: float) -> float:
     d = 0.0
     for a, t in zip(comp.alog, comp.tlog):
@@ -572,10 +788,18 @@ def resolve_station_coordinate(station: Station, decimal_year: float,
     evaluates the current (last-starting, non-flagged) occupation, the NGS
     datasheet convention for a published legacy-epoch coordinate.  Everything
     else (linear term, periodic/PSD toggles, covariance propagation, dt measured
-    from the SIF reference epoch) is identical and applies to whichever
-    occupation was selected.  Periodic and post-seismic terms are keyed on the
-    epoch, not the occupation, so "latest" does not imply "no periodic"; pass
-    ``with_periodic=False`` for that.
+    from the selected occupation's own reference epoch) is identical and applies
+    to whichever occupation was selected.  Periodic and post-seismic terms are
+    keyed on the epoch, not the occupation, so "latest" does not imply "no
+    periodic"; pass ``with_periodic=False`` for that.
+
+    When no non-flagged occupation window covers the epoch, the result is
+    flagged ``extrapolated`` with the signed years outside the selected segment
+    and whether an antenna or receiver change lies in the gap; the coordinate
+    itself is evaluated exactly as before.  A caller consuming such a coordinate
+    should warn (the CLI does).  In "latest" mode an epoch covered by an earlier
+    occupation is therefore not flagged; ``in_window`` reports that the latest
+    window does not contain it.
 
     Returns a ``ResolvedCoord`` whose ``valid`` is False when the station has no
     usable occupation (the caller should then fall back to its own a-priori).
@@ -586,7 +810,7 @@ def resolve_station_coordinate(station: Station, decimal_year: float,
     if occ is None:
         return out
 
-    dt = decimal_year - station.reference_epoch_year
+    dt = decimal_year - occ.reference_epoch_year
 
     # Linear term: reference coordinate + velocity * (t - t_ref).
     x = occ.coordinates[0] + occ.velocity[0] * dt
@@ -645,6 +869,7 @@ def resolve_station_coordinate(station: Station, decimal_year: float,
 
     out.in_window = occ.start_year <= decimal_year < occ.end_year
     out.window = (occ.start_year, occ.end_year)
+    _set_extrapolation(out, station, occ, decimal_year)
     out.valid = True
     return out
 
@@ -702,6 +927,14 @@ def build_record(key: str, station: Optional[Station], resolved: Optional[Resolv
             "window_end": (None if resolved.window[1] >= _NEAREST_WINDOW_CAP else resolved.window[1]),
             "has_covariance": resolved.has_covariance,
             "occupation_mode": resolved.occupation_mode,
+            "extrapolated": resolved.extrapolated,
+            "extrapolation_years": resolved.extrapolation_years,
+            "segment_start_year": resolved.segment_start_year,
+            # None = open-ended, the same convention as window_end.
+            "segment_end_year": (None if resolved.segment_end_year >= _NEAREST_WINDOW_CAP
+                                 else resolved.segment_end_year),
+            "antenna_change_in_gap": resolved.antenna_change_in_gap,
+            "receiver_change_in_gap": resolved.receiver_change_in_gap,
         })
         if resolved.has_covariance and resolved.covariance is not None:
             sx, sy, sz = ecef_sigmas(resolved.covariance)
@@ -724,9 +957,12 @@ _CSV_COLUMNS = [
     "x", "y", "z", "lat_deg", "lon_deg", "height_m",
     "sigma_x", "sigma_y", "sigma_z", "sigma_e", "sigma_n", "sigma_u",
     "in_window", "window_start", "window_end", "source",
-    # Last column, so the earlier column order stays unchanged for existing
-    # consumers; default runs report "covering".
+    # Appended after the historical columns, so the earlier column order stays
+    # unchanged for existing consumers; default runs report "covering".
     "occupation_mode",
+    # Extrapolation diagnostics, appended after occupation_mode for the same reason.
+    "extrapolated", "extrapolation_years", "segment_start_year", "segment_end_year",
+    "antenna_change_in_gap", "receiver_change_in_gap",
 ]
 
 
@@ -741,6 +977,7 @@ _CSV_DECIMALS = {
     "sigma_e": 6, "sigma_n": 6, "sigma_u": 6,
     "epoch_year": 6, "reference_epoch_year": 6,
     "window_start": 6, "window_end": 6,
+    "extrapolation_years": 6, "segment_start_year": 6, "segment_end_year": 6,
 }
 _CSV_DEFAULT_DECIMALS = 6
 
@@ -769,6 +1006,24 @@ def write_json(records: List[dict], stream, epoch_year: float, sif_paths: List[s
     }
     json.dump(payload, stream, indent=2)
     stream.write("\n")
+
+
+def format_extrapolation_warning(station_id: str, resolved: ResolvedCoord,
+                                 decimal_year: float) -> str:
+    """One-line description of an extrapolated result, for a caller's warning.
+
+    States the years past (or before) the selected occupation segment and
+    whether an antenna / receiver change lies in the uncovered gap.
+    """
+    yrs = resolved.extrapolation_years
+    side = "past the end" if yrs >= 0.0 else "before the start"
+    seg_end = ("open" if resolved.segment_end_year >= _NEAREST_WINDOW_CAP
+               else f"{resolved.segment_end_year:.6f}")
+    return (f"{station_id}: epoch {decimal_year:.6f} is {abs(yrs):.3f} yr {side} of the "
+            f"selected SIF occupation segment [{resolved.segment_start_year:.6f}, {seg_end}) "
+            f"({resolved.occupation_mode}); coordinate extrapolated; "
+            f"antenna change in gap: {'yes' if resolved.antenna_change_in_gap else 'no'}; "
+            f"receiver change in gap: {'yes' if resolved.receiver_change_in_gap else 'no'}")
 
 
 # --------------------------------------------------------------------------- #
@@ -868,6 +1123,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                          "ITRF2020->NAD83(2011) transformation applied afterwards.")
     args = ap.parse_args(argv)
 
+    # Route library warnings (rejected 4-char prefix candidates) to stderr in the
+    # CLI's "# WARNING:" style for the duration of this call.
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("# WARNING: %(message)s"))
+    handler.setLevel(logging.WARNING)
+    _log.addHandler(handler)
+    try:
+        return _run(args, ap)
+    finally:
+        _log.removeHandler(handler)
+
+
+def _run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
     occupation_mode = "latest" if args.datasheet else args.occupation
     no_periodic = args.no_periodic or args.datasheet
 
@@ -902,6 +1170,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Resolve.
     records: List[dict] = []
     missing: List[str] = []
+    extrapolated: List[str] = []
     for key in keys:
         st = registry.find(key)
         if st is None:
@@ -915,6 +1184,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             with_psd=not args.no_psd,
             occupation=occupation_mode,
         )
+        if rc.valid and rc.extrapolated:
+            extrapolated.append(format_extrapolation_warning(st.id, rc, decimal_year))
         records.append(build_record(key, st, rc, decimal_year,
                                     with_covariance=not args.no_covariance))
 
@@ -934,6 +1205,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if close:
             out_stream.close()
 
+    for msg in extrapolated:
+        print(f"# WARNING: {msg}", file=sys.stderr)
     if missing:
         print(f"# WARNING: {len(missing)} station(s) not found in the SIF(s): "
               f"{', '.join(missing)}", file=sys.stderr)

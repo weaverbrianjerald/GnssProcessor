@@ -60,12 +60,17 @@ namespace {
         return out;
     }
 
-    /// Trim ASCII whitespace and upper-case (for case-insensitive key matching).
-    std::string upperTrim(std::string s) {
+    /// Trim ASCII whitespace, keeping case (for equipment TYPE / serial compares).
+    std::string trimCopy(const std::string& s) {
         const auto b = s.find_first_not_of(" \t\r\n");
         if (b == std::string::npos) return {};
         const auto e = s.find_last_not_of(" \t\r\n");
-        s = s.substr(b, e - b + 1);
+        return s.substr(b, e - b + 1);
+    }
+
+    /// Trim ASCII whitespace and upper-case (for case-insensitive key matching).
+    std::string upperTrim(std::string s) {
+        s = trimCopy(s);
         for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         return s;
     }
@@ -206,6 +211,9 @@ std::size_t StationInfoFile::load(const std::filesystem::path& sif_json) {
                 SifOccupation o;
                 o.start_year = decimalYearFromSif(jstr(oj, "START"));
                 o.end_year   = decimalYearFromSif(jstr(oj, "END"));
+                // Each record's own epoch (the NCN cors_ex records carry 2010.0
+                // under a 2020.0 METADATA epoch); METADATA only when absent.
+                o.reference_epoch_year = jnum(oj, "REFERENCE_EPOCH", meta_epoch);
                 o.coordinates  = jvec3(oj, "COORDINATES");
                 o.coord_sigmas = jvec3(oj, "COORDINATE_SIGMAS");          // metres (COORDINATE_UNITS=m)
                 o.velocity         = jvec3(oj, "VELOCITY") * 1.0e-3;      // mm/y -> m/y
@@ -310,15 +318,71 @@ std::size_t StationInfoFile::load(const std::filesystem::path& sif_json) {
     return added;
 }
 
-const StationInfo* StationInfoFile::find(const std::string& station_key) const {
+namespace {
+
+    /// A position the prefix guard can use: all finite and off the origin by more
+    /// than 1e6 m (rejects the zero vector a missing RINEX APPROX header leaves).
+    bool usableEcef(const Eigen::Vector3d& p) {
+        return p.allFinite() && p.norm() > 1e6;
+    }
+
+    /// Reference position of a prefix candidate for the distance test:
+    /// APPROXIMATE_COORDINATES, else the first non-DO_NOT_USE occupation's
+    /// coordinates, else the first occupation's; the first usable one wins.
+    /// Empty when none is usable.
+    std::optional<Eigen::Vector3d> prefixReferencePosition(const StationInfo& s) {
+        if (usableEcef(s.approximate_coordinates)) return s.approximate_coordinates;
+        for (const auto& o : s.occupations) {
+            if (o.do_not_use) continue;
+            if (usableEcef(o.coordinates)) return o.coordinates;
+            break;  // only the FIRST non-flagged occupation is consulted
+        }
+        if (!s.occupations.empty() && usableEcef(s.occupations.front().coordinates))
+            return s.occupations.front().coordinates;
+        return std::nullopt;
+    }
+
+} // namespace
+
+const StationInfo* StationInfoFile::find(const std::string& station_key,
+                                         const Eigen::Vector3d* approx_ecef,
+                                         double max_prefix_distance_m) const {
     const std::string k = upperTrim(station_key);
     if (k.empty()) return nullptr;
+    // Exact matches are authoritative: no position test.
     if (auto it = by_id_.find(k); it != by_id_.end()) return &stations_[it->second];
     if (auto it = by_domes_.find(k); it != by_domes_.end()) return &stations_[it->second];
-    if (k.size() >= 4) {
-        if (auto it = by_id4_.find(k.substr(0, 4)); it != by_id4_.end())
-            return &stations_[it->second];
+    if (k.size() < 4) return nullptr;
+    const auto it4 = by_id4_.find(k.substr(0, 4));
+    if (it4 == by_id4_.end()) return nullptr;
+
+    // A 4-char prefix match is only a candidate: a 9-char ID missing from the
+    // registry can share its code with an unrelated station (GAMB00PYF vs
+    // GAMB00USA, 7,688 km apart).  Confirm it by position when the caller has
+    // one, else accept only a bare 4-char key.
+    const StationInfo& cand = stations_[it4->second];
+    if (approx_ecef != nullptr && usableEcef(*approx_ecef)) {
+        const std::optional<Eigen::Vector3d> ref = prefixReferencePosition(cand);
+        if (!ref) {
+            log_manager_.getLogger("station_info")->warn(
+                "SIF: '{}' is not a station ID or DOMES; 4-char prefix candidate {} "
+                "rejected (the candidate has no usable reference position to compare "
+                "with the approximate position)", trimCopy(station_key), cand.id);
+            return nullptr;
+        }
+        const double dist_m = (*ref - *approx_ecef).norm();
+        if (dist_m <= max_prefix_distance_m) return &cand;
+        log_manager_.getLogger("station_info")->warn(
+            "SIF: '{}' is not a station ID or DOMES; 4-char prefix candidate {} "
+            "rejected: {:.1f} m from the approximate position (limit {:.1f} m)",
+            trimCopy(station_key), cand.id, dist_m, max_prefix_distance_m);
+        return nullptr;
     }
+    if (k.size() == 4) return &cand;  // a bare code carries no conflicting information
+    log_manager_.getLogger("station_info")->warn(
+        "SIF: '{}' is not a station ID or DOMES; 4-char prefix candidate {} rejected "
+        "(no approximate position to confirm it; without one only a bare 4-char "
+        "code is accepted)", trimCopy(station_key), cand.id);
     return nullptr;
 }
 
@@ -341,6 +405,25 @@ namespace {
         return best;
     }
 
+    /// True iff some window of @p wins other than the first, in start order,
+    /// starts inside [lo, hi] (inclusive) and @p differs from the window before
+    /// it.  Windows sharing a start keep their file order (stable sort).
+    template <class Window, class Differs>
+    bool equipmentChangeInGap(const std::vector<Window>& wins, double lo, double hi,
+                              Differs differs) {
+        std::vector<const Window*> by_start;
+        by_start.reserve(wins.size());
+        for (const auto& w : wins) by_start.push_back(&w);
+        std::stable_sort(by_start.begin(), by_start.end(),
+                         [](const Window* a, const Window* b) { return a->start_year < b->start_year; });
+        for (std::size_t i = 1; i < by_start.size(); ++i) {
+            const double st = by_start[i]->start_year;
+            if (st < lo || st > hi) continue;
+            if (differs(*by_start[i - 1], *by_start[i])) return true;
+        }
+        return false;
+    }
+
 } // namespace
 
 ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
@@ -351,8 +434,43 @@ ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
     const SifOccupation* occ = selectOccupation(s, decimal_year);
     if (occ == nullptr) return out;  // no usable solution; caller falls back
 
-    // Linear term: reference coordinate + velocity * (t - t_ref).
-    const double dt = decimal_year - s.reference_epoch_year;
+    // Extrapolation diagnostics (no effect on the coordinate).  selectOccupation
+    // returns a covering window whenever one exists, so the selected record not
+    // covering the epoch means none does.
+    out.segment_start_year = occ->start_year;
+    out.segment_end_year   = occ->end_year;
+    if (decimal_year < occ->start_year || decimal_year >= occ->end_year) {
+        out.extrapolated = true;
+        double gap_lo = 0.0, gap_hi = 0.0;
+        if (decimal_year >= occ->end_year) {
+            out.extrapolation_years = decimal_year - occ->end_year;
+            gap_lo = occ->end_year - SIF_GAP_CHANGE_TOLERANCE_YR;
+            gap_hi = decimal_year;
+        } else {
+            out.extrapolation_years = decimal_year - occ->start_year;  // negative
+            gap_lo = decimal_year;
+            gap_hi = occ->start_year + SIF_GAP_CHANGE_TOLERANCE_YR;
+        }
+        // Antenna: model + radome (whole TYPE) or serial; a same-equipment
+        // re-log does not count.  Receiver: TYPE only; firmware-only and
+        // serial-only updates do not count.
+        out.antenna_change_in_gap = equipmentChangeInGap(
+            s.antennas, gap_lo, gap_hi,
+            [](const SifAntennaWindow& prev, const SifAntennaWindow& cur) {
+                return trimCopy(prev.type) != trimCopy(cur.type)
+                    || trimCopy(prev.serial) != trimCopy(cur.serial);
+            });
+        out.receiver_change_in_gap = equipmentChangeInGap(
+            s.receivers, gap_lo, gap_hi,
+            [](const SifReceiverWindow& prev, const SifReceiverWindow& cur) {
+                return trimCopy(prev.type) != trimCopy(cur.type);
+            });
+    }
+
+    // Linear term: reference coordinate + velocity * (t - t_ref), with t_ref the
+    // occupation's own reference epoch (the METADATA epoch only when the record
+    // has none; see the loader).
+    const double dt = decimal_year - occ->reference_epoch_year;
     out.ecef = occ->coordinates + occ->velocity * dt;
 
     // Periodic (seasonal) terms: sum over every block whose window covers the
@@ -401,7 +519,9 @@ ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
         }
     }
 
-    // Propagate the position covariance to the epoch: with A = [I3 | dt*I3],
+    // Propagate the position covariance to the epoch over the same dt as the
+    // linear term (the covariance is referred to the occupation's own epoch):
+    // with A = [I3 | dt*I3],
     // Cov3(t) = Cxx + dt*(Cxv + Cxv^T) + dt^2*Cvv.  (The periodic/PSD sigma
     // contributions are sub-mm and intentionally omitted from the datum prior.)
     if (occ->has_covariance) {
@@ -419,13 +539,17 @@ ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
 std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile& registry,
                                                            const std::string& station_name,
                                                            double decimal_year) {
+    // A roster station without position_ecef has no position to confirm a
+    // prefix candidate with: find() then accepts an exact ID, a DOMES number or
+    // a bare 4-char code, and rejects (and logs) a longer prefix-only name.
     const StationInfo* s = registry.find(station_name);
     if (s == nullptr) return std::nullopt;
     // Full SIF coordinate function at the run date (see resolveStationCoordinate):
     //   x(t) = x_ref + v * (t - t_ref) + periodic(t) + post-seismic(t)
-    // with x_ref/v the occupation solution at the SIF reference epoch (typically
-    // ITRF2020 at 2020.0), so the returned ECEF is the survey-grade coordinate
-    // propagated to decimal_year, as a fixed-coordinate network roster requires.
+    // with x_ref/v the occupation solution at that occupation's own reference
+    // epoch (typically ITRF2020 at 2020.0), so the returned ECEF is the
+    // survey-grade coordinate propagated to decimal_year, as a fixed-coordinate
+    // network roster requires.
     const ResolvedStationCoord rc = resolveStationCoordinate(*s, decimal_year,
                                                              /*with_periodic=*/true,
                                                              /*with_psd=*/true);
@@ -433,6 +557,12 @@ std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile
     SifRosterCoordinate out;
     out.ecef       = rc.ecef;
     out.epoch_year = decimal_year;
+    out.extrapolated           = rc.extrapolated;
+    out.extrapolation_years    = rc.extrapolation_years;
+    out.segment_start_year     = rc.segment_start_year;
+    out.segment_end_year       = rc.segment_end_year;
+    out.antenna_change_in_gap  = rc.antenna_change_in_gap;
+    out.receiver_change_in_gap = rc.receiver_change_in_gap;
     return out;
 }
 

@@ -50,6 +50,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,6 +79,23 @@ class TruthCoord:
         Provenance tag, e.g. ``"sinex:CIT1"`` or ``"sif:CIT100USA"``.
     sigma
         Optional ``(3,)`` 1-sigma ECEF uncertainty in metres (datum prior).
+    extrapolated
+        True when no usable solution window covers ``epoch_year``, so the
+        coordinate was propagated off a segment that had already ended (or not
+        yet started).  Set by :class:`SifTruth` only; other backends leave it
+        False.
+    extrapolation_years
+        Signed years outside the selected segment: ``t - end`` past its end,
+        ``t - start`` (negative) before its start, ``0.0`` when covered.
+    segment_start_year, segment_end_year
+        Window of the solution segment that produced the coordinate (an open
+        end reads ``9999.0``); ``None`` for backends that do not report one.
+    antenna_change_in_gap
+        True when an antenna change (type incl. radome, or serial number)
+        starts between the segment boundary and ``epoch_year``, i.e. the
+        extrapolation crosses a hardware change that typically ends a segment.
+    receiver_change_in_gap
+        As ``antenna_change_in_gap`` for a receiver type change.
     """
 
     ecef: np.ndarray
@@ -85,6 +103,12 @@ class TruthCoord:
     frame: str = ""
     source: str = ""
     sigma: Optional[np.ndarray] = None
+    extrapolated: bool = False
+    extrapolation_years: float = 0.0
+    segment_start_year: Optional[float] = None
+    segment_end_year: Optional[float] = None
+    antenna_change_in_gap: bool = False
+    receiver_change_in_gap: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +324,37 @@ class SinexTruth(TruthSource):
 
 _MM = 1.0e-3  # mm -> m
 
+#: A 4-char prefix match is accepted only within this 3D distance [m] of the
+#: caller's approximate position (when one is supplied).  A real rename keeps
+#: the monument (``STHL00GBR`` -> ``STHL00SHN``, 0 km); a code reused elsewhere
+#: does not (``GAMB00PYF`` vs ``GAMB00USA``, 7,688 km).
+SIF_MAX_PREFIX_DISTANCE_M = 10000.0
+
+#: Slack [yr] around a segment boundary when looking for an antenna / receiver
+#: change in an extrapolation gap: the hardware log and the coordinate segment
+#: rarely break at the same second (CHUR00CAN: receiver 23:43, segment 23:59:30).
+SIF_GAP_TOLERANCE_YR = 2.0 / 365.25
+
+# An ECEF vector shorter than this is a placeholder (zeros / missing), not a position.
+_MIN_ECEF_NORM_M = 1.0e6
+
+
+class SifPrefixRejectedWarning(UserWarning):
+    """A 4-char prefix candidate was refused (distance, or an unconfirmed long key)."""
+
+
+class SifExtrapolationWarning(UserWarning):
+    """A SIF coordinate was propagated outside every usable occupation window."""
+
+
+def _usable_ecef(v: Optional[np.ndarray]) -> bool:
+    """True for a finite ECEF vector of plausible length (norm > 1e6 m)."""
+    if v is None:
+        return False
+    v = np.asarray(v, dtype=float)
+    return (v.shape == (3,) and bool(np.all(np.isfinite(v)))
+            and float(np.linalg.norm(v)) > _MIN_ECEF_NORM_M)
+
 
 def _decimal_year_from_sif(s: str) -> float:
     """Port of ``decimalYearFromSif``: ``"YYYY-MM-DDTHH:MM:SS TZ"`` -> decimal yr.
@@ -340,10 +395,19 @@ def _enu_delta_to_ecef(e: float, n: float, u: float,
 class _SifOccupation:
     start_year: float
     end_year: float
-    coords: np.ndarray      # m, at the SIF reference epoch
+    coords: np.ndarray      # m, at ref_epoch
     velocity: np.ndarray    # m/yr
     coord_sigmas: np.ndarray
     do_not_use: bool
+    ref_epoch: float        # OCCUPATION.REFERENCE_EPOCH, else METADATA.REFERENCE_EPOCH
+
+
+@dataclass
+class _SifEquipWindow:
+    """One ANTENNA or RECEIVER history window (only what the gap test reads)."""
+    start_year: float
+    type: str               # trimmed; antenna TYPE includes the radome
+    serial: str             # trimmed
 
 
 @dataclass
@@ -382,10 +446,13 @@ class _SifStation:
     sid: str
     domes: str
     frame: str
-    ref_epoch: float
+    ref_epoch: float                  # METADATA.REFERENCE_EPOCH (occupation fallback)
     occupations: List[_SifOccupation]
     periodic: List[_SifPeriodicBlock]
     psd: List[_SifPsdBlock]
+    approx: Optional[np.ndarray] = None                       # APPROXIMATE_COORDINATES, m
+    antennas: List[_SifEquipWindow] = field(default_factory=list)   # sorted by START
+    receivers: List[_SifEquipWindow] = field(default_factory=list)  # sorted by START
 
 
 def _ecef_to_llh_rad(ecef: np.ndarray) -> Tuple[float, float]:
@@ -410,9 +477,32 @@ class SifTruth(TruthSource):
 
     Port of the C++ ``resolveStationCoordinate``: linear term
     ``coords + velocity*(t - ref_epoch)`` plus optional periodic (seasonal) and
-    post-seismic deformation.  ``ref_epoch`` is the file-level
-    ``METADATA.REFERENCE_EPOCH`` (2020.0 for IGS20), to which *all* occupation
-    ``COORDINATES`` are referenced.
+    post-seismic deformation.  ``ref_epoch`` is the selected occupation's own
+    ``OCCUPATION.REFERENCE_EPOCH``, falling back to the file-level
+    ``METADATA.REFERENCE_EPOCH`` (2020.0 for IGS20) when the record has none.
+    Almost every occupation sits at 2020.0, but a few NCN records
+    (``AZAZ00USA``, ``AZOR00USA``, ``AZPL00USA``, ``FLSI00USA``) are at 2010.0;
+    propagating those from 2020.0 would misplace them by ten years of velocity
+    (11-15 cm).  The periodic terms keep the file-level epoch as their phase
+    reference.
+
+    Lookup (:meth:`_find`) tries the full 9-char ID, then the DOMES number, then
+    the 4-char station prefix.  An exact ID or DOMES match is returned as is.  A
+    prefix match is only a *candidate*: with an approximate position it must lie
+    within ``SIF_MAX_PREFIX_DISTANCE_M`` of the candidate's reference position;
+    without one, only a bare 4-char key (``"CIT1"``) is accepted.  A longer key
+    that is neither an exact ID nor a DOMES says more than the code (monument,
+    country), and nothing confirms the candidate agrees: ``GAMB00PYF`` is absent,
+    and its prefix names ``GAMB00USA``, 7,688 km away.  Every refusal warns
+    (:class:`SifPrefixRejectedWarning`).
+
+    Occupation selection: the non-flagged window covering the epoch, else the
+    non-flagged window with the nearest midpoint.  The second case extrapolates
+    a closed segment past its end (or before its start); the coordinate is still
+    returned unchanged, but :class:`TruthCoord` then carries
+    ``extrapolated=True``, the years outside the segment and whether an antenna
+    or receiver change starts in that gap, and :meth:`resolve` warns
+    (:class:`SifExtrapolationWarning`).
     """
 
     def __init__(self, paths, with_periodic: bool = True, with_psd: bool = True):
@@ -441,9 +531,12 @@ class SifTruth(TruthSource):
                 domes=str(sj.get("DOMES", "") or "").strip().upper(),
                 frame=meta_frame,
                 ref_epoch=meta_epoch,
-                occupations=self._read_occupations(sj),
+                occupations=self._read_occupations(sj, meta_epoch),
                 periodic=self._read_periodic(sj, meta_epoch) if self.with_periodic else [],
                 psd=self._read_psd(sj) if self.with_psd else [],
+                approx=self._vec3(sj, "APPROXIMATE_COORDINATES"),  # zeros if absent
+                antennas=self._read_equipment(sj, "ANTENNA"),
+                receivers=self._read_equipment(sj, "RECEIVER"),
             )
             self._by_id.setdefault(st.sid, st)
             if len(st.sid) >= 4:
@@ -458,9 +551,14 @@ class SifTruth(TruthSource):
             return np.array([float(v[0]), float(v[1]), float(v[2])], dtype=float)
         return np.zeros(3, dtype=float)
 
-    def _read_occupations(self, sj) -> List[_SifOccupation]:
+    def _read_occupations(self, sj, meta_epoch: float) -> List[_SifOccupation]:
         out: List[_SifOccupation] = []
         for oj in sj.get("OCCUPATION", []) or []:
+            # Each occupation's COORDINATES are at its own REFERENCE_EPOCH; only a
+            # record without a numeric one inherits the file-level epoch.
+            ep = oj.get("REFERENCE_EPOCH")
+            ref_epoch = (float(ep) if isinstance(ep, (int, float))
+                         and not isinstance(ep, bool) else meta_epoch)
             out.append(_SifOccupation(
                 start_year=_decimal_year_from_sif(str(oj.get("START", ""))),
                 end_year=_decimal_year_from_sif(str(oj.get("END", ""))),
@@ -468,7 +566,19 @@ class SifTruth(TruthSource):
                 velocity=self._vec3(oj, "VELOCITY") * _MM,  # mm/yr -> m/yr
                 coord_sigmas=self._vec3(oj, "COORDINATE_SIGMAS"),
                 do_not_use=bool(oj.get("DO_NOT_USE", False)),
+                ref_epoch=ref_epoch,
             ))
+        return out
+
+    @staticmethod
+    def _read_equipment(sj, key: str) -> List[_SifEquipWindow]:
+        """``ANTENNA`` / ``RECEIVER`` history, stably sorted by START."""
+        out = [_SifEquipWindow(
+                   start_year=_decimal_year_from_sif(str(wj.get("START", ""))),
+                   type=str(wj.get("TYPE", "") or "").strip(),
+                   serial=str(wj.get("SERIAL_NUMBER", "") or "").strip())
+               for wj in (sj.get(key, []) or [])]
+        out.sort(key=lambda w: w.start_year)
         return out
 
     def _read_periodic(self, sj, meta_epoch) -> List[_SifPeriodicBlock]:
@@ -514,15 +624,89 @@ class SifTruth(TruthSource):
         return out
 
     # -- resolution --------------------------------------------------------
-    def _find(self, station: str) -> Optional[_SifStation]:
+    @staticmethod
+    def _reference_position(st: _SifStation) -> Optional[np.ndarray]:
+        """Position a prefix candidate is distance-checked against.
+
+        ``APPROXIMATE_COORDINATES`` if usable, else the first non-flagged
+        occupation's ``COORDINATES``, else the first occupation's; ``None`` when
+        none of them is a usable ECEF.
+        """
+        if _usable_ecef(st.approx):
+            return st.approx
+        for o in st.occupations:
+            if not o.do_not_use:
+                if _usable_ecef(o.coords):
+                    return o.coords
+                break
+        if st.occupations and _usable_ecef(st.occupations[0].coords):
+            return st.occupations[0].coords
+        return None
+
+    def _find(self, station: str, approx_ecef: Optional[Sequence[float]] = None,
+              max_prefix_distance_m: float = SIF_MAX_PREFIX_DISTANCE_M, *,
+              stacklevel: int = 2) -> Optional[_SifStation]:
+        """Look a station up: exact ID, then DOMES, then a checked 4-char prefix.
+
+        Parameters
+        ----------
+        station
+            9-char ID, DOMES number or 4-char code; case-insensitive, trimmed.
+        approx_ecef
+            Optional approximate ECEF [m] of the station the caller means.  When
+            usable (exactly three finite components, norm > 1e6 m) a prefix
+            candidate is accepted only within ``max_prefix_distance_m`` of its
+            reference position.  Without it, a prefix candidate is accepted only
+            for a bare 4-char key.  Exact ID and DOMES matches ignore it.
+        max_prefix_distance_m
+            Acceptance radius for a prefix candidate [m].
+        stacklevel
+            ``warnings.warn`` stack level of a refusal, counted from here: 2
+            names the direct caller, 3 the caller's caller (:meth:`resolve`
+            passes 3 so the warning names the same line as its own
+            :class:`SifExtrapolationWarning`).
+
+        Returns
+        -------
+        The station record, or ``None`` (unknown, or the prefix candidate was
+        refused with a :class:`SifPrefixRejectedWarning`).
+        """
         k = station.strip().upper()
         if not k:
             return None
         if k in self._by_id:
             return self._by_id[k]
-        if len(k) >= 4 and k[:4] in self._by_id4:
-            return self._by_id4[k[:4]]
-        return self._by_domes.get(k)
+        if k in self._by_domes:
+            return self._by_domes[k]
+        if len(k) < 4 or k[:4] not in self._by_id4:
+            return None
+        cand = self._by_id4[k[:4]]
+        if _usable_ecef(approx_ecef):
+            ref = self._reference_position(cand)
+            if ref is None:
+                warnings.warn(
+                    f"SIF: prefix candidate {cand.sid} for '{k}' rejected: the "
+                    f"candidate has no usable reference position to check "
+                    f"against the supplied approximate position",
+                    SifPrefixRejectedWarning, stacklevel=stacklevel)
+                return None
+            dist = float(np.linalg.norm(np.asarray(approx_ecef, dtype=float) - ref))
+            if dist <= max_prefix_distance_m:
+                return cand
+            warnings.warn(
+                f"SIF: prefix candidate {cand.sid} for '{k}' rejected: "
+                f"{dist:.1f} m from the supplied approximate position "
+                f"(limit {max_prefix_distance_m:.1f} m)",
+                SifPrefixRejectedWarning, stacklevel=stacklevel)
+            return None
+        if len(k) == 4:
+            return cand   # a bare 4-char code carries nothing to contradict the match
+        warnings.warn(
+            f"SIF: prefix candidate {cand.sid} for '{k}' rejected: '{k}' is not an "
+            f"exact ID or DOMES and no approximate position was supplied to "
+            f"confirm the 4-char match",
+            SifPrefixRejectedWarning, stacklevel=stacklevel)
+        return None
 
     @staticmethod
     def _select_occupation(st: _SifStation, year: float) -> Optional[_SifOccupation]:
@@ -538,15 +722,68 @@ class SifTruth(TruthSource):
                 best, best_dist = o, dist
         return best
 
-    def resolve(self, station: str, decimal_year: float) -> Optional[TruthCoord]:
-        st = self._find(station)
+    @staticmethod
+    def _change_in_gap(windows: List[_SifEquipWindow], lo: float, hi: float,
+                       compare_serial: bool) -> bool:
+        """True if a window after the first starts in ``[lo, hi]`` with a new
+        TYPE (or, when ``compare_serial``, a new SERIAL_NUMBER) relative to the
+        window before it.  A re-log that changes neither does not count."""
+        for prev, w in zip(windows, windows[1:]):
+            if lo <= w.start_year <= hi and (
+                    w.type != prev.type or (compare_serial and w.serial != prev.serial)):
+                return True
+        return False
+
+    @classmethod
+    def _extrapolation(cls, st: _SifStation, occ: _SifOccupation,
+                       year: float) -> Tuple[bool, float, bool, bool]:
+        """``(extrapolated, extrapolation_years, antenna_change, receiver_change)``.
+
+        The selected occupation covers ``year`` unless no non-flagged window
+        does, so a non-covering selection is exactly the extrapolated case.  The
+        gap runs from the segment boundary (widened by ``SIF_GAP_TOLERANCE_YR``)
+        to the query epoch.
+        """
+        if occ.start_year <= year < occ.end_year:
+            return False, 0.0, False, False
+        if year >= occ.end_year:
+            years = year - occ.end_year
+            lo, hi = occ.end_year - SIF_GAP_TOLERANCE_YR, year
+        else:
+            years = year - occ.start_year
+            lo, hi = year, occ.start_year + SIF_GAP_TOLERANCE_YR
+        return (True, years,
+                cls._change_in_gap(st.antennas, lo, hi, compare_serial=True),
+                cls._change_in_gap(st.receivers, lo, hi, compare_serial=False))
+
+    def resolve(self, station: str, decimal_year: float, *,
+                approx_ecef: Optional[Sequence[float]] = None) -> Optional[TruthCoord]:
+        """Return the SIF coordinate of ``station`` at ``decimal_year``.
+
+        ``approx_ecef`` (keyword-only, optional) lets a 4-char prefix match be
+        confirmed by distance; see :meth:`_find`.  An epoch outside every usable
+        occupation window still resolves, flagged ``extrapolated`` on the
+        result and warned with a :class:`SifExtrapolationWarning`.
+        """
+        st = self._find(station, approx_ecef, stacklevel=3)
         if st is None:
             return None
         occ = self._select_occupation(st, decimal_year)
         if occ is None:
             return None
 
-        dt = decimal_year - st.ref_epoch
+        extrapolated, extra_yr, ant_chg, rcv_chg = self._extrapolation(
+            st, occ, decimal_year)
+        if extrapolated:
+            warnings.warn(
+                f"SIF: {st.sid} at {decimal_year:.4f} is outside every usable "
+                f"occupation window; extrapolating segment "
+                f"[{occ.start_year:.4f}, {occ.end_year:.4f}) by {extra_yr:+.3f} yr "
+                f"(antenna change in gap: {'yes' if ant_chg else 'no'}, "
+                f"receiver change in gap: {'yes' if rcv_chg else 'no'})",
+                SifExtrapolationWarning, stacklevel=2)
+
+        dt = decimal_year - occ.ref_epoch
         ecef = occ.coords + occ.velocity * dt
 
         if self.with_periodic:
@@ -585,7 +822,12 @@ class SifTruth(TruthSource):
 
         sigma = occ.coord_sigmas if float(occ.coord_sigmas @ occ.coord_sigmas) > 0 else None
         return TruthCoord(ecef=ecef, epoch_year=decimal_year, frame=st.frame,
-                          source=f"sif:{st.sid}", sigma=sigma)
+                          source=f"sif:{st.sid}", sigma=sigma,
+                          extrapolated=extrapolated, extrapolation_years=extra_yr,
+                          segment_start_year=occ.start_year,
+                          segment_end_year=occ.end_year,
+                          antenna_change_in_gap=ant_chg,
+                          receiver_change_in_gap=rcv_chg)
 
     def stations(self) -> List[str]:
         return sorted(self._by_id.keys())

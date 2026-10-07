@@ -265,12 +265,13 @@ std::vector<std::string> activeFrequencyBands(
             // authoritative values the opole grid is sampled from, so they
             // carry no bilinear-interpolation error.  SifOceanPoleTide is laid
             // out in exactly the [N_R, N_I, E_R, E_I, U_R, U_I] order
-            // setOceanPoleTideCoefficients expects.
+            // setOceanPoleTideCoefficients expects.  The RINEX APPROX position
+            // confirms a 4-char prefix match (find() ignores it when unusable).
             bool from_sif = false;
             if (config.enableStationInfo()) {
                 if (const auto sif = config.getStationInfo()) {
                     const std::string key = rinex_parser_.getHeader().marker_name;
-                    if (const StationInfo* si = sif->find(key); si && si->opt.valid) {
+                    if (const StationInfo* si = sif->find(key, &opt_ecef); si && si->opt.valid) {
                         gnss_corrections_.setOceanPoleTideCoefficients(
                             { si->opt.north_real, si->opt.north_imag,
                               si->opt.east_real,  si->opt.east_imag,

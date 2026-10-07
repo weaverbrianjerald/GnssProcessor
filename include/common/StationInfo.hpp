@@ -20,9 +20,10 @@
  *    eccentricity, mounting orientation, @c DO_NOT_USE).
  *  - Time-windowed receiver history.
  *  - Time-windowed @c OCCUPATION solutions: ITRF coordinates + velocity +
- *    sigmas + the 6x6 coordinate/velocity covariance, all referred to the
- *    SIF @c REFERENCE_EPOCH (typically 2020.0) and @c REFERENCE_FRAME
- *    (typically ITRF2020).
+ *    sigmas + the 6x6 coordinate/velocity covariance, each referred to its
+ *    own record's @c REFERENCE_EPOCH (typically 2020.0; a handful of NCN
+ *    records carry 2010.0), falling back to the SIF @c METADATA epoch when a
+ *    record has none, in the SIF @c REFERENCE_FRAME (typically ITRF2020).
  *  - Nonlinear station motion: periodic (annual/semiannual XYZ cos/sin)
  *    terms and post-seismic deformation (log/exp relaxation) blocks.
  *
@@ -113,13 +114,24 @@ namespace GnssProcessor {
      * @brief Time-windowed ITRF coordinate solution (one @c OCCUPATION record).
      *
      * Coordinates and velocity are referred to the SIF @c REFERENCE_FRAME at
-     * @c REFERENCE_EPOCH (see @c StationInfo::reference_epoch_year).  The 6x6
-     * covariance is ordered [X, Y, Z, Vx, Vy, Vz].
+     * this record's own @c REFERENCE_EPOCH (@c reference_epoch_year).  The
+     * loader takes that from the OCCUPATION record and falls back to the SIF
+     * @c METADATA epoch (@c StationInfo::reference_epoch_year) only when the
+     * record has no numeric @c REFERENCE_EPOCH.  The epochs differ in
+     * practice: four NCN records (AZAZ00USA, AZOR00USA, AZPL00USA, FLSI00USA)
+     * are referred to 2010.0 while the METADATA epoch is 2020.0, so
+     * propagating them from the METADATA epoch misplaces them by ten years of
+     * velocity (11 to 15 cm).  All four are flagged DO_NOT_USE in the shipped
+     * NCN SIF, so occupation selection skips them and no resolved coordinate
+     * changes today; the per-record epoch applies once such a record is
+     * usable.  The 6x6 covariance is ordered
+     * [X, Y, Z, Vx, Vy, Vz] and is referred to the same epoch.
      */
     struct SifOccupation {
         double start_year{ 0.0 };  ///< Window start [decimal year].
         double end_year{ 0.0 };    ///< Window end   [decimal year].
-        Eigen::Vector3d coordinates{ 0.0, 0.0, 0.0 };    ///< ECEF coordinates at reference epoch [m].
+        double reference_epoch_year{ 2020.0 };           ///< Epoch of @c coordinates, @c velocity and @c covariance [decimal year].
+        Eigen::Vector3d coordinates{ 0.0, 0.0, 0.0 };    ///< ECEF coordinates at @c reference_epoch_year [m].
         Eigen::Vector3d coord_sigmas{ 0.0, 0.0, 0.0 };   ///< Coordinate sigmas [m].
         Eigen::Vector3d velocity{ 0.0, 0.0, 0.0 };       ///< ECEF velocity [m/yr].
         Eigen::Vector3d velocity_sigmas{ 0.0, 0.0, 0.0 };///< Velocity sigmas [m/yr].
@@ -188,7 +200,7 @@ namespace GnssProcessor {
         std::string description; ///< Free-text site description.
         Eigen::Vector3d approximate_coordinates{ 0.0, 0.0, 0.0 }; ///< A-priori ECEF [m].
         std::string reference_frame;       ///< e.g. "ITRF2020" (from SIF METADATA).
-        double reference_epoch_year{ 2020.0 }; ///< Coordinate/velocity reference epoch [decimal year].
+        double reference_epoch_year{ 2020.0 }; ///< SIF METADATA reference epoch [decimal year]; the fallback for an occupation with no REFERENCE_EPOCH of its own (see @c SifOccupation::reference_epoch_year).
 
         std::array<SifOtlConstituent, 11> otl{}; ///< OTL, BLQ order: M2 S2 N2 K2 K1 O1 P1 Q1 Mf Mm Ssa.
         bool has_otl{ false };                    ///< True if @c otl was populated.
