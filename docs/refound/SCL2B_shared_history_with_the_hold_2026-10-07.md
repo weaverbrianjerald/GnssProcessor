@@ -223,3 +223,16 @@ hours 2 to 6, and separately over hours 2 and 3; pooled over the 36 station-real
 external-consumer cost if the pooled median is at most +0.005 m over hours 2 to 6 and at most +0.010 m over hours 2 and
 3, and at most 20 % of station-realizations are worse by more than 0.02 m over hours 2 to 6; a cost otherwise, recorded
 for the arming decision.
+
+## 12. The held-out census read (2026-10-07)
+
+Six producers (`runs/_rap_scl2o_{col,s2,t2}_{b1,xb}`, 48 stations, the twelve of section 11 held out; exe
+`gnss_processor_scl2L.exe`), 72 consumer replays from the wire's first epoch (one checked byte-identical to the producer's
+in-loop consumer). X2b minus B1 alone, pooled over 36 station-realizations: over hours 2 to 6 median -0.0009 m (station-
+cluster bootstrap 90 %: -0.0063 to +0.0034), 0 worse by more than 0.02 m, 5 better; over hours 2 and 3 median +0.0021 m
+(-0.0072 to +0.0087). Per realization (hours 2 to 6 / 2 and 3): col -0.0015 / -0.0003, s2 -0.0037 / -0.0027, t2 +0.0018 /
++0.0087. Section 11's reading: no external-consumer cost, every clause met. Outside the registered window, hour 1 costs a
+pooled median +0.0117 m (15 of 36 worse by more than 0.02 m, 4 better; about 3 % of the hour-1 p50 of 0.34 m), earlier than
+section 9's mechanism (01:01 to 02:31): X2b's earliest wire (the ignition clones and the hold rows of the first epochs).
+The 36 samples share station effects across realizations (S43 -0.028 m on all three; S23 worse in hours 2 and 3 on all
+three), and the census is on a 48-station network, weaker than the 60-station wire an arming would use.
