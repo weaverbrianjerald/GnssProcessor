@@ -100,3 +100,25 @@ patch's hunks staged).
   section 12) as a committed grader.
 - Card SCL's owed items: the native broadcast-clock posture, a per-satellite q from the phase-visible NIS, card SMH's
   orphaned deficits at a dense edge, the census tail sites.
+
+## 7. A second noise realization (pre-registered 2026-10-07, before any regeneration)
+
+Every sim reading of cards SCL2 and SCL2B rests on one noise realization of `runs/simnet60_quiet_col_24h` (card SCL2
+section 12: the level follows that realization's code; the in-loop consumer's hours 2 and 3 are one draw on three beds).
+The read: the same fixture recipe (`config/sim/simnet60_quiet_col_24h.json`, the simulator that made it) with only the
+noise seed changed (`noise.seed`; the per-station salts stay as derived), 7 h from the fixture's start, as
+`runs/simnet60_quiet_col_s2`; the same OSB, clock and orbit truth, so the graders apply unchanged. Arms (6 h, the SCL
+regime with card SMH's smoothed hold, RINEX re-pointed to the new realization): X2b against B1 alone on the broadcast and
+the COD beds; the 16-station sim census on the broadcast pair.
+
+Predictions (no bars change; a read for the arming decision):
+
+1. X2b's de-commoned level in hour 6 at most 0.020 m on both beds and B1 alone's at least 0.035 m (the first
+   realization: 0.017 / 0.019 against 0.042 / 0.045); X2b's statement NEES in window 691-720 in [0.5, 2.0].
+2. If the in-loop SZZ000SIM excess of section 4 (+0.028 / +0.040 m in hours 2 and 3) is a draw, X2b minus B1 alone in
+   hours 2 and 3 is within plus or minus 0.02 m on both beds without a shared positive sign; a repeat of +0.02 m or more
+   in both hours on both beds reads as systematic.
+3. The sim census X2b against B1 alone: median within plus or minus 0.005 m, at most 2 stations worse by more than
+   0.02 m.
+4. X2b's hour-6 level follows the new realization's code (card SCL2 section 12's code-following prediction, if the
+   grader is ported by then): correlation at least 0.8.
