@@ -13,9 +13,13 @@ the satellite with a wire clock and no `network_level_bound.csv` row at that epo
 series   per epoch (every N): rms e, the across-satellite mean (the pivot-common part: minus the pivot's
          own level error), the rms with that mean removed (the de-commoned level), median e^2/(1/I_L)
          against the code-only bound, and median e^2/P_L; --persat writes every (epoch, satellite) row.
-decomp   per 120-epoch block from the first emitted epoch: the pivot-frame rms, the common part and the
-         de-commoned rms (card SCL2 section 3.1).  The common part on a broadcast bed carries the pinned
-         pivot's own a priori walk through card CLK-R's frame hold; the de-commoned rms is the level.
+decomp   per 120-epoch block from the first emitted epoch: the pivot-frame rms, the common part, the
+         de-commoned rms (card SCL2 section 3.1) and the all-satellite rms (amendment A2: the pivot included,
+         its pivot-frame error 0, every satellite about the mean of all).  The common part is minus the
+         pinned pivot's own level error (card SCL2 section 11); the de-commoned rms leaves the pivot ungraded.
+         --restart-bound (series only): the code-only bound 1/I_L restarted at each satellite's readmission
+         (a gap above 10 epochs in its monitor rows), since the producer's bound keeps the pre-park
+         information (card SCL2 section 11, G26); written as IL_restart_m2 in the per-satellite file.
 stated   per 30-epoch window: the de-commoned error against the producer's statement, the prior
          clock-contrast variance of `network_level_innov.csv` (p_prior_m2 at epoch t+1) less the walk
          q*30 s; rms actual, sd stated (median), mean NEES e_dm^2 / stated.
@@ -70,13 +74,33 @@ def series(d, W, ds):
     return out
 
 
+def restart_bound(S, gap_ep=10):
+    """{(epoch index, sat): 1/I_L restarted at the satellite's last readmission}.  The producer's bound
+    accumulates the code-only information without decay, so a satellite readmitted after a park keeps its
+    pre-park epochs; the information at the last monitor row before a gap above gap_ep epochs is subtracted."""
+    last, offset, out = {}, {}, {}
+    for i, (_, _, row) in enumerate(S):
+        for s, (_, _, IL) in row.items():
+            if not (IL == IL and IL > 0.0):
+                continue
+            info = 1.0 / IL
+            if s in last and i - last[s][0] > gap_ep:
+                offset[s] = last[s][1]
+            last[s] = (i, info)
+            rem = info - offset.get(s, 0.0)
+            out[(i, s)] = 1.0 / rem if rem > 0.0 else float('nan')
+    return out
+
+
 def cmd_series(a):
     W, d = load_walk(a[0]), resolve(a[1])
     every = int(a[a.index('--every') + 1]) if '--every' in a else 30
     persat = a[a.index('--persat') + 1] if '--persat' in a else None
     S = series(d, W, cl.datum_share())
+    RB = restart_bound(S) if '--restart-bound' in a else None
+    il = (lambda i, s, v: RB.get((i, s), float('nan'))) if RB is not None else (lambda i, s, v: v[2])
     f = lambda L: st.median(L) if L else float('nan')
-    print('==', os.path.basename(d), 'epochs', len(S))
+    print('==', os.path.basename(d), 'epochs', len(S), '(bound restarted at readmissions)' if RB is not None else '')
     print('   ep pivot   n   rms_e  mean_e  rms_dm  med_e2/IL  med_e2/PL  sdIL_mm')
     for i in range(59, len(S), every):
         t, pv, row = S[i]
@@ -86,24 +110,26 @@ def cmd_series(a):
         n = len(es); mu = sum(es) / n
         rms = math.sqrt(sum(x * x for x in es) / n)
         rdm = math.sqrt(sum((x - mu) ** 2 for x in es) / n)
-        nIL = [v[0] ** 2 / v[2] for v in row.values() if v[2] == v[2]]
+        ILs = {s: il(i, s, v) for s, v in row.items()}
+        nIL = [v[0] ** 2 / ILs[s] for s, v in row.items() if ILs[s] == ILs[s]]
         nPL = [v[0] ** 2 / v[1] for v in row.values() if v[1] == v[1]]
-        sIL = [math.sqrt(v[2]) for v in row.values() if v[2] == v[2]]
+        sIL = [math.sqrt(x) for x in ILs.values() if x == x]
         print(f'{i + 1:5d} {pv} {n:3d}  {rms:6.3f}  {mu:+6.3f}  {rdm:6.3f}  {f(nIL):8.2f}  {f(nPL):8.2f}  {1000 * f(sIL):7.1f}')
     if persat:
         with open(persat, 'w', newline='') as fo:
             w = csv.writer(fo)
-            w.writerow(['ep', 'tow', 'pivot', 'sat', 'e_m', 'PL_m2', 'IL_m2'])
+            w.writerow(['ep', 'tow', 'pivot', 'sat', 'e_m', 'PL_m2', 'IL_m2'] + (['IL_restart_m2'] if RB is not None else []))
             for i, (t, pv, row) in enumerate(S):
                 for s, (e, PL, IL) in sorted(row.items()):
-                    w.writerow([i + 1, f'{t:.3f}', pv, s, f'{e:.6f}', f'{PL:.6e}', f'{IL:.6e}'])
+                    extra = [f'{RB.get((i, s), float("nan")):.6e}'] if RB is not None else []
+                    w.writerow([i + 1, f'{t:.3f}', pv, s, f'{e:.6f}', f'{PL:.6e}', f'{IL:.6e}'] + extra)
 
 
 def cmd_decomp(a):
     W, ds = load_walk(a[0]), cl.datum_share()
     for r in a[1:]:
         d = resolve(r)
-        hc, hd, hp = defaultdict(list), defaultdict(list), defaultdict(list)
+        hc, hd, hp, ha = defaultdict(list), defaultdict(list), defaultdict(list), defaultdict(list)
         for i, (t, pv, row) in enumerate(series(d, W, ds)):
             es = [v[0] for v in row.values()]
             if len(es) < 5:
@@ -112,8 +138,11 @@ def cmd_decomp(a):
             hc[h].append(mu * mu)
             hd[h].append(sum((x - mu) ** 2 for x in es) / len(es))
             hp[h].append(sum(x * x for x in es) / len(es))
+            # Card SCL2 amendment A2: every satellite, the pivot included (its pivot-frame error is 0).
+            ea = es + [0.0]; ma = sum(ea) / len(ea)
+            ha[h].append(sum((x - ma) ** 2 for x in ea) / len(ea))
         f = lambda L: ' '.join(f'{math.sqrt(sum(L[h]) / len(L[h])):.3f}' for h in sorted(L))
-        print(f'{os.path.basename(d):22s} pivot-frame {f(hp)} | common {f(hc)} | de-commoned {f(hd)}')
+        print(f'{os.path.basename(d):22s} pivot-frame {f(hp)} | common {f(hc)} | de-commoned {f(hd)} | all-sat {f(ha)}')
 
 
 def cmd_stated(a):
