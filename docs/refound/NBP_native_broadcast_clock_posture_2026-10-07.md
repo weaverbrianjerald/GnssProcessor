@@ -190,3 +190,13 @@ fails is the posture, against a golden that uses COD's clocks.
 Owed (pre-register before any build): the attribution of the cost between the a priori's information (the broadcast clock
 against COD) and the regime (q 5e-6, card SMH's hold, B1, B2, X2), by the COD a priori under the self-contained regime on
 the same days; and the hour-1 convergence of the self-contained posture.
+
+## 11. Attribution of the multi-day cost (pre-registered 2026-10-07, before any run)
+
+Section 10's cost (native minus golden, pooled median +0.017 m over hours 2 to 6 on DOY 130 to 132) is split along the chain
+golden (g) -> the self-contained regime on the COD a priori (c: q 5e-6, card SMH's smoothed hold, B1, B2, keep, X2 with X2b;
+the golden's root, G01 kept) -> the same with G01 removed from the COD clock product (c0, the native mode excludes G01 by
+health) -> native (n). On DOY 129 to 132 (c and c0 new on every day; DOY 129's g and n are section 10's), 6 h, the same exe,
+the 16-site census per arm. Read: the pooled median paired change over hours 2 to 6 of each step (c - g: the regime; c0 - c:
+G01; n - c0: the a priori's information, broadcast against COD), and the share of site-days worse by more than 0.02 m per
+step; the hour-1 change per step. No bar: an attribution, recorded before the next build is chosen.
