@@ -135,3 +135,19 @@ passed, 17 data-fixture skips, 0 failed; the golden verify PASS, the posture che
 to the base exe with the knob off (`runs/_rap_nbpL_g0_{sim,fld}`); the native smoke arm byte-identical to the tested exe's,
 O trace included (`runs/_rap_nbpL_smoke` against `runs/_rap_nbp_smoke_sim`). Another workstream's uncommitted edits in
 `CMakeLists.txt` and `GnssConfigLoadNetwork.cpp` were left out of the commit.
+
+## 9. The self-contained native posture on three more days (pre-registered 2026-10-07, before any run)
+
+Every graded number of cards SCL to NBP is DOY 129. The read: on DOY 130, 131 and 132 (card MDR's data, 6 h from 00:00,
+the field), the full self-contained native posture (card SCL2B's posture with this card's `sp3_brdc_clock`: q 5e-6, card
+SMH's smoothed hold, B1, B2 and the keep, X2 with X2b, a per-day native root of SP3, ERP, OSB and the day's navigation file
+with no CLK) against the field golden (COD a priori, card LAH's phase-clock hold) on the same day and the same exe
+(`gnss_processor_nbpL.exe`), each day's roster moved by `scripts/mday_golden_config.py`. Graded on WTZZ00DEU by hour and
+the 16-site census (`scripts/clock_level/mday_census.py` or `census6h.py`, PBF on, accumulating consumers), per day and
+pooled over the three days and DOY 129 (key `nbp_n` against `s16c`).
+
+Reading (card SCL's G4 statistic, no bar changes elsewhere): the posture holds across days if, pooled over the 48
+site-days, the median paired change of the site p50 over hours 2 to 6 against the golden is at most +0.010 m and at most 20 %
+of site-days are worse by more than 0.02 m; per day the same statistic is reported. Also reported: the run-end counters
+(emitted epochs, anchor trips, datum decouples, NBP records stamped and held, cut-overs), any day whose navigation file
+lacks a transmitted record at an epoch, and the day's unhealthy satellites.
