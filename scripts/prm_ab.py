@@ -179,6 +179,47 @@ def digest(ls):
     return m.hexdigest()[:16]
 
 
+def compare_dirs(da, db, all_csv, label, absent_ok=False):
+    """Compare two run directories on the rules of `cmp` (CORE, and with all_csv every CSV
+    under logs/ that both wrote, wall-clock columns dropped).  Prints one line per file under
+    the heading `== <label>: ...` and returns True when every compared file is identical.
+    With absent_ok, a CORE file neither run wrote (products.txt on a run that emitted no
+    epoch) is reported and is not a difference; a file one run lacks always is.
+    Also used by scripts/nom_td_gate.py, which compares run directories by path."""
+    ok = True
+    files = list(CORE)
+    if all_csv:
+        ca = {os.path.relpath(p, da).replace(os.sep, '/') for p in glob.glob(da + '/logs/*.csv')}
+        cb = {os.path.relpath(p, db).replace(os.sep, '/') for p in glob.glob(db + '/logs/*.csv')}
+        files += sorted((ca & cb) - set(CORE))
+        for only in sorted(ca ^ cb):
+            print(f'  {label}  {only}: present in one arm only')
+            ok = False
+    print(f'== {label}: {os.path.basename(da)} vs {os.path.basename(db)}')
+    for rel in files:
+        pa, pb = f'{da}/{rel}', f'{db}/{rel}'
+        if absent_ok and not os.path.exists(pa) and not os.path.exists(pb):
+            print(f'  {rel:42s} absent in both runs')
+            continue
+        if not (os.path.exists(pa) and os.path.exists(pb)):
+            print(f'  {rel:42s} MISSING ({"A" if not os.path.exists(pa) else "B"})')
+            ok = False
+            continue
+        la, lb = lines(pa, rel == 'products.txt'), lines(pb, rel == 'products.txt')
+        same = la == lb
+        if not same:
+            ok = False
+        first = next((i for i, (x, y) in enumerate(zip(la, lb)) if x != y),
+                     None if len(la) == len(lb) else min(len(la), len(lb)))
+        tagv = ' (wall-clock columns dropped)' if os.path.basename(rel) in VOLATILE_COLS else ''
+        print(f'  {rel:42s} {digest(la)}/{len(la)}  {digest(lb)}/{len(lb)}  '
+              f'{"IDENTICAL" if same else "DIFFER at line " + str(first)}{tagv}')
+        if not same and first is not None:
+            print('     A:', (la[first] if first < len(la) else '<eof>')[:150])
+            print('     B:', (lb[first] if first < len(lb) else '<eof>')[:150])
+    return ok
+
+
 def cmp(a):
     ok = True
     remap = dict(m.split('=') for m in a.map)
@@ -189,33 +230,7 @@ def cmp(a):
         if not (os.path.isdir(da) and os.path.isdir(db)):
             continue
         pairs += 1
-        files = list(CORE)
-        if a.all_csv:
-            ca = {os.path.relpath(p, da).replace(os.sep, '/') for p in glob.glob(da + '/logs/*.csv')}
-            cb = {os.path.relpath(p, db).replace(os.sep, '/') for p in glob.glob(db + '/logs/*.csv')}
-            files += sorted((ca & cb) - set(CORE))
-            for only in sorted(ca ^ cb):
-                print(f'  {suffix}  {only}: present in one arm only')
-                ok = False
-        print(f'== {suffix}: {os.path.basename(da)} vs {os.path.basename(db)}')
-        for rel in files:
-            pa, pb = f'{da}/{rel}', f'{db}/{rel}'
-            if not (os.path.exists(pa) and os.path.exists(pb)):
-                print(f'  {rel:42s} MISSING ({"A" if not os.path.exists(pa) else "B"})')
-                ok = False
-                continue
-            la, lb = lines(pa, rel == 'products.txt'), lines(pb, rel == 'products.txt')
-            same = la == lb
-            if not same:
-                ok = False
-            first = next((i for i, (x, y) in enumerate(zip(la, lb)) if x != y),
-                         None if len(la) == len(lb) else min(len(la), len(lb)))
-            tagv = ' (wall-clock columns dropped)' if os.path.basename(rel) in VOLATILE_COLS else ''
-            print(f'  {rel:42s} {digest(la)}/{len(la)}  {digest(lb)}/{len(lb)}  '
-                  f'{"IDENTICAL" if same else "DIFFER at line " + str(first)}{tagv}')
-            if not same and first is not None:
-                print('     A:', (la[first] if first < len(la) else '<eof>')[:150])
-                print('     B:', (lb[first] if first < len(lb) else '<eof>')[:150])
+        ok = compare_dirs(da, db, a.all_csv, suffix) and ok
     if pairs == 0:
         print('no arm pairs to compare')
         ok = False

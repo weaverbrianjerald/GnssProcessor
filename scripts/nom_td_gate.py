@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Gate G-TD of card NOM step TD: two runs of one arm print and write the same run end.
+
+    python scripts/nom_td_gate.py <run A> <run B> [--mask-time] [--show N]
+
+A run is a directory, or a name under runs/ (`_rap_<tag>` or `<tag>` as rapid_arm.py names
+them).  The two runs are one arm on two executables built with the same Release flags (the
+reference and the candidate), or on one executable twice (the self-identity check of the
+masks).  Exit status 0 when every part below is IDENTICAL.
+
+What is compared, in order:
+  0. The two arm configs (arm.json), equal once the run directory name is masked (rapid_arm
+     writes it into product_output_path), so the runs differ by the executable alone.
+  1. Products and traces: scripts/prm_ab.py's comparison (compare_dirs with --all-csv):
+     products.txt without its '#' lines, closed_loop_trace.csv, network_epoch_status.csv
+     and every other logs/*.csv both runs wrote, with prm_ab's wall-clock columns
+     (VOLATILE_COLS) dropped.  Then products.txt in full, '#' and 'S,' lines included
+     (the serialized contract the B6 round trip reads back).  A run that emits no epoch
+     writes no products.txt; absent from both runs is consistent, from one is a difference.
+  2. The run manifest, logs/network_run_manifest.json, record by record and in order, as
+     printed (key order and number formatting included), with the values of `written_utc`,
+     `build.compiled` and `loop_ms` masked, the run directory name replaced by <RUN>, and
+     `config_hash_fnv1a64` masked (the hash of arm.json, which names the run directory;
+     part 0 compares the configs themselves); the last record must be `complete` in both.
+  3. The run-end log block, from the first line containing
+     'Network[timing]: epoch-loop wall' to the end of the file, in stdout.txt and in the
+     concatenated main_log (logs/main_log.N.log ... main_log.1.log, main_log.log, oldest
+     first, since spdlog rotates at 5 MB), line by line and in order, with the
+     `[time] [logger] [level]` prefix kept.
+  4. logs/rt_engine.log in full (the closed-loop consumer's log; the three consumer
+     summaries the run end prints are its last lines, so the full file contains the run-end
+     tail), with the same masks plus one of its own: the consumer's
+     `is <number>s behind wall-clock GPS` lag, which is the epoch's age against the wall
+     clock at the moment it ran; and the first token of exitcode.txt (the second is wall
+     seconds).
+
+The masks, and why each exists (measured on same-build pairs, card NOM2 section 6):
+  - Values: `-?<number> ms` becomes `<MS> ms` (and `<number>ms` becomes `<MS>ms`), and
+    `in <number>.<number> s` becomes `in <T> s`.  Wall-clock durations sit inside otherwise
+    deterministic counter lines (the datum graph, prior-residual, redundancy, MDB,
+    block-Baarda, congruence, roster and ledger-emit cost figures; the B6 round trip's
+    "in {:.2f} s").
+  - Whole lines dropped, because their presence, their order or every number in them is
+    wall clock: `Network[timing]`; `Network (D0)` and `Network (D0b)` (the D0b rows are
+    ranked by wall time with an unstable sort, so two 0 ms rows can swap); the D0 per-op
+    lines `Network (D0/INC-C0) carry-driver per-op` and `Network (D0/LF-1) lane-fold
+    per-op`; `Network (datum graph): worst census pass` and `Network (FC-1): slowest tick`
+    (printed or not depending on wall time); `Network (FC-1)   tick wall`.  The
+    deterministic D0 lines (the INC-C0 carry census, the K_c histogram, the D-c viability
+    screen) are kept.
+  - The run directory name becomes <RUN> (it is printed on failure branches and in the
+    manifest's paths).
+  - The time inside the prefix is the logger's GNSS epoch stamp, which is deterministic,
+    so it is compared as printed.  --mask-time replaces it with <TIME> for a log whose stamp
+    is wall clock.
+"""
+import argparse
+import glob
+import json
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE).replace(os.sep, '/')
+RUNS = ROOT + '/runs'
+sys.path.insert(0, HERE)
+import prm_ab  # noqa: E402  (the products and traces comparison)
+
+START = 'Network[timing]: epoch-loop wall'
+VALUE_MASKS = [
+    (re.compile(r'-?\d+(?:\.\d+)?(\s*)ms\b'), r'<MS>\1ms'),
+    (re.compile(r'\bin \d+\.\d+ s\b'), 'in <T> s'),
+]
+LINE_DROPS = [re.compile(p) for p in (
+    r'Network\[timing\]',
+    r'Network \(D0\)',
+    r'Network \(D0b\)',
+    r'Network \(D0/INC-C0\) carry-driver per-op',
+    r'Network \(D0/LF-1\) lane-fold per-op',
+    r'Network \(datum graph\): worst census pass',
+    r'Network \(FC-1\)   tick wall',
+    r'Network \(FC-1\): slowest tick',
+)]
+PREFIX_TIME = re.compile(r'^\[[^\]]*\](?= \[)')
+MANIFEST_MASKS = [
+    (re.compile(r'"written_utc"\s*:\s*"[^"]*"'), '"written_utc":"<UTC>"'),
+    (re.compile(r'"compiled"\s*:\s*"[^"]*"'), '"compiled":"<COMPILED>"'),
+    (re.compile(r'"loop_ms"\s*:\s*[-+0-9.eE]+'), '"loop_ms":"<MS>"'),
+    (re.compile(r'"config_hash_fnv1a64"\s*:\s*"[^"]*"'), '"config_hash_fnv1a64":"<HASH>"'),
+]
+RT_ENGINE_MASKS = [
+    (re.compile(r'is -?\d+(?:\.\d+)?s behind wall-clock GPS'), 'is <S>s behind wall-clock GPS'),
+]
+
+
+def resolve(run):
+    for cand in (run, f'{RUNS}/{run}', f'{RUNS}/_rap_{run}'):
+        if os.path.isdir(cand):
+            return cand.replace(os.sep, '/')
+    sys.exit(f'no run directory for {run}')
+
+
+def read_lines(path):
+    with open(path, encoding='utf-8', errors='replace', newline='') as f:
+        text = f.read().replace('\r\n', '\n').replace('\r', '\n')
+    lines = text.split('\n')
+    while lines and lines[-1] == '':
+        lines.pop()
+    return lines
+
+
+def main_log_lines(run):
+    """The main_log rotation set, oldest first: main_log.N.log ... main_log.1.log, main_log.log."""
+    rotated = sorted(glob.glob(f'{run}/logs/main_log.*.log'),
+                     key=lambda p: int(re.search(r'main_log\.(\d+)\.log$', p).group(1)),
+                     reverse=True)
+    out = []
+    for p in rotated + [f'{run}/logs/main_log.log']:
+        if os.path.exists(p):
+            out += read_lines(p)
+    return out
+
+
+def from_start(lines):
+    i = next((k for k, l in enumerate(lines) if START in l), None)
+    return [] if i is None else lines[i:]
+
+
+def mask_lines(lines, run_name, mask_time, extra=()):
+    out = []
+    for l in lines:
+        if any(d.search(l) for d in LINE_DROPS):
+            continue
+        for pat, rep in list(VALUE_MASKS) + list(extra):
+            l = pat.sub(rep, l)
+        l = l.replace(run_name, '<RUN>')
+        if mask_time:
+            l = PREFIX_TIME.sub('[<TIME>]', l, count=1)
+        out.append(l)
+    return out
+
+
+def first_differences(a, b):
+    """Indices of the differing lines (positional; a length difference counts from the end
+    of the shorter list)."""
+    diffs = [k for k in range(min(len(a), len(b))) if a[k] != b[k]]
+    diffs += list(range(min(len(a), len(b)), max(len(a), len(b))))
+    return diffs
+
+
+def report(name, a, b, show):
+    diffs = first_differences(a, b)
+    status = 'IDENTICAL' if not diffs else f'DIFFER ({len(diffs)} line(s))'
+    print(f'  {name:44s} {len(a):6d} / {len(b):6d} lines  {status}')
+    for k in diffs[:show]:
+        x = a[k] if k < len(a) else '<eof>'
+        y = b[k] if k < len(b) else '<eof>'
+        print(f'     line {k + 1}\n       A: {x[:220]}\n       B: {y[:220]}')
+    return not diffs
+
+
+def manifest_records(run):
+    """The manifest's records as printed (JSONL), masked textually so that number formatting
+    and key order are still compared: the values of `written_utc`, `build.compiled` (the only
+    `compiled` key) and `loop_ms` are replaced, and the run directory name becomes <RUN>."""
+    path = f'{run}/logs/network_run_manifest.json'
+    if not os.path.exists(path):
+        return None
+    name = os.path.basename(run)
+    recs = []
+    for l in read_lines(path):
+        for pat, rep in MANIFEST_MASKS:
+            l = pat.sub(rep, l)
+        recs.append(l.replace(name, '<RUN>'))
+    return recs
+
+
+def record_kind(rec_line):
+    return json.loads(rec_line).get('record')
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('run_a')
+    ap.add_argument('run_b')
+    ap.add_argument('--mask-time', action='store_true',
+                    help='mask the time inside the [time] [logger] [level] prefix')
+    ap.add_argument('--show', type=int, default=8, help='differing lines shown per part')
+    a = ap.parse_args()
+    da, db = resolve(a.run_a), resolve(a.run_b)
+    na, nb = os.path.basename(da), os.path.basename(db)
+    ok = True
+
+    print(f'G-TD: {da}  vs  {db}')
+    print('(0) arm configs')
+    ca = [l.replace(na, '<RUN>') for l in read_lines(f'{da}/arm.json')]
+    cb = [l.replace(nb, '<RUN>') for l in read_lines(f'{db}/arm.json')]
+    ok = report('arm.json (run directory masked)', ca, cb, a.show) and ok
+    print('(1) products and traces (prm_ab.compare_dirs --all-csv)')
+    ok = prm_ab.compare_dirs(da, db, True, 'products+traces', absent_ok=True) and ok
+    has_a, has_b = os.path.exists(f'{da}/products.txt'), os.path.exists(f'{db}/products.txt')
+    if has_a and has_b:
+        pa, pb = read_lines(f'{da}/products.txt'), read_lines(f'{db}/products.txt')
+        ok = report('products.txt in full', pa, pb, a.show) and ok
+    elif has_a or has_b:
+        print('  products.txt written by one run only')
+        ok = False
+    else:
+        print('  products.txt in full                       absent in both runs (no epoch emitted)')
+
+    print('(2) run manifest, record by record')
+    ma, mb = manifest_records(da), manifest_records(db)
+    if ma is None or mb is None:
+        print('  network_run_manifest.json missing in', 'A' if ma is None else 'B')
+        ok = ok and ma is None and mb is None
+    else:
+        ok = report('network_run_manifest.json (masked)', ma, mb, a.show) and ok
+        for name, recs in (('A', ma), ('B', mb)):
+            last = record_kind(recs[-1]) if recs else None
+            if last != 'complete':
+                print(f'  {name}: last manifest record is {last!r}, not complete')
+                ok = False
+        print(f'  records: {", ".join(str(record_kind(r)) for r in ma)}')
+
+    print("(3) run-end log block from '" + START + "'")
+    sa = mask_lines(from_start(read_lines(f'{da}/stdout.txt')), na, a.mask_time)
+    sb = mask_lines(from_start(read_lines(f'{db}/stdout.txt')), nb, a.mask_time)
+    if not sa or not sb:
+        print('  stdout.txt: no block start in', 'A' if not sa else 'B')
+        ok = False
+    ok = report('stdout.txt block', sa, sb, a.show) and ok
+    la = mask_lines(from_start(main_log_lines(da)), na, a.mask_time)
+    lb = mask_lines(from_start(main_log_lines(db)), nb, a.mask_time)
+    if not la or not lb:
+        print('  main_log: no block start in', 'A' if not la else 'B')
+        ok = False
+    ok = report('main_log block (rotation set)', la, lb, a.show) and ok
+
+    print('(4) rt_engine.log and the exit code')
+    ra = f'{da}/logs/rt_engine.log'
+    rb = f'{db}/logs/rt_engine.log'
+    if os.path.exists(ra) and os.path.exists(rb):
+        ok = report('rt_engine.log', mask_lines(read_lines(ra), na, a.mask_time, RT_ENGINE_MASKS),
+                    mask_lines(read_lines(rb), nb, a.mask_time, RT_ENGINE_MASKS), a.show) and ok
+    elif os.path.exists(ra) != os.path.exists(rb):
+        print('  rt_engine.log present in one run only')
+        ok = False
+    ea = open(f'{da}/exitcode.txt').read().split()[:1]
+    eb = open(f'{db}/exitcode.txt').read().split()[:1]
+    print(f'  exit code: {ea} / {eb}  {"IDENTICAL" if ea == eb else "DIFFER"}')
+    ok = ok and ea == eb
+
+    print('RESULT', 'IDENTICAL' if ok else 'DIFFERENT')
+    return 0 if ok else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
