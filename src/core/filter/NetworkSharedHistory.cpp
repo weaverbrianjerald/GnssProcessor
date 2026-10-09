@@ -525,7 +525,7 @@ void networkSharedHistoryFinalizeHoldRows(NetworkRunContext& ctx, long long ep) 
     });
 }
 
-void networkSharedHistoryTeardown(const NetworkRunContext& ctx,
+void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
                                   const std::shared_ptr<spdlog::logger>& log) {
     if (!ctx.knobs.carry_cpl_shx || !log) return;
     const SharedHistoryCounters& C = ctx.counters.shx;

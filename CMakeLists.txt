@@ -242,6 +242,17 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkRelevel.cpp
     src/core/filter/NetworkFastClock.cpp
     src/core/filter/NetworkTeardown.cpp
+    src/core/app/NetworkRunTimingRunEnd.cpp
+    src/core/app/NetworkRunArtifactsRunEnd.cpp
+    src/core/app/NetworkSolveStationsRunEnd.cpp
+    src/core/app/NetworkStationIonoRunEnd.cpp
+    src/core/app/NetworkResumeRunEnd.cpp
+    src/core/app/NetworkReadmitRunEnd.cpp
+    src/core/app/NetworkClosedLoopRunEnd.cpp
+    src/core/filter/NetworkLevelingCarryRunEnd.cpp
+    src/core/filter/NetworkRxCodeBiasCarryRunEnd.cpp
+    src/core/filter/NetworkCarryVceRunEnd.cpp
+    src/core/slip/NetworkSlipQcRunEnd.cpp
     src/core/filter/NetworkRunEnd.cpp
     src/core/filter/NetworkInject.cpp
     src/core/filter/NetworkCanonicalPairAdmission.cpp
@@ -563,6 +574,7 @@ add_executable(gnss_tests
     tests/test_rt_state_snapshot.cpp
     tests/test_band_scoped_response.cpp
     tests/test_network_inject.cpp
+    tests/test_network_run_end.cpp
     tests/test_canonical_pair_admission.cpp
     tests/test_oracle_pin.cpp
     tests/test_warm_resume_require.cpp

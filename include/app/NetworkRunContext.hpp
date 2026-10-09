@@ -4544,7 +4544,7 @@ namespace GnssProcessor {
         double    redun_wall_ms = 0.0;          ///< run-total wall time inside the census seam (the cost claim).
 
         /// Baarda reliability / MDB tallies.  Every field is documented on the struct;
-        /// reported by @c networkMdbReport, which lives next to the aggregation that
+        /// reported by @c networkMdbRunEnd, which lives next to the aggregation that
         /// produced the numbers so the counters and the sentences interpreting them cannot
         /// drift apart.
         NetworkMdbTallies mdb;

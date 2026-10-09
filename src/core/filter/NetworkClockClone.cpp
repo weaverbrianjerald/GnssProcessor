@@ -1208,7 +1208,7 @@ void networkClockCloneHarvestEnd(ClockCloneHarvest& h, NetworkRunContext& ctx) {
     ctx.counters.ccl.harvest_f3_pairs += pairs;
 }
 
-void networkClockCloneTeardown(const NetworkRunContext& ctx,
+void networkClockCloneRunEnd(const NetworkRunContext& ctx,
                                const std::shared_ptr<spdlog::logger>& log) {
     if (!ctx.knobs.carry_cpl_clone) return;
     const ClockCloneCounters& C = ctx.counters.ccl;

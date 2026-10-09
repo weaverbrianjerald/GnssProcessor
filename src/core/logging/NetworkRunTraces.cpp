@@ -2489,12 +2489,12 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
 void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
                                                   const NetworkKnobs& knobs,
                                                   const NetworkServiceCounters& counters,
+                                                  const FlagRate& fr_if_refgate,
                                                   std::size_t n_synced, std::size_t n_stations,
                                                   int n_threads, bool parallel_on, double loop_ms,
                                                   const std::shared_ptr<spdlog::logger>& log) {
     const bool  trace_flag_rates  = knobs.trace_flag_rates;
     const auto& fr_if_slip        = counters.fr_if_slip;
-    const auto& fr_if_refgate     = counters.fr_if_refgate;
     const auto& fr_we_trigger     = counters.fr_we_trigger;
     const auto& fr_raim_cell      = counters.fr_raim_cell;
     const auto& fr_raim_sat       = counters.fr_raim_sat;

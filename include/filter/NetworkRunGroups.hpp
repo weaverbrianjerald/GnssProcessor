@@ -49,7 +49,7 @@ struct NetworkRunEngines {
     const NetworkEstimator&            est;           ///< The joint estimator: section timers, the rank-gate tolerance, the run's solve counters.
     const NetworkInvariantCarryDriver& carry_driver;  ///< The DD cycle-basis invariant carry (card 4): per-op timers and the carry census.
     const NetworkCarryVce&             carry_vce;     ///< The LS-VCE carry-row variance-component monitor (M2).
-    const NetworkPriorResidual&        prires;        ///< The prior-residual census, read by networkPriorResidualReport.
+    const NetworkPriorResidual&        prires;        ///< The prior-residual census, read by networkPriorResidualRunEnd.
     const SlipQcChannel&               slip_qc;       ///< The slip-QC hardening channel and its run-end counters.
     const NetworkIonoDeweightGate&     iono_deweight; ///< The station-adaptive SH-VTEC-constraint deweight gate.
 };

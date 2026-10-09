@@ -324,7 +324,7 @@ void networkSharedHistoryProjectHoldRows(NetworkRunContext& ctx, const SharedHis
 void networkSharedHistoryFinalizeHoldRows(NetworkRunContext& ctx, long long ep);
 
 /// The run-end line of card SCL2 X2 and its INERT warning (invariant 4).  No-op off.
-void networkSharedHistoryTeardown(const NetworkRunContext& ctx,
+void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
                                   const std::shared_ptr<spdlog::logger>& log);
 
 }  // namespace GnssProcessor

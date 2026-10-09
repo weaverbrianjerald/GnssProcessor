@@ -473,7 +473,7 @@ void networkClockCloneHarvestBlock(ClockCloneHarvest& h, std::size_t est_idx,
 void networkClockCloneHarvestEnd(ClockCloneHarvest& h, NetworkRunContext& ctx);
 
 /// The run-end line of card SCL and its INERT warning (invariant 4).  No-op off.
-void networkClockCloneTeardown(const NetworkRunContext& ctx,
+void networkClockCloneRunEnd(const NetworkRunContext& ctx,
                                const std::shared_ptr<spdlog::logger>& log);
 
 }  // namespace GnssProcessor

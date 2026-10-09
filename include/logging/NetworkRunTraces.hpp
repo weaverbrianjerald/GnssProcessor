@@ -1140,9 +1140,12 @@ namespace GnssProcessor {
 
         /// Flag-rate empirical-α summary (B8; log lines and network_flag_rates.csv)
         /// and the L3 run-summary CSV.  The single knobs.trace_flag_rates gate covers
-        /// both, so a run with it off writes neither.
+        /// both, so a run with it off writes neither.  @p fr_if_refgate is tier T1r, the
+        /// IF-TD reference arm's flag rate, summed over the station detectors by the
+        /// run-summary report (networkRunSummaryRunEnd) just before the call.
         void writeFlagRateAndRunSummary(const GnssConfig& config_, const NetworkKnobs& knobs,
                                         const NetworkServiceCounters& counters,
+                                        const FlagRate& fr_if_refgate,
                                         std::size_t n_synced, std::size_t n_stations,
                                         int n_threads, bool parallel_on, double loop_ms,
                                         const std::shared_ptr<spdlog::logger>& log);
