@@ -275,7 +275,6 @@ void networkSharedHistoryFold(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
         pri.push_back(p);
     }
     if (pri.empty()) return;
-    est.attribTag("shx_hist");
     est.contributionKind(ContributionKind::SharedHistory);   // card NOM N2a
     est.addSharedPrior(pri);
     ctx.counters.shx.fold_priors += static_cast<long long>(pri.size());
@@ -285,6 +284,7 @@ void networkSharedHistoryFold(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
 void networkSharedHistoryReplayFold(const NetworkRunContext& ctx, const EpochWorkspace& ws,
                                     NetworkEstimator& est) {
     if (!ctx.knobs.carry_cpl_shx || ws.cap_shx.empty()) return;
+    est.contributionKind(ContributionKind::SharedHistory);   // card NOM N2b: the replay names its kind
     est.addSharedPrior(ws.cap_shx);
 }
 

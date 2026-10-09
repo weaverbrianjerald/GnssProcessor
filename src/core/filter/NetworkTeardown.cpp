@@ -913,6 +913,28 @@ int networkTeardown(
                       h.reattach_blocked_cold);
     }
 
+    // --- The carried-phase RAIM pools' admissions, per contribution kind ---------
+    // (card NOM step N2b; the instrumentation gap of card NOM section 16).  The pools admit
+    // a row on an ambiguity column by a declared rule read from the row's tag
+    // (raimPoolAdmitsKind): the observation phase rows, the coupling and block
+    // carried-prior rows and the SD-EWL constraint rows whose coefficient on the column
+    // exceeds 0.5.  The line says how
+    // many prior rows enter beside the phase rows (visits: once per column the row clears,
+    // the multiplicity the pool's sample has; rows: once per station and walk), and that
+    // no row of another kind cleared the bar (refused, 0 expected).  A pool that never
+    // walked prints nothing.
+    {
+        const auto poolLine = [&](const char* which, const RaimPoolAdmissionTally& t) {
+            if (t.walks == 0) return;
+            long long refused = 0;
+            for (const long long v : t.refused) refused += v;
+            log->log(refused > 0 ? spdlog::level::warn : spdlog::level::info,
+                     "Network (RAIM pool admission, {}): {}", which, t.text());
+        };
+        poolLine("post-fit", ctx.counters.raim_pool_postfit);
+        poolLine("within-epoch assess", ctx.counters.raim_pool_within);
+    }
+
     // --- RAIM pool re-host run-end telemetry -----------------------------------
     // (docs/SPEC_raim_pool_rehost.md).  Without the re-host, post-fit RAIM shows as
     // armed in the loader summary on a carry_invariant run while screening nothing, so
@@ -5295,17 +5317,16 @@ int networkTeardown(
         log->log(ctx.carry.pf_rows_written > 0 ? spdlog::level::info : spdlog::level::warn,
                  "Network (§24.6 post-fit rows): {} SIGNED per-row post-fit residual(s) written "
                  "to network_pf_rows.csv ({} code + {} phase; {} written with an empty "
-                 "elev_deg); {} data row(s) the pass visited were attributed to neither "
-                 "family and NOT written (rows with NO shared partial at all — pivot pins "
-                 "and local prior rows; since the 2026-09-14 CLK fallback a code row with "
-                 "no satellite code-bias column is no longer among them).  0 written "
-                 "under an ARMED trace means the pass never pooled a station — read the "
-                 "P1-4 line.  Card OWD: {} written with an empty signal "
-                 "(pf_rows_no_signal), {} whose observation signal differs from the first "
-                 "labelled column's (pf_rows_sig_relabel); both 0 expected.",
+                 "elev_deg); {} row(s) the pass visited were attributed to neither "
+                 "family and NOT written (rows whose tag is not an observation: pivot pins, "
+                 "local prior and anchor rows, and unclassified rows; card NOM N2b classes "
+                 "every row by its contribution tag).  0 written under an ARMED trace "
+                 "means the pass never pooled a station: read the P1-4 line.  Card OWD: {} "
+                 "written with an empty signal (pf_rows_no_signal, the row tag named no "
+                 "signal); 0 expected.",
                  ctx.carry.pf_rows_written, ctx.carry.pf_rows_code, ctx.carry.pf_rows_phase,
                  ctx.carry.pf_rows_no_elev, ctx.carry.pf_rows_unattributed,
-                 ctx.carry.pf_rows_no_signal, ctx.carry.pf_rows_sig_relabel);
+                 ctx.carry.pf_rows_no_signal);
     {
         // The producer's state-manager re-inflations, summed over the stations (card OWD,
         // O2).  The deweight-release hygiene's ionosphere re-inflation is the only producer

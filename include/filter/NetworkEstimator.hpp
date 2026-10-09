@@ -1275,12 +1275,12 @@ public:
 
     // --- Reduced-RHS class attribution (diagnostics; filter/NetworkRhsAttrib) ---
 
-    /// One captured shared-info RHS increment: the tag active at the call site
-    /// (a string literal; the recorder stores the pointer, not a copy) plus the
-    /// delta the call folded into the shared RHS.
+    /// One captured shared-info RHS increment: the contribution kind the fold site named
+    /// (@ref contributionKind; card NOM step N2b, the attribution's class is a function
+    /// of it) plus the delta the call folded into the shared RHS.
     struct AttribCapture {
-        const char*     tag;        ///< class tag (string literal only)
-        Eigen::VectorXd delta_rhs;  ///< the folded shared-RHS increment (n_shared)
+        ContributionKind kind{ContributionKind::Unset};  ///< the kind the site named; @c Unset when it named none
+        Eigen::VectorXd  delta_rhs;                      ///< the folded shared-RHS increment (n_shared)
     };
 
     /**
@@ -1288,11 +1288,12 @@ public:
      *
      * Armed, every shared-info fold (@ref addSharedPrior, @ref addSharedPriorDense,
      * @ref addSharedPriorClockGaugeFree, @ref addSharedConstraintRows, and the
-     * withdraw and re-fold calls) appends its RHS increment under the tag last set
-     * by @ref attribTag.  @ref beginEpoch clears the captures but keeps the armed
-     * flag, so a within-epoch re-solve leaves only the final build's captures
-     * (matching the kernel state the attribution reads).  Disarmed (the default),
-     * the recorder costs one branch per call.
+     * withdraw and re-fold calls) appends its RHS increment under the kind its site
+     * named (@ref contributionKind); a constraint-row fold whose site named a kind per
+     * row (@ref contributionRowKinds) appends one increment per kind.  @ref beginEpoch
+     * clears the captures but keeps the armed flag, so a within-epoch re-solve leaves
+     * only the final build's captures (matching the kernel state the attribution
+     * reads).  Disarmed (the default), the recorder costs one branch per call.
      */
     void attribArm(bool on) {
         attrib_armed_ = on;
@@ -1300,9 +1301,6 @@ public:
     }
     /// @return Whether the capture recorder is armed this epoch.
     bool attribArmed() const { return attrib_armed_; }
-    /// Set the class tag for subsequent shared-info folds (string literal only: the
-    /// pointer is stored as is).  Cheap enough to call unconditionally.
-    void attribTag(const char* tag) { attrib_tag_ = tag; }
     /// @return This epoch's captured shared-info RHS increments (armed builds only).
     const std::vector<AttribCapture>& attribCaptures() const { return attrib_shared_; }
 
@@ -1317,9 +1315,9 @@ public:
      * kind named here when it starts, and records it with its dimension in the epoch's
      * @ref sharedFoldLog when it folds.  The kind is consumed by that one call, so a fold
      * whose site named none is recorded as @c ContributionKind::Unset and counted on the
-     * table's integrity line rather than under a stale kind.  Independent of
-     * @ref attribTag, whose strings the RHS attribution reads unchanged (card NOM step N2b
-     * unifies the two).
+     * table's integrity line rather than under a stale kind.  The same kind names the
+     * fold's RHS capture (@ref attribArm), so the RHS attribution's class of a shared fold
+     * is the kind's name (card NOM step N2b; one name per fold site).
      *
      * @param k The kind of the next fold.
      */
@@ -1496,6 +1494,11 @@ private:
         contrib_kind_ = ContributionKind::Unset;
         return k;
     }
+    /// Capture one shared fold's RHS increment under its kind, when the recorder is armed
+    /// (@ref attribArm; card NOM step N2b).
+    void noteCapture_(ContributionKind k, const Eigen::VectorXd& delta_rhs) {
+        if (attrib_armed_) attrib_shared_.push_back(AttribCapture{k, delta_rhs});
+    }
     /// Record one shared fold of dimension @p dim in @ref contrib_log_ (a replay's re-fold
     /// counts apart).
     void noteFold_(ContributionKind k, long long dim) {
@@ -1511,7 +1514,6 @@ private:
     bool contrib_replay_{false};                                 ///< Folds are a within-epoch replay's re-folds.
     SharedFoldLog contrib_log_;                                  ///< This epoch's shared folds (cleared by reset()).
     bool attrib_armed_{false};                   ///< RHS-attribution capture recorder armed (diagnostics)
-    const char* attrib_tag_{"shared_untagged"};  ///< class tag for the next shared-info fold (string literal)
     std::vector<AttribCapture> attrib_shared_;   ///< captured shared-info RHS increments (armed epochs only)
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)

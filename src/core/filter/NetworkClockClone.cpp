@@ -780,7 +780,6 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
                                 /*clock_gauge_free=*/false, /*require_closure=*/false);
     }
-    est.attribTag("ccl_walk");
     est.contributionKind(ContributionKind::CloneWalk);   // card NOM N2a
     est.addCloneWalkJoint(walks, Qw);
     long long n_clk_walks = 0;
@@ -911,7 +910,6 @@ void networkClockCloneFoldEnd(NetworkRunContext& ctx, EpochWorkspace& ws,
         ++C.bcl_isolated;
     }
     if (iso.empty()) return;
-    est.attribTag("ccl_idle");
     est.contributionKind(ContributionKind::ClonePrior);   // card NOM N2a
     est.addSharedPrior(iso);
     C.fold_isolated += static_cast<long long>(n_b1_iso);
@@ -921,10 +919,16 @@ void networkClockCloneFoldEnd(NetworkRunContext& ctx, EpochWorkspace& ws,
 bool networkClockCloneReplayFold(const NetworkRunContext& ctx, const EpochWorkspace& ws,
                                  NetworkEstimator& est) {
     if (!ctx.knobs.carry_cpl_clone) return false;
-    if (!ws.cap_ccl_idle.empty()) est.addSharedPrior(ws.cap_ccl_idle);
+    // Card NOM N2b: each re-fold names its kind, as the primary folds did.
+    if (!ws.cap_ccl_idle.empty()) {
+        est.contributionKind(ContributionKind::ClonePrior);
+        est.addSharedPrior(ws.cap_ccl_idle);
+    }
     if (!ws.cap_ccl_on) return false;
+    est.contributionKind(ContributionKind::BorderCarryDense);
     est.addSharedPriorDense(ws.cap_ccl_keys, ws.cap_ccl_cov, nullptr,
                             /*clock_gauge_free=*/false, /*require_closure=*/false);
+    est.contributionKind(ContributionKind::CloneWalk);
     est.addCloneWalkJoint(ws.cap_ccl_walk, ws.cap_ccl_walkQ);
     return true;
 }

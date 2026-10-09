@@ -437,6 +437,7 @@ TEST(NetworkContributionsTest, TagCheckIsSilentOnAWellFormedBlock) {
     EXPECT_EQ(c.unset, 0);
     EXPECT_EQ(c.misplaced, 0);
     EXPECT_EQ(c.mismatches, 0);
+    EXPECT_EQ(c.unclassified, 0);
 }
 
 TEST(NetworkContributionsTest, TagCheckSeesEachDefect) {
@@ -454,6 +455,7 @@ TEST(NetworkContributionsTest, TagCheckSeesEachDefect) {
         const StationTagCheck c = checkStationTags(R);
         EXPECT_EQ(c.unset, 2);
         EXPECT_EQ(c.untagged, 0);
+        EXPECT_EQ(c.unclassified, 1) << "the unset row tag (the diagonal entry is not a row)";
     }
     {   // a data kind past the split's rows, and a non-data kind inside them
         StationAssembly R = wellFormedBlock();
@@ -472,6 +474,7 @@ TEST(NetworkContributionsTest, TagCheckSeesEachDefect) {
         R.row_tags[2] = tagOf(CK::PriorZwdCarry);
         R.carry_tags[0] = tagOf(CK::PriorRxCbDatumPrePd);
         EXPECT_EQ(checkStationTags(R).misplaced, 2);
+        EXPECT_EQ(checkStationTags(R).unclassified, 1) << "a prior kind on a row";
     }
     {   // the builders' counters: one mismatch per counter that disagrees
         StationAssembly R = wellFormedBlock();
@@ -638,8 +641,8 @@ TEST(NetworkContributionsTest, TablePrintsEveryKindTheUnitsAndTheIntegrityLines)
     ContributionTally run = ep;
     run.merge(ep);
     const std::vector<std::string> lines = contributionsTable(ep, run, "first emitted epoch");
-    // A header, the column line, one line per kind, seven integrity lines.
-    ASSERT_EQ(lines.size(), 2u + kContributionKinds + 7u);
+    // A header, the column line, one line per kind, eight integrity lines.
+    ASSERT_EQ(lines.size(), 2u + kContributionKinds + 8u);
     for (const ContributionSpec& s : contributionSpecs()) {
         const std::string* l = lineStarting(lines, std::string(s.name) + " ");
         ASSERT_NE(l, nullptr) << s.name;
@@ -664,6 +667,7 @@ TEST(NetworkContributionsTest, TablePrintsEveryKindTheUnitsAndTheIntegrityLines)
     EXPECT_NE(gim->find("4 with no GIM loaded"), std::string::npos) << *gim;
     EXPECT_TRUE(anyLineHas(lines, "station rows without a tag: 0 (2 station block(s) checked"));
     EXPECT_TRUE(anyLineHas(lines, "station rows and diagonal entries tagged unset: 0"));
+    EXPECT_TRUE(anyLineHas(lines, "station rows the readers file as unclassified (obs_other"));
     EXPECT_TRUE(anyLineHas(lines, "station rows and entries out of place: 0"));
     EXPECT_TRUE(anyLineHas(lines, "tag counts against the builders' counters: 0 mismatch(es)"));
     EXPECT_TRUE(anyLineHas(lines, "shared folds without a kind: 0"));
@@ -671,6 +675,7 @@ TEST(NetworkContributionsTest, TablePrintsEveryKindTheUnitsAndTheIntegrityLines)
     EXPECT_NE(json.find("\"record\":\"contributions\""), std::string::npos);
     EXPECT_NE(json.find("\"unset_tags\":[0,0]"), std::string::npos);
     EXPECT_NE(json.find("\"counter_mismatches\":[0,0]"), std::string::npos);
+    EXPECT_NE(json.find("\"unclassified_rows\":[0,0]"), std::string::npos);
     for (const ContributionSpec& s : contributionSpecs())
         EXPECT_NE(json.find(std::string("\"kind\":\"") + s.name + "\""), std::string::npos) << s.name;
 }

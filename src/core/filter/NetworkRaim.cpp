@@ -16,6 +16,7 @@
 #include "app/NetworkRunContext.hpp"          // ctx.knobs / ctx.carry / ctx.counters
 #include "config/GnssConfig.hpp"              // config_ getters
 #include "filter/NetworkMdb.hpp"              // Baarda MDB rider on B2's r_i (SPEC_redundancy_census)
+#include "filter/NetworkRowClassify.hpp"      // raimPoolAdmitsKind, rowTagAt (the pool's admission rule)
 #include "filter/NetworkRobustStats.hpp"      // medianPolish2Way / robustProminence / medianCopy / MedianPolish
 #include "filter/NetworkAmbStateTrace.hpp"    // ambStateNoteErase (RF-1 §7.4 D3 erase inventory)
 #include "filter/NetworkAmbFloat.hpp"          // ambFloatDrop (RF-1 step 4: the bounded drop)
@@ -205,6 +206,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     // exists (the trim bar is k·σ̂₀, which is not known until the pool closes).
     std::vector<std::vector<StationFactorRow>> staf_rows;
     if (staf_on) staf_rows.resize(stations.size());
+    ++ctx.counters.raim_pool_postfit.walks;   // one pool walk (card NOM N2b admission tally)
     for (size_t i = 0; i < stations.size(); ++i) {
         // The pivot station is skipped only when network.phase_datum_prioritized is
         // off.  With it on, the pivot is screened: its non-anchored arcs are in
@@ -273,85 +275,53 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // Largest measurement-standardized post-fit phase residual per satellite at this
         // station (a carried ambiguity's phase rows carry +1 on its A_r column; uncombined).
         std::map<std::string, double> sat_rmax;
-        // ZWD in the carried block (network.carry_zwd_in_block, B9-in-block;
-        // SPEC_amb_iono_split_overcount §7 item 4).  The pool admits a row by
-        // |A_r(row, amb_col)| > 0.5, a test written for data phase rows (which carry
-        // exactly +1 on their ambiguity column).  A whitened block row is one row of L⁻¹,
-        // so the ZWD's block row carries non-zero coefficients on the ambiguity columns
-        // below it and can clear that bar: a carried-prior row can enter a post-fit fault
-        // pool built for observations.  The admission rule is unchanged here; the
-        // admission is counted so the rule can be decided on data.  The ZWD's row is the
-        // coupling row whose primary local column is the station's ZWD column
-        // (cpl_row_local_cols is in append order from cpl_row_start).
-        Eigen::Index zwd_blk_row = -1;
-        if (R.pl_zwd_in_block && R.cpl_row_start >= 0 && R.pl_zwd.col >= 0)
-            for (std::size_t rr = 0; rr < R.cpl_row_local_cols.size(); ++rr)
-                if (R.cpl_row_local_cols[rr] == R.pl_zwd.col) {
-                    zwd_blk_row = R.cpl_row_start + static_cast<Eigen::Index>(rr);
-                    break;
-                }
-        bool zwd_row_pooled = false;   // once per station-epoch (the column-keyed loop can revisit it)
-        // Iono in the carried block (network.carry_iono_in_block, I-in-block): the same
-        // §7 item 4 interaction for the I half.  Each carried iono column contributes one
-        // whitened block row (a row of L⁻¹), which carries non-zero coefficients on the
-        // ambiguity columns below it and can therefore clear the pool's
-        // |A_r(row, amb_col)| > 0.5 admission test written for data phase rows.  The rule
-        // is unchanged here; the admissions are counted so it can be decided on data.  The
-        // rows are the coupling rows whose primary local column is one of pl_iono_blk_cols
-        // (cpl_row_local_cols is in append order from cpl_row_start).
-        std::set<Eigen::Index> iono_blk_rows;
-        if (!R.pl_iono_blk_cols.empty() && R.cpl_row_start >= 0) {
-            const std::set<Eigen::Index> icols(R.pl_iono_blk_cols.begin(),
-                                               R.pl_iono_blk_cols.end());
-            for (std::size_t rr = 0; rr < R.cpl_row_local_cols.size(); ++rr)
-                if (icols.count(R.cpl_row_local_cols[rr]))
-                    iono_blk_rows.insert(R.cpl_row_start + static_cast<Eigen::Index>(rr));
-        }
-        std::set<Eigen::Index> iono_rows_pooled;   // once per row per station-epoch
-        // Receiver clock in the carried block (network.carry_rx_clock_in_block,
-        // RX-CLK-in-block): the same §7 item 4 interaction for the rho half.  Each carried
-        // clock-family column contributes one whitened block row (a row of L⁻¹) carrying
-        // non-zero coefficients on the ambiguity columns below it, which can therefore
-        // clear the pool's |A_r(row, amb_col)| > 0.5 admission test written for data
-        // phase rows.  This count is expected to be large wherever the ZWD's is: the
-        // receiver clock is the most station-common direction, so its whitened row touches
-        // every ambiguity column of the station.  The rule is unchanged here; the
-        // admissions are counted so it can be decided on data.
-        std::set<Eigen::Index> rxclk_blk_rows;
-        if (!R.pl_rxclk_blk_cols.empty() && R.cpl_row_start >= 0) {
-            const std::set<Eigen::Index> rcols(R.pl_rxclk_blk_cols.begin(),
-                                               R.pl_rxclk_blk_cols.end());
-            for (std::size_t rr = 0; rr < R.cpl_row_local_cols.size(); ++rr)
-                if (rcols.count(R.cpl_row_local_cols[rr]))
-                    rxclk_blk_rows.insert(R.cpl_row_start + static_cast<Eigen::Index>(rr));
-        }
-        std::set<Eigen::Index> rxclk_rows_pooled;   // once per row per station-epoch
+        // The pool's admission rule (card NOM step N2b, filter/NetworkRowClassify): a row
+        // enters the pool of an ambiguity column when its coefficient on the column
+        // exceeds 0.5 and its kind is one raimPoolAdmitsKind declares: the observation
+        // phase rows, the coupling and whitened block rows of the carried priors, and the
+        // SD-EWL constraint rows.  A whitened block row is one row of L⁻¹, so it carries
+        // coefficients on the ambiguity columns pushed before its own column and can clear
+        // 0.5 on several of them; such a row enters the pool once per column it clears, as
+        // a phase row would.  That is the population the coefficient test alone admitted
+        // before the tags, stated as a rule; the prior and constraint rows stay in it on
+        // purpose until the science card RPA decides otherwise (card NOM section 16,
+        // suspect 1).  Every admission is
+        // counted per kind (ctx.counters.raim_pool_postfit), and a row of any other kind
+        // that clears 0.5 is refused and counted (0 expected).  The ZWD, ionosphere and
+        // receiver-clock block rows keep their own run-end counts, now read from the tag.
+        auto& pool_tally = ctx.counters.raim_pool_postfit;
+        std::vector<char> pool_row_seen(static_cast<std::size_t>(R.A_r.rows()), 0);
         for (const auto& pa : pool) {
             if (pa.col < 0 || pa.col >= R.A_r.cols()) continue;
             double r_max = 0.0;
             for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
-                if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;  // not a phase row of this ambiguity
-                if (row == zwd_blk_row && !zwd_row_pooled) {
-                    zwd_row_pooled = true;
-                    ++ctx.counters.n_raim_pool_zwd_rows;
+                if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;  // no coefficient on this ambiguity
+                const ContributionKind row_kind = rowTagAt(R, row).kind;
+                const bool admitted = raimPoolAdmitsKind(row_kind);
+                const bool first = admitted && !pool_row_seen[static_cast<std::size_t>(row)];
+                if (first) pool_row_seen[static_cast<std::size_t>(row)] = 1;
+                pool_tally.note(row_kind, admitted, first);
+                if (!admitted) continue;   // a kind the rule does not admit (0 expected)
+                if (first) {   // the block rows' own run-end counts (once per row and walk)
+                    if (row_kind == ContributionKind::BlockZwdCarry)
+                        ++ctx.counters.n_raim_pool_zwd_rows;
+                    else if (row_kind == ContributionKind::BlockIonoCarry)
+                        ++ctx.counters.n_raim_pool_iono_rows;
+                    else if (row_kind == ContributionKind::BlockRxClockCarry)
+                        ++ctx.counters.n_raim_pool_rxclk_rows;
                 }
-                // Same count for iono block rows (I-in-block).
-                if (!iono_blk_rows.empty() && iono_blk_rows.count(row)
-                    && iono_rows_pooled.insert(row).second)
-                    ++ctx.counters.n_raim_pool_iono_rows;
-                // Same count for clock-family block rows (RX-CLK-in-block).
-                if (!rxclk_blk_rows.empty() && rxclk_blk_rows.count(row)
-                    && rxclk_rows_pooled.insert(row).second)
-                    ++ctx.counters.n_raim_pool_rxclk_rows;
                 const double w = (row < R.w.size()) ? R.w(row) : 1.0;
                 // MDB is fed here, ahead of the `continue` below that skips uncheckable
                 // rows: a row RAIM drops from its σ̂0 pool because r_i ≤ 1e-6 is a row
                 // whose MDB is +infinity, and that value is what the rider publishes.
                 // Binning only the rows that survive the drop would report the network
                 // as fully checkable by construction.
+                // The row's class comes from its tag (card NOM step N2b): an admitted
+                // carried-prior row is a cpl_row, which the rider does not bin (it bins data
+                // rows only), where it was filed as a phase row before the tags.
                 if (mdb_here && !mdb_seen[static_cast<std::size_t>(row)]) {
                     mdb_seen[static_cast<std::size_t>(row)] = 1;
-                    mdb_feed->add(pa.sat, NetRowClass::ObsPhase, w, row_r(row));
+                    mdb_feed->add(pa.sat, rowClassOfKind(row_kind, w), w, row_r(row));
                 }
                 // The global variance component is also fed ahead of that `continue`.
                 // Since E[w·v²] = r_i, an r_i ≈ 0 row contributes ~0 to both the

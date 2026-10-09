@@ -13,15 +13,21 @@
  * system, so they are reported as a separate section and excluded from the
  * kernel-level closure.
  *
+ * Card NOM step N2b: the decomposition iterates exactly the channels the kernel folds
+ * (@ref networkRhsAttribDecompose): a station's rows, its pre-PD prior (folded with the
+ * block, the channel the attribution had missed: card NOM section 16, suspect 2) and its
+ * post-PD diagonal prior when the consume folded it, then every captured shared fold
+ * and the DD folds.  Rows are classed by their tags, station priors and shared folds by
+ * their kinds' names, so the classes sum to the kernel's reduced RHS by construction.
+ *
  * Known caveat, detected by the closure row: a within-epoch RAIM replay
  * rebuilds the kernel from modified row stacks after the shared-info captures
  * ran, and the closure row then reports the mismatch.  That RAIM tier is
  * carry_warm-gated, so it is inert with phase leveling off.
  *
  * Structure (SPEC_prefit_census_observability INC-0 / INC-5):
- *   - the row classifier and the shared-column label pass live in
- *     filter/NetworkRowClassify, one classifier shared with the census, the
- *     fuse and the topology ledger;
+ *   - the row classifier lives in filter/NetworkRowClassify (it reads the rows' tags),
+ *     one classifier shared with the census, the fuse and the topology ledger;
  *   - the decomposition runs off a @ref NetworkAttribFrame, so one code path
  *     serves the live epoch and a retained previous epoch.  The live path stores
  *     pointers to the caller's assemblies and copies only the kernel blocks.
@@ -161,43 +167,19 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
     out.valid     = true;
 }
 
-void networkRhsAttribDump(const NetworkAttribFrame& f,
-                          const std::shared_ptr<spdlog::logger>& log,
-                          const std::filesystem::path& dir, const char* kind) {
-    if (!f.valid || f.n <= 0) {
-        log->warn("Network (rhs-attrib): {} frame at tow {:.1f} has no reduced "
-                  "system — skipped", kind, f.tow);
-        return;
-    }
+std::string rhsAttribSharedClass(ContributionKind k) {
+    return std::string("shared:") + contributionKindName(k);
+}
+
+NetworkRhsAttribDecomposition networkRhsAttribDecompose(const NetworkAttribFrame& f) {
+    NetworkRhsAttribDecomposition out;
+    if (!f.valid || f.n <= 0) return out;
     const Eigen::Index n = f.n;
-    const Eigen::Index c00_l1 = f.c00_l1, c00_l2 = f.c00_l2;
 
-    // Per-column family and satellite, as buildSharedColumnMap (NetworkRowClassify;
-    // INC-0) read them from the estimator's column identity at the capture.
-    SharedColumnMap cm;
-    cm.n = n;
-    cm.label   = f.label;
-    cm.fam     = f.fam;
-    cm.col_sat = f.col_sat;
-    cm.c00_l1 = c00_l1;
-    cm.c00_l2 = c00_l2;
-
-    // ---- accumulators ------------------------------------------------------
-    std::map<std::string, Eigen::VectorXd> cls_total;   // class -> reduced-RHS vector
     auto addTotal = [&](const std::string& k, const Eigen::VectorXd& v) {
-        auto it = cls_total.find(k);
-        if (it == cls_total.end()) cls_total.emplace(k, v);
+        auto it = out.class_total.find(k);
+        if (it == out.class_total.end()) out.class_total.emplace(k, v);
         else it->second += v;
-    };
-    std::vector<AttribRow> rows_out;
-    auto pushRow = [&](const std::string& cls, const std::string& sta,
-                       const std::string& sat, const Eigen::VectorXd& v) {
-        AttribRow r;
-        r.cls = cls; r.sta = sta; r.sat = sat;
-        r.c00_l1 = (c00_l1 >= 0) ? v(c00_l1) : 0.0;
-        r.c00_l2 = (c00_l2 >= 0) ? v(c00_l2) : 0.0;
-        r.norm = v.norm();
-        rows_out.push_back(std::move(r));
     };
 
     // Per-slot cached local factorizations (reused by the DD recompute below).
@@ -207,7 +189,14 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
     // Per-slot local-col -> "sat:signal" (from pl_amb), for DD-block labels.
     std::map<std::size_t, std::map<Eigen::Index, std::string>> slot_amb_label;
 
-    // ---- pass 1: station data rows + local carry priors --------------------
+    // ---- pass 1: each station's channels, as the kernel folds them ----------
+    // A station's u_s and u_r are the sum of three channels (NetworkNormalEquations): the
+    // block's rows (addStation), the pre-PD station prior folded with the block
+    // (addStation's StationPrior, network.station_prior_before_pd), and the post-PD
+    // diagonal prior (addStationPrior), which the consume folds only when it sets
+    // carry_prior_folded.  Each row is classed by its tag (classifyRow) and each prior
+    // entry by its tag's kind (contributionKindName), so every term the kernel folded is
+    // attributed once and the closure holds by construction (card NOM step N2b).
     for (std::size_t k = 0; k < f.asm_ptr.size(); ++k) {
         const StationAssembly& R = *f.asm_ptr[k];
         const std::size_t slot = f.slot[k];
@@ -234,50 +223,49 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
             const double w = (row < R.w.size()) ? R.w(row) : 1.0;
             const double wy = w * R.y(row);
             if (!std::isfinite(wy)) continue;
-            auto& a = acc(rowClassName(classifyRow(cm, R, row, nullptr)));
+            auto& a = acc(rowClassName(classifyRow(R, row, nullptr)));
             a.first.noalias()  += R.A_s.row(row).transpose() * wy;
             a.second.noalias() += R.A_r.row(row).transpose() * wy;
         }
-        // Local carry priors (addStationPrior): RHS increments on local columns,
-        // sub-classed by which harvest list owns the column.
-        if (!R.carry_cols.empty()) {
-            std::set<Eigen::Index> cb_cols, rpb_cols, amb_cols;
-            for (const auto& t : R.pl_cb)  cb_cols.insert(std::get<1>(t));
-            for (const auto& t : R.pl_rpb) rpb_cols.insert(std::get<1>(t));
-            for (const auto& pa : R.pl_amb) amb_cols.insert(pa.col);
-            for (std::size_t j = 0; j < R.carry_cols.size()
-                                    && j < static_cast<std::size_t>(R.carry_dur.size()); ++j) {
-                const Eigen::Index col = R.carry_cols[j];
-                const char* cls = "prior_local_other";
-                if      (cb_cols.count(col))                          cls = "prior_rxcb";
-                else if (rpb_cols.count(col))                         cls = "prior_rpb";
-                else if (R.pl_zwd_present && col == R.pl_zwd.col)     cls = "prior_zwd";
-                else if (amb_cols.count(col))                         cls = "prior_plamb";
-                if (col >= 0 && col < R.A_r.cols())
-                    acc(cls).second(col) += R.carry_dur(static_cast<Eigen::Index>(j));
+        // A diagonal prior channel: RHS increments on local columns, one class per kind.
+        // An entry the coalesce merged into another entry of the same column folded inside
+        // the surviving entry, so its share is in that entry's class (the contributions
+        // table counts the merged entries on their own line).
+        const auto addPrior = [&](const std::vector<Eigen::Index>& cols,
+                                  const Eigen::VectorXd& dur,
+                                  const std::vector<RowTag>& tags) {
+            for (std::size_t j = 0; j < cols.size()
+                                    && j < static_cast<std::size_t>(dur.size()); ++j) {
+                const Eigen::Index col = cols[j];
+                if (col < 0 || col >= R.A_r.cols()) continue;
+                const ContributionKind kind =
+                    (j < tags.size()) ? tags[j].kind : ContributionKind::Unset;
+                acc(contributionKindName(kind)).second(col) +=
+                    dur(static_cast<Eigen::Index>(j));
             }
-        }
+        };
+        addPrior(R.prior_cols, R.prior_dur, R.prior_tags);   // pre-PD, with the block
+        if (R.carry_prior_folded)                            // post-PD, when folded
+            addPrior(R.carry_cols, R.carry_dur, R.carry_tags);
         // Reduce each class part through the station's final blocks.
         for (auto& [cls, uu] : per) {
             Eigen::VectorXd contrib = uu.first;
             if (uu.second.size() > 0)
                 contrib.noalias() -= Nsr * ldlt.solve(uu.second);
             addTotal(cls, contrib);
-            pushRow(cls, f.sta_name[k], "", contrib);
+            out.station_parts.push_back({cls, f.sta_name[k], contrib});
         }
     }
 
-    // ---- pass 2: shared-info captures (D2 carries, Kaula, W6, datum rows) ---
+    // ---- pass 2: shared-info captures, one class per kind -------------------
     for (const auto& cap : f.captures) {
         if (cap.delta_rhs.size() != n) continue;
-        const std::string cls = std::string("shared:") + cap.tag;
-        addTotal(cls, cap.delta_rhs);
+        addTotal(rhsAttribSharedClass(cap.kind), cap.delta_rhs);
     }
 
     // ---- pass 3: DD-fold corrections, recomputed per input block ------------
     const auto& blocks = f.dd_blocks;
     Eigen::VectorXd dd_total = Eigen::VectorXd::Zero(n);
-    std::vector<std::tuple<std::size_t, std::string, Eigen::VectorXd>> dd_rows;
     for (std::size_t b = 0; b < blocks.size(); ++b) {
         const auto& blk = blocks[b];
         const Eigen::Index K = static_cast<Eigen::Index>(blk.rows.size());
@@ -323,17 +311,50 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
         if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) continue;
         const Eigen::VectorXd delta = G * ldlt.solve(z_free - blk.zhat);
         dd_total += delta;
-        dd_rows.emplace_back(b, blk_label, delta);
+        out.dd_parts.push_back({b, blk_label, delta});
     }
     if (dd_total.size() == n && !blocks.empty()) addTotal("dd_fold", dd_total);
 
     // ---- closure (kernel-level; datum pins excluded by construction) --------
     Eigen::VectorXd sum = Eigen::VectorXd::Zero(n);
-    for (const auto& [cls, v] : cls_total) sum += v;
+    for (const auto& [cls, v] : out.class_total) sum += v;
     const Eigen::VectorXd& b_red = f.b_red;
-    const double closure_abs = (sum - b_red).cwiseAbs().maxCoeff();
+    out.closure_abs = (sum - b_red).cwiseAbs().maxCoeff();
     const double b_norm = std::max(1.0, b_red.norm());
-    const double closure_rel = (sum - b_red).norm() / b_norm;
+    out.closure_rel = (sum - b_red).norm() / b_norm;
+    out.valid = true;
+    return out;
+}
+
+void networkRhsAttribDump(const NetworkAttribFrame& f,
+                          const std::shared_ptr<spdlog::logger>& log,
+                          const std::filesystem::path& dir, const char* kind) {
+    if (!f.valid || f.n <= 0) {
+        log->warn("Network (rhs-attrib): {} frame at tow {:.1f} has no reduced "
+                  "system — skipped", kind, f.tow);
+        return;
+    }
+    const Eigen::Index n = f.n;
+    const Eigen::Index c00_l1 = f.c00_l1, c00_l2 = f.c00_l2;
+
+    // ---- the decomposition: passes 1 to 3 and the closure ---------------------
+    const NetworkRhsAttribDecomposition dec = networkRhsAttribDecompose(f);
+    const std::map<std::string, Eigen::VectorXd>& cls_total = dec.class_total;
+    const double closure_abs = dec.closure_abs;
+    const double closure_rel = dec.closure_rel;
+    const Eigen::VectorXd& b_red = f.b_red;
+    std::vector<AttribRow> rows_out;
+    auto pushRow = [&](const std::string& cls, const std::string& sta,
+                       const std::string& sat, const Eigen::VectorXd& v) {
+        AttribRow r;
+        r.cls = cls; r.sta = sta; r.sat = sat;
+        r.c00_l1 = (c00_l1 >= 0) ? v(c00_l1) : 0.0;
+        r.c00_l2 = (c00_l2 >= 0) ? v(c00_l2) : 0.0;
+        r.norm = v.norm();
+        rows_out.push_back(std::move(r));
+    };
+    for (const auto& p : dec.station_parts) pushRow(p.cls, p.sta, "", p.v);
+
     if (closure_rel > 1e-4) {
         log->warn("Network (rhs-attrib): tow {:.1f} closure VIOLATED (rel {:.3e}, "
                   "max-abs {:.3e}) — attribution untrusted this epoch (within-epoch "
@@ -368,11 +389,12 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
         const StationAssembly& R = *f.asm_ptr[k];
         if (!top_sta.count(f.sta_name[k])) continue;
         const Eigen::MatrixXd& Nsr = f.Nsr[k];
-        auto& ldlt = slot_ldlt[f.slot[k]];
+        // The factorization the decomposition used (deterministic on the same N_rr).
+        const Eigen::LDLT<Eigen::MatrixXd> ldlt(f.Nrr[k]);
         std::map<std::string, std::pair<Eigen::VectorXd, Eigen::VectorXd>> per;
         for (Eigen::Index row = 0; row < R.y.size(); ++row) {
             std::string sat;
-            const NetRowClass rc = classifyRow(cm, R, row, &sat);
+            const NetRowClass rc = classifyRow(R, row, &sat);
             if (rc != NetRowClass::ObsCode && rc != NetRowClass::ObsPhase
                 && rc != NetRowClass::ObsOther && rc != NetRowClass::IonoShRow)
                 continue;
@@ -407,7 +429,7 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
         const std::string& sname = f.sta_name[k];
         for (Eigen::Index row = 0; row < R.y.size(); ++row) {
             std::string sat;
-            const char* cls = rowClassName(classifyRow(cm, R, row, &sat));
+            const char* cls = rowClassName(classifyRow(R, row, &sat));
             const double w = (row < R.w.size()) ? R.w(row) : 1.0;
             const double h1 = (c00_l1 >= 0) ? R.A_s(row, c00_l1) : 0.0;
             const double h2 = (c00_l2 >= 0) ? R.A_s(row, c00_l2) : 0.0;
@@ -433,10 +455,10 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
               << row_kind << ',' << cls << ',' << sta << ',' << sat << ','
               << fmt::format("{:.6f}", (c00_l1 >= 0) ? v(c00_l1) : 0.0) << ','
               << fmt::format("{:.6f}", (c00_l2 >= 0) ? v(c00_l2) : 0.0) << ','
-              << fmt::format("{:.4f}", famNorm(f, cm.fam, v, NetColFam::Sh)) << ','
-              << fmt::format("{:.4f}", famNorm(f, cm.fam, v, NetColFam::Pb)) << ','
-              << fmt::format("{:.4f}", famNorm(f, cm.fam, v, NetColFam::Cb)) << ','
-              << fmt::format("{:.4f}", famNorm(f, cm.fam, v, NetColFam::Clk)) << ','
+              << fmt::format("{:.4f}", famNorm(f, f.fam, v, NetColFam::Sh)) << ','
+              << fmt::format("{:.4f}", famNorm(f, f.fam, v, NetColFam::Pb)) << ','
+              << fmt::format("{:.4f}", famNorm(f, f.fam, v, NetColFam::Cb)) << ','
+              << fmt::format("{:.4f}", famNorm(f, f.fam, v, NetColFam::Clk)) << ','
               << fmt::format("{:.4f}", v.norm()) << ',' << extra << '\n';
         };
         for (const auto& [cls, v] : cls_total) emit("TOTAL", cls, "", "", v, "");
@@ -451,9 +473,9 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
               << fmt::format("{:.6f}", r.c00_l2) << ",,,,,"
               << fmt::format("{:.4f}", r.norm) << ",\n";
         }
-        for (const auto& [b, lbl, v] : dd_rows)
-            emit("DDBLOCK", "dd_fold", "", "", v,
-                 "block=" + std::to_string(b) + ";" + lbl);
+        for (const auto& dd : dec.dd_parts)
+            emit("DDBLOCK", "dd_fold", "", "", dd.v,
+                 "block=" + std::to_string(dd.block) + ";" + dd.label);
         for (const auto& [lbl, val, v] : pin_rows)
             emit("DATUMPIN", "datum_pin", "", "", v,
                  lbl + "=" + fmt::format("{:.6f}", val));
@@ -484,7 +506,7 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
     log->info("Network (rhs-attrib): [{}] tow {:.1f} dumped {} classes / {} station "
               "rows / {} DD blocks / {} pins to {} (closure rel {:.2e}; C00 "
               "cols {}/{})",
-              kind, f.tow, cls_total.size(), rows_out.size(), dd_rows.size(),
+              kind, f.tow, cls_total.size(), rows_out.size(), dec.dd_parts.size(),
               pin_rows.size(), (dir / ("attrib_" + tow_tag + ".csv")).string(),
               closure_rel, c00_l1, c00_l2);
 }

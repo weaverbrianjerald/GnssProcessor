@@ -2398,9 +2398,8 @@ namespace GnssProcessor {
         long long pf_rows_code         = 0;   ///< …of which kind=code
         long long pf_rows_phase        = 0;   ///< …of which kind=phase
         long long pf_rows_no_elev      = 0;   ///< …written with an empty elev_deg (station absent from the modeled set, or no satellite on the row)
-        long long pf_rows_unattributed = 0;   ///< data rows attributed to neither family (local-column-only pseudo-observations); counted, not written
-        long long pf_rows_no_signal    = 0;   ///< rows written with an empty signal (neither the observation's own signal nor a labelled column named one); 0 expected (card OWD, O5)
-        long long pf_rows_sig_relabel  = 0;   ///< rows whose observation signal differs from the first labelled column's (the label used before card OWD); 0 expected, which shows the fix only filled empties (O5)
+        long long pf_rows_unattributed = 0;   ///< rows attributed to neither family (the row tag is not an observation: pins, local prior and anchor rows, unclassified rows); counted, not written
+        long long pf_rows_no_signal    = 0;   ///< rows written with an empty signal (the row tag named no signal); 0 expected (card OWD, O5)
         // Run-end accounting of the per-station local-block audit (SPEC_event_harness
         // §24.10, network.trace_station_block, card ZP).  Invariant #4 needs all four: "0
         // rows under an armed trace" must be visible, and the two refusal counts say which
@@ -3430,6 +3429,15 @@ namespace GnssProcessor {
         double    max_rxclk_innov_m = 0.0;               ///< largest |innovation| seen, metres: the largest step the gate saw
         long long n_raim_pool_rxclk_rows = 0;            ///< post-fit RAIM pool admissions (station-epochs x rows) whose admitted row is one of the clock-family columns' whitened block rows: the SPEC_amb_iono_split_overcount §7 item 4 interaction measured for the rho half, as n_raim_pool_zwd_rows / n_raim_pool_iono_rows measure it for theirs.  Counted only; the pool rule is unchanged.
         long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row is the ZWD's whitened block row: the §7 item 4 interaction, measured (the pool admits by |A_r(row, amb_col)| > 0.5, and a ZWD block row mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged.
+        /// The carried-phase RAIM pools' admissions per contribution kind (card NOM step N2b,
+        /// filter/NetworkRowClassify @c raimPoolAdmitsKind): the post-fit pool
+        /// (NetworkRaim.cpp; one walk per epoch it runs) and the within-epoch assess pool
+        /// (NetworkSolveGlue.cpp; one walk per assess call, the first and each replay's).
+        /// Read at run end; the declared rule admits the observation phase rows, the
+        /// coupling and block carried-prior rows and the SD-EWL constraint rows, so the
+        /// non-data rows' share is on record for the science card RPA.
+        RaimPoolAdmissionTally raim_pool_postfit;
+        RaimPoolAdmissionTally raim_pool_within;   ///< As @c raim_pool_postfit, for the within-epoch assess pool.
         long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (the re-coupling edge of invariant #7, counted)
         long long n_pl_blk_refloat_fail = 0;             ///< … whose re-whiten was non-SPD: the block's rows were dropped for that re-solve (a safe degradation: the refloated arcs re-float from data)
 

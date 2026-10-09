@@ -100,21 +100,27 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
  * @f$\hat\sigma_0 = 1.4826\,\mathrm{median}@f$ of that pool, plus separate code
  * and phase pools.
  *
- * Row classification (each row is assigned once, in this order):
- *  - a row with any nonzero in a shared VtecSh column is an SH↔slant-iono
- *    pseudo-observation and is excluded from all three pools (about 70–90 % of
- *    those rows exceed 3σ by construction, documented in
- *    @c NetworkIonoDeweightGate.hpp, so pooling them would swamp the statistic
- *    with a known artifact);
- *  - a row at or past @c cpl_row_start is a Card-1 coupling pseudo-observation
- *    and is also excluded (it is a statement about the carry, not about data);
- *  - a row touching a satellite phase-bias (@c PB:) column or a present-ambiguity
- *    local column is phase;
- *  - a row that is not phase and touches a satellite code-bias (@c CB:) or clock
- *    (@c CLK:) column is code;
- *  - any other data row (no shared partial: pivot pins, local prior rows) enters
- *    only the pooled @c sigma0_pf and is counted by the rows extension as
+ * Row classification (card NOM step N2b): each row's class comes from its contribution
+ * tag (@c StationAssembly::row_tags, read through @ref rowClassOfKind in
+ * filter/NetworkRowClassify), not from the columns it touches:
+ *  - an SH-VTEC to slant-ionosphere tie row is excluded from all three pools (about
+ *    70 to 90 % of those rows exceed 3σ by construction, documented in
+ *    @c NetworkIonoDeweightGate.hpp, so pooling them would swamp the statistic with a
+ *    known artifact);
+ *  - a coupling row or a whitened carried-prior block row is also excluded (it is a
+ *    statement about the carry, not about data);
+ *  - an observation row is code or phase by its declared observation type (the
+ *    companion code and second phase channels included);
+ *  - any other row (a pivot pin, a local prior or anchor row, an unclassified row)
+ *    enters only the pooled @c sigma0_pf and is counted by the rows extension as
  *    unattributed.
+ *
+ * Before the tags the class was inferred: phase from a phase-bias partial or a touch
+ * above 0.5 on an ambiguity column of @c R.pl_amb, code from a code-bias or clock
+ * partial, coupling from the row's position after @c cpl_row_start.  The phase rows of a
+ * (satellite, signal) tracked at one station have no phase-bias column and, before the
+ * carry is warm, no @c pl_amb entry, so they were filed as code in the first epochs of a
+ * run (card NOM section 16, suspect 3: 30 rows on the 2 h field golden).
  *
  * Interpretation: read @c sigma0_pf_code, not @c sigma0_pf.  With free
  * per-(station,satellite,signal) ambiguities (the configuration whenever
@@ -134,47 +140,27 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
  *
  * Keyed extension (§4.3 RHS localization, @c network.trace_postfit_keyed): the
  * same pass optionally pools per station, per satellite and per signal (the row's
- * sat/signal read from the shared CLK/CB/PB column labels it touches) and writes
- * one @c network_pf_keyed.csv row per key per epoch.  The Phase-1 verdict put the
+ * satellite and observation code, read from its tag) and writes one
+ * @c network_pf_keyed.csv row per key per epoch.  The Phase-1 verdict put the
  * collapse trigger on the right-hand side with the misfit global across stations;
  * these keys are the axes that separate the remaining candidate sources (station
  * geography ⇒ iono front, per-satellite structure ⇒ orbit/clock input, per-signal
- * split ⇒ dispersive).  With the keyed trace closed there are no extra label
- * lookups and the off path is unchanged.
+ * split ⇒ dispersive).  With the keyed trace closed the pass builds no key.
  *
  * Rows extension (SPEC_event_harness §24.6, @c network.trace_postfit_rows): the
- * same pass writes every data row it attributes to a family as one signed line of
+ * same pass writes every observation row as one signed line of
  * @c network_pf_rows.csv.  @c resid_m is @f$v_i@f$ itself (observed − predicted,
  * metres, the sign convention of @f$v = y - A_s x_s - A_r x_r@f$ above), @c w the
  * row's information weight, @c elev_deg the LOS elevation read off @p modeled.
  * The keyed pools identify which station / satellite / signal; the rows give the
  * residual of one LOS: its mean (a constant no state absorbed), its dispersive
- * ratio across signals, its elevation shape.  The signal written is the
- * observation's own (the assembly's @c row_sig), falling back to the first
- * labelled CB/PB column's signal (card OWD).  Rows of neither family are counted
- * (@c ctx.carry.pf_rows_unattributed), not written.  The label lookups are shared
- * with the keyed path; there is no cost when the rows trace is closed.
- *
- * Code-side clock fallback (card ZP; found by card PV).  A satellite code-bias
- * column is not present in every posture: with the satellite biases supplied
- * externally (a .BIA product, "0 code biases") there are no @c CB: columns, and
- * with them estimated the W6 datum signal's OSB is the gauge and carries no
- * column either (§24.9 records this case).  Without a fallback those code rows
- * fall to @c pf_rows_unattributed and an external-bias run's wire census sees no
- * code arcs.  The code side therefore carries the counterpart of the phase side's
- * ambiguity-column touch: a data row that is not phase and touches a satellite
- * clock (@c CLK:) column is a code row, because every observation equation
- * carries the satellite clock.  Rows with no shared partial (pivot pins, local
- * prior rows) touch neither and stay unattributed, which is what that counter
- * means.  Remaining limitation: such a row has no @c CB: / @c PB: label, so in the
- * keyed pools its signal is empty; it joins the per-station and per-satellite
- * pools but not the per-signal one.  The receiver code-bias local column does not
- * help: on the FT63 lineage it is one per-constellation @c GPS_DCB state, not a
- * per-signal one.  The same gap is present in @c filter/NetworkRowClassify's
- * @c classifyRow (@c if(cb) ObsCode; else ObsOther), which the prefit census, the
- * seed tripwire, the topology ledger and the structural FUSE share; closing it
- * there is solve-affecting whenever @c network.prefit_fuse_sigma is armed, so it
- * needs its own card.
+ * ratio across signals, its elevation shape.  The satellite and the signal written
+ * are the row tag's (the observation's own code, card OWD), so a code row whose only
+ * shared column is the satellite clock (a code signal tracked at one station, or a
+ * posture with the satellite code biases supplied externally) keeps its signal and
+ * joins the per-signal pool.  Rows that are not observations are counted
+ * (@c ctx.carry.pf_rows_unattributed), not written; there is no cost when the rows
+ * trace is closed.
  *
  * @param ctx           Run context (per-epoch results + run counters).
  * @param config_       Live config; not read (the toggles act through which traces

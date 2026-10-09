@@ -649,7 +649,7 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
         delta_info(c, c) += p.info;          // diagonal info prior (D2 carry-forward)
         delta_rhs(c)     += p.info * p.value;
     }
-    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    noteCapture_(ck, delta_rhs);
     neq_.addSharedInfo(delta_info, delta_rhs);
     noteFold_(ck, static_cast<long long>(priors.size()));
 }
@@ -889,7 +889,7 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
                        col[static_cast<std::size_t>(b)]) += Lambda(a, b);
         if (lambda_diag) (*lambda_diag)(in_idx[static_cast<std::size_t>(a)]) = Lambda(a, a);
     }
-    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    noteCapture_(ck, delta_rhs);
     neq_.addSharedInfo(delta_info, delta_rhs);
     noteFold_(ck, static_cast<long long>(nk));
     return static_cast<std::size_t>(k);
@@ -938,7 +938,7 @@ std::size_t NetworkEstimator::addCloneWalk(const std::vector<CloneWalk>& walks, 
         ++applied;
     }
     if (applied == 0) return 0;
-    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    noteCapture_(ck, delta_rhs);
     neq_.addSharedInfo(delta_info, delta_rhs);
     noteFold_(ck, static_cast<long long>(walks.size()));
     return applied;
@@ -1013,7 +1013,7 @@ std::size_t NetworkEstimator::addCloneWalkJoint(const std::vector<CloneWalk>& wa
         }
     }
     delta_info = (0.5 * (delta_info + delta_info.transpose())).eval();
-    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    noteCapture_(ck, delta_rhs);
     neq_.addSharedInfo(delta_info, delta_rhs);
     noteFold_(ck, static_cast<long long>(walks.size()));
     return static_cast<std::size_t>(k);
@@ -1146,7 +1146,7 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
         }
         downdated += rows.size();
     }
-    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    noteCapture_(ck, delta_rhs);
     neq_.addSharedInfo(delta_info, delta_rhs);
     noteFold_(ck, static_cast<long long>(priors.size()));
     return downdated;
@@ -1237,7 +1237,7 @@ std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
         dropped += nd;
     }
     if (dropped == 0) return 0;
-    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    noteCapture_(ck, delta_rhs);
     neq_.addSharedInfo(delta_info, delta_rhs);
     noteFold_(ck, static_cast<long long>(priors.size()));
     return dropped;
@@ -1260,7 +1260,7 @@ void NetworkEstimator::withdrawSharedPrior(const std::vector<SharedPrior>& prior
         delta_info(c, c) -= p.info;
         delta_rhs(c)     -= p.info * p.value;
     }
-    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    noteCapture_(ck, delta_rhs);
     neq_.addSharedInfo(delta_info, delta_rhs);
     noteFold_(ck, static_cast<long long>(priors.size()));
 }
@@ -1314,7 +1314,7 @@ std::size_t NetworkEstimator::refoldSharedPriorDenseDroppingClocks(
     const double sgn = restore ? -1.0 : +1.0;   // restore folds the inverse delta
     accumulate(old_col, L_old, e_old, -sgn);           // remove the block as folded
     if (has_new) accumulate(new_col, L_new, e_new, +sgn);  // re-fold the marginalized block
-    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    noteCapture_(ck, delta_rhs);
     neq_.addSharedInfo(delta_info, delta_rhs);
     noteFold_(ck, static_cast<long long>(nk));
     return dropped;
@@ -1333,11 +1333,30 @@ void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
     if (H.rows() == 0 || !(weight > 0.0)) return;
     const Eigen::MatrixXd delta_info = weight * (H.transpose() * H);
     const Eigen::VectorXd delta_rhs  = weight * (H.transpose() * z);
-    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    const bool per_row_kinds =
+        row_kinds && static_cast<Eigen::Index>(row_kinds->size()) == H.rows();
+    if (attrib_armed_) {
+        if (per_row_kinds) {
+            // Card NOM step N2b: one capture per kind present in the rows, in the order a
+            // kind first appears, each the rows of that kind (their sum is delta_rhs).
+            std::vector<ContributionKind> order;
+            for (const ContributionKind k : *row_kinds)
+                if (std::find(order.begin(), order.end(), k) == order.end()) order.push_back(k);
+            for (const ContributionKind k : order) {
+                Eigen::VectorXd part = Eigen::VectorXd::Zero(H.cols());
+                for (Eigen::Index r = 0; r < H.rows(); ++r)
+                    if ((*row_kinds)[static_cast<std::size_t>(r)] == k)
+                        part.noalias() += (weight * z(r)) * H.row(r).transpose();
+                noteCapture_(k, part);
+            }
+        } else {
+            noteCapture_(ck, delta_rhs);
+        }
+    }
     neq_.addSharedInfo(delta_info, delta_rhs);
     // Card NOM N2a: one record per kind present in the rows (in the order a kind first
     // appears), when the site named a kind per row; else one record under the call's kind.
-    if (row_kinds && static_cast<Eigen::Index>(row_kinds->size()) == H.rows()) {
+    if (per_row_kinds) {
         std::vector<std::pair<ContributionKind, long long>> per_kind;
         for (const ContributionKind k : *row_kinds) {
             auto it = std::find_if(per_kind.begin(), per_kind.end(),

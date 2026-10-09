@@ -13,7 +13,7 @@
 #include "app/NetworkRunContext.hpp"
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkRowClassify.hpp"   // sharedColumnFamily
+#include "filter/NetworkRowClassify.hpp"   // sharedColumnFamily, rowClassOfKind, rowTagAt
 #include "logging/NetworkRunTraces.hpp"
 
 #include <Eigen/Dense>
@@ -188,82 +188,24 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
     (void)config_;   // toggles are expressed through which traces are open
     const std::size_t stations_n = stations.size();
     // Keyed extension (§4.3): active only while its trace is open; with the trace
-    // closed it adds no label lookups and no pool work.
+    // closed it adds no pool work.
     const bool keyed = traces.pf_keyed_trace.is_open();
-    // Rows extension (§24.6): the signed per-row dump, gated the same way.  The
-    // per-column sat / signal labels are shared with the keyed path.
+    // Rows extension (§24.6): the signed per-row dump, gated the same way.
     const bool rows_on = traces.pf_rows_trace.is_open();
-    const bool labels  = keyed || rows_on;
     ctx.carry.ep_sigma0_pf       = 0.0;
     ctx.carry.ep_sigma0_pf_code  = 0.0;
     ctx.carry.ep_sigma0_pf_phase = 0.0;
     ctx.carry.ep_pf_rows         = 0;
 
-    // Shared-column families used to classify each row.
-    //  - SH: a row with any nonzero in an SH-VTEC column is the SH↔slant-iono
-    //    pseudo-observation, whose 3σ exceedance is a documented structural
-    //    artifact (NetworkIonoDeweightGate.hpp:20-30); it is excluded outright.
-    //  - PB / CB: the phase/code discriminator.  An uncombined phase row carries
-    //    a satellite phase-bias partial and a code row a satellite code-bias
-    //    partial, so the split is a property of the measurement model and holds
-    //    whatever the QC configuration is.  The within-epoch RAIM's pl_amb set is
-    //    not the primary discriminator because it is populated only under
-    //    phase_leveling; without leveling it would put every row in the code pool
-    //    (the inert wiring standing invariant #4 guards against).  It serves only
-    //    as the secondary phase signal below.
-    //  - CLK: the code side's fallback, the counterpart of the ambiguity-column
-    //    touch on the phase side (card ZP; found by card PV).  A satellite
-    //    code-bias column is not present in every posture: with the biases
-    //    supplied externally (a .BIA product, "0 code biases") there are no CB
-    //    columns, and with them estimated the W6 datum signal's OSB is the gauge
-    //    and carries no column either (§24.9: the residual-pool trace omitted every
-    //    C1C row at WROC).  Without the fallback every such code row goes to the
-    //    unattributed counter and the wire census sees no code arcs on an
-    //    external-bias posture.  Every real observation equation carries the
-    //    satellite clock partial, so a data row that touches a CLK column and is
-    //    not phase is a code row.  Rows with no shared partial (pivot pins, local
-    //    prior rows) touch neither and stay unattributed, which is what that
-    //    counter means.  Remaining limitation: such a row has no CB/PB label, so
-    //    its label-derived signal is empty and it joins the per-station and
-    //    per-satellite keyed pools but not the per-signal one (the rows trace
-    //    takes the observation's own signal instead; see below).  The receiver
-    //    code-bias local column does not help: on this lineage it is one
-    //    per-constellation "GPS_DCB", not a per-signal state.
-    std::vector<char> is_sh_col, is_pb_col, is_cb_col, is_clk_col;
-    // Keyed extension: per-column sat / signal, parsed from the labels the bitmap
-    // pass already fetches ("CLK:G01" / "CB:G01:C1W" / "PB:G01:L1C"): no extra
-    // label calls, and empty vectors (no cost) when neither the keyed nor the rows
-    // trace is open.
-    std::vector<std::string> col_sat, col_sig;
-    if (x_s.size() > 0) {
-        const std::size_t nsh = static_cast<std::size_t>(x_s.size());
-        is_sh_col.assign(nsh, 0);
-        is_pb_col.assign(nsh, 0);
-        is_cb_col.assign(nsh, 0);
-        is_clk_col.assign(nsh, 0);
-        if (labels) { col_sat.assign(nsh, {}); col_sig.assign(nsh, {}); }
-        for (Eigen::Index c = 0; c < x_s.size(); ++c) {
-            std::string lbl;
-            try { lbl = est.sharedColumnLabel(c); } catch (...) { continue; }
-            const std::size_t u = static_cast<std::size_t>(c);
-            if      (lbl.rfind("SH", 0) == 0) is_sh_col[u] = 1;
-            else if (lbl.rfind("PB:", 0) == 0) is_pb_col[u] = 1;
-            else if (lbl.rfind("CB:", 0) == 0) is_cb_col[u] = 1;
-            else if (lbl.rfind("CLK:", 0) == 0) is_clk_col[u] = 1;
-            if (labels && lbl.rfind("SH", 0) != 0) {
-                // "KIND:sat[:signal]": sat between the first and (optional)
-                // second colon, signal after the second.
-                const std::size_t p1 = lbl.find(':');
-                if (p1 != std::string::npos) {
-                    const std::size_t p2 = lbl.find(':', p1 + 1);
-                    col_sat[u] = lbl.substr(p1 + 1, (p2 == std::string::npos)
-                                                        ? std::string::npos
-                                                        : p2 - p1 - 1);
-                    if (p2 != std::string::npos) col_sig[u] = lbl.substr(p2 + 1);
-                }
-            }
-        }
-    }
+    // Each row's class, satellite and signal come from its contribution tag (card NOM
+    // step N2b, filter/NetworkRowClassify): the observation rows by their declared type
+    // (code, phase), the SH ties and the coupling and block rows by their kinds.  Before
+    // the tags the class was inferred from the shared columns a row touched (an SH, a
+    // phase-bias, a code-bias or a clock column) and from a touch above 0.5 on an
+    // ambiguity column listed in R.pl_amb; that inference filed the phase rows of a
+    // station-unique (satellite, signal) as code until the carry was warm (no phase-bias
+    // column, an empty pl_amb), and left a code row without a code-bias column out of
+    // the per-signal pools (card NOM section 16, suspect 3).
 
     // Keyed pools: SAT / SIG accumulate across stations ({code, phase} pairs);
     // the STA pools are per-station locals written as each station completes.
@@ -307,13 +249,6 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
 
         const Eigen::VectorXd v = R.y - R.A_s * x_s - R.A_r * x_r;
 
-        // Local columns carrying a present ambiguity: the secondary phase
-        // discriminator (the pl_amb set the within-epoch RAIM pools over).
-        std::vector<char> is_amb_col(static_cast<std::size_t>(R.A_r.cols()), 0);
-        for (const auto& pa : R.pl_amb)
-            if (pa.col >= 0 && pa.col < R.A_r.cols())
-                is_amb_col[static_cast<std::size_t>(pa.col)] = 1;
-
         // Keyed: this station's own {code, phase} pools (STA row written below).
         std::vector<double> sta_code, sta_phase;
         // Rows: this station's satellite -> elevation (deg) off the modelled set,
@@ -323,43 +258,27 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
             for (const PppObservation& o : (*modeled)[i]) sta_el[o.satellite] = o.elevation;
 
         for (Eigen::Index row = 0; row < v.size(); ++row) {
-            // Card-1 coupling rows are statements about the carry, not data.
-            if (R.cpl_row_start >= 0 && row >= R.cpl_row_start) continue;
-            bool sh_row = false, pb_row = false, cb_row = false, clk_row = false;
-            const std::string* row_sat = nullptr;   // keyed: first labeled col's sat
-            const std::string* row_sig = nullptr;   // keyed: first CB/PB col's signal
-            for (Eigen::Index c = 0; c < R.A_s.cols(); ++c) {
-                if (R.A_s(row, c) == 0.0) continue;
-                const std::size_t u = static_cast<std::size_t>(c);
-                if (is_sh_col[u]) { sh_row = true; break; }
-                if (is_pb_col[u]) pb_row = true;
-                else if (is_cb_col[u]) cb_row = true;
-                else if (is_clk_col[u]) clk_row = true;
-                if (labels) {
-                    if (!row_sat && !col_sat[u].empty()) row_sat = &col_sat[u];
-                    if (!row_sig && !col_sig[u].empty()) row_sig = &col_sig[u];
-                }
-            }
-            if (sh_row) continue;
-
+            const RowTag& tag = rowTagAt(R, row);
             const double w = (row < R.w.size()) ? R.w(row) : 1.0;
+            const NetRowClass cls = rowClassOfKind(tag.kind, w);
+            // The SH tie rows (a documented 3-sigma artifact) and the coupling and block
+            // rows (statements about the carry, not data) enter no pool.
+            if (cls == NetRowClass::IonoShRow || cls == NetRowClass::CplRow) continue;
+
             const double r = std::abs(v(row)) * std::sqrt(std::max(0.0, w));
             if (!std::isfinite(r)) continue;
 
-            // Ambiguity-column touch is a secondary phase signal for a run whose
-            // satellite phase biases are not estimated (no PB columns at all).
-            bool phase_row = pb_row;
-            for (Eigen::Index c = 0; c < R.A_r.cols() && !phase_row; ++c)
-                if (is_amb_col[static_cast<std::size_t>(c)] && std::abs(R.A_r(row, c)) > 0.5)
-                    phase_row = true;
-
-            // Code = a data row that is not phase and carries a satellite partial:
-            // the CB column when the posture estimates one, else the CLK column
-            // every observation equation has (see the CLK note at the family
-            // bitmaps).  A row with neither (no shared partial: a pivot pin, a local
-            // prior row) still enters pool_all but stays unattributed instead of
-            // being misfiled.
-            const bool code_row = !phase_row && (cb_row || clk_row);
+            // Code and phase by the row's declared observation type.  Any other row (a
+            // pivot pin, a local prior or anchor row, an unclassified row) enters only
+            // pool_all and stays unattributed instead of being misfiled.
+            const bool phase_row = (cls == NetRowClass::ObsPhase);
+            const bool code_row  = (cls == NetRowClass::ObsCode);
+            // The row's satellite and observation code, read only by the keyed pools and
+            // the rows trace (no string work while both are closed).
+            const bool ids = (keyed || rows_on) && (phase_row || code_row);
+            const std::string row_sat =
+                (ids && tag.sat.valid()) ? tag.sat.str() : std::string();
+            const std::string row_sig = ids ? rowObservationCode(tag) : std::string();
 
             pool_all.push_back(r);
             if (phase_row)      pool_phase.push_back(r);
@@ -367,42 +286,31 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
             if (keyed && (phase_row || code_row)) {
                 auto& sta_pool = phase_row ? sta_phase : sta_code;
                 sta_pool.push_back(r);
-                if (row_sat) {
-                    auto& sp = sat_pool[*row_sat];
+                if (!row_sat.empty()) {
+                    auto& sp = sat_pool[row_sat];
                     (phase_row ? sp.second : sp.first).push_back(r);
                 }
-                if (row_sig) {
-                    auto& gp = sig_pool[*row_sig];
+                if (!row_sig.empty()) {
+                    auto& gp = sig_pool[row_sig];
                     (phase_row ? gp.second : gp.first).push_back(r);
                 }
             }
             if (rows_on) {
                 if (phase_row || code_row) {
                     // Signed v (metres), the row weight, and the LOS elevation.  The
-                    // sat comes from the CLK/CB/PB labels the keyed pools key on.  The
-                    // signal is the observation's own (the assembly's row_sig,
-                    // row-aligned with H for the data rows); an appended row falls back
-                    // to the first labelled column's.  The label alone would leave a row
-                    // whose only shared column is the clock with an empty signal, and
-                    // every (station, sat, signal) grade would pool such rows across
-                    // signals (card OWD, O5).
-                    const std::string* obs_sig =
-                        (row < static_cast<Eigen::Index>(R.row_sig.size())
-                         && !R.row_sig[static_cast<std::size_t>(row)].empty())
-                            ? &R.row_sig[static_cast<std::size_t>(row)] : nullptr;
-                    const std::string* sig_out = obs_sig ? obs_sig : row_sig;
-                    if (!sig_out) ++ctx.carry.pf_rows_no_signal;
-                    if (obs_sig && row_sig && *obs_sig != *row_sig)
-                        ++ctx.carry.pf_rows_sig_relabel;
+                    // satellite and the signal are the row tag's (the observation's own
+                    // code, card OWD), so a row whose only shared column is the clock
+                    // keeps its signal.
+                    if (row_sig.empty()) ++ctx.carry.pf_rows_no_signal;
                     auto& t = traces.pf_rows_trace;
                     t << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
                       << stations[i].name << ','
-                      << (row_sat ? *row_sat : std::string()) << ','
-                      << (sig_out ? *sig_out : std::string()) << ','
+                      << row_sat << ','
+                      << row_sig << ','
                       << (phase_row ? "phase" : "code") << ','
                       << fmt::format("{:.5f}", v(row)) << ','
                       << fmt::format("{:.6e}", w) << ',';
-                    const auto el = row_sat ? sta_el.find(*row_sat) : sta_el.end();
+                    const auto el = row_sat.empty() ? sta_el.end() : sta_el.find(row_sat);
                     if (el != sta_el.end()) t << fmt::format("{:.2f}", el->second);
                     else ++ctx.carry.pf_rows_no_elev;
                     t << '\n';

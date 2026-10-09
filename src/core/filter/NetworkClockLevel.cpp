@@ -15,6 +15,7 @@
 #include "common/GnssIdentity.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkExtraBandScope.hpp"   // networkPinBandsFor (the pin pair's bands)
+#include "filter/NetworkRowClassify.hpp"     // rowTagAt, isCodeObservationKind (the code rows)
 #include "logging/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/NetworkProductEmitter.hpp"
@@ -468,19 +469,23 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
         try { x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s); }
         catch (...) { continue; }
         if (x_r.size() != R.A_r.cols()) continue;
-        // The coupling rows (and anything after them) are statements about the carry,
-        // not observations.
-        const Eigen::Index row_end = (R.cpl_row_start >= 0)
-                                         ? std::min<Eigen::Index>(R.cpl_row_start, R.A_s.rows())
-                                         : R.A_s.rows();
+        // A code-bias column's rows: the code observation rows (by their tags; card NOM
+        // step N2b) that carry the column's partial and the satellite clock's.  The tag
+        // replaces the row's position ahead of the coupling region, which kept out the
+        // coupling rows (statements about the carry, which can carry both partials).
+        const Eigen::Index n_rows = R.A_s.rows();
+        const auto codeRowOf = [&R](Eigen::Index r, const CbCol& cb) {
+            return isCodeObservationKind(rowTagAt(R, r).kind)
+                   && R.A_s(r, cb.col) != 0.0 && R.A_s(r, cb.clk) != 0.0;
+        };
         // CLV2 R-A2: every code row's post-fit residual per (satellite, signal) at any
         // positive weight (the second code channel's rows included), then one cell per
         // free same-band signal the station holds beside the pin pair's first signal.
         if (free_cb_rebase) {
             std::map<std::string, std::map<std::string, std::pair<double, double>>> res;
             for (const CbCol& cb : cbs) {
-                for (Eigen::Index r = 0; r < row_end; ++r) {
-                    if (R.A_s(r, cb.col) == 0.0 || R.A_s(r, cb.clk) == 0.0) continue;
+                for (Eigen::Index r = 0; r < n_rows; ++r) {
+                    if (!codeRowOf(r, cb)) continue;
                     const double w = R.w(r);
                     if (!(w > 0.0) || !std::isfinite(w)) continue;
                     auto& slot = res[cb.sat][cb.sig];
@@ -519,8 +524,8 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
                 offpin = (pr == ctx.carry.this_epoch_if_pin_real.end())
                          || (cb.sig != pr->second.first && cb.sig != pr->second.second);
             }
-            for (Eigen::Index r = 0; r < row_end; ++r) {
-                if (R.A_s(r, cb.col) == 0.0 || R.A_s(r, cb.clk) == 0.0) continue;
+            for (Eigen::Index r = 0; r < n_rows; ++r) {
+                if (!codeRowOf(r, cb)) continue;
                 const double w = R.w(r);
                 if (!(w >= kClvFullWeight) || !std::isfinite(w)) continue;
                 if (offpin) {

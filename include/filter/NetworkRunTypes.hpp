@@ -1248,8 +1248,8 @@ struct StationAssembly {
     std::map<int,int> h2local;             ///< H-column -> A_r-column map (back-substitute the slant-iono nuisance for the viz trace).
     /// One contribution tag per row of @c A_s / @c A_r, in row order (card NOM N2a,
     /// filter/NetworkContributions.hpp): every site that appends rows appends their tags in
-    /// lockstep, so the row's kind, satellite and signal travel with it.  Trace class in this
-    /// step: no reader takes a decision from a tag.
+    /// lockstep, so the row's kind, satellite and signal travel with it.  Every reader that
+    /// asks what a row is reads its tag (card NOM step N2b, filter/NetworkRowClassify).
     std::vector<RowTag> row_tags;
     /// The split's data rows: rows [0, n_data_rows) of the block are the measurement
     /// update's (@c em.H.rows()), everything after them is appended (card NOM N2a; the tag
@@ -1273,13 +1273,6 @@ struct StationAssembly {
     /// @c sd_ewl_ctr.rows_built over the call; card NOM N2a: the tag check compares it with
     /// the @c SdEwl tags).
     long long sd_ewl_rows{0};
-    /// The observation's own signal for each data row [0, H.rows()): the measurement's
-    /// @c signal_types, row-aligned with H by the assembly's invariant; rows appended
-    /// later (datum pins, ionosphere ties, coupling rows) have none (card OWD, O5).
-    /// Filled only under @c network.trace_postfit_rows.  The only reader is the post-fit
-    /// row writer; naming a row's signal from its first labelled column instead would
-    /// give an empty signal for a row whose only shared column is the clock.
-    std::vector<std::string> row_sig;
     /// The station's parameter inventory of this epoch (card NOM N1): every state column
     /// classified, with the disposition networkSplitStation_ gave it.  Written by this
     /// station's produce iteration only, drained serially after PASS B
@@ -2634,8 +2627,9 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 /// shared-border input folded outside the per-station assembly must be captured when
 /// armed and re-applied verbatim.  Writer sites (a new prior fold elsewhere must
 /// mirror into this channel):
-///   - cap_H / cap_z / cap_constraint_weight / cap_has_constraint: the W6
-///     satellite code-bias datum constraint rows (SB_SOLVEGLUE, W6 block).
+///   - cap_H / cap_z / cap_constraint_weight / cap_has_constraint / cap_row_kinds: the W6
+///     satellite code-bias datum constraint rows and their kinds (SB_SOLVEGLUE, W6
+///     block; the kinds name the replay's re-fold, card NOM step N2b).
 ///   - cap_sbc_H / cap_sbc_z: the SBC S-basis completion gauge rows
 ///     (SB_SOLVEGLUE, network.sbasis_complete block; re-applied at
 ///     NetworkSbasis::kSbasisCompleteWeight, a compile-time constant, so no weight
@@ -2668,6 +2662,7 @@ struct EpochWorkspace {
     Eigen::VectorXd cap_z;
     double cap_constraint_weight = 0.0;
     bool   cap_has_constraint = false;
+    std::vector<ContributionKind> cap_row_kinds;   ///< One kind per row of cap_H (the W6 builder's row kinds; card NOM N2b)
     Eigen::MatrixXd cap_sbc_H;   ///< SBC completion rows (see writer-site list)
     Eigen::VectorXd cap_sbc_z;   ///< SBC completion targets
     std::vector<NetworkEstimator::SharedPrior> cap_priors;

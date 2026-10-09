@@ -292,8 +292,6 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             if (i < est_index_of.size() && est_index_of[i] >= 0) census_set.insert(i);
     if (census_set.empty()) return;
 
-    const SharedColumnMap cm = buildSharedColumnMap(est, n_shared);
-
     // Datum-frame shared covariance, built once per epoch (the per-station wrapper
     // would copy the whole n_shared² block per call: 63 × 450² doubles on the FT63
     // tier).  Exact gauges are zeroed inside; n_free counts the columns left.
@@ -328,12 +326,20 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         const std::string& sname = stations[i].name;
 
         // ---- cheap tier: classes and the centred magnitude metric ----------
+        // Each row's class and satellite come from its contribution tag (card NOM
+        // step N2b, filter/NetworkRowClassify).  An SH tie row is filed under no
+        // satellite: a whitened tie row spans the slant ionospheres of several lines of
+        // sight, so it joins no per-satellite cell, block or bin (the block-Baarda census
+        // counts it as an unnamed row), as before the tags, when its only shared columns
+        // were the SH coefficients.
         const Eigen::Index m = R.y.size();
         std::vector<NetRowClass> cls(static_cast<std::size_t>(m));
         std::vector<std::string> sat(static_cast<std::size_t>(m));
-        for (Eigen::Index row = 0; row < m; ++row)
-            cls[static_cast<std::size_t>(row)] =
-                classifyRow(cm, R, row, &sat[static_cast<std::size_t>(row)]);
+        for (Eigen::Index row = 0; row < m; ++row) {
+            const std::size_t u = static_cast<std::size_t>(row);
+            cls[u] = classifyRow(R, row, &sat[u]);
+            if (cls[u] == NetRowClass::IonoShRow) sat[u].clear();
+        }
         const StationPrefitCensus pc = stationPrefitCensus(cls, R);
         counters.redun_pool_skips += pc.n_pool_skipped;
 

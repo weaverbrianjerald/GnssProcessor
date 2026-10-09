@@ -10,8 +10,9 @@
  * columns of the armed posture, which registers neither a clone nor a history column, so
  * the exclusion is tested here over an estimator that holds every kind of column: two
  * satellites' clocks, code biases and phase biases, SH coefficients of both shells, a
- * clock clone and two history columns.  @c buildSharedColumnMap (the map the row
- * classifier reads) and the frame diagnostic's mass partition both take the family from
+ * clock clone and two history columns.  @c buildSharedColumnMap (the map the RHS
+ * attribution and the topology ledger read; the row classifier reads the row tags since
+ * card NOM step N2b) and the frame diagnostic's mass partition both take the family from
  * this function.  The bias clones of card BCL (@c NetworkEstimator::registerClone) are
  * tested on their own: they carry a bias kind with the clone flag, and every reader that
  * used to parse the label prefix gave them no family.

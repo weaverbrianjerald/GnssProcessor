@@ -762,7 +762,6 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         Eigen::VectorXd x_try;
         try {
             if (!dense_drop.empty()) {
-                est.attribTag("cta_refloat");
                 // Card SCL: on a clone epoch the fold was the joint one, so its walk factors
                 // are withdrawn (the clones stay; filter/NetworkClockClone).  Off, the clone
                 // refloat does nothing and returns false.
@@ -779,7 +778,6 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 folded_dense = true;
             }
             if (!diag_drop.empty()) {
-                est.attribTag("cta_refloat");
                 // A gauge-free "diagonal" block is not diagonal: removing one key
                 // moves the group's information-weighted mean, so every survivor's
                 // anchor target changes.  Re-fold the group instead of subtracting

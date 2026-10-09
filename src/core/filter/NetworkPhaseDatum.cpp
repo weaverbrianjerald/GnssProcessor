@@ -89,7 +89,6 @@ int healNearNullPhaseBias(NetworkEstimator& est,
             healed_out->push_back(PhaseHealEvent{p.sat, p.signal, a.second, a.first});
         }
     }
-    est.attribTag("pb_heal");
     est.contributionKind(ContributionKind::PbHeal);   // card NOM N2a
     est.addSharedPrior(hp);
     if (within_epoch_armed)

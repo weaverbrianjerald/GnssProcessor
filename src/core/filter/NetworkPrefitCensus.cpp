@@ -37,22 +37,21 @@ namespace {
 /// (invariant #4).
 constexpr int kTopoColEventCap = 64;
 
-/// One classified row: its class plus the satellite of the first labelled
-/// shared column it touches.  (Named apart from the declared contribution tag,
-/// RowTag of filter/NetworkContributions.hpp, card NOM N2a.)
+/// One classified row: its class and the satellite its contribution tag names (card NOM
+/// step N2b).  (Named apart from the declared contribution tag, RowTag of
+/// filter/NetworkContributions.hpp, card NOM N2a.)
 struct ClassifiedRow {
     NetRowClass cls{NetRowClass::ObsOther};
     std::string sat;
 };
 
-/// Classify every row of one station once (the walk's only O(rows × cols) pass).
-void classifyStation(const SharedColumnMap& cm, const StationAssembly& R,
-                     std::vector<ClassifiedRow>& tags) {
+/// Classify every row of one station once, from the rows' tags.
+void classifyStation(const StationAssembly& R, std::vector<ClassifiedRow>& tags) {
     const Eigen::Index m = R.y.size();
     tags.assign(static_cast<std::size_t>(std::max<Eigen::Index>(m, 0)), ClassifiedRow{});
     for (Eigen::Index row = 0; row < m; ++row) {
         ClassifiedRow& tg = tags[static_cast<std::size_t>(row)];
-        tg.cls = classifyRow(cm, R, row, &tg.sat);
+        tg.cls = classifyRow(R, row, &tg.sat);
     }
 }
 
@@ -168,10 +167,9 @@ double prefitStandardizedDeviation(double y, double w, double m) {
     return std::isfinite(s) ? s : 0.0;
 }
 
-PrefitStationCentres prefitStationCentres(const SharedColumnMap& cm,
-                                          const StationAssembly& R) {
+PrefitStationCentres prefitStationCentres(const StationAssembly& R) {
     std::vector<ClassifiedRow> tags;
-    classifyStation(cm, R, tags);
+    classifyStation(R, tags);
     return centresFrom(R, tags);
 }
 
@@ -187,7 +185,6 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
                            unsigned class_mask) {
     const Eigen::Index n = est.numShared();
     if (n <= 0 || class_mask == 0) return 0.0;
-    const SharedColumnMap cm = buildSharedColumnMap(est, n);
 
     std::vector<double> pool;
     const bool have_prior = ctx.carry.prefit_walk_seeded;
@@ -197,7 +194,7 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
         if (!R.ok || R.A_s.cols() != n || R.y.size() == 0) continue;
 
         std::vector<ClassifiedRow> tags;
-        classifyStation(cm, R, tags);
+        classifyStation(R, tags);
         const PrefitStationCentres c = centresFrom(R, tags);
 
         for (Eigen::Index row = 0; row < R.y.size(); ++row) {
@@ -210,8 +207,10 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
             if (!std::isfinite(y) || !std::isfinite(w)) continue;
             if (w >= kNetPrefitPinWeight) continue;            // pin-regime DATA row
             if (!c.have[ti]) continue;                         // no usable centre
-            // Skip cells born this epoch (as INC-1 does) when the labels name the satellite.
-            if (!tg.sat.empty() && have_prior
+            // Skip cells born this epoch (as INC-1 does).  An SH tie row is a structural
+            // row, not a per-cell birth, so it is never deferred, although its tag names
+            // its line of sight's satellite (card NOM step N2b keeps that rule).
+            if (tg.cls != NetRowClass::IonoShRow && !tg.sat.empty() && have_prior
                 && ctx.carry.prefit_present_prev.count(
                        {static_cast<int>(i), tg.sat}) == 0)
                 continue;
@@ -234,15 +233,15 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
 // =====================================================================
 
 int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
-                             const GnssTime& t, const SharedColumnMap& cm,
+                             const GnssTime& t, Eigen::Index n_shared,
                              const std::string& station, StationAssembly& R,
                              double s_fuse) {
-    if (s_fuse <= 0.0 || !R.ok || R.y.size() == 0 || R.A_s.cols() != cm.n) return 0;
+    if (s_fuse <= 0.0 || !R.ok || R.y.size() == 0 || R.A_s.cols() != n_shared) return 0;
     auto& ctr = ctx.counters.pc;
     ++ctr.fuse_station_epochs;
 
     std::vector<ClassifiedRow> tags;
-    classifyStation(cm, R, tags);
+    classifyStation(R, tags);
     const PrefitStationCentres c = centresFrom(R, tags);
 
     const long long seq = static_cast<long long>(ctx.counters.n_loop_epochs);
@@ -365,32 +364,17 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         ++ctr.station_epochs;
 
         std::vector<ClassifiedRow> tags;
-        classifyStation(cm, R, tags);
+        classifyStation(R, tags);
         const PrefitStationCentres c = centresFrom(R, tags);
         for (int t = 0; t < kNetDataClasses; ++t)
             if (!c.have[t] && c.n[t] > 0) ++ctr.type_skips;
 
-        // An SH<->slant tie row touches only SH shared columns, so the shared
-        // labels cannot name its satellite, and a tie-row event without a
-        // satellite does not identify the valve edge it reports.  The satellite
-        // is recovered from the local side: the row carries the station's
-        // slant-iono column for that LOS.  The map (state key -> H column -> A_r
-        // column) is built once per station-epoch, only while the walk runs.
-        std::map<Eigen::Index, std::string> slant_col_sat;
-        if (stations[i].sm) {
-            try {
-                for (const auto& [sat, sidx] : stations[i].sm->getIonosphereStates()) {
-                    const auto hit = R.h2local.find(static_cast<int>(sidx));
-                    if (hit != R.h2local.end())
-                        slant_col_sat[static_cast<Eigen::Index>(hit->second)] = sat;
-                }
-            } catch (...) { slant_col_sat.clear(); }   // diagnostics degrade, never abort
-        }
-        auto slantSat = [&](Eigen::Index row) -> std::string {
-            for (const auto& [col, sat] : slant_col_sat)
-                if (col >= 0 && col < R.A_r.cols() && R.A_r(row, col) != 0.0) return sat;
-            return {};
-        };
+        // A row's satellite is the one its tag names (card NOM step N2b).  An SH<->slant
+        // tie row touches only SH shared columns, and its tag names its own line of
+        // sight: for a whitened tie row, the line of sight of its primary row (the
+        // diagonal of L⁻¹).  Before the tags the satellite was recovered from the first
+        // slant-ionosphere column the row touched, which for a whitened row is the
+        // lowest such column, not the row's own.
 
         // Established cells (INC-1) and cells born this epoch (INC-3) are kept
         // apart.  A birth's innovation is set by the seed, which makes it about 0
@@ -416,9 +400,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             ++rows_epoch;
 
             // --- structure bookkeeping (INC-3 presence, INC-4 kinds/ties) ---
-            std::string row_sat = tg.sat;
-            if (row_sat.empty() && tg.cls == NetRowClass::IonoShRow)
-                row_sat = slantSat(row);
+            const std::string& row_sat = tg.sat;
             const std::string sat = row_sat.empty() ? std::string("?") : row_sat;
             if (!row_sat.empty()) {
                 const auto cell = std::make_pair(static_cast<int>(i), row_sat);

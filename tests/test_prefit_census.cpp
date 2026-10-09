@@ -67,23 +67,15 @@ namespace {
 // ---------------------------------------------------------------------------
 //  Column layout used by every fixture below.  Four shared columns suffice to
 //  exercise all four data classes plus both pin classes:
-//    0 CLK:G07      (a labelled column of no family the classifier splits on)
-//    1 CB:G07:C1W   (the code discriminator)
-//    2 PB:G07:L1C   (the phase discriminator)
+//    0 CLK:G07      (a clock-only code row touches it alone)
+//    1 CB:G07:C1W   (a code row's code bias)
+//    2 PB:G07:L1C   (a phase row's phase bias)
 //    3 SH:C:0:0     (the SH<->slant tie)
+//  The class of a row is read from its tag (card NOM step N2b), which makeStation sets
+//  from the recipe (tagOf); the columns give the rows their geometry.
 // ---------------------------------------------------------------------------
 constexpr int kCols = 4;
 enum Col { kClk = 0, kCb = 1, kPb = 2, kSh = 3 };
-
-SharedColumnMap makeColumnMap() {
-    SharedColumnMap cm;
-    cm.n = kCols;
-    cm.label = { "CLK:G07", "CB:G07:C1W", "PB:G07:L1C", "SH:C:0:0" };
-    cm.fam = { NetColFam::Clk, NetColFam::Cb, NetColFam::Pb, NetColFam::Sh };
-    cm.col_sat = { "G07", "G07", "G07", "" };
-    cm.c00_l1 = kSh;
-    return cm;
-}
 
 /// Row recipe: which shared column it touches, its innovation and its weight.
 /// col = -1 marks a row with no shared partial (the pin classes).
@@ -93,8 +85,28 @@ struct RowSpec {
     double w;
 };
 
-/// Build a station block from row recipes.  One local column exists so the
-/// local-only rows have somewhere to point.
+/// The contribution tag a row of the recipe carries (card NOM step N2b: the classifier
+/// reads the tag, not the columns): a code-bias row and a clock-only row are code
+/// observations, a phase-bias row a phase observation, an SH row a tie, a local-only row
+/// an ambiguity pin (its weight decides pivot or local), and a row at or past
+/// @p cpl_row_start a coupling row.  Every tag names G07 except the ties': a production
+/// tie names its own line of sight, the fixture's ties name none, so they stay out of the
+/// per-satellite cells these tests count (presence, births, row kinds), as the ties of
+/// other lines of sight would.
+RowTag tagOf(const RowSpec& s, Eigen::Index row, Eigen::Index cpl_row_start) {
+    using CK = ContributionKind;
+    if (cpl_row_start >= 0 && row >= cpl_row_start) return makeRowTag(CK::CouplingScalar, "G07", "L1C");
+    switch (s.col) {
+        case kCb:  return makeRowTag(CK::DataCode, "G07", "C1W");
+        case kClk: return makeRowTag(CK::DataCode, "G07", "C1W");
+        case kPb:  return makeRowTag(CK::DataPhase, "G07", "L1C");
+        case kSh:  return makeRowTag(CK::ShIonoTie, "");
+        default:   return makeRowTag(CK::AmbiguityPin, "G07", "L1C");
+    }
+}
+
+/// Build a station block from row recipes, with its row tags.  One local column exists
+/// so the local-only rows have somewhere to point.
 StationAssembly makeStation(const std::vector<RowSpec>& rows,
                             Eigen::Index cpl_row_start = -1) {
     const auto m = static_cast<Eigen::Index>(rows.size());
@@ -111,6 +123,7 @@ StationAssembly makeStation(const std::vector<RowSpec>& rows,
         else            R.A_r(i, 0) = 1.0;
         R.y(i) = s.y;
         R.w(i) = s.w;
+        R.row_tags.push_back(tagOf(s, i, cpl_row_start));
     }
     return R;
 }
@@ -162,8 +175,8 @@ std::unique_ptr<GnssConfig> loadCfg(LogManager& log, const std::string& tag,
     return cfg;
 }
 
-/// An estimator carrying exactly the four shared columns of @ref makeColumnMap,
-/// so the census seam's own label pass reproduces that map.
+/// An estimator carrying exactly the four shared columns of the layout above, so the
+/// census seam's own column pass reproduces it.
 void registerColumns(NetworkEstimator& est) {
     est.registerClock("G07");
     est.registerCodeBias("G07", "C1W");
@@ -213,14 +226,13 @@ int countEvents(const fs::path& csv, const std::string& want) {
 // displaces one row against its station's own median.  Raw magnitude cannot tell
 // the two apart; the centred statistic separates them (0 against 3.76e5 here).
 TEST(PrefitCensusObservability, CentredMetricCancelsAClockStepAndKeepsAParkedCell) {
-    const SharedColumnMap cm = makeColumnMap();
 
     // Six code rows at 3e5 m (the clock step) and one at 3e5 + 1.88e5 (the park).
     std::vector<RowSpec> rows = codeRows(6, 3.0e5, 4.0);
     rows.push_back({ kCb, 3.0e5 + 1.88e5, 4.0 });
     const StationAssembly R = makeStation(rows);
 
-    const PrefitStationCentres c = prefitStationCentres(cm, R);
+    const PrefitStationCentres c = prefitStationCentres(R);
     ASSERT_TRUE(c.have[static_cast<int>(NetRowClass::ObsCode)]);
     EXPECT_DOUBLE_EQ(c.m[static_cast<int>(NetRowClass::ObsCode)], 3.0e5);
 
@@ -245,25 +257,25 @@ TEST(PrefitCensusObservability, CentredMetricCancelsAClockStepAndKeepsAParkedCel
 // statement about the carry, not a measurement.  Both are excluded from the census
 // and, more importantly, from the fuse, which would otherwise cap the datum.
 TEST(PrefitCensusObservability, PinAndCouplingRowsAreExcludedFromEveryPool) {
-    const SharedColumnMap cm = makeColumnMap();
     const std::vector<RowSpec> rows = {
         { kCb, 1.0, 4.0 },        // 0 obs_code
         { kPb, 0.01, 1.0e4 },     // 1 obs_phase
-        { kClk, 0.5, 1.0 },       // 2 obs_other  (labelled, neither CB nor PB)
+        { kClk, 0.5, 1.0 },       // 2 obs_other  (its tag is made unset below)
         { kSh, 2.0, 1.0 },        // 3 iono_sh_row
-        { -1, 0.0, 1.0e10 },      // 4 pivot_pin   (no shared partial, hard weight)
+        { -1, 0.0, 1.0e10 },      // 4 pivot_pin   (an ambiguity pin, hard weight)
         { -1, 0.3, 1.0 },         // 5 local_pin_row
-        { kCb, 9.0, 1.0 },        // 6 cpl_row     (past cpl_row_start)
+        { kCb, 9.0, 1.0 },        // 6 cpl_row     (a coupling row, past cpl_row_start)
     };
-    const StationAssembly R = makeStation(rows, /*cpl_row_start=*/6);
+    StationAssembly R = makeStation(rows, /*cpl_row_start=*/6);
+    R.row_tags[2].kind = ContributionKind::Unset;   // a row no site named: unclassified
 
-    EXPECT_EQ(classifyRow(cm, R, 0, nullptr), NetRowClass::ObsCode);
-    EXPECT_EQ(classifyRow(cm, R, 1, nullptr), NetRowClass::ObsPhase);
-    EXPECT_EQ(classifyRow(cm, R, 2, nullptr), NetRowClass::ObsOther);
-    EXPECT_EQ(classifyRow(cm, R, 3, nullptr), NetRowClass::IonoShRow);
-    EXPECT_EQ(classifyRow(cm, R, 4, nullptr), NetRowClass::PivotPin);
-    EXPECT_EQ(classifyRow(cm, R, 5, nullptr), NetRowClass::LocalPinRow);
-    EXPECT_EQ(classifyRow(cm, R, 6, nullptr), NetRowClass::CplRow);
+    EXPECT_EQ(classifyRow(R, 0, nullptr), NetRowClass::ObsCode);
+    EXPECT_EQ(classifyRow(R, 1, nullptr), NetRowClass::ObsPhase);
+    EXPECT_EQ(classifyRow(R, 2, nullptr), NetRowClass::ObsOther);
+    EXPECT_EQ(classifyRow(R, 3, nullptr), NetRowClass::IonoShRow);
+    EXPECT_EQ(classifyRow(R, 4, nullptr), NetRowClass::PivotPin);
+    EXPECT_EQ(classifyRow(R, 5, nullptr), NetRowClass::LocalPinRow);
+    EXPECT_EQ(classifyRow(R, 6, nullptr), NetRowClass::CplRow);
 
     EXPECT_FALSE(isDataRowClass(NetRowClass::PivotPin));
     EXPECT_FALSE(isDataRowClass(NetRowClass::LocalPinRow));
@@ -271,12 +283,12 @@ TEST(PrefitCensusObservability, PinAndCouplingRowsAreExcludedFromEveryPool) {
 
     // Exactly one row per data class reached a pool; the three excluded classes
     // contributed nothing.
-    const PrefitStationCentres c = prefitStationCentres(cm, R);
+    const PrefitStationCentres c = prefitStationCentres(R);
     for (int t = 0; t < kNetDataClasses; ++t) EXPECT_EQ(c.n[t], 1) << "class " << t;
 
-    // The row's satellite comes from the first labelled shared column it touches.
+    // The row's satellite comes from its tag.
     std::string sat;
-    classifyRow(cm, R, 0, &sat);
+    classifyRow(R, 0, &sat);
     EXPECT_EQ(sat, "G07");
 }
 
@@ -290,14 +302,13 @@ TEST(PrefitCensusObservability, PinAndCouplingRowsAreExcludedFromEveryPool) {
 // every sparse station into an exceedance and, with the fuse armed, into a silent
 // solve change.
 TEST(PrefitCensusObservability, ShTiesAreUncentredAndThinTypesHaveNoCentre) {
-    const SharedColumnMap cm = makeColumnMap();
     std::vector<RowSpec> rows(4, RowSpec{ kSh, 2.0, 1.0 });   // 4 identical SH ties
     rows.push_back({ kCb, 5.0, 1.0 });                        // 3 code rows only:
     rows.push_back({ kCb, 5.0, 1.0 });                        //   below the minimum
     rows.push_back({ kCb, 5.0, 1.0 });
     const StationAssembly R = makeStation(rows);
 
-    const PrefitStationCentres c = prefitStationCentres(cm, R);
+    const PrefitStationCentres c = prefitStationCentres(R);
     const int sh = static_cast<int>(NetRowClass::IonoShRow);
     const int cd = static_cast<int>(NetRowClass::ObsCode);
 
@@ -321,7 +332,6 @@ TEST(PrefitCensusObservability, FuseCapsToSFuseEquivalentLoadAndKeepsTheRow) {
     ASSERT_DOUBLE_EQ(ctx.knobs.pc_fuse_sigma, 1000.0);
 
     NetworkRunTraces traces(scratchDir("fuse_cap"));
-    const SharedColumnMap cm = makeColumnMap();
 
     std::vector<RowSpec> rows = codeRows(6, 0.0, 4.0);
     rows.push_back({ kCb, 1.0e5, 4.0 });        // s = 2e5, far over S_fuse
@@ -329,7 +339,7 @@ TEST(PrefitCensusObservability, FuseCapsToSFuseEquivalentLoadAndKeepsTheRow) {
     StationAssembly R = makeStation(rows);
     const Eigen::VectorXd w0 = R.w;
 
-    const int capped = networkPrefitFuseStation(ctx, traces, epochAt(1000.0).time, cm,
+    const int capped = networkPrefitFuseStation(ctx, traces, epochAt(1000.0).time, kCols,
                                                 "BSHM00ISR", R, 1000.0);
     EXPECT_EQ(capped, 1);
 
@@ -361,7 +371,6 @@ TEST(PrefitCensusObservability, FuseSkipsPinWeightsAndCentrelessTypes) {
     auto cfg = loadCfg(log, "fuse_skip", "    \"prefit_fuse_sigma\": 1000.0,\n");
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     NetworkRunTraces traces(scratchDir("fuse_skip"));
-    const SharedColumnMap cm = makeColumnMap();
 
     // A pin-weight data row (w >= 1e6) with a huge innovation, a code pool
     // deliberately one row short of a centre, and an SH tie that needs none.
@@ -375,7 +384,7 @@ TEST(PrefitCensusObservability, FuseSkipsPinWeightsAndCentrelessTypes) {
     StationAssembly R = makeStation(rows);
     const Eigen::VectorXd w0 = R.w;
 
-    const int capped = networkPrefitFuseStation(ctx, traces, epochAt(1000.0).time, cm,
+    const int capped = networkPrefitFuseStation(ctx, traces, epochAt(1000.0).time, kCols,
                                                 "AAAA", R, 1000.0);
     EXPECT_EQ(capped, 1) << "only the SH tie is both over threshold and eligible";
     EXPECT_EQ(R.w(0), w0(0)) << "pin-weight row untouched";
@@ -427,7 +436,7 @@ TEST(PrefitCensusObservability, FuseDomainExcludesPhaseByDefaultAndCountsWhatItG
     StationAssembly R = makeStation(rows);
     const Eigen::VectorXd w0 = R.w;
 
-    EXPECT_EQ(networkPrefitFuseStation(ctx, traces, epochAt(1000.0).time, makeColumnMap(),
+    EXPECT_EQ(networkPrefitFuseStation(ctx, traces, epochAt(1000.0).time, kCols,
                                        "MRO100AUS", R, 1000.0), 1);
     EXPECT_LT(R.w(6), w0(6)) << "the parked CODE cell is still fused";
     for (Eigen::Index i = 7; i < R.w.size(); ++i)
@@ -461,7 +470,7 @@ TEST(PrefitCensusObservability, DefaultsAreOffAndTheFuseIsStructurallyInert) {
     StationAssembly R = makeStation(rows);
     const Eigen::VectorXd w0 = R.w;
 
-    EXPECT_EQ(networkPrefitFuseStation(ctx, traces, epochAt(1000.0).time, makeColumnMap(),
+    EXPECT_EQ(networkPrefitFuseStation(ctx, traces, epochAt(1000.0).time, kCols,
                                        "AAAA", R, ctx.knobs.pc_fuse_sigma), 0);
     EXPECT_EQ(R.w, w0);
     EXPECT_EQ(ctx.counters.pc.fuse_station_epochs, 0)
@@ -498,13 +507,12 @@ TEST(PrefitCensusObservability, EventsAreRateLimitedPerCellAndResumeAfterTheHold
     traces.events_trace.open(csv, std::ios::trunc);
     ASSERT_TRUE(traces.events_trace.is_open());
 
-    const SharedColumnMap cm = makeColumnMap();
     for (int ep = 0; ep < 12; ++ep) {
         ctx.counters.n_loop_epochs = static_cast<std::size_t>(ep);
         std::vector<RowSpec> rows = codeRows(6, 0.0, 4.0);
         rows.push_back({ kCb, 1.0e5, 4.0 });     // the same parked cell, every epoch
         StationAssembly R = makeStation(rows);
-        networkPrefitFuseStation(ctx, traces, epochAt(1000.0 + 30.0 * ep).time, cm,
+        networkPrefitFuseStation(ctx, traces, epochAt(1000.0 + 30.0 * ep).time, kCols,
                                  "BSHM00ISR", R, 1000.0);
     }
     traces.events_trace.flush();

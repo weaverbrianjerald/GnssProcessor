@@ -29,6 +29,7 @@
 #include "filter/NetworkRelevel.hpp"
 #include "filter/NetworkRhsAttrib.hpp"   // flight-recorder trip latch and inline A4 dump (INC-5)
 #include "filter/NetworkRobustStats.hpp"
+#include "filter/NetworkRowClassify.hpp"   // the row tags' readers: the pools' admission rule (card NOM N2b)
 #include "filter/NetworkSbasis.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "products/LiveEphemerisStore.hpp"
@@ -465,7 +466,6 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     // phase 2).
     networkSignalRosterDatumPin(ctx, this_epoch_if_pin_real);
     if (cbd.H.rows() > 0) {
-        est.attribTag("w6_cb_gauge");
         // Card NOM N2a: one kind per row, by row type (the builder's row_kinds); a size
         // mismatch would leave the fold without a kind, on the table's integrity line.
         est.contributionRowKinds(&cbd.row_kinds);
@@ -567,6 +567,7 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         }
         if (within_epoch_armed) {
             cap_H = cbd.H; cap_z = cbd.z;
+            ws.cap_row_kinds = cbd.row_kinds;   // the replay names the same kinds (card NOM N2b)
             cap_constraint_weight = NetworkSbasis::kCodeBiasGaugeWeight;
             cap_has_constraint = true;
         }
@@ -583,7 +584,6 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         const auto kp = NetworkSbasis::buildCodeBiasKaulaPriors(
             registered_code_keys, config_.networkCbKaulaSigmaM());
         if (!kp.empty()) {
-            est.attribTag("cb_kaula");
             est.contributionKind(ContributionKind::CbKaula);   // card NOM N2a
             est.addSharedPrior(kp);
             // The RAIM within-epoch replay re-solves from a fresh beginEpoch();
@@ -708,7 +708,6 @@ try {
 // re-solve re-applies them from plan, which is in scope there).  In pin mode plan
 // has 0 rows and this is a no-op (byte-identical).
 if (plan.clock_constraint_H.rows() > 0) {
-    est.attribTag("clock_datum_rows");
     est.contributionKind(ContributionKind::ClockConstraintRows);   // card NOM N2a
     est.addSharedConstraintRows(plan.clock_constraint_H, plan.clock_constraint_z,
                                 plan.clock_constraint_weight);
@@ -1002,7 +1001,6 @@ if (ctx.knobs.sbasis_complete_on) {
         // the epoch is headed for a withhold, so a release edge here would report a
         // re-coupling that did not happen.
     } else if (sbc.n_extra > 0) {
-        est.attribTag("sbasis_complete");
         // Card SCL: rows formed over the clone-free view take zero clone columns (off, the
         // completion's own rows, value for value).
         const Eigen::MatrixXd sbc_H =
@@ -1348,7 +1346,6 @@ networkInjectClockOscPrior(ctx, ws, traces, se.time, est, registered_clock_sats,
             p.info  = clk_info;
             clk_anchor.push_back(p);
         }
-        est.attribTag("clk_anchor");
         est.contributionKind(ContributionKind::ColdClockAnchor);   // card NOM N2a
         est.addSharedPrior(clk_anchor);
         if (within_epoch_armed)
@@ -1513,47 +1510,44 @@ if (within_epoch_armed && carry_warm) {
     const double trig_code = config_.networkRaimWeCodeTrigger();
     const double trig_iono = config_.networkRaimWeIonoTrigger();
     constexpr double kWeCiCodeWeightScale = 1e-2;   // de-weighted code row: w×1e-2 = σ×10
-    // Shared-column classification, built once per epoch: the shared layout is
-    // frozen for the epoch, so the maps stay valid across within-epoch re-solves.
-    // Same label source and prefixes as the P1-4 pass (NetworkFrameDiag.cpp).
-    std::vector<char> ci_sh_col, ci_cb_col;
-    std::vector<std::string> ci_col_sat;
+    // WE-CI's rows, read from the row tags (card NOM step N2b, filter/NetworkRowClassify):
+    // the SH-VTEC to slant-ionosphere tie rows, and the code observation rows that carry a
+    // satellite code-bias partial (the rows a satellite code-row de-weight acts on).  The
+    // code-bias columns are marked once per epoch: the shared layout is frozen for the
+    // epoch, so the map stays valid across within-epoch re-solves.  Before the tags the
+    // rows were inferred from their shared columns (an SH column, a code-bias column) and
+    // from a touch above 0.5 on an R.pl_amb ambiguity column (the phase rows kept out);
+    // the code-bias partial is kept as WE-CI's declared scope, so a code row of a signal
+    // with no code-bias column (the W6 datum signal, a signal tracked at one station) is
+    // outside it, as it was.
+    std::vector<char> ci_cb_col;
     if (we_ci) {
-        const std::size_t nsh = static_cast<std::size_t>(est.numShared());
-        ci_sh_col.assign(nsh, 0);
-        ci_cb_col.assign(nsh, 0);
-        ci_col_sat.assign(nsh, {});
-        for (std::size_t u = 0; u < nsh; ++u) {
-            std::string lbl;
-            try { lbl = est.sharedColumnLabel(static_cast<Eigen::Index>(u)); }
-            catch (...) { continue; }
-            if (lbl.rfind("SH", 0) == 0) { ci_sh_col[u] = 1; continue; }
-            if (lbl.rfind("CB:", 0) == 0) ci_cb_col[u] = 1;
-            const std::size_t p1 = lbl.find(':');
-            if (p1 != std::string::npos) {
-                const std::size_t p2 = lbl.find(':', p1 + 1);
-                ci_col_sat[u] = lbl.substr(p1 + 1, (p2 == std::string::npos)
-                                                       ? std::string::npos : p2 - p1 - 1);
-            }
-        }
+        const Eigen::Index nsh = est.numShared();
+        ci_cb_col.assign(static_cast<std::size_t>(std::max<Eigen::Index>(nsh, 0)), 0);
+        for (Eigen::Index c = 0; c < nsh; ++c)
+            if (sharedColumnFamily(est, c) == NetColFam::Cb)
+                ci_cb_col[static_cast<std::size_t>(c)] = 1;
     }
     double s0_code_we = 0.0, s0_iono_we = 0.0;      // last assess()'s CI pool σ̂0
     std::map<std::string, double> ci_sat_code_max;  // sat → max standardized code row (last assess)
     std::map<int, double> ci_sta_max;               // station → max standardized code/iono row (last assess)
     std::set<std::string> dw_code_sats;             // chosen sat code-de-weight responses
-    // Classify one data row against the shared maps: sh_row = iono-constraint row
-    // (touches an SH column, which short-circuits); cb_row = touches a CB column;
-    // row_sat = first sat-labelled shared column (the attribution key).
+    // One row's WE-CI role, from its tag: sh_row = an SH tie row; code_row = a code
+    // observation row with a satellite code-bias partial; row_sat = the satellite the
+    // tag names (the attribution key; empty when it names none).
     auto ci_classify = [&](const StationAssembly& R, Eigen::Index row,
-                           bool& sh_row, bool& cb_row, const std::string*& row_sat) {
-        sh_row = false; cb_row = false; row_sat = nullptr;
+                           bool& sh_row, bool& code_row, std::string& row_sat) {
+        const RowTag& tag = rowTagAt(R, row);
+        sh_row = (tag.kind == ContributionKind::ShIonoTie);
+        code_row = false;
+        row_sat = tag.sat.valid() ? tag.sat.str() : std::string();
+        if (sh_row || !isCodeObservationKind(tag.kind)) return;
         for (Eigen::Index c = 0; c < R.A_s.cols(); ++c) {
-            if (R.A_s(row, c) == 0.0) continue;
             const std::size_t u = static_cast<std::size_t>(c);
-            if (u < ci_sh_col.size() && ci_sh_col[u]) { sh_row = true; return; }
-            if (u < ci_cb_col.size() && ci_cb_col[u]) cb_row = true;
-            if (!row_sat && u < ci_col_sat.size() && !ci_col_sat[u].empty())
-                row_sat = &ci_col_sat[u];
+            if (u < ci_cb_col.size() && ci_cb_col[u] && R.A_s(row, c) != 0.0) {
+                code_row = true;
+                return;
+            }
         }
     };
 
@@ -1586,10 +1580,18 @@ if (within_epoch_armed && carry_warm) {
     // faithful measure of the remaining contamination without special cases; the
     // culprit is kept out of the next pick by the candidate-set exclusion, not by
     // hiding it here.
+    // The phase pool's admission (card NOM step N2b): the post-fit pool's declared rule
+    // (raimPoolAdmitsKind, filter/NetworkRowClassify): a row enters the pool of an
+    // ambiguity column when its coefficient on the column exceeds 0.5 and it is an
+    // observation phase row, a coupling or whitened block carried-prior row or an SD-EWL
+    // constraint row, once per column it clears.  Counted per kind over every assess call
+    // (ctx.counters.raim_pool_within).
     auto assess = [&](const Eigen::VectorXd& xs, double& sigma0_out,
                       std::map<std::string, double>& sat_eff,
                       std::map<int, double>& sta_eff,
                       std::map<std::pair<int, std::string>, double>& arc_eff) {
+        auto& pool_tally = ctx.counters.raim_pool_within;
+        ++pool_tally.walks;
         std::vector<double> r_pool;
         std::vector<double> ci_code_pool, ci_iono_pool;   // per-pool standardized rows (WE-CI)
         if (we_ci) { ci_sat_code_max.clear(); ci_sta_max.clear(); }
@@ -1618,11 +1620,19 @@ if (within_epoch_armed && carry_warm) {
                                               R.A_s, R.A_r, R.w, plan.shared_datum);
                 } catch (...) { row_r.resize(0); }
             }
+            std::vector<char> pool_row_seen(static_cast<std::size_t>(R.A_r.rows()), 0);
             for (const auto& pa : R.pl_amb) {
                 if (pa.col < 0 || pa.col >= R.A_r.cols()) continue;
                 double r_max = 0.0;
                 for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
                     if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;
+                    const ContributionKind row_kind = rowTagAt(R, row).kind;
+                    const bool admitted = raimPoolAdmitsKind(row_kind);
+                    const bool first =
+                        admitted && !pool_row_seen[static_cast<std::size_t>(row)];
+                    if (first) pool_row_seen[static_cast<std::size_t>(row)] = 1;
+                    pool_tally.note(row_kind, admitted, first);
+                    if (!admitted) continue;   // a kind the rule does not admit (0 expected)
                     const double w = (row < R.w.size()) ? R.w(row) : 1.0;
                     double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
                     if (raim_redun && row < row_r.size()) {   // standardize v/(σ·√r_i) (B2)
@@ -1645,26 +1655,12 @@ if (within_epoch_armed && carry_warm) {
             }
             // --- Pool this station's code and iono-constraint rows (WE-CI) -------
             if (we_ci) {
-                std::vector<char> is_amb_col(static_cast<std::size_t>(R.A_r.cols()), 0);
-                for (const auto& pa : R.pl_amb)
-                    if (pa.col >= 0 && pa.col < R.A_r.cols())
-                        is_amb_col[static_cast<std::size_t>(pa.col)] = 1;
-                const Eigen::Index data_rows =
-                    (R.cpl_row_start >= 0) ? R.cpl_row_start : R.A_r.rows();
                 double sta_max = 0.0;
-                for (Eigen::Index row = 0; row < data_rows && row < resid.size(); ++row) {
-                    bool sh_row = false, cb_row = false;
-                    const std::string* row_sat = nullptr;
-                    ci_classify(R, row, sh_row, cb_row, row_sat);
-                    if (!sh_row && !cb_row) continue;          // phase/clock-only row
-                    if (!sh_row) {
-                        bool phase_row = false;                // the phase pool's rows stay its own
-                        for (Eigen::Index c = 0; c < R.A_r.cols() && !phase_row; ++c)
-                            if (is_amb_col[static_cast<std::size_t>(c)]
-                                && std::abs(R.A_r(row, c)) > 0.5)
-                                phase_row = true;
-                        if (phase_row) continue;
-                    }
+                for (Eigen::Index row = 0; row < resid.size(); ++row) {
+                    bool sh_row = false, code_row = false;
+                    std::string row_sat;
+                    ci_classify(R, row, sh_row, code_row, row_sat);
+                    if (!sh_row && !code_row) continue;   // not a WE-CI row (the phase pool's rows stay its own)
                     const double w = (row < R.w.size()) ? R.w(row) : 1.0;
                     double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
                     if (raim_redun && row < row_r.size()) {    // B2, same as the phase pool
@@ -1676,8 +1672,8 @@ if (within_epoch_armed && carry_warm) {
                     if (!std::isfinite(r)) continue;
                     (sh_row ? ci_iono_pool : ci_code_pool).push_back(r);
                     if (r > sta_max) sta_max = r;
-                    if (!sh_row && row_sat) {
-                        double& m = ci_sat_code_max[*row_sat];
+                    if (!sh_row && !row_sat.empty()) {
+                        double& m = ci_sat_code_max[row_sat];
                         if (r > m) m = r;
                     }
                 }
@@ -1772,24 +1768,12 @@ if (within_epoch_armed && carry_warm) {
             Eigen::VectorXd w_ci;
             const Eigen::VectorXd* wr = &R.w;
             if (we_ci && !dw_code_sats.empty()) {
-                std::vector<char> is_amb_col(static_cast<std::size_t>(R.A_r.cols()), 0);
-                for (const auto& pa : R.pl_amb)
-                    if (pa.col >= 0 && pa.col < R.A_r.cols())
-                        is_amb_col[static_cast<std::size_t>(pa.col)] = 1;
-                const Eigen::Index dw_data_rows =
-                    (R.cpl_row_start >= 0) ? R.cpl_row_start : R.A_r.rows();
-                for (Eigen::Index row = 0; row < dw_data_rows && row < R.w.size(); ++row) {
-                    bool sh_row = false, cb_row = false;
-                    const std::string* row_sat = nullptr;
-                    ci_classify(R, row, sh_row, cb_row, row_sat);
-                    if (sh_row || !cb_row || !row_sat || !dw_code_sats.count(*row_sat))
+                for (Eigen::Index row = 0; row < R.w.size(); ++row) {
+                    bool sh_row = false, code_row = false;
+                    std::string row_sat;
+                    ci_classify(R, row, sh_row, code_row, row_sat);
+                    if (!code_row || row_sat.empty() || !dw_code_sats.count(row_sat))
                         continue;
-                    bool phase_row = false;
-                    for (Eigen::Index c = 0; c < R.A_r.cols() && !phase_row; ++c)
-                        if (is_amb_col[static_cast<std::size_t>(c)]
-                            && std::abs(R.A_r(row, c)) > 0.5)
-                            phase_row = true;
-                    if (phase_row) continue;
                     if (w_ci.size() == 0) w_ci = R.w;
                     w_ci(row) *= kWeCiCodeWeightScale;
                 }
@@ -1862,8 +1846,10 @@ if (within_epoch_armed && carry_warm) {
                 const Eigen::Index nk = ok ? Hr.rows() : 0;          // surviving coupling rows
                 // Card NOM N2a: the rebuilt block's row tags, the rows before the coupling
                 // block then the kept coupling rows' (the rows the re-whiten reports),
-                // checked against the rebuilt rows and stored for this replay build.  Trace
-                // class: nothing reads them in this step.
+                // checked against the rebuilt rows and stored for this replay build: the
+                // record of the layout the estimator solved.  Every reader of a station's rows
+                // reads the primary block R, which this copy leaves unchanged, with its own
+                // tags (card NOM step N2b).
                 {
                     std::vector<RowTag> replay_tags =
                         rowTagsAfterJointRewhiten(R.row_tags, nd, R.cpl_raw, kept, nk);
@@ -1990,21 +1976,31 @@ if (within_epoch_armed && carry_warm) {
         }
         replay_fail_at.clear();   // every station is in: a throw below is the shared system's
         replay_fail_idx = -1;
-        est.attribTag("replay_refold");
-        if (cap_has_constraint) est.addSharedConstraintRows(cap_H, cap_z, cap_constraint_weight);
+        // Card NOM step N2b: each re-fold names its kind as the primary fold did, so the
+        // RHS attribution of a replayed epoch names the same classes (the replay's folds
+        // are counted apart from the primary build's in the contributions table).  The
+        // captured priors are of several kinds and re-fold in one call, which names none.
+        if (cap_has_constraint) {
+            est.contributionRowKinds(&ws.cap_row_kinds);
+            est.addSharedConstraintRows(cap_H, cap_z, cap_constraint_weight);
+        }
         // Re-apply the constraint-realized clock gauge rows (sum-to-zero or
         // broadcast-anchored) on the fresh arrowhead.  plan is in scope, and its rows
         // are frozen with the layout for the epoch, so they match the primary solve.
         // In pin mode there are 0 rows and this is a no-op (byte-identical).
-        if (plan.clock_constraint_H.rows() > 0)
+        if (plan.clock_constraint_H.rows() > 0) {
+            est.contributionKind(ContributionKind::ClockConstraintRows);
             est.addSharedConstraintRows(plan.clock_constraint_H, plan.clock_constraint_z,
                                         plan.clock_constraint_weight);
+        }
         // SBC completion rows, re-applied unchanged (EpochWorkspace writer-site
         // contract) so the replayed solve carries the same completed datum; the
         // weight is the compile-time constant, so no weight travels in the capture.
-        if (cap_sbc_H.rows() > 0)
+        if (cap_sbc_H.rows() > 0) {
+            est.contributionKind(ContributionKind::SbasisCompletion);
             est.addSharedConstraintRows(cap_sbc_H, cap_sbc_z,
                                         NetworkSbasis::kSbasisCompleteWeight);
+        }
         // The replay must fold the same prior the primary solve folded.  With the
         // gauge-free downdate armed, the plain accumulator would leave information
         // along the datum gauge that the primary solve removed, and the within-epoch
@@ -2026,10 +2022,12 @@ if (within_epoch_armed && carry_warm) {
         // Card SCL: the joint fold over the stand-ins and the walk factors (and the idle
         // clones' isolated priors) when captured; cap_dense_* then hold its marginal for
         // their readers.  Off, the clone replay folds nothing and returns false.
-        if (!networkClockCloneReplayFold(ctx, ws, est) && !cap_dense_keys.empty())
+        if (!networkClockCloneReplayFold(ctx, ws, est) && !cap_dense_keys.empty()) {
+            est.contributionKind(ContributionKind::BorderCarryDense);
             est.addSharedPriorDense(cap_dense_keys, cap_dense_cov, nullptr,
                                     ctx.knobs.carry_gauge_free,
                                     ctx.knobs.carry_gauge_free_closure);   // same fold as the primary solve (card C-GF)
+        }
         // Card SCL2 X2: the shared-history columns' N(0, 1) priors, as the primary fold
         // folded them after the clones'.  No-op off.
         networkSharedHistoryReplayFold(ctx, ws, est);

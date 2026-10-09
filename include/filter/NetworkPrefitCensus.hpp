@@ -203,10 +203,12 @@ struct PrefitStationCentres {
  * requiring @ref kNetPrefitMinTypeRows rows); @c iono_sh_row is not centred
  * (m ≡ 0) because it carries no receiver clock, and it has a usable centre
  * whenever it has one finite row.  Rows with a non-finite y or w never enter a
- * median.
+ * median.  The rows are classified from their tags (@ref classifyRow).
+ *
+ * @param R The station's assembled block, with its row tags.
+ * @return The per-type centres.
  */
-PrefitStationCentres prefitStationCentres(const SharedColumnMap& cm,
-                                          const StationAssembly& R);
+PrefitStationCentres prefitStationCentres(const StationAssembly& R);
 
 /// @return @f$s = |y - m|\sqrt{\max(w,0)}@f$, the card's standardized prefit
 ///         deviation.  Non-finite inputs yield 0 (the caller counts those
@@ -229,13 +231,12 @@ double prefitStandardizedDeviation(double y, double w, double m);
  *  - pin-regime rows (w ≥ @ref kNetPrefitPinWeight) are excluded;
  *  - rows of a type with no usable centre are excluded (the census walk counts
  *    these);
- *  - cells born this epoch are excluded where the shared labels name the
+ *  - cells born this epoch are excluded where the row's tag names the
  *    satellite ("Births are not exceedances"), read from the lag-1 presence map
  *    the census walk maintains; for this reason the loader forces this knob off
- *    unless @c network.trace_prefit_census is armed.  SH tie rows have no
- *    satellite label here (the census recovers it from the slant column; this
- *    pass does not), so they are never deferred; they are structural rows, not
- *    per-cell births.
+ *    unless @c network.trace_prefit_census is armed.  SH tie rows are never
+ *    deferred, although their tags name their lines of sight: they are structural
+ *    rows, not per-cell births.
  *
  * Computed before the solve, at the top of @c networkSolveGlue, so every H site,
  * including the pre-solve observability-gate withhold, reads the same per-epoch
@@ -267,14 +268,16 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
  * @param ctx     Run context (counters + the per-cell event holdoff).
  * @param traces  PREFIT-tier `prefit_fused` events.
  * @param t       This epoch (event stamp).
- * @param cm      This epoch's shared-column map.
+ * @param n_shared This epoch's shared-column count (@c est.numShared()); a block of
+ *                another width is skipped.
  * @param station Station name (event identity).
- * @param R       [in/out] the station's assembled block; only @c w is written.
+ * @param R       [in/out] the station's assembled block; only @c w is written.  Its
+ *                rows are classified from their tags (@ref classifyRow).
  * @param s_fuse  The threshold @f$S_\text{fuse}@f$ (> 0; the caller gates on it).
  * @return        Rows capped.
  */
 int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
-                             const GnssTime& t, const SharedColumnMap& cm,
+                             const GnssTime& t, Eigen::Index n_shared,
                              const std::string& station, StationAssembly& R,
                              double s_fuse);
 

@@ -11,6 +11,7 @@
 #include "config/GnssConfig.hpp"            // NetworkConfig (the manifest switch)
 #include "filter/NetworkEstimator.hpp"      // NetworkEstimator::sharedFoldLog
 #include "filter/NetworkParamRegistry.hpp"  // NetworkParamKind, paramKindName
+#include "filter/NetworkRowClassify.hpp"    // rowClassOfKind (the unclassified rows)
 #include "filter/NetworkRunTypes.hpp"       // StationAssembly, CplRowRaw
 #include "filter/StateKeySchema.hpp"
 #include "logging/NetworkRunTraces.hpp"     // appendRunManifestRecord
@@ -352,6 +353,7 @@ ContributionTally runAsPrinted(const NetworkContributionLedger& L) {
     run.unset_tags             = L.unset_tags_all;
     run.misplaced_rows         = L.misplaced_rows_all;
     run.counter_mismatches     = L.mismatches_all;
+    run.unclassified_rows      = L.unclassified_all;
     run.station_epochs_checked = L.checked_all;
     return run;
 }
@@ -570,6 +572,14 @@ StationTagCheck checkStationTags(const StationAssembly& R) {
             || contributionInCouplingRegion(g.kind) != cpl_region)
             ++c.misplaced;
     }
+    // The rows the row classifier files as unclassified (card NOM N2b): a row past the
+    // tags, or a tag whose kind maps to obs_other.
+    for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
+        const double w = (row < R.w.size()) ? R.w(row) : 1.0;
+        const CK k = (static_cast<std::size_t>(row) < R.row_tags.size())
+                         ? R.row_tags[static_cast<std::size_t>(row)].kind : CK::Unset;
+        if (rowClassOfKind(k, w) == NetRowClass::ObsOther) ++c.unclassified;
+    }
     channel(R.carry_tags, CC::StationPriorPostPd);
     channel(R.carry_merged, CC::StationPriorPostPd);
     channel(R.prior_tags, CC::StationPriorPrePd);
@@ -610,6 +620,7 @@ void ContributionTally::merge(const ContributionTally& o) {
     unset_tags += o.unset_tags;
     misplaced_rows += o.misplaced_rows;
     counter_mismatches += o.counter_mismatches;
+    unclassified_rows += o.unclassified_rows;
     coalesced_entries += o.coalesced_entries;
     folds_without_kind += o.folds_without_kind;
     replay_builds += o.replay_builds;
@@ -661,6 +672,7 @@ void networkContributionsStationDrain(NetworkContributionLedger& led,
         t.unset_tags         += chk.unset;
         t.misplaced_rows     += chk.misplaced;
         t.counter_mismatches += chk.mismatches;
+        t.unclassified_rows  += chk.unclassified;
         if (i >= est_index_of.size() || est_index_of[i] < 0) continue;   // not taken
         ++t.station_blocks;
         seen.fill(false);
@@ -680,6 +692,7 @@ void networkContributionsStationDrain(NetworkContributionLedger& led,
     led.unset_tags_all     += t.unset_tags;
     led.misplaced_rows_all += t.misplaced_rows;
     led.mismatches_all     += t.counter_mismatches;
+    led.unclassified_all   += t.unclassified_rows;
     led.checked_all        += t.station_epochs_checked;
     led.replay_realigned  = 0;
     led.replay_misaligned = 0;
@@ -786,6 +799,10 @@ std::vector<std::string> contributionsTable(const ContributionTally& epoch,
         "station rows and diagonal entries tagged unset: {} ({}); over the run {}",
         epoch.unset_tags, epoch_scope, run.unset_tags));
     out.push_back(fmt::format(
+        "station rows the readers file as unclassified (obs_other: no tag, an unset kind, or "
+        "a kind that is not a station row): {} ({}); over the run {}",
+        epoch.unclassified_rows, epoch_scope, run.unclassified_rows));
+    out.push_back(fmt::format(
         "station rows and entries out of place: {} ({}); over the run {} (the split's data "
         "rows carry the data kinds and no other row does; the coupling region, cpl_row_start "
         "and its coupling rows, carries the coupling and block kinds and no other row does; "
@@ -855,6 +872,7 @@ std::string contributionsJson(const ContributionTally& epoch, const Contribution
     j += fmt::format(
         "],\"integrity\":{{\"untagged_rows\":[{},{}],\"unset_tags\":[{},{}],"
         "\"misplaced_rows\":[{},{}],\"counter_mismatches\":[{},{}],"
+        "\"unclassified_rows\":[{},{}],"
         "\"station_blocks_checked\":[{},{}],\"folds_without_kind\":[{},{}],"
         "\"coalesced_entries\":[{},{}]}},"
         "\"replay\":{{\"builds\":[{},{}],\"folds\":[{},{}],\"dim\":[{},{}],\"realigned\":[{},{}],"
@@ -862,7 +880,8 @@ std::string contributionsJson(const ContributionTally& epoch, const Contribution
         "\"weighting_off\":[{},{}]}}}}",
         epoch.untagged_rows, run.untagged_rows, epoch.unset_tags, run.unset_tags,
         epoch.misplaced_rows, run.misplaced_rows, epoch.counter_mismatches,
-        run.counter_mismatches, epoch.station_epochs_checked, run.station_epochs_checked,
+        run.counter_mismatches, epoch.unclassified_rows, run.unclassified_rows,
+        epoch.station_epochs_checked, run.station_epochs_checked,
         epoch.folds_without_kind, run.folds_without_kind, epoch.coalesced_entries,
         run.coalesced_entries, epoch.replay_builds, run.replay_builds, epoch.replay_folds,
         run.replay_folds, epoch.replay_dim, run.replay_dim, epoch.replay_realigned,

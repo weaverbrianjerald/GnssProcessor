@@ -13,11 +13,22 @@
  *
  * At an armed target epoch the solve's reduced shared RHS
  * @f$\tilde u_s = u_s - \sum_r N_{sr} N_{rr}^{-1} u_r\ (+\ \text{DD folds})@f$
- * is decomposed exactly by row class.  The classes are observation rows (code,
- * phase, slant↔SH ties), pivot pins, coupling rows, station-local carry priors
- * (rx-CB, RPB, ZWD, leveling), shared-info priors (D2 carries, dense C1 block,
- * Kaula, W6 code-bias gauge, clock-datum rows, phase-datum prior) and the
- * invariant-carry DD folds.  The dump reports each class's load on the target
+ * is decomposed exactly by class (card NOM step N2b: every class is read from a
+ * contribution tag or kind, filter/NetworkContributions.hpp):
+ *
+ *  - a station's rows by their tags' row class (@ref classifyRow, @ref rowClassName):
+ *    @c obs_code, @c obs_phase, @c iono_sh_row, @c pivot_pin, @c local_pin_row,
+ *    @c cpl_row, and @c obs_other for an unclassified row;
+ *  - a station's prior entries by their kinds' names (@ref contributionKindName), from
+ *    both channels the kernel folds: the pre-PD prior folded with the block (for
+ *    example @c prior_rx_cb_datum_pre_pd) and the post-PD diagonal prior when the
+ *    consume folded it (@c prior_ambiguity_carry, @c prior_zwd_carry,
+ *    @c prior_iono_carry, @c prior_rx_cb_carry, @c prior_rx_cb_datum,
+ *    @c prior_ambiguity_oracle_pin);
+ *  - each shared fold the estimator captured, by its kind: @c "shared:" and the kind's
+ *    name (@ref rhsAttribSharedClass; for example @c shared:border_carry_dense,
+ *    @c shared:cb_if_pin);
+ *  - the invariant-carry DD folds (@c dd_fold).  The dump reports each class's load on the target
  * shared columns (the two-layer SH means @c SH:C:0:0 / @c SH2:C:0:0), and the
  * dumped per-class full vectors allow projection on any other direction
  * offline (for example the NEQ-export weak-3).
@@ -65,6 +76,7 @@
  */
 
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -126,7 +138,7 @@ struct NetworkAttribFrame {
     std::vector<Eigen::VectorXd>  ur;        ///< @f$u_r@f$ per item.
 
     // --- epoch-level ---------------------------------------------------------
-    std::vector<NetworkEstimator::AttribCapture>        captures;   ///< shared-info folds (tags are literals).
+    std::vector<NetworkEstimator::AttribCapture>        captures;   ///< shared-info folds, each with the kind its site named.
     std::vector<NetworkNormalEquations::DdPriorBlock>   dd_blocks;  ///< DD-prior input blocks.
     Eigen::VectorXd            b_red;   ///< kernel reduced shared RHS.
     Eigen::MatrixXd            N_red;   ///< kernel reduced shared normals (datum-pin section).
@@ -158,6 +170,63 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
                                const std::vector<StationAssembly>& asm_res,
                                const std::vector<int>& est_index_of,
                                bool own_assemblies);
+
+/**
+ * @brief The attribution class of a shared fold: the one map from a contribution kind
+ *        to the class the dump writes (card NOM step N2b).
+ *
+ * The class is @c "shared:" followed by the kind's name (@ref contributionKindName), so
+ * each fold site names one thing: the kind it hands the estimator.  A fold whose site
+ * named no kind reads @c shared:unset (the within-epoch replay's single re-fold of the
+ * captured priors, which are of several kinds).  These strings are written to the
+ * attribution's @c attrib_<tow>.csv (the TOTAL rows' class) and @c vec_<tow>.csv (the
+ * class column) only; no event carries them.
+ *
+ * @param k The fold's kind.
+ * @return The class.
+ */
+std::string rhsAttribSharedClass(ContributionKind k);
+
+/**
+ * @brief The exact reduced-RHS decomposition of one captured frame, before it is
+ *        written.
+ */
+struct NetworkRhsAttribDecomposition {
+    /// One class's reduced contribution at one station.
+    struct StationPart {
+        std::string     cls;  ///< The class (a row class name or a prior kind's name).
+        std::string     sta;  ///< The station.
+        Eigen::VectorXd v;    ///< Its reduced shared-RHS contribution (n_shared).
+    };
+    /// One DD prior block's recomputed fold.
+    struct DdPart {
+        std::size_t     block{0};  ///< The block's index in the frame's DD inputs.
+        std::string     label;     ///< Up to three of its terms ("sat:signal" or "loc<col>").
+        Eigen::VectorXd v;         ///< Its reduced shared-RHS contribution.
+    };
+    bool valid{false};                                    ///< The frame had a reduced system.
+    std::map<std::string, Eigen::VectorXd> class_total;  ///< Per class, the sum over stations and folds.
+    std::vector<StationPart> station_parts;               ///< Per (station, class), in station order.
+    std::vector<DdPart>      dd_parts;                    ///< Per DD block that factored.
+    double closure_abs{0.0};  ///< max |sum of the classes - the kernel's reduced RHS|.
+    double closure_rel{0.0};  ///< ||sum - kernel|| / max(1, ||kernel||); the dump warns above 1e-4.
+};
+
+/**
+ * @brief Decompose one captured frame by class, exactly (no file is written).
+ *
+ * Iterates the channels the kernel folds, in its order: per station the block's rows
+ * (classed by @ref classifyRow), the pre-PD prior entries (@c prior_cols, folded with the
+ * block) and, when @c carry_prior_folded, the post-PD entries (@c carry_cols), each
+ * entry classed by its tag's kind; each part is reduced through the station's final
+ * @f$N_{sr}N_{rr}^{-1}@f$.  Then the captured shared folds (@ref rhsAttribSharedClass)
+ * and the DD folds.  The classes sum to the kernel's reduced RHS up to rounding unless a
+ * within-epoch replay rebuilt the kernel after the captures, which the closure reports.
+ *
+ * @param f A frame captured by @ref networkAttribCaptureFrame.
+ * @return The decomposition; @c valid false for a frame without a reduced system.
+ */
+NetworkRhsAttribDecomposition networkRhsAttribDecompose(const NetworkAttribFrame& f);
 
 /**
  * @brief Decompose and dump one captured frame (the attribution proper).

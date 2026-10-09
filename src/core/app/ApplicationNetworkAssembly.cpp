@@ -3455,8 +3455,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             std::vector<ParamDisposition> col_disp;
             // Card NOM N2a: the split tags its data rows (kind, satellite, signal) in its own
             // weight passes; every site below that appends rows appends their tags in
-            // lockstep (StationAssembly::row_tags).  Trace class: no reader takes a decision
-            // from a tag in this step.
+            // lockstep (StationAssembly::row_tags).  Every reader that asks what a row is
+            // reads its tag (card NOM step N2b, filter/NetworkRowClassify).
             networkSplitStation_(st, est, em, ctx.param_inventory.rx_ifb,
                                  R.A_s, R.A_r, R.w, R.y, h2local, col_disp, R.row_tags);
             R.n_data_rows = R.A_s.rows();
@@ -3466,11 +3466,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // absorbed instance (N1b), into this station's own slot (no shared write;
             // drained serially below).  Trace class.
             recordStationParams(*st.sm, i, col_disp, st.mm->absorbedSharedStates(), R.param_inv);
-            // The observation's own signal of every data row, for the post-fit row
-            // writer (card OWD, O5); row-aligned with em.H, the invariant the
-            // demotion blocks of networkSplitStation_ rely on.  Trace-only: nothing in
-            // the solve reads it.
-            if (config_.getNetworkConfig().trace_postfit_rows) R.row_sig = em.signal_types;
+            // The observation's own signal of every data row travels in its row tag
+            // (R.row_tags, set by the split): the post-fit row writer reads it there
+            // (card OWD, O5; card NOM step N2b).
 
             // --- Station congruence screen (docs/SPEC_redundancy_census.md, CG-INC-0)
             // Retain the per-row position partial that networkSplitStation_ just
@@ -3804,9 +3802,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // Ionosphere constraint (W6): the between-satellite structure that makes
             // the satellite DCB observable against the free slant iono.  The
             // co-estimated SH-VTEC field (the network's own iono) when enabled,
-            // otherwise the external GIM when the satellite code bias is estimated.
-            // Folded into the station's own block (and the shared SH border); inert
-            // when neither applies.
+            // otherwise the external GIM rows when the satellite code bias is estimated,
+            // folded into the station's own block (and the shared SH border).  The GIM
+            // builder appends rows only with a GIM loaded and the ionosphere weighting on:
+            // under network.w6_iono_constraint none (the goldens) the setup builds no GIM
+            // and the loader forces the weighting off, so the call returns with nothing
+            // appended.  The contributions table counts its rows (gim_iono) and its calls by
+            // outcome (card NOM section 16, suspect 4).
             if (config_.estimateNetworkIonoSh())
                 networkAppendShIonoRows_(st, est, modeled[i], h2local, se.time,
                                          sh_model, setup.sh_model2, iono_deweight,
@@ -5549,18 +5551,18 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // has finished, and nothing between here and est.addStation writes R.w.  Serial
     // by design: the row build is parallel, so a fuse inside it would make the event
     // order depend on the thread count.  s_fuse <= 0 (the default) skips the whole
-    // block (no shared-column map, no classification, no allocation), so the off
-    // path is structurally byte-identical.
+    // block (no classification, no allocation), so the off path is structurally
+    // byte-identical.  The rows are classified from their tags (card NOM step N2b).
     const double pc_fuse_sigma = ctx.knobs.pc_fuse_sigma;
     if (pc_fuse_sigma > 0.0) {
-        const SharedColumnMap fuse_cm = buildSharedColumnMap(est, est.numShared());
-        if (fuse_cm.n > 0) {
+        const Eigen::Index fuse_n_shared = est.numShared();
+        if (fuse_n_shared > 0) {
             ++ctx.counters.pc.fuse_epochs;
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (!present[i]) continue;
                 StationAssembly& R = asm_res[i];
                 if (!R.ok || R.threw || R.state_mismatch || R.empty_innov) continue;
-                networkPrefitFuseStation(ctx, traces, se.time, fuse_cm,
+                networkPrefitFuseStation(ctx, traces, se.time, fuse_n_shared,
                                          stations[i].name, R, pc_fuse_sigma);
             }
         }

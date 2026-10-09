@@ -9,7 +9,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkRowClassify.hpp"   // sharedColumnFamily
+#include "filter/NetworkRowClassify.hpp"   // rowClassOfKind, rowTagAt
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
@@ -189,32 +189,29 @@ namespace {
 /// state map claims at all.
 std::vector<std::string> buildLocalLabels(const StationAssembly& R,
                                           const StateManager& sm,
-                                          Eigen::Index n_local,
-                                          std::vector<char>& is_amb_col) {
+                                          Eigen::Index n_local) {
     std::vector<std::string> labels(static_cast<std::size_t>(n_local));
-    is_amb_col.assign(static_cast<std::size_t>(n_local), 0);
     const auto& h2l = R.h2local;
-    auto put = [&](std::size_t state_idx, std::string label, bool amb) {
+    auto put = [&](std::size_t state_idx, std::string label) {
         const auto hit = h2l.find(static_cast<int>(state_idx));
         if (hit == h2l.end() || hit->second < 0) return;
         const Eigen::Index c = static_cast<Eigen::Index>(hit->second);
         if (c >= n_local) return;
         labels[static_cast<std::size_t>(c)] = std::move(label);
-        if (amb) is_amb_col[static_cast<std::size_t>(c)] = 1;
     };
 
     const std::size_t kNone = std::numeric_limits<std::size_t>::max();
     auto putScalar = [&](std::size_t idx, const char* label) {
-        if (idx != kNone) put(idx, label, false);
+        if (idx != kNone) put(idx, label);
     };
     // Core block (index-stable by construction).
     if (sm.getPositionIndex() != kNone) {
         const std::size_t p = sm.getPositionIndex();
-        put(p + 0, "pos:x", false); put(p + 1, "pos:y", false); put(p + 2, "pos:z", false);
+        put(p + 0, "pos:x"); put(p + 1, "pos:y"); put(p + 2, "pos:z");
     }
     if (sm.getVelocityIndex() != kNone) {
         const std::size_t v = sm.getVelocityIndex();
-        put(v + 0, "vel:x", false); put(v + 1, "vel:y", false); put(v + 2, "vel:z", false);
+        put(v + 0, "vel:x"); put(v + 1, "vel:y"); put(v + 2, "vel:z");
     }
     putScalar(sm.getClockIndex(), "clk");
     putScalar(sm.getClockRateIndex(), "clkrate");
@@ -225,22 +222,20 @@ std::vector<std::string> buildLocalLabels(const StationAssembly& R,
     putScalar(sm.getTropoGradientEastIndex(), "grde");
     putScalar(sm.getIonoIndex(), "iono");
     // Dynamic key -> index maps.
-    for (const auto& [key, idx] : sm.getCodeBiasStates())         put(idx, "rxcb:" + key, false);
-    for (const auto& [sat, idx] : sm.getIonosphereStates())       put(idx, "iono:" + sat, false);
-    for (const auto& [sat, idx] : sm.getIonosphereRateStates())   put(idx, "ionorate:" + sat, false);
-    for (const auto& [sys, idx] : sm.getSystemTimeOffsetStates()) put(idx, "isb:" + sys, false);
-    for (const auto& [key, idx] : sm.getSatBiasStates())          put(idx, "satbias:" + key, false);
-    for (const auto& [key, idx] : sm.getSatPhaseBiasStates())     put(idx, "satpb:" + key, false);
-    for (const auto& [key, idx] : sm.getReceiverPhaseBiasStates())put(idx, "rxpb:" + key, false);
-    for (const auto& [sat, idx] : sm.getSatClockStates())         put(idx, "satclk:" + sat, false);
+    for (const auto& [key, idx] : sm.getCodeBiasStates())         put(idx, "rxcb:" + key);
+    for (const auto& [sat, idx] : sm.getIonosphereStates())       put(idx, "iono:" + sat);
+    for (const auto& [sat, idx] : sm.getIonosphereRateStates())   put(idx, "ionorate:" + sat);
+    for (const auto& [sys, idx] : sm.getSystemTimeOffsetStates()) put(idx, "isb:" + sys);
+    for (const auto& [key, idx] : sm.getSatBiasStates())          put(idx, "satbias:" + key);
+    for (const auto& [key, idx] : sm.getSatPhaseBiasStates())     put(idx, "satpb:" + key);
+    for (const auto& [key, idx] : sm.getReceiverPhaseBiasStates())put(idx, "rxpb:" + key);
+    for (const auto& [sat, idx] : sm.getSatClockStates())         put(idx, "satclk:" + sat);
     for (const auto& [key, idx] : sm.getAmbiguities()) {
         // "<sat>_<signal>" -> "amb:<sat>:<signal>"; an unparseable key is labelled
-        // "amb:<raw key>" rather than dropped, so the column is still named and
-        // still marked as an ambiguity column.
+        // "amb:<raw key>" rather than dropped, so the column is still named.
         const auto parts = StateKeys::parseAmbiguityKey(key);
         put(idx,
-            parts ? ("amb:" + parts->satellite + ':' + parts->signal) : ("amb:" + key),
-            true);
+            parts ? ("amb:" + parts->satellite + ':' + parts->signal) : ("amb:" + key));
     }
     return labels;
 }
@@ -269,31 +264,6 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
     if (ne == 0 || ne == ctx.carry.sb_last_emitted) return;
     ctx.carry.sb_last_emitted = ne;
     if (!(ne <= 20 || (ne % 60) == 0)) return;
-
-    // Phase/code discriminator, built as the P1-4 post-fit pass builds it: a
-    // satellite phase-bias shared column ("PB:") marks a phase row, a satellite
-    // code-bias column ("CB:") a code row, and an SH-VTEC column ("SH") marks the
-    // SH<->slant-iono pseudo-observation, which is not data.  The ambiguity local
-    // columns are the second phase marker (a posture that estimates no satellite
-    // phase biases has no PB columns).  Unlike the pass's `pl_amb` set, they are
-    // read from the StateManager, so the discriminator also works under
-    // `carry_invariant`.
-    std::vector<char> is_sh_col, is_pb_col, is_cb_col;
-    if (x_s.size() > 0) {
-        const std::size_t nsh = static_cast<std::size_t>(x_s.size());
-        is_sh_col.assign(nsh, 0);
-        is_pb_col.assign(nsh, 0);
-        is_cb_col.assign(nsh, 0);
-        for (Eigen::Index c = 0; c < x_s.size(); ++c) {
-            const std::size_t u = static_cast<std::size_t>(c);
-            switch (sharedColumnFamily(est, c)) {
-                case NetColFam::Sh: is_sh_col[u] = 1; break;
-                case NetColFam::Pb: is_pb_col[u] = 1; break;
-                case NetColFam::Cb: is_cb_col[u] = 1; break;
-                default:                              break;
-            }
-        }
-    }
 
     long long rows_this_epoch = 0;
     const std::size_t stations_n = stations.size();
@@ -328,12 +298,9 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
             continue;
         }
 
-        std::vector<char> is_amb_col;
         const std::vector<std::string> labels =
-            stations[i].sm ? buildLocalLabels(R, *stations[i].sm, Nrr.rows(), is_amb_col)
+            stations[i].sm ? buildLocalLabels(R, *stations[i].sm, Nrr.rows())
                            : std::vector<std::string>{};
-        if (is_amb_col.empty())
-            is_amb_col.assign(static_cast<std::size_t>(Nrr.rows()), 0);
 
         const StationBlockAudit::Spectrum sp = StationBlockAudit::spectrum(Nrr, labels);
         if (!sp.ok) { ++ctx.carry.sb_decomp_failed; continue; }
@@ -356,32 +323,22 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
                                    : 0.0;
 
         // Row census.  Redundancy is computed over every row of A_r (all of them
-        // enter N_rr), but only data rows are counted: the SH pseudo-observation
-        // constrains the iono field and the Card-1 coupling rows (from
-        // cpl_row_start on) constrain the carry, so neither is an observation whose
-        // checkability the card measures.  A data row that is neither phase nor
-        // code counts toward n_data only.
+        // enter N_rr), but only the rows that are not carry statements or SH ties are
+        // counted: the SH pseudo-observation constrains the iono field and the coupling
+        // and block rows constrain the carry, so neither is an observation whose
+        // checkability the card measures.  Each row's kind is read from its tag (card NOM
+        // step N2b): code and phase by the declared observation type; a row of neither
+        // kind (a pin, a local prior or anchor row) counts toward n_data only.
         const Eigen::VectorXd red = StationBlockAudit::redundancy(sp, R.A_r, R.w);
         long long n_code = 0, n_phase = 0, n_data = 0, zr_code = 0, zr_phase = 0;
         for (Eigen::Index row = 0; row < R.A_r.rows() && row < red.size(); ++row) {
-            if (R.cpl_row_start >= 0 && row >= R.cpl_row_start) continue;
-            bool sh_row = false, pb_row = false, cb_row = false;
-            for (Eigen::Index c = 0; c < R.A_s.cols(); ++c) {
-                if (R.A_s(row, c) == 0.0) continue;
-                const std::size_t u = static_cast<std::size_t>(c);
-                if (is_sh_col[u]) { sh_row = true; break; }
-                if (is_pb_col[u]) pb_row = true;
-                else if (is_cb_col[u]) cb_row = true;
-            }
-            if (sh_row) continue;
-            bool phase_row = pb_row;
-            for (Eigen::Index c = 0; c < R.A_r.cols() && !phase_row; ++c)
-                if (is_amb_col[static_cast<std::size_t>(c)] && std::abs(R.A_r(row, c)) > 0.5)
-                    phase_row = true;
+            const double w = (row < R.w.size()) ? R.w(row) : 1.0;
+            const NetRowClass cls = rowClassOfKind(rowTagAt(R, row).kind, w);
+            if (cls == NetRowClass::IonoShRow || cls == NetRowClass::CplRow) continue;
             ++n_data;
             const bool zero_red = (red(row) < StationBlockAudit::kZeroRedundancy);
-            if (phase_row)   { ++n_phase; if (zero_red) ++zr_phase; }
-            else if (cb_row) { ++n_code;  if (zero_red) ++zr_code;  }
+            if (cls == NetRowClass::ObsPhase)     { ++n_phase; if (zero_red) ++zr_phase; }
+            else if (cls == NetRowClass::ObsCode) { ++n_code;  if (zero_red) ++zr_code;  }
         }
 
         auto num = [](double v) {

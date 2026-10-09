@@ -220,7 +220,7 @@ double networkGrossLosUndoDeweight(double r_folded, double scale);
  * @brief One code row of a line of sight, as the pure decision rule sees it.
  */
 struct GrossLosSample {
-    std::string signal;      ///< Signal label from the row's @c CB: / @c PB: column; empty when the posture gives the row no such column (external biases, or the W6 datum signal).
+    std::string signal;      ///< The row's observation code, from its contribution tag (card NOM step N2b); empty when the tag names no signal.
     double      r{0.0};      ///< @f$|v|\sqrt{w}@f$: the residual in units of the row's own σ.
     double      v_m{0.0};    ///< The signed residual, metres (event detail only).
 };
@@ -254,12 +254,12 @@ struct GrossLosVerdict {
  * following the @c networkRaimEraseBandScope precedent.
  *
  * Two edge cases:
- *  - **Counted as rows, not distinct signal labels.**  A code row of a posture
- *    whose satellite code biases are supplied externally, and a row of the W6
- *    datum signal even when its bias is estimated, carry no @c CB: column and so
- *    have an empty signal label.  A distinct-label test would under-count exactly
- *    there, and the screen would be inert on the postures it is meant for.  The
- *    distinct labels that were over the bar still reach the event.
+ *  - **Counted as rows, not distinct signal labels.**  Before card NOM step N2b a
+ *    row's signal was read from its @c CB: column, so a code row of a posture whose
+ *    satellite code biases are supplied externally, and a row of the W6 datum signal,
+ *    had an empty label; a distinct-label test would have under-counted exactly
+ *    there.  The signal now comes from the row's tag, and the rule still counts rows.
+ *    The distinct signals that were over the bar reach the event.
  *  - **@c under_clear is not `!over`.**  The release bar is far below the
  *    declaration bar, and the band between them is evidence neither to declare nor
  *    to release: a line of sight sitting there keeps its current disposition,
@@ -393,11 +393,9 @@ void networkGrossLosAct(NetworkRunContext& ctx,
  * @brief Run the gross-LOS screen for this epoch (the seam).
  *
  * Walks each station in the solve once, forms @f$v = y - A_s x_s - A_r x_r@f$,
- * classifies every data row with the same family rule @c networkPostfitSigma0
- * uses (SH-touching rows excluded, coupling rows excluded, a row touching an
- * ambiguity column or a @c PB: column is phase, a remaining row touching a
- * @c CB: or @c CLK: column and naming a satellite is code), bins the code rows
- * per satellite, and drives the state machine above.
+ * takes the code observation rows by their contribution tags (the rule
+ * @c networkPostfitSigma0 reads; card NOM step N2b), bins them per satellite, and
+ * drives the state machine above.
  *
  * Mutates persistent carries.  The response erases (or, under
  * @c network.gross_los_bound, holds) @c ctx.carry.local_carry entries and marks

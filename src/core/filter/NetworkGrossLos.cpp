@@ -16,6 +16,7 @@
 
 #include "app/NetworkRunContext.hpp"      // ctx.knobs / ctx.carry / ctx.counters
 #include "config/GnssConfig.hpp"          // config_.getNetworkConfig()
+#include "filter/NetworkRowClassify.hpp"  // rowTagAt, isCodeObservationKind, rowObservationCode
 #include "filter/StateManager.hpp"        // markAmbiguityPendingReseed
 #include "logging/NetworkRunTraces.hpp"   // emitEvent
 
@@ -263,37 +264,14 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                          threshold, action, detail);
     };
 
-    // --- Shared-column families ------------------------------------------------
-    // Same rule and same label source as networkPostfitSigma0's bitmap pass
-    // (NetworkFrameDiag.cpp), so the acting screen and the measuring trace agree
-    // about which rows are code.
-    std::vector<char> is_sh_col, is_pb_col, is_cb_col, is_clk_col;
-    std::vector<std::string> col_sat, col_sig;
-    if (x_s.size() > 0) {
-        const std::size_t nsh = static_cast<std::size_t>(x_s.size());
-        is_sh_col.assign(nsh, 0);
-        is_pb_col.assign(nsh, 0);
-        is_cb_col.assign(nsh, 0);
-        is_clk_col.assign(nsh, 0);
-        col_sat.assign(nsh, {});
-        col_sig.assign(nsh, {});
-        for (Eigen::Index c = 0; c < x_s.size(); ++c) {
-            std::string lbl;
-            try { lbl = est.sharedColumnLabel(c); } catch (...) { continue; }
-            const std::size_t u = static_cast<std::size_t>(c);
-            if      (lbl.rfind("SH", 0)  == 0) { is_sh_col[u] = 1; continue; }
-            else if (lbl.rfind("PB:", 0) == 0) is_pb_col[u] = 1;
-            else if (lbl.rfind("CB:", 0) == 0) is_cb_col[u] = 1;
-            else if (lbl.rfind("CLK:", 0) == 0) is_clk_col[u] = 1;
-            // "KIND:sat[:signal]": sat is the text between the first and the optional second colon.
-            const std::size_t p1 = lbl.find(':');
-            if (p1 == std::string::npos) continue;
-            const std::size_t p2 = lbl.find(':', p1 + 1);
-            col_sat[u] = lbl.substr(p1 + 1,
-                                    (p2 == std::string::npos) ? std::string::npos : p2 - p1 - 1);
-            if (p2 != std::string::npos) col_sig[u] = lbl.substr(p2 + 1);
-        }
-    }
+    // --- The code rows ----------------------------------------------------------
+    // A row is a code row when its contribution tag says so (card NOM step N2b,
+    // filter/NetworkRowClassify): the latched code signal's rows and the second code
+    // channel's companion rows, with the satellite and the signal the tag names.  The
+    // network_pf_rows.csv writer (NetworkFrameDiag) reads the same tags, so the acting
+    // screen and the measuring trace agree about which rows are code.  Before the tags
+    // the screen inferred it from the shared columns a row touched (a code-bias or clock
+    // column, and no phase-bias column or ambiguity touch above 0.5).
 
     // (station index, satellite) seen with at least one code row this epoch; the
     // absence half of the streak rule works on the complement of this set.
@@ -327,15 +305,6 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
 
         const Eigen::VectorXd v = R.y - R.A_s * x_s - R.A_r * x_r;
 
-        // Local columns carrying a present ambiguity: the phase discriminator.  The
-        // pool is whichever census this lineage fills: pl_amb on the phase-leveling
-        // vehicle, qc_amb under carry_invariant.  This is a classification read, not a
-        // fault pool; it only keeps phase rows out of the code bins.
-        std::vector<char> is_amb_col(static_cast<std::size_t>(R.A_r.cols()), 0);
-        for (const auto& pa : (R.qc_amb.empty() ? R.pl_amb : R.qc_amb))
-            if (pa.col >= 0 && pa.col < R.A_r.cols())
-                is_amb_col[static_cast<std::size_t>(pa.col)] = 1;
-
         // The scale map the assembly read for this epoch.  This seam republishes it
         // only at its own end, so the map here is the one that was folded.  The
         // statistic undoes the fold with it; see the row build below.
@@ -343,32 +312,17 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
 
         std::map<std::string, std::vector<GrossLosSample>> by_sat;
         for (Eigen::Index row = 0; row < v.size(); ++row) {
-            // Coupling rows (card 1) are statements about the carry, not data.
-            if (R.cpl_row_start >= 0 && row >= R.cpl_row_start) continue;
-            bool sh_row = false, pb_row = false, cb_row = false, clk_row = false;
-            const std::string* row_sat = nullptr;
-            const std::string* row_sig = nullptr;
-            for (Eigen::Index c = 0; c < R.A_s.cols(); ++c) {
-                if (R.A_s(row, c) == 0.0) continue;
-                const std::size_t u = static_cast<std::size_t>(c);
-                if (is_sh_col[u]) { sh_row = true; break; }
-                if (is_pb_col[u]) pb_row = true;
-                else if (is_cb_col[u]) cb_row = true;
-                else if (is_clk_col[u]) clk_row = true;
-                if (!row_sat && !col_sat[u].empty()) row_sat = &col_sat[u];
-                if (!row_sig && !col_sig[u].empty()) row_sig = &col_sig[u];
-            }
-            if (sh_row) continue;     // the SH↔slant-iono tie is a documented 3σ artifact
-            bool phase_row = pb_row;
-            for (Eigen::Index c = 0; c < R.A_r.cols() && !phase_row; ++c)
-                if (is_amb_col[static_cast<std::size_t>(c)] && std::abs(R.A_r(row, c)) > 0.5)
-                    phase_row = true;
-            if (phase_row) continue;                        // the phase side has its own tiers
-            if (!(cb_row || clk_row) || !row_sat) continue;  // no satellite partial ⇒ not a LOS row
+            // Only the code observations are screened: the phase side has its own tiers,
+            // the SH tie is a documented 3-sigma artifact, and the pins, prior rows and
+            // coupling rows are not observations.
+            const RowTag& tag = rowTagAt(R, row);
+            if (!isCodeObservationKind(tag.kind) || !tag.sat.valid()) continue;
+            const std::string row_sat = tag.sat.str();
+            const std::string row_sig = rowObservationCode(tag);
 
             double gl_scale_here = 1.0;
             if (!gl_scale.empty()) {
-                const auto sc = gl_scale.find(*row_sat);
+                const auto sc = gl_scale.find(row_sat);
                 if (sc != gl_scale.end()) gl_scale_here = sc->second;
             }
             const double w = (row < R.w.size()) ? R.w(row) : 1.0;
@@ -395,8 +349,7 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                 if (std::isfinite(av_f) && av_f > tal.folded_v_abs_max_m)
                     tal.folded_v_abs_max_m = av_f;
             }
-            by_sat[*row_sat].push_back(
-                GrossLosSample{ row_sig ? *row_sig : std::string(), r, v(row) });
+            by_sat[row_sat].push_back(GrossLosSample{ row_sig, r, v(row) });
         }
         if (by_sat.empty()) continue;
         ++tal.stations_screened;

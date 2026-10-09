@@ -3500,7 +3500,6 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 sh_priors.push_back(p);
             }
         }
-        est.attribTag("d2_sh");
         est.contributionKind(ContributionKind::ShPrior);   // card NOM N2a
         est.addSharedPrior(sh_priors);
         if (within_epoch_armed)
@@ -3543,7 +3542,6 @@ void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             p.value = cp.value; p.info = 1.0 / cp.var;
             hp.push_back(p);
         }
-        est.attribTag("phase_hold");
         est.contributionKind(ContributionKind::PhaseHold);   // card NOM N2a
         est.addSharedPrior(hp);  // skips keys absent from this epoch's layout
         if (within_epoch_armed)
@@ -3579,7 +3577,6 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         ++ctx.counters.hyg.bridge_folds;
     }
     if (bp.empty()) return;
-    est.attribTag("pin_bridge");
     est.contributionKind(ContributionKind::PinBridge);   // card NOM N2a
     est.addSharedPrior(bp);   // skips keys absent from this epoch's layout
     if (within_epoch_armed)
@@ -3859,7 +3856,6 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             if (seed_gap > 0.0)
                 readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored);
         }
-        est.attribTag("d2_carry");
         // With the gauge-free fold armed (card Q3 §2.1), the clock entries are folded
         // with the per-constellation common direction marginalized out, so the anchor
         // constrains the estimable between-satellite differences and leaves the gauge to
@@ -4009,7 +4005,6 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             }
             try {
                 Eigen::VectorXd lam;
-                est.attribTag("dense_c1");
                 // Card SCL: the joint fold over the stand-ins (each cloned clock stood in for
                 // by its clone) and the clones' walk factors when a clone stands in this
                 // epoch, which also writes the B7 information; card CTU's fold otherwise.
@@ -4060,7 +4055,6 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 }
             }
         }
-        est.attribTag("d2_leftover");
         // First post-resume fold (§18.12, invariant #7): unless the dense border was
         // restored from the snapshot's QK/QP records (RS-7, see networkTryWarmResume),
         // every carried key misses prev_carry_cov.row here and folds through the legacy
@@ -4385,7 +4379,6 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             if (anchor_info_trace.is_open()) clk_prior_info[sat] = p.info;  // two-state clock-model prior info (B7)
             clkp.push_back(p);
         }
-        est.attribTag("clock_osc");
         est.contributionKind(ContributionKind::ClockOscillator);   // card NOM N2a
         est.addSharedPrior(clkp);
         if (within_epoch_armed)

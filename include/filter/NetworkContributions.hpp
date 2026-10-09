@@ -55,9 +55,14 @@
  *     merges the epoch into the run and writes the table once after the first emitted
  *     epoch; @ref networkContributionsRunEnd writes the run's table in the teardown tail.
  *
- * Trace class: no reader takes a decision from a tag in this step (N2b moves the readers
- * onto them).  Plain value types, free functions and tables (card NOM section 10): no
- * behaviour classes, no virtual dispatch.
+ * The readers (card NOM step N2b): every reader that asks "what is this row" reads the
+ * tag through filter/NetworkRowClassify (@c rowClassOfKind, @c classifyRow,
+ * @c raimPoolAdmitsKind): the prefit and redundancy censuses and their riders, the
+ * post-fit row trace and the post-fit sigma0, the gross line-of-sight screen, the station
+ * block audit, the clock level read, both RAIM pools and the RHS attribution, which also
+ * names each diagonal prior entry and each shared fold by its kind.  Plain value types,
+ * free functions and tables (card NOM section 10): no behaviour classes, no virtual
+ * dispatch.
  */
 
 #include "common/GnssIdentity.hpp"              // SatId, SignalId, System
@@ -380,10 +385,11 @@ namespace GnssProcessor {
      *        count is 0 on a block whose tags are complete and right.
      */
     struct StationTagCheck {
-        long long untagged{0};    ///< @ref untaggedRows.
-        long long unset{0};       ///< Tags (rows and diagonal entries) whose kind is @c Unset or out of range.
-        long long misplaced{0};   ///< Tags whose kind does not belong where the tag sits (see @ref checkStationTags).
-        long long mismatches{0};  ///< Builder counters that disagree with the tags' per-kind counts.
+        long long untagged{0};      ///< @ref untaggedRows.
+        long long unset{0};         ///< Tags (rows and diagonal entries) whose kind is @c Unset or out of range.
+        long long misplaced{0};     ///< Tags whose kind does not belong where the tag sits (see @ref checkStationTags).
+        long long mismatches{0};    ///< Builder counters that disagree with the tags' per-kind counts.
+        long long unclassified{0};  ///< Rows of the block the row classifier files as @c obs_other (card NOM N2b: no tag, an unset kind, or a kind that is not a station row).
     };
 
     /**
@@ -407,6 +413,10 @@ namespace GnssProcessor {
      *    @c prior_ambiguity_oracle_pin with @c opin_rows, and @c prior_rx_cb_datum +
      *    @c prior_rx_cb_datum_pre_pd with @c pl_cb_datum_rows (one mismatch per counter
      *    that disagrees).
+     *
+     * It also counts the rows a reader would file as unclassified (@c obs_other of
+     * filter/NetworkRowClassify @c rowClassOfKind): a row past the tags, an unset kind, or
+     * a kind that is not a station row (card NOM step N2b; 0 expected).
      *
      * @param R The station's assembly (assembled: @c ok and not @c threw).
      * @return The counts.
@@ -450,6 +460,7 @@ namespace GnssProcessor {
         long long unset_tags{0};              ///< @c StationTagCheck::unset summed over them.
         long long misplaced_rows{0};          ///< @c StationTagCheck::misplaced summed over them.
         long long counter_mismatches{0};      ///< @c StationTagCheck::mismatches summed over them.
+        long long unclassified_rows{0};       ///< @c StationTagCheck::unclassified summed over them (card NOM N2b).
         long long coalesced_entries{0};       ///< Diagonal prior entries merged into another entry of the same column.
         long long folds_without_kind{0};      ///< Shared folds whose site named no kind (@c Unset).
         long long replay_builds{0};           ///< Within-epoch replay builds.
@@ -485,6 +496,7 @@ namespace GnssProcessor {
         long long unset_tags_all{0};      ///< @c StationTagCheck::unset.
         long long misplaced_rows_all{0};  ///< @c StationTagCheck::misplaced.
         long long mismatches_all{0};      ///< @c StationTagCheck::mismatches.
+        long long unclassified_all{0};    ///< @c StationTagCheck::unclassified (card NOM N2b).
         long long checked_all{0};         ///< Station blocks checked.
         long long replay_realigned{0};    ///< This epoch's replay re-alignments (reset at the station drain).
         long long replay_misaligned{0};   ///< This epoch's replay misalignments (reset at the station drain).
@@ -492,9 +504,11 @@ namespace GnssProcessor {
         /// with a different row layout (a joint re-whiten of the coupling rows), by station
         /// index, aligned with the rows that build handed to the estimator.  A station absent
         /// from the map kept its primary layout, whose tags are @c StationAssembly::row_tags
-        /// (the scalar and local-block refloats zero or rewrite rows in place).  Cleared at
-        /// the start of every replay build and at the station drain.  Trace class in this
-        /// step; card NOM step N2b's readers take a replayed block's tags from here.
+        /// (the scalar and local-block refloats zero or rewrite rows in place, on a copy).
+        /// Cleared at the start of every replay build and at the station drain.  The record
+        /// of the replay's layout: every reader of a station's rows reads the primary block
+        /// (@c StationAssembly, which a replay never edits) with its own tags, so no reader
+        /// takes a tag from here (card NOM step N2b).
         std::map<int, std::vector<RowTag>> replay_row_tags;
         bool      first_table_written{false};  ///< The first-emitted-epoch table is out.
     };

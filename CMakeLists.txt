@@ -533,6 +533,8 @@ add_executable(gnss_tests
     tests/test_gnss_identity.cpp
     tests/test_network_param_inventory.cpp
     tests/test_network_contributions.cpp
+    tests/test_network_row_classify.cpp
+    tests/test_network_rhs_attrib.cpp
     tests/test_phase_colour_state.cpp
     tests/test_exl_switch_on_resume.cpp
     tests/test_carry_disposition.cpp
