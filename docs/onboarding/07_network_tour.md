@@ -54,7 +54,7 @@ are an artifact.
 
 ## Start with the tables
 
-Two tables at the top of `logs\main_log.log` say what the run estimates, before any
+Three tables at the top of `logs\main_log.log` say what the run estimates, before any
 residual or plot is read.
 
 **The model as armed** (`Network (param model)`, card PRM): one line per kind of
@@ -116,8 +116,31 @@ satellite code biases are estimated (network.estimate_sat_code_bias); premise (G
 does not hold on this run
 ```
 
-That one line is the finding card L5R needed a residual study to make. Both tables are
-also written to the run manifest as JSON records (`param_model`, `param_inventory`).
+That one line is the finding card L5R needed a residual study to make.
+
+**The contributions as armed** (`Network (contributions as armed)`, card NOM step N2a):
+every row and every prior that enters the joint solve, by kind. A station's block holds
+observation rows and constraint rows side by side; this table says which is which, how
+many there are, where each comes from and how it is weighted.
+
+```
+kind                      channel                stage        unit     count_epoch folds_epoch ... weight | builder
+data_code                 station_rows           before_gate  rows             956          58 ... 1/sigma^2 of the stochastic model ...
+data_phase                station_rows           before_gate  rows             954          58 ... 1/sigma^2 of the stochastic model ...
+ambiguity_pin             station_rows           before_gate  rows              88          13 ... 1e10 (literal, an exact gauge) ...
+block_rx_cb_carry         station_rows           before_gate  rows               0           0 ... unit (whitened local block) ...
+prior_rx_cb_datum_pre_pd  station_prior_pre_pd   before_gate  entries           58          58 ... 1/network.rx_code_bias_datum_sigma^2 ...
+cb_if_pin                 shared_rows            before_gate  rows              32           1 ... NetworkSbasis::kCodeBiasGaugeWeight ...
+```
+
+The excerpt is the cold first epoch, before any carry exists, so the carried-prior kinds
+read 0; the run-end table counts them over the run. Every declared kind is listed, including
+those this posture never uses (they read 0), so an armed family that produces nothing is
+visible. The closing integrity lines (rows without a tag, tags left unset, tags out of place,
+counts that disagree with the builders' own counters, shared folds without a kind) read 0.
+
+All three tables are also written to the run manifest as JSON records (`param_model`,
+`param_inventory`, `contributions`).
 
 ## The identities
 
