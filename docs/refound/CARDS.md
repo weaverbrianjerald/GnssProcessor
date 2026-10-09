@@ -101,6 +101,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [NOM2](NOM2_network_object_model_rows_2026-10-09.md): open, 2026-10-09: card NOM's continuation; N2a, N2b and N3a LANDED (the "signals as planned" table)
   (57 contribution kinds, a tag on every row and fold; every reader on the tags; RAIM pool admission declared; solve
   unchanged, trace moves explained).
-- [ICF](ICF_ignition_code_fault_2026-10-09.md): open, 2026-10-09: pre-registered. A faulty L1 receiver channel at
-  BSHM00ISR moves the network's G07 clock by metres in the cold start; no designed tier responds. Attribution first
-  (RHS dump), then three default-off responses.
+- [ICF](ICF_ignition_code_fault_2026-10-09.md): closed, 2026-10-09: KEEP_OFF, FAILED G2's clock-wire clause. The
+  faulty BSHM00ISR line of sight, made redundant by its carried ambiguity, moves G07's clock in the cold start (gate A,
+  instrument A'); the 12 m cold-start bound holds it within 0.03 m but the hours 2 to 6 clock-wire median is 12 % worse.

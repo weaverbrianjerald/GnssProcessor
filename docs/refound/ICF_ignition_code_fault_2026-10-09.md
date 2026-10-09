@@ -4,15 +4,15 @@
 
 - **id:** ICF
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Pre-registered. On the field golden, a faulty L1 receiver channel at BSHM00ISR (G07, C1C/C1W/L1C drifting together by up to 340 m from the first epoch) moves the network's G07 clock by metres during the cold start; on the golden, prior-driven T4 refloats stop it at -3 m. No tier designed for it responds: the gross line-of-sight screen is held for its first 120 epochs, the Q3 guard decides on the phase statistic, the clock step mark is output-only. The card attributes the conduit first, then tests the responses.
+- **status:** closed
+- **summary:** KEEP_OFF, FAILED G2's clock-wire clause. A faulty L1 receiver channel at BSHM00ISR (G07, code and phase drifting together by up to 340 m) moves the network's G07 clock in the cold start; on the golden only the carried-prior rows' refloats stop it, at -3 m (card RPA). Gate A (instrument A', `network.rhs_attrib_columns`): the faulty line of sight, made redundant by its carried ambiguity, injects about -2.2 m per epoch and the border carry keeps it (reading R-a). Response 1, the gross line-of-sight screen's cold-start bound (`network.gross_los_cold_bound_m`, 12 m), holds G07 within 0.03 m and passes G0, G1, G3 and the consumer, sim and census clauses of G2; the hours 2 to 6 clock-wire median is 12 % / 6 % worse (three near-median arcs, not noise by a sham control).
 - **source:** card [RPA](RPA_raim_pool_data_rows_2026-10-08.md) sections 4 and 5 (the event, its numbers and the read-only investigation); card [RF-3](RF-3_code_row_qc_2026-09-22.md) (the gross line-of-sight screen and its maturity horizon); card Q3 (`docs/cards/clock/`, the guarded anchor); card [CTU](CTU_coupling_time_update_2026-09-28.md) (the exact update that lets the clock level move on code); standing invariants 1 and 7
-- **knobs / posture:** the goldens; candidate responses default off, one knob each, named in section 3
+- **knobs / posture:** the goldens; `network.rhs_attrib_columns` (A', diagnostics only, `086d595`); `network.gross_los_cold_bound_m` (response 1, default off, `7cca805`)
 - **dates in the text:** 2026-10-09
-- **hashes / run dirs:** the event runs `runs/_rap_rpa_{off,on}_f6`, `runs/_rap_rpa1_{off,on}_f2`; gate A `runs/_rap_icfa_{off,on}_f2`
+- **hashes / run dirs:** the event runs `runs/_rap_rpa_{off,on}_f6`, `runs/_rap_rpa1_{off,on}_f2`; gate A `runs/_rap_icfa_{off,on}_f2`, `runs/_rap_icfa2_{off,on}_f2`; response 1 `runs/_rap_icfr1_*`, sham controls `runs/_rap_icfs_sham{1,2,3}_f6`
 - **gates (frozen at pre-registration):** section 4
 
-**Outcome.** Pre-registered. Gate A, first read (section 5): the right-hand-side dump cannot decide between the readings (its row class lumps the three carried-prior kinds, and a right-hand-side share is not a solution share); the per-row dump at BSHM00ISR shows the line-of-sight carry holding most of the tension, with the station-level carry taking part, and the existing refloat of that carry halting the runaway. The instrument is extended (kinds per row, solution share at named columns) before any response is built. Gate A decided (section 6): R-a. The faulty line of sight puts about -2.2 m per epoch into G07's clock through its code and phase rows, made redundant by its carried ambiguity, and the border carry keeps it; the receiver code-bias carry opposes the move. Candidate response 1 is built first.
+**Outcome.** Question: which state carries a faulty receiver channel into a shared satellite clock during the cold start, and which response stops it? Gate A (section 6): the faulty line of sight's carried ambiguity makes it redundant, so its code and phase rows inject about -2.2 m per epoch into G07's clock and the border carry keeps it; the receiver code-bias carry is not the conduit. Response 1 (section 7), a 12 m cold-start bound on the gross line-of-sight screen, holds G07 within 0.03 m against 11.7 m, but the hours 2 to 6 clock-wire median is 12 % worse (three near-median arcs, a real effect by a sham control): FAILED G2, KEEP_OFF as frozen; the trade is the author's.
 
 ## 1. What is known (card RPA section 5, read-only)
 
@@ -87,3 +87,42 @@ Instrument A' landed on main (`086d595`): the row dump names each row's contribu
 **Reading.** The arms differ only at BSHM00ISR and in the border carry (the other stations agree to 7 mm). On the on arm, BSHM00ISR's G07 line of sight puts about -2.2 to -2.5 m into the estimate every epoch, split about equally between its code row and its phase row, and the border carry keeps most of each epoch's injection (its arm gap grows by 0.79 to 0.89 of BSHM00ISR's previous share each epoch): that is the ratchet. On the off arm, after the refloat at 259470 erased the line of sight's carried ambiguity, the same line of sight with the same faulty prefit contributes about 0, and the border relaxes. The receiver code-bias carry contributes +0.03 to +0.04 m, against the move. **R-b is not supported; R-a is, with a correction to its wording:** the carried ambiguity's own row carries a small share that opposes the move (+0.16 to +0.30 m); the carry acts through the operator. The fault moves C1C and L1C together (card RPA section 5: L1C minus C1C flat). On a single-frequency line of sight with the slant ionosphere free, the ionosphere absorbs the code-minus-phase part, and with the ambiguity held by its carry the sum of code and phase is redundant: it measures the shared states, the fault twice. With the ambiguity free, the line of sight has no redundancy and says nothing about the shared states. Card section 2's "the carried state holds the fault's history and its prior pulls the shared states" is therefore replaced by: the carried ambiguity makes the faulty line of sight informative about the shared states, and the border carry accumulates what it injects.
 
 **What this means for the responses.** A response must take the line of sight's redundancy away while it is faulty: withhold its rows, or free (refloat) its carried ambiguity. Candidate 1 (the gross line-of-sight screen, an absolute cold-start bound) does that if the screen's action covers the line of sight's phase row, or if the line of sight has no second band (as here from 259440); candidate 3 does not trigger on this event, since code and phase agree on the faulty band and the line of sight is single-frequency; candidate 2 acts on the clock after the injection, where the border carry has already kept it. Candidate 1 is built first.
+
+## 7. 2026-10-09: response 1, the cold-start bound (FAILED G2's clock-wire clause; KEEP_OFF)
+
+**What was built** (`7cca805`, landed default off; exe `gnss_processor_icfr1.exe`). `network.gross_los_cold_bound_m` (metres, 0 = off; resolved off without `network.gross_los_screen` and under `network.gross_los_bound`; not fingerprinted). Inside the screen's maturity horizon, a line of sight whose largest post-fit code residual exceeds the bound is declared at once, with the screen's own response: its carried ambiguities and per-line-of-sight carries are erased and its code rows are folded at 100 sigma until release. Three additions: a standing cold declaration whose bound is exceeded again erases the carried ambiguity again (a re-stashed ambiguity would make the line of sight redundant through its phase rows); the erase also sweeps a carried ambiguity of a signal absent this epoch; every exit (the screen's release test, an expiry, a satellite stand-down) erases once more, so the line of sight reconnects on a fresh ambiguity (invariant 7's re-coupling edge). A station guard, added in the build and not pre-registered, holds the cold declarations of a station when most of its lines of sight are over the bound in one epoch (a station fault, where folding every code row would remove its clock). Each edge is a `GROSSLOS` event with a counter; the run-end readout gives the counts, the bound's margin on the run, and an INERT clause.
+
+**The bound, chosen before G1.** The statistic is the largest post-fit code residual of the line of sight in metres (the prefit residual is unusable: on clean rows of the golden it reaches 232 km, the receiver clock's linearization offset). Clean population over the first 120 epochs: field maximum 6.70 m (BSHM00ISR G09 at 259470, collateral of the same fault; 3.43 m without that station), 99.9th percentile 2.18 m; sim maximum 4.88 m, 2.91 m. The faulty line of sight: 0 from 259200 to 259350 (no redundancy), 2.5 m at 259380, 24.2 m at 259410 (its first visible epoch), then 66 m and 109 m. Bound 12 m: the geometric mean of 6.70 and 24.2, rounded down.
+
+**Gates** (re-graded by the manager: G1's C records, WTZZ00DEU, the clock wire):
+
+| gate | result | verdict |
+| --- | --- | --- |
+| G0 | knob off on both 2 h goldens: products, closed-loop trace and epoch status identical to the A' build, `products.txt` byte-identical, CSVs differing in wall-clock columns only | PASS |
+| G1 | with card RPA's knob on, G07's emitted clock record over 259410 to 259650 stays within 0.032 m (the table below), against -11.674 m without the bound; the change from 259380 is 0.444 m, the 259410 epoch's own move, before the first declaration | PASS |
+| G2, WTZZ00DEU 6 h | 0.113 0.023 0.016 0.020 0.030 0.026 m by hour against 0.108 0.024 0.016 0.020 0.030 0.026 (largest change +0.005 m, hour 1) | PASS |
+| G2, sim 6 h | identical to the reference (0 triggers) | PASS |
+| G2, census, hours 2 to 6 | median paired change -0.0000 m; ARHT00ATA 0.039 m better (card RPA's G07 residue site), QUIN 0.014 m and KOKB 0.011 m worse, neither tracking G07 (their replays with G07 excluded are identical) | PASS |
+| G2, clock wire, hours 2 to 6 | `ftc_step_attrib.py --r3`, `e_clk`, de-commoned p50: 0.0216 / 0.0186 to 0.0242 / 0.0198 m all / tracked (+12 / +6 %) | **FAIL** (frozen: not worse) |
+| G3 | sim 0 triggers (INERT clause printed); field: 1 declaration at 259410, re-erases at 259470, 259530, 259590 and 259770, the release at 259830, all inside the horizon and 0 after it; the sigma-bar screen's counts after the horizon unchanged (4 declared, 2 released, 2 expired); T4 isolated-arc refloats 26 to 18 | PASS |
+
+Unit suite 2 976 run, 2 952 passed, 24 skipped, 0 failed (10 new cases, `tests/test_network_gross_los_cold_bound.cpp`).
+
+G07's emitted clock record (m):
+
+| TOW | golden | RPA knob on | RPA knob on, bound on | golden, bound on |
+| --- | --- | --- | --- | --- |
+| 259380 | 0.440 | 0.440 | 0.440 | 0.440 |
+| 259410 | -0.004 | -0.004 | -0.004 | -0.004 |
+| 259440 | -1.364 | -1.364 | -0.001 | -0.001 |
+| 259470 | -2.981 | -2.981 | 0.018 | 0.018 |
+| 259530 | -2.558 | -6.465 | 0.022 | 0.022 |
+| 259590 | -2.208 | -9.958 | 0.027 | 0.027 |
+| 259620 | -2.071 | -11.674 | 0.022 | 0.022 |
+| 259650 | -1.934 | -11.009 | 0.030 | 0.030 |
+
+With the bound on, the arm with card RPA's knob and the golden are identical through the window: the bound replaces the prior-row refloats as the check of this event.
+
+**The failed clause, read.** The rest of the clock-wire distribution improves: the hours 2 to 6 90th percentile 0.0633 to 0.0584 m, the all-hours p50 0.0583 to 0.0428 m, the all-hours maximum 0.427 to 0.103 m, G07's own arc 0.0659 to 0.0200 m. Paired per arc over 36 arcs, the median change is -0.0001 m and the mean -0.0013 m (8 better, 10 worse at 1 mm). The p50 rise comes from three arcs near the median: G05 +0.0097, G21 +0.0059, G13 +0.0053 m. A sham control measured whether the statistic is noise under a comparable perturbation: three clean lines of sight withheld for the same window on the 6 h golden (`rapid_arm.py` windowed strips, 259410 to 259830, of DJIG00DJI G07, URUM00CHN G07 and CEBR00ESP G13; `runs/_rap_icfs_sham{1,2,3}_f6`) give hours 2 to 6 p50 0.0217, 0.0216, 0.0216 / 0.0186 m. The statistic is stable under a one-line-of-sight withhold in the cold start, so the rise is the response's own consequence: removing G07's early excursion (the golden's refloats left it at -3 m and the border carry kept it) changes how the other satellites' clock levels settle, with three near-median arcs settling 5 to 10 mm worse.
+
+**Verdict.** Response 1 removes the defect the card is about (the cold-start runaway, 0.03 m against 3 m on the golden and 11.7 m without the prior-row refloats) and no longer depends on the prior rows to stop it; it fails the frozen G2 clause on the hours 2 to 6 clock-wire median (+12 / +6 %). **KEEP_OFF as frozen.** The trade for the author: the cold start and the run's worst clock arc against three near-median arcs 5 to 10 mm worse in hours 2 to 6. Candidates 2 and 3 are not built (section 6: candidate 3 does not trigger on this event; candidate 2 acts after the border carry has kept the injection). The card closes.
