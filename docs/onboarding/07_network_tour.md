@@ -142,8 +142,8 @@ counts that disagree with the builders' own counters, shared folds without a kin
 Every check that asks what a row is (the post-fit outlier tests, the censuses, the
 residual traces, the right-hand-side attribution) reads the row's tag. The row classifier
 (`include\filter\NetworkRowClassify.hpp`) maps each kind to its class in one table, and
-the outlier pool's admission rule is one declared predicate there, with a counter per kind
-it admits.
+the outlier pool's admission rule is one declared predicate there (`raimPoolAdmitsKind`);
+`NetworkRaim` counts each kind the pool admits.
 
 All three tables are also written to the run manifest as JSON records (`param_model`,
 `param_inventory`, `contributions`).

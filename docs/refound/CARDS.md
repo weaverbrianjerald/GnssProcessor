@@ -99,5 +99,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [RPA](RPA_raim_pool_data_rows_2026-10-08.md): open, 2026-10-08: pre-registered. The post-fit RAIM pool admits the
   float vehicle's whitened prior rows as phase data (most T4 refloats on the golden); a default-off knob restricting it
   to observation rows, graded on both beds, the census and two named events. Built after card NOM step N2b.
-- [NOM2](NOM2_network_object_model_rows_2026-10-09.md): open, 2026-10-09: card NOM's continuation; N2a LANDED (57
-  contribution kinds, a tag on every row and fold, the 'contributions as armed' table, byte-identical); N2b next.
+- [NOM2](NOM2_network_object_model_rows_2026-10-09.md): open, 2026-10-09: card NOM's continuation; N2a and N2b LANDED
+  (57 contribution kinds, a tag on every row and fold; every reader on the tags; RAIM pool admission declared; solve
+  unchanged, trace moves explained).
