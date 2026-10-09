@@ -24,12 +24,25 @@ per-station truth and answers the three questions a fix count cannot:
      would already get right.  If the ceiling is high and the fix rate is low, the search is being
      refused by its gates; if the ceiling is low, the float is the problem and Phase 3 is premature.
 
+**The wind-up branch of each arc (card ARL section 4).**  The simulator accumulates phase wind-up
+from the satellite's rise at its own mask; the producer (estimation.accumulate_phase_windup) starts
+each arc's accumulator at the arc's first epoch with the WRAPPED value, so where the simulator's
+accumulated value at that epoch is beyond +-0.5 cycle the producer's integer differs from the
+simulator's by k = round(wu_sim(t0)) on every band of that arc (N_producer = N_sim + k).  Both are
+right; they count the same phase from different branches.  The grader therefore takes each arc's
+first epoch from the producer's own trace (logs/network_slip_raw.csv, one row per dual-frequency
+phase line of sight the producer models, from the run's first epoch; a gap
+longer than the accumulator's 300 s continuity horizon starts a new arc) and the simulator's
+wind-up there (<fixture>/<sta>/truth_windup.csv), and grades against N_sim + k.  --no-windup-branch
+grades against the simulator's raw integers.
+
 Plus the reference sat/station identity over time and its switch count, because every DD in this
 file is differenced against one such pair and inherits its error (SPEC_amb_iono_split_overcount
 §6.12: any grade built on a single reference element must report that element's share or difference
 it away).  A high switch count with a settled-window verdict means the graded population is rotating.
 
-Reads:  <run>/logs/network_producer_ar.csv, <fixture>/<sta>/truth_ambiguities.csv + truth_slips.csv
+Reads:  <run>/logs/network_producer_ar.csv, <run>/logs/network_slip_raw.csv,
+        <fixture>/<sta>/truth_ambiguities.csv + truth_slips.csv + truth_windup.csv
 Usage:  python scripts/simnet_producer_ar_grade.py <fixture_dir> --run <run_dir> [--settle-h 12]
                                                    [--stride N] [--json]
         python scripts/simnet_producer_ar_grade.py --selftest
@@ -39,6 +52,7 @@ import collections
 import csv
 import io
 import json
+import math
 import os
 import statistics as st
 import sys
@@ -48,6 +62,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from simnet_amb_integer import load_truth, n_at  # noqa: E402
 
 TRACE_REL = os.path.join("logs", "network_producer_ar.csv")
+ARC_TRACE_REL = os.path.join("logs", "network_slip_raw.csv")
+
+# The producer's wind-up accumulator continuity horizon (GnssCorrections: a gap longer than this
+# restarts the accumulator at the wrapped value, which is a new branch).
+WINDUP_HORIZON_S = 300.0
 
 # Formal-sigma bins (cycles) for the wrong-fix breakdown.  The ILS gates on FFR, not on sigma
 # directly, so a wrong fix concentrated in one bin says the covariance is mis-scaled in that bin.
@@ -58,6 +77,75 @@ SIGMA_BINS = ((0.0, 0.01, "[0,.01)"), (0.01, 0.03, "[.01,.03)"), (0.03, 0.10, "[
 def wrap(x):
     """Fractional part of x in [-0.5, 0.5]."""
     return x - round(x)
+
+
+def round_half_up(x):
+    """Nearest integer, halves away from the producer's wrap: wrap(x) = x - k lies in [-0.5, 0.5)."""
+    return int(math.floor(x + 0.5))
+
+
+def load_windup_branches(fixture, run, stations, horizon_s=WINDUP_HORIZON_S):
+    """Per (station, satellite): a sorted list of (arc_start_tow, arc_end_tow, k), where k is the
+    integer the producer's integer differs from the simulator's by on that arc (both bands).
+
+    Arc starts are the producer's: the first epoch each (station, satellite) has a modelled phase
+    pair in network_slip_raw.csv, a new arc after a gap > horizon_s.  k = round(wu_sim(start)), the
+    simulator's accumulated wind-up at that epoch.  Returns (branches, info)."""
+    path = os.path.join(run, ARC_TRACE_REL)
+    if not os.path.isfile(path):
+        raise SystemExit("missing " + path + " (the producer's slip trace, or pass "
+                         "--no-windup-branch)")
+    seen = collections.defaultdict(set)          # (sta, sat) -> {tow}
+    with io.open(path, newline="", encoding="utf-8", errors="replace") as f:
+        rd = csv.reader(l for l in f if not l.startswith("#"))
+        hdr = next(rd)
+        i_tow, i_sta, i_sat = hdr.index("tow"), hdr.index("station"), hdr.index("sat")
+        for row in rd:
+            seen[(row[i_sta], row[i_sat])].add(float(row[i_tow]))
+
+    wu = {}                                      # (sta, sat) -> {tow: windup_cycles}
+    for sta in stations:
+        p = os.path.join(fixture, sta, "truth_windup.csv")
+        if not os.path.isfile(p):
+            continue
+        with open(p, newline="") as f:
+            for row in csv.DictReader(f):
+                wu.setdefault((sta, row["satellite"]), {})[float(row["tow_s"])] = \
+                    float(row["windup_cycles"])
+
+    branches = {}
+    info = {"arcs": 0, "arcs_shifted": 0, "arcs_no_truth": 0, "shifted": []}
+    for key, tows in seen.items():
+        ts = sorted(tows)
+        starts = [0] + [i for i in range(1, len(ts)) if ts[i] - ts[i - 1] > horizon_s]
+        ends = [i - 1 for i in starts[1:]] + [len(ts) - 1]
+        arcs = []
+        for a, b in zip(starts, ends):
+            info["arcs"] += 1
+            w0 = wu.get(key, {}).get(ts[a])
+            if w0 is None:
+                info["arcs_no_truth"] += 1
+                k = 0
+            else:
+                k = round_half_up(w0)
+            if k != 0:
+                info["arcs_shifted"] += 1
+                info["shifted"].append({"sta": key[0], "sat": key[1], "start_tow": ts[a],
+                                        "end_tow": ts[b], "wu_sim_start": w0, "k": k})
+            arcs.append((ts[a], ts[b], k))
+        branches[key] = arcs
+    return branches, info
+
+
+def branch_at(branches, sta, sat, tow):
+    """k of the arc holding `tow` (the latest arc started at or before it); 0 if none."""
+    k = 0
+    for t0, _t1, kk in branches.get((sta, sat), ()):
+        if t0 <= tow:
+            k = kk
+        else:
+            break
+    return k
 
 
 def sigma_bin(s):
@@ -102,7 +190,7 @@ def fmt_acc(label, d):
         d["unwrapped_std"], d["unwrapped_abs_p50"])
 
 
-def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout):
+def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout, windup_branch=True):
     """Join the producer-AR trace to truth; print the grade and return it as a dict."""
     stations = sorted(d for d in os.listdir(fixture)
                       if os.path.isdir(os.path.join(fixture, d))
@@ -110,6 +198,10 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout):
     if not stations:
         raise SystemExit("no truth stations under " + fixture)
     n_int, slips = load_truth(fixture, stations)
+    if windup_branch:
+        branches, wb_info = load_windup_branches(fixture, run, stations)
+    else:
+        branches, wb_info = {}, None
 
     path = os.path.join(run, TRACE_REL)
     if not os.path.isfile(path):
@@ -177,6 +269,11 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout):
             n_nojoin += 1
             continue
         n_join += 1
+        # The producer's integer: the simulator's plus the arc's wind-up branch.
+        n_rj += branch_at(branches, sta_r, sat_j, tow)
+        n_rp += branch_at(branches, sta_r, ref_sat, tow)
+        n_fj += branch_at(branches, ref_sta, sat_j, tow)
+        n_fp += branch_at(branches, ref_sta, ref_sat, tow)
         dd_true = (n_rj - n_rp) - (n_fj - n_fp)
         e = float(row[ix["float_cyc"]]) - dd_true
         band = cons + ":" + sig
@@ -229,13 +326,25 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout):
 
     res = {"run": run, "fixture": fixture, "settle_h": settle_h, "stride": stride,
            "rows_read": n_rows, "rows_joined": n_join, "rows_unjoinable": n_nojoin,
-           "reference": ref_stats, "windows": {}}
+           "reference": ref_stats, "windup_branch": wb_info, "windows": {}}
 
     print("=" * 108, file=out)
     print("PRODUCER-AR PHASE-2 TRUTH GRADE  run=%s  fixture=%s" % (run, fixture), file=out)
     print("  rows %d joined %d unjoinable %d   settle >= h%.0f   stride %d"
           % (n_rows, n_join, n_nojoin, settle_h, stride), file=out)
     print("=" * 108, file=out)
+
+    if wb_info is None:
+        print("\nWIND-UP BRANCH: not applied (--no-windup-branch): graded on the simulator's integers",
+              file=out)
+    else:
+        print("\nWIND-UP BRANCH (card ARL section 4): %d producer arcs, %d on a shifted branch, "
+              "%d without wind-up truth at their start"
+              % (wb_info["arcs"], wb_info["arcs_shifted"], wb_info["arcs_no_truth"]), file=out)
+        for x in wb_info["shifted"][:20]:
+            print("  %s/%s  arc %.0f-%.0f  wu_sim at start %+.3f cyc  k %+d"
+                  % (x["sta"], x["sat"], x["start_tow"], x["end_tow"], x["wu_sim_start"], x["k"]),
+                  file=out)
 
     print("\nREFERENCE IDENTITY (every DD is differenced against this pair -- SPEC_amb_iono 6.12)",
           file=out)
@@ -356,7 +465,7 @@ def selftest():
                     "5.00,0.999900,2,2,2\n" % (sat, fl, sg, insub, fx_int, kept))
 
     buf = io.StringIO()
-    r = grade(fx, run, settle_h=0.0, out=buf)
+    r = grade(fx, run, settle_h=0.0, out=buf, windup_branch=False)
     w = r["windows"]["settled"]
     ok = True
 
@@ -381,6 +490,36 @@ def selftest():
     chk(abs(w["float_subset"]["unwrapped_std"] - 0.28) < 1e-6, "unwrapped std")
     chk(w["fix_epochs"] == 1 and w["epochs"] == 1, "epoch counters")
     chk(r["reference"]["G:L1C"]["sat_switches"] == 0, "reference switch count")
+
+    # Wind-up branch: S02/G03's arc starts where the simulator's wind-up is -0.501 cycle, so the
+    # producer's integer is N_sim - 1; a float fixed one below the simulator's DD is then correct.
+    # G02's arc starts at +0.499 (k 0).  Rewrite the trace with G03 fixed at dd_true - 1.
+    with open(os.path.join(run, "logs", "network_slip_raw.csv"), "w", newline="") as f:
+        f.write("# test\nweek,tow,station,sat,signal\n")
+        for sta in ("S01", "S02"):
+            for sat in ("G01", "G02", "G03"):
+                f.write("2313,100.0,%s,%s,L1C\n" % (sta, sat))
+    for sta in ("S01", "S02"):
+        with open(os.path.join(fx, sta, "truth_windup.csv"), "w", newline="") as f:
+            f.write("week,tow_s,satellite,windup_cycles\n")
+            for sat in ("G01", "G02", "G03"):
+                v = -0.501 if (sta, sat) == ("S02", "G03") else (0.499 if sat == "G02" else 0.1)
+                f.write("2313,100.0,%s,%.3f\n" % (sat, v))
+    rows2 = [("G02", dd_true("G02") + 0.04, 0.010, 1, dd_true("G02"), 1),
+             ("G03", dd_true("G03") - 1 + 0.02, 0.012, 1, dd_true("G03") - 1, 1)]
+    with open(os.path.join(run, "logs", "network_producer_ar.csv"), "w", newline="") as f:
+        f.write("week,tow,cons,signal,sat_j,ref_sat,sta_r,ref_sta,lambda_m,float_cyc,"
+                "sigma_cyc,in_subset,fixed_int,kept,ratio,p_succ,n_dd,n_search,n_fixed\n")
+        for sat, fl, sg, insub, fx_int, kept in rows2:
+            f.write("2313,100.0,G,L1C,%s,G01,S02,S01,0.190293673,%.6f,%.6f,%d,%d,%d,"
+                    "5.00,0.999900,2,2,2\n" % (sat, fl, sg, insub, fx_int, kept))
+    r2 = grade(fx, run, settle_h=0.0, out=io.StringIO())
+    w2 = r2["windows"]["settled"]
+    chk(r2["windup_branch"]["arcs"] == 6 and r2["windup_branch"]["arcs_shifted"] == 1,
+        "wind-up branch: one shifted arc of six")
+    chk(w2["correct_fix"] == 2 and w2["wrong_fix"] == 0, "wind-up branch: both fixes correct")
+    r3 = grade(fx, run, settle_h=0.0, out=io.StringIO(), windup_branch=False)
+    chk(r3["windows"]["settled"]["wrong_fix"] == 1, "without the branch: G03 graded wrong")
     print("selftest " + ("PASS" if ok else "FAILED"))
     return 0 if ok else 1
 
@@ -394,6 +533,8 @@ def main():
                     help="hours from the first traced epoch before the SETTLED window starts")
     ap.add_argument("--stride", type=int, default=1, help="grade every Nth traced epoch")
     ap.add_argument("--json", action="store_true", help="dump the full result as JSON to stdout")
+    ap.add_argument("--no-windup-branch", action="store_true",
+                    help="grade against the simulator's raw integers (no per-arc wind-up branch)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -401,7 +542,8 @@ def main():
     if not a.fixture_dir or not a.run:
         ap.error("fixture_dir and --run are required (or --selftest)")
     out = io.StringIO() if a.json else sys.stdout
-    r = grade(a.fixture_dir, a.run, settle_h=a.settle_h, stride=max(1, a.stride), out=out)
+    r = grade(a.fixture_dir, a.run, settle_h=a.settle_h, stride=max(1, a.stride), out=out,
+              windup_branch=not a.no_windup_branch)
     if a.json:
         print(json.dumps(r, indent=1, default=str))
     return 0
