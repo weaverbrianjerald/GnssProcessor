@@ -2192,43 +2192,44 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << (nc.slip_qc.tracker_modeled_first
                        ? std::string("\"tracker_modeled_first\":true,")
                        : std::string())
-               // The arc-ledger observatory's own record (card SID phase 1).  It does
-               // not affect the solve, but an archived logs/ folder still has to be
-               // able to say that this run carries network_arc_ledger.csv and the ARC
-               // event tier, and on what horizon the ledger's gaps and deaths were
-               // decided (the four config values it is derived from are written too,
-               // so the number can be checked without re-reading the config).
-               // Emitted only when armed (as for gap_reentry), so an unarmed run's
-               // manifest bytes are unchanged.
-               << (config_.networkSignalRoster()
-                       ? fmt::format("\"signal_roster\":{{\"armed\":true,"
-                                     "\"horizon_s\":{},"
-                                     "\"phase_leveling_max_gap_s\":{},"
-                                     "\"iono_carry_max_gap_s\":{},"
-                                     "\"emit_pb_hold_max_gap_s\":{},"
-                                     "\"readmit_seed_horizon_s\":{},"
-                                     "\"forget_ep\":{},\"event_holdoff_ep\":{},"
-                                     "\"trace\":\"network_arc_ledger.csv\","
-                                     "\"event_tier\":\"ARC\","
-                                     // The reader's own state (card SID phase 2), and
-                                     // the two observatory extensions that are on
-                                     // whenever the roster is: the IF pin writes the
-                                     // datum designation, and the admitted lifecycle
-                                     // runs beside the raw one.
-                                     "\"roster_tracker\":{},"
-                                     "\"admitted_lifecycle\":true,"
-                                     "\"if_pin_writes_datum\":true}},",
-                                     std::max(std::max(config_.networkPhaseLevelingMaxGapS(),
-                                                       config_.networkIonoCarryMaxGapS()),
-                                              std::max(nc.emit_pb_hold_max_gap_s,
-                                                       config_.networkReadmitSeedHorizonS())),
-                                     config_.networkPhaseLevelingMaxGapS(),
-                                     config_.networkIonoCarryMaxGapS(),
-                                     nc.emit_pb_hold_max_gap_s,
-                                     config_.networkReadmitSeedHorizonS(),
-                                     kArcLedgerForgetEp, kArcLedgerEventHoldoffEp,
-                                     config_.networkRosterTracker() ? "true" : "false")
-                       : std::string())
+               // The signal roster and arc ledger's own record (card SID phase 1).  They
+               // do not affect the solve, but the run-end census and the
+               // signals_as_planned records are read against the ledger's horizon,
+               // forget window and holdoff, so an archived logs/ folder has to carry
+               // them (the four config values the horizon is derived from are written
+               // too, so the number can be checked without re-reading the config).
+               // Written on every network run: since card NOM step N3a the roster and
+               // the ledger are built on every run, and network.signal_roster is the
+               // switch of the ledger's trace only, recorded as "trace" (with the trace
+               // file named when it is written).
+               << fmt::format("\"signal_roster\":{{\"built\":true,\"trace\":{},{}"
+                              "\"horizon_s\":{},"
+                              "\"phase_leveling_max_gap_s\":{},"
+                              "\"iono_carry_max_gap_s\":{},"
+                              "\"emit_pb_hold_max_gap_s\":{},"
+                              "\"readmit_seed_horizon_s\":{},"
+                              "\"forget_ep\":{},\"event_holdoff_ep\":{},"
+                              "\"event_tier\":\"ARC\","
+                              // The reader's own state (card SID phase 2), and the two
+                              // extensions that are on whenever the roster is built: the
+                              // IF pin writes the datum designation, and the admitted
+                              // lifecycle runs beside the raw one.
+                              "\"roster_tracker\":{},"
+                              "\"admitted_lifecycle\":true,"
+                              "\"if_pin_writes_datum\":true}},",
+                              config_.networkSignalRoster() ? "true" : "false",
+                              config_.networkSignalRoster()
+                                  ? "\"trace_file\":\"network_arc_ledger.csv\"," : "",
+                              std::max(std::max(config_.networkPhaseLevelingMaxGapS(),
+                                                config_.networkIonoCarryMaxGapS()),
+                                       std::max(nc.emit_pb_hold_max_gap_s,
+                                                config_.networkReadmitSeedHorizonS())),
+                              config_.networkPhaseLevelingMaxGapS(),
+                              config_.networkIonoCarryMaxGapS(),
+                              nc.emit_pb_hold_max_gap_s,
+                              config_.networkReadmitSeedHorizonS(),
+                              kArcLedgerForgetEp, kArcLedgerEventHoldoffEp,
+                              config_.networkRosterTracker() ? "true" : "false")
                // Simulation-only oracle slip response (include/slip/NetworkSlipOracle.hpp).
                // It affects the solve and is fed by truth, so an archived logs/ folder
                // must be able to say that its products are a diagnostic ceiling rather
@@ -2411,10 +2412,11 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                << "\"stations_no_record\":" << counters.n_marker_arp_no_record << ','
                << fmt::format("\"max_h_m\":{:.4f},", counters.marker_arp_max_h)
                << "\"max_h_station\":\"" << counters.marker_arp_max_h_station << "\"},"
-               // The observatory's own end-of-run census (card SID phase 2), so an
+               // The roster's own end-of-run census (card SID phase 2), so an
                // archived logs/ folder carries the new classes without the run-end
-               // log text.  Emitted in both knob states; every field is 0 when the
-               // roster was never armed, which is what an unarmed run should read.
+               // log text.  Written on every network run; the roster is built on every
+               // run (card NOM step N3a), so a field reads 0 only when nothing it
+               // counts happened, and "epochs" 0 means the build seam never ran.
                << "\"signal_roster\":{"
                << "\"epochs\":" << counters.sid.epochs << ','
                << "\"trk_roster_hits\":" << counters.sid.trk_roster_hits << ','

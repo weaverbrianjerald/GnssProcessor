@@ -18,7 +18,9 @@
  *  - a roster built before the latch is decided carries no modelled role, which is
  *    why the first table waits for a later epoch;
  *  - the table prints every role (an empty one as "-") and every site, flags a site
- *    with no case compared, and the manifest record carries the same numbers.
+ *    with no case compared, names the run's latch rule on the latch-rule row, and the
+ *    manifest record carries the same numbers;
+ *  - a run end with no audited epoch says so instead of printing week 0 TOW 0.0.
  */
 
 #include <gtest/gtest.h>
@@ -322,6 +324,9 @@ TEST(SignalRosterPlanTest, TheManifestRecordCarriesTheSameNumbers) {
     const nlohmann::json j = nlohmann::json::parse(js);
     EXPECT_EQ(j.at("record"), "signals_as_planned");
     EXPECT_EQ(j.at("scope"), "first_emitted_epoch");
+    EXPECT_EQ(j.at("audited"), true);
+    EXPECT_EQ(j.at("canonical_signal_rule"), "count");
+    EXPECT_EQ(j.at("canonical_signal_priority_stations"), 0);
     EXPECT_EQ(j.at("week"), 2313);
     EXPECT_DOUBLE_EQ(j.at("tow").get<double>(), 259230.0);
     EXPECT_EQ(j.at("epochs"), 2);
@@ -347,6 +352,84 @@ TEST(SignalRosterPlanTest, TheManifestRecordCarriesTheSameNumbers) {
     EXPECT_EQ(pin.at("epoch").at("disagree"), 1);
     EXPECT_EQ(pin.at("run").at("compared"), 12);
     EXPECT_EQ(pin.at("run").at("disagree"), 2);
+}
+
+TEST(SignalRosterPlanTest, TheLatchRuleRowNamesTheRulesOfThisRun) {
+    const RosterPlan plan = signalRosterPlanOf(threeStations(), threeStationVotes());
+    const RosterSiteCounts none{};
+    const auto latchRow = [](const std::vector<std::string>& t) {
+        for (const std::string& line : t)
+            if (line.rfind("latch_rule ", 0) == 0) return line;
+        return std::string();
+    };
+
+    // The global rule: the row says which one built the band rows.
+    RosterPlanHeader h = header();
+    h.latch_rule = "priority";
+    std::string row = latchRow(signalRosterPlanTable(plan, none, none, h));
+    ASSERT_FALSE(row.empty());
+    EXPECT_NE(row.find("| this run: processing.canonical_signal_rule = priority, so every "
+                       "station latched by the priority rule"),
+              std::string::npos) << row;
+    // No other row carries it.
+    for (const std::string& line : signalRosterPlanTable(plan, none, none, h))
+        if (line != row) EXPECT_EQ(line.find("this run:"), std::string::npos) << line;
+
+    // A station list scopes the rule and overrides it (PppModel::canonicalRuleForStation).
+    h.latch_rule = "count";
+    h.latch_rule_priority_stations = 3;
+    row = latchRow(signalRosterPlanTable(plan, none, none, h));
+    EXPECT_NE(row.find("| this run: processing.canonical_signal_priority_stations lists 3 "
+                       "station(s), which latch by the priority rule; every other station "
+                       "latches by the count rule"),
+              std::string::npos) << row;
+    const nlohmann::json j =
+        nlohmann::json::parse(signalRosterPlanJson(plan, none, none, h, "run"));
+    EXPECT_EQ(j.at("canonical_signal_rule"), "count");
+    EXPECT_EQ(j.at("canonical_signal_priority_stations"), 3);
+}
+
+TEST(SignalRosterPlanTest, ARunEndWithNoAuditedEpochSaysSo) {
+    // Two builds, no audit: the plan is empty and the run columns still count.
+    RosterSiteCounts run{};
+    run[static_cast<std::size_t>(RosterSite::CanonicalLatch)] = RosterSiteCount{ 8, 0 };
+    RosterPlanHeader h = header();
+    h.scope = "run end";
+    h.audited = false;
+    h.week = 0;
+    h.tow = 0.0;
+    const RosterPlan empty;
+    const std::vector<std::string> t = signalRosterPlanTable(empty, RosterSiteCounts{}, run, h);
+    ASSERT_FALSE(t.empty());
+    EXPECT_EQ(t[0].rfind("run end: no epoch reached the audit", 0), 0u) << t[0];
+    EXPECT_NE(t[0].find("(2 epoch(s), week 2313 TOW 259200.0 to week 2313 TOW 259230.0)"),
+              std::string::npos) << t[0];
+    EXPECT_EQ(t[0].find("week 0 TOW 0.0"), std::string::npos) << t[0];
+    for (const std::string& line : t)
+        EXPECT_NE(line, "system   band role          signals") << "no band header row";
+    std::string latch;
+    for (const std::string& line : t)
+        if (line.rfind("canonical_latch ", 0) == 0) latch = line;
+    EXPECT_NE(latch.find("              -              -            8            0  signal | "),
+              std::string::npos) << latch;
+
+    const nlohmann::json j =
+        nlohmann::json::parse(signalRosterPlanJson(empty, RosterSiteCounts{}, run, h, "run"));
+    EXPECT_EQ(j.at("audited"), false);
+    EXPECT_TRUE(j.at("week").is_null());
+    EXPECT_TRUE(j.at("tow").is_null());
+    EXPECT_EQ(j.at("epochs"), 2);
+    EXPECT_TRUE(j.at("bands").empty());
+    const nlohmann::json& site =
+        j.at("sites").at(static_cast<std::size_t>(RosterSite::CanonicalLatch));
+    EXPECT_TRUE(site.at("epoch").is_null());
+    EXPECT_EQ(site.at("run").at("compared"), 8);
+
+    // No epoch built at all: the run span says so rather than printing week 0.
+    h.epochs = 0;
+    const std::vector<std::string> t0 =
+        signalRosterPlanTable(empty, RosterSiteCounts{}, RosterSiteCounts{}, h);
+    EXPECT_NE(t0[0].find("(no epoch built)"), std::string::npos) << t0[0];
 }
 
 }  // namespace GnssProcessor

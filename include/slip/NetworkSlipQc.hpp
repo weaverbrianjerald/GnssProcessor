@@ -835,8 +835,9 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @param sid     This epoch's ledger-driven population, or nullptr / @c armed
  *                false for the historical raw-driven path (byte-identical).
  * @param sid_out Per-arc outcome sink for the unified "answered" census (R4), or
- *                nullptr when the observatory is not armed.  Written in both
- *                knob states.
+ *                nullptr when no roster was set up (every network run sets one up
+ *                since card NOM step N3a).  Written in both states of
+ *                network.ledger_reentry.
  */
 void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 const std::vector<bool>& present,

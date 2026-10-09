@@ -6858,8 +6858,9 @@ namespace GnssProcessor {
          * (@ref networkRosterTracker, @ref networkLedgerReentry,
          * @ref networkLedgerScreens, @ref networkLedgerEmit) no longer need it.
          *
-         * Why the roster exists (card SID phase 1): the signal-identity audit (`runs/_msc/sid_audit_report_2026-09-22.md`,
-         * summarized in docs/refound/SID_signal_identity_2026-09-22.md) lists 128 sites
+         * Why the roster exists (card SID phase 1): the signal-identity audit
+         * (`runs/_msc/sid_audit_report_2026-09-22.md`, summarized in
+         * docs/refound/SID_signal_identity_2026-09-22.md) lists 128 sites
          * in 38 files that decide which signal stands for a band, under at least nine
          * rules and six independent implementations of "the two lowest distinct
          * bands", and arc-keyed lifecycle holders with both edges silent.  On the

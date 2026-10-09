@@ -463,8 +463,8 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     // knows which signals the S-basis pinned this epoch (the realized pair, after the
     // basis hold and any re-latch).  It fills BandRoster::datum_code / datum_phase and a
     // census; the solve does not read them (the wire's signal declaration does, in
-    // networkLedgerEmitBuildDeclaration).  No-op when the roster is disarmed (card SID
-    // phase 2).
+    // networkLedgerEmitBuildDeclaration).  Runs on every network epoch, since the roster
+    // is built on every run (card NOM step N3a); a no-op only in a context no run set up.
     networkSignalRosterDatumPin(ctx, this_epoch_if_pin_real);
     if (cbd.H.rows() > 0) {
         // Card NOM N2a: one kind per row, by row type (the builder's row_kinds); a size

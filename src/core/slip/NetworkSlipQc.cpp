@@ -2359,7 +2359,8 @@ void gapReentryVoidPends(int i, const std::string& satellite,
 // ---------------------------------------------------------------------------
 
 /// Record one arc's response outcome for the unified census (R4).  Null sink ⇒
-/// the observatory is not armed and nothing is recorded.
+/// no roster was set up (a context no network run built, such as a unit test's;
+/// every network run builds it since card NOM step N3a) and nothing is recorded.
 void sidRecordOutcome(ArcReentryOutcomeMap* sink, int i, const std::string& sat,
                       const std::string& sig, ArcReentryOutcome o) {
     if (sink == nullptr) return;

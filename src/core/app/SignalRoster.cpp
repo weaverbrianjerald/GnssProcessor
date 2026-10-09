@@ -61,17 +61,43 @@ namespace GnssProcessor {
             return sat + "|" + signal;
         }
 
-        /// @brief Median of a sample, by value (the sample is copied and sorted).
-        double medianOf(std::vector<int> v) {
-            if (v.empty()) return 0.0;
-            std::sort(v.begin(), v.end());
-            const std::size_t n = v.size();
-            return (n % 2) ? static_cast<double>(v[n / 2])
-                           : 0.5 * (static_cast<double>(v[n / 2 - 1])
-                                    + static_cast<double>(v[n / 2]));
-        }
-
     }  // namespace
+
+    // =====================================================================
+    // Census class (f): a family's carried support as a histogram
+    // =====================================================================
+
+    void RosterFamilySupport::add(int n) {
+        if (n < 0) return;
+        const auto idx = static_cast<std::size_t>(n);
+        if (idx >= epochs_by_support.size()) epochs_by_support.resize(idx + 1, 0);
+        ++epochs_by_support[idx];
+        ++epochs;
+    }
+
+    long long RosterFamilySupport::below(int bar) const {
+        long long k = 0;
+        for (std::size_t n = 0; n < epochs_by_support.size()
+                                && static_cast<long long>(n) < static_cast<long long>(bar); ++n)
+            k += epochs_by_support[n];
+        return k;
+    }
+
+    double RosterFamilySupport::median() const {
+        if (epochs <= 0) return 0.0;
+        // The sample of rank r (0-based) in sorted order: the first support value whose
+        // cumulative count exceeds r.
+        const auto at_rank = [this](long long r) {
+            long long cum = 0;
+            for (std::size_t n = 0; n < epochs_by_support.size(); ++n) {
+                cum += epochs_by_support[n];
+                if (cum > r) return static_cast<double>(n);
+            }
+            return 0.0;   // unreachable: r < epochs, the sum of the counts
+        };
+        const long long mid = epochs / 2;
+        return (epochs % 2) ? at_rank(mid) : 0.5 * (at_rank(mid - 1) + at_rank(mid));
+    }
 
     const char* signalRoleName(SignalRole r) {
         switch (r) {
@@ -557,6 +583,37 @@ namespace GnssProcessor {
             return s;
         }
 
+        /// The rule this run latched by, as the latch-rule row states it.  A station
+        /// list scopes the rule and decides on its own (PppModel::canonicalRuleForStation).
+        std::string latchRuleText(const RosterPlanHeader& hdr) {
+            if (hdr.latch_rule_priority_stations > 0)
+                return fmt::format(
+                    "processing.canonical_signal_priority_stations lists {} station(s), "
+                    "which latch by the priority rule; every other station latches by the "
+                    "count rule (processing.canonical_signal_rule = {} does not apply)",
+                    hdr.latch_rule_priority_stations, hdr.latch_rule);
+            return fmt::format("processing.canonical_signal_rule = {}, so every station "
+                               "latched by the {} rule and the band rows follow it",
+                               hdr.latch_rule, hdr.latch_rule);
+        }
+
+        /// The header fields every table of the run shares: the span of epochs the
+        /// roster was built over so far and the run's latch rule.  The caller sets the
+        /// scope and the epoch the band rows describe.
+        RosterPlanHeader planHeaderOf(const SignalRoster& rs, const GnssConfig& config_) {
+            RosterPlanHeader h;
+            h.epochs     = rs.epochs;
+            h.week_first = rs.week_first;
+            h.tow_first  = rs.tow_first;
+            h.week_last  = rs.week_last;
+            h.tow_last   = rs.tow_last;
+            h.latch_rule = config_.canonicalSignalRule() == CanonicalSignalRule::Priority
+                               ? "priority" : "count";
+            h.latch_rule_priority_stations =
+                static_cast<int>(config_.canonicalSignalPriorityStations().size());
+            return h;
+        }
+
     }  // namespace
 
     const std::array<RosterSiteSpec, kRosterSites>& signalRosterSiteSpecs() {
@@ -681,18 +738,31 @@ namespace GnssProcessor {
                                                    const RosterSiteCounts& run,
                                                    const RosterPlanHeader& hdr) {
         std::vector<std::string> out;
-        out.push_back(fmt::format(
-            "{}: the band rows are the roster built at week {} TOW {:.1f} ({} station(s) "
-            "with a cell). A number after a signal counts the stations holding that role, "
-            "except after 'pinned by', where it counts the satellites whose "
-            "ionosphere-free pin used that code; a datum phase is named only at a station "
-            "whose modelled code is the pinned code. The decision-site rows count that "
-            "epoch (epoch columns) and the run so far (run columns: {} epoch(s), week {} "
-            "TOW {:.1f} to week {} TOW {:.1f})",
-            hdr.scope, hdr.week, hdr.tow, plan.stations, hdr.epochs, hdr.week_first,
-            hdr.tow_first, hdr.week_last, hdr.tow_last));
-        out.push_back(planRow("system", "band", "role", "signals"));
+        const std::string run_span =
+            hdr.epochs > 0
+                ? fmt::format("{} epoch(s), week {} TOW {:.1f} to week {} TOW {:.1f}",
+                              hdr.epochs, hdr.week_first, hdr.tow_first, hdr.week_last,
+                              hdr.tow_last)
+                : std::string("no epoch built");
+        if (hdr.audited)
+            out.push_back(fmt::format(
+                "{}: the band rows are the roster built at week {} TOW {:.1f} ({} "
+                "station(s) with a cell). A number after a signal counts the stations "
+                "holding that role, except after 'pinned by', where it counts the "
+                "satellites whose ionosphere-free pin used that code; a datum phase is "
+                "named only at a station whose modelled code is the pinned code. The "
+                "decision-site rows count that epoch (epoch columns) and the run so far "
+                "(run columns: {})",
+                hdr.scope, hdr.week, hdr.tow, plan.stations, run_span));
+        else
+            out.push_back(fmt::format(
+                "{}: no epoch reached the audit, so there is no epoch to describe: no band "
+                "row is printed and the epoch columns read '-'. The run columns count the "
+                "run so far ({})",
+                hdr.scope, run_span));
+        if (hdr.audited) out.push_back(planRow("system", "band", "role", "signals"));
         for (const RosterPlanBand& b : plan.bands) {
+            if (!hdr.audited) break;
             const std::string band(1, b.band);
             const auto row = [&](const char* role, const std::string& text) {
                 out.push_back(planRow(b.constellation, band, role, text));
@@ -724,12 +794,19 @@ namespace GnssProcessor {
             const RosterSiteCount& r = run[siteIdx(s.site)];
             std::string tail = fmt::format("{} | {} | {} | {}", s.group, s.where, s.compared,
                                            s.disagreement);
+            // The latch-rule row compares two rules; which one built the band rows is
+            // this run's configuration, so the row names it.
+            if (s.site == RosterSite::LatchRule)
+                tail += " | this run: " + latchRuleText(hdr);
             if (r.compared == 0)
                 tail += " | note: no case compared in the run columns, so 0 is not an "
                         "agreement";
-            out.push_back(siteRow(s.name, std::to_string(e.compared),
-                                  std::to_string(e.disagree), std::to_string(r.compared),
-                                  std::to_string(r.disagree), tail));
+            const auto epochCell = [&hdr](long long v) {
+                return hdr.audited ? std::to_string(v) : std::string("-");
+            };
+            out.push_back(siteRow(s.name, epochCell(e.compared), epochCell(e.disagree),
+                                  std::to_string(r.compared), std::to_string(r.disagree),
+                                  tail));
         }
         out.push_back("not in this table: the other band-role and signal-choice sites of "
                       "card NOM section 18 (groups A to G), which have no counter against "
@@ -741,9 +818,14 @@ namespace GnssProcessor {
                                      const RosterSiteCounts& run, const RosterPlanHeader& hdr,
                                      const std::string& scope_key) {
         std::string js = fmt::format(
-            "{{\"record\":\"signals_as_planned\",\"scope\":\"{}\",\"week\":{},\"tow\":{:.1f},"
-            "\"epochs\":{},\"stations\":{},\"bands\":[",
-            scope_key, hdr.week, hdr.tow, hdr.epochs, plan.stations);
+            "{{\"record\":\"signals_as_planned\",\"scope\":\"{}\",\"audited\":{},"
+            "\"week\":{},\"tow\":{},\"epochs\":{},\"stations\":{},"
+            "\"canonical_signal_rule\":\"{}\",\"canonical_signal_priority_stations\":{},"
+            "\"bands\":[",
+            scope_key, hdr.audited ? "true" : "false",
+            hdr.audited ? std::to_string(hdr.week) : std::string("null"),
+            hdr.audited ? fmt::format("{:.1f}", hdr.tow) : std::string("null"),
+            hdr.epochs, plan.stations, hdr.latch_rule, hdr.latch_rule_priority_stations);
         for (std::size_t k = 0; k < plan.bands.size(); ++k) {
             const RosterPlanBand& b = plan.bands[k];
             std::string excl = "{";
@@ -765,11 +847,14 @@ namespace GnssProcessor {
         js += "],\"sites\":[";
         for (std::size_t k = 0; k < kRosterSites; ++k) {
             const RosterSiteSpec& s = kSiteSpecs[k];
+            const std::string ep =
+                hdr.audited ? fmt::format("{{\"compared\":{},\"disagree\":{}}}",
+                                          epoch[k].compared, epoch[k].disagree)
+                            : std::string("null");
             js += fmt::format(
-                "{}{{\"site\":\"{}\",\"group\":\"{}\",\"epoch\":{{\"compared\":{},"
-                "\"disagree\":{}}},\"run\":{{\"compared\":{},\"disagree\":{}}}}}",
-                k ? "," : "", s.name, s.group, epoch[k].compared, epoch[k].disagree,
-                run[k].compared, run[k].disagree);
+                "{}{{\"site\":\"{}\",\"group\":\"{}\",\"epoch\":{},"
+                "\"run\":{{\"compared\":{},\"disagree\":{}}}}}",
+                k ? "," : "", s.name, s.group, ep, run[k].compared, run[k].disagree);
         }
         return js + "]}";
     }
@@ -870,6 +955,11 @@ namespace GnssProcessor {
         // Open the epoch's decision-site census (card NOM step N3a): the audit pass
         // states the epoch's own counts as the difference from this point.
         rs.site_epoch_start = signalRosterSiteCounts(ctr, rs);
+        // The datum seam writes this epoch's pin and votes.  Cleared here as well as
+        // there, so an epoch that skips the datum seam pairs its cells with no votes
+        // rather than with the previous epoch's.
+        rs.datum_pin.clear();
+        rs.datum_votes.clear();
         if (rs.epochs == 0) {
             rs.week_first = se.time.week;
             rs.tow_first  = se.time.tow;
@@ -1591,7 +1681,7 @@ namespace GnssProcessor {
                     continue;
                 ++support[familyKey(std::get<1>(key), std::get<2>(key))];
             }
-            for (const auto& [fam, n] : support) rs.family_support[fam].push_back(n);
+            for (const auto& [fam, n] : support) rs.family_support[fam].add(n);
         }
 
         // --- (g) wire family coverage, from the emitter's own epoch ------------
@@ -1691,6 +1781,7 @@ namespace GnssProcessor {
         rs.site_last_epoch =
             signalRosterSiteDelta(signalRosterSiteCounts(ctr, rs), rs.site_epoch_start);
         rs.plan_last  = signalRosterPlanOf(rs.by_station, rs.datum_votes);
+        rs.audited    = true;
         rs.week_audit = se.time.week;
         rs.tow_audit  = se.time.tow;
         // The first table waits for an emitted epoch whose roster carries a modelled
@@ -1700,15 +1791,10 @@ namespace GnssProcessor {
         if (!rs.plan_table_written && emitted && rs.plan_last.hasModelledRole()) {
             rs.plan_table_written = true;
             const RosterSiteCounts run = signalRosterSiteCounts(ctr, rs);
-            RosterPlanHeader hdr;
-            hdr.scope      = "first emitted epoch with a modelled role";
-            hdr.week       = se.time.week;
-            hdr.tow        = se.time.tow;
-            hdr.epochs     = rs.epochs;
-            hdr.week_first = rs.week_first;
-            hdr.tow_first  = rs.tow_first;
-            hdr.week_last  = rs.week_last;
-            hdr.tow_last   = rs.tow_last;
+            RosterPlanHeader hdr = planHeaderOf(rs, config_);
+            hdr.scope = "first emitted epoch with a modelled role";
+            hdr.week  = se.time.week;
+            hdr.tow   = se.time.tow;
             for (const std::string& line :
                  signalRosterPlanTable(rs.plan_last, rs.site_last_epoch, run, hdr))
                 log->info("Network (signals as planned): {}", line);
@@ -1826,35 +1912,34 @@ namespace GnssProcessor {
     // The run-end table
     // =====================================================================
 
-    void networkSignalRosterRunEnd(NetworkRunContext& ctx, const GnssConfig& config_,
-                                   const std::shared_ptr<spdlog::logger>& log,
-                                   NetworkRunTraces& traces) {
+    void networkSignalRosterPlanRunEnd(NetworkRunContext& ctx, const GnssConfig& config_,
+                                       const std::shared_ptr<spdlog::logger>& log,
+                                       NetworkRunTraces& traces) {
+        const auto& rs = ctx.roster;
+        if (!rs.active) return;
+        // The band rows and the epoch columns are the last audited epoch, the run
+        // columns every epoch the roster was built at.  The census's run-end cell
+        // census of class (a) is not one of the table's sites, so the table needs
+        // nothing the census computes later.
+        const RosterSiteCounts run = signalRosterSiteCounts(ctx.counters.sid, rs);
+        RosterPlanHeader hdr = planHeaderOf(rs, config_);
+        hdr.scope   = rs.audited ? "run end (the last audited epoch)" : "run end";
+        hdr.audited = rs.audited;
+        hdr.week    = rs.week_audit;
+        hdr.tow     = rs.tow_audit;
+        for (const std::string& line :
+             signalRosterPlanTable(rs.plan_last, rs.site_last_epoch, run, hdr))
+            log->info("Network (signals as planned, run end): {}", line);
+        traces.appendRunManifestRecord(
+            config_.getNetworkConfig(),
+            signalRosterPlanJson(rs.plan_last, rs.site_last_epoch, run, hdr, "run"));
+    }
+
+    void networkSignalRosterRunEnd(NetworkRunContext& ctx,
+                                   const std::shared_ptr<spdlog::logger>& log) {
         auto& rs = ctx.roster;
         if (!rs.active) return;
         auto& c = ctx.counters.sid;
-
-        // The "signals as planned" table at run end (card NOM step N3a): the band rows
-        // and the epoch columns are the last audited epoch, the run columns every epoch
-        // the roster was built at.  Written before the census table below, whose
-        // run-end cell census of class (a) is not one of the table's sites.
-        {
-            const RosterSiteCounts run = signalRosterSiteCounts(c, rs);
-            RosterPlanHeader hdr;
-            hdr.scope      = "run end (the last audited epoch)";
-            hdr.week       = rs.week_audit;
-            hdr.tow        = rs.tow_audit;
-            hdr.epochs     = rs.epochs;
-            hdr.week_first = rs.week_first;
-            hdr.tow_first  = rs.tow_first;
-            hdr.week_last  = rs.week_last;
-            hdr.tow_last   = rs.tow_last;
-            for (const std::string& line :
-                 signalRosterPlanTable(rs.plan_last, rs.site_last_epoch, run, hdr))
-                log->info("Network (signals as planned, run end): {}", line);
-            traces.appendRunManifestRecord(
-                config_.getNetworkConfig(),
-                signalRosterPlanJson(rs.plan_last, rs.site_last_epoch, run, hdr, "run"));
-        }
 
         // Class (a), the cell census: per (station, constellation, band), the dominant
         // tracker signal over the run against that cell's modelled phase.  That is the
@@ -1888,16 +1973,14 @@ namespace GnssProcessor {
 
         // Class (f): the median support per family, and the thin population.
         std::map<std::string, std::vector<double>> med_by_signal;
-        for (const auto& [fam, v] : rs.family_support) {
-            if (v.empty()) continue;
+        for (const auto& [fam, h] : rs.family_support) {
+            if (h.epochs == 0) continue;
             ++c.fam_families;
-            const std::size_t thin =
-                static_cast<std::size_t>(std::count_if(v.begin(), v.end(),
-                                                       [](int n) { return n < 3; }));
-            if (static_cast<double>(thin) > 0.10 * static_cast<double>(v.size())) ++c.fam_thin;
+            const long long thin = h.below(3);
+            if (static_cast<double>(thin) > 0.10 * static_cast<double>(h.epochs)) ++c.fam_thin;
             const auto bar = fam.find('|');
             const std::string sig = (bar == std::string::npos) ? fam : fam.substr(bar + 1);
-            med_by_signal[sig].push_back(medianOf(v));
+            med_by_signal[sig].push_back(h.median());
         }
         std::string fam_line;
         for (auto& [sig, meds] : med_by_signal) {
@@ -1938,8 +2021,9 @@ namespace GnssProcessor {
             c.companion_signals, c.excluded_signals, c.excl_allowlist,
             c.excl_not_latched, c.excl_no_latch, c.roster_latch_disagree,
             c.epochs == 0
-                ? "  ⚠ ARMED AND INERT: the build seam never ran; this is dead "
-                  "wiring, not a quiet run."
+                ? "  ⚠ INERT: the build seam never ran (the roster is built on every "
+                  "network run), so every count in these tables is a zero with a zero "
+                  "denominator; this is dead wiring, not a quiet run."
                 : "");
 
         log->info(
@@ -2017,8 +2101,8 @@ namespace GnssProcessor {
             c.build_ms, c.epochs ? c.build_ms / static_cast<double>(c.epochs) : 0.0,
             c.audit_ms, c.epochs ? c.audit_ms / static_cast<double>(c.epochs) : 0.0,
             c.arc_birth == 0
-                ? "  ⚠ ARMED AND INERT: ZERO arcs were ever born, so the ledger saw "
-                  "no observation at all.  This is dead wiring, not a quiet run."
+                ? "  ⚠ INERT: ZERO arcs were ever born, so the ledger saw no "
+                  "observation at all.  This is dead wiring, not a quiet run."
                 : "");
 
         // ---------------------------------------------------------------
@@ -2053,7 +2137,7 @@ namespace GnssProcessor {
             "by (constellation, band): {}.  Datum phase: {}.  "
             "ADMITTED LIFECYCLE: {} admitted phase row(s) fed over the run, peak {} "
             "admitted-live arc(s); TRANSITIONS {} birth, {} gap, {} reentry, {} death "
-            "({} trace row(s), side=adm).  "
+            "({}).  "
             "(c) local_carry, ADMITTED side: {} of {} entr(y|ies) at a DEAD admitted arc, "
             "{} at an arc never admitted, {} MODELLED arc(s) admitted-Tracking with no "
             "carry entry [RAW side, for comparison: {} dead, {} unknown, {} tracking "
@@ -2071,7 +2155,10 @@ namespace GnssProcessor {
             c.datum_cells_off_model, c.datum_cells_ambiguous,
             datum_line, datum_ph_line,
             c.adm_rows, c.adm_live_max,
-            c.adm_birth, c.adm_gap, c.adm_reentry, c.adm_death, c.adm_trace_rows,
+            c.adm_birth, c.adm_gap, c.adm_reentry, c.adm_death,
+            rs.trace ? fmt::format("{} trace row(s), side=adm", c.adm_trace_rows)
+                     : std::string("no trace row written: network.signal_roster, the "
+                                   "trace switch, is off"),
             c.lc_adm_arc_dead, c.lc_entries, c.lc_adm_arc_unknown,
             c.lc_adm_tracking_no_entry,
             c.lc_arc_dead, c.lc_arc_unknown, c.lc_tracking_no_entry,
@@ -2084,9 +2171,8 @@ namespace GnssProcessor {
             c.carry_gap_any, c.carry_gap_2_30, c.carry_gap_2_30_answered,
             c.carry_gap_2_30 - c.carry_gap_2_30_answered,
             c.adm_rows == 0
-                ? "  ⚠ ARMED AND INERT: ZERO admitted rows were ever fed, so the "
-                  "admitted lifecycle never advanced.  This is dead wiring, not a "
-                  "quiet run."
+                ? "  ⚠ INERT: ZERO admitted rows were ever fed, so the admitted "
+                  "lifecycle never advanced.  This is dead wiring, not a quiet run."
                 : "");
 
         // ---------------------------------------------------------------
@@ -2095,17 +2181,21 @@ namespace GnssProcessor {
         log->info(
             "Network (card SID phase 3 / PRUNE AND EXPIRY EDGES): "
             "(R3a) the leveling carry's gap prune retired {} entr(y|ies) at "
-            "phase_leveling_max_gap_s = {:.0f} s, each now an ARC arc_death with "
-            "reason=horizon ({} evented, holdoff {} epoch(s) per station and "
-            "transition); that edge emitted NOTHING before this phase.  "
+            "phase_leveling_max_gap_s = {:.0f} s, each an ARC arc_death with "
+            "reason=horizon in the ledger's trace ({}); that edge emitted NOTHING "
+            "before this phase.  "
             "(R3b) the state-vector prune destroyed {} ambiguity column(s) over the "
             "run, of which {} were MARKED state_pruned because their ADMITTED arc "
             "was in a GAP inside the carry horizon (the silent death path of the "
             "audit, now on the record) and {} belonged to an arc the ledger has "
             "never admitted; {} admitted re-entry(ies) then landed on a RE-CREATED "
             "column.  The prune itself is unchanged: no behaviour moved here.{}",
-            c.carry_prune_deaths, rs.horizon_pl_s, c.carry_prune_events,
-            kArcLedgerEventHoldoffEp,
+            c.carry_prune_deaths, rs.horizon_pl_s,
+            rs.trace ? fmt::format("{} evented, holdoff {} epoch(s) per station and "
+                                   "transition", c.carry_prune_events,
+                                   kArcLedgerEventHoldoffEp)
+                     : std::string("none evented: network.signal_roster, the trace "
+                                   "switch, is off"),
             c.state_prune_keys, c.state_pruned_marks, c.state_prune_unknown,
             c.adm_state_recreated,
             (c.state_prune_keys > 0 && c.state_pruned_marks == 0)
@@ -2188,8 +2278,8 @@ namespace GnssProcessor {
                 per_writer.empty() ? "none" : per_writer,
                 silent.empty() ? "none" : silent,
                 c.gap_folded == 0
-                    ? "  ⚠ ARMED AND INERT: no admitted gap was folded at all, so the "
-                      "reason masks say nothing about this run."
+                    ? "  ⚠ ARMED (network.ledger_screens) AND INERT: no admitted gap "
+                      "was folded at all, so the reason masks say nothing about this run."
                     : "");
             // This is not the phase-3 `ledger_reentry_no_verdict` population: that one
             // is every admitted return inside the carry horizon and is attributed by

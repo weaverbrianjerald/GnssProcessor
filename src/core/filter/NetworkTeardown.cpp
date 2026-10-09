@@ -6403,6 +6403,11 @@ int networkTeardown(
         // Card NOM N2a: every contribution to the normal equations by its declared kind over
         // the run ("contributions as armed", the run's table) and its manifest record.
         networkContributionsRunEnd(ctx, log, traces, config_.getNetworkConfig());
+        // Card NOM N3a: the signal roster's "signals as planned" at run end (the last
+        // audited epoch's band rows, the run's decision-site census) and its manifest
+        // record, beside the two tables above and before the manifest's complete record,
+        // so that record stays the manifest's last.  Written on every network run.
+        networkSignalRosterPlanRunEnd(ctx, config_, log, traces);
         // Card PRM phase 1b: what the fold applied to the carried border over the run, per
         // kind and disposition (key-epochs), decided once before PASS B; the same counts go
         // to the run manifest as a `param_dispositions` record.
@@ -7217,14 +7222,14 @@ int networkTeardown(
     // guard for the same reason as the injector's clause: a rule that withheld the whole
     // network has to be visible on a run that also produced nothing.
     networkCanonicalPairRunEnd(ctx, log);
-    // Signal-roster run-end (SID phase 1, app/SignalRoster.cpp): the "signals as
-    // planned" table with its run-manifest record (card NOM step N3a), then the
-    // roster's build census with its bar-0 self-check, every disagreement class with
-    // its denominator, and the arc ledger's transitions, horizon and cost.  Written on
-    // every network run.  Read here, before the zero-emit guard, for the reason the two
-    // clauses above give: the observatory's table matters most on a run that produced
-    // nothing.
-    networkSignalRosterRunEnd(ctx, config_, log, traces);
+    // Signal-roster run-end (SID phase 1, app/SignalRoster.cpp): the roster's build
+    // census with its bar-0 self-check, every disagreement class with its denominator,
+    // and the arc ledger's transitions, horizon and cost.  Written on every network run
+    // (card NOM step N3a; its "signals as planned" table is written above, beside the
+    // parameter and contribution tables).  Read here, before the zero-emit guard, for the
+    // reason the two clauses above give: the observatory's table matters most on a run
+    // that produced nothing.
+    networkSignalRosterRunEnd(ctx, log);
     // All-channel family census and cross-channel exposure (SID phase 6b), beside the
     // roster's table because the two answer the same question at different
     // granularities.  Returns on its first line when the widening is not active.

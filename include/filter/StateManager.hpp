@@ -1407,8 +1407,9 @@ namespace GnssProcessor {
          * @brief Arm the prune's key recorder (card SID phase 3, R3b).
          *
          * Off by default, so a run that does not ask for it allocates and copies
-         * nothing. The network producer arms it with the card SID observatory and
-         * drains @ref takePrunedAmbiguities once per epoch.
+         * nothing. The network producer arms it on every run, with the card SID
+         * roster and arc ledger, which are built on every network run since card NOM
+         * step N3a, and drains @ref takePrunedAmbiguities once per epoch.
          */
         void setRecordPrunedAmbiguities(bool on) { record_pruned_ambiguities_ = on; }
 

@@ -254,7 +254,7 @@ namespace GnssProcessor {
      * compares there, and what it counts as a disagreement.
      */
     struct RosterSiteSpec {
-        RosterSite  site;
+        RosterSite  site;          ///< the site this row declares (its index in the table).
         const char* name;          ///< stable identifier, used as the JSON key.
         const char* group;         ///< "signal" (a band role or signal choice) or "arc" (an arc's lifecycle).
         const char* where;         ///< the deciding code, by file or function.
@@ -262,7 +262,12 @@ namespace GnssProcessor {
         const char* disagreement;  ///< what is counted as a disagreement.
     };
 
-    /// @brief The declared site texts, in @ref RosterSite order (checked by @c static_assert).
+    /**
+     * @brief The declared site texts, in @ref RosterSite order (checked by
+     *        @c static_assert).
+     *
+     * @return One @ref RosterSiteSpec per site, with static storage duration.
+     */
     const std::array<RosterSiteSpec, kRosterSites>& signalRosterSiteSpecs();
 
     /// @brief The census at one site: how many cases were compared, how many disagreed.
@@ -291,8 +296,8 @@ namespace GnssProcessor {
     /// @brief One signal in one role, with the number of stations that hold it in
     ///        that role (or, for a datum code, the number of satellites that pinned it).
     struct RosterPlanEntry {
-        std::string signal;
-        int         count{ 0 };
+        std::string signal;      ///< RINEX observation code ("L1C", "C2W").
+        int         count{ 0 };  ///< stations holding the role (satellites for a datum vote).
     };
 
     /**
@@ -339,21 +344,36 @@ namespace GnssProcessor {
      * @param by_station  The roster's cells, one map per station (@c SignalRoster::by_station).
      * @param datum_votes "<constellation>|<band>" -> pinned code -> satellites that
      *                    pinned it this epoch (@c SignalRoster::datum_votes).
+     * @return One @ref RosterPlanBand per (constellation, band) with a cell at any
+     *         station, and the number of stations with a cell.
      */
     RosterPlan signalRosterPlanOf(
         const std::vector<StationRoster>& by_station,
         const std::map<std::string, std::map<std::string, long long>>& datum_votes);
 
-    /// @brief What the table's first line states about the epoch and the run it describes.
+    /// @brief What the table's first line states about the epoch and the run it
+    ///        describes, and the run's latch rule, which the latch-rule row names.
     struct RosterPlanHeader {
-        std::string scope;        ///< "first emitted epoch with a modelled role" or "run end".
-        int         week{ 0 };    ///< the epoch whose roster the band rows show.
-        double      tow{ 0.0 };
-        long long   epochs{ 0 };  ///< epochs the roster was built over the run so far.
-        int         week_first{ 0 };
-        double      tow_first{ 0.0 };
-        int         week_last{ 0 };
-        double      tow_last{ 0.0 };
+        /// "first emitted epoch with a modelled role", "run end (the last audited
+        /// epoch)" or, with no audited epoch, "run end".
+        std::string scope;
+        /// False when no epoch reached the audit: there is then no epoch to describe,
+        /// so the table prints no band row and "-" in the epoch columns, and the record
+        /// writes null for the week, the time and each site's epoch counts.
+        bool        audited{ true };
+        int         week{ 0 };       ///< GPS week of the epoch whose roster the band rows show.
+        double      tow{ 0.0 };      ///< its time of week (s).
+        long long   epochs{ 0 };     ///< epochs the roster was built over the run so far.
+        int         week_first{ 0 }; ///< GPS week of the first epoch the roster was built at.
+        double      tow_first{ 0.0 };///< its time of week (s).
+        int         week_last{ 0 };  ///< GPS week of the latest epoch the roster was built at.
+        double      tow_last{ 0.0 }; ///< its time of week (s).
+        /// This run's @c processing.canonical_signal_rule ("count" or "priority").
+        std::string latch_rule{ "count" };
+        /// Number of stations in @c processing.canonical_signal_priority_stations.  When
+        /// it is above 0 the listed stations latch by the priority rule and every other
+        /// station by the count rule, whatever @ref latch_rule says.
+        int         latch_rule_priority_stations{ 0 };
     };
 
     /**
@@ -364,12 +384,16 @@ namespace GnssProcessor {
      * stations, phase, code, second phase, companion, datum, excluded (a role with
      * no signal reads "-").  Then one row per decision site with its compared and
      * disagreeing counts at that epoch and over the run, where it is decided and what
-     * a disagreement is.  The last line names what the table does not cover yet.
+     * a disagreement is; the latch-rule row also names the rule this run latched by.
+     * The last line names what the table does not cover yet.  With
+     * @c hdr.audited false the first line says that no epoch was audited, no band row
+     * is printed and the epoch columns read "-".
      *
      * @param plan   @ref signalRosterPlanOf of the epoch.
      * @param epoch  The site census of that epoch (@ref signalRosterSiteDelta).
      * @param run    The cumulative site census.
      * @param hdr    The epoch and run the table describes.
+     * @return The table's lines, without a log prefix and with no trailing blank.
      */
     std::vector<std::string> signalRosterPlanTable(const RosterPlan& plan,
                                                    const RosterSiteCounts& epoch,
@@ -379,12 +403,14 @@ namespace GnssProcessor {
     /**
      * @brief The same table as one JSON object for the run manifest.  Pure.
      *
-     * @c {"record":"signals_as_planned","scope":...,"week":...,"tow":...,"epochs":...,
-     * "stations":...,"bands":[...],"sites":[...]}, on one line.  A band carries its
-     * station counts and one signal -> count object per role ("phase", "code",
-     * "second_phase", "companion", "datum_code", "datum_pinned_by", "datum_phase")
-     * and "excluded" (reason -> signal -> stations); a site carries its name, group
-     * and the compared and disagreeing counts of the epoch and of the run.
+     * @c {"record":"signals_as_planned","scope":...,"audited":...,"week":...,"tow":...,
+     * "epochs":...,"stations":...,"canonical_signal_rule":...,
+     * "canonical_signal_priority_stations":...,"bands":[...],"sites":[...]}, on one
+     * line.  A band carries its station counts and one signal -> count object per role
+     * ("phase", "code", "second_phase", "companion", "datum_code", "datum_pinned_by",
+     * "datum_phase") and "excluded" (reason -> signal -> stations); a site carries its
+     * name, group and the compared and disagreeing counts of the epoch and of the run.
+     * With @c hdr.audited false, "week", "tow" and every site's "epoch" are null.
      *
      * @param plan      @ref signalRosterPlanOf of the epoch.
      * @param epoch     The site census of that epoch.
@@ -396,6 +422,47 @@ namespace GnssProcessor {
     std::string signalRosterPlanJson(const RosterPlan& plan, const RosterSiteCounts& epoch,
                                      const RosterSiteCounts& run, const RosterPlanHeader& hdr,
                                      const std::string& scope_key);
+
+    /**
+     * @brief One phase-bias family's carried support over the run, as a histogram
+     *        (census class (f); card NOM step N3a).
+     *
+     * Each epoch in which the family is carried adds one sample: the number of
+     * stations whose modelled arc of it is alive in the ledger and present in
+     * @c local_carry.  The run end reads two statistics of those samples, the median
+     * and the number below a bar, and both are exact on the histogram, so the samples
+     * themselves are not kept.  The memory is bounded by the largest station count
+     * seen, not by the length of the run, which matters now that the census runs on
+     * every network run.
+     */
+    struct RosterFamilySupport {
+        /// Index n -> epochs in which exactly n stations carried the family.
+        std::vector<long long> epochs_by_support;
+        /// Total samples (the sum of @ref epochs_by_support).
+        long long epochs{ 0 };
+
+        /**
+         * @brief Add one epoch's sample.
+         * @param n Stations carrying the family at that epoch (negative is ignored).
+         */
+        void add(int n);
+
+        /**
+         * @brief Samples strictly below a bar.
+         * @param bar The bar, in stations.
+         * @return The number of epochs in which fewer than @p bar stations carried
+         *         the family.
+         */
+        long long below(int bar) const;
+
+        /**
+         * @brief The median sample, as the sorted-vector median would give it: the
+         *        middle sample of an odd count, the mean of the two middle samples of
+         *        an even count, and 0 with no sample.
+         * @return The median, in stations.
+         */
+        double median() const;
+    };
 
     /**
      * @brief Run-scope state of the observatory: the epoch product plus the caches
@@ -428,15 +495,19 @@ namespace GnssProcessor {
         /// audit, so the run-end table reads this snapshot rather than the last cells,
         /// and its band rows and epoch columns describe one epoch.
         RosterPlan plan_last{};
-        int    week_audit{ 0 };    ///< the last epoch whose audit ran.
-        double tow_audit{ 0.0 };
+        /// Set at the first audit.  False at run end means no epoch reached the audit,
+        /// so @ref plan_last, @ref site_last_epoch and the audit time describe nothing
+        /// and the run-end table says so.
+        bool   audited{ false };
+        int    week_audit{ 0 };    ///< GPS week of the last epoch whose audit ran.
+        double tow_audit{ 0.0 };   ///< its time of week (s).
         /// Set once the first-epoch table is out (after the first emitted epoch whose
         /// roster carries a modelled role).
         bool plan_table_written{ false };
-        int    week_first{ 0 };    ///< the first epoch the roster was built at.
-        double tow_first{ 0.0 };
-        int    week_last{ 0 };     ///< the latest epoch the roster was built at.
-        double tow_last{ 0.0 };
+        int    week_first{ 0 };    ///< GPS week of the first epoch the roster was built at.
+        double tow_first{ 0.0 };   ///< its time of week (s).
+        int    week_last{ 0 };     ///< GPS week of the latest epoch the roster was built at.
+        double tow_last{ 0.0 };    ///< its time of week (s).
 
         /// station index -> this epoch's cells.  Rebuilt every epoch.
         std::vector<StationRoster> by_station;
@@ -471,10 +542,11 @@ namespace GnssProcessor {
         /// (last seen).
         std::map<std::tuple<int, System, char>, std::string> modelled_of_cell;
 
-        /// "sat|signal" -> one entry per epoch in which the family is carried: the
-        /// number of stations whose modelled arc of it is alive in the ledger and
-        /// present in local_carry.
-        std::map<std::string, std::vector<int>> family_support;
+        /// "sat|signal" -> the family's carried support over the run: per epoch in
+        /// which the family is carried, the number of stations whose modelled arc of
+        /// it is alive in the ledger and present in local_carry, held as a histogram
+        /// (@ref RosterFamilySupport), so its size does not grow with the run.
+        std::map<std::string, RosterFamilySupport> family_support;
 
         /// Anchor keys present in @c anchor_incumbent at the previous epoch's audit.
         std::set<std::string> anchor_prev;
@@ -771,6 +843,7 @@ namespace GnssProcessor {
      *
      * @param c  The census counters.
      * @param rs The roster (the latch-rule station sets live there).
+     * @return The cumulative compared and disagreeing counts, one per site.
      */
     RosterSiteCounts signalRosterSiteCounts(const NetworkSignalRosterCounters& c,
                                             const SignalRoster& rs);
@@ -1031,17 +1104,38 @@ namespace GnssProcessor {
                                        const AnchorReentry& re);
 
     /**
-     * @brief Run-end readout: the "signals as planned" table (the last epoch's
-     *        roster, the run's site census) with its run-manifest record, then the
-     *        census table of every class.  Nothing in a context no run set up.
+     * @brief Run-end "signals as planned" table (card NOM step N3a): the band rows
+     *        and the epoch columns of the last audited epoch, the run columns of every
+     *        epoch the roster was built at, logged and appended to the run manifest
+     *        as a @c signals_as_planned record.  Nothing in a context no run set up.
+     *
+     * Called by the teardown beside the "parameters as armed" and "contributions as
+     * armed" tables, before the run manifest's @c complete record, so that record
+     * stays the manifest's last.  With no audited epoch the table says so
+     * (@ref RosterPlanHeader::audited).
      *
      * @param ctx     Run context (counters, roster state and ledger).
-     * @param config_ The run's config (the run manifest switch).
+     * @param config_ The run's config (the run manifest switch, the latch rule).
      * @param log     Producer logger.
      * @param traces  Trace bundle (the run manifest).
      */
-    void networkSignalRosterRunEnd(NetworkRunContext& ctx, const GnssConfig& config_,
-                                   const std::shared_ptr<spdlog::logger>& log,
-                                   NetworkRunTraces& traces);
+    void networkSignalRosterPlanRunEnd(NetworkRunContext& ctx, const GnssConfig& config_,
+                                       const std::shared_ptr<spdlog::logger>& log,
+                                       NetworkRunTraces& traces);
+
+    /**
+     * @brief Run-end readout: the census table of every class, with its denominators
+     *        and the arc ledger's transitions, horizon and cost.  Nothing in a context
+     *        no run set up.
+     *
+     * A count that only the ledger's trace switch (@c network.signal_roster) moves is
+     * printed only with the trace on; with it off the line says that nothing was
+     * written, so no trace-only zero reads as dead wiring.
+     *
+     * @param ctx Run context (counters, roster state and ledger).
+     * @param log Producer logger.
+     */
+    void networkSignalRosterRunEnd(NetworkRunContext& ctx,
+                                   const std::shared_ptr<spdlog::logger>& log);
 
 } // namespace GnssProcessor

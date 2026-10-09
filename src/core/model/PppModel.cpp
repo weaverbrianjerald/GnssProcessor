@@ -686,9 +686,10 @@ std::vector<std::string> activeFrequencyBands(
             // Retain the candidate list so the signal roster's census can evaluate a
             // second rule over the same first-epoch counts, such as what the count
             // rule would have latched here (card SID phase 1).  A pure store, kept on
-            // every run since the roster is built on every network run (card NOM step
-            // N3a): nothing on the latch path reads it, so no branch changes.
-            canonical_candidates_[cons] = candidates;
+            // every network run since the roster is built on every one (card NOM step
+            // N3a), and on no other: the roster is the only reader.  Nothing on the
+            // latch path reads it, so no branch changes.
+            if (config_.isNetworkMode()) canonical_candidates_[cons] = candidates;
 
             log_manager_.getLogger("ppp_model")->info(
                 "Canonical signals locked for {} ({} sats this epoch): {}",
