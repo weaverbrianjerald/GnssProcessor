@@ -1,0 +1,3950 @@
+{
+ "about": "The cut of networkTeardown into run-end reports (card NOM step TD1b).  Written by scripts/nom_td_cut.py, read by scripts/nom_td_verify.py.",
+ "frozen": {
+  "rev": "067fdc1",
+  "path": "src/core/filter/NetworkTeardown.cpp",
+  "function": "networkTeardown"
+ },
+ "preamble": [
+  83,
+  207
+ ],
+ "global_drops": {
+  "209": "`double loop_ms = 0.0;`: networkTeardown measures the loop wall once (a const)",
+  "210": "the S01 timing scope's `{`: the measurement moved to networkTeardown, the line to networkRunTimingRunEnd",
+  "211": "the loop-wall measurement: networkTeardown (from run.timing.loop_begin)",
+  "212": "the loop-wall measurement: networkTeardown (from run.timing.loop_begin)",
+  "218": "the S01 timing scope's `}`",
+  "2333": "the S36 block's `{`: split into six reports by owner; d to h read only `C`, re-declared as an alias",
+  "2770": "the S36 block's `}`",
+  "6396": "the S98 block's `{`: split into the parameter model, the three table reports and PRM phase 1b",
+  "6465": "the S98 block's `}`",
+  "7274": "`return inject_rc != 0 ? inject_rc : amb_block_rc;`: networkTeardown returns the last non-zero verdict"
+ },
+ "renames": {
+  "networkPriorResidualReport": "networkPriorResidualRunEnd",
+  "networkMdbReport": "networkMdbRunEnd",
+  "networkBlockBaardaReport": "networkBlockBaardaRunEnd",
+  "networkCongruenceReport": "networkCongruenceRunEnd",
+  "networkClockLevelTeardown": "networkClockLevelRunEnd",
+  "networkClockCloneTeardown": "networkClockCloneRunEnd",
+  "networkSharedHistoryTeardown": "networkSharedHistoryRunEnd"
+ },
+ "table": "src/core/filter/NetworkRunEnd.cpp",
+ "reports": [
+  {
+   "func": "networkTraceCloseRunEnd",
+   "file": "src/core/app/NetworkRunArtifactsRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "new": "const NetworkEstimator& est = v.run.engines.est;"
+    },
+    {
+     "frozen": [
+      370,
+      377
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "trace close: the estimability RUN row, then every trace stream closed",
+   "adapter": null
+  },
+  {
+   "func": "networkRunTimingRunEnd",
+   "file": "src/core/app/NetworkRunTimingRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const double loop_ms = v.loop_ms;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "new": "const NetworkEstimator& est = v.run.engines.est;"
+    },
+    {
+     "new": "const NetworkInvariantCarryDriver& carry_driver = v.run.engines.carry_driver;"
+    },
+    {
+     "new": "const std::vector<SubBlockTimer>& sec_sub = v.run.timing.sub_blocks;"
+    },
+    {
+     "new": "const char* const* kSubNames = kSubBlockNames;"
+    },
+    {
+     "new": "const double sec_asm_wall_ms = v.run.timing.asm_wall_ms;"
+    },
+    {
+     "new": "const std::size_t sec_profiled_epochs = v.run.timing.profiled_epochs;"
+    },
+    {
+     "new": "const bool parallel_on = v.setup.parallel_on;"
+    },
+    {
+     "new": "const int n_threads = v.setup.n_threads;"
+    },
+    {
+     "new": "const bool carry_invariant = v.ctx.knobs.carry_invariant;"
+    },
+    {
+     "new": "const auto& n_loop_epochs = v.ctx.counters.n_loop_epochs;"
+    },
+    {
+     "new": "const bool sec_timers_on = v.config.getNetworkConfig().trace_section_timers;"
+    },
+    {
+     "frozen": [
+      213,
+      217
+     ],
+     "shift": 4
+    },
+    {
+     "frozen": [
+      219,
+      369
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "run timing: the epoch-loop wall, the D0 and D0b section timers",
+   "adapter": null
+  },
+  {
+   "func": "networkEmitOutcomeRunEnd",
+   "file": "src/core/filter/NetworkEmitStore.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<SyncedEpoch>& synced = v.setup.sync->getSyncedEpochs();   // for its size: the batch epoch list"
+    },
+    {
+     "new": "const auto& n_emitted = v.ctx.counters.n_emitted;"
+    },
+    {
+     "new": "const auto& n_skipped = v.ctx.counters.n_skipped;"
+    },
+    {
+     "new": "const auto& n_gate_withheld = v.ctx.counters.n_gate_withheld;"
+    },
+    {
+     "new": "const auto& n_sigma0_withheld = v.ctx.counters.n_sigma0_withheld;"
+    },
+    {
+     "frozen": [
+      378,
+      382
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "producer complete: epochs emitted, skipped and withheld",
+   "adapter": null
+  },
+  {
+   "func": "networkSolveStationsRunEnd",
+   "file": "src/core/app/NetworkSolveStationsRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      383,
+      450
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "stations in the solve and the addStation PD rejections",
+   "adapter": null
+  },
+  {
+   "func": "networkDeferredHeartbeatsRunEnd",
+   "file": "src/core/filter/NetworkEmitStore.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkSetupResult& setup = v.setup;"
+    },
+    {
+     "frozen": [
+      451,
+      460
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "heartbeats of a deferred product writer that never opened",
+   "adapter": null
+  },
+  {
+   "func": "networkRankGateRunEnd",
+   "file": "src/core/filter/NetworkEstimator.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const auto& n_emitted = v.ctx.counters.n_emitted;"
+    },
+    {
+     "frozen": [
+      461,
+      537
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the observability rank gate and the datum-direction ratio",
+   "adapter": null
+  },
+  {
+   "func": "networkSbasisCompletionRunEnd",
+   "file": "src/core/filter/NetworkSbasis.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      538,
+      566
+     ],
+     "if_line": 544,
+     "close_line": 566,
+     "shift": 0,
+     "cond": "ctx.knobs.sbasis_complete_on",
+     "line": "if (!ctx.knobs.sbasis_complete_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "S-basis completion (SBC)",
+   "adapter": null
+  },
+  {
+   "func": "networkDatumGraphRunEnd",
+   "file": "src/core/filter/NetworkDatumGraph.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      567,
+      623
+     ],
+     "if_line": 572,
+     "close_line": 623,
+     "shift": 0,
+     "cond": "ctx.knobs.dg_on",
+     "line": "if (!ctx.knobs.dg_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the datum graph census",
+   "adapter": null
+  },
+  {
+   "func": "networkWithinEpochRaimRunEnd",
+   "file": "src/core/filter/NetworkRaim.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      624,
+      673
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "within-epoch RAIM: the WE-CI screen and the T2 responses",
+   "adapter": null
+  },
+  {
+   "func": "networkBiasAdmissionRunEnd",
+   "file": "src/core/filter/NetworkBiasAdmission.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      674,
+      694
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the KP prior and the CB-ADM code-pair admission",
+   "adapter": null
+  },
+  {
+   "func": "networkAdaptiveIonoQRunEnd",
+   "file": "src/core/app/NetworkStationIonoRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "guard": [
+      695,
+      715
+     ],
+     "if_line": 700,
+     "close_line": 715,
+     "shift": 0,
+     "cond": "config_.getNetworkConfig().adaptive_iono_q",
+     "line": "if (!config_.getNetworkConfig().adaptive_iono_q) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the adaptive ionosphere process noise",
+   "adapter": null
+  },
+  {
+   "func": "networkAnchorHygieneRunEnd",
+   "file": "src/core/filter/NetworkAnchorHygiene.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      716,
+      925
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "phase-anchor hygiene: handover, cold fallback, PHASE_ANCHOR re-reference, eq34",
+   "adapter": null
+  },
+  {
+   "func": "networkRaimPoolRunEnd",
+   "file": "src/core/filter/NetworkRaim.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      926,
+      1022
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the carried-phase RAIM pools: admissions and the re-host",
+   "adapter": null
+  },
+  {
+   "func": "networkGrossLosRunEnd",
+   "file": "src/core/filter/NetworkGrossLos.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "frozen": [
+      1023,
+      1035
+     ],
+     "shift": 0
+    },
+    {
+     "new": "auto gross_los = ctx.counters.gross_los;   // a local copy: the folded-row sum below is this report's own"
+    },
+    {
+     "frozen": [
+      1036,
+      1239
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 1036,
+     "from": "ctx.counters.gross_los.rows_deweighted",
+     "to": "gross_los.rows_deweighted"
+    },
+    {
+     "line": 1037,
+     "from": "ctx.counters.gross_los.rows_deweighted",
+     "to": "gross_los.rows_deweighted"
+    },
+    {
+     "line": 1038,
+     "from": "const auto& g = ctx.counters.gross_los;",
+     "to": "const auto& g = gross_los;"
+    }
+   ],
+   "drops": [],
+   "label": "the gross line-of-sight screen",
+   "adapter": null
+  },
+  {
+   "func": "networkGrossLosColdBoundRunEnd",
+   "file": "src/core/filter/NetworkGrossLos.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      1240,
+      1240
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the gross line-of-sight screen's cold-start bound",
+   "adapter": "networkGrossLosColdBoundRunEnd"
+  },
+  {
+   "func": "networkDwReleaseHygieneRunEnd",
+   "file": "src/core/filter/NetworkIonoDwRelease.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      1241,
+      1319
+     ],
+     "if_line": 1250,
+     "close_line": 1319,
+     "shift": 0,
+     "cond": "ctx.knobs.dw_hygiene_on",
+     "line": "if (!ctx.knobs.dw_hygiene_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the ionosphere-deweight release hygiene",
+   "adapter": null
+  },
+  {
+   "func": "networkSignalIntegrityRunEnd",
+   "file": "src/core/filter/NetworkSignalIntegrity.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "guard": [
+      1320,
+      1441
+     ],
+     "if_line": 1330,
+     "close_line": 1441,
+     "shift": 0,
+     "cond": "ctx.knobs.sig_integrity_on",
+     "line": "if (!ctx.knobs.sig_integrity_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 1331,
+     "from": "auto& s = ctx.counters.sig;",
+     "to": "auto s = ctx.counters.sig;   // a local copy: the demoted-row sum below is this report's own"
+    }
+   ],
+   "drops": [],
+   "label": "the flicker and gap signal integrity",
+   "adapter": null
+  },
+  {
+   "func": "networkPriorResidualRunEnd",
+   "file": "src/core/filter/NetworkPriorResidual.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkSetupResult& setup = v.setup;"
+    },
+    {
+     "new": "const NetworkPriorResidual& prires_est = v.run.engines.prires;"
+    },
+    {
+     "frozen": [
+      1442,
+      1449
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 1449,
+     "from": "networkPriorResidualReport(",
+     "to": "networkPriorResidualRunEnd("
+    }
+   ],
+   "drops": [],
+   "label": "the prior-residual census",
+   "adapter": "networkPriorResidualRunEnd"
+  },
+  {
+   "func": "networkRedundancyCensusRunEnd",
+   "file": "src/core/filter/NetworkRedundancyCensus.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkConfig& nc = v.config.getNetworkConfig();"
+    },
+    {
+     "guard": [
+      1450,
+      1575
+     ],
+     "if_line": 1458,
+     "close_line": 1575,
+     "shift": 0,
+     "cond": "ctx.knobs.redun_census_on",
+     "line": "if (!ctx.knobs.redun_census_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the redundancy and testability census",
+   "adapter": null
+  },
+  {
+   "func": "networkMdbRunEnd",
+   "file": "src/core/filter/NetworkMdb.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      1576,
+      1583
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 1583,
+     "from": "networkMdbReport(",
+     "to": "networkMdbRunEnd("
+    }
+   ],
+   "drops": [],
+   "label": "Baarda MDB reliability",
+   "adapter": "networkMdbRunEnd"
+  },
+  {
+   "func": "networkBlockBaardaRunEnd",
+   "file": "src/core/filter/NetworkBlockBaarda.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkSetupResult& setup = v.setup;"
+    },
+    {
+     "frozen": [
+      1584,
+      1592
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 1592,
+     "from": "networkBlockBaardaReport(",
+     "to": "networkBlockBaardaRunEnd("
+    }
+   ],
+   "drops": [],
+   "label": "the BlockFormal LOS-block census",
+   "adapter": "networkBlockBaardaRunEnd"
+  },
+  {
+   "func": "networkCongruenceRunEnd",
+   "file": "src/core/filter/NetworkCongruence.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkSetupResult& setup = v.setup;"
+    },
+    {
+     "frozen": [
+      1593,
+      1602
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 1602,
+     "from": "networkCongruenceReport(",
+     "to": "networkCongruenceRunEnd("
+    }
+   ],
+   "drops": [],
+   "label": "the station congruence screen",
+   "adapter": "networkCongruenceRunEnd"
+  },
+  {
+   "func": "networkPrefitCensusRunEnd",
+   "file": "src/core/filter/NetworkPrefitCensus.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkConfig& nc = v.config.getNetworkConfig();"
+    },
+    {
+     "unwrap": [
+      1603,
+      1754
+     ],
+     "open_line": 1610,
+     "close_line": 1754,
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the prefit tier: census, fuse, seed births, topology, recorder, attribution",
+   "adapter": null
+  },
+  {
+   "func": "networkMeasurementAdmissionRunEnd",
+   "file": "src/core/filter/NetworkMeasurementAdmission.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      1755,
+      1927
+     ],
+     "if_line": 1765,
+     "close_line": 1927,
+     "shift": 0,
+     "cond": "ctx.knobs.adm_on",
+     "line": "if (!ctx.knobs.adm_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the product-referenced measurement admission",
+   "adapter": null
+  },
+  {
+   "func": "networkCarryDdFoldRunEnd",
+   "file": "src/core/filter/NetworkInvariantCarryDriver.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkInvariantCarryDriver& carry_driver = v.run.engines.carry_driver;"
+    },
+    {
+     "frozen": [
+      1928,
+      2012
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the PD-safe invariant-DD fold",
+   "adapter": null
+  },
+  {
+   "func": "networkProducerArRunEnd",
+   "file": "src/core/filter/NetworkProducerAr.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "new": "const NetworkConfig& nc = v.config.getNetworkConfig();"
+    },
+    {
+     "guard": [
+      2013,
+      2079
+     ],
+     "if_line": 2021,
+     "close_line": 2079,
+     "shift": 0,
+     "cond": "nc.ambiguity_resolution.enable",
+     "line": "if (!nc.ambiguity_resolution.enable) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the producer ambiguity-resolution search",
+   "adapter": null
+  },
+  {
+   "func": "networkCarryAwareCovarianceRunEnd",
+   "file": "src/core/filter/NetworkEstimator.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkEstimator& est = v.run.engines.est;"
+    },
+    {
+     "guard": [
+      2080,
+      2127
+     ],
+     "if_line": 2085,
+     "close_line": 2127,
+     "shift": 0,
+     "cond": "ctx.knobs.carry_invariant",
+     "line": "if (!ctx.knobs.carry_invariant) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the carry-aware covariance mode",
+   "adapter": null
+  },
+  {
+   "func": "networkSdEwlRunEnd",
+   "file": "src/core/filter/NetworkSdEwlAr.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "guard": [
+      2128,
+      2254
+     ],
+     "if_line": 2133,
+     "close_line": 2254,
+     "shift": 0,
+     "cond": "config_.getNetworkConfig().sd_ewl.enable",
+     "line": "if (!config_.getNetworkConfig().sd_ewl.enable) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the SD pre-reduce EWL rows and integer fix",
+   "adapter": null
+  },
+  {
+   "func": "networkSlipMwRelevelRunEnd",
+   "file": "src/core/slip/NetworkSlipQcRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const SlipQcChannel& slip_qc = v.run.engines.slip_qc;"
+    },
+    {
+     "frozen": [
+      2255,
+      2321
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "slip QC: MW and LLI detections, the re-level response, the statistical retap",
+   "adapter": null
+  },
+  {
+   "func": "networkLevelingRetirementRunEnd",
+   "file": "src/core/filter/NetworkLevelingCarryRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      2322,
+      2332
+     ],
+     "shift": 0
+    },
+    {
+     "frozen": [
+      2334,
+      2541
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "leveling-carry retirement census [B] and [A]; F1, F3, the clock gate, young arcs",
+   "adapter": null
+  },
+  {
+   "func": "networkResumeRestoreRunEnd",
+   "file": "src/core/app/NetworkResumeRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const auto& C = v.ctx.counters;"
+    },
+    {
+     "frozen": [
+      2542,
+      2684
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "warm-resume restores: frame, coupling regressors, dense border",
+   "adapter": null
+  },
+  {
+   "func": "networkReadmitRunEnd",
+   "file": "src/core/app/NetworkReadmitRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const auto& C = v.ctx.counters;"
+    },
+    {
+     "frozen": [
+      2685,
+      2712
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "re-admission continuity",
+   "adapter": null
+  },
+  {
+   "func": "networkDdFracReferenceRunEnd",
+   "file": "src/core/filter/NetworkDdFrac.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkConfig& nc = v.config.getNetworkConfig();"
+    },
+    {
+     "new": "const auto& C = v.ctx.counters;"
+    },
+    {
+     "guard": [
+      2713,
+      2734
+     ],
+     "if_line": 2719,
+     "close_line": 2734,
+     "shift": 4,
+     "cond": "nc.trace_dd_fractional && C.n_ddfrac_ref_epochs > 0",
+     "line": "if (!(nc.trace_dd_fractional && C.n_ddfrac_ref_epochs > 0)) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the DD fractional-cycle trace's reference identity",
+   "adapter": null
+  },
+  {
+   "func": "networkZwdSeamRunEnd",
+   "file": "src/core/app/NetworkResumeRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const auto& C = v.ctx.counters;"
+    },
+    {
+     "frozen": [
+      2735,
+      2748
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the seam-scoped ZWD re-seed",
+   "adapter": null
+  },
+  {
+   "func": "networkLevelingResponseRunEnd",
+   "file": "src/core/filter/NetworkLevelingCarryRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const auto& C = v.ctx.counters;"
+    },
+    {
+     "new": "const SlipQcChannel& slip_qc = v.run.engines.slip_qc;"
+    },
+    {
+     "frozen": [
+      2749,
+      2769
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "leveling-carry retirement census [C], [D] and the response",
+   "adapter": null
+  },
+  {
+   "func": "networkSlipWindupMwRunEnd",
+   "file": "src/core/slip/NetworkSlipQcRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "new": "const SlipQcChannel& slip_qc = v.run.engines.slip_qc;"
+    },
+    {
+     "frozen": [
+      2771,
+      2956
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "slip QC: wind-up census and restart, anchor-slip handover, MW admission and scope",
+   "adapter": null
+  },
+  {
+   "func": "networkExtraBandScopeRunEnd",
+   "file": "src/core/filter/NetworkExtraBandScope.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "guard": [
+      2957,
+      2980
+     ],
+     "if_line": 2962,
+     "close_line": 2980,
+     "shift": 0,
+     "cond": "config_.networkExtraBandCodeSigmaScale() > 1.0",
+     "line": "if (!(config_.networkExtraBandCodeSigmaScale() > 1.0)) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 2963,
+     "from": "auto& C = ctx.counters;",
+     "to": "struct { long long n_eb_rows_deweighted = 0, n_eb_rows_no_pin = 0; } C;   // this report's own sums"
+    }
+   ],
+   "drops": [],
+   "label": "the extra-band code deweight",
+   "adapter": null
+  },
+  {
+   "func": "networkSecondCodeScopeRunEnd",
+   "file": "src/core/filter/NetworkSecondCodeScope.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "guard": [
+      2981,
+      3036
+     ],
+     "if_line": 2990,
+     "close_line": 3036,
+     "shift": 0,
+     "cond": "config_.networkSecondCodeRowsActive()",
+     "line": "if (!config_.networkSecondCodeRowsActive()) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 2991,
+     "from": "auto& C = ctx.counters.second_code;",
+     "to": "auto C = ctx.counters.second_code;   // a local copy: the row sums below are this report's own"
+    }
+   ],
+   "drops": [],
+   "label": "the second code channel",
+   "adapter": null
+  },
+  {
+   "func": "networkSecondPhaseScopeRunEnd",
+   "file": "src/core/filter/NetworkSecondPhaseScope.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "guard": [
+      3037,
+      3115
+     ],
+     "if_line": 3045,
+     "close_line": 3115,
+     "shift": 0,
+     "cond": "config_.networkSecondPhaseRowsActive()",
+     "line": "if (!config_.networkSecondPhaseRowsActive()) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 3046,
+     "from": "auto& C = ctx.counters.second_phase;",
+     "to": "auto C = ctx.counters.second_phase;   // a local copy: the row sum below is this report's own"
+    }
+   ],
+   "drops": [],
+   "label": "the second phase channel",
+   "adapter": null
+  },
+  {
+   "func": "networkCommonBandScopeRunEnd",
+   "file": "src/core/slip/NetworkCommonBandScope.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "unwrap": [
+      3116,
+      3169
+     ],
+     "open_line": 3124,
+     "close_line": 3169,
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the common-band scope verdicts",
+   "adapter": null
+  },
+  {
+   "func": "networkSlipBandResponsesRunEnd",
+   "file": "src/core/slip/NetworkSlipQcRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkConfig& nc = v.config.getNetworkConfig();"
+    },
+    {
+     "new": "const SlipQcChannel& slip_qc = v.run.engines.slip_qc;"
+    },
+    {
+     "frozen": [
+      3170,
+      3373
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "slip QC: IF-TD pairs, band-scoped responses, the lane observatory, retap corroboration",
+   "adapter": null
+  },
+  {
+   "func": "networkIonoCarryRunEnd",
+   "file": "src/core/app/NetworkStationIonoRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      3374,
+      3402
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the slant-ionosphere carry",
+   "adapter": null
+  },
+  {
+   "func": "networkRaimWithholdRunEnd",
+   "file": "src/core/filter/NetworkRaim.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      3403,
+      3445
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the withhold era, the R2 station factor, the R4 rate hygiene",
+   "adapter": null
+  },
+  {
+   "func": "networkLevelAuthorityRunEnd",
+   "file": "src/core/filter/NetworkLevelAuthority.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      3446,
+      3462
+     ],
+     "if_line": 3448,
+     "close_line": 3462,
+     "shift": 0,
+     "cond": "config_.networkLevelAuthorityCsgf()",
+     "line": "if (!config_.networkLevelAuthorityCsgf()) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the LV-6 level-authority census",
+   "adapter": null
+  },
+  {
+   "func": "networkSlipDatumStationRunEnd",
+   "file": "src/core/slip/NetworkSlipQcRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkConfig& nc = v.config.getNetworkConfig();"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "new": "const SlipQcChannel& slip_qc = v.run.engines.slip_qc;"
+    },
+    {
+     "frozen": [
+      3463,
+      3517
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "slip QC: datum-station detection and LLI corroboration",
+   "adapter": null
+  },
+  {
+   "func": "networkOraclePinRunEnd",
+   "file": "src/core/filter/NetworkOraclePin.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      3518,
+      3523
+     ],
+     "shift": 0
+    }
+   ],
+   "subs": [
+    {
+     "line": 3523,
+     "from": "networkOraclePinRunEnd(",
+     "to": "return networkOraclePinRunEnd("
+    }
+   ],
+   "drops": [],
+   "label": "the sim-only oracle ambiguity pin",
+   "adapter": "networkOraclePinRunEnd"
+  },
+  {
+   "func": "networkSlipOracleRunEnd",
+   "file": "src/core/slip/NetworkSlipOracle.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      3524,
+      3591
+     ],
+     "if_line": 3530,
+     "close_line": 3591,
+     "shift": 0,
+     "cond": "ctx.carry.slip_oracle",
+     "line": "if (!ctx.carry.slip_oracle) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the sim-only oracle slip response",
+   "adapter": null
+  },
+  {
+   "func": "networkSlipGapRefGateRunEnd",
+   "file": "src/core/slip/NetworkSlipQcRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkConfig& nc = v.config.getNetworkConfig();"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "new": "const SlipQcChannel& slip_qc = v.run.engines.slip_qc;"
+    },
+    {
+     "frozen": [
+      3592,
+      3911
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "slip QC: the gap instrument, re-entry, GRS, the IF-TD reference gate",
+   "adapter": null
+  },
+  {
+   "func": "networkChainDatumRunEnd",
+   "file": "src/core/filter/NetworkChainDatum.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const auto& eq34_reref_total = v.ctx.carry.eq34_reref_total;"
+    },
+    {
+     "new": "const auto& eq34_erase_total = v.ctx.carry.eq34_erase_total;"
+    },
+    {
+     "new": "const auto& eq34_shift_total = v.ctx.carry.eq34_shift_total;"
+    },
+    {
+     "new": "const auto& eq34_cpl_sprev_total = v.ctx.carry.eq34_cpl_sprev_total;"
+    },
+    {
+     "new": "const auto& eq34_gap_repin_total = v.ctx.carry.eq34_gap_repin_total;"
+    },
+    {
+     "new": "const auto& eq34_mismatch_epochs = v.ctx.carry.eq34_mismatch_epochs;"
+    },
+    {
+     "frozen": [
+      3912,
+      4056
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the eq34 chain datum: re-references, pin audit, seed round, slip-aware election",
+   "adapter": null
+  },
+  {
+   "func": "networkInvariantCarryRunEnd",
+   "file": "src/core/filter/NetworkInvariantCarryDriver.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const bool carry_invariant = v.ctx.knobs.carry_invariant;"
+    },
+    {
+     "new": "const auto& carry_epochs = v.ctx.carry.carry_epochs;"
+    },
+    {
+     "new": "const auto& carry_born_total = v.ctx.carry.carry_born_total;"
+    },
+    {
+     "new": "const auto& carry_marg_total = v.ctx.carry.carry_marg_total;"
+    },
+    {
+     "new": "const auto& carry_merges_total = v.ctx.carry.carry_merges_total;"
+    },
+    {
+     "new": "const auto& carry_splits_total = v.ctx.carry.carry_splits_total;"
+    },
+    {
+     "new": "const auto& carry_swaps_total = v.ctx.carry.carry_swaps_total;"
+    },
+    {
+     "new": "const auto& carry_zdim_last = v.ctx.carry.carry_zdim_last;"
+    },
+    {
+     "new": "const auto& carry_slipkills_total = v.ctx.carry.carry_slipkills_total;"
+    },
+    {
+     "new": "const auto& carry_dropped_total = v.ctx.carry.carry_dropped_total;"
+    },
+    {
+     "frozen": [
+      4057,
+      4066
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the card 4/M1 invariant carry",
+   "adapter": null
+  },
+  {
+   "func": "networkFastClockRunEnd",
+   "file": "src/core/filter/NetworkFastClock.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      4067,
+      4120
+     ],
+     "if_line": 4071,
+     "close_line": 4120,
+     "shift": 0,
+     "cond": "config_.getNetworkConfig().fast_clock.enable",
+     "line": "if (!config_.getNetworkConfig().fast_clock.enable) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the FC-1 split-cadence fast clock",
+   "adapter": null
+  },
+  {
+   "func": "networkResumeSnapshotRunEnd",
+   "file": "src/core/app/NetworkResumeRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkSetupResult& setup = v.setup;"
+    },
+    {
+     "new": "const NetworkInvariantCarryDriver& carry_driver = v.run.engines.carry_driver;"
+    },
+    {
+     "new": "const bool carry_invariant = v.ctx.knobs.carry_invariant;"
+    },
+    {
+     "frozen": [
+      4121,
+      4438
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 4315,
+     "from": "        auto& C = ctx.counters;",
+     "to": "        const auto& C = ctx.counters;"
+    }
+   ],
+   "drops": [
+    4324,
+    4325
+   ],
+   "label": "resume and snapshot: RTB-7, RS-2 to RS-9, the coupling capture",
+   "adapter": null
+  },
+  {
+   "func": "networkShDevCarryRunEnd",
+   "file": "src/core/filter/NetworkShDevVtec.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const bool sh_dev_on =   // as the driver resolves it: the SH model exists and its correlation time is positive\n        (v.setup.sh_model ? v.config.getGlobalVtecShConfig().rep_error_tau_s : 0.0) > 0.0;"
+    },
+    {
+     "new": "const GlobalVtecShConfig& shc = v.config.getGlobalVtecShConfig();"
+    },
+    {
+     "new": "const auto& sh_dev_carry = v.ctx.carry.sh_dev_carry;"
+    },
+    {
+     "guard": [
+      4439,
+      4466
+     ],
+     "if_line": 4439,
+     "close_line": 4466,
+     "shift": 0,
+     "cond": "sh_dev_on",
+     "line": "if (!sh_dev_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the Iono-2 SH deviation carry",
+   "adapter": null
+  },
+  {
+   "func": "networkRxCodeBiasCarryRunEnd",
+   "file": "src/core/filter/NetworkRxCodeBiasCarryRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "frozen": [
+      4467,
+      4728
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the receiver code-bias carry family",
+   "adapter": null
+  },
+  {
+   "func": "networkSbasisDatumRunEnd",
+   "file": "src/core/filter/NetworkSbasis.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      4729,
+      4966
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the S-basis datum arms",
+   "adapter": null
+  },
+  {
+   "func": "networkLanesRunEnd",
+   "file": "src/core/filter/NetworkMwWlLayer.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkInvariantCarryDriver& carry_driver = v.run.engines.carry_driver;"
+    },
+    {
+     "new": "const NetworkMwWlLayer::Counters& mw_wl_run = v.run.lanes.mw_wl_run;"
+    },
+    {
+     "new": "const std::vector<EwlLane>& ewl_lanes = v.run.lanes.ewl_lanes;"
+    },
+    {
+     "new": "const WlCounters& wl_run = v.run.lanes.wl_run;"
+    },
+    {
+     "new": "const std::map<char, WlCounters>& wl_cons_run = v.run.lanes.wl_cons_run;"
+    },
+    {
+     "new": "const bool mw_wl_on = v.ctx.knobs.mw_wl_on;"
+    },
+    {
+     "new": "const bool ewl_on = v.ctx.knobs.ewl_on;"
+    },
+    {
+     "new": "const bool wl_inject_on = v.ctx.knobs.wl_inject_on;"
+    },
+    {
+     "new": "const bool uwl_on = v.ctx.knobs.uwl_on;"
+    },
+    {
+     "new": "const bool lane_on = v.ctx.knobs.lane_on;"
+    },
+    {
+     "new": "const auto& nmw = v.config.getNetworkConfig().mw_wl;"
+    },
+    {
+     "new": "const auto& lane_pair_arcs = v.ctx.carry.lane_pair_arcs;"
+    },
+    {
+     "new": "const auto& lane_resid_arcs = v.ctx.carry.lane_resid_arcs;"
+    },
+    {
+     "new": "const auto& lane_pair_tree_mismatch = v.ctx.carry.lane_pair_tree_mismatch;"
+    },
+    {
+     "frozen": [
+      4967,
+      5105
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the MW/WL lanes: WL-1, EWL, the WL inject, UWL, WL-3",
+   "adapter": null
+  },
+  {
+   "func": "networkD5GateRunEnd",
+   "file": "src/core/filter/NetworkInvariantCarryDriver.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkInvariantCarryDriver& carry_driver = v.run.engines.carry_driver;"
+    },
+    {
+     "new": "const bool carry_innov_gate = v.ctx.knobs.carry_innov_gate;"
+    },
+    {
+     "new": "const auto& carry_slipkills_total = v.ctx.carry.carry_slipkills_total;"
+    },
+    {
+     "new": "const auto& carry_innov_flags_total = v.ctx.carry.carry_innov_flags_total;"
+    },
+    {
+     "new": "const auto& carry_innov_retaps_total = v.ctx.carry.carry_innov_retaps_total;"
+    },
+    {
+     "frozen": [
+      5106,
+      5243
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the D5 fine-slip innovation gate and its variants",
+   "adapter": null
+  },
+  {
+   "func": "networkIonoDeweightRunEnd",
+   "file": "src/core/filter/NetworkIonoDwRelease.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkIonoDeweightGate& iono_deweight = v.run.engines.iono_deweight;"
+    },
+    {
+     "new": "const bool idw_on = v.run.engines.iono_deweight.active();"
+    },
+    {
+     "new": "const IonoConstraintDeweightConfig& idw = v.config.getIonoConstraintDeweightConfig();"
+    },
+    {
+     "guard": [
+      5244,
+      5266
+     ],
+     "if_line": 5244,
+     "close_line": 5266,
+     "shift": 0,
+     "cond": "idw_on",
+     "line": "if (!idw_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the station-adaptive SH-VTEC constraint deweight",
+   "adapter": null
+  },
+  {
+   "func": "networkCbExcursionRunEnd",
+   "file": "src/core/filter/NetworkClockQc.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      5267,
+      5296
+     ],
+     "if_line": 5270,
+     "close_line": 5296,
+     "shift": 0,
+     "cond": "config_.getNetworkConfig().cb_excursion_reinit",
+     "line": "if (!config_.getNetworkConfig().cb_excursion_reinit) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the CB-excursion guard (Phase 2.1)",
+   "adapter": null
+  },
+  {
+   "func": "networkShHealthRunEnd",
+   "file": "src/core/filter/NetworkShHealth.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      5297,
+      5319
+     ],
+     "if_line": 5300,
+     "close_line": 5319,
+     "shift": 0,
+     "cond": "config_.getNetworkConfig().sh_health_gate",
+     "line": "if (!config_.getNetworkConfig().sh_health_gate) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the SH health gate (Phase 2.2)",
+   "adapter": null
+  },
+  {
+   "func": "networkPostfitRunEnd",
+   "file": "src/core/filter/NetworkFrameDiag.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      5320,
+      5353
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the post-fit sigma0 and the post-fit rows",
+   "adapter": null
+  },
+  {
+   "func": "networkReinflateRunEnd",
+   "file": "src/core/filter/NetworkIonoDwRelease.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "unwrap": [
+      5354,
+      5375
+     ],
+     "open_line": 5354,
+     "close_line": 5375,
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the producer's state-manager re-inflations",
+   "adapter": null
+  },
+  {
+   "func": "networkStationBlockRunEnd",
+   "file": "src/core/filter/NetworkStationBlock.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      5376,
+      5388
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the ZP station-block trace",
+   "adapter": null
+  },
+  {
+   "func": "networkAmbVehicleRunEnd",
+   "file": "src/core/filter/NetworkAmbFloat.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "int amb_block_rc = 0;   // the joint-block PD-fallback bar's verdict, this report's return value"
+    },
+    {
+     "frozen": [
+      5389,
+      5538
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return amb_block_rc;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the ambiguity vehicle and the joint-block PD-fallback bar",
+   "adapter": null
+  },
+  {
+   "func": "networkHeldSbasisRunEnd",
+   "file": "src/core/filter/NetworkPhaseDatum.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      5539,
+      5580
+     ],
+     "if_line": 5545,
+     "close_line": 5580,
+     "shift": 0,
+     "cond": "ctx.knobs.pd_held_basis",
+     "line": "if (!ctx.knobs.pd_held_basis) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the held S-basis (RF-2)",
+   "adapter": null
+  },
+  {
+   "func": "networkAmbStateTraceRunEnd",
+   "file": "src/core/filter/NetworkAmbStateTrace.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      5581,
+      5599
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the ambiguity-state trace",
+   "adapter": null
+  },
+  {
+   "func": "networkShSpectrumRunEnd",
+   "file": "src/core/filter/NetworkFrameDiag.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      5600,
+      5604
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the shared-normal spectrum trace",
+   "adapter": null
+  },
+  {
+   "func": "networkD5MapMissRunEnd",
+   "file": "src/core/filter/NetworkInvariantCarryDriver.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const bool carry_innov_gate = v.ctx.knobs.carry_innov_gate;"
+    },
+    {
+     "new": "const auto& carry_innov_map_miss = v.ctx.carry.carry_innov_map_miss;"
+    },
+    {
+     "frozen": [
+      5605,
+      5608
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "D5 flags missing from the carry map",
+   "adapter": null
+  },
+  {
+   "func": "networkEmitRebaseRunEnd",
+   "file": "src/core/products/NetworkEmitRebase.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkEmitRebase& emit_rebase_engine = v.run.emit.rebase;"
+    },
+    {
+     "new": "const bool emit_rebase_on = v.ctx.knobs.emit_rebase_on;"
+    },
+    {
+     "guard": [
+      5609,
+      5624
+     ],
+     "if_line": 5609,
+     "close_line": 5624,
+     "shift": 0,
+     "cond": "emit_rebase_on",
+     "line": "if (!emit_rebase_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the emit-layer frame re-base",
+   "adapter": null
+  },
+  {
+   "func": "networkPbEmitFilterRunEnd",
+   "file": "src/core/products/NetworkPbEmitFilter.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkPbEmitFilter& pb_filter_engine = v.run.emit.pb_filter;"
+    },
+    {
+     "new": "const bool emit_pb_filter_on = v.ctx.knobs.emit_pb_filter_on;"
+    },
+    {
+     "guard": [
+      5625,
+      5654
+     ],
+     "if_line": 5625,
+     "close_line": 5654,
+     "shift": 0,
+     "cond": "emit_pb_filter_on",
+     "line": "if (!emit_pb_filter_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the phase-bias emission-continuity filter",
+   "adapter": null
+  },
+  {
+   "func": "networkClockEmitRebaseRunEnd",
+   "file": "src/core/products/NetworkClockEmitRebase.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkClockEmitRebase& clk_rebase_engine = v.run.emit.clk_rebase;"
+    },
+    {
+     "guard": [
+      5655,
+      5687
+     ],
+     "if_line": 5655,
+     "close_line": 5687,
+     "shift": 0,
+     "cond": "ctx.knobs.clk_frame_hold || ctx.knobs.clk_jump_test",
+     "line": "if (!(ctx.knobs.clk_frame_hold || ctx.knobs.clk_jump_test)) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the clock emission re-base and frame hold",
+   "adapter": null
+  },
+  {
+   "func": "networkClockLevelRunEnd",
+   "file": "src/core/filter/NetworkClockLevel.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkSetupResult& setup = v.setup;"
+    },
+    {
+     "frozen": [
+      5688,
+      5690
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 5690,
+     "from": "networkClockLevelTeardown(",
+     "to": "networkClockLevelRunEnd("
+    }
+   ],
+   "drops": [],
+   "label": "the clock level re-base (CLV)",
+   "adapter": "networkClockLevelRunEnd"
+  },
+  {
+   "func": "networkSatHealthRunEnd",
+   "file": "src/core/filter/NetworkHandoverStransform.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkSetupResult& setup = v.setup;"
+    },
+    {
+     "guard": [
+      5691,
+      5714
+     ],
+     "if_line": 5693,
+     "close_line": 5714,
+     "shift": 0,
+     "cond": "ctx.knobs.sat_health != 0",
+     "line": "if (!(ctx.knobs.sat_health != 0)) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "broadcast satellite health (HLT)",
+   "adapter": null
+  },
+  {
+   "func": "networkClockAnchorRunEnd",
+   "file": "src/core/filter/NetworkClockAnchor.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      5715,
+      5856
+     ],
+     "if_line": 5715,
+     "close_line": 5856,
+     "shift": 0,
+     "cond": "ctx.knobs.cta_on",
+     "line": "if (!ctx.knobs.cta_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the Q3 guarded temporal clock anchor",
+   "adapter": null
+  },
+  {
+   "func": "networkPivotHandoverRunEnd",
+   "file": "src/core/filter/NetworkHandoverStransform.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      5857,
+      5938
+     ],
+     "if_line": 5864,
+     "close_line": 5938,
+     "shift": 0,
+     "cond": "!ctx.counters.pivot_handovers.empty() || ctx.knobs.handover_stransform",
+     "line": "if (!(!ctx.counters.pivot_handovers.empty() || ctx.knobs.handover_stransform)) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "clock-pivot handovers and their S-transform",
+   "adapter": null
+  },
+  {
+   "func": "networkClockRunawayRunEnd",
+   "file": "src/core/filter/NetworkSolPrep.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const bool clk_runaway_on = v.ctx.knobs.clk_runaway_on;"
+    },
+    {
+     "new": "const double clk_runaway_mag = v.ctx.knobs.clk_runaway_mag;"
+    },
+    {
+     "new": "const double clk_runaway_rate = v.ctx.knobs.clk_runaway_rate;"
+    },
+    {
+     "new": "const auto& n_runaway_epochs = v.ctx.counters.n_runaway_epochs;"
+    },
+    {
+     "frozen": [
+      5939,
+      5942
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the clock-runaway quarantine (RT0-5)",
+   "adapter": null
+  },
+  {
+   "func": "networkDropHealRunEnd",
+   "file": "src/core/filter/NetworkPhaseDatum.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const auto& n_healed_epochs = v.ctx.counters.n_healed_epochs;"
+    },
+    {
+     "new": "const auto& n_healed_cols = v.ctx.counters.n_healed_cols;"
+    },
+    {
+     "frozen": [
+      5943,
+      5969
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the prioritized-datum drop-and-heal",
+   "adapter": null
+  },
+  {
+   "func": "networkCouplingRunEnd",
+   "file": "src/core/filter/NetworkCoupling.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const bool carry_cpl_cond = v.ctx.knobs.carry_cpl_cond;"
+    },
+    {
+     "new": "const bool carry_cpl_joint = v.ctx.knobs.carry_cpl_joint;"
+    },
+    {
+     "new": "const bool carry_cpl_tu = v.ctx.knobs.carry_cpl_tu;"
+    },
+    {
+     "new": "const auto& n_cpl_joint_fallback = v.ctx.counters.n_cpl_joint_fallback;"
+    },
+    {
+     "new": "const auto& n_cpl_stash = v.ctx.counters.n_cpl_stash;"
+    },
+    {
+     "new": "const auto& n_cpl_stash_empty = v.ctx.counters.n_cpl_stash_empty;"
+    },
+    {
+     "new": "const auto& n_cpl_harvest_fail = v.ctx.counters.n_cpl_harvest_fail;"
+    },
+    {
+     "new": "const auto& n_cpl_terms_present = v.ctx.counters.n_cpl_terms_present;"
+    },
+    {
+     "new": "const auto& n_cpl_terms_departed = v.ctx.counters.n_cpl_terms_departed;"
+    },
+    {
+     "new": "const auto& n_cpl_terms_shrunk = v.ctx.counters.n_cpl_terms_shrunk;"
+    },
+    {
+     "frozen": [
+      5970,
+      5982
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the coupling carry (cards 1, 1b, 1d)",
+   "adapter": null
+  },
+  {
+   "func": "networkClockLevelMonitorRunEnd",
+   "file": "src/core/filter/NetworkClockLevel.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      5983,
+      6038
+     ],
+     "if_line": 5983,
+     "close_line": 6038,
+     "shift": 0,
+     "cond": "ctx.knobs.clm_on",
+     "line": "if (!ctx.knobs.clm_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the CTU level monitor",
+   "adapter": null
+  },
+  {
+   "func": "networkBrdcWireRunEnd",
+   "file": "src/core/filter/NetworkBrdcWire.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkSetupResult& setup = v.setup;"
+    },
+    {
+     "guard": [
+      6039,
+      6054
+     ],
+     "if_line": 6039,
+     "close_line": 6054,
+     "shift": 0,
+     "cond": "ctx.knobs.nbp_on",
+     "line": "if (!ctx.knobs.nbp_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the native broadcast clock a priori (NBP)",
+   "adapter": null
+  },
+  {
+   "func": "networkPhaseVisibleRunEnd",
+   "file": "src/core/filter/NetworkPhaseVisibleDiag.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      6055,
+      6087
+     ],
+     "if_line": 6055,
+     "close_line": 6087,
+     "shift": 0,
+     "cond": "ctx.knobs.pv_on",
+     "line": "if (!ctx.knobs.pv_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the phase-visible consistency (PVN)",
+   "adapter": null
+  },
+  {
+   "func": "networkPivotFrameQRunEnd",
+   "file": "src/core/filter/NetworkCarryDisposition.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      6088,
+      6103
+     ],
+     "if_line": 6088,
+     "close_line": 6103,
+     "shift": 0,
+     "cond": "ctx.knobs.pfq_on",
+     "line": "if (!ctx.knobs.pfq_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the pivot-frame clock noise (PFQ)",
+   "adapter": null
+  },
+  {
+   "func": "networkCouplingExactRunEnd",
+   "file": "src/core/filter/NetworkCouplingExact.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      6104,
+      6170
+     ],
+     "if_line": 6104,
+     "close_line": 6170,
+     "shift": 0,
+     "cond": "ctx.knobs.carry_cpl_exact",
+     "line": "if (!ctx.knobs.carry_cpl_exact) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 6161,
+     "from": "networkClockCloneTeardown(",
+     "to": "networkClockCloneRunEnd("
+    },
+    {
+     "line": 6162,
+     "from": "networkSharedHistoryTeardown(",
+     "to": "networkSharedHistoryRunEnd("
+    }
+   ],
+   "drops": [],
+   "label": "the exact coupling time update (CTU, WSX, SCL, SCL2)",
+   "adapter": null
+  },
+  {
+   "func": "networkGaugeFreeCarryRunEnd",
+   "file": "src/core/filter/NetworkClockAnchor.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkEstimator& est = v.run.engines.est;"
+    },
+    {
+     "frozen": [
+      6171,
+      6197
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the gauge-free shared carry (C-GF)",
+   "adapter": null
+  },
+  {
+   "func": "networkCouplingProjectionRunEnd",
+   "file": "src/core/filter/NetworkCoupling.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const bool carry_cpl_cond = v.ctx.knobs.carry_cpl_cond;"
+    },
+    {
+     "new": "const auto& n_cpl_terms_departed = v.ctx.counters.n_cpl_terms_departed;"
+    },
+    {
+     "frozen": [
+      6198,
+      6254
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "coupling reinit sources (1g) and gauge projection (1f)",
+   "adapter": null
+  },
+  {
+   "func": "networkCarryVceRunEnd",
+   "file": "src/core/filter/NetworkCarryVceRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const NetworkCarryVce& carry_vce_est = v.run.engines.carry_vce;"
+    },
+    {
+     "new": "const double pl_var_floor = v.ctx.knobs.pl_var_floor;   // lock-in guard; 0 = off"
+    },
+    {
+     "new": "const double pb_var_floor = v.ctx.knobs.pb_var_floor;   // phase-bias carry floor (D2, B4); 0 = off"
+    },
+    {
+     "new": "const double cb_var_floor = v.ctx.knobs.cb_var_floor;   // code-bias carry floor (D2, B4); 0 = off"
+    },
+    {
+     "new": "const bool carry_vce = v.ctx.knobs.carry_vce;"
+    },
+    {
+     "frozen": [
+      6255,
+      6330
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the LS-VCE carry-variance monitor and factor",
+   "adapter": null
+  },
+  {
+   "func": "networkPhaseDatumGatesRunEnd",
+   "file": "src/core/filter/NetworkPhaseDatum.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const auto& n_gated_epochs = v.ctx.counters.n_gated_epochs;"
+    },
+    {
+     "new": "const auto& n_gated_key_epochs = v.ctx.counters.n_gated_key_epochs;"
+    },
+    {
+     "frozen": [
+      6331,
+      6357
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the anchored-union coverage gate and its drop edge",
+   "adapter": null
+  },
+  {
+   "func": "networkMarkerArpRunEnd",
+   "file": "src/core/app/ApplicationNetworkSetup.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      6358,
+      6386
+     ],
+     "if_line": 6363,
+     "close_line": 6386,
+     "shift": 0,
+     "cond": "ctx.counters.n_marker_arp_ecc > 0 || ctx.counters.n_marker_arp_no_record > 0",
+     "line": "if (!(ctx.counters.n_marker_arp_ecc > 0 || ctx.counters.n_marker_arp_no_record > 0)) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the marker to ARP roster reduction (UPO)",
+   "adapter": null
+  },
+  {
+   "func": "networkPerConstellationRunEnd",
+   "file": "src/core/filter/NetworkSolPrep.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const bool perconst_on = v.ctx.knobs.perconst_on;"
+    },
+    {
+     "new": "const auto& n_perconst_partial_epochs = v.ctx.counters.n_perconst_partial_epochs;"
+    },
+    {
+     "new": "const auto& n_perconst_diffuse_published = v.ctx.counters.n_perconst_diffuse_published;"
+    },
+    {
+     "frozen": [
+      6387,
+      6391
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the per-constellation sigma0 carve-out (RTA-10)",
+   "adapter": null
+  },
+  {
+   "func": "networkParamModelRunEnd",
+   "file": "src/core/filter/NetworkParamRegistry.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      6392,
+      6395
+     ],
+     "shift": 0
+    },
+    {
+     "frozen": [
+      6397,
+      6410
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the parameter model as armed",
+   "adapter": null
+  },
+  {
+   "func": "networkParamInventoryRunEnd",
+   "file": "src/core/filter/NetworkParamInventory.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "frozen": [
+      6411,
+      6413
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "parameters as armed (NOM N1)",
+   "adapter": "networkParamInventoryRunEnd"
+  },
+  {
+   "func": "networkContributionsRunEnd",
+   "file": "src/core/filter/NetworkContributions.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "frozen": [
+      6414,
+      6416
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "contributions as armed (NOM N2a)",
+   "adapter": "networkContributionsRunEnd"
+  },
+  {
+   "func": "networkSignalRosterPlanRunEnd",
+   "file": "src/core/app/SignalRoster.cpp",
+   "indent": 4,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "frozen": [
+      6417,
+      6421
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "signals as planned (NOM N3a)",
+   "adapter": "networkSignalRosterPlanRunEnd"
+  },
+  {
+   "func": "networkCarryDispositionRunEnd",
+   "file": "src/core/filter/NetworkCarryDisposition.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "frozen": [
+      6422,
+      6464
+     ],
+     "shift": 4
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the fold's dispositions of the carried border (PRM 1b)",
+   "adapter": null
+  },
+  {
+   "func": "networkCarrySitesRunEnd",
+   "file": "src/core/filter/NetworkCarrySites.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "unwrap": [
+      6466,
+      6540
+     ],
+     "open_line": 6470,
+     "close_line": 6540,
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the carried references per site (PRM 2)",
+   "adapter": null
+  },
+  {
+   "func": "networkResponsesRunEnd",
+   "file": "src/core/filter/NetworkResponses.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "unwrap": [
+      6541,
+      6657
+     ],
+     "open_line": 6547,
+     "close_line": 6657,
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the declared responses of the carried instances (PRM 3a)",
+   "adapter": null
+  },
+  {
+   "func": "networkPhaseColourRunEnd",
+   "file": "src/core/filter/NetworkLevelingCarryRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "guard": [
+      6658,
+      6682
+     ],
+     "if_line": 6660,
+     "close_line": 6682,
+     "shift": 0,
+     "cond": "ctx.knobs.pc_on",
+     "line": "if (!ctx.knobs.pc_on) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the phase-colour state (LGM)",
+   "adapter": null
+  },
+  {
+   "func": "networkRunManifestCompleteRunEnd",
+   "file": "src/core/app/NetworkRunArtifactsRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "new": "const double loop_ms = v.loop_ms;"
+    },
+    {
+     "new": "const NetworkConfig& nc = v.config.getNetworkConfig();"
+    },
+    {
+     "new": "const std::vector<SyncedEpoch>& synced = v.setup.sync->getSyncedEpochs();   // for its size: the batch epoch list"
+    },
+    {
+     "frozen": [
+      6683,
+      6686
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the run manifest's complete record",
+   "adapter": null
+  },
+  {
+   "func": "networkProductContractRunEnd",
+   "file": "src/core/filter/NetworkEmitStore.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::filesystem::path& log_dir_ = v.traces.log_dir_;"
+    },
+    {
+     "new": "auto& product_writer = v.setup.product_writer;   // closed here (B6)"
+    },
+    {
+     "new": "const auto& prod_path = v.setup.prod_path;"
+    },
+    {
+     "new": "const auto& pending_contract = v.setup.pending_contract;"
+    },
+    {
+     "new": "const auto& contract_pending = v.setup.contract_pending;"
+    },
+    {
+     "new": "const double contract_rebroadcast_s = v.ctx.knobs.contract_rebroadcast_s;"
+    },
+    {
+     "frozen": [
+      6687,
+      6816
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the product contract round trip (B6)",
+   "adapter": null
+  },
+  {
+   "func": "networkRunSummaryRunEnd",
+   "file": "src/core/app/NetworkRunArtifactsRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "NetworkRunTraces& traces = v.traces;"
+    },
+    {
+     "new": "const double loop_ms = v.loop_ms;"
+    },
+    {
+     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
+    },
+    {
+     "new": "const std::vector<SyncedEpoch>& synced = v.setup.sync->getSyncedEpochs();   // for its size: the batch epoch list"
+    },
+    {
+     "new": "const bool parallel_on = v.setup.parallel_on;"
+    },
+    {
+     "new": "const int n_threads = v.setup.n_threads;"
+    },
+    {
+     "new": "const auto& trace_path = v.traces.trace_path;"
+    },
+    {
+     "frozen": [
+      6817,
+      6822
+     ],
+     "shift": 0
+    },
+    {
+     "new": "FlagRate fr_if_refgate;   // the IF-TD reference arm's flag rate, summed below for the writer"
+    },
+    {
+     "frozen": [
+      6823,
+      6840
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [
+    {
+     "line": 6824,
+     "from": "auto& fr = ctx.counters.fr_if_refgate;",
+     "to": "auto& fr = fr_if_refgate;"
+    },
+    {
+     "line": 6836,
+     "from": "ctx.counters, synced.size(),",
+     "to": "ctx.counters, fr_if_refgate, synced.size(),"
+    }
+   ],
+   "drops": [],
+   "label": "flag rates, the run summary and the shared-product line",
+   "adapter": null
+  },
+  {
+   "func": "networkClosedLoopRunEnd",
+   "file": "src/core/app/NetworkClosedLoopRunEnd.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const std::size_t cl_epochs = v.run.closed_loop.epochs;"
+    },
+    {
+     "new": "const std::size_t cl_ar_ran = v.run.closed_loop.ar_ran;"
+    },
+    {
+     "new": "const std::size_t cl_ar_fixed = v.run.closed_loop.ar_fixed;"
+    },
+    {
+     "new": "const long long cl_sum_fixed = v.run.closed_loop.sum_fixed;"
+    },
+    {
+     "new": "const double cl_first_fix_tow = v.run.closed_loop.first_fix_tow;"
+    },
+    {
+     "new": "const int cl_first_fix_week = v.run.closed_loop.first_fix_week;"
+    },
+    {
+     "new": "const std::deque<double>& cl_recent_err3d = v.run.closed_loop.recent_err3d;"
+    },
+    {
+     "new": "const Eigen::Vector3d& cl_truth = v.setup.cl_truth_arp;   // the consumer's truth"
+    },
+    {
+     "new": "const Coordinates::Llh cl_truth_llh =\n        v.setup.closed_loop_on ? Coordinates::ecefToLlh(v.setup.cl_truth_arp) : Coordinates::Llh{};"
+    },
+    {
+     "new": "const std::filesystem::path& log_dir_ = v.traces.log_dir_;"
+    },
+    {
+     "new": "const ClosedLoopConfig& cl = v.config.getNetworkConfig().closed_loop;"
+    },
+    {
+     "new": "const bool closed_loop_on = v.setup.closed_loop_on;"
+    },
+    {
+     "new": "auto& consumer = v.setup.consumer;"
+    },
+    {
+     "guard": [
+      6841,
+      7224
+     ],
+     "if_line": 6843,
+     "close_line": 7224,
+     "shift": 0,
+     "cond": "closed_loop_on && consumer",
+     "line": "if (!(closed_loop_on && consumer)) return 0;"
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the closed-loop integer-recovery harness",
+   "adapter": null
+  },
+  {
+   "func": "networkInjectRunEnd",
+   "file": "src/core/filter/NetworkInject.cpp",
+   "indent": 4,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      7225,
+      7228
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return inject_rc;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the event harness (fault injection)",
+   "adapter": "networkInjectRunEnd"
+  },
+  {
+   "func": "networkCanonicalPairRunEnd",
+   "file": "src/core/filter/NetworkCanonicalPairAdmission.cpp",
+   "indent": 4,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      7229,
+      7235
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the canonical-pair admission (CPA)",
+   "adapter": "networkCanonicalPairRunEnd"
+  },
+  {
+   "func": "networkSignalRosterRunEnd",
+   "file": "src/core/app/SignalRoster.cpp",
+   "indent": 4,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      7236,
+      7243
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the signal roster and the arc ledger (SID phase 1)",
+   "adapter": "networkSignalRosterRunEnd"
+  },
+  {
+   "func": "networkChannelAllRunEnd",
+   "file": "src/core/filter/NetworkChannelAll.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "new": "const SlipQcChannel& slip_qc = v.run.engines.slip_qc;"
+    },
+    {
+     "frozen": [
+      7244,
+      7248
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the all-channel census (SID phase 6b)",
+   "adapter": "networkChannelAllRunEnd"
+  },
+  {
+   "func": "networkMultiGnssRunEnd",
+   "file": "src/core/filter/NetworkMultiGnss.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const GnssConfig& config_ = v.config;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      7249,
+      7253
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the second constellation (GAL)",
+   "adapter": "networkMultiGnssRunEnd"
+  },
+  {
+   "func": "networkLedgerEmitRunEnd",
+   "file": "src/core/filter/NetworkLedgerEmit.cpp",
+   "indent": 0,
+   "pieces": [
+    {
+     "new": "const NetworkRunContext& ctx = v.ctx;"
+    },
+    {
+     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+    },
+    {
+     "frozen": [
+      7254,
+      7258
+     ],
+     "shift": 0
+    },
+    {
+     "new": "return 0;"
+    }
+   ],
+   "subs": [],
+   "drops": [],
+   "label": "the ledger-driven emission (SID phase 5a)",
+   "adapter": "networkLedgerEmitRunEnd"
+  }
+ ],
+ "teardown": {
+  "func": "networkTeardown",
+  "file": "src/core/filter/NetworkTeardown.cpp",
+  "indent": 0,
+  "pieces": [
+   {
+    "new": "// The epoch-loop wall, from run.timing.loop_begin (taken just before the estimator is"
+   },
+   {
+    "new": "// built), measured once before any report runs.  The timing report, the manifest's"
+   },
+   {
+    "new": "// complete record and the run-summary CSV read this one value."
+   },
+   {
+    "new": "const double loop_ms = std::chrono::duration<double, std::milli>("
+   },
+   {
+    "new": "std::chrono::steady_clock::now() - run.timing.loop_begin).count();"
+   },
+   {
+    "new": "const NetworkRunEndView view{ctx, config_, log, traces, setup, run, loop_ms};"
+   },
+   {
+    "new": "// Every report, in the declared order.  A report returns 0, or a verdict for the exit"
+   },
+   {
+    "new": "// code; a later non-zero verdict replaces an earlier one, so the table's order is the"
+   },
+   {
+    "new": "// precedence (the injection verdict over the joint-block PD-fallback bar)."
+   },
+   {
+    "new": "int verdict = 0;"
+   },
+   {
+    "new": "for (const NetworkRunEndRow& row : kNetworkRunEndReports) {"
+   },
+   {
+    "new": "const int rc = row.report(view);"
+   },
+   {
+    "new": "if (rc != 0) verdict = rc;"
+   },
+   {
+    "new": "}"
+   },
+   {
+    "new": "// A run that emitted nothing failed, whatever the reports returned.  Checked after the"
+   },
+   {
+    "new": "// walk, so the injection clause, the canonical-pair census, the roster and the other"
+   },
+   {
+    "new": "// tail reports are on record for a run that produced nothing."
+   },
+   {
+    "frozen": [
+     7259,
+     7271
+    ],
+    "shift": 0
+   },
+   {
+    "new": "return verdict;"
+   }
+  ],
+  "subs": [
+   {
+    "line": 7260,
+    "from": "if (n_emitted == 0) {",
+    "to": "if (ctx.counters.n_emitted == 0) {"
+   }
+  ],
+  "drops": [],
+  "label": "the teardown",
+  "adapter": null
+ }
+}
