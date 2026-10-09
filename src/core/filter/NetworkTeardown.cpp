@@ -37,6 +37,7 @@
 #include "filter/NetworkBlockBaarda.hpp"       // BlockFormal LOS-block census (networkBlockBaardaReport)
 #include "filter/NetworkCongruence.hpp"        // station congruence screen (networkCongruenceReport)
 #include "filter/NetworkMdb.hpp"               // Baarda MDB (networkMdbReport, which holds the run-end body)
+#include "filter/NetworkRaim.hpp"              // RaimPoolAdmissionTally: the RAIM pools' run-end admission lines (card NOM N2b)
 #include "filter/NetworkClockAnchor.hpp"       // kCtaWLadder / kCtaELadder for the guard-ladder run-end line (card Q3 §3)
 #include "filter/NetworkClockLevel.hpp"        // level re-base run-end readout (card CLV)
 #include "filter/NetworkRedundancyCensus.hpp"  // redundancy census (kCensusMinPoolRows for the run-end line)

@@ -833,13 +833,23 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         // cap_priors / cap_dense_* verbatim onto a fresh arrowhead, so a withdrawn
         // prior left in the capture would be re-injected.
         if (!diag_drop.empty()) {
+            // The capture's kinds (card NOM step N2b) are erased in step with the priors,
+            // when the two are in step; a capture without kinds keeps none.
             auto& cp = ws.cap_priors;
-            cp.erase(std::remove_if(cp.begin(), cp.end(),
-                                    [&](const NetworkEstimator::SharedPrior& p) {
-                                        return p.kind == SharedParamKind::Clock
-                                            && trip_resolve.count(p.sat) > 0;
-                                    }),
-                     cp.end());
+            auto& ck = ws.cap_prior_kinds;
+            const bool kinds_in_step = (ck.size() == cp.size());
+            std::size_t kept = 0;
+            for (std::size_t r = 0; r < cp.size(); ++r) {
+                if (cp[r].kind == SharedParamKind::Clock && trip_resolve.count(cp[r].sat) > 0)
+                    continue;
+                if (kept != r) {
+                    cp[kept] = std::move(cp[r]);
+                    if (kinds_in_step) ck[kept] = ck[r];
+                }
+                ++kept;
+            }
+            cp.resize(kept);
+            if (kinds_in_step) ck.resize(kept);
         }
         if (!dense_drop.empty()) {
             // Marginalize the dropped keys out of the captured block too, so a

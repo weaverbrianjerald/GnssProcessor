@@ -293,9 +293,10 @@ void NetworkEstimator::reset() {
     // The contribution log is per epoch (card NOM N2a): read by the epoch tail, which runs
     // before the next epoch's reset.
     contrib_log_.clear();
-    contrib_kind_      = ContributionKind::Unset;
-    contrib_row_kinds_ = nullptr;
-    contrib_replay_    = false;
+    contrib_kind_        = ContributionKind::Unset;
+    contrib_row_kinds_   = nullptr;
+    contrib_prior_kinds_ = nullptr;
+    contrib_replay_      = false;
     epoch_open_ = false;
     solved_ = false;
 }
@@ -636,11 +637,21 @@ const Eigen::MatrixXd& NetworkEstimator::reducedSharedNormals() {
 
 void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
     const ContributionKind ck = takeContributionKind_();
+    const std::vector<ContributionKind>* prior_kinds = contrib_prior_kinds_;
+    contrib_prior_kinds_ = nullptr;
     if (priors.empty()) return;
+    const bool per_prior_kinds = prior_kinds && prior_kinds->size() == priors.size();
+    // Card NOM step N2b: with a kind per prior and the capture armed, each kind's part of
+    // the RHS increment is accumulated beside it (the fold itself is unchanged).
+    const bool split = attrib_armed_ && per_prior_kinds;
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
     Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
-    for (const SharedPrior& p : priors) {
+    const std::vector<ContributionKind> korder =
+        split ? kindsInOrder_(*prior_kinds) : std::vector<ContributionKind>{};
+    std::vector<Eigen::VectorXd> kpart(korder.size(), Eigen::VectorXd::Zero(n));
+    for (std::size_t j = 0; j < priors.size(); ++j) {
+        const SharedPrior& p = priors[j];
         if (!(p.info > 0.0)) continue;
         const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
         const auto it = index_.find(pkey);
@@ -648,10 +659,19 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
         const Eigen::Index c = it->second;
         delta_info(c, c) += p.info;          // diagonal info prior (D2 carry-forward)
         delta_rhs(c)     += p.info * p.value;
+        if (split) {
+            const auto ki = std::find(korder.begin(), korder.end(), (*prior_kinds)[j]);
+            kpart[static_cast<std::size_t>(ki - korder.begin())](c) += p.info * p.value;
+        }
     }
-    noteCapture_(ck, delta_rhs);
+    if (split) {
+        for (std::size_t k = 0; k < korder.size(); ++k) noteCapture_(korder[k], kpart[k]);
+    } else {
+        noteCapture_(ck, delta_rhs);
+    }
     neq_.addSharedInfo(delta_info, delta_rhs);
-    noteFold_(ck, static_cast<long long>(priors.size()));
+    if (per_prior_kinds) noteFoldsPerKind_(*prior_kinds);
+    else                 noteFold_(ck, static_cast<long long>(priors.size()));
 }
 
 bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
@@ -1071,27 +1091,44 @@ bool NetworkEstimator::cloneConditional(const Datum& datum, Eigen::MatrixXd& K,
 std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
     const std::vector<SharedPrior>& priors, bool require_closure) {
     const ContributionKind ck = takeContributionKind_();
+    const std::vector<ContributionKind>* prior_kinds = contrib_prior_kinds_;
+    contrib_prior_kinds_ = nullptr;
     if (priors.empty()) return 0;
+    const bool per_prior_kinds = prior_kinds && prior_kinds->size() == priors.size();
+    // Card NOM step N2b: with a kind per prior and the capture armed, each kind's part of
+    // the RHS increment is accumulated beside it (the fold itself is unchanged).  A
+    // downdated group's increment is Λ_gf v, so prior b's part is column b of Λ_gf times
+    // its value v_b, which lands on every column of its group.
+    const bool split = attrib_armed_ && per_prior_kinds;
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
     Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    const std::vector<ContributionKind> korder =
+        split ? kindsInOrder_(*prior_kinds) : std::vector<ContributionKind>{};
+    std::vector<Eigen::VectorXd> kpart(korder.size(), Eigen::VectorXd::Zero(n));
+    const auto partOf = [&](std::size_t j) -> Eigen::VectorXd& {
+        const auto ki = std::find(korder.begin(), korder.end(), (*prior_kinds)[j]);
+        return kpart[static_cast<std::size_t>(ki - korder.begin())];
+    };
 
     // Pass 1: resolve identities.  Non-clock priors accumulate exactly as
     // addSharedPrior accumulates them (same order, same arithmetic); clock
     // priors are grouped by constellation for the downdate below.
-    struct ClkRow { Eigen::Index col; double info, value; };
+    struct ClkRow { Eigen::Index col; double info, value; std::size_t j; };   // j: the prior's index in priors
     std::map<char, std::vector<ClkRow>> grp;
-    for (const SharedPrior& p : priors) {
+    for (std::size_t j = 0; j < priors.size(); ++j) {
+        const SharedPrior& p = priors[j];
         if (!(p.info > 0.0)) continue;
         const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
         const Eigen::Index c = it->second;
         if (p.kind == SharedParamKind::Clock && !p.clone && !p.sat.empty()) {   // a clone folds plainly (card SCL)
-            grp[letterOfSat(p.sat)].push_back({c, p.info, p.value});
+            grp[letterOfSat(p.sat)].push_back({c, p.info, p.value, j});
         } else {
             delta_info(c, c) += p.info;
             delta_rhs(c)     += p.info * p.value;
+            if (split) partOf(j)(c) += p.info * p.value;
         }
     }
 
@@ -1127,6 +1164,7 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
                 for (const ClkRow& r : rows) {
                     delta_info(r.col, r.col) += r.info;
                     delta_rhs(r.col)         += r.info * r.value;
+                    if (split) partOf(r.j)(r.col) += r.info * r.value;
                 }
                 continue;
             }
@@ -1142,13 +1180,19 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
                 const double v = (a == b ? rows[a].info : 0.0)
                                - rows[a].info * rows[b].info / tot;
                 delta_info(rows[a].col, rows[b].col) += v;
+                if (split) partOf(rows[b].j)(rows[a].col) += v * rows[b].value;
             }
         }
         downdated += rows.size();
     }
-    noteCapture_(ck, delta_rhs);
+    if (split) {
+        for (std::size_t k = 0; k < korder.size(); ++k) noteCapture_(korder[k], kpart[k]);
+    } else {
+        noteCapture_(ck, delta_rhs);
+    }
     neq_.addSharedInfo(delta_info, delta_rhs);
-    noteFold_(ck, static_cast<long long>(priors.size()));
+    if (per_prior_kinds) noteFoldsPerKind_(*prior_kinds);
+    else                 noteFold_(ck, static_cast<long long>(priors.size()));
     return downdated;
 }
 
@@ -1339,10 +1383,7 @@ void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
         if (per_row_kinds) {
             // Card NOM step N2b: one capture per kind present in the rows, in the order a
             // kind first appears, each the rows of that kind (their sum is delta_rhs).
-            std::vector<ContributionKind> order;
-            for (const ContributionKind k : *row_kinds)
-                if (std::find(order.begin(), order.end(), k) == order.end()) order.push_back(k);
-            for (const ContributionKind k : order) {
+            for (const ContributionKind k : kindsInOrder_(*row_kinds)) {
                 Eigen::VectorXd part = Eigen::VectorXd::Zero(H.cols());
                 for (Eigen::Index r = 0; r < H.rows(); ++r)
                     if ((*row_kinds)[static_cast<std::size_t>(r)] == k)
@@ -1356,18 +1397,8 @@ void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
     neq_.addSharedInfo(delta_info, delta_rhs);
     // Card NOM N2a: one record per kind present in the rows (in the order a kind first
     // appears), when the site named a kind per row; else one record under the call's kind.
-    if (per_row_kinds) {
-        std::vector<std::pair<ContributionKind, long long>> per_kind;
-        for (const ContributionKind k : *row_kinds) {
-            auto it = std::find_if(per_kind.begin(), per_kind.end(),
-                                   [k](const auto& e) { return e.first == k; });
-            if (it == per_kind.end()) per_kind.emplace_back(k, 1);
-            else                      ++it->second;
-        }
-        for (const auto& [k, n] : per_kind) noteFold_(k, n);
-        return;
-    }
-    noteFold_(ck, static_cast<long long>(H.rows()));
+    if (per_row_kinds) noteFoldsPerKind_(*row_kinds);
+    else               noteFold_(ck, static_cast<long long>(H.rows()));
 }
 
 NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_s,

@@ -30,7 +30,8 @@ int healNearNullPhaseBias(NetworkEstimator& est,
                           bool phase_datum_prioritized,
                           bool within_epoch_armed,
                           std::vector<NetworkEstimator::SharedPrior>& cap_priors,
-                          std::vector<PhaseHealEvent>* healed_out) {
+                          std::vector<PhaseHealEvent>* healed_out,
+                          std::vector<ContributionKind>* cap_prior_kinds) {
     if (!phase_datum_prioritized || est.numShared() == 0 || shared_phase_keys.empty())
         return 0;
     const Eigen::MatrixXd& Nss = est.reducedSharedNormals();
@@ -91,8 +92,12 @@ int healNearNullPhaseBias(NetworkEstimator& est,
     }
     est.contributionKind(ContributionKind::PbHeal);   // card NOM N2a
     est.addSharedPrior(hp);
-    if (within_epoch_armed)
-        cap_priors.insert(cap_priors.end(), hp.begin(), hp.end());
+    if (within_epoch_armed) {
+        if (cap_prior_kinds)
+            networkCapturePriors(cap_priors, *cap_prior_kinds, hp, ContributionKind::PbHeal);
+        else
+            cap_priors.insert(cap_priors.end(), hp.begin(), hp.end());
+    }
     return static_cast<int>(hp.size());
 }
 

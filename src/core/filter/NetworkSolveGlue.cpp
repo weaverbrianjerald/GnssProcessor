@@ -26,6 +26,7 @@
 #include "filter/NetworkPhaseDatum.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/NetworkPrefitCensus.hpp"   // networkPrefitSigma0, the census-fed H σ̂₀ (H-rider)
+#include "filter/NetworkRaim.hpp"           // RaimPoolAdmissionTally: the within-epoch pool's admission tally (card NOM N2b)
 #include "filter/NetworkRelevel.hpp"
 #include "filter/NetworkRhsAttrib.hpp"   // flight-recorder trip latch and inline A4 dump (INC-5)
 #include "filter/NetworkRobustStats.hpp"
@@ -590,7 +591,8 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             // a prior missing there would give the replayed solve a different
             // datum from the first one, with nothing in the log.
             if (within_epoch_armed)
-                cap_priors.insert(cap_priors.end(), kp.begin(), kp.end());
+                networkCapturePriors(cap_priors, ws.cap_prior_kinds, kp,
+                                     ContributionKind::CbKaula);
             ++ctx.counters.n_kp_epochs;
             ctx.counters.n_kp_cols += kp.size();
             // The K2 anti-fragility margin is measured after the gate (in the
@@ -1105,7 +1107,7 @@ try {
         const int healed = healNearNullPhaseBias(
             est, shared_phase_keys, phase_datum_prioritized,
             within_epoch_armed, cap_priors,    // 0 unless prioritized + near-null PB
-            &heal_events);
+            &heal_events, &ws.cap_prior_kinds);
         healed_n = healed;
         // Count the attempt before the re-gate can throw: the success-only pair
         // below cannot tell "the heal never ran" from "the heal ran every epoch
@@ -1349,7 +1351,8 @@ networkInjectClockOscPrior(ctx, ws, traces, se.time, est, registered_clock_sats,
         est.contributionKind(ContributionKind::ColdClockAnchor);   // card NOM N2a
         est.addSharedPrior(clk_anchor);
         if (within_epoch_armed)
-            cap_priors.insert(cap_priors.end(), clk_anchor.begin(), clk_anchor.end());
+            networkCapturePriors(cap_priors, ws.cap_prior_kinds, clk_anchor,
+                                 ContributionKind::ColdClockAnchor);
     }
 }
 
@@ -1534,18 +1537,21 @@ if (within_epoch_armed && carry_warm) {
     std::set<std::string> dw_code_sats;             // chosen sat code-de-weight responses
     // One row's WE-CI role, from its tag: sh_row = an SH tie row; code_row = a code
     // observation row with a satellite code-bias partial; row_sat = the satellite the
-    // tag names (the attribution key; empty when it names none).
+    // tag names, written for a code row only (the key of the satellite code-row
+    // de-weight and of ci_sat_code_max, which read no other row's satellite; empty
+    // otherwise, and when the tag names none).
     auto ci_classify = [&](const StationAssembly& R, Eigen::Index row,
                            bool& sh_row, bool& code_row, std::string& row_sat) {
         const RowTag& tag = rowTagAt(R, row);
         sh_row = (tag.kind == ContributionKind::ShIonoTie);
         code_row = false;
-        row_sat = tag.sat.valid() ? tag.sat.str() : std::string();
+        row_sat.clear();
         if (sh_row || !isCodeObservationKind(tag.kind)) return;
         for (Eigen::Index c = 0; c < R.A_s.cols(); ++c) {
             const std::size_t u = static_cast<std::size_t>(c);
             if (u < ci_cb_col.size() && ci_cb_col[u] && R.A_s(row, c) != 0.0) {
                 code_row = true;
+                if (tag.sat.valid()) row_sat = tag.sat.str();
                 return;
             }
         }
@@ -1979,7 +1985,8 @@ if (within_epoch_armed && carry_warm) {
         // Card NOM step N2b: each re-fold names its kind as the primary fold did, so the
         // RHS attribution of a replayed epoch names the same classes (the replay's folds
         // are counted apart from the primary build's in the contributions table).  The
-        // captured priors are of several kinds and re-fold in one call, which names none.
+        // captured priors are of several kinds and re-fold in one call, which names one
+        // kind per prior (the kind its primary site named, ws.cap_prior_kinds).
         if (cap_has_constraint) {
             est.contributionRowKinds(&ws.cap_row_kinds);
             est.addSharedConstraintRows(cap_H, cap_z, cap_constraint_weight);
@@ -2008,6 +2015,7 @@ if (within_epoch_armed && carry_warm) {
         // under test.  The within-epoch tier is in the standard armed set, so this
         // applies whenever the downdate is armed with the carry (card C-GF).
         if (!cap_priors.empty()) {
+            est.contributionPriorKinds(&ws.cap_prior_kinds);
             if (ctx.knobs.carry_gauge_free)
                 est.addSharedPriorClockGaugeFree(cap_priors,
                                                  ctx.knobs.carry_gauge_free_closure);

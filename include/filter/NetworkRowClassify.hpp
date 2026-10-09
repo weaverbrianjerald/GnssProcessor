@@ -57,11 +57,10 @@
  * SD-EWL constraint rows.
  * That is today's population stated as a rule (card NOM section 16, suspect 1): the
  * prior rows are in it on purpose until the science card RPA decides otherwise.  Every
- * admission is counted per kind (@ref RaimPoolAdmissionTally), and a row of any other
- * kind that clears 0.5 is counted as refused (expected 0).
+ * admission is counted per kind (@c RaimPoolAdmissionTally, filter/NetworkRaim.hpp), and a
+ * row of any other kind that clears 0.5 is counted as refused (expected 0).
  */
 
-#include <array>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -223,41 +222,6 @@ NetRowClass classifyRow(const StationAssembly& R, Eigen::Index row, std::string*
  * @return True for the eleven admitted kinds.
  */
 bool raimPoolAdmitsKind(ContributionKind k);
-
-/**
- * @brief The admissions of one carried-phase RAIM pool over a run, per contribution
- *        kind (card NOM step N2b; the instrumentation gap of card NOM section 16).
- *
- * A pool walks the rows of each station once per ambiguity column of its pool, so a row
- * that clears 0.5 on two columns is visited twice and enters the pool's sample twice:
- * @c visits counts every (row, column) admission, @c rows each admitted row once per
- * station-epoch (per walk).  @c refused counts the (row, column) visits whose
- * coefficient cleared 0.5 but whose kind the rule does not admit, by kind (@c Unset in
- * the last slot); 0 is expected, and a non-zero count is a row the coefficient test alone
- * would have admitted.
- */
-struct RaimPoolAdmissionTally {
-    long long walks{0};  ///< Pool walks: post-fit epochs, or within-epoch assess calls.
-    std::array<long long, kContributionKinds + 1> visits{};   ///< Admitted (row, column) visits, by kind.
-    std::array<long long, kContributionKinds + 1> rows{};     ///< Admitted rows, each once per station-epoch walk, by kind.
-    std::array<long long, kContributionKinds + 1> refused{};  ///< Visits refused by the kind rule, by kind (@c Unset last).
-
-    /**
-     * @brief Count one (row, column) visit that cleared 0.5.
-     * @param k        The row's kind.
-     * @param admitted Whether @ref raimPoolAdmitsKind admitted it.
-     * @param first    Whether this is the row's first admitted visit of this station's walk.
-     */
-    void note(ContributionKind k, bool admitted, bool first);
-
-    /**
-     * @brief The run-end text: the admitted kinds with their visits and rows, the refused
-     *        visits by kind.
-     * @return One line, without a prefix: "walks N; admitted: <kind> visits V rows R, ...;
-     *         refused by kind: none" (or the refused kinds with their visits).
-     */
-    std::string text() const;
-};
 
 /**
  * @brief One epoch's shared-column labels, families, per-column satellite, and

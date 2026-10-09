@@ -107,6 +107,12 @@ struct PhaseHealEvent {
  *                                records nothing.  Observational only: it does not
  *                                change which columns are selected or what prior
  *                                is folded.
+ * @param cap_prior_kinds         [out, optional] the capture's kinds
+ *                                (ws.cap_prior_kinds): one @c PbHeal per soft anchor
+ *                                appended to @p cap_priors, so the two stay in step
+ *                                (card NOM step N2b).  @c nullptr (the default) appends
+ *                                none, and a replay of that capture is recorded under
+ *                                one unnamed kind.
  * @return Number of phase-bias columns soft-anchored (0 when nothing is below the
  *         cutoff, the datum is not prioritized, or the eigensolve fails).
  */
@@ -115,7 +121,8 @@ int healNearNullPhaseBias(NetworkEstimator& est,
                           bool phase_datum_prioritized,
                           bool within_epoch_armed,
                           std::vector<NetworkEstimator::SharedPrior>& cap_priors,
-                          std::vector<PhaseHealEvent>* healed_out = nullptr);
+                          std::vector<PhaseHealEvent>* healed_out = nullptr,
+                          std::vector<ContributionKind>* cap_prior_kinds = nullptr);
 
 /**
  * @brief Build this epoch's prioritized phase-datum candidate census and apply

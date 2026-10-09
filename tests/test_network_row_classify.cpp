@@ -23,6 +23,7 @@
 
 #include "common/GnssIdentity.hpp"
 #include "filter/NetworkContributions.hpp"
+#include "filter/NetworkRaim.hpp"          // RaimPoolAdmissionTally
 #include "filter/NetworkRowClassify.hpp"
 #include "filter/NetworkRunTypes.hpp"   // StationAssembly
 

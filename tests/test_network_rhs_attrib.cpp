@@ -16,7 +16,10 @@
  *    (the defect the step closes);
  *  - the post-PD channel is attributed only when the consume folded it;
  *  - each shared fold is classed by the kind its site named, one class per row kind for a
- *    constraint-row fold.
+ *    constraint-row fold;
+ *  - the replay's single re-fold of the captured priors, which are of several kinds, is
+ *    classed and logged per kind (one kind per captured prior) and folds exactly what the
+ *    unnamed call folds, under the plain and the gauge-free fold.
  */
 #include <gtest/gtest.h>
 
@@ -29,6 +32,7 @@
 
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -232,4 +236,120 @@ TEST(NetworkRhsAttribClosureTest, SharedClassIsTheKindsName) {
     est.addSharedPrior({p});
     ASSERT_EQ(est.attribCaptures().size(), 2u);
     EXPECT_EQ(est.attribCaptures()[1].kind, CK::ShPrior);
+}
+
+namespace {
+
+/// The replay's captured priors (card NOM step N2b): four kinds over three clocks of one
+/// constellation and a phase bias, two kinds on the same clock column, so the gauge-free
+/// downdate mixes the kinds within its group.
+std::vector<NetworkEstimator::SharedPrior> mixedCapture() {
+    auto prior = [](SharedParamKind kind, const char* sat, const char* sig, double v,
+                    double info) {
+        NetworkEstimator::SharedPrior p;
+        p.kind = kind;
+        p.sat = sat;
+        p.signal = sig;
+        p.value = v;
+        p.info = info;
+        return p;
+    };
+    return {prior(SharedParamKind::Clock, "G01", "", 0.3, 4.0),
+            prior(SharedParamKind::Clock, "G02", "", -0.1, 2.0),
+            prior(SharedParamKind::PhaseBias, "G01", "L1C", 0.05, 10.0),
+            prior(SharedParamKind::Clock, "G03", "", 0.2, 1.0),
+            prior(SharedParamKind::Clock, "G01", "", 0.1, 1.0)};
+}
+
+/// An armed estimator with the columns of @ref mixedCapture, its epoch open.
+void openMixed(NetworkEstimator& est) {
+    est.registerClock("G01");
+    est.registerClock("G02");
+    est.registerClock("G03");
+    est.registerPhaseBias("G01", "L1C");
+    est.attribArm(true);
+    est.beginEpoch();
+}
+
+}  // namespace
+
+TEST(NetworkRhsAttribClosureTest, ReplayPriorRefoldIsNamedPerKindAndFoldsTheSame) {
+    const std::vector<NetworkEstimator::SharedPrior> priors = mixedCapture();
+    std::vector<NetworkEstimator::SharedPrior> cap;
+    std::vector<CK> cap_kinds;
+    networkCapturePriors(cap, cap_kinds, {priors[0]}, CK::BorderCarryDiagonal);
+    networkCapturePriors(cap, cap_kinds, {priors[1]}, CK::ClockOscillator);
+    networkCapturePriors(cap, cap_kinds, {priors[2]}, CK::PhaseHold);
+    networkCapturePriors(cap, cap_kinds, {priors[3], priors[4]}, CK::ColdClockAnchor);
+    ASSERT_EQ(cap.size(), 5u);
+    ASSERT_EQ(cap_kinds.size(), cap.size()) << "the capture's kinds stay in step";
+
+    for (const bool gauge_free : {false, true}) {
+        SCOPED_TRACE(gauge_free ? "gauge-free" : "plain");
+        auto fold = [&](NetworkEstimator& est) {
+            if (gauge_free) est.addSharedPriorClockGaugeFree(cap, false);
+            else            est.addSharedPrior(cap);
+        };
+        NetworkEstimator unnamed, named;
+        openMixed(unnamed);
+        openMixed(named);
+        fold(unnamed);
+        named.contributionPriorKinds(&cap_kinds);
+        fold(named);
+
+        // The fold is the same, bit for bit: the kinds change only the record.
+        EXPECT_TRUE(named.normals().sharedNormals() == unnamed.normals().sharedNormals());
+        EXPECT_TRUE(named.normals().sharedRhs() == unnamed.normals().sharedRhs());
+
+        // One capture per kind, in the order a kind first appears, summing to the call's.
+        ASSERT_EQ(unnamed.attribCaptures().size(), 1u);
+        EXPECT_EQ(unnamed.attribCaptures()[0].kind, CK::Unset);
+        const auto& caps = named.attribCaptures();
+        ASSERT_EQ(caps.size(), 4u);
+        EXPECT_EQ(caps[0].kind, CK::BorderCarryDiagonal);
+        EXPECT_EQ(caps[1].kind, CK::ClockOscillator);
+        EXPECT_EQ(caps[2].kind, CK::PhaseHold);
+        EXPECT_EQ(caps[3].kind, CK::ColdClockAnchor);
+        Eigen::VectorXd sum = Eigen::VectorXd::Zero(named.numShared());
+        for (const auto& c : caps) sum += c.delta_rhs;
+        const Eigen::VectorXd& whole = unnamed.attribCaptures()[0].delta_rhs;
+        EXPECT_LT((sum - whole).norm(), 1e-12 * std::max(1.0, whole.norm()));
+        // Under the downdate a clock prior's part spreads over its whole group: the
+        // oscillator prior on G02 moves the RHS of G01 and G03 as well.
+        const Eigen::Index g01 = named.clockColumn("G01");
+        const Eigen::Index g03 = named.clockColumn("G03");
+        if (gauge_free) {
+            EXPECT_NE(caps[1].delta_rhs(g01), 0.0);
+            EXPECT_NE(caps[1].delta_rhs(g03), 0.0);
+        } else {
+            EXPECT_EQ(caps[1].delta_rhs(g01), 0.0);
+            EXPECT_EQ(caps[1].delta_rhs(g03), 0.0);
+        }
+
+        // The fold log: one record per kind, each with its number of priors.
+        const SharedFoldLog& log = named.sharedFoldLog();
+        ASSERT_EQ(log.folds.size(), 4u);
+        EXPECT_EQ(log.folds[3].kind, CK::ColdClockAnchor);
+        EXPECT_EQ(log.folds[3].dim, 2);
+
+        // The kinds are consumed by the call; a size mismatch is ignored (the call's kind).
+        named.addSharedPrior({priors[0]});
+        EXPECT_EQ(named.attribCaptures().back().kind, CK::Unset);
+        const std::vector<CK> short_kinds{CK::PhaseHold};
+        named.contributionPriorKinds(&short_kinds);
+        named.contributionKind(CK::ShPrior);
+        fold(named);
+        EXPECT_EQ(named.attribCaptures().back().kind, CK::ShPrior);
+    }
+
+    // In a replay the per-kind records count apart: one replay fold per kind.
+    NetworkEstimator est;
+    openMixed(est);
+    est.contributionReplay(true);
+    est.contributionPriorKinds(&cap_kinds);
+    est.addSharedPrior(cap);
+    est.contributionReplay(false);
+    EXPECT_TRUE(est.sharedFoldLog().folds.empty());
+    EXPECT_EQ(est.sharedFoldLog().replay_folds, 4);
+    EXPECT_EQ(est.sharedFoldLog().replay_dim, 5);
 }

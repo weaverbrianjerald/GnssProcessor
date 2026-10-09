@@ -40,6 +40,7 @@
  * guarded body.
  */
 
+#include "filter/NetworkContributions.hpp"  // ContributionKind, kContributionKinds (RaimPoolAdmissionTally)
 #include "filter/NetworkEstimator.hpp"      // NetworkEstimator + NetworkEstimator::Datum
 #include "filter/NetworkPriorResidual.hpp"  // the constraint-aware global σ̂₀ data-side feed
 #include "filter/NetworkRunTypes.hpp"       // NetStation / StationAssembly
@@ -47,6 +48,7 @@
 
 #include <Eigen/Core>
 
+#include <array>
 #include <memory>
 #include <set>
 #include <string>
@@ -93,6 +95,47 @@ struct NetworkRaimCiTallies {
     double    sigma0_max = 0.0;      ///< Largest σ̂0 seen over epochs with a non-empty pool.
     double    sigma0_sum = 0.0;      ///< Σ σ̂0 over epochs with a non-empty pool (mean = sigma0_sum / sigma0_n).
     long long sigma0_n = 0;          ///< Epochs contributing to sigma0_sum.
+};
+
+/**
+ * @brief The admissions of one carried-phase RAIM pool over a run, per contribution
+ *        kind (card NOM step N2b; the instrumentation gap of card NOM section 16).
+ *
+ * The admission rule itself is a statement about row kinds and lives with the row
+ * classifier (filter/NetworkRowClassify.hpp, @c raimPoolAdmitsKind); this counter of what
+ * the rule admitted is RAIM telemetry and lives here.  The post-fit pool
+ * (@ref networkPostFitRaim) and the within-epoch assess pool (NetworkSolveGlue.cpp) each
+ * keep one in @c NetworkRunContext::counters, read at run end (NetworkTeardown.cpp).
+ *
+ * A pool walks the rows of each station once per ambiguity column of its pool, so a row
+ * that clears 0.5 on two columns is visited twice and enters the pool's sample twice:
+ * @c visits counts every (row, column) admission, @c rows each admitted row once per
+ * station-epoch (per walk).  @c refused counts the (row, column) visits whose
+ * coefficient cleared 0.5 but whose kind the rule does not admit, by kind (@c Unset in
+ * the last slot); 0 is expected, and a non-zero count is a row the coefficient test alone
+ * would have admitted.
+ */
+struct RaimPoolAdmissionTally {
+    long long walks{0};  ///< Pool walks: post-fit epochs, or within-epoch assess calls.
+    std::array<long long, kContributionKinds + 1> visits{};   ///< Admitted (row, column) visits, by kind.
+    std::array<long long, kContributionKinds + 1> rows{};     ///< Admitted rows, each once per station-epoch walk, by kind.
+    std::array<long long, kContributionKinds + 1> refused{};  ///< Visits refused by the kind rule, by kind (@c Unset last).
+
+    /**
+     * @brief Count one (row, column) visit that cleared 0.5.
+     * @param k        The row's kind.
+     * @param admitted Whether @ref raimPoolAdmitsKind admitted it.
+     * @param first    Whether this is the row's first admitted visit of this station's walk.
+     */
+    void note(ContributionKind k, bool admitted, bool first);
+
+    /**
+     * @brief The run-end text: the admitted kinds with their visits and rows, the refused
+     *        visits by kind.
+     * @return One line, without a prefix: "walks N; admitted: <kind> visits V rows R, ...;
+     *         refused by kind: none" (or the refused kinds with their visits).
+     */
+    std::string text() const;
 };
 
 /**

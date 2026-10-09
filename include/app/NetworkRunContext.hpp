@@ -37,7 +37,7 @@
 #include "filter/NetworkAnchorHygiene.hpp" // NetworkAnchorTallies (eq34 reattach hygiene)
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
 #include "filter/NetworkIonoDwRelease.hpp"   // NetworkIonoDwReleaseTallies (iono-deweight release hygiene)
-#include "filter/NetworkRaim.hpp"            // NetworkRaimCiTallies (RAIM pool re-host)
+#include "filter/NetworkRaim.hpp"            // NetworkRaimCiTallies (RAIM pool re-host), RaimPoolAdmissionTally (card NOM N2b)
 #include "filter/NetworkGrossLos.hpp"        // NetworkGrossLosTallies / GrossLosState (card GL)
 #include "filter/NetworkPrefitCensus.hpp"    // NetworkPrefitCensusTallies (prefit census / fuse / topology / recorder)
 #include "filter/NetworkCarryVceApply.hpp"   // NetworkCarryVceApply (M2 v2 carry variance-factor state)
@@ -3428,7 +3428,7 @@ namespace GnssProcessor {
         double    max_rxclk_gate_m = 0.0;                ///< largest  k*sqrt(var_pred) seen (0 = never tested)
         double    max_rxclk_innov_m = 0.0;               ///< largest |innovation| seen, metres: the largest step the gate saw
         long long n_raim_pool_rxclk_rows = 0;            ///< post-fit RAIM pool admissions (station-epochs x rows) whose admitted row is one of the clock-family columns' whitened block rows: the SPEC_amb_iono_split_overcount §7 item 4 interaction measured for the rho half, as n_raim_pool_zwd_rows / n_raim_pool_iono_rows measure it for theirs.  Counted only; the pool rule is unchanged.
-        long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row is the ZWD's whitened block row: the §7 item 4 interaction, measured (the pool admits by |A_r(row, amb_col)| > 0.5, and a ZWD block row mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged.
+        long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row is the ZWD's whitened block row: the §7 item 4 interaction, measured (the pool admits a row whose coefficient on the ambiguity column exceeds 0.5 and whose kind the declared rule admits, filter/NetworkRowClassify @c raimPoolAdmitsKind; a ZWD block row is a carried-prior block kind the rule admits, and it mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged.
         /// The carried-phase RAIM pools' admissions per contribution kind (card NOM step N2b,
         /// filter/NetworkRowClassify @c raimPoolAdmitsKind): the post-fit pool
         /// (NetworkRaim.cpp; one walk per epoch it runs) and the within-epoch assess pool

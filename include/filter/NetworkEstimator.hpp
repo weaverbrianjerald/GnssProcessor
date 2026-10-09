@@ -42,6 +42,7 @@
 
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -1290,7 +1291,8 @@ public:
      * @ref addSharedPriorClockGaugeFree, @ref addSharedConstraintRows, and the
      * withdraw and re-fold calls) appends its RHS increment under the kind its site
      * named (@ref contributionKind); a constraint-row fold whose site named a kind per
-     * row (@ref contributionRowKinds) appends one increment per kind.  @ref beginEpoch
+     * row (@ref contributionRowKinds), and a diagonal-prior fold whose site named a kind
+     * per prior (@ref contributionPriorKinds), append one increment per kind.  @ref beginEpoch
      * clears the captures but keeps the armed flag, so a within-epoch re-solve leaves
      * only the final build's captures (matching the kernel state the attribution
      * reads).  Disarmed (the default), the recorder costs one branch per call.
@@ -1334,6 +1336,28 @@ public:
      */
     void contributionRowKinds(const std::vector<ContributionKind>* kinds) {
         contrib_row_kinds_ = kinds;
+    }
+
+    /**
+     * @brief Name one kind per prior of the next @ref addSharedPrior or
+     *        @ref addSharedPriorClockGaugeFree (the within-epoch replay's re-fold of the
+     *        captured priors, which are of several kinds and re-fold in one call).
+     *
+     * Consumed by that call.  The fold itself is unchanged: the call accumulates and folds
+     * the same information and RHS as without the kinds.  What the kinds change is the
+     * record: the fold is entered in @ref sharedFoldLog once per kind present (in the order
+     * a kind first appears, each with its number of priors), and an armed capture
+     * (@ref attribArm) holds one RHS increment per kind, the part of the call's increment
+     * that the priors of that kind contribute (their sum is the call's increment; under the
+     * gauge-free downdate a prior's part is its column of the downdated information times
+     * its value).  A vector whose size is not the call's prior count is ignored, and the
+     * fold is recorded under the kind of @ref contributionKind.
+     *
+     * @param kinds One kind per entry of the call's @c priors (not owned; must outlive the
+     *              call), or null.
+     */
+    void contributionPriorKinds(const std::vector<ContributionKind>* kinds) {
+        contrib_prior_kinds_ = kinds;
     }
 
     /**
@@ -1509,8 +1533,22 @@ private:
         }
         contrib_log_.folds.push_back(SharedFoldRecord{k, dim});
     }
+    /// The kinds present in @p kinds, each once, in the order a kind first appears.
+    static std::vector<ContributionKind> kindsInOrder_(const std::vector<ContributionKind>& kinds) {
+        std::vector<ContributionKind> order;
+        for (const ContributionKind k : kinds)
+            if (std::find(order.begin(), order.end(), k) == order.end()) order.push_back(k);
+        return order;
+    }
+    /// Record a fold whose site named a kind per part (a row or a prior) as one fold per kind
+    /// present, in the order a kind first appears, each of dimension the number of its parts.
+    void noteFoldsPerKind_(const std::vector<ContributionKind>& kinds) {
+        for (const ContributionKind k : kindsInOrder_(kinds))
+            noteFold_(k, static_cast<long long>(std::count(kinds.begin(), kinds.end(), k)));
+    }
     ContributionKind contrib_kind_{ContributionKind::Unset};  ///< Kind named for the next shared fold (card NOM N2a); @c Unset when none.
     const std::vector<ContributionKind>* contrib_row_kinds_{nullptr};  ///< Per-row kinds for the next addSharedConstraintRows (not owned).
+    const std::vector<ContributionKind>* contrib_prior_kinds_{nullptr};  ///< Per-prior kinds for the next addSharedPrior / addSharedPriorClockGaugeFree (not owned; card NOM N2b).
     bool contrib_replay_{false};                                 ///< Folds are a within-epoch replay's re-folds.
     SharedFoldLog contrib_log_;                                  ///< This epoch's shared folds (cleared by reset()).
     bool attrib_armed_{false};                   ///< RHS-attribution capture recorder armed (diagnostics)

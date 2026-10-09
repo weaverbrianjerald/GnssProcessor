@@ -2634,15 +2634,18 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 ///     (SB_SOLVEGLUE, network.sbasis_complete block; re-applied at
 ///     NetworkSbasis::kSbasisCompleteWeight, a compile-time constant, so no weight
 ///     field travels).  rows() == 0 means nothing to re-apply.
-///   - cap_priors: the SH-VTEC pre-gate prior (networkInjectShVtecPrior_), the Fix-A
-///     held phase-bias datum prior (networkInjectPhaseHoldPrior_), the eq34
-///     reattach-hygiene pin-bridge priors (network.phase_datum_time_linked), the
-///     drop-and-heal soft anchors (NetworkPhaseDatum healNearNullPhaseBias,
-///     gate-failure path), the card KP code-bias bound prior (NetworkSolveGlue,
-///     network.cb_kaula_prior), the D2 diagonal carry prior and dense-fallback
-///     leftovers (networkInjectD2CarryPrior_), the two-state clock-model prior
-///     (networkInjectClockOscPrior_), and the a-priori satellite-clock Tikhonov
-///     anchor.
+///   - cap_priors / cap_prior_kinds: the SH-VTEC pre-gate prior
+///     (networkInjectShVtecPrior_), the Fix-A held phase-bias datum prior
+///     (networkInjectPhaseHoldPrior_), the eq34 reattach-hygiene pin-bridge priors
+///     (network.phase_datum_time_linked), the drop-and-heal soft anchors
+///     (NetworkPhaseDatum healNearNullPhaseBias, gate-failure path), the card KP
+///     code-bias bound prior (NetworkSolveGlue, network.cb_kaula_prior), the D2 diagonal
+///     carry prior and dense-fallback leftovers (networkInjectD2CarryPrior_), the
+///     two-state clock-model prior (networkInjectClockOscPrior_), and the a-priori
+///     satellite-clock Tikhonov anchor.  Each writer appends its priors through
+///     @ref networkCapturePriors with the kind its fold named, so cap_prior_kinds holds
+///     one kind per entry of cap_priors and the replay's single re-fold of them is
+///     recorded per kind (card NOM step N2b).
 ///   - cap_dense_keys / cap_dense_cov: the C1 dense shared-carry fold
 ///     (networkInjectD2CarryPrior_, dense-success branch only; its non-PD fallback
 ///     routes through cap_priors like every diagonal prior).  On a card SCL clone epoch
@@ -2654,7 +2657,8 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 ///     isolated priors (filter/NetworkClockClone); empty and false when off.
 ///   - cap_shx: card SCL2 X2's history priors (filter/NetworkSharedHistory); empty off.
 /// The Q3 clock-anchor guard (NetworkClockAnchor) also edits the capture: before its
-/// re-solve it removes the withdrawn satellites' clock priors from cap_priors and
+/// re-solve it removes the withdrawn satellites' clock priors from cap_priors (and their
+/// kinds from cap_prior_kinds, in step) and
 /// marginalizes them out of cap_dense_keys / cap_dense_cov (and, on a card SCL clone
 /// epoch, removes their walk factors from cap_ccl_walk).
 struct EpochWorkspace {
@@ -2666,6 +2670,7 @@ struct EpochWorkspace {
     Eigen::MatrixXd cap_sbc_H;   ///< SBC completion rows (see writer-site list)
     Eigen::VectorXd cap_sbc_z;   ///< SBC completion targets
     std::vector<NetworkEstimator::SharedPrior> cap_priors;
+    std::vector<ContributionKind> cap_prior_kinds;   ///< One kind per entry of cap_priors: the kind its fold site named (card NOM N2b; see @ref networkCapturePriors)
     std::vector<NetworkEstimator::SharedPrior> cap_dense_keys;
     Eigen::MatrixXd cap_dense_cov;
     bool cap_ccl_on = false;                                       ///< card SCL: the joint fold below was captured (the replay folds it in place of cap_dense_*)
@@ -2684,6 +2689,28 @@ struct EpochWorkspace {
     /// diagnostic after the solve (B7, P1-4).
     std::map<std::string, double> clk_prior_info;
 };
+
+/**
+ * @brief Append a fold's priors to the RAIM-replay capture with the kind the fold named
+ *        (card NOM step N2b).
+ *
+ * Appends @p priors to @p cap_priors and one @p kind per prior to @p cap_prior_kinds, so
+ * the two stay in step (the replay names the kinds to its single re-fold of the captured
+ * priors through @c NetworkEstimator::contributionPriorKinds).  The writers are listed in
+ * the @ref EpochWorkspace contract.
+ *
+ * @param cap_priors      The capture (@c EpochWorkspace::cap_priors).
+ * @param cap_prior_kinds Its kinds (@c EpochWorkspace::cap_prior_kinds).
+ * @param priors          The priors the fold folded.
+ * @param kind            The kind the fold site named for them.
+ */
+inline void networkCapturePriors(std::vector<NetworkEstimator::SharedPrior>& cap_priors,
+                                 std::vector<ContributionKind>& cap_prior_kinds,
+                                 const std::vector<NetworkEstimator::SharedPrior>& priors,
+                                 ContributionKind kind) {
+    cap_priors.insert(cap_priors.end(), priors.begin(), priors.end());
+    cap_prior_kinds.insert(cap_prior_kinds.end(), priors.size(), kind);
+}
 
 /// Epoch-scratch candidate census consumed by every prioritized phase-bias datum
 /// realization (ensemble, eq34 chain, anchor election).  Built once per epoch by

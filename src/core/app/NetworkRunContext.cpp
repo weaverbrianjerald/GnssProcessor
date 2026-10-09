@@ -3503,7 +3503,8 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         est.contributionKind(ContributionKind::ShPrior);   // card NOM N2a
         est.addSharedPrior(sh_priors);
         if (within_epoch_armed)
-            cap_priors.insert(cap_priors.end(), sh_priors.begin(), sh_priors.end());
+            networkCapturePriors(cap_priors, ws.cap_prior_kinds, sh_priors,
+                                 ContributionKind::ShPrior);
     }
 }
 
@@ -3545,7 +3546,8 @@ void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         est.contributionKind(ContributionKind::PhaseHold);   // card NOM N2a
         est.addSharedPrior(hp);  // skips keys absent from this epoch's layout
         if (within_epoch_armed)
-            cap_priors.insert(cap_priors.end(), hp.begin(), hp.end());
+            networkCapturePriors(cap_priors, ws.cap_prior_kinds, hp,
+                                 ContributionKind::PhaseHold);
     }
 }
 
@@ -3580,7 +3582,8 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     est.contributionKind(ContributionKind::PinBridge);   // card NOM N2a
     est.addSharedPrior(bp);   // skips keys absent from this epoch's layout
     if (within_epoch_armed)
-        ws.cap_priors.insert(ws.cap_priors.end(), bp.begin(), bp.end());
+        networkCapturePriors(ws.cap_priors, ws.cap_prior_kinds, bp,
+                             ContributionKind::PinBridge);
     // Margin check, sampled once (the analogue of card KP's K2): a datum row whose
     // information sits at the rank-gate cutoff either trips the gate or survives by
     // coincidence.  The bridge is a datum row, so it has to sit well above the cutoff;
@@ -3861,18 +3864,20 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         // constrains the estimable between-satellite differences and leaves the gauge to
         // the S-basis datum.  Non-clock entries fold identically either way, and the off
         // path is the original single call.
+        const ContributionKind carry_kind = ctx.knobs.carry_gauge_free
+                                                ? ContributionKind::BorderCarryGaugeFree
+                                                : ContributionKind::BorderCarryDiagonal;
+        est.contributionKind(carry_kind);   // card NOM N2a
         if (ctx.knobs.carry_gauge_free) {
-            est.contributionKind(ContributionKind::BorderCarryGaugeFree);   // card NOM N2a
             const std::size_t gf = est.addSharedPriorClockGaugeFree(
                 priors, ctx.knobs.carry_gauge_free_closure);
             ctx.counters.cta_gf_keys += static_cast<long long>(gf);
             if (gf == 0) ++ctx.counters.cta_gf_inert;
         } else {
-            est.contributionKind(ContributionKind::BorderCarryDiagonal);   // card NOM N2a
             est.addSharedPrior(priors);  // skips params absent from this epoch's layout
         }
         if (within_epoch_armed)
-            cap_priors.insert(cap_priors.end(), priors.begin(), priors.end());
+            networkCapturePriors(cap_priors, ws.cap_prior_kinds, priors, carry_kind);
     } else if ((!datum_changed || scoped_handover) && !prev_carry.empty()) {
         // Dense carry (C1, network.shared_carry_full_cov): fold the carried block as one
         // dense information prior Λ = (P_prev + Q)⁻¹, the information-form KF time update
@@ -4072,9 +4077,10 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         // construction: the fallback can under-anchor but cannot re-introduce gauge
         // information.
         // Card NOM N2a: the leftovers are the border carry folded diagonally.
-        est.contributionKind(ctx.knobs.carry_gauge_free
-                                 ? ContributionKind::BorderCarryGaugeFree
-                                 : ContributionKind::BorderCarryDiagonal);
+        const ContributionKind leftover_kind = ctx.knobs.carry_gauge_free
+                                                   ? ContributionKind::BorderCarryGaugeFree
+                                                   : ContributionKind::BorderCarryDiagonal;
+        est.contributionKind(leftover_kind);
         if (ctx.knobs.carry_gauge_free)
             ctx.counters.cta_gf_keys +=
                 static_cast<long long>(est.addSharedPriorClockGaugeFree(
@@ -4082,7 +4088,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         else
             est.addSharedPrior(leftovers);  // no-op when empty; skips absent keys
         if (within_epoch_armed)
-            cap_priors.insert(cap_priors.end(), leftovers.begin(), leftovers.end());
+            networkCapturePriors(cap_priors, ws.cap_prior_kinds, leftovers, leftover_kind);
     }
     // Card PRM phase 3a: a clock-pivot handover in legacy (unscoped) mode skips both fold
     // branches, retiring every carried entry for the epoch; tallied here (counters only, the
@@ -4382,7 +4388,8 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         est.contributionKind(ContributionKind::ClockOscillator);   // card NOM N2a
         est.addSharedPrior(clkp);
         if (within_epoch_armed)
-            cap_priors.insert(cap_priors.end(), clkp.begin(), clkp.end());
+            networkCapturePriors(cap_priors, ws.cap_prior_kinds, clkp,
+                                 ContributionKind::ClockOscillator);
     }
 }
 

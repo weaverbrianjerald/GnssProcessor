@@ -7,14 +7,15 @@
  * ## Coverage gap addressed
  *
  * Every other post-fit tier of the producer screens carried-ambiguity phase rows
- * only.  The admission test is one line in @c networkPostFitRaim (NetworkRaim.cpp):
- *
- * @code
- *   if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;  // not a phase row of this ambiguity
- * @endcode
+ * only.  The admission rule of @c networkPostFitRaim (NetworkRaim.cpp) is the declared
+ * one of filter/NetworkRowClassify.hpp (card NOM step N2b): a row enters the pool of an
+ * ambiguity column when its coefficient on the column exceeds 0.5 and its kind is one
+ * @c raimPoolAdmitsKind admits (the observation phase rows, the coupling and block
+ * carried-prior rows, and the SD-EWL constraint rows).  No code kind is admitted.
  *
  * An uncombined phase row carries @f$+1@f$ on its ambiguity column; a code row
- * carries zero on every ambiguity column.  A code row therefore never enters the
+ * carries zero on every ambiguity column and is of a kind the rule does not admit.  A
+ * code row therefore never enters the
  * σ̂₀ pool, never contributes to a cell's @c r_max, never appears in the
  * median-polish table, and never reaches the cross-station consensus or the
  * isolated-arc attribution.  A gross code error on one line of sight is out of

@@ -1360,4 +1360,30 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     (void)attrib_acted;
 }
 
+// --- The pools' admission tally (card NOM step N2b; declared in NetworkRaim.hpp) ---
+
+void RaimPoolAdmissionTally::note(ContributionKind k, bool admitted, bool first) {
+    const std::size_t u = std::min<std::size_t>(static_cast<std::size_t>(k),
+                                                kContributionKinds);
+    if (!admitted) { ++refused[u]; return; }
+    ++visits[u];
+    if (first) ++rows[u];
+}
+
+std::string RaimPoolAdmissionTally::text() const {
+    const auto name = [](std::size_t u) -> const char* {
+        return contributionKindName(static_cast<ContributionKind>(u));
+    };
+    std::string adm, ref;
+    for (std::size_t u = 0; u <= kContributionKinds; ++u) {
+        if (visits[u] > 0)
+            adm += fmt::format("{}{} visits {} rows {}", adm.empty() ? "" : ", ", name(u),
+                               visits[u], rows[u]);
+        if (refused[u] > 0)
+            ref += fmt::format("{}{} visits {}", ref.empty() ? "" : ", ", name(u), refused[u]);
+    }
+    return fmt::format("walks {}; admitted: {}; refused by kind: {}", walks,
+                       adm.empty() ? "none" : adm, ref.empty() ? "none" : ref);
+}
+
 } // namespace GnssProcessor
