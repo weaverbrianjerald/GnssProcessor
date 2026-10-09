@@ -51,14 +51,25 @@
  *    observation-class load on the target columns also get per-satellite
  *    sub-rows (a second pass over their rows).
  *  - `rows_<tow>.csv`: one line per row of every station (w, y, target-column
- *    coefficients).
+ *    coefficients), with the row's class and, in the last column @c kind, the
+ *    contribution kind its tag declares (card NOM step N2a; card ICF instrument A').
  *  - `vec_<tow>.csv`: per-class total reduced-RHS vectors over all shared
  *    columns (col, label, value) for offline projections.
+ *  - `cols_<tow>.csv` (only when @c network.rhs_attrib_columns names columns): for
+ *    every (station, contribution kind), every (station, kind, satellite, signal),
+ *    every shared fold kind, the DD folds and the datum pins, the reduced-RHS
+ *    contribution at each named column and its solution share there
+ *    (@ref networkRhsAttribColumnShares), with the kind totals, the full solution and
+ *    a closure line per column (@ref networkRhsAttribDump documents the records).
  *
  * ## Knobs (network section; loader guards)
  *
  *  - @c network.rhs_attrib_tow   (double, default −1 = off): first target TOW.
  *  - @c network.rhs_attrib_n_ep  (int, default 2): number of target epochs.
+ *  - @c network.rhs_attrib_columns (list of shared-column labels as `vec_<tow>.csv`
+ *    prints them, e.g. `["CLK:G07", "CB:G07:C1W"]`; default empty = no `cols_` file):
+ *    the named columns of the solution-share readout (card ICF instrument A').
+ *    Diagnostics only, not fingerprinted, read at every dump (armed or trip).
  *  - @c network.rhs_attrib_on_trip (bool, default false): the INC-5 flight
  *    recorder (docs/SPEC_prefit_census_observability.md §7).  Arms the capture
  *    recorder every epoch and dumps automatically at the first trip of a QC era
@@ -143,6 +154,11 @@ struct NetworkAttribFrame {
     Eigen::VectorXd            b_red;   ///< kernel reduced shared RHS.
     Eigen::MatrixXd            N_red;   ///< kernel reduced shared normals (datum-pin section).
     NetworkEstimator::Datum    datum;   ///< the epoch's minimum-constraint pins.
+    /// The solve's shared estimate @c x_s as the driver holds it after the epoch's last
+    /// solve, when the caller supplied it (size @ref n); empty otherwise (the trip path,
+    /// a retained frame).  Read only by the solution-share readout, which reports it
+    /// beside its own recomputation as a check that the operator is the solve's.
+    Eigen::VectorXd            x_s;
 
     /// Approximate retained heap footprint in bytes (run-end telemetry).
     std::size_t bytes() const;
@@ -162,6 +178,9 @@ struct NetworkAttribFrame {
  * @param est_index_of   station → kernel slot (−1 = not folded).
  * @param own_assemblies deep-copy the assemblies into the frame (retention);
  *                       false = point at @p asm_res, valid only until it changes.
+ * @param x_s            optional: the solve's shared estimate, copied into
+ *                       @ref NetworkAttribFrame::x_s when its size matches the shared
+ *                       width; nullptr (the default) leaves it empty.
  */
 void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
                                const std::vector<NetStation>& stations,
@@ -169,7 +188,8 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
                                const NetworkEstimator::Datum& plan_datum,
                                const std::vector<StationAssembly>& asm_res,
                                const std::vector<int>& est_index_of,
-                               bool own_assemblies);
+                               bool own_assemblies,
+                               const Eigen::VectorXd* x_s = nullptr);
 
 /**
  * @brief The attribution class of a shared fold: the one map from a contribution kind
@@ -229,21 +249,143 @@ struct NetworkRhsAttribDecomposition {
 NetworkRhsAttribDecomposition networkRhsAttribDecompose(const NetworkAttribFrame& f);
 
 /**
+ * @brief The load of every contribution at a few named shared columns, as reduced
+ *        right-hand side and as solution share (card ICF instrument A',
+ *        @c network.rhs_attrib_columns).
+ *
+ * A right-hand-side share says how hard a contribution pushes on a column; the solve
+ * moves the column by @f$\tilde N^{-1}\tilde u@f$, so a contribution's effect on the
+ * estimate is its solution share, which can differ in size and sign (card ICF section 5).
+ *
+ * ## The operator
+ *
+ * The solution share is computed with the operator @c NetworkEstimator::solve applies,
+ * rebuilt from the frame: the kernel's reduced shared normals @f$\tilde N@f$
+ * (@ref NetworkAttribFrame::N_red, after the shared folds, the ensemble phase gauges and
+ * the DD folds; the datum is NOT in it) with the epoch's minimum-constraint pins applied
+ * by the same Dirichlet elimination: each pinned row and column zeroed, the pinned
+ * diagonal set to @f$s=\max(1,\max_i|\tilde N_{ii}|)@f$, factorized by
+ * @c Eigen::LDLT as @c NetworkNormalEquations::solveSharedConstrained does.  Call the
+ * result @f$N_c@f$, with free columns @f$F@f$ and pinned columns @f$P@f$.  The solve is
+ * @f[ x_F = \tilde N_{FF}^{-1}\,(\tilde u_F - \tilde N_{FP} v_P),\qquad x_P = v_P, @f]
+ * so for a named free column @f$c@f$ with @f$g = N_c^{-1} e_c@f$ (its entries on
+ * @f$P@f$ are zero by construction and are zeroed explicitly), a reduced-RHS part
+ * @f$\tilde u^{(k)}@f$ has the solution share @f$g^\top \tilde u^{(k)}@f$, and the
+ * datum's own share is @f$g^\top(-\tilde N_{:,P} v_P)@f$.  The shares sum to @f$x_c@f$
+ * exactly, up to the right-hand-side closure of @ref networkRhsAttribDecompose.  At a
+ * pinned named column every share is zero and the datum's share is the pin value.
+ *
+ * A station part never forms its reduced vector: with
+ * @f$r = N_{rr}^{-1} N_{sr}^\top e_c@f$ and @f$t = N_{rr}^{-1} N_{sr}^\top g@f$ per
+ * station, a row with weight @f$w@f$ and prefit @f$y@f$ contributes
+ * @f$w y\,(A_s[c] - A_r\!\cdot r)@f$ to the reduced RHS at @f$c@f$ and
+ * @f$w y\,(A_s\!\cdot g - A_r\!\cdot t)@f$ to the solution share, and a diagonal
+ * prior entry @f$\delta u@f$ on local column @f$j@f$ contributes @f$-\delta u\,r_j@f$
+ * and @f$-\delta u\,t_j@f$.  These are the station reduction of
+ * @ref networkRhsAttribDecompose (@f$u_s - N_{sr}N_{rr}^{-1}u_r@f$) restricted to the
+ * part's rows and read at one column, so any grouping of rows is exact.
+ *
+ * ## What the solved quantity is
+ *
+ * The shared columns are linearized at the a priori product each epoch (the clock
+ * column is @f$\Delta\delta t^s@f$ against the a priori satellite clock, which
+ * @c NetworkEstimator::toSolutionEpoch copies into the emitted clock), so the solution
+ * share is a share of the column's estimate itself, not of a step from the previous
+ * epoch; the epoch-to-epoch change of a share is the change of that part's
+ * contribution.  The carried border and station priors enter as contributions like any
+ * other (their kinds name them).
+ */
+struct NetworkRhsColumnShares {
+    /// One contribution's load at every named column.
+    struct Part {
+        std::string     record;  ///< @c STAKIND, @c STALOS, @c SHARED, @c DDFOLD, @c DATUMPIN or @c KIND.
+        std::string     sta;     ///< The station (@c STAKIND, @c STALOS); empty otherwise.
+        std::string     kind;    ///< The kind's name (@ref contributionKindName); @c "shared:<kind>" for a shared fold (@ref rhsAttribSharedClass), @c dd_fold, @c datum_pin.
+        std::string     sat;     ///< @c STALOS: the satellite the tag names, @c "?" for none; empty otherwise.
+        std::string     sig;     ///< @c STALOS: the signal the tag names ("1C"), empty for none.
+        long long       n{0};    ///< Terms in the part: rows and prior entries, fold captures, DD blocks or pins.
+        Eigen::VectorXd rhs;     ///< Per named column: the part's reduced-RHS contribution (0 at an absent column).
+        Eigen::VectorXd sol;     ///< Per named column: the part's solution share (0 at an absent column).
+    };
+    bool valid{false};                  ///< The frame had a reduced system and the constrained factorization succeeded.
+    std::vector<std::string>  labels;   ///< The named columns, as requested.
+    std::vector<Eigen::Index> col;      ///< Their shared columns this epoch; -1 = no such column.
+    std::vector<char>         pinned;   ///< 1 where the epoch's datum pins the column.
+    std::vector<Part> station_kind;     ///< @c STAKIND: per (station, kind), stations in frame order, kinds by name.
+    std::vector<Part> station_los;      ///< @c STALOS: per (station, kind, satellite, signal); sums to @ref station_kind.
+    std::vector<Part> folds;            ///< @c SHARED per shared-fold class, then @c DDFOLD and @c DATUMPIN.
+    std::vector<Part> kind_total;       ///< @c KIND: per kind over every station, then each fold; sums to the totals.
+    Eigen::VectorXd rhs_sum;   ///< Sum of @c rhs over @ref station_kind and the @c SHARED and @c DDFOLD folds (the datum pin acts on the solve's copy and is excluded, as in the class closure).
+    Eigen::VectorXd sol_sum;   ///< Sum of @c sol over @ref station_kind and every fold, the datum pin included.
+    Eigen::VectorXd b_red;     ///< The kernel's reduced RHS at each column.
+    Eigen::VectorXd x_full;    ///< @f$(N_c^{-1}u_c)_c@f$: the datum-constrained solution recomputed from the frame.
+    Eigen::VectorXd x_solve;   ///< The driver's @c x_s at each column (NaN when the frame holds none).
+    Eigen::VectorXd rhs_closure_abs;  ///< @f$|\text{rhs\_sum}-\tilde u_c|@f$.
+    Eigen::VectorXd rhs_closure_rel;  ///< @ref rhs_closure_abs over @f$|\tilde u_c|@f$ (0 when both are 0).
+    Eigen::VectorXd sol_closure_abs;  ///< @f$|\text{sol\_sum}-x_c|@f$ with @f$x_c@f$ = @ref x_full.
+    Eigen::VectorXd sol_closure_rel;  ///< @ref sol_closure_abs over @f$|x_c|@f$ (0 when both are 0).
+};
+
+/**
+ * @brief The solution share and reduced-RHS contribution of every (station, kind) part,
+ *        every shared fold kind, the DD folds and the datum at the named columns (no
+ *        file is written).
+ *
+ * See @ref NetworkRhsColumnShares for the operator.  The station parts follow the
+ * channels @ref networkRhsAttribDecompose iterates (rows by their tags' kinds, the
+ * pre-PD prior entries, the post-PD entries when folded), keyed by kind instead of
+ * class; the shared folds are @ref NetworkAttribFrame::captures grouped by
+ * @ref rhsAttribSharedClass; the DD folds are @p dec's recomputed blocks.  A label that
+ * names no shared column this epoch keeps its slot with @c col -1 and zeros.
+ *
+ * @param f      A frame captured by @ref networkAttribCaptureFrame.
+ * @param dec    @ref networkRhsAttribDecompose of the same frame (its DD parts are reused).
+ * @param labels The named columns (shared-column labels, "CLK:G07").
+ * @return The shares; @c valid false for a frame without a reduced system or a
+ *         constrained system that does not factorize.
+ */
+NetworkRhsColumnShares networkRhsAttribColumnShares(const NetworkAttribFrame& f,
+                                                    const NetworkRhsAttribDecomposition& dec,
+                                                    const std::vector<std::string>& labels);
+
+/**
  * @brief Decompose and dump one captured frame (the attribution proper).
  *
  * Writes `attrib_<tow>.csv`, `rows_<tow>.csv` and `vec_<tow>.csv` under @p dir,
  * in the same format for hand-armed and trip dumps, including the closure row.
+ * `rows_<tow>.csv` ends with the column @c kind, the row's contribution kind
+ * (@ref contributionKindName of its tag; @c unset for a row without a tag).
  *
- * @param f    A frame captured by @ref networkAttribCaptureFrame.
- * @param log  Run logger (closure-violation warning and the dump line).
- * @param dir  Output directory (created if absent).
- * @param kind Short tag naming the reason for the dump ("armed",
- *             "trip:sigma0", "trip-prev:sh_gate", …).  It appears in the log
- *             text only, so the CSVs stay byte-comparable across dump reasons.
+ * With @p columns non-empty it also writes `cols_<tow>.csv`
+ * (@ref networkRhsAttribColumnShares): header
+ * `week,tow,record,station,kind,sat,signal,n` followed by `rhs[<label>],sol[<label>]`
+ * for each named column, one line per record:
+ *
+ *  - @c COLUMN: the field pair holds the shared column index (empty when absent) and 1
+ *    when the datum pins it, else 0;
+ *  - @c STAKIND, @c STALOS, @c SHARED, @c DDFOLD, @c DATUMPIN, @c KIND: the parts
+ *    (@ref NetworkRhsColumnShares::Part);
+ *  - @c TOTAL: the sums (@c rhs without, @c sol with the datum pin);
+ *  - @c FULL: the kernel's reduced RHS and the recomputed constrained solution;
+ *  - @c SOLVE: the driver's solution (the @c sol field; empty when the frame holds none);
+ *  - @c CLOSURE_ABS and @c CLOSURE_REL: the closures of @c TOTAL against @c FULL.
+ *
+ * Every value is written with ten significant digits.  An empty @p columns writes
+ * nothing beyond the three class-based files, whose bytes do not depend on it.
+ *
+ * @param f       A frame captured by @ref networkAttribCaptureFrame.
+ * @param log     Run logger (closure-violation warning and the dump line).
+ * @param dir     Output directory (created if absent).
+ * @param kind    Short tag naming the reason for the dump ("armed",
+ *                "trip:sigma0", "trip-prev:sh_gate", …).  It appears in the log
+ *                text only, so the CSVs stay byte-comparable across dump reasons.
+ * @param columns The named columns (@c network.rhs_attrib_columns); empty = no
+ *                `cols_` file.
  */
 void networkRhsAttribDump(const NetworkAttribFrame& f,
                           const std::shared_ptr<spdlog::logger>& log,
-                          const std::filesystem::path& dir, const char* kind);
+                          const std::filesystem::path& dir, const char* kind,
+                          const std::vector<std::string>& columns = {});
 
 /**
  * @brief Post-solve reduced-RHS class attribution at the armed target epochs.
@@ -265,6 +407,9 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
  *                     @c plan.shared_datum), attributed per pin.
  * @param asm_res      PASS A/B station assemblies (the row stacks to classify).
  * @param est_index_of Station → kernel slot map (−1 = not folded this epoch).
+ * @param x_s          Optional: the epoch's shared solution as the driver holds it,
+ *                     written beside the recomputed one in `cols_<tow>.csv`
+ *                     (@c network.rhs_attrib_columns); nullptr = not reported.
  */
 void networkRhsAttribution(NetworkRunContext& ctx, const GnssConfig& config_,
                            const std::shared_ptr<spdlog::logger>& log,
@@ -273,7 +418,8 @@ void networkRhsAttribution(NetworkRunContext& ctx, const GnssConfig& config_,
                            NetworkEstimator& est,
                            const NetworkEstimator::Datum& plan_datum,
                            const std::vector<StationAssembly>& asm_res,
-                           const std::vector<int>& est_index_of);
+                           const std::vector<int>& est_index_of,
+                           const Eigen::VectorXd* x_s = nullptr);
 
 /**
  * @brief INC-5 flight recorder: consume a pending trip, then refresh the

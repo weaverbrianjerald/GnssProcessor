@@ -39,6 +39,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -96,7 +97,7 @@ std::size_t NetworkAttribFrame::bytes() const {
     }
     for (const auto& c : captures) b += vec(c.delta_rhs);
     for (const auto& blk : dd_blocks) b += mat(blk.Pz) + vec(blk.zhat);
-    b += mat(N_red) + vec(b_red);
+    b += mat(N_red) + vec(b_red) + vec(x_s);
     return b;
 }
 
@@ -110,7 +111,8 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
                                const NetworkEstimator::Datum& plan_datum,
                                const std::vector<StationAssembly>& asm_res,
                                const std::vector<int>& est_index_of,
-                               bool own_assemblies) {
+                               bool own_assemblies,
+                               const Eigen::VectorXd* x_s) {
     out.clear();
     out.week = se.time.week;
     out.tow  = se.time.tow;
@@ -164,6 +166,7 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
     out.b_red     = kernel.reducedSharedRhs();
     out.N_red     = kernel.reducedSharedNormals();
     out.datum     = plan_datum;
+    if (x_s && x_s->size() == n) out.x_s = *x_s;
     out.valid     = true;
 }
 
@@ -326,9 +329,251 @@ NetworkRhsAttribDecomposition networkRhsAttribDecompose(const NetworkAttribFrame
     return out;
 }
 
+NetworkRhsColumnShares networkRhsAttribColumnShares(const NetworkAttribFrame& f,
+                                                    const NetworkRhsAttribDecomposition& dec,
+                                                    const std::vector<std::string>& labels) {
+    NetworkRhsColumnShares out;
+    out.labels = labels;
+    const Eigen::Index J = static_cast<Eigen::Index>(labels.size());
+    const Eigen::VectorXd zeroJ = Eigen::VectorXd::Zero(J);
+    out.col.assign(labels.size(), -1);
+    out.pinned.assign(labels.size(), 0);
+    out.rhs_sum = out.sol_sum = out.b_red = out.x_full = zeroJ;
+    out.x_solve = Eigen::VectorXd::Constant(J, std::numeric_limits<double>::quiet_NaN());
+    out.rhs_closure_abs = out.rhs_closure_rel = zeroJ;
+    out.sol_closure_abs = out.sol_closure_rel = zeroJ;
+    if (!f.valid || f.n <= 0 || f.N_red.rows() != f.n || f.b_red.size() != f.n) return out;
+    const Eigen::Index n = f.n;
+
+    // ---- the named columns ------------------------------------------------------
+    for (Eigen::Index j = 0; j < J; ++j) {
+        const auto it = std::find(f.label.begin(), f.label.end(),
+                                  labels[static_cast<std::size_t>(j)]);
+        if (it != f.label.end())
+            out.col[static_cast<std::size_t>(j)] = static_cast<Eigen::Index>(it - f.label.begin());
+    }
+    std::vector<char> is_pinned(static_cast<std::size_t>(n), 0);
+    for (const auto& p : f.datum)
+        if (p.column >= 0 && p.column < n) is_pinned[static_cast<std::size_t>(p.column)] = 1;
+    for (std::size_t j = 0; j < labels.size(); ++j)
+        if (out.col[j] >= 0) out.pinned[j] = is_pinned[static_cast<std::size_t>(out.col[j])];
+
+    // ---- the solve's operator: NetworkEstimator::solve's Dirichlet pins on N_red --
+    Eigen::MatrixXd Nc = f.N_red;
+    Eigen::VectorXd uc = f.b_red;
+    Eigen::VectorXd pin_total = Eigen::VectorXd::Zero(n);   // the datum's RHS move
+    for (const auto& p : f.datum) {
+        if (p.column < 0 || p.column >= n) continue;
+        pin_total -= f.N_red.col(p.column) * p.value;
+    }
+    const double pin_scale =
+        Nc.size() > 0 ? std::max(1.0, Nc.diagonal().cwiseAbs().maxCoeff()) : 1.0;
+    for (const auto& p : f.datum) {   // the solve's own order of operations
+        if (p.column < 0 || p.column >= n) continue;
+        uc -= f.N_red.col(p.column) * p.value;
+    }
+    for (const auto& p : f.datum) {
+        if (p.column < 0 || p.column >= n) continue;
+        Nc.row(p.column).setZero();
+        Nc.col(p.column).setZero();
+    }
+    for (const auto& p : f.datum) {
+        if (p.column < 0 || p.column >= n) continue;
+        Nc(p.column, p.column) = pin_scale;
+        uc(p.column) = pin_scale * p.value;
+    }
+    const Eigen::LDLT<Eigen::MatrixXd> ldlt_c(Nc);
+    if (ldlt_c.info() != Eigen::Success) return out;
+    const Eigen::VectorXd x_c = ldlt_c.solve(uc);
+
+    // g_j = N_c^-1 e_c: the row of the inverse that maps a reduced-RHS part to the
+    // solution at column c (symmetric).  Its pinned entries are zero by the block
+    // structure and are zeroed explicitly; at a pinned named column g_j is all zero.
+    Eigen::MatrixXd G = Eigen::MatrixXd::Zero(n, J);
+    for (Eigen::Index j = 0; j < J; ++j) {
+        const Eigen::Index c = out.col[static_cast<std::size_t>(j)];
+        if (c < 0) continue;
+        out.b_red(j)  = f.b_red(c);
+        out.x_full(j) = x_c(c);
+        if (f.x_s.size() == n) out.x_solve(j) = f.x_s(c);
+        if (out.pinned[static_cast<std::size_t>(j)]) continue;
+        G.col(j) = ldlt_c.solve(Eigen::VectorXd::Unit(n, c));
+        for (Eigen::Index q = 0; q < n; ++q)
+            if (is_pinned[static_cast<std::size_t>(q)]) G(q, j) = 0.0;
+    }
+    // The load of a full reduced-RHS vector at every named column.
+    const auto loadOf = [&](const Eigen::VectorXd& v, Eigen::VectorXd& rhs,
+                            Eigen::VectorXd& sol) {
+        rhs = zeroJ;
+        for (Eigen::Index j = 0; j < J; ++j) {
+            const Eigen::Index c = out.col[static_cast<std::size_t>(j)];
+            if (c >= 0) rhs(j) = v(c);
+        }
+        sol = G.transpose() * v;
+    };
+    const auto newPart = [&](const char* record, const std::string& sta,
+                             const std::string& kind, const std::string& sat,
+                             const std::string& sig) {
+        NetworkRhsColumnShares::Part p;
+        p.record = record; p.sta = sta; p.kind = kind; p.sat = sat; p.sig = sig;
+        p.rhs = zeroJ;
+        p.sol = zeroJ;
+        return p;
+    };
+
+    // ---- pass 1: each station's channels, by kind --------------------------------
+    // R_loc(:, j) = N_rr^-1 N_sr^T e_c reads the reduced RHS at c of a local-RHS part;
+    // T_loc(:, j) = N_rr^-1 N_sr^T g_j reads its solution share.  A row adds w y times
+    // (A_s[c] - A_r R_loc) and (A_s g - A_r T_loc); a prior entry on local column l adds
+    // -du R_loc(l) and -du T_loc(l).  Same channels as networkRhsAttribDecompose.
+    std::map<std::string, NetworkRhsColumnShares::Part> kind_tot;
+    for (std::size_t k = 0; k < f.asm_ptr.size(); ++k) {
+        const StationAssembly& R = *f.asm_ptr[k];
+        const std::string& sname = f.sta_name[k];
+        const Eigen::MatrixXd& Nsr = f.Nsr[k];
+        const Eigen::Index nr = R.A_r.cols();
+        Eigen::MatrixXd R_loc = Eigen::MatrixXd::Zero(nr, J);
+        Eigen::MatrixXd T_loc = Eigen::MatrixXd::Zero(nr, J);
+        if (nr > 0 && f.Nrr[k].rows() == nr && Nsr.cols() == nr) {
+            const Eigen::LDLT<Eigen::MatrixXd> ldlt(f.Nrr[k]);
+            Eigen::MatrixXd Ec = Eigen::MatrixXd::Zero(n, J);
+            for (Eigen::Index j = 0; j < J; ++j) {
+                const Eigen::Index c = out.col[static_cast<std::size_t>(j)];
+                if (c >= 0) Ec(c, j) = 1.0;
+            }
+            R_loc = ldlt.solve(Nsr.transpose() * Ec);
+            T_loc = ldlt.solve(Nsr.transpose() * G);
+        }
+        std::map<std::string, NetworkRhsColumnShares::Part> per_kind;
+        std::map<std::tuple<std::string, std::string, std::string>,
+                 NetworkRhsColumnShares::Part> per_los;
+        const auto add = [&](const RowTag& t, const Eigen::VectorXd& rhs,
+                             const Eigen::VectorXd& sol) {
+            const std::string kname = contributionKindName(t.kind);
+            const std::string sat = t.sat.valid() ? t.sat.str() : std::string("?");
+            const std::string sig =
+                (t.signal.sys != System::Unknown) ? t.signal.str() : std::string();
+            auto ik = per_kind.find(kname);
+            if (ik == per_kind.end())
+                ik = per_kind.emplace(kname, newPart("STAKIND", sname, kname, "", "")).first;
+            ik->second.rhs += rhs; ik->second.sol += sol; ++ik->second.n;
+            const auto key = std::make_tuple(kname, sat, sig);
+            auto il = per_los.find(key);
+            if (il == per_los.end())
+                il = per_los.emplace(key, newPart("STALOS", sname, kname, sat, sig)).first;
+            il->second.rhs += rhs; il->second.sol += sol; ++il->second.n;
+        };
+        Eigen::VectorXd rhs(J), sol(J);
+        for (Eigen::Index row = 0; row < R.y.size(); ++row) {
+            const double w = (row < R.w.size()) ? R.w(row) : 1.0;
+            const double wy = w * R.y(row);
+            if (!std::isfinite(wy)) continue;
+            for (Eigen::Index j = 0; j < J; ++j) {
+                const Eigen::Index c = out.col[static_cast<std::size_t>(j)];
+                const double as_c = (c >= 0) ? R.A_s(row, c) : 0.0;
+                const double ar_r = (nr > 0) ? R.A_r.row(row).dot(R_loc.col(j)) : 0.0;
+                const double ar_t = (nr > 0) ? R.A_r.row(row).dot(T_loc.col(j)) : 0.0;
+                rhs(j) = wy * (as_c - ar_r);
+                sol(j) = wy * (R.A_s.row(row).dot(G.col(j)) - ar_t);
+            }
+            add(rowTagAt(R, row), rhs, sol);
+        }
+        const auto addPrior = [&](const std::vector<Eigen::Index>& cols,
+                                  const Eigen::VectorXd& dur,
+                                  const std::vector<RowTag>& tags) {
+            for (std::size_t e = 0; e < cols.size()
+                                    && e < static_cast<std::size_t>(dur.size()); ++e) {
+                const Eigen::Index l = cols[e];
+                if (l < 0 || l >= nr) continue;
+                const double du = dur(static_cast<Eigen::Index>(e));
+                for (Eigen::Index j = 0; j < J; ++j) {
+                    rhs(j) = -du * R_loc(l, j);
+                    sol(j) = -du * T_loc(l, j);
+                }
+                add((e < tags.size()) ? tags[e] : RowTag{}, rhs, sol);
+            }
+        };
+        addPrior(R.prior_cols, R.prior_dur, R.prior_tags);   // pre-PD, with the block
+        if (R.carry_prior_folded)                            // post-PD, when folded
+            addPrior(R.carry_cols, R.carry_dur, R.carry_tags);
+        for (auto& [kname, p] : per_kind) {
+            auto it = kind_tot.find(kname);
+            if (it == kind_tot.end())
+                it = kind_tot.emplace(kname, newPart("KIND", "", kname, "", "")).first;
+            it->second.rhs += p.rhs; it->second.sol += p.sol; it->second.n += p.n;
+            out.rhs_sum += p.rhs;
+            out.sol_sum += p.sol;
+            out.station_kind.push_back(std::move(p));
+        }
+        for (auto& [key, p] : per_los) out.station_los.push_back(std::move(p));
+    }
+    for (auto& [kname, p] : kind_tot) out.kind_total.push_back(std::move(p));
+
+    // ---- pass 2: the folds: shared captures by class, the DD folds, the datum ------
+    std::map<std::string, NetworkRhsColumnShares::Part> shared;
+    for (const auto& cap : f.captures) {
+        if (cap.delta_rhs.size() != n) continue;
+        const std::string cls = rhsAttribSharedClass(cap.kind);
+        auto it = shared.find(cls);
+        if (it == shared.end())
+            it = shared.emplace(cls, newPart("SHARED", "", cls, "", "")).first;
+        Eigen::VectorXd rhs, sol;
+        loadOf(cap.delta_rhs, rhs, sol);
+        it->second.rhs += rhs; it->second.sol += sol; ++it->second.n;
+    }
+    for (auto& [cls, p] : shared) out.folds.push_back(std::move(p));
+    if (!dec.dd_parts.empty()) {
+        NetworkRhsColumnShares::Part p = newPart("DDFOLD", "", "dd_fold", "", "");
+        for (const auto& dd : dec.dd_parts) {
+            if (dd.v.size() != n) continue;
+            Eigen::VectorXd rhs, sol;
+            loadOf(dd.v, rhs, sol);
+            p.rhs += rhs; p.sol += sol; ++p.n;
+        }
+        out.folds.push_back(std::move(p));
+    }
+    for (const auto& p : out.folds) {
+        out.rhs_sum += p.rhs;
+        out.sol_sum += p.sol;
+    }
+    {
+        NetworkRhsColumnShares::Part p = newPart("DATUMPIN", "", "datum_pin", "", "");
+        for (const auto& pin : f.datum)
+            if (pin.column >= 0 && pin.column < n) ++p.n;
+        loadOf(pin_total, p.rhs, p.sol);
+        // At a pinned named column the solve sets x_c to the pin value: the datum's share.
+        for (const auto& pin : f.datum)
+            for (Eigen::Index j = 0; j < J; ++j)
+                if (out.col[static_cast<std::size_t>(j)] == pin.column) p.sol(j) = pin.value;
+        out.sol_sum += p.sol;
+        out.folds.push_back(std::move(p));
+    }
+    // KIND: the stations' kinds by name, then each fold as itself.
+    for (const auto& p : out.folds) {
+        NetworkRhsColumnShares::Part k = p;
+        k.record = "KIND";
+        out.kind_total.push_back(std::move(k));
+    }
+
+    // ---- closure ------------------------------------------------------------------
+    const auto rel = [](double a, double b) {
+        return (a == 0.0) ? 0.0 : a / std::max(std::abs(b), std::numeric_limits<double>::min());
+    };
+    for (Eigen::Index j = 0; j < J; ++j) {
+        if (out.col[static_cast<std::size_t>(j)] < 0) continue;
+        out.rhs_closure_abs(j) = std::abs(out.rhs_sum(j) - out.b_red(j));
+        out.rhs_closure_rel(j) = rel(out.rhs_closure_abs(j), out.b_red(j));
+        out.sol_closure_abs(j) = std::abs(out.sol_sum(j) - out.x_full(j));
+        out.sol_closure_rel(j) = rel(out.sol_closure_abs(j), out.x_full(j));
+    }
+    out.valid = true;
+    return out;
+}
+
 void networkRhsAttribDump(const NetworkAttribFrame& f,
                           const std::shared_ptr<spdlog::logger>& log,
-                          const std::filesystem::path& dir, const char* kind) {
+                          const std::filesystem::path& dir, const char* kind,
+                          const std::vector<std::string>& columns) {
     if (!f.valid || f.n <= 0) {
         log->warn("Network (rhs-attrib): {} frame at tow {:.1f} has no reduced "
                   "system — skipped", kind, f.tow);
@@ -423,6 +668,10 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
     // w, y and h_c00 are written separately so a weight change and an
     // innovation change can be told apart; the class/station sums cannot
     // separate them.  About 3–4k rows per armed epoch; diagnostics-only.
+    // The last column is the row's contribution kind (card ICF instrument A'): the
+    // class lumps kinds (cpl_row holds the coupling rows and all six carried-prior
+    // block kinds), the kind names the one the row's builder declared.  It is
+    // appended last so the columns before it keep their positions.
     std::vector<std::string> row_dump;
     for (std::size_t k = 0; k < f.asm_ptr.size(); ++k) {
         const StationAssembly& R = *f.asm_ptr[k];
@@ -434,9 +683,9 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
             const double h1 = (c00_l1 >= 0) ? R.A_s(row, c00_l1) : 0.0;
             const double h2 = (c00_l2 >= 0) ? R.A_s(row, c00_l2) : 0.0;
             row_dump.push_back(fmt::format(
-                "{},{},{},{},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e}", sname, row,
+                "{},{},{},{},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{}", sname, row,
                 cls, sat.empty() ? "?" : sat, w, R.y(row), h1, h2,
-                w * R.y(row) * h1));
+                w * R.y(row) * h1, contributionKindName(rowTagAt(R, row).kind)));
         }
     }
 
@@ -487,7 +736,7 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
     }
     if (!row_dump.empty()) {
         std::ofstream o(dir / ("rows_" + tow_tag + ".csv"), std::ios::trunc);
-        o << "station,row,class,sat,w,y,h_c00_l1,h_c00_l2,w_y_h1\n";
+        o << "station,row,class,sat,w,y,h_c00_l1,h_c00_l2,w_y_h1,kind\n";
         for (const auto& s : row_dump) o << s << '\n';
     }
     {
@@ -509,6 +758,70 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
               kind, f.tow, cls_total.size(), rows_out.size(), dec.dd_parts.size(),
               pin_rows.size(), (dir / ("attrib_" + tow_tag + ".csv")).string(),
               closure_rel, c00_l1, c00_l2);
+
+    // ---- solution shares at the named columns (card ICF instrument A') ----------
+    if (columns.empty()) return;
+    const NetworkRhsColumnShares sh = networkRhsAttribColumnShares(f, dec, columns);
+    if (!sh.valid) {
+        log->warn("Network (rhs-attrib): [{}] tow {:.1f}: the datum-constrained reduced "
+                  "system did not factorize; cols_{}.csv not written", kind, f.tow, tow_tag);
+        return;
+    }
+    std::ofstream o(dir / ("cols_" + tow_tag + ".csv"), std::ios::trunc);
+    o << "week,tow,record,station,kind,sat,signal,n";
+    for (const auto& lbl : sh.labels) o << ",rhs[" << lbl << "],sol[" << lbl << "]";
+    o << '\n';
+    const std::string head = fmt::format("{},{:.3f},", f.week, f.tow);
+    const auto num = [](double v) { return fmt::format("{:.9e}", v); };
+    const auto line = [&](const char* record, const std::string& sta,
+                          const std::string& kname, const std::string& sat,
+                          const std::string& sig, const std::string& nterms,
+                          const Eigen::VectorXd* rhs, const Eigen::VectorXd* sol) {
+        o << head << record << ',' << sta << ',' << kname << ',' << sat << ',' << sig
+          << ',' << nterms;
+        for (std::size_t j = 0; j < sh.labels.size(); ++j) {
+            const bool present = sh.col[j] >= 0;
+            o << ',' << (present && rhs ? num((*rhs)(static_cast<Eigen::Index>(j))) : "")
+              << ',' << (present && sol ? num((*sol)(static_cast<Eigen::Index>(j))) : "");
+        }
+        o << '\n';
+    };
+    {   // COLUMN: the column index and whether the datum pins it.
+        o << head << "COLUMN,,,,,";
+        for (std::size_t j = 0; j < sh.labels.size(); ++j) {
+            if (sh.col[j] >= 0) o << ',' << sh.col[j] << ',' << int(sh.pinned[j]);
+            else                o << ",,";
+        }
+        o << '\n';
+    }
+    const auto part = [&](const NetworkRhsColumnShares::Part& p) {
+        line(p.record.c_str(), p.sta, p.kind, p.sat, p.sig, std::to_string(p.n), &p.rhs,
+             &p.sol);
+    };
+    for (const auto& p : sh.station_kind) part(p);
+    for (const auto& p : sh.station_los)  part(p);
+    for (const auto& p : sh.folds)        part(p);
+    for (const auto& p : sh.kind_total)   part(p);
+    line("TOTAL", "", "", "", "", "", &sh.rhs_sum, &sh.sol_sum);
+    line("FULL", "", "", "", "", "", &sh.b_red, &sh.x_full);
+    line("SOLVE", "", "", "", "", "", nullptr, f.x_s.size() == n ? &sh.x_solve : nullptr);
+    line("CLOSURE_ABS", "", "", "", "", "", &sh.rhs_closure_abs, &sh.sol_closure_abs);
+    line("CLOSURE_REL", "", "", "", "", "", &sh.rhs_closure_rel, &sh.sol_closure_rel);
+
+    // The run log names each column's solution, its closure and the solve check.
+    for (std::size_t j = 0; j < sh.labels.size(); ++j) {
+        const Eigen::Index jj = static_cast<Eigen::Index>(j);
+        if (sh.col[j] < 0) {
+            log->warn("Network (rhs-attrib): [{}] tow {:.1f}: named column '{}' is not a "
+                      "shared column this epoch", kind, f.tow, sh.labels[j]);
+            continue;
+        }
+        log->info("Network (rhs-attrib): [{}] tow {:.1f} {}{}: x {:.6f} (solve {:.6f}), "
+                  "solution-share closure abs {:.3e} rel {:.3e}, rhs closure rel {:.3e}",
+                  kind, f.tow, sh.labels[j], sh.pinned[j] ? " (pinned)" : "",
+                  sh.x_full(jj), sh.x_solve(jj), sh.sol_closure_abs(jj),
+                  sh.sol_closure_rel(jj), sh.rhs_closure_rel(jj));
+    }
 }
 
 void networkRhsAttribution(NetworkRunContext& ctx, const GnssConfig& config_,
@@ -518,7 +831,8 @@ void networkRhsAttribution(NetworkRunContext& ctx, const GnssConfig& config_,
                            NetworkEstimator& est,
                            const NetworkEstimator::Datum& plan_datum,
                            const std::vector<StationAssembly>& asm_res,
-                           const std::vector<int>& est_index_of) {
+                           const std::vector<int>& est_index_of,
+                           const Eigen::VectorXd* x_s) {
     const auto& nc = config_.getNetworkConfig();
     if (nc.rhs_attrib_tow < 0.0) return;
     if (ctx.carry.rhs_attrib_done >= std::max(1, nc.rhs_attrib_n_ep)) return;
@@ -527,8 +841,9 @@ void networkRhsAttribution(NetworkRunContext& ctx, const GnssConfig& config_,
 
     NetworkAttribFrame f;
     networkAttribCaptureFrame(f, se, stations, est, plan_datum, asm_res,
-                              est_index_of, /*own_assemblies=*/false);
-    networkRhsAttribDump(f, log, traces.log_dir_ / "rhs_attrib", "armed");
+                              est_index_of, /*own_assemblies=*/false, x_s);
+    networkRhsAttribDump(f, log, traces.log_dir_ / "rhs_attrib", "armed",
+                         config_.networkRhsAttribColumns());
     ++ctx.counters.pc.rec_dumps;
 }
 
@@ -569,12 +884,14 @@ void networkRhsAttribTrip(NetworkRunContext& ctx, const GnssConfig& config_,
         NetworkAttribFrame now;
         networkAttribCaptureFrame(now, se, stations, est, plan_datum, asm_res,
                                   est_index_of, /*own_assemblies=*/false);
-        networkRhsAttribDump(now, log, dir, ("trip:" + why).c_str());
+        networkRhsAttribDump(now, log, dir, ("trip:" + why).c_str(),
+                             config_.networkRhsAttribColumns());
         ++ctr.rec_dumps;
         if (nc.rhs_attrib_on_trip_prev) {
             if (ctx.carry.rhs_prev_frame && ctx.carry.rhs_prev_frame->valid) {
                 networkRhsAttribDump(*ctx.carry.rhs_prev_frame, log, dir,
-                                     ("trip-prev:" + why).c_str());
+                                     ("trip-prev:" + why).c_str(),
+                                     config_.networkRhsAttribColumns());
                 ++ctr.rec_prev_dumps;
             } else {
                 log->warn("Network (rhs-attrib INC-5): trip '{}' at TOW {:.1f} has NO "

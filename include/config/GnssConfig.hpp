@@ -6884,6 +6884,34 @@ namespace GnssProcessor {
         bool networkSignalRoster() const { return network_signal_roster_; }
 
         /**
+         * @brief The named shared columns of the attribution's solution-share readout
+         *        (@c network.rhs_attrib_columns; card ICF instrument A').
+         *
+         * A list of shared-column labels as `logs/rhs_attrib/vec_<tow>.csv` prints them
+         * ("CLK:G07", "CB:G07:C1W", "PB:G07:L1C").  When it names any, every
+         * attribution dump (the armed @c network.rhs_attrib_tow window and the flight
+         * recorder's trip dumps) also writes `cols_<tow>.csv`: for every (station,
+         * contribution kind), every (station, kind, satellite, signal), every shared fold
+         * kind, the DD folds and the datum pins, the reduced right-hand-side
+         * contribution at each named column and its solution share there under the
+         * solve's own datum, with the kind totals and a closure line per column
+         * (@c networkRhsAttribColumnShares, filter/NetworkRhsAttrib.hpp).  A label that
+         * names no shared column at a dump epoch keeps its slot, empty, and is named in
+         * the log.
+         *
+         * Diagnostics only, the same class as @c network.rhs_attrib_tow: inert without a
+         * dump, never read by the solve, not fingerprinted, so it is legal on a warm
+         * resume.  The loader keeps the string entries of a JSON array, in order and
+         * without duplicates, and refuses anything else with an error (the list then
+         * stays empty).  Network mode only.  Default empty: no `cols_` file.
+         *
+         * @return The labels, in the order the dump writes them.
+         */
+        const std::vector<std::string>& networkRhsAttribColumns() const {
+            return network_rhs_attrib_columns_;
+        }
+
+        /**
          * @brief The arc-level slip tracker reads the roster
          *        (@c network.roster_tracker; card SID phase 2).
          *
@@ -9350,6 +9378,7 @@ namespace GnssProcessor {
         double network_phase_bias_min_station_fraction_{0.0}; ///< Phase-bias coverage gate: a signal below this network coverage keeps its observation but gets no satellite phase-bias state (float ambiguity absorbs it, signal not AR-eligible); the "float, not drop" alternative. 0 = off (every phase signal gets a bias, byte-identical). Network mode only.
         bool   network_phase_bias_exclude_unmatched_antenna_{false}; ///< Exclude a station whose receiver antenna has no ATX model match (zero receiver PCO/PCV → uncalibrated carrier phase) from every satellite phase-bias state; its arc is absorbed by the local float ambiguity (like phase_bias_min_station_fraction, but per-station and all-signals) while it still feeds the satellite clock/code-bias/iono/position. The clock-datum pivot is never excluded (warned instead). Off = every station contributes (byte-identical). Network mode only.
         bool   network_station_marker_to_arp_{false};              ///< Reduce every roster station's configured position_ecef from the monument to the antenna reference point at setup (network.station_marker_to_arp; card UPO), via Coordinates::markerToArp with that station's RINEX `ANTENNA: DELTA H/E/N`: the helper and frame the held-out consumer's truth already uses. The roster is held fixed at a published (monument) coordinate while the observations refer to the antenna and the ATX model is ARP-relative, so the station misfits every range by H·sin(elev); its zenith wet delay absorbs about a quarter of H and the rest leaks into the satellite clocks regionally. A station whose header has no eccentricity record is left unchanged and warned; a zero eccentricity is an exact no-op. Off = byte-identical (eccentricities are read and reported only). Fingerprinted (armed-only append). Network mode only.
+        std::vector<std::string> network_rhs_attrib_columns_;      ///< Named shared columns of the attribution's solution-share readout (network.rhs_attrib_columns; card ICF instrument A'): every attribution dump also writes logs/rhs_attrib/cols_<tow>.csv, each contribution's reduced-RHS load and solution share at these columns. Empty (default) = no cols_ file. Diagnostics only, not fingerprinted. Network mode only.
         bool   network_signal_roster_{false};                      ///< Write the arc ledger's trace (network.signal_roster; card SID phase 1, a trace switch since card NOM step N3a): logs/network_arc_ledger.csv and the ARC event rows of the roster's build and audit. The per-station signal roster, the arc ledger and their disagreement census are built on every network run whatever this says. Trace class. Not fingerprinted. Network mode only.
         bool   network_roster_tracker_{false};                     ///< The arc-level slip tracker (networkComputeRawObservables) names each band by the roster's modelled_phase for that (station, constellation, band) when that phase is reported with its matching code this epoch, falling back to the lexical rule only where the roster names none (network.roster_tracker; card SID phase 2). The first reader of the roster, which is built on every run (card NOM step N3a); supersedes network.cycle_slip.tracker_modeled_first by construction (the roster's modelled role is that knob's latch), and both may be armed. Not fingerprinted. Network mode only.
         bool   network_ledger_reentry_{false};                     ///< The gap re-entry response takes its population from the arc ledger's admitted lifecycle (network.ledger_reentry; card SID phase 3): every arc whose admitted state goes Gap to Reentered this epoch, whose signal the roster calls Modelled, and whose gap is inside phase_leveling_max_gap_s; it looks the raw tiers' verdict up per arc instead of being driven by them. The raw tiers keep running unchanged. An arc no raw tier saw has no verdict and is handled by network.ledger_reentry_no_verdict. Solve-affecting when armed (it changes which carried levels survive a break). Refused (error + disarm) without network.roster_tracker. Fingerprinted (armed-only append). Network mode only.

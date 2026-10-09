@@ -2022,6 +2022,46 @@ namespace GnssProcessor {
                       network_config_.rhs_attrib_tow,
                       std::max(1, network_config_.rhs_attrib_n_ep));
         }
+        // The attribution's named columns (card ICF instrument A'): each dump also writes
+        // cols_<tow>.csv, the solution share of every (station, kind) at these columns.
+        // Same class as rhs_attrib_tow (diagnostics only, not fingerprinted).  The string
+        // entries of an array are kept in order, without duplicates; anything else is
+        // refused by name and the list stays empty, so the knob is inert, never wrong.
+        network_rhs_attrib_columns_.clear();
+        const nlohmann::json* cols = detail::resolvePath(json, "network.rhs_attrib_columns");
+        if (!cols && json.contains("rhs_attrib_columns")) cols = &json["rhs_attrib_columns"];
+        if (cols) {
+            if (!cols->is_array()) {
+                log->error("Network (rhs-attrib, card ICF): network.rhs_attrib_columns must be "
+                           "an array of shared-column labels (e.g. [\"CLK:G07\", "
+                           "\"CB:G07:C1W\"]); ignored.");
+            } else {
+                for (const auto& c : *cols) {
+                    if (!c.is_string() || c.get<std::string>().empty()) {
+                        log->error("Network (rhs-attrib, card ICF): network.rhs_attrib_columns "
+                                   "holds an entry that is not a non-empty string; ignored.");
+                        continue;
+                    }
+                    const std::string lbl = c.get<std::string>();
+                    if (std::find(network_rhs_attrib_columns_.begin(),
+                                  network_rhs_attrib_columns_.end(), lbl)
+                        == network_rhs_attrib_columns_.end())
+                        network_rhs_attrib_columns_.push_back(lbl);
+                }
+            }
+        }
+        if (!network_rhs_attrib_columns_.empty()) {
+            std::string names;
+            for (const auto& c : network_rhs_attrib_columns_)
+                names += (names.empty() ? "" : ", ") + c;
+            log->info("Network: reduced-RHS attribution solution shares at {} named column(s) "
+                      "[{}] (diagnostics-only; logs/rhs_attrib/cols_<tow>.csv at every dump{})",
+                      network_rhs_attrib_columns_.size(), names,
+                      (network_config_.rhs_attrib_tow < 0.0
+                       && !jval<bool>(json, "network.rhs_attrib_on_trip",
+                                      "rhs_attrib_on_trip", false))
+                          ? "; no dump is armed, so nothing is written" : "");
+        }
         // Redundancy / testability census (docs/SPEC_redundancy_census.md).
         // Measure-only and not fingerprinted, the same class as the rhs_attrib block
         // above, so it can be armed on a warm resume against an untraced snapshot.

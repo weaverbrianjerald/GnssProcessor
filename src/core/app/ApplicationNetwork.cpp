@@ -2997,7 +2997,7 @@ int Application::runNetwork() {
                                     datum_changed);
         if (est.attribArmed())
             networkRhsAttribution(ctx, config_, log, traces, se, stations, est,
-                                  plan.shared_datum, asm_res, est_index_of);
+                                  plan.shared_datum, asm_res, est_index_of, &x_s);
         // Flight recorder (INC-5): consumes a trip raised anywhere earlier this epoch
         // (SH-gate engage, clock runaway, a00-band exit; the A4 withhold consumes its own,
         // since that epoch never reaches here), then retains this epoch as the next trip's
