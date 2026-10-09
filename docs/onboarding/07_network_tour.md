@@ -139,6 +139,12 @@ those this posture never uses (they read 0), so an armed family that produces no
 visible. The closing integrity lines (rows without a tag, tags left unset, tags out of place,
 counts that disagree with the builders' own counters, shared folds without a kind) read 0.
 
+Every check that asks what a row is (the post-fit outlier tests, the censuses, the
+residual traces, the right-hand-side attribution) reads the row's tag. The row classifier
+(`include\filter\NetworkRowClassify.hpp`) maps each kind to its class in one table, and
+the outlier pool's admission rule is one declared predicate there, with a counter per kind
+it admits.
+
 All three tables are also written to the run manifest as JSON records (`param_model`,
 `param_inventory`, `contributions`).
 
