@@ -9,10 +9,10 @@
 - **source:** card [RPA](RPA_raim_pool_data_rows_2026-10-08.md) sections 4 and 5 (the event, its numbers and the read-only investigation); card [RF-3](RF-3_code_row_qc_2026-09-22.md) (the gross line-of-sight screen and its maturity horizon); card Q3 (`docs/cards/clock/`, the guarded anchor); card [CTU](CTU_coupling_time_update_2026-09-28.md) (the exact update that lets the clock level move on code); standing invariants 1 and 7
 - **knobs / posture:** the goldens; candidate responses default off, one knob each, named in section 3
 - **dates in the text:** 2026-10-09
-- **hashes / run dirs:** the event runs `runs/_rap_rpa_{off,on}_f6`, `runs/_rap_rpa1_{off,on}_f2`
+- **hashes / run dirs:** the event runs `runs/_rap_rpa_{off,on}_f6`, `runs/_rap_rpa1_{off,on}_f2`; gate A `runs/_rap_icfa_{off,on}_f2`
 - **gates (frozen at pre-registration):** section 4
 
-**Outcome.** Pre-registered; no result yet.
+**Outcome.** Pre-registered. Gate A, first read (section 5): the right-hand-side dump cannot decide between the readings (its row class lumps the three carried-prior kinds, and a right-hand-side share is not a solution share); the per-row dump at BSHM00ISR shows the line-of-sight carry holding most of the tension, with the station-level carry taking part, and the existing refloat of that carry halting the runaway. The instrument is extended (kinds per row, solution share at named columns) before any response is built.
 
 ## 1. What is known (card RPA section 5, read-only)
 
@@ -47,3 +47,22 @@ Which state carries the fault into the shared clock, and which response, at whic
 Arming is the author's decision.
 
 <!-- Results are appended below this line under dated headings. -->
+
+## 5. 2026-10-09: gate A, first read (not decisive; the instrument is extended)
+
+Runs `runs/_rap_icfa_{off,on}_f2`: the 2 h field golden with `network.rhs_attrib_tow` 259500 and `rhs_attrib_n_ep` 4 (dumps at 259500, 259530, 259560, 259590), without and with card RPA's knob, exe `gnss_processor_icfa.exe` (main `3c097ca`, SHA256 `9581055644bdd0ec...`). `products.txt` is byte-identical to `runs/_rap_rpa1_{off,on}_f2` on both arms, so the event is the one card RPA measured; the attribution closes at 9e-12 to 6e-11 on every dump.
+
+**What the dump can say.** The class totals of the reduced right-hand side at `CLK:G07` are sums of order 1e6 that cancel (at 259590 on the off arm: coupling and carried-prior rows +2.74e6, observation phase -2.59e6, observation code -1.26e5, the dense border carry -7.8e5, the reduced total -9.24e5), and the two arms differ by less than 0.3 % in every class. The dump groups rows by the row classifier's class, and the class `cpl_row` holds the six carried-prior block kinds together (ambiguity, ionosphere and receiver code bias), which are exactly the two readings; the per-station split is written only at the C00 columns, which do not exist on this posture. A right-hand-side share is also not a solution share: the clock moves by `N^-1 b`. Gate A as frozen cannot decide between R-a and R-b.
+
+**What the per-row dump shows at BSHM00ISR, G07** (prefit `y`, whitened rows have unit weight):
+
+| row | off 259500 | off 259590 | on 259500 | on 259590 |
+| --- | --- | --- | --- | --- |
+| code C1C (weight 4.7, sigma 0.46 m) | 102 m | 207 m | 102 m | 207 m |
+| phase L1C | 0 | 37 m | 106 m | 211 m |
+| carried-prior row of the G07 line of sight | -8.6 | 308 | 134 | 453 |
+| carried-prior rows with no satellite (station-level) | -5.4, -2.1 | -32.7, -2.1 | -69.7, 0.5 | -175.5, -0.8 |
+
+The faulty code row's prefit residual doubles over the window on both arms. On the off arm the isolated-arc refloat at 259470 erased the line of sight's carry (its row reads -8.6 at 259500, the phase residual 0), the carry builds back to 308 by 259590, and the refloat fires again. On the on arm nothing erases it: the line-of-sight carry row reaches 453 and the station-level rows reach -176. Both carries hold tension; the line-of-sight carry holds more, and erasing it is what halts the runaway on the golden. This leans to R-a with R-b taking part, and does not meet gate A's bar (a share of the clock column by kind).
+
+**Instrument extension A' (diagnostic only, the solve byte-identical; built before any response).** (1) The row dump writes each row's contribution kind (card NOM2's N2a tag) beside its class. (2) A knob `network.rhs_attrib_columns` (a list of border labels, e.g. `CLK:G07`) writes, for every (station, kind) pair, the right-hand-side contribution at each named column and its solution share `(N_red^-1 b)` at that column under the solve's own datum, with the closure of the shares against the solved increment. Gate A then reads the solution share of `CLK:G07` by (station, kind) at the four epochs on both arms and names the conduit: R-a if BSHM00ISR's line-of-sight carry kinds dominate the increment, R-b if its receiver code-bias carry does.
