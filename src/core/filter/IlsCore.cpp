@@ -462,5 +462,86 @@ IlsResult ilsFix(const Eigen::VectorXd& a_hat_cycles,
     return res;
 }
 
+// ===========================================================================
+// Partial fix in the decorrelated space (card ARL)
+// ===========================================================================
+
+IlsResult ilsFixDecorrelatedPartial(const Eigen::VectorXd& a_hat_cycles,
+                                    const Eigen::MatrixXd& Q_cycles,
+                                    const IlsGateConfig& gates,
+                                    double determined_sigma_cyc) {
+    IlsResult res;
+    const int n = static_cast<int>(a_hat_cycles.size());
+    res.z_total = n;
+    if (n <= 0) { res.full_fail = IlsFailReason::MlambdaFailed; return res; }
+
+    Eigen::MatrixXd L, Z;
+    Eigen::VectorXd d;
+    if (!ldlDecompose(Q_cycles, L, d)) { res.full_fail = IlsFailReason::MlambdaFailed; return res; }
+    reduction(L, d, Z);
+    const Eigen::VectorXd z_hat = Z.transpose() * a_hat_cycles;
+    res.full_p_succ = computeBootstrapSuccessRate(d);
+
+    // The largest trailing set (the components the search fixes first) whose
+    // bootstrap success rate clears the bar.
+    int m = 0;
+    double p_tail = 1.0;
+    constexpr double kInv2Sqrt2 = 0.353553390593273762200422181052424519;  // 1/(2√2)
+    for (int i = n - 1; i >= 0; --i) {
+        if (!(d(i) > 0.0)) break;
+        const double p_next = p_tail * std::erf(kInv2Sqrt2 / std::sqrt(d(i)));
+        if (p_next < gates.min_success_rate) break;
+        p_tail = p_next;
+        ++m;
+    }
+    if (m == 0) { res.full_fail = IlsFailReason::Bootstrap; return res; }
+
+    // Search the trailing set; on a failed ratio test drop its least precise
+    // (leading) component and search again.
+    Eigen::VectorXd z_fix_t;
+    for (; m >= 1; --m) {
+        const int s0 = n - m;
+        const Eigen::MatrixXd L_t = L.bottomRightCorner(m, m);
+        const Eigen::VectorXd d_t = d.tail(m);
+        Eigen::MatrixXd zn;
+        Eigen::VectorXd sq;
+        if (search(L_t, d_t, z_hat.segment(s0, m), zn, sq, 2) < 2) continue;
+        if (!(sq(0) > 0.0 && sq(1) > 0.0)) continue;
+        const double ratio = sq(1) / sq(0);
+        if (res.full_ratio == 0.0) { res.full_ratio = ratio; res.full_s1 = sq(0); res.full_s2 = sq(1); }
+        if (ratio < gates.ratio_threshold || ratio > gates.ratio_upper_bound) continue;
+        z_fix_t = zn.col(0);
+        res.ratio = ratio;
+        res.p_succ = computeBootstrapSuccessRate(d_t);
+        break;
+    }
+    if (m < 1 || z_fix_t.size() != m) { res.full_fail = IlsFailReason::RatioLow; return res; }
+    res.z_fixed = m;
+
+    // Condition the floats on the fixed components.
+    const Eigen::MatrixXd Z_t = Z.rightCols(m);
+    const Eigen::MatrixXd Q_az = Q_cycles * Z_t;                  // n x m
+    const Eigen::MatrixXd Q_zz = Z_t.transpose() * Q_az;          // m x m
+    const Eigen::LDLT<Eigen::MatrixXd> Q_zz_f(Q_zz);
+    if (Q_zz_f.info() != Eigen::Success) { res.full_fail = IlsFailReason::MlambdaFailed; return res; }
+    const Eigen::VectorXd a_c = a_hat_cycles - Q_az * Q_zz_f.solve(z_hat.tail(m) - z_fix_t);
+    const Eigen::MatrixXd K = Q_zz_f.solve(Q_az.transpose());     // m x n
+    std::vector<double> afix;
+    for (int i = 0; i < n; ++i) {
+        const double var_c = Q_cycles(i, i) - Q_az.row(i).dot(K.col(i));
+        const double sig_c = std::sqrt(std::max(0.0, var_c));
+        const double frac = std::abs(a_c(i) - std::round(a_c(i)));
+        if (sig_c <= determined_sigma_cyc && frac <= gates.nl_max_per_pair_frac) {
+            res.kept.push_back(i);
+            afix.push_back(std::round(a_c(i)));
+            res.max_frac = std::max(res.max_frac, frac);
+        }
+    }
+    res.afix = Eigen::Map<const Eigen::VectorXd>(afix.data(), static_cast<Eigen::Index>(afix.size()));
+    res.ok = !res.kept.empty();
+    res.partial = static_cast<int>(res.kept.size()) < n;
+    return res;
+}
+
 } // namespace ils
 } // namespace GnssProcessor

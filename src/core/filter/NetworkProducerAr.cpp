@@ -280,7 +280,14 @@ void networkProducerAr(NetworkRunContext& ctx,
                 gates.nl_max_per_pair_frac = netar.nl_max_per_pair_frac;
                 gates.enable_partial_ar    = netar.enable_partial_ar;
                 ils::IlsResult fix;
-                try { fix = ils::ilsFix(y_fix, Q_fix, gates); }
+                try {
+                    // Card ARL: the decorrelated-space partial fix reports the
+                    // single-signal DDs its fixed combinations determine.
+                    fix = netar.decorrelated_partial
+                        ? ils::ilsFixDecorrelatedPartial(y_fix, Q_fix, gates,
+                                                         netar.decorrelated_determined_sigma_cyc)
+                        : ils::ilsFix(y_fix, Q_fix, gates);
+                }
                 catch (...) { fix = ils::IlsResult(); }
                 // Median DD formal σ (cycles) is the convergence gauge: as the
                 // network float tightens toward cm it drops and the DDs become
@@ -309,13 +316,16 @@ void networkProducerAr(NetworkRunContext& ctx,
                 log->info("Network AR (Phase 2, log-only): TOW {:.1f} — {} DD / {} undiff-amb / "
                           "{} (const,signal); fixed {}{} of {} searched{} (ratio {:.2f}, "
                           "p_succ {:.4f}, med_DD_sigma {:.4f} cyc, med_DD_frac {:.3f}, "
-                          "near_int {}/{}), cov {}",
+                          "near_int {}/{}), cov {}{}",
                           se.time.tow, nd, static_cast<int>(reqs.size()), n_const_signal,
                           fix.ok ? static_cast<int>(fix.kept.size()) : 0,
                           fix.partial ? " partial" : "", nd_fix,
                           nd_fix < nd ? " (ILS-capped)" : "", fix.ratio, fix.p_succ,
                           med_sig, med_frac, n_near, nd,
-                          ar_carry_aware ? "CARRY-AWARE" : "carry-blind");
+                          ar_carry_aware ? "CARRY-AWARE" : "carry-blind",
+                          netar.decorrelated_partial
+                              ? fmt::format(", decorrelated {} of {} fixed", fix.z_fixed, fix.z_total)
+                              : std::string());
                 // --- Run-end tallies (invariant #4): the log line above is per-epoch;
                 //     the tallies give the run a denominator, so an armed but inert
                 //     search is distinguishable from a quiet one. ---------------------

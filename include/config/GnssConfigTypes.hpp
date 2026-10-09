@@ -901,6 +901,14 @@ namespace GnssProcessor {
         double nl_max_per_pair_frac{ 0.10 };  ///< Max per-DD |float − fixed| (cycles).
         bool   enable_partial_ar{ true };     ///< Fix the decisively-fixable subset; leave the rest float.
         bool   wl_cascade{ false };           ///< WL->NL cascade (needs per-station MW aggregation; off in V1).
+        /// Card ARL: fix in the decorrelated space (ils::ilsFixDecorrelatedPartial) instead of
+        /// the entry-by-entry partial fix: the trailing decorrelated components whose bootstrap
+        /// success rate clears min_success_rate are searched, and a single-signal DD is reported
+        /// fixed when the fixed components determine it.  Off (default) = the existing search.
+        bool   decorrelated_partial{ false };
+        /// Conditional sigma (cycles) at or below which a single-signal DD counts as determined
+        /// by the fixed decorrelated components (decorrelated_partial only).
+        double decorrelated_determined_sigma_cyc{ 0.05 };
         int    min_epochs{ 10 };              ///< Let the network float converge before fixing.
         int    ils_max_dim{ 0 };              ///< Cap on the ILS (MLAMBDA) search dimension: when > 0, only the
                                               ///< @c ils_max_dim lowest-formal-σ DDs enter the integer search

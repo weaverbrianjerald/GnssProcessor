@@ -517,6 +517,7 @@ add_executable(gnss_tests
     tests/test_sbf.cpp
     tests/test_estimation_core.cpp
     tests/test_ils_core.cpp
+    tests/test_ils_decorrelated_partial.cpp
     tests/test_wl_only_ffr.cpp
     tests/test_nl_search_row.cpp
     tests/test_signal_math.cpp

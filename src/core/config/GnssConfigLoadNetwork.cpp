@@ -1153,6 +1153,15 @@ namespace GnssProcessor {
                                               "network_ar_enable_partial_ar", true);
             ar.wl_cascade = jval<bool>(json, "network.ambiguity_resolution.wl_cascade",
                                        "network_ar_wl_cascade", false);
+            // Card ARL: partial fix in the decorrelated space (default off).
+            ar.decorrelated_partial = jval<bool>(json, "network.ambiguity_resolution.decorrelated_partial",
+                                                 "network_ar_decorrelated_partial", false);
+            ar.decorrelated_determined_sigma_cyc =
+                jval<double>(json, "network.ambiguity_resolution.decorrelated_determined_sigma_cyc",
+                             "network_ar_decorrelated_determined_sigma_cyc", 0.05);
+            if (!(std::isfinite(ar.decorrelated_determined_sigma_cyc)
+                  && ar.decorrelated_determined_sigma_cyc > 0.0))
+                ar.decorrelated_determined_sigma_cyc = 0.05;
             ar.min_epochs = jval<int>(json, "network.ambiguity_resolution.min_epochs",
                                       "network_ar_min_epochs", 10);
             // Cap on the MLAMBDA search dimension (0 = uncapped legacy).  Required at

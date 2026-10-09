@@ -162,6 +162,10 @@ struct IlsResult {
     double full_max_frac = 0.0;     ///< Full-set worst |float − fixed| (0 if not reached).
     int    full_worst_idx = -1;     ///< Index of the worst-fractional entry (-1 if not reached).
     IlsFailReason full_fail = IlsFailReason::None;  ///< Why the full set failed (None if it passed).
+
+    // Decorrelated partial fix (@ref ilsFixDecorrelatedPartial only; 0 elsewhere).
+    int    z_fixed = 0;             ///< Decorrelated components fixed (0 = none accepted).
+    int    z_total = 0;             ///< Decorrelated components available (the input dimension).
 };
 
 struct PartialFix {
@@ -213,6 +217,46 @@ PartialFix selectFixableSubset(const Eigen::VectorXd& y_cycles,
 IlsResult ilsFix(const Eigen::VectorXd& a_hat_cycles,
                  const Eigen::MatrixXd& Q_cycles,
                  const IlsGateConfig& gates);
+
+/**
+ * @brief Partial fix in the decorrelated space, then the single-signal integers it determines.
+ *
+ * Card ARL (the integer-ambiguity ladder).  With a free slant ionosphere the
+ * uncombined L1/L2 double differences are each imprecise (about 0.3 cycle) while
+ * combinations of a pair (the wide lane, the ionosphere-free part) are precise, so
+ * a subset chosen entry by entry (@ref selectFixableSubset) finds nothing and the
+ * per-entry fraction cap rejects correct fixes.  This routine works on the
+ * decorrelated ambiguities instead:
+ *
+ *  1. Q = Lᵀ·D·L and the MLAMBDA reduction give z = Zᵀ·a with conditional
+ *     variances d.  The search fixes z from the last component down, so the
+ *     trailing components are fixed first.
+ *  2. The largest trailing set whose bootstrap success rate Π erf(1/(2√(2 d_i)))
+ *     is at least @c gates.min_success_rate is searched (its covariance is the
+ *     trailing block of Lᵀ·D·L, i.e. the trailing L and d).  If its ratio test
+ *     fails, the set is shrunk by one component and searched again.
+ *  3. The floats are conditioned on the fixed components:
+ *     ǎ = â − Q_az·Q_zz⁻¹·(ẑ − ž),  Q_ǎ = Q − Q_az·Q_zz⁻¹·Q_za.
+ *  4. An input entry is reported fixed (in @c kept, with @c afix its integer)
+ *     when its conditional sigma is at most @p determined_sigma_cyc and its
+ *     conditional value lies within @c gates.nl_max_per_pair_frac of an integer:
+ *     the fixed combinations determine that single-signal ambiguity.
+ *
+ * @c z_fixed / @c z_total report the decorrelated fix; @c ok is true when at
+ * least one single-signal ambiguity is determined.  Pure: no logging, no state.
+ *
+ * @param a_hat_cycles         Float ambiguity vector (cycles).
+ * @param Q_cycles             Covariance (cycles²); symmetric PD.
+ * @param gates                min_success_rate, ratio_threshold, ratio_upper_bound and
+ *                             nl_max_per_pair_frac are used; enable_partial_ar is not.
+ * @param determined_sigma_cyc Conditional sigma (cycles) at or below which a
+ *                             single-signal ambiguity counts as determined.
+ * @return IlsResult (see above).
+ */
+IlsResult ilsFixDecorrelatedPartial(const Eigen::VectorXd& a_hat_cycles,
+                                    const Eigen::MatrixXd& Q_cycles,
+                                    const IlsGateConfig& gates,
+                                    double determined_sigma_cyc);
 
 } // namespace ils
 } // namespace GnssProcessor
