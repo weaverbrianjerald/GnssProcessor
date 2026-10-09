@@ -405,6 +405,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.gl_emit_exclude  = k.gl_on && config_.getNetworkConfig().gross_los_emit_exclude;
     k.gl_station_tier  = k.gl_on && config_.getNetworkConfig().gross_los_station_tier;
     k.raim_ci_refloat = k.raim_ci_on && config_.networkRaimCarryInvariantRefloat();
+    // Card RPA: the RAIM pools restricted to observation phase rows.  ANDed with raim_on
+    // (the loader already guarantees it), so both pool walks and the run-end lines read
+    // one bool.  Not appended to the snapshot fingerprint below: a QC knob, like raim_*.
+    k.raim_pool_data_rows_only = k.raim_on && config_.networkRaimPoolDataRowsOnly();
     k.eq34_rpb_prior_sigma = config_.networkPhaseDatumEq34RpbPriorSigmaM();
     k.eq34_rpb_prior_w = (k.phase_datum_eq34 && k.eq34_rpb_prior_sigma > 0.0) ? 1.0 / (k.eq34_rpb_prior_sigma * k.eq34_rpb_prior_sigma) : 0.0;
     k.eq34_rpb_q = (k.phase_datum_eq34 && !k.carry_invariant) ? config_.networkPhaseDatumEq34RpbQ() : 0.0;

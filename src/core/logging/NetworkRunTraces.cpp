@@ -2273,6 +2273,11 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"raim_redundancy_normalize\":" << (raim_redun ? "true" : "false") << ','
                << "\"raim_attribution\":" << (config_.networkRaimAttribution() ? "true" : "false") << ','
                << "\"raim_within_epoch\":" << (config_.networkRaimWithinEpoch() ? "true" : "false") << ','
+               // The RAIM pools restricted to observation phase rows (card RPA): it moves
+               // refloat decisions, so a grader must be able to tell the arms apart.
+               // Emitted only when armed, so an unarmed run's manifest bytes are unchanged.
+               << (config_.networkRaimPoolDataRowsOnly()
+                       ? std::string("\"raim_pool_data_rows_only\":true,") : std::string())
                << "\"clock_monitor\":" << (clk_mon_on ? "true" : "false") << ','
                << fmt::format("\"clock_monitor_abs_max_m\":{},", clk_mon_abs)
                << fmt::format("\"clock_monitor_jump_max_m\":{},", clk_mon_jump)

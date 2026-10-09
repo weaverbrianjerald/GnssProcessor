@@ -289,19 +289,41 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // counted per kind (ctx.counters.raim_pool_postfit), and a row of any other kind
         // that clears 0.5 is refused and counted (0 expected).  The ZWD, ionosphere and
         // receiver-clock block rows keep their own run-end counts, now read from the tag.
+        //
+        // Card RPA (network.raim_pool_data_rows_only, raimPoolAdmitsRow): with the knob on,
+        // a row enters a column's pool only when it is an observation phase row whose tag
+        // names the column's satellite and signal, so the carried-prior and SD-EWL rows are
+        // refused (and counted as refused), and every rider below (the MDB feed, the data
+        // side of the global σ̂₀, the station factor, the redundancy census) sees the
+        // observation rows only.  The walk then visits every row of the block, so each phase
+        // row's own column can be checked against the column its coefficient clears
+        // (noteOwnColumn, 0 disagreements expected).  Off, the walk and the rule are
+        // today's, unchanged.
         auto& pool_tally = ctx.counters.raim_pool_postfit;
+        const bool data_rows_only = ctx.knobs.raim_pool_data_rows_only;
         std::vector<char> pool_row_seen(static_cast<std::size_t>(R.A_r.rows()), 0);
         for (const auto& pa : pool) {
             if (pa.col < 0 || pa.col >= R.A_r.cols()) continue;
+            // The column's subject (its satellite and signal), read with the knob on only.
+            const RowTag pa_subject =
+                data_rows_only ? raimPoolColumnSubject(pa.sat, pa.signal) : RowTag{};
             double r_max = 0.0;
             for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
-                if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;  // no coefficient on this ambiguity
-                const ContributionKind row_kind = rowTagAt(R, row).kind;
-                const bool admitted = raimPoolAdmitsKind(row_kind);
+                const bool clears = std::abs(R.A_r(row, pa.col)) > 0.5;
+                if (!clears && !data_rows_only) continue;  // no coefficient on this ambiguity
+                const RowTag& row_tag = rowTagAt(R, row);
+                const ContributionKind row_kind = row_tag.kind;
+                const bool admitted =
+                    raimPoolAdmitsRow(row_tag, clears, pa_subject, data_rows_only);
+                if (data_rows_only) {
+                    // For a phase row, admitted is "its tag names this column".
+                    pool_tally.noteOwnColumn(row_kind, clears, admitted);
+                    if (!clears && !admitted) continue;   // not a visit of this column
+                }
                 const bool first = admitted && !pool_row_seen[static_cast<std::size_t>(row)];
                 if (first) pool_row_seen[static_cast<std::size_t>(row)] = 1;
                 pool_tally.note(row_kind, admitted, first);
-                if (!admitted) continue;   // a kind the rule does not admit (0 expected)
+                if (!admitted) continue;   // a kind the rule does not admit (0 expected when off)
                 if (first) {   // the block rows' own run-end counts (once per row and walk)
                     if (row_kind == ContributionKind::BlockZwdCarry)
                         ++ctx.counters.n_raim_pool_zwd_rows;
@@ -1384,6 +1406,19 @@ std::string RaimPoolAdmissionTally::text() const {
     }
     return fmt::format("walks {}; admitted: {}; refused by kind: {}", walks,
                        adm.empty() ? "none" : adm, ref.empty() ? "none" : ref);
+}
+
+void RaimPoolAdmissionTally::noteOwnColumn(ContributionKind k, bool clears, bool names) {
+    if (!isPhaseObservationKind(k)) return;
+    if (clears && names)       ++own_col_agree;
+    else if (clears)           ++own_col_cleared_other;
+    else if (names)            ++own_col_not_cleared;
+}
+
+std::string RaimPoolAdmissionTally::ownColumnText() const {
+    return fmt::format("own column: tag and coefficient agree {}, coefficient > 0.5 on "
+                       "another column {}, tag's column at or below 0.5 {}",
+                       own_col_agree, own_col_cleared_other, own_col_not_cleared);
 }
 
 } // namespace GnssProcessor

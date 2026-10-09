@@ -6872,6 +6872,13 @@ namespace GnssProcessor {
         network_raim_carry_invariant_refloat_ =
             jval<bool>(json, "network.raim_carry_invariant_refloat",
                        "network_raim_carry_invariant_refloat", false);
+        // The carried-phase RAIM pools restricted to observation phase rows (card RPA).
+        // Parsed with the RAIM family; its interlock (network.raim) is checked after the
+        // RAIM auto-couplings and the service profile, in validateNetworkCarryPosture_.
+        // A QC knob: not in the warm-resume fingerprint, as for the other raim_* knobs.
+        network_raim_pool_data_rows_only_ =
+            jval<bool>(json, "network.raim_pool_data_rows_only",
+                       "network_raim_pool_data_rows_only", false);
         network_raim_within_epoch_ =
             jval<bool>(json, "network.raim_within_epoch", "network_raim_within_epoch", false);
         network_raim_sigma0_trigger_ =
@@ -13189,6 +13196,21 @@ namespace GnssProcessor {
                       "leaves the reduced RHS algebraically unchanged).  DISABLED.");
             network_raim_carry_invariant_refloat_ = false;
         }
+        // Card RPA: the pool restriction acts inside the RAIM pools, so without
+        // network.raim (after its auto-couplings and the service profile, both above) it
+        // has nothing to act on.  Disabled rather than left to read as armed (invariant #4).
+        if (network_raim_pool_data_rows_only_ && !network_raim_) {
+            log->warn("Network (RAIM pool, card RPA): network.raim_pool_data_rows_only is on "
+                      "but network.raim is OFF: there is no RAIM pool to restrict.  DISABLED.");
+            network_raim_pool_data_rows_only_ = false;
+        }
+        if (network_raim_pool_data_rows_only_)
+            log->info("Network (RAIM pool, card RPA): network.raim_pool_data_rows_only ON: the "
+                      "post-fit and within-epoch RAIM pools admit the observation phase rows "
+                      "only (data_phase, data_phase_second), each to the pool of the ambiguity "
+                      "column its tag names; the carried-prior and SD-EWL rows are refused.  "
+                      "Solve-affecting (T3/T4 and the within-epoch adaptation read observation "
+                      "residuals only); fingerprint-safe.");
         if (network_raim_carry_invariant_ && network_raim_withhold_sigma0_ > 0.0)
             log->warn("Network (RAIM pool re-host): the re-host makes σ̂0 REAL on this lineage "
                       "for the first time (with the pool empty it never left its 1.0 "

@@ -1591,7 +1591,10 @@ if (within_epoch_armed && carry_warm) {
     // ambiguity column when its coefficient on the column exceeds 0.5 and it is an
     // observation phase row, a coupling or whitened block carried-prior row or an SD-EWL
     // constraint row, once per column it clears.  Counted per kind over every assess call
-    // (ctx.counters.raim_pool_within).
+    // (ctx.counters.raim_pool_within).  Card RPA (network.raim_pool_data_rows_only,
+    // raimPoolAdmitsRow): with the knob on, the observation phase rows only, each to the
+    // pool of the column its tag names, with the post-fit pool's own-column check.
+    const bool we_data_rows_only = ctx.knobs.raim_pool_data_rows_only;
     auto assess = [&](const Eigen::VectorXd& xs, double& sigma0_out,
                       std::map<std::string, double>& sat_eff,
                       std::map<int, double>& sta_eff,
@@ -1629,16 +1632,28 @@ if (within_epoch_armed && carry_warm) {
             std::vector<char> pool_row_seen(static_cast<std::size_t>(R.A_r.rows()), 0);
             for (const auto& pa : R.pl_amb) {
                 if (pa.col < 0 || pa.col >= R.A_r.cols()) continue;
+                // Card RPA: the column's subject, read with the knob on only.
+                const RowTag pa_subject = we_data_rows_only
+                                              ? raimPoolColumnSubject(pa.sat, pa.signal)
+                                              : RowTag{};
                 double r_max = 0.0;
                 for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
-                    if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;
-                    const ContributionKind row_kind = rowTagAt(R, row).kind;
-                    const bool admitted = raimPoolAdmitsKind(row_kind);
+                    const bool clears = std::abs(R.A_r(row, pa.col)) > 0.5;
+                    if (!clears && !we_data_rows_only) continue;
+                    const RowTag& row_tag = rowTagAt(R, row);
+                    const ContributionKind row_kind = row_tag.kind;
+                    const bool admitted =
+                        raimPoolAdmitsRow(row_tag, clears, pa_subject, we_data_rows_only);
+                    if (we_data_rows_only) {
+                        // For a phase row, admitted is "its tag names this column".
+                        pool_tally.noteOwnColumn(row_kind, clears, admitted);
+                        if (!clears && !admitted) continue;   // not a visit of this column
+                    }
                     const bool first =
                         admitted && !pool_row_seen[static_cast<std::size_t>(row)];
                     if (first) pool_row_seen[static_cast<std::size_t>(row)] = 1;
                     pool_tally.note(row_kind, admitted, first);
-                    if (!admitted) continue;   // a kind the rule does not admit (0 expected)
+                    if (!admitted) continue;   // a kind the rule does not admit (0 expected when off)
                     const double w = (row < R.w.size()) ? R.w(row) : 1.0;
                     double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
                     if (raim_redun && row < row_r.size()) {   // standardize v/(σ·√r_i) (B2)

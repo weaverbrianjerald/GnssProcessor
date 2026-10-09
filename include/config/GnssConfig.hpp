@@ -7128,6 +7128,42 @@ namespace GnssProcessor {
         bool networkRaimCarryInvariantRefloat() const { return network_raim_carry_invariant_refloat_; }
 
         /**
+         * @brief Restrict the carried-phase RAIM pools to observation phase rows
+         *        (@c network.raim_pool_data_rows_only; card RPA,
+         *        docs/refound/RPA_raim_pool_data_rows_2026-10-08.md).
+         *
+         * Both pools (the post-fit pass, filter/NetworkRaim.cpp, and the within-epoch
+         * assess, filter/NetworkSolveGlue.cpp) walk the rows of a station block once per
+         * carried ambiguity column.  Off, a row enters a column's pool when its
+         * coefficient on the column exceeds 0.5 and its kind is one the declared rule
+         * admits (@c raimPoolAdmitsKind, filter/NetworkRowClassify.hpp): the observation
+         * phase rows, the coupling and whitened block carried-prior rows and the SD-EWL
+         * rows.  On the float vehicle about 90 % of the pool's samples are then
+         * carried-prior rows, and they decide most T4 isolated-arc refloats (card NOM
+         * section 16).
+         *
+         * On, a row enters a column's pool only when it is an observation phase row
+         * (@c data_phase, @c data_phase_second) whose tag names the column's satellite
+         * and signal; the carried-prior and SD-EWL rows enter no pool.  The σ̂0 pool, the
+         * per-satellite consensus (T3), the median-polish attribution (T4) and the
+         * within-epoch adaptation then read observation residuals only, as do the
+         * measure-only riders on the post-fit walk (the MDB feed, the data side of the
+         * constraint-aware global σ̂0, the station factor and the redundancy census).  The
+         * prior side of the prior-residual census is fed elsewhere and is unchanged.  The
+         * run-end admission lines count the refused kinds and cross-check, per phase row,
+         * that the column its tag names is the column on which its coefficient exceeds
+         * 0.5 (0 disagreements expected).
+         *
+         * A QC knob: it moves refloat decisions, not the state layout, so it is not in
+         * the warm-resume fingerprint (as for the other RAIM knobs).  It changes the
+         * solve from the first refloat it moves.  Requires @ref networkRaim (the loader
+         * disables it otherwise).  Off = today's rule, byte-identical.
+         *
+         * @return True when the pools admit observation phase rows only.
+         */
+        bool networkRaimPoolDataRowsOnly() const { return network_raim_pool_data_rows_only_; }
+
+        /**
          * @brief Whether a "so bad" epoch triggers within-epoch adaptation
          *        (@c network.raim_within_epoch).
          *
@@ -9317,6 +9353,7 @@ namespace GnssProcessor {
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; off = consensus behaviour.
         bool   network_raim_carry_invariant_{false};         ///< Run the post-fit RAIM screen on the card-4 invariant-carry lineage (pool re-host, measure-only) by building the carry-neutral `qc_amb` census and widening the seam's call-site gate. Otherwise post-fit RAIM is structurally inert under carry_invariant: the seam is not called (carry_warm needs phase_leveling) and its pool `pl_amb` is never filled (its fill site is under `!carry_invariant`). Not emission-neutral: filling the pool makes σ̂0 real, which feeds the A4 withhold and the URA EWMA. Requires network_carry_invariant_ + network_raim_. Off = byte-identical.
         bool   network_raim_carry_invariant_refloat_{false}; ///< The actuator for the above: queue a re-hosted RAIM flag into `raim_refloat_pending`, drained at the next epoch's head into the C3c slip funnel `carry_slipped_ambs` (not the raw subset). Deferred because RAIM detects post-solve at SB_RAIM while the funnel is consumed at SB_DDBUILD, the same deferral the D5 innovation gate and the dw-release edge use. The seam's two legacy actions (local_carry.erase, pending-reseed mark) cannot move the card-4 solve. Requires network_raim_carry_invariant_. Off = measure + count only.
+        bool   network_raim_pool_data_rows_only_{false};     ///< Card RPA: the carried-phase RAIM pools (post-fit and within-epoch) admit the observation phase rows only, each to the pool of the ambiguity column its tag names; the carried-prior and SD-EWL rows are refused. Requires network_raim_ (loader disables it otherwise). Off = today's declared rule (byte-identical). QC knob: fingerprint-safe.
         bool   network_raim_within_epoch_{false}; ///< Arm within-epoch adaptation (detect→drop-culprit→re-solve) when σ̂0 exceeds the trigger; off = emit the first solve (byte-identical).
         double network_raim_sigma0_trigger_{3.0}; ///< σ̂0 above which an epoch is "so bad" that within-epoch adaptation fires.
         double network_raim_withhold_sigma0_{0.0}; ///< Within-epoch escape-hatch ceiling (A4): if σ̂0 still exceeds this after the 5-pass adaptation, the epoch is withheld (reusing the observability-gate disposition) instead of emitted with a warning; 0 = off (emit anyway). Used only when @ref networkRaimWithinEpoch. Typically ~2× @ref networkRaimSigma0Trigger.

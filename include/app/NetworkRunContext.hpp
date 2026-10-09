@@ -591,6 +591,14 @@ namespace GnssProcessor {
         /// drained into the C3c funnel at the next epoch's head.  ANDed with `raim_ci_on`;
         /// false = the screen measures and counts but queues nothing.
         bool raim_ci_refloat{};
+        /// The carried-phase RAIM pools admit observation phase rows only, each to the
+        /// pool of the ambiguity column its tag names (@c network.raim_pool_data_rows_only,
+        /// card RPA).  Read by both pool walks (the post-fit pass in filter/NetworkRaim.cpp
+        /// and the within-epoch assess in filter/NetworkSolveGlue.cpp) through
+        /// @c raimPoolAdmitsRow, and by the run-end admission lines.  The loader guarantees
+        /// @c network.raim.  Off = today's declared rule (byte-identical).  Not
+        /// fingerprinted (a QC knob).
+        bool raim_pool_data_rows_only{};
         /// The gross line-of-sight screen is armed for this run (card GL,
         /// docs/SPEC_event_harness.md §24.18).  Resolved once from
         /// @c network.gross_los_screen so the driver, the assembly, the seam and the

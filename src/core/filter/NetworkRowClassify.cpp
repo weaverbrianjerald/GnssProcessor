@@ -148,4 +148,19 @@ bool raimPoolAdmitsKind(ContributionKind k) {
            || k == ContributionKind::SdEwl;
 }
 
+RowTag raimPoolColumnSubject(std::string_view sat, std::string_view signal) {
+    return makeRowTag(ContributionKind::DataPhase, sat, signal);
+}
+
+bool rowTagNamesColumn(const RowTag& row, const RowTag& column) {
+    return column.sat.valid() && column.signal.sys != System::Unknown
+           && row.sat == column.sat && row.signal == column.signal;
+}
+
+bool raimPoolAdmitsRow(const RowTag& row, bool clears, const RowTag& column,
+                       bool data_rows_only) {
+    if (!data_rows_only) return clears && raimPoolAdmitsKind(row.kind);
+    return isPhaseObservationKind(row.kind) && rowTagNamesColumn(row, column);
+}
+
 } // namespace GnssProcessor

@@ -59,10 +59,16 @@
  * prior rows are in it on purpose until the science card RPA decides otherwise.  Every
  * admission is counted per kind (@c RaimPoolAdmissionTally, filter/NetworkRaim.hpp), and a
  * row of any other kind that clears 0.5 is counted as refused (expected 0).
+ *
+ * Card RPA's knob (@c network.raim_pool_data_rows_only, default off) replaces the rule in
+ * both pools by @ref raimPoolAdmitsRow's second setting: the observation phase rows only,
+ * each to the pool of the column its tag names.  The refused counts then hold the
+ * carried-prior and SD-EWL rows that cleared 0.5.
  */
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -222,6 +228,55 @@ NetRowClass classifyRow(const StationAssembly& R, Eigen::Index row, std::string*
  * @return True for the eleven admitted kinds.
  */
 bool raimPoolAdmitsKind(ContributionKind k);
+
+/**
+ * @brief The subject of a carried ambiguity column of a RAIM pool: its satellite and
+ *        signal as a tag, for @ref raimPoolAdmitsRow (card RPA).
+ *
+ * @param sat    The pool entry's RINEX satellite id (@c PlAmb::sat, "G05").
+ * @param signal The pool entry's signal (@c PlAmb::signal, the ambiguity key's signal,
+ *               "L1W").
+ * @return A tag of kind @c DataPhase naming that satellite and signal; a satellite or a
+ *         signal that does not parse leaves that field default, and then no row's tag
+ *         names the column.
+ */
+RowTag raimPoolColumnSubject(std::string_view sat, std::string_view signal);
+
+/**
+ * @brief Does a row's tag name a column's satellite and signal?
+ *
+ * @param row    The row's tag.
+ * @param column The column's subject (@ref raimPoolColumnSubject).
+ * @return True when both tags name the same valid satellite and the same signal.  A
+ *         default (unparsed) satellite or signal names nothing.
+ */
+bool rowTagNamesColumn(const RowTag& row, const RowTag& column);
+
+/**
+ * @brief The carried-phase RAIM pools' admission of one row to the pool of one ambiguity
+ *        column, under both settings of @c network.raim_pool_data_rows_only (card RPA,
+ *        docs/refound/RPA_raim_pool_data_rows_2026-10-08.md).
+ *
+ *  - **Off** (today's declared rule): the row's coefficient on the column exceeds 0.5 and
+ *    @ref raimPoolAdmitsKind admits its kind, so a whitened carried-prior row enters the
+ *    pool of every column it clears.
+ *  - **On**: the row is an observation phase row (@ref isPhaseObservationKind) whose tag
+ *    names the column's satellite and signal (@ref rowTagNamesColumn).  The coefficient
+ *    is not read: an observation phase row carries +1 on its own ambiguity column and
+ *    nothing on any other, and the pools count, per phase row, every column on which the
+ *    coefficient test and the tag disagree (@c RaimPoolAdmissionTally::noteOwnColumn,
+ *    0 expected).  The carried-prior rows and the SD-EWL rows enter no pool.
+ *
+ * @param row            The row's tag.
+ * @param clears         Whether the row's coefficient on the column exceeds 0.5 in
+ *                       magnitude (read with the knob off only).
+ * @param column         The column's subject (@ref raimPoolColumnSubject; read with the
+ *                       knob on only).
+ * @param data_rows_only The knob, as resolved for the run (@c NetworkKnobs).
+ * @return Whether the row enters the column's pool.
+ */
+bool raimPoolAdmitsRow(const RowTag& row, bool clears, const RowTag& column,
+                       bool data_rows_only);
 
 /**
  * @brief One epoch's shared-column labels, families, per-column satellite, and

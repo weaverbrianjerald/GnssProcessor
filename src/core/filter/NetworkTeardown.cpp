@@ -923,10 +923,22 @@ int networkTeardown(
     // many prior rows enter beside the phase rows (visits: once per column the row clears,
     // the multiplicity the pool's sample has; rows: once per station and walk), and that
     // no row of another kind cleared the bar (refused, 0 expected).  A pool that never
-    // walked prints nothing.
+    // walked prints nothing.  With card RPA's knob on (network.raim_pool_data_rows_only)
+    // the pools admit the observation phase rows only: the refused counts are then the
+    // carried-prior and SD-EWL rows the rule keeps out (expected), the admitted prior kinds
+    // must read 0, and the line closes with the own-column check, which warns on any
+    // disagreement between a phase row's tag and its coefficient.
     {
+        const bool data_rows_only = ctx.knobs.raim_pool_data_rows_only;
         const auto poolLine = [&](const char* which, const RaimPoolAdmissionTally& t) {
             if (t.walks == 0) return;
+            if (data_rows_only) {
+                const bool disagree = t.own_col_cleared_other > 0 || t.own_col_not_cleared > 0;
+                log->log(disagree ? spdlog::level::warn : spdlog::level::info,
+                         "Network (RAIM pool admission, {}, data rows only, card RPA): {}; {}",
+                         which, t.text(), t.ownColumnText());
+                return;
+            }
             long long refused = 0;
             for (const long long v : t.refused) refused += v;
             log->log(refused > 0 ? spdlog::level::warn : spdlog::level::info,
