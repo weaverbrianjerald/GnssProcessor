@@ -7206,6 +7206,24 @@ namespace GnssProcessor {
                           gnc.gross_los_bound ? "true" : "false",
                           gnc.gross_los_emit_exclude ? "true" : "false",
                           gnc.gross_los_station_tier ? "true" : "false");
+            // The cold-start absolute bound (card ICF response 1).  A negative or
+            // non-finite value cannot express a bound in metres, so it is clamped to 0
+            // (off) loudly rather than read as "declare everything".
+            gnc.gross_los_cold_bound_m =
+                jval<double>(json, "network.gross_los_cold_bound_m",
+                             "gross_los_cold_bound_m", 0.0);
+            if (!(std::isfinite(gnc.gross_los_cold_bound_m)
+                  && gnc.gross_los_cold_bound_m >= 0.0)) {
+                log->warn("Network (gross-LOS, card ICF): network.gross_los_cold_bound_m = {} "
+                          "is not a non-negative number of metres; clamped to 0 (off).",
+                          gnc.gross_los_cold_bound_m);
+                gnc.gross_los_cold_bound_m = 0.0;
+            }
+            if (gnc.gross_los_cold_bound_m > 0.0 && !gnc.gross_los_screen)
+                log->warn("Network (gross-LOS, card ICF): network.gross_los_cold_bound_m = {:g} m "
+                          "while network.gross_los_screen is OFF; the seam is never entered, so "
+                          "the bound is INERT.  Read this as a miswired arm, not as a null "
+                          "result.", gnc.gross_los_cold_bound_m);
             gnc.gross_los_warmup_epochs =
                 jval<int>(json, "network.gross_los_warmup_epochs", "gross_los_warmup_epochs", 120);
             gnc.gross_los_max_station_frac =
@@ -7386,6 +7404,35 @@ namespace GnssProcessor {
                           "removes what determines its clock).  Both guards SCREEN and COUNT "
                           "normally; they only hold the declaration, and neither blocks a CLEAR.",
                           gnc.gross_los_warmup_epochs, 100.0 * gnc.gross_los_max_station_frac);
+                // --- The cold-start bound (card ICF response 1) ---------------------
+                if (gnc.gross_los_cold_bound_m > 0.0) {
+                    if (gnc.gross_los_bound)
+                        log->warn("Network (gross-LOS, card ICF): network.gross_los_cold_bound_m "
+                                  "= {:g} m is INERT under network.gross_los_bound: the cold "
+                                  "response erases the faulted carried ambiguity every epoch "
+                                  "the bound is exceeded, and the hold would keep it.",
+                                  gnc.gross_los_cold_bound_m);
+                    else if (gnc.gross_los_warmup_epochs == 0)
+                        log->warn("Network (gross-LOS, card ICF): network.gross_los_cold_bound_m "
+                                  "= {:g} m with network.gross_los_warmup_epochs = 0: there is no "
+                                  "maturity hold for the bound to act in, so it never declares.",
+                                  gnc.gross_los_cold_bound_m);
+                    else
+                        log->info("Network producer (gross-LOS, card ICF cold-start bound): "
+                                  "inside the first {} emitted epochs a line of sight whose "
+                                  "largest POST-FIT code |v| exceeds {:g} m is declared AT ONCE "
+                                  "(one epoch, no persistence) with the screen's response: its "
+                                  "carried ambiguities are erased and marked pending-reseed and "
+                                  "its code rows fold at sigma x {:g}.  While it stands, every "
+                                  "epoch over the bound re-erases the carried ambiguity (a "
+                                  "re-stashed ambiguity would make the faulty line of sight "
+                                  "redundant again); the release erases it once more, so the "
+                                  "line of sight reconnects on a fresh ambiguity.  No cold "
+                                  "declaration at a station with more than {:.0f} % of its lines "
+                                  "of sight over the bound.",
+                                  gnc.gross_los_warmup_epochs, gnc.gross_los_cold_bound_m,
+                                  gnc.gross_los_deweight, 100.0 * gnc.gross_los_max_station_frac);
+                }
             }
         }
 

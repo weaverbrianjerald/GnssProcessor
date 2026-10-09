@@ -439,6 +439,7 @@ add_executable(gnss_tests
     tests/test_network_mdb.cpp
     tests/test_block_baarda.cpp
     tests/test_network_gross_los.cpp
+    tests/test_network_gross_los_cold_bound.cpp
     tests/test_station_congruence.cpp
     tests/test_prior_residual_census.cpp
     tests/test_producer_ar_trace.cpp

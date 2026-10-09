@@ -123,6 +123,23 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
     return GrossLosEdge::Clear;
 }
 
+GrossLosColdEdge networkGrossLosColdStep(GrossLosState& s, const GrossLosVerdict& v,
+                                         double bound_m, bool in_hold, bool allow_declare,
+                                         double tow) {
+    if (!(bound_m > 0.0)) return GrossLosColdEdge::None;
+    const bool over = v.n_rows > 0 && v.v_abs_max > bound_m;
+    if (s.gross) return (s.cold && over) ? GrossLosColdEdge::Refloat : GrossLosColdEdge::None;
+    if (!in_hold || !over) return GrossLosColdEdge::None;
+    if (!allow_declare) return GrossLosColdEdge::Held;
+    s.gross        = true;
+    s.cold         = true;
+    s.over_streak  = 0;
+    s.clear_streak = 0;
+    s.declared_tow = tow;
+    ++s.n_declared;
+    return GrossLosColdEdge::Declare;
+}
+
 // ---------------------------------------------------------------------------
 // The actuator's publish half (serial, pre-assembly)
 // ---------------------------------------------------------------------------
@@ -235,6 +252,11 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     const bool   gl_bound     = ctx.knobs.gl_bound;
     const bool   gl_emit_excl = ctx.knobs.gl_emit_exclude;
     const bool   gl_sta_tier  = ctx.knobs.gl_station_tier;
+    // --- The cold-start bound (card ICF response 1); 0 = off, already resolved against
+    // the screen and the hold at the knob resolve.  It acts inside the maturity horizon,
+    // where the σ-bar declarations are held.
+    const double cold_bound   = ctx.knobs.gl_cold_bound_m;
+    const bool   cold_window  = cold_bound > 0.0 && !mature;
 
     auto& tal    = ctx.counters.gross_los;
     auto& gstate = ctx.carry.gl_state;
@@ -246,6 +268,7 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     ctx.carry.gl_act_declare.clear();
     ctx.carry.gl_act_release.clear();
     ctx.carry.gl_act_station.clear();
+    ctx.carry.gl_act_cold_refloat.clear();
     ctx.carry.gl_emit_withhold.clear();
     ctx.carry.gl_emit_disc.clear();
 
@@ -277,6 +300,7 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     // absence half of the streak rule works on the complement of this set.
     std::set<std::pair<int, std::string>> seen;
     int n_declared_ep = 0, n_cleared_ep = 0;
+    int n_cold_edges_ep = 0;   // cold-start bound: declarations, re-erases, releases, expiries
 
     // The satellite stand-down (GL-2) needs a network-wide tally before any line of
     // sight is acted on: "the same satellite over the bar at >= N stations in one
@@ -288,6 +312,7 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
         std::size_t i{0};
         std::map<std::string, GrossLosVerdict> verdicts;
         bool sta_standdown{false};
+        bool cold_standdown{false};   ///< The cold station guard holds cold declarations here (card ICF).
     };
     std::vector<StationPass> passes;
     passes.reserve(stations.size());
@@ -453,10 +478,36 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
             }
         }
 
+        // --- The cold station guard (card ICF response 1) ---------------------------
+        // The whole-station rule above, read on the cold-start bound: when most of a
+        // station's lines of sight are over the bound in one epoch, the fault is the
+        // station's, and folding all of its code rows would remove what determines its
+        // clock.  Evaluated inside the horizon only, where the cold path declares.
+        bool cold_standdown = false;
+        if (cold_window && max_sta_frac < 1.0 && n_los_here > 0) {
+            int n_cold_over_here = 0;
+            for (const auto& [sat, d] : verdicts) {
+                (void)sat;
+                if (d.n_rows > 0 && d.v_abs_max > cold_bound) ++n_cold_over_here;
+            }
+            cold_standdown = static_cast<double>(n_cold_over_here)
+                           > max_sta_frac * static_cast<double>(n_los_here);
+            if (cold_standdown) {
+                ++tal.cold_standdowns;
+                emitEvent("gross_los_cold_standdown", "", stations[i].name,
+                          static_cast<double>(n_cold_over_here)
+                              / static_cast<double>(n_los_here),
+                          max_sta_frac, "standdown",
+                          fmt::format("n_over_bound={};n_los={};bound_m={:g};"
+                                      "reason=whole_station_not_one_los",
+                                      n_cold_over_here, n_los_here, cold_bound));
+            }
+        }
+
         if (gl2_on)
             for (const auto& [sat, d] : verdicts)
                 if (d.over) ++sat_over_stations[sat];
-        passes.push_back(StationPass{ i, std::move(verdicts), sta_standdown });
+        passes.push_back(StationPass{ i, std::move(verdicts), sta_standdown, cold_standdown });
     }
 
     // --- The whole-satellite stand-down (GL-2, §24.19) --------------------------
@@ -570,6 +621,72 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                 // The hold is part of the response, so it lifts with the response
                 // (RF-3b B2): a released line of sight must not stay frozen.
                 ctx.carry.gl_act_release.push_back({ static_cast<int>(i), sat });
+                // A cold declaration (card ICF) reconnects on a fresh ambiguity at every
+                // exit, this one included: its carry was harvested while the fault was in
+                // its rows.
+                if (st.cold) {
+                    st.cold = false;
+                    ++tal.cold_released;
+                    ++n_cold_edges_ep;
+                    ctx.carry.gl_act_cold_refloat.push_back({ static_cast<int>(i), sat });
+                    emitEvent("gross_los_cold_release", sat, stations[i].name, d.v_abs_max,
+                              cold_bound, "release",
+                              fmt::format("n_rows={};declared_tow={:.1f};episode={};"
+                                          "reason=sat_standdown;reseed=erase",
+                                          d.n_rows, st.declared_tow, st.n_declared));
+                }
+            }
+            // --- The cold-start bound (card ICF response 1) --------------------------
+            // Inside the horizon, a line of sight far beyond any plausible residual is
+            // declared at once with the screen's own response (the deferred erase below
+            // and the code fold the publish half applies).  A standing cold declaration
+            // whose bound is exceeded again has its carried ambiguity erased again, so a
+            // re-stashed ambiguity cannot make the faulty line of sight redundant through
+            // its phase rows.  Off (bound 0) the step returns None and nothing here runs.
+            if (cold_bound > 0.0) {
+                if (cold_window) {
+                    ++tal.cold_los_screened;
+                    const bool over_b = d.n_rows > 0 && d.v_abs_max > cold_bound;
+                    if (over_b) {
+                        ++tal.cold_los_over;
+                        tal.cold_v_over_max_m = std::max(tal.cold_v_over_max_m, d.v_abs_max);
+                    } else if (!st.gross) {
+                        tal.cold_v_under_max_m = std::max(tal.cold_v_under_max_m, d.v_abs_max);
+                    }
+                }
+                const GrossLosColdEdge cedge = networkGrossLosColdStep(
+                    st, d, cold_bound, cold_window, !pass.cold_standdown, se.time.tow);
+                if (cedge == GrossLosColdEdge::Held) {
+                    ++tal.cold_held_station;
+                } else if (cedge == GrossLosColdEdge::Declare) {
+                    ++tal.cold_declared;
+                    ++tal.cold_declared_by_los[stations[i].name + ":" + sat];
+                    ++n_cold_edges_ep;
+                    // The screen's own erase, deferred to the act half (it must run after
+                    // the carry harvest) through the cold list, whose pass also sweeps a
+                    // carried ambiguity of a signal absent this epoch; the publish below
+                    // folds the code rows.
+                    ctx.carry.gl_act_cold_refloat.push_back({ static_cast<int>(i), sat });
+                    emitEvent("gross_los_cold_declare", sat, stations[i].name, d.v_abs_max,
+                              cold_bound, "declare",
+                              fmt::format("n_rows={};r_max={:.1f};emitted_epochs={};"
+                                          "horizon={};episode={};deweight_sigma_x={:g};"
+                                          "response=erase",
+                                          d.n_rows, d.r_max, ctx.counters.n_emitted,
+                                          warmup_ep, st.n_declared, ctx.knobs.gl_deweight));
+                    continue;   // the σ-bar step has nothing to add on the declaring epoch
+                } else if (cedge == GrossLosColdEdge::Refloat) {
+                    ++tal.cold_refloats;
+                    if (!cold_window) ++tal.cold_refloats_after_hold;
+                    ++n_cold_edges_ep;
+                    ctx.carry.gl_act_cold_refloat.push_back({ static_cast<int>(i), sat });
+                    emitEvent("gross_los_cold_refloat", sat, stations[i].name, d.v_abs_max,
+                              cold_bound, "refloat",
+                              fmt::format("n_rows={};declared_tow={:.1f};episode={};"
+                                          "in_hold={}",
+                                          d.n_rows, st.declared_tow, st.n_declared,
+                                          cold_window ? 1 : 0));
+                }
             }
             // Origin of the per-episode latency (RF-3b B5).  Stamped when an over-bar
             // streak opens and cleared when it ends, so a declaration can state how
@@ -632,6 +749,21 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                                       gl_bound ? "hold" : "erase", lat,
                                       st.first_over_tow, gl_emit_excl ? 0 : 1));
                 st.first_over_age_ep = 0;
+            } else if (edge == GrossLosEdge::Clear && st.cold) {
+                // The re-coupling edge of a cold declaration (card ICF response 1): the
+                // screen's release test passed, and the carried ambiguity is erased once
+                // more, because it was harvested while the fault was in the line of
+                // sight's rows; the line of sight reconnects on a fresh ambiguity.
+                st.cold = false;
+                ++tal.cold_released;
+                ++n_cold_edges_ep;
+                ctx.carry.gl_act_release.push_back({ static_cast<int>(i), sat });
+                ctx.carry.gl_act_cold_refloat.push_back({ static_cast<int>(i), sat });
+                emitEvent("gross_los_cold_release", sat, stations[i].name, d.r_max, clear_sigma,
+                          "release",
+                          fmt::format("n_rows={};v_abs_max_m={:.3f};declared_tow={:.1f};"
+                                      "episode={};reseed=erase",
+                                      d.n_rows, d.v_abs_max, st.declared_tow, st.n_declared));
             } else if (edge == GrossLosEdge::Clear) {
                 ++tal.cleared;
                 ++n_cleared_ep;
@@ -658,7 +790,21 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
         it->second.clear_streak = 0;
         const double gap = now_s - it->second.last_seen_s;
         if (gap <= max_gap_s) { ++it; continue; }
-        if (it->second.gross) {
+        if (it->second.gross && it->second.cold) {
+            // The cold path's absent-satellite exit (card ICF response 1), with the same
+            // re-seed as its release: whatever carry the line of sight still holds was
+            // harvested while the fault was in its rows.
+            ++tal.cold_expired;
+            ++n_cold_edges_ep;
+            const std::size_t si = static_cast<std::size_t>(it->first.first);
+            emitEvent("gross_los_cold_expire", it->first.second,
+                      si < stations.size() ? stations[si].name : std::string(),
+                      gap, max_gap_s, "expire",
+                      fmt::format("unseen_s={:.1f};declared_tow={:.1f};episode={};reseed=erase",
+                                  gap, it->second.declared_tow, it->second.n_declared));
+            ctx.carry.gl_act_release.push_back({ it->first.first, it->first.second });
+            ctx.carry.gl_act_cold_refloat.push_back({ it->first.first, it->first.second });
+        } else if (it->second.gross) {
             ++tal.expired;
             const std::size_t si = static_cast<std::size_t>(it->first.first);
             emitEvent("gross_los_expire", it->first.second,
@@ -751,6 +897,12 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
         log->info("Network (gross-LOS screen) TOW {:.1f}: {} declared, {} cleared, "
                   "{} currently gross (run-max standardized code residual so far {:.1f} sigma)",
                   se.time.tow, n_declared_ep, n_cleared_ep, now_gross, tal.r_max);
+    if (n_cold_edges_ep > 0)
+        log->info("Network (gross-LOS, card ICF cold bound {:g} m) TOW {:.1f}: {} cold edge(s) "
+                  "or re-erase(s) this epoch; run totals {} declared, {} re-erased, {} released, "
+                  "{} expired.",
+                  cold_bound, se.time.tow, n_cold_edges_ep, tal.cold_declared,
+                  tal.cold_refloats, tal.cold_released, tal.cold_expired);
 }
 
 // ---------------------------------------------------------------------------
@@ -882,6 +1034,25 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 ctx.carry.gl_act_release.push_back({ si, sat });
         }
     }
+    // --- The cold-start bound's erase (card ICF response 1): at the declaration, at each
+    //     epoch the bound is exceeded again, and as the re-seed at the release or the
+    //     expiry.  The screen's own erase (the bound is resolved off under the hold, so
+    //     respond is the erase here), followed by a sweep of any other carried ambiguity
+    //     of the line of sight that is not in this epoch's assembly (a signal absent this
+    //     epoch, or a line of sight that has expired), so no carried level harvested
+    //     while the fault was in the rows survives the response.
+    for (const auto& [si, sat] : ctx.carry.gl_act_cold_refloat) {
+        const std::size_t n_before = ctx.carry.local_carry.size();
+        respond(si, sat);
+        for (auto it = ctx.carry.local_carry.begin(); it != ctx.carry.local_carry.end(); ) {
+            if (std::get<0>(it->first) == si && std::get<1>(it->first) == sat)
+                it = ctx.carry.local_carry.erase(it);
+            else
+                ++it;
+        }
+        tal.cold_amb_erased +=
+            static_cast<long long>(n_before - ctx.carry.local_carry.size());
+    }
     // --- The re-coupling edge: a release or an expiry drops the hold, and the states
     //     continue from the values they were held at.  Idempotent.
     for (const auto& [si, sat] : ctx.carry.gl_act_release) {
@@ -915,6 +1086,67 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                    ctx.carry.gl_act_declare.size(), gl_bound ? "HOLD" : "erase",
                    ctx.carry.gl_hold_amb.size(),
                    ctx.carry.gl_hold_iono.size() + ctx.carry.gl_hold_iono_blk.size());
+}
+
+// ---------------------------------------------------------------------------
+// Run-end readout of the cold-start bound (card ICF response 1)
+// ---------------------------------------------------------------------------
+
+void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
+                                    const GnssConfig& config_,
+                                    const std::shared_ptr<spdlog::logger>& log) {
+    const double configured = config_.networkGrossLosColdBoundM();
+    if (!log || !(configured > 0.0)) return;   // off: nothing to report
+    const NetworkConfig& nc = config_.getNetworkConfig();
+    const double bound = ctx.knobs.gl_cold_bound_m;
+    if (!(bound > 0.0)) {
+        log->warn("Network (gross-LOS, card ICF cold bound): INERT.  "
+                  "network.gross_los_cold_bound_m = {:g} m was set but resolved off "
+                  "(network.gross_los_screen {}, network.gross_los_bound {}); the run is the "
+                  "unarmed run.",
+                  configured, nc.gross_los_screen ? "on" : "off",
+                  nc.gross_los_bound ? "on" : "off");
+        return;
+    }
+    const auto& g = ctx.counters.gross_los;
+    long long standing = 0;
+    for (const auto& kv : ctx.carry.gl_state)
+        if (kv.second.gross && kv.second.cold) ++standing;
+
+    log->info("Network (gross-LOS, card ICF cold bound {:g} m): {} LOS-epoch(s) screened inside "
+              "the maturity horizon ({} emitted epochs), {} over the bound.  Largest post-fit "
+              "code |v| over the bound {:.2f} m; largest under it on a line of sight not "
+              "declared {:.2f} m, the bound's margin on this run (x{:.2f}).",
+              bound, g.cold_los_screened, nc.gross_los_warmup_epochs, g.cold_los_over,
+              g.cold_v_over_max_m, g.cold_v_under_max_m,
+              g.cold_v_under_max_m > 0.0 ? bound / g.cold_v_under_max_m : 0.0);
+    log->info("Network (gross-LOS, card ICF cold bound): {} declaration(s) (decoupling edges), "
+              "{} release(s) and {} expiry(ies) (re-coupling edges, each re-seeding the "
+              "carried ambiguity), {} still declared at run end; {} re-erase(s) of a standing "
+              "declaration whose bound was exceeded again ({} after the horizon opened); {} "
+              "carried ambiguity entr(ies) removed by these erases.  The cold station guard "
+              "fired on {} station-epoch(s) and held {} LOS-epoch(s) over the bound.",
+              g.cold_declared, g.cold_released, g.cold_expired, standing, g.cold_refloats,
+              g.cold_refloats_after_hold, g.cold_amb_erased, g.cold_standdowns,
+              g.cold_held_station);
+    if (g.cold_declared == 0) {
+        const char* why =
+            (g.cold_los_screened == 0)
+                ? "the seam never screened a line of sight inside the horizon (no code rows "
+                  "reached it, or the horizon is 0)"
+            : (g.cold_los_over == 0)
+                ? "ZERO OPPORTUNITY: no line of sight reached the bound inside the horizon; a "
+                  "clean window, not a demonstration"
+                : "every line of sight over the bound was held by the cold station guard";
+        log->info("Network (gross-LOS, card ICF cold bound): INERT on this run: {}.", why);
+    }
+    if (!g.cold_declared_by_los.empty()) {
+        std::string line;
+        for (const auto& [los, n] : g.cold_declared_by_los)
+            line += fmt::format("{}{}={}", line.empty() ? "" : " ", los, n);
+        log->info("Network (gross-LOS, card ICF cold bound): declarations by line of sight: {}",
+                  line);
+    }
 }
 
 } // namespace GnssProcessor

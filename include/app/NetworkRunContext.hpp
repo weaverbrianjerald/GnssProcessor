@@ -630,6 +630,12 @@ namespace GnssProcessor {
         /// network.gross_los_station_tier (RF-3b B4): the whole-station guard becomes a
         /// station-level declaration with its own two edges.  ANDed with @ref gl_on.
         bool   gl_station_tier{};
+        /// network.gross_los_cold_bound_m (card ICF response 1): the cold-start absolute
+        /// bound on a line of sight's post-fit code |v|, metres.  Resolved to 0 (off)
+        /// unless @ref gl_on and not @ref gl_bound, so the seam, the act half and the
+        /// run-end readout read one number and cannot disagree about whether the cold
+        /// path exists.
+        double gl_cold_bound_m{ 0.0 };
         /// Declared per-station variance factor (QUEUE item 4 R2, SPEC_t3_null_derivation
         /// §6/§7.5).  Measure-only: it feeds no denominator.
         bool   staf_on{};
@@ -1961,6 +1967,13 @@ namespace GnssProcessor {
         /// The stations the decision half declared (@c true) or released (@c false) this
         /// epoch, deferred to the act half (RF-3b B3/B4).
         std::vector<std::pair<int, bool>> gl_act_station;
+        /// The lines of sight whose carried ambiguity the act half erases this epoch under
+        /// the cold-start bound (card ICF response 1): a cold declaration, a standing cold
+        /// declaration whose bound was exceeded again, and the re-seed at a cold
+        /// declaration's release or expiry.  The act half applies the screen's erase and
+        /// sweeps every other carried ambiguity of the line of sight.  Same lifecycle as
+        /// @ref gl_act_declare; empty unless @c knobs.gl_cold_bound_m is positive.
+        std::vector<std::pair<int, std::string>> gl_act_cold_refloat;
         /// The carried receiver-clock-family local columns for RX-CLK-in-block
         /// (@c network.carry_rx_clock_in_block), keyed (station index, kind), with kind ""
         /// for the primary receiver clock and the system name for each ISB.  The value is

@@ -4335,6 +4335,32 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Cold-start absolute bound of the gross line-of-sight screen, metres
+         *        (@c network.gross_los_cold_bound_m; card ICF response 1,
+         *        docs/refound/ICF_ignition_code_fault_2026-10-09.md).
+         *
+         * Inside the screen's maturity horizon (@c network.gross_los_warmup_epochs
+         * emitted epochs) a line of sight whose largest post-fit code residual exceeds
+         * this many metres is declared at once, with the screen's response (carry erased,
+         * code rows folded at @c network.gross_los_deweight).  While the declaration
+         * stands, each epoch over the bound re-erases the carried ambiguity; the release
+         * erases it once more, so the line of sight reconnects on a fresh ambiguity.  The
+         * statistic is the residual the screen already forms, @f$v = y - A_s x_s - A_r
+         * x_r@f$, in metres: the prefit @f$y@f$ is no use here, since it carries the
+         * receiver clock's linearization offset (hundreds of kilometres on clean rows).
+         *
+         * 0 (the default) is off and byte-identical.  The value is read as given: the
+         * loader clamps a negative or non-finite value to 0 with a warning, and the run
+         * context resolves it to 0 unless @c network.gross_los_screen is on and
+         * @c network.gross_los_bound is off (@c NetworkRunContext::Knobs::gl_cold_bound_m).
+         *
+         * @return The bound in metres; 0 when the cold path is off.
+         */
+        double networkGrossLosColdBoundM() const {
+            return network_config_.gross_los_cold_bound_m;
+        }
+
+        /**
          * @brief Whether the second code channel is armed (card SCC).
          *
          * `network.second_code_channel`.  When true a network station contributes,

@@ -1227,6 +1227,7 @@ int networkTeardown(
         topTable("declarations", "satellite", g.declared_by_sat);
         topTable("stand-down station-epochs", "station", g.standdown_by_station);
     }
+    networkGrossLosColdBoundRunEnd(ctx, config_, log);   // card ICF response 1
 
     // --- Iono-deweight release hygiene run-end telemetry -----------------------
     // (docs/SPEC_deweight_release_hygiene.md).  At the event the spec was written

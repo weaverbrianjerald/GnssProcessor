@@ -2452,6 +2452,33 @@ namespace GnssProcessor {
         /// @ref gross_los_clear_epochs consecutive screened epochs.  Solve-affecting;
         /// requires @ref gross_los_screen.
         bool   gross_los_station_tier{ false };
+        /// Cold-start absolute bound, metres (card ICF response 1,
+        /// docs/refound/ICF_ignition_code_fault_2026-10-09.md section 3).  0 (the default)
+        /// = off.  Before the maturity horizon (@ref gross_los_warmup_epochs) the screen
+        /// makes no declaration on its σ-standardized bar, because a cold post-fit code
+        /// residual measures the unconverged station block.  A residual of tens of metres
+        /// is not that: on the two 2 h goldens the largest post-fit code |v| of any line
+        /// of sight in the first 120 epochs is 6.70 m (field) and 4.88 m (sim), while the
+        /// faulty L1 channel of BSHM00ISR G07 reaches 24.2 m at its first visible epoch
+        /// and grows 40 to 50 m per epoch after it.  With a positive value, inside the
+        /// maturity horizon a line of sight whose largest post-fit code |v| this epoch
+        /// exceeds the bound is declared at once (one epoch, no persistence), with the
+        /// screen's own response: its carried ambiguities are erased and marked
+        /// pending-reseed, its per-LOS iono and phase-colour carries are erased, and its
+        /// code rows fold at σ × @ref gross_los_deweight.  While that declaration stands,
+        /// every epoch on which the bound is exceeded again re-applies the erase, so a
+        /// re-stashed ambiguity cannot make the line of sight redundant again (with the
+        /// ambiguity free, the phase rows carry nothing to the shared states).  The
+        /// release is the screen's own test (@ref gross_los_clear_sigma for
+        /// @ref gross_los_clear_epochs), and it erases the carry once more, so the line
+        /// of sight reconnects on a fresh ambiguity rather than one that absorbed the
+        /// fault.  A station with more than @ref gross_los_max_station_frac of its lines
+        /// of sight over the bound declares none of them (a station fault).  Requires
+        /// @ref gross_los_screen; inert under @ref gross_los_bound (the hold would keep
+        /// the faulted level the response erases).  Solve-affecting; not fingerprinted,
+        /// like the screen's other knobs (it changes which rows are trusted, not what a
+        /// carried state means).
+        double gross_los_cold_bound_m{ 0.0 };
         // --- Datum graph census (docs/SPEC_datum_graph_census.md;
         //     filter/NetworkDatumGraph) ----------------------------------------
         // Measure-only, default-off and fingerprint-safe, like the blocks around it.

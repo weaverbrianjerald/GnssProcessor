@@ -78,6 +78,41 @@
  *    evidence does not apply to it; without the expiry, a deweight set once would
  *    carry over to a fresh arc unnoticed.
  *
+ * ## The cold-start bound (card ICF response 1, @c network.gross_los_cold_bound_m)
+ *
+ * The maturity horizon holds every σ-bar declaration for the first
+ * @c gross_los_warmup_epochs emitted epochs, because a cold post-fit code residual
+ * measures the unconverged station block.  A faulty receiver channel inside that window
+ * is not that: on the field golden, BSHM00ISR tracks G07 on a faulty L1 channel (C1C
+ * and L1C drift together), and once its carried ambiguity makes the line of sight
+ * redundant it puts about -2.2 m per epoch into G07's clock, which the dense border
+ * carry keeps (card ICF section 6).  Its post-fit code |v| is 24 m at its first
+ * visible epoch, against a largest clean value of 6.7 m (field) and 4.9 m (sim) over
+ * the first 120 epochs of the 2 h goldens.
+ *
+ *  - **Declaration.**  Inside the horizon, a line of sight whose largest post-fit code
+ *    |v| (metres, @ref GrossLosVerdict::v_abs_max) exceeds the bound is declared at
+ *    once: one epoch, no row count, no persistence.  The response is the screen's own
+ *    (the erase, pending-reseed and code fold below); @ref GrossLosState::cold records
+ *    which path declared it.  A station with more than
+ *    @c gross_los_max_station_frac of its lines of sight over the bound declares none
+ *    of them (a station fault, as for the σ bar), with its own event.
+ *  - **The redundancy taken away.**  With the slant ionosphere free, a single-band line
+ *    of sight is redundant only through its carried ambiguity (code plus phase), and the
+ *    code fold weakens that sum by @f$f^2@f$.  A two-band line of sight is also redundant
+ *    through its phase rows alone, which the code fold does not reach.  So while a cold
+ *    declaration stands, every epoch on which the bound is exceeded again erases the
+ *    carried ambiguity again: a free ambiguity absorbs its phase row exactly, whatever
+ *    the number of bands.
+ *  - **Release (the re-coupling edge).**  The screen's own release test.  At the release
+ *    (and at an expiry) the carried ambiguity is erased once more, so the line of sight
+ *    reconnects on a fresh ambiguity, not on one harvested while the fault was in its
+ *    rows (standing invariant #7: the re-coupling edge re-seeds what it reconnects).
+ *
+ * The cold path's edges are counted apart from the σ-bar path's (@c cold_* in
+ * @ref NetworkGrossLosTallies) and reported by @ref networkGrossLosColdBoundRunEnd.
+ * Off (bound 0, the default), nothing on this path runs and the run is byte-identical.
+ *
  * The epoch always emits: this is adapt-and-emit, and an epoch withhold would be
  * graded as an adaptation failure.  The per-LOS screen never drops a station or a
  * satellite.  Two optional sub-rules prune individual satellites from an
@@ -193,6 +228,23 @@ struct NetworkGrossLosTallies {
     long long sta_released = 0;      ///< Station-level releases (B4).
     long long sta_los_epochs = 0;    ///< Station-epochs spent under a standing station declaration (B4).
     std::map<std::string, long long> sta_declared_by_station;  ///< Station declarations per station name (B4).
+    // --- The cold-start bound (card ICF response 1); all zero unless
+    //     network.gross_los_cold_bound_m is positive.  The cold path's edges are counted
+    //     here only, not in declared / cleared / expired above, so those keep describing
+    //     the σ-bar path; currently_gross and max_concurrent count both paths.
+    long long cold_los_screened = 0;     ///< LOS-epochs screened inside the maturity horizon (the denominator).
+    long long cold_los_over = 0;         ///< LOS-epochs inside the horizon whose largest post-fit code |v| exceeded the bound.
+    long long cold_declared = 0;         ///< Cold declarations (decoupling edges).
+    long long cold_held_station = 0;     ///< LOS-epochs over the bound whose declaration the cold station guard held.
+    long long cold_standdowns = 0;       ///< Station-epochs on which the cold station guard fired.
+    long long cold_refloats = 0;         ///< Re-erases of a standing cold declaration whose bound was exceeded again.
+    long long cold_refloats_after_hold = 0; ///< The subset of @ref cold_refloats taken after the maturity horizon opened.
+    long long cold_released = 0;         ///< Releases of a cold declaration (re-coupling edges), each with a carry re-seed.
+    long long cold_expired = 0;          ///< Expiries of a cold declaration, each with a carry re-seed.
+    long long cold_amb_erased = 0;       ///< Carried ambiguity entries removed by the re-erases and the re-seeds.
+    double    cold_v_over_max_m = 0.0;   ///< Largest post-fit code |v| (m) over the bound.
+    double    cold_v_under_max_m = 0.0;  ///< Largest post-fit code |v| (m) under the bound inside the horizon, on a line of sight not declared: the run's clean-population maximum, i.e. the bound's margin.
+    std::map<std::string, long long> cold_declared_by_los;  ///< Cold declarations per "STATION:SAT".
 };
 
 /**
@@ -300,6 +352,10 @@ struct GrossLosState {
     double first_over_tow{0.0};
     /// Over-bar screened epochs since @ref first_over_tow: the same latency in epochs (RF-3b B5).
     int    first_over_age_ep{0};
+    /// The standing declaration was taken under the cold-start bound (card ICF response
+    /// 1).  While set, each epoch over the bound re-erases the carried ambiguity, and the
+    /// release or expiry re-seeds it.  Cleared at the release and the expiry.
+    bool   cold{false};
 };
 
 /// The edge a @ref networkGrossLosStep transition produced.
@@ -346,6 +402,71 @@ enum class GrossLosEdge {
 GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
                                  int declare_epochs, int clear_epochs, double tow,
                                  bool allow_declare = true);
+
+/// The edge a @ref networkGrossLosColdStep transition produced (card ICF response 1).
+enum class GrossLosColdEdge {
+    None,     ///< The cold-start bound does not act on this line of sight this epoch.
+    Declare,  ///< Decoupling edge: the line of sight is declared under the bound.
+    Refloat,  ///< A standing cold declaration whose bound was exceeded again: erase its carried ambiguity again.
+    Held      ///< Over the bound inside the horizon, and the cold station guard held the declaration (counted, never silent).
+};
+
+/**
+ * @brief Pure function: the cold-start bound's transition for one line of sight
+ *        (card ICF response 1, @c network.gross_los_cold_bound_m).
+ *
+ * Called for an epoch in which the line of sight produced code rows, before
+ * @ref networkGrossLosStep.  A @c Declare edge replaces that step for the epoch; the
+ * other edges leave it to run (it owns the release test of every declaration).
+ *
+ *  - A bound of 0 or less is off: @c None, whatever the residual.
+ *  - A line of sight not declared, inside the horizon, whose largest code |v| exceeds
+ *    the bound is declared at once (@c Declare: @c gross and @c cold set, both streaks
+ *    reset, the episode counted), unless @p allow_declare is false (@c Held).
+ *  - A line of sight declared under the bound whose largest code |v| exceeds it again
+ *    gives @c Refloat, inside the horizon or after it: the re-erase belongs to the
+ *    declaration, which outlives the horizon until its release.
+ *  - A line of sight declared on the σ bar is never touched here.
+ *
+ * Equality with the bound is not over it.  An empty row set is never over (absence is
+ * not evidence, the screen's rule).
+ *
+ * @param s             [in/out] the line of sight's carried state.
+ * @param v             This epoch's verdict (@ref GrossLosVerdict::v_abs_max is the statistic).
+ * @param bound_m       The bound, metres (0 = off).
+ * @param in_hold       True while the maturity horizon has not opened.
+ * @param allow_declare False when the cold station guard holds new cold declarations at
+ *                      this station this epoch.
+ * @param tow           This epoch's TOW (stamps a declaration).
+ * @return The edge.
+ */
+GrossLosColdEdge networkGrossLosColdStep(GrossLosState& s, const GrossLosVerdict& v,
+                                         double bound_m, bool in_hold, bool allow_declare,
+                                         double tow);
+
+/**
+ * @brief Run-end readout of the cold-start bound (card ICF response 1; standing
+ *        invariant #4).
+ *
+ * Prints nothing when @c network.gross_los_cold_bound_m is 0.  Armed, it states the
+ * population screened inside the horizon, the largest residual over the bound and the
+ * largest under it on an undeclared line of sight (the bound's margin on this run), both
+ * edges and the re-erases with their carry counts, the station guard, and the
+ * declarations by line of sight.  An armed bound that declared nothing prints an INERT
+ * clause naming which of three cases it was (never screened inside the horizon, nothing
+ * reached the bound, or the guard held everything), and a bound set but resolved off
+ * (the screen off, or the hold on) prints a warning.
+ *
+ * Called once from the run-end tail (filter/NetworkTeardown.cpp), right after the
+ * screen's own section.
+ *
+ * @param ctx     Run context (knobs, the per-LOS states, the tallies).
+ * @param config_ Live config (the configured bound and the horizon).
+ * @param log     "main_log".
+ */
+void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
+                                    const GnssConfig& config_,
+                                    const std::shared_ptr<spdlog::logger>& log);
 
 /**
  * @brief RF-3b B3: which half of the screen a call runs.

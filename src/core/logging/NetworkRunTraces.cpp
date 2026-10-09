@@ -1872,6 +1872,11 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.gross_los_emit_exclude ? "true" : "false",
                                      nc.gross_los_station_tier ? "true" : "false")
                        : std::string())
+               // The cold-start bound of the same screen (card ICF response 1), under the
+               // same rule: solve-affecting, so recorded, and only when armed.
+               << ((nc.gross_los_cold_bound_m > 0.0)
+                       ? fmt::format("\"gross_los_cold_bound_m\":{},", nc.gross_los_cold_bound_m)
+                       : std::string())
                // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
                // needs to tell a screened leg from its control without re-reading the
                // config and, because `adm_screen` affects the solve, to know that the
