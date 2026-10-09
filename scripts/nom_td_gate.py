@@ -181,6 +181,11 @@ def record_kind(rec_line):
 
 
 def main():
+    # The log lines hold non-ASCII text (sigma, arrows); a differing line must print on a
+    # cp1252 console instead of ending the gate with an encoding error.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('run_a')
