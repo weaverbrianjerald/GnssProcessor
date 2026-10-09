@@ -8,6 +8,7 @@
 #include "filter/NetworkSignalIntegrity.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"   // obsTypeOf
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
@@ -34,7 +35,7 @@ constexpr long long kArcForgetEp = 2880;
 /// True for a phase observable key.  RINEX-3 codes on the uncombined producer path
 /// are always the raw 3-character forms ("L1C", "C2W", …), so the type character
 /// alone decides.
-inline bool isPhaseKey(const std::string& k) { return !k.empty() && k[0] == 'L'; }
+inline bool isPhaseKey(const std::string& k) { return obsTypeOf(k) == ObsType::Phase; }
 
 } // namespace
 

@@ -9,6 +9,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
+#include "filter/NetworkRowClassify.hpp"   // sharedColumnFamily
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
@@ -284,12 +285,13 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
         is_pb_col.assign(nsh, 0);
         is_cb_col.assign(nsh, 0);
         for (Eigen::Index c = 0; c < x_s.size(); ++c) {
-            std::string lbl;
-            try { lbl = est.sharedColumnLabel(c); } catch (...) { continue; }
             const std::size_t u = static_cast<std::size_t>(c);
-            if      (lbl.rfind("SH", 0) == 0)  is_sh_col[u] = 1;
-            else if (lbl.rfind("PB:", 0) == 0) is_pb_col[u] = 1;
-            else if (lbl.rfind("CB:", 0) == 0) is_cb_col[u] = 1;
+            switch (sharedColumnFamily(est, c)) {
+                case NetColFam::Sh: is_sh_col[u] = 1; break;
+                case NetColFam::Pb: is_pb_col[u] = 1; break;
+                case NetColFam::Cb: is_cb_col[u] = 1; break;
+                default:                              break;
+            }
         }
     }
 

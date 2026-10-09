@@ -2101,11 +2101,13 @@ namespace GnssProcessor {
         bool trace_phase_colour{ false };
         /// Card AIL: the ionosphere-free ambiguity information trace
         /// (@c network_amb_if.csv).  Per station-epoch, per line of sight whose two bands
-        /// are both carried in the station's whitened block, the variance of the
-        /// ionosphere-free ambiguity combination at the inject (from the block's prior
-        /// covariance) and at the harvest (from the harvest block), both conditional on
-        /// the border, in full and with the station's common mode projected out.  Trace
-        /// class: no solve effect.  Inert without the float vehicle's local block.
+        /// (the first two of its constellation's traits table: GPS L1/L2, Galileo E1/E5a;
+        /// BeiDou is not traced) are both carried in the station's whitened block, the
+        /// variance of the ionosphere-free ambiguity combination at the inject (from the
+        /// block's prior covariance) and at the harvest (from the harvest block), both
+        /// conditional on the border, in full and with the station's common mode over the
+        /// lines of sight of the same constellation projected out.  Trace class: no solve
+        /// effect.  Inert without the float vehicle's local block.
         bool trace_amb_if{ false };
         /// Per-arc carry-state trace (@c network.trace_amb_state) to
         /// @c network_amb_state.csv (RF-1 §7.4).  One row per carried (station,

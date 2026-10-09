@@ -167,6 +167,8 @@
  * @ref NetworkCarryVce.
  */
 
+#include "common/GnssIdentity.hpp"
+
 #include <cmath>
 #include <map>
 #include <string>
@@ -336,7 +338,8 @@ private:
     /// Bucket key for the step-noise estimate: the constellation letter, or ""
     /// when pooled.
     std::string bucket(const std::string& sat) const {
-        return (cfg_.split_by_const && !sat.empty()) ? std::string(1, sat[0]) : std::string();
+        return (cfg_.split_by_const && !sat.empty()) ? constellationKey(systemOfSat(sat))
+                                                     : std::string();
     }
 
     // Geometric mean of a χ²₁ variate: exp(E[log χ²₁]) = exp(−γ−ln2) = e^{−γ}/2.

@@ -6,6 +6,8 @@
 
 #include "products/NetworkClockEmitRebase.hpp"
 
+#include "common/GnssIdentity.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -23,7 +25,7 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
     std::map<char, std::vector<Entry*>> by_const;
     for (auto& e : entries) {
         if (e.sat.empty()) continue;
-        by_const[e.sat.front()].push_back(&e);
+        by_const[letterOfSat(e.sat)].push_back(&e);
     }
 
     for (auto& [cst, group] : by_const) {

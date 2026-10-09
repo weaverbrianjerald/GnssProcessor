@@ -6,7 +6,7 @@
 #include "app/SignalRoster.hpp"
 
 #include "app/NetworkRunContext.hpp"
-#include "common/PppUtils.hpp"
+#include "common/GnssIdentity.hpp"           // obsTypeOf, systemName, systemOfSat, ObservableId
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunTypes.hpp"        // NetStation (roster + its PppModel / StateManager)
 #include "filter/StateKeySchema.hpp"         // parseAmbiguityKey, for the prune's keys (card SID phase 3)
@@ -29,9 +29,11 @@ namespace GnssProcessor {
 
     namespace {
 
-        /// @brief Is this a usable three-or-more character code or phase key?
-        bool isObsKey(const std::string& k, char type) {
-            return k.size() >= 3 && k[0] == type && k[1] >= '0' && k[1] <= '9';
+        /// @brief Is this a usable three-or-more character key of one observation type
+        ///        (a band digit in the second character)?  The pure builders below get
+        ///        no constellation, so the band digit is read from the key itself.
+        bool isObsKey(const std::string& k, ObsType type) {
+            return k.size() >= 3 && obsTypeOf(k) == type && k[1] >= '0' && k[1] <= '9';
         }
 
         /// @brief The matching code key of a phase key ("L1W" gives "C1W").
@@ -98,8 +100,8 @@ namespace GnssProcessor {
 
         // 1. The tracked sets, per band digit, deduplicated and ascending.
         for (const std::string& k : tracked) {
-            if (isObsKey(k, 'L'))      out[k[1]].tracked_phase.push_back(k);
-            else if (isObsKey(k, 'C')) out[k[1]].tracked_code.push_back(k);
+            if (isObsKey(k, ObsType::Phase))     out[k[1]].tracked_phase.push_back(k);
+            else if (isObsKey(k, ObsType::Code)) out[k[1]].tracked_code.push_back(k);
         }
         for (auto& [band, br] : out) {
             (void)band;
@@ -136,7 +138,8 @@ namespace GnssProcessor {
                                           b1.modelled_code);
                 if (canon_present) {
                     for (const std::string& sig : companion_allow) {
-                        if (sig.size() != 3 || sig[0] != 'C' || sig[1] != '1') continue;
+                        if (sig.size() != 3 || obsTypeOf(sig) != ObsType::Code || sig[1] != '1')
+                            continue;
                         if (sig == b1.modelled_code) continue;
                         if (!std::binary_search(b1.tracked_code.begin(),
                                                 b1.tracked_code.end(), sig)) continue;
@@ -165,7 +168,8 @@ namespace GnssProcessor {
                                           b1.modelled_phase);
                 if (latched_present) {
                     for (const std::string& sig : second_phase_allow) {
-                        if (sig.size() != 3 || sig[0] != 'L' || sig[1] != '1') continue;
+                        if (sig.size() != 3 || obsTypeOf(sig) != ObsType::Phase || sig[1] != '1')
+                            continue;
                         if (sig == b1.modelled_phase) continue;
                         if (!std::binary_search(b1.tracked_phase.begin(),
                                                 b1.tracked_phase.end(), sig)) continue;
@@ -246,7 +250,7 @@ namespace GnssProcessor {
         // band-digit-only comparator under std::sort produces on this toolchain.
         // std::set iterates ascending, so the first hit per band is that signal.
         for (const std::string& k : keys) {
-            if (!isObsKey(k, 'L')) continue;
+            if (!isObsKey(k, ObsType::Phase)) continue;
             if (!keys.count(codeOf(k))) continue;
             out.emplace(k[1], k);
         }
@@ -280,7 +284,7 @@ namespace GnssProcessor {
                 if (o.satellite.empty()) continue;
                 for (const auto& [key, val] : o.observed) {
                     (void)val;
-                    if (key.size() < 3 || key[0] != 'L') continue;
+                    if (key.size() < 3 || obsTypeOf(key) != ObsType::Phase) continue;
                     out.emplace(static_cast<int>(i), o.satellite, key);
                 }
             }
@@ -298,15 +302,18 @@ namespace GnssProcessor {
             if (i < present.size() && !present[i]) continue;
             for (const PppObservation& o : modeled[i]) {
                 if (o.satellite.empty()) continue;
-                const std::string cons = PppUtils::getSystemString(o.system);
+                const std::string cons = systemName(o.system);
                 for (const auto& [key, val] : o.observed) {
                     (void)val;
-                    if (key.size() < 3 || key[0] != 'L') continue;
+                    if (key.size() < 3 || obsTypeOf(key) != ObsType::Phase) continue;
                     // The role decides, not the presence of a row: an arc the
                     // roster does not mark Modelled on this band has no carried
-                    // level for the response to protect.
-                    if (signalRosterModelledPhase(rs, static_cast<int>(i), cons, key[1])
-                        != key) {
+                    // level for the response to protect.  A key that does not parse
+                    // (or an unknown constellation) is never a modelled phase.
+                    const auto sig = SignalId::fromObsCode(o.system, key);
+                    if (!sig
+                        || signalRosterModelledPhase(rs, static_cast<int>(i), cons, sig->digit)
+                               != key) {
                         if (n_not_modelled != nullptr) ++(*n_not_modelled);
                         continue;
                     }
@@ -323,19 +330,20 @@ namespace GnssProcessor {
         // Tally the per-satellite pins into (constellation, band) votes.
         //
         // The constellation key is the roster's, not the S-basis one.  The datum seam
-        // keys a constellation by the first character of the satellite id ("G"); the
-        // roster keys it by the system string PppUtils::getSystemString gives ("GPS"),
-        // which is also the key of the signal-priority map the latch is decided from.
-        // Votes tallied under the letter would match no roster cell, and the census
-        // would read zero.
+        // keys a constellation by its letter ("G"); the roster keys it by the system
+        // name ("GPS", systemName), which is also the key of the signal-priority map
+        // the latch is decided from.  Votes tallied under the letter would match no
+        // roster cell, and the census would read zero.
         std::map<std::string, std::map<std::string, long long>> votes;
         for (const auto& [sat, pair] : if_pin_real) {
             if (sat.empty()) continue;
-            const std::string cons = PppUtils::getSystemString(sat);
-            if (cons.empty() || cons == "Unknown") continue;
+            const System sys = systemOfSat(sat);
+            if (sys == System::Unknown) continue;
+            const std::string cons = systemName(sys);
             for (const std::string* sig : { &pair.first, &pair.second }) {
-                if (sig->size() < 2 || (*sig)[0] != 'C') continue;
-                ++votes[cons + "|" + std::string(1, (*sig)[1])][*sig];
+                const auto code = ObservableId::parse(sys, *sig);
+                if (!code || code->type != ObsType::Code) continue;
+                ++votes[cons + "|" + std::string(1, code->signal.digit)][*sig];
             }
         }
         // Resolve each (constellation, band) to one designation, and mark it ambiguous
@@ -548,13 +556,14 @@ namespace GnssProcessor {
             std::map<std::string, std::vector<std::string>> tracked_by_cons;
             std::map<std::string, std::vector<const RinexObservation*>> obs_by_cons;
             for (const RinexObservation& o : sit->second) {
-                const std::string cons = PppUtils::getSystemString(o.system);
-                if (cons.empty() || cons == "Unknown") continue;
+                if (o.system == System::Unknown) continue;
+                const std::string cons = systemName(o.system);
                 if (!prio.count(cons)) continue;
                 auto& tr = tracked_by_cons[cons];
                 for (const auto& [key, val] : o.measurements) {
                     (void)val;
-                    if (isObsKey(key, 'L') || isObsKey(key, 'C')) tr.push_back(key);
+                    if (isObsKey(key, ObsType::Phase) || isObsKey(key, ObsType::Code))
+                        tr.push_back(key);
                 }
                 obs_by_cons[cons].push_back(&o);
             }
@@ -674,8 +683,9 @@ namespace GnssProcessor {
                             // The population of card CSL is the band-1 phase, the pick
                             // the estimator depends on; the wider count over any
                             // (band, obs type) is reported beside it.
-                            if (key.second == 'L' && !pick.signal.empty()
-                                && pick.signal.size() >= 2 && pick.signal[1] == '1')
+                            const auto pick_sig =
+                                SignalId::fromObsCode(systemFromName(cons), pick.signal);
+                            if (key.second == 'L' && pick_sig && pick_sig->digit == '1')
                                 rs.rule_differs_b1.insert(stations[i].name);
                         }
                     }
@@ -689,8 +699,9 @@ namespace GnssProcessor {
                         if (o->satellite.empty()) continue;
                         for (const auto& [key, val] : o->measurements) {
                             (void)val;
-                            if (!isObsKey(key, 'L')) continue;
-                            const auto cell = cells.find(key[1]);
+                            if (!isObsKey(key, ObsType::Phase)) continue;
+                            const auto sig = SignalId::fromObsCode(o->system, key);
+                            const auto cell = sig ? cells.find(sig->digit) : cells.end();
                             // A second phase is modelled too (card SID phase 6a): it
                             // carries its own float ambiguity and joins its signal's
                             // satellite phase-bias family, so the ledger's `modelled`
@@ -835,7 +846,7 @@ namespace GnssProcessor {
         const auto& rel = ctx.carry.relevel;
         const auto answered = [&](int sta, const std::string& sat,
                                   const std::string& sig) {
-            const auto k = std::make_pair(sta, sat + "_" + sig);
+            const auto k = std::make_pair(sta, StateKeys::makeAmbiguityKey(sat, sig));
             if (!rel.free_ambs.count(k)) return false;
             const auto cit = rel.free_cause.find(k);
             return cit == rel.free_cause.end()
@@ -895,9 +906,9 @@ namespace GnssProcessor {
             // the row disappearing; otherwise the bit lands on no gap.
             if (ctx.reasons.armed)
                 for (const auto& [sta, amb] : ctx.carry.relevel.free_ambs) {
-                    const auto us = amb.find('_');
-                    if (us == std::string::npos) continue;
-                    const ArcLedger::Key k{ sta, amb.substr(0, us), amb.substr(us + 1) };
+                    const auto parts = StateKeys::parseAmbiguityKey(amb);
+                    if (!parts) continue;
+                    const ArcLedger::Key k{ sta, parts->satellite, parts->signal };
                     arcReasonRecord(ctx.reasons, k, kArcReasonSlip,
                                     ctx.arc_ledger.find(k) != nullptr);
                 }
@@ -1043,27 +1054,31 @@ namespace GnssProcessor {
 
 
         // --- (a) the arc-level tracker's band signal against modelled_phase ----
-        // Counted per row here; the (station, band) cell census is the run-end mode
-        // of the same rows, the definition the SID audit's 46 cells use.
+        // Counted per row here; the (station, constellation, band) cell census is the
+        // run-end mode of the same rows, the definition the SID audit's 46 cells use (a
+        // GPS-only posture, where a cell is a (station, band) pair).
         if (raw != nullptr && raw->computed) {
             for (std::size_t i = 0; i < raw->rows.size() && i < rs.by_station.size(); ++i) {
                 const StationRoster& sr = rs.by_station[i];
                 for (const RawSlipObs& r : raw->rows[i]) {
+                    // The cells of the row's own constellation (the roster is keyed by the
+                    // constellation's name): a Galileo band-1 row is compared with the
+                    // Galileo cell, not with the GPS cell of the same digit.
+                    const System sys = systemOfSat(r.satellite);
+                    const auto cons_it = sr.find(systemName(sys));
                     for (const std::string* s : { &r.sig1, &r.sig2 }) {
-                        if (s->size() < 2) continue;
-                        const char band = (*s)[1];
+                        const auto sig = SignalId::fromObsCode(sys, *s);
+                        if (!sig) continue;
+                        const char band = sig->digit;
                         std::string modelled;
-                        for (const auto& [cons, cells] : sr) {
-                            (void)cons;
-                            const auto cit = cells.find(band);
-                            if (cit != cells.end() && !cit->second.modelled_phase.empty()) {
+                        if (cons_it != sr.end()) {
+                            const auto cit = cons_it->second.find(band);
+                            if (cit != cons_it->second.end())
                                 modelled = cit->second.modelled_phase;
-                                break;
-                            }
                         }
-                        ++rs.tracker_rows[std::make_tuple(static_cast<int>(i), band, *s)];
+                        ++rs.tracker_rows[std::make_tuple(static_cast<int>(i), sys, band, *s)];
                         if (modelled.empty()) { ++ctr.trk_rows_no_modelled; continue; }
-                        rs.modelled_of_cell[std::make_pair(static_cast<int>(i), band)] = modelled;
+                        rs.modelled_of_cell[std::make_tuple(static_cast<int>(i), sys, band)] = modelled;
                         ++ctr.trk_rows;
                         if (*s != modelled) ++ctr.trk_rows_mismatch;
                     }
@@ -1118,9 +1133,9 @@ namespace GnssProcessor {
                     (void)idx;
                     live.insert(k);
                     ++ctr.amb_states;
-                    const auto us = k.find('_');
-                    if (us == std::string::npos) continue;
-                    const ArcLedger::Key ak{ si, k.substr(0, us), k.substr(us + 1) };
+                    const auto parts = StateKeys::parseAmbiguityKey(k);
+                    if (!parts) continue;
+                    const ArcLedger::Key ak{ si, parts->satellite, parts->signal };
                     const ArcRecord* a = ctx.arc_ledger.find(ak);
                     if (a == nullptr) {
                         ++ctr.amb_arc_unknown;
@@ -1135,7 +1150,8 @@ namespace GnssProcessor {
                      it != arcs.end() && std::get<0>(it->first) == si; ++it) {
                     if (!it->second.modelled) continue;
                     const bool alive =
-                        live.count(std::get<1>(it->first) + "_" + std::get<2>(it->first)) > 0;
+                        live.count(StateKeys::makeAmbiguityKey(std::get<1>(it->first),
+                                                               std::get<2>(it->first))) > 0;
                     if (alive) continue;
                     if (it->second.state == ArcState::Gap)     ++ctr.amb_destroyed_in_gap;
                     if (it->second.adm_state == ArcState::Gap) ++ctr.amb_adm_destroyed_in_gap;
@@ -1155,10 +1171,10 @@ namespace GnssProcessor {
                 now.insert(amb);
                 if (rs.anchor_prev.count(amb)) continue;
                 ++ctr.anchor_first_sightings;
-                const auto us = amb.find('_');
-                if (us == std::string::npos) continue;
-                const std::string sat = amb.substr(0, us);
-                const std::string sig = amb.substr(us + 1);
+                const auto parts = StateKeys::parseAmbiguityKey(amb);
+                if (!parts) continue;
+                const std::string& sat = parts->satellite;
+                const std::string& sig = parts->signal;
                 bool returned = false;
                 for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
                     if (std::get<1>(key) != sat || std::get<2>(key) != sig) continue;
@@ -1395,14 +1411,14 @@ namespace GnssProcessor {
         if (!rs.armed) return;
         auto& c = ctx.counters.sid;
 
-        // Class (a), the cell census: per (station, band), the dominant tracker
-        // signal over the run against that cell's modelled phase.  That is the SID
-        // audit's definition of a mismatched station-band cell.
-        std::map<std::pair<int, char>, std::pair<std::string, long long>> mode;
+        // Class (a), the cell census: per (station, constellation, band), the dominant
+        // tracker signal over the run against that cell's modelled phase.  That is the
+        // SID audit's definition of a mismatched station-band cell, per constellation.
+        std::map<std::tuple<int, System, char>, std::pair<std::string, long long>> mode;
         for (const auto& [k, n] : rs.tracker_rows) {
-            const auto cell = std::make_pair(std::get<0>(k), std::get<1>(k));
+            const auto cell = std::make_tuple(std::get<0>(k), std::get<1>(k), std::get<2>(k));
             auto& best = mode[cell];
-            if (n > best.second) best = { std::get<2>(k), n };
+            if (n > best.second) best = { std::get<3>(k), n };
         }
         std::set<int> mismatched_stations;
         for (const auto& [cell, best] : mode) {
@@ -1411,9 +1427,10 @@ namespace GnssProcessor {
             ++c.trk_cells;
             if (best.first == mit->second) continue;
             ++c.trk_cells_mismatch;
-            if (cell.second == '1')      ++c.trk_cells_b1;
-            else if (cell.second == '2') ++c.trk_cells_b2;
-            mismatched_stations.insert(cell.first);
+            const char band = std::get<2>(cell);
+            if (band == '1')      ++c.trk_cells_b1;
+            else if (band == '2') ++c.trk_cells_b2;
+            mismatched_stations.insert(std::get<0>(cell));
         }
         c.trk_stations_mismatch = static_cast<long long>(mismatched_stations.size());
 
@@ -1484,7 +1501,7 @@ namespace GnssProcessor {
             "Network (card SID phase 1 / DISAGREEMENT CLASSES): "
             "(a) TRACKER vs modelled_phase: {} of {} compared row-slot(s) name a "
             "different signal ({} slot(s) had no modelled phase to compare against); "
-            "run-end CELL census {} of {} (station, band) cell(s) whose DOMINANT "
+            "run-end CELL census {} of {} (station, constellation, band) cell(s) whose DOMINANT "
             "tracker signal is not the modelled one, at {} station(s) [band 1 {}, "
             "band 2 {}].  "
             "(b) COUNT rule vs PRIORITY rule: {} of {} station(s) latch differently on "

@@ -10,7 +10,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "common/Constants.hpp"
-#include "common/PppUtils.hpp"
+#include "common/GnssIdentity.hpp"
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
@@ -46,8 +46,7 @@ void networkDdFrac(
     const Eigen::VectorXd& x_s,
     const NetworkSbasis::Plan& plan,
     const std::vector<StationAssembly>& asm_res,
-    const std::vector<int>& est_index_of,
-    const std::unique_ptr<PppUtils>& dd_ppp_utils) {
+    const std::vector<int>& est_index_of) {
     // --- Alias preamble: mechanically-derived run-TU aliases (+ reconstructions). --
     const auto& nc = config_.getNetworkConfig();
     auto& stations = setup.stations;
@@ -60,7 +59,7 @@ void networkDdFrac(
                                     bool phase_datum_prioritized, std::size_t i,
                                     const std::string& sat, const std::string& signal) -> bool {
         if (!phase_datum_prioritized) return stations[i].is_pivot;
-        return stations[i].pinned_amb_targets.count(sat + "_" + signal) != 0;
+        return stations[i].pinned_amb_targets.count(StateKeys::makeAmbiguityKey(sat, signal)) != 0;
     };
 
 
@@ -89,7 +88,7 @@ void networkDdFrac(
                 if (!networkIsGaugePinned_(stations, phase_datum_prioritized,
                                            i, parts->satellite, parts->signal))
                     continue;
-                const std::string cst = NetworkSbasis::constellationOf(parts->satellite);
+                const std::string cst = constellationKey(systemOfSat(parts->satellite));
                 traces.phase_anchor_trace
                     << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
                     << cst << ',' << parts->signal << ',' << parts->satellite << ','
@@ -117,13 +116,6 @@ void networkDdFrac(
     if (dd_frac_trace.is_open()
         && ((n_loop_epochs - 1)
             % static_cast<size_t>(std::max(1, nc.trace_dd_fractional_epoch_stride)) == 0)) {  // T2e stride
-        auto sysOfChar = [](char c) -> System {
-            switch (c) {
-                case 'G': return System::GPS;      case 'E': return System::Galileo;
-                case 'C': return System::BeiDou;   case 'J': return System::QZSS;
-                case 'S': return System::SBAS;     default:  return System::Unknown;
-            }
-        };
         struct AmbAbs { double value_m; std::size_t est_id; Eigen::Index col; };  // T2a: +est_id,col
         // (const,signal) -> sat -> station index -> absolute float ambiguity (m) plus its
         // (estimator station id, local A_r column) for the T2a joint-covariance request.
@@ -149,8 +141,8 @@ void networkDdFrac(
                 if (networkIsGaugePinned_(stations, phase_datum_prioritized,
                                           i, parts->satellite, parts->signal))
                     continue;   // anchored (pinned to 0) → degenerate DD
-                const std::string cst = NetworkSbasis::constellationOf(parts->satellite);
-                if (cst == "R") continue;   // GLONASS FDMA: excluded (no common λ / integer DD)
+                const System sys = systemOfSat(parts->satellite);
+                if (sys == System::GLONASS) continue;   // GLONASS FDMA: excluded (no common λ / integer DD)
                 const int amb_idx = static_cast<int>(sidx);
                 if (amb_idx < 0 || amb_idx >= x_lin.size()) continue;
                 const auto hit = h2l.find(amb_idx);
@@ -159,7 +151,7 @@ void networkDdFrac(
                     || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
                 const double value_m = x_lin(amb_idx) + x_r(hit->second);
                 if (!std::isfinite(value_m)) continue;
-                pool[{cst, parts->signal}][parts->satellite][i] =
+                pool[{constellationKey(sys), parts->signal}][parts->satellite][i] =
                     AmbAbs{value_m, static_cast<std::size_t>(est_index_of[i]),
                            static_cast<Eigen::Index>(hit->second)};
             }
@@ -226,15 +218,16 @@ void networkDdFrac(
                 if (!prev.empty() && prev != ref) ++ctx.counters.n_ddfrac_ref_switch;
                 prev = ref;
             }
-            // λ for this (const,signal).  GLONASS is already excluded, so the nominal
-            // per-band wavelength is satellite-independent; 0 (unknown signal) leaves the
-            // cycle columns 0 so the reader falls back to the metre column.
+            // λ for this (const,signal).  GLONASS is already excluded, so the wavelength
+            // is the band's and satellite-independent (no FDMA slot: 0); 0 (unknown signal)
+            // leaves the cycle columns 0 so the reader falls back to the metre column.  The
+            // band is read from the digit alone, as PppUtils::getWavelength read it, so
+            // BeiDou digit 1 is B1C here as at the chain datum's rounding; the BeiDou
+            // digit-1 decision is owed (card NOM section 12).
             double lambda = 0.0;
-            if (dd_ppp_utils) {
-                const System sys = sysOfChar(cs.first.empty() ? '?' : cs.first[0]);
-                if (sys != System::Unknown)
-                    lambda = dd_ppp_utils->getWavelength(sys, cs.second, ref);
-            }
+            const System cs_sys = systemFromName(cs.first);
+            if (const auto sig = SignalId::fromObsCode(cs_sys, cs.second))
+                lambda = wavelengthM(bandOfDigit(cs_sys, sig->digit), /*glo_slot=*/0);
             const auto& rmap = satmap[ref];
             for (const auto& [sat, stamap] : satmap) {
                 if (sat == ref) continue;

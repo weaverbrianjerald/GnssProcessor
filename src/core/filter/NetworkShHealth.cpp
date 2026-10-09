@@ -9,7 +9,7 @@
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
-#include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"     // systemOfSat, ionoDelayMetresPerTecu
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
@@ -195,7 +195,7 @@ void networkShHealth(
             const double Re = shc.earth_radius_km * 1000.0;
             const double H  = shc.layer_height_km * 1000.0;
             const double tecu_to_L1m =
-                40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+                ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
             const double lon_sun = shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
             double res_sum = 0.0, res_sumsq = 0.0, res_max = 0.0;
             int n_los = 0, n_los_gt3 = 0, n_sta = 0, n_sta_gt3 = 0;
@@ -215,7 +215,7 @@ void networkShHealth(
                 bool sta_present = false, sta_gt3 = false;
                 double zz_gate = 0.0; int nn_gate = 0;   // per-station Σ(r/σ)², count (deweight gate)
                 for (const auto& kv : stations[i].sm->getIonosphereStates()) {
-                    if (kv.first.empty() || kv.first.front() == 'R') continue;  // SH excludes GLONASS
+                    if (kv.first.empty() || systemOfSat(kv.first) == System::GLONASS) continue;  // SH excludes GLONASS
                     const auto gt = geom.find(kv.first);
                     if (gt == geom.end()) continue;
                     if (gt->second.first < iw.elevation_cutoff_deg) continue;

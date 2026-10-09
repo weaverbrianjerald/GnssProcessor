@@ -50,6 +50,7 @@
  * read them under their own knobs.
  */
 
+#include "common/GnssTypes.hpp"         // System (the tracker cell census key)
 #include "filter/ArcLedger.hpp"
 #include "filter/NetworkAnchorReentry.hpp"  // AnchorReentry (card SID phase 4)
 
@@ -234,10 +235,12 @@ namespace GnssProcessor {
         /// screen).  The two populations are counted separately and never combined.
         std::map<std::tuple<int, std::string, std::string>, long long> carry_last_ep;
 
-        /// (station index, band digit, tracker signal) -> rows, for the run-end cell census.
-        std::map<std::tuple<int, char, std::string>, long long> tracker_rows;
-        /// (station index, band digit) -> the modelled phase of that cell (last seen).
-        std::map<std::pair<int, char>, std::string> modelled_of_cell;
+        /// (station index, constellation, band digit, tracker signal) -> rows, for the
+        /// run-end cell census.
+        std::map<std::tuple<int, System, char, std::string>, long long> tracker_rows;
+        /// (station index, constellation, band digit) -> the modelled phase of that cell
+        /// (last seen).
+        std::map<std::tuple<int, System, char>, std::string> modelled_of_cell;
 
         /// "sat|signal" -> one entry per epoch in which the family is carried: the
         /// number of stations whose modelled arc of it is alive in the ledger and
@@ -298,7 +301,7 @@ namespace GnssProcessor {
         long long trk_rows{ 0 };              ///< RawSlipObs band slots compared (denominator).
         long long trk_rows_mismatch{ 0 };     ///< of those, the tracker's signal is not the modelled one.
         long long trk_rows_no_modelled{ 0 };  ///< band slots whose band has no modelled phase (not comparable).
-        long long trk_cells{ 0 };             ///< run-end: (station, band) cells with at least one row.
+        long long trk_cells{ 0 };             ///< run-end: (station, constellation, band) cells with at least one row.
         long long trk_cells_mismatch{ 0 };    ///< run-end: cells whose most frequent tracker signal is not the modelled one.
         long long trk_cells_b1{ 0 };          ///< of those, on band digit 1.
         long long trk_cells_b2{ 0 };          ///< of those, on band digit 2.
@@ -554,7 +557,7 @@ namespace GnssProcessor {
      *
      * @param rs      The run's roster (@c ctx.roster).
      * @param station Producer station index.
-     * @param cons    Constellation string, as @c PppUtils::getSystemString gives it.
+     * @param cons    Constellation name, as @c systemName gives it ("GPS").
      * @param band    RINEX band digit.
      */
     std::string signalRosterModelledPhase(const SignalRoster& rs, int station,
@@ -615,9 +618,8 @@ namespace GnssProcessor {
      * @brief Resolve the per-satellite IF pins to one code designation per
      *        (constellation, band digit).  Pure function (phase 2).
      *
-     * The constellation key is the roster's: the system string
-     * @c PppUtils::getSystemString gives ("GPS"), not the satellite id's first
-     * character ("G") by which the datum seam keys its own maps.
+     * The constellation key is the roster's: the system name @c systemName gives
+     * ("GPS"), not the letter ("G") by which the datum seam keys its own maps.
      *
      * @param if_pin_real Satellite -> the two realized IF-pin code signals.
      * @param votes_out   Optional: the full tally, "<cons>|<band>" -> signal -> count.

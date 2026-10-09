@@ -5,6 +5,7 @@
  */
 #include "filter/NetworkExtraBandScope.hpp"
 
+#include "common/GnssIdentity.hpp"
 #include "products/ProductCache.hpp"
 
 namespace GnssProcessor {
@@ -16,9 +17,12 @@ NetworkPinBands networkPinBandsFor(char system_char) {
     const auto it = refs.find(system_char);
     if (it == refs.end()) return out;
     const auto& ref = it->second;
-    if (ref.sig1.size() < 2 || ref.sig2.size() < 2) return out;
-    out.band1 = ref.sig1[1];
-    out.band2 = ref.sig2[1];
+    const System sys = systemFromLetter(system_char);
+    const auto sig1 = SignalId::fromObsCode(sys, ref.sig1);
+    const auto sig2 = SignalId::fromObsCode(sys, ref.sig2);
+    if (!sig1 || !sig2) return out;
+    out.band1 = sig1->digit;
+    out.band2 = sig2->digit;
     // A degenerate pair (same band twice, or a malformed code) is reported as
     // invalid, not half-resolved: every consumer gates on valid().
     return out;

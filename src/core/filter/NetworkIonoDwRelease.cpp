@@ -10,6 +10,7 @@
 #include "app/NetworkSetupResult.hpp"
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkIonoDeweightGate.hpp"
@@ -201,7 +202,7 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
     const double H  = shc.layer_height_km * 1000.0;
     const double H2 = shc.layer2_height_km * 1000.0;
     const double tecu_to_L1m =
-        40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+        ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
     const double lon_sun = shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
 
     auto emit = [&](const char* event, const std::string& sat, const std::string& station,
@@ -240,7 +241,7 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
         }
 
         for (const auto& o : modeled[i]) {
-            if (o.satellite.empty() || o.satellite.front() == 'R') continue;  // SH excludes GLONASS
+            if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS) continue;  // SH excludes GLONASS
             if (o.elevation < iw.elevation_cutoff_deg) continue;              // the admission gate
             if (!o.sat_pos.allFinite()) continue;
             const int iono_idx = st.sm->getIonosphereIndex(o.satellite);

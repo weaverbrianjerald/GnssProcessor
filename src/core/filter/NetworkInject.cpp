@@ -5,6 +5,7 @@
 #include "filter/NetworkInject.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/PppUtils.hpp"
 #include "logging/LogManager.hpp"
 #include "config/GnssConfig.hpp"
@@ -65,11 +66,11 @@ namespace GnssProcessor {
             codes.reserve(o.measurements.size());
             for (const auto& kv : o.measurements) codes.push_back(kv.first);
             for (const auto& code : codes) {
-                if (code.empty()) continue;
-                if (code[0] == 'C') {
+                const ObsType type = obsTypeOf(code);
+                if (type == ObsType::Code) {
                     o.measurements[code] += step_m;
                     ++n;
-                } else if (code[0] == 'L') {
+                } else if (type == ObsType::Phase) {
                     const double lam = utils
                             ? utils->getWavelength(o.system, code, o.satellite) : 0.0;
                     if (lam > 0.0) {

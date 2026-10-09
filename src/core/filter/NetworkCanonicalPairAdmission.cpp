@@ -5,7 +5,7 @@
 #include "filter/NetworkCanonicalPairAdmission.hpp"
 
 #include "app/NetworkRunContext.hpp"
-#include "common/PppUtils.hpp"
+#include "common/GnssIdentity.hpp"      // systemName, systemFromName, SignalId
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunTypes.hpp"      // NetStation (roster + its PppModel)
 #include "logging/NetworkRunTraces.hpp"
@@ -33,12 +33,14 @@ namespace GnssProcessor {
         std::map<std::string, CanonicalPair> latchedPairs(const PppModel& model) {
             std::map<std::string, CanonicalPair> out;
             for (const auto& e : model.exportCanonicalSignals()) {
-                if (e.signal.size() < 2 || e.constellation.empty()) continue;
-                const char digit = e.signal[1];
-                if (digit != '1' && digit != '2') continue;
+                const auto signal = SignalId::fromObsCode(systemFromName(e.constellation), e.signal);
+                if (!signal) continue;
+                // The pair's bands are the digits 1 and 2 (a band role, card NOM step N3).
+                const bool band1 = signal->digit == '1';
+                if (!band1 && signal->digit != '2') continue;
                 CanonicalPair& p = out[e.constellation];
-                if (e.obs_type == 'L') (digit == '1' ? p.l1 : p.l2) = e.signal;
-                else if (e.obs_type == 'C') (digit == '1' ? p.c1 : p.c2) = e.signal;
+                if (e.obs_type == 'L') (band1 ? p.l1 : p.l2) = e.signal;
+                else if (e.obs_type == 'C') (band1 ? p.c1 : p.c2) = e.signal;
             }
             return out;
         }
@@ -149,8 +151,8 @@ namespace GnssProcessor {
             auto& cache = st.pairs[i];
 
             for (const auto& o : sit->second) {
-                const std::string cons = PppUtils::getSystemString(o.system);
-                if (cons.empty() || cons == "Unknown") continue;
+                if (o.system == System::Unknown) continue;
+                const std::string cons = systemName(o.system);
 
                 auto pit = cache.find(cons);
                 if (pit == cache.end()) {

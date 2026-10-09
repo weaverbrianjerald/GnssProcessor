@@ -70,8 +70,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                          action, detail);
     };
     auto satOf = [](const std::string& amb) {
-        const auto us = amb.find('_');
-        return us == std::string::npos ? amb : amb.substr(0, us);
+        const auto a = StateKeys::parseAmbiguityKey(amb);
+        return a ? a->satellite : amb;
     };
 
     // --- (1) Age this epoch's anchorable arcs -----------------------------
@@ -119,12 +119,10 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 : std::min(prev->second + 1, kArcAgeCap);
             new_age[{si, amb}] = counted;
             if (!sid_age_read) continue;
-            const std::size_t us = amb.find('_');
-            if (us == std::string::npos || us == 0 || us + 1 >= amb.size()) continue;
+            const auto a = StateKeys::parseAmbiguityKey(amb);
+            if (!a) continue;
             const long long led_age = anchorLedgerArcAge(
-                ctx.arc_ledger,
-                ArcLedger::Key{ si, amb.substr(0, us), amb.substr(us + 1) },
-                sid_now_ep);
+                ctx.arc_ledger, ArcLedger::Key{ si, a->satellite, a->signal }, sid_now_ep);
             if (led_age < 0) { ++sid_ctr.age_no_ledger; continue; }
             ++sid_ctr.age_compared;
             const int led_clamped = static_cast<int>(
@@ -364,7 +362,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
             bool drop_any = false;
             for (const auto& kv : sm.getSatPhaseBiasStates()) {
                 const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                if (p && blocked.count(p->satellite + "_" + p->signal)) {
+                if (p && blocked.count(StateKeys::makeAmbiguityKey(p->satellite, p->signal))) {
                     drop_any = true;
                     // The parameter inventory's absorbed instance (card NOM N1b).
                     if (stations[i].mm)

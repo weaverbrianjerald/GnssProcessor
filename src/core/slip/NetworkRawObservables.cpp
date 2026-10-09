@@ -13,6 +13,8 @@
 
 #include "slip/NetworkRawObservables.hpp"
 
+#include "common/GnssIdentity.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -26,14 +28,14 @@ namespace {
 /// receiver sets LLI too often.
 bool hasAnyPhase(const PppObservation& obs) {
     for (const auto& kv : obs.raw_observed)
-        if (!kv.first.empty() && kv.first[0] == 'L') return true;
+        if (obsTypeOf(kv.first) == ObsType::Phase) return true;
     return false;
 }
 
 /// True when the observation sets RINEX LLI bit 0 on any phase signal.
 bool assertsLli(const PppObservation& obs) {
     for (const auto& [code, lli] : obs.lli_flags)
-        if (!code.empty() && code[0] == 'L' && (lli & 1)) return true;
+        if (obsTypeOf(code) == ObsType::Phase && (lli & 1)) return true;
     return false;
 }
 
@@ -45,8 +47,16 @@ bool assertsLli(const PppObservation& obs) {
 
 namespace {
 
-/// Returns the phase signal that this station latched on @p band and tracks this
-/// epoch, or an empty string (card GRK).
+/// One phase signal of a satellite that the tracker can use this epoch (its raw phase
+/// and the code of the same signal are both reported), parsed once.
+struct PhaseSignal {
+    std::string phase;    ///< The phase code, e.g. "L1C".
+    SignalId    signal;   ///< Its signal (band digit and attribute), e.g. 1C.
+    std::string code;     ///< The code of the same signal, e.g. "C1C".
+};
+
+/// Returns the phase signal that this station latched on @p band, among the signals
+/// @p usable the satellite reports this epoch, or null (card GRK).
 ///
 /// The source is the station's canonical latch, not the epoch's admitted row set
 /// (@c PppObservation::observed).  The admitted set is decided per epoch, and the
@@ -54,16 +64,16 @@ namespace {
 /// arc's first epochs, which are the re-entry epochs this tracker has to name
 /// correctly.  The latch is decided once per constellation and then fixed.  A
 /// latched signal is usable only when both its raw phase and its matching code are
-/// reported this epoch, since the observables are built from them.
-std::string latchedPhaseOfBand(const PppObservation& obs, char band,
-                               int station, const std::string& system,
-                               const TrackerLatchLookup* latch) {
-    if (latch == nullptr || !*latch) return std::string{};
-    const std::string k = (*latch)(station, system, band);
-    if (k.size() < 2 || k[0] != 'L' || k[1] != band) return std::string{};
-    if (!obs.raw_observed.count(k)) return std::string{};
-    if (!obs.raw_observed.count("C" + k.substr(1))) return std::string{};
-    return k;
+/// reported this epoch, since the observables are built from them: exactly the
+/// signals of @p usable.
+const PhaseSignal* latchedPhaseOfBand(const std::vector<PhaseSignal>& usable, char band,
+                                      int station, const std::string& system,
+                                      const TrackerLatchLookup* latch) {
+    if (latch == nullptr || !*latch) return nullptr;
+    const std::string k = (*latch)(station, system, band);   // a phase on this band, e.g. L2W
+    for (const PhaseSignal& p : usable)
+        if (p.phase == k && p.signal.digit == band) return &p;
+    return nullptr;
 }
 
 }  // namespace
@@ -82,18 +92,25 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
         if (!present[i]) continue;
         auto& dst = out.rows[static_cast<std::size_t>(i)];
         for (const auto& obs : modeled[static_cast<std::size_t>(i)]) {
-            std::vector<std::string> ph;  // phase signals with a matching code
+            std::vector<PhaseSignal> ph;   // the phase signals with a matching code
             for (const auto& kv : obs.raw_observed) {
-                const std::string& k = kv.first;
-                if (k.size() < 2 || k[0] != 'L') continue;
-                if (obs.raw_observed.count("C" + k.substr(1))) ph.push_back(k);
+                const auto phase = ObservableId::parse(obs.system, kv.first);
+                if (!phase || phase->type != ObsType::Phase) continue;
+                std::string code = phase->signal.obsCode(ObsType::Code);
+                if (obs.raw_observed.count(code))
+                    ph.push_back({kv.first, phase->signal, std::move(code)});
             }
             if (ph.empty()) continue;
             std::sort(ph.begin(), ph.end(),
-                      [](const std::string& a, const std::string& b) { return a[1] < b[1]; });
-            std::string s1 = ph.front();
-            std::string s2;
-            for (const auto& k : ph) if (k[1] != s1[1]) { s2 = k; break; }  // distinct band
+                      [](const PhaseSignal& a, const PhaseSignal& b) {
+                          return a.signal.digit < b.signal.digit;   // band digit only
+                      });
+            // The two lowest distinct bands: the first signal, and the first signal after
+            // it on another band (none when every signal shares one band).
+            const PhaseSignal* p1 = &ph.front();
+            const PhaseSignal* p2 = nullptr;
+            for (const PhaseSignal& p : ph)
+                if (p.signal.digit != p1->signal.digit) { p2 = &p; break; }
             // ---- Name each band by the latch, not lexically (card GRK) -------
             // The two bands are already fixed (the two lowest distinct ones);
             // this step decides only which signal of each band the tracker
@@ -114,21 +131,23 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
             // the counter is 0 by construction.  One counter serves both states
             // (invariant #4).
             if ((tracker_modeled_first || cnt != nullptr) && latch != nullptr) {
-                const std::string system = PppUtils::getSystemString(obs.system);
-                for (std::string* s : { &s1, &s2 }) {
-                    if (s->empty()) continue;
-                    const std::string m =
-                        latchedPhaseOfBand(obs, (*s)[1], i, system, latch);
-                    if (m.empty()) continue;            // no latched cell here
-                    if (tracker_modeled_first) *s = m;
-                    if (cnt != nullptr && m != *s) ++cnt->gap_tracker_key_mismatch;
+                const std::string system = systemName(obs.system);
+                for (const PhaseSignal** p : { &p1, &p2 }) {
+                    if (*p == nullptr) continue;
+                    const PhaseSignal* m =
+                        latchedPhaseOfBand(ph, (*p)->signal.digit, i, system, latch);
+                    if (m == nullptr) continue;         // no latched cell here
+                    if (tracker_modeled_first) *p = m;
+                    if (cnt != nullptr && m != *p) ++cnt->gap_tracker_key_mismatch;
                 }
             }
+            const std::string& s1 = p1->phase;
+            const std::string  s2 = p2 ? p2->phase : std::string{};
 
             const double lam1 = utils.getWavelength(obs.system, s1, obs.satellite);
             if (!(std::isfinite(lam1) && lam1 > 0.0)) continue;
             const double L1_cyc = obs.raw_observed.at(s1);
-            const double P1_m   = obs.raw_observed.at("C" + s1.substr(1));
+            const double P1_m   = obs.raw_observed.at(p1->code);
             const double L1_m   = L1_cyc * lam1;
             const double l1c1   = L1_m - P1_m;
             const int    lli1   = obs.lli_flags.count(s1) ? obs.lli_flags.at(s1) : 0;
@@ -142,7 +161,7 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                 if (std::isfinite(lam2) && lam2 > 0.0) {
                     const double inv1 = 1.0 / lam1, inv2 = 1.0 / lam2;
                     const double L2_cyc = obs.raw_observed.at(s2);
-                    const double P2_m   = obs.raw_observed.at("C" + s2.substr(1));
+                    const double P2_m   = obs.raw_observed.at(p2->code);
                     gf = L1_m - L2_cyc * lam2;
                     mw = (L1_cyc - L2_cyc) / (inv1 - inv2)
                        - (P1_m * inv1 + P2_m * inv2) / (inv1 + inv2);
@@ -192,13 +211,14 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
             // metres.
             if (per_signal) {
                 r.sigs.reserve(ph.size());
-                for (const auto& k : ph) {
+                for (const PhaseSignal& p : ph) {
+                    const std::string& k = p.phase;
                     const double lam = utils.getWavelength(obs.system, k, obs.satellite);
                     if (!(std::isfinite(lam) && lam > 0.0)) continue;
                     RawSigObs s;
                     s.sig     = k;
                     s.phase_m = obs.raw_observed.at(k) * lam;
-                    s.code_m  = obs.raw_observed.at("C" + k.substr(1));
+                    s.code_m  = obs.raw_observed.at(p.code);
                     s.lli     = obs.lli_flags.count(k) ? obs.lli_flags.at(k) : 0;
                     r.sigs.push_back(std::move(s));
                 }

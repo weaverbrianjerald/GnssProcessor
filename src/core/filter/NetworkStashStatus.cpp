@@ -10,6 +10,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"   // letterOfSat
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkClockAnchor.hpp"     // gauge projection shared with the guard (§2.1 of card Q3)
@@ -103,7 +104,7 @@ void networkStashStatus(
     // the behaviour is unchanged.
     const auto sts_released = [&](const std::string& sat) {
         return !ctx.carry.sts_consts.empty() && !sat.empty()
-            && ctx.carry.sts_consts.count(sat.front()) > 0;
+            && ctx.carry.sts_consts.count(letterOfSat(sat)) > 0;
     };
     auto emitEpochStatus = [&](const char* disposition, const EpochStatusRow& r) {
         traces.emitEpochStatus(se.time, disposition, r);
@@ -341,7 +342,7 @@ void networkStashStatus(
                 const auto it = prires_shared_prior.find(
                     sharedCarryKey(cp.kind, cp.sat, cp.signal));
                 if (it == prires_shared_prior.end()) continue;
-                by_const[cp.sat[0]].push_back(it->second.value - cp.value);
+                by_const[letterOfSat(cp.sat)].push_back(it->second.value - cp.value);
             }
             for (auto& [c, v] : by_const) {
                 std::nth_element(v.begin(),
@@ -380,7 +381,8 @@ void networkStashStatus(
                 Eigen::Index col;
                 try { col = est.clockColumn(cp.sat); } catch (...) { continue; }
                 if (col >= 0 && col < cov.rows() && col < cov.cols())
-                    by_c[cp.sat[0]].push_back(ClkMember{cp.sat, col, it->second.fold_var});
+                    by_c[letterOfSat(cp.sat)].push_back(
+                        ClkMember{cp.sat, col, it->second.fold_var});
             }
             for (const auto& [c, v] : by_c) {
                 (void)c;
@@ -417,7 +419,7 @@ void networkStashStatus(
             in.station  = -1;                    // shared: this prior has no station
             in.e        = p.value - cp.value;    // carried − solved
             if (is_clk && !cp.sat.empty()) {
-                const auto mit = clk_med.find(cp.sat[0]);
+                const auto mit = clk_med.find(letterOfSat(cp.sat));
                 if (mit != clk_med.end()) in.e -= mit->second;
             }
             in.fold_var = p.fold_var;

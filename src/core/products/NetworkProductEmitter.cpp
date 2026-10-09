@@ -5,6 +5,7 @@
 
 #include "products/NetworkProductEmitter.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/GnssTypes.hpp"
 #include "common/SignalBand.hpp"
 
@@ -20,20 +21,6 @@
 
 namespace GnssProcessor {
 namespace {
-
-/// Map a RINEX satellite-ID prefix to its constellation (for the SSR header).
-System systemFromSat(const std::string& sat) {
-    if (sat.empty()) return System::Unknown;
-    switch (sat[0]) {
-        case 'G': return System::GPS;
-        case 'R': return System::GLONASS;
-        case 'E': return System::Galileo;
-        case 'C': return System::BeiDou;
-        case 'J': return System::QZSS;
-        case 'S': return System::SBAS;
-        default:  return System::Unknown;
-    }
-}
 
 /// Split a serialized-state line on ','.  Keys in the emitter state ("sat",
 /// "sat|signal", "const|signal") and its numeric fields never contain commas.
@@ -118,7 +105,7 @@ double NetworkProductEmitter::discThresholdM(const std::string& sat,
     // SignalBand's stateless classifier; an unrecognized signal (λ == 0) falls back to
     // the flat gate, so an unknown code does not disable the discontinuity test.
     const auto cls = classifySignalForSat(sat, signal);
-    const double lambda = bandNominalWavelengthMeters(cls.band);
+    const double lambda = nominalWavelengthM(cls.band);
     return (lambda > 0.0) ? disc_threshold_frac_cycles_ * lambda : disc_threshold_m_;
 }
 
@@ -148,7 +135,8 @@ unsigned NetworkProductEmitter::pendingMarkChannels(const std::string& sat) cons
     // MarkScopeEvent census as side effects; callers run this probe before the
     // emit, so counting here would double-count there.
     unsigned mask = 0u;
-    if (!sat.empty() && (force_all_bump_ || forced_bump_consts_.count(sat.front()) != 0))
+    if (!sat.empty()
+        && (force_all_bump_ || forced_bump_consts_.count(letterOfSat(sat)) != 0))
         mask |= kDiscChanAll;   // a datum change re-declares every channel it reaches
     if (forced_bump_sats_.count(sat) != 0) {
         if (!disc_mark_scope_channel_) {
@@ -173,7 +161,7 @@ NetworkProductEmitter::pbSeamCensus(const NetworkSolutionEpoch& sol) const {
     const double epoch_s = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
     for (const auto& s : sol.sats) {
         if (s.sat.empty() || s.phase_bias.empty()) continue;
-        const char cst = s.sat[0];
+        const char cst = letterOfSat(s.sat);
         for (const auto& [signal, npb] : s.phase_bias) {
             const std::string key = s.sat + "|" + signal;
             const auto last_it = last_phase_bias_.find(key);
@@ -282,19 +270,21 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     // The emitted code_bias_m keys are the producer's registered (sat, signal)
     // shared columns, the same set that the per-(const, signal) sum-to-zero and the
     // per-sat IF pin are built over, so a change of set or band tuple here is a
-    // datum re-reference.  The constellation key is the satellite ID's leading
-    // char, matching NetworkSbasis::constellationOf in the producer's sum-to-zero
-    // rows.
+    // datum re-reference.  The constellation key is the RINEX letter of the
+    // satellite's constellation (letterOfSat(sat)), the key of the
+    // producer's sum-to-zero rows.
     std::map<std::string, std::set<std::string>> cur_code_satset;  // "const|signal" -> sats
     std::map<std::string, std::vector<char>>     cur_band_tuple;   // "sat" -> sorted distinct band digits
     for (const auto& s : sol.sats) {
         if (s.code_bias_m.empty() || s.sat.empty()) continue;
-        const char cst = s.sat[0];
+        const System sys = systemOfSat(s.sat);
+        const char cst = rinexLetter(sys);
         std::set<char> bands;
         for (const auto& [signal, bias] : s.code_bias_m) {
             (void)bias;
             cur_code_satset[std::string(1, cst) + "|" + signal].insert(s.sat);
-            if (signal.size() >= 2) bands.insert(signal[1]);  // RINEX band digit
+            if (const auto sig = SignalId::fromObsCode(sys, signal))
+                bands.insert(sig->digit);  // RINEX band digit
         }
         cur_band_tuple[s.sat].assign(bands.begin(), bands.end());  // std::set<char> is sorted-unique
     }
@@ -320,7 +310,8 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     std::map<char, std::set<std::string>> cur_clock_satset;
     if (clock_disc_on_set_change_) {
         for (const auto& s : sol.sats)
-            if (s.has_clock && !s.sat.empty()) cur_clock_satset[s.sat[0]].insert(s.sat);
+            if (s.has_clock && !s.sat.empty())
+                cur_clock_satset[letterOfSat(s.sat)].insert(s.sat);
         for (const auto& [cst, sats] : cur_clock_satset) {
             const auto it = prev_clock_satset_.find(cst);
             if (it != prev_clock_satset_.end() && it->second != sats)
@@ -418,7 +409,8 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
         header.iod_ssr     = sol.iod_ssr;
         header.provider_id = sol.provider_id;
         header.solution_id = sol.solution_id;
-        header.system      = systemFromSat(s.sat);
+        header.system      = systemOfSat(s.sat);
+        const char cst     = rinexLetter(header.system);   // key of the per-constellation maps
 
         if (s.has_clock) {
             SsrClockCorrection rec;
@@ -466,8 +458,8 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // state across the gap needs the reset.  staleKey exists only to
                 // suppress a spurious jump test on the phase and code channels.
                 if (seen_before && !s.sat.empty()
-                    && (constForced(s.sat[0]) || satForced(s.sat, kDiscChanClock)
-                        || clock_set_changed.count(s.sat[0]) != 0)) ++cctr;
+                    && (constForced(cst) || satForced(s.sat, kDiscChanClock)
+                        || clock_set_changed.count(cst) != 0)) ++cctr;
                 seen_clock_sats_.insert(s.sat);
                 if (staleness_horizon_s_ > 0.0) clock_last_seen_s_[s.sat] = epoch_s;
                 rec.disc_counter = cctr;
@@ -504,7 +496,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
 
             for (const auto& [signal, bias] : s.code_bias_m) {
                 const std::string key  = s.sat + "|" + signal;
-                const std::string chan = std::string(1, s.sat[0]) + "|" + signal;
+                const std::string chan = std::string(1, cst) + "|" + signal;
 
                 // Step on a forced (clock-pivot) datum change, a per-(const,
                 // signal) sum-to-zero set re-reference, this satellite's IF-pin
@@ -516,7 +508,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 const auto cb_last_it    = last_code_bias_.find(key);
                 const bool have_baseline = (cb_last_it != last_code_bias_.end());
                 const bool fresh         = have_baseline && !staleKey(code_last_seen_s_, key);
-                const bool forced        = (!s.sat.empty() && constForced(s.sat[0]))
+                const bool forced        = (!s.sat.empty() && constForced(cst))
                                            || satForced(s.sat, kDiscChanCodeBias);  // per-sat retro-bump on the code channel (B1, card MS)
                 // Opt-in magnitude test (network.code_bias_disc_jump_test): the phase
                 // jump test applied to code.  It catches value wander under weak
@@ -575,7 +567,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 const auto last_it       = last_phase_bias_.find(key);
                 const bool have_baseline = (last_it != last_phase_bias_.end());
                 const bool fresh         = have_baseline && !staleKey(phase_last_seen_s_, key);
-                const bool forced        = (!s.sat.empty() && constForced(s.sat[0]))
+                const bool forced        = (!s.sat.empty() && constForced(cst))
                                            || satForced(s.sat, kDiscChanPhaseBias); // per-sat retro-bump on the phase channel (B1, card MS)
                 // A forced datum change (clock-pivot handover or global
                 // re-declaration) steps the counter even on a beyond-horizon return,
@@ -681,7 +673,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     // epochs.  When every flagged constellation is present, everything clears here.
     std::set<char> present_consts;
     for (const auto& s : sol.sats)
-        if (!s.sat.empty()) present_consts.insert(s.sat[0]);
+        if (!s.sat.empty()) present_consts.insert(letterOfSat(s.sat));
     if (force_all_bump_) {
         // The global (empty-set) bump forces every constellation.  A tracked
         // constellation (one with previously emitted keys, for which a consumer may
@@ -692,12 +684,13 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
         auto pendIfAbsent = [&](char cst) {
             if (present_consts.count(cst) == 0) forced_bump_consts_.insert(cst);
         };
+        // The phase and code keys are "sat|signal", so their satellite leads the key.
         for (const auto& kv : last_phase_bias_)
-            if (!kv.first.empty()) pendIfAbsent(kv.first[0]);
+            if (!kv.first.empty()) pendIfAbsent(letterOfSat(kv.first));
         for (const auto& kv : last_code_bias_)
-            if (!kv.first.empty()) pendIfAbsent(kv.first[0]);
+            if (!kv.first.empty()) pendIfAbsent(letterOfSat(kv.first));
         for (const auto& sat : seen_clock_sats_)
-            if (!sat.empty()) pendIfAbsent(sat[0]);
+            if (!sat.empty()) pendIfAbsent(letterOfSat(sat));
         force_all_bump_ = false;
     }
     for (auto it = forced_bump_consts_.begin(); it != forced_bump_consts_.end();) {

@@ -13,10 +13,16 @@
  * The frequency comparison records, and does not fix, the places the two sources
  * disagree; step N0b decides them.  The expected list is pinned here so that a change on
  * either side is noticed.
+ *
+ * Step N0b's call-site helpers are tested last, each against the expression or helper it
+ * replaces at the network call sites: the satellite-letter reads, the renderings of a
+ * @c System, the observation-type test, and the wavelength and TECU expressions, the last
+ * two bit for bit (the migration claims byte identity).
  */
 
 #include <gtest/gtest.h>
 
+#include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"
 #include "common/PppUtils.hpp"
 #include "common/SignalBand.hpp"
@@ -369,4 +375,138 @@ TEST(GnssIdentityTest, FrequencyAgreesWithPppUtilsExceptTheRecordedCases) {
     EXPECT_DOUBLE_EQ(carrierFrequencyHz(FrequencyBand::GloG1, 3), 1602.0e6 + 3 * 0.5625e6);
     EXPECT_EQ(nominalCarrierFrequencyHz(FrequencyBand::Unknown), 0.0);
     EXPECT_EQ(nominalWavelengthM(FrequencyBand::Unknown), 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Step N0b: the call-site helpers, each against what it replaces
+// ---------------------------------------------------------------------------
+
+TEST(GnssIdentityTest, SystemOfSatReadsTheFirstLetterOnly) {
+    // Every satellite of the six constellations, in its canonical rendering.
+    for (System s : kSystems)
+        for (int prn = 1; prn <= 99; ++prn)
+            EXPECT_EQ(systemOfSat(SatId{s, prn}.str()), s) << SatId{s, prn}.str();
+    // Tolerant: the non-normalized spellings, and anything after the letter.
+    for (const char* t : {"G 5", "G5", "G005", "G", "GXYZ"})
+        EXPECT_EQ(systemOfSat(t), System::GPS) << "'" << t << "'";
+    // The single letter policy: never GPS for an unknown letter or an empty id.
+    for (const char* t : {"", " G05", "g05", "I05", "X01", "?01"})
+        EXPECT_EQ(systemOfSat(t), System::Unknown) << "'" << t << "'";
+
+    // The name it gives is the name PppUtils::getSystemString reads from the same
+    // string, for every first character (the satellite overload the call sites use).
+    EXPECT_EQ(std::string(systemName(systemOfSat(""))), PppUtils::getSystemString(std::string{}));
+    for (int c = 1; c < 128; ++c) {
+        const std::string sat = std::string(1, static_cast<char>(c)) + "01";
+        EXPECT_EQ(std::string(systemName(systemOfSat(sat))), PppUtils::getSystemString(sat)) << c;
+    }
+}
+
+TEST(GnssIdentityTest, LetterNameAndKeyRenderTheTraits) {
+    static_assert(rinexLetter(System::BeiDou) == 'C', "BeiDou letter");
+    static_assert(rinexLetter(System::Unknown) == '?', "Unknown letter");
+    for (System s : kSystems) {
+        EXPECT_EQ(rinexLetter(s), traitsOf(s).letter);
+        EXPECT_EQ(std::string(systemName(s)), PppUtils::getSystemString(s));
+        EXPECT_EQ(systemFromName(systemName(s)), s);
+        // The key is the satellite id's first character, for every satellite.
+        for (int prn = 1; prn <= 99; ++prn) {
+            const std::string sat = SatId{s, prn}.str();
+            EXPECT_EQ(constellationKey(systemOfSat(sat)), sat.substr(0, 1)) << sat;
+        }
+    }
+    EXPECT_EQ(std::string(systemName(System::Unknown)), "Unknown");
+    EXPECT_EQ(constellationKey(System::Unknown), "?");
+    // Recorded: where the first character itself is not a known letter, the key is "?"
+    // (the first character would have been "" or "I").
+    EXPECT_EQ(constellationKey(systemOfSat("")), "?");
+    EXPECT_EQ(constellationKey(systemOfSat("I05")), "?");
+}
+
+TEST(GnssIdentityTest, LetterOfSatIsTheFirstCharacterOfAKnownSatellite) {
+    // The letter reads are compile-time constants (inline constexpr table reads).
+    static_assert(systemFromLetter('E') == System::Galileo, "letter map");
+    static_assert(systemFromLetter('I') == System::Unknown, "IRNSS has no System value");
+    static_assert(systemOfSat("C19") == System::BeiDou, "satellite read");
+    static_assert(systemOfSat("") == System::Unknown, "empty id");
+    static_assert(letterOfSat("J02") == 'J', "satellite letter");
+    static_assert(letterOfSat("") == '?', "empty id");
+    // The first character of every satellite of the six constellations.
+    for (System s : kSystems)
+        for (int prn = 1; prn <= 99; ++prn) {
+            const std::string sat = SatId{s, prn}.str();
+            EXPECT_EQ(letterOfSat(sat), sat.front()) << sat;
+            EXPECT_EQ(letterOfSat(sat), rinexLetter(systemOfSat(sat))) << sat;
+        }
+    // An empty id and every letter outside the table share the '?' group, which is
+    // where letterOfSat differs from the first character it replaced.
+    for (const char* t : {"", "I05", "X01", "g05", " G05"})
+        EXPECT_EQ(letterOfSat(t), '?') << "'" << t << "'";
+}
+
+TEST(GnssIdentityTest, ObsTypeOfReadsTheFirstCharacter) {
+    static_assert(obsTypeOf("C1C") == ObsType::Code, "code");
+    static_assert(obsTypeOf("L2W") == ObsType::Phase, "phase");
+    // The type of every classified observable, as the validating parser reads it.
+    for (System s : kSystems)
+        for (const SignalId& g : classifiedSignals(s))
+            for (ObsType t : {ObsType::Code, ObsType::Phase, ObsType::Doppler, ObsType::Snr}) {
+                const std::string code = g.obsCode(t);
+                EXPECT_EQ(obsTypeOf(code), ObservableId::parse(s, code)->type) << code;
+            }
+    // The tests it replaces read the first character alone: a pair text included.
+    EXPECT_EQ(obsTypeOf("C1C_C2W"), ObsType::Code);
+    EXPECT_EQ(obsTypeOf("L1C_L2W"), ObsType::Phase);
+    for (const char* t : {"", "X1C", "c1C", "1C"})
+        EXPECT_EQ(obsTypeOf(t), ObsType::Unknown) << "'" << t << "'";
+    for (int c = 1; c < 128; ++c) {
+        const std::string code = std::string(1, static_cast<char>(c)) + "1C";
+        EXPECT_EQ(obsTypeOf(code) == ObsType::Code, code[0] == 'C') << c;
+        EXPECT_EQ(obsTypeOf(code) == ObsType::Phase, code[0] == 'L') << c;
+    }
+}
+
+TEST(GnssIdentityTest, WavelengthsAgreeBitForBitWithTheFunctionsTheyReplace) {
+    LogManager log;
+    PppUtils pu(log);
+    const std::map<System, std::string> sat = {
+        {System::GPS, "G01"}, {System::Galileo, "E01"}, {System::GLONASS, "R01"},
+        {System::BeiDou, "C01"}, {System::QZSS, "J01"}, {System::SBAS, "S20"}};
+    ASSERT_EQ(pu.getGlonassChannel("R01"), 1);
+
+    // SignalId::wavelengthM against PppUtils::getWavelength, exactly (EXPECT_EQ, not a
+    // tolerance): a call site that swaps one for the other keeps its bytes, except for
+    // the BeiDou digit-1 I and Q signals N0a records (their frequencies differ).
+    std::set<std::string> disagree;
+    for (System s : kSystems)
+        for (const SignalId& g : classifiedSignals(s)) {
+            const int slot = (s == System::GLONASS) ? 1 : 0;   // R01: slot +1
+            EXPECT_EQ(g.wavelengthM(slot), wavelengthM(g.band(), slot));
+            for (ObsType t : {ObsType::Code, ObsType::Phase}) {
+                const std::string code = g.obsCode(t);
+                if (g.wavelengthM(slot) != pu.getWavelength(s, code, sat.at(s)))
+                    disagree.insert(std::string(1, rinexLetter(s)) + code);
+            }
+        }
+    const std::set<std::string> expected = {"CC1I", "CC1Q", "CL1I", "CL1Q"};
+    EXPECT_EQ(disagree, expected);
+
+    // nominalWavelengthM against SignalBand's table, exactly, for every band: the table's
+    // constexpr quotients and this function's run-time quotient are the same division.
+    for (int b = 0; b <= static_cast<int>(FrequencyBand::IrnS); ++b) {
+        const auto band = static_cast<FrequencyBand>(b);
+        EXPECT_EQ(nominalWavelengthM(band), bandNominalWavelengthMeters(band)) << bandLabel(band);
+    }
+}
+
+TEST(GnssIdentityTest, IonoDelayPerTecuReproducesTheSiteExpression) {
+    // The expression the network code writes at each of its sites, bit for bit.
+    const double site = 40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+    EXPECT_EQ(nominalCarrierFrequencyHz(FrequencyBand::GpsL1), Constants::GPS_L1_FREQ);
+    EXPECT_EQ(ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1)), site);
+    EXPECT_NEAR(site, 0.16237, 1.0e-5);
+    // The first-order delay scales as 1 / f^2.
+    const double l2 = ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL2));
+    const double ratio = Constants::GPS_L1_FREQ / Constants::GPS_L2_FREQ;
+    EXPECT_NEAR(l2 / site, ratio * ratio, 1.0e-12);
 }

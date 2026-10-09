@@ -6,6 +6,7 @@
 
 #include "filter/NetworkHandoverStransform.hpp"
 
+#include "common/GnssIdentity.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // pivotHandoverSignalled
 #include "filter/NetworkSolveGlue.hpp"       // networkClockDatumDeclaration
 #include "math/TimeUtils.hpp"
@@ -50,11 +51,11 @@ ClockStransformResult applyClockStransform(
     // structural direction is the constellation's common shift, coefficient 1
     // (NetworkSbasis::clockNullDirection).
     const bool wide = (mech == CarryMechanism::HandoverBeforeRows);
-    const std::string cq = NetworkSbasis::constellationOf(q);
+    const System sys_q = systemOfSat(q);
     const auto coeffOf = [&](const std::string& sat, double& vi) {
         const auto cit = coeff.find(sat);
         if (cit != coeff.end()) { vi = cit->second; return true; }
-        if (wide && !sat.empty() && NetworkSbasis::constellationOf(sat) == cq) { vi = 1.0; return true; }
+        if (wide && !sat.empty() && systemOfSat(sat) == sys_q) { vi = 1.0; return true; }
         return false;
     };
     // x <- x - v_c*c0 ; var <- var + v_c[i]^2 * var_q.  Clocks only: every other shared
@@ -124,13 +125,15 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, c
     }
     const Eigen::Index iq = static_cast<Eigen::Index>(qit->second);
     const double c0 = qcp->value;
+    const System sys = systemFromLetter(c);
 
     // u: every clock row of the constellation in the block (its key is "<sat>|CLK").
     std::vector<char> u(static_cast<std::size_t>(k), 0);
     std::vector<Eigen::Index> U;
     for (const auto& [key, row] : pcc.row) {
         if (static_cast<Eigen::Index>(row) >= k) continue;
-        if (key.size() > 4 && key.front() == c && key.compare(key.size() - 4, 4, "|CLK") == 0) {
+        if (key.size() > 4 && systemOfSat(key) == sys
+            && key.compare(key.size() - 4, 4, "|CLK") == 0) {
             u[row] = 1;
             U.push_back(static_cast<Eigen::Index>(row));
         }
@@ -173,12 +176,11 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, c
     std::set<std::string> carried_clk;
     long long n_rows = 0, n_parked = 0;
     double var_saved = 0.0;
-    const std::string cs(1, c);
     forEachCarriedReference(
         carry, carryMechanismSites(CarryMechanism::Handover),
         [&](const CarriedRef& ref) -> bool {
             if (ref.kind != SharedParamKind::Clock || ref.site != CarrySite::PrevCarry) return false;
-            if (ref.sat.empty() || NetworkSbasis::constellationOf(ref.sat) != cs) return false;
+            if (ref.sat.empty() || systemOfSat(ref.sat) != sys) return false;
             carried_clk.insert(ref.sat);
             *ref.value -= c0;
             const auto rit = pcc.row.find(sharedCarryKey(SharedParamKind::Clock, ref.sat, ""));
@@ -201,7 +203,7 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, c
     // The outgoing pivot: exact in the outgoing frame, so its row in the incoming frame is
     // -r_j + P_qq u_j and its value -c0.
     Eigen::Index ip = -1;
-    if (!p_out.empty() && NetworkSbasis::constellationOf(p_out) == cs
+    if (!p_out.empty() && systemOfSat(p_out) == sys
         && !pcc.row.count(sharedCarryKey(SharedParamKind::Clock, p_out, ""))
         && !carried_clk.count(p_out)) {
         ip = k;
@@ -269,8 +271,7 @@ long long undoClockStransform(NetworkCarryState& carry, char constellation, doub
         carry, carryMechanismSites(CarryMechanism::HandoverBeforeRows),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::Clock || r.sat.empty()) return false;
-            if (NetworkSbasis::constellationOf(r.sat) != std::string(1, constellation))
-                return false;
+            if (systemOfSat(r.sat) != systemFromLetter(constellation)) return false;
             *r.value += c0;
             if (r.site == CarrySite::PrevCarry) *r.var -= var_q;
             else if (r.var && *r.var > 0.0) *r.var -= var_q;   // a free term's p_prev
@@ -476,7 +477,8 @@ void networkHandoverStransform(NetworkRunContext& ctx,
             // (before PASS B, the carry the rows were built on) and this transform.
             std::set<std::string> clean;
             for (const CarryPrior& cp : ctx.carry.prev_carry)
-                if (cp.kind == SharedParamKind::Clock && !cp.sat.empty() && cp.sat.front() == c
+                if (cp.kind == SharedParamKind::Clock && !cp.sat.empty()
+                    && systemOfSat(cp.sat) == systemFromLetter(c)
                     && cp.fold.disposition != CarryDisposition::Undecided
                     && cp.value == cp.fold.value_decided_m && cp.var == cp.fold.var_decided_m2)
                     clean.insert(cp.sat);
@@ -501,7 +503,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                 rec.selfcheck_ok = d.selfcheck_ok;
                 for (const auto& [rk, row] : ctx.carry.prev_carry_cov.row) {
                     (void)row;
-                    if (rk.size() > 4 && rk.front() == c
+                    if (rk.size() > 4 && systemOfSat(rk) == systemFromLetter(c)
                         && rk.compare(rk.size() - 4, 4, "|CLK") == 0)
                         rec.row_sats.insert(rk.substr(0, rk.size() - 4));
                 }

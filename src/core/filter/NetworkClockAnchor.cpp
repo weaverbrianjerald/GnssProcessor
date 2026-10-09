@@ -14,7 +14,7 @@
 #include "filter/NetworkClockClone.hpp"      // networkClockCloneRefloat (card SCL)
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey
 #include "filter/NetworkResponses.hpp"       // prmRespond / ResponseSite (card PRM phase 3a)
-#include "common/SignalBand.hpp"             // phase-space statistic: band wavelengths (card CTU section 14)
+#include "common/GnssIdentity.hpp"           // systemOfSat; phase-space statistic: band wavelengths (card CTU section 14)
 
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -114,25 +114,33 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
     // The functional per satellite: coefficients over the folded keys and over the
     // shared columns.
     struct Fn { std::vector<std::pair<int, double>> ka; std::vector<std::pair<Eigen::Index, double>> sc; };
-    std::map<char, std::vector<std::pair<std::string, Fn>>> by_const;
+    std::map<System, std::vector<std::pair<std::string, Fn>>> by_const;
     for (auto& [sat, s0] : by) {
         if (s0.ic < 0 || s0.ip.size() < 2) continue;
+        const System sys = systemOfSat(sat);
+        // The physical band of one of the satellite's phase-bias signals (Unknown for a
+        // signal the identity layer does not parse).
+        const auto bandOf = [sys](const std::string& sig) {
+            const auto signal = SignalId::fromObsCode(sys, sig);
+            return signal ? signal->band() : FrequencyBand::Unknown;
+        };
         // One phase bias per band: the best-determined one (smallest folded variance).  A
         // band with a second signal (GPS L1C and L1W) keeps its primary column; the
         // sparse family's column wanders with its own anchor, and any one signal per band
-        // gives a functional blind to the level and to the ionosphere direction.
+        // gives a functional blind to the level and to the ionosphere direction.  (A
+        // signal choice, card NOM step N3.)
         Sat s;
         s.ic = s0.ic;
         {
-            std::map<int, std::pair<int, std::string>> best;   // band -> (key index, signal)
+            std::map<FrequencyBand, std::pair<int, std::string>> best;   // band -> (key index, signal)
             bool ok_band = true;
             for (std::size_t j = 0; j < s0.ip.size(); ++j) {
-                const int band = static_cast<int>(classifySignalForSat(sat, s0.sig[j]).band);
+                const FrequencyBand band = bandOf(s0.sig[j]);
                 const auto it = best.find(band);
                 if (it == best.end()
                     || cov(s0.ip[j], s0.ip[j]) < cov(it->second.first, it->second.first))
                     best[band] = {s0.ip[j], s0.sig[j]};
-                if (!(bandNominalWavelengthMeters(classifySignalForSat(sat, s0.sig[j]).band) > 0.0))
+                if (!(nominalWavelengthM(band) > 0.0))
                     ok_band = false;
             }
             if (!ok_band) continue;
@@ -146,7 +154,7 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
         std::vector<double> alpha;
         bool ok = true;
         for (const auto& sg : s.sig) {
-            const double lam = bandNominalWavelengthMeters(classifySignalForSat(sat, sg).band);
+            const double lam = nominalWavelengthM(bandOf(sg));
             if (!(lam > 0.0)) { ok = false; break; }
             alpha.push_back(lam * lam);
         }
@@ -178,7 +186,7 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
         for (std::size_t j = 0; j < s.sig.size(); ++j)
             row.sigs += (j ? "+" : "") + s.sig[j];    // the functional's signals (card PVN)
         out[sat] = row;
-        by_const[sat[0]].emplace_back(sat, std::move(fn));
+        by_const[sys].emplace_back(sat, std::move(fn));
     }
     const double floor2 = floor_m * floor_m;
     for (auto& [c, v] : by_const) {
@@ -339,10 +347,10 @@ void clockAnchorFoldCommit(NetworkRunContext& ctx, const std::string& sat,
     if (f.anchored) {
         if (f.floor_hit) ++ctx.counters.cta_floor_hits;
         ++ctx.counters.cta_folded_anchored;
-        ++ctx.counters.mgnss.anchor_folds_anchored[sat.substr(0, 1)];   // per constellation (card GAL)
+        ++ctx.counters.mgnss.anchor_folds_anchored[constellationKey(systemOfSat(sat))];   // per constellation (card GAL)
     } else {
         ++ctx.counters.cta_folded_loose;
-        ++ctx.counters.mgnss.anchor_folds_loose[sat.substr(0, 1)];      // per constellation (card GAL)
+        ++ctx.counters.mgnss.anchor_folds_loose[constellationKey(systemOfSat(sat))];      // per constellation (card GAL)
     }
     st.t_last          = pl_now_s;
     st.last_value      = value;
@@ -372,7 +380,7 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     // (gap, datum, ext, statistic): every decoupling edge goes through this path.
     prmRespond(ctx.counters.prm_resp, ResponseSite::ClkAnchorDecouple);
     ctx.carry.clk_anchor.tripped.insert(sat);
-    ++ctx.counters.mgnss.anchor_trips[sat.substr(0, 1)];   // per constellation (card GAL)
+    ++ctx.counters.mgnss.anchor_trips[constellationKey(systemOfSat(sat))];   // per constellation (card GAL)
     // Re-admission continuity: a trip within the verify window of a clock seed is the
     // data rejecting the seeded pre-gap realization (invariant #7's mark-if-moved),
     // attributed in the event detail and counted.
@@ -434,9 +442,10 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             // re-expressed entry: the carry is in the incoming frame, so the frame did not
             // retire and the anchor stays engaged.  The statistic below still tests it.
             if (ctx.knobs.cta_datum_keep) {
-                const auto rec = ctx.carry.sts_dense.find(sat.front());
+                const char cons = letterOfSat(sat);   // the dense kernel's key
+                const auto rec = ctx.carry.sts_dense.find(cons);
                 const bool keep = rec != ctx.carry.sts_dense.end()
-                               && ctx.carry.sts_consts.count(sat.front()) > 0
+                               && ctx.carry.sts_consts.count(cons) > 0
                                && rec->second.selfcheck_ok
                                && rec->second.row_sats.count(sat) > 0
                                && it->second.folded && it->second.folded_anchored;
@@ -484,7 +493,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         const Eigen::MatrixXd& cov = est.sharedCovariance();
         struct Row { std::string sat; double e{}, S{}, post_var{}, var_eff{}; bool anchored{}; };
         std::vector<Row> rows;
-        std::map<char, std::vector<double>> e_by_const;
+        std::map<System, std::vector<double>> e_by_const;
         // The statistic is on the common-removed residual, so both halves of
         // S = P⁻ − P⁺ have to be the variance of that contrast rather than of the
         // raw state (card Q3 §2.1; @ref clockAnchorGaugeProject documents why, and
@@ -495,7 +504,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         // the two.
         std::map<std::string, double> post_gf, prior_gf;
         if (proj_post || proj_prior) {
-            std::map<char, std::vector<std::pair<std::string, Eigen::Index>>> by_c;
+            std::map<System, std::vector<std::pair<std::string, Eigen::Index>>> by_c;
             for (const std::string& sat : registered_clock_sats) {
                 if (sat.empty()) continue;
                 const auto it = anchor.sat.find(sat);
@@ -503,7 +512,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 Eigen::Index col;
                 try { col = est.clockColumn(sat); } catch (...) { continue; }
                 if (col >= 0 && col < cov.rows() && col < cov.cols())
-                    by_c[sat[0]].emplace_back(sat, col);
+                    by_c[systemOfSat(sat)].emplace_back(sat, col);
             }
             for (const auto& [c, v] : by_c) {
                 (void)c;
@@ -562,14 +571,14 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             r.anchored = it->second.folded_anchored;
             if (!std::isfinite(r.e) || !std::isfinite(r.S)) continue;
             rows.push_back(r);
-            e_by_const[sat[0]].push_back(r.e);
+            e_by_const[systemOfSat(sat)].push_back(r.e);
         }
         if (rows.empty()) break;
         // The per-constellation common mode is the free per-epoch clock gauge (rx
         // clocks are white, q = 1000).  Removing it is standing invariant #5:
         // without it every satellite of a re-realizing constellation reports the
         // gauge shift and the guard trips on all of them.
-        std::map<char, double> med;
+        std::map<System, double> med;
         for (auto& [c, v] : e_by_const) {
             std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2),
                              v.end());
@@ -586,7 +595,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         std::set<std::string> trip;          // anchored satellites that failed
         std::set<std::string> trip_resolve;  // …whose prior may also be withdrawn
         for (const Row& r : rows) {
-            const double eh = r.e - med[r.sat[0]];
+            const double eh = r.e - med[systemOfSat(r.sat)];
             const double w  = eh / std::sqrt(r.S);
             const double aw = std::abs(w);
             const auto pit = phi.find(r.sat);
@@ -661,10 +670,10 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                          bad_nis ? k : abs_m,
                          phi_ok ? fmt::format("e={:.4f};med={:.4f};sqrtS={:.4f};pass={};"
                                               "e_phi={:.4f};sqrtS_phi={:.4f}",
-                                              r.e, med[r.sat[0]], std::sqrt(r.S), pass,
+                                              r.e, med[systemOfSat(r.sat)], std::sqrt(r.S), pass,
                                               pit->second.e_hat, std::sqrt(pit->second.S))
                                 : fmt::format("e={:.4f};med={:.4f};sqrtS={:.4f};pass={}",
-                                              r.e, med[r.sat[0]], std::sqrt(r.S), pass));
+                                              r.e, med[systemOfSat(r.sat)], std::sqrt(r.S), pass));
                 trip.insert(r.sat);
                 // Admission screen for the same-epoch value correction only; the
                 // decouple and the mark are unconditional.

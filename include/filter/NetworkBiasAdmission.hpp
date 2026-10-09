@@ -119,13 +119,15 @@ struct NetworkBiasAdmission {
      * and is deterministic (std::map/std::set iteration order), so the
      * classification is reproducible from run to run.  The usable-observation
      * predicate over @c SyncedEpoch::by_station -> @c RinexObservation::
-     * measurements is: 3-char id, @c id[0]=='C' (code obs), no '_', finite
-     * nonzero value; GLONASS satellites (@c satellite[0]=='R') are skipped (no
-     * OSB scope).  Distinctness for tier 2 uses @ref classifySignalForSat's
-     * @c band: two codes are distinct iff their carrier bands differ, the
-     * criterion @ref NetworkSbasis::selectIfPinPair applies via carrier
+     * measurements is: 3-char id, a code observation (@c obsTypeOf is
+     * @c ObsType::Code), no '_', finite nonzero value; GLONASS satellites
+     * (@c systemOfSat is @c System::GLONASS) are skipped (no OSB scope).
+     * Distinctness for tier 2 uses the physical band of each code
+     * (@c SignalId::band): two codes are distinct iff their carrier bands differ,
+     * the criterion @ref NetworkSbasis::selectIfPinPair applies via carrier
      * frequency.  A same-band co-channel pair such as C1P and C1X is not
-     * distinct, and a code of unknown band does not count.
+     * distinct, and a code that does not parse or whose band is unknown does not
+     * count.
      *
      * @param synced        The whole in-memory synced-epoch vector.
      * @param i0            Index of the first epoch the run loop will process

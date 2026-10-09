@@ -11,6 +11,7 @@
 #include "filter/NetworkPbHold.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"   // letterOfSat
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "products/NetworkProductEmitter.hpp"
@@ -72,7 +73,7 @@ bool pbHoldCommonClockStep(const NetworkSolutionEpoch& sol,
     std::vector<double> pop;
     for (const auto& s : sol.sats) {
         if (!s.has_clock || s.sat.empty() || !std::isfinite(s.clock_c0_m)) continue;
-        if (s.sat[0] != constellation) continue;
+        if (letterOfSat(s.sat) != constellation) continue;
         const auto it = prev_clock_m.find(s.sat);
         if (it == prev_clock_m.end()) continue;
         pop.push_back(s.clock_c0_m - it->second);
@@ -138,7 +139,8 @@ void networkPbHold(NetworkRunContext& ctx,
     if (frz_on) {
         std::set<char> ccs;
         for (const auto& s : sol.sats)
-            if (s.has_clock && !s.sat.empty() && std::isfinite(s.clock_c0_m)) ccs.insert(s.sat[0]);
+            if (s.has_clock && !s.sat.empty() && std::isfinite(s.clock_c0_m))
+                ccs.insert(letterOfSat(s.sat));
         bool advanced = false;
         for (char cc : ccs) {
             double med = 0.0;
@@ -152,7 +154,7 @@ void networkPbHold(NetworkRunContext& ctx,
         for (const auto& s : sol.sats) {
             if (!s.has_clock || s.sat.empty() || !std::isfinite(s.clock_c0_m)) continue;
             ctx.carry.pb_hold_frz_prev_clk[s.sat] = s.clock_c0_m;
-            frz_c[s.sat] = s.clock_c0_m - ctx.carry.pb_hold_frz_M[s.sat[0]];
+            frz_c[s.sat] = s.clock_c0_m - ctx.carry.pb_hold_frz_M[letterOfSat(s.sat)];
         }
     }
 
@@ -332,7 +334,7 @@ void networkPbHold(NetworkRunContext& ctx,
                         } else if (den > 0.0) {
                             r = c_phi * c_phi / den;
                             const int hour = static_cast<int>(std::floor((epoch_s - ctx.carry.smh_t_first_s) / 3600.0));
-                            auto& acc = ctx.counters.smh_r[{s.sat[0], hour}];
+                            auto& acc = ctx.counters.smh_r[{letterOfSat(s.sat), hour}];
                             acc.first  += r;
                             acc.second += 1;
                         }

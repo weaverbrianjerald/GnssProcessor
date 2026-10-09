@@ -9,7 +9,7 @@
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
-#include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"     // systemOfSat, ionoDelayMetresPerTecu
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkIonoDeweightGate.hpp"
@@ -80,7 +80,7 @@ void networkShDevVtec(
         const auto& iwh = config_.getIonosphereWeightingConfig();
         const double Re_h = shc.earth_radius_km * 1000.0;
         const double tecu_to_L1m_h =
-            40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+            ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
         const double lon_sun_h = shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
         const std::vector<ShLayer> lay_h =
             shLayers(shc, sh_model.get(), sh_model2.get());
@@ -121,7 +121,7 @@ void networkShDevVtec(
                 const auto& h2l = asm_res[i].h2local;
                 const Eigen::VectorXd x_lin = stations[i].sm->getStateVector();
                 for (const auto& o : modeled[i]) {
-                    if (o.satellite.empty() || o.satellite.front() == 'R') continue;
+                    if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS) continue;
                     if (o.elevation < iwh.elevation_cutoff_deg) continue;
                     const int iono_idx = stations[i].sm->getIonosphereIndex(o.satellite);
                     if (iono_idx < 0 || iono_idx >= static_cast<int>(x_lin.size())) continue;

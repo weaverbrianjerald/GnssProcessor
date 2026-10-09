@@ -19,6 +19,7 @@
 
 #include "slip/NetworkSlipQc.hpp"
 
+#include "common/GnssIdentity.hpp"      // obsTypeOf, systemOfSat, SignalId
 #include "config/GnssConfig.hpp"        // networkCycleSlip* getters
 #include "filter/StateKeySchema.hpp"    // StateKeys::parseAmbiguityKey (refloat lambdas)
 #include "rinex/MultiRinexSync.hpp"     // SyncedEpoch (se.time in log/event rows)
@@ -1003,7 +1004,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 // decision, so first establish whether this satellite asserts LLI.
                 bool asserts = false;
                 for (const auto& [code, lli] : obs.lli_flags)
-                    if (!code.empty() && code[0] == 'L' && (lli & 1)) { asserts = true; break; }
+                    if (obsTypeOf(code) == ObsType::Phase && (lli & 1)) { asserts = true; break; }
                 if (!asserts) continue;
 
                 bool corr_mw = false, corr_gf = false, measurable = false, offpair = false;
@@ -1027,7 +1028,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         for (const auto& r : raw.rows[static_cast<std::size_t>(i)]) {
                             if (r.satellite != obs.satellite) continue;
                             for (const auto& [code, lli] : obs.lli_flags)
-                                if (!code.empty() && code[0] == 'L' && (lli & 1)
+                                if (obsTypeOf(code) == ObsType::Phase && (lli & 1)
                                     && (code == r.sig1 || code == r.sig2)) { on_pair = true; break; }
                             break;
                         }
@@ -1093,14 +1094,14 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 std::set<std::string> lli_impl;
                 if (bscope_on)
                     for (const auto& [code, lli] : obs.lli_flags)
-                        if (!code.empty() && code[0] == 'L' && (lli & 1))
+                        if (obsTypeOf(code) == ObsType::Phase && (lli & 1))
                             lli_impl.insert(code);
                 const std::string bs_keep_lli =
                     bandScopeKeepAt(bscope_on, stations[i], i, obs.satellite,
                                     lli_impl, &raw, relevel, &carry_slipped_ambs,
                                     qc_cnt);
                 for (const auto& [code, lli] : obs.lli_flags) {
-                    if (code.empty() || code[0] != 'L' || !(lli & 1)) continue;
+                    if (obsTypeOf(code) != ObsType::Phase || !(lli & 1)) continue;
                     if (!bs_keep_lli.empty() && code == bs_keep_lli) continue;
                     // The §14 rule always implicates an LLI band, so this guard
                     // never fires on a band the receiver flagged.  It is here
@@ -2237,6 +2238,8 @@ GapArcOutcome gapReentryRespondArc(
         // (L2L where the station carries L2W) correctly finds no carry, and
         // counting it against the modelled same-band carry would score an arc
         // that tracked through this break and has no break of its own.
+        const System sys = systemOfSat(satellite);
+        const auto this_sig = SignalId::fromObsCode(sys, sig);
         for (auto it = (count_unreachable
                             ? local_carry.lower_bound(std::make_tuple(i, satellite,
                                                                       std::string{}))
@@ -2245,8 +2248,9 @@ GapArcOutcome gapReentryRespondArc(
                  && std::get<1>(it->first) == satellite;
              ++it) {
             const std::string& other = std::get<2>(it->first);
-            if (other == sig || other.size() < 2 || sig.size() < 2) continue;
-            if (other[1] != sig[1]) continue;                  // a different band
+            const auto other_sig = SignalId::fromObsCode(sys, other);
+            if (other == sig || !other_sig || !this_sig) continue;
+            if (other_sig->digit != this_sig->digit) continue;   // a different band
             if (present_sigs != nullptr && present_sigs->count(other) == 0) continue;
             const double gap_s = pl_now_s - it->second.last_seen_s;
             if (gap_s >= 0.0 && gap_s <= pl_max_gap_s) {
@@ -2538,14 +2542,17 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         std::vector<std::string> sigs6b{ g.sig1, g.sig2 };
         {
             const NetStation& stx = stations[static_cast<std::size_t>(i)];
+            const System sys = systemOfSat(g.satellite);
+            const auto band1 = SignalId::fromObsCode(sys, g.sig1);   // the two bands that broke
+            const auto band2 = SignalId::fromObsCode(sys, g.sig2);
             for (const std::string& cell : stx.spc_cells) {
                 const auto parts = StateKeys::parseSatPhaseBiasKey(cell);
                 if (!parts || parts->satellite != g.satellite) continue;
                 const std::string& s = parts->signal;
-                if (s.size() < 2) continue;
-                const bool on_band =
-                    (!g.sig1.empty() && g.sig1.size() >= 2 && s[1] == g.sig1[1])
-                    || (!g.sig2.empty() && g.sig2.size() >= 2 && s[1] == g.sig2[1]);
+                const auto cell_sig = SignalId::fromObsCode(sys, s);
+                if (!cell_sig) continue;
+                const bool on_band = (band1 && cell_sig->digit == band1->digit)
+                                  || (band2 && cell_sig->digit == band2->digit);
                 if (!on_band) continue;
                 if (std::find(sigs6b.begin(), sigs6b.end(), s) != sigs6b.end()) continue;
                 sigs6b.push_back(s);

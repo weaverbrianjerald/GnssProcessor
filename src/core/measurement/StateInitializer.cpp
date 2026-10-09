@@ -7,6 +7,7 @@
 #include "model/PppModel.hpp"
 #include "products/ProductCache.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "filter/StateKeySchema.hpp"
 #include <algorithm>
 #include <cmath>
@@ -52,27 +53,16 @@ StateInitializer::StateInitializer(const GnssConfig& config,
 // ===========================================================================
 
 std::string StateInitializer::systemToIsbName(System system) {
-    switch (system) {
-    case System::GPS:     return "";
-    case System::Galileo: return "Galileo";
-    case System::GLONASS: return "GLONASS";
-    case System::BeiDou:  return "BeiDou";
-    case System::QZSS:    return "QZSS";
-    case System::SBAS:    return "SBAS";
-    default:              return "";
-    }
+    // GPS is the time reference and has no ISB state; an unknown system has none either.
+    if (system == System::GPS || system == System::Unknown) return "";
+    return systemName(system);
 }
 
 char StateInitializer::systemToClockRefChar(System system) {
-    switch (system) {
-    case System::GPS:     return 'G';
-    case System::Galileo: return 'E';
-    case System::GLONASS: return 'R';
-    case System::BeiDou:  return 'C';
-    case System::QZSS:    return 'J';
-    case System::SBAS:    return 'S';
-    default:              return '\0';
-    }
+    // The BIA keys its clock-reference pairs by RINEX letter.  An unknown system gives
+    // '\0' (not the '?' of rinexLetter), which the callers test for.
+    if (system == System::Unknown) return '\0';
+    return rinexLetter(system);
 }
 
 // ===========================================================================
@@ -137,17 +127,18 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     // code, on any band digit.  The rest (unit coefficient, absolute frame,
     // GLONASS exclusion, undecided-latch fall-through) is unchanged.
     const bool chan_all = config_.networkChannelModeAll();
+    const auto code = ObservableId::parse(system, obs_signal);   // e.g. C1W: code, band digit '1'
     if ((config_.networkSecondCodeChannel() || chan_all) && system != System::GLONASS
-        && obs_signal.size() == 3 && obs_signal[0] == 'C'
-        && (chan_all ? (obs_signal[1] >= '1' && obs_signal[1] <= '9')
-                     : obs_signal[1] == '1')) {
+        && code && code->type == ObsType::Code
+        && (chan_all ? (code->signal.digit >= '1' && code->signal.digit <= '9')
+                     : code->signal.digit == '1')) {
         const auto& allow = config_.networkSecondCodeSignals();
         const bool listed =
             chan_all || std::find(allow.begin(), allow.end(), obs_signal) != allow.end();
         if (listed) {
-            const std::string sys = PppUtils::getSystemString(system);
+            const std::string sys = systemName(system);
             const std::string canonical =
-                ppp_model_.latchedCanonicalCodeOnBandDigit(sys, obs_signal[1]);
+                ppp_model_.latchedCanonicalCodeOnBandDigit(sys, code->signal.digit);
             if (!canonical.empty() && canonical != obs_signal) {
                 result.state_key   = StateKeys::makeReceiverIscKey(sys, obs_signal);
                 result.coefficient = 1.0;
@@ -182,8 +173,9 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     // (empty reference pair), which would return early and never reach any IFB
     // logic.
     if (system == System::GLONASS && config_.enableGlonassIfb()) {
-        const char band = (obs_signal.size() >= 2) ? obs_signal[1] : '\0';
-        if (band == '1' || band == '2') {           // FDMA bands only
+        const auto sig = SignalId::fromObsCode(system, obs_signal);
+        const FrequencyBand fb = sig ? sig->band() : FrequencyBand::Unknown;
+        if (fb == FrequencyBand::GloG1 || fb == FrequencyBand::GloG2) {   // FDMA bands only
             // Resolve k from the model's seeded PppUtils (RINEX header / live
             // broadcast), not from this class's own unseeded instance, whose
             // getGlonassChannel would fall back to the stale default table.
@@ -191,7 +183,7 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
             if (k < -7 || k > 6) return result;      // unknown slot -> no IFB column
             if (k == 0) return result;               // central channel = held datum
             result.state_key   = StateKeys::makeGlonassPerSlotIfbKey(
-                                     PppUtils::getSystemString(system), band, k);
+                                     systemName(system), sig->digit, k);
             result.coefficient = 1.0;
         }
         return result;  // GLONASS fully handled here (per-slot, or none for CDMA/k=0)
@@ -202,12 +194,16 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     if (it == clock_refs.end()) return result;
 
     const auto& ref = it->second;
-    const std::string sys = PppUtils::getSystemString(system);
+    const std::string sys = systemName(system);
 
-    const char band_j = (obs_signal.size() >= 2) ? obs_signal[1] : '\0';
-    const char band_1 = (ref.sig1.size() >= 2) ? ref.sig1[1] : '\0';
-    const char band_2 = (ref.sig2.size() >= 2) ? ref.sig2[1] : '\0';
-    if (band_j == '\0' || band_1 == '\0' || band_2 == '\0') return result;
+    // The band digits of this signal and of the clock-reference pair (ref.sig1, ref.sig2).
+    const auto sig_j = SignalId::fromObsCode(system, obs_signal);
+    const auto sig_1 = SignalId::fromObsCode(system, ref.sig1);
+    const auto sig_2 = SignalId::fromObsCode(system, ref.sig2);
+    if (!sig_j || !sig_1 || !sig_2) return result;
+    const char band_j = sig_j->digit;
+    const char band_1 = sig_1->digit;
+    const char band_2 = sig_2->digit;
 
     // Non-reference band: independent IFB state, key "<system>_IFB<band>".
     // GLONASS is excluded here: its FDMA per-channel receiver delay cannot be
@@ -218,7 +214,7 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     // residual de-weighting.
     if (band_j != band_1 && band_j != band_2) {
         if (system == System::GLONASS) return result;   // no FDMA per-band IFB
-        result.state_key   = sys + "_IFB" + band_j;
+        result.state_key   = StateKeys::makeIfbKey(sys, band_j);
         result.coefficient = 1.0;
         return result;
     }
@@ -235,7 +231,7 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     const double dmu = mu1 - mu2;
     if (std::abs(dmu) < 1e-12) return result;
 
-    result.state_key = sys + "_DCB";
+    result.state_key = StateKeys::makeDcbKey(sys);
     result.coefficient = (band_j == band_1) ? (mu1 / dmu) : (mu2 / dmu);
     return result;
 }
@@ -280,14 +276,16 @@ double StateInitializer::computeRawResidual(const PppObservation& obs,
 
     // Per-satellite ionosphere (PPP-RTK uncombined)
     double iono = 0.0;
-    if (config_.isUncombinedEnabled() && !ref_type.empty() && (ref_type[0] == 'C' || ref_type[0] == 'L')) {
+    const ObsType ref_obs_type = obsTypeOf(ref_type);   // first character: 'C' or 'L'
+    if (config_.isUncombinedEnabled() && !ref_type.empty()
+        && (ref_obs_type == ObsType::Code || ref_obs_type == ObsType::Phase)) {
         const int iono_idx = state_manager_.getIonosphereIndex(obs.satellite);
         if (iono_idx >= 0 && iono_idx < static_cast<int>(x.size())) {
             const double freq = ppp_utils_.getFrequency(ref_type, obs.system, obs.satellite);
             if (freq > 0.0) {
-                const double f_ref = Constants::GPS_L1_FREQ;
+                const double f_ref = nominalCarrierFrequencyHz(FrequencyBand::GpsL1);
                 const double alpha = (f_ref * f_ref) / (freq * freq);
-                iono = (ref_type[0] == 'L' ? -1.0 : 1.0) * alpha * x(iono_idx);
+                iono = (ref_obs_type == ObsType::Phase ? -1.0 : 1.0) * alpha * x(iono_idx);
             }
         }
     }
@@ -295,7 +293,7 @@ double StateInitializer::computeRawResidual(const PppObservation& obs,
     // Receiver code bias (DCB / IFB; code only, uncombined)
     double code_bias = 0.0;
     if (config_.estimateIfb() && config_.isUncombinedEnabled()
-        && !ref_type.empty() && ref_type[0] == 'C') {
+        && !ref_type.empty() && ref_obs_type == ObsType::Code) {
         const auto bias = resolveReceiverBias(ref_type, obs.system, obs.satellite);
         if (std::isfinite(bias.coefficient) && !bias.state_key.empty()) {
             const int cb_idx = state_manager_.getCodeBiasIndex(bias.state_key);
@@ -309,10 +307,10 @@ double StateInitializer::computeRawResidual(const PppObservation& obs,
     if (config_.estimateSatBiases() && !ref_type.empty()) {
         const bool is_if = (ref_type.find('_') != std::string::npos);
         const bool applicable = config_.isUncombinedEnabled()
-            ? (!is_if && ref_type[0] == 'C')
-            : (is_if && ref_type[0] == 'C');
+            ? (!is_if && ref_obs_type == ObsType::Code)
+            : (is_if && ref_obs_type == ObsType::Code);
         if (applicable) {
-            const std::string sb_key = obs.satellite + "|" + ref_type;
+            const std::string sb_key = StateKeys::makeSatBiasKey(obs.satellite, ref_type);
             const int sb_idx = state_manager_.getSatBiasIndex(sb_key);
             if (sb_idx >= 0 && sb_idx < static_cast<int>(x.size()))
                 sat_bias = x(sb_idx);
@@ -331,7 +329,8 @@ std::optional<double> StateInitializer::computeIonosphereSeed(const PppObservati
     struct CodeObs { std::string key; double value; double freq; char band; };
     std::vector<CodeObs> codes;
     for (const auto& [key, val] : obs.observed) {
-        if (key.size() < 2 || key[0] != 'C') continue;
+        const auto code = ObservableId::parse(obs.system, key);   // e.g. C1C
+        if (!code || code->type != ObsType::Code) continue;
         if (!obs.modeled.count(key)) continue;
         // Only use code signals with valid BIA coverage.  Otherwise
         // (P - mod) carries the raw satellite hardware bias, which
@@ -358,7 +357,7 @@ std::optional<double> StateInitializer::computeIonosphereSeed(const PppObservati
             && !config_.getModelCorrections().enable_code_phase_bias) continue;
         const double freq = ppp_utils_.getFrequency(key, obs.system, obs.satellite);
         if (freq <= 0.0) continue;
-        codes.push_back({key, val, freq, key[1]});
+        codes.push_back({key, val, freq, code->signal.digit});
     }
     if (codes.size() < 2) return std::nullopt;
 
@@ -372,7 +371,7 @@ std::optional<double> StateInitializer::computeIonosphereSeed(const PppObservati
             const double mod1 = obs.modeled.at(codes[i].key);
             const double mod2 = obs.modeled.at(codes[j].key);
 
-            const double f_ref = Constants::GPS_L1_FREQ;
+            const double f_ref = nominalCarrierFrequencyHz(FrequencyBand::GpsL1);
             const double alpha1 = (f_ref * f_ref) / (f1 * f1);
             const double alpha2 = (f_ref * f_ref) / (f2 * f2);
             const double denom = alpha1 - alpha2;
@@ -470,8 +469,8 @@ std::optional<double> StateInitializer::computeStationSeedOffset(
         iono_seed_offset_logged_ = true;
         // TECU conversion at L1 for the cross-check against the GIM verdict
         // script's `bias_TECU` column: 1 TECU = 40.3e16/f_L1² metres of delay.
-        constexpr double kTecuToL1M =
-            40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+        const double kTecuToL1M =
+            ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
         log_manager_.getLogger("main_log")->info(
             "Network (LV-1): station '{}' seed-frame offset {:+.3f} m "
             "({:+.2f} slant-TECU at L1) from {} raw per-satellite seeds — this is a "
@@ -517,7 +516,7 @@ bool StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
         if (obs.elevation < config_.getElevationMaskDeg()) continue;
 
         for (const auto& [ref_type, observed] : obs.observed) {
-            if (ref_type.empty() || ref_type[0] != 'C') continue;
+            if (obsTypeOf(ref_type) != ObsType::Code) continue;
             const bool has_underscore = (ref_type.find('_') != std::string::npos);
             if (config_.isUncombinedEnabled()) {
                 if (has_underscore) continue;
@@ -528,24 +527,25 @@ bool StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
 
             const double residual = computeRawResidual(obs, ref_type, x);
             const std::string sys_name = systemToIsbName(obs.system);
-            const std::string key = sys_name.empty() ? "GPS" : sys_name;
+            const std::string key = sys_name.empty() ? systemName(System::GPS) : sys_name;
             system_residuals[key].push_back(residual);
             break;  // one code obs per satellite
         }
     }
 
-    if (system_residuals.find("GPS") == system_residuals.end() ||
-        system_residuals["GPS"].empty()) {
+    const std::string gps_key = systemName(System::GPS);   // the reference system's key
+    if (system_residuals.find(gps_key) == system_residuals.end() ||
+        system_residuals[gps_key].empty()) {
         log_manager_.getLogger("state_initializer")->warn(
             "{}Cannot initialize ISB: no GPS code observations", epoch_prefix);
         return false;   // retry next epoch; the caller does not latch as initialized
     }
 
-    double gps_median = computeMedian(system_residuals["GPS"]);
+    double gps_median = computeMedian(system_residuals[gps_key]);
     Eigen::VectorXd x_updated = state_manager_.getStateVector();
 
     for (auto& [sys_name, residuals] : system_residuals) {
-        if (sys_name == "GPS" || residuals.empty()) continue;
+        if (sys_name == gps_key || residuals.empty()) continue;
 
         const size_t isb_idx = state_manager_.getSystemTimeOffsetIndex(sys_name);
         if (isb_idx >= static_cast<size_t>(x_updated.size())) continue;
@@ -556,7 +556,7 @@ bool StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
         log_manager_.getLogger("state_initializer")->info(
             "{}Initialized {} ISB: {:.3f} m ({:.3e} s) from {} code obs (GPS ref: {} obs)",
             epoch_prefix, sys_name, isb_estimate, isb_estimate / Constants::SPEED_OF_LIGHT,
-            residuals.size(), system_residuals["GPS"].size());
+            residuals.size(), system_residuals[gps_key].size());
     }
 
     state_manager_.setStateVector(x_updated);
@@ -607,7 +607,7 @@ bool StateInitializer::seedColdReceiverClock(const std::vector<PppObservation>& 
         if (obs.elevation < config_.getElevationMaskDeg()) continue;
 
         for (const auto& [ref_type, observed] : obs.observed) {
-            if (ref_type.empty() || ref_type[0] != 'C') continue;
+            if (obsTypeOf(ref_type) != ObsType::Code) continue;
             const bool has_underscore = (ref_type.find('_') != std::string::npos);
             if (config_.isUncombinedEnabled()) {
                 if (has_underscore) continue;   // uncombined uses raw single-band code
@@ -669,8 +669,9 @@ void StateInitializer::initializePhaseClockOffset(const std::vector<PppObservati
 
             const double residual = computeRawResidual(obs, ref_type, x);
 
-            if (ref_type[0] == 'C' && !have_code)  { code_residual  = residual; have_code  = true; }
-            if (ref_type[0] == 'L' && !have_phase) { phase_residual = residual; have_phase = true; }
+            const ObsType type = obsTypeOf(ref_type);
+            if (type == ObsType::Code && !have_code)   { code_residual  = residual; have_code  = true; }
+            if (type == ObsType::Phase && !have_phase) { phase_residual = residual; have_phase = true; }
         }
 
         if (have_code && have_phase)
@@ -742,13 +743,15 @@ void StateInitializer::initializeCodeBiases(const std::vector<PppObservation>& o
         };
         std::map<char, BandResidual> band_residuals;
         for (const auto& [ref_type, val] : obs.observed) {
-            if (ref_type.empty() || ref_type[0] != 'C' || ref_type.size() < 2) continue;
-            if (ref_type.find('_') != std::string::npos) continue;
+            // One single-band code ("C1C"); an ionosphere-free pair ("C1C_C2W") does not
+            // parse as one code and is skipped.
+            const auto code = ObservableId::parse(obs.system, ref_type);
+            if (!code || code->type != ObsType::Code) continue;
             if (!obs.modeled.count(ref_type)) continue;
 
             const double freq = ppp_utils_.getFrequency(ref_type, obs.system, obs.satellite);
             if (freq <= 0.0) continue;
-            const double f_ref = Constants::GPS_L1_FREQ;
+            const double f_ref = nominalCarrierFrequencyHz(FrequencyBand::GpsL1);
             const double alpha = (f_ref * f_ref) / (freq * freq);
 
             const auto bias = resolveReceiverBias(ref_type, obs.system, obs.satellite);
@@ -757,8 +760,7 @@ void StateInitializer::initializeCodeBiases(const std::vector<PppObservation>& o
             const double residual = computeRawResidual(obs, ref_type, x);
             if (!std::isfinite(residual)) continue;
 
-            const char band_digit = ref_type[1];
-            band_residuals[band_digit] = { residual, alpha, bias };
+            band_residuals[code->signal.digit] = { residual, alpha, bias };
         }
 
         if (band_residuals.size() < 2) continue;
@@ -767,8 +769,9 @@ void StateInitializer::initializeCodeBiases(const std::vector<PppObservation>& o
         const auto& clock_refs = ProductCache::getInstance().getClockRefSignals();
         auto crit = clock_refs.find(sys_char);
         if (crit == clock_refs.end()) continue;
-        const char ref1_band = (crit->second.sig1.size() >= 2) ? crit->second.sig1[1] : '\0';
-        if (ref1_band == '\0') continue;
+        const auto ref1_sig = SignalId::fromObsCode(obs.system, crit->second.sig1);
+        if (!ref1_sig) continue;
+        const char ref1_band = ref1_sig->digit;   // the first clock-reference band
 
         auto ref1_it = band_residuals.find(ref1_band);
         if (ref1_it == band_residuals.end()) continue;

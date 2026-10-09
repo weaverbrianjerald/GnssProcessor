@@ -115,8 +115,10 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
     out.n = n;
 
     const SharedColumnMap cm = buildSharedColumnMap(est, n);
-    out.label  = cm.label;
-    out.c00_l1 = cm.c00_l1;
+    out.label   = cm.label;
+    out.fam     = cm.fam;
+    out.col_sat = cm.col_sat;
+    out.c00_l1  = cm.c00_l1;
     out.c00_l2 = cm.c00_l2;
 
     // Admission predicate: folded into the kernel this epoch, block built,
@@ -170,31 +172,15 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
     const Eigen::Index n = f.n;
     const Eigen::Index c00_l1 = f.c00_l1, c00_l2 = f.c00_l2;
 
-    // Per-column family and satellite, re-derived from the frame's own labels
-    // with the same prefix parse as buildSharedColumnMap (NetworkRowClassify;
-    // INC-0).
+    // Per-column family and satellite, as buildSharedColumnMap (NetworkRowClassify;
+    // INC-0) read them from the estimator's column identity at the capture.
     SharedColumnMap cm;
     cm.n = n;
-    cm.label = f.label;
-    cm.fam.assign(static_cast<std::size_t>(n), NetColFam::Other);
-    cm.col_sat.assign(static_cast<std::size_t>(n), {});
+    cm.label   = f.label;
+    cm.fam     = f.fam;
+    cm.col_sat = f.col_sat;
     cm.c00_l1 = c00_l1;
     cm.c00_l2 = c00_l2;
-    for (Eigen::Index c = 0; c < n; ++c) {
-        const std::size_t u = static_cast<std::size_t>(c);
-        const std::string& L = cm.label[u];
-        if      (L.rfind("SH", 0) == 0)  cm.fam[u] = NetColFam::Sh;
-        else if (L.rfind("PB:", 0) == 0) cm.fam[u] = NetColFam::Pb;
-        else if (L.rfind("CB:", 0) == 0) cm.fam[u] = NetColFam::Cb;
-        else if (L.rfind("CLK:", 0) == 0) cm.fam[u] = NetColFam::Clk;
-        if (cm.fam[u] == NetColFam::Pb || cm.fam[u] == NetColFam::Cb
-            || cm.fam[u] == NetColFam::Clk) {
-            const std::size_t p1 = L.find(':');
-            const std::size_t p2 = L.find(':', p1 + 1);
-            cm.col_sat[u] = L.substr(p1 + 1, (p2 == std::string::npos)
-                                                 ? std::string::npos : p2 - p1 - 1);
-        }
-    }
 
     // ---- accumulators ------------------------------------------------------
     std::map<std::string, Eigen::VectorXd> cls_total;   // class -> reduced-RHS vector

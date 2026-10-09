@@ -797,8 +797,9 @@ namespace GnssProcessor {
         /// post_var_m2,prior_var_dm_m2,post_var_dm_m2`, one row per line of sight whose two
         /// bands are carried in the station's block.  `prior` is the block the inject
         /// folded this epoch (NaN when the line of sight was not in it), `post` the harvest
-        /// block; `_dm` with the station's common mode over its traced lines of sight
-        /// projected out.  All conditional on the border.
+        /// block; `_dm` with the station's common mode over its traced lines of sight of
+        /// the same constellation projected out, and `n_los` the number of those lines of
+        /// sight.  All conditional on the border.
         std::ofstream amb_if_trace;
         const std::filesystem::path amb_if_trace_path;
         /// One row per gauge-pinned ambiguity per processed epoch (S1;

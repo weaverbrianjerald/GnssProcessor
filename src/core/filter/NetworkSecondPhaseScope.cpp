@@ -7,6 +7,7 @@
 #include "filter/NetworkSecondPhaseScope.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"   // obsTypeOf
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -24,7 +25,7 @@ bool secondPhaseAllowEntryValid(const std::string& entry, std::string* why) {
     };
     if (entry.size() != 3)
         return refuse("not a 3-character RINEX observation code");
-    if (entry[0] != 'L')
+    if (obsTypeOf(entry) != ObsType::Phase)
         return refuse("not a PHASE type (must start with 'L'); a code type belongs "
                       "to card SCC");
     if (entry[1] != '1')

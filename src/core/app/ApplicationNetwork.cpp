@@ -97,6 +97,7 @@
 #include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (card 4, M1 C3b)
 #include "filter/NetworkMwWlLayer.hpp"             // MW-seeded wide-lane pseudo-observation layer (card M5 WL-1)
 #include "filter/StateKeySchema.hpp"
+#include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, systemFromLetter, rinexLetter, systemName
 #include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
 #include "filter/NetworkWlRunTypes.hpp" // WL and RAII types hoisted out of runNetwork() (INC-9b)
 #include "filter/NetworkRobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
@@ -156,7 +157,7 @@
 #include "slip/NetworkSlipOracle.hpp"   // simulation-only oracle slip response (level-preserving ceiling)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
-#include "common/PppUtils.hpp"        // signal wavelengths for the DD fractional-cycle diagnostic (B5)
+#include "common/PppUtils.hpp"        // the slip-QC and fast-clock wavelength providers (GLONASS slots)
 #include "realtime/RealTimeEngine.hpp"
 #include "realtime/NetworkStreamFrontEnd.hpp"  // multi-station streaming epoch source (RTF-3)
 #include "math/TimeUtils.hpp"
@@ -290,14 +291,6 @@ int Application::runNetwork() {
     auto& trace                = traces.trace;
     auto& dd_frac_trace        = traces.dd_frac_trace;
     auto& slip_raw_trace       = traces.slip_raw_trace;
-    std::unique_ptr<PppUtils> dd_ppp_utils;   // DD-trace wavelength provider, built only with that trace on (B5)
-    // Producer-side network AR (network.ambiguity_resolution, Phase 2+): a
-    // wavelength provider for the between-station DD metres-to-cycles conversion,
-    // built only when AR is armed.  Off by default; with it off the AR block is
-    // skipped entirely and the float product is byte-identical.
-    const auto& netar = nc.ambiguity_resolution;
-    std::unique_ptr<PppUtils> ar_ppp_utils;
-    if (netar.enable) ar_ppp_utils = std::make_unique<PppUtils>(log_manager_);
     // Slip-QC hardening channel: knobs +
     // per-station cross-epoch state + this epoch's raw evidence + run-end
     // counters, threaded by reference into the PASS-A slip seam and the
@@ -395,14 +388,12 @@ int Application::runNetwork() {
                 networkOraclePinLoad(config_, stations, log_manager_, log);
     }
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
-    // Wavelength providers for the DD trace (B5) and the raw-slip path, gated on
-    // the streams openAll just opened.  They are built here because they need
-    // log_manager_, which the traces unit does not hold.  The raw-slip provider
-    // serves three consumers (the trace, card L and card G) and is built when any
+    // Wavelength provider for the raw-slip path, gated on the streams openAll just
+    // opened.  It is built here because it needs log_manager_, which the traces
+    // unit does not hold.  The raw-slip provider serves three consumers (the trace, card L and card G) and is built when any
     // of them is armed, per spec §1: "compute once per epoch when any consumer
     // needs it".  With none armed it stays null and the raw-observable path is
     // skipped.
-    if (dd_frac_trace) dd_ppp_utils = std::make_unique<PppUtils>(log_manager_);
     if (slip_qc.params.anyConsumer(static_cast<bool>(slip_raw_trace)))
         slip_qc.utils = std::make_unique<PppUtils>(log_manager_);
     // Split-cadence clocks-only fast pass.  Two hooks, both no-ops when off: a
@@ -777,16 +768,18 @@ int Application::runNetwork() {
     const bool uwl_dual    = nmw.uwl_dual_top;   // increment 5: both {b_top, b_top2} uncarried
     auto isUncarriedThirdBand = [uwl_excl_on, uwl_gal_top, uwl_dual](
                                     char cons, const std::string& signal) -> bool {
-        const char band = signal.size() >= 2 ? signal[1] : '\0';   // "L5Q" → '5'
+        // The band digit is read directly: besides a carried signal ("L5Q" → '5') the
+        // caller passes band probes "L<digit>", which are not full observation codes.
+        const char band = signal.size() >= 2 ? signal[1] : '\0';
         if (uwl_excl_on) {
             const auto tier = mwLaneTierOf(cons, uwl_gal_top, false, uwl_dual);
             return tier && (band == tier->b_top
                             || (tier->b_top2 != '\0' && band == tier->b_top2));
         }
-        switch (cons) {
-            case 'G': return band == '5';   // GPS  EWL = (L2,L5) ⇒ L5 uncarried
-            case 'E': return band == '7';   // Galileo EWL = (E5b,E5a) ⇒ E5b(7) uncarried
-            default:  return false;         // BDS/QZSS deferred; GLONASS excluded from the carry anyway
+        switch (systemFromLetter(cons)) {
+            case System::GPS:     return band == '5';   // GPS  EWL = (L2,L5) ⇒ L5 uncarried
+            case System::Galileo: return band == '7';   // Galileo EWL = (E5b,E5a) ⇒ E5b(7) uncarried
+            default:              return false;         // BDS/QZSS deferred; GLONASS excluded from the carry anyway
         }
     };
     NetworkMwWlLayer::Config mw_wl_cfg;
@@ -847,7 +840,8 @@ int Application::runNetwork() {
     std::vector<EwlLane> ewl_lanes;
     if (ewl_on) {
         if (uwl_on) {
-            for (const char cons : { 'G', 'E' }) {
+            for (const System sys : { System::GPS, System::Galileo }) {
+                const char cons = rinexLetter(sys);   // the lane-tier table is keyed by letter
                 const auto tier = mwLaneTierOf(cons, nmw.uwl_gal_top_band,
                                                nmw.uwl_mid_enable, nmw.uwl_dual_top);
                 if (!tier) continue;
@@ -953,10 +947,6 @@ int Application::runNetwork() {
         a.sib_blocked         += b.sib_blocked;
         a.sib_abs_frac_sum    += b.sib_abs_frac_sum;
     };
-    // FDMA-correct per-signal wavelengths for the WL/EWL-row coefficients and z.  Built when
-    // any lane layer is armed (mw_wl_on, ewl_on or lane_on), as ar_ppp_utils is for AR.
-    std::unique_ptr<PppUtils> mw_wl_ppp_utils;
-    if (mw_wl_on || ewl_on || lane_on) mw_wl_ppp_utils = std::make_unique<PppUtils>(log_manager_);
     NetworkMwWlLayer::Counters mw_wl_run;    // run-total eligibility/skip tallies (invariant #4)
     NetworkMwWlLayer::Counters mw_wl_epoch;  // per-build tallies (the last build before the accepted solve wins)
     // One-shot F6 diagnostic (card M5 WL-1): a per-arc, per-row attribution dump of the
@@ -1367,7 +1357,7 @@ int Application::runNetwork() {
             struct ConsTally { int seen = 0, admitted = 0, lowcount = 0, noifpin = 0; };
             std::map<char, ConsTally> per_cons;
             for (const auto& p : adm.census) {
-                ConsTally& t = per_cons[p.satellite.empty() ? '?' : p.satellite[0]];
+                ConsTally& t = per_cons[letterOfSat(p.satellite)];   // '?' when unknown
                 ++t.seen;
                 if (p.verdict == NetworkBiasAdmission::Verdict::Admitted)      ++t.admitted;
                 else if (p.verdict == NetworkBiasAdmission::Verdict::LowCount) ++t.lowcount;
@@ -1562,6 +1552,10 @@ int Application::runNetwork() {
             }
         }
         ++n_loop_epochs;  // [TIMING]
+        // The satellite ids of no modelled constellation, and of SBAS (card NOM N0b), counted
+        // on every processed epoch before any model reads its observations.  Measure-only;
+        // the count is printed under the parameter table in the run-end tail.
+        networkParamInventoryNoteSatellites(ctx.param_inventory, se);
 
         // Per-epoch section-timer baseline (D0).  Deltas of the estimator's run-cumulative
         // accumulators against this snapshot give this epoch's reduce, solve, cov-inverse
@@ -1852,7 +1846,7 @@ int Application::runNetwork() {
                 // path, and D3c derives its need_rpb set from that) and therefore ahead
                 // of est.beginEpoch and PASS B.  The full ordering contract is in
                 // filter/NetworkChainDatum.hpp.
-                networkElectChainDatum(ctx, config_, log_manager_, log, stations,
+                networkElectChainDatum(ctx, config_, log, stations,
                                        present, cnd, hyg, carry_slipped_ambs,
                                        shared_phase_keys);
             } else {
@@ -2007,7 +2001,7 @@ int Application::runNetwork() {
                     arcReasonExpand(ctx.reasons, ctx.arc_ledger, -1, gd.sat,
                                     gd.signal, kArcReasonGate);
                     emitEvent("PHASE_ANCHOR", "gate_drop",
-                              gd.sat + "_" + gd.signal,
+                              StateKeys::makeAmbiguityKey(gd.sat, gd.signal),
                               gd.survivors.empty() ? std::string("-") : gd.survivors,
                               static_cast<double>(gd.n_trackers),
                               static_cast<double>(config_.networkPhaseDatumMinStations()),
@@ -2124,7 +2118,7 @@ int Application::runNetwork() {
                         else                       ++ctx.counters.n_anc_slip_continuous;
                     }
                     emitEvent("PHASE_ANCHOR", "anchor_slip_handover",
-                              d.sat + "_" + d.signal,
+                              StateKeys::makeAmbiguityKey(d.sat, d.signal),
                               d.retired.empty() ? std::string("-") : d.retired.front(),
                               std::nullopt, std::nullopt, "handover",
                               fmt::format("to={};branch={}{}",
@@ -2340,7 +2334,7 @@ int Application::runNetwork() {
                     const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
                     if (!p || p->satellite.empty()) continue;
                     need_rpb.insert(StateKeys::makeReceiverPhaseBiasKey(
-                        PppUtils::getSystemString(p->satellite), p->signal));
+                        systemName(systemOfSat(p->satellite)), p->signal));
                 }
                 for (const auto& rk : need_rpb)
                     if (sm.getReceiverPhaseBiasIndex(rk) < 0)
@@ -2565,7 +2559,8 @@ int Application::runNetwork() {
             for (const auto& g : slip_qc.epoch.resumptions) {
                 const int i = g.station;
                 if (i < 0 || i >= static_cast<int>(stations.size())) continue;
-                const char cons = g.satellite.empty() ? '\0' : g.satellite.front();
+                const char cons =
+                    g.satellite.empty() ? '\0' : letterOfSat(g.satellite);
                 const auto svit = carry_sat_vertex.find(g.satellite);
                 for (const std::string& sig : {g.sig1, g.sig2}) {
                     if (sig.empty()) continue;
@@ -2667,7 +2662,7 @@ int Application::runNetwork() {
                                       carry_arc_amb_key2, carry_slipped_ambs, carry_slipped_raw,
                                       carry_we_drop_sats,
                                       carry_we_drop_arcs, n_threads, ewl_lanes, ewl_cfg, mw_wl_layer,
-                                      mw_wl_ppp_utils, mw_wl_f6, mw_wl_epoch, wl_inject_epoch, lane_trace_epoch,
+                                      mw_wl_f6, mw_wl_epoch, wl_inject_epoch, lane_trace_epoch,
                                       wl_epoch, wl_cons_epoch, isUncarriedThirdBand, carry_innov_gate, mw_wl_on,
                                       ewl_on, uwl_on, uwl_cold_on, uwl_mid_on, uwl_dual_on, uwl_family_on,
                                       uwl_sib_gate_on, wl_inject_on, bridge_debias_on, ewl_carry_exclude,
@@ -2734,7 +2729,7 @@ int Application::runNetwork() {
         subEnd(SB_INSTALL);     // close installPosterior, the card-4 posterior readback (D0b)
         subBegin(SB_NETAR);     // producer-side network AR phase 2, log-only, off in the tier (D0b)
         networkProducerAr(ctx, config_, log, traces, se, est, x_s, stations,
-                          est_index_of, asm_res, plan, ar_ppp_utils, log_dir_);
+                          est_index_of, asm_res, plan, log_dir_);
         subEnd(SB_NETAR);      // close producer AR / pre-emit tail (D0b)
         subBegin(SB_SOLPREP);  // toSolutionEpoch + per-satellite discontinuity signalling (D0b)
         // Decision half of the gross-LOS screen (RF-3b B3,
@@ -2795,7 +2790,7 @@ int Application::runNetwork() {
         subEnd(SB_IONODIAG);   // close block 4a, iono/ZWD/anchor traces (D0b)
         subBegin(SB_DDFRAC);   // block 6: cross-station DD fractional-residual trace, B5 (D0b)
         networkDdFrac(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
-                      est_index_of, dd_ppp_utils);
+                      est_index_of);
         subEnd(SB_DDFRAC);       // close block 6, dd-frac B5 (D0b)
         subBegin(SB_SHDEV_VTEC); // block 4b: T5 SH-deviation carry KF + VTEC coefficient trace (D0b)
         networkShDevVtec(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,

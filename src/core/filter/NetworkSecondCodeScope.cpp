@@ -5,6 +5,8 @@
  */
 #include "filter/NetworkSecondCodeScope.hpp"
 
+#include "common/GnssIdentity.hpp"   // obsTypeOf
+
 #include <algorithm>
 #include <iterator>
 
@@ -17,7 +19,7 @@ bool secondCodeAllowEntryValid(const std::string& entry, std::string* why) {
     };
     if (entry.size() != 3)
         return refuse("not a 3-character RINEX observation code");
-    if (entry[0] != 'C')
+    if (obsTypeOf(entry) != ObsType::Code)
         return refuse("not a CODE type (must start with 'C')");
     if (entry[1] != '1')
         return refuse("not on band 1 (band 2 is a follow-up card: it would wake "

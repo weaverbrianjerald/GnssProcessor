@@ -269,7 +269,7 @@ TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
 
     std::set<std::string> shared;
-    networkElectChainDatum(ctx, *cfg, log, spdlog::default_logger(), c.stations,
+    networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
                            c.present, c.cnd, hyg, kNoSlips, shared);
     EXPECT_EQ(pinnedHost(c, "G29_L1C"), "MATR")
         << "the election took the FRESH host despite a converged one being available "
@@ -311,7 +311,7 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
     }
 
     std::set<std::string> shared;
-    networkElectChainDatum(ctx, *cfg, log, spdlog::default_logger(), c.stations,
+    networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
                            c.present, c.cnd, hyg, kNoSlips, shared);
     EXPECT_TRUE(pinnedHost(c, "G29_L1C").empty()) << "a held-out key must not be pinned";
     EXPECT_EQ(shared.count(StateKeys::makeSatPhaseBiasKey("G29", kSig)), 0u);
@@ -369,7 +369,7 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
     EXPECT_EQ(ctx.carry.anchor_blocked.count("G29_L1C"), 0u);
 
     std::set<std::string> shared;
-    networkElectChainDatum(ctx, *cfg, log, spdlog::default_logger(), cr.stations,
+    networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), cr.stations,
                            cr.present, cr.cnd, hyg, kNoSlips, shared);
     EXPECT_FALSE(pinnedHost(cr, "G29_L1C").empty()) << "the key must come back";
 }
@@ -475,7 +475,7 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
 
     std::set<std::string> shared;
-    networkElectChainDatum(ctx, *cfg, log, spdlog::default_logger(), c.stations,
+    networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
                            c.present, c.cnd, hyg, kNoSlips, shared);
     // No host is elected for a bridged key: its datum is the shared row, and it enters
     // the walk as a spanning-forest root.  (Receivers reached through it still pin their
@@ -628,7 +628,7 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
     EXPECT_EQ(hyg.pinSigmaScale(0, "G29_L1C"), 1.0);
 
     std::set<std::string> shared;
-    networkElectChainDatum(ctx, *cfg, log, spdlog::default_logger(), c.stations,
+    networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
                            c.present, c.cnd, hyg, kNoSlips, shared);
     EXPECT_FALSE(pinnedHost(c, "G29_L1C").empty());
     for (const auto& st : c.stations)
@@ -745,13 +745,13 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionDeseatsASlippedIncumbentTreeEdge) {
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
         std::set<std::string> shared;
         AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
-        networkElectChainDatum(ctx, *cfg, log, spdlog::default_logger(), c.stations,
+        networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
                                c.present, c.cnd, hyg, kNoSlips, shared);
         tree1 = treeEdges(c);
         // Second epoch, same census, one incumbent tree edge now slipped.
         shared.clear();
         hyg = runHygiene(ctx, *cfg, c, 1030.0, slip);
-        networkElectChainDatum(ctx, *cfg, log, spdlog::default_logger(), c.stations,
+        networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
                                c.present, c.cnd, hyg, slip, shared);
         tree2 = treeEdges(c);
         deseeded   = ctx.counters.eq34_slip_deseeded;
@@ -818,7 +818,7 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionReadmitsAnUnavoidableSlippedTreeEdge)
     const std::set<std::pair<int, std::string>> slip{ { 0, "G09_L1C" } };
     std::set<std::string> shared;
     AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0, slip);
-    networkElectChainDatum(ctx, *cfg, log, spdlog::default_logger(), c.stations,
+    networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
                            c.present, c.cnd, hyg, slip, shared);
 
     EXPECT_EQ(treeEdges(c).count({ 0, "G09_L1C" }), 1u)

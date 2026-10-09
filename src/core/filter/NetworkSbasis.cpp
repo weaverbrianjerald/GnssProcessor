@@ -7,6 +7,9 @@
 
 #include "filter/NetworkSbasis.hpp"
 
+#include "common/GnssIdentity.hpp"     // systemOfSat, constellationKey, SignalId, obsTypeOf
+#include "filter/StateKeySchema.hpp"   // StateKeys::parseSatBiasKey
+
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -53,13 +56,16 @@ std::pair<std::string, std::string> NetworkSbasis::selectIfPinPair(
 bool NetworkSbasis::broadcastGroupDelayDescribesPair(const std::string& sat,
                                                      const std::string& sig1,
                                                      const std::string& sig2) {
-    if (sig1.size() < 2 || sig2.size() < 2) return false;
-    const char b1 = sig1[1];
-    const char b2 = sig2[1];
+    const System sys = systemOfSat(sat);
+    const std::optional<SignalId> s1 = SignalId::fromObsCode(sys, sig1);
+    const std::optional<SignalId> s2 = SignalId::fromObsCode(sys, sig2);
+    if (!s1 || !s2) return false;
+    const char b1 = s1->digit;   // RINEX band digits
+    const char b2 = s2->digit;
     // Galileo: the latched value is BGD(E1, E5a), which describes (E1, E5a) only.
     // A Galileo (E1, E5b) pair (a triple-frequency posture) would need the second
     // group delay, BGD(E1, E5b), which the setup does not latch: target zero there.
-    if (!sat.empty() && sat.front() == 'E') return b1 == '1' && b2 == '5';
+    if (sys == System::Galileo) return b1 == '1' && b2 == '5';
     // Every other constellation: the RF-0c band-digit rule, unchanged.
     return b1 == '1' && b2 == '2';
 }
@@ -180,13 +186,14 @@ bool NetworkSbasis::SatHealth::unhealthyAt(const std::string& sat, double t_gps_
 int NetworkSbasis::galileoHealthMask(const std::vector<std::string>& signals) {
     int mask = 0;
     for (const std::string& s : signals) {
-        if (s.size() < 2) continue;
-        switch (s[1]) {
-        case '1': mask |= 0x007;         break;   // E1-B: data validity bit 0, health bits 1-2
-        case '5': mask |= 0x038;         break;   // E5a: bits 3 to 5
-        case '7': mask |= 0x1C0;         break;   // E5b: bits 6 to 8
-        case '8': mask |= 0x038 | 0x1C0; break;   // E5 AltBOC: both E5 fields
-        default:                         break;   // E6 has no bits in the word
+        const std::optional<SignalId> sig = SignalId::fromObsCode(System::Galileo, s);
+        if (!sig) continue;
+        switch (sig->band()) {
+        case FrequencyBand::GalE1:  mask |= 0x007;         break;   // E1-B: data validity bit 0, health bits 1-2
+        case FrequencyBand::GalE5a: mask |= 0x038;         break;   // E5a: bits 3 to 5
+        case FrequencyBand::GalE5b: mask |= 0x1C0;         break;   // E5b: bits 6 to 8
+        case FrequencyBand::GalE5:  mask |= 0x038 | 0x1C0; break;   // E5 AltBOC: both E5 fields
+        default:                                           break;   // E6 has no bits in the word
         }
     }
     return mask;
@@ -278,19 +285,22 @@ NetworkSbasis::PivotPick NetworkSbasis::electClockPivot(const std::vector<std::s
 
 NetworkSbasis::ChannelFamily NetworkSbasis::channelFamilyOf(
     const std::string& constellation, const std::string& signal) {
-    // Raw RINEX-3 code observable, "C<band><attribute>".  The attribute is signal[2]
-    // and is not canonicalized on input (MeasurementModel keys the sat-bias state on
-    // the raw 3-character code), so this reads the receiver's own declaration.
-    if (signal.size() < 3) return ChannelFamily::Primary;
-    const char attr = signal[2];
+    // Raw RINEX-3 code observable, "C<band><attribute>".  The attribute is not
+    // canonicalized on input (MeasurementModel keys the sat-bias state on the raw
+    // 3-character code), so this reads the receiver's own declaration.
+    //
     // The §7 allow-list is enforced here rather than at the call site: only
     // constellations whose family split has been analysed (Galileo, GPS, BeiDou) can
     // report a secondary family.  Any other constellation returns Primary for every
     // signal, so its census cannot find a partition and the row emitter cannot fire
     // on it.  This keeps extra rows from appearing on a posture merely because a
     // partition is detected.
-    if (constellation != "E" && constellation != "G" && constellation != "C")
+    const System sys = systemFromName(constellation);
+    if (sys != System::Galileo && sys != System::GPS && sys != System::BeiDou)
         return ChannelFamily::Primary;
+    const std::optional<SignalId> sig = SignalId::fromObsCode(sys, signal);
+    if (!sig) return ChannelFamily::Primary;
+    const char attr = sig->attribute;
     // 'X' is the combined I+Q correlator output, a physically distinct hardware path
     // with its own bias.  Every other attribute (Galileo A/B/C/I/Q/Z, GPS
     // C/W/P/Y/S/L/I/Q/M, BeiDou I/Q/D/P/A/Z) is a discrete component on the
@@ -314,14 +324,13 @@ NetworkSbasis::FamilyCensus NetworkSbasis::runFamilyCensus(
         (void)station;
         std::map<std::string, std::pair<bool, bool>> seen;  // const -> (has primary, has secondary)
         for (const auto& key : keys) {
-            // Key shape is "SAT|SIGNAL" (StateKeySchema); a plain split suffices,
-            // since the constellation is the satellite's first character.
-            const auto bar = key.find('|');
-            if (bar == std::string::npos || bar == 0 || bar + 1 >= key.size()) continue;
-            const std::string sat = key.substr(0, bar);
-            const std::string sig = key.substr(bar + 1);
-            if (sig.empty() || sig[0] != 'C') continue;      // code channels only
-            const std::string cst = constellationOf(sat);
+            // Key shape is "SAT|SIGNAL" (StateKeys::makeSatBiasKey).
+            const auto parts = StateKeys::parseSatBiasKey(key);
+            if (!parts) continue;
+            const std::string& sat = parts->satellite;
+            const std::string& sig = parts->signal;
+            if (obsTypeOf(sig) != ObsType::Code) continue;   // code channels only
+            const std::string cst = constellationKey(systemOfSat(sat));
             auto& s = seen[cst];
             if (channelFamilyOf(cst, sig) == ChannelFamily::Secondary) s.second = true;
             else                                                       s.first  = true;
@@ -410,7 +419,7 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     std::map<std::string, std::vector<std::string>> by_const;
     for (const auto& sat : registered_clock_sats) {
         if (sat.empty()) continue;
-        by_const[constellationOf(sat)].push_back(sat);
+        by_const[constellationKey(systemOfSat(sat))].push_back(sat);
     }
     for (auto& [c, sats] : by_const) std::sort(sats.begin(), sats.end());
 
@@ -514,7 +523,7 @@ std::vector<std::pair<std::string, double>> NetworkSbasis::clockNullDirection(
     std::vector<std::string> sats;
     for (const auto& sat : registered_clock_sats) {
         if (sat.empty()) continue;
-        if (constellationOf(sat) == constellation) sats.push_back(sat);
+        if (constellationKey(systemOfSat(sat)) == constellation) sats.push_back(sat);
     }
     std::sort(sats.begin(), sats.end());
     std::vector<std::pair<std::string, double>> out;
@@ -805,8 +814,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     // path runs (byte-identical).
     auto prevCb = [&](const std::string& sat, const std::string& sig,
                       double& out) -> bool {
-        const auto it = code_bias_prev_.find(
-            NetworkSbasis::constellationOf(sat) + "|" + sig);
+        const auto it = code_bias_prev_.find(constellationKey(systemOfSat(sat)) + "|" + sig);
         if (it == code_bias_prev_.end()) return false;
         const auto jt = it->second.find(sat);
         if (jt == it->second.end()) return false;
@@ -828,7 +836,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         Eigen::Index col;
         try { col = est.codeBiasColumn(kv.first, kv.second); } catch (...) { continue; }
         const std::string skey =
-            NetworkSbasis::constellationOf(kv.first) + "|" + kv.second;
+            constellationKey(systemOfSat(kv.first)) + "|" + kv.second;
         st0_chan[skey].emplace_back(kv.first, col);
     }
 
@@ -959,7 +967,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             // on row_ok so a satellite whose columns could not be resolved is not
             // summed into a row that would then span a column it never contributed.
             if (row_ok && sat_if_level_datum) {
-                const std::string cst = NetworkSbasis::constellationOf(sat);
+                const std::string cst = constellationKey(systemOfSat(sat));
                 auto it = if_level_row.find(cst);
                 if (it == if_level_row.end())
                     it = if_level_row.emplace(cst, Eigen::VectorXd::Zero(nshared)).first;
@@ -1056,7 +1064,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     double target = 0.0;
                     // The same branches, counted per constellation (card GAL, R3 iii).
                     SatGfConstCounts& gcc =
-                        out.sat_gf_by_const[NetworkSbasis::constellationOf(sat)];
+                        out.sat_gf_by_const[constellationKey(systemOfSat(sat))];
                     if (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd) {
                         // The pair must be one the latched group delay describes: (band 1,
                         // band 2) for GPS (T_GD), (band 1, band 5) for Galileo (BGD(E1,
@@ -1121,10 +1129,8 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     zs.push_back(target);
                     ++out.n_sat_gf_rows;
                     ++gcc.rows;
-                    sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sig1]
-                        .insert(sat);
-                    sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sig2]
-                        .insert(sat);
+                    sat_gf_pinned[constellationKey(systemOfSat(sat)) + "|" + sig1].insert(sat);
+                    sat_gf_pinned[constellationKey(systemOfSat(sat)) + "|" + sig2].insert(sat);
 
                     // --- Per-signal extension (RF-0d) ----------------------------
                     // The pair row above closes every rank-deficiency-3b direction (the
@@ -1158,8 +1164,12 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     // ISC, which needs no ionosphere to be observable and is estimable
                     // from the data at any coverage.  Pinning it would discard real
                     // information; leaving it free costs nothing.
+                    const System sat_sys = systemOfSat(sat);
+                    const std::optional<SignalId> pin1 = SignalId::fromObsCode(sat_sys, sig1);
+                    const std::optional<SignalId> pin2 = SignalId::fromObsCode(sat_sys, sig2);
                     for (const std::string& sk : sigs) {
                         if (sk == sig1 || sk == sig2) continue;
+                        const std::optional<SignalId> id_k = SignalId::fromObsCode(sat_sys, sk);
                         const double fk = freqOf(sat, sk);
                         if (!(fk > 0.0)) { ++out.n_sat_gf_extra_nofreq; continue; }
                         const double mu_k = (f1 * f1) / (fk * fk);
@@ -1185,7 +1195,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                         // (n_isc_pinned), so the wire can report which satellites' C2X is an
                         // estimate and which is an assertion.
                         const bool same_band_as_sig2 =
-                            sig2.size() >= 2 && sk.size() >= 2 && sk[1] == sig2[1];
+                            pin2 && id_k && id_k->digit == pin2->digit;
                         if (sat_isc_state && same_band_as_sig2) {
                             if (isc_bridged.count(sat + "|" + sk)) {
                                 ++out.n_isc_observed;   // free: the data determines it
@@ -1226,13 +1236,13 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                         // the data standing invariant #3 requires for an "inert" claim.
                         bool extra_band_carry = false;
                         bool extra_band_hold  = false;
-                        if (sat_gf_extra_band_free && sig1.size() >= 2 && sig2.size() >= 2
-                            && sk[1] != sig1[1] && sk[1] != sig2[1]) {
+                        if (sat_gf_extra_band_free && pin1 && pin2 && id_k
+                            && id_k->digit != pin1->digit && id_k->digit != pin2->digit) {
                             // The roster is keyed on the pin pair the builder realized,
                             // not on an assumed (L1, L2): a held or re-selected pair
                             // changes which two bands the determination needs.
                             const std::string dkey = sat + "|" + sk + "|"
-                                                   + std::string{sig1[1], sig2[1]};
+                                                   + std::string{pin1->digit, pin2->digit};
                             if (extra_band_determined.count(dkey)) {
                                 ++out.n_extra_band_free;   // free: the data determine it
                                 continue;
@@ -1324,8 +1334,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                                 ++out.n_sat_gf_isc_zero;
                                 ++gcc.isc_zero;
                             }
-                            sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sk]
-                                .insert(sat);
+                            sat_gf_pinned[constellationKey(systemOfSat(sat)) + "|" + sk].insert(sat);
                         }
                     }
                 }
@@ -1420,14 +1429,14 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         // value.  Passing the gate is therefore not the acceptance test for this row; the
         // ionosphere level is (docs/SPEC_family_gf_datum.md §6.0).
         if (gf_datum && !gf_family_constellations.empty() &&
-            gf_family_constellations.count(NetworkSbasis::constellationOf(sat))) {
+            gf_family_constellations.count(constellationKey(systemOfSat(sat)))) {
             // The family's own signal subset, and its own pin pair chosen by the same
             // selector and the same frequency source as the primary pin, so the
             // determinism contract holds by construction rather than through a parallel
             // implementation.
             std::vector<std::string> fam_sigs;
             for (const std::string& s : sigs)
-                if (NetworkSbasis::channelFamilyOf(NetworkSbasis::constellationOf(sat), s) ==
+                if (NetworkSbasis::channelFamilyOf(constellationKey(systemOfSat(sat)), s) ==
                     ChannelFamily::Secondary)
                     fam_sigs.push_back(s);
             const auto fam_pin = NetworkSbasis::selectIfPinPair(

@@ -4,7 +4,7 @@
  *
  * The body was moved out of Application::runNetwork at decomposition INC-8b.  The
  * alias preamble below reproduces the run TU's local names for the entries this body
- * references: 20 `auto& X = ctx.carry.X;` references (zwd_carry and
+ * references: 19 `auto& X = ctx.carry.X;` references (zwd_carry and
  * eq34_cpl_sprev_total serve the §14 coupling re-base) and 7 `ctx.knobs` values.
  */
 
@@ -15,8 +15,7 @@
 #include "filter/NetworkCoupling.hpp"
 #include "filter/NetworkResponses.hpp"   // prmRespond / ResponseSite (card PRM phase 3a)
 #include "filter/StateKeySchema.hpp"
-#include "common/PppUtils.hpp"
-#include "logging/LogManager.hpp"
+#include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, rinexLetter, constellationKey, SignalId, wavelengthM
 
 #include <algorithm>
 #include <cmath>
@@ -56,7 +55,8 @@ void eq34ShiftCarry(NetworkCarryState& carry,
                     auto bs = shift_sat.find({r.sat, r.signal});
                     if (bs != shift_sat.end()) d -= bs->second;
                     if (!r.sat.empty()) {
-                        auto dr = shift_rxg.find(std::make_tuple(r.station, r.sat.front(), r.signal));
+                        auto dr = shift_rxg.find(std::make_tuple(
+                            r.station, letterOfSat(r.sat), r.signal));
                         if (dr != shift_rxg.end()) d -= dr->second;
                     }
                     if (!(d != 0.0 && std::isfinite(d))) return false;
@@ -91,7 +91,6 @@ void eq34ShiftCarry(NetworkCarryState& carry,
 
 void networkElectChainDatum(NetworkRunContext& ctx,
                             const GnssConfig& config_,
-                            LogManager& log_manager_,
                             const std::shared_ptr<spdlog::logger>& log,
                             std::vector<NetStation>& stations,
                             const std::vector<bool>& present,
@@ -106,7 +105,6 @@ auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
 auto& eq34_rx_parent = ctx.carry.eq34_rx_parent;
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
 auto& eq34_prev_el = ctx.carry.eq34_prev_el;
-auto& eq34_ppp_utils = ctx.carry.eq34_ppp_utils;
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
 auto& eq34_erase_total = ctx.carry.eq34_erase_total;
 auto& eq34_shift_total = ctx.carry.eq34_shift_total;
@@ -143,8 +141,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     const auto& usable_keys = cnd.usable_keys;
     const auto& union_keys  = cnd.union_keys;
     const auto& cover       = cnd.cover;
-    auto cov = [&](char c, size_t i) -> int {
-        auto it = cover.find(c); if (it == cover.end()) return 0;
+    auto cov = [&](System sys, size_t i) -> int {
+        auto it = cover.find(rinexLetter(sys)); if (it == cover.end()) return 0;
         auto jt = it->second.find(i); return jt == it->second.end() ? 0 : jt->second;
     };
 
@@ -179,7 +177,6 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     ctx.carry.eq34_epoch_bridged.clear();
     shared_phase_keys.clear();
     for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
-    if (!eq34_ppp_utils) eq34_ppp_utils = std::make_unique<PppUtils>(log_manager_);
     // This epoch's receiver-side parent edges + per-sat component roots;
     // they replace eq34_rx_parent / eq34_sat_root wholesale after the
     // election, so the maps always describe one epoch's tree.
@@ -198,21 +195,15 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // below, can still round the targets.)
     const bool        eq34_round   = config_.networkPhaseDatumEq34PinRound()
                                   && !carry_invariant;
-    auto eqSysOfChar = [](char c) -> System {
-        switch (c) {
-            case 'G': return System::GPS;    case 'E': return System::Galileo;
-            case 'C': return System::BeiDou; case 'J': return System::QZSS;
-            default:  return System::Unknown;
-        }
-    };
-
     // Group the ungated (sat,σ) keys into (constellation,signal)
     // sub-problems.  Recover (sat,σ) from the pbkey value so the
-    // "sat_signal" '_' split is unambiguous.
+    // "sat_signal" '_' split is unambiguous.  The groups are visited in
+    // (RINEX letter, signal) order.
     struct GKey {
-        char cons; std::string signal;
+        System sys; std::string signal;
         bool operator<(const GKey& o) const {
-            return cons != o.cons ? cons < o.cons : signal < o.signal;
+            const char a = rinexLetter(sys), b = rinexLetter(o.sys);
+            return a != b ? a < b : signal < o.signal;
         }
     };
     std::map<GKey, std::set<std::string>>                      grp_sats;
@@ -224,7 +215,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (!union_keys.count(amb)) continue;          // gated out
             const auto p = StateKeys::parseSatPhaseBiasKey(pbkey);
             if (!p || p->satellite.empty()) continue;
-            const GKey g{ p->satellite.front(), p->signal };
+            const GKey g{ systemOfSat(p->satellite), p->signal };
             grp_sats[g].insert(p->satellite);
             grp_arcs[g][i].push_back(p->satellite);
             grp_satrx[g][p->satellite].push_back(i);
@@ -247,16 +238,30 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         // Plain locals rather than the structured bindings g/sats, so the
         // recordEdge lambda below can capture them (C++17 does not allow
         // capturing structured bindings).
-        const char        grp_cons = g.cons;
+        const System      grp_sys  = g.sys;
         const std::string grp_sig  = g.signal;
-        const System      system  = eqSysOfChar(grp_cons);
-        const std::string sys_str = PppUtils::getSystemString(*sats.begin());
+        // The pin-to-round and the seed-round below apply to the CDMA constellations
+        // only: a GLONASS (FDMA) or SBAS group keeps the unrounded target.
+        const bool        roundable = grp_sys == System::GPS || grp_sys == System::Galileo
+                                   || grp_sys == System::BeiDou || grp_sys == System::QZSS;
+        // The group signal's carrier wavelength for that rounding, from the band digit
+        // alone as PppUtils::getWavelength reads it (BeiDou digit 1 is B1C there, where
+        // SignalId::band reads L1I as B1I); 0 where the signal does not parse or the band
+        // is unknown.  No FDMA group is rounded, so the slot is 0.
+        double grp_lambda = 0.0;
+        if (roundable)
+            if (const auto signal = SignalId::fromObsCode(grp_sys, grp_sig))
+                grp_lambda = wavelengthM(bandOfDigit(grp_sys, signal->digit), /*glo_slot=*/0);
+        const std::string sys_str = systemName(grp_sys);
         const std::string rpb_key = StateKeys::makeReceiverPhaseBiasKey(sys_str, grp_sig);
-        const std::string dr_key  = std::string(1, grp_cons) + "|" + grp_sig;
+        const std::string dr_key  = constellationKey(grp_sys) + "|" + grp_sig;
         auto& arcs  = grp_arcs[g];
         auto& satrx = grp_satrx[g];
+        // Graph vertices are named "R<station index>" (a receiver) and "S<sat>" (a
+        // satellite); the prefix is the vertex kind, not a constellation letter.
         auto rV = [](size_t i){ return "R" + std::to_string(i); };
         auto sV = [](const std::string& s){ return "S" + s; };
+        auto isSatVertex = [](const std::string& v) { return v[0] == 'S'; };
 
         // Longevity score of arc (station ri, sat) (I4): higher means a longer
         // expected life and so a better new tree edge (fewer future deaths,
@@ -322,16 +327,13 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             inc_adj[rV(ni->second)].push_back(sV(sat));
             inc_adj[sV(sat)].push_back(rV(ni->second));
         };
-        const std::string sig_suffix = "_" + grp_sig;
         for (const auto& [amb, sta] : anchor_incumbent) {
-            if (amb.empty() || amb.front() != grp_cons) continue;
-            if (amb.size() <= sig_suffix.size()
-                || amb.compare(amb.size() - sig_suffix.size(),
-                               sig_suffix.size(), sig_suffix) != 0) continue;
-            seedEdge(sta, amb.substr(0, amb.size() - sig_suffix.size()));
+            const auto a = StateKeys::parseAmbiguityKey(amb);
+            if (!a || systemOfSat(a->satellite) != grp_sys || a->signal != grp_sig) continue;
+            seedEdge(sta, a->satellite);
         }
         const std::string rx_suffix =
-            "|" + std::string(1, grp_cons) + "|" + grp_sig;
+            "|" + constellationKey(grp_sys) + "|" + grp_sig;
         for (const auto& [rxkey, sat] : eq34_rx_parent) {
             if (rxkey.size() <= rx_suffix.size()
                 || rxkey.compare(rxkey.size() - rx_suffix.size(),
@@ -380,7 +382,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (r1 == static_cast<size_t>(-1)) {
                 std::map<std::string, int> root_votes;
                 for (const auto& s : comp_sat[root]) {
-                    auto rt = eq34_sat_root.find(s + "_" + grp_sig);
+                    auto rt = eq34_sat_root.find(StateKeys::makeAmbiguityKey(s, grp_sig));
                     if (rt != eq34_sat_root.end()) ++root_votes[rt->second];
                 }
                 int best_v = 0; std::string best_name;
@@ -401,7 +403,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (r1 == static_cast<size_t>(-1)) {
                 int best = -1;
                 for (size_t i : rx_list) {
-                    const int cv = cov(g.cons, i);
+                    const int cv = cov(grp_sys, i);
                     if (cv > best
                         || (cv == best && stations[i].name < stations[r1].name)) {
                         best = cv; r1 = i;
@@ -455,7 +457,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 order;
             auto recordEdge = [&](size_t ri, const std::string& sat,
                                   bool sat_is_child) {
-                const std::string amb = sat + "_" + grp_sig;
+                const std::string amb = StateKeys::makeAmbiguityKey(sat, grp_sig);
                 // Slip-aware (Card 3/4): this arc is becoming a tree edge.  If it slipped
                 // this epoch, the election could not avoid it (the component has no other
                 // route to the vertex), and every cycle through it refloats.  Counted
@@ -479,9 +481,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 if (eq34_round && anchor_incumbent.count(amb)) {
                     auto lc = local_carry.find(std::make_tuple(
                         static_cast<int>(ri), sat, grp_sig));
-                    if (lc != local_carry.end() && system != System::Unknown) {
-                        const double lam =
-                            eq34_ppp_utils->getWavelength(system, grp_sig, sat);
+                    if (lc != local_carry.end() && roundable) {
+                        const double lam = grp_lambda;
                         if (std::isfinite(lam) && lam > 0.0) {
                             carry_val = lc->second.value_abs;
                             target = lam * std::round(carry_val / lam);
@@ -512,8 +513,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     if (sidx < 0) return std::numeric_limits<double>::quiet_NaN();
                     return stations[ri].sm->getStateVector()(sidx);
                 };
-                if (eq34_seed_round && !std::isfinite(carry_val)
-                    && system != System::Unknown) {
+                if (eq34_seed_round && !std::isfinite(carry_val) && roundable) {
                     // Freeze after first realization (INC-1, SPEC §8.5): a frame is
                     // realized once.  Reuse this (station, amb)'s previously realized
                     // target unchanged (on the same host: pinmove 0, no step, no
@@ -531,8 +531,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         // INC-2 off the freeze branch keeps its single map lookup.
                         if (eq34_seed_rehost) seed_x = ambStateValue();
                     } else {
-                    const double lam =
-                        eq34_ppp_utils->getWavelength(system, grp_sig, sat);
+                    const double lam = grp_lambda;
                     if (std::isfinite(lam) && lam > 0.0) {
                         const int sidx = stations[ri].sm->getAmbiguityIndex(amb);
                         if (sidx >= 0) {
@@ -670,7 +669,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             std::vector<std::string> bridged_roots;
             if (hyg.active && !hyg.bridged.empty()) {
                 for (const auto& s : comp_sat[root]) {
-                    if (!hyg.isBridged(s + "_" + grp_sig)) continue;
+                    if (!hyg.isBridged(StateKeys::makeAmbiguityKey(s, grp_sig))) continue;
                     if (visited.count(sV(s))) continue;
                     attach(sV(s));
                     bridged_roots.push_back(sV(s));
@@ -704,7 +703,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             bool allow_slipped = !eq34_slip_aware;
             auto newEdgeOk = [&](size_t ri, const std::string& sat) {
                 if (!allow_slipped && arcSlipped(ri, sat, grp_sig)) return false;
-                if (hyg.eligibleHost(ri, sat + "_" + grp_sig)) return true;
+                if (hyg.eligibleHost(ri, StateKeys::makeAmbiguityKey(sat, grp_sig))) return true;
                 if (!allow_cold) return false;
                 ++ctx.counters.hyg.cold_fallback_pins;
                 return true;
@@ -729,7 +728,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     if (ia == inc_adj.end()) continue;
                     for (const auto& u : ia->second) {
                         if (visited.count(u)) continue;
-                        if (u[0] == 'S')
+                        if (isSatVertex(u))
                             recordEdge(static_cast<size_t>(
                                            std::stoul(v.substr(1))),
                                        u.substr(1), /*sat_is_child=*/true);
@@ -741,7 +740,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     }
                 } else {
                     const std::string v = new_q.front(); new_q.pop_front();
-                    if (v[0] == 'R') {
+                    if (!isSatVertex(v)) {
                         const size_t ri =
                             static_cast<size_t>(std::stoul(v.substr(1)));
                         std::vector<std::string> ss = arcs[ri];
@@ -778,8 +777,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         if (eq34_longevity)
                             std::sort(rr.begin(), rr.end(),
                                       [&](size_t a, size_t b) {
-                                          const int ca = cov(grp_cons, a),
-                                                    cb = cov(grp_cons, b);
+                                          const int ca = cov(grp_sys, a),
+                                                    cb = cov(grp_sys, b);
                                           if (ca != cb) return ca > cb;
                                           const double la = arcLife(a, s),
                                                        lb = arcLife(b, s);
@@ -840,7 +839,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 const double s = k ? (-vshift[p] - pinmove) : 0.0;
                 vshift[v] = s;
                 vknown[v] = k;
-                if (v[0] == 'S') {
+                if (isSatVertex(v)) {
                     const std::string sat = v.substr(1);
                     if (!k)          eq34_reref.insert({sat, grp_sig});
                     else if (s != 0.0) shift_sat[{sat, grp_sig}] = s;
@@ -854,7 +853,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         if (rpb_carry.erase({idx, rpb_key}) != 0)
                             prmRespond(ctx.counters.prm_resp, ResponseSite::RpbEq34Erase);
                     } else if (s != 0.0) {
-                        shift_rxg[std::make_tuple(idx, grp_cons,
+                        shift_rxg[std::make_tuple(idx, rinexLetter(grp_sys),
                                                   grp_sig)] = s;
                         shift_rpb[{idx, rpb_key}] = s;
                     }
@@ -987,12 +986,6 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         std::map<std::string, size_t> gname2idx;
         for (size_t i = 0; i < stations.size(); ++i)
             gname2idx[stations[i].name] = i;
-        auto splitAmb = [](const std::string& a, std::string& sat,
-                           std::string& sig) -> bool {
-            const auto us = a.find('_');
-            if (us == std::string::npos) return false;
-            sat = a.substr(0, us); sig = a.substr(us + 1); return true;
-        };
         auto carryAlive = [&](size_t idx, const std::string& sat,
                               const std::string& sig) -> bool {
             return local_carry.count(std::make_tuple(
@@ -1002,11 +995,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         // Sat-side parents (amb → parent station) + their component roots.
         for (const auto& [amb, sta] : anchor_incumbent) {
             if (this_epoch_anchor.count(amb)) continue;    // re-seen live
-            std::string sat, sig;
-            if (!splitAmb(amb, sat, sig)) continue;
+            const auto a = StateKeys::parseAmbiguityKey(amb);
+            if (!a) continue;
             auto gi = gname2idx.find(sta);
             if (gi == gname2idx.end()
-                || !carryAlive(gi->second, sat, sig)) continue;  // dead ⇒ drop
+                || !carryAlive(gi->second, a->satellite, a->signal)) continue;  // dead ⇒ drop
             this_epoch_anchor.emplace(amb, sta);
             eq34_retained_edges.emplace(static_cast<int>(gi->second), amb);
             auto sr = eq34_sat_root.find(amb);
@@ -1027,14 +1020,14 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 || !carryAlive(gi->second, sat, sig)) continue;
             new_rx_parent.emplace(rxkey, sat);
             eq34_retained_edges.emplace(static_cast<int>(gi->second),
-                                        sat + "_" + sig);
+                                        StateKeys::makeAmbiguityKey(sat, sig));
         }
         // Pinned integers ({receiver idx, "sat_signal"} → target).
         for (const auto& [k, tgt] : eq34_prev_target) {
             if (new_prev_target.count(k)) continue;
-            std::string sat, sig;
-            if (!splitAmb(k.second, sat, sig)) continue;
-            if (!carryAlive(static_cast<size_t>(k.first), sat, sig)) continue;
+            const auto a = StateKeys::parseAmbiguityKey(k.second);
+            if (!a) continue;
+            if (!carryAlive(static_cast<size_t>(k.first), a->satellite, a->signal)) continue;
             new_prev_target.emplace(k, tgt);
         }
     }

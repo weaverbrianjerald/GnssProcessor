@@ -12,6 +12,7 @@
 #include "filter/NetworkTeardown.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"   // systemFromLetter
 #include "filter/NetworkClockClone.hpp"   // networkClockCloneTeardown (card SCL)
 #include "filter/NetworkSharedHistory.hpp" // networkSharedHistoryTeardown (card SCL2 X2)
 #include "filter/NetworkChannelAll.hpp"
@@ -4941,9 +4942,10 @@ int networkTeardown(
             const auto& er = lane.run;
             const double mean_R = er.rows_built > 0
                 ? er.sum_R / static_cast<double>(er.rows_built) : 0.0;
-            const char* label = lane.cons == '\0' ? "all-cons"
-                              : lane.cons == 'G'  ? "GPS EWL (L2,L5) λ 5.861 m"
-                              : lane.cons == 'E'
+            const System lane_sys = systemFromLetter(lane.cons);
+            const char* label = lane.cons == '\0'           ? "all-cons"
+                              : lane_sys == System::GPS     ? "GPS EWL (L2,L5) λ 5.861 m"
+                              : lane_sys == System::Galileo
                                   ? (lane.top == '8'
                                          ? (nmw.uwl_dual_top
                                                 ? "Galileo UWL (E5,E5a) λ 19.537 m [preferred]"

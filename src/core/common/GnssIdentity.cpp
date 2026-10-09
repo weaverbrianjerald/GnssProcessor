@@ -1,8 +1,8 @@
 /**
  * @file GnssIdentity.cpp
- * @brief The letter and name maps, the frequency functions and the parsers of the
- *        identity types (see GnssIdentity.hpp, which holds the constellation traits table;
- *        card NOM step N0a).
+ * @brief The name map, the frequency functions and the parsers of the identity types
+ *        (see GnssIdentity.hpp, which holds the constellation traits table and the inline
+ *        letter reads; card NOM step N0a), and the call-site helpers of step N0b.
  */
 
 #include "common/GnssIdentity.hpp"
@@ -23,18 +23,6 @@ namespace GnssProcessor {
 
     } // namespace
 
-    System systemFromLetter(char letter) {
-        switch (letter) {
-        case 'G': return System::GPS;
-        case 'E': return System::Galileo;
-        case 'R': return System::GLONASS;
-        case 'C': return System::BeiDou;
-        case 'J': return System::QZSS;
-        case 'S': return System::SBAS;
-        default:  return System::Unknown;   // IRNSS 'I' included until N0b adds it
-        }
-    }
-
     System systemFromName(std::string_view text) {
         if (text.size() == 1) return systemFromLetter(text.front());
         for (System s : {System::GPS, System::Galileo, System::GLONASS, System::BeiDou,
@@ -42,6 +30,8 @@ namespace GnssProcessor {
             if (text == traitsOf(s).name) return s;
         return System::Unknown;
     }
+
+    std::string constellationKey(System sys) { return std::string(1, rinexLetter(sys)); }
 
     double carrierFrequencyHz(FrequencyBand band, int glo_slot) {
         namespace K = Constants;
@@ -87,6 +77,11 @@ namespace GnssProcessor {
     }
 
     double nominalWavelengthM(FrequencyBand band) { return wavelengthM(band, 0); }
+
+    double ionoDelayMetresPerTecu(double carrier_hz) {
+        // Term for term as the call sites wrote it, so the double is the same bit for bit.
+        return 40.3 * 1.0e16 / (carrier_hz * carrier_hz);
+    }
 
     // -----------------------------------------------------------------------
     // SatId
@@ -135,6 +130,10 @@ namespace GnssProcessor {
 
     FrequencyBand SignalId::band() const {
         return classifySignal(traitsOf(sys).name, obsCode(ObsType::Code)).band;
+    }
+
+    double SignalId::wavelengthM(int glo_slot) const {
+        return GnssProcessor::wavelengthM(band(), glo_slot);
     }
 
     std::string SignalId::obsCode(ObsType type) const {

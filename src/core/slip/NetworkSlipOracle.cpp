@@ -7,6 +7,7 @@
 
 #include "slip/NetworkSlipOracle.hpp"
 
+#include "common/GnssIdentity.hpp"
 #include "common/GnssTypes.hpp"
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
@@ -33,19 +34,6 @@ std::string trim(std::string s) {
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_ws));
     s.erase(std::find_if(s.rbegin(), s.rend(), not_ws).base(), s.end());
     return s;
-}
-
-/// The system letter -> System mapping the wavelength provider keys on.
-System systemOf(const std::string& sat) {
-    if (sat.empty()) return System::GPS;
-    switch (sat[0]) {
-        case 'G': return System::GPS;
-        case 'R': return System::GLONASS;
-        case 'E': return System::Galileo;
-        case 'C': return System::BeiDou;
-        case 'J': return System::QZSS;
-        default:  return System::GPS;
-    }
 }
 
 /// splitmix64: a full-avalanche 64-bit mixer, so the seeds of two arcs that
@@ -331,7 +319,7 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
     //     is counted in no_lambda and falls through; skipping it without a count
     //     would read as a false alarm and bias the census.
     const double lambda =
-        oracle.utils ? oracle.utils->getWavelength(systemOf(sat), signal, sat) : 0.0;
+        oracle.utils ? oracle.utils->getWavelength(systemOfSat(sat), signal, sat) : 0.0;
     if (!(lambda > 0.0) || !std::isfinite(lambda)) { ++oracle.no_lambda; return false; }
 
     const double noise = networkSlipOracleNoise(oracle.noise_cyc, sta, sat, signal, now_s);

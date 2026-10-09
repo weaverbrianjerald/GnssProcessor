@@ -291,8 +291,6 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             dd_frac_trace << "week,tow,cons,signal,sat_i,ref_sat,sta_a,sta_b,"
                              "dd_m,lambda_m,dd_cyc,frac_cyc,dd_sigma_cyc,"
                              "sigma_carry_aware\n";  // dd_sigma_cyc added by T2a
-            // (The caller builds the wavelength provider dd_ppp_utils only while this
-            //  stream is open, because it needs the LogManager; B5.)
         } else {
             log->warn("Network: failed to open DD-fractional trace {}",
                       dd_frac_trace_path.string());

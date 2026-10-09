@@ -23,6 +23,8 @@
  * unit-testable without a network run and lives here, not inline in the driver.
  */
 
+#include "common/GnssIdentity.hpp"   // letterOfSat
+
 #include <map>
 #include <set>
 #include <string>
@@ -84,8 +86,8 @@ inline bool pivotHandoverSignalled(
  * using the same @p changed_consts set that @ref pivotHandoverSignalled records
  * for the A2 emit-bump scoping (one source, never re-derived).
  *
- * A key's constellation is derived from its satellite id (first char).  A key
- * with no satellite (empty @p sat, e.g. a receiver-side or other
+ * A key's constellation is read from its satellite id (@c systemOfSat, compared as its
+ * RINEX letter).  A key with no satellite (empty @p sat, e.g. a receiver-side or other
  * constellation-less shared column, should one ever be carried) is treated as
  * affected even when scoping is on, matching the legacy global invalidation for
  * anything whose datum membership is unknown.
@@ -107,7 +109,7 @@ inline bool datumChangeAffectsKey(const std::string& sat,
                                   bool scoped) {
     if (!scoped) return true;       // legacy global response
     if (sat.empty()) return true;   // constellation-less key: conservative
-    return changed_consts.count(sat.front()) > 0;
+    return changed_consts.count(letterOfSat(sat)) > 0;
 }
 
 /**

@@ -10,6 +10,7 @@
 #include "filter/NetworkRelevel.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"           // systemOfSat
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkRunTypes.hpp"        // CarryPrior / CoupledShared / SharedParamKind / ClockOsc
 #include "products/LiveEphemerisStore.hpp"
@@ -114,7 +115,7 @@ void networkEphCutoverRelevel(NetworkRunContext& ctx,
 if (brdc_rts) {
     auto& eph_store = LiveEphemerisStore::getInstance();
     for (const std::string& sat : registered_clock_sats) {
-        if (sat.empty() || sat[0] == 'R') continue;          // GLONASS out of scope (plan D8)
+        if (sat.empty() || systemOfSat(sat) == System::GLONASS) continue;   // GLONASS out of scope (plan D8)
         const auto now = eph_store.computeSatelliteClock(sat, se.time);
         if (!now) continue;                                  // no eph held → nothing to track
         const int new_iode = now->iode;

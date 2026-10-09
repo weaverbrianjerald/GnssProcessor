@@ -10,6 +10,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/NetworkRunTraces.hpp"  // appendRunManifestRecord
+#include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -87,7 +88,7 @@ std::string bandJson(FrequencyBand b) {
 
 /// The JSON value of a constellation: its name, or "" for the station-wide kinds.
 std::string systemJson(System s) {
-    return s == System::Unknown ? std::string() : std::string(traitsOf(s).name);
+    return s == System::Unknown ? std::string() : std::string(systemName(s));
 }
 
 /// The kind column: the registry name, with the form appended ("rx_code_bias.ifb").
@@ -872,12 +873,51 @@ void networkParamInventoryEpochTail(NetworkRunContext& ctx, const std::shared_pt
     traces.appendRunManifestRecord(nc, paramInventoryJson(inv.last_epoch, inv.rx_ifb, "first_emitted_epoch"));
 }
 
+void networkParamInventoryNoteSatellites(NetworkParamInventory& inv, const SyncedEpoch& se) {
+    SatIdentityCensus& c = inv.sat_ids;
+    ++c.epochs;
+    for (const auto& [station, obs] : se.by_station) {
+        (void)station;
+        for (const RinexObservation& o : obs) {
+            ++c.records;
+            const System sys = systemOfSat(o.satellite);
+            if (sys == System::Unknown)   c.unknown_system.insert(o.satellite);
+            else if (sys == System::SBAS) c.sbas.insert(o.satellite);
+        }
+    }
+}
+
 void networkParamInventoryRunEnd(const NetworkRunContext& ctx, const std::shared_ptr<spdlog::logger>& log,
                                  NetworkRunTraces& traces, const NetworkConfig& nc) {
     const NetworkParamInventory& inv = ctx.param_inventory;
     logTable(log, "Network (parameters as armed, run end)",
              paramInventoryTable(inv.whole_run, inv.rx_ifb, "run"));
     traces.appendRunManifestRecord(nc, paramInventoryJson(inv.whole_run, inv.rx_ifb, "run"));
+
+    // The satellite-id census (card NOM N0b): the ids of no modelled constellation and the
+    // SBAS ids, with up to ten of each listed when any was counted.
+    const SatIdentityCensus& c = inv.sat_ids;
+    const auto listed = [](const std::set<std::string>& ids) {
+        std::string out;
+        std::size_t n = 0;
+        for (const std::string& id : ids) {
+            if (n++ == 10) { out += " ..."; break; }
+            out += " '" + id + "'";
+        }
+        return out.empty() ? out : ":" + out;
+    };
+    const std::string line = fmt::format(
+        "satellite ids in the synced observations over {} processed epoch(s) ({} satellite "
+        "records): "
+        "{} of no modelled constellation{} (they would share the '?' group of the maps keyed "
+        "by a constellation letter); {} SBAS{} (they would reach the SBAS carrier wavelength "
+        "of the emit re-base)",
+        c.epochs, c.records, c.unknown_system.size(), listed(c.unknown_system), c.sbas.size(),
+        listed(c.sbas));
+    if (c.unknown_system.empty() && c.sbas.empty())
+        log->info("Network (parameters as armed, run end): {}.", line);
+    else
+        log->warn("Network (parameters as armed, run end): {}.", line);
 }
 
 }  // namespace GnssProcessor

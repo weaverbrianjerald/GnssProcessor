@@ -51,7 +51,6 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class PppUtils;             // common/PppUtils.hpp; only a unique_ptr<>& param here
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
 struct NetworkRunContext;  // app/NetworkRunContext.hpp, included in the .cpp only
 
@@ -132,8 +131,6 @@ std::vector<DdFixLabel> mapFixToBasis(int n_dd,
  * @param est_index_of  Per-station estimator-slot map (< 0 = not in this epoch).
  * @param asm_res       Per-station assembly results (h2local for local-column labels).
  * @param plan          S-basis plan (shared_datum for the conditional covariance).
- * @param ar_ppp_utils  Wavelength oracle for the DD cycle conversion (may be null when
- *                      AR is disabled; the AR block is skipped when it is null).
  * @param log_dir_      Output root for the NEQ-export artifacts (log_dir_/neq_export).
  */
 void networkProducerAr(NetworkRunContext& ctx,
@@ -147,7 +144,6 @@ void networkProducerAr(NetworkRunContext& ctx,
                        const std::vector<int>& est_index_of,
                        const std::vector<StationAssembly>& asm_res,
                        const NetworkSbasis::Plan& plan,
-                       const std::unique_ptr<PppUtils>& ar_ppp_utils,
                        const std::filesystem::path& log_dir_);
 
 } // namespace GnssProcessor

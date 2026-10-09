@@ -16,6 +16,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "filter/NetworkClockLevel.hpp"        // networkClockLevelDeclare (card CLV)
 #include "filter/NetworkLedgerEmit.hpp"
 #include "filter/NetworkPbHold.hpp"
@@ -94,7 +95,6 @@ void networkEmitStore(
     auto& last_pivot = ctx.carry.last_pivot;
     auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
     auto& eq34_emitted_pdr = ctx.carry.eq34_emitted_pdr;
-    auto& eq34_ppp_utils = ctx.carry.eq34_ppp_utils;
     auto& first_emit_content_s = ctx.carry.first_emit_content_s;
     const bool   ser_disc_ctrs   = ctx.knobs.ser_disc_ctrs;    // serialize post-emit disc-counter values on C/B/P records (RTA-4)
     const double contract_rebroadcast_s = ctx.knobs.contract_rebroadcast_s; // S-contract re-broadcast period (product time, s; 0 = off) (RTA-5)
@@ -194,12 +194,13 @@ void networkEmitStore(
             for (const auto& [amb, sidx] : stations[i].sm->getAmbiguities()) {
                 (void)sidx;
                 const auto parts = StateKeys::parseAmbiguityKey(amb);
-                if (!parts || parts->satellite.empty() || parts->satellite.front() == 'R')
+                if (!parts || parts->satellite.empty()
+                    || systemOfSat(parts->satellite) == System::GLONASS)
                     continue;   // GLONASS FDMA excluded (no common-λ integer DD)
                 if (!shared_phase_keys.count(
                         StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal)))
                     continue;   // not an eq34 graph arc (gated/legacy lump)
-                auto& p = dsu[{parts->satellite.front(), parts->signal}];
+                auto& p = dsu[{letterOfSat(parts->satellite), parts->signal}];
                 const std::string rv = "R" + std::to_string(i);
                 const std::string sv = "S" + parts->satellite;
                 if (!p.count(rv)) p[rv] = rv;
@@ -226,21 +227,23 @@ void networkEmitStore(
         //     keys are excluded, so their raw emitted frame is untouched.  λ per (const,σ).
         std::vector<NetworkEmitRebase::Entry> rb_entries;
         std::map<std::pair<char, std::string>, double> lambda_of;
-        auto sysOfChar = [](char c) -> System {
-            switch (c) { case 'G': return System::GPS;    case 'E': return System::Galileo;
-                         case 'C': return System::BeiDou; case 'J': return System::QZSS;
-                         default:  return System::Unknown; }
-        };
         for (auto& s : sol.sats) {
-            if (s.sat.empty() || s.sat.front() == 'R') continue;
-            const char cons = s.sat.front();
+            const System sys = systemOfSat(s.sat);
+            if (s.sat.empty() || sys == System::GLONASS) continue;
+            const char cons = rinexLetter(sys);
             for (auto& [signal, npb] : s.phase_bias) {
                 const auto cit = comp_of.find(s.sat + "|" + signal);
                 if (cit == comp_of.end()) continue;   // legacy/gated key: keep raw frame
                 const std::pair<char, std::string> g{cons, signal};
                 double& lam = lambda_of[g];
-                if (lam == 0.0 && eq34_ppp_utils)
-                    lam = eq34_ppp_utils->getWavelength(sysOfChar(cons), signal, s.sat);
+                // GLONASS is excluded above, so the wavelength needs no FDMA slot (0).  The
+                // band is read from the digit alone, as PppUtils::getWavelength read it, so
+                // BeiDou digit 1 is B1C here as at the chain datum's rounding; the BeiDou
+                // digit-1 decision is owed (card NOM section 12).
+                if (lam == 0.0) {
+                    const auto sig = SignalId::fromObsCode(sys, signal);
+                    lam = sig ? wavelengthM(bandOfDigit(sys, sig->digit), /*glo_slot=*/0) : 0.0;
+                }
                 NetworkEmitRebase::Entry e;
                 e.sat = s.sat; e.signal = signal; e.component = cit->second;
                 e.lambda_m = lam; e.bias_m = npb.bias_m;
@@ -278,7 +281,7 @@ void networkEmitStore(
             std::vector<NetworkPbEmitFilter::Entry> pf_entries;
             pf_entries.reserve(rb_out.size());
             for (auto& s : sol.sats) {
-                if (s.sat.empty() || s.sat.front() == 'R') continue;   // GLONASS excluded (FDMA)
+                if (s.sat.empty() || systemOfSat(s.sat) == System::GLONASS) continue;   // GLONASS excluded (FDMA)
                 for (auto& [signal, npb] : s.phase_bias) {
                     if (!rb_out.count(s.sat + "|" + signal)) continue;  // only re-based keys
                     NetworkPbEmitFilter::Entry e;
@@ -329,7 +332,7 @@ void networkEmitStore(
         auto clkForced = [&](const std::string& sat) {
             if (retro_emit_sats.count(sat)) return true;
             if (sat.empty()) return false;
-            return global_bump || serialized_consts.count(sat[0]) != 0;
+            return global_bump || serialized_consts.count(letterOfSat(sat)) != 0;
         };
         std::vector<NetworkClockEmitRebase::Entry> ce;
         ce.reserve(sol.sats.size());
@@ -368,7 +371,7 @@ void networkEmitStore(
             }
             if (resume_seam)
                 for (const auto& e : ce)
-                    if (!e.sat.empty()) reanchored.insert(e.sat.front());
+                    if (!e.sat.empty()) reanchored.insert(letterOfSat(e.sat));
             if (!reanchored.empty()) {
                 // Invariant #7: the re-anchor (or resume seam) is a re-coupling
                 // edge; the datum mark keeps a consumer from integrating across it
@@ -701,7 +704,7 @@ void networkEmitStore(
                 const double Re = shc.earth_radius_km * 1000.0;
                 const double H  = shc.layer_height_km * 1000.0;
                 const double tecu_to_L1m =
-                    40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+                    ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
                 const double lon_sun = shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
                 // SH coefficient vector from the shared solution (guard the
                 // column lookups, as elsewhere in this file).
@@ -755,7 +758,7 @@ void networkEmitStore(
                     }
                     int n_iono = 0;
                     for (const auto& o : cit->second) {
-                        if (o.satellite.empty() || o.satellite.front() == 'R')
+                        if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS)
                             continue;   // GLONASS skipped: the SH field excludes it
                         const auto pit = sat_pos.find(o.satellite);
                         if (pit == sat_pos.end()) continue;

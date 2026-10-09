@@ -32,6 +32,7 @@
 #include <fmt/format.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/NetworkRunTraces.hpp"
 
@@ -81,18 +82,16 @@ private:
 // ===========================================================================
 
 /// Constellation letter of a "SAT/FAMILY" identity, or of a bare satellite id.
-/// Returns '?' when the leading token is not an uppercase letter followed by two
-/// digits.  An `observed only` direction named by its column label rather than by
-/// an identity lands there on purpose: its constellation was not parsed, so
+/// Returns '?' when the identity does not open with a satellite id (a letter
+/// followed by two digits) or when its letter names no constellation
+/// (@c systemOfSat).  An `observed only` direction named by its column label rather
+/// than by an identity lands there on purpose: its constellation was not parsed, so
 /// assigning one would be a guess.
 char consOfIdentity(const std::string& id) {
-    if (id.empty()) return '?';
-    const unsigned char c0 = static_cast<unsigned char>(id[0]);
-    if (!std::isupper(c0)) return '?';
     if (id.size() < 3 || !std::isdigit(static_cast<unsigned char>(id[1]))
         || !std::isdigit(static_cast<unsigned char>(id[2])))
         return '?';
-    return id[0];
+    return letterOfSat(id);
 }
 
 /// Join identity tokens for a single CSV field, `;` separated: the file's
@@ -173,7 +172,7 @@ netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges) {
 
     for (const auto& e : edges) {
         if (e.sat.empty() || e.station < 0) continue;
-        Build& b = build[e.sat[0]];
+        Build& b = build[letterOfSat(e.sat)];
         auto its = b.sta_v.find(e.station);
         if (its == b.sta_v.end()) its = b.sta_v.emplace(e.station, b.uf.make()).first;
         auto itv = b.sat_v.find(e.sat);
@@ -242,7 +241,7 @@ std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     // end, but they are accumulated first because a cell's code count and its
     // phase count arrive from different sources.
     std::map<std::string, NetDatumGraphPrediction> cell;
-    std::map<char, int> cb_by_cons;   // the code-bias layer precondition
+    std::map<System, int> cb_by_cons;   // the code-bias layer precondition
 
     const auto touch = [&](const std::string& sat, const std::string& family)
         -> NetDatumGraphPrediction& {
@@ -265,7 +264,7 @@ std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     for (const auto& [sat, sig] : registered_code_keys) {
         if (sat.empty()) continue;
         ++touch(sat, netDatumGraphFamily(sig)).n_cb;
-        ++cb_by_cons[sat[0]];
+        ++cb_by_cons[systemOfSat(sat)];
     }
 
     std::vector<NetDatumGraphPrediction> out;
@@ -274,7 +273,7 @@ std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
         if (p.n_pb <= 0) continue;                          // not a cell of this census
         const auto sup = code_support.find(key);
         p.n_code_support = (sup == code_support.end()) ? 0 : sup->second;
-        p.cb_layer       = !p.sat.empty() && cb_by_cons[p.sat[0]] > 0;
+        p.cb_layer       = !p.sat.empty() && cb_by_cons[systemOfSat(p.sat)] > 0;
         // Both predicates need the code-bias layer: with no code column anywhere
         // in the constellation the code observations pin the slant ionosphere
         // directly and the trade direction does not exist, while the literal
@@ -421,7 +420,7 @@ void networkDatumGraphCensus(
                 // measurement model would have nothing to difference against.
                 if (!ob.modeled.count(code)) continue;
                 supported = true;
-                if (code.empty() || code[0] != 'C') continue;
+                if (obsTypeOf(code) != ObsType::Code) continue;
                 // Only observables backing a registered code column count as
                 // support; that restriction makes zero_keys imply zero_support
                 // exactly (NetworkDatumGraph.hpp).
@@ -447,7 +446,7 @@ void networkDatumGraphCensus(
         // declared_dimension counts them.
         for (const auto& [cons, sat] : plan.clock_pivot) {
             (void)sat;
-            if (!cons.empty()) d_of[cons[0]] = 1;
+            if (!cons.empty()) d_of[rinexLetter(systemFromName(cons))] = 1;
         }
     } else if (config_.networkClockDatumBroadcastAnchored()) {
         // Every satellite carries its own anchor, so a disjoint component is
@@ -462,7 +461,7 @@ void networkDatumGraphCensus(
         // about this when the census is armed under the sum-to-zero datum.
         datum_mode = "sum_to_zero";
         for (const auto& s : registered_clock_sats)
-            if (!s.empty()) d_of[s[0]] = 1;
+            if (!s.empty()) d_of[letterOfSat(s)] = 1;
     }
 
     long long pred_k1_total = 0;
@@ -601,7 +600,7 @@ void networkDatumGraphCensus(
         std::map<char, Row> rows;
         for (const auto& [cons, t1] : tier1) rows[cons].t1 = &t1;
         for (const auto& c : cells) {
-            Row& r = rows[c.sat.empty() ? '?' : c.sat[0]];
+            Row& r = rows[letterOfSat(c.sat)];
             ++r.cells;
             if (!c.cb_layer) ++r.no_layer;
             if (c.zero_keys)    r.pred.push_back(c.id());

@@ -116,6 +116,7 @@
 #include "slip/NetworkSlipQc.hpp"       // slip-QC pure helpers: ifElevMap, parseIfPairResetKey (INC-2)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"    // systemOfSat, letterOfSat, systemName, ObservableId, SignalId
 #include "common/PppUtils.hpp"        // signal wavelengths for the DD fractional-cycle diagnostic (B5)
 #include "realtime/RealTimeEngine.hpp"
 #include "math/TimeUtils.hpp"
@@ -329,7 +330,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         }
         const std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
         const auto& priorities = config_.getSignalPriorities();
-        const auto gal = priorities.find("Galileo");
+        const auto gal = priorities.find(systemName(System::Galileo));
         int gal_mask = gal != priorities.end() ? NetworkSbasis::galileoHealthMask(gal->second) : 0;
         if (gal_mask == 0) gal_mask = 0x1FF;   // no Galileo band named: every signal's bits count
         setup.sat_health = NetworkSbasis::satHealthSeries(nav, gal_mask);
@@ -453,7 +454,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
         std::map<char, std::set<std::string>> nav_by_const;
         for (const auto& e : nav)
-            if (!e.satellite.empty()) nav_by_const[e.satellite[0]].insert(e.satellite);
+            if (!e.satellite.empty())
+                nav_by_const[letterOfSat(e.satellite)].insert(e.satellite);
         if (nav.empty()) {
             log->error("Network (brdc_rts): parsed 0 usable broadcast ephemerides from '{}'. "
                        "Cannot form a broadcast a-priori — check the file is a "
@@ -525,7 +527,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             return 1;
         }
         for (const std::string& sys : config_.getActiveSystems()) {
-            if (sys != "GPS") {
+            if (sys != systemName(System::GPS)) {
                 log->error("Network (card NBP): network.apriori_source sp3_brdc_clock is GPS-only "
                            "(processing.active_systems names '{}').", sys);
                 return 1;
@@ -788,13 +790,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 if (sat_obs.empty()) continue;
                 auto& trk = sta_tracks[sta];
                 for (const auto& ob : sat_obs) {
-                    const std::string sys = PppUtils::getSystemString(ob.system);
-                    if (sys == "Unknown") continue;
+                    if (ob.system == System::Unknown) continue;
+                    const std::string sys = systemName(ob.system);
                     for (const auto& [code, val] : ob.measurements) {
                         (void)val;
-                        if (code.empty()) continue;
-                        const char t = code[0];
-                        if (t != 'C' && t != 'L') continue;   // code + phase channels only
+                        const ObsType t = obsTypeOf(code);
+                        if (t != ObsType::Code && t != ObsType::Phase)
+                            continue;   // code + phase channels only
                         trk.insert({sys, code});
                     }
                 }
@@ -814,7 +816,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             if (sig_cover_min > 0.0 && frac >= sig_cover_min)
                 signal_allowlist[key.first].insert(key.second);
             // The float gate applies to phase codes only (it withholds phase-bias states).
-            if (pb_cover_min > 0.0 && key.second[0] == 'L' && frac >= pb_cover_min)
+            if (pb_cover_min > 0.0 && obsTypeOf(key.second) == ObsType::Phase
+                && frac >= pb_cover_min)
                 phase_bias_allowlist[key.first].insert(key.second);
         }
         auto reportGate = [&](const char* label, double thr,
@@ -826,7 +829,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 for (const auto& [key, cnt] : code_n) {
                     (void)cnt;
                     if (key.first != sys) continue;
-                    if (phase_only && key.second[0] != 'L') continue;
+                    if (phase_only && obsTypeOf(key.second) != ObsType::Phase) continue;
                     codes.insert(key.second);
                 }
                 std::string keep, gate;
@@ -1089,24 +1092,22 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             for (const std::string& sys_name : config_.getActiveSystems()) {
                 const auto pit = config_.getSignalPriorities().find(sys_name);
                 if (pit == config_.getSignalPriorities().end()) continue;
-                std::set<char> bands;
-                for (const std::string& s : pit->second)
-                    if (s.size() >= 2 && (s[0] == 'C' || s[0] == 'L')) bands.insert(s[1]);
-                const System sys = sys_name == "GPS"     ? System::GPS
-                                 : sys_name == "Galileo" ? System::Galileo
-                                 : sys_name == "BeiDou"  ? System::BeiDou
-                                 : sys_name == "GLONASS" ? System::GLONASS
-                                 : sys_name == "QZSS"    ? System::QZSS
-                                 : sys_name == "SBAS"    ? System::SBAS
-                                                         : System::Unknown;
+                const System sys = systemFromName(sys_name);
                 if (sys == System::Unknown) continue;
+                std::set<char> bands;   // the band digits of the priority list's code and phase entries
+                for (const std::string& s : pit->second) {
+                    const auto o = ObservableId::parse(sys, s);
+                    if (o && (o->type == ObsType::Code || o->type == ObsType::Phase))
+                        bands.insert(o->signal.digit);
+                }
                 std::string worst = "exact";
                 std::string band_txt;
                 int n_band = 0;
                 for (const char b : bands) {
                     if (n_band++ >= 2) break;
                     std::string key;
-                    const std::string sig = std::string("L") + b + "C";
+                    // The band's phase with attribute C, "L<b>C".
+                    const std::string sig = SignalId{sys, b, 'C'}.obsCode(ObsType::Phase);
                     const std::string route = st.model->receiverAtxFrequencySource(sig, sys, &key);
                     band_txt += fmt::format("{}band {} {}{}", band_txt.empty() ? "" : ", ", b,
                                             route, key.empty() ? std::string() : " (" + key + ")");
@@ -1200,10 +1201,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // (M5 card UWL-1, SPEC_uwl_card.md §3.1)
             if (mwc.uwl_enable) {
                 std::map<char, MwLaneTier> tiers;
-                for (const char cons : { 'G', 'E' })
+                for (const System sys : { System::GPS, System::Galileo }) {
+                    const char cons = rinexLetter(sys);   // the lane-tier table is keyed by letter
                     if (const auto t = mwLaneTierOf(cons, mwc.uwl_gal_top_band,
                                                     mwc.uwl_mid_enable, mwc.uwl_dual_top))
                         tiers[cons] = *t;
+                }
                 st.mw_slip->setLaneTiers(std::move(tiers));
             }
             // The TurboEdit MW+GF integer repair resolver is built only for turbo_edit
@@ -1602,7 +1605,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 pending_contract.decl.isb_datum =
                     SbasisDeclaration::IsbDatum::SumToZeroPerConstellation;
             } else if (!nc.clock_datum_satellite.empty()) {
-                pending_contract.decl.clock_pivot_sat[NetworkSbasis::constellationOf(nc.clock_datum_satellite)]
+                pending_contract.decl.clock_pivot_sat[
+                    constellationKey(systemOfSat(nc.clock_datum_satellite))]
                     = nc.clock_datum_satellite;
             }
             // Resolve the a-priori orbit/clock identity to the resolved SP3 and CLK file

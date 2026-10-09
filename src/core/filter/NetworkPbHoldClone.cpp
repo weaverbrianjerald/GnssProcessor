@@ -10,7 +10,9 @@
 #include "filter/NetworkPbHoldClone.hpp"
 
 #include "app/NetworkRunContext.hpp"
-#include "common/SignalBand.hpp"          // the band pair's wavelengths (card SMD)
+#include "common/GnssIdentity.hpp"        // systemOfSat, letterOfSat, SignalId, nominalWavelengthM
+#include "common/SignalBand.hpp"          // FrequencyBand (card SMD)
+#include "filter/StateKeySchema.hpp"      // StateKeys::makeAmbiguityKey
 #include "filter/NetworkClockAnchor.hpp"  // clockAnchorPhaseClockWeights (card SMD)
 #include "filter/NetworkRunTypes.hpp"
 
@@ -19,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace GnssProcessor {
 
@@ -82,7 +85,7 @@ void queueBlockBirth(NetworkRunContext& ctx, const std::string& key, const PbHol
 PbHoldCloneDeath engagementDeath(const NetworkRunContext& ctx, const PbHoldClone& c) {
     const ClockAnchorState& an = ctx.carry.clk_anchor;
     if (an.tripped.count(c.sat)) return PbHoldCloneDeath::Withdrawn;
-    const auto pv = ctx.carry.cxu_pivot.find(c.sat.empty() ? '\0' : c.sat[0]);
+    const auto pv = ctx.carry.cxu_pivot.find(c.sat.empty() ? '\0' : letterOfSat(c.sat));
     const bool pinned = pv != ctx.carry.cxu_pivot.end() && pv->second.first == c.sat;
     const auto it = an.sat.find(c.sat);
     if (!pinned && (it == an.sat.end() || !it->second.folded_anchored))
@@ -132,7 +135,7 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
             else                                                       ++out.n_d;
             continue;
         }
-        const char   cc     = tm.sat.empty() ? '\0' : tm.sat[0];
+        const char   cc     = tm.sat.empty() ? '\0' : letterOfSat(tm.sat);
         const bool   is_clk = (tm.kind == SharedParamKind::Clock);
         const Eigen::Index col = in.col_of ? in.col_of(tm) : -1;
         if (!(tm.p_prev > 0.0)) {
@@ -257,21 +260,21 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
 
 PbHoldPair pbHoldClonePickPair(const std::string& sat, const std::map<std::string, double>& pb_var) {
     PbHoldPair out;
-    std::map<int, std::pair<std::string, double>> best;   // band -> (signal, stashed variance)
+    std::map<FrequencyBand, std::pair<std::string, double>> best;   // band -> (signal, stashed variance)
+    const System sys = systemOfSat(sat);
     for (const auto& [sig, v] : pb_var) {
         if (!(v > 0.0) || !std::isfinite(v)) continue;
-        const FrequencyBand band = classifySignalForSat(sat, sig).band;
-        if (!(bandNominalWavelengthMeters(band) > 0.0)) continue;
-        const int b = static_cast<int>(band);
-        const auto it = best.find(b);
-        if (it == best.end() || v < it->second.second) best[b] = {sig, v};
+        const std::optional<SignalId> signal = SignalId::fromObsCode(sys, sig);
+        const FrequencyBand band = signal ? signal->band() : FrequencyBand::Unknown;
+        if (!(nominalWavelengthM(band) > 0.0)) continue;
+        const auto it = best.find(band);
+        if (it == best.end() || v < it->second.second) best[band] = {sig, v};
     }
     if (best.size() < 2) return out;
     std::vector<double> alpha;
-    for (const auto& [b, sv] : best) {
-        (void)b;
+    for (const auto& [band, sv] : best) {
         out.sig.push_back(sv.first);
-        const double lam = bandNominalWavelengthMeters(classifySignalForSat(sat, sv.first).band);
+        const double lam = nominalWavelengthM(band);
         alpha.push_back(lam * lam);
     }
     out.w = clockAnchorPhaseClockWeights(alpha);
@@ -438,7 +441,8 @@ PbHoldCloneMarg pbHoldCloneMarginalizeClones(
     for (const PbHoldCloneTerm& t : terms) {
         if (is_clone(t.col)) {
             rc(t.col - n0) += t.coeff;
-            if (t.kind == SharedParamKind::Clock && !t.sat.empty()) deficit[t.sat[0]] += t.coeff;
+            if (t.kind == SharedParamKind::Clock && !t.sat.empty())
+                deficit[letterOfSat(t.sat)] += t.coeff;
             ++out.n_clone;
             continue;
         }
@@ -458,7 +462,8 @@ PbHoldCloneMarg pbHoldCloneMarginalizeClones(
             out.mass_dropped += std::abs(m);
             continue;
         }
-        if (t.kind == SharedParamKind::Clock && !t.sat.empty()) deficit[t.sat[0]] -= m;
+        if (t.kind == SharedParamKind::Clock && !t.sat.empty())
+            deficit[letterOfSat(t.sat)] -= m;
         const std::string key = termKey(t);
         const auto it = at.find(key);
         if (it != at.end() && rest[it->second].col == j) {
@@ -599,7 +604,7 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
             }
             if (f == PbHoldFollow::None) {
                 for (const std::string& sg : c.pv_pair.sig) {
-                    const auto bit = basis.find(c.sat + "_" + sg);
+                    const auto bit = basis.find(StateKeys::makeAmbiguityKey(c.sat, sg));
                     if (bit != basis.end() && bit->second.elected_ep == ep) {
                         f = PbHoldFollow::Tenure;
                         break;
@@ -783,7 +788,7 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
             t.col    = pn.column;
             t.s_prev = (pn.column >= 0 && pn.column < nx) ? x_s(pn.column) : pn.value;
             t.p_prev = 0.0;
-            ccl_pin[t.sat[0]] = t;
+            ccl_pin[letterOfSat(t.sat)] = t;
         }
     }
     const auto ccl_term_of_col = [&](Eigen::Index j, PbHoldCloneTerm& t) {
@@ -878,8 +883,8 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
         double prior_p = std::numeric_limits<double>::quiet_NaN();
         if (const auto f = folded.find(pkey); f != folded.end()) prior_p = f->second;
         else if (const auto dg = diag.find(pkey); dg != diag.end()) prior_p = dg->second;
-        const bool pinned_parent = in.pivot_sat.count(c.sat.empty() ? '\0' : c.sat[0])
-                                   && in.pivot_sat.at(c.sat[0]) == c.sat;
+        const auto pv_it = in.pivot_sat.find(c.sat.empty() ? '\0' : letterOfSat(c.sat));
+        const bool pinned_parent = pv_it != in.pivot_sat.end() && pv_it->second == c.sat;
         double step_p = 0.0;
         if (!pinned_parent) {
             if (!(pcol >= 0 && pcol < nx) || !std::isfinite(prior_p)) {
@@ -982,8 +987,8 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
         // against the prior mean the solve folded.
         const Eigen::Index pcol = in.col_of(PbHoldCloneTerm{SharedParamKind::Clock, c.sat, "", 0.0, 0.0, 0.0, -1});
         const double prior_c = prior_of_key(sharedCarryKey(SharedParamKind::Clock, c.sat, ""));
-        const bool pinned_parent = in.pivot_sat.count(c.sat.empty() ? '\0' : c.sat[0])
-                                   && in.pivot_sat.at(c.sat[0]) == c.sat;
+        const auto pv_it = in.pivot_sat.find(c.sat.empty() ? '\0' : letterOfSat(c.sat));
+        const bool pinned_parent = pv_it != in.pivot_sat.end() && pv_it->second == c.sat;
         double step_c = 0.0;
         if (!pinned_parent) {
             if (!(pcol >= 0 && pcol < nx) || !std::isfinite(prior_c)) {
@@ -1378,7 +1383,7 @@ void networkPbHoldBlockAtHold(NetworkRunContext& ctx, const std::string& key,
     const double den = c.pv_W - c.pv_vpost;
     if (c.pv_phi_ok && c.pv_w_valid && den > 0.0 && ctx.carry.smh_t_first_s >= 0.0 && !c.sat.empty()) {
         const int hour = static_cast<int>(std::floor((epoch_s - ctx.carry.smh_t_first_s) / 3600.0));
-        auto& acc = ctx.counters.smh_pv_r[{c.sat[0], hour}];
+        auto& acc = ctx.counters.smh_pv_r[{letterOfSat(c.sat), hour}];
         acc.first  += c.pv_phi * c.pv_phi / den;
         acc.second += 1;
     }

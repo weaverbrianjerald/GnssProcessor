@@ -7,6 +7,7 @@
 #include "filter/NetworkCarrySites.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "filter/StateKeySchema.hpp"   // StateKeys::parseAmbiguityKey ("sat_signal" keys)
 
 #include <array>
 #include <tuple>
@@ -250,15 +251,6 @@ const MechRow& mechRow(CarryMechanism m) {
     return rows[static_cast<std::size_t>(m)];
 }
 
-/// Split "SAT<sep>SIGNAL" at its first separator (both parts non-empty).
-bool splitKey(const std::string& key, char sep, std::string& sat, std::string& sig) {
-    const std::size_t u = key.find(sep);
-    if (u == std::string::npos) return false;
-    sat = key.substr(0, u);
-    sig = key.substr(u + 1);
-    return !sat.empty() && !sig.empty();
-}
-
 }  // namespace
 
 const CarrySiteSpec& carrySiteSpec(CarrySite s) {
@@ -363,19 +355,19 @@ long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
             hand(CarriedRef{S::PbHoldPrevClock, SharedParamKind::Clock, sat, kNone, -1, &v,
                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
     if (on(S::PbLevelPrev)) {
-        std::string sat, sig;
-        for (auto& [key, v] : carry.pb_level_prev) {
-            if (!splitKey(key, '_', sat, sig)) continue;
-            hand(CarriedRef{S::PbLevelPrev, SharedParamKind::PhaseBias, sat, sig, -1, &v,
-                            nullptr, false, nullptr, nullptr, nullptr, nullptr});
+        for (auto& [key, v] : carry.pb_level_prev) {   // "sat_signal" keys
+            const auto a = StateKeys::parseAmbiguityKey(key);
+            if (!a) continue;
+            hand(CarriedRef{S::PbLevelPrev, SharedParamKind::PhaseBias, a->satellite, a->signal,
+                            -1, &v, nullptr, false, nullptr, nullptr, nullptr, nullptr});
         }
     }
     if (on(S::PinBridge)) {
-        std::string sat, sig;
-        for (auto& [key, br] : carry.pin_bridge) {
-            if (!splitKey(key, '_', sat, sig)) continue;
-            hand(CarriedRef{S::PinBridge, SharedParamKind::PhaseBias, sat, sig, -1, &br.value,
-                            nullptr, false, nullptr, nullptr, nullptr, nullptr});
+        for (auto& [key, br] : carry.pin_bridge) {   // "sat_signal" keys
+            const auto a = StateKeys::parseAmbiguityKey(key);
+            if (!a) continue;
+            hand(CarriedRef{S::PinBridge, SharedParamKind::PhaseBias, a->satellite, a->signal,
+                            -1, &br.value, nullptr, false, nullptr, nullptr, nullptr, nullptr});
         }
     }
     if (on(S::PbHold)) {

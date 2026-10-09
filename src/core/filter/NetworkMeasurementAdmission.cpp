@@ -8,6 +8,7 @@
 #include "filter/NetworkMeasurementAdmission.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
@@ -230,7 +231,7 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
             ++ctr.los_epochs;
             for (const auto& [key, val] : obs.observed) {
                 (void)val;
-                if (key.empty() || key[0] != 'C') continue;   // code only, by design
+                if (obsTypeOf(key) != ObsType::Code) continue;   // code only, by design
                 const char band = measurementAdmissionBand(key);
                 if (band == '\0') continue;
                 double d = 0.0;
@@ -365,8 +366,9 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
             std::vector<std::string> phase_keys, code_keys;
             for (auto it = obs.observed.begin(); it != obs.observed.end();) {
                 if (measurementAdmissionBand(it->first) != band) { ++it; continue; }
-                if (it->first[0] == 'L')      phase_keys.push_back(it->first);
-                else if (it->first[0] == 'C') code_keys.push_back(it->first);
+                const ObsType type = obsTypeOf(it->first);
+                if (type == ObsType::Phase)     phase_keys.push_back(it->first);
+                else if (type == ObsType::Code) code_keys.push_back(it->first);
                 // raw_observed is left untouched: it belongs to the slip detectors,
                 // which have already run this epoch and must keep seeing the
                 // receiver's true tracking state.
@@ -720,7 +722,7 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                         if (revet) a.vet_left = revet_ep;
                         for (const auto& [okey, oval] : modeled[i][c.obs_idx].observed) {
                             (void)oval;
-                            if (okey.empty() || okey[0] != 'L') continue;
+                            if (obsTypeOf(okey) != ObsType::Phase) continue;
                             if (measurementAdmissionBand(okey) != c.band) continue;
                             const std::string amb = StateKeys::makeAmbiguityKey(sat, okey);
                             if (carry_invariant) {

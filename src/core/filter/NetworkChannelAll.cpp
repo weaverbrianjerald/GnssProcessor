@@ -6,8 +6,8 @@
 #include "filter/NetworkChannelAll.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/PppObservation.hpp"
-#include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -38,12 +38,12 @@ std::vector<std::string> channelAllExtraChannels(
     std::vector<std::string> out;
     for (const std::string& k : key_set) {
         if (k.size() < 3) continue;
-        const char type = k[0];
-        if (type != 'C' && type != 'L') continue;
+        const ObsType type = obsTypeOf(k);
+        if (type != ObsType::Code && type != ObsType::Phase) continue;
         if (std::find(bands.begin(), bands.end(), k[1]) == bands.end()) continue;
         if (allowed != nullptr
             && std::find(allowed->begin(), allowed->end(), k) == allowed->end()) continue;
-        const auto& canon_map = (type == 'C') ? canon_code : canon_phase;
+        const auto& canon_map = (type == ObsType::Code) ? canon_code : canon_phase;
         const auto cit = canon_map.find(k[1]);
         const std::string canon = (cit == canon_map.end()) ? std::string{} : cit->second;
         if (!channelAllIsExtra(k, canon, key_set.count(canon) != 0)) continue;
@@ -76,28 +76,33 @@ void networkChannelAllEpoch(NetworkRunContext& ctx, const GnssConfig& config_,
         // (station, satellite, band) -> how many modelled phases / codes it carries.
         std::map<std::pair<std::string, char>, std::pair<int, int>> cell;
         for (const PppObservation& ob : modeled[i]) {
-            if (ob.satellite.empty()) continue;
-            const std::string cons = PppUtils::getSystemString(ob.system);
-            if (cons.empty() || cons == "Unknown") continue;
+            if (ob.satellite.empty() || ob.system == System::Unknown) continue;
+            const std::string cons = systemName(ob.system);
             for (const auto& [sig, val] : ob.raw_observed) {
                 (void)val;
-                if (sig.size() < 3 || (sig[0] != 'C' && sig[0] != 'L')) continue;
+                const ObsType type = obsTypeOf(sig);
+                if (sig.size() < 3 || (type != ObsType::Code && type != ObsType::Phase)) continue;
                 sta_tracking[cons + "|" + sig].insert(static_cast<int>(i));
             }
             for (const auto& [sig, val] : ob.observed) {
                 (void)val;
-                if (sig.size() < 3 || (sig[0] != 'C' && sig[0] != 'L')) continue;
+                const ObsType type = obsTypeOf(sig);
+                if (sig.size() < 3 || (type != ObsType::Code && type != ObsType::Phase)) continue;
+                const bool phase = (type == ObsType::Phase);
                 const std::string key = cons + "|" + sig;
                 sta_modelling[key].insert(static_cast<int>(i));
                 cols[key].insert(ob.satellite);
+                // The band digit is the key's second character (the identity parser
+                // would refuse an ionosphere-free key such as "C1C_C2W", which counts
+                // on its first band here).
                 auto& cc = cell[{ ob.satellite, sig[1] }];
-                if (sig[0] == 'L') ++cc.first; else ++cc.second;
-                const bool extra = (sig[0] == 'L') ? ob.second_phases.count(sig) != 0
-                                                   : ob.companion_codes.count(sig) != 0;
+                if (phase) ++cc.first; else ++cc.second;
+                const bool extra = phase ? ob.second_phases.count(sig) != 0
+                                         : ob.companion_codes.count(sig) != 0;
                 auto& row = C.family[key];
                 if (extra) {
                     ++row.rows_extra;
-                    if (sig[0] == 'C') extra_code_bands.insert(sig[1]);
+                    if (!phase) extra_code_bands.insert(sig[1]);
                 } else {
                     ++row.rows_canonical;
                 }

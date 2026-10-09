@@ -11,7 +11,9 @@
 #include "filter/NetworkFrameDiag.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
+#include "filter/NetworkRowClassify.hpp"   // sharedColumnFamily
 #include "logging/NetworkRunTraces.hpp"
 
 #include <Eigen/Dense>
@@ -35,15 +37,20 @@ namespace {
 /// the CSV column order; kFamilyCount is the array bound.
 enum Family { kClk = 0, kCb = 1, kPb = 2, kSh = 3, kFamilyCount = 4 };
 
-/// Classify one shared column from its @c sharedColumnLabel prefix.  The labels
-/// are "CLK:", "CB:", "PB:", "SH:"/"SH2:" (NetworkEstimator::sharedColumnLabel in
-/// NetworkEstimator.cpp); an unrecognized label is charged to the phase-bias bucket
-/// instead of being dropped, so the four masses always sum to 1 and a future family
-/// stays in the partition.
-Family familyOf(const std::string& label) {
-    if (label.rfind("CLK:", 0) == 0) return kClk;
-    if (label.rfind("CB:",  0) == 0) return kCb;
-    if (label.rfind("SH",   0) == 0) return kSh;   // "SH:" and the Iono-2 "SH2:"
+/// The bucket of one shared column: its family by the one column classifier
+/// (@ref sharedColumnFamily: clock, code bias, phase bias, or an SH-VTEC coefficient of
+/// either shell).  A column of no family (a clock clone, a shared-history column, an
+/// index outside the layout) is charged to the phase-bias bucket instead of being
+/// dropped, so the four masses always sum to 1 and a future family stays in the
+/// partition.
+Family familyOfColumn(const NetworkEstimator& est, Eigen::Index c) {
+    switch (sharedColumnFamily(est, c)) {
+        case NetColFam::Clk:   return kClk;
+        case NetColFam::Cb:    return kCb;
+        case NetColFam::Pb:    return kPb;
+        case NetColFam::Sh:    return kSh;
+        case NetColFam::Other: return kPb;
+    }
     return kPb;
 }
 
@@ -90,8 +97,7 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
     std::vector<Family> fam(static_cast<std::size_t>(n), kPb);
     int n_fam[kFamilyCount] = {0, 0, 0, 0};
     for (Eigen::Index c = 0; c < n; ++c) {
-        Family f = kPb;
-        try { f = familyOf(est.sharedColumnLabel(c)); } catch (...) { f = kPb; }
+        const Family f = familyOfColumn(est, c);
         fam[static_cast<std::size_t>(c)] = f;
         ++n_fam[f];
     }
@@ -470,7 +476,7 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
     std::map<char, std::vector<Eigen::Index>> by_const;
     for (const std::string& sat : registered_clock_sats) {
         if (sat.empty()) continue;
-        try { by_const[sat[0]].push_back(est.clockColumn(sat)); }
+        try { by_const[letterOfSat(sat)].push_back(est.clockColumn(sat)); }
         catch (...) {}   // not in this epoch's layout, so not part of this epoch's gauge
     }
     if (by_const.empty()) return;

@@ -108,6 +108,7 @@
  * translation unit of this card that touches traces.
  */
 
+#include "common/GnssIdentity.hpp"       // systemOfSat, constellationKey: a satellite's family
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkMdb.hpp"           // netMdbConstIndex / netMdbConstChar: the shared constellation partition
 #include "filter/NetworkPriorResidual.hpp" // ladder rungs and the label / corroboration enums reused per SPEC §4
@@ -321,10 +322,11 @@ public:
     bool   corroborating() const { return corroborate_; }
 
     /// @return Family index for @p sat, or -1 when its constellation was not
-    ///         requested.  The satellite's leading character is the system.
+    ///         requested.  A family is named by its constellation's one-letter key
+    ///         ("G", "E", ...).
     int familyIndex(std::string_view sat) const {
         if (sat.empty()) return -1;
-        const std::string sys(1, sat.front());
+        const std::string sys = constellationKey(systemOfSat(sat));
         for (std::size_t i = 0; i < families_.size(); ++i)
             if (families_[i] == sys) return static_cast<int>(i);
         return -1;

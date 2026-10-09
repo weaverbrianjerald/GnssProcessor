@@ -10,6 +10,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, ObservableId, carrier frequencies
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkSbasis.hpp"
@@ -25,6 +26,7 @@
 #include <cmath>
 #include <deque>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -34,14 +36,17 @@
 namespace GnssProcessor {
 
 bool sdEwlBands(char cons, char& b1, char& b2, double& f1, double& f2) {
-    if (cons == 'G') {   // GPS EWL (L2,L5): lambda_EWL = c/(f2-f5) = 5.861 m
+    const System sys = systemFromLetter(cons);
+    if (sys == System::GPS) {       // GPS EWL (L2,L5): lambda_EWL = c/(f2-f5) = 5.861 m
         b1 = '2'; b2 = '5';
-        f1 = Constants::GPS_L2_FREQ; f2 = Constants::GPS_L5_FREQ;
+        f1 = nominalCarrierFrequencyHz(FrequencyBand::GpsL2);
+        f2 = nominalCarrierFrequencyHz(FrequencyBand::GpsL5);
         return true;
     }
-    if (cons == 'E') {   // Galileo UWL (E5b,E5a): lambda = c/(f7-f5) = 9.768 m
+    if (sys == System::Galileo) {   // Galileo UWL (E5b,E5a): lambda = c/(f7-f5) = 9.768 m
         b1 = '7'; b2 = '5';
-        f1 = Constants::GAL_E5B_FREQ; f2 = Constants::GAL_E5A_FREQ;
+        f1 = nominalCarrierFrequencyHz(FrequencyBand::GalE5b);
+        f2 = nominalCarrierFrequencyHz(FrequencyBand::GalE5a);
         return true;
     }
     return false;        // BeiDou deferred (clock divergence), GLONASS excluded (FDMA)
@@ -295,8 +300,10 @@ void networkSdEwlAr(
             const auto parts = StateKeys::parseAmbiguityKey(key);
             if (!parts) continue;
             const std::string& sig = parts->signal;
-            if (sig.size() < 2 || sig[0] != 'L') continue;
-            cand[{ parts->satellite, sig[1] }].push_back(sig);
+            const std::optional<ObservableId> obs_id =
+                ObservableId::parse(systemOfSat(parts->satellite), sig);
+            if (!obs_id || obs_id->type != ObsType::Phase) continue;
+            cand[{ parts->satellite, obs_id->signal.digit }].push_back(sig);
         }
         for (auto& kv : cand) std::sort(kv.second.begin(), kv.second.end());
 
@@ -305,7 +312,7 @@ void networkSdEwlAr(
         std::set<std::string> seen_sats;
         for (const auto& o : obs) {
             if (o.satellite.empty() || !seen_sats.insert(o.satellite).second) continue;
-            const char cons = o.satellite.front();
+            const char cons = letterOfSat(o.satellite);
             char b1 = 0, b2 = 0;
             double f1 = 0.0, f2 = 0.0;
             if (!sdEwlBands(cons, b1, b2, f1, f2)) continue;

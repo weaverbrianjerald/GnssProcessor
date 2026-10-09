@@ -78,6 +78,10 @@
  *  7. @ref networkParamInventoryEpochTail writes the table once after the first emitted
  *     epoch and @ref networkParamInventoryRunEnd again in the run-end tail, each with a
  *     @c param_inventory record in the run manifest.
+ *  8. Beside the table, @ref networkParamInventoryNoteSatellites counts on every
+ *     processed epoch the satellite ids of the synced observations whose constellation
+ *     the network does not model by its own rule (@ref SatIdentityCensus), and the
+ *     run-end tail prints the count under the table.
  *
  * ### What is withheld but not counted as absorbed
  *
@@ -106,6 +110,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -120,6 +125,7 @@ namespace GnssProcessor {
     struct NetworkRunContext;
     struct NetworkRunTraces;
     struct StationAssembly;
+    struct SyncedEpoch;
 
     // =======================================================================
     // The disposition of a column
@@ -720,6 +726,28 @@ namespace GnssProcessor {
     // =======================================================================
 
     /**
+     * @brief The satellite ids whose constellation the network does not model by its own
+     *        rule, counted over the run (card NOM step N0b).
+     *
+     * Two readers of a satellite's constellation behave differently since step N0b on
+     * inputs the goldens do not contain.  An id whose letter is outside the traits table
+     * (IRNSS 'I', a malformed id) reads as @c System::Unknown, and every such id shares
+     * the '?' group of the containers keyed by a constellation letter (@ref letterOfSat),
+     * where each letter had a group of its own.  An SBAS id has a carrier wavelength at
+     * the emit re-base, where it had none.  The census counts the distinct ids of both
+     * kinds in the synced observations of every processed epoch, before any model reads
+     * them, so a zero on a run states that neither path was reached (on the RINEX path the
+     * parser drops an unknown letter, and @c processing.active_systems removes SBAS unless
+     * it is listed).
+     */
+    struct SatIdentityCensus {
+        long long             epochs{0};        ///< Processed epochs counted (the denominator).
+        long long             records{0};       ///< Satellite records counted, summed over the stations.
+        std::set<std::string> unknown_system;   ///< Distinct ids whose @ref systemOfSat is @c System::Unknown.
+        std::set<std::string> sbas;             ///< Distinct SBAS ids.
+    };
+
+    /**
      * @brief The inventory's run state.  Lives on @c NetworkRunContext beside the
      *        registry (@c ctx.param_inventory).
      */
@@ -734,7 +762,18 @@ namespace GnssProcessor {
         ParamInventoryTally last_epoch;                  ///< The tally of the last epoch PASS B drained.
         ParamInventoryTally whole_run;                   ///< The tally of every drained epoch.
         bool                first_table_written{false};  ///< The first-emitted-epoch table is out.
+        SatIdentityCensus   sat_ids;                     ///< The satellite ids of no modelled constellation, and of SBAS.
     };
+
+    /**
+     * @brief Count this epoch's satellite ids into @c inv.sat_ids (serial, once per
+     *        processed epoch, after the admission seams and before any model reads the
+     *        observations).
+     *
+     * @param inv The inventory.
+     * @param se  The synced epoch the producer processes.
+     */
+    void networkParamInventoryNoteSatellites(NetworkParamInventory& inv, const SyncedEpoch& se);
 
     /**
      * @brief Fold this epoch's station slots (serial, after the parallel PASS B).
@@ -780,7 +819,9 @@ namespace GnssProcessor {
 
     /**
      * @brief Write the run's table in the run-end tail, next to the registry's model
-     *        table, with its @c param_inventory record (scope "run").
+     *        table, with its @c param_inventory record (scope "run"), and under it one
+     *        line of the satellite-id census (@ref SatIdentityCensus; a warning when an
+     *        id was counted).
      *
      * @param ctx    Run context (read).
      * @param log    The run logger.

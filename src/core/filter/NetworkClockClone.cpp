@@ -7,6 +7,7 @@
 #include "filter/NetworkClockClone.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"            // letterOfSat, systemOfSat
 #include "filter/NetworkCarryDisposition.hpp"   // carryColumnPresent (card BCL-d)
 
 #include <Eigen/Eigenvalues>
@@ -447,7 +448,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
     }
     const auto denseOf = [&](const std::string& sat) -> const DenseHo* {
         if (dho.empty() || sat.empty()) return nullptr;
-        const auto it = dho.find(sat.front());
+        const auto it = dho.find(letterOfSat(sat));
         return it != dho.end() ? &it->second : nullptr;
     };
     std::vector<char> st_dense(kd, 0);   // stood in across a dense-transformed handover
@@ -468,7 +469,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         // Card SCL B2: a dense re-expression is the exception, when nothing else moved the
         // entry between the decision and the transform.
         const bool sts = !ctx.carry.sts_consts.empty() && !k.sat.empty()
-                      && ctx.carry.sts_consts.count(k.sat.front()) > 0;
+                      && ctx.carry.sts_consts.count(letterOfSat(k.sat)) > 0;
         const DenseHo* dh = sts ? denseOf(k.sat) : nullptr;
         const bool dense_ok = dh && dh->ok && dh->rec->clean.count(k.sat) > 0;
         if (dinflate[a] || (dreexp[a] && !dense_ok) || (sts && !dense_ok)
@@ -582,8 +583,9 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
     const auto uRow = [&](std::size_t b) -> Eigen::Index {
         const NetworkEstimator::SharedPrior& kb = dkeys[b];
         if (kb.kind != SharedParamKind::Clock || kb.clone || kb.sat.empty()) return -1;
-        const auto it = ctx.carry.sts_dense.find(kb.sat.front());
-        if (it == ctx.carry.sts_dense.end() || !ctx.carry.sts_consts.count(kb.sat.front()))
+        const char cons = letterOfSat(kb.sat);   // the dense kernel's key
+        const auto it = ctx.carry.sts_dense.find(cons);
+        if (it == ctx.carry.sts_dense.end() || !ctx.carry.sts_consts.count(cons))
             return -1;
         return static_cast<Eigen::Index>(it->second.iq);
     };
@@ -643,7 +645,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
             if (!fa) continue;
             for (std::size_t b = a + 1; b < kd; ++b) {
                 if (dkeys[b].kind != SharedParamKind::Clock || dkeys[b].clone || st_dense[b]) continue;
-                if (dkeys[b].sat.front() != dkeys[a].sat.front()) continue;
+                if (systemOfSat(dkeys[b].sat) != systemOfSat(dkeys[a].sat)) continue;
                 if (!keys[a].clone && !keys[b].clone) continue;   // two current columns keep it
                 const auto* fb = pfOf(dkeys[b].sat);
                 if (!fb) continue;
@@ -666,7 +668,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
             for (Eigen::Index b = a + 1; b < nw; ++b) {
                 const auto& wb = walks[static_cast<std::size_t>(b)];
                 if (!wb.ref.empty() || wb.kind != SharedParamKind::Clock
-                    || wb.sat.front() != wa.sat.front()) continue;
+                    || systemOfSat(wb.sat) != systemOfSat(wa.sat)) continue;
                 const auto* fb = pfOf(wb.sat);
                 if (!fb) continue;
                 const double v = pivotFrameCross(fa->first, fa->second, fb->second);
@@ -1059,13 +1061,13 @@ ClockCloneHarvest networkClockCloneHarvestBegin(NetworkRunContext& ctx,
     h.col_cc.assign(static_cast<std::size_t>(h.n0), '\0');
     for (const auto& [col, d] : col2desc)
         if (d.kind == SharedParamKind::Clock && !d.sat.empty() && col >= 0 && col < h.n0)
-            h.col_cc[static_cast<std::size_t>(col)] = d.sat[0];
+            h.col_cc[static_cast<std::size_t>(col)] = letterOfSat(d.sat);
     h.clone_cc.assign(static_cast<std::size_t>(h.n_shared - h.n0), '\0');
     const ClockCloneEpoch& E = ctx.carry.ccl;
     for (const auto& [sat, col] : E.col) {
         const Eigen::Index i = col - h.n0;
         if (i < 0 || i >= static_cast<Eigen::Index>(h.clone_cc.size()) || sat.empty()) continue;
-        h.clone_cc[static_cast<std::size_t>(i)] = sat[0];
+        h.clone_cc[static_cast<std::size_t>(i)] = letterOfSat(sat);
         if (E.standin.count(sat) && h.B(i, i) >= 0.0) C.post_sd.push_back(std::sqrt(h.B(i, i)));
     }
     // Card BCL: a clock clone card SCL did not register is a member of the clock gauge like
@@ -1076,7 +1078,7 @@ ClockCloneHarvest networkClockCloneHarvestBegin(NetworkRunContext& ctx,
             || idit->second.sat.empty()) continue;
         const Eigen::Index i = col - h.n0;
         if (i < 0 || i >= static_cast<Eigen::Index>(h.clone_cc.size())) continue;
-        h.clone_cc[static_cast<std::size_t>(i)] = idit->second.sat[0];
+        h.clone_cc[static_cast<std::size_t>(i)] = letterOfSat(idit->second.sat);
     }
     for (const auto& p : datum)
         if (p.column >= 0 && p.column < h.n0 && h.col_cc[static_cast<std::size_t>(p.column)])

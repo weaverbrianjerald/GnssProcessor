@@ -75,6 +75,7 @@
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkNormalEquations.hpp"
+#include "filter/NetworkRowClassify.hpp"   // NetColFam
 #include "filter/NetworkRunTypes.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
@@ -110,6 +111,8 @@ struct NetworkAttribFrame {
     double                   tow{0.0};
     Eigen::Index             n{0};           ///< shared-column count.
     std::vector<std::string> label;          ///< shared-column labels (size @ref n).
+    std::vector<NetColFam>   fam;            ///< shared-column families (size @ref n), from the column identity.
+    std::vector<std::string> col_sat;        ///< shared-column satellites (CLK / CB / PB columns), size @ref n.
     Eigen::Index             c00_l1{-1};     ///< column of @c SH:C:0:0.
     Eigen::Index             c00_l2{-1};     ///< column of @c SH2:C:0:0.
 

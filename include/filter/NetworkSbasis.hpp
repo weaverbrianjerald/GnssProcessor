@@ -608,6 +608,18 @@ public:
                                      const std::string& incumbent,
                                      const std::set<std::string>* ineligible);
 
+    /**
+     * @brief The channel family of a code signal (FAMILY-GF): @c Secondary for the
+     *        combined I+Q correlator output (attribute 'X'), @c Primary otherwise.
+     *
+     * Only Galileo, GPS and BeiDou report a secondary family (the §7 allow-list);
+     * every other constellation, and a code @c SignalId::fromObsCode refuses, is
+     * @c Primary.
+     * @param constellation The constellation key ("E") or name, read through
+     *                      @c systemFromName.
+     * @param signal        The raw RINEX-3 code observable, e.g. "C1X".
+     * @return The family.
+     */
     static ChannelFamily channelFamilyOf(const std::string& constellation,
                                          const std::string& signal);
 
@@ -820,14 +832,6 @@ public:
                                  const std::string&)>& emitEvent);
 
     /**
-     * @brief Map a RINEX satellite id to its constellation key (first char).
-     * @return "G","E","C","R","J","S","I" or the first char as-is.
-     */
-    static std::string constellationOf(const std::string& sat) {
-        return sat.empty() ? std::string{} : std::string(1, sat.front());
-    }
-
-    /**
      * @brief Deterministically select a satellite's ionosphere-free reference
      *        pair (the clock-common code-bias pin) from its registered code
      *        signals, as a pure function of the signal set and the frequency map.
@@ -1010,7 +1014,8 @@ public:
      * @param registered_clock_sats This epoch's registered satellite-clock set:
      *                              the same vector passed to @ref buildSharedDatum.
      * @param constellation         Constellation key (e.g. "G"), as produced by
-     *                              @ref constellationOf.
+     *                              @c constellationKey(systemOfSat(sat))
+     *                              (common/GnssIdentity.hpp).
      * @return The direction's nonzero entries; empty when the constellation has
      *         no registered clock satellite (the caller must treat that as a
      *         no-op, not as a zero direction).

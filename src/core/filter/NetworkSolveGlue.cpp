@@ -12,6 +12,7 @@
 #include "filter/NetworkSolveGlue.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, constellationKey, SignalId
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"   // SH gate (Phase 2.2): coeffs()
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
@@ -88,7 +89,7 @@ SbasisDeclaration networkClockDatumDeclaration(const NetworkRunContext& ctx,
         // per-constellation sum-to-zero constraint rows (no pivot, empty datum).
         decl.isb_datum = SbasisDeclaration::IsbDatum::SumToZeroPerConstellation;
     } else if (!nc.clock_datum_satellite.empty()) {
-        decl.clock_pivot_sat[NetworkSbasis::constellationOf(nc.clock_datum_satellite)]
+        decl.clock_pivot_sat[constellationKey(systemOfSat(nc.clock_datum_satellite))]
             = nc.clock_datum_satellite;
     }
     return decl;
@@ -369,11 +370,19 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
                 const auto parts = StateKeys::parseSatBiasKey(kv.first);
                 if (parts) by_sat[parts->satellite].insert(parts->signal);
             }
-            for (const auto& [sat, sigs] : by_sat)
-                for (const auto& a : sigs)
-                    for (const auto& b : sigs)
-                        if (a != b && a.size() >= 2 && b.size() >= 2 && a[1] == b[1])
+            for (const auto& [sat, sigs] : by_sat) {
+                // The band digit of each signal, read once; a code that does not parse
+                // has no band and no band-mate.
+                const System sys = systemOfSat(sat);
+                std::vector<std::pair<std::string, char>> digit_of;
+                for (const auto& s : sigs)
+                    if (const std::optional<SignalId> id = SignalId::fromObsCode(sys, s))
+                        digit_of.emplace_back(s, id->digit);
+                for (const auto& [a, da] : digit_of)
+                    for (const auto& [b, db] : digit_of)
+                        if (a != b && da == db)
                             isc_bridged.insert(sat + "|" + a);   // a is bridged to its band-mate
+            }
         }
     }
 
@@ -405,16 +414,18 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
                 if (parts) by_sat[parts->satellite].insert(parts->signal);
             }
             for (const auto& [sat, sigs] : by_sat) {
-                std::set<char> bands;
+                const System sys = systemOfSat(sat);
+                std::set<char> bands;   // RINEX band digits
                 for (const auto& s : sigs)
-                    if (s.size() >= 2) bands.insert(s[1]);
+                    if (const auto id = SignalId::fromObsCode(sys, s)) bands.insert(id->digit);
                 if (bands.size() < 3) continue;   // a pair plus an extra band, or nothing
                 for (const auto& sk : sigs) {
-                    if (sk.size() < 2) continue;
+                    const std::optional<SignalId> id_k = SignalId::fromObsCode(sys, sk);
+                    if (!id_k) continue;
                     for (const char b1 : bands) {
-                        if (b1 == sk[1]) continue;
+                        if (b1 == id_k->digit) continue;
                         for (const char b2 : bands) {
-                            if (b2 == b1 || b2 == sk[1]) continue;
+                            if (b2 == b1 || b2 == id_k->digit) continue;
                             extra_band_determined.insert(sat + "|" + sk + "|"
                                                          + std::string{b1, b2});
                         }
@@ -541,7 +552,10 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
                     const std::string& sig1 = pit->second.first;
                     const std::string& sig2 = pit->second.second;
                     if (sig == sig1 || sig == sig2) continue;
-                    if (sig.size() < 2 || sig2.size() < 2 || sig[1] != sig2[1]) continue;
+                    const System sys = systemOfSat(sat);
+                    const std::optional<SignalId> id_sig  = SignalId::fromObsCode(sys, sig);
+                    const std::optional<SignalId> id_sig2 = SignalId::fromObsCode(sys, sig2);
+                    if (!id_sig || !id_sig2 || id_sig->digit != id_sig2->digit) continue;
                     (isc_bridged.count(sat + "|" + sig) ? ctx.carry.this_epoch_isc_obs
                                                         : ctx.carry.this_epoch_isc_pinned)
                         .insert(sat + "|" + sig);
@@ -880,11 +894,10 @@ if (ctx.knobs.sbasis_complete_on) {
             } catch (...) { /* departed key: no target */ }
         }
         for (const auto& [key, v] : ctx.carry.pb_level_prev) {
-            const auto us = key.find('_');
-            if (us == std::string::npos || !std::isfinite(v)) continue;
+            const auto parts = StateKeys::parseAmbiguityKey(key);   // "G01_L1C"
+            if (!parts || !std::isfinite(v)) continue;
             try {
-                sbc_x_prev(est.phaseBiasColumn(key.substr(0, us),
-                                               key.substr(us + 1))) = v;
+                sbc_x_prev(est.phaseBiasColumn(parts->satellite, parts->signal)) = v;
             } catch (...) {}
         }
         for (const auto& [skey, sats] : code_bias_prev_) {
@@ -1446,8 +1459,8 @@ const bool wh_era_live = ctx.carry.wh_era_len > 0 &&
 bool wh_escalated = false;         // in effect this epoch: the budget escalation of §3(a)
 // Per-constellation partition of the last assess()'s standardized-residual pool
 // (RTA-10, network.per_const_withhold): the rows whose median is the global σ̂0 that
-// the A4 withhold compares, keyed by the ambiguity's satellite constellation
-// (pa.sat[0]).  Cleared and refilled on every assess() so that, like sigma0_adapt,
+// the A4 withhold compares, keyed by the RINEX letter of the ambiguity's satellite
+// (letterOfSat(pa.sat)).  Cleared and refilled on every assess() so that, like sigma0_adapt,
 // it describes the final within-epoch solve.  Populated only when the carve-out is
 // armed; otherwise empty, with no cost and no change on the default path.
 std::map<char, std::vector<double>> we_sigma0_pool_c;
@@ -1616,7 +1629,7 @@ if (within_epoch_armed && carry_warm) {
                     // included; redundancy-floored rows excluded by the continue
                     // above), partitioned by constellation (RTA-10).
                     if (perconst_on && !pa.sat.empty())
-                        we_sigma0_pool_c[pa.sat[0]].push_back(r);
+                        we_sigma0_pool_c[letterOfSat(pa.sat)].push_back(r);
                     if (r > r_max) r_max = r;
                 }
                 const auto key = std::make_pair(static_cast<int>(i), pa.sat);

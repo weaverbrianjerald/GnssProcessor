@@ -9,6 +9,7 @@
 #include "filter/NetworkMwWlGlue.hpp"
 
 #include "app/NetworkRunContext.hpp"          // ctx.carry / ctx.counters
+#include "common/GnssIdentity.hpp"            // systemOfSat / SignalId (band digit)
 #include "config/GnssConfig.hpp"              // config_.getNetworkConfig().mw_wl
 #include "filter/StateKeySchema.hpp"          // StateKeys::makeAmbiguityKey
 #include "logging/NetworkRunTraces.hpp"       // traces.trace
@@ -136,8 +137,8 @@ void networkMwWlInject(
             // Not the primary L1 signal: a secondary/other-band carry group
             // (→ skip_not_primary) or a single-band band-1 arc lacking L2
             // (is_primary_sig1 true + col2=-1 → skip_missing_band).
-            out.is_primary_sig1 =
-                (!pp || !pp->ok) && (rv.signal.size() >= 2 && rv.signal[1] == '1');
+            const auto sig = SignalId::fromObsCode(systemOfSat(rv.sat), rv.signal);
+            out.is_primary_sig1 = (!pp || !pp->ok) && (sig && sig->digit == '1');
             out.col1    = local_col;
             out.col2    = -1;
             out.have_mw = false;
@@ -233,7 +234,7 @@ void networkMwWlInject(
             { static_cast<int>(est_station), static_cast<int>(local_col) });
         if (rit == revmap.end()) return false;
         const Rev& rv = rit->second;
-        out.cons = rv.sat.empty() ? '?' : rv.sat.front();
+        out.cons = letterOfSat(rv.sat);
         const auto pit = primary.find({ rv.rx, rv.sat });
         const PP* pp = (pit != primary.end()) ? &pit->second : nullptr;
         if (pp && pp->ok && rv.signal == pp->sig1
@@ -295,8 +296,8 @@ void networkMwWlInject(
             if (lmit == lin_of.end() || ltit == lin_of.end()) out.have_mw = false;
             else { out.x_lin1 = lmit->second; out.x_lin2 = ltit->second; }
         } else {
-            out.is_primary_sig1 =
-                (!pp || !pp->ok) && (rv.signal.size() >= 2 && rv.signal[1] == '1');
+            const auto sig = SignalId::fromObsCode(systemOfSat(rv.sat), rv.signal);
+            out.is_primary_sig1 = (!pp || !pp->ok) && (sig && sig->digit == '1');
             out.col1    = local_col;
             out.col2    = -1;
             out.have_mw = false;
@@ -492,7 +493,7 @@ void networkMwWlInject(
         const auto svit0 = sat_of_vertex.find(chord.v);
         const std::string sat_lbl =
             svit0 != sat_of_vertex.end() ? svit0->second : std::string{};
-        const char ccons = sat_lbl.empty() ? '?' : sat_lbl.front();
+        const char ccons = letterOfSat(sat_lbl);
         WlCounters& wc = uwl_on ? wl_cons_epoch[ccons] : wl_epoch;
         ++wc.rows_seen;
         // Resolve the tier of the chord's constellation once: which rung this entry came
@@ -1006,7 +1007,7 @@ void networkMwWlInject(
             const auto svit = sat_of_v.find(e.chord.v);
             if (svit == sat_of_v.end()) continue;
             e.sat = svit->second;
-            const char cons = e.sat.empty() ? '?' : e.sat.front();
+            const char cons = letterOfSat(e.sat);
             const auto pcit = primary.find({ e.chord.u, e.sat });
             if (pcit == primary.end() || !pcit->second.ok) continue;
             if (lane_on) {

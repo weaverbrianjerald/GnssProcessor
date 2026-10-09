@@ -62,7 +62,6 @@
 #include "filter/NetworkAnchorReentry.hpp" // the anchor drop memo and its read (card SID phase 4)
 #include "filter/NetworkLedgerEmit.hpp"    // the emitter read and the declared roster (card SID phase 5a)
 #include "logging/NetworkRunTraces.hpp" // FlagRate (B8 counters)
-#include "common/PppUtils.hpp"          // eq34_ppp_utils
 
 #include <Eigen/Dense>
 
@@ -1283,9 +1282,6 @@ namespace GnssProcessor {
         // triggers an S-line re-broadcast (advanced only at emit, like the pivot
         // baselines).  Empty on every non-eq34 run.
         std::string eq34_emitted_pdr;
-        // Wavelength provider for the pin-to-round re-pin target (λ·round(float/λ));
-        // built lazily on first eq34 use.  Null on every non-eq34 run.
-        std::unique_ptr<PppUtils> eq34_ppp_utils;
         // Run-scope observability counters of card 3, logged once in the run-end producer
         // summary (the per-epoch reref/erase lines are debug-only, so these totals are the
         // only non-debug record of the reref volume).  Untouched on non-eq34 runs.

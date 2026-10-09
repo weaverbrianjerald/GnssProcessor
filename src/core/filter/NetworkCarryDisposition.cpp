@@ -7,6 +7,7 @@
 #include "filter/NetworkCarryDisposition.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"   // letterOfSat
 #include "filter/NetworkClockAnchor.hpp"
 #include "filter/NetworkPivotFrameQ.hpp"
 #include "math/TimeUtils.hpp"
@@ -192,11 +193,12 @@ void networkCarryPivotFrame(NetworkRunContext& ctx) {
         CarryFoldDecision& d = cp.fold;
         d.pfq_rate_m2ps = 0.0;
         d.pfq_add_m2    = 0.0;
-        const auto pv = ctx.carry.pfq_pivot.find(cp.sat.front());
+        const char cons = letterOfSat(cp.sat);            // the key of carry.pfq_pivot
+        const auto pv = ctx.carry.pfq_pivot.find(cons);
         if (pv == ctx.carry.pfq_pivot.end()) continue;    // no pivot recorded for it
         if (cp.sat == pv->second) continue;               // the pivot is 0 by definition
         if (!folds(d)) continue;
-        const double r = rate_of[cp.sat.front()];
+        const double r = rate_of[cons];
         const double add = pivotFrameDiag(r, d.dt_applied_s);
         if (!(add > 0.0)) continue;
         d.q_applied_m2  += add;

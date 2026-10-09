@@ -18,7 +18,9 @@
 #include "filter/NetworkRhsAttrib.hpp"   // flight-recorder trip latch (INC-5)
 
 #include "app/NetworkRunContext.hpp"            // ctx.* aliases
+#include "common/GnssIdentity.hpp"              // systemOfSat, letterOfSat
 #include "config/GnssConfig.hpp"                // config_ getters + getNetworkConfig
+#include "filter/StateKeySchema.hpp"            // StateKeys::parseAmbiguityKey
 #include "logging/NetworkRunTraces.hpp"         // events_trace + emitEvent
 #include "math/TimeUtils.hpp"                   // TimeUtils::nowGpsTime
 #include "products/CombinedCorrectionSigma.hpp" // computeCombinedCorrectionSigma / selectCombinedCodeRef
@@ -168,7 +170,7 @@ NetworkSolPrepResult networkSolPrep(
     if (brdc_rts) {
         auto& eph_store = LiveEphemerisStore::getInstance();
         for (auto& s : sol.sats) {
-            if (!s.has_clock || s.sat.empty() || s.sat[0] == 'R') continue;
+            if (!s.has_clock || s.sat.empty() || systemOfSat(s.sat) == System::GLONASS) continue;
             if (auto bc = eph_store.computeSatelliteClock(s.sat, se.time))
                 s.clock_iode = bc->iode;
         }
@@ -321,8 +323,9 @@ NetworkSolPrepResult networkSolPrep(
             std::map<char, std::vector<double>> dev, rate;
             for (const auto& s : sol.sats) {
                 if (s.sat.empty() || !s.has_clock) continue;
-                dev[s.sat[0]].push_back(std::abs(s.clock_c0_m - gmed));
-                if (s.clock_c1_m_s != 0.0) rate[s.sat[0]].push_back(std::abs(s.clock_c1_m_s));
+                const char cons = letterOfSat(s.sat);
+                dev[cons].push_back(std::abs(s.clock_c0_m - gmed));
+                if (s.clock_c1_m_s != 0.0) rate[cons].push_back(std::abs(s.clock_c1_m_s));
             }
             auto medianOf = [](std::vector<double>& v) {
                 std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
@@ -342,7 +345,9 @@ NetworkSolPrepResult networkSolPrep(
                 if (bad) {
                     runaway.insert(c);
                     const auto n_drop = std::count_if(sol.sats.begin(), sol.sats.end(),
-                        [c](const NetworkSatSolution& s){ return !s.sat.empty() && s.sat[0] == c; });
+                        [c](const NetworkSatSolution& s) {
+                            return !s.sat.empty() && letterOfSat(s.sat) == c;
+                        });
                     log->warn("Network (RT0-5): constellation '{}' clock runaway — median |Δclk|="
                               "{:.1f} m (ceil {:.0f}), median |drift|={:.3f} m/s (ceil {:.2f}); "
                               "WITHHOLDING its {} sats this epoch.",
@@ -363,7 +368,8 @@ NetworkSolPrepResult networkSolPrep(
             std::vector<NetworkSatSolution> kept;
             kept.reserve(sol.sats.size());
             for (auto& s : sol.sats)
-                if (s.sat.empty() || runaway.count(s.sat[0]) == 0) kept.push_back(std::move(s));
+                if (s.sat.empty() || runaway.count(letterOfSat(s.sat)) == 0)
+                    kept.push_back(std::move(s));
             sol.sats.swap(kept);
             ++n_runaway_epochs;
             epoch_withheld_consts.insert(runaway.begin(), runaway.end());  // for the H heartbeat (RTA-10)
@@ -387,8 +393,9 @@ NetworkSolPrepResult networkSolPrep(
         std::vector<NetworkSatSolution> kept;
         kept.reserve(sol.sats.size());
         for (auto& s : sol.sats) {
-            if (!s.sat.empty() && perconst_publish.count(s.sat[0]) == 0)
-                pruned.insert(s.sat[0]);
+            const char cons = letterOfSat(s.sat);   // an empty id is kept below
+            if (!s.sat.empty() && perconst_publish.count(cons) == 0)
+                pruned.insert(cons);
             else
                 kept.push_back(std::move(s));
         }
@@ -1100,6 +1107,7 @@ NetworkSolPrepResult networkSolPrep(
         for (const auto& [amb, sta] : this_epoch_anchor) {
             auto it = emitted_anchor.find(amb);
             if (it != emitted_anchor.end() && it->second != sta) {
+                const auto amb_parts = StateKeys::parseAmbiguityKey(amb);   // "G01_L1C"
                 // Under eq34 (Card 3) the handover is a tree-edge reattach: the emitted
                 // δ̃_s steps by an exact integer number of cycles (the chain path
                 // difference; the receiver fractional part does not leak), usually 0
@@ -1118,7 +1126,7 @@ NetworkSolPrepResult networkSolPrep(
                 // PHASE_DATUM/reattach_blocked_cold instead.
                 emitEvent(phase_datum_eq34 ? "PHASE_DATUM" : "PHASE_ANCHOR",
                           phase_datum_eq34 ? "eq34_reattach" : "anchor_handover",
-                          amb.substr(0, amb.find('_')), sta,
+                          amb_parts ? amb_parts->satellite : amb, sta,
                           std::nullopt, std::nullopt, "reanchor",
                           it->second + "->" + sta);
                 ++n_handover;
@@ -1188,8 +1196,9 @@ NetworkSolPrepResult networkSolPrep(
         for (const auto& s : sol.sats) emitted_sats.insert(s.sat);
         for (const auto& [sat, sel] : this_epoch_if_pin_real)
             if (!sat.empty() && emitted_sats.count(sat)) {
-                by_const[sat[0]].insert(sel);
-                auto& tally = gf_by_const[sat[0]];
+                const char cons = letterOfSat(sat);
+                by_const[cons].insert(sel);
+                auto& tally = gf_by_const[cons];
                 if (this_epoch_gf_pin_real.count(sat)) ++tally.first;
                 ++tally.second;
             }
@@ -1235,7 +1244,7 @@ NetworkSolPrepResult networkSolPrep(
             const bool partitioned = ctx.carry.family_census.partitioned.count(cst_key) > 0;
             std::set<std::pair<std::string, std::string>> fam_pairs;
             for (const auto& [sat, sel] : ctx.carry.this_epoch_family_gf_pin_real)
-                if (!sat.empty() && sat[0] == cst && emitted_sats.count(sat))
+                if (!sat.empty() && letterOfSat(sat) == cst && emitted_sats.count(sat))
                     fam_pairs.insert(sel);
             if (!fam_pairs.empty()) {
                 if (fam_pairs.size() != 1) {

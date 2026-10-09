@@ -10,6 +10,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkIonoDeweightGate.hpp"
@@ -261,7 +262,7 @@ void networkIonoDiag(
             const double anchor_frac_data = (denom_ad > 0.0) ? (anchor_info / denom_ad) : 0.0;
             const double carry_frac = (total_info > 0.0) ? (carry_info / total_info) : 0.0;
             const double frac = (total_info > 0.0) ? (anchor_info / total_info) : 0.0;
-            const auto pit = plan.clock_pivot.find(NetworkSbasis::constellationOf(sat));
+            const auto pit = plan.clock_pivot.find(constellationKey(systemOfSat(sat)));
             const bool is_pivot = (pit != plan.clock_pivot.end() && pit->second == sat);
             anchor_info_trace
                 << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','

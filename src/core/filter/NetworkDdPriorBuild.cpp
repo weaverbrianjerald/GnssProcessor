@@ -13,7 +13,7 @@
 
 #include "app/NetworkRunContext.hpp"          // ctx.carry / ctx.counters / ctx.knobs
 #include "config/GnssConfig.hpp"              // config_.getNetworkConfig() / .mw_wl
-#include "common/PppUtils.hpp"                // mw_wl_ppp_utils->getWavelength
+#include "common/GnssIdentity.hpp"            // systemOfSat, SignalId (band digit, wavelength)
 #include "filter/NetworkMwWlGlue.hpp"         // networkMwWlInject (WL/EWL/UWL inject seam)
 #include "filter/NetworkNormalEquations.hpp"  // SumZeroGauge / DdPriorBlock / GroupInput
 #include "filter/StateKeySchema.hpp"          // StateKeys::parse*
@@ -127,7 +127,6 @@ void networkBuildCarryDdPriors(
     std::vector<EwlLane>& ewl_lanes,
     const NetworkMwWlLayer::Config& ewl_cfg,
     NetworkMwWlLayer& mw_wl_layer,
-    const std::unique_ptr<PppUtils>& mw_wl_ppp_utils,
     F6Capture& mw_wl_f6,
     NetworkMwWlLayer::Counters& mw_wl_epoch,
     std::vector<WlInjectPlan>& wl_inject_epoch,
@@ -191,15 +190,6 @@ void networkBuildCarryDdPriors(
     // Byte-identical when every lane is off: nothing here is populated, and building
     // it earlier has no effect on the solve (it only reads station state).
     const bool mw_mach_on = mw_wl_on || ewl_on || lane_on;
-    auto sysFromSat = [](const std::string& sat) -> System {
-        if (sat.empty()) return System::Unknown;
-        switch (sat.front()) {
-            case 'G': return System::GPS;     case 'E': return System::Galileo;
-            case 'R': return System::GLONASS; case 'C': return System::BeiDou;
-            case 'J': return System::QZSS;    case 'S': return System::SBAS;
-            default:  return System::Unknown;
-        }
-    };
     // Reverse map (est_station,col)->arc identity and per-(rx,sat) ambiguity
     // signals over all resolvable ambiguities (both bands, including those not in
     // shared_phase_keys: the WL row needs the L2 column even when L2 is not an eq34
@@ -242,15 +232,28 @@ void networkBuildCarryDdPriors(
     // pair groups that appear and disappear.  The third (EWL) band never becomes a
     // pair band.
     std::map<char, std::pair<std::string, std::string>> lane_pref_pair;
-    // Per-(sat,signal) wavelength cache (FDMA-correct via the satellite id).
+    // Per-(sat,signal) wavelength cache.  Every caller holds an arc of arc_signals or of
+    // the carry below, and both exclude GLONASS, so no FDMA slot is needed (slot 0); a
+    // code that does not parse has no wavelength (0).  The band is read from the digit
+    // alone, as PppUtils::getWavelength read it, so BeiDou digit 1 is B1C here as at the
+    // chain datum's rounding; the BeiDou digit-1 decision is owed (card NOM section 12).
     std::map<std::pair<std::string, std::string>, double> lam_cache;
     auto lam = [&](const std::string& sat, const std::string& sig) -> double {
         const auto k = std::make_pair(sat, sig);
         const auto it = lam_cache.find(k);
         if (it != lam_cache.end()) return it->second;
-        const double v = mw_wl_ppp_utils->getWavelength(sysFromSat(sat), sig, sat);
+        const System sys = systemOfSat(sat);
+        const auto s = SignalId::fromObsCode(sys, sig);
+        const double v = s ? wavelengthM(bandOfDigit(sys, s->digit), /*glo_slot=*/0) : 0.0;
         lam_cache.emplace(k, v);
         return v;
+    };
+    // The RINEX band digit of one of a satellite's phase signals ('\0' when the code does
+    // not parse).  The band ROLES below (primary pair, census channel, EWL top band) are
+    // decided on this digit; card NOM step N3 moves those decisions to the plan.
+    const auto bandDigit = [](System sys, const std::string& sig) -> char {
+        const auto s = SignalId::fromObsCode(sys, sig);
+        return s ? s->digit : '\0';
     };
     if (mw_mach_on) {
         for (size_t i = 0; i < stations.size(); ++i) {
@@ -261,7 +264,7 @@ void networkBuildCarryDdPriors(
             for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(key);
                 if (!parts || parts->satellite.empty() || parts->signal.empty()) continue;
-                if (parts->satellite.front() == 'R') continue;   // GLONASS excluded
+                if (systemOfSat(parts->satellite) == System::GLONASS) continue;   // GLONASS excluded
                 const auto hit = h2l.find(static_cast<int>(sidx));
                 if (hit == h2l.end() || hit->second < 0) continue;
                 const int col = static_cast<int>(hit->second);
@@ -301,11 +304,11 @@ void networkBuildCarryDdPriors(
         if (lane_on) {
             std::map<std::pair<char, std::string>, long long> chan_count;
             for (const auto& [rs, sigs] : arc_signals) {
-                const char cons = rs.second.empty() ? '?' : rs.second.front();
+                const char cons = letterOfSat(rs.second);
                 for (const auto& [sig, col] : sigs) ++chan_count[{cons, sig}];
             }
             for (const auto& [k, cnt] : chan_count) {
-                const char band = k.second.size() >= 2 ? k.second[1] : '\0';
+                const char band = bandDigit(systemFromLetter(k.first), k.second);
                 if (band == '\0') continue;
                 std::string& best = chan_pref[{k.first, band}];
                 long long bc = -1;
@@ -333,27 +336,28 @@ void networkBuildCarryDdPriors(
                 std::map<std::pair<char, std::pair<std::string, std::string>>,
                          long long> pair_count;
                 for (auto& [rs, sigs] : arc_signals) {
+                    const System sys = systemOfSat(rs.second);
                     std::sort(sigs.begin(), sigs.end(),
-                              [](const std::pair<std::string, int>& a,
-                                 const std::pair<std::string, int>& b) {
-                        const char ba = a.first.size() >= 2 ? a.first[1] : '\0';
-                        const char bb = b.first.size() >= 2 ? b.first[1] : '\0';
+                              [&](const std::pair<std::string, int>& a,
+                                  const std::pair<std::string, int>& b) {
+                        const char ba = bandDigit(sys, a.first);
+                        const char bb = bandDigit(sys, b.first);
                         if (ba != bb) return ba < bb;
                         return a.first < b.first;
                     });
                     if (sigs.empty()) continue;
-                    const char cons = rs.second.empty() ? '?' : rs.second.front();
+                    const char cons = rinexLetter(sys);
                     // Two lowest carried bands (the uncarried top band never
                     // pairs; this is the same exclusion the routing applies).
                     std::string s1;
                     char b1 = '\0';
                     for (const auto& [sig, col] : sigs)
-                        if (sig.size() >= 2 && !isUncarriedThirdBand(cons, sig)) {
-                            s1 = sig; b1 = sig[1]; break;
+                        if (bandDigit(sys, sig) != '\0' && !isUncarriedThirdBand(cons, sig)) {
+                            s1 = sig; b1 = bandDigit(sys, sig); break;
                         }
                     if (b1 == '\0') continue;
                     for (const auto& [sig, col] : sigs)
-                        if (sig.size() >= 2 && sig[1] != b1
+                        if (bandDigit(sys, sig) != '\0' && bandDigit(sys, sig) != b1
                             && !isUncarriedThirdBand(cons, sig)) {
                             ++pair_count[{cons, { s1, sig }}];
                             break;
@@ -370,8 +374,8 @@ void networkBuildCarryDdPriors(
                     }
                 }
                 for (const auto& [cons, pr] : joint_best) {
-                    const char b1 = pr.first.size()  >= 2 ? pr.first[1]  : '\0';
-                    const char b2 = pr.second.size() >= 2 ? pr.second[1] : '\0';
+                    const char b1 = bandDigit(systemFromLetter(cons), pr.first);
+                    const char b2 = bandDigit(systemFromLetter(cons), pr.second);
                     if (b1 == '\0' || b2 == '\0') continue;
                     chan_pref[{cons, b1}] = pr.first;
                     chan_pref[{cons, b2}] = pr.second;
@@ -379,25 +383,27 @@ void networkBuildCarryDdPriors(
             }
         }
         for (auto& [rs, sigs] : arc_signals) {
+            const System sys = systemOfSat(rs.second);
             std::sort(sigs.begin(), sigs.end(),
-                      [](const std::pair<std::string, int>& a,
-                         const std::pair<std::string, int>& b) {
-                const char ba = a.first.size() >= 2 ? a.first[1] : '\0';
-                const char bb = b.first.size() >= 2 ? b.first[1] : '\0';
+                      [&](const std::pair<std::string, int>& a,
+                          const std::pair<std::string, int>& b) {
+                const char ba = bandDigit(sys, a.first);
+                const char bb = bandDigit(sys, b.first);
                 if (ba != bb) return ba < bb;
                 return a.first < b.first;
             });
             PP pp;
             if (!sigs.empty()) { pp.sig1 = sigs.front().first; pp.col1 = sigs.front().second; }
-            const char b1 = pp.sig1.size() >= 2 ? pp.sig1[1] : '\0';
+            const char b1 = bandDigit(sys, pp.sig1);
             for (const auto& [sig, col] : sigs) {
-                if (sig.size() >= 2 && b1 != '\0' && sig[1] != b1) {
+                const char b = bandDigit(sys, sig);
+                if (b != '\0' && b1 != '\0' && b != b1) {
                     pp.sig2 = sig; pp.col2 = col; break;
                 }
             }
             if (lane_on && !sigs.empty()) {
-                const char cons = rs.second.empty() ? '?' : rs.second.front();
-                const char b2 = pp.sig2.size() >= 2 ? pp.sig2[1] : '\0';
+                const char cons = rinexLetter(sys);
+                const char b2 = bandDigit(sys, pp.sig2);
                 auto preferChan = [&](char band, std::string& sig_io, int& col_io) {
                     const auto pit2 = chan_pref.find({cons, band});
                     if (pit2 == chan_pref.end() || pit2->second == sig_io) return;
@@ -425,7 +431,7 @@ void networkBuildCarryDdPriors(
                      long long> pp_count;
             for (const auto& [rs, pp] : primary) {
                 if (!pp.ok) continue;
-                const char cons = rs.second.empty() ? '?' : rs.second.front();
+                const char cons = letterOfSat(rs.second);
                 ++pp_count[{ cons, { pp.sig1, pp.sig2 } }];
             }
             for (const auto& [k, cnt] : pp_count) {
@@ -486,12 +492,13 @@ void networkBuildCarryDdPriors(
             char top_digit  = '5';
             char mid_digit  = '\0';
             char top2_digit = '\0';   // increment 5: the fallback rung's digit
-            const char cons = rs.second.empty() ? '?' : rs.second.front();
+            const System sys = systemOfSat(rs.second);
+            const char cons = rinexLetter(sys);
             if (uwl_on) {
                 const auto tier = mwLaneTierOf(cons, nmw.uwl_gal_top_band,
                                                nmw.uwl_mid_enable, nmw.uwl_dual_top);
                 if (!tier) {
-                    if (ewl_on && cons != '?' && uwl_warned_cons.insert(cons).second)
+                    if (ewl_on && sys != System::Unknown && uwl_warned_cons.insert(cons).second)
                         log->warn("Network (M5/UWL-1): constellation '{}' has NO lane "
                                   "tier in the armed table — its cycles contribute no "
                                   "EWL/UWL statistic and no bridge (BDS-3 deferred on "
@@ -502,7 +509,7 @@ void networkBuildCarryDdPriors(
                 top_digit  = tier->b_top;
                 mid_digit  = tier->b_mid;
                 top2_digit = tier->b_top2;
-            } else if (ewl_on && cons != 'G' && cons != '?'
+            } else if (ewl_on && sys != System::GPS && sys != System::Unknown
                        && uwl_warned_cons.insert(cons).second) {
                 log->warn("Network (M5/UWL-1): constellation '{}' enters the EWL lane "
                           "under the LEGACY GPS band digits — its top-tier pair is "
@@ -511,13 +518,13 @@ void networkBuildCarryDdPriors(
                           "for the per-constellation lane-tier table.", cons);
             }
             for (const auto& [sig, col] : sigs)
-                if (sig.size() >= 2 && sig[1] == top_digit) { band_top_of[rs] = { sig, col }; break; }
+                if (bandDigit(sys, sig) == top_digit) { band_top_of[rs] = { sig, col }; break; }
             if (top2_digit != '\0')
                 for (const auto& [sig, col] : sigs)
-                    if (sig.size() >= 2 && sig[1] == top2_digit) { band_top2_of[rs] = { sig, col }; break; }
+                    if (bandDigit(sys, sig) == top2_digit) { band_top2_of[rs] = { sig, col }; break; }
             if (mid_digit != '\0')
                 for (const auto& [sig, col] : sigs)
-                    if (sig.size() >= 2 && sig[1] == mid_digit) { band_mid_of[rs] = sig; break; }
+                    if (bandDigit(sys, sig) == mid_digit) { band_mid_of[rs] = sig; break; }
         }
     }
     // The carry driver needs this arc's ambiguity linearization value when either half
@@ -539,8 +546,9 @@ void networkBuildCarryDdPriors(
         for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
             const auto parts = StateKeys::parseAmbiguityKey(key);
             if (!parts || parts->satellite.empty()) continue;
-            const char cons = parts->satellite.front();
-            if (cons == 'R') {   // GLONASS FDMA: no common-λ integer DD (spec OPEN-3)
+            const System sys = systemOfSat(parts->satellite);
+            const char cons = rinexLetter(sys);
+            if (sys == System::GLONASS) {   // GLONASS FDMA: no common-λ integer DD (spec OPEN-3)
                 if (!carry_glonass_warned) {
                     log->warn("Network[Card4]: GLONASS ambiguities are EXCLUDED from the "
                               "invariant carry (FDMA — no common wavelength for an integer "

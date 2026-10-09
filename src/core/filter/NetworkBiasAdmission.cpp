@@ -10,7 +10,7 @@
 #include "filter/NetworkBiasAdmission.hpp"
 
 #include "filter/StateKeySchema.hpp"    // StateKeys::makeSatBiasKey / parseSatBiasKey
-#include "common/SignalBand.hpp"        // classifySignalForSat, FrequencyBand
+#include "common/GnssIdentity.hpp"      // systemOfSat, obsTypeOf, SignalId, FrequencyBand
 #include "rinex/MultiRinexSync.hpp"     // SyncedEpoch, RinexObservation
 
 #include <algorithm>
@@ -47,14 +47,14 @@ NetworkBiasAdmission NetworkBiasAdmission::runCensus(
                 // GLONASS has no OSB scope (a per-(sat,signal) code OSB is not
                 // physical under FDMA); the network never allocates a sat-bias
                 // state for it, so it is kept out of the census as well.
-                if (obs.satellite.empty() || obs.satellite[0] == 'R') continue;
+                if (obs.satellite.empty() || systemOfSat(obs.satellite) == System::GLONASS) continue;
                 for (const auto& [code, value] : obs.measurements) {
                     // Usable raw code predicate: 3-char id, code obs ('C'), no
                     // composite '_' (a redundant check: raw RINEX codes never
                     // carry one), finite and nonzero.  ObsValueMap stores a real
                     // 0 for a touched-but-empty slot, distinct from the NaN
                     // absent sentinel, so presence alone is not enough.
-                    if (code.size() != 3 || code[0] != 'C') continue;
+                    if (code.size() != 3 || obsTypeOf(code) != ObsType::Code) continue;
                     if (code.find('_') != std::string::npos) continue;
                     if (!std::isfinite(value) || value == 0.0) continue;
                     const std::string key =
@@ -104,15 +104,17 @@ NetworkBiasAdmission NetworkBiasAdmission::runCensus(
     // distinct frequencies).  A satellite that fails this has all its candidates
     // demoted to quarantined, which removes the datum-orphan near-null
     // directions at the source instead of letting the rank gate find them and
-    // withhold the whole epoch.  Band identity (classifySignalForSat) gives the
+    // withhold the whole epoch.  Band identity (SignalId::band) gives the
     // pin's carrier-frequency distinctness without a modeling object; codes of
     // unknown band are not counted. -------------------------------------------
     std::set<std::string> if_pinnable_sats;
     for (const auto& [sat, row_idxs] : sat_candidate_rows) {
+        const System sys = systemOfSat(sat);
         std::set<FrequencyBand> bands;
         for (const std::size_t ri : row_idxs) {
-            const auto cls = classifySignalForSat(sat, rows[ri].sig);
-            if (cls.band != FrequencyBand::Unknown) bands.insert(cls.band);
+            const auto signal = SignalId::fromObsCode(sys, rows[ri].sig);
+            const FrequencyBand band = signal ? signal->band() : FrequencyBand::Unknown;
+            if (band != FrequencyBand::Unknown) bands.insert(band);
         }
         if (bands.size() >= 2) if_pinnable_sats.insert(sat);
     }

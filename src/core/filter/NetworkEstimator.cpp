@@ -10,6 +10,7 @@
 
 #include "filter/NetworkEstimator.hpp"
 
+#include "common/GnssIdentity.hpp"
 #include "filter/StateKeySchema.hpp"
 
 #include <algorithm>
@@ -141,7 +142,7 @@ Eigen::Index NetworkEstimator::registerClockClone(const std::string& sat) {
             "NetworkEstimator: cannot register shared parameters after "
             "beginEpoch(); finalize the layout first");
     }
-    const std::string k = sat + "|CLKC";   // disjoint from the clock's "sat|CLK"
+    const std::string k = cloneKey_(SharedParamKind::Clock, sat, "");   // disjoint from the clock's "sat|CLK"
     auto it = index_.find(k);
     if (it != index_.end()) return it->second;
     const Eigen::Index col = static_cast<Eigen::Index>(columns_.size());
@@ -211,7 +212,7 @@ bool NetworkEstimator::isHistoryColumn(Eigen::Index col) const {
 }
 
 Eigen::Index NetworkEstimator::clockCloneColumn(const std::string& sat) const {
-    return index_.at(sat + "|CLKC");
+    return index_.at(cloneKey_(SharedParamKind::Clock, sat, ""));
 }
 
 Eigen::Index NetworkEstimator::cloneColumn(SharedParamKind kind, const std::string& sat,
@@ -750,11 +751,11 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
     // information-budget check below, so that check sees the information actually
     // folded.
     if (clock_gauge_free) {
-        std::map<char, std::vector<Eigen::Index>> grp;   // constellation -> rows of Λ
+        std::map<char, std::vector<Eigen::Index>> grp;   // constellation letter -> rows of Λ
         for (Eigen::Index a = 0; a < k; ++a) {
             const SharedPrior& p = keys[static_cast<std::size_t>(in_idx[static_cast<std::size_t>(a)])];
             if (p.kind == SharedParamKind::Clock && !p.clone && !p.sat.empty())   // a clone is not a clock of the gauge (card SCL)
-                grp[p.sat[0]].push_back(a);
+                grp[letterOfSat(p.sat)].push_back(a);
         }
         // Support closure (Card C-GF).  U = v|_C is the datum direction v restricted
         // to the carried set C.  Because Λ is zero outside C, annihilating U does
@@ -773,7 +774,7 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
             std::map<char, std::size_t> registered;
             for (const ColumnDesc& d : columns_)
                 if (d.kind == SharedParamKind::Clock && !d.clone && !d.sat.empty())   // clones are not clocks of the gauge (card SCL)
-                    ++registered[d.sat[0]];
+                    ++registered[letterOfSat(d.sat)];
             for (auto it = grp.begin(); it != grp.end();) {
                 const auto rit = registered.find(it->first);
                 if (rit == registered.end() || it->second.size() != rit->second) {
@@ -899,7 +900,7 @@ std::size_t NetworkEstimator::addCloneWalk(const std::vector<CloneWalk>& walks, 
         if (!w.ref.empty()) {
             // Card SCL B2: c - k + r = mean across a dense-transformed handover,
             // a = e_c - e_k + e_r, information a a'/q.
-            const auto ir = index_.find(w.ref + "|CLKC");
+            const auto ir = index_.find(cloneKey_(SharedParamKind::Clock, w.ref, ""));
             if (ir == index_.end() || ir->second == k) continue;
             const Eigen::Index idx[3] = {c, k, ir->second};
             const double coef[3] = {1.0, -1.0, 1.0};
@@ -950,7 +951,7 @@ std::size_t NetworkEstimator::addCloneWalkJoint(const std::vector<CloneWalk>& wa
         r.w = i;
         r.t = {{ic->second, 1.0}, {ik->second, -1.0}};
         if (!w.ref.empty()) {
-            const auto ir = index_.find(w.ref + "|CLKC");
+            const auto ir = index_.find(cloneKey_(SharedParamKind::Clock, w.ref, ""));
             if (ir == index_.end() || ir->second == ik->second) continue;
             r.t.push_back({ir->second, 1.0});
         }
@@ -1066,7 +1067,7 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
         const Eigen::Index c = it->second;
         if (p.kind == SharedParamKind::Clock && !p.clone && !p.sat.empty()) {   // a clone folds plainly (card SCL)
-            grp[p.sat[0]].push_back({c, p.info, p.value});
+            grp[letterOfSat(p.sat)].push_back({c, p.info, p.value});
         } else {
             delta_info(c, c) += p.info;
             delta_rhs(c)     += p.info * p.value;
@@ -1086,7 +1087,7 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
     if (require_closure)
         for (const ColumnDesc& d : columns_)
             if (d.kind == SharedParamKind::Clock && !d.clone && !d.sat.empty())   // clones are not clocks of the gauge (card SCL)
-                ++registered[d.sat[0]];
+                ++registered[letterOfSat(d.sat)];
 
     std::size_t downdated = 0;
     for (const auto& [c, rows] : grp) {
@@ -1143,7 +1144,7 @@ std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
         if (p.kind != SharedParamKind::Clock || p.clone || p.sat.empty() || !(p.info > 0.0)) continue;
         const auto it = index_.find(key_(p.sat, p.kind, p.signal));
         if (it == index_.end()) continue;
-        grp[p.sat[0]].push_back({it->second, p.info, p.value, drop_sats.count(p.sat) > 0});
+        grp[letterOfSat(p.sat)].push_back({it->second, p.info, p.value, drop_sats.count(p.sat) > 0});
     }
     // The gauge-free block is not diagonal, so a per-key subtraction (the plain
     // withdrawSharedPrior) would leave the rest of the group folded against a
@@ -1180,7 +1181,7 @@ std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
     if (require_closure)
         for (const ColumnDesc& d : columns_)
             if (d.kind == SharedParamKind::Clock && !d.clone && !d.sat.empty())   // clones are not clocks of the gauge (card SCL)
-                ++registered[d.sat[0]];
+                ++registered[letterOfSat(d.sat)];
 
     std::size_t dropped = 0;
     for (const auto& [c, rows] : grp) {
@@ -1375,7 +1376,7 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
                 // emitted bias carries only integer lumps and keeps the integer
                 // property for CDMA satellites.
                 npb.signal_integer = !ambiguity_datum_ensemble
-                                     && !d.sat.empty() && d.sat[0] != 'R';
+                                     && !d.sat.empty() && systemOfSat(d.sat) != System::GLONASS;
                 break;
             }
             case SharedParamKind::VtecSh:

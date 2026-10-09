@@ -26,8 +26,8 @@
 
 #include "app/NetworkRunContext.hpp"     // ctx.counters.n_emitted
 #include "config/GnssConfig.hpp"         // config_.getNetworkConfig() / .ambiguity_resolution
+#include "common/GnssIdentity.hpp"       // systemOfSat, systemFromName, constellationKey, SignalId
 #include "common/GnssTypes.hpp"          // System
-#include "common/PppUtils.hpp"           // ar_ppp_utils->getWavelength
 #include "filter/IlsCore.hpp"            // ils::IlsGateConfig / IlsResult / ilsFix
 #include "filter/StateKeySchema.hpp"     // StateKeys::parseAmbiguityKey
 #include "filter/StateManager.hpp"       // stations[i].sm-> ...
@@ -45,6 +45,7 @@
 #include <fstream>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -103,7 +104,6 @@ void networkProducerAr(NetworkRunContext& ctx,
                        const std::vector<int>& est_index_of,
                        const std::vector<StationAssembly>& asm_res,
                        const NetworkSbasis::Plan& plan,
-                       const std::unique_ptr<PppUtils>& ar_ppp_utils,
                        const std::filesystem::path& log_dir_) {
     // --- Alias preamble: byte-copies of the former Application::runNetwork aliases,
     //     so the relocated SB_NETAR body below reads the original names. ----------
@@ -119,10 +119,9 @@ void networkProducerAr(NetworkRunContext& ctx,
     // basis (star topology per (const,signal)), builds the exact DD covariance
     // from est.jointConditionalCovariance, converts to cycles, and runs
     // ils::ilsFix to log how many integers the network could fix.  Gated on
-    // network.ambiguity_resolution.enable and min_epochs (and a non-null
-    // ar_ppp_utils); byte-identical when off.
+    // network.ambiguity_resolution.enable and min_epochs; byte-identical when off.
     if (netar.enable && n_emitted >= static_cast<size_t>(std::max(0, netar.min_epochs))
-        && x_s.size() > 0 && ar_ppp_utils) {
+        && x_s.size() > 0) {
         struct ArRec { double value_m; std::size_t est_id; Eigen::Index col; };
         // (const,signal) -> sat -> station index -> absolute float ambiguity + its
         // (est id, A_r column) for the covariance request.  GPS+Galileo only.
@@ -138,8 +137,10 @@ void networkProducerAr(NetworkRunContext& ctx,
             for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(key);
                 if (!parts) continue;
-                const std::string cst = NetworkSbasis::constellationOf(parts->satellite);
-                if (cst != "G" && cst != "E") continue;   // GPS+Gal integer-capable; GLONASS FDMA stays float
+                const System sys = systemOfSat(parts->satellite);
+                if (sys != System::GPS && sys != System::Galileo)
+                    continue;   // GPS+Gal integer-capable; GLONASS FDMA stays float
+                const std::string cst = constellationKey(sys);
                 if (stations[i].sm->isAmbiguityUnresolvable(key)) continue;
                 const int amb_idx = static_cast<int>(sidx);
                 if (amb_idx < 0 || amb_idx >= x_lin.size()) continue;
@@ -190,8 +191,9 @@ void networkProducerAr(NetworkRunContext& ctx,
                 if (!have_ref || cnt > ref_cnt) { ref_cnt = cnt; ref_i = sta_i; have_ref = true; }
             }
             if (!have_ref) continue;
-            const System sys = (cs.first == "G") ? System::GPS : System::Galileo;
-            const double lambda = ar_ppp_utils->getWavelength(sys, cs.second, ref_sat);
+            const System sys = systemFromName(cs.first);   // "G" or "E"
+            const std::optional<SignalId> amb_sig = SignalId::fromObsCode(sys, cs.second);
+            const double lambda = amb_sig ? amb_sig->wavelengthM(0) : 0.0;   // CDMA: no FDMA slot
             if (!(std::isfinite(lambda) && lambda > 0.0)) continue;
             const ArRec& fp = satmap[ref_sat].at(ref_i);   // ref station, ref sat
             ++n_const_signal;

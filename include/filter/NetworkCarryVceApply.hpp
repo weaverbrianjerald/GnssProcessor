@@ -121,6 +121,7 @@
  * truth, following the standalone-class pattern of @c test_network_carry_vce.
  */
 
+#include "common/GnssIdentity.hpp"   // letterOfSat
 #include "filter/NetworkCarryVce.hpp"
 
 #include <algorithm>
@@ -257,9 +258,9 @@ public:
         return alpha2_[static_cast<std::size_t>(family_slot)][c];
     }
 
-    /// Convenience overload: takes the satellite id and uses its first character.
+    /// Convenience overload: takes the satellite id and uses its constellation letter.
     double factor(int family_slot, const std::string& sat) const {
-        return sat.empty() ? 1.0 : factor(family_slot, sat[0]);
+        return sat.empty() ? 1.0 : factor(family_slot, letterOfSat(sat));
     }
 
     /**

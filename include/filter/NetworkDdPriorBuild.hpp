@@ -38,7 +38,6 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class PppUtils;
 struct NetworkRunContext;
 struct NetworkRunTraces;
 
@@ -61,6 +60,9 @@ void networkBuildEnsembleGauges(NetworkEstimator& est,
  *        lane rows, and install them via NetworkEstimator::setDdPriors.  Returns early
  *        unless carry_invariant, so with it off the output is byte-identical.  All WL
  *        run-state arguments are in/out references into instances owned by the run TU.
+ *
+ * The lane wavelengths come from the identity layer (@c SignalId::wavelengthM, card
+ * NOM step N0b); GLONASS never enters the carry, so no FDMA slot is needed.
  */
 void networkBuildCarryDdPriors(
     NetworkRunContext& ctx,
@@ -92,7 +94,6 @@ void networkBuildCarryDdPriors(
     std::vector<EwlLane>& ewl_lanes,
     const NetworkMwWlLayer::Config& ewl_cfg,
     NetworkMwWlLayer& mw_wl_layer,
-    const std::unique_ptr<PppUtils>& mw_wl_ppp_utils,
     F6Capture& mw_wl_f6,
     NetworkMwWlLayer::Counters& mw_wl_epoch,
     std::vector<WlInjectPlan>& wl_inject_epoch,

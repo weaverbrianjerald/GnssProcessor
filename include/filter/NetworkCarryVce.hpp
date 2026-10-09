@@ -90,6 +90,8 @@
  * @c NeqAccumulator and @c CombinedCorrectionSigma.
  */
 
+#include "common/GnssIdentity.hpp"   // systemOfSat, constellationKey
+
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -536,7 +538,7 @@ private:
 
     std::string key(const std::string& family, const std::string& sat) const {
         std::string c;
-        if (split_by_const_ && !sat.empty()) c.assign(1, sat[0]);
+        if (split_by_const_ && !sat.empty()) c = constellationKey(systemOfSat(sat));
         return family + "|" + c;
     }
 

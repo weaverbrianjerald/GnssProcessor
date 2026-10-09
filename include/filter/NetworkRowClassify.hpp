@@ -47,10 +47,33 @@ namespace GnssProcessor {
 class NetworkEstimator;
 struct StationAssembly;
 
-/// Family tag of a shared column, parsed once per epoch from its label
-/// ("CLK:" / "CB:" / "PB:" / "SH"…, NetworkEstimator::sharedColumnLabel in
-/// NetworkEstimator.cpp).
+/// Family tag of a shared column, read once per epoch from the estimator's column
+/// identity (@ref sharedColumnFamily).  The families match the label prefixes of
+/// NetworkEstimator::sharedColumnLabel ("SH" / "PB:" / "CB:" / "CLK:"); a clone of any
+/// kind (a clock clone "CLKC:", card SCL; a bias clone "PBC:" or "CBC:", card BCL) and a
+/// shared-history column ("HIST:") are @c Other.
 enum class NetColFam : char { Sh, Pb, Cb, Clk, Other };
+
+/**
+ * @brief The family of one shared column, and its satellite, from the estimator's
+ *        column identity (@c NetworkEstimator::sharedColumnIdentity).
+ *
+ * A satellite column (clock, code bias, phase bias) gives @c Clk, @c Cb or @c Pb and
+ * its satellite.  A column with no satellite identity is an SH-VTEC coefficient
+ * (@c Sh, either shell) unless it is a clone (a clock clone, card SCL, or a phase- or
+ * code-bias clone, card BCL) or a shared-history column (card SCL2 X2), which are
+ * @c Other, as is a column out of range.  A bias clone is not a bias of its family: its
+ * label ("PBC:", "CBC:") never matched the "PB:" and "CB:" prefixes this function
+ * replaced, and its column identity is withheld (@c sharedColumnIdentity is false).
+ *
+ * @param est The estimator whose current epoch layout is being classified.
+ * @param col The shared column.
+ * @param sat Optional out: the column's satellite, written for @c Clk, @c Cb and
+ *            @c Pb only.  Pass nullptr to skip.
+ * @return The family.
+ */
+NetColFam sharedColumnFamily(const NetworkEstimator& est, Eigen::Index col,
+                             std::string* sat = nullptr);
 
 /// Row class.  The enumerator order of the four data classes is the census's
 /// column order (@ref dataClassIndex); reordering them changes the trace header.
@@ -102,7 +125,9 @@ struct SharedColumnMap {
 };
 
 /**
- * @brief Build the epoch's shared-column map from the estimator's labels.
+ * @brief Build the epoch's shared-column map from the estimator's labels (kept for the
+ *        traces) and column identities (the families, the satellites and the two SH
+ *        mean columns).
  * @param est The estimator whose current epoch layout is being classified.
  * @param n   Shared-column count (@c est.numShared()); a non-positive value
  *            yields an empty map.

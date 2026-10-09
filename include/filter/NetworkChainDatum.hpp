@@ -63,7 +63,6 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class LogManager;
 struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
 
 /**
@@ -122,11 +121,6 @@ void eq34ShiftCarry(NetworkCarryState& carry,
  *                      S-transform.  The body opens with an alias preamble that
  *                      reproduces the former run-TU local names.
  * @param config_       networkPhaseDatumEq34Receiver / Eq34PinRound.
- * @param log_manager_  The only Application dependency: lazy construction of
- *                      ctx.carry.eq34_ppp_utils.  Keep the construction here rather
- *                      than in the caller: PppUtils' constructor logs, so hoisting it
- *                      changes spdlog output on every non-eq34 arm, and the pointer
- *                      is read again at the emit-rebase site later in the epoch.
  * @param log           "main_log": the pin/gauge-mismatch warning + 2 debug lines.
  * @param stations      [in/out] pinned_amb_targets / pinned_rpb_keys.
  * @param present       This epoch's presence mask.
@@ -144,7 +138,6 @@ void eq34ShiftCarry(NetworkCarryState& carry,
  */
 void networkElectChainDatum(NetworkRunContext& ctx,
                             const GnssConfig& config_,
-                            LogManager& log_manager_,
                             const std::shared_ptr<spdlog::logger>& log,
                             std::vector<NetStation>& stations,
                             const std::vector<bool>& present,

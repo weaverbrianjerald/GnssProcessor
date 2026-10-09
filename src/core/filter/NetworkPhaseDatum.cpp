@@ -12,7 +12,8 @@
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkPhaseDatum.hpp"
 
-#include "filter/StateKeySchema.hpp"    // StateKeys::parseSatPhaseBiasKey
+#include "filter/StateKeySchema.hpp"    // StateKeys::parseSatPhaseBiasKey, parseAmbiguityKey
+#include "common/GnssIdentity.hpp"      // letterOfSat
 #include "config/GnssConfig.hpp"        // the census reads two knobs (INC-8b)
 #include "common/PppObservation.hpp"    // elevation source for modeled[] (INC-8b)
 
@@ -126,7 +127,7 @@ void networkBuildPhaseDatumCandidates(
         for (const auto& kv : sm.getSatPhaseBiasStates()) {
             const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
             if (!p) continue;
-            usable_keys[i].emplace(p->satellite + "_" + p->signal, kv.first);
+            usable_keys[i].emplace(StateKeys::makeAmbiguityKey(p->satellite, p->signal), kv.first);
         }
     }
 
@@ -141,13 +142,14 @@ void networkBuildPhaseDatumCandidates(
     for (size_t i = 0; i < stations.size(); ++i) {
         if (!present[i]) continue;
         for (const auto& [sat, el] : sat_el[i])
-            if (!sat.empty() && el >= pref_el) ++cover[sat.front()][i];
+            if (!sat.empty() && el >= pref_el) ++cover[letterOfSat(sat)][i];
     }
     std::map<char, std::set<size_t>> cand_set;
     std::map<std::string, std::string> union_keys;   // "sat_signal" -> "sat|signal|PB"
     for (size_t i = 0; i < stations.size(); ++i)
         for (const auto& [amb, pb] : usable_keys[i]) {
-            if (!amb.empty()) cand_set[amb.front()].insert(i);
+            if (const auto parts = StateKeys::parseAmbiguityKey(amb))
+                cand_set[letterOfSat(parts->satellite)].insert(i);
             union_keys.emplace(amb, pb);
         }
 
@@ -194,7 +196,7 @@ void networkBuildPhaseDatumCandidates(
                 bool drop_any = false;
                 for (const auto& kv : sm.getSatPhaseBiasStates()) {
                     const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                    if (p && gated_amb.count(p->satellite + "_" + p->signal)) {
+                    if (p && gated_amb.count(StateKeys::makeAmbiguityKey(p->satellite, p->signal))) {
                         drop_any = true;
                         // The parameter inventory's absorbed instance (card NOM N1b).
                         if (stations[i].mm)
@@ -399,10 +401,10 @@ void networkElectPhaseAnchors(
     auto candMature = [&](size_t i, const std::string& amb) {
         if (!cand_usable || cand_usable->min_age_ep <= 0 || !cand_usable->local_carry)
             return true;
-        const std::size_t us = amb.find('_');
-        if (us == std::string::npos || us == 0 || us + 1 >= amb.size()) return true;
+        const auto parts = StateKeys::parseAmbiguityKey(amb);
+        if (!parts) return true;
         const auto it = cand_usable->local_carry->find(
-                {static_cast<int>(i), amb.substr(0, us), amb.substr(us + 1)});
+                {static_cast<int>(i), parts->satellite, parts->signal});
         if (it == cand_usable->local_carry->end()) return true;   // never carried ⇒ unknown
         return !localCarryYoung(it->second, cand_usable->now_ep,
                                 cand_usable->min_age_ep);
@@ -470,8 +472,8 @@ void networkElectPhaseAnchors(
         std::map<std::string, std::set<std::string>> held;   // sat -> stations keeping a pin
         for (const auto& [amb, pbkey] : union_keys) {
             if (hyg.isBridged(amb)) continue;
-            const std::size_t us = amb.find('_');
-            if (us == std::string::npos || us == 0) continue;
+            const auto parts = StateKeys::parseAmbiguityKey(amb);
+            if (!parts) continue;
             const auto inc = anchor_incumbent.find(amb);
             if (inc == anchor_incumbent.end()) continue;   // first sighting: no handover
             const InjectAnchorDirective* d = inject ? inject->anchorFor(amb) : nullptr;
@@ -482,11 +484,11 @@ void networkElectPhaseAnchors(
                     if (present[i] && stations[i].name == inc->second
                         && usable_keys[i].count(amb)
                         && !(!bn.empty() && stations[i].name == bn)) { keeps = true; break; }
-            if (keeps) held[amb.substr(0, us)].insert(inc->second);
-            else       sat_joint[amb.substr(0, us)].moving.push_back(amb);
+            if (keeps) held[parts->satellite].insert(inc->second);
+            else       sat_joint[parts->satellite].moving.push_back(amb);
         }
         for (auto& [sat, j] : sat_joint) {
-            const char c2 = sat.empty() ? char(0) : sat.front();
+            const char c2 = sat.empty() ? char(0) : letterOfSat(sat);
             const auto cit = cand.find(c2);
             if (cit == cand.end()) { ++tally.sat_clause_no_usable; continue; }
             auto nUsable = [&](std::size_t i) {
@@ -550,7 +552,8 @@ void networkElectPhaseAnchors(
     // election byte-identical.
     std::map<std::string, double> new_target;
     for (const auto& [amb, pbkey] : union_keys) {
-        const char c = amb.empty() ? char(0) : amb.front();
+        const auto amb_parts = StateKeys::parseAmbiguityKey(amb);   // "G01_L1C" -> (G01, L1C)
+        const char c = amb_parts ? letterOfSat(amb_parts->satellite) : char(0);
         // A bridged key's gauge is the soft shared pseudo-obs row
         // (networkInjectPinBridgePrior), not a receiver pin (eq34 reattach hygiene,
         // INC-2).  It stays in the shared set, so the column is registered and
@@ -708,7 +711,7 @@ void networkElectPhaseAnchors(
             // cannot be pinned there (no ambiguity state) and falls back to the
             // per-family pick; that is the only remaining way the clause can split a
             // satellite, and it is counted (sat_clause_host_untracked).
-            const auto sj = sat_joint.find(amb.substr(0, amb.find('_')));
+            const auto sj = sat_joint.find(amb_parts ? amb_parts->satellite : amb);
             if (sj != sat_joint.end()
                 && sj->second.host != static_cast<std::size_t>(-1)) {
                 const size_t host = sj->second.host;
@@ -752,10 +755,8 @@ void networkElectPhaseAnchors(
             && anchor_incumbent.find(amb) == anchor_incumbent.end()) {
             re_row_live = true;
             re_row.amb = amb;
-            const std::size_t us2 = amb.find('_');
-            const std::string r_sat = us2 == std::string::npos ? amb : amb.substr(0, us2);
-            const std::string r_sig = us2 == std::string::npos ? std::string{}
-                                                               : amb.substr(us2 + 1);
+            const std::string r_sat = amb_parts ? amb_parts->satellite : amb;
+            const std::string r_sig = amb_parts ? amb_parts->signal : std::string{};
             int n_dead_ = 0;
             anchorReentryFamilyCensus(*reentry->led, r_sat, r_sig,
                                       re_row.n_tracking, re_row.n_returning, n_dead_);
@@ -1184,11 +1185,11 @@ int networkStageAnchorSlipHandovers(
             if (inc == anchor_incumbent.end()) continue;       // family has no anchor
             if (inc->second != stations[i].name) continue;     // a non-anchor arc: no-op
             if (!staged.insert(amb).second) continue;          // already staged
-            const std::size_t us = amb.find('_');
-            if (us == std::string::npos || us == 0 || us + 1 >= amb.size()) continue;
+            const auto parts = StateKeys::parseAmbiguityKey(amb);
+            if (!parts) continue;
             InjectAnchorDirective d;
-            d.sat    = amb.substr(0, us);
-            d.signal = amb.substr(us + 1);
+            d.sat    = parts->satellite;
+            d.signal = parts->signal;
             d.cold   = false;   // continuous: the successor is pinned at its own
                                 // carried value_abs, so the family does not step.
                                 // A cold outcome is still possible (no usable

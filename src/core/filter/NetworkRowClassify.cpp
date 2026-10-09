@@ -10,6 +10,11 @@
  * returned as the enum instead of a `const char*`; @ref rowClassName maps it
  * back to the same strings, so every dumped class name is unchanged.  The
  * relocation was gated on a byte-identical attribution dump.
+ *
+ * Card NOM step N0b: a column's family, its satellite and the two SH mean columns
+ * are read from the estimator's column identity (@ref sharedColumnFamily,
+ * @c NetworkEstimator::vtecCoeffColumn) instead of being parsed from the label; the
+ * label is still built, for the traces.
  */
 
 #include "filter/NetworkRowClassify.hpp"
@@ -36,6 +41,26 @@ const char* rowClassName(NetRowClass c) {
     return "obs_other";   // unreachable; keeps every compiler quiet
 }
 
+NetColFam sharedColumnFamily(const NetworkEstimator& est, Eigen::Index col, std::string* sat) {
+    if (col < 0 || col >= est.numShared()) return NetColFam::Other;
+    SharedParamKind kind = SharedParamKind::Clock;
+    std::string     col_sat, signal;
+    if (est.sharedColumnIdentity(col, kind, col_sat, signal)) {
+        if (sat) *sat = col_sat;
+        switch (kind) {
+            case SharedParamKind::Clock:     return NetColFam::Clk;
+            case SharedParamKind::CodeBias:  return NetColFam::Cb;
+            case SharedParamKind::PhaseBias: return NetColFam::Pb;
+            case SharedParamKind::VtecSh:    return NetColFam::Sh;   // not a satellite identity
+        }
+        return NetColFam::Other;
+    }
+    // No satellite identity: a clone of any kind (card SCL's clocks, card BCL's biases), a
+    // shared-history column or an SH coefficient.
+    if (est.isClockClone(col) || est.isHistoryColumn(col)) return NetColFam::Other;
+    return NetColFam::Sh;
+}
+
 SharedColumnMap buildSharedColumnMap(const NetworkEstimator& est, Eigen::Index n) {
     SharedColumnMap cm;
     if (n <= 0) return cm;
@@ -43,24 +68,24 @@ SharedColumnMap buildSharedColumnMap(const NetworkEstimator& est, Eigen::Index n
     cm.label.assign(static_cast<std::size_t>(n), {});
     cm.fam.assign(static_cast<std::size_t>(n), NetColFam::Other);
     cm.col_sat.assign(static_cast<std::size_t>(n), {});
+    bool any_sh = false;
     for (Eigen::Index c = 0; c < n; ++c) {
         const std::size_t u = static_cast<std::size_t>(c);
         try { cm.label[u] = est.sharedColumnLabel(c); }
         catch (...) { cm.label[u] = "col" + std::to_string(c); }
-        const std::string& L = cm.label[u];
-        if      (L.rfind("SH", 0) == 0)  cm.fam[u] = NetColFam::Sh;
-        else if (L.rfind("PB:", 0) == 0) cm.fam[u] = NetColFam::Pb;
-        else if (L.rfind("CB:", 0) == 0) cm.fam[u] = NetColFam::Cb;
-        else if (L.rfind("CLK:", 0) == 0) cm.fam[u] = NetColFam::Clk;
-        if (L == "SH:C:0:0")  cm.c00_l1 = c;
-        if (L == "SH2:C:0:0") cm.c00_l2 = c;
-        if (cm.fam[u] == NetColFam::Pb || cm.fam[u] == NetColFam::Cb
-            || cm.fam[u] == NetColFam::Clk) {
-            const std::size_t p1 = L.find(':');
-            const std::size_t p2 = L.find(':', p1 + 1);
-            cm.col_sat[u] = L.substr(p1 + 1, (p2 == std::string::npos)
-                                                 ? std::string::npos : p2 - p1 - 1);
-        }
+        cm.fam[u] = sharedColumnFamily(est, c, &cm.col_sat[u]);
+        if (cm.fam[u] == NetColFam::Sh) any_sh = true;
+    }
+    // The SH mean column of one shell: its (n, m, trig) = (0, 0, cos) coefficient, or -1.
+    const auto meanColumn = [&](int layer) -> Eigen::Index {
+        try {
+            const Eigen::Index c = est.vtecCoeffColumn(0, 0, 'C', layer);
+            return (c >= 0 && c < n) ? c : -1;
+        } catch (...) { return -1; }   // the shell is not registered
+    };
+    if (any_sh) {
+        cm.c00_l1 = meanColumn(0);   // "SH:C:0:0"
+        cm.c00_l2 = meanColumn(1);   // "SH2:C:0:0"
     }
     return cm;
 }

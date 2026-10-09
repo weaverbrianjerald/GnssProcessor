@@ -5,6 +5,7 @@
 #include "filter/NetworkMultiGnss.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/GnssTypes.hpp"
 #include "common/PppObservation.hpp"
 #include "config/GnssConfig.hpp"
@@ -63,14 +64,12 @@ void networkMultiGnssEpoch(NetworkRunContext& ctx, const GnssConfig& config_,
         std::set<std::string> systems_here;
         for (const PppObservation& ob : modeled[i]) {
             if (ob.satellite.empty()) continue;
-            const std::string letter(1, ob.satellite.front());
+            const std::string letter = constellationKey(systemOfSat(ob.satellite));
             ++M.sat_rows[letter];
             sats[letter].insert(ob.satellite);
-            if (ob.system == System::Galileo) systems_here.insert("Galileo");
-            else if (ob.system == System::BeiDou) systems_here.insert("BeiDou");
-            else if (ob.system == System::GLONASS) systems_here.insert("GLONASS");
-            else if (ob.system == System::QZSS) systems_here.insert("QZSS");
-            else if (ob.system == System::SBAS) systems_here.insert("SBAS");
+            // Every constellation but GPS (the time reference) holds an inter-system bias.
+            if (ob.system != System::GPS && ob.system != System::Unknown)
+                systems_here.insert(systemName(ob.system));
         }
         for (const std::string& s : systems_here) ++M.isb_station_epochs[s];
         if (networkStationNonGpsOnly(modeled[i])) {

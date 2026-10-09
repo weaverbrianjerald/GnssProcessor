@@ -13,6 +13,7 @@
 #include "filter/NetworkPrefitCensus.hpp"   // parseFuseClassMask / fuseClassMaskName (SPEC_prefit_census_observability INC-2)
 
 #include "config/GnssConfig.hpp"
+#include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, constellationKey, SignalId
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"   // AmbStateRow / ambStateNoteErase (RF-1 §7.4)
 #include "filter/NetworkAmbFloat.hpp"       // ambFloatBirthFloor (RF-1 step 4)
@@ -1749,7 +1750,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                     e.var   = lc.var;
                                     e.var_first = lc.var_first;
                                     ctx.carry.handover.value_abs[{std::get<0>(key),
-                                        std::get<1>(key) + "_" + std::get<2>(key)}] = e;
+                                        StateKeys::makeAmbiguityKey(std::get<1>(key),
+                                                                    std::get<2>(key))}] = e;
                                     ++n_ledger_primed;
                                 }
                             }
@@ -2417,14 +2419,16 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 ctx.carry.cxu_stash_valid = ctx.carry.prev_carry_cov.P.rows() > 0;
                                 ctx.carry.cxu_pivot.clear();
                                 for (const auto& [c, sat] : snap.prev_pivot)
-                                    if (!sat.empty()) ctx.carry.cxu_pivot[sat[0]] = {sat, 0.0};
+                                    if (!sat.empty())
+                                        ctx.carry.cxu_pivot[letterOfSat(sat)] =
+                                            {sat, 0.0};
                                 ++ctx.counters.cxu_resume_stash;
                             }
                             // Card PFQ: the restored block's frame is the snapshot's pivots.
                             if (ctx.knobs.pfq_on) {
                                 ctx.carry.pfq_pivot.clear();
                                 for (const auto& [c, sat] : snap.prev_pivot)
-                                    if (!sat.empty()) ctx.carry.pfq_pivot[sat[0]] = sat;
+                                    if (!sat.empty()) ctx.carry.pfq_pivot[letterOfSat(sat)] = sat;
                             }
                             ctx.counters.n_resume_cpl_cov_keys    = static_cast<long long>(nk);
                             ctx.counters.n_resume_cpl_cov_dropped = n_drop_cov;
@@ -3557,15 +3561,15 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     bp.reserve(bridges.size());
     for (auto& [amb, br] : bridges) {
         // "sat_signal" → (sat, signal).  The satellite id never contains '_', so the
-        // first underscore splits it (the StateKeys::parseAmbiguityKey convention; an
-        // iono-free combination keeps its own underscores inside `signal`).
-        const auto us = amb.find('_');
-        if (us == std::string::npos || us == 0 || us + 1 >= amb.size()) continue;
+        // first underscore splits it (an iono-free combination keeps its own
+        // underscores inside `signal`).
+        const auto parts = StateKeys::parseAmbiguityKey(amb);
+        if (!parts) continue;
         if (!std::isfinite(br.value)) continue;
         NetworkEstimator::SharedPrior p;
         p.kind   = SharedParamKind::PhaseBias;
-        p.sat    = amb.substr(0, us);
-        p.signal = amb.substr(us + 1);
+        p.sat    = parts->satellite;
+        p.signal = parts->signal;
         p.value  = br.value;
         p.info   = ctx.knobs.pin_bridge_info;
         bp.push_back(p);
@@ -3702,7 +3706,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // byte-identical.
     const auto sts_released = [&](const std::string& sat) {
         return !ctx.carry.sts_consts.empty() && !sat.empty()
-            && ctx.carry.sts_consts.count(sat.front()) > 0;
+            && ctx.carry.sts_consts.count(letterOfSat(sat)) > 0;
     };
     // READMIT continuity (E2 seed-first re-admission, network.readmit_seed_horizon_s).
     // Set up the epoch clock that the stash (which has none of its own) and the guard
@@ -3988,7 +3992,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                     if (!(dpfq_rate[a] > 0.0) || dkeys[a].kind != SharedParamKind::Clock) continue;
                     for (std::size_t b = a + 1; b < kd; ++b) {
                         if (!(dpfq_rate[b] > 0.0) || dkeys[b].kind != SharedParamKind::Clock
-                            || dkeys[b].sat.front() != dkeys[a].sat.front())
+                            || systemOfSat(dkeys[b].sat) != systemOfSat(dkeys[a].sat))
                             continue;
                         const double v = pivotFrameCross(dpfq_rate[a], dpfq_dt[a], dpfq_dt[b]);
                         const auto ia = static_cast<Eigen::Index>(a), ib = static_cast<Eigen::Index>(b);
@@ -4193,7 +4197,9 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
         const std::string key = sharedCarryKey(cp->kind, cp->sat, cp->signal);
         ep.p_of_key[key] = p;
         ep.clk_p[static_cast<std::size_t>(p)] = (cp->kind == SharedParamKind::Clock) ? 1 : 0;
-        ep.cc_p[static_cast<std::size_t>(p)]  = cp->sat.empty() ? '\0' : cp->sat[0];
+        // The constellation letter is read for clock rows only (their sat is a satellite).
+        ep.cc_p[static_cast<std::size_t>(p)]  =
+            cp->sat.empty() ? '\0' : letterOfSat(cp->sat);
         CouplingExactDRoute route;
         const double var_eff = rowsVar(*cp, route);
         if (!std::isfinite(var_eff)) {
@@ -4263,7 +4269,7 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
             for (Eigen::Index b = 0; b < nS; ++b) {
                 if (b == a) continue;
                 const CarryPrior* cb2 = pfqCp(b);
-                if (!cb2 || cb2->sat.front() != ca->sat.front()) continue;
+                if (!cb2 || systemOfSat(cb2->sat) != systemOfSat(ca->sat)) continue;
                 ep.q_off.emplace_back(static_cast<int>(a), static_cast<int>(b),
                                       pivotFrameCross(ca->fold.pfq_rate_m2ps, ca->fold.dt_applied_s,
                                                       cb2->fold.dt_applied_s));
@@ -4620,7 +4626,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     if (lcit != local_carry.end()) hv_e.var_first = lcit->second.var_first;
                 }
                 ctx.carry.handover.value_abs[{static_cast<int>(i),
-                                              pa.sat + "_" + pa.signal}] = hv_e;
+                                              StateKeys::makeAmbiguityKey(pa.sat, pa.signal)}] = hv_e;
             }
         }
         ctx.carry.handover.primed = true;
@@ -5353,49 +5359,84 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             // (R.pl_blk.Sigma, rows keyed by local column); posterior: the harvest block
             // just filled (rows a of R.pl_amb).  Both are conditional on the border.  The
             // demeaned versions project out the station's common mode over the traced lines
-            // of sight (the direction the free receiver clock leaves to the code).  Reads
-            // only; nothing the solve uses is written.
+            // of sight of the same constellation (the direction the free receiver clock and
+            // that constellation's receiver biases leave to the code).  Reads only; nothing
+            // the solve uses is written.
             if (ctx.knobs.amb_if_trace && hblk && !R.pl_amb.empty()) {
-                constexpr double kF1 = 1575.42e6, kF2 = 1227.60e6;
-                const double ca = kF1 * kF1 / (kF1 * kF1 - kF2 * kF2);
-                const double cb = -kF2 * kF2 / (kF1 * kF1 - kF2 * kF2);
+                // The ionosphere-free pair of a line of sight: the first two bands of its
+                // constellation in RINEX digit order (the traits table: GPS L1/L2, Galileo
+                // E1/E5a, QZSS L1/L2, SBAS L1/L5), with the IF coefficients from their
+                // carriers.  BeiDou is not traced: its first two bands, B1C and B1I, are
+                // 14 MHz apart and form no usable pair (the coefficient is about 55); its
+                // pair is a band-role decision of card NOM step N3.  GLONASS is never
+                // carried in the block; its FDMA bands would be read at slot 0.
+                struct IfPair { char d1{'\0'}, d2{'\0'}; double ca{0.0}, cb{0.0}; };
+                const auto ifPairOf = [](System sys) {
+                    IfPair pr;
+                    const ConstellationTraits& t = traitsOf(sys);
+                    if (sys == System::BeiDou || t.n_bands < 2) return pr;
+                    const double f1 = nominalCarrierFrequencyHz(t.bands[0].band);
+                    const double f2 = nominalCarrierFrequencyHz(t.bands[1].band);
+                    pr.d1 = t.bands[0].digit;
+                    pr.d2 = t.bands[1].digit;
+                    pr.ca = f1 * f1 / (f1 * f1 - f2 * f2);
+                    pr.cb = -f2 * f2 / (f1 * f1 - f2 * f2);
+                    return pr;
+                };
                 std::map<std::string, std::pair<int, int>> los;   // sat -> (a band 1, a band 2)
+                std::map<std::string, IfPair> if_pair;            // sat -> its pair
                 for (std::size_t a = 0; a < R.pl_amb.size(); ++a) {
-                    const std::string& sig = R.pl_amb[a].signal;
-                    if (sig.size() < 2) continue;
+                    const System sys = systemOfSat(R.pl_amb[a].sat);
+                    const auto sig = SignalId::fromObsCode(sys, R.pl_amb[a].signal);
+                    if (!sig) continue;
+                    const IfPair& pr =
+                        if_pair.try_emplace(R.pl_amb[a].sat, ifPairOf(sys)).first->second;
+                    if (pr.d1 == '\0') continue;
                     auto& lp = los.try_emplace(R.pl_amb[a].sat, -1, -1).first->second;
-                    if (sig[1] == '1' && lp.first < 0) lp.first = static_cast<int>(a);
-                    else if (sig[1] == '2' && lp.second < 0) lp.second = static_cast<int>(a);
+                    if (sig->digit == pr.d1 && lp.first < 0) lp.first = static_cast<int>(a);
+                    else if (sig->digit == pr.d2 && lp.second < 0) lp.second = static_cast<int>(a);
                 }
                 std::map<Eigen::Index, Eigen::Index> prow;   // local column -> prior block row
                 for (std::size_t k = 0; k < R.pl_blk.rows.size(); ++k)
                     prow[R.pl_blk.rows[k].local_col] = static_cast<Eigen::Index>(k);
-                std::vector<std::string> sats;
-                std::vector<std::array<int, 2>> idx;
-                for (const auto& [sat, lp] : los)
-                    if (lp.first >= 0 && lp.second >= 0) {
-                        sats.push_back(sat);
-                        idx.push_back({lp.first, lp.second});
+                // The traced lines of sight, one group per constellation: each constellation
+                // has its own receiver code and phase biases, so its common mode is its own.
+                // `los` is in satellite-string order, so a constellation is a contiguous run.
+                struct TracedLos { std::string sat; std::array<int, 2> idx; IfPair coef; };
+                std::vector<std::vector<TracedLos>> groups;
+                System group_sys = System::Unknown;
+                for (const auto& [sat, lp] : los) {
+                    if (lp.first < 0 || lp.second < 0) continue;
+                    const System sys = systemOfSat(sat);
+                    if (groups.empty() || sys != group_sys) {
+                        groups.emplace_back();
+                        group_sys = sys;
                     }
-                const Eigen::Index n = static_cast<Eigen::Index>(sats.size());
-                if (n > 0) {
-                    const auto post = [&](int a, int b) {
-                        const double u = hblk->C(a, b), v = hblk->C(b, a);
-                        return std::isfinite(u) && std::isfinite(v) ? 0.5 * (u + v)
-                             : std::numeric_limits<double>::quiet_NaN();
-                    };
-                    const auto prior = [&](int a, int b) {
-                        const auto ia = prow.find(R.pl_amb[static_cast<std::size_t>(a)].col);
-                        const auto ib = prow.find(R.pl_amb[static_cast<std::size_t>(b)].col);
-                        if (ia == prow.end() || ib == prow.end())
-                            return std::numeric_limits<double>::quiet_NaN();
-                        return R.pl_blk.Sigma(ia->second, ib->second);
-                    };
-                    const auto ifcov = [&](const auto& c, Eigen::Index i, Eigen::Index j) {
-                        const auto& p = idx[static_cast<std::size_t>(i)];
-                        const auto& q = idx[static_cast<std::size_t>(j)];
-                        return ca * ca * c(p[0], q[0]) + ca * cb * c(p[0], q[1])
-                             + cb * ca * c(p[1], q[0]) + cb * cb * c(p[1], q[1]);
+                    groups.back().push_back({sat, {lp.first, lp.second}, if_pair.at(sat)});
+                }
+                const auto post = [&](int a, int b) {
+                    const double u = hblk->C(a, b), v = hblk->C(b, a);
+                    return std::isfinite(u) && std::isfinite(v) ? 0.5 * (u + v)
+                         : std::numeric_limits<double>::quiet_NaN();
+                };
+                const auto prior = [&](int a, int b) {
+                    const auto ia = prow.find(R.pl_amb[static_cast<std::size_t>(a)].col);
+                    const auto ib = prow.find(R.pl_amb[static_cast<std::size_t>(b)].col);
+                    if (ia == prow.end() || ib == prow.end())
+                        return std::numeric_limits<double>::quiet_NaN();
+                    return R.pl_blk.Sigma(ia->second, ib->second);
+                };
+                const double t_week = std::floor(pl_now_s / 604800.0);
+                const double t_tow  = pl_now_s - 604800.0 * t_week;
+                for (const std::vector<TracedLos>& g : groups) {
+                    const Eigen::Index n = static_cast<Eigen::Index>(g.size());
+                    const auto ifcov = [&](const auto& c, Eigen::Index r, Eigen::Index s) {
+                        const auto& p = g[static_cast<std::size_t>(r)].idx;
+                        const auto& q = g[static_cast<std::size_t>(s)].idx;
+                        const IfPair& u = g[static_cast<std::size_t>(r)].coef;
+                        const IfPair& v = g[static_cast<std::size_t>(s)].coef;
+                        return u.ca * v.ca * c(p[0], q[0]) + u.ca * v.cb * c(p[0], q[1])
+                             + u.cb * v.ca * c(p[1], q[0]) + u.cb * v.cb * c(p[1], q[1]);
                     };
                     Eigen::MatrixXd Vpo(n, n), Vpr(n, n);
                     for (Eigen::Index r2 = 0; r2 < n; ++r2)
@@ -5408,18 +5449,17 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     const bool po_ok = Vpo.allFinite(), pr_ok = Vpr.allFinite();
                     const Eigen::MatrixXd Dpo = po_ok ? Eigen::MatrixXd(Pm * Vpo * Pm) : Vpo;
                     const Eigen::MatrixXd Dpr = pr_ok ? Eigen::MatrixXd(Pm * Vpr * Pm) : Vpr;
-                    const double t_week = std::floor(pl_now_s / 604800.0);
-                    const double t_tow  = pl_now_s - 604800.0 * t_week;
                     for (Eigen::Index r2 = 0; r2 < n; ++r2) {
+                        const TracedLos& t = g[static_cast<std::size_t>(r2)];
                         const auto lit = local_carry.find(std::make_tuple(
-                            static_cast<int>(i), sats[static_cast<std::size_t>(r2)],
-                            R.pl_amb[static_cast<std::size_t>(idx[static_cast<std::size_t>(r2)][0])].signal));
+                            static_cast<int>(i), t.sat,
+                            R.pl_amb[static_cast<std::size_t>(t.idx[0])].signal));
                         const long long age = (lit != local_carry.end() && lit->second.birth_ep > 0)
                             ? static_cast<long long>(ctx.counters.n_loop_epochs) - lit->second.birth_ep
                             : -1;
                         ctx.carry.amb_if_rows.push_back(fmt::format(
                             "{:.0f},{:.1f},{},{},{},{},{:.6e},{:.6e},{:.6e},{:.6e}\n",
-                            t_week, t_tow, stations[i].name, sats[static_cast<std::size_t>(r2)],
+                            t_week, t_tow, stations[i].name, t.sat,
                             age, n, Vpr(r2, r2), Vpo(r2, r2),
                             pr_ok ? Dpr(r2, r2) : std::numeric_limits<double>::quiet_NaN(),
                             po_ok ? Dpo(r2, r2) : std::numeric_limits<double>::quiet_NaN()));
@@ -5507,12 +5547,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             // namespace both lane levels are read from.
             const auto resolve = [&](int sta, const std::string& sat,
                                      const std::string& code) -> std::string {
-                if (code.size() < 2) return {};
+                const System sys = systemOfSat(sat);
+                const auto want = SignalId::fromObsCode(sys, code);
+                if (!want) return {};
                 auto it = local_carry.lower_bound(std::make_tuple(sta, sat, std::string{}));
                 for (; it != local_carry.end(); ++it) {
                     if (std::get<0>(it->first) != sta || std::get<1>(it->first) != sat) break;
                     const std::string& sig = std::get<2>(it->first);
-                    if (sig.size() >= 2 && sig[1] == code[1]) return sig;
+                    const auto have = SignalId::fromObsCode(sys, sig);
+                    if (have && have->digit == want->digit) return sig;   // same band
                 }
                 return {};
             };
@@ -5684,10 +5727,13 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     // the namespace note at `resolve`).
                     const auto cap_of = [&](const std::string& code)
                         -> std::pair<const std::string*, const NetworkCarryState::LaneT4Pre*> {
-                        if (code.size() < 2) return {nullptr, nullptr};
+                        const System sys = systemOfSat(sat);
+                        const auto want = SignalId::fromObsCode(sys, code);
+                        if (!want) return {nullptr, nullptr};
                         for (auto it2 = t4_lo; t4_same(it2); ++it2) {
                             const std::string& sig = std::get<2>(it2->first);
-                            if (sig.size() >= 2 && sig[1] == code[1])
+                            const auto have = SignalId::fromObsCode(sys, sig);
+                            if (have && have->digit == want->digit)   // same band
                                 return {&std::get<2>(it2->first), &it2->second};
                         }
                         return {nullptr, nullptr};
@@ -7198,7 +7244,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 const double v =
                     x_s(est.phaseBiasColumn(parts->satellite, parts->signal));
                 if (std::isfinite(v))
-                    ctx.carry.pb_level_prev[parts->satellite + "_" + parts->signal] = v;
+                    ctx.carry.pb_level_prev[StateKeys::makeAmbiguityKey(parts->satellite,
+                                                                        parts->signal)] = v;
             } catch (...) {}
         }
         // The DD invariant carry is the phase time-link, so the S-dependent shared
@@ -7276,7 +7323,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         if (cb_time_linked) {
             const double v = x_s(col);
             if (std::isfinite(v)) {
-                code_bias_prev_[NetworkSbasis::constellationOf(kv.first) + "|" + kv.second]
+                code_bias_prev_[constellationKey(systemOfSat(kv.first)) + "|" + kv.second]
                                [kv.first] = v;
                 code_bias_sat_seen_.insert(kv.first);
             }
@@ -7314,7 +7361,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             Eigen::Index col = -1;
             try { col = est.clockColumn(sat); } catch (...) { continue; }
             if (pinned_cols.count(col) && col >= 0 && col < x_s.size())
-                ctx.carry.cxu_pivot[sat[0]] = {sat, x_s(col)};
+                ctx.carry.cxu_pivot[letterOfSat(sat)] = {sat, x_s(col)};
         }
     }
     // Card PFQ: the clock pivot this stash was pinned on, the frame of the carried clocks
@@ -7325,7 +7372,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             if (sat.empty()) continue;
             Eigen::Index col = -1;
             try { col = est.clockColumn(sat); } catch (...) { continue; }
-            if (col >= 0 && pinned_cols.count(col)) ctx.carry.pfq_pivot[sat[0]] = sat;
+            if (col >= 0 && pinned_cols.count(col)) ctx.carry.pfq_pivot[letterOfSat(sat)] = sat;
         }
     }
     if (config_.estimateNetworkIonoSh() && sh_model) {   // SH-VTEC coefficients

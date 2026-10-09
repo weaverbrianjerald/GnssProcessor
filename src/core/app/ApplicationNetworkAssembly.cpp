@@ -56,6 +56,7 @@
 #include "slip/NetworkSlipQc.hpp"       // slip-QC pure helpers: ifElevMap / parseIfPairResetKey (INC-2)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"    // identity reads (systemOfSat, ObservableId, ...), carriers
 #include "common/PppUtils.hpp"        // signal wavelengths for the DD fractional-cycle diagnostic (B5)
 #include "realtime/RealTimeEngine.hpp"
 #include "math/TimeUtils.hpp"
@@ -95,7 +96,7 @@ bool Application::networkIsGaugePinned_(const std::vector<NetStation>& stations,
                                         const std::string& sat,
                                         const std::string& signal) const {
     if (!phase_datum_prioritized) return stations[i].is_pivot;
-    return stations[i].pinned_amb_targets.count(sat + "_" + signal) != 0;
+    return stations[i].pinned_amb_targets.count(StateKeys::makeAmbiguityKey(sat, signal)) != 0;
 }
 
 // Column-split helper: split a station's H into the shared border A_s
@@ -260,7 +261,7 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
     // proportional counter reset is invisible to both MW and GF), so the phase is
     // down-weighted until a detector can monitor it again.
     //
-    // Code rows are left untouched (`sig[0] != 'L'`): they are slip-immune, and
+    // Code rows are left untouched (not ObsType::Phase): they are slip-immune, and
     // they re-anchor the float to a bounded error.  The phase row is down-weighted,
     // not excluded (prefer-fallback): it still contributes, at σ × scale.
     //
@@ -285,7 +286,7 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         long long n_dem = 0;
         for (Eigen::Index r = 0; r < mr; ++r) {
             const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
-            if (sig.empty() || sig[0] != 'L') continue;          // code untouched
+            if (obsTypeOf(sig) != ObsType::Phase) continue;      // code untouched
             if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
             const auto sc = st.phase_sigma_scale.find(
                 em.satellite_ids[static_cast<std::size_t>(r)]);
@@ -322,7 +323,7 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         long long n_dw = 0;
         for (Eigen::Index r = 0; r < mr; ++r) {
             const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
-            if (sig.empty() || sig[0] == 'L') continue;           // phase untouched
+            if (sig.empty() || obsTypeOf(sig) == ObsType::Phase) continue;   // phase untouched
             if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
             const auto sc = st.gl_code_sigma_scale.find(
                 em.satellite_ids[static_cast<std::size_t>(r)]);
@@ -366,13 +367,14 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         long long n_eb = 0, n_nopin = 0;
         for (Eigen::Index r = 0; r < mr; ++r) {
             const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
-            if (sig.empty() || sig[0] == 'L') continue;           // phase untouched
+            if (sig.empty() || obsTypeOf(sig) == ObsType::Phase) continue;   // phase untouched
             if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
             const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
             if (sat.empty()) continue;
-            auto pit = pin_by_sys.find(sat[0]);
+            const char cons = letterOfSat(sat);
+            auto pit = pin_by_sys.find(cons);
             if (pit == pin_by_sys.end())
-                pit = pin_by_sys.emplace(sat[0], networkPinBandsFor(sat[0])).first;
+                pit = pin_by_sys.emplace(cons, networkPinBandsFor(cons)).first;
             // A constellation with no resolvable pin pair is counted (invariant #4),
             // not treated as all-extra-band or as all-primary.
             if (!pit->second.valid()) { ++n_nopin; continue; }
@@ -420,7 +422,7 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
             long long n_comp = 0, n_fall = 0;
             for (Eigen::Index r = 0; r < mr; ++r) {
                 const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
-                if (sig.empty() || sig[0] == 'L') continue;           // phase untouched
+                if (sig.empty() || obsTypeOf(sig) == ObsType::Phase) continue;   // phase untouched
                 if (!isc_sigs.count(sig)) continue;
                 if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
                 const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
@@ -457,7 +459,7 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         long long n_sp = 0;
         for (Eigen::Index r = 0; r < mr; ++r) {
             const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
-            if (sig.empty() || sig[0] != 'L') continue;           // code untouched
+            if (obsTypeOf(sig) != ObsType::Phase) continue;      // code untouched
             if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
             const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
             if (sat.empty()) continue;
@@ -505,7 +507,7 @@ void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator
         std::string row = fmt::format(
             "{},{:.3f},{},{},{},{},{},{},{},{},{},{},{},{},{:.4f},{:.4f},{:.4f},"
             "{:.4f},{:.4f}",
-            t.week, t.tow, st.name, sat.empty() ? '?' : sat.front(), sat, pivot,
+            t.week, t.tow, st.name, letterOfSat(sat), sat, pivot,
             status, s1, s2, c1, c2, n_cand, n_arc, bia ? 1 : 0, lam, mean_m, pred_m,
             resid_m, sigma_m);
         if (cfg.fix_enable)
@@ -630,11 +632,12 @@ void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator
         const auto parts = StateKeys::parseAmbiguityKey(key);
         if (!parts) continue;
         const std::string& sig = parts->signal;
-        if (sig.size() < 2 || sig[0] != 'L') continue;
+        const auto phase = ObservableId::parse(systemOfSat(parts->satellite), sig);
+        if (!phase || phase->type != ObsType::Phase) continue;
         const auto hit = h2local.find(static_cast<int>(sidx));
         if (hit == h2local.end()) continue;         // no phase row on this arc this epoch
-        cand[{ parts->satellite, sig[1] }].emplace_back(sig, hit->second,
-                                                        static_cast<int>(sidx));
+        cand[{ parts->satellite, phase->signal.digit }].emplace_back(sig, hit->second,
+                                                                     static_cast<int>(sidx));
     }
     for (auto& kv : cand)
         std::sort(kv.second.begin(), kv.second.end());   // ascending signal name first
@@ -650,7 +653,7 @@ void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator
     std::map<char, std::vector<Arc>> by_const;
     for (const auto& o : sta_obs) {
         if (o.satellite.empty()) continue;
-        const char cons = o.satellite.front();
+        const char cons = letterOfSat(o.satellite);
         char b1 = 0, b2 = 0;
         double fb1 = 0.0, fb2 = 0.0;
         if (!bandsFor(cons, b1, b2, fb1, fb2)) continue;
@@ -1081,17 +1084,19 @@ void Application::networkAppendGimIonoRows_(NetStation& st,
     struct GRow { int col; double innov; double var; };
     std::map<char, std::vector<GRow>> by_const;   // constellation char -> rows
     for (const auto& o : sta_obs) {
-        if (o.satellite.empty() || o.satellite.front() == 'R') continue;  // every system but GLONASS
+        // Every system but GLONASS.
+        if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS) continue;
         if (o.elevation < iw.elevation_cutoff_deg) continue;
         const int iono_idx = st.sm->getIonosphereIndex(o.satellite);
         if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
         const auto hit = h2local.find(iono_idx);
         if (hit == h2local.end()) continue;   // iono not in this station's local block this epoch
         const GimQuery q =
-            gim_->slantIonoDelay(t, st.ecef, o.sat_pos, Constants::GPS_L1_FREQ);
+            gim_->slantIonoDelay(t, st.ecef, o.sat_pos,
+                                 nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
         if (!q.valid) continue;
         const double sigma = std::max(iw.floor_m, iw.std_scale * q.std_m);
-        by_const[o.satellite.front()].push_back(
+        by_const[letterOfSat(o.satellite)].push_back(
             GRow{hit->second, q.delay_m - x(iono_idx), sigma * sigma});
     }
 
@@ -1228,7 +1233,7 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
     const Eigen::VectorXd x = st.sm->getStateVector();
     const double Re = shc.earth_radius_km * 1000.0;
     const double tecu_to_L1m =
-        40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+        ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
     const double lon_sun = shc.sun_fixed ? meanSunLongitude(t) : 0.0;
     // Dual layer (Iono-2): one row still asserts one slant constraint, but the field
     // side sums the shells, ι = Σ_l M_l(el)·tecu·SH_l(IPP_l)·c_l (+ d).  Each shell
@@ -1250,7 +1255,8 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
     std::map<char, std::vector<SRow>> by_const;
     std::vector<double> bvals;
     for (const auto& o : sta_obs) {
-        if (o.satellite.empty() || o.satellite.front() == 'R') continue;  // every system but GLONASS
+        // Every system but GLONASS.
+        if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS) continue;
         if (o.elevation < iw.elevation_cutoff_deg) continue;
         const int iono_idx = st.sm->getIonosphereIndex(o.satellite);
         if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
@@ -1317,7 +1323,7 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
             r.innov = -x(iono_idx) + dev_pred_slant;
             r.var   = iw.floor_m * iw.floor_m + var_pred_slant;
         }
-        by_const[o.satellite.front()].push_back(std::move(r));
+        by_const[letterOfSat(o.satellite)].push_back(std::move(r));
     }
 
     int total = 0;
@@ -1626,10 +1632,11 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                 const std::string& s2) {
                                 if (!mw_pairs_primary) return true;
                                 if (sat.empty()) return true;
-                                auto pit = mw_pin_by_sys.find(sat[0]);
+                                const char cons = letterOfSat(sat);
+                                auto pit = mw_pin_by_sys.find(cons);
                                 if (pit == mw_pin_by_sys.end())
                                     pit = mw_pin_by_sys.emplace(
-                                              sat[0], networkPinBandsFor(sat[0])).first;
+                                              cons, networkPinBandsFor(cons)).first;
                                 return networkMwPairInPrimaryScope(s1, s2, pit->second);
                             };
                         for (const auto& r : mwr) {
@@ -1696,7 +1703,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                         }
                         for (const auto& obs : modeled[i])
                             for (const auto& [code, lli] : obs.lli_flags)
-                                if (!code.empty() && code[0] == 'L' && (lli & 1))
+                                if (obsTypeOf(code) == ObsType::Phase && (lli & 1))
                                     cbev[obs.satellite].lli_signals.insert(code);
                     }
                 } catch (...) { /* best-effort: no MW action this epoch */ }
@@ -1783,7 +1790,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                 for (const auto& ob : modeled[static_cast<std::size_t>(i)]) {
                     for (const auto& [sig, val] : ob.observed) {
                         (void)val;
-                        if (sig.empty() || sig[0] != 'C') continue;
+                        if (obsTypeOf(sig) != ObsType::Code) continue;
                         const std::string key = StateKeys::makeSatBiasKey(ob.satellite, sig);
                         auto& sup = col_support[key];
                         ++sup.first;
@@ -1881,7 +1888,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                 for (const auto& ob : modeled[static_cast<std::size_t>(i)]) {
                     for (const auto& [sig, val] : ob.observed) {
                         (void)val;
-                        if (sig.empty() || sig[0] != 'L') continue;
+                        if (obsTypeOf(sig) != ObsType::Phase) continue;
                         const std::string key =
                             StateKeys::makeSatPhaseBiasKey(ob.satellite, sig);
                         auto& sup = col_support[key];
@@ -1893,7 +1900,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                     // band's latched phase is absent this epoch, so the case is visible
                     // only here, against the station's own latch.  `raw_observed` is
                     // the untouched raw key set, which is what the selection screened.
-                    const std::string cons = PppUtils::getSystemString(ob.satellite);
+                    const System sys = systemOfSat(ob.satellite);
+                    const std::string cons = systemName(sys);
                     // Band scope (card SID phase 6b).  Under the phase-6a knob the
                     // card's own allow-list is band 1 by construction.  Under the
                     // all-channel widening there is no allow-list, and every selected
@@ -1908,10 +1916,12 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                     if (chan_all) {
                         for (const auto& [sig, val] : ob.observed) {
                             (void)val;
-                            if (sig.size() < 2 || sig[0] != 'L') continue;
-                            if (std::find(bands6b.begin(), bands6b.end(), sig[1])
+                            const auto phase = ObservableId::parse(sys, sig);
+                            if (!phase || phase->type != ObsType::Phase) continue;
+                            const char digit = phase->signal.digit;
+                            if (std::find(bands6b.begin(), bands6b.end(), digit)
                                 == bands6b.end())
-                                bands6b.push_back(sig[1]);
+                                bands6b.push_back(digit);
                         }
                         std::sort(bands6b.begin(), bands6b.end());
                     } else {
@@ -1928,7 +1938,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                     if (chan_all) {
                         for (const auto& [sig, val] : ob.raw_observed) {
                             (void)val;
-                            if (sig.size() < 3 || sig[0] != 'L' || sig[1] != bd) continue;
+                            const auto phase = ObservableId::parse(sys, sig);
+                            if (!phase || phase->type != ObsType::Phase
+                                || phase->signal.digit != bd) continue;
                             cand.push_back(sig);
                         }
                     } else {
@@ -2150,10 +2162,10 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
             for (const auto& r : mwr) {
                 if (r.sig1.empty() || r.sig2.empty()) continue;
                 if (dm_pairs_primary && !r.satellite.empty()) {
-                    auto pit = dm_pin_by_sys.find(r.satellite[0]);
+                    const char cons = letterOfSat(r.satellite);
+                    auto pit = dm_pin_by_sys.find(cons);
                     if (pit == dm_pin_by_sys.end())
-                        pit = dm_pin_by_sys.emplace(
-                                  r.satellite[0], networkPinBandsFor(r.satellite[0])).first;
+                        pit = dm_pin_by_sys.emplace(cons, networkPinBandsFor(cons)).first;
                     if (!networkMwPairInPrimaryScope(r.sig1, r.sig2, pit->second)) {
                         ++pa.sta_mw_admit[0].scope_skipped;
                         continue;
@@ -2718,12 +2730,14 @@ EpochAction Application::networkAssemblyRegisterColumns_(const SyncedEpoch& se,
             // Reusing the phase signal unchanged would match nothing and leave this
             // counter permanently 0, inert wiring that reads as "no orphans"
             // (standing invariant #4).
-            std::string csig = parts->signal;
-            if (!csig.empty()) csig[0] = 'C';
-            const std::string code_key =
-                StateKeys::makeSatBiasKey(parts->satellite, csig);
-            if (ctx.admission.isAdmitted(code_key) && !cbadm_reg_code_keys.count(code_key))
-                ++ctx.counters.n_cbadm_phase_orphan_key_epochs;
+            const auto phase =
+                SignalId::fromObsCode(systemOfSat(parts->satellite), parts->signal);
+            if (phase) {
+                const std::string code_key =
+                    StateKeys::makeSatBiasKey(parts->satellite, phase->obsCode(ObsType::Code));
+                if (ctx.admission.isAdmitted(code_key) && !cbadm_reg_code_keys.count(code_key))
+                    ++ctx.counters.n_cbadm_phase_orphan_key_epochs;
+            }
         }
     }
     // Register the satellite code-bias (OSB) columns (W6, full multi-band): every
@@ -3375,7 +3389,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     shLayers(shc, sh_model.get(), setup.sh_model2.get());
                 const double lv1_Re = shc.earth_radius_km * 1000.0;
                 const double lv1_tecu_to_L1m =
-                    40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+                    ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
                 const double lv1_lon_sun =
                     shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
                 StateInitializer::IonoSeedFrame frame;
@@ -3390,7 +3404,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // field's frame would put it in a frame nothing else in its
                     // block shares; those births stay raw and are counted as
                     // lv1_field_missing.
-                    if (o.satellite.empty() || o.satellite.front() == 'R') continue;
+                    if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS)
+                        continue;
                     double slant = 0.0;
                     if (networkShSlantAtLos_(st.ecef, o.sat_pos, lv1_lay, sh_field_lag1,
                                              lv1_Re, lv1_lon_sun, lv1_tecu_to_L1m,
@@ -3574,21 +3589,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 };
                 if (phase_datum_prioritized) {
                     // Audit group key = the election's dr_key, "<cons>|<signal>".
-                    // The RPB key carries the system name ("GPS_RPB_L2W"), so map
-                    // it back to the constellation char the election grouped by.
-                    auto consOfSystem = [](const std::string& sys) -> char {
-                        if (sys == "GPS")     return 'G';
-                        if (sys == "Galileo") return 'E';
-                        if (sys == "BeiDou")  return 'C';
-                        if (sys == "QZSS")    return 'J';
-                        if (sys == "GLONASS") return 'R';
-                        return '?';
-                    };
+                    // The RPB key carries the system name ("GPS_RPB_L2W"), so it is
+                    // read back to the constellation the election grouped by.
                     for (const auto& [amb_key, target] : st.pinned_amb_targets) {
                         const int out = foldAmb(amb_key, target);
                         if (phase_datum_eq34)
                             if (const auto p = StateKeys::parseAmbiguityKey(amb_key))
-                                ++R.pin_audit[std::string(1, p->satellite.front())
+                                ++R.pin_audit[constellationKey(systemOfSat(p->satellite))
                                               + "|" + p->signal]
                                              [static_cast<std::size_t>(out)];
                     }
@@ -3597,7 +3604,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (phase_datum_eq34)
                             if (const auto p =
                                     StateKeys::parseReceiverPhaseBiasKey(rpb_key))
-                                ++R.pin_audit[std::string(1, consOfSystem(p->system))
+                                ++R.pin_audit[constellationKey(systemFromName(p->system))
                                               + "|" + p->signal]
                                              [static_cast<std::size_t>(out)];
                     }
@@ -3605,7 +3612,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     for (const auto& pk : shared_phase_keys) {
                         const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
                         if (!parts) continue;
-                        foldAmb(parts->satellite + "_" + parts->signal, 0.0);
+                        foldAmb(StateKeys::makeAmbiguityKey(parts->satellite, parts->signal),
+                                0.0);
                     }
                 }
                 const int n_hard = static_cast<int>(pin_col.size());
@@ -3721,7 +3729,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     if (hit != h2local.end()) anchor_cols.push_back(hit->second);
                 }
                 for (const auto& [sat, sidx] : st.sm->getIonosphereStates()) {
-                    if (sat.empty() || sat.front() != 'R') continue;  // GLONASS iono only
+                    if (systemOfSat(sat) != System::GLONASS) continue;  // GLONASS iono only
                     const auto hit = h2local.find(static_cast<int>(sidx));
                     if (hit != h2local.end()) anchor_cols.push_back(hit->second);
                 }

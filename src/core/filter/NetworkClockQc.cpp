@@ -13,6 +13,7 @@
 #include "filter/NetworkClockQc.hpp"
 
 #include "app/NetworkRunContext.hpp"          // ctx.* + networkRetroUraBookkeeping
+#include "common/GnssIdentity.hpp"            // systemOfSat: the per-constellation medians
 #include "config/GnssConfig.hpp"              // config_.getNetworkConfig() (nc.trace_clock_full)
 #include "filter/NetworkPivotHandover.hpp"    // datumChangeAffectsKey
 #include "filter/NetworkResponses.hpp"        // prmRespond / ResponseSite (card PRM phase 3a)
@@ -141,7 +142,7 @@ void networkClockQc(NetworkRunContext& ctx,
                           fmt::format("datum re-reference (scoped: {})", consts));
             }
             std::map<std::string, double> z_of, innov_of, S_of, p_post_of;
-            std::map<char, std::vector<double>> innov_by_const;
+            std::map<System, std::vector<double>> innov_by_const;
             const Eigen::MatrixXd& shcov = est.sharedCovariance();   // posterior formal cov
             for (const std::string& sat : registered_clock_sats) {
                 Eigen::Index col;
@@ -167,9 +168,9 @@ void networkClockQc(NetworkRunContext& ctx,
                 // to a posterior-consistent innovation.
                 S_of[sat]     = std::max(std::max(1e-12, clk_model_r),
                                          pit->second.p00 - p_post_of[sat]);
-                innov_by_const[sat[0]].push_back(innov_of[sat]);
+                innov_by_const[systemOfSat(sat)].push_back(innov_of[sat]);
             }
-            std::map<char, double> med_innov;
+            std::map<System, double> med_innov;
             for (auto& [c, vv] : innov_by_const) {
                 std::nth_element(vv.begin(), vv.begin() + vv.size() / 2, vv.end());
                 med_innov[c] = vv[vv.size() / 2];
@@ -204,7 +205,7 @@ void networkClockQc(NetworkRunContext& ctx,
                     continue;
                 }
                 const double S   = std::max(1e-12, S_of[sat]);
-                const double dm  = innov_of[sat] - med_innov[sat[0]];  // datum common-mode removed
+                const double dm  = innov_of[sat] - med_innov[systemOfSat(sat)];  // datum common-mode removed
                 const double nis = dm / std::sqrt(S);
                 const bool   ext = clock_refloat_sats.count(sat) > 0;  // within-epoch/RAIM (couple)
                 const bool   flagged = (std::abs(nis) > clk_model_k) || ext;
@@ -339,14 +340,14 @@ void networkClockQc(NetworkRunContext& ctx,
     // network.clock_model on, the two-state normalized-innovation test above replaces it.
     if (clk_mon_on && !clk_model_on && static_cast<int>(n_emitted) >= pl_warmup) {
         std::map<std::string, double> clk_of;
-        std::map<char, std::vector<double>> clk_by_const;  // per-constellation, for the datum median
+        std::map<System, std::vector<double>> clk_by_const;  // per-constellation, for the datum median
         for (const std::string& sat : registered_clock_sats) {
             Eigen::Index col;
             try { col = est.clockColumn(sat); } catch (...) { continue; }
             const double v = x_s(col);
             if (!std::isfinite(v) || sat.empty()) continue;
             clk_of[sat] = v;
-            clk_by_const[sat[0]].push_back(v);
+            clk_by_const[systemOfSat(sat)].push_back(v);
         }
         // De-mean per constellation.  Each constellation has its own clock datum (a distinct
         // pivot satellite), so a whole-constellation offset, such as a Galileo-wide
@@ -354,7 +355,7 @@ void networkClockQc(NetworkRunContext& ctx,
         // error.  A single global median would subtract the GPS datum from the Galileo clocks
         // and flag the entire constellation; the per-constellation median cancels that and
         // leaves only the per-satellite outliers within each system.
-        std::map<char, double> med_by_const;
+        std::map<System, double> med_by_const;
         for (auto& [c, vv] : clk_by_const) {
             std::nth_element(vv.begin(), vv.begin() + vv.size() / 2, vv.end());
             med_by_const[c] = vv[vv.size() / 2];
@@ -362,7 +363,7 @@ void networkClockQc(NetworkRunContext& ctx,
         int n_new = 0;
         std::string detail;
         for (const auto& [sat, v] : clk_of) {
-            const double med      = med_by_const[sat[0]];
+            const double med      = med_by_const[systemOfSat(sat)];
             const double dev      = v - med;
             const bool   flag_abs = std::abs(dev) > clk_mon_abs;
             // Jump-test reference frame.  Pin mode uses the raw clock v: the pivot pin

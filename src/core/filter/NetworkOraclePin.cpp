@@ -8,9 +8,11 @@
 #include "filter/NetworkOraclePin.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/GnssTypes.hpp"
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
 
@@ -37,19 +39,6 @@ std::string opinTrim(std::string s) {
     return s;
 }
 
-/// The system letter -> System mapping the wavelength provider keys on.
-System opinSystemOf(const std::string& sat) {
-    if (sat.empty()) return System::GPS;
-    switch (sat[0]) {
-        case 'G': return System::GPS;
-        case 'R': return System::GLONASS;
-        case 'E': return System::Galileo;
-        case 'C': return System::BeiDou;
-        case 'J': return System::QZSS;
-        default:  return System::GPS;
-    }
-}
-
 /// In-place median of @p v (v is reordered).  Even n takes the mean of the two
 /// central order statistics; the caller guarantees a non-empty vector.
 double opinMedian(std::vector<double>& v) {
@@ -61,11 +50,6 @@ double opinMedian(std::vector<double>& v) {
     const double lo = *std::max_element(v.begin(),
                                         v.begin() + static_cast<std::ptrdiff_t>(m));
     return 0.5 * (lo + hi);
-}
-
-/// "<sat>_<signal>": the key form that `this_epoch_anchor` and `pinned_amb_targets` use.
-std::string opinFamilyKey(const std::string& sat, const std::string& sig) {
-    return sat + "_" + sig;
 }
 
 } // namespace
@@ -121,7 +105,7 @@ OraclePinScope oraclePinParseScope(const std::string& s, std::string& why) {
         for (char c : tail + "+") {
             if (c == '+') {
                 if (!tok.empty()) {
-                    if (tok[0] != 'L') {
+                    if (obsTypeOf(tok) != ObsType::Phase) {
                         why = "scope '" + t + "': band token '" + tok
                             + "' is not a PHASE signal code (leading L)";
                         return out;
@@ -330,7 +314,7 @@ std::unique_ptr<NetworkOraclePin> networkOraclePinLoad(
             // estimator's ambiguity column carries.  An arc whose wavelength the
             // provider cannot resolve is dropped and counted (reported in the arming
             // line) instead of being pinned at a wrong scale.
-            const double lam = pin->utils->getWavelength(opinSystemOf(key.first),
+            const double lam = pin->utils->getWavelength(systemOfSat(key.first),
                                                          key.second, key.first);
             if (!(lam > 0.0)) { ++n_nolam; continue; }
             t.lambda_m = lam;
@@ -387,10 +371,11 @@ int networkOraclePinFit(
     };
     std::map<std::pair<std::string, std::string>, Fam> fams;
     for (const auto& [fam_key, a_name] : anchor_of) {
-        const auto us = fam_key.rfind('_');
-        if (us == std::string::npos || us == 0 || us + 1 >= fam_key.size()) continue;
-        const std::string sat = fam_key.substr(0, us);
-        const std::string sig = fam_key.substr(us + 1);
+        // fam_key is the family's ambiguity key "<sat>_<signal>" (StateKeySchema).
+        const auto parts = StateKeys::parseAmbiguityKey(fam_key);
+        if (!parts) continue;
+        const std::string& sat = parts->satellite;
+        const std::string& sig = parts->signal;
         const auto iit = idx_of.find(a_name);
         if (iit == idx_of.end()) continue;
         const auto tit = pin.truth.find({iit->second, sat, sig});
@@ -425,7 +410,7 @@ int networkOraclePinFit(
         const auto fit = fams.find({sat, sig});
         if (fit == fams.end()) continue;                 // family has no usable anchor
         if (fit->second.a == sta) continue;              // the anchor's own arc: t_sj is its level
-        const std::string fam_key = opinFamilyKey(sat, sig);
+        const std::string fam_key = StateKeys::makeAmbiguityKey(sat, sig);
         if (stations[static_cast<std::size_t>(sta)].pinned_amb_targets.count(fam_key))
             continue;                                    // gauge-pinned here too (eq34 / legacy)
         const auto tit = pin.truth.find(key);
@@ -518,7 +503,7 @@ int networkOraclePinFit(
 
         // Never pin an anchor arc: its 1e10 datum pin defines the family's gauge,
         // and a second row there would conflict with it (header, property 2).
-        const std::string fam_key = opinFamilyKey(sat, sig);
+        const std::string fam_key = StateKeys::makeAmbiguityKey(sat, sig);
         const auto ait = anchor_of.find(fam_key);
         if (ait != anchor_of.end() && ait->second == sta_name) continue;
         if (stations[static_cast<std::size_t>(sta)].pinned_amb_targets.count(fam_key))

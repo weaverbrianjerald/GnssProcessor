@@ -12,7 +12,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "common/Constants.hpp"
-#include "common/SignalBand.hpp"
+#include "common/GnssIdentity.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkExtraBandScope.hpp"   // networkPinBandsFor (the pin pair's bands)
 #include "logging/NetworkRunTraces.hpp"
@@ -37,10 +37,11 @@ namespace GnssProcessor {
 namespace {
 
 /// Carrier frequency (Hz) of a RINEX code on a satellite, from its band's nominal
-/// wavelength; 0 when the band is unknown.
+/// wavelength (speed of light over that wavelength); 0 when the code or its band is
+/// unknown.
 double carrierHz(const std::string& sat, const std::string& code) {
-    const SignalClassification sc = classifySignalForSat(sat, code);
-    const double lam = bandNominalWavelengthMeters(sc.band);
+    const auto signal = SignalId::fromObsCode(systemOfSat(sat), code);
+    const double lam = signal ? nominalWavelengthM(signal->band()) : 0.0;
     return (lam > 0.0) ? Constants::SPEED_OF_LIGHT / lam : 0.0;
 }
 
@@ -49,15 +50,6 @@ double medianOf(std::vector<double> v) {
     std::sort(v.begin(), v.end());
     const std::size_t n = v.size();
     return (n % 2 == 1) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
-}
-
-/// Split "SAT_SIGNAL" (the pb_level_prev / pin_bridge key) at its first underscore.
-bool splitSatSignal(const std::string& key, std::string& sat, std::string& sig) {
-    const std::size_t u = key.find('_');
-    if (u == std::string::npos) return false;
-    sat = key.substr(0, u);
-    sig = key.substr(u + 1);
-    return !sat.empty() && !sig.empty();
 }
 
 }  // namespace
@@ -138,9 +130,9 @@ ClockLevelTwoWay clockLevelTwoWay(const std::vector<ClockLevelPair>& pairs, int 
     }
     // One offset per (station, constellation): a receiver's inter-system bias is a
     // per-constellation station offset and must not leak into the satellite effects.
-    std::map<std::pair<int, char>, int> ridx;
+    std::map<std::pair<int, System>, int> ridx;
     for (std::size_t k : use) {
-        const std::pair<int, char> key{pairs[k].station, pairs[k].sat[0]};
+        const std::pair<int, System> key{pairs[k].station, systemOfSat(pairs[k].sat)};
         if (ridx.count(key)) continue;
         const int next = static_cast<int>(ridx.size());
         ridx[key] = next;
@@ -155,7 +147,7 @@ ClockLevelTwoWay clockLevelTwoWay(const std::vector<ClockLevelPair>& pairs, int 
     for (std::size_t k : use) {
         const ClockLevelPair& p = pairs[k];
         const int i = sidx.at(p.sat);
-        const int j = S + ridx.at({p.station, p.sat[0]});
+        const int j = S + ridx.at({p.station, systemOfSat(p.sat)});
         N(i, i) += p.w_if;
         N(j, j) += p.w_if;
         N(i, j) -= p.w_if;
@@ -173,8 +165,8 @@ ClockLevelTwoWay clockLevelTwoWay(const std::vector<ClockLevelPair>& pairs, int 
     double big = 0.0;
     for (int i = 0; i < S; ++i) big = std::max(big, N(i, i));
     big = 10.0 * std::max(1.0, big);
-    std::map<char, std::vector<int>> by_const;
-    for (const auto& [sat, i] : sidx) by_const[sat[0]].push_back(i);
+    std::map<System, std::vector<int>> by_const;
+    for (const auto& [sat, i] : sidx) by_const[systemOfSat(sat)].push_back(i);
     for (const auto& [c, idx] : by_const) {
         (void)c;
         for (int a : idx)
@@ -214,7 +206,7 @@ ClockLevelTwoWay clockLevelTwoWay(const std::vector<ClockLevelPair>& pairs, int 
     double chi = 0.0;
     for (std::size_t k : use) {
         const ClockLevelPair& p = pairs[k];
-        const double r = p.v_if - x(sidx.at(p.sat)) + x(S + ridx.at({p.station, p.sat[0]}));
+        const double r = p.v_if - x(sidx.at(p.sat)) + x(S + ridx.at({p.station, systemOfSat(p.sat)}));
         chi += p.w_if * r * r;
     }
     const long long dof = out.used - (S - 1) - R;
@@ -250,9 +242,9 @@ ClockLevelUpdate clockLevelFilterUpdate(double info_prior, bool armed, double i_
 
 bool clockLevelIsFreeSameBand(const std::string& signal, const std::string& pin1,
                               const std::string& pin2) {
-    if (signal.size() < 2 || pin1.size() < 2 || signal[0] != 'C') return false;
+    if (signal.size() < 2 || pin1.size() < 2 || obsTypeOf(signal) != ObsType::Code) return false;
     if (signal == pin1 || signal == pin2) return false;
-    return signal[1] == pin1[1];
+    return signal[1] == pin1[1];   // the same band digit (a band role, card NOM step N3)
 }
 
 double clockLevelFreeCbFollowFactor(int mode, double f1_hz, double f2_hz) {
@@ -436,22 +428,25 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
     if (x_s.size() != ns) return false;
 
     // This epoch's satellite code-bias columns, each with its satellite's clock column.
-    struct CbCol { Eigen::Index col{-1}; Eigen::Index clk{-1}; std::string sat, sig; };
+    struct CbCol {
+        Eigen::Index col{-1};
+        Eigen::Index clk{-1};
+        std::string  sat, sig;
+        SignalId     signal{};   ///< the code's signal; its band digit meets the pin bands
+    };
     std::vector<CbCol> cbs;
     for (Eigen::Index c = 0; c < ns; ++c) {
-        std::string lbl;
-        try { lbl = est.sharedColumnLabel(c); } catch (...) { continue; }
-        if (lbl.rfind("CB:", 0) != 0) continue;
-        const std::size_t p1 = lbl.find(':');
-        const std::size_t p2 = lbl.find(':', p1 + 1);
-        if (p2 == std::string::npos) continue;
         CbCol cb;
-        cb.col = c;
-        cb.sat = lbl.substr(p1 + 1, p2 - p1 - 1);
-        cb.sig = lbl.substr(p2 + 1);
-        // GLONASS is FDMA (no common pin-pair frequency): out of the card's scope.
-        if (cb.sat.empty() || cb.sat[0] == 'R' || cb.sig.size() < 2 || cb.sig[0] != 'C')
+        SharedParamKind kind{};
+        if (!est.sharedColumnIdentity(c, kind, cb.sat, cb.sig)
+            || kind != SharedParamKind::CodeBias)
             continue;
+        cb.col = c;
+        // GLONASS is FDMA (no common pin-pair frequency): out of the card's scope.
+        const System sys = systemOfSat(cb.sat);
+        const auto code = ObservableId::parse(sys, cb.sig);
+        if (sys == System::GLONASS || !code || code->type != ObsType::Code) continue;
+        cb.signal = code->signal;
         try { cb.clk = est.clockColumn(cb.sat); } catch (...) { continue; }
         if (cb.clk < 0 || cb.clk >= ns) continue;
         cbs.push_back(std::move(cb));
@@ -460,7 +455,7 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
 
     // (1) One ionosphere-free pair per (station, satellite): the heaviest full-weight
     //     data code row on each of the constellation's two pin bands.
-    std::map<char, NetworkPinBands> pin_of;
+    std::map<System, NetworkPinBands> pin_of;
     // CLV2 R-A2: the same-band difference cells, per (constellation, free signal),
     // go to fcb_pairs.
     for (std::size_t i = 0; i < asm_res.size(); ++i) {
@@ -508,7 +503,7 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
                     cell.station = static_cast<int>(i);
                     cell.v_if    = wv.second - p1->second.second;
                     cell.w_if    = 1.0 / (kClvFcbSigmaM * kClvFcbSigmaM);
-                    fcb_pairs[{sat[0], sig}].push_back(std::move(cell));
+                    fcb_pairs[{letterOfSat(sat), sig}].push_back(std::move(cell));
                 }
             }
         }
@@ -532,15 +527,17 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
                     if (offpin_count) ++*offpin_count;
                     break;
                 }
-                auto& slot = best[cb.sat][cb.sig[1]];
+                auto& slot = best[cb.sat][cb.signal.digit];   // a pin band role (card NOM step N3)
                 if (!(w > std::get<0>(slot))) continue;
                 const double v = R.y(r) - R.A_s.row(r).dot(x_s) - R.A_r.row(r).dot(x_r);
                 if (std::isfinite(v)) slot = {w, v, cb.sig};
             }
         }
         for (const auto& [sat, bands] : best) {
-            auto pit = pin_of.find(sat[0]);
-            if (pit == pin_of.end()) pit = pin_of.emplace(sat[0], networkPinBandsFor(sat[0])).first;
+            const System sys = systemOfSat(sat);
+            auto pit = pin_of.find(sys);
+            if (pit == pin_of.end())
+                pit = pin_of.emplace(sys, networkPinBandsFor(rinexLetter(sys))).first;
             if (!pit->second.valid()) continue;
             const auto i1 = bands.find(pit->second.band1);
             const auto i2 = bands.find(pit->second.band2);
@@ -810,11 +807,11 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
     const double now_s = TimeUtils::continuousGpsSeconds(t);
     struct Step { double d{0.0}; double i_ep{0.0}; double e{0.0}; ClockLevelUpdate u; };
     std::map<std::string, Step> steps;
-    // R-C: the constellations' clock pivots (constellation letter -> satellite).
-    std::map<char, std::string> pivot_of;
+    // R-C: the constellations' clock pivots (constellation -> satellite).
+    std::map<System, std::string> pivot_of;
     if (ctx.knobs.clv_pivot_ref)
         for (const auto& [cst, psat] : ctx.carry.prev_pivot)
-            if (!cst.empty() && !psat.empty()) pivot_of[cst[0]] = psat;
+            if (!cst.empty() && !psat.empty()) pivot_of[systemFromName(cst)] = psat;
     const int n_confirm = std::max(1, ctx.knobs.clv_confirm_epochs);
     auto clearPending = [](ClockLevelSat& ls) {
         ls.pend_n = 0;
@@ -824,7 +821,7 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
     };
     for (const auto& [sat, e] : tw.effect) {
         ClockLevelSat& ls = ctx.carry.clk_level.sat[sat];
-        const auto pv = pivot_of.find(sat[0]);
+        const auto pv = pivot_of.find(systemOfSat(sat));
         const bool is_pivot = (pv != pivot_of.end() && pv->second == sat);
         if (ctx.carry.clk_anchor.tripped.count(sat)) {
             ++ctx.counters.clv_sat_tripped;
@@ -908,17 +905,17 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
     // information-weighted mean is removed.  R-C: where the constellation's pivot has an
     // update, every other satellite is shifted by its update minus the pivot's and the
     // pivot by nothing (the datum pins it); otherwise the de-mean, counted.
-    std::map<char, std::pair<double, double>> cmean;
+    std::map<System, std::pair<double, double>> cmean;
     for (const auto& [sat, st] : steps) {
-        auto& m = cmean[sat[0]];
+        auto& m = cmean[systemOfSat(sat)];
         m.first  += st.i_ep * st.d;
         m.second += st.i_ep;
     }
-    std::map<char, double> pivot_d;
+    std::map<System, double> pivot_d;
     if (ctx.knobs.clv_pivot_ref) {
-        std::set<char> csts;
-        for (const auto& [sat, st] : steps) csts.insert(sat[0]);
-        for (char c : csts) {
+        std::set<System> csts;
+        for (const auto& [sat, st] : steps) csts.insert(systemOfSat(sat));
+        for (const System c : csts) {
             const auto pv = pivot_of.find(c);
             const auto ps = (pv != pivot_of.end()) ? steps.find(pv->second) : steps.end();
             if (ps != steps.end()) {
@@ -931,12 +928,13 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
     }
     std::map<std::string, double> shift;
     for (auto& [sat, st] : steps) {
-        const auto pd = pivot_d.find(sat[0]);
+        const System sys = systemOfSat(sat);
+        const auto pd = pivot_d.find(sys);
         if (pd != pivot_d.end()) {
-            const auto pv = pivot_of.find(sat[0]);
+            const auto pv = pivot_of.find(sys);
             st.d = (pv != pivot_of.end() && pv->second == sat) ? 0.0 : st.d - pd->second;
         } else {
-            const auto& m = cmean[sat[0]];
+            const auto& m = cmean[sys];
             if (m.second > 0.0) st.d -= m.first / m.second;
         }
         shift[sat] = st.d;
@@ -1252,19 +1250,21 @@ void networkClockLevelTeardown(const NetworkRunContext& ctx, const NetworkProduc
                                const std::shared_ptr<spdlog::logger>& log) {
     if (!ctx.knobs.clv_on || !log) return;
     const auto& c = ctx.counters;
-    // Per constellation, V_L of each armed satellite at its last update (R6).
+    // Per constellation, V_L of each armed satellite at its last update (R6).  Keyed by
+    // the RINEX letter, which the lines print and which orders them.
     std::map<char, std::vector<double>> v_by;
     std::map<char, int> floor_by, unarmed_by;
     for (const auto& [sat, ls] : ctx.carry.clk_level.sat) {
         if (sat.empty()) continue;
+        const char cons = letterOfSat(sat);
         if (!ls.armed || !(ls.info > 0.0)) {
-            ++unarmed_by[sat[0]];
+            ++unarmed_by[cons];
             continue;
         }
         bool at_floor = false;
-        v_by[sat[0]].push_back(clockLevelVariance(ls.info, ctx.knobs.clv_floor_m,
-                                                  ctx.knobs.clv_ignition_var, &at_floor));
-        if (at_floor) ++floor_by[sat[0]];
+        v_by[cons].push_back(clockLevelVariance(ls.info, ctx.knobs.clv_floor_m,
+                                                ctx.knobs.clv_ignition_var, &at_floor));
+        if (at_floor) ++floor_by[cons];
     }
     for (auto& [cons, v] : v_by) {
         std::sort(v.begin(), v.end());

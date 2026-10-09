@@ -12,7 +12,6 @@
 
 #include "app/NetworkSetupResult.hpp"
 #include "common/PppObservation.hpp"
-#include "common/PppUtils.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkRunTypes.hpp"
@@ -48,6 +47,9 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  *        estimation state (only the trace's own reference-age bookkeeping and
  *        counters), and it does nothing unless one of the two traces is open.
  *        The caller keeps the subBegin/subEnd(SB_DDFRAC) brackets.
+ *
+ * The trace's wavelengths come from the identity layer (@c SignalId::wavelengthM,
+ * card NOM step N0b); GLONASS is excluded, so no FDMA slot is needed.
  */
 void networkDdFrac(
     NetworkRunContext& ctx,
@@ -60,7 +62,6 @@ void networkDdFrac(
     const Eigen::VectorXd& x_s,
     const NetworkSbasis::Plan& plan,
     const std::vector<StationAssembly>& asm_res,
-    const std::vector<int>& est_index_of,
-    const std::unique_ptr<PppUtils>& dd_ppp_utils);
+    const std::vector<int>& est_index_of);
 
 } // namespace GnssProcessor

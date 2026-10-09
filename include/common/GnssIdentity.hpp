@@ -47,7 +47,22 @@
  *
  * New types only: no existing call site reads them yet (step N0b migrates the call sites).
  * IRNSS has no @c System value: its letter 'I' maps to @c System::Unknown here, and
- * @ref SatId::parse refuses it, until N0b adds it to the enum.
+ * @ref SatId::parse refuses it.  Adding IRNSS to the enum is a user-side decision that
+ * card NOM leaves out of its scope (section 15).
+ *
+ * ### Step N0b additions (card NOM section 15)
+ *
+ * The small helpers the network call sites need to read these types in one line:
+ * @ref systemOfSat (the one place a satellite string's constellation is read until step
+ * N4 re-keys the containers by @ref SatId) and @ref letterOfSat (its RINEX letter, the
+ * key of the containers keyed by a constellation character), @ref rinexLetter and
+ * @ref systemName (the two renderings of a @c System), @ref constellationKey (the
+ * one-letter string key of the containers that stay string-keyed until N4),
+ * @ref obsTypeOf (the observation type of a code), @ref SignalId::wavelengthM and
+ * @ref ionoDelayMetresPerTecu (frequency-derived values, written so that each reproduces
+ * the expression it replaces bit for bit).  The letter reads (@ref systemFromLetter,
+ * @ref systemOfSat, @ref letterOfSat) are inline @c constexpr, like @ref traitsOf: they
+ * run per coupling term and per carried ambiguity.
  */
 
 #include "common/GnssTypes.hpp"    // System
@@ -211,7 +226,17 @@ namespace GnssProcessor {
      * @param letter The letter.
      * @return The constellation, or @c System::Unknown.
      */
-    System systemFromLetter(char letter);
+    constexpr System systemFromLetter(char letter) {
+        switch (letter) {
+        case 'G': return System::GPS;
+        case 'E': return System::Galileo;
+        case 'R': return System::GLONASS;
+        case 'C': return System::BeiDou;
+        case 'J': return System::QZSS;
+        case 'S': return System::SBAS;
+        default:  return System::Unknown;   // IRNSS 'I' included (no System value)
+        }
+    }
 
     /**
      * @brief The constellation of a name or a letter.
@@ -224,6 +249,77 @@ namespace GnssProcessor {
      * @return The constellation, or @c System::Unknown for anything else.
      */
     System systemFromName(std::string_view name_or_letter);
+
+    /**
+     * @brief The constellation of a satellite id string, read from its first character.
+     *
+     * The one place a satellite string's constellation is read, until step N4 re-keys the
+     * network's containers by @ref SatId: call sites that hold a satellite as a string
+     * ("G05") call this instead of testing @c sat[0] or @c sat.front() against a letter.
+     *
+     * Tolerant on purpose: only the first character is read, through
+     * @ref systemFromLetter (the single letter policy), so the non-normalized spellings
+     * "G 5" and "G5" read as GPS as "G05" does, and the rest of the string is not
+     * validated (@ref SatId::parse is the validating parser).  An empty string, a leading
+     * blank, a lower-case letter and every letter outside the table (IRNSS 'I' included)
+     * give @c System::Unknown, never GPS.
+     *
+     * @param sat The satellite id, e.g. "G05".
+     * @return The constellation, or @c System::Unknown.
+     */
+    constexpr System systemOfSat(std::string_view sat) {
+        return sat.empty() ? System::Unknown : systemFromLetter(sat.front());
+    }
+
+    /**
+     * @brief The RINEX satellite-id letter of a constellation.
+     *
+     * @param sys The constellation.
+     * @return @ref ConstellationTraits::letter: 'G', 'E', 'R', 'C', 'J', 'S'; '?' for
+     *         @c System::Unknown.
+     */
+    constexpr char rinexLetter(System sys) { return traitsOf(sys).letter; }
+
+    /**
+     * @brief The RINEX letter of a satellite id string's constellation: the key of the
+     *        containers keyed by a constellation character.
+     *
+     * Short for @c rinexLetter(systemOfSat(sat)), the read that replaced @c sat[0] at the
+     * network call sites.  It equals the id's first character for the six constellations
+     * of the traits table; an empty id and every letter outside the table (IRNSS 'I'
+     * included) give '?', so all of them share one group.  A call site that kept a
+     * separate value for an empty id tests @c sat.empty() itself.
+     *
+     * @param sat The satellite id, e.g. "G05".
+     * @return 'G', 'E', 'R', 'C', 'J', 'S', or '?'.
+     */
+    constexpr char letterOfSat(std::string_view sat) { return rinexLetter(systemOfSat(sat)); }
+
+    /**
+     * @brief The name of a constellation, as @c PppUtils::getSystemString and the
+     *        configuration spell it.
+     *
+     * @param sys The constellation.
+     * @return @ref ConstellationTraits::name: "GPS", "Galileo", "GLONASS", "BeiDou",
+     *         "QZSS", "SBAS"; "Unknown" for @c System::Unknown.  A pointer into the
+     *         constant table (static storage).
+     */
+    constexpr const char* systemName(System sys) { return traitsOf(sys).name; }
+
+    /**
+     * @brief The one-letter string key of a constellation ("G", "E", ...).
+     *
+     * A bridge for the containers that stay keyed by a constellation string until step N4
+     * re-keys them by @c System (maps keyed "G", composite keys such as "G|L1C").
+     * Rendered from @ref rinexLetter, so @c System::Unknown gives "?".  Equal to the
+     * first character of a satellite id for the six constellations of the table; for an
+     * empty id or a letter outside the table, @c constellationKey(systemOfSat(sat)) is
+     * "?" where the first character itself would have been "" or, for IRNSS, "I".
+     *
+     * @param sys The constellation.
+     * @return A one-character string.
+     */
+    std::string constellationKey(System sys);
 
     // =======================================================================
     // Frequencies
@@ -278,6 +374,21 @@ namespace GnssProcessor {
      * @return Wavelength in metres, or 0.0 where the frequency is 0.0.
      */
     double nominalWavelengthM(FrequencyBand band);
+
+    /**
+     * @brief Metres of first-order ionospheric delay per TECU on a carrier:
+     *        40.3 * 1e16 / f^2.
+     *
+     * One TEC unit is 1e16 electrons per square metre, and the first-order group delay is
+     * 40.3 TEC / f^2 metres.  The expression is evaluated term for term as the network
+     * code wrote it at each of its sites, @c 40.3 * 1.0e16 / (f * f), so that a site
+     * reading this function gets the same double bit for bit (the GPS L1 value,
+     * f = @ref nominalCarrierFrequencyHz of @c GpsL1, is about 0.1624 m per TECU).
+     *
+     * @param carrier_hz Carrier frequency (Hz), e.g. from @ref carrierFrequencyHz.
+     * @return Metres per TECU; not finite when @p carrier_hz is 0.0.
+     */
+    double ionoDelayMetresPerTecu(double carrier_hz);
 
     // =======================================================================
     // Satellite
@@ -354,6 +465,31 @@ namespace GnssProcessor {
     // =======================================================================
 
     /**
+     * @brief The observation type of a RINEX observation code, from its first character.
+     *
+     * Replaces the @c code[0] == 'C' and @c code[0] == 'L' tests.  Tolerant on purpose:
+     * only the first character is read, as those tests read it, so the text of an
+     * ionosphere-free pair ("C1C_C2W") reads as @c ObsType::Code.  A code whose
+     * constellation is known and whose form must be checked is parsed with
+     * @ref ObservableId::parse instead.
+     *
+     * @param code The code, e.g. "C1C" or "L2W".
+     * @return @c Code, @c Phase, @c Doppler or @c Snr for a first character 'C', 'L',
+     *         'D' or 'S'; @c ObsType::Unknown for any other character and for an empty
+     *         string.
+     */
+    constexpr ObsType obsTypeOf(std::string_view code) {
+        if (code.empty()) return ObsType::Unknown;
+        switch (code.front()) {
+        case 'C': return ObsType::Code;
+        case 'L': return ObsType::Phase;
+        case 'D': return ObsType::Doppler;
+        case 'S': return ObsType::Snr;
+        default:  return ObsType::Unknown;
+        }
+    }
+
+    /**
      * @brief A tracking signal of one constellation, such as GPS "1C": the band digit and
      *        the tracking attribute, without the observation type.
      *
@@ -400,6 +536,20 @@ namespace GnssProcessor {
          * @return @ref carrierFrequencyHz of @ref band.
          */
         double frequencyHz(int glo_slot) const { return carrierFrequencyHz(band(), glo_slot); }
+
+        /**
+         * @brief The carrier wavelength of the signal's band (m).
+         *
+         * Speed of light over @ref frequencyHz, the division @c PppUtils::getWavelength
+         * performs, so the two agree bit for bit wherever their frequencies agree (every
+         * classified signal except the BeiDou digit-1 I and Q signals, which N0a records).
+         *
+         * @param glo_slot GLONASS FDMA channel number k (read for the FDMA bands only; no
+         *                 default, see @ref carrierFrequencyHz).
+         * @return The free function @ref GnssProcessor::wavelengthM of @ref band; 0.0 for
+         *         a band the classifier does not list.
+         */
+        double wavelengthM(int glo_slot) const;
 
         /**
          * @brief The two-character rendering, "1C".

@@ -60,6 +60,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/SignalBand.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRobustStats.hpp"   // medianPolish2Way (robust two-way decomposition)
@@ -108,7 +109,7 @@ bool fastClockGeometricRange(const Model::Geometry& geom,
     double pr = 0.0;
     for (const auto& kv : ro.measurements) {
         const std::string& code = kv.first;
-        if (code.empty() || code[0] != 'C') continue;
+        if (obsTypeOf(code) != ObsType::Code) continue;
         const double v = kv.second;
         if (std::isfinite(v) && v > 1.0e6) { pr = v; break; }
     }
@@ -237,12 +238,12 @@ void networkFastClockHarvest(
             std::vector<Cand> cands;
             for (const auto& kv : po.observed) {
                 const std::string& code = kv.first;
-                if (code.empty() || code[0] != 'L') continue;
+                if (obsTypeOf(code) != ObsType::Phase) continue;
                 if (!ro.measurements.count(code)) continue;
                 const double cyc = ro.measurements.at(code);
                 if (!std::isfinite(cyc) || cyc == 0.0) continue;
-                const SignalClassification sc = classifySignalForSat(po.satellite, code);
-                cands.push_back({sc.band, code});
+                const auto sig = SignalId::fromObsCode(po.system, code);
+                cands.push_back({sig ? sig->band() : FrequencyBand::Unknown, code});
             }
             if (cands.empty()) continue;
             std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {

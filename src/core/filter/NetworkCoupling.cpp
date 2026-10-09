@@ -17,6 +17,7 @@
 #include "filter/NetworkSharedHistory.hpp"   // sharedHistoryRowTerms (card SCL2 X2)
 #include "config/GnssConfigTypes.hpp"    // GlobalVtecShConfig::q_per_degree (couplingQ)
 #include "filter/StateKeySchema.hpp"     // StateKeys::parseSatPhaseBiasKey (card 1d dump)
+#include "common/GnssIdentity.hpp"       // letterOfSat: a term's constellation letter
 
 #include <spdlog/spdlog.h>               // debug dump of card 1d (log->info)
 #include <fmt/format.h>                  // gauge-sum formatting in the card 1d dump
@@ -210,7 +211,7 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                 ++R.cpl_terms_departed;
                 if (carry_cpl_gauge && !cs.sat.empty()
                     && cs.kind != SharedParamKind::VtecSh)
-                    trunc[{cs.sat[0], static_cast<int>(cs.kind)}] += cs.coeff;
+                    trunc[{letterOfSat(cs.sat), static_cast<int>(cs.kind)}] += cs.coeff;
                 continue;
             }
             ++R.cpl_terms_present;
@@ -227,13 +228,13 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                     ++R.cpl_terms_shrunk;
                 }
                 ents.push_back(TuEnt{c, m, cs.coeff, cs.s_prev,
-                                     cs.sat.empty() ? '\0' : cs.sat[0],
+                                     cs.sat.empty() ? '\0' : letterOfSat(cs.sat),
                                      cs.kind});
                 continue;
             }
             if (buffer_all) {   // unshrunk, but routed through the buffer (card 1f)
                 ents.push_back(TuEnt{c, cs.coeff, cs.coeff, cs.s_prev,
-                                     cs.sat.empty() ? '\0' : cs.sat[0],
+                                     cs.sat.empty() ? '\0' : letterOfSat(cs.sat),
                                      cs.kind});
                 continue;
             }
@@ -292,7 +293,7 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
     // vector in the same way.
     const auto note_trunc = [&](const CoupledShared& cs) {
         if (carry_cpl_gauge && !cs.sat.empty() && cs.kind != SharedParamKind::VtecSh)
-            trunc[{cs.sat[0], static_cast<int>(cs.kind)}] += cs.coeff;
+            trunc[{letterOfSat(cs.sat), static_cast<int>(cs.kind)}] += cs.coeff;
     };
     for (const CoupledShared& cs : lc.coupling) {
         const Eigen::Index c = resolveSharedCol(cs);
@@ -338,13 +339,13 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
                 ++R.cpl_terms_shrunk;
             }
             ents.push_back(TuEnt{c, m, cs.coeff, cs.s_prev,
-                                 cs.sat.empty() ? '\0' : cs.sat[0],
+                                 cs.sat.empty() ? '\0' : letterOfSat(cs.sat),
                                  cs.kind});
             continue;
         }
         if (buffer_all) {   // unshrunk, but routed through the buffer (card 1f)
             ents.push_back(TuEnt{c, cs.coeff, cs.coeff, cs.s_prev,
-                                 cs.sat.empty() ? '\0' : cs.sat[0],
+                                 cs.sat.empty() ? '\0' : letterOfSat(cs.sat),
                                  cs.kind});
             continue;
         }
@@ -422,7 +423,7 @@ bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
             }
             continue;
         }
-        const char cc      = cs.sat.empty() ? '\0' : cs.sat[0];
+        const char cc      = cs.sat.empty() ? '\0' : letterOfSat(cs.sat);
         const bool is_clk  = (cs.kind == SharedParamKind::Clock);
         const Eigen::Index c = resolveSharedCol(cs);
         if (!(cs.p_prev > 0.0)) {
@@ -959,7 +960,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                 for (const auto& [col, d] : cpl_col2desc_dbg)
                     if (d.kind != SharedParamKind::VtecSh && col < Rc.A_s.cols()
                         && !d.sat.empty())
-                        gsum[d.sat[0]] += Rc.A_s(row, col);
+                        gsum[letterOfSat(d.sat)] += Rc.A_s(row, col);
                 std::string gs;
                 for (const auto& [cch, v] : gsum) gs += fmt::format("{}:{:+.3e} ", cch, v);
                 log->info("Network (Card 1d dbg): TOW {:.1f} sta {} cplrow {} local_col {}: "
