@@ -51,7 +51,7 @@
 #include <vector>
 
 #include "filter/NetworkNormalEquations.hpp"
-#include "filter/NetworkContributions.hpp"   // ContributionKind, SharedFoldLog (card NOM N2a)
+#include "filter/NetworkContributionKind.hpp"   // ContributionKind, SharedFoldLog (card NOM N2a)
 #include "products/NetworkProductEmitter.hpp"
 
 namespace spdlog { class logger; }
@@ -1145,7 +1145,7 @@ public:
      * @param gauges One sum-to-zero gauge per (satellite, signal) shared phase bias.
      */
     void setPhaseSumZeroGauges(std::vector<NetworkNormalEquations::SumZeroGauge> gauges) {
-        const TakenKind ck = takeContributionKind_();
+        const ContributionKind ck = takeContributionKind_();
         const long long n = static_cast<long long>(gauges.size());
         phase_sumzero_gauges_ = std::move(gauges);
         if (n > 0) noteFold_(ck, n);
@@ -1173,7 +1173,7 @@ public:
      * @param blocks One rank-K DD-prior block per component.
      */
     void setDdPriors(std::vector<NetworkNormalEquations::DdPriorBlock> blocks) {
-        const TakenKind ck = takeContributionKind_();
+        const ContributionKind ck = takeContributionKind_();
         const long long n = static_cast<long long>(blocks.size());
         dd_priors_ = std::move(blocks);
         if (n > 0) noteFold_(ck, n);
@@ -1316,16 +1316,14 @@ public:
      * @ref addSharedConstraintRows, @ref setPhaseSumZeroGauges, @ref setDdPriors) takes the
      * kind named here when it starts, and records it with its dimension in the epoch's
      * @ref sharedFoldLog when it folds.  The kind is consumed by that one call, so a fold
-     * whose site named none is recorded without a kind and counted on the table's integrity
-     * line rather than under a stale kind.  Independent of @ref attribTag, whose strings the
-     * RHS attribution reads unchanged.
+     * whose site named none is recorded as @c ContributionKind::Unset and counted on the
+     * table's integrity line rather than under a stale kind.  Independent of
+     * @ref attribTag, whose strings the RHS attribution reads unchanged (card NOM step N2b
+     * unifies the two).
      *
      * @param k The kind of the next fold.
      */
-    void contributionKind(ContributionKind k) {
-        contrib_kind_     = k;
-        contrib_kind_set_ = true;
-    }
+    void contributionKind(ContributionKind k) { contrib_kind_ = k; }
 
     /**
      * @brief Name one kind per row of the next @ref addSharedConstraintRows (the W6
@@ -1491,29 +1489,24 @@ private:
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
     std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< per-component invariant-carry DD priors (Card 4 (M1); empty = off, byte-identical)
-    /// The kind a fold site named for the next shared fold, taken by that fold (card NOM N2a).
-    struct TakenKind {
-        ContributionKind kind{ContributionKind::DataCode};  ///< The kind.
-        bool             set{false};                        ///< False: the site named none.
-    };
-    /// Take (and clear) the kind named by @ref contributionKind.
-    TakenKind takeContributionKind_() {
-        const TakenKind t{contrib_kind_, contrib_kind_set_};
-        contrib_kind_set_ = false;
-        return t;
+    /// Take the kind named by @ref contributionKind for this fold, and clear it (card NOM
+    /// N2a): @c Unset when the site named none.
+    ContributionKind takeContributionKind_() {
+        const ContributionKind k = contrib_kind_;
+        contrib_kind_ = ContributionKind::Unset;
+        return k;
     }
     /// Record one shared fold of dimension @p dim in @ref contrib_log_ (a replay's re-fold
     /// counts apart).
-    void noteFold_(TakenKind k, long long dim) {
+    void noteFold_(ContributionKind k, long long dim) {
         if (contrib_replay_) {
             ++contrib_log_.replay_folds;
             contrib_log_.replay_dim += dim;
             return;
         }
-        contrib_log_.folds.push_back(SharedFoldRecord{k.kind, k.set, dim});
+        contrib_log_.folds.push_back(SharedFoldRecord{k, dim});
     }
-    ContributionKind contrib_kind_{ContributionKind::DataCode};  ///< Kind named for the next shared fold (card NOM N2a).
-    bool contrib_kind_set_{false};                               ///< @ref contrib_kind_ is live.
+    ContributionKind contrib_kind_{ContributionKind::Unset};  ///< Kind named for the next shared fold (card NOM N2a); @c Unset when none.
     const std::vector<ContributionKind>* contrib_row_kinds_{nullptr};  ///< Per-row kinds for the next addSharedConstraintRows (not owned).
     bool contrib_replay_{false};                                 ///< Folds are a within-epoch replay's re-folds.
     SharedFoldLog contrib_log_;                                  ///< This epoch's shared folds (cleared by reset()).

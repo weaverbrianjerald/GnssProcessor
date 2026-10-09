@@ -293,7 +293,7 @@ void NetworkEstimator::reset() {
     // The contribution log is per epoch (card NOM N2a): read by the epoch tail, which runs
     // before the next epoch's reset.
     contrib_log_.clear();
-    contrib_kind_set_  = false;
+    contrib_kind_      = ContributionKind::Unset;
     contrib_row_kinds_ = nullptr;
     contrib_replay_    = false;
     epoch_open_ = false;
@@ -635,7 +635,7 @@ const Eigen::MatrixXd& NetworkEstimator::reducedSharedNormals() {
 }
 
 void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
-    const TakenKind ck = takeContributionKind_();
+    const ContributionKind ck = takeContributionKind_();
     if (priors.empty()) return;
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
@@ -856,7 +856,7 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
                                                   Eigen::VectorXd* lambda_diag,
                                                   bool clock_gauge_free,
                                                   bool require_closure) {
-    const TakenKind ck = takeContributionKind_();
+    const ContributionKind ck = takeContributionKind_();
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
     if (cov.rows() != nk || cov.cols() != nk) {
         throw std::invalid_argument(
@@ -896,7 +896,7 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
 }
 
 std::size_t NetworkEstimator::addCloneWalk(const std::vector<CloneWalk>& walks, double sign) {
-    const TakenKind ck = takeContributionKind_();
+    const ContributionKind ck = takeContributionKind_();
     if (walks.empty()) return 0;
     // Like withdrawSharedPrior, the call may follow solve(): card Q3's refloat withdraws a
     // factor and, when its re-solve throws, folds it back before restoring the solve.
@@ -947,7 +947,7 @@ std::size_t NetworkEstimator::addCloneWalk(const std::vector<CloneWalk>& walks, 
 std::size_t NetworkEstimator::addCloneWalkJoint(const std::vector<CloneWalk>& walks,
                                                 const Eigen::MatrixXd& Qw, double sign) {
     if (Qw.size() == 0) return addCloneWalk(walks, sign);   // takes the kind itself
-    const TakenKind ck = takeContributionKind_();
+    const ContributionKind ck = takeContributionKind_();
     if (walks.empty()) return 0;
     if (!epoch_open_) {
         throw std::logic_error("NetworkEstimator::addCloneWalkJoint: call beginEpoch() first");
@@ -1070,7 +1070,7 @@ bool NetworkEstimator::cloneConditional(const Datum& datum, Eigen::MatrixXd& K,
 
 std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
     const std::vector<SharedPrior>& priors, bool require_closure) {
-    const TakenKind ck = takeContributionKind_();
+    const ContributionKind ck = takeContributionKind_();
     if (priors.empty()) return 0;
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
@@ -1155,7 +1155,7 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
 std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
     const std::vector<SharedPrior>& priors, const std::set<std::string>& drop_sats,
     bool restore, bool require_closure) {
-    const TakenKind ck = takeContributionKind_();
+    const ContributionKind ck = takeContributionKind_();
     if (priors.empty() || drop_sats.empty()) return 0;
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
@@ -1244,7 +1244,7 @@ std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
 }
 
 void NetworkEstimator::withdrawSharedPrior(const std::vector<SharedPrior>& priors) {
-    const TakenKind ck = takeContributionKind_();
+    const ContributionKind ck = takeContributionKind_();
     if (priors.empty()) return;
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
@@ -1269,7 +1269,7 @@ std::size_t NetworkEstimator::refoldSharedPriorDenseDroppingClocks(
     const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
     const std::set<std::string>& drop_sats, bool restore, bool clock_gauge_free,
     bool require_closure) {
-    const TakenKind ck = takeContributionKind_();
+    const ContributionKind ck = takeContributionKind_();
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
     if (cov.rows() != nk || cov.cols() != nk) {
         throw std::invalid_argument(
@@ -1323,7 +1323,7 @@ std::size_t NetworkEstimator::refoldSharedPriorDenseDroppingClocks(
 void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
                                                const Eigen::VectorXd& z,
                                                double weight) {
-    const TakenKind ck = takeContributionKind_();
+    const ContributionKind ck = takeContributionKind_();
     const std::vector<ContributionKind>* row_kinds = contrib_row_kinds_;
     contrib_row_kinds_ = nullptr;
     if (H.cols() != numShared() || H.rows() != z.size()) {
@@ -1345,7 +1345,7 @@ void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
             if (it == per_kind.end()) per_kind.emplace_back(k, 1);
             else                      ++it->second;
         }
-        for (const auto& [k, n] : per_kind) noteFold_(TakenKind{k, true}, n);
+        for (const auto& [k, n] : per_kind) noteFold_(k, n);
         return;
     }
     noteFold_(ck, static_cast<long long>(H.rows()));

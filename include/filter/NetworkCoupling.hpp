@@ -76,7 +76,8 @@ struct PendCplRow {
     /// The row's contribution tag (card NOM N2a): @c CouplingScalar on a scalar row, the
     /// primary column's block kind on a whitened block row, with that column's identity.
     /// @ref CouplingRowBuilder::appendCouplingRows appends it to @c StationAssembly::row_tags
-    /// in lockstep with the row.
+    /// in lockstep with the row.  Default @c Unset: a row no builder tagged is caught by
+    /// the tag check (@c checkStationTags).
     RowTag tag{};
 };
 
@@ -162,8 +163,9 @@ struct LocalBlockCol {
  *        (card NOM N2a): from the column's family flags, the ones the builder's telemetry
  *        already reads.
  * @param c The block column.
- * @return @c BlockZwd, @c BlockIono, @c BlockRxClock (an ISB included), @c BlockRxCodeBias,
- *         @c BlockPhaseColour, or @c BlockAmbiguity for a column with no flag.
+ * @return @c BlockZwdCarry, @c BlockIonoCarry, @c BlockRxClockCarry (an ISB included),
+ *         @c BlockRxCbCarry, @c BlockPhaseColourCarry, or @c BlockAmbiguityCarry for a
+ *         column with no flag.
  */
 ContributionKind localBlockColKind(const LocalBlockCol& c);
 

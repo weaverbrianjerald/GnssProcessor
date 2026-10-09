@@ -11,16 +11,18 @@
  * blocks, birth rows) with diagonal priors beside it, and the shared border receives
  * constraint rows, priors in three forms, pins, gauges and DD blocks.  Until this step a
  * reader that needed to know what a row was inferred it: from a coefficient magnitude, a
- * column's label prefix, a row's position after @c cpl_row_start (seven inference
- * schemes, card NOM section 16).  Here each family is declared once, with its channel,
- * its stage relative to the rank gate, its subject, the parameter kinds it touches, its
- * weight source and its builder, and every row and fold carries its kind from the site
- * that creates it.
+ * column's label prefix, or a row's position after @c cpl_row_start (card NOM section
+ * 3.4).  Here each family is declared once, with its channel, its stage relative to the
+ * rank gate, its subject, its unit, the parameter kinds it touches, its weight source and
+ * its builder, and every row and fold carries its kind from the site that creates it.
+ * The run-start table "contributions as armed" prints every declared family, a zero
+ * included, so the table is the inventory.
  *
  * ### The vocabulary
  *
- *  - @ref ContributionKind: one value per family (57), grouped as card NOM section 17
- *    lists them; @ref contributionSpec gives each its @ref ContributionSpec.
+ *  - @ref ContributionKind (filter/NetworkContributionKind.hpp, the half the estimator
+ *    includes): one value per family, and @c Unset, the default of every tag.
+ *    @ref contributionSpec gives each family its @ref ContributionSpec.
  *  - @ref RowTag: the plain tag of one row of a station block (kind, satellite, signal).
  *    @c StationAssembly holds one per row of @c A_r / @c A_s (@c row_tags), one per entry
  *    of each diagonal prior channel (@c carry_tags, @c prior_tags) and the tags of the
@@ -34,17 +36,20 @@
  * ### The pieces, in the order an epoch passes through them
  *
  *  1. PASS B (parallel produce): every site that appends rows to a station block appends
- *     one tag per row in lockstep (@c networkSplitStation_'s data rows through
- *     @ref tagDataRows, the pins, the GLONASS anchors, the SH and GIM ties, the SD-EWL
- *     rows, the coupling and whitened block rows through @c CouplingRowBuilder, the LGM
- *     birth rows), and every diagonal prior entry carries its tag through the sort and
- *     the coalesce.
+ *     one tag per row in lockstep (@c networkSplitStation_'s data rows, tagged by the
+ *     split itself in its weight passes, the pins, the GLONASS anchors, the SH and GIM
+ *     ties, the SD-EWL rows, the coupling and whitened block rows through
+ *     @c CouplingRowBuilder, the LGM birth rows), and every diagonal prior entry carries
+ *     its tag through the sort and the coalesce.
  *  2. The end of PASS B (serial): @ref networkContributionsStationDrain counts the rows
  *     and entries of the stations the estimator took, per kind, and checks every
- *     assembled station's tag vectors against its rows (the integrity line).
+ *     assembled station's tags (@ref checkStationTags: present, set, in place, and in
+ *     agreement with the builders' own counters).
  *  3. The solve glue: every shared fold names its kind before the call; a within-epoch
  *     RAIM replay re-folds on a fresh arrowhead under the estimator's replay flag, and
- *     its re-folds are counted apart, so the table describes the primary build.
+ *     its re-folds are counted apart, so the table describes the primary build.  A
+ *     replay that re-whitens a station's coupling rows stores the rebuilt block's tags
+ *     (@c NetworkContributionLedger::replay_row_tags).
  *  4. The epoch tail (@ref networkContributionsEpochTail, the driver's one call): adds
  *     the epoch's shared folds, the clock pivots of the last solve and the gauges,
  *     merges the epoch into the run and writes the table once after the first emitted
@@ -55,15 +60,16 @@
  * behaviour classes, no virtual dispatch.
  */
 
-#include "common/GnssIdentity.hpp"   // SatId, SignalId, System
+#include "common/GnssIdentity.hpp"              // SatId, SignalId, System
+#include "filter/NetworkContributionKind.hpp"   // ContributionKind, SharedFoldLog
 
 #include <Eigen/Core>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -73,12 +79,11 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
     // filter/NetworkParamRegistry.hpp declares it; that header includes the estimator,
-    // which includes this one, so the scoped enum is declared opaquely here (its fixed
-    // underlying type makes it complete).
+    // which includes filter/NetworkContributionKind.hpp, so the scoped enum is declared
+    // opaquely here (its fixed underlying type makes it complete).
     enum class NetworkParamKind : int;
 
     class NetworkEstimator;
-    class StateManager;
     struct CplRowRaw;
     struct NetworkConfig;
     struct NetworkRunContext;
@@ -86,100 +91,8 @@ namespace GnssProcessor {
     struct StationAssembly;
 
     // =======================================================================
-    // The kinds and their declarations
+    // The declarations
     // =======================================================================
-
-    /**
-     * @brief One value per family of contribution to the normal equations, in the order
-     *        of the declaration table (card NOM section 17's grouping).
-     *
-     * Against the inventory of card NOM section 16 (table B, 32 families): no family is
-     * merged; these are split, one kind per value a reader has to tell apart:
-     *  - B5/B6 (pins): the phase-datum ambiguity pins, and the eq34 receiver phase-bias
-     *    pin, rank floor and time link (four kinds);
-     *  - B7 (GLONASS anchors): the per-slot IFB anchors and the slant-ionosphere anchors;
-     *  - B11 (coupling rows): the scalar rows (card 1) and the jointly whitened rows
-     *    (card 1b);
-     *  - B12 (whitened local block): one kind per family of the block's primary column;
-     *  - B13 (LGM rows): the birth rows and the backstop rows;
-     *  - B14 (diagonal local priors): one kind per family, and B15 the receiver DCB
-     *    datum on the pre-PD channel apart from the same rows on the post-PD channel;
-     *  - B16 (W6 code-bias datum stack): one kind per row type (eight);
-     *  - B22 to B30 and B25 (the border carry in its diagonal, gauge-free and dense
-     *    forms; the clones' isolated priors and their walks; the shared history).
-     * The clone path's dense fold (the border carry with a clone standing in for a
-     * clock) is the dense border carry's kind: the family is the carried border, the
-     * clone only moves which column a clock entry lands on.
-     */
-    enum class ContributionKind : std::uint8_t {
-        // --- Station data rows -------------------------------------------------------
-        DataCode = 0,          ///< Code rows of the latched code signal.
-        DataCodeCompanion,     ///< Code rows of a second code channel through a receiver inter-signal state (card SCC).
-        DataPhase,             ///< Phase rows of the latched phase signal.
-        DataPhaseSecond,       ///< Phase rows of a second phase channel (card SID phase 6a).
-        // --- Station constraint rows -------------------------------------------------
-        AmbiguityPin,          ///< Phase-datum pins on the station's anchored ambiguities (legacy pivot, prioritized, eq34 tree edges).
-        Eq34RpbPin,            ///< The eq34 datum receiver's receiver phase-bias pin.
-        Eq34RpbRankFloor,      ///< The eq34 zero-mean receiver phase-bias rank floor.
-        Eq34RpbTimeLink,       ///< The eq34 receiver phase-bias time link toward the carried value.
-        GloIfbAnchor,          ///< Zero-mean anchor rows on the GLONASS per-slot receiver IFB columns.
-        GloIonoAnchor,         ///< Zero-mean anchor rows on the GLONASS slant-ionosphere columns.
-        ShIonoTie,             ///< Slant-ionosphere to SH-VTEC tie rows (whitened per constellation).
-        GimIono,               ///< External GIM slant-ionosphere rows (whitened per constellation).
-        SdEwl,                 ///< Between-satellite single-differenced EWL rows (whitened per constellation).
-        // --- Station block rows ------------------------------------------------------
-        CouplingScalar,        ///< A carried local column's conditional coupling row, +1 on the column (card 1).
-        CouplingJoint,         ///< The station's coupling rows whitened jointly (card 1b).
-        BlockAmbiguity,        ///< Whitened local block row whose primary column is an ambiguity (F3).
-        BlockZwd,              ///< Whitened local block row whose primary column is the wet delay (B9-in-block).
-        BlockIono,             ///< Whitened local block row whose primary column is a slant ionosphere (I-in-block).
-        BlockRxClock,          ///< Whitened local block row whose primary column is the receiver clock or an ISB (RX-CLK-in-block).
-        BlockRxCodeBias,       ///< Whitened local block row whose primary column is a receiver code bias (RXCB-IN-BLOCK).
-        BlockPhaseColour,      ///< Whitened local block row whose primary column is a phase colour (card LGM).
-        PhaseColourBirth,      ///< The stationary prior row of a phase-colour column with no live carry (card LGM).
-        PhaseColourBackstop,   ///< The stationary prior row of a carried phase-colour column whose carry did not fold (card LGM).
-        // --- Station priors (diagonal channels) --------------------------------------
-        PriorAmbiguity,        ///< Diagonal carried prior on an ambiguity (leveling carry, diagonal route).
-        PriorZwd,              ///< Diagonal carried prior on the wet delay (B9).
-        PriorIono,             ///< Diagonal carried prior on a slant ionosphere (QUEUE 8b).
-        PriorRxCodeBias,       ///< Diagonal carried prior on a receiver code bias (rx-CB carry).
-        PriorOraclePin,        ///< Simulation-only oracle ambiguity pin (diagonal).
-        PriorRxcbDatum,        ///< Zero-mean receiver DCB datum on the post-PD channel (RXCB-DATUM, pre-PD routing off).
-        PriorRxcbDatumPrePd,   ///< Zero-mean receiver DCB datum on the pre-PD channel (RXCB-DATUM, network.station_prior_before_pd).
-        // --- Shared rows -------------------------------------------------------------
-        CbIfPin,               ///< W6 code-bias datum: the per-satellite ionosphere-free pin row.
-        CbSatGfPair,           ///< W6 code-bias datum: the per-satellite geometry-free pair row (sat_gf_datum).
-        CbExtraBandHeld,       ///< W6 code-bias datum: an extra-band column held at its own level (B5D).
-        CbExtraGf,             ///< W6 code-bias datum: an extra signal's geometry-free row (ISC asserted zero, RF-0d).
-        CbGfPin,               ///< W6 code-bias datum: the slant posture's geometry-free pin row.
-        CbFamilyGf,            ///< W6 code-bias datum: a secondary family's geometry-free row (FAMILY-GF).
-        CbIfLevel,             ///< W6 code-bias datum: the per-constellation ionosphere-free level row (RF-0e e1).
-        CbSumToZero,           ///< W6 code-bias datum: the (constellation, signal) sum-to-zero row.
-        ClockConstraintRows,   ///< Constraint-realized clock datum rows (sum-to-zero or broadcast-anchored).
-        SbasisCompletion,      ///< S-basis completion rows on the directions the declared datum misses (SBC).
-        // --- Shared priors -----------------------------------------------------------
-        CbKaula,               ///< Loose physical-bound prior on the satellite code biases (card KP).
-        PbHeal,                ///< Drop-and-heal prior on a near-null phase-bias direction (the rank gate's response).
-        ShPrior,               ///< Carried SH-VTEC prior.
-        PhaseHold,             ///< Phase-bias hold prior (ensemble datum).
-        PinBridge,             ///< eq34 pin bridge on an unpinned key (reattach hygiene).
-        BorderCarryDiagonal,   ///< The border carry, diagonal form (D2, and the dense fold's leftovers).
-        BorderCarryGaugeFree,  ///< The border carry, diagonal with the clock common mode downdated (card Q3 gauge-free fold).
-        BorderCarryDense,      ///< The border carry, dense information block (C1; the clone path's stand-in block included).
-        Q3Refold,              ///< The clock-anchor guard's withdrawals and refolds before its re-solve (card Q3).
-        ClonePrior,            ///< Isolated priors on idle clones (card SCL / BCL).
-        CloneWalk,             ///< Clone walk factors (card SCL / PFQ).
-        SharedHistory,         ///< N(0, 1) priors on the shared-history columns (card SCL2 X2).
-        ClockOscillator,       ///< Two-state clock-model prior on the satellite clocks.
-        ColdClockAnchor,       ///< A-priori satellite-clock anchor (cold-start conditioning).
-        // --- Pins, gauges, DD blocks -------------------------------------------------
-        ClockPivotPin,         ///< Per-constellation clock pivot pins (Dirichlet, in the solve).
-        EnsemblePhaseGauge,    ///< Ensemble sum-to-zero phase-bias gauges (fix A).
-        DdPriorBlock,          ///< Card-4 DD prior blocks (carry_invariant).
-    };
-
-    /// Number of @ref ContributionKind values (the table's size).
-    inline constexpr std::size_t kContributionKinds = 57;
 
     /**
      * @brief The channel a contribution enters the normal equations through.
@@ -225,13 +138,28 @@ namespace GnssProcessor {
         None,                  ///< Network-wide (SH coefficients, a whole datum, a DD block).
     };
 
+    /**
+     * @brief What the table's count column counts for a kind: the unit of
+     *        @c ContributionCount::count.
+     */
+    enum class ContributionUnit : std::uint8_t {
+        Rows = 0,  ///< Rows of a station block, or constraint rows handed to a shared fold.
+        Entries,   ///< Entries of a diagonal station prior channel (a merged entry counts under its own kind).
+        Keys,      ///< Border keys handed to a shared prior fold (a key absent from this epoch's layout is skipped by the fold, not by the count).
+        Walks,     ///< Clone walk factors handed to a fold (one per border key and its clone).
+        Pins,      ///< Clock pivot pins of the last primary solve.
+        Gauges,    ///< Ensemble phase-bias gauges set for the solve.
+        Blocks,    ///< DD prior blocks set for the solve.
+    };
+
     /// A set of @c NetworkParamKind values, one bit per kind (bit = the kind's value).
     using ParamKindSet = std::uint32_t;
 
     /**
      * @brief The declaration of one contribution family: one row of the table.
      *
-     * Every text was checked against the code it names (card NOM N2a).
+     * Every text was checked against the code it names (card NOM N2a), every knob path
+     * against the loader.
      */
     struct ContributionSpec {
         ContributionKind    kind;            ///< The family.
@@ -239,21 +167,24 @@ namespace GnssProcessor {
         ContributionChannel channel;         ///< Where it enters the normal equations.
         ContributionStage   stage;           ///< When, relative to the rank gate.
         ContributionSubject subject;         ///< What one instance is about.
+        ContributionUnit    unit;            ///< What the count column counts.
         ParamKindSet        params;          ///< The parameter kinds its rows or folds touch.
         const char*         weight;          ///< The weight source: the knob or the named constant.
         const char*         builder;         ///< The function (and file) that builds it.
         bool                is_observation;  ///< True for rows of this epoch's observations.
+        const char*         note;            ///< How the count reads where the unit alone does not say (printed after the builder), or null.
     };
 
     /**
-     * @brief The declaration table: one entry per kind, in enum order.
+     * @brief The declaration table: one entry per kind, in enum order (checked at compile
+     *        time).
      * @return The table (static storage).
      */
     const std::array<ContributionSpec, kContributionKinds>& contributionSpecs();
 
     /**
      * @brief The declaration of a kind.
-     * @param k The kind.
+     * @param k The kind (@c Unset, or a value out of range, returns the first entry).
      * @return Its table entry (static storage).
      */
     const ContributionSpec& contributionSpec(ContributionKind k);
@@ -261,7 +192,7 @@ namespace GnssProcessor {
     /**
      * @brief The name of a kind.
      * @param k The kind.
-     * @return @c contributionSpec(k).name, e.g. "data_code".
+     * @return @c contributionSpec(k).name, e.g. "data_code"; "unset" for @c Unset.
      */
     const char* contributionKindName(ContributionKind k);
 
@@ -289,12 +220,28 @@ namespace GnssProcessor {
     const char* contributionSubjectName(ContributionSubject s);
 
     /**
+     * @brief The name of a unit.
+     * @param u The unit.
+     * @return "rows", "entries", "keys", "walks", "pins", "gauges" or "blocks".
+     */
+    const char* contributionUnitName(ContributionUnit u);
+
+    /**
      * @brief Does a family touch a parameter kind?
      * @param spec The family's declaration.
      * @param k    The parameter kind.
      * @return True when @p k is in @c spec.params.
      */
     bool contributionTouches(const ContributionSpec& spec, NetworkParamKind k);
+
+    /**
+     * @brief Is a kind one that @c CouplingRowBuilder::appendCouplingRows appends, so that
+     *        its rows sit in a station block's coupling region (rows @c cpl_row_start to
+     *        @c cpl_row_start + @c cpl_row_local_cols.size())?
+     * @param k The kind.
+     * @return True for @c CouplingScalar, @c CouplingJoint and the six @c Block*Carry kinds.
+     */
+    bool contributionInCouplingRegion(ContributionKind k);
 
     /**
      * @brief The parameter kinds of a set, by their registry names.
@@ -313,12 +260,13 @@ namespace GnssProcessor {
      *
      * The subject the family declares: the satellite and the signal where it has them,
      * default (invalid) values otherwise.  A whitened row carries the identity of the
-     * input row on the diagonal of L⁻¹ (its primary row).
+     * input row on the diagonal of L⁻¹ (its primary row).  A default tag is @c Unset, so a
+     * row no site named is caught by the tag check rather than read as a data row.
      */
     struct RowTag {
-        ContributionKind kind{ContributionKind::DataCode};  ///< The family.
-        SatId            sat{};                             ///< The satellite, where the subject has one.
-        SignalId         signal{};                          ///< The signal, where the subject has one.
+        ContributionKind kind{ContributionKind::Unset};  ///< The family.
+        SatId            sat{};                          ///< The satellite, where the subject has one.
+        SignalId         signal{};                       ///< The signal, where the subject has one.
     };
 
     /**
@@ -344,82 +292,78 @@ namespace GnssProcessor {
     RowTag makeRowTag(ContributionKind kind, System sys, std::string_view code);
 
     /**
-     * @brief The tag of a row or prior on a receiver phase bias, from its key
-     *        ("GPS_RPB_L2W", @c StateKeys::makeReceiverPhaseBiasKey).
+     * @brief The signal of a receiver phase-bias key ("GPS_RPB_L2W",
+     *        @c StateKeys::makeReceiverPhaseBiasKey).
+     * @param key The key.
+     * @return The signal; default (invalid) for a key that does not parse.
+     */
+    SignalId rxPhaseBiasSignal(std::string_view key);
+
+    /**
+     * @brief The signal of a receiver code-bias key: the signal of an inter-signal state
+     *        ("GPS_ISC_C1C"); none for a DCB or an IFB key, whose subject is a band pair or
+     *        a band, not a signal.
+     * @param key The key.
+     * @return The signal; default (invalid) when the key names none.
+     */
+    SignalId rxCodeBiasSignal(std::string_view key);
+
+    /**
+     * @brief The tag of a row or prior on a receiver phase bias, from its key.
      * @param kind The family.
      * @param key  The receiver phase-bias key.
-     * @return The tag with the key's signal; no signal for a key that does not parse.
+     * @return The tag with @ref rxPhaseBiasSignal of the key and no satellite.
      */
     RowTag rxPhaseBiasTag(ContributionKind kind, std::string_view key);
 
     /**
-     * @brief The tag of a row or prior on a receiver code bias, from its key: the signal of
-     *        an inter-signal state ("GPS_ISC_C1C"); none for a DCB or an IFB key, whose
-     *        subject is a band pair or a band, not a signal.
+     * @brief The tag of a row or prior on a receiver code bias, from its key.
      * @param kind The family.
      * @param key  The receiver code-bias key.
-     * @return The tag.
+     * @return The tag with @ref rxCodeBiasSignal of the key and no satellite.
      */
     RowTag rxCodeBiasTag(ContributionKind kind, std::string_view key);
 
     /**
-     * @brief The signals of a station's receiver inter-signal states (card SCC): the code
-     *        rows of these signals route through such a state rather than the per-band DCB.
+     * @brief Tag the data rows of a station block before the split's weight passes: one
+     *        tag per row of the measurement update.
      *
-     * The test the second-code weight pass of @c networkSplitStation_ applies, read from the
-     * state set (the states @c StateInitializer::resolveReceiverBias allocated), so a tag
-     * and a weight cannot disagree about which rows are companions.
+     * A phase row is @c DataPhase and any other row @c DataCode, with the row's satellite
+     * and signal.  @c networkSplitStation_ calls this, then changes a row's kind in the
+     * weight pass that decides it (@c DataCodeCompanion in the second-code pass,
+     * @c DataPhaseSecond in the second-phase pass), so a tag and a weight cannot disagree.
+     * A row past the end of the identity vectors (an asserted invariant says there is
+     * none) is tagged @c DataCode with no identity, so the tag vector stays aligned.
      *
-     * @param sm The station's state manager.
-     * @return The code signals ("C1C") with a "<system>_ISC_<signal>" state.
-     */
-    std::set<std::string> receiverIscSignals(const StateManager& sm);
-
-    /**
-     * @brief Tag the data rows of a station block: one tag per row of the measurement update.
-     *
-     * The kind follows the weight passes of @c networkSplitStation_: a phase row is
-     * @c DataPhaseSecond when its (satellite, signal) is in the second-phase cell set and
-     * @c DataPhase otherwise; any other row is @c DataCodeCompanion when the second code
-     * channel is active and its signal routes through a receiver inter-signal state, and
-     * @c DataCode otherwise.  A row past the end of the identity vectors (an asserted
-     * invariant says there is none) is tagged @c DataCode with no identity, so the tag
-     * vector stays aligned.
-     *
-     * @param tags      The station's tag vector; cleared, then filled with @p m tags.
-     * @param m         Rows of the measurement update (@c em.H.rows()).
-     * @param sats      The rows' satellites (@c em.satellite_ids).
-     * @param sigs      The rows' observation codes (@c em.signal_types).
-     * @param isc_sigs  @ref receiverIscSignals of the station, or null when the second code
-     *                  channel is not active.
-     * @param spc_cells The station's second-phase cells (@c StateKeys::makeSatPhaseBiasKey).
+     * @param tags The station's tag vector; cleared, then filled with @p m tags.
+     * @param m    Rows of the measurement update (@c em.H.rows()).
+     * @param sats The rows' satellites (@c em.satellite_ids).
+     * @param sigs The rows' observation codes (@c em.signal_types).
      */
     void tagDataRows(std::vector<RowTag>& tags, Eigen::Index m,
                      const std::vector<std::string>& sats,
-                     const std::vector<std::string>& sigs,
-                     const std::set<std::string>* isc_sigs,
-                     const std::set<std::string>& spc_cells);
+                     const std::vector<std::string>& sigs);
 
     /**
      * @brief The tags of a station block after a within-epoch refloat re-whitens its
      *        jointly whitened coupling rows (card 1b): the rows before the coupling block,
      *        then the kept coupling rows' tags.
      *
-     * The keep rule is @c whitenCouplingRows's: a row survives when its local column is not
-     * in @p skip.  On a failed re-whiten the caller appends no coupling row, and @p nk is 0.
+     * The kept rows are the ones @c whitenCouplingRows reports, so the keep rule exists
+     * once.  On a failed re-whiten the caller appends no coupling row, and @p nk is 0.
      *
      * @param tags The station's tags (aligned with its primary block).
      * @param nd   Rows before the coupling block (@c cpl_row_start).
      * @param raw  The coupling rows' pre-whitening ingredients (@c cpl_raw), with their tags.
-     * @param skip The refloated local columns.
-     * @param nk   Coupling rows the re-whiten produced.
-     * @return The tags of the rebuilt block (size @p nd + @p nk when @p nk matches the kept
-     *         rows; the caller compares the size with its rows).
+     * @param kept Indices into @p raw of the rows the re-whiten kept, in output order.
+     * @param nk   Coupling rows the re-whiten produced (0 when it failed).
+     * @return The tags of the rebuilt block (size @p nd + @p nk when @p kept covers the
+     *         produced rows; the caller compares the size with its rows).
      */
     std::vector<RowTag> rowTagsAfterJointRewhiten(const std::vector<RowTag>& tags,
                                                   Eigen::Index nd,
                                                   const std::vector<CplRowRaw>& raw,
-                                                  const std::set<Eigen::Index>& skip,
+                                                  const std::vector<Eigen::Index>& kept,
                                                   Eigen::Index nk);
 
     /**
@@ -431,35 +375,43 @@ namespace GnssProcessor {
      */
     long long untaggedRows(const StationAssembly& R);
 
-    // =======================================================================
-    // The shared folds of one epoch (written by the estimator)
-    // =======================================================================
-
     /**
-     * @brief One shared fold of the primary build: its kind (when the site named one) and
-     *        its dimension (the priors, keys, rows, walks, gauges or blocks handed in).
+     * @brief The result of @ref checkStationTags on one assembled station block.  Each
+     *        count is 0 on a block whose tags are complete and right.
      */
-    struct SharedFoldRecord {
-        ContributionKind kind{ContributionKind::DataCode};  ///< The kind the site named.
-        bool             has_kind{false};                   ///< False: the site named none (the integrity line counts it).
-        long long        dim{0};                            ///< The fold's dimension.
+    struct StationTagCheck {
+        long long untagged{0};    ///< @ref untaggedRows.
+        long long unset{0};       ///< Tags (rows and diagonal entries) whose kind is @c Unset or out of range.
+        long long misplaced{0};   ///< Tags whose kind does not belong where the tag sits (see @ref checkStationTags).
+        long long mismatches{0};  ///< Builder counters that disagree with the tags' per-kind counts.
     };
 
     /**
-     * @brief The shared folds of one epoch, kept by the estimator and cleared by its
-     *        @c reset().
+     * @brief Check one assembled station block's tags against its rows and its builders.
+     *
+     * Four checks, each counted on its own integrity line of the table:
+     *  - present: @ref untaggedRows;
+     *  - set: no tag is @c Unset;
+     *  - in place: the split's data rows (rows @c 0 to @c n_data_rows) carry the
+     *    observation kinds and no other row does; the coupling region (rows
+     *    @c cpl_row_start to @c cpl_row_start + @c cpl_row_local_cols.size()) carries the
+     *    kinds of @ref contributionInCouplingRegion and no other row does; every tag's kind
+     *    belongs to the channel of its vector (@c row_tags: station rows; @c carry_tags and
+     *    @c carry_merged: the post-PD prior; @c prior_tags and @c prior_merged: the pre-PD
+     *    prior);
+     *  - counted: the tags' per-kind counts (rows and entries built, folded or not) agree
+     *    with the builders' own counters: @c ambiguity_pin + @c eq34_rpb_pin with @c np,
+     *    @c phase_colour_birth with @c pc_birth_rows, @c phase_colour_backstop with
+     *    @c pc_backstop_rows, the six @c block_*_carry kinds with @c pl_blk_rows, @c sd_ewl
+     *    with @c sd_ewl_rows (the SD-EWL builder's @c rows_built this station-epoch),
+     *    @c prior_ambiguity_oracle_pin with @c opin_rows, and @c prior_rx_cb_datum +
+     *    @c prior_rx_cb_datum_pre_pd with @c pl_cb_datum_rows (one mismatch per counter
+     *    that disagrees).
+     *
+     * @param R The station's assembly (assembled: @c ok and not @c threw).
+     * @return The counts.
      */
-    struct SharedFoldLog {
-        std::vector<SharedFoldRecord> folds;  ///< The primary build's folds, in call order.
-        long long replay_builds{0};           ///< Within-epoch replay builds (fresh arrowheads).
-        long long replay_folds{0};            ///< Shared re-folds made by those builds.
-        long long replay_dim{0};              ///< Their summed dimension.
-        long long pins{0};                    ///< Clock pivot pins of the last primary solve.
-        bool      solved{false};              ///< A primary solve ran this epoch.
-
-        /// Empty the log (a new epoch).
-        void clear() { *this = SharedFoldLog{}; }
-    };
+    StationTagCheck checkStationTags(const StationAssembly& R);
 
     /**
      * @brief The outcome of the GIM ionosphere row builder on one station-epoch (card NOM
@@ -468,7 +420,7 @@ namespace GnssProcessor {
     enum class GimRowsOutcome : std::uint8_t {
         NotCalled = 0,  ///< The builder did not run for the station.
         NoGim,          ///< No GIM is loaded (the W6-none setup never builds one).
-        WeightingOff,   ///< estimation.ionosphere_weighting is off.
+        WeightingOff,   ///< estimation.ionosphere_weighting.enable is off.
         NoRows,         ///< Ran, and no line of sight qualified.
         Appended,       ///< Appended rows.
     };
@@ -478,12 +430,11 @@ namespace GnssProcessor {
     // =======================================================================
 
     /**
-     * @brief One kind's count: rows (station rows, diagonal prior entries, or the summed
-     *        dimension of shared folds) and folds (station blocks carrying the kind, or
-     *        shared fold calls).
+     * @brief One kind's count: the count in the kind's unit (@ref ContributionUnit) and the
+     *        folds (station blocks carrying the kind, or shared fold calls).
      */
     struct ContributionCount {
-        long long rows{0};   ///< Rows, entries or folded dimension.
+        long long count{0};  ///< Rows, entries, keys, walks, pins, gauges or blocks (the kind's unit).
         long long folds{0};  ///< Station blocks or fold calls.
     };
 
@@ -495,9 +446,12 @@ namespace GnssProcessor {
         long long epochs{0};                  ///< Epochs tallied (reached the epoch tail).
         long long station_blocks{0};          ///< Station blocks the estimator took.
         long long station_epochs_checked{0};  ///< Assembled station blocks whose tags were checked.
-        long long untagged_rows{0};           ///< @ref untaggedRows summed over them.
+        long long untagged_rows{0};           ///< @c StationTagCheck::untagged summed over them.
+        long long unset_tags{0};              ///< @c StationTagCheck::unset summed over them.
+        long long misplaced_rows{0};          ///< @c StationTagCheck::misplaced summed over them.
+        long long counter_mismatches{0};      ///< @c StationTagCheck::mismatches summed over them.
         long long coalesced_entries{0};       ///< Diagonal prior entries merged into another entry of the same column.
-        long long folds_without_kind{0};      ///< Shared folds whose site named no kind.
+        long long folds_without_kind{0};      ///< Shared folds whose site named no kind (@c Unset).
         long long replay_builds{0};           ///< Within-epoch replay builds.
         long long replay_folds{0};            ///< Their shared re-folds (not in @ref kinds).
         long long replay_dim{0};              ///< Their summed dimension.
@@ -525,10 +479,23 @@ namespace GnssProcessor {
         ContributionTally pending{};      ///< This epoch's station side, from the end of PASS B.
         ContributionTally last_epoch{};   ///< The last epoch tallied.
         ContributionTally whole_run{};    ///< Every epoch tallied.
-        long long untagged_rows_all{0};   ///< @ref untaggedRows over every assembled epoch, tallied or not.
-        long long checked_all{0};         ///< Station blocks checked over every assembled epoch.
+        // The tag checks over every assembled epoch, tallied or not (an epoch withheld after
+        // PASS B is still checked).
+        long long untagged_rows_all{0};   ///< @c StationTagCheck::untagged.
+        long long unset_tags_all{0};      ///< @c StationTagCheck::unset.
+        long long misplaced_rows_all{0};  ///< @c StationTagCheck::misplaced.
+        long long mismatches_all{0};      ///< @c StationTagCheck::mismatches.
+        long long checked_all{0};         ///< Station blocks checked.
         long long replay_realigned{0};    ///< This epoch's replay re-alignments (reset at the station drain).
         long long replay_misaligned{0};   ///< This epoch's replay misalignments (reset at the station drain).
+        /// The row tags of the station blocks the last within-epoch replay build rebuilt
+        /// with a different row layout (a joint re-whiten of the coupling rows), by station
+        /// index, aligned with the rows that build handed to the estimator.  A station absent
+        /// from the map kept its primary layout, whose tags are @c StationAssembly::row_tags
+        /// (the scalar and local-block refloats zero or rewrite rows in place).  Cleared at
+        /// the start of every replay build and at the station drain.  Trace class in this
+        /// step; card NOM step N2b's readers take a replayed block's tags from here.
+        std::map<int, std::vector<RowTag>> replay_row_tags;
         bool      first_table_written{false};  ///< The first-emitted-epoch table is out.
     };
 
@@ -537,10 +504,20 @@ namespace GnssProcessor {
      *        prior entries of every station the estimator took, per kind, and the tag
      *        check of every assembled station.
      *
-     * Rows count for a station with an estimator index; its pre-PD prior entries count
-     * with it (they fold in @c addStation), its post-PD entries when the consume folded
-     * them (@c StationAssembly::carry_prior_folded).  Writes @c led.pending and the
-     * run-wide integrity counters.
+     * The counting rules:
+     *  - a station assembled (@c ok, not @c threw) has its tags checked
+     *    (@ref checkStationTags), taken or not;
+     *  - a station the estimator took (an estimator index >= 0) has its rows counted, and
+     *    its pre-PD prior entries with them (they fold in @c addStation);
+     *  - its post-PD entries count only when the consume folded them
+     *    (@c StationAssembly::carry_prior_folded);
+     *  - an entry the coalesce merged into another entry of the same column counts under
+     *    its own kind, with its channel's entries, and on the merged-entries line;
+     *  - a kind's fold count is one per taken station whose block carries it;
+     *  - the GIM builder's outcome counts for every station it ran on, assembled or not.
+     *
+     * Writes @c led.pending and the run-wide check counters, and clears this epoch's replay
+     * re-alignment counters and tags.
      *
      * @param led          The ledger.
      * @param asm_res      The epoch's station assemblies.
@@ -582,8 +559,9 @@ namespace GnssProcessor {
                                     NetworkRunTraces& traces, const NetworkConfig& nc);
 
     /**
-     * @brief The "contributions as armed" table: a header line, one line per kind (every
-     *        declared kind, a zero included), the GIM note, the integrity lines.
+     * @brief The "contributions as armed" table: a header line, the column line, one line
+     *        per kind (every declared kind, a zero included, with its unit, its weight
+     *        source, its builder and its note), the GIM note, the integrity lines.
      *
      * @param epoch The epoch's tally (the first emitted epoch, or the last tallied one).
      * @param run   The run's tally (so far, or whole).

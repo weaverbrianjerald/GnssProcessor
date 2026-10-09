@@ -75,7 +75,10 @@ TEST(NetworkCouplingTest, WhitenRowsAreExactInverseCholeskyOfJointCovariance) {
     const Eigen::Index ncol_r = 2, nshared = 2;
     Eigen::MatrixXd Hr, Hs;
     Eigen::VectorXd z;
-    ASSERT_TRUE(whitenCouplingRows(rows, white_pw, /*skip=*/{}, ncol_r, nshared, Hr, Hs, z));
+    std::vector<Eigen::Index> kept;
+    ASSERT_TRUE(whitenCouplingRows(rows, white_pw, /*skip=*/{}, ncol_r, nshared, Hr, Hs, z,
+                                   kept));
+    EXPECT_EQ(kept, (std::vector<Eigen::Index>{0, 1}));   // no skip set: every row, in order
     ASSERT_EQ(Hr.rows(), 2);
     ASSERT_EQ(Hs.rows(), 2);
 
@@ -111,8 +114,10 @@ TEST(NetworkCouplingTest, WhitenSkipSetDropsRefloatedRows) {
 
     Eigen::MatrixXd Hr, Hs;
     Eigen::VectorXd z;
-    ASSERT_TRUE(whitenCouplingRows(rows, white_pw, skip, 3, 0, Hr, Hs, z));
+    std::vector<Eigen::Index> kept;
+    ASSERT_TRUE(whitenCouplingRows(rows, white_pw, skip, 3, 0, Hr, Hs, z, kept));
     ASSERT_EQ(Hr.rows(), 2);            // rows 0 and 2 survive
+    EXPECT_EQ(kept, (std::vector<Eigen::Index>{0, 2}));   // and the kernel reports them
     // Surviving rows target locals 0 and 2 (diagonal +1 after unit-var whitening).
     EXPECT_GT(Hr(0, 0), 0.0);
     EXPECT_DOUBLE_EQ(Hr(0, 1), 0.0);
@@ -133,7 +138,8 @@ TEST(NetworkCouplingTest, WhitenNonSpdReturnsFalse) {
     std::vector<double> white_pw;
     Eigen::MatrixXd Hr, Hs;
     Eigen::VectorXd z;
-    EXPECT_FALSE(whitenCouplingRows(rows, white_pw, /*skip=*/{}, 1, 0, Hr, Hs, z));
+    std::vector<Eigen::Index> kept;
+    EXPECT_FALSE(whitenCouplingRows(rows, white_pw, /*skip=*/{}, 1, 0, Hr, Hs, z, kept));
 }
 
 // An empty kept-row set is the documented success case (returns true, empty outputs).
@@ -142,8 +148,10 @@ TEST(NetworkCouplingTest, WhitenEmptyIsSuccess) {
     std::vector<double> white_pw;
     Eigen::MatrixXd Hr, Hs;
     Eigen::VectorXd z;
-    EXPECT_TRUE(whitenCouplingRows(rows, white_pw, /*skip=*/{}, 2, 2, Hr, Hs, z));
+    std::vector<Eigen::Index> kept{7};   // cleared by the call
+    EXPECT_TRUE(whitenCouplingRows(rows, white_pw, /*skip=*/{}, 2, 2, Hr, Hs, z, kept));
     EXPECT_EQ(Hr.rows(), 0);
+    EXPECT_TRUE(kept.empty());
 }
 
 // --- CouplingRowBuilder over a real registered estimator --------------------

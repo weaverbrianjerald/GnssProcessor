@@ -158,12 +158,12 @@ bool CouplingRowBuilder::readmitDiverted(const CoupledShared& cs) {
 }
 
 ContributionKind localBlockColKind(const LocalBlockCol& c) {
-    if (c.is_zwd)    return ContributionKind::BlockZwd;
-    if (c.is_iono)   return ContributionKind::BlockIono;
-    if (c.is_rx_clk) return ContributionKind::BlockRxClock;
-    if (c.is_rx_cb)  return ContributionKind::BlockRxCodeBias;
-    if (c.is_pc)     return ContributionKind::BlockPhaseColour;
-    return ContributionKind::BlockAmbiguity;
+    if (c.is_zwd)    return ContributionKind::BlockZwdCarry;
+    if (c.is_iono)   return ContributionKind::BlockIonoCarry;
+    if (c.is_rx_clk) return ContributionKind::BlockRxClockCarry;
+    if (c.is_rx_cb)  return ContributionKind::BlockRxCbCarry;
+    if (c.is_pc)     return ContributionKind::BlockPhaseColourCarry;
+    return ContributionKind::BlockAmbiguityCarry;
 }
 
 void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
@@ -783,8 +783,9 @@ void CouplingRowBuilder::appendCouplingRows() {
         if (!craw.empty()) {
             Eigen::MatrixXd Hr, Hs;
             Eigen::VectorXd z;
+            std::vector<Eigen::Index> kept;   // every row (no skip set on the primary build)
             const bool ok = whitenCouplingRows(craw, white_pw, /*skip=*/{},
-                                               R.A_r.cols(), R.A_s.cols(), Hr, Hs, z);
+                                               R.A_r.cols(), R.A_s.cols(), Hr, Hs, z, kept);
             const Eigen::Index add = static_cast<Eigen::Index>(craw.size());
             const Eigen::Index m0  = R.A_s.rows();
             R.A_s.conservativeResize(m0 + add, Eigen::NoChange);

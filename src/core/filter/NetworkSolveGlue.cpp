@@ -1740,8 +1740,10 @@ if (within_epoch_armed && carry_warm) {
         replay_fail_idx = -1;
         we_free_replay = 0;
         // Card NOM N2a: the replay's re-folds are counted apart from the primary build's
-        // contributions (switched off at the end, and by the callers' catch blocks).
+        // contributions (switched off at the end, and by the callers' catch blocks), and the
+        // tags of the blocks this build re-lays are its own.
         est.contributionReplay(true);
+        ctx.contributions.replay_row_tags.clear();
         est.beginEpoch();
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!orig_added[i] || drop_stations.count(static_cast<int>(i))
@@ -1853,19 +1855,22 @@ if (within_epoch_armed && carry_warm) {
                 // (card 1b).
                 Eigen::MatrixXd Hr, Hs;
                 Eigen::VectorXd z;
+                std::vector<Eigen::Index> kept;   // the re-whiten's kept rows (indices into cpl_raw)
                 const bool ok = whitenCouplingRows(R.cpl_raw, R.cpl_white_pw, refloat_cols,
-                                                   R.A_r.cols(), R.A_s.cols(), Hr, Hs, z);
+                                                   R.A_r.cols(), R.A_s.cols(), Hr, Hs, z, kept);
                 const Eigen::Index nd = R.cpl_row_start;             // data + SH rows (unchanged)
                 const Eigen::Index nk = ok ? Hr.rows() : 0;          // surviving coupling rows
                 // Card NOM N2a: the rebuilt block's row tags, the rows before the coupling
-                // block then the kept coupling rows' (the re-whiten's keep rule), checked
-                // against the rebuilt rows.  Trace class: nothing reads them in this step.
+                // block then the kept coupling rows' (the rows the re-whiten reports),
+                // checked against the rebuilt rows and stored for this replay build.  Trace
+                // class: nothing reads them in this step.
                 {
-                    const std::vector<RowTag> replay_tags =
-                        rowTagsAfterJointRewhiten(R.row_tags, nd, R.cpl_raw, refloat_cols, nk);
+                    std::vector<RowTag> replay_tags =
+                        rowTagsAfterJointRewhiten(R.row_tags, nd, R.cpl_raw, kept, nk);
                     ++ctx.contributions.replay_realigned;
                     if (static_cast<Eigen::Index>(replay_tags.size()) != nd + nk)
                         ++ctx.contributions.replay_misaligned;
+                    ctx.contributions.replay_row_tags[static_cast<int>(i)] = std::move(replay_tags);
                 }
                 Eigen::MatrixXd As(nd + nk, R.A_s.cols()), Ar(nd + nk, R.A_r.cols());
                 Eigen::VectorXd rw(nd + nk), ry(nd + nk);

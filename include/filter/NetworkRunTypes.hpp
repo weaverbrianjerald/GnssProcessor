@@ -552,6 +552,7 @@ struct CplRowRaw {
     double var_eff{0.0};                                  ///< pure conditional variance (plus process noise); this row's own diagonal.
     /// The row's contribution tag (card NOM N2a): its kind and the identity of its local
     /// column, carried with the ingredients so that a re-whiten keeps the tags aligned.
+    /// Default @c Unset (caught by the tag check).
     RowTag tag{};
 };
 
@@ -1250,6 +1251,10 @@ struct StationAssembly {
     /// lockstep, so the row's kind, satellite and signal travel with it.  Trace class in this
     /// step: no reader takes a decision from a tag.
     std::vector<RowTag> row_tags;
+    /// The split's data rows: rows [0, n_data_rows) of the block are the measurement
+    /// update's (@c em.H.rows()), everything after them is appended (card NOM N2a; the tag
+    /// check reads it).
+    Eigen::Index n_data_rows{0};
     /// One tag per entry of @c carry_cols (the post-PD diagonal channel), in entry order.  An
     /// entry the coalesce built from two diagonal priors on one column keeps the tag of the
     /// entry the sort placed first; the merged entries' tags are in @c carry_merged.
@@ -1264,6 +1269,10 @@ struct StationAssembly {
     /// What the GIM ionosphere row builder did on this station-epoch (card NOM section 16,
     /// suspect 4: it was called and silently inert on the golden).
     GimRowsOutcome gim_rows{GimRowsOutcome::NotCalled};
+    /// SD-EWL rows the builder reported this station-epoch (the change of the station's
+    /// @c sd_ewl_ctr.rows_built over the call; card NOM N2a: the tag check compares it with
+    /// the @c SdEwl tags).
+    long long sd_ewl_rows{0};
     /// The observation's own signal for each data row [0, H.rows()): the measurement's
     /// @c signal_types, row-aligned with H by the assembly's invariant; rows appended
     /// later (datum pins, ionosphere ties, coupling rows) have none (card OWD, O5).
@@ -1642,16 +1651,24 @@ struct StationAssembly {
 /// if the factor is still non-SPD it returns false, and the caller falls back to the
 /// card 1 scalar path.  @p Hr is @c m×ncol_r, @p Hs is @c m×nshared, @p z has length
 /// @c m, with @c m the kept-row count (m = 0 gives empty outputs and returns true).
+/// @p kept receives the indices into @p rows of the kept rows, in order (output row k
+/// belongs to @c rows[kept[k]]), as @ref whitenLocalBlock reports its own; it is filled
+/// before the factor, so it names the kept rows on a false return too (card NOM N2a: the
+/// re-whiten's row tags read it, so the keep rule exists once).
 inline bool whitenCouplingRows(const std::vector<CplRowRaw>& rows,
                                const std::vector<double>& white_pw,
                                const std::set<Eigen::Index>& skip,
                                Eigen::Index ncol_r, Eigen::Index nshared,
                                Eigen::MatrixXd& Hr, Eigen::MatrixXd& Hs,
-                               Eigen::VectorXd& z) {
+                               Eigen::VectorXd& z, std::vector<Eigen::Index>& kept) {
     std::vector<const CplRowRaw*> keep;
     keep.reserve(rows.size());
-    for (const CplRowRaw& r : rows)
-        if (skip.find(r.local_col) == skip.end()) keep.push_back(&r);
+    kept.clear();
+    for (std::size_t i = 0; i < rows.size(); ++i)
+        if (skip.find(rows[i].local_col) == skip.end()) {
+            keep.push_back(&rows[i]);
+            kept.push_back(static_cast<Eigen::Index>(i));
+        }
     const Eigen::Index m = static_cast<Eigen::Index>(keep.size());
     Hr = Eigen::MatrixXd::Zero(m, ncol_r);
     Hs = Eigen::MatrixXd::Zero(m, nshared);

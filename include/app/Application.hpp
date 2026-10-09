@@ -594,6 +594,11 @@ private:
      * @param ifb_rule The run's receiver IFB rule (@c ctx.param_inventory.rx_ifb,
      *                 built once per run by @c networkRxIfbRule): which receiver
      *                 IFB columns are left out of the local block.
+     * @param[out] tags One contribution tag per data row (card NOM N2a): @c DataCode or
+     *                 @c DataPhase with the row's satellite and signal
+     *                 (@c tagDataRows), changed to @c DataCodeCompanion or
+     *                 @c DataPhaseSecond by the weight pass that scales the row, so a
+     *                 tag and a weight cannot disagree.
      */
     void networkSplitStation_(NetStation& st, const NetworkEstimator& est,
                               const EpochMeasurement& em,
@@ -601,7 +606,8 @@ private:
                               Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                               Eigen::VectorXd& w, Eigen::VectorXd& y,
                               std::map<int, int>& h2local,
-                              std::vector<ParamDisposition>& col_disp) const;
+                              std::vector<ParamDisposition>& col_disp,
+                              std::vector<RowTag>& tags) const;
 
     /**
      * @brief GIM ionosphere pseudo-observation rows (W6 satellite code-bias
