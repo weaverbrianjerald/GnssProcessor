@@ -5,14 +5,14 @@
 - **id:** NOM
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** The network producer gains explicit, typed objects for every constellation, band, signal, satellite, station, line of sight and arc, a declared disposition for every parameter instance, a declared kind for every row, and run state owned by those objects; plain types, clarity over byte identity (the author, section 10). N0a, N1 and N1b BUILT and landed, byte-identical (sections 12 and 14); N0b built on its branch (section 15); a network code tour for newcomers started (`docs/onboarding/07_network_tour.md`); the row-classification read found one solve-affecting defect for its own card (section 16).
+- **summary:** The network producer gains explicit, typed objects for every constellation, band, signal, satellite, station, line of sight and arc, a declared disposition for every parameter instance, a declared kind for every row, and run state owned by those objects; plain types, clarity over byte identity (the author, section 10). N0a, N1, N1b, N0b and N0c LANDED, byte-identical (sections 12, 14, 18; `c7e0a9a`, `029b06c`); a network code tour for newcomers started (`docs/onboarding/07_network_tour.md`); the row-classification read found one solve-affecting defect, card RPA (section 16). N2 is specified here (section 17); its results go to a continuation card, as this file nears the size bar.
 - **source:** the author's request of 2026-10-08 ("explicit objects for each system, signal, channel, etc. and their network parameters ... much easier for me to follow"); the read-only organization map of 2026-10-08 (five investigators over the user filter, the network parameters, the network rows, the identity layer and the run state; session files, every count below re-checked where it drives a decision); [PRM](PRM_parameter_registry_2026-09-29.md) and [PRM3](PRM3_responses_2026-10-02.md) (the registry, the traversal, the principles this card keeps); [SID](SID_signal_identity_2026-09-22.md) (the signal roster and arc ledger, built and not armed); [L5R](L5R_l5_return_on_the_exact_update_2026-10-08.md) and [GAL2](GAL2_galileo_on_the_exact_update_2026-10-08.md) (the defects that triggered the request); `docs/network_decomposition_plan.md` sections 10 and 11
 - **knobs / posture:** steps N0 to N5 are refactors with no knob, gated by same-build byte identity on both goldens (card PRM's harness `scripts/prm_ab.py`); N1 and N2 add trace-class tables and counters only; N6 is behaviour-changing and gets its own card
 - **dates in the text:** 2026-10-08
 - **hashes / run dirs:** the map was read on main `a4cda77`; branches `nom/n0a-n1` (`1752737`, `deca912`), `nom/n1b` (`d6f93cf`), `nom/n0b` (from `2b7e804`) in a session worktree; exes `gnss_processor_gal2.exe` (`df936f39`, the clean pre-step build), `gnss_processor_nom1` to `nom8`; G0 arms `runs/_rap_nom{1..8}_*`, the combined-tree check `runs/_rap_main1_{f2,s2}`
 - **gates (frozen at pre-registration):** section 6
 
-**Outcome.** Question: can the network producer be organized around explicit objects a human can follow? The author chose plain types, N0 and N1 first, and clarity over byte identity (section 10). N0a (typed identities, one constellation traits table) and N1 (every station column classified, with a declared disposition, and the "parameters as armed" table) are built, reviewed and byte-identical on four arms (section 12); N1b accounts for every withheld instance (section 14). The table shows the receiver L5 delay held at its seed with no reading of code. Next: N0b, N2, the network code tour (sections 13, 15, 16).
+**Outcome.** Question: can the network producer be organized around explicit objects a human can follow? The author chose plain types, N0 and N1 first, and clarity over byte identity (section 10). N0a (typed identities, one constellation traits table) and N1 (every station column classified, with a declared disposition, and the "parameters as armed" table) are built, reviewed and byte-identical on four arms (section 12); N1b accounts for every withheld instance (section 14); N0b and N0c put the network's identity handling through the typed layer (satellite first-character reads 173 to 3, section 18). The table shows the receiver L5 delay held at its seed with no reading of code. Next: N2 (section 17).
 
 ## 1. Why: the defects of the last three weeks share one shape
 
@@ -253,3 +253,106 @@ Two read-only investigators checked section 7's suspects 1 to 4 against the code
 **What this sets for N2.** N2 tags every contribution where it is created (rows of the station blocks, the diagonal prior channels, pins, coupling and birth rows, the shared rows and priors), and every reader takes the kind from the tag. Where today's behaviour depends on the misclassification, N2 keeps the behaviour and states it explicitly: the RAIM pool admits "data phase rows plus prior rows that clear 0.5 on the column" as a declared rule with a counter per kind, so the step changes no decision. Classification by declared observation type moves the statistics of suspect 3 (census pool skips 20 to 0, 30 trace rows from code to phase) and is reported as such.
 
 **A separate card, not part of the reorganization:** admitting data rows only to the RAIM pool changes T4 decisions on the golden (11 of 12 refloats gone, masked spikes flagged). It is a science change: a default-off knob, a field and sim A/B with the census, and the two ready-made events (BSHM00ISR TOW 259470 to 259590; KIT300UZB TOW 263670 to 263730). Arming is the author's decision.
+
+## 17. 2026-10-08: N2 specified (pre-registered before the build)
+
+N2 gives every contribution to the normal equations a declared kind, in two parts.
+
+**N2a, declare and tag (no reader changes; byte-identical, traces included).**
+- `include/filter/NetworkContributions.hpp`: `ContributionKind`, one value per family of section 16's inventory (station data rows: code, companion code, phase, second phase; station constraint rows: ambiguity pins, eq34 pins and rank floor and time link, GLONASS anchors, SH ties, GIM ionosphere rows, SD-EWL rows; station block rows: scalar coupling rows, the whitened local block per family (ambiguity, wet delay, ionosphere, receiver clock, receiver code bias, phase colour), LGM birth and backstop rows; station priors: the post-PD diagonal priors per family and the pre-PD receiver code-bias datum; shared rows: each satellite code-bias datum row type, the clock constraint rows, the S-basis completion rows; shared priors: Kaula, phase-bias heal, SH prior, phase hold, pin bridge, the border carry in its diagonal, gauge-free and dense forms, the Q3 refold, clones and walks and shared history, the clock oscillator, the cold clock anchor; pins: the clock pivots; gauges: the ensemble phase gauges; the DD prior blocks), and one `ContributionSpec` per kind (name, channel, stage relative to the rank gate, subject, parameter kinds touched, weight source, whether it is observation data).
+- Every site that appends rows or folds a prior records the kind: a plain tag per row of each station block (kind, satellite, signal), aligned with `A_r` / `A_s` and kept aligned through the within-epoch re-whiten; a kind on every shared fold (replacing the free-text attribution tags).
+- A "contributions as armed" table after the first emitted epoch and at run end: per kind, the rows or folds this epoch and over the run, the builder, the weight source; a declared kind with zero instances is printed (the GIM rows: 0 rows, no GIM loaded).
+
+**N2b, the readers take the kind (explained trace moves; the solve unchanged).** The row classifier, the post-fit row trace, the RHS attribution (iterating exactly the channels the kernel folds, the pre-PD prior included), the MDB rider and the RAIM pool admission read the tag. The RAIM pool keeps today's admission population as a declared rule ("data phase rows, and the ambiguity and receiver code-bias block rows whose coefficient on the column exceeds 0.5"), with a counter per admitted kind and the same visit multiplicity, so no QC decision moves; changing that rule is the separate science card of section 16. Expected trace moves, each explained: 30 early phase rows filed as phase instead of code, the census pool skips 20 to 0 and 3 to 0 on the field, the code and phase post-fit sigma0 at 6 epochs, the H-record sigma0 at about 8 epochs.
+
+Gates: G0 on the four arms (products, consumer trace, epoch status identical; N2a also every trace); the table lists every kind with 0 untagged rows on the four arms; a unit closure test of the RHS attribution with a non-empty pre-PD prior and one forced attribution dump on a 2 h golden copy (`network.rhs_attrib_tow`); the independent review. The user-side measurement header stops including network headers (the absorbed-instance record moves to its own small header), the one should-fix the commit review left.
+
+## 18. 2026-10-09: N0b and N0c landed (`029b06c`)
+
+N0b was built on branch `nom/n0b` (stage-1 helpers `2b7e804`; four workers on disjoint file sets, merged at `d0ed4a5`; cleanup `d86faa7`), reviewed (merge after eight fixes), fixed (`b3eb57f`), then applied onto main `c7e0a9a` together with N0c (the same six items for the PFQ and BCL clone code N0b never saw) and fast-forwarded as one commit, `029b06c`, reviewed again (land; this section and the tour were its two should-fix items).
+
+**What changed for a reader.** A satellite string's constellation is read in one place (`systemOfSat`, `letterOfSat`, `constellationKey`); the ten private converters, `NetworkSbasis::constellationOf` and every `case 'G':` arm are gone; band digits come from `SignalId`; the network files read no frequency constant (every carrier frequency and wavelength from the traits table); the receiver IFB and DCB keys go through `StateKeySchema`; estimator columns are classified by one function, `sharedColumnFamily` (`NetworkRowClassify`), with its own test (`NetworkColumnFamilyTest`). Pattern counts over the network files, main `c7e0a9a` against `029b06c`: satellite first-character reads 173 to 3, letter comparisons 50 to 3, `case 'G':` arms 30 to 0, band-digit reads 59 to 11, label-prefix parses 33 to 18, frequency constants 22 to 0, `StateKeySchema` calls 115 to 161.
+
+**Gates.** G0 IDENTICAL against `gnss_processor_gal2.exe` on the four arms (products, consumer trace, epoch status; every log file but the timing ones), and against `gnss_processor_main1.exe` (`c7e0a9a`) on a clock-clone arm with PFQ and on a PFQ + BCL-a + BCL-d arm; a new run-end census of satellite ids with an unknown constellation or SBAS reads 0 on all six; unit suite 2 917 tests, 2 893 passed, 24 skipped (fixture data), 0 failed. Lines no G0 arm exercises (equivalence by reading only): the conflict-resolved `uRow` of `NetworkClockClone.cpp`, two clone-key lookups in `NetworkEstimator.cpp`, the warm-resume fill of `pfq_pivot`. Wall time (G3) not readable on a loaded machine; owed on an idle box.
+
+**Corrected inconsistencies (trace or observatory only, explained):** the signal roster's tracker cell is keyed by (station, constellation, band), so a Galileo band-1 row no longer lands in the GPS cell (mismatched rows on the GPS+Galileo arm 24 393 to 49); the ambiguity trace (`network.trace_amb_if`) now writes Galileo lines (GPS lines byte-identical), with its common mode removed per constellation and BeiDou excluded (B1C and B1I are 14 MHz apart); `NetworkOraclePin` splits a family key at the first underscore. **Recorded deviations:** local maps re-keyed from a letter to `System` iterate in enum order (their bodies are per group); about 30 sites now refuse a malformed observation code that `sig[1]` read. **Owed decisions:** BeiDou digit 1 (B1C at every network site, as before; `classifySignal` says B1I); IRNSS in the `System` enum; `NetworkEstimator::isClockClone` now means any clone (rename); five label parses remain (`NetworkDatumGraph`, `NetworkFrameDiag`, `NetworkGrossLos`, `NetworkSbasis`, `NetworkSolveGlue`).
+
+**The N3 list.** The sites whose logic is a band ROLE or a signal CHOICE, collected by the four workers and the reviews (line numbers of `nom/n0b`); each is a decision the per-station signal plan of step N3 takes over.
+
+**A. Pin pair, primary pair and the group-delay pair**
+1. `NetworkSbasis.cpp:27-53` `selectIfPinPair`: the IF pin pair is ordered by band digit then name; the first later signal on a distinct frequency is taken.
+2. `NetworkSbasis.cpp:56-72`: the pair the latched group delay describes is Galileo (1,5) and (1,2) for every other constellation.
+3. `NetworkSbasis.cpp:864-~900`: the per-satellite IF pin choice and the `clock_signal_basis_hold` pair hold.
+4. `NetworkSbasis.cpp:1439-1445`: the secondary family's own pin pair.
+5. `NetworkExtraBandScope.cpp:13-46`: the BIA clock-reference pin pair (`networkPinBandsFor`), the extra-band test and the primary MW-pair scope.
+6. `NetworkClockLevel.cpp:530-543`: the heaviest code row per band digit, matched against the BIA pin bands.
+7. `NetworkClockLevel.cpp:243-248` `clockLevelIsFreeSameBand`: a code counts as free if it sits on the pin pair's first band digit.
+8. `StateInitializer.cpp:215`: DCB versus IFB role, decided by the BIA clock-reference pair bands.
+9. `StateInitializer.cpp:774`: the first clock-reference band is the code-bias seed reference.
+10. `NetworkCanonicalPairAdmission.cpp:33-46` `latchedPairs`: the canonical pair is digits 1 and 2, so Galileo is never screened.
+11. `NetworkBiasAdmission.cpp:102-119`: tier 2 admits a satellite only if its candidates span 2 or more distinct bands (the IF-pin requirement).
+12. `ApplicationNetworkAssembly.cpp:1640` and `:2169`: the MW pair must lie inside the primary pin pair.
+13. `NetworkRunContext.cpp:5307`: the AIL trace's IF pair is the first two traits bands.
+
+**B. Extra band and band-2 companion**
+1. `NetworkSbasis.cpp:1176`: extras on the reference band (mu_k = 1) stay free.
+2. `NetworkSbasis.cpp:1197-1205`: the band-2 companion is the signal with the same digit as sig2.
+3. `NetworkSbasis.cpp:1239-1250`: the extra band (digit outside the pin pair) and its roster key.
+4. `NetworkSolveGlue.cpp:373-383`: the ISC band-mate roster.
+5. `NetworkSolveGlue.cpp:409-432`: the extra-band roster over the candidate pin pairs.
+6. `NetworkSolveGlue.cpp:550-560`: the band-2 companion verdict on the wire (`isc=obs` or pinned).
+7. `ApplicationNetworkAssembly.cpp:381`: the extra-band code deweight.
+8. `NetworkChannelAll.cpp:22-28` and `:30-53`: canonical versus extra channel per band digit.
+9. `NetworkChannelAll.cpp:98,105`: the census groups rows by band digit.
+
+**C. Second channel restricted to band 1**
+1. `NetworkSecondCodeScope.cpp:24` and `NetworkSecondPhaseScope.cpp:31`.
+2. `ApplicationNetworkAssembly.cpp:1928`.
+3. `SignalRoster.cpp:132-171`: companion codes and second phases.
+4. `StateInitializer.cpp:134`: the second code channel, which also reads the canonical latch.
+5. `NetworkMwWlGlue.cpp:141` and `:300`: `is_primary_sig1` when no primary pair exists.
+6. `SignalRoster.cpp:688`: the CSL band-1 phase.
+
+**D. EWL, UWL and lane band roles**
+1. `NetworkSdEwlAr.cpp:38-53` `sdEwlBands`: GPS (2,5), Galileo (7,5). This is one of three copies of the rule; its caller is `ApplicationNetworkAssembly.cpp:542`.
+2. `ApplicationNetwork.cpp:776-790` `isUncarriedThirdBand`: GPS '5', Galileo '7', or the UWL tier.
+3. `NetworkDdPriorBuild.cpp:563`: the EWL third band is kept out of the carry.
+4. `NetworkDdPriorBuild.cpp:482-525`: the EWL top, mid and fallback bands (digit '5' for every constellation without UWL, otherwise the tier table).
+5. `ApplicationNetwork.cpp:849-853` and `ApplicationNetworkSetup.cpp:1204`: the UWL lane-tier constellations are GPS and Galileo.
+6. `NetworkDdPriorBuild.cpp:332-380`: the UWL-1 joint pair census (two lowest carried bands, majority pair).
+7. `NetworkDdPriorBuild.cpp:448-481`: `lane_pref_pair`, including the `"L"+digit` probe of `isUncarriedThirdBand`.
+8. `NetworkDdPriorBuild.cpp:426-446`: admission of minority-family pairs.
+9. `NetworkDdPriorBuild.cpp:621-649`: routing into a pair group versus a per-band group.
+10. `NetworkTeardown.cpp:4949`: the run-end label reads the lane's top-band digit ('8' is E5, otherwise E5b).
+
+**E. Which signal stands for a band**
+1. `NetworkClockAnchor.cpp:126-150`: one phase bias per band, the one with the smallest folded variance.
+2. `NetworkPbHoldClone.cpp:261-289` `pbHoldClonePickPair`: the smallest stashed variance per band.
+3. `NetworkDdPriorBuild.cpp:300-319`: the preferred channel per (constellation, band), by majority census with a lexical tie-break.
+4. `NetworkDdPriorBuild.cpp:382-414`: each arc's primary pair (two lowest digits, lexical tie, then `preferChan`).
+5. `NetworkFastClock.cpp:237-260`: the fast tier's two bands (lowest FrequencyBand ordinal, tie broken by code).
+6. `NetworkSdEwlAr.cpp:296-306`: every phase signal per band, with all (s1, s2) pairs tried.
+7. `ApplicationNetworkAssembly.cpp:633-700`: candidate channels in ascending order; the first mature pair wins.
+8. `NetworkRunContext.cpp:5474` (`resolve`) and `:5654` (`cap_of`): the first carried signal on the same band digit.
+9. `NetworkRawObservables.cpp:105-112`: the slip tracker takes the two lowest digits after an unstable sort, then `front()`.
+10. `NetworkRawObservables.cpp:137`: the latch overrides the band's signal.
+11. `SignalRoster.cpp:255`: the lexically lowest phase per band.
+12. `StateInitializer.cpp:366`: the ionosphere seed takes the first code pair on distinct bands.
+13. `ApplicationNetworkSetup.cpp:1095-1110`: the receiver ATX report uses the two lowest priority bands, with attribute 'C' standing for each band.
+14. `NetworkMeasurementAdmission.cpp:67-75`: the digit used as the band key when withholding a channel.
+15. `SignalRoster.cpp:1427`: the band '1'/'2' mismatch counters.
+16. `SignalRoster.cpp:1066-1070`: the tracker cell looks the band up in the first constellation that has it, not the satellite's own. Worker 4 flags this as a suspected defect: a Galileo band-1 row is matched to the GPS cell.
+
+**F. Channel family (two contradictory definitions)**
+1. `NetworkSbasis.cpp:286-310` `channelFamilyOf`: 'X' is secondary; Galileo, GPS and BeiDou only.
+2. `NetworkDatumGraph.cpp:228-233`: family is the attribute character.
+
+**G. Constellation roles and reference carriers**
+1. `NetworkProducerAr.cpp:144`: GPS and Galileo are the integer-capable constellations (a `ConstellationPlan` candidate).
+2. `NetworkChainDatum.cpp:250-259`: only GPS, Galileo, BeiDou and QZSS groups are rounded, and the wavelength comes from the band digit alone. BeiDou digit 1 stays B1C here, which belongs with the BeiDou digit-1 decision.
+3. `NetworkSbasis.cpp:186-199`: which Galileo bands' health bits count, read from the configured priorities.
+4. The ionosphere is referenced to the GPS L1 carrier for every constellation at `NetworkEmitStore.cpp:707` and `NetworkIonoDwRelease.cpp:205` (listed by worker 2). The same convention is at `NetworkShDevVtec.cpp:83`, `NetworkShHealth.cpp:198`, `ApplicationNetworkAssembly.cpp:1096,1236,3392` and `StateInitializer.cpp:286,374,473,754`.
+5. GLONASS-exclusion tests (`== System::GLONASS`, 21 in the network files, for example `NetworkEstimator.cpp:1262`) could read `traitsOf(sys).fdma`.
+
+Added by the reviews: GPS as the inter-system-bias and time reference (`StateInitializer.cpp` 57 and 536, `NetworkMultiGnss.cpp` 70, `ApplicationNetworkSetup.cpp` 530); same-band equivalence in gap re-entry (`NetworkSlipQc.cpp` around 2242 and 2546); `NetworkProductEmitter.cpp` 107 `discThresholdM` still classifies through `classifySignalForSat`.
+

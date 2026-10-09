@@ -129,8 +129,14 @@ properties (`traitsOf`: letter, name, frequency bands), and the value types `Sat
 parser, one rendering and an order that matches the string keys still in use. New network
 code reads these types instead of testing `sat[0] == 'G'` or `signal[1] == '5'`.
 
-*In progress:* most existing network code still parses identities by hand (card NOM step
-N0b moves it onto these types).
+The network code reads identities through these types (card NOM step N0b): a satellite
+string's constellation comes from `systemOfSat` or `letterOfSat` and nowhere else, band
+digits from `SignalId`, carrier frequencies from the traits table, and an estimator
+column's family from `sharedColumnFamily` (`include\filter\NetworkRowClassify.hpp`).
+
+*In progress:* many network containers are still keyed by composite strings such as
+`"G05|L1C"`; card NOM step N4 re-keys them by the types above. Five estimator-label parses
+remain and are listed in the card.
 
 ## One epoch, in eight stages
 

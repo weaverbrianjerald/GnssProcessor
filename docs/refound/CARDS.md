@@ -94,5 +94,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   passes, field census fails on all four postures; the receiver's band-5 code delay is not a state of the network solve.
   L5 SEQUENCED: R-1b (estimate it), then R-2.
 - [NOM](NOM_network_object_model_2026-10-08.md): open, 2026-10-08: network object model. N0a (typed identities), N1
-  (every station column with a declared disposition; the 'parameters as armed' table) and N1b (absorbed instances)
-  LANDED, byte-identical; N0b on its branch; the RAIM pool admits prior rows (own card owed); network code tour started.
+  (every station column with a declared disposition; the 'parameters as armed' table), N1b (absorbed instances) and
+  N0b/N0c (identity reads through the typed layer) LANDED, byte-identical; N2 specified; network code tour started.
+- [RPA](RPA_raim_pool_data_rows_2026-10-08.md): open, 2026-10-08: pre-registered. The post-fit RAIM pool admits the
+  float vehicle's whitened prior rows as phase data (most T4 refloats on the golden); a default-off knob restricting it
+  to observation rows, graded on both beds, the census and two named events. Built after card NOM step N2b.
