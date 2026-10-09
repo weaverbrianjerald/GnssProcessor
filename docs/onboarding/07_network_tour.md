@@ -215,12 +215,30 @@ run, so a check's response reaches the product one epoch later.
 added each piece rather than by station, satellite or signal. Card NOM step N4 regroups it
 by entity, so that everything about one satellite or one arc sits in one record.
 
+## The run end
+
+After the last epoch, every mechanism prints what it did over the run: counters, verdicts,
+INERT clauses for armed knobs that never acted. These lines are the run's own telemetry
+(an armed knob reading "0 driven" is dead wiring), and grading scripts parse them.
+
+The run end is a table. `include\filter\NetworkRunEnd.hpp` declares
+`kNetworkRunEndReports`: 107 reports in print order, each row naming what it reports and
+the file it lives in. `networkTeardown` (`src\core\filter\NetworkTeardown.cpp`, 68 lines)
+walks the table. A report is one function, `int networkXxxRunEnd(const NetworkRunEndView&)`,
+in the file of the subsystem it describes: the RAIM pool's report is in `NetworkRaim.cpp`,
+the gross line-of-sight screen's in `NetworkGrossLos.cpp`. It reads the run through the
+view, prints its lines when its subsystem is armed, and returns 0, or a verdict for the
+exit code. To find what a mechanism reports at run end, open its file and search for
+`RunEnd`; to see the whole run end in order, read the table.
+
 ## Where new code goes
 
 `CLAUDE.md` (section "Network producer: where new code goes") maps each kind of change to
 its file: a new per-epoch step to a `Network*` stage file, new run state to
 `NetworkRunContext`, new emission behaviour to `NetworkSolPrep` or `NetworkEmitStore`, a
-new run-end readout to `NetworkTeardown`. The loop itself stays a list of calls.
+new run-end readout to a report in the subsystem's own file plus one row of
+`kNetworkRunEndReports` (the table's header lists the order rules). The loop itself stays a
+list of calls.
 
 ## The record
 
