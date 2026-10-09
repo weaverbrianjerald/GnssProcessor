@@ -71,8 +71,17 @@ std::string NetworkEstimator::priorKey_(const SharedPrior& p) {
     if (p.kind == SharedParamKind::VtecSh)
         return StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer);
     if (p.hist) return "HIST|" + std::to_string(p.hist_idx);   // card SCL2 X2: a shared-history column
-    if (p.clone) return p.sat + "|CLKC";   // card SCL: the clock clone column
+    if (p.clone) return cloneKey_(p.kind, p.sat, p.signal);   // card SCL clock, card BCL bias clone
     return key_(p.sat, p.kind, p.signal);
+}
+
+std::string NetworkEstimator::cloneKey_(SharedParamKind kind, const std::string& sat,
+                                        const std::string& signal) {
+    switch (kind) {
+        case SharedParamKind::PhaseBias: return sat + "|PBC|" + signal;   // card BCL
+        case SharedParamKind::CodeBias:  return sat + "|CBC|" + signal;   // card BCL
+        default:                         return sat + "|CLKC";            // card SCL
+    }
 }
 
 Eigen::Index NetworkEstimator::registerColumn_(const std::string& sat,
@@ -146,6 +155,32 @@ Eigen::Index NetworkEstimator::registerClockClone(const std::string& sat) {
     return col;
 }
 
+Eigen::Index NetworkEstimator::registerClone(SharedParamKind kind, const std::string& sat,
+                                             const std::string& signal) {
+    if (kind == SharedParamKind::Clock) return registerClockClone(sat);
+    if (kind != SharedParamKind::PhaseBias && kind != SharedParamKind::CodeBias)
+        throw std::invalid_argument("NetworkEstimator::registerClone: a clone is of a clock, a "
+                                    "phase bias or a code bias");
+    if (epoch_open_) {
+        throw std::logic_error(
+            "NetworkEstimator: cannot register shared parameters after "
+            "beginEpoch(); finalize the layout first");
+    }
+    const std::string k = cloneKey_(kind, sat, signal);   // disjoint from the bias's own key
+    auto it = index_.find(k);
+    if (it != index_.end()) return it->second;
+    const Eigen::Index col = static_cast<Eigen::Index>(columns_.size());
+    index_.emplace(k, col);
+    ColumnDesc d;
+    d.sat    = sat;
+    d.kind   = kind;
+    d.signal = signal;
+    d.clone  = true;
+    columns_.push_back(std::move(d));
+    ++n_clones_;
+    return col;
+}
+
 Eigen::Index NetworkEstimator::registerHistoryColumn(int j) {
     if (epoch_open_) {
         throw std::logic_error(
@@ -177,6 +212,11 @@ bool NetworkEstimator::isHistoryColumn(Eigen::Index col) const {
 
 Eigen::Index NetworkEstimator::clockCloneColumn(const std::string& sat) const {
     return index_.at(sat + "|CLKC");
+}
+
+Eigen::Index NetworkEstimator::cloneColumn(SharedParamKind kind, const std::string& sat,
+                                           const std::string& signal) const {
+    return index_.at(cloneKey_(kind, sat, signal));
 }
 
 bool NetworkEstimator::isClockClone(Eigen::Index col) const {
@@ -219,7 +259,11 @@ std::string NetworkEstimator::sharedColumnLabel(Eigen::Index col) const {
                                 "column index out of range");
     }
     const ColumnDesc& d = columns_[static_cast<std::size_t>(col)];
-    if (d.clone) return "CLKC:" + d.sat;   // card SCL: a clock clone
+    if (d.clone) {   // card SCL: a clock clone; card BCL: a bias clone
+        if (d.kind == SharedParamKind::PhaseBias) return "PBC:" + d.sat + ":" + d.signal;
+        if (d.kind == SharedParamKind::CodeBias)  return "CBC:" + d.sat + ":" + d.signal;
+        return "CLKC:" + d.sat;
+    }
     if (d.hist) return "HIST:" + std::to_string(d.hist_idx);   // card SCL2 X2: a shared-history column
     switch (d.kind) {
         case SharedParamKind::Clock:     return "CLK:" + d.sat;
@@ -847,8 +891,8 @@ std::size_t NetworkEstimator::addCloneWalk(const std::vector<CloneWalk>& walks, 
     std::size_t applied = 0;
     for (const CloneWalk& w : walks) {
         if (!(w.q > 0.0) || !std::isfinite(w.q) || !std::isfinite(w.mean)) continue;
-        const auto ic = index_.find(key_(w.sat, SharedParamKind::Clock, ""));
-        const auto ik = index_.find(w.sat + "|CLKC");
+        const auto ic = index_.find(key_(w.sat, w.kind, w.signal));   // card BCL: a bias walk too
+        const auto ik = index_.find(cloneKey_(w.kind, w.sat, w.signal));
         if (ic == index_.end() || ik == index_.end()) continue;
         const Eigen::Index c = ic->second, k = ik->second;
         const double info = sign / w.q;
@@ -879,6 +923,79 @@ std::size_t NetworkEstimator::addCloneWalk(const std::vector<CloneWalk>& walks, 
     if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
     neq_.addSharedInfo(delta_info, delta_rhs);
     return applied;
+}
+
+std::size_t NetworkEstimator::addCloneWalkJoint(const std::vector<CloneWalk>& walks,
+                                                const Eigen::MatrixXd& Qw, double sign) {
+    if (Qw.size() == 0) return addCloneWalk(walks, sign);
+    if (walks.empty()) return 0;
+    if (!epoch_open_) {
+        throw std::logic_error("NetworkEstimator::addCloneWalkJoint: call beginEpoch() first");
+    }
+    const Eigen::Index m = static_cast<Eigen::Index>(walks.size());
+    if (Qw.rows() != m || Qw.cols() != m) {
+        throw std::runtime_error("NetworkEstimator::addCloneWalkJoint: Qw is not walks x walks");
+    }
+    // The rows a_i of the walks that apply (addCloneWalk's skip rules), as sparse index lists.
+    struct Row { Eigen::Index w; std::vector<std::pair<Eigen::Index, double>> t; };
+    std::vector<Row> rows;
+    rows.reserve(walks.size());
+    for (Eigen::Index i = 0; i < m; ++i) {
+        const CloneWalk& w = walks[static_cast<std::size_t>(i)];
+        if (!std::isfinite(w.mean)) continue;
+        const auto ic = index_.find(key_(w.sat, w.kind, w.signal));   // card BCL: a bias walk too
+        const auto ik = index_.find(cloneKey_(w.kind, w.sat, w.signal));
+        if (ic == index_.end() || ik == index_.end()) continue;
+        Row r;
+        r.w = i;
+        r.t = {{ic->second, 1.0}, {ik->second, -1.0}};
+        if (!w.ref.empty()) {
+            const auto ir = index_.find(w.ref + "|CLKC");
+            if (ir == index_.end() || ir->second == ik->second) continue;
+            r.t.push_back({ir->second, 1.0});
+        }
+        rows.push_back(std::move(r));
+    }
+    if (rows.empty()) return 0;
+    const Eigen::Index k = static_cast<Eigen::Index>(rows.size());
+    Eigen::MatrixXd Qk(k, k);
+    Eigen::VectorXd mean(k);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        mean(a) = walks[static_cast<std::size_t>(rows[static_cast<std::size_t>(a)].w)].mean;
+        for (Eigen::Index b = 0; b < k; ++b)
+            Qk(a, b) = 0.5 * (Qw(rows[static_cast<std::size_t>(a)].w, rows[static_cast<std::size_t>(b)].w)
+                            + Qw(rows[static_cast<std::size_t>(b)].w, rows[static_cast<std::size_t>(a)].w));
+    }
+    // Correlation scaling before the factor: the walks' variances span decades.
+    Eigen::VectorXd d(k);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        if (!(Qk(a, a) > 0.0) || !std::isfinite(Qk(a, a)))
+            throw std::runtime_error("NetworkEstimator::addCloneWalkJoint: non-positive walk variance");
+        d(a) = 1.0 / std::sqrt(Qk(a, a));
+    }
+    const Eigen::MatrixXd C = d.asDiagonal() * Qk * d.asDiagonal();
+    const Eigen::LDLT<Eigen::MatrixXd> f(C);
+    if (f.info() != Eigen::Success || !f.isPositive()
+        || !(f.vectorD().minCoeff() > 1e-12 * f.vectorD().cwiseAbs().maxCoeff()))
+        throw std::runtime_error("NetworkEstimator::addCloneWalkJoint: Qw is not positive definite");
+    // W = Qk^-1 = D C^-1 D; information A'WA and right-hand side A'W mean, through the rows.
+    const Eigen::MatrixXd W = d.asDiagonal() * f.solve(Eigen::MatrixXd::Identity(k, k)) * d.asDiagonal();
+    const Eigen::VectorXd Wm = W * mean;
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        for (const auto& [ca, va] : rows[static_cast<std::size_t>(a)].t) {
+            delta_rhs(ca) += sign * va * Wm(a);
+            for (Eigen::Index b = 0; b < k; ++b)
+                for (const auto& [cb, vb] : rows[static_cast<std::size_t>(b)].t)
+                    delta_info(ca, cb) += sign * va * W(a, b) * vb;
+        }
+    }
+    delta_info = (0.5 * (delta_info + delta_info.transpose())).eval();
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return static_cast<std::size_t>(k);
 }
 
 bool NetworkEstimator::cloneConditional(const Datum& datum, Eigen::MatrixXd& K,

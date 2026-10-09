@@ -366,6 +366,11 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
                 if (p && blocked.count(p->satellite + "_" + p->signal)) {
                     drop_any = true;
+                    // The parameter inventory's absorbed instance (card NOM N1b).
+                    if (stations[i].mm)
+                        stations[i].mm->noteAbsorbedSharedState(
+                            StateContainer::SatPhaseBiasStates, kv.first,
+                            AbsorbedReason::AnchorHygieneBlock);
                     continue;
                 }
                 keep_pb.insert(kv.first);

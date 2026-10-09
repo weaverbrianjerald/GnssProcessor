@@ -9,7 +9,7 @@
 %                                 computeSnr / synthesizeCn0FromElevation /
 %                                 computeSatBlock
 %    filter/KalmanFilter        -- update, computeResidualQc_,
-%                                 validatePostFitResiduals
+%                                 residualQcKernel, validatePostFitResiduals
 %    filter/NeqAccumulator      -- solve (batch variance factor)
 %    filter/NetworkSolveGlue    -- within-epoch RAIM, WE-CI pools,
 %                                 per-constellation carve-out, SH health gate
@@ -18,7 +18,10 @@
 %    filter/NetworkFrameDiag    -- networkPostfitSigma0 (redundancy collapse)
 %    filter/NetworkIonoDeweightGate, filter/NetworkShHealth
 %    filter/NetworkSolPrep      -- emission prune + clock-runaway quarantine
-%    filter/NetworkCarryVce     -- LS-VCE carry monitor (default-off)
+%    filter/NetworkCarryVce     -- LS-VCE carry monitor (loader default off,
+%                                 armed on the goldens)
+%    filter/NetworkCarryVceApply -- variance-factor feedback (default off)
+%    filter/NetworkMdb, filter/BaardaReliability -- network MDB (measure-only)
 % ============================================================
 
 % doc-local macros (descriptive names, no single/double-letter caps)
@@ -307,15 +310,52 @@ emission-side prune that removes a withheld constellation's satellites.
 loop and the pooled statistics.  The emitted product is not treated
 here.
 
-The network path has a third variance-factor instrument, which is not
-operational.  \texttt{NetworkCarryVce} estimates Floor and Rate variance
-components of the carry-row stochastic model, by residual-form
-least-squares variance-component estimation at fixed weight.  Its only
-purpose is to check the hand-set carry floors against a measured
-$\hat\sigma$.  It is off by default (\texttt{network.carry\_vce}) and
-never feeds back into the solve.  The feedback setting
-\texttt{network.carry\_vce\_apply} is a hard error at configuration
-load, and the class has no apply method.
+The network path has a third variance-factor instrument, which measures
+and does not act.  \texttt{NetworkCarryVce} checks the hand-set
+carry-row stochastic model against the carry residuals
+$\hat e_i = \bar b_i - \hat x_i$ (the carried prior minus the solved
+value).  Its primary output is a tail-robust geometric mean of
+$\hat e_i^2$, and a residual-form least-squares variance-component
+estimate of Floor and Rate components at fixed weight is reported
+beside it.  The loader default is off (\texttt{network.carry\_vce}).
+Both golden configurations arm it as a monitor of the ambiguity,
+phase-bias and code-bias carries, and in that role it never feeds back
+into the solve.
+
+The feedback is \texttt{network.carry\_vce\_apply}
+(\texttt{filter/NetworkCarryVceApply}), built and default off.  It
+multiplies the fold variance $p_i$ of each carry family and
+constellation by a factor $\alpha^2 \ge 1$, updated by the
+variance-factor iteration of the LASER guide (slides 5-93 to 5-95)
+\cite{snow2024laser}, $\alpha^2_{j+1} = \hat\sigma^2_j\,\alpha^2_j$.
+The group estimate $\hat\sigma^2$ divides the weighted residual square
+sum by the group's redundancy \cite{snow2026adjustment}.  A carry row
+folded at $\alpha^2 p_i$ with posterior variance $v_i$ has the partial
+redundancy $\redno_i = 1 - v_i/(\alpha^2 p_i)$ and
+$E\{\hat e_i^2\} = \redno_i\,\alpha^2 p_i\,\hat\sigma^2$.  The streaming
+target is therefore formed row by row, as a geometric mean consistent
+with the monitor's:
+\begin{equation}
+\alpha^2 \;\leftarrow\;
+  \frac{\exp\bigl(\overline{\log(\hat e_i^2/\redno_i)}\bigr)\big/c_{\chi^2_1}}
+       {\exp\bigl(\overline{\log p_i}\bigr)} ,
+\qquad c_{\chi^2_1} = e^{-\gamma}/2 \approx 0.2807 ,
+\label{eq:qc-carry-vce-target}
+\end{equation}
+where the overbar is the monitor's forgetting-weighted mean, $p_i$ is
+the hand fold variance before the factor, and $c_{\chi^2_1}$ is the
+geometric mean of a $\chi^2_1$ variate.  A row with $\redno_i$ at or
+below $10^{-3}$, or with $\redno_i < 0$, carries no information on the
+factor and is left out and counted.  The case $\redno_i < 0$ arises on
+the coupled ambiguity carry, whose harvested variance is a conditional
+variance that can exceed the prior; there $\redno_i$ is an
+approximation.  The factor is inflate-only, slew-limited, frozen on a
+contaminated epoch, and valid only from a fresh convergence.  Until
+2026-10-07 the target omitted the division by $\redno_i$.  For a scalar
+carry with true prior variance $a\,p$ and data variance $d$,
+$E\{\hat e^2\} = \redno^2(a p + d)$, so that target settled below $a$,
+and once $d$ exceeded about $a p/4$ it stayed at $\alpha^2 = 1$: the
+under-inflation was largest where the carry is stiff against its data.
 
 \subsection{Redundancy numbers, the Baarda $w$-test, and the MDB}
 \label{sec:stoch-baarda}
@@ -342,7 +382,8 @@ only under the off-diagonal kernel of \Cref{sec:stoch-fullR}.
 \label{eq:qc-redundancy}
 \end{empheq}
 clamped to $[0,1]$ for numerical safety in both branches of
-\texttt{computeResidualQc\_}.  When $\redno_i \to 1$ the geometry checks
+\texttt{KalmanFilter::residualQcKernel} (called by
+\texttt{computeResidualQc\_}).  When $\redno_i \to 1$ the geometry checks
 the observation fully, and a blunder appears almost entirely in the
 residual.  When $\redno_i \to 0$ the observation is \emph{uncheckable}:
 the estimate absorbs a blunder and the residual shows nothing.  The sum
@@ -392,24 +433,41 @@ form is
 \wtest_i \;=\; \frac{\hat v_i}{\sqrt{\srmat_{ii}}}
 \label{eq:qc-wtest-diag}
 \end{equation}
-(the diagonal branch of \texttt{computeResidualQc\_}).  The divisor is
-$\sqrt{\srmat_{ii}}$, the \emph{true} residual standard deviation, not
-$\sqrt{R_{ii}}$.  This is the Studentised residual, and under the null
+(the diagonal branch of \texttt{KalmanFilter::residualQcKernel}).  The
+divisor is $\sqrt{\srmat_{ii}}$, the \emph{true} residual standard
+deviation, not $\sqrt{R_{ii}}$.  With $\sigma_0^2 = 1$ known (every
+$\Rmat$ here is absolute), this is the standardised residual of
+\cite{snow2026adjustment}, chapter 9; it becomes the studentised residual
+when an estimated $\hat\sigma_0$ replaces $\sigma_0$.  Under the null
 hypothesis $\wtest_i \sim \mathcal{N}(0,1)$.  The $\sres$ used by the
 fixed gate floors the denominator at $R$ and is therefore conservative.
-When the residual covariance is not diagonal, the correlated Teunissen
-generalisation is used (the \texttt{use\_full} branch of the same
+When the observations are correlated, the weight matrix $\Rmat^{-1}$
+takes the place of $1/R_{ii}$ (the \texttt{use\_full} branch of the same
 routine):
 \begin{empheq}[box=\fbox]{equation}
 \wtest_i \;=\;
-  \frac{\bigl(\srmat^{-1}\residvec\bigr)_i}
-       {\sqrt{\bigl(\srmat^{-1}\bigr)_{ii}}} .
+  \frac{\bigl(\Rmat^{-1}\residvec\bigr)_i}
+       {\sqrt{\bigl(\Rmat^{-1}\srmat\,\Rmat^{-1}\bigr)_{ii}}} .
 \label{eq:qc-wtest-corr}
 \end{empheq}
-\Cref{eq:qc-wtest-corr} reduces to \Cref{eq:qc-wtest-diag} when $\srmat$ is
-diagonal, but accounts for the off-diagonal correlation among residuals
-introduced by differencing
-\cite{teunissen2017handbook,teunissen1985generalised}.
+This is Baarda's statistic for a single blunder in observation $i$
+\cite{baarda1968testing,teunissen2000adjustment}, the most powerful test of
+that alternative, and the form of the LASER guide's data snooping
+\cite{snow2024laser}.  In a Kalman update
+$\Rmat^{-1}\residvec = \bm{S}^{-1}\bm{z}$ and
+$\Rmat^{-1}\srmat\,\Rmat^{-1} = \bm{S}^{-1}$, with $\bm{z}$ the innovation
+and $\bm{S}$ its covariance, so \Cref{eq:qc-wtest-corr} is also the
+innovation $w$-test $(\bm{S}^{-1}\bm{z})_i/\sqrt{(\bm{S}^{-1})_{ii}}$
+\cite{teunissen2017handbook,teunissen1985generalised}.  It reduces to
+\Cref{eq:qc-wtest-diag} when $\Rmat$ is diagonal, although $\srmat$ is not
+diagonal in a Kalman update.  Until 2026-10-07 the branch used
+$\srmat^{-1}$ in place of $\Rmat^{-1}$.  That statistic is also standard
+normal under the null hypothesis, but it tests the direction
+$\bm{S}\Rmat^{-1}\bm{e}_i$ rather than observation $i$: it lost power
+against a single blunder, and it did not reduce to
+\Cref{eq:qc-wtest-diag} even for a diagonal $\Rmat$.
+\texttt{tests/test\_residual\_qc\_wtest.cpp} checks the routine against a
+batch Gauss--Markov model with the prior as stochastic constraints.
 
 \paragraph{Minimal detectable bias.}  The smallest blunder on observation $i$
 that the $w$-test will detect, at the configured significance and a
@@ -420,17 +478,28 @@ conventional $80\%$ test power, is
 \noncentral = \texttt{dataSnoopingCritical()} + 0.8416 ,
 \label{eq:qc-mdb}
 \end{empheq}
-with $\sigma_i = \sqrt{R_{ii}}$ the a-priori observation $\sigma$ (both branches
-of \texttt{computeResidualQc\_}).  The non-centrality $\noncentral$ is the
+with $\sigma_i = \sqrt{R_{ii}}$ the a-priori observation $\sigma$ (the
+diagonal branch of \texttt{KalmanFilter::residualQcKernel}).  With
+correlated observations the same definition gives
+$\mdb_i = \noncentral/\sqrt{(\Rmat^{-1}\srmat\,\Rmat^{-1})_{ii}}$, so that a
+blunder of size $\mdb_i$ in observation $i$ shifts the expectation of
+\Cref{eq:qc-wtest-corr} by exactly $\noncentral$; it equals
+\Cref{eq:qc-mdb} when $\Rmat$ is diagonal.  The non-centrality $\noncentral$ is the
 critical value plus $\Phi^{-1}(0.80)=0.8416$, for a test power of $80\%$
 ($\beta=0.20$).  For the default critical value $k=3.29$ this gives
 $\noncentral \approx 4.13$.  The factor $1/\sqrt{\redno_i}$ expresses the
 geometry.  A poorly checked observation ($\redno_i \to 0$) has an
 arbitrarily large MDB, and the code returns $+\infty$ when $\redno_i$ is
 below \texttt{kRedFloor}.  A blunder on such a row cannot be detected
-from the residual.  The MDB exists only in the Kalman-filter QC.  The
-network producer computes no minimal detectable bias and relies on the
-robust $\hat\sigma_{0,\mathrm{net}}$ RAIM loop of
+from the residual.  The network producer computes the same quantity from
+its own redundancy numbers (\texttt{filter/NetworkMdb},
+\texttt{network.mdb}), with $\sigma_i = 1/\sqrt{w_i}$.  Both paths take
+$\noncentral$, the redundancy floor and the $+\infty$ convention from one
+header, \texttt{filter/BaardaReliability.hpp}, so a PPP MDB and a network
+MDB are commensurable.  The network MDB is measure-only: no gate,
+deweight or withhold reads it.  Its loader default is off, and both
+golden configurations arm it.  The producer's acting phase-side QC
+remains the robust $\hat\sigma_{0,\mathrm{net}}$ RAIM loop of
 \Cref{eq:qc-sigma0-net}.
 
 \subsection{Data-snooping gate override}\label{sec:stoch-snooping}
@@ -487,18 +556,22 @@ and symmetrised, and the QC quantities follow without approximation:
   & \dof &= \operatorname{tr}\redmat,
 \label{eq:qc-full-red}\\[2pt]
 \wssr &= \residvec^{\Tr}\Rmat^{-1}\residvec,
-  & \wtest_i &= \frac{\bigl(\srmat^{-1}\residvec\bigr)_i}{\sqrt{(\srmat^{-1})_{ii}}},
-  & \mdb_i &= \frac{\sqrt{R_{ii}}\,\noncentral}{\sqrt{\redno_i}} .
+  & \wtest_i &= \frac{\bigl(\Rmat^{-1}\residvec\bigr)_i}
+                    {\sqrt{(\Rmat^{-1}\srmat\,\Rmat^{-1})_{ii}}},
+  & \mdb_i &= \frac{\noncentral}{\sqrt{(\Rmat^{-1}\srmat\,\Rmat^{-1})_{ii}}} .
 \label{eq:qc-full-w}
 \end{align}
-$\Rmat^{-1}$ and $\srmat^{-1}$ come from $\mathrm{LDL}^{\Tr}$ solves
-against the identity, since both matrices are symmetric positive
-definite.  When the off-diagonals vanish, the diagonal of the full
-$\redmat$ and the full Teunissen $\wtest$ equal the per-row quantities
-of \Cref{sec:stoch-baarda}.  The \emph{outlier-handling path is
-therefore unchanged behind the flag}.  The flag only makes the
-statistics correct on differenced epochs, where the residuals are
-correlated.  Its scope is narrow.  The gain and the Joseph-form update
+$\Rmat^{-1}$ comes from an $\mathrm{LDL}^{\Tr}$ solve against the
+identity.  An $\Rmat$ that is not positive definite has no weight
+matrix, and the routine then falls back to the per-row forms.  When
+$\Rmat$ is diagonal, $\redmat$, $\wtest$ and $\mdb$ equal the per-row
+quantities of \Cref{sec:stoch-baarda}, whatever the off-diagonals of
+$\srmat$.  The diagonal of the full $\srmat$ equals the per-row
+$\srmat_{ii}$, so the fixed $|\sres| > 6$ gate is \emph{unchanged behind
+the flag}; under data snooping (\Cref{sec:stoch-snooping}) the gate reads
+the correlation-aware $\wtest_i$.  The flag only makes the statistics
+correct on differenced epochs, where the residuals are correlated.  Its
+scope is narrow.  The gain and the Joseph-form update
 already use a dense $\Rmat$ whenever one is supplied, with or without
 the flag.  The flag decides only whether the \emph{post-fit residual}
 covariance is formed densely.  \dcref{sec:diff}{The differencing section}

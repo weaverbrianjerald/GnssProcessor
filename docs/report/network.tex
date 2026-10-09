@@ -72,11 +72,14 @@ layered. The base layer is the \emph{diagonal} D2 shared carry: each
 shared parameter's posterior value and variance are re-injected as a
 diagonal prior on the next epoch's shared border, inflated by $q\,\dt$
 and dropped on a datum change (\texttt{networkInjectD2CarryPrior},
-\texttt{app/NetworkRunContext}). This layer has no enable flag, so the
-producer is always a filtered solve, never a snapshot solve. The layers
-built on it are each a large subsystem, default off in the loader, and
-are referenced here without derivation: the C1 full-covariance shared
-carry (\texttt{network.shared\_carry\_full\_cov}, folded through
+\texttt{app/NetworkRunContext}), except where the clock-pivot handover
+S-transform (\texttt{network.handover\_stransform}, default off, armed
+by the goldens) has re-expressed it in the incoming datum. This layer
+has no enable flag, so the producer is always a filtered solve, never a
+snapshot solve. The layers built on it are each a large subsystem,
+default off in the loader, and are referenced here without derivation:
+the C1 full-covariance shared carry
+(\texttt{network.shared\_carry\_full\_cov}, folded through
 \texttt{addSharedPriorDense}), the Card-4 invariant DD carry
 (\texttt{network.carry\_invariant}, \texttt{setDdPriors}), the
 station-local phase-leveling, ZWD and receiver-code-bias carries folded
@@ -87,7 +90,17 @@ lane-coordinate widelane layers. The golden configurations
 phase leveling (\texttt{network.phase\_leveling}) with the float
 ambiguity vehicle (\texttt{network.ambiguity\_vehicle} set to
 \texttt{float\_kf}; the loader default is \texttt{level}). They leave
-the invariant DD carry and every widelane layer off.
+the invariant DD carry and every widelane layer off. Under the vehicle
+the carried ambiguities, and with
+\texttt{network.carry\_rx\_code\_bias\_in\_block} the receiver code
+biases, enter as whitened coupling rows of each station's design
+(\texttt{CouplingRowBuilder::buildLocalBlock}), not through
+\texttt{addStationPrior}. The vehicle, its exact coupling time update
+(\texttt{network.carry\_coupling\_exact\_update}) and the temporal clock
+anchor are developed in
+\dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}; the event
+responses and the holds on the emitted product are in
+\dcref{sec:net-wire}{the event-response and emitted-product section}.
 
 \subsection{Producer architecture: the decomposed epoch loop}
 \label{sec:net-arch}
@@ -110,7 +123,7 @@ shrank by roughly a factor of eight, to under $1{,}800$ lines of
 epoch-loop orchestration, with no change in the numbers. Later cards
 have added seams to the call sequence: the file
 (\texttt{src/core/app/ApplicationNetwork.cpp}) exceeded $2{,}250$ lines
-by 2026-08-15 and measures 3,071 lines on 2026-09-28. The placement
+by 2026-08-15 and measures 3,139 lines on 2026-10-07. The placement
 rules of this section exist to bound that growth. The gate's coverage
 is incomplete. \texttt{docs/network\_decomposition\_plan.md} records
 per-increment byte gates through increment~8 (with increment~7b) only.
@@ -193,19 +206,31 @@ driver's section timers bracket the calls. Rows marked \emph{default
 off} are inert unless armed; most of the newer machinery in this
 producer is in that state. The table omits smaller calls in the same
 loop, among them the signal roster (\texttt{networkBuildSignalRoster}),
-the float-vehicle drop step (\texttt{networkAmbFloatApplyDrops}), the
-gross line-of-sight screen (\texttt{networkGrossLosScreen}, loader
+the float-vehicle drop step with the latch-cause tally before it
+(\texttt{networkAmbFloatApplyDrops}, \texttt{networkResponseLatchTally}),
+the gross line-of-sight screen (\texttt{networkGrossLosScreen}, loader
 default off, armed by the goldens), and the code-only clock-level
 re-base of card CLV (\texttt{networkClockLevelRebase}, after
 \texttt{networkStashStatus}; inert unless
-\texttt{network.clock\_level\_carry}, default off). The gross screen
-runs its response half after post-fit RAIM; under
+\texttt{network.clock\_level\_carry}, default off). Further small calls
+are inert on the goldens (loader default off, not armed): ahead of the
+fold decision, card CTU's one-time level raise after a warm resume
+(\texttt{networkClockLevelRestoreRaise}) and the clock-pivot handover
+S-transform before the coupling rows
+(\texttt{networkHandoverStransformBeforeRows}); around the emission, the
+smoothed-hold clock clones of card SMH (\texttt{networkPbHoldCloneUpdate}
+before \texttt{networkEmitStore}, \texttt{networkPbHoldCloneHarvest}
+after \texttt{networkStashStatus}); after \texttt{networkClockQc}, the
+phase-visible consistency instrument of card PVN
+(\texttt{networkPhaseVisibleMonitor}); and after the CLV re-base, card
+CTU's level monitor and bound raise (\texttt{networkClockLevelMonitor}).
+The gross screen runs its response half after post-fit RAIM; under
 \texttt{network.gross\_los\_emit\_exclude} its decision half runs
 earlier, before \texttt{networkSolPrep}, so that a declaration reaches
 the epoch it declares. The prefit census row runs only when one of its
-instruments is armed: \texttt{network.trace\_prefit\_census} (armed by
-the goldens), \texttt{network.trace\_topology}, or a positive
-\texttt{network.seed\_birth\_check\_sigma}.
+instruments is armed: \texttt{network.trace\_prefit\_census} or
+\texttt{network.trace\_topology} (both armed by the goldens), or a
+positive \texttt{network.seed\_birth\_check\_sigma}.
 
 \begin{center}
 \footnotesize
@@ -223,13 +248,14 @@ seam call (driver order) & concern (translation unit) \\
 \texttt{networkAssembly\-RegisterColumns\_} & clear the layout, register this epoch's shared columns, open the arrowhead system (\texttt{app/ApplicationNetworkAssembly}) \\
 \texttt{networkSdEwlAr} & single-difference extra-widelane integer decision; \emph{default off} (\texttt{filter/NetworkSdEwlAr}) \\
 \texttt{networkRxCbDemeanPrepass} & receiver code-bias carry de-mean before assembly reads the map; \emph{default off} (\texttt{app/NetworkRunContext}) \\
+\texttt{networkCarryDecide}, \texttt{networkCoupling\-ExactPrepare} & the fold decision for every carried border entry, made once per epoch and read by both the coupling rows and the D2 fold (\texttt{filter/NetworkCarryDisposition}); the inputs of the exact coupling time update, \emph{default off}, armed by the goldens (\texttt{app/NetworkRunContext}) \\
 \texttt{networkPassB\_} & PASS~B produce/consume: the split design blocks handed to \texttt{addStation} (\texttt{app/ApplicationNetworkAssembly}, \texttt{filter/NetworkCoupling}) \\
 \texttt{networkBuildEnsembleGauges}, \texttt{networkBuildCarryDdPriors} & sum-to-zero phase gauges; Card-4 DD carry priors (\texttt{filter/NetworkDdPriorBuild}) \\
 \texttt{networkSolveGlue} & shared datum build, rank gate and drop-and-heal, D2 carry injection, the constrained solve, within-epoch RAIM re-solve, withhold gates (\texttt{filter/NetworkSolveGlue}, calling \texttt{NetworkSbasis}, \texttt{NetworkPhaseDatum}, \texttt{NetworkRelevel}) \\
 \texttt{networkInstallCarry} & DD posterior read-back into the invariant carry; \emph{default off} (\texttt{filter/NetworkInstallCarry}) \\
 \texttt{networkProducerAr} & producer-side AR diagnostic and normal-equation export; read-only and log-only, \emph{default off} (\texttt{filter/NetworkProducerAr}) \\
 \texttt{networkSolPrep} & map to the solution epoch; per-satellite discontinuity signalling (\texttt{filter/NetworkSolPrep}) \\
-\texttt{networkEmitStore} & emit re-base, phase-bias continuity filter, store push, product write, closed-loop consume (\texttt{filter/NetworkEmitStore}) \\
+\texttt{networkEmitStore} & emit re-base, phase-bias continuity filter, phase-bias hold, store push, product write, closed-loop consume (\texttt{filter/NetworkEmitStore}, calling \texttt{NetworkPbHold}) \\
 \texttt{networkFastClockHarvest} & fast-clock harvest off the accepted solution; \emph{default off} (\texttt{filter/NetworkFastClock}) \\
 \texttt{networkIonoDiag}, \texttt{networkDdFrac}, \texttt{networkShDevVtec}, \texttt{networkShHealth}, \texttt{networkIonoDwRelease}, \texttt{networkLeveling} & diagnostic sweeps, the iono-deweight release hygiene that reseeds slant states a zero-weight era left unvalidated, and the SH-deviation and phase-leveling carry harvests (\texttt{filter/NetworkIonoDiag}, \texttt{NetworkDdFrac}, \texttt{NetworkShDevVtec}, \texttt{NetworkShHealth}, \texttt{NetworkIonoDwRelease}, \texttt{NetworkLeveling}) \\
 \texttt{networkPostFitRaim} & post-fit network RAIM and its attribution pass (\texttt{filter/NetworkRaim}) \\
@@ -486,7 +512,13 @@ against the matching S-basis dimension. The goldens keep the default
 clock pin (at \texttt{network.clock\_datum\_station}), arm the
 prioritized phase datum with \texttt{network.phase\_datum\_held\_basis},
 estimate the satellite code biases, and pin the geometry-free code bias
-at the broadcast T\textsubscript{GD} (\texttt{broadcast\_tgd}).
+at the broadcast T\textsubscript{GD} (\texttt{broadcast\_tgd}). They
+also arm the guarded temporal clock anchor
+(\texttt{network.clock\_temporal\_anchor}, default off). The anchor
+leaves the clock pin and the declared S-basis unchanged. It makes each
+satellite clock's carried prior bind across epochs and is treated with
+the carry
+(\dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}).
 
 \begin{remark}
 A null-space rank gate eigen-decomposes the pre-constraint reduced
@@ -688,6 +720,29 @@ arm proves: the in-process SH-VTEC slant-ionosphere supply has no
 product-wire record, so \texttt{closed\_loop.consume\_network\_iono} is
 inert on the replay path (the driver logs a warning), and the consumer
 floats its own ionosphere there.
+
+The goldens also arm two emit-side holds and the consumer's answer to
+them, treated in
+\dcref{sec:net-wire}{the event-response and emitted-product section}.
+The phase-bias generation hold (\texttt{network.emit\_pb\_hold}) freezes
+each emitted phase bias at the first value of its generation and
+declares every new generation on the wire. The phase-clock hold
+(\texttt{network.emit\_pb\_hold\_phase\_clock}), a mode of the same
+hold, keeps the satellite's phase-visible clock over the generation
+instead. Both run inside \texttt{networkEmitStore}
+(\texttt{filter/NetworkPbHold}) and leave the solve unchanged. Under
+\texttt{network.closed\_loop.pb\_hold\_presence\_flip} the derived
+consumer (\texttt{processing.ssr\_pb\_hold\_presence\_flip}) answers a
+held phase bias that appears on, or leaves, a phase row it already uses
+as it answers an unheld one. The derived configuration is a full copy
+of the producer's (\texttt{GnssConfig::deriveClosedLoopConsumerConfig})
+and leaves \texttt{estimation.accumulate\_phase\_windup} unchanged, so
+the in-process consumer runs the producer's wind-up mode; the goldens
+arm accumulation on both beds. The replay driver derives its consumer
+through the same call from the replay configuration, and the product's
+S-basis contract records only the wind-up model revision
+(\texttt{windup\_id}), so a replay matches the producer's mode only when
+its configuration does.
 
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}

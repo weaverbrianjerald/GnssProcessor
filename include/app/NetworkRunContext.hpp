@@ -25,9 +25,11 @@
 
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkParamRegistry.hpp" // NetworkParamRegistry: one declared property set per parameter kind (card PRM)
+#include "filter/NetworkParamInventory.hpp" // NetworkParamInventory: every parameter instance with its disposition (card NOM N1)
 #include "filter/NetworkCarrySites.hpp"     // CarrySite / CarryMechanism: the carried references of the border (card PRM phase 2)
 #include "filter/NetworkResponses.hpp"      // ResponseSite: the declared responses of the carried instances (card PRM phase 3a)
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactCounters (card CTU)
+#include "filter/NetworkPivotFrameQ.hpp"    // PivotFrameCounters (card PFQ)
 #include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone (card SMH)
 #include "filter/NetworkClockClone.hpp"     // ClockCloneEpoch / ClockCloneCounters (card SCL)
 #include "filter/NetworkSharedHistory.hpp"  // SharedHistoryState / SharedHistoryCounters (card SCL2 X2)
@@ -256,12 +258,21 @@ namespace GnssProcessor {
         /// network.carry_coupling_exact_cross (card WSX): the exact update's bracket between
         /// two rows of a station, added in the whitened local block.
         bool carry_cpl_exact_cross{};
+        /// network.clock_pivot_frame_q (card PFQ): the carried clocks' process noise in the
+        /// pivot frame (filter/NetworkPivotFrameQ.hpp).
+        bool pfq_on{};
         /// network.carry_coupling_clock_clone (card SCL): the previous epoch's satellite
         /// clocks as one-epoch clone columns in the shared border (filter/NetworkClockClone).
         bool carry_cpl_clone{};
         /// network.carry_coupling_shared_history (card SCL2 X2): the clones' shared
         /// conditional carried as history columns (filter/NetworkSharedHistory).
         bool carry_cpl_shx{};
+        /// network.carry_coupling_bias_clone (card BCL-a): the phase and code biases on
+        /// one-epoch clones with walk factors (filter/NetworkClockClone).
+        bool carry_cpl_bclone{};
+        /// network.carry_coupling_departed_clone (card BCL-d): the keys card CTU
+        /// re-attributes on one-epoch clones with the stashed prior (filter/NetworkClockClone).
+        bool carry_cpl_dclone{};
         /// network.carry_coupling_shared_history_rank (card SCL2 X2): history columns kept
         /// per cloned clock (1 to 8).
         int  shx_rank{1};
@@ -1043,6 +1054,10 @@ namespace GnssProcessor {
         double cxu_stash_s{0.0};                            ///< continuous-GPS s of the stash prev_carry_cov belongs to
         bool   cxu_stash_valid{false};                      ///< the stash was taken this run with the dense block present
         std::map<char, std::pair<std::string, double>> cxu_pivot;  ///< constellation -> (pinned clock sat, pinned value) at the stash
+        /// Card PFQ: constellation -> the clock pivot the stashed posterior was pinned on
+        /// (the frame the carried clocks are in).  Recorded at every stash and restored from
+        /// the snapshot's pivots; empty and unread when network.clock_pivot_frame_q is off.
+        std::map<char, std::string> pfq_pivot;
         CouplingExactEpoch cxu_epoch;                       ///< this epoch's inputs; ok = false when off or unbuilt
         ClockCloneEpoch    ccl;                             ///< card SCL: this epoch's clock clones and the rows' copy of cxu_epoch (filter/NetworkClockClone); rebuilt every armed epoch, empty off
         SharedHistoryState shx;                             ///< card SCL2 X2: the held compression and this epoch's history columns (filter/NetworkSharedHistory); not snapshotted, empty off
@@ -3895,6 +3910,7 @@ namespace GnssProcessor {
         long long cxu_fold_reexpressed_in_s = 0;   ///< keys in S folded on a variance a handover re-expressed after the rows
         long long cxu_fold_retired_in_s = 0;       ///< keys in S the fold retired at a handover (the rows carried them)
         long long cxu_pivot_missing = 0;       ///< built epochs with a clock constellation and no recorded pivot
+        PivotFrameCounters pfq{};              ///< card PFQ run totals (filter/NetworkPivotFrameQ.hpp)
         ClockCloneCounters ccl{};              ///< card SCL run totals (filter/NetworkClockClone)
         SharedHistoryCounters shx{};           ///< card SCL2 X2 run totals (filter/NetworkSharedHistory)
         // Card PRM phase 1b: the decided-once fold disposition (networkCarryDecide before
@@ -4619,7 +4635,8 @@ namespace GnssProcessor {
     struct NetworkRunContext {
         NetworkRunContext(const GnssConfig& config, const NetworkConfig& nc)
             : knobs(NetworkKnobs::snapshot(config, nc)),
-              params(NetworkParamRegistry::build(knobs, config)) {
+              params(NetworkParamRegistry::build(knobs, config)),
+              param_inventory(networkRxIfbRule(config)) {
             // The estimability census latch is a counter, so it is seeded here (the one
             // place the context is built) rather than snapshotted into knobs; the dump
             // site decrements it (RF-NS).  The default 6 equals the former hard-coded
@@ -4635,6 +4652,13 @@ namespace GnssProcessor {
         /// initialized after it) and read, never written, inside the epoch loop.  The
         /// single process-noise source of the border kinds (@ref NetworkParamRegistry::q).
         const NetworkParamRegistry params;
+        /// The parameter inventory (card NOM N1): the run's receiver IFB rule
+        /// (@c param_inventory.rx_ifb, built here once and read by the station split), and
+        /// every state column of every station as a parameter instance with its disposition,
+        /// folded after PASS B.  The tallies are trace class: written by the drain, never
+        /// read by the solve.  Tabled after the first emitted epoch and at run end
+        /// ("parameters as armed").
+        NetworkParamInventory  param_inventory;
         NetworkCarryState      carry;
         NetworkServiceCounters counters;
         NetworkBiasAdmission   admission;   // latched census result of CB-ADM (active=false: the legacy path)

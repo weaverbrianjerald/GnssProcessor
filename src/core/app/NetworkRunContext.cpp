@@ -133,9 +133,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_tu = config_.networkCarryCouplingTimeUpdate();
     k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov + !joint
     k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // card WSX; loader guarantees exact
+    k.pfq_on = config_.networkClockPivotFrameQ();   // card PFQ; loader guarantees fullcov + the pin datum
     k.carry_cpl_clone = config_.networkCarryCouplingClockClone();   // card SCL; loader guarantees exact + fullcov
     k.carry_cpl_shx   = config_.networkCarryCouplingSharedHistory();       // card SCL2 X2; loader guarantees B1
     k.shx_rank        = config_.networkCarryCouplingSharedHistoryRank();   // card SCL2 X2; loader guarantees [1, 8]
+    k.carry_cpl_bclone = config_.networkCarryCouplingBiasClone();       // card BCL-a; loader guarantees B1
+    k.carry_cpl_dclone = config_.networkCarryCouplingDepartedClone();   // card BCL-d; loader guarantees B1
     k.clm_on    = config_.networkClockLevelMonitor();      // card CTU monitor (trace class)
     k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
     k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
@@ -1196,6 +1199,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Card WSX: the within-station bracket changes the rows' joint weight; armed only.
         if (ctx.knobs.carry_cpl_exact_cross)
             add(fmt::format("carrycplexactx={}", ctx.knobs.carry_cpl_exact_cross));
+        // Card PFQ: the pivot-frame clock noise changes every carried clock's prior and the
+        // exact update's Q_S; armed-only token.
+        if (ctx.knobs.pfq_on)
+            add(fmt::format("pfq={}", ctx.knobs.pfq_on));
         // Card SCL: the clock clone changes the rows, the fold and the carry each epoch hands
         // on (the harvest marginalizes the clones); armed-only token, so every existing
         // fingerprint is unchanged.
@@ -1203,6 +1210,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Card SCL2 X2: the shared history changes the rows, the fold and the carried
         // variances (the remainder only); armed-only token with its rank.
         if (ctx.knobs.carry_cpl_shx) add(fmt::format("shx:{}", ctx.knobs.shx_rank));
+        // Card BCL: the bias and departed clones change the rows and the fold; armed-only
+        // tokens.
+        if (ctx.knobs.carry_cpl_bclone) add("bcl:a");
+        if (ctx.knobs.carry_cpl_dclone) add("bcl:d");
         // The bound raise (card CTU) moves the carried border block; the monitor alone is
         // trace class and stays out of the fingerprint.
         if (ctx.knobs.clm_raise)
@@ -2408,6 +2419,12 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 for (const auto& [c, sat] : snap.prev_pivot)
                                     if (!sat.empty()) ctx.carry.cxu_pivot[sat[0]] = {sat, 0.0};
                                 ++ctx.counters.cxu_resume_stash;
+                            }
+                            // Card PFQ: the restored block's frame is the snapshot's pivots.
+                            if (ctx.knobs.pfq_on) {
+                                ctx.carry.pfq_pivot.clear();
+                                for (const auto& [c, sat] : snap.prev_pivot)
+                                    if (!sat.empty()) ctx.carry.pfq_pivot[sat[0]] = sat;
                             }
                             ctx.counters.n_resume_cpl_cov_keys    = static_cast<long long>(nk);
                             ctx.counters.n_resume_cpl_cov_dropped = n_drop_cov;
@@ -3868,6 +3885,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         std::vector<double> dvar_eff;                         // per-key var_eff (diag + fallback)
         std::vector<char> dinflate;                           // inflate_q per dense key
         std::vector<char> dreexp;                             // re-expressed since the decision (card PRM phase 1b)
+        std::vector<double> dpfq_rate, dpfq_dt;               // card PFQ: the pivot's rate and the key's interval
         std::vector<NetworkEstimator::SharedPrior> leftovers; // no matrix row → diagonal fold
         dkeys.reserve(prev_carry.size());
         drow.reserve(prev_carry.size());
@@ -3906,6 +3924,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             dvar_eff.push_back(var_eff);
             dinflate.push_back(cp.inflate_q ? 1 : 0);
             dreexp.push_back((cp.var != cp.fold.var_decided_m2 || cp.value != cp.fold.value_decided_m) ? 1 : 0);
+            dpfq_rate.push_back(cp.fold.pfq_rate_m2ps);
+            dpfq_dt.push_back(cp.fold.dt_applied_s);
         }
         const std::size_t kd = dkeys.size();
         // Card CTU: the coupling rows were built in PASS B from the same decision
@@ -3957,6 +3977,25 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                     for (std::size_t b = 0; b < kd; ++b)
                         if (b != a && lvl(b) && dkeys[b].sat == dkeys[a].sat)
                             cov_eff(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b)) += sq->second;
+                }
+            }
+            // Card PFQ: the pairwise half of the pivot-frame clock noise.  The diagonal half
+            // is inside dvar_eff through the decision; two clocks of one constellation that
+            // took it share the pivot's walk over the overlap of their intervals.  A reinit
+            // key took no term (its rate is 0), so its decorrelated row stays zero.
+            if (ctx.knobs.pfq_on) {
+                for (std::size_t a = 0; a < kd; ++a) {
+                    if (!(dpfq_rate[a] > 0.0) || dkeys[a].kind != SharedParamKind::Clock) continue;
+                    for (std::size_t b = a + 1; b < kd; ++b) {
+                        if (!(dpfq_rate[b] > 0.0) || dkeys[b].kind != SharedParamKind::Clock
+                            || dkeys[b].sat.front() != dkeys[a].sat.front())
+                            continue;
+                        const double v = pivotFrameCross(dpfq_rate[a], dpfq_dt[a], dpfq_dt[b]);
+                        const auto ia = static_cast<Eigen::Index>(a), ib = static_cast<Eigen::Index>(b);
+                        cov_eff(ia, ib) += v;
+                        cov_eff(ib, ia) += v;
+                        ++ctx.counters.pfq.dense_pairs;
+                    }
                 }
             }
             try {
@@ -4205,6 +4244,30 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
                 const CarryPrior* cb2 = seamCp(b);
                 if (cb2 && cb2->sat == ca->sat)
                     ep.q_off.emplace_back(static_cast<int>(a), static_cast<int>(b), ca->fold.seam_q_m2);
+            }
+        }
+    }
+    // Card PFQ: the pairwise half of the pivot-frame clock noise, the same as the dense fold
+    // adds (its diagonal half is inside q_s through the decision), so the rows are
+    // re-expressed with the fold's own Q_S.
+    if (ctx.knobs.pfq_on) {
+        const Eigen::Index nS = ep.nS();
+        const auto pfqCp = [&](Eigen::Index a) -> const CarryPrior* {
+            const CarryPrior* c = cp_of_p[static_cast<std::size_t>(ep.p_of_s[static_cast<std::size_t>(a)])];
+            return (c && c->kind == SharedParamKind::Clock && c->fold.pfq_rate_m2ps > 0.0
+                    && !c->sat.empty()) ? c : nullptr;
+        };
+        for (Eigen::Index a = 0; a < nS; ++a) {
+            const CarryPrior* ca = pfqCp(a);
+            if (!ca) continue;
+            for (Eigen::Index b = 0; b < nS; ++b) {
+                if (b == a) continue;
+                const CarryPrior* cb2 = pfqCp(b);
+                if (!cb2 || cb2->sat.front() != ca->sat.front()) continue;
+                ep.q_off.emplace_back(static_cast<int>(a), static_cast<int>(b),
+                                      pivotFrameCross(ca->fold.pfq_rate_m2ps, ca->fold.dt_applied_s,
+                                                      cb2->fold.dt_applied_s));
+                ++ctx.counters.pfq.cxu_pairs;
             }
         }
     }
@@ -7252,6 +7315,17 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             try { col = est.clockColumn(sat); } catch (...) { continue; }
             if (pinned_cols.count(col) && col >= 0 && col < x_s.size())
                 ctx.carry.cxu_pivot[sat[0]] = {sat, x_s(col)};
+        }
+    }
+    // Card PFQ: the clock pivot this stash was pinned on, the frame of the carried clocks
+    // the next epoch's fold applies the pivot-frame process noise in.
+    if (ctx.knobs.pfq_on) {
+        ctx.carry.pfq_pivot.clear();
+        for (const std::string& sat : registered_clock_sats) {
+            if (sat.empty()) continue;
+            Eigen::Index col = -1;
+            try { col = est.clockColumn(sat); } catch (...) { continue; }
+            if (col >= 0 && pinned_cols.count(col)) ctx.carry.pfq_pivot[sat[0]] = sat;
         }
     }
     if (config_.estimateNetworkIonoSh() && sh_model) {   // SH-VTEC coefficients

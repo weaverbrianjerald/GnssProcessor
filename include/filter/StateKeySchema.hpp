@@ -35,6 +35,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace GnssProcessor {
 namespace StateKeys {
@@ -428,6 +429,10 @@ inline std::string makeDcbKey(std::string_view system) {
 struct GlonassPerSlotIfbKeyParts {
     char band;       ///< FDMA band digit ('1' or '2').
     int  fcn_slot;   ///< GLONASS FDMA channel number k ∈ [-7,+6].
+    /// The system name before "_IFB" ("GLONASS"); empty when the key does not open with
+    /// "<system>_" before the infix (the parser does not require it).  Card NOM N1: the
+    /// parameter inventory reads the constellation from here rather than assuming it.
+    std::string system{};
 };
 
 /// Build a per-FCN-slot GLONASS receiver IFB key, e.g. "GLONASS_IFB1_k-4".
@@ -483,7 +488,10 @@ parseGlonassPerSlotIfbKey(std::string_view key) {
         if (c < '0' || c > '9') return std::nullopt;
         mag = mag * 10 + (c - '0');
     }
-    return GlonassPerSlotIfbKeyParts{ band, neg ? -mag : mag };
+    std::string system;
+    if (ifb > 0 && key[ifb - 1] == kCodeBiasDelimiter)
+        system = std::string(key.substr(0, ifb - 1));
+    return GlonassPerSlotIfbKeyParts{ band, neg ? -mag : mag, std::move(system) };
 }
 
 /// Decomposed receiver per-band IFB key ("<system>_IFB<band>").

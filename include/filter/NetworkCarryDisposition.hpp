@@ -117,4 +117,24 @@ double carryFoldVarEff(const NetworkRunContext& ctx, const CarryPrior& cp,
 void networkCarryDecide(NetworkRunContext& ctx, const NetworkEstimator& est, const GnssTime& t,
                         double dt);
 
+/**
+ * @brief Card PFQ (@c network.clock_pivot_frame_q): add the pivot's walk to the decided
+ *        increment of every other folding satellite clock of its constellation.
+ *
+ * A carried clock is the pivot-frame quantity @f$c_j - c_p@f$ (the clock datum pins one
+ * satellite per constellation), so its state equation carries the pivot's walk over its
+ * own interval, @f$r_p\,\Delta t_j@f$, and two such clocks share @f$r_p
+ * \min(\Delta t_j, \Delta t_k)@f$ (filter/NetworkPivotFrameQ.hpp).  This pass adds the
+ * diagonal half to @c q_applied_m2 and records @f$r_p@f$ on the decision
+ * (@c pfq_rate_m2ps); the dense fold and the exact coupling update add the pairwise half.
+ * The pivot is the one the stashed posterior was pinned on (@c carry.pfq_pivot).  The
+ * stash skips pinned columns, so that pivot is not carried and @f$r_p@f$ is the model's
+ * physical per-satellite rate: the anchor's q with the anchor armed, the legacy rate
+ * without it (a carried pivot would use its own decided rate).  A reinit and a non-folding entry take no
+ * term.  Called by @ref networkCarryDecide after every entry is decided; a no-op with the
+ * knob off, so the off path is byte-identical.  Counted in @c counters.pfq.
+ * @param ctx run context (decisions of the carried clocks are updated)
+ */
+void networkCarryPivotFrame(NetworkRunContext& ctx);
+
 }  // namespace GnssProcessor

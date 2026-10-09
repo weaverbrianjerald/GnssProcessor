@@ -117,6 +117,28 @@ public:
      */
     Eigen::Index registerClockClone(const std::string& sat);
     /**
+     * @brief Register the one-epoch clone of any satellite border key (card BCL,
+     *        docs/refound/BCL_previous_border_on_clones_2026-10-08.md); idempotent; returns
+     *        its column.
+     *
+     * A clock is @ref registerClockClone exactly (key @c "sat|CLKC").  A phase bias is keyed
+     * @c "sat|PBC|signal" and labelled @c "PBC:<sat>:<signal>", a code bias
+     * @c "sat|CBC|signal" and @c "CBC:<sat>:<signal>": disjoint from the biases' own keys,
+     * and no "PB:" or "CB:" prefix parser matches the label.  The descriptor carries the
+     * key's own kind with the clone flag, so every reader that tests a kind for a bias also
+     * meets the flag through @ref sharedColumnIdentity (false for a clone) or the label.
+     * Like B1's clones it is registered after every other column, counted in
+     * @ref numClockClones (the clones of every kind), never emitted, stashed or
+     * snapshotted.
+     * @param kind   Clock, PhaseBias or CodeBias.
+     * @param sat    the satellite.
+     * @param signal the signal (ignored for a clock).
+     * @throws std::invalid_argument for an SH-VTEC kind; std::logic_error after
+     *         @ref beginEpoch, like every registration.
+     */
+    Eigen::Index registerClone(SharedParamKind kind, const std::string& sat,
+                               const std::string& signal);
+    /**
      * @brief Register shared-history column @p j (card SCL2 X2,
      *        @c network.carry_coupling_shared_history); idempotent; returns its column.
      *
@@ -148,7 +170,12 @@ public:
     /// @return The clock clone column of @p sat (card SCL, @ref registerClockClone).
     /// @throws std::out_of_range if absent.
     Eigen::Index clockCloneColumn(const std::string& sat) const;
-    /// @return Whether shared column @p col is a clock clone (card SCL); false when
+    /// @return The clone column of (@p kind, @p sat, @p signal) (card BCL,
+    ///         @ref registerClone). @throws std::out_of_range if absent.
+    Eigen::Index cloneColumn(SharedParamKind kind, const std::string& sat,
+                             const std::string& signal) const;
+    /// @return Whether shared column @p col is a clone of any kind (card SCL, card BCL);
+    ///         false when
     ///         @p col is out of range.
     bool isClockClone(Eigen::Index col) const;
     /// @return The shared-history column @p j (card SCL2 X2, @ref registerHistoryColumn).
@@ -172,8 +199,9 @@ public:
      */
     bool sharedColumnIdentity(Eigen::Index col, SharedParamKind& kind, std::string& sat,
                               std::string& signal) const;
-    /// @return The number of clock clone columns registered this epoch (card SCL); they
-    ///         are the last columns of the layout.  0 whenever the knob is off.
+    /// @return The number of clone columns registered this epoch (card SCL's clocks and
+    ///         card BCL's biases and departed keys); they are the last columns of the
+    ///         layout before the history.  0 whenever the knobs are off.
     Eigen::Index numClockClones() const { return n_clones_; }
     /// @return The number of shared-history columns registered this epoch (card SCL2 X2);
     ///         they follow the clones.  0 whenever the knob is off.
@@ -194,7 +222,9 @@ public:
      * (satellite code bias), @c "PB:<sat>:<signal>" (satellite phase bias),
      * @c "SH:<C|S>:<n>:<m>" (SH-VTEC coefficient; @c "SH2:<C|S>:<n>:<m>" on the
      * second shell), @c "CLKC:<sat>" (a clock clone, card SCL; no "CLK:" prefix
-     * parser matches it), @c "HIST:<j>" (a shared-history column, card SCL2 X2).  Intended for the NEQ export and other offline attribution
+     * parser matches it), @c "PBC:<sat>:<signal>" and @c "CBC:<sat>:<signal>" (a phase-
+     * or code-bias clone, card BCL; no "PB:" or "CB:" prefix parser matches them),
+     * @c "HIST:<j>" (a shared-history column, card SCL2 X2).  Intended for the NEQ export and other offline attribution
      * tooling; labels are stable across epochs for an unchanged registration order.
      *
      * @throws std::out_of_range if @p col is not a registered column.
@@ -735,8 +765,9 @@ public:
         double          value{0.0};  ///< prior mean
         double          info{0.0};   ///< information weight = 1 / prior-variance (>0)
         /// Card SCL: the prior is on the clock clone column of @c sat
-        /// (@ref registerClockClone, key @c "sat|CLKC"), with @c kind Clock.  False (the
-        /// default) = the column of (kind, sat, signal), as before.
+        /// (@ref registerClockClone, key @c "sat|CLKC"), with @c kind Clock; card BCL: on the
+        /// clone of (kind, sat, signal) (@ref registerClone).  False (the default) = the
+        /// column of (kind, sat, signal), as before.
         bool            clone{false};
         /// Card SCL2 X2: the prior is on shared-history column @c hist_idx
         /// (@ref registerHistoryColumn, key @c "HIST|j"), with @c kind Clock and an empty
@@ -821,11 +852,13 @@ public:
                                     bool clock_gauge_free = false,
                                     bool require_closure = false);
 
-    /// One clock clone's walk factor (card SCL): the pseudo-observation
-    /// @f$c_s(t) - c_s(t-1) = \text{mean}@f$ with variance @c q, between the satellite's
-    /// clock column and its clone column.
+    /// One clone's walk factor (card SCL; card BCL for a bias): the pseudo-observation
+    /// @f$x(t) - x(t-1) = \text{mean}@f$ with variance @c q, between the key's own column
+    /// and its clone column.  The defaults (@c kind Clock, empty @c signal) are a clock's.
     struct CloneWalk {
-        std::string sat;    ///< satellite id (its clock and its clone must both be registered)
+        std::string sat;    ///< satellite id (its key and its clone must both be registered)
+        SharedParamKind kind{SharedParamKind::Clock};   ///< card BCL: the key's kind (Clock, PhaseBias or CodeBias)
+        std::string signal; ///< card BCL: the key's signal (empty for a clock)
         double mean{0.0};   ///< the factor's mean (m): the fold-time carried clock minus the clone's prior mean, 0 unless the carry moved after the rows were built
         double q{0.0};      ///< the walk's variance over the epoch (m^2): the fold's var_eff minus the stashed variance
         /// Card SCL B2: across a clock-pivot handover the dense S-transform re-expressed, the
@@ -857,6 +890,31 @@ public:
      * @throws std::logic_error before @ref beginEpoch.
      */
     std::size_t addCloneWalk(const std::vector<CloneWalk>& walks, double sign = 1.0);
+
+    /**
+     * @brief Fold (or withdraw) the clones' walk factors as one joint factor with a full
+     *        walk covariance (card PFQ on card SCL's clone,
+     *        docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md section 6).
+     *
+     * With the pivot-frame clock noise (@c network.clock_pivot_frame_q) the walks of two
+     * clocks of a constellation share the pinned pivot's walk, so the walk vector
+     * @f$w = A x@f$ (row i of @f$A@f$ is @ref addCloneWalk's @f$a_i@f$ of walk i) has the
+     * covariance @p Qw, not a diagonal.  The factor is the pseudo-observation
+     * @f$A x = \text{mean}@f$ with that covariance: information @f$A^\top Q_w^{-1} A@f$ and
+     * right-hand side @f$A^\top Q_w^{-1}\,\text{mean}@f$, times @p sign.  A walk that
+     * @ref addCloneWalk would skip is dropped from the factor together with its row and
+     * column of @p Qw.  With an empty @p Qw this is @ref addCloneWalk exactly, and with a
+     * diagonal @p Qw equal to the walks' @c q it folds the same information.
+     * @param walks the factors (their @c q is ignored when @p Qw is given).
+     * @param Qw    the walks' covariance (m^2), symmetric positive definite over the walks
+     *              that apply; empty selects the per-walk form.
+     * @param sign  +1 folds, -1 withdraws exactly what +1 folded.
+     * @return The number of walks in the factor.
+     * @throws std::logic_error before @ref beginEpoch; std::runtime_error when the
+     *         applicable block of @p Qw is not positive definite (nothing is folded).
+     */
+    std::size_t addCloneWalkJoint(const std::vector<CloneWalk>& walks, const Eigen::MatrixXd& Qw,
+                                  double sign = 1.0);
 
     /**
      * @brief The posterior regression of the clock clones on the rest of the border
@@ -1322,7 +1380,7 @@ private:
         int  sh_m{-1};         ///< VtecSh order  (VtecSh only)
         char sh_trig{0};       ///< VtecSh 'C'/'S' (VtecSh only)
         int  sh_layer{0};      ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
-        bool clone{false};     ///< card SCL: a clock clone column (kind Clock, @ref registerClockClone)
+        bool clone{false};     ///< card SCL: a clock clone column (kind Clock, @ref registerClockClone); card BCL: a bias clone (its own kind, @ref registerClone)
         bool hist{false};      ///< card SCL2 X2: a shared-history column (kind Clock, empty sat, @ref registerHistoryColumn)
         int  hist_idx{-1};     ///< card SCL2 X2: its history index j
     };
@@ -1335,6 +1393,10 @@ private:
     /// column (card SCL2 X2), @c "sat|CLKC" for a clock clone (card SCL), @ref key_
     /// otherwise (the same string as before for every other prior).
     static std::string priorKey_(const SharedPrior& p);
+    /// The layout key of a clone (card SCL, card BCL): @c "sat|CLKC" for a clock,
+    /// @c "sat|PBC|signal" and @c "sat|CBC|signal" for the biases.
+    static std::string cloneKey_(SharedParamKind kind, const std::string& sat,
+                                 const std::string& signal);
     /// Throw unless the epoch is open and not yet solved (guards @ref addStation).
     void requireAccumulating_() const;
 

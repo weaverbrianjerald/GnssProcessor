@@ -44,7 +44,7 @@ namespace GnssProcessor {
         //     is on; otherwise left empty or at their neutral defaults, so the
         //     output with both off is byte-identical. ---
         Eigen::VectorXd residual_redundancy;         /**< Per-row redundancy number rᵢ = Sr_ii/Rᵢᵢ ∈ [0,1] (Baarda). */
-        Eigen::VectorXd residual_wtest;              /**< Per-row Baarda w-test statistic wᵢ = vᵢ/√Sr_ii. */
+        Eigen::VectorXd residual_wtest;              /**< Per-row Baarda w-test statistic wᵢ = (R⁻¹v)ᵢ/√(R⁻¹·Sr·R⁻¹)ᵢᵢ; vᵢ/√Sr_ii for a diagonal R. */
         Eigen::VectorXd residual_mdb;                /**< Per-row minimal detectable bias MDBᵢ (m). */
         double variance_factor{ 1.0 };               /**< A-posteriori variance factor σ̂₀² = (Σ vᵢ²/Rᵢᵢ)/dof (1.0 when not computed). */
         double variance_dof{ 0.0 };                  /**< Effective redundancy / degrees of freedom = Σ rᵢ used for σ̂₀². */

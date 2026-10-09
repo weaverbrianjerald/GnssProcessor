@@ -66,6 +66,7 @@ const char* paramKindName(NetworkParamKind kind) {
         case NetworkParamKind::RxPhaseBias:  return "rx_phase_bias";
         case NetworkParamKind::RxCodeBias:   return "rx_code_bias";
         case NetworkParamKind::PhaseColour:  return "phase_colour";
+        case NetworkParamKind::RxPosition:   return "rx_position";
     }
     return "?";
 }
@@ -298,6 +299,24 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
                    "sigma_zen / sin(max(e, network.phase_colour_elev_floor_deg)); "
                    "network.phase_colour_state; gap network.phase_colour_max_gap_s";
         set(NetworkParamKind::PhaseColour, std::move(s));
+    }
+    {
+        // Card NOM N1: the station coordinates are columns of every station's state
+        // manager that networkSplitStation_ keeps out of the local block (the network holds
+        // each station at its roster coordinate; the A6 linearity guard throws if one
+        // reaches A_r).  Declared here so the parameter inventory's Pinned instances have
+        // a kind; nothing about the solve is read from this entry.
+        ParamSpec s;
+        s.estimated = s.carried = false;
+        s.q = 0.0;
+        s.q_rule = ParamQRule::None;
+        s.var_floor_m2 = 0.0;
+        s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = kNaN;
+        s.route = ParamRoute::NotCarried;
+        s.source = "held at the roster coordinate (networkSplitStation_; network.station_marker_to_arp "
+                   "reduces it to the antenna reference point)";
+        set(NetworkParamKind::RxPosition, std::move(s));
     }
 
     // Card PRM phase 3a: the responses armed per kind and event.  A declared response site

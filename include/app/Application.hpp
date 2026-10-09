@@ -29,6 +29,7 @@
 #include "common/PppTypes.hpp"
 #include "filter/Smoother.hpp"
 #include "filter/NeqAccumulator.hpp"
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <set>
@@ -43,6 +44,8 @@ struct NetworkRunTraces;     // logging/NetworkRunTraces.hpp (decomposition INC-
 struct SdEwlFix;             // filter/NetworkRunTypes.hpp (SD EWL integer, increment 2a)
 struct NetStation;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
 struct StationAssembly;      // filter/NetworkRunTypes.hpp (decomposition INC-7)
+enum class ParamDisposition : std::uint8_t;  // filter/NetworkParamInventory.hpp (card NOM N1)
+struct RxIfbRule;            // filter/NetworkParamInventory.hpp (card NOM N1)
 struct ShDevCarry;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
 struct SyncedEpoch;          // rinex/MultiRinexSync.hpp, namespace scope (decomposition INC-7)
 class  NetworkEstimator;     // filter/NetworkEstimator.hpp (decomposition INC-7)
@@ -148,7 +151,13 @@ private:
      * ARP by the header's H/E/N antenna offset when one is given; otherwise
      * falls back to a default Earth-surface position.  When station information
      * (SIF) is enabled and the marker resolves, the SIF coordinate propagated to
-     * the first-observation epoch replaces either one.
+     * the first-observation epoch replaces either one.  That coordinate is a
+     * monument coordinate, so it is reduced to the ARP first, by the header's
+     * H/E/N offset or, when the header carries none, by the SIF antenna window's
+     * ARP-minus-GRP vector (@c reduceSifCoordinateToArp).  PppModel::initializeState
+     * later re-derives the position from a configured reference position or the
+     * RINEX header, so run() re-applies the SIF seed after it unless a reference
+     * position is configured (@c sif_apriori_seeded_).
      *
      * @return true on success, false on unrecoverable error.
      */
@@ -572,16 +581,25 @@ private:
      *        border @p A_s (clock/phase-bias/code-bias columns) and the local
      *        nuisance block @p A_r (decomposition INC-7).
      *
-     * Fills the H-column → A_r-column map @p h2local.  Throws (linearity
-     * invariant) if a position column ever survives into A_r; the per-station
-     * try/catch of the PASS-B produce loop catches the throw.  Implemented in
+     * Fills the H-column → A_r-column map @p h2local and, per state column, the
+     * disposition it took (@p col_disp: border, local block, held coordinate,
+     * held at its seed by @p ifb_rule, or unobserved), which the parameter
+     * inventory records (card NOM N1).  Throws (linearity invariant) if a
+     * position column ever survives into A_r; the per-station try/catch of the
+     * PASS-B produce loop catches the throw.  Implemented in
      * @c ApplicationNetworkAssembly.cpp.
+     *
+     * @param ifb_rule The run's receiver IFB rule (@c ctx.param_inventory.rx_ifb,
+     *                 built once per run by @c networkRxIfbRule): which receiver
+     *                 IFB columns are left out of the local block.
      */
     void networkSplitStation_(NetStation& st, const NetworkEstimator& est,
                               const EpochMeasurement& em,
+                              const RxIfbRule& ifb_rule,
                               Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                               Eigen::VectorXd& w, Eigen::VectorXd& y,
-                              std::map<int, int>& h2local) const;
+                              std::map<int, int>& h2local,
+                              std::vector<ParamDisposition>& col_disp) const;
 
     /**
      * @brief GIM ionosphere pseudo-observation rows (W6 satellite code-bias
@@ -914,6 +932,7 @@ private:
 
     PppState ppp_state_;                      /**< Current PPP state (synced with filter).  In baseline mode this is the rover state. */
     Eigen::Vector3d initial_position_;        /**< Position used for sanity-check reversion. */
+    bool sif_apriori_seeded_{ false };        /**< True when @ref initializePosition seeded @c initial_position_ from the SIF (ARP-reduced); run() then re-applies it after PppModel::initializeState, which re-derives the position from the RINEX header. */
 
     // Baseline-mode reference-station companions.  In baseline mode PppModel
     // runs twice per epoch (rover + reference), so per-receiver errors

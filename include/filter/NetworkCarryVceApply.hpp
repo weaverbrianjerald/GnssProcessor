@@ -28,7 +28,7 @@
  * ## Streaming form, per (family × constellation) group @c g
  *
  * ```
- *   target_g       = robust_floor_g / hand_fold_var_g       both from the M2 monitor
+ *   target_g       = robust_var_r_g / hand_fold_var_r_g     both from the M2 monitor
  *   step           = clamp( target_g / α²_g , [1/slew, slew] )
  *   α²_g          <- clamp( α²_g · step , [1, apply_max] )
  *   fold_var       = hand model evaluated as before, then × α²_g   at every fold site
@@ -39,22 +39,50 @@
  * of group g under the weights the solve used, and is emitted per group per epoch
  * as the slide prescribes (@c network_carry_vce_apply.csv).
  *
- * ## Why the target has no lag
+ * ## The redundancy belongs in the target
  *
- * Both halves of @c target are independent of α²: @c robust_floor is the
- * χ²₁-corrected geometric mean of ê² alone, and @c hand_fold_var is the geometric
- * mean of the fold variance as the hand model formed it (the monitor is fed both,
- * see @c NetworkCarryVce::addRow).  The update is therefore a first-order tracker
- * of a fixed point, not a feedback loop closed through a lagged measurement.
+ * LASER's group estimate divides the weighted residual square sum by the group's
+ * redundancy, @f$\hat\sigma_i^2 = \hat e_i^T P_i \hat e_i / r_i@f$.  The carry-row
+ * residual (the prior minus the solved value) has @f$E\{\hat e^2\} = r\,\sigma^2_{used}
+ * \hat\sigma^2@f$ with @f$r = 1 - w v@f$, so the monitor's @c robust_var_r (the
+ * geometric mean of @f$\hat e^2/r@f$) over @c hand_fold_var_r is
+ * @f$\hat\sigma^2\alpha^2@f$, the next factor of the iteration.
  *
- * This matters for stability.  A step driven by @f$\hat\sigma^2@f$ measured from
- * the standardized residuals (the direct reading of 5-95) would close the loop
- * through the monitor's exponential window, whose mean lag is
- * @f$\varphi/(1-\varphi) \approx 86@f$ epochs at the default 60-epoch half-life.
- * A saturated 5 %/epoch ramp against an 86-epoch lag overshoots its target by
+ * Until 2026-10-07 the target was @c robust_floor / @c hand_fold_var, without the
+ * division.  For a scalar carry with true prior variance @f$a\,p@f$ (p the hand fold
+ * variance) and data variance d, @f$E\{\hat e^2\} = r^2(a p + d)@f$, and that target's
+ * fixed point solves @f$\alpha^4 p^2 + \alpha^2 p d + d^2 = \alpha^2 a p^2@f$: below
+ * a always, and with no solution above 1 once d exceeds about a·p/4, where the factor
+ * stays pinned at 1.  The under-inflation was largest exactly where the carry is
+ * stiff against its data (small r), the case the factor exists for.
+ *
+ * ## Why the loop is stable
+ *
+ * The target depends on α² only through the redundancy, which the monitor reads at
+ * the weights actually used.  In the scalar model the target is
+ * @f$f(\alpha^2) = \alpha^2 (a p + d)/(\alpha^2 p + d)@f$: increasing, with its only
+ * positive fixed point at @f$\alpha^2 = a@f$ and slope @f$d/(a p + d) < 1@f$ there.
+ * The update is therefore a first-order tracker toward a level, read through the
+ * monitor's window lag: with a positive contraction the lagged recursion
+ * @f$\delta_{k+1} = (1-s)\delta_k + s\,f'\delta_{k-L}@f$ has coefficients summing below
+ * one, so it decays without alternating at any lag L.
+ *
+ * This is what separates it from the form that failed.  A step that multiplies the
+ * factor by @f$\hat\sigma^2@f$ every epoch is an integrator: closed through the
+ * monitor's exponential window, whose mean lag is
+ * @f$\varphi/(1-\varphi) \approx 86@f$ epochs at the default 60-epoch half-life, a
+ * saturated 5 %/epoch ramp overshoots its target by
  * @f$e^{86\ln 1.05} \approx 66\times@f$ before the effect reaches the measurement,
- * then oscillates.  With a target independent of α², the same ramp approaches
- * monotonically and stops, because @c step is formed against the current α².
+ * then oscillates.  Here @c step is formed against the current α² toward a level
+ * that moves less than α² does, so the same ramp approaches monotonically and stops.
+ *
+ * Rows without redundancy (r at or below the monitor's floor, or r < 0 where the
+ * coupled ambiguity carry harvests a conditional variance above the prior) carry no
+ * information on the factor and are left out of @c robust_var_r.  The warm-up gate
+ * counts the rows that remain (@c n_eff_r), and the trace reports both counts and
+ * the mean redundancy (@c rbar).  On the coupled @c pl family r is formed from the
+ * harvested conditional variance, so it is an approximation there; read @c rbar and
+ * @c n_eff_r against @c n_eff before trusting a @c pl factor.
  *
  * ## Guards (each follows a standing invariant; none is a tuning choice)
  *
@@ -129,7 +157,7 @@ public:
     enum class Freeze : int {
         kNone = 0,
         kEpochDirty,   ///< the epoch was contaminated (datum handover / reref storm).
-        kWarmup,       ///< the group is below @c apply_min_rows effective rows.
+        kWarmup,       ///< the group is below @c apply_min_rows effective rows with redundancy (@c n_eff_r).
         kNoTarget      ///< the monitor could not form a positive, finite target.
     };
 
@@ -138,11 +166,15 @@ public:
         int         family = -1;      ///< @ref Family slot.
         char        sys    = '\0';    ///< RINEX constellation letter (G/E/C/R…); '\0' = pooled.
         double      alpha2 = 1.0;     ///< the live variance factor (≥ 1 by construction).
-        double      target = 1.0;     ///< last formed robust_floor / hand_fold_var.
+        double      target = 1.0;     ///< last formed robust_var_r / hand_fold_var_r.
         double      sigma_hat_post = 1.0; ///< LASER's σ̂² under the weights actually used = target/α².
-        double      robust_floor = 0.0;   ///< monitor readback (m²), for the trace.
+        double      robust_floor = 0.0;   ///< monitor readback (m²), uncorrected for redundancy, for the trace.
         double      hand_fold_var = 0.0;  ///< monitor readback (m²), for the trace.
+        double      robust_var_r = 0.0;   ///< monitor readback (m²): the target's numerator.
+        double      hand_fold_var_r = 0.0;///< monitor readback (m²): the target's denominator.
+        double      rbar   = 0.0;     ///< monitor's geometric-mean redundancy of the target's rows.
         double      n_eff  = 0.0;     ///< monitor's forgetting-weighted row count at the last step.
+        double      n_eff_r = 0.0;    ///< the same count over the target's rows (the warm-up gate).
         Freeze      freeze = Freeze::kWarmup;  ///< this epoch's freeze state.
         bool        at_ceiling = false;        ///< α² is pinned at @c apply_max.
         bool        at_unit    = false;        ///< α² is pinned at the inflate-only floor of 1.
@@ -262,16 +294,22 @@ public:
             g.sys    = sys;
 
             const NetworkCarryVce::Estimate e = mon.estimate(fc.first, fc.second);
-            g.robust_floor  = e.robust_floor;
-            g.hand_fold_var = e.hand_fold_var;
-            g.n_eff         = e.n_eff;
+            g.robust_floor    = e.robust_floor;
+            g.hand_fold_var   = e.hand_fold_var;
+            g.robust_var_r    = e.robust_var_r;
+            g.hand_fold_var_r = e.hand_fold_var_r;
+            g.rbar            = e.rbar;
+            g.n_eff           = e.n_eff;
+            g.n_eff_r         = e.n_eff_r;
 
+            // The warm-up counts the rows the target is formed from (those with
+            // redundancy), not every row the monitor saw.
             const Freeze was_frozen = g.freeze;
             Freeze freeze = Freeze::kNone;
             if (!clean)                       freeze = Freeze::kEpochDirty;
-            else if (e.n_eff < min_rows_)     freeze = Freeze::kWarmup;
-            else if (!(e.robust_floor > 0.0) || !std::isfinite(e.robust_floor)
-                  || !(e.hand_fold_var > 0.0) || !std::isfinite(e.hand_fold_var))
+            else if (e.n_eff_r < min_rows_)   freeze = Freeze::kWarmup;
+            else if (!(e.robust_var_r > 0.0) || !std::isfinite(e.robust_var_r)
+                  || !(e.hand_fold_var_r > 0.0) || !std::isfinite(e.hand_fold_var_r))
                                               freeze = Freeze::kNoTarget;
             g.freeze = freeze;
 
@@ -281,9 +319,9 @@ public:
                 // measures how far the folded model is from the data; the factor
                 // just did not act this epoch.  A blank column would read as "no
                 // data" when the data exist and were not applied.
-                if (e.hand_fold_var > 0.0 && std::isfinite(e.hand_fold_var)
-                    && std::isfinite(e.robust_floor))
-                    g.target = e.robust_floor / e.hand_fold_var;
+                if (e.hand_fold_var_r > 0.0 && std::isfinite(e.hand_fold_var_r)
+                    && std::isfinite(e.robust_var_r))
+                    g.target = e.robust_var_r / e.hand_fold_var_r;
                 g.sigma_hat_post = (g.alpha2 > 0.0) ? g.target / g.alpha2 : 0.0;
                 if (edges && was_frozen == Freeze::kNone)
                     edges->push_back(Edge{fslot, sys, "freeze", true, g.alpha2,
@@ -294,7 +332,7 @@ public:
                 edges->push_back(Edge{fslot, sys, "freeze", false, g.alpha2,
                                       g.target, freezeName(was_frozen)});
 
-            g.target = e.robust_floor / e.hand_fold_var;
+            g.target = e.robust_var_r / e.hand_fold_var_r;
 
             // --- LASER 5-95: α² <- σ̂² · α², slewed, then clamped ---------------
             double step = g.target / g.alpha2;              // == σ̂² under the used weights

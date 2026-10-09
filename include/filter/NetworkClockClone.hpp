@@ -79,11 +79,40 @@ struct ClockCloneActive {
     double       shat{0.0};  ///< the clone's prior mean: the stashed value the rows use (m)
 };
 
+/// The identity of one card BCL clone (its key's kind, satellite and signal).
+struct BorderCloneId {
+    SharedParamKind kind{SharedParamKind::Clock};
+    std::string sat;
+    std::string signal;   ///< empty for a clock
+};
+
+/// One key moved onto its clone in the rows' epoch by card BCL
+/// (docs/refound/BCL_previous_border_on_clones_2026-10-08.md): a walking bias (BCL-a, with a
+/// walk) or a key card CTU would re-attribute (BCL-d, a time t-1 state with no walk).
+struct BorderCloneActive {
+    BorderCloneId id;
+    int          p{-1};      ///< its row of the stashed dense block
+    int          s{-1};      ///< its S index in the rows' epoch
+    Eigen::Index col{-1};    ///< its clone column
+    double       q{0.0};     ///< BCL-a: the walk variance the rows' epoch removed (m^2); 0 for BCL-d
+    double       shat{0.0};  ///< the clone's prior mean: the stashed value the rows use (m)
+    int          route{0};   ///< BCL-d: the CouplingExactDRoute card CTU's epoch gave it (Present for BCL-a)
+};
+
 /// Card SCL's per-epoch state (@c ctx.carry.ccl).  Rebuilt every epoch at the column
 /// registration; nothing here survives to the next epoch.
 struct ClockCloneEpoch {
     std::map<std::string, Eigen::Index>     col;      ///< satellite -> clone column registered this epoch
     std::map<std::string, ClockCloneActive> active;   ///< satellites on their clone in the rows' epoch
+    // Card BCL (network.carry_coupling_bias_clone / network.carry_coupling_departed_clone),
+    // keyed by sharedCarryKey.  Empty with both knobs off.
+    std::map<std::string, Eigen::Index>      xcol;     ///< BCL clones registered this epoch (biases; clocks card SCL did not clone)
+    std::map<std::string, BorderCloneId>     xid;      ///< their identities
+    std::map<std::string, BorderCloneActive> xactive;  ///< BCL-a: bias keys on their clones in the rows' epoch
+    std::map<std::string, BorderCloneActive> xdep;     ///< BCL-d: re-attributed keys on their clones in the rows' epoch
+    std::set<std::string> xreferenced;                 ///< BCL clones with row information at the fold
+    std::set<std::string> xstandin;                    ///< BCL-a: bias clones stood in with a walk factor this epoch
+    std::set<std::string> xdprior;                     ///< BCL-d: clones given the stashed prior with no walk this epoch (any kind)
     CouplingExactEpoch rows_epoch;                    ///< card CTU's epoch with the active clocks on their clones
     bool rows_on{false};                              ///< PASS B reads @c rows_epoch this epoch
     std::set<std::string> referenced;                 ///< clones with row information at the fold
@@ -100,6 +129,13 @@ struct ClockCloneEpoch {
     void clear() {
         col.clear();
         active.clear();
+        xcol.clear();
+        xid.clear();
+        xactive.clear();
+        xdep.clear();
+        xreferenced.clear();
+        xstandin.clear();
+        xdprior.clear();
         rows_epoch = CouplingExactEpoch{};
         rows_on = false;
         referenced.clear();
@@ -148,6 +184,31 @@ struct ClockCloneCounters {
     long long harvest_gauge_orphan = 0;///< clock-family deficits with no pinned clock of the constellation (the row stays gauge-variant)
     double    harvest_gauge_abs = 0.0; ///< summed |deficit| restored
     long long refloat_walks = 0;       ///< walk factors withdrawn by card Q3's in-epoch refloat
+    // Card PFQ on the clone (network.clock_pivot_frame_q with the clone): the pivot's walk
+    // as a joint walk factor over the stood-in clocks.
+    long long pfq_walk_epochs = 0;     ///< joint folds whose walks carried the pivot's walk pairs
+    long long pfq_walk_pairs = 0;      ///< walk pairs given r_p min(dt_a, dt_b), summed
+    long long pfq_walk_notpd = 0;      ///< joint walk covariances that did not factor (folded per walk)
+    long long pfq_pairs_lost = 0;      ///< pairs between a stood-in clone and a clock on its own column (no place in the factorization)
+    // Card BCL (network.carry_coupling_bias_clone, BCL-a; network.carry_coupling_departed_clone,
+    // BCL-d): the clones of the rest of the stashed border.
+    long long bcl_epochs = 0;          ///< epochs with BCL clones registered
+    long long bcl_registered = 0;      ///< BCL clones registered, summed over epochs
+    long long bcl_registered_max = 0;  ///< the most registered in one epoch
+    long long bcl_a_active = 0;        ///< BCL-a: bias keys on their clones in the rows' epoch, summed
+    long long bcl_a_screened = 0;      ///< BCL-a: bias keys in S left on their columns (walk below the screen, a seam, a reinit), summed
+    long long bcl_a_standin = 0;       ///< BCL-a: bias clones stood in with a walk factor, summed
+    long long bcl_a_moved = 0;         ///< BCL-a: active bias keys whose carry moved or did not fold after the rows were built
+    long long bcl_d_active[kCouplingExactRoutes]{};   ///< BCL-d: re-attributed keys on their clones in the rows' epoch, by card CTU route
+    long long bcl_d_noclone[kCouplingExactRoutes]{};  ///< BCL-d: re-attributed keys with a carried entry and no registered clone (card CTU's route), by route
+    long long bcl_d_nocarry = 0;       ///< BCL-d: stashed rows with no carried entry (no value to centre a clone on)
+    long long bcl_d_prepare_retry = 0; ///< rows' epochs that did not factor with the BCL-d keys and were rebuilt without them
+    long long bcl_d_prior = 0;         ///< clones given the stashed prior with no walk at the fold, summed
+    long long bcl_d_fallen = 0;        ///< of those, clones moved in the rows whose key did not fold as decided (any kind)
+    long long bcl_d_bad_row = 0;       ///< BCL-d clones whose row lies outside the block the rows were built on (left without a prior)
+    long long bcl_d_fold_retry = 0;    ///< joint folds that did not factor with the BCL-d priors and were folded without them
+    long long bcl_free = 0;            ///< BCL clones referenced at the fold and left without a prior
+    long long bcl_isolated = 0;        ///< BCL clones idle at the fold, given an isolated prior
     std::vector<double> post_sd;       ///< sqrt(diag B') of each stand-in clone at each harvest (m): the size of the second-order term
     // Card SMH's clone rows on the clone epoch (network.emit_pb_hold_smoothed with the clone;
     // pbHoldCloneOnClones / pbHoldCloneMarginalizeClones).
@@ -176,7 +237,11 @@ struct ClockCloneCounters {
  * Armed and with a valid stash stamp: one clone per registered satellite clock that has a
  * carried entry, a row @c "sat|CLK" in the stashed dense block and no reinit mark.  The
  * datum-pinned pivot has no stashed row, so it gets none.  Records satellite -> column in
- * @c ctx.carry.ccl (cleared here every armed epoch).  No-op off.
+ * @c ctx.carry.ccl (cleared here every armed epoch).  Card BCL: then, by key, a clone of
+ * every phase and code bias with a stashed row (BCL-a) and of every key that will or may be
+ * re-attributed (BCL-d: a clock card SCL did not clone; without BCL-a, a bias whose column is
+ * absent, whose phase-bias frame is re-referenced or held, or which is parked), in
+ * @c ccl.xcol.  No-op off.
  */
 void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
                                const std::vector<std::string>& registered_clock_sats);
@@ -190,8 +255,12 @@ void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
  * stashed variance), with a registered clone, no reinit mark and no switch-on seam noise,
  * moves onto its clone: column = the clone, @f$Q = 0@f$, mean = the stashed value.  The
  * off-diagonal process noise pairs touching a moved clock are dropped, and the epoch is
- * re-factored.  On a factor failure the rows read card CTU's epoch (counted).  Always
- * resets the previous epoch's rows' epoch; a no-op beyond that when off.
+ * re-factored.  On a factor failure the rows read card CTU's epoch (counted).  Card BCL-a: a
+ * phase or code bias in S with a registered clone moves the same way, by the same screen.
+ * Card BCL-d: every key card CTU's epoch puts in D, with a carried entry and a registered
+ * clone, joins S on its clone at Q = 0 (mean its carried value), so no term is
+ * re-attributed; when that epoch does not factor it is rebuilt without those keys (counted).
+ * Always resets the previous epoch's rows' epoch; a no-op beyond that when off.
  * @param cp_of_p the carried entry of each stashed dense row (null for none), as the
  *                prepare resolved it.
  */
@@ -266,6 +335,14 @@ void networkClockCloneFoldBegin(NetworkRunContext& ctx, NetworkEstimator& est);
  * clocks fold on their own columns, as before (counted).  The one-epoch walk-frame term
  * (the walks are independent in the incoming frame, where the exact walk noise has a
  * common part @f$Q_q@f$) is not added.
+ *
+ * Card BCL-a: each bias key on its clone in the rows stands in by the same rule, its walk in
+ * the same joint factor (card PFQ's pairs stay between clocks).  Card BCL-d: each key on its
+ * clone in the rows' D set, and each moved clone whose key the fold retires, screens or folds
+ * decorrelated, is appended as a time t-1 state: the row and column of card CTU's copy of the
+ * block, against a current clock of a dense-transformed constellation less the incoming
+ * pivot's row, zero against a reinit key, and no walk.  A block that does not factor with
+ * them is folded without them (counted); with no walk left the function then returns false.
  * @param clk_prior_info B7 trace (null when closed): the folded @f$\Lambda(c,c)@f$ of each
  *        clock, 1/Q for a cloned clock (its column appears only in its walk factor).
  * @return true when the joint fold ran (the caller then skips card CTU's fold); false when
@@ -290,7 +367,8 @@ void networkClockCloneNoteFallback(NetworkRunContext& ctx);
  *        on the previous level is marginalized) or idle, and an idle clone gets an
  *        isolated prior at its stashed variance (it couples to nothing, so the prior is a
  *        solve no-op on every other state and keeps the normals definite).  Captured for
- *        the replay with @p within_epoch_armed.  No-op off.
+ *        the replay with @p within_epoch_armed.  Card BCL: its clones the same, by key,
+ *        skipping those the joint fold gave a stand-in or a stashed prior.  No-op off.
  */
 void networkClockCloneFoldEnd(NetworkRunContext& ctx, EpochWorkspace& ws,
                               NetworkEstimator& est, bool within_epoch_armed);

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "filter/StateManager.hpp"
+#include "filter/NetworkParamInventory.hpp"   // StationAbsorbed (the network's withheld shared states)
 #include "model/PppModel.hpp"
 #include "config/GnssConfig.hpp"
 #include "common/Constants.hpp"
@@ -88,6 +89,12 @@ namespace GnssProcessor {
          * gate rejects.  States no longer required are pruned, so a dropped
          * satellite or signal leaves no stale column.
          *
+         * Every shared state a gate here withholds from the station (GLONASS
+         * code-only scope, unmatched antenna, coverage allowlist, pivot allowlist,
+         * CB-ADM co-gate) is noted in @ref absorbedSharedStates, which this call
+         * clears first: the parameter inventory counts each as an absorbed instance
+         * (card NOM N1b, filter/NetworkParamInventory.hpp).
+         *
          * @param observations This station's modeled observations for the epoch.
          * @param allowed_phase_keys If non-empty, restrict phase-bias allocation to
          *        these @c "<sat>|<signal>|PB" keys: the datum (pivot) station's
@@ -103,6 +110,33 @@ namespace GnssProcessor {
         void ensureNetworkSharedStates(const std::vector<PppObservation>& observations,
                                        const std::set<std::string>& allowed_phase_keys = {},
                                        const std::set<std::string>* cbadm_admitted_code_keys = nullptr);
+
+        /**
+         * @brief The shared satellite states withheld from this station this epoch
+         *        (network producer only; card NOM N1b).
+         *
+         * Cleared and refilled by @ref ensureNetworkSharedStates in PASS A, then
+         * extended by the serial gates that prune a state the station had allocated
+         * (@ref noteAbsorbedSharedState).  Read by @c recordStationParams after the
+         * station's split.  Empty in every other mode: nothing writes it there.
+         *
+         * @return The station's list for the epoch.
+         */
+        const StationAbsorbed& absorbedSharedStates() const { return absorbed_shared_; }
+
+        /**
+         * @brief Note a shared satellite state a network gate withheld from this
+         *        station after allocation (the anchored-union coverage gate, the eq34
+         *        hygiene block): appended to @ref absorbedSharedStates.
+         *
+         * @param container @c StateContainer::SatPhaseBiasStates or @c SatBiasStates.
+         * @param key       The state's key in the station's state manager.
+         * @param reason    The gate.
+         */
+        void noteAbsorbedSharedState(StateContainer container, std::string_view key,
+                                     AbsorbedReason reason) {
+            noteAbsorbed(absorbed_shared_, container, key, reason);
+        }
 
         /**
          * @brief Install a network coverage allowlist for satellite phase-bias states.
@@ -128,9 +162,11 @@ namespace GnssProcessor {
          * station, so its carrier phase writes no shared phase-bias Jacobian,
          * scatters no phase-bias column into the border, and the station cannot be
          * elected a phase-bias anchor.  The observations are still admitted: the
-         * station still feeds the satellite clock, code bias, ionosphere and its
-         * own position, and only the shared phase-bias coupling is removed, with
-         * the local float ambiguity absorbing each arc.
+         * station still feeds the satellite clock, code bias and ionosphere (its
+         * position is held at the roster coordinate in the network, never
+         * estimated), and only the shared phase-bias coupling is removed, with the
+         * local float ambiguity absorbing each arc.  Each withheld state is noted in
+         * @ref absorbedSharedStates (reason unmatched_antenna).
          *
          * The network producer uses this to keep a station with an unmatched
          * receiver antenna (no receiver PCV, so uncalibrated phase) out of the
@@ -371,6 +407,10 @@ namespace GnssProcessor {
         /// True = allocate no satellite phase-bias state for this station's observations
         /// (all signals).  False (default) = contribute normally; byte-identical.
         bool phase_bias_emission_excluded_{false};
+
+        /// The shared states withheld from this station this epoch (see
+        /// @ref absorbedSharedStates).  Network producer only.
+        StationAbsorbed absorbed_shared_;
 
         /// Whether @p signal (a raw phase code, e.g. "L1C") for @p system may get a
         /// satellite phase-bias state under the coverage allowlist.  True when the

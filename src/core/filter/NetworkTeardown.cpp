@@ -6038,6 +6038,22 @@ int networkTeardown(
             log->warn("Network (card PVN): the phase-visible instrument is ARMED but formed no "
                       "row.");
     }
+    if (ctx.knobs.pfq_on) {
+        // Card PFQ run-end telemetry (invariant 4): how many clocks took the pivot's walk, at
+        // which rate source, and how many pairs the dense fold and the exact update carried.
+        const PivotFrameCounters& P = ctx.counters.pfq;
+        log->info("Network (card PFQ / pivot-frame clock noise): {} decision pass(es); {} clock "
+                  "key-epoch(s) took r_p dt (summed {:.4e} m^2); pivot rate: the model's (pinned "
+                  "pivot, not carried) {} / a carried pivot anchored {} / loose {} "
+                  "(constellation-epochs), largest r_p {:.3e} m^2/s; pairs: {} in the dense fold, "
+                  "{} (ordered) in the exact update's Q_S.",
+                  P.epochs, P.keys, P.add_sum_m2, P.pivot_model, P.pivot_anchored,
+                  P.pivot_loose, P.rate_max, P.dense_pairs, P.cxu_pairs);
+        if (P.keys == 0)
+            log->warn("Network (card PFQ): network.clock_pivot_frame_q is ARMED but no clock took "
+                      "the term (no recorded pivot, or no folding clock): the card is INERT for "
+                      "this run.");
+    }
     if (ctx.knobs.carry_cpl_exact) {
         // Card CTU run-end telemetry (invariant 4).  `rows exact = 0` means the rule never
         // ran and every row took card 1d's kappa, however clean the rest reads.  The rows
@@ -6236,16 +6252,18 @@ int networkTeardown(
         for (const auto& kv : va.groups()) {
             const NetworkCarryVceApply::Group& g = kv.second;
             log->info("  [{}|{}] alpha2 = {:.3f} (max {:.3f}, target {:.3f}, "
-                      "sigma_hat_post {:.3f}); robust {:.3e} m2 vs hand fold {:.3e} m2; "
+                      "sigma_hat_post {:.3f}); redundancy-corrected {:.3e} m2 vs hand fold "
+                      "{:.3e} m2 (rbar {:.3f}; uncorrected {:.3e} m2); "
                       "{} stepped / {} frozen ({}), {} slew-up / {} slew-down, "
-                      "{} ep at ceiling, {} ep at unit; n_eff {:.0f}.",
+                      "{} ep at ceiling, {} ep at unit; n_eff {:.0f} ({:.0f} with redundancy).",
                       NetworkCarryVceApply::familyName(g.family),
                       g.sys ? std::string(1, g.sys) : std::string("*"),
                       g.alpha2, g.alpha2_max, g.target, g.sigma_hat_post,
-                      g.robust_floor, g.hand_fold_var,
+                      g.robust_var_r, g.hand_fold_var_r, g.rbar, g.robust_floor,
                       g.n_steps, g.n_frozen,
                       NetworkCarryVceApply::freezeName(g.freeze),
-                      g.n_slew_up, g.n_slew_down, g.n_ceiling_ep, g.n_unit_ep, g.n_eff);
+                      g.n_slew_up, g.n_slew_down, g.n_ceiling_ep, g.n_unit_ep, g.n_eff,
+                      g.n_eff_r);
             if (g.n_steps == 0)
                 log->warn("    [{}|{}] NEVER STEPPED — the factor stayed at {:.3f} for the "
                           "whole run (last freeze reason '{}').  Report this arm as "
@@ -6343,6 +6361,9 @@ int networkTeardown(
                   ctx.carry.iono_carry.size(), ctx.carry.iono_blk_carry.size(),
                   ctx.carry.rx_clk_carry.size(), ctx.carry.rpb_carry.size(),
                   ctx.carry.rx_cb_carry.size());
+        // Card NOM N1: the instances of every kind over the run, with their treatments
+        // ("parameters as armed", the run's table) and its manifest record.
+        networkParamInventoryRunEnd(ctx, log, traces, config_.getNetworkConfig());
         // Card PRM phase 1b: what the fold applied to the carried border over the run, per
         // kind and disposition (key-epochs), decided once before PASS B; the same counts go
         // to the run manifest as a `param_dispositions` record.

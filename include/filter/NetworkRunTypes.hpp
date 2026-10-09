@@ -15,6 +15,7 @@
 #include "filter/StateManager.hpp"
 #include "filter/NetworkEstimator.hpp"      // SharedParamKind
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactCounters (StationAssembly, card CTU)
+#include "filter/NetworkParamInventory.hpp" // StationParamSlot (StationAssembly, card NOM N1)
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "common/PppState.hpp"
@@ -411,6 +412,17 @@ struct CarryFoldDecision {
     bool   departed{false};     ///< a foldable entry whose shared column is absent from this epoch's layout
     bool   has_seam{false};     ///< card CTU G5: a switch-on seam's level noise applies (dense fold only)
     double seam_q_m2{0.0};      ///< that noise (m^2)
+    /// The interval the increment covers (s) and its rate (m^2/s), q_applied_m2 = rate·dt
+    /// before card PFQ's term.  Set for a folding disposition.
+    double dt_applied_s{0.0};
+    double rate_m2ps{0.0};
+    /// Card PFQ (network.clock_pivot_frame_q): the pivot's rate this clock's term uses
+    /// (m^2/s), 0 when the clock takes no term (the knob off, the pivot itself, a reinit, a
+    /// non-folding disposition, another kind).  The term r_p·dt_applied_s is inside
+    /// q_applied_m2; the dense fold and the exact update add r_p·min(dt_a, dt_b) between
+    /// two such clocks of a constellation.
+    double pfq_rate_m2ps{0.0};
+    double pfq_add_m2{0.0};     ///< card PFQ: the diagonal term inside q_applied_m2 (m^2), 0 without
     double var_decided_m2{0.0};   ///< the carried variance when decided
     double value_decided_m{0.0};  ///< the carried value when decided
 };
@@ -1236,6 +1248,11 @@ struct StationAssembly {
     /// row writer; naming a row's signal from its first labelled column instead would
     /// give an empty signal for a row whose only shared column is the clock.
     std::vector<std::string> row_sig;
+    /// The station's parameter inventory of this epoch (card NOM N1): every state column
+    /// classified, with the disposition networkSplitStation_ gave it.  Written by this
+    /// station's produce iteration only, drained serially after PASS B
+    /// (networkParamInventoryDrain).  Trace class: nothing in the solve reads it.
+    StationParamSlot param_inv;
     std::string      err;                  ///< Diagnostic (mismatch detail or exception text).
     // Phase-leveling carry (increment 1): built in PASS B, consumed serially.
     std::vector<Eigen::Index> carry_cols;  ///< A_r columns receiving a carried prior (ascending, for determinism).
@@ -2620,6 +2637,7 @@ struct EpochWorkspace {
     std::vector<NetworkEstimator::SharedPrior> cap_ccl_keys;       ///< card SCL: the stand-in block's keys (the cloned clocks as their clones)
     Eigen::MatrixXd cap_ccl_cov;                                   ///< card SCL: the stand-in block's covariance
     std::vector<NetworkEstimator::CloneWalk> cap_ccl_walk;         ///< card SCL: the walk factors
+    Eigen::MatrixXd cap_ccl_walkQ;                                 ///< card PFQ: the walks' joint covariance (empty: the per-walk form)
     std::vector<NetworkEstimator::SharedPrior> cap_ccl_idle;       ///< card SCL: the idle clones' isolated priors
     std::vector<NetworkEstimator::SharedPrior> cap_shx;            ///< card SCL2 X2: the history columns' N(0, 1) priors (filter/NetworkSharedHistory)
     /// Two-state clock-model predictions stashed by the prior fold

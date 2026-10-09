@@ -39,7 +39,7 @@ is its entry there.
 
 | | |
 | --- | --- |
-| **New contributor?** Start at [onboarding/README.md](onboarding/README.md) | [1 Setup](onboarding/01_setup.md) · [2 Code tour](onboarding/02_code_tour.md) · [3 Worked example](onboarding/03_worked_example.md) · [4 Git workflow](onboarding/04_git_workflow.md) · [5 Debugging](onboarding/05_debugging.md) · [6 First tasks](onboarding/06_first_tasks.md) · `CONTRIBUTING.md` (repo root) |
+| **New contributor?** Start at [onboarding/README.md](onboarding/README.md) | [1 Setup](onboarding/01_setup.md) · [2 Code tour](onboarding/02_code_tour.md) · [3 Worked example](onboarding/03_worked_example.md) · [4 Git workflow](onboarding/04_git_workflow.md) · [5 Debugging](onboarding/05_debugging.md) · [6 First tasks](onboarding/06_first_tasks.md) · [7 Network tour](onboarding/07_network_tour.md) · `CONTRIBUTING.md` (repo root) |
 | Architecture, capabilities, build targets, config sections (the pre-2026-09-19 root README) | [OVERVIEW.md](OVERVIEW.md) |
 | Build, standing invariants, the standard armed set, the anti-regrowth trees | `CLAUDE.md` (repo root) |
 | The goldens — the armed set made executable | `config/golden/` + `python scripts/make_golden_config.py --verify` |

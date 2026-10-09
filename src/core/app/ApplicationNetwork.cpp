@@ -2901,6 +2901,11 @@ int Application::runNetwork() {
         // same reason as the census above: `present` is final.  Measure-only; it returns
         // on its first line unless a constellation other than GPS is active.
         networkMultiGnssEpoch(ctx, config_, stations, modeled, present);
+        // Parameters as armed (card NOM N1): every parameter instance with its treatment,
+        // from the inventory PASS B drained, written once after the first emitted epoch.
+        // Trace class; it returns on its first line once the table is out.
+        networkParamInventoryEpochTail(ctx, log, traces, nc,
+                                       ctx.counters.n_emitted != fc_n_emitted_before);
         subEnd(SB_ROSTER);
         // Trigger instrumentation (SPEC_day129_frame_guards P1-3/P1-4).  It runs before
         // the stash/status block, because the epoch-status row written there reads the

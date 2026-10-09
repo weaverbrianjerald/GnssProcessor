@@ -1,0 +1,666 @@
+% ============================================================
+%  The float ambiguity vehicle
+%
+%  The between-epoch ambiguity carry the golden network
+%  configurations ARM (network.ambiguity_vehicle = float_kf).  The
+%  invariant DD carry of sec:net-carry is not armed by the goldens.
+%
+%  Sources (code is ground truth): filter/NetworkAmbFloat,
+%  filter/NetworkCoupling, filter/NetworkCouplingExact,
+%  filter/NetworkClockAnchor, filter/NetworkPhaseDatum,
+%  filter/NetworkHandoverStransform, filter/NetworkParamRegistry,
+%  filter/NetworkRunTypes, filter/NetworkNormalEquations,
+%  filter/NetworkSolveGlue, app/NetworkRunContext,
+%  app/ApplicationNetworkAssembly, config/GnssConfigLoadNetwork,
+%  config/GnssConfigNetworkPosture, config/golden/*_refound.json.
+%
+%  Standalone-compilable subfile (shares gnssreport.sty via the
+%  subfiles package).
+% ============================================================
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+
+\section{The float ambiguity vehicle}
+\label{sec:net-vehicle}
+
+% Shared with the Network-mode and carry documents; \providecommand so the
+% subfiles can be combined in any order without a redefinition error.
+\providecommand{\Nss}{\bm{N}_{ss}}            % shared (satellite) normal block
+\providecommand{\Nrr}{\bm{N}_{rr}}            % per-station local normal block
+\providecommand{\Nsr}{\bm{N}_{sr}}            % shared<->local cross block
+\providecommand{\redNss}{\tilde{\bm{N}}_{ss}} % Schur-reduced shared normals
+\providecommand{\redus}{\tilde{\bm{u}}_s}     % Schur-reduced shared RHS
+\providecommand{\xshared}{\bm{x}_s}           % shared satellite-parameter estimate
+\providecommand{\xlocal}[1]{\bm{x}_{#1}}      % station r's private nuisance block
+% Doc-local, deliberately non-trivial names (see the subfiles macro-collision note).
+\providecommand{\vehM}[1]{\bm{m}_{#1}}        % border coefficients of carried column #1
+\providecommand{\vehSig}{\bm{\Sigma}_{C}}     % joint covariance of a station's carried block
+\providecommand{\vehF}{\bm{F}_{\!S}}          % (P_SS + Q_S)^{-1} of the exact update
+\providecommand{\vehxlin}[1]{x^{\mathrm{lin}}_{#1}} % linearisation point of column #1
+
+The golden configurations (\texttt{config/golden/golden\_field\_refound.json},
+\texttt{config/golden/golden\_sim\_refound.json}) carry the carrier-phase
+ambiguities between epochs as float states of each station's local block.
+The invariant double-difference carry of
+\dcref{sec:net-carry}{the between-epoch carry section} is off
+(\texttt{network.carry\_invariant} false), and the loader refuses the float
+vehicle on a lineage that arms it. The invariant carry transports only the
+gauge-free chords and folds them through door~3 after the reduction
+(\dcref{sec:net-carry-doors}{the three doors}). The float vehicle
+transports every station's own ambiguity columns, conditional on the
+border, as rows of that station's block before the reduction. Gauge
+invariance then comes from each row's full border regression
+(\Cref{sec:net-vehicle-column}) and from the held phase-datum basis
+(\Cref{sec:net-vehicle-basis}). The ambiguity process noise is zero: the
+parameter registry (\texttt{filter/NetworkParamRegistry}) takes it from
+\texttt{network.phase\_leveling\_q\_amb}, loader default $0$, kept by the
+goldens.
+
+% ============================================================
+\subsection{The armed posture}
+\label{sec:net-vehicle-posture}
+
+\Cref{tab:net-vehicle-knobs} lists the knobs both goldens arm that change
+the estimate or the wire and belong to the ambiguity carry (the
+\texttt{network.} prefix omitted).
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.34\linewidth}>{\raggedright\arraybackslash}p{0.33\linewidth}>{\raggedright\arraybackslash}p{0.12\linewidth}>{\raggedright\arraybackslash}p{0.11\linewidth}@{}}
+\toprule
+knob = golden value (loader default) & mechanism & where & card \\
+\midrule
+\texttt{ambiguity\_vehicle} = \texttt{float\_kf} (\texttt{level}) &
+  joint local block; bounded drop &
+  \Cref{sec:net-vehicle-block,sec:net-vehicle-drop} & RF-1, GRB \\
+\texttt{phase\_leveling} = true (false) &
+  the station-local carry the vehicle folds &
+  \Cref{sec:net-vehicle-column} & armed set \\
+\texttt{carry\_conditional\_coupling}, \texttt{carry\_coupling\_time\_update}, \texttt{carry\_coupling\_gauge\_project}, \texttt{carry\_coupling\_reinit\_sources} = true (false) &
+  border regression rows; scalar $\kappa$ fallback; gauge restore; re-realised columns routed as departed &
+  \Cref{sec:net-vehicle-column,sec:net-vehicle-tu} & 1, 1d, 1f, 1g \\
+\texttt{shared\_carry\_full\_cov} = true (false) &
+  dense border carry $\bm{P}$ &
+  \Cref{sec:net-vehicle-tu} & C1 \\
+\texttt{station\_prior\_before\_pd} = true (false) &
+  receiver DCB datum rows inside the tested block &
+  \Cref{sec:net-vehicle-column} & RF-PD-fix \\
+\texttt{phase\_datum\_prioritized}, \texttt{phase\_datum\_held\_basis} = true (false) &
+  per-(satellite, signal) anchor, elected and held &
+  \Cref{sec:net-vehicle-basis} & RF-2, RF-2b \\
+\texttt{phase\_datum\_handover\_continuous} = true (false); \texttt{phase\_datum\_handover\_max\_var\_m2} = 0.01 (1.0) &
+  successor pinned at its carried level &
+  \Cref{sec:net-vehicle-basis} & R2 sticky \\
+\texttt{phase\_anchor\_carry\_reref}, \texttt{phase\_datum\_held\_cold\_release}, \texttt{phase\_datum\_held\_mark\_cold} = true (false) &
+  cold handover erased and marginalised, declared &
+  \Cref{sec:net-vehicle-basis} & R0\,+\,1(d), RF-2d \\
+\texttt{phase\_datum\_gate\_drop\_erase} = true (false); \texttt{phase\_datum\_min\_stations} = 2 (1) &
+  erase at the coverage gate's drop edge &
+  \Cref{sec:net-vehicle-drop} & EV7 \\
+\texttt{handover\_stransform} = true (false) &
+  clock-pivot S-transform of the border carry &
+  \Cref{sec:net-vehicle-basis} & queue 1(b) \\
+\texttt{rank\_gate\_tol} = $10^{-11}$ ($10^{-9}$) &
+  gate and heal cutoff &
+  \Cref{sec:net-vehicle-basis} & CTU2, EXL \\
+\texttt{carry\_coupling\_exact\_update}, \texttt{carry\_rx\_code\_bias\_in\_block}, \texttt{amb\_float\_drop\_decouple\_always} = true (false) &
+  exact time update; receiver code bias in the block; drop always decouples &
+  \Cref{sec:net-vehicle-tu,sec:net-vehicle-drop} & CTU, CTU2, EXL \\
+\texttt{clock\_temporal\_anchor} = true (false); \texttt{clock\_anchor\_q} = $2.9\times10^{-8}$ ($10^{-4}$); \texttt{clock\_anchor\_guard\_space} = \texttt{phase} (\texttt{clock}) &
+  binding satellite-clock carry; guard on the phase-visible clock &
+  \Cref{sec:net-vehicle-tu} & Q3, CTU2 \\
+\midrule
+\multicolumn{4}{@{}p{0.97\linewidth}@{}}{Wire-side and event-response knobs, documented in
+  \dcref{sec:net-wire}{the event-response and emitted-product section}:} \\
+\texttt{emit\_pb\_hold}; \texttt{emit\_pb\_hold\_phase\_clock}; \texttt{closed\_loop.pb\_hold\_presence\_flip} &
+  generation hold; level step moved to the held bias; consumer presence edges &
+  wire & PBH; LAH, EXL; PBF \\
+\texttt{gross\_los\_screen} &
+  acting code-row tier per line of sight &
+  wire & GL, RF-3 \\
+\texttt{estimation.accumulate\_phase\_windup}; \texttt{cycle\_slip.windup\_restart\_refloat} &
+  accumulated wind-up; restart latch &
+  wire & WUP \\
+\texttt{readmit\_seed\_horizon\_s} = 3900; \texttt{cycle\_slip.gap\_reentry\_per\_signal}; \texttt{cycle\_slip.tracker\_modeled\_first} &
+  re-admission seeds; per-signal re-entry latch and its key &
+  wire & READMIT-EDGE; GRS; GRK \\
+\bottomrule
+\end{tabular}
+\caption{Knobs of the float ambiguity vehicle armed by both goldens
+(\emph{armed set}: the standard set every network configuration arms,
+with no card of its own).}
+\label{tab:net-vehicle-knobs}
+\end{table}
+
+\paragraph{Built and not armed.}
+\texttt{network.amb\_float\_birth\_var\_m2} is absent, so its default $0$
+disables the birth floor of \Cref{eq:veh-floor}; the drop-only floor
+\texttt{network.amb\_float\_drop\_var\_m2} is $0$;
+\texttt{network.amb\_float\_declared\_handover},
+\texttt{network.carry\_coupling\_exact\_cross} and
+\texttt{network.ctu\_switch\_on\_resume} are off.
+\texttt{network.amb\_float\_q\_m2s} is parsed and written to the manifest,
+but no solve path reads it. Under \texttt{float\_kf} the loader forces
+\texttt{network.phase\_leveling\_local\_block} and
+\texttt{network.phase\_leveling\_los\_scale} off and refuses
+\texttt{network.carry\_coupling\_joint\_whiten}.
+
+% ============================================================
+\subsection{The carried local column}
+\label{sec:net-vehicle-column}
+
+\paragraph{The entry.}
+\texttt{LocalCarry} (\texttt{filter/NetworkRunTypes}) is keyed by
+(station, satellite, signal). After the accepted solve the harvest
+(\texttt{networkHarvestLocalCarries}) writes, for carried column $c$ of
+station $\rx$ (ambiguity in metres),
+\begin{equation}
+\hat a_c = \vehxlin{c} + \widehat{\delta x}_c,
+\qquad
+v_c = \big(\Nrr^{-1}\big)_{cc},
+\qquad
+\vehM{c} = \Nsr\,\Nrr^{-1}\bm{e}_c,
+\qquad
+C_{cc'} = \big(\Nrr^{-1}\big)_{cc'} :
+\label{eq:veh-harvest}
+\end{equation}
+\texttt{value\_abs}, the pure conditional variance \texttt{var}, the border
+regression \texttt{coupling} (one term per border column $j$ above
+\texttt{kCouplingSparsifyRelThresh} of the row maximum, with the solved
+value $\hat s_j$ and the datum-frame variance $p_j$, $0$ when pinned) and
+the cross-covariance block \texttt{blk}, all from one local solve
+$\Nrr^{-1}\bm{e}_c$ (\texttt{stationRegression}). The entry also keeps
+\texttt{var\_first} (the first-stash $v_c$), \texttt{var\_birth} and the
+birth stamps. The anchored column of each family is excluded at inject and
+harvest: its value is the datum.
+
+\paragraph{Why the regression row.}
+With $\bm{u}_\rx = \xlocal{\rx} + (\Nrr^{\,\rx})^{-1}\Nsr^{\,\rx\Tr}\xshared$,
+completing the square in each station's block of
+\dcref{eq:net-arrowhead}{the arrowhead system} splits the posterior
+quadratic form exactly:
+\begin{equation}
+(\bm{x}-\hat{\bm{x}})^\Tr\bm{N}(\bm{x}-\hat{\bm{x}})
+ = (\xshared-\hat{\bm{x}}_s)^\Tr\redNss(\xshared-\hat{\bm{x}}_s)
+ + \sum_{\rx}(\bm{u}_\rx-\hat{\bm{u}}_\rx)^\Tr\Nrr^{\,\rx}(\bm{u}_\rx-\hat{\bm{u}}_\rx).
+\label{eq:veh-split}
+\end{equation}
+Door~1 carries the border term. The vehicle carries the second: component
+$c$ of $\bm{u}_\rx$ is $x_c + \vehM{c}^\Tr\xshared$, with conditional
+covariance $(\Nrr^{\,\rx})^{-1}$, and becomes the pseudo-observation
+\begin{equation}
+\delta x_c + \vehM{c}^\Tr\xshared
+ = \big(\hat a_c - \vehxlin{c}\big) + \vehM{c}^\Tr\hat{\bm{s}} + \epsilon_c ,
+\qquad \epsilon_c \sim N(0,\sigma_c^2),
+\label{eq:veh-row}
+\end{equation}
+with $\sigma_c^2 = v_c$ before the time update
+(\Cref{sec:net-vehicle-tu}). A row stating $\hat a_c$ at $v_c$ with no
+border coefficients would state the border along $\vehM{c}$ a second time,
+on top of door~1 (card~1).
+
+\paragraph{Linearisation invariance.}
+Replacing $\vehxlin{c}$ by $\vehxlin{c}+\delta$ maps $\delta x_c \mapsto
+\delta x_c - \delta$ and the right-hand side of \Cref{eq:veh-row} by
+$-\delta$. Storing the absolute $\hat a_c$ makes a shift of the
+linearisation point an exact solve no-op.
+
+\paragraph{Gauge invariance.}
+Every data row of station $\rx$ satisfies
+$\bm{A}_{s,\rx}\bm{g}_s + \bm{A}_{r,\rx}\bm{g}_r = \bm{0}$ along each
+structural gauge direction, hence
+$\Nsr^{\,\rx\Tr}\bm{g}_s + \Nrr^{\,\rx}\bm{g}_r = \bm{0}$ and
+\begin{equation}
+\vehM{c}^\Tr\bm{g}_s = -\,g_r(c):
+\label{eq:veh-gauge}
+\end{equation}
+the row of \Cref{eq:veh-row} is blind to every gauge, provided the
+datum-pinned terms are kept. Without them every row observes the clock
+gauge and the null-space gate withholds.
+
+\paragraph{Which door.}
+The row's increment lands in station $\rx$'s own $\Nss^{\,\rx}$,
+$\Nsr^{\,\rx}$, $\Nrr^{\,\rx}$, so the arrowhead is preserved. It is an
+observation of that station: \texttt{appendCouplingRows} appends it to
+$\bm{A}_{s,\rx}$, $\bm{A}_{r,\rx}$, $\bm{W}_\rx$, $\bm{y}_\rx$, and it
+enters through \texttt{addStation}. Like door~2 it precedes the reduction;
+unlike door~2 it also adds to the station's border blocks. The phase-datum
+pins are $\bm{A}_r$ rows of weight $10^{10}$ with right-hand side
+$t - \vehxlin{c}$. No carried prior folds before
+\texttt{network.phase\_leveling\_warmup\_epochs} emitted epochs (default 6).
+
+\paragraph{Station prior before the PD test.}
+\texttt{addStation} rejects a station whose $\Nrr$ factor fails the
+positive-definiteness pivot test. With
+\texttt{network.station\_prior\_before\_pd} the receiver DCB datum rows
+($\Lambda = 1/\sigma^2$, $\sigma$ =
+\texttt{network.rx\_code\_bias\_datum\_sigma\_m}, $\eta = -\Lambda\,
+\vehxlin{c}$) are folded into a copy of $\Nrr$, $\bm{u}_r$ before the test
+(\texttt{StationPrior}) and withheld from the later \texttt{addStationPrior}
+call; before the knob, stations were rejected for that missing row. On the
+goldens every carried ambiguity row and in-block receiver code-bias row is
+also a row of $\bm{A}_{r,\rx}$, so the test judges the block the solve uses.
+
+% ============================================================
+\subsection{The joint local block}
+\label{sec:net-vehicle-block}
+
+Under \texttt{float\_kf}, \texttt{NetworkKnobs::pl\_local\_block} follows
+the vehicle and \texttt{CouplingRowBuilder::buildLocalBlock} folds each
+station's carried columns jointly (given
+\texttt{carry\_conditional\_coupling} and no
+\texttt{carry\_coupling\_joint\_whiten}). For the columns $C$ that pass the
+inject predicates (present, not gauge-pinned, not pending a reseed, finite
+$\vehxlin{c}$, a live entry), with the row ingredients $(\vehM{c}, y_c,
+\sigma_c^2)$ of \Cref{sec:net-vehicle-tu},
+\begin{equation}
+(\vehSig)_{ii} = \sigma_{c_i}^2,
+\qquad
+(\vehSig)_{ij} =
+\begin{cases}
+C_{c_ic_j} & \text{same harvest block},\\
+0 & \text{otherwise (counted)},
+\end{cases}
+\qquad
+\vehSig = \bm{L}\bm{L}^\Tr,
+\label{eq:veh-block}
+\end{equation}
+and the station receives the unit-weight rows
+$\bm{L}^{-1}[\,\bm{I}_C \mid \bm{M}_C \mid \bm{y}_C\,]$
+(\texttt{whitenLocalBlock}). Each block of $\vehSig$ is a principal
+submatrix of one posterior, so $\vehSig$ is positive-definite by
+construction; after one ridge retry a failed factor reverts the station to
+per-column rows, counted. A column refloated within the epoch has its row
+and column deleted before the factor: an exact marginalisation.
+
+$\vehSig$ is the joint conditional covariance of $\bm{u}_C$ with every
+non-carried local integrated out. Independent rows fold
+$\mathrm{diag}(\vehSig)^{-1}$. For $n$ columns of variance $\sigma^2$ and
+pairwise correlation $\rho$, along $\bm{v} = \bm{1}/\sqrt{n}$,
+\begin{equation}
+\bm{v}^\Tr\vehSig^{-1}\bm{v} = \frac{1}{\sigma^2\,[1+(n-1)\rho]},
+\qquad
+\bm{v}^\Tr\mathrm{diag}(\vehSig)^{-1}\bm{v} = \frac{1}{\sigma^2},
+\label{eq:veh-overcount}
+\end{equation}
+an over-count of $1+(n-1)\rho$ along the directions the non-carried locals
+share: the slant ionosphere of a line of sight's two bands, and the
+receiver clock, zenith wet delay and receiver DCB of every column. The
+block is exact in every local-local direction given the border.
+
+% ============================================================
+\subsection{Birth prior and the bounded drop}
+\label{sec:net-vehicle-drop}
+
+\paragraph{Birth.}
+A new arc folds no carried prior in its first epoch; a prior from the
+same epoch's data would count it twice. The first harvest records
+$\sigma^2_{\mathrm{first}} = v_c$ and sets, once,
+\begin{equation}
+\sigma^2_{\mathrm{birth}} = \max\{\sigma^2_{\mathrm{first}},\ f(e)\},
+\qquad
+f(e) = \frac{\sigma^2_{\mathrm{zen}}}{\big[\sin\max(e,\,5^\circ)\big]^{2p}}
+\label{eq:veh-floor}
+\end{equation}
+(\texttt{ambFloatBirthFloor}), with $\sigma^2_{\mathrm{zen}}$ =
+\texttt{network.amb\_float\_birth\_var\_m2} and $p$ =
+\texttt{filter.code\_elevation\_power}, the code weights' mapping, because
+the floor states what a code-determined level is worth. An unknown
+elevation reads as zenith; $\sigma^2_{\mathrm{zen}} \le 0$ gives $f \equiv
+0$. On the goldens $\sigma^2_{\mathrm{birth}} = \sigma^2_{\mathrm{first}}$.
+
+\paragraph{The drop.}
+A slip lowers confidence in the level and keeps the arc's identity.
+\texttt{ambFloatDrop} (through \texttt{ambFloatDropFloored}) sets
+\begin{equation}
+\sigma^2_{\mathrm{tgt}} = \max\{\sigma^2_{\mathrm{birth}},\ \sigma^2_{\mathrm{first}},\ f_b(e),\ f_d(e)\},
+\qquad
+\sigma_c^2 < \sigma^2_{\mathrm{tgt}} \;\Rightarrow\;
+\sigma_c^2 \leftarrow \sigma^2_{\mathrm{tgt}},\;\;
+\vehM{c} \leftarrow \varnothing,\;\;
+C_{c\,\cdot} \leftarrow \varnothing ,
+\label{eq:veh-drop}
+\end{equation}
+with $f_b$, $f_d$ the floor at the birth floor and at
+\texttt{network.amb\_float\_drop\_var\_m2}. The age clock restarts;
+$\hat a_c$, \texttt{var\_first}, \texttt{var\_birth}, the birth stamps,
+\texttt{last\_seen\_s} and \texttt{n\_folds} are kept. A drop only loosens:
+for $\sigma_c^2 \ge \sigma^2_{\mathrm{tgt}}$ it is idempotent, and
+\texttt{network.amb\_float\_drop\_decouple\_always} makes that branch clear
+the regression and block row too. Without it an arc slipping one epoch
+after birth kept its pre-slip regression and cross terms, and under the
+exact update its stale value went into the satellite clocks (card CTU2,
+section~6). On the goldens $\sigma^2_{\mathrm{tgt}} =
+\sigma^2_{\mathrm{first}}$; the prior still folds in the same epoch.
+
+\paragraph{Causes.}
+\texttt{networkAmbFloatApplyDrops} runs between the PASS-A slip scans and
+PASS~B, so the inject folds at birth strength where the leveling vehicle
+skips: \texttt{relevel\_free} (the latched free set of
+\texttt{network.cycle\_slip.relevel\_free\_epoch}: slip detectors, gap
+re-entry and wind-up restart) and \texttt{stale\_gap} (gap above
+\texttt{network.phase\_leveling\_max\_gap\_s}, golden 900~s, default 120~s).
+\texttt{networkPostFitRaim} drops on \texttt{t4\_attrib} and
+\texttt{t3\_consensus}, where the leveling vehicle erases. Under the held
+basis each latched arc is stamped in \texttt{ctx.carry.amb\_flag\_ep}.
+
+\paragraph{The erases that remain.}
+The post-harvest prune erases an arc unseen past
+\texttt{network.phase\_leveling\_max\_gap\_s}. On the goldens three more
+responses erase carried ambiguities: the gross line-of-sight screen
+(\texttt{network.gross\_los\_bound} off), the anchor re-reference
+(\Cref{sec:net-vehicle-basis}), and the coverage gate's drop edge (card EV7),
+where the survivor's carried ambiguity would absorb the removed bias.
+
+\paragraph{Both edges.}
+Standing invariant~7 requires both edges. The decoupling edge is bounded:
+a free epoch opens a direction the border re-balances into, mainly the
+satellite clock, since the anchor pin holds the phase bias; the drop
+removes information down to a stated level. The re-coupling edge
+re-validates: the arc re-enters as an uncoupled row at
+$\sigma^2_{\mathrm{tgt}}$, its cross terms read as pair misses until the
+next harvest, and it re-earns its variance from the data. Drops are counted
+by cause and traced in \texttt{network\_amb\_state.csv}.
+
+% ============================================================
+\subsection{The held S-basis}
+\label{sec:net-vehicle-basis}
+
+\paragraph{The family gauge.}
+Each (satellite $\sat$, signal $\sigl$) family carries the gauge
+\begin{equation}
+G(c):\qquad a^{\sat}_{\rx,\sigl} \mapsto a^{\sat}_{\rx,\sigl} - c \;\;\forall \rx,
+\qquad b^{\sat}_{\sigl} \mapsto b^{\sat}_{\sigl} + c,
+\label{eq:veh-gaugegroup}
+\end{equation}
+with $b^{\sat}_\sigl$ the satellite phase bias. The prioritized datum
+(\texttt{networkElectPhaseAnchors}) pins $a^{\sat}_{\rx^\star,\sigl} = t$
+at one anchor $\rx^\star$. Two realisations differ by an exact S-transform
+\parencite{teunissen1985generalised},
+\begin{equation}
+\bm{x}(\rx', t') = G(c)\,\bm{x}(\rx^\star, t),
+\qquad
+c = \hat a^{\sat}_{\rx',\sigl}(\rx^\star, t) - t' ,
+\label{eq:veh-handover}
+\end{equation}
+and every carried reference of the family (each $\hat a$, the carried phase
+bias, each $\hat s_j$ on its column) lives in the realisation it was
+harvested in.
+
+\paragraph{Held basis.}
+Under \texttt{network.phase\_datum\_held\_basis} a retained incumbent
+re-pins at the value frozen at its election
+(\texttt{PhaseBasisEntry::value}): $c = 0$ within a tenure. A datum
+re-derived after a drop or a flag would apply $G(c)$, $c \ne 0$, a
+phase-bias step the consumer re-converges through. The basis ambiguity is
+a held constant outside the carry; every other ambiguity is a live state.
+A screen flag on the incumbent's own column within
+\texttt{network.phase\_anchor\_flag\_quiet\_ep} epochs deposes it at the
+election. A new election ranks by elevation the candidates aged at least
+\texttt{network.phase\_anchor\_min\_age\_ep}, unflagged and with a usable
+ledger entry; failing that, by elevation alone (a cold pin), then coverage.
+
+\paragraph{Handover.}
+\texttt{AnchorHandoverLedger} holds each station's previous-epoch $\hat a$
+(written $\ell$) and conditional variance; an entry is usable when
+$0 < \mathrm{var} \le$
+\texttt{network.phase\_datum\_handover\_max\_var\_m2}. A continuous handover
+pins at $t' = \ell_{\rx'}$: $c$ is the successor's one-epoch revision,
+bounded by the ceiling, and the family does not step. A cold handover pins
+at $t' = 0$: $c = \ell_{\rx'} =: \Delta$. The goldens answer a cold
+handover, a first sighting or a bridge exit by erasing the family's
+carried ambiguities and marginalising its phase-bias key out of the border
+carry for one epoch (\texttt{network.phase\_anchor\_carry\_reref},
+\texttt{network.phase\_datum\_held\_cold\_release}); with
+\texttt{network.phase\_datum\_held\_mark\_cold} the wire declares a handover
+if and only if it is cold. The exact alternative
+(\texttt{declaredHandoverShiftCarry}, behind
+\texttt{network.amb\_float\_declared\_handover}, off) applies $G(\Delta)$ to
+the carry,
+\begin{equation}
+\hat a^{\sat}_{\rx,\sigl} \leftarrow \hat a^{\sat}_{\rx,\sigl} - \Delta,
+\qquad
+\hat b^{\sat}_\sigl \leftarrow \hat b^{\sat}_\sigl + \Delta,
+\qquad
+\hat s_j \leftarrow \hat s_j + \Delta \;\;(j = b^{\sat}_\sigl),
+\label{eq:veh-declared}
+\end{equation}
+variances untouched; moving one reference alone injects the frame step as
+row bias.
+
+\paragraph{Clock pivot.}
+At a clock-pivot swap $p \to q$, \texttt{network.handover\_stransform}
+re-expresses the border carry along the structural clock null direction
+$\bm{v}_c$,
+\begin{equation}
+c_0 = x_q/v_c[q],
+\qquad
+x_i \leftarrow x_i - v_c[i]\,c_0,
+\qquad
+\mathrm{var}_i \leftarrow \mathrm{var}_i + v_c[i]^2\,\mathrm{var}_q ,
+\label{eq:veh-clockst}
+\end{equation}
+cross term dropped, and releases that constellation's one-epoch carry skip
+(it needs \texttt{network.scoped\_handover\_response}, armed).
+
+\paragraph{Rank gate and heal.}
+\texttt{NetworkSbasis::assertNullSpaceRank} requires
+\begin{equation}
+n_{\mathrm{null}} = \#\big\{k : \lambda_k(\redNss) < \tau\,\max(\lambda_{\max}, 1)\big\},
+\qquad \tau = \texttt{network.rank\_gate\_tol},
+\label{eq:veh-rankgate}
+\end{equation}
+to equal the declared S-basis dimension. On failure,
+\texttt{healNearNullPhaseBias} soft-anchors toward $0$ at $\sigma = 1$~m
+every phase-bias column with absolute component above $0.3$ in a direction
+below the same cutoff, through \texttt{addSharedPrior} (door~1, no second
+reduction), and re-gates once; a second failure withholds. A held basis
+whose anchor station is rejected leaves its column near-null, and the heal
+makes that a bounded one-epoch degradation. Gate, heal and estimability dump
+read one $\tau$. With the exact update the level keeps a code-scale variance
+in the first minutes, and at $\tau = 10^{-9}$ weak but real phase-bias
+common modes were counted as null (card CTU2, section~3); the goldens set
+$10^{-11}$ and also arm \texttt{network.sbasis\_complete}.
+
+% ============================================================
+\subsection{The coupling time update}
+\label{sec:net-vehicle-tu}
+
+A row harvested at epoch $k-1$ states $l = r + \bm{m}^\Tr\bm{s} + e$,
+$e \sim N(0, v)$, given that epoch's border $\bm{s}$. The border moves,
+$\bm{s}^+ = \bm{s} + \bm{w}$, $\bm{w} \sim N(\bm{0}, \Qmat)$, and the border
+fold re-injects it at $N(\hat{\bm{s}}, \bm{P} + \Qmat)$, with $\bm{P}$ the
+stashed dense posterior and $\Qmat$ the fold's own inflation. The row must
+be re-expressed on $\bm{s}^+$ with the same $\Qmat$.
+
+\paragraph{Card 1d.}
+\texttt{scalarRowIngredients} shrinks each present term with $q_j\dt > 0$,
+$p_j > 0$:
+\begin{equation}
+\kappa_j = \frac{p_j}{p_j + q_j\dt},
+\qquad
+m_j \leftarrow \kappa_j m_j,
+\qquad
+\sigma^2 \mathrel{+}= m_j^2\,\kappa_j\,q_j\dt ;
+\label{eq:veh-kappa}
+\end{equation}
+a departed or re-realised term adds $m_j^2 p_j$ and is deleted, and
+\texttt{tuGaugeRestore} spreads each (constellation, kind) deficit over the
+family's present terms so \Cref{eq:veh-gauge} holds. $q_j$ is the
+registry's border $q$ (\texttt{couplingQ}); for a clock,
+\texttt{filter.process\_noise.sat\_clock\_q}, golden
+\SI{1e-3}{\metre\squared\per\second}. The fold anchors the same clock at
+\texttt{network.clock\_anchor\_q} with floor
+\texttt{network.clock\_anchor\_var\_floor\_m2} (golden
+\SI{1e-5}{\metre\squared}). At the floor and $\dt = 30$~s,
+$\kappa_{\mathrm{clk}} \approx 3\times10^{-4}$ while $\kappa_{\mathrm{pb}}
+\approx 1$: the row loses its own clock coefficient.
+
+\paragraph{The level lock.}
+In the single-station, two-band model of card CTU, section~2 (phase
+$\phi_j = \rho + T + dt_r - c + p_j + N_j - \alpha_j I$, code
+$P_j = \rho + T + dt_r - c + b_j + \alpha_j I$, $\alpha_1 = 1$), the code
+rows give $\partial I/\partial c = \kappa' = \sum_j w_j\alpha_j / \sum_j
+w_j\alpha_j^2$, and
+\begin{equation}
+\text{exact row: } N_j - (1+\alpha_j\kappa')\,c + p_j = r_j,
+\qquad
+\text{shrunk row: } N_j + p_j = r_j .
+\label{eq:veh-lock}
+\end{equation}
+With the phase row, the exact row constrains $\alpha_j(I - \kappa' c)$ and
+leaves $c$ to the code. The shrunk row gives $c + \alpha_j I = r_j - \phi_j
++ \rho + T + dt_r$ for $j = 1,2$, which fixes the satellite clock level at
+phase precision at every station and epoch. The level is estimable from
+code only; stated at phase precision, it freezes (card CTU).
+
+\paragraph{The exact update.}
+\texttt{network.carry\_coupling\_exact\_update}
+(\texttt{filter/NetworkCouplingExact}) splits a row's stashed terms into
+$S$, the columns the fold carries with a finite inflation $\Qmat_S$, and
+$D$, the rest (departed, re-initialised, re-referenced, skipped). Over
+$K = S \cup D$,
+\begin{equation}
+\begin{aligned}
+\bm{m}_{\mathrm{new}} &= (\bm{P}_{SS} + \Qmat_S)^{-1}\bm{P}_{S,K}\,\bm{m}_K,
+\qquad
+\mathrm{Var}\,e' = v + \bm{m}_K^\Tr\bm{B}\,\bm{m}_K,\\
+\bm{B} &= \bm{P}_{KK} - \bm{P}_{K,S}(\bm{P}_{SS}+\Qmat_S)^{-1}\bm{P}_{S,K}.
+\end{aligned}
+\label{eq:veh-exact}
+\end{equation}
+With $\vehF = (\bm{P}_{SS}+\Qmat_S)^{-1}$, $\bm{g} = \Qmat_S\bm{m}_S$,
+$\bm{u} = \bm{P}_{S,D}\bm{m}_D$, $\bm{z} = \vehF\bm{u}$ and
+$\vehF\bm{P}_{SS} = \bm{I} - \vehF\Qmat_S$, \texttt{couplingExactRow}
+evaluates both halves free of cancellation:
+\begin{equation}
+\bm{m}_{\mathrm{new}} = \bm{m}_S - \vehF\bm{g} + \bm{z},
+\qquad
+\bm{m}_K^\Tr\bm{B}\,\bm{m}_K = \bm{m}_{\mathrm{new}}^\Tr\bm{g} + \bm{g}^\Tr\bm{z}
+ + \big(\bm{m}_D^\Tr\bm{P}_{DD}\bm{m}_D - \bm{u}^\Tr\bm{z}\big),
+\label{eq:veh-exactform}
+\end{equation}
+the variance clamped at $0$ (counted). With $D$ empty, $\Qmat_S = \bm{0}$
+returns the harvested row and a diagonal $\bm{P}$ returns
+\Cref{eq:veh-kappa}. The difference is in $D$: a decoupled or departed
+clock correlated with its phase biases along the level gives
+$m_{\mathrm{new},p} \approx m_p + (P_{pc}/P_{pp})\,m_c$, so the row keeps
+its co-movement with the level.
+
+\paragraph{The assembled row.}
+\texttt{exactRowIngredients} emits $\bm{m}_{\mathrm{new}}$ on $S$ with
+right-hand-side terms $m_{\mathrm{new},j}\hat s_j$, $\hat s_j$ the mean the
+fold centres its prior on. A datum-pinned term is kept as harvested; a
+present term with no dense row takes \Cref{eq:veh-kappa} at the fold's
+inflation; a departed one adds $m_j^2 p_j$; SH-VTEC terms keep card 1d.
+Per constellation the clock coefficients the update removes (harvested
+minus emitted) go to the stash's pinned pivot clock, so the row keeps its
+identity along the declared clock gauge. The variance
+\begin{equation}
+\sigma_c^2 = v_c + \textstyle\sum_{\mathrm{dep}} m_j^2 p_j
+ + \textstyle\sum_{\mathrm{scalar}} m_j^2\kappa_j q_j\dt
+ + \bm{m}_K^\Tr\bm{B}\,\bm{m}_K
+\label{eq:veh-exactrow}
+\end{equation}
+is the diagonal of $\vehSig$ in \Cref{eq:veh-block}. Only rows harvested at
+the stash of $\bm{P}$ take this route; others, and epochs whose
+$\bm{P}_{SS} + \Qmat_S$ does not factor, take card 1d's, counted. $\Qmat_S$
+is the fold's own decision, made once before PASS~B
+(\texttt{networkCarryDecide}, \texttt{networkCouplingExactPrepare}:
+$q = \texttt{var\_eff} - P_{pp}$), so rows and fold read one $\Qmat$. The
+covariance $\bm{m}_i^\Tr\bm{B}\,\bm{m}_k$ between rows is dropped (card WSX
+adds the within-station half; off).
+
+\paragraph{Information loss.}
+Card AIL split each arc's variance budget into the loss at the inject and
+the gain in the solve. Under card 1d with the legacy clock $q$, a young
+arc's ambiguity information is discarded at every inject; under the exact
+update the steady loss is the anchored clock's walk.
+
+\paragraph{Receiver code bias in the block.}
+The diagonal receiver code-bias carry folded each column at its
+conditional variance with no border coefficients, the double count that
+\Cref{eq:veh-row} avoids; the border information along each satellite's
+level roughly doubled every epoch (card CTU2, section~2).
+\texttt{network.carry\_rx\_code\_bias\_in\_block} harvests these columns
+with their regression and cross covariances into the block of
+\Cref{eq:veh-block}, with no diagonal fallback.
+
+\paragraph{Temporal clock anchor.}
+Card Q3's guarded anchor, \texttt{network.clock\_temporal\_anchor}, folds
+each satellite clock of the border carry at
+\begin{equation}
+v_{\mathrm{eff}} =
+\begin{cases}
+\max\{v + q_a\,\dt_{\sat},\ v_{\mathrm{floor}}\} & \text{anchored},\\
+v + q_c\,\dt & \text{loose},
+\end{cases}
+\qquad
+\dt_{\sat} = t - t_{\mathrm{last}}(\sat),
+\label{eq:veh-anchor}
+\end{equation}
+$q_a$ = \texttt{network.clock\_anchor\_q}, $v_{\mathrm{floor}}$ =
+\texttt{network.clock\_anchor\_var\_floor\_m2}, $q_c$ =
+\texttt{sat\_clock\_q}; an anchored carry older than
+\texttt{network.clock\_anchor\_max\_gap\_s} decouples. Once bound, the
+emitted walk is $\sqrt{q_a\dt}$. The guard standardises the
+common-removed residual by $\sqrt{\max(P^- - P^+, \sigma_f^2)}$, since
+$\mathrm{Var}(\hat x - \mu) = P^- - P^+$. A trip at
+\texttt{network.clock\_anchor\_k}, or above
+\texttt{network.clock\_anchor\_abs\_m}, sets the satellite loose, withdraws
+its prior, re-solves before emission and marks the wire; re-coupling needs
+\texttt{network.clock\_anchor\_recouple\_epochs} in-band epochs
+(\texttt{filter/NetworkClockAnchor}).
+
+\paragraph{Guard space.}
+With the exact update the level carries a code-scale variance while the
+phase-visible combinations are phase-precise, and a clock-space statistic
+trips on legitimate level convergence. Under
+\texttt{network.clock\_anchor\_guard\_space} = \texttt{phase} the trip reads
+\begin{equation}
+d = c - \textstyle\sum_j w_j\,p_j,
+\qquad
+\bm{w} = \arg\min\|\bm{w}\| \;\text{s.t.}\; \textstyle\sum_j w_j = 1,\;
+\textstyle\sum_j w_j\lambda_j^2 = 0,
+\label{eq:veh-phiclock}
+\end{equation}
+one phase bias per band, constellation median removed, $\sqrt{S}$ floored
+at \texttt{network.clock\_anchor\_phase\_sigma\_floor\_m}. The level (a
+common shift of $c$ and every $p_j$) and the ionosphere direction ($p_j$ by
+$\alpha_j\delta$) leave $d$ unchanged; GPS L1/L2 gives
+$\bm{w} = (2.5457, -1.5457)$. The backstop stays on the clock.
+
+\paragraph{Fresh convergence only.}
+A snapshot written without the exact update, the in-block receiver code
+bias, the drop decouple or the phase-space guard is not resumed into a run
+that arms them unless \texttt{network.ctu\_switch\_on\_resume} (default
+off). That seam failed card CTU's gate G5: the restored ambiguities, and the
+slant ionosphere they tie, had absorbed the frozen level error and hold it;
+the ambiguity-side response is not built (card CTU2, section~8).
+
+% ============================================================
+\subsection{Standing}
+\label{sec:net-vehicle-standing}
+
+Armed (cards under \texttt{docs/refound/}): the float vehicle with the held
+basis (\texttt{RF-1\_float\_ambiguities\_design.md},
+\texttt{RF-2\_held\_basis\_2026-09-15.md},
+\texttt{RF-2b\_election\_fix\_2026-09-15.md},
+\texttt{GRB\_golden\_rebase\_2026-09-22.md}); the station prior before the
+PD test (\texttt{RF-PD-fix\_station\_prior\_before\_pd\_2026-09-15.md}); the
+exact update with its companions and card LAH's hold
+(\texttt{CTU\_coupling\_time\_update\_2026-09-28.md},
+\texttt{CTU2\_level\_recursion\_followup\_2026-09-29.md},
+\texttt{EXL\_exact\_update\_lah\_promotion\_2026-10-01.md}). The registry and
+the per-epoch fold decision (\texttt{PRM\_parameter\_registry\_2026-09-29.md})
+are byte-identical consolidations. Owed: the birth floor of the RF-1
+decision, set by no golden or working base; the declared handover
+S-transform, built and off; the switch-on seam's ambiguity-side response
+and the guard's answer to a phase-bias event (CTU2); the information budget
+(\texttt{AIL\_ambiguity\_information\_loss\_2026-10-01.md}, open); the
+residual non-finite-input station rejections (RF-PD-fix).
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

@@ -1351,7 +1351,14 @@ void NetworkRunTraces::writeCarryVceApplyRows(const GnssTime& t,
           << g.n_steps << ',' << g.n_frozen << ','
           << g.n_slew_up << ',' << g.n_slew_down << ','
           << g.n_ceiling_ep << ',' << g.n_unit_ep << ','
-          << fmt::format("{:.6e}", g.alpha2_max) << '\n';
+          << fmt::format("{:.6e}", g.alpha2_max) << ','
+          // The target is robust_var_r / hand_fold_var_r (redundancy-corrected,
+          // 2026-10-07); robust_floor_m2 above is the uncorrected readback, about
+          // rbar times robust_var_r.
+          << fmt::format("{:.6e}", g.robust_var_r) << ','
+          << fmt::format("{:.6e}", g.hand_fold_var_r) << ','
+          << fmt::format("{:.4f}", g.rbar) << ','
+          << fmt::format("{:.1f}", g.n_eff_r) << '\n';
     }
     // Durability: nothing else flushes this stream (only health_trace is flushed on
     // every write), and it is the card's graded artifact, so an hourly flush bounds
@@ -2084,6 +2091,15 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        : std::string{})
                << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
                << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
+               // Card PFQ: solve-affecting and fingerprinted, so an archived logs/ folder
+               // has to say whether the carried clocks took the pivot-frame noise.
+               << (config_.networkClockPivotFrameQ()
+                       ? std::string("\"clock_pivot_frame_q\":true,") : std::string{})
+               // Card BCL: solve-affecting and fingerprinted, armed-only like card PFQ's.
+               << (config_.networkCarryCouplingBiasClone()
+                       ? std::string("\"carry_coupling_bias_clone\":true,") : std::string{})
+               << (config_.networkCarryCouplingDepartedClone()
+                       ? std::string("\"carry_coupling_departed_clone\":true,") : std::string{})
                // LS-VCE monitor and v2 apply (M2).  The apply knobs are in the manifest
                // because they affect the solve and are fingerprinted: an archived logs/
                // folder has to be able to say which α² regime produced its products.

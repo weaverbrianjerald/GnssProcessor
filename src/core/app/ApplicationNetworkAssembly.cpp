@@ -40,6 +40,7 @@
 #include "filter/NetworkMwWlLayer.hpp"             // MW-seeded wide-lane pseudo-obs layer (M5 card WL-1)
 #include "filter/NetworkSdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "filter/NetworkCoupling.hpp"       // conditional coupling-row builder (Card 1/1b/1d, INC-7b)
+#include "filter/NetworkParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
 #include "filter/NetworkPrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
@@ -100,16 +101,22 @@ bool Application::networkIsGaugePinned_(const std::vector<NetStation>& stations,
 // Column-split helper: split a station's H into the shared border A_s
 // (clock/phase-bias columns) and the local nuisance block A_r (everything
 // except the 3 fixed-position columns and the shared columns).  Returns the
-// H-column → A_r-column map (used for the pivot ambiguity pins).
+// H-column → A_r-column map (used for the pivot ambiguity pins) and, per state
+// column, the disposition the split gave it (card NOM N1: the parameter
+// inventory records it; the five branches below each set one).  The receiver
+// IFB drop reads the run's rule, built once in NetworkRunContext.
 void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& est,
                                        const EpochMeasurement& em,
+                                       const RxIfbRule& ifb_rule,
                                        Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                                        Eigen::VectorXd& w, Eigen::VectorXd& y,
-                                       std::map<int, int>& h2local) const {
+                                       std::map<int, int>& h2local,
+                                       std::vector<ParamDisposition>& col_disp) const {
     const Eigen::Index m       = em.H.rows();
     const Eigen::Index nstate  = em.H.cols();
     const Eigen::Index nshared = est.numShared();
     A_s = Eigen::MatrixXd::Zero(m, nshared);
+    col_disp.assign(static_cast<std::size_t>(nstate), ParamDisposition::Unobserved);
 
     std::set<int> shared_cols;  // H-column indices that map to the shared border
     for (const auto& kv : st.sm->getSatClockStates()) {
@@ -158,11 +165,20 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
     // network), not through an explicit receiver counterpart.  The receiver DCB
     // between the two primary bands ("sys_DCB") is kept, and the GLONASS per-slot
     // IFB (a different state family) is untouched.
+    //
+    // Card NOM N1: the drop is a declared rule (networkRxIfbRule, built once per run
+    // and passed in as ifb_rule): whether it drops, the disposition the column gets
+    // (held at its first-epoch seed), and the premise above (GIM weighting), with
+    // whether that premise holds on this run.  The rule names the columns through the
+    // parameter classifier: a receiver code-bias key of the IFB form, the one test
+    // RxIfbRule::governs.  These are the columns the former substring test on "_IFB"
+    // named.  The parameter inventory prints the instances the rule holds, and a
+    // WARNING when the premise does not hold.
     std::set<int> drop_cols;
-    if (config_.estimateNetworkSatCodeBias()) {
+    if (ifb_rule.drop) {
         for (const auto& kv : st.sm->getCodeBiasStates()) {
-            if (StateKeys::isGlonassPerSlotIfbKey(kv.first)) continue;
-            if (kv.first.find("_IFB") != std::string::npos)
+            const auto id = classifyStateColumn(StateContainer::CodeBiasStates, kv.first);
+            if (id && ifb_rule.drops(*id))
                 drop_cols.insert(static_cast<int>(kv.second));
         }
     }
@@ -171,9 +187,19 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
     std::vector<int> local_cols;
     local_cols.reserve(static_cast<size_t>(nstate));
     for (int c = 0; c < static_cast<int>(nstate); ++c) {
-        if (c == pos || c == pos + 1 || c == pos + 2) continue;  // coords fixed
-        if (shared_cols.count(c)) continue;                      // shared border
-        if (drop_cols.count(c)) continue;                        // non-primary rx IFB (dropped)
+        ParamDisposition& disp = col_disp[static_cast<std::size_t>(c)];
+        if (c == pos || c == pos + 1 || c == pos + 2) {          // coords fixed
+            disp = ParamDisposition::Pinned;
+            continue;
+        }
+        if (shared_cols.count(c)) {                              // shared border
+            disp = ParamDisposition::EstimatedBorder;
+            continue;
+        }
+        if (drop_cols.count(c)) {                                // non-primary rx IFB (dropped)
+            disp = ifb_rule.disposition;
+            continue;
+        }
         // Drop a structurally unobservable local state (all-zero H column this
         // epoch).  The usual case is the Galileo inter-system-bias state of a
         // station that tracks no Galileo this epoch (the StateManager allocates
@@ -185,7 +211,11 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         // the zero column lets the station contribute every observable state it
         // has; its receiver clock absorbs its GPS rows, so the GPS clock
         // common-mode gauge stays intact.
-        if (em.H.col(c).cwiseAbs().maxCoeff() == 0.0) continue;
+        if (em.H.col(c).cwiseAbs().maxCoeff() == 0.0) {
+            disp = ParamDisposition::Unobserved;
+            continue;
+        }
+        disp = ParamDisposition::EstimatedLocal;
         h2local[c] = static_cast<int>(local_cols.size());
         local_cols.push_back(c);
     }
@@ -3382,7 +3412,15 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // Alias into the assembly slot so the H->A_r column map survives
             // for the post-solve slant-iono back-substitution (viz trace).
             std::map<int, int>& h2local = R.h2local;
-            networkSplitStation_(st, est, em, R.A_s, R.A_r, R.w, R.y, h2local);
+            std::vector<ParamDisposition> col_disp;
+            networkSplitStation_(st, est, em, ctx.param_inventory.rx_ifb,
+                                 R.A_s, R.A_r, R.w, R.y, h2local, col_disp);
+            // The parameter inventory (card NOM N1): every column of this station's state
+            // manager as a parameter instance with the disposition the split just gave it,
+            // and every shared state a gate withheld from the station this epoch as an
+            // absorbed instance (N1b), into this station's own slot (no shared write;
+            // drained serially below).  Trace class.
+            recordStationParams(*st.sm, i, col_disp, st.mm->absorbedSharedStates(), R.param_inv);
             // The observation's own signal of every data row, for the post-fit row
             // writer (card OWD, O5); row-aligned with em.H, the invariant the
             // demotion blocks of networkSplitStation_ rely on.  Trace-only: nothing in
@@ -5223,6 +5261,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     if (relevel_free_on)
         for (const StationAssembly& Rc : asm_res)
             ctx.counters.n_relevel_free_skips += Rc.relevel_free_skips;
+    // Card NOM N1: the stations' parameter inventories, folded serially (the same
+    // discipline); networkParamInventoryEpochTail writes the table after the first
+    // emitted epoch and the teardown writes the run's.  `present` tells a roster station
+    // with no usable observations from one that was assembled but never reached its split.
+    networkParamInventoryDrain(ctx.param_inventory, asm_res, present, se.time.week, se.time.tow);
     // Card PRM phase 3a: the produce phase's per-station response counts, folded into the
     // run's response table (serial, the same discipline; zero where a site is unarmed).
     for (const StationAssembly& Rc : asm_res) {

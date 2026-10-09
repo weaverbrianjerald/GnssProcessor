@@ -288,7 +288,9 @@ ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::s
     // LOOSE), which is what the commit's operator[] creates.
     ClockAnchorFold out;
     const double dt_leg = std::max(0.0, dt_epoch);
-    out.inc_m2 = ctx.params.q(SharedParamKind::Clock) * dt_leg;
+    out.inc_m2    = ctx.params.q(SharedParamKind::Clock) * dt_leg;
+    out.dt_s      = dt_leg;
+    out.rate_m2ps = ctx.params.q(SharedParamKind::Clock);
     if (!ctx.knobs.cta_on) {
         out.var_eff = prev_var + out.inc_m2;
         return out;
@@ -301,12 +303,16 @@ ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::s
                                  ? seed_horizon_s : ctx.knobs.cta_max_gap_s;
     const bool stale = !(dt_sat > 0.0)
                     || (ctx.knobs.cta_max_gap_s > 0.0 && dt_sat > gap_bound);
-    if (seed_horizon_s > 0.0 && dt_sat > 0.0)
+    if (seed_horizon_s > 0.0 && dt_sat > 0.0) {
         out.inc_m2 = ctx.params.q(SharedParamKind::Clock) * dt_sat;
+        out.dt_s   = dt_sat;
+    }
     if (stale && st.anchored) out.decoupled = true;   // stale_pending, cleared by BeginEpoch
     if (st.anchored && !out.decoupled) {
-        out.inc_m2   = ctx.knobs.cta_q * dt_sat;
-        out.anchored = true;
+        out.inc_m2    = ctx.knobs.cta_q * dt_sat;
+        out.dt_s      = dt_sat;
+        out.rate_m2ps = ctx.knobs.cta_q;
+        out.anchored  = true;
     }
     return clockAnchorFoldAt(ctx, out, prev_var);
 }

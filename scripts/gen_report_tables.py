@@ -279,14 +279,17 @@ def gen_slip_detectors() -> tuple[str, int]:
                 default,
                 sigma,
                 status,
-                tex_escape(clean_doc(doc)),
+                # Dotted config keys in the description are one unbreakable word;
+                # let them break after each underscore.
+                tex_escape(clean_doc(doc)).replace(r"\_", r"\_\allowbreak{}"),
             ]
         )
 
+    # The Detector column holds unbreakable names up to about 3.3 cm (MelbourneWubbena).
     table = longtable(
-        r"@{}>{\raggedright\arraybackslash}p{2.8cm} "
+        r"@{}>{\raggedright\arraybackslash}p{3.3cm} "
         r">{\raggedright\arraybackslash}p{3.2cm} c c l "
-        r">{\raggedright\arraybackslash}p{3.6cm}@{}",
+        r">{\raggedright\arraybackslash}p{3.1cm}@{}",
         [
             r"\textbf{Detector}",
             r"\textbf{Config flag}",
@@ -523,9 +526,11 @@ def gen_state_keys() -> tuple[str, int]:
         )
 
     table = longtable(
-        r"@{}>{\raggedright\arraybackslash}p{4.6cm} "
+        # The Builder column holds unbreakable camelCase names up to about 4.9 cm
+        # (makeGlonassPerSlotIfbKey); the State column wraps.
+        r"@{}>{\raggedright\arraybackslash}p{3.6cm} "
         r">{\raggedright\arraybackslash}p{6.3cm} "
-        r">{\raggedright\arraybackslash}p{4.3cm}@{}",
+        r">{\raggedright\arraybackslash}p{5.3cm}@{}",
         [r"\textbf{State}", r"\textbf{Key format}", r"\textbf{Builder}"],
         rows,
         caption=(

@@ -196,6 +196,11 @@ void networkBuildPhaseDatumCandidates(
                     const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
                     if (p && gated_amb.count(p->satellite + "_" + p->signal)) {
                         drop_any = true;
+                        // The parameter inventory's absorbed instance (card NOM N1b).
+                        if (stations[i].mm)
+                            stations[i].mm->noteAbsorbedSharedState(
+                                StateContainer::SatPhaseBiasStates, kv.first,
+                                AbsorbedReason::AnchoredUnionCoverage);
                         continue;
                     }
                     keep_pb.insert(kv.first);

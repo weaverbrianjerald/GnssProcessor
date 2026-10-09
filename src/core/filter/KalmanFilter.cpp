@@ -1629,6 +1629,23 @@ namespace GnssProcessor {
         // commensurable with this one by construction rather than by a second
         // copy of the formula.
         const double delta_0 = baardaDelta0(config_.dataSnoopingCritical());
+        const ResidualQcStats q =
+            residualQcKernel(meas.residuals, R, sr_diag, Sr_full, delta_0);
+
+        meas.residual_redundancy = q.redundancy;
+        meas.residual_wtest      = q.wtest;
+        meas.residual_mdb        = q.mdb;
+        meas.variance_dof        = q.dof;
+        meas.variance_factor     =
+            (q.dof > 1e-9 && std::isfinite(q.wssr)) ? (q.wssr / q.dof) : 1.0;
+    }
+
+    KalmanFilter::ResidualQcStats KalmanFilter::residualQcKernel(
+        const Eigen::VectorXd& v, const Eigen::MatrixXd& R,
+        const Eigen::VectorXd& sr_diag, const Eigen::MatrixXd* Sr_full,
+        double delta_0) {
+
+        const Eigen::Index m = v.size();
         constexpr double kSrFloor  = 1e-12;   // guard /√Sr
 
         Eigen::VectorXd redundancy(m);
@@ -1637,40 +1654,65 @@ namespace GnssProcessor {
         double wssr = 0.0;   // Σ vᵀR⁻¹v  (weighted post-fit residual SSR)
         double dof  = 0.0;   // Σ rᵢ      (effective redundancy / degrees of freedom)
 
-        const bool use_full = (Sr_full != nullptr &&
-                               Sr_full->rows() == m && Sr_full->cols() == m &&
-                               R.rows() == m && R.cols() == m);
+        bool use_full = (Sr_full != nullptr &&
+                         Sr_full->rows() == m && Sr_full->cols() == m &&
+                         R.rows() == m && R.cols() == m);
+
+        // P = R⁻¹, formed only for the correlation-aware branch.  An R that is not
+        // positive definite has no weight matrix, so that branch falls back to the
+        // diagonal one rather than testing against an invented P.
+        Eigen::MatrixXd Rinv;
+        if (use_full) {
+            const Eigen::LDLT<Eigen::MatrixXd> R_ldlt(R);
+            use_full = (R_ldlt.info() == Eigen::Success) && R_ldlt.isPositive();
+            if (use_full) {
+                Rinv = R_ldlt.solve(Eigen::MatrixXd::Identity(m, m));
+                use_full = Rinv.allFinite();
+            }
+        }
 
         if (use_full) {
-            // Correlation-aware path (off-diagonal R kernel, item #13A):
-            //   redundancy matrix  Red = Sr · R⁻¹   → rᵢ = Red(i,i), dof = tr(Red)
-            //   w-test (Teunissen) wᵢ = (Sr⁻¹ v)ᵢ / √(Sr⁻¹)ᵢᵢ
-            //   wssr              = vᵀ R⁻¹ v
-            const Eigen::MatrixXd Rinv =
-                R.ldlt().solve(Eigen::MatrixXd::Identity(m, m));
-            const Eigen::MatrixXd Red   = (*Sr_full) * Rinv;
-            const Eigen::MatrixXd Srinv =
-                Sr_full->ldlt().solve(Eigen::MatrixXd::Identity(m, m));
-            const Eigen::VectorXd Srinv_v = Srinv * meas.residuals;
-            wssr = meas.residuals.dot(Rinv * meas.residuals);
+            // Correlation-aware path (off-diagonal R kernel, item #13A).  With the
+            // weight matrix P = R⁻¹ and the residual cofactor Q_v = Sr:
+            //   redundancy matrix  Q_v·P = Sr·R⁻¹   → rᵢ = (Sr R⁻¹)ᵢᵢ, dof = tr
+            //   w-test (Baarda)    wᵢ = (P v)ᵢ / √(P Q_v P)ᵢᵢ
+            //   MDB                MDBᵢ = δ₀ / √(P Q_v P)ᵢᵢ
+            //   wssr               = vᵀ P v
+            // In a Kalman update P·v = S⁻¹·z and P·Q_v·P = S⁻¹, so wᵢ is the
+            // innovation w-test (S⁻¹z)ᵢ/√(S⁻¹)ᵢᵢ.  Until 2026-10-07 this branch used
+            // Sr⁻¹ in place of P: that statistic is N(0,1) under H₀ but tests the
+            // direction S·R⁻¹·eᵢ rather than observation i, so it lost power against
+            // a blunder in row i and disagreed with the diagonal branch even for a
+            // diagonal R (Snow, Adjustment Computations, ch. 9; LASER 5-97..5-100).
+            const Eigen::MatrixXd Red = (*Sr_full) * Rinv;
+            const Eigen::MatrixXd PQP = Rinv * (*Sr_full) * Rinv;
+            const Eigen::VectorXd Pv  = Rinv * v;
+            wssr = v.dot(Pv);
             for (Eigen::Index i = 0; i < m; ++i) {
                 double r_i = Red(i, i);
                 r_i = std::isfinite(r_i) ? std::min(std::max(r_i, 0.0), 1.0) : 0.0;
                 redundancy(i) = r_i;
                 dof += r_i;
-                const double srinv_ii = Srinv(i, i);
-                wtest(i) = (std::isfinite(srinv_ii) && srinv_ii > kSrFloor &&
-                            std::isfinite(Srinv_v(i)))
-                    ? Srinv_v(i) / std::sqrt(srinv_ii) : 0.0;
-                const double sigma_i = (R(i, i) > 0.0) ? std::sqrt(R(i, i)) : 0.0;
-                mdb(i) = baardaMinimalDetectableBias(sigma_i, r_i, delta_0);
+                // wᵢ and MDBᵢ are written through the row's own σ so their guards
+                // match the diagonal branch: uᵢ = Rᵢᵢ·(P v)ᵢ (m) and
+                // sᵢ = Rᵢᵢ²·(P Q_v P)ᵢᵢ (m²) are exactly vᵢ and Sr_ii when R is
+                // diagonal, and r̃ᵢ = Rᵢᵢ·(P Q_v P)ᵢᵢ is then rᵢ.
+                const double Rii = R(i, i);
+                const double pqp = PQP(i, i);
+                const double u_i = Rii * Pv(i);
+                const double s_i = Rii * Rii * pqp;
+                wtest(i) = (Rii > 0.0 && std::isfinite(u_i) && std::isfinite(s_i))
+                    ? u_i / std::sqrt(std::max(s_i, kSrFloor)) : 0.0;
+                const double sigma_i = (Rii > 0.0) ? std::sqrt(Rii) : 0.0;
+                const double r_mdb   = (Rii > 0.0 && std::isfinite(pqp)) ? Rii * pqp : 0.0;
+                mdb(i) = baardaMinimalDetectableBias(sigma_i, r_mdb, delta_0);
             }
         } else {
             // Diagonal (uncorrelated) path, the common PPP case.
             for (Eigen::Index i = 0; i < m; ++i) {
                 const double Rii  = (i < R.rows() && R(i, i) > 0.0) ? R(i, i) : 0.0;
                 const double srii = (i < sr_diag.size()) ? sr_diag(i) : 0.0;
-                const double v_i  = meas.residuals(i);
+                const double v_i  = v(i);
                 double r_i = (Rii > 0.0) ? srii / Rii : 0.0;
                 r_i = std::isfinite(r_i) ? std::min(std::max(r_i, 0.0), 1.0) : 0.0;
                 redundancy(i) = r_i;
@@ -1684,12 +1726,13 @@ namespace GnssProcessor {
             }
         }
 
-        meas.residual_redundancy = redundancy;
-        meas.residual_wtest      = wtest;
-        meas.residual_mdb        = mdb;
-        meas.variance_dof        = dof;
-        meas.variance_factor     =
-            (dof > 1e-9 && std::isfinite(wssr)) ? (wssr / dof) : 1.0;
+        ResidualQcStats out;
+        out.redundancy = std::move(redundancy);
+        out.wtest      = std::move(wtest);
+        out.mdb        = std::move(mdb);
+        out.wssr       = wssr;
+        out.dof        = dof;
+        return out;
     }
 
     // ===================================================================

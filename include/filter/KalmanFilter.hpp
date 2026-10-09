@@ -219,19 +219,70 @@ namespace GnssProcessor {
          */
         std::pair<bool, bool> validatePostFitResiduals(EpochMeasurement& meas_update, Eigen::VectorXd& x_prev, Eigen::MatrixXd& P_prev);
 
+        /// Per-row Baarda reliability and the variance factor of one update
+        /// (the output of @ref residualQcKernel).
+        struct ResidualQcStats {
+            Eigen::VectorXd redundancy;  ///< rᵢ = (Q_v·P)ᵢᵢ, clamped to [0,1].
+            Eigen::VectorXd wtest;       ///< Baarda wᵢ = (P·v)ᵢ / √(P·Q_v·P)ᵢᵢ.
+            Eigen::VectorXd mdb;         ///< MDBᵢ = δ₀ / √(P·Q_v·P)ᵢᵢ (m); +∞ when uncheckable.
+            double wssr = 0.0;           ///< vᵀ·P·v, the weighted post-fit square sum.
+            double dof  = 0.0;           ///< Σ rᵢ, the redundancy of the observation group.
+        };
+
+        /**
+         * @brief Pure kernel of the statistical QC: redundancy numbers, the Baarda
+         *        w-test, the MDB and the variance-factor sums of one update.
+         *
+         * With the weight matrix P = R⁻¹ (σ₀² = 1, absolute units) and the post-fit
+         * residual cofactor Q_v = Sr = R − H·P⁺·Hᵀ (Snow, Adjustment Computations,
+         * ch. 9; NGS LASER Guide v2.7 slides 5-97..5-100):
+         *
+         *   - rᵢ  = (Q_v·P)ᵢᵢ, dof = tr(Q_v·P), wssr = vᵀ·P·v, so wssr/dof is the
+         *     group's variance factor (E{vᵀPv} = tr(Q_v P));
+         *   - wᵢ  = (P·v)ᵢ / √(P·Q_v·P)ᵢᵢ, standard normal under H₀ and the most
+         *     powerful test of a single blunder in observation i;
+         *   - MDBᵢ = δ₀ / √(P·Q_v·P)ᵢᵢ, so a blunder of that size in row i shifts
+         *     the expectation of wᵢ by exactly δ₀.
+         *
+         * In a Kalman update P·v = S⁻¹·z and P·Q_v·P = S⁻¹ (z the innovation, S its
+         * covariance), so wᵢ is also the innovation w-test (S⁻¹z)ᵢ/√(S⁻¹)ᵢᵢ.  With
+         * @p Sr_full null, R is taken as diagonal and the formulas reduce to
+         * rᵢ = Sr_ii/Rᵢᵢ, wᵢ = vᵢ/√Sr_ii and MDBᵢ = √Rᵢᵢ·δ₀/√rᵢ.  With a full Sr and a
+         * diagonal R the two branches agree.
+         *
+         * Static and stateless, so it is unit-testable without a KalmanFilter
+         * (tests/test_residual_qc_wtest.cpp checks it against a batch Gauss-Markov
+         * oracle).
+         *
+         * @param v       Post-fit residuals v = z − H·x⁺ (m).
+         * @param R       Working measurement-noise covariance (possibly inflated).
+         * @param sr_diag Diagonal of Sr = R − H·P⁺·Hᵀ.
+         * @param Sr_full Optional full Sr (m×m) for the correlation-aware form;
+         *                nullptr selects the diagonal form.  Ignored, with the
+         *                diagonal form used instead, when R is not positive
+         *                definite.
+         * @param delta_0 Baarda non-centrality (@c baardaDelta0).
+         * @return The per-row statistics and the variance-factor sums.
+         */
+        static ResidualQcStats residualQcKernel(const Eigen::VectorXd& v,
+                                                const Eigen::MatrixXd& R,
+                                                const Eigen::VectorXd& sr_diag,
+                                                const Eigen::MatrixXd* Sr_full,
+                                                double delta_0);
+
         /**
          * @brief Compute per-epoch statistical QC diagnostics.
          *
-         * Forms the a-posteriori variance factor σ̂₀² = (Σ vᵢ²/Rᵢᵢ)/dof over
-         * dof = Σ redundancy numbers, plus the Baarda data-snooping triple:
-         * redundancy rᵢ = Sr_ii/Rᵢᵢ, w-test wᵢ = vᵢ/√Sr_ii, and MDBᵢ.  Results
-         * are stored on @p meas.  Pure diagnostics — touches neither state nor
-         * covariance.
+         * Forms the a-posteriori variance factor σ̂₀² = vᵀR⁻¹v/dof over
+         * dof = Σ redundancy numbers, plus the Baarda data-snooping triple
+         * (redundancy rᵢ, w-test wᵢ and MDBᵢ) by @ref residualQcKernel.  Results
+         * are stored on @p meas.  Touches neither state nor covariance; the w-test
+         * gates the outlier dispatch only when estimation.enable_data_snooping is on.
          *
          * @param meas    Epoch measurement; QC fields filled in place.
          * @param R       Working measurement-noise covariance (possibly inflated).
          * @param sr_diag Diagonal of Sr = R − H·P⁺·Hᵀ.
-         * @param Sr_full Optional full Sr for a correlation-aware form via Sr⁻¹;
+         * @param Sr_full Optional full Sr for the correlation-aware form;
          *                nullptr selects the diagonal form.
          */
         void computeResidualQc_(EpochMeasurement& meas, const Eigen::MatrixXd& R,

@@ -661,6 +661,12 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
             if (a == E.active.end() || a->second.p < 0 || a->second.col < 0) continue;
             clone_of_p[a->second.p] = a->second.col;
         }
+        // Card BCL-a: the bias clones that stood in with a walk, the same way (empty off).
+        for (const std::string& key : E.xstandin) {
+            const auto a = E.xactive.find(key);
+            if (a == E.xactive.end() || a->second.p < 0 || a->second.col < 0) continue;
+            clone_of_p[a->second.p] = a->second.col;
+        }
     }
     // An S key the solve did not fold took no carried prior: the Reinit route for the
     // clones (a withdrawn clock, a constellation skipped at an un-transformed handover).

@@ -2429,6 +2429,29 @@ namespace GnssProcessor {
         bool networkCarryCouplingExactUpdate() const { return network_carry_coupling_exact_update_; }
 
         /**
+         * @brief Carry the satellite clocks' process noise in the pivot frame
+         *        (@c network.clock_pivot_frame_q, card PFQ,
+         *        docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md).
+         *
+         * The clock datum pins one satellite clock per constellation, so a carried clock
+         * is @f$c_j - c_p@f$ and its state equation is the S-transform of the absolute one
+         * (Snow, *Adjustment Computations*, 15.9 with chapter 18).  Each folding satellite
+         * clock other than the pivot takes the pivot's walk over its own interval,
+         * @f$r_p\,\Delta t_j@f$, on top of its own increment, and two of them share
+         * @f$r_p \min(\Delta t_j, \Delta t_k)@f$ in the dense fold and in the exact
+         * coupling update's @f$Q_S@f$.  The pivot is the one the stashed posterior was
+         * pinned on; it is not carried, so @f$r_p@f$ is the model's physical per-satellite
+         * rate (the anchor's q with the anchor armed, the legacy rate without it;
+         * filter/NetworkPivotFrameQ.hpp).
+         *
+         * Requires @ref networkSharedCarryFullCov (the pairwise half needs the dense
+         * fold), and refuses the anchor-free clock datums (sum-to-zero, broadcast-anchored)
+         * and @c network.clock_model, which have no pivot or no carried clock (hard errors
+         * at load).  Fingerprinted.  Default false (byte-identical).
+         */
+        bool networkClockPivotFrameQ() const { return network_clock_pivot_frame_q_; }
+
+        /**
          * @brief Add the exact time update's covariance between two carried rows of one
          *        station to the station's whitened local block
          *        (@c network.carry_coupling_exact_cross, card WSX,
@@ -2522,6 +2545,50 @@ namespace GnssProcessor {
          * checked at load whether or not the knob is armed.
          */
         int networkCarryCouplingSharedHistoryRank() const { return network_carry_coupling_shared_history_rank_; }
+
+        /**
+         * @brief Carry the satellite phase and code biases on one-epoch clones like the
+         *        clocks (@c network.carry_coupling_bias_clone, card BCL-a,
+         *        docs/refound/BCL_previous_border_on_clones_2026-10-08.md).
+         *
+         * Card SCL's clone keeps the clocks' walk shared between the coupling rows; the
+         * biases stay on card CTU's per-row update, which drops their walk's covariance
+         * between rows.  With this knob each phase and code bias with a row in the stashed
+         * dense block gets a clone column (@c NetworkEstimator::registerClone), the rows keep
+         * their harvested bias coefficients on it (a bias in S whose walk passes card SCL's
+         * screen, not a seam key), the stashed block folds over the stand-ins and each bias
+         * walk folds once, in the clones' joint walk factor, and card SMH's rows advance on
+         * the stood-in bias clones.  The harvest, the gate view and card SCL2's history
+         * treat them as card SCL's clones (a bias clone takes no part in the clock-family
+         * deficit).
+         *
+         * Requires @ref networkCarryCouplingClockClone (hard error at load).  Fingerprinted
+         * (armed-only token).  Default false = the biases on card CTU's per-row update
+         * (byte-identical).  UNVALIDATED.
+         */
+        bool networkCarryCouplingBiasClone() const { return network_carry_coupling_bias_clone_; }
+
+        /**
+         * @brief Carry every stashed key card CTU would re-attribute on a one-epoch clone
+         *        (@c network.carry_coupling_departed_clone, card BCL-d,
+         *        docs/refound/BCL_previous_border_on_clones_2026-10-08.md).
+         *
+         * Card CTU re-attributes a row's terms on a key the fold does not carry (departed,
+         * reinit, a re-referenced phase-bias frame, skipped) through the stashed block, one
+         * row at a time, and adds the conditional variance of the departed part to each row
+         * on its own.  With this knob such a key, when it has a carried entry and a
+         * registered clone (a clock through card SCL's key, a bias through
+         * @c NetworkEstimator::registerClone), moves into the rows' S on its clone at Q = 0,
+         * and the fold gives the clone the stashed block's row and column as a time t-1 state
+         * with no walk factor.  A clone moved in the rows whose key then does not fold as
+         * decided takes the same prior instead of being left free.  A joint fold that does
+         * not factor with these clones is retried without them (counted).
+         *
+         * Requires @ref networkCarryCouplingClockClone (hard error at load).  Fingerprinted
+         * (armed-only token).  Default false = card CTU's re-attribution (byte-identical).
+         * UNVALIDATED.
+         */
+        bool networkCarryCouplingDepartedClone() const { return network_carry_coupling_departed_clone_; }
 
         /**
          * @brief Fully marginalize the SH-VTEC coefficient terms of every coupling
@@ -9128,8 +9195,11 @@ namespace GnssProcessor {
         bool   network_carry_coupling_time_update_{false};  ///< Apply the border time update to each coupling row at injection (card 1d): shrink every present coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder equal to the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, card 1c).  Requires carry_conditional_coupling (hard error otherwise).  Off = raw harvested rows (byte-identical).
         bool   network_carry_coupling_shared_history_{false};    ///< Card SCL2 X2: the clones' shared conditional carried as history columns.  Requires carry_coupling_clock_clone.  Off = card SCL's per-station harvest (byte-identical).
         int    network_carry_coupling_shared_history_rank_{1};   ///< Card SCL2 X2: history columns per cloned clock, [1, 8].
+        bool   network_carry_coupling_bias_clone_{false};        ///< Card BCL-a: the satellite phase and code biases on one-epoch clones with walk factors.  Requires carry_coupling_clock_clone.  Off = card CTU's per-row update for the biases (byte-identical).
+        bool   network_carry_coupling_departed_clone_{false};    ///< Card BCL-d: every key card CTU re-attributes on a one-epoch clone with the stashed prior and no walk.  Requires carry_coupling_clock_clone.  Off = card CTU's re-attribution (byte-identical).
         bool   network_carry_coupling_clock_clone_{false};   ///< Card SCL: carry the previous epoch's satellite clocks as one-epoch clone columns in the shared border (the rows keep their clock coefficients on the clone, the walk enters once in the border prior, the harvest marginalizes the clones).  Requires carry_coupling_exact_update and shared_carry_full_cov; refuses clock_model, clock_anchor_gauge_free and shared_carry_gauge_free.  Off = card CTU's per-row form (byte-identical).
         bool   network_carry_coupling_exact_cross_{false};   ///< Add the exact time update's within-station row covariance M_i'BM_k to the whitened local block (card WSX).  Requires carry_coupling_exact_update.  Off = the per-row form (byte-identical).
+        bool   network_clock_pivot_frame_q_{false};          ///< Card PFQ: the carried satellite clocks' process noise in the pivot frame (each folding non-pivot clock takes the pivot's walk r_p dt_j; pairs share r_p min(dt_j, dt_k) in the dense fold and the exact update's Q_S).  Requires shared_carry_full_cov; refuses the anchor-free clock datums and clock_model.  Off = byte-identical.
         bool   network_carry_coupling_exact_update_{false};  ///< Replace the card 1d scalar kappa by the exact conditional time update of the coupling rows (card CTU): M_new = (P_SS+Q_S)^-1 P_S,K M_K over the stashed dense border block with the fold's own inflation, the bracket variance added per row (the per-row form: no time-update covariance between rows), departed/decoupled columns re-attributed through P, the clock-family deficit onto the pinned pivot.  Requires carry_coupling_time_update and shared_carry_full_cov, refuses carry_coupling_joint_whiten.  Off = card 1d rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< Carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (B9; via addStationPrior, alongside the ambiguity carry); off = per-epoch white-noise ZWD (byte-identical).  FALSIFIED for continuous runs of the standard posture (consumer 0.204 → 0.723 m rms: an information double count against the station filter's own persistence); its seam value is delivered by network.zwd_seam_reseed instead.
         bool   network_carry_zwd_in_block_{false};         ///< Carry the station ZWD column inside the F3 jointly whitened local block (B9-in-block; harvested (N_rr⁻¹) cross terms against every carried ambiguity column) instead of as a separate diagonal coupling row, which makes the ZWD carry exact along the station-common directions the diagonal row over-counts (SPEC_amb_iono_split_overcount §7 item 17).  Requires network.carry_zwd and network.phase_leveling_local_block (the loader warns and disables otherwise).  Off = byte-identical.

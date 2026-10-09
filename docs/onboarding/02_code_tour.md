@@ -180,6 +180,7 @@ it: files named `Network*` (mostly in `include/filter/` and `src/core/filter/`),
 `ApplicationNetwork*.cpp`, `config\archive\`, `config\golden\`, `config\test_suite\`,
 `docs\refound\`, `docs\cards\`, `docs\archive\`, and most of `scripts\`. That is about
 two thirds of the repository. It is a careful research record, not clutter, but it is
-not the starting point.
+not the starting point. When a task requires it, [7 · Network tour](07_network_tour.md)
+reads one network run from its tables and walks its eight stages.
 
 Next: [3 · Worked example](03_worked_example.md).

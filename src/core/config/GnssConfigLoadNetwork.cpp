@@ -4826,6 +4826,38 @@ namespace GnssProcessor {
                       "pinned pivot.  Card 1d's kappa remains for stale rows, terms with no "
                       "dense row and SH terms.");
         }
+        // Card PFQ: the carried clocks' process noise in the pivot frame.  The pairwise half
+        // lives in the dense fold, so the dense carry is required; the anchor-free clock
+        // datums have no pivot and the clock model carries no clock in the border, so both
+        // are refused.  Those keys load in later sections and are read raw here.
+        network_clock_pivot_frame_q_ =
+            jval<bool>(json, "network.clock_pivot_frame_q", "clock_pivot_frame_q", false);
+        if (network_clock_pivot_frame_q_) {
+            if (!network_shared_carry_full_cov_)
+                throw std::runtime_error(
+                    "network.clock_pivot_frame_q requires network.shared_carry_full_cov = true "
+                    "(card PFQ: two carried clocks share the pivot's walk, a covariance only the "
+                    "dense fold carries).");
+            if (jval<bool>(json, "network.clock_datum_sum_to_zero",
+                           "network_clock_datum_sum_to_zero", false)
+                || jval<bool>(json, "network.clock_datum_broadcast_anchored",
+                              "network_clock_datum_broadcast_anchored", false))
+                throw std::runtime_error(
+                    "network.clock_pivot_frame_q refuses network.clock_datum_sum_to_zero and "
+                    "network.clock_datum_broadcast_anchored (card PFQ: the term is the pinned "
+                    "pivot's walk; an anchor-free clock datum has no pivot).");
+            if (jval<bool>(json, "network.clock_model", "network_clock_model", false))
+                throw std::runtime_error(
+                    "network.clock_pivot_frame_q refuses network.clock_model (card PFQ: the clock "
+                    "model carries no satellite clock in the shared border).");
+            log->info("Network producer (card PFQ): network.clock_pivot_frame_q = true — the "
+                      "carried satellite clocks take their process noise in the pivot frame: "
+                      "each folding clock other than the pinned pivot adds the pivot's walk "
+                      "r_p dt_j (r_p the model's physical rate: the anchor's q when armed), and "
+                      "two such clocks of a "
+                      "constellation share r_p min(dt_j, dt_k) in the dense fold and the exact "
+                      "update's Q_S.  Counted at the run end.");
+        }
         // The same bracket between two rows of a station (card WSX): the exact update's
         // within-station covariance, added in the whitened local block.
         network_carry_coupling_exact_cross_ =
@@ -4920,6 +4952,33 @@ namespace GnssProcessor {
                       network_carry_coupling_shared_history_rank_,
                       network_carry_coupling_shared_history_rank_);
         }
+        // Card BCL: the clone over the rest of the stashed border, the walking biases (BCL-a)
+        // and the keys card CTU re-attributes (BCL-d).  Both are modes of B1's clone.
+        network_carry_coupling_bias_clone_ =
+            jval<bool>(json, "network.carry_coupling_bias_clone", "carry_coupling_bias_clone",
+                       false);
+        network_carry_coupling_departed_clone_ =
+            jval<bool>(json, "network.carry_coupling_departed_clone",
+                       "carry_coupling_departed_clone", false);
+        if ((network_carry_coupling_bias_clone_ || network_carry_coupling_departed_clone_)
+            && !network_carry_coupling_clock_clone_)
+            throw std::runtime_error(fmt::format(
+                "network.carry_coupling_{}_clone requires network.carry_coupling_clock_clone = "
+                "true (card BCL: the clones of the rest of the border are a mode of card SCL's "
+                "clock clone).",
+                network_carry_coupling_bias_clone_ ? "bias" : "departed"));
+        if (network_carry_coupling_bias_clone_)
+            log->info("Network producer (card BCL-a): network.carry_coupling_bias_clone = true: "
+                      "each satellite phase and code bias with a row in the stashed dense block "
+                      "gets a one-epoch clone column; the rows keep their bias coefficients on "
+                      "it and each bias walk enters the border prior once, in the clones' joint "
+                      "walk factor.  UNVALIDATED; run-end line in the card CTU block.");
+        if (network_carry_coupling_departed_clone_)
+            log->info("Network producer (card BCL-d): network.carry_coupling_departed_clone = "
+                      "true: a stashed key the fold does not carry (departed, reinit, "
+                      "re-referenced, skipped) keeps the rows' terms on a one-epoch clone with "
+                      "the stashed prior and no walk, instead of card CTU's per-row "
+                      "re-attribution.  UNVALIDATED; run-end line in the card CTU block.");
         // Full marginalization of the coupling rows' SH-VTEC terms (card 1d-SH).  The SH
         // border is a mean-reverting GM (climatology-anchored), not the pure random walk
         // the κ update models, so shrink-carrying its terms compounds row weight against

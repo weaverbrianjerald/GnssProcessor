@@ -1,0 +1,590 @@
+% ============================================================
+%  Event responses and the emitted product
+%  How the network producer answers events on its carried state
+%  and what it writes on the product wire, under the golden
+%  configurations armed today.
+%
+%  Sources: filter/NetworkResponses, NetworkCarryDisposition,
+%  NetworkClockAnchor, NetworkGrossLos, NetworkSolPrep,
+%  NetworkPbHold, NetworkEmitStore; app/NetworkRunContext,
+%  ApplicationNetwork; slip/NetworkSlipQc, NetworkRawObservables;
+%  corrections/GnssCorrections; products/NetworkProductIO;
+%  realtime/RealTimeEngineSsrBreaks, PbHoldLedger; config loaders
+%  and posture rows; config/golden/golden_{field,sim}_refound.json.
+%  Standalone-compilable subfile.
+% ============================================================
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+
+\section{Event responses and the emitted product}\label{sec:net-wire}
+
+% Doc-local macros with distinctive names (subfiles collision note).
+\providecommand{\wireWuHorizon}{T_{\mathrm{wu}}}  % wind-up continuity horizon
+\providecommand{\wirePlHorizon}{T_{\mathrm{pl}}}  % leveling-carry gap horizon
+\providecommand{\wireHoldGap}{T_{\mathrm{h}}}     % hold generation gap
+\providecommand{\wireRdHorizon}{T_{\mathrm{rd}}}  % re-admission horizon
+\providecommand{\wireWrap}{\operatorname{w}}
+\providecommand{\wireMed}{\operatorname*{med}}
+
+This section covers two duties of the network producer of
+\dcref{sec:net}{the Network-mode document}: the response to events on
+carried state (a slip, a tracking gap, a satellite's absence and return,
+a restart of the wind-up model, a gross code fault on one line of sight),
+and the product wire (which phase-bias value reaches the consumer, how a
+change is declared, how the consumer answers). The carried local column,
+the bounded drop operator, the held S-basis and the coupling time update
+belong to \dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}.
+Knobs are quoted with their loader defaults; ``the goldens'' are
+\texttt{config/golden/golden\_field\_refound.json} and
+\texttt{golden\_sim\_refound.json}, which agree on every knob named here.
+
+\subsection{The event doctrine}\label{sec:net-wire-doctrine}
+
+A carried quantity enters the next epoch as a prior. In the information
+form of \dcref{sec:net-carry}{the between-epoch carry document}, a
+carried value $\hat x$ with variance $P$ folds as the pseudo-observation
+\begin{equation}
+x = \hat x + e, \qquad e \sim \mathcal{N}\big(0,\; P + q\,\dt\big),
+\label{eq:wire-prior}
+\end{equation}
+with $q$ the process-noise rate of its kind. If the quantity moved by
+$\delta$ after $\hat x$ was formed, the pseudo-observation is biased by
+$\delta$ at weight $(P + q\,\dt)^{-1}$. For a time-linked quantity
+$q \approx 0$ and $P$ is small, so the states sharing its rows
+(ionosphere, clocks, troposphere) absorb the bias; a wired response must
+change $(\hat x, P)$ before the fold. Standing invariant~7 of
+the project states the rule: a mechanism that changes which
+information flows into which states is an event at both edges. The
+decoupling edge bounds what the decoupled states can accumulate; the
+re-coupling edge re-validates or re-seeds what it reconnects. Each edge
+writes an event row and a counter, so an inert response reads as zero.
+
+\paragraph{Vocabulary.}
+Card PRM phase~3 (\texttt{filter/NetworkResponses},
+\texttt{NetworkParamRegistry}) names five events (\texttt{ParamEvent}:
+slip, gap, handover, decouple, readmit) and eighteen policies
+(\texttt{ResponsePolicy}). Those used here: \emph{Drop} returns the
+variance to birth strength, clears the border regression and the block
+row, and keeps the value (\dcref{sec:net-vehicle}{the
+float-ambiguity-vehicle section}); \emph{EraseAndRebirth} erases the
+entry for the next harvest to re-create; \emph{Park},
+\emph{SeedAtVarPlusQGap} and \emph{Discard} keep an entry past its
+column's departure, seed the returned column, or drop the entry
+unfolded; \emph{Hold} freezes and re-applies an entry. Each response
+site is one of 69 rows of \texttt{ResponseSite}, a (kind, event, policy,
+code site) tuple with an arming predicate (\texttt{responseSiteArmed})
+and a counter; a site that responds where it is not declared armed is a
+run-end declaration error. Marks that only re-seed a linearization point
+are excluded, among them the pending-reseed mark, which PASS~B's
+measurement pre-pass consumes (a solve no-op on the float vehicle). The
+acting ambiguity response is the free-epoch latch, which ends in a Drop
+(card PRM3, section~2).
+
+\paragraph{Armed set.}
+The goldens arm the MW/LLI and IF triple-difference slip drains
+(\texttt{network.cycle\_slip.mw\_detect}, \texttt{if\_phase\_td};
+\dcref{sec:slip-network-qc}{the network slip-QC section}) with three
+refinements: \texttt{mw\_evidence\_refloat} admits an MW flag on its own
+strength (bias-free lane, mature arc, ratio to the threshold above
+\texttt{mw\_evidence\_ratio\_min}); \texttt{common\_band\_scope} frees
+only the bands the evidence implicates; \texttt{anchor\_slip\_handover}
+bans a freed phase anchor's family for that epoch, so the election picks
+a successor pinned at its own carried value. They also arm the responses
+of \Cref{sec:net-wire-gap} to \Cref{sec:net-wire-consumer}. Each arming
+knob is off in the loader.
+
+\subsection{Gap re-entry, keyed per signal}\label{sec:net-wire-gap}
+
+An arc that returns within $\wirePlHorizon$
+(\texttt{network.phase\_leveling\_max\_gap\_s}, loader default
+\SI{120}{s}, goldens \SI{900}{s}) has its carried entry re-injected at
+the pre-gap value. No time-difference detector covers the return epoch:
+MW needs an adjacent predecessor on the same pair, the IF triple
+difference three consecutive epochs. The gap re-entry drains
+(\texttt{slip/NetworkSlipQc}) run serially in the PASS-A slip band, after
+the wind-up restart drain and before the inject, so an arc is freed in
+the epoch it returns.
+
+\paragraph{Row-level verdict.}
+\texttt{networkComputeRawObservables} builds one raw row per (station,
+satellite) on the two lowest distinct bands $s_1, s_2$ with phase and
+matching code. A row absent for at least one processed epoch and present
+now is a \texttt{GapResumption}, with verdict
+\begin{equation}
+\text{slipped} = \underbrace{\big(|\Delta\mwc| > g_{\mwc} \vee |\Delta\gfc| > g_{\gfc}\big)}_{\text{shifted}}
+\vee \big(\kappa_{\mathrm{lli}} \wedge (\mathrm{LLI}_{s_1} \vee \mathrm{LLI}_{s_2})\big)
+\vee \big(\kappa_{\mathrm{unm}} \wedge \neg\,\text{measurable}\big),
+\label{eq:wire-gap-verdict}
+\end{equation}
+with $\Delta\mwc, \Delta\gfc$ the raw level changes across the break,
+$g$ the station's empirical gates, $\kappa_{\mathrm{lli}}$ =
+\texttt{gap\_reentry\_relevel\_lli} (default true) and
+$\kappa_{\mathrm{unm}}$ = \texttt{gap\_reentry\_relevel\_unmeasurable}
+(default false: missing evidence is not evidence of a slip). A slipped
+row frees both bands.
+
+\paragraph{The target is the carry.}
+A returning arc has no live ambiguity column at drain time: it was pruned
+with the gap, and PASS~B's pre-pass re-creates it after the drains. The
+response synthesizes the inject's key (\texttt{StateKeys::makeAmbiguityKey})
+and asks the carry whether anything needs protection: a leveling-carry
+entry $(\rx,\sat,\sigl)$ with
+\begin{equation}
+0 \le t - t_{\mathrm{seen}} \le \wirePlHorizon ,
+\label{eq:wire-protect}
+\end{equation}
+exactly what the inject would fold. A protectable arc enters the
+free-epoch latch (\texttt{relevel.free\_ambs}, cause
+\texttt{kCauseGap}); a live column also takes the pending-reseed mark.
+\texttt{network.cycle\_slip.relevel\_free\_epoch} is the latch: it carries
+the freed key past the pre-pass to the inject, where the arc folds at
+birth strength after the bounded drop of \dcref{sec:net-vehicle}{the
+float-ambiguity-vehicle section}. An arc without a protectable entry is
+counted \texttt{no\_carry}.
+
+\paragraph{Per-signal key.}
+The raw row is rebuilt every epoch from whichever phases have a matching
+code. A receiver that loses lock on its primary pair while another signal
+tracks through (band~5, or a fallback signal) keeps its row, so the
+row-level tier sees no gap and the returning phases would fold across the
+break. \texttt{network.cycle\_slip.gap\_reentry\_per\_signal} (card GRS)
+keys the re-entry on (station, satellite, signal). For a signal $\sigl$
+last seen at epoch $k_\sigl$, the level test differences raw phases
+(metres) against a partner $p$ present at $k$ and $k_\sigl$:
+\begin{equation}
+d_\sigl
+= \big[\phaseo_\sigl - \phaseo_p\big](k) - \big[\phaseo_\sigl - \phaseo_p\big](k_\sigl)
+\approx \lambda_\sigl\,\slipd N_\sigl - \lambda_p\,\slipd N_p - (\mu_\sigl - \mu_p)\,\delta I ,
+\label{eq:wire-sig-dgf}
+\end{equation}
+up to noise, multipath and the wind-up change. A partner that tracked
+through the gap is preferred: then $\slipd N_p = 0$ and $d_\sigl$
+isolates the candidate's step plus the ionospheric change over the gap.
+With $g_{\gfc}$ the station's GF gate, which does not grow with the gap,
+\begin{equation}
+\text{slipped}_\sigl = \big(|d_\sigl| > g_{\gfc}\big) \vee
+\big(\kappa_{\mathrm{lli}} \wedge \mathrm{LLI}_\sigl\big) \vee
+\big(\kappa'_{\mathrm{unm}} \wedge \neg\,\text{measurable}_\sigl\big),
+\label{eq:wire-sig-verdict}
+\end{equation}
+with $\mathrm{LLI}_\sigl$ the returning signal's own flag and
+$\kappa'_{\mathrm{unm}}$ = \texttt{gap\_reentry\_per\_signal\_unmeasurable}
+(default true: the carry of a satellite that stayed present is certain
+to fold). Only $\sigl$ is freed; the other bands tracked through. Both
+tiers share one responder (\texttt{gapReentryRespondArc}); the
+per-signal tier skips a satellite the row-level tier reported.
+
+\paragraph{Tracker naming.}
+Before card GRK the row-level tier named each band lexically: where the
+canonical band-1 phase is L1W the tracker named L1C, the key missed the
+carry, and the stale ambiguity folded.
+\texttt{network.cycle\_slip.tracker\_modeled\_first} names each band by
+the station's canonical phase latch (\texttt{TrackerLatchLookup}) when
+that signal has raw phase and code this epoch, so the tracker key equals
+the carried key; \texttt{gap\_tracker\_key\_mismatch} is then zero by
+construction.
+
+\subsection{Re-admission after a long absence}\label{sec:net-wire-readmit}
+
+A satellite in eclipse, or below every mask, leaves the shared layout,
+and its clock and code-bias columns depart; on return they re-realize
+from code. \texttt{network.readmit\_seed\_horizon\_s} $=\wireRdHorizon$
+(loader default 0, off; goldens \SI{3900}{s}) bridges the absence.
+
+At departure the stash (\texttt{app/NetworkRunContext}) parks each D2
+clock entry whose column left the layout: it keeps the entry with its
+departure time $t_{\mathrm{park}}$, unfolded. Code-bias entries park too
+under \texttt{network.readmit\_seed\_code\_bias} (default true).
+Phase-bias entries do not: their frame is re-realized at the cold re-pin
+on return, and a stiff seed would conflict with that pin. When the column
+returns with $0 < t - t_{\mathrm{park}} \le \wireRdHorizon$, the fold
+decision (\texttt{carryFoldDecide}) is \emph{Seeded},
+\begin{equation}
+P_{\mathrm{seed}} = P + q\,(t - t_{\mathrm{park}}),
+\label{eq:wire-seed}
+\end{equation}
+with $q$ the registry rate of its kind. A clock under card Q3's temporal
+anchor (\texttt{network.clock\_temporal\_anchor}, armed) folds through
+the anchor with the staleness bound raised to
+$\max(\texttt{clock\_anchor\_max\_gap\_s}, \wireRdHorizon)$
+(\texttt{clockAnchorFoldVariance}), so it folds anchored over its true
+gap instead of re-drawing from code. The anchor's guard is the
+re-coupling check: a trip within its verify window after a seed is
+recorded as the data rejecting the pre-gap realization
+(\texttt{readmit\_seed\_moved}) and decouples the clock.
+
+A parked entry is dropped past the horizon (\texttt{ClkParkExpire},
+\texttt{CbParkExpire}), when its column returns without consuming it
+(\texttt{ClkParkDiscard}), and at a clock-datum change of its
+constellation that the handover S-transform did not re-express
+(\texttt{ClkParkDiscardDatum}). The returning satellite is then a
+different arc and registers cold. The clock-only variant
+(\texttt{readmit\_seed\_code\_bias} false) was falsified on the
+triple-frequency sim bed of card READMIT: the clock tails returned. The
+code-bias seeds fix the split between clock and code bias at the return;
+without them the cold code-bias realization relocates into the clock
+(\texttt{docs/cards/network-vehicle/READMIT-EDGE.md}).
+
+\subsection{Carrier-phase wind-up: accumulation and its restart}\label{sec:net-wire-windup}
+
+The wind-up angle $\theta^{\mathrm{raw}} \in (-\pi,\pi]$ is an
+$\operatorname{atan2}$ (\dcref{sec:obsphys-windup}{the wind-up section of
+the observation-physics document}), applied as $\lambda_\sigl\theta/2\pi$
+on every phase signal of the satellite. In \emph{fractional} mode
+(\texttt{estimation.accumulate\_phase\_windup} false, the loader default)
+$\theta = \theta^{\mathrm{raw}}$, and each crossing of $\pm\pi$ steps the
+applied correction by one cycle on every signal inside a continuous arc.
+The goldens accumulate: \texttt{GnssCorrections::computePhaseWindUp}
+keeps $(\theta_{k-1}, t_{k-1})$ per satellite and forms
+\begin{equation}
+\theta_k =
+\begin{cases}
+\theta_{k-1} + \wireWrap\big(\theta^{\mathrm{raw}}_k - \theta_{k-1}\big), & 0 < t_k - t_{k-1} < \wireWuHorizon,\\[2pt]
+\theta^{\mathrm{raw}}_k \quad \text{(restart)}, & \text{otherwise},
+\end{cases}
+\qquad \wireWrap(x) = x - 2\pi \operatorname{round}(x/2\pi),
+\label{eq:wire-unwrap}
+\end{equation}
+with $\wireWuHorizon$ = \texttt{estimation.phase\_windup\_max\_gap\_s}
+(loader default \SI{300}{s}; not set by the goldens). A repeated call
+within one epoch ($t_k = t_{k-1}$) reuses the accumulated $\theta_k$ and
+is not a restart. A restart is recorded in the ledger
+\texttt{wuRestarts}. The state is keyed by
+satellite; each station owns its correction object, so the key is
+injective.
+
+\paragraph{The restart is an integer, band-common step.}
+By \eqref{eq:wire-unwrap}, $\theta_k - \theta^{\mathrm{raw}}_k \in
+2\pi\mathbb{Z}$ at every epoch, so the continuation a restart replaces
+equals $\theta^{\mathrm{raw}}_k + 2\pi n$ for an integer $n$. The restart
+moves the modelled phase of every signal by $-n\lambda_\sigl$: the same
+integer number of cycles on every signal, which the float ambiguities see
+as a slip $\slipd N_\sigl = n$ for all $\sigl$. The raw observations did
+not change, so no raw-observable detector can see it. In residual space
+\begin{equation}
+\frac{f_1 n\lambda_1 - f_2 n\lambda_2}{f_1 - f_2}
+= n\,\frac{\sLight - \sLight}{f_1 - f_2} = 0,
+\qquad
+c_1 n\lambda_1 - c_2 n\lambda_2 = n\,\frac{\sLight}{f_1+f_2} = n\,\lamnl ,
+\label{eq:wire-mw-blind}
+\end{equation}
+with $c_1, c_2$ the coefficients of \dcref{eq:if-coeffs}{the IF
+coefficients}: the step is MW-blind and appears in the ionosphere-free
+combination as $n\lamnl = n\lamif$. It also happens across a gap of at
+least $\wireWuHorizon$, where no time difference has an adjacent
+predecessor. The leveling carry survives gaps up to $\wirePlHorizon$, and
+$\wireWuHorizon < \wirePlHorizon$ on the goldens; a return after a gap in
+$[\wireWuHorizon, \wirePlHorizon]$ therefore steps the model while the
+carried ambiguity re-injects at its pre-gap value (invariant~1).
+
+\paragraph{The restart response.}
+\texttt{network.cycle\_slip.windup\_restart\_refloat} (disarmed by the
+loader without accumulation or phase leveling) drains each present
+station's ledger in the PASS-A slip band. A record not stamped with the
+current epoch is refused as stale; a gap beyond $\wirePlHorizon$ is
+\texttt{beyond\_carry}, since the carry was pruned with it. Otherwise
+\texttt{networkWindupRestartTargets} resolves the stepped arcs: the
+satellite's live ambiguity columns at the station if any exist, else its
+leveling-carry entries satisfying \eqref{eq:wire-protect}. Each target
+enters the free-epoch latch (cause \texttt{kCauseWindup}; the
+pending-reseed mark only on a live column), and the satellite's open
+bridge pends are voided. With \texttt{cycle\_slip.refloat\_band\_scope}
+at its default \texttt{all} every target band is freed; the
+accumulator's verdict needs no raw corroboration. Card WUP fixed the
+drain, which walked only the live ambiguity map: a restarted arc's column
+was pruned with the gap, so no in-horizon restart reached an arc, the
+inject folded the carry across the step, and the counter reported an
+answer.
+
+\paragraph{One mode for producer and consumer.}
+The measured gain of accumulation is in the consumer's own rows; the wire
+alone is neutral (card WUP). The wire declares the wind-up construction
+(S-line \texttt{windup\_id} = \texttt{nominal-wu93}) and not the mode.
+The in-process consumer inherits the producer's mode through the derived
+configuration; a replay or stand-alone consumer holds the rule by
+configuration.
+
+\subsection{The gross line-of-sight screen}\label{sec:net-wire-gross}
+
+Post-fit RAIM (\dcref{sec:stoch-net-raim}{the producer-side RAIM
+section}) admits a row only if it carries an ambiguity coefficient above
+0.5. A code row carries none, so a gross code error on one line of sight
+never enters $\hat\sigma_0$, a cell maximum or the median polish.
+\texttt{network.gross\_los\_screen} (\texttt{filter/NetworkGrossLos}) is
+the acting tier for code rows; card RF-3 armed it with two sub-rules.
+
+\paragraph{Statistic.}
+Per station the seam forms $\bm{v} = \bm{y} - \bm{A}_s\hat{\bm{x}}_s -
+\bm{A}_r\hat{\bm{x}}_r$ with $\hat{\bm{x}}_r$ from
+\dcref{eq:net-backsub}{the back-substitution of the Network-mode
+document}. A code row touches no SH, ambiguity or \texttt{PB:} column,
+touches a \texttt{CB:} or \texttt{CLK:} column and names a satellite;
+coupling rows are skipped. The statistic
+\begin{equation}
+r_j = |v_j|\,\sqrt{w_j}\; f_j
+\label{eq:wire-gl-stat}
+\end{equation}
+uses the row's own weight $w_j$ and undoes the deweight factor $f_j$
+the assembly applied (1 if none), so both bars read the data at nominal
+weight. The row's own $\sigma$ is used because the pooled $\hat\sigma_0$
+inflates while a station degrades, exactly when the screen must stay
+sensitive.
+
+\paragraph{Declaration and release.}
+For one (station, satellite) with $n$ code rows, $n_{\mathrm{over}}$ of
+them above $k$ = \texttt{network.gross\_los\_k}, the epoch's evidence
+clears the bar when
+\begin{equation}
+n_{\mathrm{over}} \ge m_{\mathrm{eff}}, \qquad
+m_{\mathrm{eff}} =
+\begin{cases}
+\max\big(1, \min(m, n)\big) & \texttt{available},\\
+\max(1, m) & \texttt{fixed},
+\end{cases}
+\label{eq:wire-gl-bar}
+\end{equation}
+with $m$ = \texttt{network.gross\_los\_min\_rows} (loader default 2) and
+\texttt{network.gross\_los\_min\_rows\_rule} (loader default
+\texttt{fixed}). A gross line of sight is wrong on every code band at
+once; one heavy-tailed row is one band's multipath. Under \texttt{fixed}
+a line of sight with one code row can never be declared;
+\texttt{available} reaches it and still demands two rows where two
+exist. Declaring takes \texttt{gross\_los\_epochs} consecutive epochs of
+evidence (absence resets the streak) and passes two counted guards: the
+maturity horizon (\texttt{gross\_los\_warmup\_epochs}) and the
+whole-station stand-down (\texttt{gross\_los\_max\_station\_frac}: a
+station-wide fault is not a line-of-sight fault). Release takes every
+code row under \texttt{gross\_los\_clear\_sigma} for
+\texttt{gross\_los\_clear\_epochs} epochs and is never guarded. A
+declaration unseen beyond \texttt{gross\_los\_max\_gap\_s} expires with
+its own event: the next sighting is a new arc.
+
+\paragraph{Response.}
+From the next assembly the declared code rows fold at
+$\sigma\times$\texttt{gross\_los\_deweight}
+(\texttt{networkGrossLosPublishScales}); the row keeps its sign and still
+anchors the float if the phase side disappears. At the declaration the
+line of sight's leveling-carry entries (\texttt{AmbGrossErase}, with a
+pending-reseed mark) and slant-ionosphere entries
+(\texttt{IonoGrossErase}) are erased. Both sites are declared
+EraseAndRebirth on a decouple event: this response erases where the slip
+responses drop. Phase rows keep their weight; they have their own tiers.
+The bounded variant \texttt{gross\_los\_bound} (freeze instead of erase)
+was falsified and stays off
+(\texttt{docs/refound/RF-3\_code\_row\_qc\_2026-09-22.md}).
+
+\paragraph{Two halves and the emission exclusion.}
+The erase must follow the carry harvest (\texttt{networkLeveling}), or
+the harvest re-stashes the erased entries; the decision needs only the
+solved epoch. With \texttt{network.gross\_los\_emit\_exclude} the seam is
+split (\texttt{GrossLosPhase}): the Decide half runs immediately before
+\texttt{networkSolPrep}, the Act half after \texttt{networkPostFitRaim}.
+Unsplit, a declaration reaches the wire one epoch late. The emitted clock
+and code bias are joint-solve states, and removing a station's
+contribution would take a second solve, so the exclusion acts on the
+records. For each satellite $\sat$ screened at $n_\sat$ stations, $e_\sat$
+of them with a standing declaration on it,
+\begin{equation}
+n_\sat - e_\sat < N_{\min} \;\Rightarrow\; \text{withhold } \sat;
+\qquad \text{otherwise emit } \sat \text{ with a discontinuity mark},
+\label{eq:wire-gl-exclude}
+\end{equation}
+with $N_{\min}$ = \texttt{network.gross\_los\_sat\_min\_stations}
+(loader default 3). The withhold is per satellite and the epoch still
+emits. The mark joins the retro queue, whose drain this knob arms, and
+lands with full channel scope (clock, code bias, phase bias) in the
+first emission containing the satellite, normally the declaring epoch.
+
+\subsection{The emitted phase bias}\label{sec:net-wire-pb}
+
+For satellite $\sat$, signal $\sigl$ and emission epoch $t$, let
+$c^\sat(t)$ be the emitted clock ($C_0$, metres) and $p^\sat_\sigl(t)$
+the estimator's phase bias in the emit frame (the \texttt{bias\_m}
+\texttt{networkPbHold} receives). The wire carries $C^\sat = c^\sat$ and
+$P^\sat_\sigl$; the consumer applies $-C$ on code and $-C + P$ on phase
+(\dcref{eq:ssr-phase-bias}{the SSR phase-bias equation}).
+
+\paragraph{The generation hold.}
+Under \texttt{network.emit\_pb\_hold} (card PBH) each key $(\sat,\sigl)$
+carries a generation $g \ge 1$, started at $t_0$ when the key is first
+emitted or was last emitted more than $\wireHoldGap$ ago
+(\texttt{network.emit\_pb\_hold\_max\_gap\_s}, loader default
+\SI{300}{s}; not set by the goldens). Within a generation
+\begin{equation}
+P^\sat_\sigl(t) = p^\sat_\sigl(t_0).
+\label{eq:wire-hold-plain}
+\end{equation}
+The generation is declared by a \texttt{gen=}$g$ token on every P record,
+by \texttt{SsrPhaseBiasEntry::hold\_generation} in the in-process store,
+and by \texttt{pbhold=} on the S line (1 plain, 2 phase-clock mode). The
+solve and the C and B records are byte-identical with the knob on. The
+premise, graded against truth in card PBH: the wire's phase-bias motion
+within an arc is error that adds to the clock error. Like the
+\texttt{iode=} cutover, the contract states that the value has not
+changed and names the epoch at which that statement restarts; handover
+steps of the estimate stay off the wire.
+
+\paragraph{Ordering contract.}
+\texttt{networkPbHold} is the last writer of \texttt{bias\_m} in
+\texttt{networkEmitStore}: after the carry-invariant emission re-base and
+the phase-bias emission filter (both gated on
+\texttt{network.carry\_invariant}, inert on the goldens) and after every
+discontinuity-marking site; before the emitter's value-jump test, which
+then screens the held value; before the file write, which reads the same
+solution as the in-process store.
+
+\paragraph{Both edges.}
+Decoupling: each held emission records $|p^\sat_\sigl(t) -
+P^\sat_\sigl(t)|$ into a run-end distribution. Re-coupling: each
+generation start is a counted \texttt{PB\_HOLD} \texttt{gen\_start} event
+(cause \texttt{first} or \texttt{gap}). A mark naming a satellite's clock
+and phase bias together states that both moved; the plain hold drops the
+phase-bias half and records the de-commoned clock step it left out (the
+phase-clock mode below transfers it).
+
+\paragraph{The phase-clock mode.}
+Under \texttt{network.emit\_pb\_hold\_phase\_clock} (card LAH, armed by
+card EXL) the common clock motion of constellation $k$ accumulates over
+consecutive emissions $t^- < t$,
+\begin{equation}
+M_k(t) = M_k(t^-) + \wireMed_{j \in \mathcal{S}_k(t)} \big[c^j(t) - c^j(t^-)\big],
+\label{eq:wire-cm}
+\end{equation}
+over the satellites $\mathcal{S}_k(t)$ of $k$ with a finite clock at both
+emissions (an even count takes the mean of the two middle values;
+\texttt{pbHoldCommonClockStep}). With $\tilde c^\sat(t) = c^\sat(t) -
+M_{k(\sat)}(t)$ the held emission is
+\begin{empheq}[box=\fbox]{equation}
+P^\sat_\sigl(t) = p^\sat_\sigl(t_0) + \big[\tilde c^\sat(t) - \tilde c^\sat(t_0)\big].
+\label{eq:wire-hold-pc}
+\end{empheq}
+An emission without the satellite's clock reuses the last transfer; a
+generation started without one is held plainly. Subtracting from
+$C^\sat = c^\sat$ gives the phase-side identity
+\begin{equation}
+C^\sat(t) - P^\sat_\sigl(t)
+= c^\sat(t) - p^\sat_\sigl(t_0) - c^\sat(t) + M_k(t) + c^\sat(t_0) - M_k(t_0)
+= \big[c^\sat - p^\sat_\sigl\big](t_0) + M_k(t) - M_k(t_0).
+\label{eq:wire-identity}
+\end{equation}
+The constant goes into the consumer's float ambiguity. The common mode is
+part of every $c^j$ of the constellation, so it enters code and phase
+rows alike and the receiver clock and inter-system bias absorb it.
+Satellite-specific clock motion reaches the code rows only. In the family
+$(C - P)(t) = (c - p)(t_0) + \Phi(t)$ the phase-clock mode is
+$\Phi = M_k(t) - M_k(t_0)$; the plain hold is $\Phi = c(t) - c(t_0)$,
+every clock move on the phase side; no hold passes the estimator's own
+phase-visible change, wander included.
+
+\paragraph{Why the mode exists.}
+Under the exact coupling time update armed on the goldens
+(\texttt{network.carry\_coupling\_exact\_update}, card CTU;
+\dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}) the
+satellite's level converges: the estimator moves $c^\sat$ and every
+$p^\sat_\sigl$ by the same amount, invisible to phase. The plain hold
+freezes $P$ while $C$ follows, turning the convergence into a phase-side
+drift the consumer's float ambiguities cannot follow. Under the
+phase-clock mode the move shifts $\tilde c^\sat$, hence $P$, by the same
+amount (unless common to the constellation): $C - P$ stays and the level
+reaches the code side only.
+
+\paragraph{Limitation.}
+The mode is interim. Within a generation the phase-visible clock motion
+the consumer sees is the a priori clock product's alone, since the
+emitted clock refines the a priori clock (\dcref{sec:net-closedloop}{the
+closed-loop section}) and the hold passes none of the network's
+satellite-specific motion to the phase side. That is valid with a precise
+a priori clock (\texttt{network.apriori\_source} \texttt{sp3}, the
+default). The loader warns under \texttt{brdc\_rts}, refuses the mode
+under \texttt{sp3\_brdc\_clock}, and refuses it with
+\texttt{network.clock\_level\_carry} (both move the held bias with the
+level) and with \texttt{network.fast\_clock.enable} (sub-epoch clock
+records would saw-tooth the phase-visible clock). The smoothed members
+(\texttt{network.emit\_pb\_hold\_smoothed}) are built and not armed.
+
+\begin{remark}
+A datum move between two generation starts, such as a phase-anchor
+handover with its S-transform, moves the estimator's phase biases and not
+the held values (counted, measure-only:
+\texttt{prm\_pbhold\_unmoved\_at\_shift}). A float consumer absorbs each
+held constant in its own ambiguity. An integer-resolving consumer needs
+every phase bias of a constellation in one S-basis
+(\dcref{sec:net-phasebias}{the explicit phase-bias section};
+\cite{odijk2016estimability}), which a held wire does not guarantee after
+a datum move. The goldens run the consumer float
+(\texttt{closed\_loop.ar\_mode} 0).
+\end{remark}
+
+\subsection{The consumer's answer}\label{sec:net-wire-consumer}
+
+The in-process consumer (undifferenced on the goldens) reacts in
+\texttt{realtime/RealTimeEngine\allowbreak SsrBreaks}, in a fixed order.
+First,
+\texttt{reactToGenerationChange} reads the product's solution-generation
+id, which is distinct from the hold generation; a change (a producer
+restart, a global re-realization) resets every network-corrected
+ambiguity and re-inflates the receiver code-bias states. It runs before
+the per-signal reactions because a restart re-seeds the discontinuity
+counters.
+
+\paragraph{Hold generation.}
+\texttt{resetOnPhaseBiasDisc} dispatches \texttt{reactToPbHold\_} before
+any other phase-bias reaction, keyed on the data: a key whose store entry
+has a nonzero \texttt{hold\_generation} is claimed. Its discontinuity
+counter is consumed, so the per-key memory advances, and ignored, since
+under a hold a counter change carries no value step.
+\texttt{PbHoldLedger::react} decides: \emph{FirstSight} adopts the
+generation, \emph{Held} keeps it, \emph{Refloat} answers a change of a
+previously seen generation with \texttt{StateManager::resetAmbiguity}
+at the configured ambiguity $\sigma$, the call a discontinuity reset
+uses. First sightings, held cells and refloats sum to the visited cells.
+
+\paragraph{Presence edges.}
+Under the bias staleness gate (\texttt{processing.enable\_ssr\_bias\_max\_age},
+armed by the closed-loop harness on its derived consumer) the consumer
+tracks
+\begin{equation}
+a_\sigl(t) = \big[\text{bias present} \wedge \text{age} \le
+\texttt{ssr\_bias\_max\_age\_s} \cdot \texttt{ssr\_bias\_stale\_hold\_factor}\big]
+\label{eq:wire-presence}
+\end{equation}
+and answers an edge $a_\sigl(t) \ne a_\sigl(t^-)$, the A5 freshness flip,
+with an ambiguity reset. A held wire has two such edges with no
+generation change: a held bias appearing on a phase row already in use
+without it, and one leaving such a row; either steps the applied
+correction by the whole bias. Before card PBF a claimed key skipped every
+downstream reaction, A5 included, and its A5 memory was not written while
+held, so both edges went unanswered (a first sighting lacks prior state
+only on a new row). The update's post-fit peel then attributed the
+residual to other satellites, reset their ambiguities and could exclude
+the faulty satellite's code rows; card PBF records a field epoch that
+moved the position by about \SI{490}{m}. With
+\texttt{processing.ssr\_pb\_hold\_presence\_flip}, derived from
+\texttt{network.closed\_loop.pb\_hold\_presence\_flip}, a claimed key
+skips only the counter reaction, which the hold owns, and its A5 edge
+runs as on an unheld key: on the goldens a reset, since the step
+translation (\texttt{closed\_loop.pb\_step\_translate}) and the level
+check (\texttt{closed\_loop.amb\_level\_check}, harmful under the hold,
+card PBH) are off.
+
+\subsection{Standing}\label{sec:net-wire-standing}
+
+A card named by its identifier, such as PBH, is the file
+\texttt{docs/refound/}\emph{identifier}\texttt{\_*.md}. Armed on both
+goldens through the promotion ledger: gap re-entry per row
+(\texttt{docs/cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md}), per signal
+(GRS) and with the tracker's band naming (GRK); the re-admission horizon
+(\texttt{docs/cards/network-vehicle/READMIT-EDGE.md}); accumulated
+wind-up with its restart response (WUP); the gross line-of-sight screen
+(RF-3); the generation hold (PBH) in its phase-clock mode (LAH, armed by
+EXL); the consumer's presence edges (PBF). Owed: the hold in the
+warm-resume snapshot and the cause of the phase-bias wander (PBH); the
+held emission under a phase-bias shift (PRM3); LAH's regressions at the
+C1W stations and its need for a precise a priori clock (pursued by SCL
+and NBP); RF-3's dedicated wire writer; GRS's failed field
+triple-frequency bar; the peel's masking of a bad phase row (PBF). The
+register is \texttt{docs/status/OPEN\_ITEMS\_A\_current\_program.md}.
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

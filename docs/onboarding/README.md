@@ -11,6 +11,7 @@ Each page ends with a working result.
 | 4 | [Git workflow](04_git_workflow.md) | The branch, commit and merge-request loop | 1 hour |
 | 5 | [Debugging](05_debugging.md) | The IDE opened on the project, launch arguments set, a breakpoint hit in the epoch loop | 2 hours |
 | 6 | [First tasks](06_first_tasks.md) | A list of small open tasks, each with its files and a definition of done | as needed |
+| 7 | [Network tour](07_network_tour.md) | One network run read from its tables: what it estimates, its eight stages, where a quantity lives | 1 day, when a task touches the network |
 
 Afterwards, [CONTRIBUTING.md](../../CONTRIBUTING.md) is the one-page reference: the five
 rules, the merge-request checklist, and a table that maps each kind of change to its
@@ -38,4 +39,6 @@ code, test and reference files.
 About two thirds of the repository belongs to a multi-station network research program:
 `docs\refound\`, `docs\cards\`, `docs\archive\`, most of `config\` and `scripts\`, every
 `Network*` source file, and `CLAUDE.md`. It is a careful scientific record, but it is not
-the starting point. The [code tour](02_code_tour.md#what-to-skip) lists what to skip.
+the starting point. The [code tour](02_code_tour.md#what-to-skip) lists what to skip. When a
+task does touch the network, the [network tour](07_network_tour.md) is the entry point; the
+network code is being reorganized so that this tour covers more of it with every step.

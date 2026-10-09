@@ -116,7 +116,7 @@ namespace GnssProcessor {
      * @f$ [t,\ t_{start} + \text{tol}] @f$ before it.
      */
     struct ResolvedStationCoord {
-        Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };       ///< ECEF position at the query epoch [m].
+        Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };       ///< ECEF position of the ground reference point (monument) at the query epoch [m]; see @c reduceSifCoordinateToArp.
         Eigen::Matrix3d covariance{ Eigen::Matrix3d::Zero() }; ///< Propagated position covariance [m^2].
         bool has_covariance{ false };                          ///< True if @c covariance is meaningful.
         bool valid{ false };                                   ///< True if a usable occupation was found.
@@ -301,5 +301,83 @@ namespace GnssProcessor {
     std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile& registry,
                                                                const std::string& station_name,
                                                                double decimal_year);
+
+    /**
+     * @brief Largest norm [m] by which a RINEX `ANTENNA: DELTA H/E/N` record and
+     *        the covering SIF antenna window's @c arp_minus_grp_enu may differ
+     *        before @ref reduceSifCoordinateToArp's caller reports a disagreement.
+     *
+     * Both sources print the eccentricity to 0.1 mm.  On the 2024-129 field
+     * roster they agree exactly at every SIF-resolved station (GRAZ00AUT
+     * 1.964 m up, KRGG00ATF 1.0332 / 0.0034 / 0.0004 m), so 1 mm flags a
+     * genuine metadata conflict (a header from another antenna period, a
+     * mis-entered survey) rather than rounding.
+     */
+    static constexpr double SIF_ECCENTRICITY_TOLERANCE_M = 1e-3;
+
+    /**
+     * @brief Origin of the marker -> ARP eccentricity in a @ref SifArpReduction.
+     */
+    enum class SifEccentricitySource {
+        RinexHeader,       ///< The RINEX `ANTENNA: DELTA H/E/N` record.
+        SifAntennaWindow,  ///< The SIF antenna window covering the epoch (`ARP_MINUS_GRP_ENU`).
+        None               ///< Neither was available: the coordinate was not reduced.
+    };
+
+    /**
+     * @brief A SIF coordinate reduced from the ground reference point to the ARP.
+     *
+     * Result carrier for @ref reduceSifCoordinateToArp.  The eccentricity fields
+     * use the RINEX (H, E, N) = (Up, East, North) order that
+     * @c Coordinates::markerToArp takes, whatever the source.
+     */
+    struct SifArpReduction {
+        Eigen::Vector3d arp_ecef{ Eigen::Vector3d::Zero() };  ///< Antenna reference point ECEF [m]; the input coordinate unchanged when @c source is None.
+        Eigen::Vector3d delta_hen{ Eigen::Vector3d::Zero() }; ///< Eccentricity applied, (H, E, N) [m]; zero when @c source is None.
+        SifEccentricitySource source{ SifEccentricitySource::None }; ///< Where @c delta_hen came from.
+        bool has_sif_eccentricity{ false };                   ///< True iff a SIF antenna window covers the epoch.
+        Eigen::Vector3d sif_delta_hen{ Eigen::Vector3d::Zero() }; ///< That window's @c arp_minus_grp_enu reordered to (H, E, N) [m]; zero when none covers.
+        double eccentricity_disagreement_m{ 0.0 };            ///< |RINEX - SIF| eccentricity norm [m] when both are available, else 0.
+    };
+
+    /**
+     * @brief Reduce a resolved SIF coordinate from the monument to the antenna
+     *        reference point.
+     *
+     * A SIF OCCUPATION coordinate (and therefore @c ResolvedStationCoord::ecef)
+     * refers to the ground reference point (GRP), the monument, like the RINEX
+     * `APPROX POSITION XYZ`; the SIF records the antenna's offset from it per
+     * antenna window as @c SifAntennaWindow::arp_minus_grp_enu.  Every position
+     * state in the engine is the ARP (ATX PCO/PCV are ARP-relative), so a SIF
+     * coordinate that seeds or constrains a position state is reduced first;
+     * used as given it holds the station one antenna height (plus any horizontal
+     * eccentricity) below its antenna.  Measured on DOY 2024-129: GRAZ00AUT's SIF
+     * coordinate lies 0.6 mm from its published monument with a 1.964 m antenna
+     * height, KRGG00ATF's 1.6 mm with 1.033 m.
+     *
+     * The eccentricity is the RINEX header's `ANTENNA: DELTA H/E/N` when the
+     * header carries the record, which is the convention of the RINEX APPROX seed
+     * and of the network roster (@c network.station_marker_to_arp), and otherwise
+     * the SIF antenna window covering @p decimal_year.  The covering window is the
+     * first whose [start, end) contains the epoch, @c DO_NOT_USE or not (the
+     * window the a-priori path's antenna QC reports on); the SIF windows do not
+     * overlap.  With neither source the coordinate is returned unchanged and
+     * @c source is None, for the caller to report.  The reduction itself is
+     * @c Coordinates::markerToArp, an exact no-op at a zero eccentricity.
+     *
+     * @param s                Station record that @p grp_ecef was resolved from.
+     * @param grp_ecef         Resolved SIF coordinate (monument) [m].
+     * @param decimal_year     Epoch @p grp_ecef was resolved at, which selects the
+     *                         antenna window.
+     * @param rinex_delta_hen  RINEX `ANTENNA: DELTA H/E/N` in (H, E, N) order [m],
+     *                         or @c nullptr when the header carried no such record
+     *                         (a recorded 0/0/0 is a valid, zero eccentricity).
+     * @return ARP coordinate with the eccentricity applied, its source, and the
+     *         RINEX-vs-SIF eccentricity cross-check.
+     */
+    SifArpReduction reduceSifCoordinateToArp(const StationInfo& s,
+                                             const Eigen::Vector3d& grp_ecef,
+                                             double decimal_year,
+                                             const Eigen::Vector3d* rinex_delta_hen);
 
 } // namespace GnssProcessor

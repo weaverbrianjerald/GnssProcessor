@@ -6,13 +6,13 @@
 - **topic:** queues
 - **status:** open
 - **summary:** Checklist of what the comment audit found in the code: 14 verified defects open and 5 fixed, plus unverified suspicions, author checks, wrong CLAUDE.md claims and dead code.
-- **dates in the text:** 2026-09-22 → 2026-09-28
+- **dates in the text:** 2026-09-22 → 2026-10-07
 - **knobs / posture:** `processing.enable_noncausal_slip_bridge`, `model_corrections.apply_phase_shifts`, `network.gross_los_emit_exclude`
 - **hashes named in the text** (commit / exe / byte-cert): `b3a8e48`, `ae53603`, `335f640`
 - **run dirs named in the text:** none
 - **source:** the comment rewrite (commit `b3a8e48`); every comment and docstring was rewritten with its claims checked against the code
 
-**Outcome.** The comment rewrite (`b3a8e48`) changed no code; this checklist holds what it found in the code, plus the findings of the 2026-09-28 report prose passes. Section 2 holds 11 verified open defects, among them a `ProductCache` error-path deadlock and a PPP fix-and-hold that holds nothing; the report passes add a GLONASS ephemeris anchored on the host clock, a chordless-block dimension mismatch in `ddPriorPosteriorMean` and Sun and Moon directions precessed twice. The Sun-frame fix's 2 h on/off run is neutral on the field at the millimetre level and no verdict on the sim; a regenerated sim fixture, the 6 h pair and the census are owed.
+**Outcome.** The comment rewrite (`b3a8e48`) changed no code; this checklist holds what it found in the code, plus the findings of the 2026-09-28 report prose passes. Section 2 holds 11 verified open defects, among them a `ProductCache` error-path deadlock and a PPP fix-and-hold that holds nothing; the report passes add a GLONASS ephemeris anchored on the host clock, a chordless-block dimension mismatch in `ddPriorPosteriorMean` and Sun and Moon directions precessed twice. The Sun-frame fix's 2 h on/off run is neutral on the field at the millimetre level and no verdict on the sim; a regenerated sim fixture, the 6 h pair and the census are owed. The 2026-10-07 network-chapter pass adds the RF-1 birth floor and the declared handover found unarmed on the goldens, the phantom knob `network.amb_float_q_m2s`, a consistency question on the drop's restored variance, and eight stale comments.
 
 > Results are appended TO THIS FILE. An item is closed by ticking its box and adding the commit or the reason.
 
@@ -300,3 +300,96 @@ Two questions about the mathematics, left unchanged for the author:
   disagrees with a truth that carries the old frame. Owed before adoption: a sim fixture
   regenerated with the flag on, then the 6 h pair and the census. The report (frames_time.tex, sec:frame-sunmoon) now states this; it had
   claimed the direction was good to well under a milliarcsecond.
+
+## 2026-10-07: findings from the network-chapter currency pass
+
+The pass added `docs/report/network_vehicle.tex` (the float ambiguity vehicle) and
+`docs/report/network_wire.tex` (event responses and the emitted product) and brought
+`network.tex` up to date. Each claim was checked against the code and the two goldens.
+Items marked *re-verified* were checked a second time by the manager session; the rest are
+as the drafting pass reported them.
+
+**Posture the cards describe but the goldens do not arm**
+
+- [ ] **Re-verified: the RF-1 birth floor is not armed.** `network.amb_float_birth_var_m2`
+  defaults to 0 (`GnssConfigLoadNetwork.cpp`) and no config under `config/` sets it, so on
+  the goldens `var_birth = var_first` and a drop restores `var_first` unfloored. Card
+  RF-1-decision and card RF-0hv describe a (0.5 m)² floor as part of the posture. Owed: an
+  author decision (arm it through the ledger, or record that the posture runs without it).
+- [ ] **The declared handover S-transform is off.** `network.amb_float_declared_handover`
+  is absent from both goldens (default false). RF-1 describes it as part of the vehicle; a
+  cold anchor handover is answered by an erase instead (`phase_anchor_carry_reref`).
+
+**Verified or likely defects**
+
+- [ ] **Re-verified: `network.amb_float_q_m2s` is a phantom knob.** It is parsed, copied
+  into `NetworkKnobs`, logged and written to the manifest, but no solve path reads it;
+  the ambiguity process noise comes from `network.phase_leveling_q_amb` through the
+  parameter registry. A nonzero value is silently ignored under `float_kf`. Owed: read it,
+  or refuse it at load.
+- [ ] **Re-verified (writer census): `amb_flag_ep` has one writer.** The comments say a
+  gross line-of-sight declaration stamps it; the only writer is the drop pass
+  (`NetworkAmbFloat.cpp`). The slip-latch stamp is written after
+  `networkElectPhaseAnchors` in the same epoch, so it affects only the next election;
+  same-epoch handling relies on `cycle_slip.anchor_slip_handover` (armed).
+- [ ] **Math question: is the drop consistent?** A drop clears the border regression and
+  restores `var_first`, a conditional variance from the birth harvest. The restored row
+  then states the absolute value at conditional precision, the same double count card
+  CTU2 section 2 found in the diagonal receiver code-bias carry. Consistent alternatives:
+  the marginal variance (`var_first` plus mᵀPm) or keeping the regression. With the birth
+  floor at 0 nothing bounds it. Owed: a reading of whether it is material.
+- [ ] **The per-signal gap re-entry GF test is not pure.** `d_gf` differences raw phases,
+  so it also carries the change in wind-up between the two signals over the gap and
+  multipath; the code comment says it isolates "step plus ionospheric change". For L1/L2,
+  one cycle of wind-up change is about 5.4 cm against a 4 cm GF floor.
+- [ ] **The product does not declare the wind-up mode.** The S line carries only the
+  construction (`windup_id`), so `checkContract` cannot catch a replay or stand-alone
+  consumer on the other mode. The in-process consumer inherits the mode through
+  `deriveClosedLoopConsumerConfig`; the same-mode rule is posture only.
+- [ ] **The held emission ignores a datum move.** Held phase biases are exempt from the
+  S-transform shift (`prm_pbhold_unmoved_at_shift`, measure-only), so after a datum move the
+  held values of one constellation can sit in different S-bases: harmless for the float
+  consumer (`ar_mode` 0), fatal to integer recovery. Already owed under PRM3.
+
+**Comments the code contradicts**
+
+- [ ] `NetworkAmbFloat.hpp` banner lists two remaining erases (gap prune, re-admission);
+  on the goldens three more responses erase carried ambiguities: the gross line-of-sight
+  erase (`AmbGrossErase`), the anchor re-reference erase and the EV7 gate-drop erase.
+- [ ] `NetworkAmbFloat.hpp` and RF-1-decision say keeping `value_abs` is an exact solve
+  no-op because it is the linearisation point. The exact no-op is a shift of the
+  linearisation point; keeping `value_abs` across a drop is a modelling choice.
+- [ ] `station_prior_before_pd` loader log says the carry rows stay after the
+  positive-definiteness test, and RF-PD-fix lists "carry rows judged after the test" as
+  owed. On the golden route every carried ambiguity row and in-block receiver code-bias row
+  is an `A_r` row, so `addStation`'s test already judges them.
+- [ ] `CoupledShared::coeff` is described as a "regression coeff"; the stored m is minus
+  the regression slope.
+- [ ] `NetworkCouplingExact.hpp`: "Q=0 returns the harvested row exactly" holds only with
+  D empty. The stale-gap pass drops absent arcs that the prune erases in the same epoch, so
+  one arc counts as a drop and an erase.
+- [ ] `NetworkGrossLos.hpp` banner: the erased slant ionosphere "re-draws from the SH tie";
+  the goldens have no SH, so the entry is reborn at the next harvest.
+- [ ] `networkGrossLosAct`: the pending-reseed mark "is the actuator"; PRM3 section 2 and
+  `NetworkResponses.hpp` state the mark is a solve no-op on the float vehicle, and the
+  carry erase is what acts.
+- [ ] `NetworkPbHold.hpp` ordering contract: only read-only steps between the hold and
+  `emitToStore`. `networkBrdcWire` (card NBP) now runs there and writes the clock record.
+  No live conflict (NBP off; the loader refuses the phase-clock hold under
+  `sp3_brdc_clock`), and the hold is still the last writer of `bias_m`.
+
+**Configuration and CLAUDE.md**
+
+- [ ] The goldens arm `emit_pb_filter`, `emit_pb_filter_gate_v2` and their sub-keys; all
+  are inert because the filter is gated on `carry_invariant`. CLAUDE.md (AGU amendment 2)
+  says not to arm `gate_v2` on that lineage.
+- [ ] `network.gross_los_sat_min_stations` serves both the emission exclusion and the
+  satellite stand-down (not armed); one knob, two meanings.
+- [ ] The coupled-mark census (`decommonedClockStep`) takes one median across all
+  constellations; the hold's `M_k` is per constellation.
+- [ ] CLAUDE.md, wu93 amendment 3: the exposed wind-up interval is [300, 900] s, not
+  (300, 900]: `computePhaseWindUp` restarts at a gap of at least the horizon.
+- [ ] CLAUDE.md gives the network driver as 2,359 lines (2026-08-15); it measures 3,139
+  (2026-10-07).
+- [ ] The re-admission clock-only falsification was measured on the triple-frequency sim
+  bed (card READMIT); no dual-frequency re-measurement was found.

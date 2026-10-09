@@ -250,6 +250,19 @@ JSON section is `processing` (loop-level toggles) or `estimation` (state-vector 
 
 **State-vector discipline.** `StateManager` is the single source of truth for state layout and dynamic key→index maps (ambiguities, per-sat iono, code biases, sat biases, system time offsets). `KalmanFilter` operates on state owned by `StateManager`. Don't add sibling classes that own parallel state; extend `StateManager`.
 
+**Organization (standing user directive, 2026-10-08).** "The codebase should be so
+incredibly organized that I can read it and follow easily, and anyone new can immediately
+begin contributing." Every change is judged also on whether a reader can follow it: one
+owner per concept, typed identities, declared properties, run-start tables a human reads,
+short functions with a linear story. On refactors, a clear structure outranks byte identity:
+the same-build golden comparison still runs, and any output move is explained before it
+lands. The network producer is being reorganized under card NOM
+(`docs/refound/NOM_network_object_model_2026-10-08.md`): new network code takes its
+identities from `common/GnssIdentity.hpp` (constellation traits, `SatId`, `SignalId`,
+`LosId`, `ArcId`; no new `sat[0]` / `sig[1]` parsing), and every station state column has a
+declared disposition in `filter/NetworkParamInventory.hpp` (the "parameters as armed" table
+at run start). Plain value types and tables; no behaviour classes, no virtual dispatch.
+
 **Documentation prose style (standing user directive, 2026-09-19).** New or edited
 Markdown (README, CONTRIBUTING, `docs/onboarding/`, new cards, summaries) uses an
 impersonal, concise, technical register. No second-person address ("changes to X are

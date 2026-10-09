@@ -33,6 +33,8 @@ $bibtex_use = 2;    # run biber; remove .bbl on a full clean
     'network.tex',
     'network_example.tex',
     'network_carry.tex',
+    'network_vehicle.tex',
+    'network_wire.tex',
     'pipeline_diagrams.tex',
     'generated_tables.tex',
     'linear_algebra.tex',

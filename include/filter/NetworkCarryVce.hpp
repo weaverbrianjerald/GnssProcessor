@@ -126,7 +126,31 @@ public:
                                           ///  innovation variance (m²), a tail-robust estimate of
                                           ///  r̄·(true carry var).  Dominated by the typical carry,
                                           ///  not by the rare frame-churn re-levels that dominate
-                                          ///  the arithmetic mean.
+                                          ///  the arithmetic mean.  It is NOT divided by the
+                                          ///  redundancy, so it is not a variance-component
+                                          ///  estimate on its own; @ref robust_var_r is.
+        double        robust_var_r = 0.0; ///< Redundancy-corrected channel (m²): the χ²₁-corrected
+                                          ///  geometric mean of ê²/rᵢ over the rows whose partial
+                                          ///  redundancy rᵢ = 1 − wᵢvᵢ (at the weight the fold USED)
+                                          ///  lies in (@c kRedundancyFloor, 1].  Since
+                                          ///  E{ê²} = rᵢ·σ²_used·σ̂² (Snow ch. 16; LASER 5-93..95, where
+                                          ///  the group's σ̂² divides êᵀPê by its redundancy), this is
+                                          ///  σ̂²·σ²_used: the prior variance the data support under
+                                          ///  the weights actually used.  Divided by
+                                          ///  @ref hand_fold_var_r it is LASER's next factor
+                                          ///  α²_{j+1} = σ̂²_j·α²_j.  A row with rᵢ at or below the
+                                          ///  floor carries no information on the component (ê and
+                                          ///  rᵢ vanish together) and is left out, counted by the gap
+                                          ///  between @ref n_eff and @ref n_eff_r.  Falls back to
+                                          ///  @c seedFloor() with no such rows.
+        double        hand_fold_var_r = 0.0;///< Geometric mean of the hand fold variance over the
+                                          ///  rows of @ref robust_var_r (m²); the denominator of the
+                                          ///  apply target.  Falls back to @c seedFloor().
+        double        rbar      = 0.0;    ///< Geometric-mean partial redundancy of the rows of
+                                          ///  @ref robust_var_r (0 when there are none).  Report only:
+                                          ///  robust_floor ≈ rbar·robust_var_r.
+        double        n_eff_r   = 0.0;    ///< Forgetting-weighted count of the rows of
+                                          ///  @ref robust_var_r.
         double        hand_fold_var = 0.0;///< Geometric mean of the hand-model fold variance (m²)
                                           ///  over the same forgetting window, i.e.
                                           ///  `max(var_prev + q·Δt, var_floor)` before any variance
@@ -232,6 +256,8 @@ public:
         // rows were folded at.  For the same reason the v2 apply path is
         // fresh-convergence-only (SPEC_carry_vce_apply.md §8, its one field-blocking
         // deferral).  The D5 consumer of this seed reads only robust_floor and n_eff.
+        // The redundancy-corrected channel (robust_var_r) is not seeded either: it
+        // feeds only the apply target, which is fresh-convergence-only.
         a.sum_log_fv = n_eff * std::log(seed_floor_);
     }
 
@@ -271,11 +297,13 @@ public:
      *
      * No-op unless the monitor is enabled, the epoch is clean, @p family is
      * requested, @p fold_var_m2 is positive, @p gap_s is non-negative and the
-     * inputs are finite.  The innovation feeds both the tail-robust geometric-mean
-     * accumulator (which uses only ê²) and the arithmetic-mean LS-VCE normals
-     * (which also use the redundancy r = 1 − w·v, clamped to [ε,1] with
-     * ε = kRedundancyFloor = 1e-3, because under the coupling carry the harvested
-     * @p post_var_m2 is a conditional variance that can exceed the prior).
+     * inputs are finite.  The innovation feeds the tail-robust geometric-mean
+     * accumulator (which uses only ê²), the redundancy-corrected geometric channel
+     * (ê²/r, only for rows with r in (ε,1]; see @c Estimate::robust_var_r) and the
+     * arithmetic-mean LS-VCE normals (which also use the redundancy r = 1 − w·v,
+     * clamped to [ε,1] with ε = kRedundancyFloor = 1e-3, because under the coupling
+     * carry the harvested @p post_var_m2 is a conditional variance that can exceed
+     * the prior).
      */
     void addRow(const std::string& family, const std::string& sat,
                 double innovation_m, double gap_s,
@@ -302,11 +330,27 @@ public:
         a.sum_log_fv += std::log(fv_hand);
         a.n_eff += 1.0;
         ++a.n_rows;
+        const double w = 1.0 / fold_var_m2;                 // config weight the solve used
+        // Redundancy-corrected geometric channel (Estimate::robust_var_r).  Per row,
+        // E{ê²} = r·σ²_used·σ̂², so log(ê²/r) removes the redundancy row by row before
+        // the geometric mean, which keeps it consistent with the χ²₁ correction.  The
+        // redundancy is NOT clamped here: a row at or below the floor carries no
+        // information on the variance component, and on the coupled ambiguity carry
+        // r < 0 marks a harvested conditional variance above the prior (the RNEG
+        // population of the prior-residual census), where 1 − w·v is not a redundancy.
+        // Both are left out rather than clamped, since a clamped r would divide ê² by
+        // an invented number.
+        const double r_raw = 1.0 - w * post_var_m2;
+        if (r_raw > kRedundancyFloor && r_raw <= 1.0) {
+            a.sum_log_e2r += std::log((e2 > kTinyE2 ? e2 : kTinyE2) / r_raw);
+            a.sum_log_fv_r += std::log(fv_hand);
+            a.sum_log_r += std::log(r_raw);
+            a.n_eff_r += 1.0;
+        }
         // Arithmetic-mean LS-VCE normals (include event rows; secondary output).
         // The redundancy is clamped rather than the row dropped, so the mean is
         // always defined.
-        const double w = 1.0 / fold_var_m2;                 // config weight the solve used
-        double r = 1.0 - w * post_var_m2;                   // partial redundancy (block-diagonal)
+        double r = r_raw;                                   // partial redundancy (block-diagonal)
         if (r < kRedundancyFloor) r = kRedundancyFloor;
         if (r > 1.0) r = 1.0;
         const double w2r = w * w * r;
@@ -346,10 +390,21 @@ public:
         if (a.n_eff > 0.0) {
             const double geo = std::exp(a.sum_log_e2 / a.n_eff);   // geometric mean of ê²
             out.robust_floor = geo / kChi2GeoMean;                 // ÷ e^(−1.27036)
-            out.hand_fold_var = std::exp(a.sum_log_fv / a.n_eff);  // target denominator (M2 v2)
+            out.hand_fold_var = std::exp(a.sum_log_fv / a.n_eff);  // geometric hand fold var (M2 v2)
         } else {
             out.robust_floor  = seed_floor_;
             out.hand_fold_var = seed_floor_;
+        }
+        // Redundancy-corrected channel, over its own rows (the apply target).
+        out.n_eff_r = a.n_eff_r;
+        if (a.n_eff_r > 0.0) {
+            out.robust_var_r    = std::exp(a.sum_log_e2r / a.n_eff_r) / kChi2GeoMean;
+            out.hand_fold_var_r = std::exp(a.sum_log_fv_r / a.n_eff_r);
+            out.rbar            = std::exp(a.sum_log_r / a.n_eff_r);
+        } else {
+            out.robust_var_r    = seed_floor_;
+            out.hand_fold_var_r = seed_floor_;
+            out.rbar            = 0.0;
         }
 
         // --- Secondary output: arithmetic-mean LS-VCE (includes event rows) --
@@ -454,6 +509,10 @@ private:
     struct Accum {
         double sum_log_e2 = 0.0;                   ///< Σ log(ê²), the robust geometric-mean accumulator.
         double sum_log_fv = 0.0;                   ///< Σ log(hand fold var) over the same rows (M2 v2).
+        double sum_log_e2r = 0.0;                  ///< Σ log(ê²/r) over rows with r in (floor, 1].
+        double sum_log_fv_r = 0.0;                 ///< Σ log(hand fold var) over those rows.
+        double sum_log_r = 0.0;                    ///< Σ log(r) over those rows.
+        double n_eff_r = 0.0;                      ///< forgetting-weighted count of those rows.
         double n00 = 0.0, n01 = 0.0, n11 = 0.0;   ///< symmetric LS-VCE normal matrix N.
         double l0  = 0.0, l1  = 0.0;              ///< LS-VCE right-hand side l.
         double n_eff = 0.0;                        ///< forgetting-weighted row count.
@@ -461,6 +520,10 @@ private:
         void decay(double phi) {
             sum_log_e2 *= phi;
             sum_log_fv *= phi;
+            sum_log_e2r *= phi;
+            sum_log_fv_r *= phi;
+            sum_log_r *= phi;
+            n_eff_r *= phi;
             n00 *= phi; n01 *= phi; n11 *= phi;
             l0  *= phi; l1  *= phi; n_eff *= phi;
         }

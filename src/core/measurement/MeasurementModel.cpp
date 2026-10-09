@@ -1211,6 +1211,19 @@ namespace GnssProcessor {
         if (config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) return;
         if (!config_.isUncombinedEnabled()) return;  // network V1 is uncombined-only
 
+        // The parameter inventory's absorbed instances (card NOM N1b): every shared
+        // state a gate below withholds from this station is noted with the gate's
+        // reason, and recordStationParams counts it after the split as Absorbed.  The
+        // list is the station's for this epoch, so it starts empty here (the later
+        // serial gates append through noteAbsorbedSharedState).  Network mode only:
+        // the two returns above leave every other mode, and the user-side filter never
+        // calls this function, so a PPP run neither writes nor holds a record.
+        absorbed_shared_ = StationAbsorbed{};
+        const auto withhold = [this](StateContainer container, const std::string& key,
+                                     AbsorbedReason reason) {
+            noteAbsorbed(absorbed_shared_, container, key, reason);
+        };
+
         // Empty exclusion set: the network driver runs no KF rebuild loop, so no
         // row is carried-excluded.  Matches the excluded set computeMeasurementUpdate
         // is called with below, keeping this admission gate identical to the build.
@@ -1247,14 +1260,24 @@ namespace GnssProcessor {
                 if (ref_type.find('_') != std::string::npos) continue;  // raw signals only
                 sat_usable = true;
 
-                // Per-(sat,signal) phase bias on raw phase rows.  Skipped for
-                // GLONASS (code-only network scope): a shared per-(sat,signal)
-                // satellite phase bias is unphysical for FDMA, so GLONASS phase
-                // observations contribute to the satellite clock only (the float
-                // ambiguity absorbs the per-receiver phase nuisance).
+                // Per-(sat,signal) phase bias on raw phase rows.  Every gate below
+                // withholds the shared column only: the phase row is still built
+                // (buildJacobianRow writes the phase-bias column only when the state
+                // exists), so the station's float ambiguity absorbs the bias, and each
+                // withheld state is noted for the parameter inventory with its gate.
                 if (config_.estimateSatPhaseBiases()
-                    && obs.system != System::GLONASS
                     && classifyMeasurement(ref_type) == MeasurementType::Phase) {
+                    const std::string pk =
+                        StateKeys::makeSatPhaseBiasKey(obs.satellite, ref_type);
+                    // GLONASS (code-only network scope): a shared per-(sat,signal)
+                    // satellite phase bias is unphysical for FDMA, so GLONASS phase
+                    // observations contribute to the satellite clock only (the float
+                    // ambiguity absorbs the per-receiver phase nuisance).
+                    if (obs.system == System::GLONASS) {
+                        withhold(StateContainer::SatPhaseBiasStates, pk,
+                                 AbsorbedReason::GlonassCodeOnlyScope);
+                        continue;
+                    }
                     // Per-station phase-bias exclusion (network.phase_bias_exclude_unmatched_antenna):
                     // a station with an unmatched receiver antenna gets no phase-bias state for
                     // any signal, so its uncalibrated (zero receiver PCV) carrier phase cannot
@@ -1262,19 +1285,27 @@ namespace GnssProcessor {
                     // the observation is withheld from the bias, not dropped: the phase row is
                     // still built (feeding the sat clock and the local float ambiguity) and
                     // only the shared bias column is withheld.  Default false: byte-identical.
-                    if (phase_bias_emission_excluded_)
+                    if (phase_bias_emission_excluded_) {
+                        withhold(StateContainer::SatPhaseBiasStates, pk,
+                                 AbsorbedReason::UnmatchedAntenna);
                         continue;
+                    }
                     // Phase-bias coverage gate (network.phase_bias_min_station_fraction):
                     // a signal tracked too sparsely across the network gets no phase-bias
                     // state; the float ambiguity absorbs the bias and the signal is not
                     // AR-eligible.  The observation is still used (the phase row is built);
                     // only the shared bias column is withheld.  Empty allowlist = admit all.
-                    if (!phaseBiasAdmitted(PppUtils::getSystemString(obs.satellite), ref_type))
+                    if (!phaseBiasAdmitted(PppUtils::getSystemString(obs.satellite), ref_type)) {
+                        withhold(StateContainer::SatPhaseBiasStates, pk,
+                                 AbsorbedReason::CoverageGate);
                         continue;
-                    const std::string pk =
-                        StateKeys::makeSatPhaseBiasKey(obs.satellite, ref_type);
-                    if (!allowed_phase_keys.empty() && !allowed_phase_keys.count(pk))
+                    }
+                    // Legacy single-pivot datum: only the pivot station's keys are shared.
+                    if (!allowed_phase_keys.empty() && !allowed_phase_keys.count(pk)) {
+                        withhold(StateContainer::SatPhaseBiasStates, pk,
+                                 AbsorbedReason::Allowlist);
                         continue;
+                    }
                     // Phase co-gate, symmetric with the code sponge (CB-ADM): when
                     // the run-latched census has quarantined this signal's code pair,
                     // its shared phase bias is withheld as well.  The phase then folds
@@ -1290,8 +1321,11 @@ namespace GnssProcessor {
                     if (cbadm_admitted_code_keys) {
                         std::string csig = ref_type;
                         if (!csig.empty()) csig[0] = 'C';
-                        if (!cbadm_admitted_code_keys->count(obs.satellite + "|" + csig))
+                        if (!cbadm_admitted_code_keys->count(obs.satellite + "|" + csig)) {
+                            withhold(StateContainer::SatPhaseBiasStates, pk,
+                                     AbsorbedReason::CodeCensusCogate);
                             continue;
+                        }
                     }
                     required_phase_keys.insert(pk);
                     if (state_manager_.getSatPhaseBiasIndex(pk) < 0)
@@ -1303,18 +1337,26 @@ namespace GnssProcessor {
                 // the network scope): FDMA makes a single shared per-(sat,signal) OSB
                 // unphysical for GLONASS, whose receiver group delay stays in the
                 // per-FCN-slot rx IFB and whose code feeds the satellite clock alone.
+                // (Card NOM N1b, checked: the per-slot IFB exists only on the FDMA bands
+                // at a known slot k != 0, and the GLONASS branch below is not reached
+                // in a loaded run, because the loader refuses
+                // network.estimate_sat_code_bias together with network.estimate_glonass.)
                 // Allocated at 0 because, like the clock and phase bias, this is a
                 // shared state that the network solve treats as absolute
                 // (linearization point 0, never written back), so the innovation
                 // carries the full bias and the joint solve recovers it.
                 // buildJacobianRow's sat_bias_term writes the +1 Jacobian.
                 if (config_.estimateNetworkSatCodeBias()
-                    && obs.system != System::GLONASS
                     && classifyMeasurement(ref_type) == MeasurementType::Code) {
                     const std::string cbk = obs.satellite + "|" + ref_type;  // matches sat_bias_term key
-                    required_code_keys.insert(cbk);
-                    if (state_manager_.getSatBiasIndex(cbk) < 0)
-                        state_manager_.addSatBiasState(cbk, 0.0);
+                    if (obs.system == System::GLONASS) {
+                        withhold(StateContainer::SatBiasStates, cbk,
+                                 AbsorbedReason::GlonassCodeOnlyScope);
+                    } else {
+                        required_code_keys.insert(cbk);
+                        if (state_manager_.getSatBiasIndex(cbk) < 0)
+                            state_manager_.addSatBiasState(cbk, 0.0);
+                    }
                 }
             }
 

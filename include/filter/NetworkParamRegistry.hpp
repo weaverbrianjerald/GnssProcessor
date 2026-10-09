@@ -61,10 +61,14 @@ enum class NetworkParamKind : int {
     RxPhaseBias,      ///< Receiver phase bias of the eq34 chain datum (local).
     RxCodeBias,       ///< Receiver code bias per (station, signal) (local).
     PhaseColour,      ///< Band-common phase nuisance per (station, satellite) (local; card LGM).
+    /// Receiver position per station: three columns of the station's state manager that
+    /// the network holds at the roster coordinate and never estimates (card NOM N1: the
+    /// parameter inventory's coordinate instances, treatment Pinned).
+    RxPosition,
 };
 
 /// Number of @ref NetworkParamKind enumerators (the registry's table size).
-inline constexpr std::size_t kNetworkParamKindCount = 11;
+inline constexpr std::size_t kNetworkParamKindCount = 12;
 
 /// @brief How a kind's process noise scales across an epoch gap.
 enum class ParamQRule {

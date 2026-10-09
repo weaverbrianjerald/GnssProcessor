@@ -80,3 +80,19 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   to the stamped IODE, no CLK product. The shipped `brdc_rts` path selects a different record on 99.6 % of
   satellite-epochs. Gates: equivalence with the bed.
   LANDED 2026-10-07, default off: every gate passed; the native posture equals the bed to the print resolution at no cost.
+- [PFQ](PFQ_pivot_frame_process_noise_2026-10-08.md): open, 2026-10-08: pivot-frame clock noise. FALSIFIED standalone (the
+  per-row update drops the shared walk between rows); on the augmented previous border (card SCL's clock clone, joint
+  walk factor) it PASSES: walk bed common level 0.051 to 0.011 m, consumer within 2 mm. Default off; arm with the clone.
+- [BCL](BCL_previous_border_on_clones_2026-10-08.md): parked, 2026-10-08: the whole previous border on clones (card SCL's
+  clone extended to the phase and code biases, BCL-a, and to every key card CTU re-attributes, BCL-d). BCL-a nil at +40 %
+  wall time (only the code biases pass the screen); BCL-d exact at events but FAILED G2 on the held-out consumer
+  (+15 / +17 mm), census neutral. Both default off, nothing armed.
+- [GAL2](GAL2_galileo_on_the_exact_update_2026-10-08.md): open, 2026-10-08: Galileo on the exact-update golden, NOT ARMED:
+  census hours 2 to 6 -0.018 m (11 of 16 better), hour 1 -0.23 m, inter-system bias on truth; missed C1X recovery
+  (0.05 m against 0.02), WTZZ00DEU hour 3, GPS clock wire +14 %. Adoption is the author's decision.
+- [L5R](L5R_l5_return_on_the_exact_update_2026-10-08.md): open, 2026-10-08: L5 R-1 on the exact-update golden: sim
+  passes, field census fails on all four postures; the receiver's band-5 code delay is not a state of the network solve.
+  L5 SEQUENCED: R-1b (estimate it), then R-2.
+- [NOM](NOM_network_object_model_2026-10-08.md): open, 2026-10-08: network object model. N0a (typed identities), N1
+  (every station column with a declared disposition; the 'parameters as armed' table) and N1b (absorbed instances)
+  LANDED, byte-identical; N0b on its branch; the RAIM pool admits prior rows (own card owed); network code tour started.

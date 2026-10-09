@@ -98,6 +98,19 @@ order:
 two-satellite network, the smallest network whose observation graph
 has a cycle, through every step with exact arithmetic.
 
+The golden configurations do not arm the invariant DD carry developed
+here (\texttt{network.carry\_invariant} is false in both); they carry
+the float ambiguity vehicle instead
+(\dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}).  The
+door analysis of \Cref{sec:net-carry-doors} still governs where that
+vehicle's folds enter.  The shared-border carry takes door~1, and the
+vehicle's per-station block, with its regression on the shared border,
+enters before the reduction as whitened rows of that station's own
+design (\texttt{CouplingRowBuilder::buildLocalBlock},
+\texttt{filter/NetworkCoupling}), so it touches only that station's
+blocks and is bound by door~2's ordering constraint.  No golden fold
+takes door~3.
+
 \begin{remark}[Theoretical footing]
 Time-linking a \emph{selected} set of linear functions $\bm{z} =
 \bm{F}^\Tr\bm{x}$ while re-estimating the remainder fresh each epoch is

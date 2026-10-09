@@ -119,6 +119,15 @@ docs/report/
                             fold with its posterior/innovation closed forms, and
                             a fully numerical 2-receiver x 2-satellite example
                             (one chord) carried end to end.
+  network_vehicle.tex       The float ambiguity vehicle the golden configurations
+                            arm: carried local column, joint local block, floored
+                            birth prior and bounded drop, held phase-datum basis,
+                            exact conditional time update of the coupling rows.
+  network_wire.tex          Event responses and the emitted product: gap re-entry,
+                            re-admission seeds, accumulated wind-up and its restart
+                            response, the gross line-of-sight screen, the
+                            phase-bias generation hold and phase-clock mode, the
+                            consumer's presence-edge response.
   pipeline_diagrams.tex     Curated TikZ process diagrams.
   generated_tables.tex      Appendix subfile; \input's the generated/ tables.
   linear_algebra.tex        Appendix subfile: linear algebra supplement (norms,

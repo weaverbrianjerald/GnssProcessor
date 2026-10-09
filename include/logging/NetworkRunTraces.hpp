@@ -105,7 +105,8 @@ namespace GnssProcessor {
     inline constexpr const char* kCarryVceApplyHeader =
         "week,tow,family,const,n_eff,robust_floor_m2,hand_fold_var_m2,target,"
         "alpha2,sigma_hat_post,frozen,at_ceiling,at_unit,"
-        "n_steps,n_frozen,n_slew_up,n_slew_down,n_ceiling_ep,n_unit_ep,alpha2_max\n";
+        "n_steps,n_frozen,n_slew_up,n_slew_down,n_ceiling_ep,n_unit_ep,alpha2_max,"
+        "robust_var_r_m2,hand_fold_var_r_m2,rbar,n_eff_r\n";
     /// network_prior_residual.csv header (docs/SPEC_prior_residual_census.md INC-1).
     /// One row per (family x label) per censused epoch that saw at least one row.
     ///

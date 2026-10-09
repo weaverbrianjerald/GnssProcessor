@@ -93,7 +93,7 @@ namespace GnssProcessor {
         double end_year{ 0.0 };    ///< Window end   [decimal year].
         std::string type;          ///< IGS antenna+radome code, e.g. "TRM57971.00     NONE".
         std::string serial;        ///< Antenna serial number.
-        Eigen::Vector3d arp_minus_grp_enu{ 0.0, 0.0, 0.0 }; ///< ARP - GRP eccentricity, ENU (E,N,U) [m].
+        Eigen::Vector3d arp_minus_grp_enu{ 0.0, 0.0, 0.0 }; ///< ARP - GRP eccentricity, ENU (E,N,U) [m]; the RINEX ANTENNA: DELTA H/E/N in another order (see @c reduceSifCoordinateToArp).
         double orientation_deg{ 0.0 }; ///< Antenna mounting orientation, clockwise from true north [deg].
         bool do_not_use{ false };  ///< True if this window is flagged unusable.
     };
@@ -131,7 +131,7 @@ namespace GnssProcessor {
         double start_year{ 0.0 };  ///< Window start [decimal year].
         double end_year{ 0.0 };    ///< Window end   [decimal year].
         double reference_epoch_year{ 2020.0 };           ///< Epoch of @c coordinates, @c velocity and @c covariance [decimal year].
-        Eigen::Vector3d coordinates{ 0.0, 0.0, 0.0 };    ///< ECEF coordinates at @c reference_epoch_year [m].
+        Eigen::Vector3d coordinates{ 0.0, 0.0, 0.0 };    ///< ECEF coordinates of the ground reference point (monument, not the ARP) at @c reference_epoch_year [m].
         Eigen::Vector3d coord_sigmas{ 0.0, 0.0, 0.0 };   ///< Coordinate sigmas [m].
         Eigen::Vector3d velocity{ 0.0, 0.0, 0.0 };       ///< ECEF velocity [m/yr].
         Eigen::Vector3d velocity_sigmas{ 0.0, 0.0, 0.0 };///< Velocity sigmas [m/yr].

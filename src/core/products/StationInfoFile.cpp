@@ -566,4 +566,39 @@ std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile
     return out;
 }
 
+SifArpReduction reduceSifCoordinateToArp(const StationInfo& s,
+                                         const Eigen::Vector3d& grp_ecef,
+                                         double decimal_year,
+                                         const Eigen::Vector3d* rinex_delta_hen) {
+    SifArpReduction out;
+    out.arp_ecef = grp_ecef;
+
+    // The covering SIF antenna window, the same one the a-priori antenna QC
+    // reports on.  ARP_MINUS_GRP_ENU is stored (E, N, U); markerToArp takes the
+    // RINEX (H, E, N) order.
+    for (const auto& aw : s.antennas) {
+        if (decimal_year < aw.start_year || decimal_year >= aw.end_year) continue;
+        out.has_sif_eccentricity = true;
+        out.sif_delta_hen = Eigen::Vector3d(aw.arp_minus_grp_enu(2),
+                                            aw.arp_minus_grp_enu(0),
+                                            aw.arp_minus_grp_enu(1));
+        break;
+    }
+
+    if (rinex_delta_hen != nullptr) {
+        out.delta_hen = *rinex_delta_hen;
+        out.source = SifEccentricitySource::RinexHeader;
+        if (out.has_sif_eccentricity)
+            out.eccentricity_disagreement_m = (out.delta_hen - out.sif_delta_hen).norm();
+    } else if (out.has_sif_eccentricity) {
+        out.delta_hen = out.sif_delta_hen;
+        out.source = SifEccentricitySource::SifAntennaWindow;
+    } else {
+        return out;
+    }
+
+    out.arp_ecef = Coordinates::markerToArp(grp_ecef, out.delta_hen);
+    return out;
+}
+
 } // namespace GnssProcessor

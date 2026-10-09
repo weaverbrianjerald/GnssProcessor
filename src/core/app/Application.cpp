@@ -398,8 +398,15 @@ bool Application::initializePosition() {
     // seed the filter with the SIF ITRF coordinate propagated to the
     // first-observation epoch (velocity, seasonal and post-seismic terms).  It is
     // more accurate than the RINEX APPROX header and in the products' frame
-    // (ITRF2020 / IGS20).  The occupation coordinate is ARP-referenced like the
-    // state vector, so no antenna delta is applied.
+    // (ITRF2020 / IGS20).  The occupation coordinate refers to the ground
+    // reference point (the monument), like the RINEX APPROX position, while the
+    // state vector is the ARP, so it is reduced marker -> ARP before it seeds the
+    // state: through the header's ANTENNA: DELTA H/E/N as the APPROX seed above
+    // and the network roster (network.station_marker_to_arp) are, or the SIF
+    // antenna window's ARP_MINUS_GRP_ENU when the header carries no record
+    // (reduceSifCoordinateToArp).  Used unreduced, it would seed GRAZ00AUT 1.964 m
+    // below its antenna.  run() re-applies this seed after PppModel::initializeState,
+    // which otherwise replaces it with the RINEX-derived position.
     //
     // The pre-override position confirms a 4-char prefix match (a marker that is
     // not an exact SIF ID / DOMES): find() accepts the candidate only within
@@ -427,17 +434,43 @@ bool Application::initializePosition() {
                             rc.segment_start_year, rc.segment_end_year,
                             rc.antenna_change_in_gap ? "yes" : "no",
                             rc.receiver_change_in_gap ? "yes" : "no");
+                    const Eigen::Vector3d rinex_hen = rinex_parser_->getAntennaDeltaHen();
+                    const SifArpReduction red = reduceSifCoordinateToArp(
+                        *si, rc.ecef, year,
+                        rinex_parser_->hasAntennaDeltaHen() ? &rinex_hen : nullptr);
+                    const char* ecc_source =
+                        red.source == SifEccentricitySource::RinexHeader      ? "RINEX ANTENNA: DELTA H/E/N"
+                      : red.source == SifEccentricitySource::SifAntennaWindow ? "SIF ARP_MINUS_GRP_ENU"
+                                                                              : "none";
+                    if (red.source == SifEccentricitySource::None)
+                        log_manager_.getLogger("main_log")->warn(
+                            "SIF a-priori for marker '{}' (matched {}): no RINEX ANTENNA: DELTA H/E/N "
+                            "record and no SIF antenna window at {:.3f}; the monument coordinate "
+                            "seeds the ARP state unreduced", marker, si->id, year);
+                    if (red.source == SifEccentricitySource::RinexHeader && red.has_sif_eccentricity
+                        && red.eccentricity_disagreement_m > SIF_ECCENTRICITY_TOLERANCE_M)
+                        log_manager_.getLogger("main_log")->warn(
+                            "SIF a-priori for marker '{}' (matched {}): RINEX ANTENNA: DELTA H/E/N "
+                            "({:.4f}, {:.4f}, {:.4f}) m differs from the SIF ARP_MINUS_GRP "
+                            "H/E/N ({:.4f}, {:.4f}, {:.4f}) m by {:.4f} m; the RINEX value is applied",
+                            marker, si->id, red.delta_hen(0), red.delta_hen(1), red.delta_hen(2),
+                            red.sif_delta_hen(0), red.sif_delta_hen(1), red.sif_delta_hen(2),
+                            red.eccentricity_disagreement_m);
                     const Eigen::Vector3d prev = initial_position_;
-                    initial_position_ = rc.ecef;
+                    initial_position_ = red.arp_ecef;
+                    sif_apriori_seeded_ = true;
                     Eigen::VectorXd sv = state_manager_->getStateVector();
                     if (sv.size() >= static_cast<Eigen::Index>(state_manager_->getPositionIndex() + 3)) {
                         sv.segment<3>(state_manager_->getPositionIndex()) = initial_position_;
                         state_manager_->setStateVector(sv);
                     }
                     log_manager_.getLogger("main_log")->info(
-                        "SIF a-priori for marker '{}' (matched {}) @ {:.3f}: ITRF {} "
+                        "SIF a-priori for marker '{}' (matched {}) @ {:.3f}: ITRF {} monument "
+                        "({:.3f}, {:.3f}, {:.3f}) m, H/E/N ({:.4f}, {:.4f}, {:.4f}) m from {} -> ARP "
                         "({:.3f}, {:.3f}, {:.3f}) m; shift vs RINEX/fallback = {:.3f} m",
                         marker, si->id, year, si->reference_frame,
+                        rc.ecef.x(), rc.ecef.y(), rc.ecef.z(),
+                        red.delta_hen(0), red.delta_hen(1), red.delta_hen(2), ecc_source,
                         initial_position_.x(), initial_position_.y(), initial_position_.z(),
                         (initial_position_ - prev).norm());
                 }
@@ -1679,6 +1712,20 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     }
 
     ppp_model_->initializeState(ppp_state_);
+    // initializeState() re-derives the position from a configured reference
+    // position or the RINEX APPROX header, and the sync below would overwrite the
+    // SIF a-priori that initializePosition() wrote to the state vector (as the
+    // real-time engine's seedInitialState() notes for its own seed).  Re-apply it;
+    // a configured reference position keeps precedence.  Inert unless
+    // processing.enable_station_info resolved the marker.
+    if (sif_apriori_seeded_) {
+        if (config_.hasReferencePosition()) {
+            log_manager_.getLogger("main_log")->info(
+                "SIF a-priori not applied: the configured reference position seeds the state");
+        } else {
+            ppp_state_.position = initial_position_;
+        }
+    }
     state_manager_->syncPppStateToStateVector(ppp_state_);
 
     // Ambiguity resolution (MLAMBDA)

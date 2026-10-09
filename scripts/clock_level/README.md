@@ -20,6 +20,8 @@ copy, and that includes the files the writers produce (output location substitut
 | `census6h.py` | LAH, SMH, SMD, QPV | The same census on a 6 h wire (tags `msc6_<site>_<key>`, PBF on), graded per hour with the paired change. `CENSUS_SITES=a,b` limits the sites and drops WTZZ. |
 | `simcensus6h.py` | SMH, SMD, QPV | The 6 h census on the sim bed: 16 in-network stations (S01, S05, ..., S57, S60), tags `smc6_<station>_<key>`. Absolute values are optimistic. The paired change between two wires of one solve is the quantity read. |
 | `p50.py` | LAH | Consumer 3D p50 by hour from `closed_loop_trace.csv`. |
+| `gcensus.py` | GAL2, L5R | The 16-site census plus WTZZ on a 6 h field wire. `make <key> <consumer base run> <wire run> <exe>` builds each replay from the base run's own `arm.json` (the wire's own for its posture's consumer, the dual control's for a dual GPS consumer of another wire); `grade <refkey> <key> ...` prints the median site p50 by hour and the paired change over hours 2 to 6 and hour 1. |
+| `band5_offsets.py` | L5R | Per station, the mean GPS code post-fit residual over hours 2 to 6 by band, with a block standard error; counts the stations with a station-constant offset (card L5R's P3). |
 
 ## Clock level and the anchor
 

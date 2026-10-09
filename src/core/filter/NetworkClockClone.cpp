@@ -7,6 +7,7 @@
 #include "filter/NetworkClockClone.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "filter/NetworkCarryDisposition.hpp"   // carryColumnPresent (card BCL-d)
 
 #include <Eigen/Eigenvalues>
 
@@ -40,6 +41,41 @@ void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
         if (!pcc.row.count(sharedCarryKey(SharedParamKind::Clock, sat, ""))) continue;
         E.col[sat] = est.registerClockClone(sat);
     }
+    // Card BCL: after card SCL's clocks.  BCL-a clones every phase and code bias with a
+    // stashed row; BCL-d clones the keys that will (or may) be re-attributed: a clock card
+    // SCL did not clone (reinit-marked, or its column absent) and, without BCL-a, a bias whose
+    // column is absent, whose phase-bias frame is re-referenced or held, or which is parked.
+    // The routes are final only at the decision, after this layout; a clone registered for a
+    // key that then folds is idle and takes an isolated prior.
+    if (ctx.knobs.carry_cpl_bclone || ctx.knobs.carry_cpl_dclone) {
+        for (const CarryPrior& cp : ctx.carry.prev_carry) {
+            if (cp.kind == SharedParamKind::VtecSh) continue;
+            const std::string key = sharedCarryKey(cp.kind, cp.sat, cp.signal);
+            if (!pcc.row.count(key) || E.xcol.count(key)) continue;
+            bool want = false;
+            if (cp.kind == SharedParamKind::Clock) {
+                want = ctx.knobs.carry_cpl_dclone && !E.col.count(cp.sat);
+            } else if (cp.kind == SharedParamKind::PhaseBias || cp.kind == SharedParamKind::CodeBias) {
+                want = ctx.knobs.carry_cpl_bclone;
+                if (!want && ctx.knobs.carry_cpl_dclone) {
+                    const bool pb = cp.kind == SharedParamKind::PhaseBias;
+                    want = !carryColumnPresent(est, cp) || cp.t_park_s > 0.0
+                        || (pb && (ctx.knobs.phase_hold_on
+                                   || ctx.carry.eq34_reref.count({cp.sat, cp.signal})
+                                   || ctx.carry.phase_anchor_reref.count({cp.sat, cp.signal})));
+                }
+            }
+            if (!want) continue;
+            E.xcol[key] = est.registerClone(cp.kind, cp.sat, cp.signal);
+            E.xid[key]  = BorderCloneId{cp.kind, cp.sat, cp.signal};
+        }
+        if (!E.xcol.empty()) {
+            ClockCloneCounters& C = ctx.counters.ccl;
+            ++C.bcl_epochs;
+            C.bcl_registered += static_cast<long long>(E.xcol.size());
+            C.bcl_registered_max = std::max(C.bcl_registered_max, static_cast<long long>(E.xcol.size()));
+        }
+    }
     if (E.col.empty()) return;
     ClockCloneCounters& C = ctx.counters.ccl;
     ++C.epochs;
@@ -53,10 +89,13 @@ void networkClockClonePrepare(NetworkRunContext& ctx,
     if (!ctx.knobs.carry_cpl_clone) return;
     E.rows_on = false;
     E.active.clear();
+    E.xactive.clear();
+    E.xdep.clear();
     E.rows_epoch = CouplingExactEpoch{};
-    if (E.col.empty()) return;
+    if (E.col.empty() && E.xcol.empty()) return;
     const CouplingExactEpoch& ep = ctx.carry.cxu_epoch;
     if (!ep.ok) return;
+    ClockCloneCounters& C = ctx.counters.ccl;
     const Eigen::Index nS = ep.nS();
     CouplingExactEpoch ce = ep;
     ce.clone_s.assign(static_cast<std::size_t>(nS), 0);
@@ -85,29 +124,148 @@ void networkClockClonePrepare(NetworkRunContext& ctx,
         a.shat = ep.shat_s(s);
         E.active[cp->sat] = a;
     }
-    if (E.active.empty()) return;
+    // Card BCL-a: each phase and code bias in S on its clone at Q = 0, by card SCL's rule.
+    if (ctx.knobs.carry_cpl_bclone && !E.xcol.empty()) {
+        for (Eigen::Index s = 0; s < nS; ++s) {
+            const int p = ep.p_of_s[static_cast<std::size_t>(s)];
+            if (p < 0 || static_cast<std::size_t>(p) >= cp_of_p.size()) continue;
+            const CarryPrior* cp = cp_of_p[static_cast<std::size_t>(p)];
+            if (!cp || (cp->kind != SharedParamKind::PhaseBias && cp->kind != SharedParamKind::CodeBias))
+                continue;
+            const std::string key = sharedCarryKey(cp->kind, cp->sat, cp->signal);
+            const auto it = E.xcol.find(key);
+            if (it == E.xcol.end()) continue;
+            const double q = ep.q_s(s);
+            const double P = ep.P(p, p);
+            if (cp->inflate_q || cp->fold.has_seam || !(q > 0.0) || !std::isfinite(q)
+                || !(q > kClockCloneMinQRel * P)) {
+                ++C.bcl_a_screened;
+                continue;
+            }
+            ce.col_of_s[static_cast<std::size_t>(s)] = it->second;
+            ce.q_s(s) = 0.0;
+            ce.clone_s[static_cast<std::size_t>(s)] = 1;
+            BorderCloneActive a;
+            a.id   = BorderCloneId{cp->kind, cp->sat, cp->signal};
+            a.p    = p;
+            a.s    = static_cast<int>(s);
+            a.col  = it->second;
+            a.q    = q;
+            a.shat = ep.shat_s(s);
+            a.route = static_cast<int>(CouplingExactDRoute::Present);
+            E.xactive[key] = a;
+        }
+    }
+    // Card BCL-d: each key card CTU re-attributes, with a carried entry and a registered
+    // clone, joins S on its clone at Q = 0 (the rows keep its harvested coefficient, and the
+    // fold gives the clone the stashed block's row and column with no walk).
+    CouplingExactEpoch ced;
+    std::map<std::string, BorderCloneActive> dep;
+    if (ctx.knobs.carry_cpl_dclone) {
+        ced = ce;
+        std::vector<double> qd(ced.q_s.data(), ced.q_s.data() + ced.q_s.size());
+        std::vector<double> sd(ced.shat_s.data(), ced.shat_s.data() + ced.shat_s.size());
+        const int np = static_cast<int>(ep.s_of_p.size());
+        for (int p = 0; p < np; ++p) {
+            if (ep.s_of_p[static_cast<std::size_t>(p)] >= 0) continue;
+            const int route = ep.route_p[static_cast<std::size_t>(p)];
+            const int rt = (route >= 0 && route < kCouplingExactRoutes) ? route
+                         : static_cast<int>(CouplingExactDRoute::Skipped);
+            const CarryPrior* cp = (static_cast<std::size_t>(p) < cp_of_p.size())
+                                       ? cp_of_p[static_cast<std::size_t>(p)] : nullptr;
+            if (!cp) {
+                ++C.bcl_d_nocarry;
+                continue;
+            }
+            const std::string key = sharedCarryKey(cp->kind, cp->sat, cp->signal);
+            Eigen::Index col = -1;
+            if (cp->kind == SharedParamKind::Clock) {
+                const auto ic = E.col.find(cp->sat);
+                if (ic != E.col.end()) col = ic->second;
+            }
+            if (col < 0) {
+                const auto ix = E.xcol.find(key);
+                if (ix != E.xcol.end()) col = ix->second;
+            }
+            if (col < 0 || !std::isfinite(cp->value)) {
+                ++C.bcl_d_noclone[rt];
+                continue;
+            }
+            ced.s_of_p[static_cast<std::size_t>(p)] = static_cast<int>(ced.p_of_s.size());
+            ced.p_of_s.push_back(p);
+            ced.col_of_s.push_back(col);
+            ced.clone_s.push_back(1);
+            qd.push_back(0.0);
+            sd.push_back(cp->value);
+            BorderCloneActive a;
+            a.id    = BorderCloneId{cp->kind, cp->sat, cp->signal};
+            a.p     = p;
+            a.s     = static_cast<int>(ced.p_of_s.size()) - 1;
+            a.col   = col;
+            a.shat  = cp->value;
+            a.route = rt;
+            dep[key] = a;
+        }
+        ced.q_s    = Eigen::Map<const Eigen::VectorXd>(qd.data(), static_cast<Eigen::Index>(qd.size()));
+        ced.shat_s = Eigen::Map<const Eigen::VectorXd>(sd.data(), static_cast<Eigen::Index>(sd.size()));
+    }
+    if (E.active.empty() && E.xactive.empty() && dep.empty()) return;
     // The off-diagonal process noise is the seam's (a moved clock carries none), but a pair
     // touching a moved clock would put a walk on a clone; drop it.
-    if (!ce.q_off.empty()) {
-        const auto before = ce.q_off.size();
-        ce.q_off.erase(std::remove_if(ce.q_off.begin(), ce.q_off.end(),
-                                      [&](const std::tuple<int, int, double>& t) {
-                                          const int a = std::get<0>(t), b = std::get<1>(t);
-                                          return (a >= 0 && a < nS && ce.clone_s[static_cast<std::size_t>(a)])
-                                              || (b >= 0 && b < nS && ce.clone_s[static_cast<std::size_t>(b)]);
-                                      }),
-                       ce.q_off.end());
-        ctx.counters.ccl.q_off_dropped += static_cast<long long>(before - ce.q_off.size());
+    const auto dropPairs = [](CouplingExactEpoch& e) -> long long {
+        if (e.q_off.empty()) return 0;
+        const Eigen::Index n = e.nS();
+        const auto before = e.q_off.size();
+        e.q_off.erase(std::remove_if(e.q_off.begin(), e.q_off.end(),
+                                     [&](const std::tuple<int, int, double>& t) {
+                                         const int a = std::get<0>(t), b = std::get<1>(t);
+                                         return (a >= 0 && a < n && e.clone_s[static_cast<std::size_t>(a)])
+                                             || (b >= 0 && b < n && e.clone_s[static_cast<std::size_t>(b)]);
+                                     }),
+                      e.q_off.end());
+        return static_cast<long long>(before - e.q_off.size());
+    };
+    if (!dep.empty()) {
+        const long long dropped = dropPairs(ced);
+        if (couplingExactFactor(ced)) {
+            C.q_off_dropped += dropped;
+            E.xdep = std::move(dep);
+            for (const auto& [key, a] : E.xdep) {
+                (void)key;
+                ++C.bcl_d_active[a.route];
+            }
+            E.rows_epoch = std::move(ced);
+            E.rows_on = true;
+            if (!E.active.empty()) {
+                ++C.rows_epochs;
+                C.active += static_cast<long long>(E.active.size());
+            }
+            C.bcl_a_active += static_cast<long long>(E.xactive.size());
+            return;
+        }
+        // The stashed block over S and the re-attributed keys did not factor: the rows take
+        // the epoch without them (their terms re-attributed, as card CTU does).
+        ++C.bcl_d_prepare_retry;
+        for (const auto& [key, a] : dep) {
+            (void)key;
+            ++C.bcl_d_noclone[a.route];
+        }
+        if (E.active.empty() && E.xactive.empty()) return;
     }
+    C.q_off_dropped += dropPairs(ce);
     if (!couplingExactFactor(ce)) {
-        ++ctx.counters.ccl.prepare_unfactored;
+        ++C.prepare_unfactored;
         E.active.clear();
+        E.xactive.clear();
         return;
     }
     E.rows_epoch = std::move(ce);
     E.rows_on = true;
-    ++ctx.counters.ccl.rows_epochs;
-    ctx.counters.ccl.active += static_cast<long long>(E.active.size());
+    if (!E.active.empty()) {
+        ++C.rows_epochs;
+        C.active += static_cast<long long>(E.active.size());
+    }
+    C.bcl_a_active += static_cast<long long>(E.xactive.size());
 }
 
 bool networkClockCloneGateView(NetworkRunContext& ctx, NetworkEstimator& est,
@@ -116,7 +274,8 @@ bool networkClockCloneGateView(NetworkRunContext& ctx, NetworkEstimator& est,
     ClockCloneEpoch& E = ctx.carry.ccl;
     // Card SCL2 X2: the shared-history columns follow the clones and are marginalized with
     // them (numBorderNuisance; 0 history columns off, so this is the clones as before).
-    if (E.col.empty() && est.numHistoryColumns() == 0) return false;
+    // Card BCL: its clones are border nuisance too (they precede the history).
+    if (E.col.empty() && E.xcol.empty() && est.numHistoryColumns() == 0) return false;
     const Eigen::MatrixXd& N = est.reducedSharedNormals();
     const Eigen::Index n  = N.rows();
     const Eigen::Index nc = est.numBorderNuisance();
@@ -190,11 +349,17 @@ void networkClockCloneFoldBegin(NetworkRunContext& ctx, NetworkEstimator& est) {
     ClockCloneEpoch& E = ctx.carry.ccl;
     E.referenced.clear();
     E.standin.clear();
-    if (E.col.empty()) return;
+    E.xreferenced.clear();
+    E.xstandin.clear();
+    E.xdprior.clear();
+    if (E.col.empty() && E.xcol.empty()) return;
     const Eigen::MatrixXd& N = est.reducedSharedNormals();
     for (const auto& [sat, col] : E.col)
         if (col >= 0 && col < N.cols() && N.col(col).cwiseAbs().maxCoeff() > 0.0)
             E.referenced.insert(sat);
+    for (const auto& [key, col] : E.xcol)   // card BCL
+        if (col >= 0 && col < N.cols() && N.col(col).cwiseAbs().maxCoeff() > 0.0)
+            E.xreferenced.insert(key);
 }
 
 bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
@@ -208,7 +373,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 std::map<std::string, double>* clk_prior_info) {
     if (!ctx.knobs.carry_cpl_clone) return false;
     ClockCloneEpoch& E = ctx.carry.ccl;
-    if (!E.rows_on || E.active.empty()) return false;
+    if (!E.rows_on || (E.active.empty() && E.xactive.empty() && E.xdep.empty())) return false;
     ClockCloneCounters& C = ctx.counters.ccl;
     const SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
     const std::size_t kd = dkeys.size();
@@ -217,6 +382,24 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
     std::vector<NetworkEstimator::CloneWalk> walks;
     std::set<std::string> met;
     std::map<std::string, double> q_of;
+    // Card BCL-d: clones moved in the rows' epoch whose key does not fold as decided (retired
+    // or screened at the fold, or folded decorrelated as a reinit); with BCL-d they take the
+    // stashed prior with no walk instead of being left free.  A clone whose key folds on its
+    // own column on a moved carry or a walk that is not positive stays free: the key's own
+    // row would put c(t) and c(t-1) in one block with the walk as their only difference.
+    const bool dclone = ctx.knobs.carry_cpl_dclone;
+    std::vector<BorderCloneActive> fallen;
+    const auto fallClock = [&](const std::string& sat, const ClockCloneActive& ac) {
+        if (!dclone) return;
+        BorderCloneActive f;
+        f.id   = BorderCloneId{SharedParamKind::Clock, sat, ""};
+        f.p    = ac.p;
+        f.s    = ac.s;
+        f.col  = ac.col;
+        f.shat = ac.shat;
+        f.route = -1;   // fell: no card CTU route of its own
+        fallen.push_back(f);
+    };
 
     // Card SCL B2: a constellation whose block the dense S-transform re-expressed this epoch
     // (network.handover_stransform_dense).  The rows hold their clocks' harvested
@@ -291,6 +474,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         if (dinflate[a] || (dreexp[a] && !dense_ok) || (sts && !dense_ok)
             || static_cast<int>(drow[a]) != ac.p) {
             ++C.fold_reexpressed;
+            if (dinflate[a]) fallClock(k.sat, ac);   // decorrelated: no shared row with its clone
             continue;
         }
         const Eigen::Index p = static_cast<Eigen::Index>(drow[a]);
@@ -334,12 +518,75 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         q_of[k.sat] = Q;
     }
     for (const auto& [sat, ac] : E.active) {
-        (void)ac;
-        if (!met.count(sat)) ++C.fold_retired;
+        if (met.count(sat)) continue;
+        ++C.fold_retired;
+        fallClock(sat, ac);
     }
-    if (walks.empty()) return false;
+    // Card BCL-a: each bias key on its clone in the rows' epoch stands in for its column at
+    // the stashed variance, with its walk b(t) - b(t-1) at the fold's own variance, by card
+    // SCL's rule for a clock.  A clock-pivot handover's transform acts on the clocks only, so
+    // a bias stands in across it; its covariance with a transformed constellation's
+    // stand-ins comes from the block before the transform (card SCL B2's loop below reads the
+    // clone flag set here).
+    std::set<std::string> xmet;
+    if (ctx.knobs.carry_cpl_bclone && !E.xactive.empty()) {
+        for (std::size_t a = 0; a < kd; ++a) {
+            const NetworkEstimator::SharedPrior& k = dkeys[a];
+            if (k.clone || (k.kind != SharedParamKind::PhaseBias && k.kind != SharedParamKind::CodeBias))
+                continue;
+            const std::string key = sharedCarryKey(k.kind, k.sat, k.signal);
+            const auto it = E.xactive.find(key);
+            if (it == E.xactive.end()) continue;
+            xmet.insert(key);
+            const BorderCloneActive& xa = it->second;
+            const Eigen::Index p = static_cast<Eigen::Index>(drow[a]);
+            const double P = (p < pcc.P.rows()) ? pcc.P(p, p) : 0.0;
+            const double Q = dvar_eff[a] - P;
+            if (dinflate[a] || dreexp[a] || static_cast<int>(drow[a]) != xa.p || !(P > 0.0)
+                || !(Q > 0.0) || !std::isfinite(Q) || !(Q > kClockCloneMinQRel * P)) {
+                ++C.bcl_a_moved;
+                if (dclone && dinflate[a]) {   // decorrelated: no shared row with its clone
+                    fallen.push_back(xa);
+                    fallen.back().route = -1;
+                }
+                continue;
+            }
+            const Eigen::Index ia = static_cast<Eigen::Index>(a);
+            keys[a].clone = true;
+            keys[a].value = xa.shat;
+            keys[a].info  = 1.0 / P;
+            cov(ia, ia)   = P;
+            NetworkEstimator::CloneWalk w;
+            w.sat    = k.sat;
+            w.kind   = k.kind;
+            w.signal = k.signal;
+            w.mean   = k.value - xa.shat;
+            w.q      = Q;
+            if (w.mean != 0.0) ++C.fold_walk_moved;
+            walks.push_back(w);
+        }
+        for (const auto& [key, xa] : E.xactive) {
+            if (xmet.count(key)) continue;
+            ++C.bcl_a_moved;   // its key did not fold (retired, screened)
+            if (dclone) {
+                fallen.push_back(xa);
+                fallen.back().route = -1;
+            }
+        }
+    }
+    if (walks.empty() && E.xdep.empty() && fallen.empty()) return false;
     // Card SCL B2: the rows and columns of the stand-ins of a dense-transformed constellation,
     // in the outgoing frame, with the extra keys appended (independent).
+    // u_b and the incoming pivot's row before the transform, for a current key b: a clock of
+    // a constellation the dense kernel re-expressed.
+    const auto uRow = [&](std::size_t b) -> Eigen::Index {
+        const NetworkEstimator::SharedPrior& kb = dkeys[b];
+        if (kb.kind != SharedParamKind::Clock || kb.clone || kb.sat.empty()) return -1;
+        const auto it = ctx.carry.sts_dense.find(kb.sat.front());
+        if (it == ctx.carry.sts_dense.end() || !ctx.carry.sts_consts.count(kb.sat.front()))
+            return -1;
+        return static_cast<Eigen::Index>(it->second.iq);
+    };
     bool any_dense = false;
     for (char x : st_dense) any_dense = any_dense || x != 0;
     if (any_dense || !extra.empty()) {
@@ -349,16 +596,6 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         cov.rightCols(ne).setZero();
         cov.bottomRows(ne).setZero();
         for (Eigen::Index e = 0; e < ne; ++e) cov(n0 + e, n0 + e) = extra_var[static_cast<std::size_t>(e)];
-        // u_b and the incoming pivot's row before the transform, for a current key b: a clock
-        // of a constellation the dense kernel re-expressed.
-        const auto uRow = [&](std::size_t b) -> Eigen::Index {
-            const NetworkEstimator::SharedPrior& kb = dkeys[b];
-            if (kb.kind != SharedParamKind::Clock || kb.clone || kb.sat.empty()) return -1;
-            const auto it = ctx.carry.sts_dense.find(kb.sat.front());
-            if (it == ctx.carry.sts_dense.end() || !ctx.carry.sts_consts.count(kb.sat.front()))
-                return -1;
-            return static_cast<Eigen::Index>(it->second.iq);
-        };
         const Eigen::Index k_old = xe.P.rows();
         for (std::size_t a = 0; a < kd; ++a) {
             if (!st_dense[a]) continue;
@@ -382,20 +619,185 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         }
         for (std::size_t e = 0; e < extra.size(); ++e) keys.push_back(extra[e]);
     }
+    // Card PFQ (network.clock_pivot_frame_q, docs/refound/PFQ_pivot_frame_process_noise_2026-
+    // 10-08.md section 6): two clocks of a constellation share the pinned pivot's walk, which
+    // the C1 fold put between their columns (cov_eff).  (1) A stand-in is a time t-1 state,
+    // so that pair comes out of every covariance entry with a stood-in clone on either side;
+    // between a stood-in clone and a clock folded on its own column the walks' covariance has
+    // no place in this factorization and is lost (counted).  (2) The stood-in clocks' walks
+    // carry it instead, as one joint factor whose covariance is checked before anything is
+    // folded; a factor that does not factor folds per walk (counted).
+    Eigen::MatrixXd Qw;   // empty: the per-walk form, byte-identical with the knob off
+    if (ctx.knobs.pfq_on && !walks.empty()) {
+        std::map<std::string, std::pair<double, double>> pf;   // sat -> (r_p, dt) of the term
+        for (const CarryPrior& cp : ctx.carry.prev_carry)
+            if (cp.kind == SharedParamKind::Clock && cp.fold.pfq_rate_m2ps > 0.0)
+                pf[cp.sat] = {cp.fold.pfq_rate_m2ps, cp.fold.dt_applied_s};
+        const auto pfOf = [&](const std::string& sat) -> const std::pair<double, double>* {
+            const auto it = pf.find(sat);
+            return it == pf.end() ? nullptr : &it->second;
+        };
+        for (std::size_t a = 0; a < kd; ++a) {
+            if (dkeys[a].kind != SharedParamKind::Clock || dkeys[a].clone || st_dense[a]) continue;
+            const auto* fa = pfOf(dkeys[a].sat);
+            if (!fa) continue;
+            for (std::size_t b = a + 1; b < kd; ++b) {
+                if (dkeys[b].kind != SharedParamKind::Clock || dkeys[b].clone || st_dense[b]) continue;
+                if (dkeys[b].sat.front() != dkeys[a].sat.front()) continue;
+                if (!keys[a].clone && !keys[b].clone) continue;   // two current columns keep it
+                const auto* fb = pfOf(dkeys[b].sat);
+                if (!fb) continue;
+                const double v = pivotFrameCross(fa->first, fa->second, fb->second);
+                const Eigen::Index ia = static_cast<Eigen::Index>(a), ib = static_cast<Eigen::Index>(b);
+                cov(ia, ib) -= v;
+                cov(ib, ia) -= v;
+                if (keys[a].clone != keys[b].clone) ++C.pfq_pairs_lost;
+            }
+        }
+        const Eigen::Index nw = static_cast<Eigen::Index>(walks.size());
+        Qw = Eigen::MatrixXd::Zero(nw, nw);
+        long long pairs = 0;
+        for (Eigen::Index a = 0; a < nw; ++a) {
+            const auto& wa = walks[static_cast<std::size_t>(a)];
+            Qw(a, a) = wa.q;
+            // The pivot's walk is a clock's (card BCL's bias walks take none).
+            const auto* fa = (wa.ref.empty() && wa.kind == SharedParamKind::Clock) ? pfOf(wa.sat) : nullptr;
+            if (!fa) continue;
+            for (Eigen::Index b = a + 1; b < nw; ++b) {
+                const auto& wb = walks[static_cast<std::size_t>(b)];
+                if (!wb.ref.empty() || wb.kind != SharedParamKind::Clock
+                    || wb.sat.front() != wa.sat.front()) continue;
+                const auto* fb = pfOf(wb.sat);
+                if (!fb) continue;
+                const double v = pivotFrameCross(fa->first, fa->second, fb->second);
+                Qw(a, b) = v;
+                Qw(b, a) = v;
+                ++pairs;
+            }
+        }
+        // Checked here so the joint factor below cannot throw after the block is folded.
+        Eigen::VectorXd dq(nw);
+        for (Eigen::Index a = 0; a < nw; ++a) dq(a) = 1.0 / std::sqrt(Qw(a, a));
+        const Eigen::LDLT<Eigen::MatrixXd> fq(dq.asDiagonal() * Qw * dq.asDiagonal());
+        if (pairs == 0) {
+            Qw.resize(0, 0);
+        } else if (fq.info() != Eigen::Success || !fq.isPositive()
+                   || !(fq.vectorD().minCoeff() > 1e-12 * fq.vectorD().cwiseAbs().maxCoeff())) {
+            Qw.resize(0, 0);
+            ++C.pfq_walk_notpd;
+        } else {
+            ++C.pfq_walk_epochs;
+            C.pfq_walk_pairs += pairs;
+        }
+    }
+    // Card BCL-d: each re-attributed key on its clone, and each clone that fell above, as a
+    // time t-1 state: the row and column of the block the rows were built on (card CTU's copy,
+    // before any handover transform), against a stood-in clone the same, against a current key
+    // the same less the incoming pivot's row for a clock of a dense-transformed constellation
+    // (that key is S y + w), zero against a reinit key and an incoming pivot's own column, and
+    // no walk factor.  Appended after every other key, so the indices above are unchanged.
+    const std::size_t nbase = keys.size();
+    std::vector<BorderCloneActive> dlist;
+    if (dclone) {
+        for (const auto& [key, a] : E.xdep) {
+            (void)key;
+            dlist.push_back(a);
+        }
+        for (const BorderCloneActive& f : fallen) dlist.push_back(f);
+        const Eigen::Index k_old = xe.P.rows();
+        dlist.erase(std::remove_if(dlist.begin(), dlist.end(),
+                                   [&](const BorderCloneActive& d) {
+                                       const bool bad = d.p < 0 || d.p >= k_old
+                                                     || !(xe.P(d.p, d.p) > 0.0);
+                                       if (bad) ++C.bcl_d_bad_row;
+                                       return bad;
+                                   }),
+                    dlist.end());
+    }
+    Eigen::MatrixXd cov_nod;
+    if (!dlist.empty()) {
+        cov_nod = cov;
+        const Eigen::Index n0 = static_cast<Eigen::Index>(nbase);
+        const Eigen::Index nd = static_cast<Eigen::Index>(dlist.size());
+        const Eigen::Index k_old = xe.P.rows();
+        cov.conservativeResize(n0 + nd, n0 + nd);
+        cov.rightCols(nd).setZero();
+        cov.bottomRows(nd).setZero();
+        for (Eigen::Index i = 0; i < nd; ++i) {
+            const BorderCloneActive& d = dlist[static_cast<std::size_t>(i)];
+            const Eigen::Index rd = static_cast<Eigen::Index>(d.p);
+            for (std::size_t b = 0; b < kd; ++b) {
+                const Eigen::Index rb = static_cast<Eigen::Index>(drow[b]);
+                double v = 0.0;
+                if (keys[b].clone) {
+                    v = (rb < k_old) ? xe.P(rd, rb) : 0.0;
+                } else if (!dinflate[b]) {
+                    v = (rb < k_old) ? xe.P(rd, rb) : 0.0;
+                    const Eigen::Index iq_b = uRow(b);
+                    if (iq_b >= 0 && iq_b < k_old) v -= xe.P(rd, iq_b);
+                }
+                cov(n0 + i, static_cast<Eigen::Index>(b)) = v;
+                cov(static_cast<Eigen::Index>(b), n0 + i) = v;
+            }
+            for (Eigen::Index j = 0; j < nd; ++j)
+                cov(n0 + i, n0 + j) = xe.P(rd, static_cast<Eigen::Index>(dlist[static_cast<std::size_t>(j)].p));
+            NetworkEstimator::SharedPrior pr;
+            pr.kind   = d.id.kind;
+            pr.sat    = d.id.sat;
+            pr.signal = d.id.signal;
+            pr.clone  = true;
+            pr.value  = d.shat;
+            pr.info   = 1.0 / xe.P(rd, rd);   // diagonal paths only
+            keys.push_back(pr);
+        }
+    }
     Eigen::VectorXd lam;
     // Throws exactly when card CTU's dense fold would (non-finite, non-PD, information
-    // budget), with nothing folded; the caller's diagonal fallback then applies.
-    est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
-                            /*clock_gauge_free=*/false, /*require_closure=*/false);
+    // budget), with nothing folded; the caller's diagonal fallback then applies.  Card BCL-d:
+    // a block that does not factor with the time t-1 states is folded without them (they are
+    // then left free), so the clones cannot add a fallback card SCL would not take.
+    if (!dlist.empty()) {
+        try {
+            est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
+                                    /*clock_gauge_free=*/false, /*require_closure=*/false);
+        } catch (const std::exception&) {
+            ++C.bcl_d_fold_retry;
+            keys.resize(nbase);
+            cov = std::move(cov_nod);
+            dlist.clear();
+            if (walks.empty()) return false;   // nothing of card SCL's left to fold
+            est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
+                                    /*clock_gauge_free=*/false, /*require_closure=*/false);
+        }
+    } else {
+        est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
+                                /*clock_gauge_free=*/false, /*require_closure=*/false);
+    }
     est.attribTag("ccl_walk");
-    est.addCloneWalk(walks);
-    for (const auto& w : walks) E.standin.insert(w.sat);
+    est.addCloneWalkJoint(walks, Qw);
+    long long n_clk_walks = 0;
+    for (const auto& w : walks) {
+        if (w.kind == SharedParamKind::Clock) {
+            E.standin.insert(w.sat);
+            ++n_clk_walks;
+        } else {
+            E.xstandin.insert(sharedCarryKey(w.kind, w.sat, w.signal));   // card BCL-a
+            ++C.bcl_a_standin;
+        }
+    }
     for (const auto& [sat, e] : extra_of) {
         (void)e;
         E.standin.insert(sat);   // the incoming pivot's clone stood in (no walk of its own)
     }
-    ++C.fold_epochs;
-    C.fold_standin += static_cast<long long>(walks.size());
+    for (const BorderCloneActive& d : dlist) {   // card BCL-d
+        E.xdprior.insert(sharedCarryKey(d.id.kind, d.id.sat, d.id.signal));
+        ++C.bcl_d_prior;
+        if (d.route < 0) ++C.bcl_d_fallen;
+    }
+    if (n_clk_walks > 0 || !extra_of.empty()) {
+        ++C.fold_epochs;
+        C.fold_standin += n_clk_walks;
+    }
     if (any_dense) {
         ++C.fold_dense_epochs;
         for (char x : st_dense) C.fold_dense_standin += (x != 0) ? 1 : 0;
@@ -418,6 +820,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         ws.cap_ccl_keys = std::move(keys);
         ws.cap_ccl_cov  = std::move(cov);
         ws.cap_ccl_walk = std::move(walks);
+        ws.cap_ccl_walkQ = std::move(Qw);
     }
     return true;
 }
@@ -430,13 +833,16 @@ void networkClockCloneFoldEnd(NetworkRunContext& ctx, EpochWorkspace& ws,
                               NetworkEstimator& est, bool within_epoch_armed) {
     if (!ctx.knobs.carry_cpl_clone) return;
     ClockCloneEpoch& E = ctx.carry.ccl;
-    if (E.col.empty()) return;
+    if (E.col.empty() && E.xcol.empty()) return;
     ClockCloneCounters& C = ctx.counters.ccl;
     const SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
     std::vector<NetworkEstimator::SharedPrior> iso;
     for (const auto& [sat, col] : E.col) {
         (void)col;
         if (E.standin.count(sat)) continue;
+        // Card BCL-d: a clone that fell from the stand-ins took the stashed prior.
+        if (!E.xdprior.empty() && E.xdprior.count(sharedCarryKey(SharedParamKind::Clock, sat, "")))
+            continue;
         if (E.referenced.count(sat)) {
             ++C.fold_free;
             continue;
@@ -461,10 +867,45 @@ void networkClockCloneFoldEnd(NetworkRunContext& ctx, EpochWorkspace& ws,
         p.info  = 1.0 / var;
         iso.push_back(p);
     }
+    const std::size_t n_b1_iso = iso.size();
+    // Card BCL: the same for its clones, by key (a referenced clone without a prior is free,
+    // an idle one takes the isolated prior at its stashed value and variance).
+    for (const auto& [key, col] : E.xcol) {
+        (void)col;
+        if (E.xstandin.count(key) || E.xdprior.count(key)) continue;
+        if (E.xreferenced.count(key)) {
+            ++C.bcl_free;
+            continue;
+        }
+        const auto idit = E.xid.find(key);
+        if (idit == E.xid.end()) continue;
+        const BorderCloneId& id = idit->second;
+        double value = 0.0, var = 0.0;
+        const auto rit = pcc.row.find(key);
+        if (rit != pcc.row.end() && static_cast<Eigen::Index>(rit->second) < pcc.P.rows())
+            var = pcc.P(static_cast<Eigen::Index>(rit->second), static_cast<Eigen::Index>(rit->second));
+        for (const CarryPrior& cp : ctx.carry.prev_carry)
+            if (cp.kind == id.kind && cp.sat == id.sat && cp.signal == id.signal) {
+                value = cp.value;
+                if (!(var > 0.0)) var = cp.var;
+                break;
+            }
+        if (!(var > 0.0) || !std::isfinite(var)) var = 1.0;
+        if (!std::isfinite(value)) value = 0.0;
+        NetworkEstimator::SharedPrior p;
+        p.kind   = id.kind;
+        p.sat    = id.sat;
+        p.signal = id.signal;
+        p.clone  = true;
+        p.value  = value;
+        p.info   = 1.0 / var;
+        iso.push_back(p);
+        ++C.bcl_isolated;
+    }
     if (iso.empty()) return;
     est.attribTag("ccl_idle");
     est.addSharedPrior(iso);
-    C.fold_isolated += static_cast<long long>(iso.size());
+    C.fold_isolated += static_cast<long long>(n_b1_iso);
     if (within_epoch_armed) ws.cap_ccl_idle = std::move(iso);
 }
 
@@ -475,17 +916,22 @@ bool networkClockCloneReplayFold(const NetworkRunContext& ctx, const EpochWorksp
     if (!ws.cap_ccl_on) return false;
     est.addSharedPriorDense(ws.cap_ccl_keys, ws.cap_ccl_cov, nullptr,
                             /*clock_gauge_free=*/false, /*require_closure=*/false);
-    est.addCloneWalk(ws.cap_ccl_walk);
+    est.addCloneWalkJoint(ws.cap_ccl_walk, ws.cap_ccl_walkQ);
     return true;
 }
 
 bool networkClockCloneRefloat(NetworkRunContext& ctx, EpochWorkspace& ws, NetworkEstimator& est,
                               const std::set<std::string>& drop_sats, bool restore) {
     if (!ctx.knobs.carry_cpl_clone || !ws.cap_ccl_on) return false;
+    // The refloat frees clocks: a walk is dropped when it is a dropped satellite's clock walk
+    // (card BCL-a's bias walks of the same satellite stay).
+    const auto dropped = [&](const NetworkEstimator::CloneWalk& w) {
+        return w.kind == SharedParamKind::Clock && drop_sats.count(w.sat) > 0;
+    };
     std::vector<NetworkEstimator::CloneWalk> wd;
     std::set<std::string> walked;
     for (const auto& w : ws.cap_ccl_walk)
-        if (drop_sats.count(w.sat)) {
+        if (dropped(w)) {
             wd.push_back(w);
             walked.insert(w.sat);
         }
@@ -500,7 +946,33 @@ bool networkClockCloneRefloat(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
                                                  restore, /*clock_gauge_free=*/false,
                                                  /*require_closure=*/false);
     if (!wd.empty()) {
-        est.addCloneWalk(wd, restore ? 1.0 : -1.0);
+        if (ws.cap_ccl_walkQ.size() == 0) {
+            est.addCloneWalk(wd, restore ? 1.0 : -1.0);
+        } else {
+            // Card PFQ: the walks are one joint factor, so a walk cannot be withdrawn on its
+            // own.  The whole factor is withdrawn and the factor over the kept walks (the
+            // marginal of the walk vector, a sub-block of its covariance) folded in its place;
+            // a restore does the reverse.  Both factors were checked when the fold formed them.
+            std::vector<NetworkEstimator::CloneWalk> kept;
+            std::vector<Eigen::Index> idx;
+            for (std::size_t i = 0; i < ws.cap_ccl_walk.size(); ++i)
+                if (!dropped(ws.cap_ccl_walk[i])) {
+                    kept.push_back(ws.cap_ccl_walk[i]);
+                    idx.push_back(static_cast<Eigen::Index>(i));
+                }
+            Eigen::MatrixXd Qk(static_cast<Eigen::Index>(idx.size()), static_cast<Eigen::Index>(idx.size()));
+            for (std::size_t a = 0; a < idx.size(); ++a)
+                for (std::size_t b = 0; b < idx.size(); ++b)
+                    Qk(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b)) =
+                        ws.cap_ccl_walkQ(idx[a], idx[b]);
+            if (!restore) {
+                est.addCloneWalkJoint(ws.cap_ccl_walk, ws.cap_ccl_walkQ, -1.0);
+                if (!kept.empty()) est.addCloneWalkJoint(kept, Qk, 1.0);
+            } else {
+                if (!kept.empty()) est.addCloneWalkJoint(kept, Qk, -1.0);
+                est.addCloneWalkJoint(ws.cap_ccl_walk, ws.cap_ccl_walkQ, 1.0);
+            }
+        }
         if (!restore) ctx.counters.ccl.refloat_walks += static_cast<long long>(wd.size());
     }
     return true;
@@ -509,9 +981,22 @@ bool networkClockCloneRefloat(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
 void networkClockCloneRefloatTrim(EpochWorkspace& ws, const std::set<std::string>& drop_sats) {
     if (!ws.cap_ccl_on || drop_sats.empty()) return;
     auto& wk = ws.cap_ccl_walk;
-    wk.erase(std::remove_if(wk.begin(), wk.end(),
-                            [&](const NetworkEstimator::CloneWalk& w) { return drop_sats.count(w.sat) > 0; }),
-             wk.end());
+    // A dropped satellite's clock walk (card BCL-a's bias walks stay).
+    const auto dropped = [&](const NetworkEstimator::CloneWalk& w) {
+        return w.kind == SharedParamKind::Clock && drop_sats.count(w.sat) > 0;
+    };
+    if (ws.cap_ccl_walkQ.size() != 0) {
+        // Card PFQ: the joint factor's covariance follows the kept walks.
+        std::vector<Eigen::Index> idx;
+        for (std::size_t i = 0; i < wk.size(); ++i)
+            if (!dropped(wk[i])) idx.push_back(static_cast<Eigen::Index>(i));
+        Eigen::MatrixXd Qk(static_cast<Eigen::Index>(idx.size()), static_cast<Eigen::Index>(idx.size()));
+        for (std::size_t a = 0; a < idx.size(); ++a)
+            for (std::size_t b = 0; b < idx.size(); ++b)
+                Qk(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b)) = ws.cap_ccl_walkQ(idx[a], idx[b]);
+        ws.cap_ccl_walkQ = std::move(Qk);
+    }
+    wk.erase(std::remove_if(wk.begin(), wk.end(), dropped), wk.end());
     std::vector<Eigen::Index> keep;
     keep.reserve(ws.cap_ccl_keys.size());
     for (std::size_t i = 0; i < ws.cap_ccl_keys.size(); ++i) {
@@ -582,6 +1067,16 @@ ClockCloneHarvest networkClockCloneHarvestBegin(NetworkRunContext& ctx,
         if (i < 0 || i >= static_cast<Eigen::Index>(h.clone_cc.size()) || sat.empty()) continue;
         h.clone_cc[static_cast<std::size_t>(i)] = sat[0];
         if (E.standin.count(sat) && h.B(i, i) >= 0.0) C.post_sd.push_back(std::sqrt(h.B(i, i)));
+    }
+    // Card BCL: a clock clone card SCL did not register is a member of the clock gauge like
+    // card SCL's; a bias clone is not ('\0', as a history column).
+    for (const auto& [key, col] : E.xcol) {
+        const auto idit = E.xid.find(key);
+        if (idit == E.xid.end() || idit->second.kind != SharedParamKind::Clock
+            || idit->second.sat.empty()) continue;
+        const Eigen::Index i = col - h.n0;
+        if (i < 0 || i >= static_cast<Eigen::Index>(h.clone_cc.size())) continue;
+        h.clone_cc[static_cast<std::size_t>(i)] = idit->second.sat[0];
     }
     for (const auto& p : datum)
         if (p.column >= 0 && p.column < h.n0 && h.col_cc[static_cast<std::size_t>(p.column)])
@@ -720,6 +1215,49 @@ void networkClockCloneTeardown(const NetworkRunContext& ctx,
               C.harvest_noreg, C.harvest_rows, C.harvest_rows_dropped, C.harvest_reg_mass,
               C.harvest_var_mass, C.harvest_gauge_held, C.harvest_gauge_orphan, C.harvest_gauge_abs,
               C.harvest_f3_pairs, p50, mx, sd.size(), C.refloat_walks);
+    if (ctx.knobs.pfq_on) {
+        // Card PFQ on the clone: the pivot's walk enters once, in the joint walk factor.
+        log->info("Network (card PFQ / on the clock clone): {} joint fold(s) with the pivot's "
+                  "walk shared between the stood-in clocks' walks ({} pair(s)); {} joint "
+                  "covariance(s) that did not factor (folded per walk); {} pair(s) between a "
+                  "stood-in clone and a clock on its own column, lost.",
+                  C.pfq_walk_epochs, C.pfq_walk_pairs, C.pfq_walk_notpd, C.pfq_pairs_lost);
+        if (C.fold_epochs > 0 && C.pfq_walk_epochs == 0)
+            log->warn("Network (card PFQ): network.clock_pivot_frame_q is ARMED with the clone "
+                      "but no joint walk factor formed: the term is INERT on the clone.");
+    }
+    if (ctx.knobs.carry_cpl_bclone || ctx.knobs.carry_cpl_dclone) {
+        // Card BCL: the rest of the stashed border on clones.
+        const auto routes = [](const long long (&r)[kCouplingExactRoutes]) {
+            return fmt::format("{} departed / {} reinit / {} reref / {} skipped",
+                               r[static_cast<int>(CouplingExactDRoute::Departed)],
+                               r[static_cast<int>(CouplingExactDRoute::Reinit)],
+                               r[static_cast<int>(CouplingExactDRoute::Reref)],
+                               r[static_cast<int>(CouplingExactDRoute::Skipped)]);
+        };
+        const double perb = C.bcl_epochs > 0 ? 1.0 / static_cast<double>(C.bcl_epochs) : 0.0;
+        log->info("Network (card BCL / the previous border on clones): {} epoch(s) with clones, "
+                  "{:.1f} registered mean / {} max per epoch; BCL-a {}: {} bias key(s) on their "
+                  "clones in the rows, {} screened, {} stood in with a walk, {} moved or "
+                  "unfolded; BCL-d {}: in the rows {}, without a clone {}, {} row(s) without a "
+                  "carried entry, {} rows' epoch(s) rebuilt without them; at the fold {} stashed "
+                  "prior(s) ({} for clones that fell), {} outside the block, {} fold(s) retried "
+                  "without them; {} referenced clone(s) left free, {} idle isolated.",
+                  C.bcl_epochs, static_cast<double>(C.bcl_registered) * perb, C.bcl_registered_max,
+                  ctx.knobs.carry_cpl_bclone ? "on" : "off", C.bcl_a_active, C.bcl_a_screened,
+                  C.bcl_a_standin, C.bcl_a_moved, ctx.knobs.carry_cpl_dclone ? "on" : "off",
+                  routes(C.bcl_d_active), routes(C.bcl_d_noclone), C.bcl_d_nocarry,
+                  C.bcl_d_prepare_retry, C.bcl_d_prior, C.bcl_d_fallen, C.bcl_d_bad_row,
+                  C.bcl_d_fold_retry, C.bcl_free, C.bcl_isolated);
+        if (ctx.knobs.carry_cpl_bclone && C.bcl_a_standin == 0)
+            log->warn("Network (card BCL-a): network.carry_coupling_bias_clone is ARMED but no "
+                      "bias clone stood in: the card is INERT for this run.");
+        long long d_active = 0;
+        for (int r = 0; r < kCouplingExactRoutes; ++r) d_active += C.bcl_d_active[r];
+        if (ctx.knobs.carry_cpl_dclone && d_active == 0 && C.bcl_d_prior == 0)
+            log->warn("Network (card BCL-d): network.carry_coupling_departed_clone is ARMED but no "
+                      "re-attributed key was put on a clone: the card is INERT for this run.");
+    }
     if (C.fold_dense_epochs > 0 || C.fold_dense_noref > 0)
         log->info("Network (card SCL / clock clone, B2): {} joint fold(s) across a "
                   "dense-transformed handover ({} clone(s) stood in in the outgoing frame, the "
