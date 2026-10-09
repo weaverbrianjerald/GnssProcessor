@@ -464,13 +464,14 @@ const char* absorbedBy(AbsorbedReason r, NetworkParamKind kind) {
     return "";
 }
 
-void noteAbsorbed(StationAbsorbed& into, StateContainer container, std::string_view key,
-                  AbsorbedReason reason) {
-    if (const auto id = classifyStateColumn(container, key)) {
-        into.instances.push_back(AbsorbedInstance{*id, reason});
-        return;
-    }
-    into.unclassified.push_back(std::string(stateContainerName(container)) + ":" + std::string(key));
+std::optional<AbsorbedInstance> classifyAbsorbed(const AbsorbedNote& note) {
+    if (const auto id = classifyStateColumn(note.container, note.key))
+        return AbsorbedInstance{*id, note.reason};
+    return std::nullopt;
+}
+
+std::string absorbedNoteLabel(const AbsorbedNote& note) {
+    return std::string(stateContainerName(note.container)) + ":" + note.key;
 }
 
 bool absorberPresent(const StateManager& sm, const AbsorbedInstance& a) {
@@ -531,21 +532,28 @@ void recordStationParams(const StateManager& sm, int station,
     }
     // The shared states the gates withheld from it (no column), each absorbed by a column
     // the station still holds; one whose observation left before the split has nothing
-    // to absorb it and is counted apart.
-    for (const AbsorbedInstance& a : absorbed.instances) {
-        if (!absorberPresent(sm, a)) {
+    // to absorb it and is counted apart.  A note whose key the classifier refuses is
+    // listed unclassified after the columns' own, in note order.
+    std::vector<std::string> absorbed_unclassified;
+    for (const AbsorbedNote& note : absorbed.notes) {
+        const auto a = classifyAbsorbed(note);
+        if (!a) {
+            absorbed_unclassified.push_back("absorbed " + absorbedNoteLabel(note));
+            continue;
+        }
+        if (!absorberPresent(sm, *a)) {
             ++slot.absorbed_no_absorber;
             continue;
         }
         StationParamRecord rec;
-        rec.id         = a.id;
+        rec.id         = a->id;
         rec.id.station = StationId{station};
         rec.disp       = ParamDisposition::Absorbed;
-        rec.reason     = a.reason;
+        rec.reason     = a->reason;
         slot.records.push_back(rec);
     }
-    for (const std::string& label : absorbed.unclassified)
-        slot.unclassified.push_back("absorbed " + label);
+    for (std::string& label : absorbed_unclassified)
+        slot.unclassified.push_back(std::move(label));
 }
 
 // ---------------------------------------------------------------------------

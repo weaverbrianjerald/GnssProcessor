@@ -41,6 +41,7 @@
 #include "filter/NetworkSdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "filter/NetworkCoupling.hpp"       // conditional coupling-row builder (Card 1/1b/1d, INC-7b)
 #include "filter/NetworkParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
+#include "filter/NetworkContributions.hpp" // row tags and the contribution tallies (card NOM N2a)
 #include "filter/NetworkPrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
@@ -409,12 +410,9 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
     // Off: the whole block is skipped and the output is byte-identical.  With the
     // knob armed at scale 1 the weights are untouched (no division is performed).
     if (config_.networkSecondCodeRowsActive() && st.sm) {
-        std::set<std::string> isc_sigs;   // signals with an inter-signal state at this station
-        for (const auto& [key, idx] : st.sm->getCodeBiasStates()) {
-            (void)idx;
-            if (const auto p = StateKeys::parseReceiverIscKey(key))
-                isc_sigs.insert(p->signal);
-        }
+        // Signals with an inter-signal state at this station: the one definition, which the
+        // data-row tags read too (card NOM N2a), so a tag and a weight cannot disagree.
+        const std::set<std::string> isc_sigs = receiverIscSignals(*st.sm);
         if (!isc_sigs.empty()) {
             const double sc_scale = config_.networkSecondCodeSigmaScale();
             const Eigen::Index mr = std::min<Eigen::Index>(
@@ -483,6 +481,7 @@ void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator
                                           const GnssTime& t,
                                           Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                                           Eigen::VectorXd& w, Eigen::VectorXd& y,
+                                          std::vector<RowTag>& tags,
                                           std::vector<std::string>& trace_rows,
                                           const std::map<std::pair<std::size_t, char>,
                                                          std::map<std::string, SdEwlFix>>* fix,
@@ -984,6 +983,11 @@ void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator
         A_s.middleRows(m0, mc) = llt.matrixL().solve(Hs);
         y.segment(m0, mc) = llt.matrixL().solve(zc);
         w.segment(m0, mc).setOnes();
+        // One tag per row (card NOM N2a), in row order: the row's satellite (the arc on
+        // the diagonal of L^-1; the pivot arc is common to every row of the group).
+        for (int k = 0; k < mc; ++k)
+            tags.push_back(makeRowTag(ContributionKind::SdEwl,
+                                      rows[static_cast<std::size_t>(k)].s->sat));
         ctr.rows_built += mc;
         if (fixed_group) { ctr.rows_fixed += mc; ++ctr.groups_fixed; }
         else             { ctr.rows_float += mc; }
@@ -1070,18 +1074,19 @@ void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator
 // anchors in PASS B (no satellite code bias).  The rows go into the station's
 // own block with no shared write, so the function is safe in the parallel
 // produce phase (the GIM query is const).
-void Application::networkAppendGimIonoRows_(NetStation& st,
+GimRowsOutcome Application::networkAppendGimIonoRows_(NetStation& st,
                                             const std::vector<PppObservation>& sta_obs,
                                             const std::map<int, int>& h2local,
                                             const GnssTime& t,
                                             Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
-                                            Eigen::VectorXd& w, Eigen::VectorXd& y) const {
-    if (!gim_ || !gim_->isLoaded()) return;
+                                            Eigen::VectorXd& w, Eigen::VectorXd& y,
+                                            std::vector<RowTag>& tags) const {
+    if (!gim_ || !gim_->isLoaded()) return GimRowsOutcome::NoGim;
     const auto& iw = config_.getIonosphereWeightingConfig();
-    if (!iw.enabled) return;
+    if (!iw.enabled) return GimRowsOutcome::WeightingOff;
     const Eigen::VectorXd x = st.sm->getStateVector();
 
-    struct GRow { int col; double innov; double var; };
+    struct GRow { int col; double innov; double var; std::string sat; };
     std::map<char, std::vector<GRow>> by_const;   // constellation char -> rows
     for (const auto& o : sta_obs) {
         // Every system but GLONASS.
@@ -1097,12 +1102,12 @@ void Application::networkAppendGimIonoRows_(NetStation& st,
         if (!q.valid) continue;
         const double sigma = std::max(iw.floor_m, iw.std_scale * q.std_m);
         by_const[letterOfSat(o.satellite)].push_back(
-            GRow{hit->second, q.delay_m - x(iono_idx), sigma * sigma});
+            GRow{hit->second, q.delay_m - x(iono_idx), sigma * sigma, o.satellite});
     }
 
     int total = 0;
     for (const auto& kv : by_const) total += static_cast<int>(kv.second.size());
-    if (total == 0) return;
+    if (total == 0) return GimRowsOutcome::NoRows;
 
     const double common_var = iw.common_mode_sigma_m * iw.common_mode_sigma_m;
     const Eigen::Index m0     = A_s.rows();
@@ -1129,8 +1134,11 @@ void Application::networkAppendGimIonoRows_(NetStation& st,
         A_r.middleRows(out, mc) = llt.matrixL().solve(Hc);
         y.segment(out, mc)      = llt.matrixL().solve(zc);
         w.segment(out, mc).setOnes();
+        for (int k = 0; k < mc; ++k)   // one tag per row (card NOM N2a), in row order
+            tags.push_back(makeRowTag(ContributionKind::GimIono, rws[k].sat));
         out += mc;
     }
+    return GimRowsOutcome::Appended;
 }
 
 // Sample the SH-VTEC field at one line of sight's pierce point(s) and return the
@@ -1220,7 +1228,8 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
                                            const std::set<std::string>& dw_row_held,
                                            const std::set<std::string>* dw_tie_admitted,
                                            Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
-                                           Eigen::VectorXd& w, Eigen::VectorXd& y) const {
+                                           Eigen::VectorXd& w, Eigen::VectorXd& y,
+                                           std::vector<RowTag>& tags) const {
     if (!sh_model) return;
     const auto& iw = config_.getIonosphereWeightingConfig();
     if (!iw.enabled) return;
@@ -1251,6 +1260,7 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
         double var;              ///< per-LOS representativeness variance (m²).
         std::vector<double> map_tecu;             ///< Per layer: M_l(el)·tecu_to_L1m.
         std::vector<std::vector<double>> basis;   ///< Per layer: Ȳ_nm(IPP_l) in coeff order.
+        std::string sat;                          ///< The line of sight's satellite (the row's tag, card NOM N2a).
     };
     std::map<char, std::vector<SRow>> by_const;
     std::vector<double> bvals;
@@ -1289,6 +1299,7 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
             iw.floor_m, shc.representation_sigma_tecu * g0.mapping * tecu_to_L1m);
         SRow r;
         r.local_col = hit->second;
+        r.sat       = o.satellite;
         r.innov     = -x(iono_idx);
         r.var       = sigma * sigma;
         r.map_tecu.resize(n_lay, 0.0);
@@ -1399,6 +1410,8 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
         A_s.middleRows(out, mc) = llt.matrixL().solve(Hs);
         y.segment(out, mc)      = llt.matrixL().solve(zc);
         w.segment(out, mc).setOnes();
+        for (int k = 0; k < mc; ++k)   // one tag per row (card NOM N2a), in row order
+            tags.push_back(makeRowTag(ContributionKind::ShIonoTie, rws[k].sat));
         out += mc;
     }
 }
@@ -3430,6 +3443,17 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             std::vector<ParamDisposition> col_disp;
             networkSplitStation_(st, est, em, ctx.param_inventory.rx_ifb,
                                  R.A_s, R.A_r, R.w, R.y, h2local, col_disp);
+            // Card NOM N2a: one tag per data row (kind, satellite, signal), by the split's own
+            // weight-pass tests; every site below that appends rows appends their tags in
+            // lockstep (StationAssembly::row_tags).  Trace class: no reader takes a decision
+            // from a tag in this step.
+            {
+                const bool scc_on = config_.networkSecondCodeRowsActive();
+                const std::set<std::string> isc =
+                    scc_on ? receiverIscSignals(*st.sm) : std::set<std::string>{};
+                tagDataRows(R.row_tags, em.H.rows(), em.satellite_ids, em.signal_types,
+                            scc_on ? &isc : nullptr, st.spc_cells);
+            }
             // The parameter inventory (card NOM N1): every column of this station's state
             // manager as a parameter instance with the disposition the split just gave it,
             // and every shared state a gate withheld from the station this epoch as an
@@ -3523,6 +3547,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 std::vector<int> pin_col;       // A_r column of each pin
                 std::vector<double> pin_y;       // innovation = target - current absolute value
                 std::vector<double> pin_w;       // row information weight: 1e10 hard pins, 1/σ² RPB priors
+                std::vector<RowTag> pin_tag;     // one contribution tag per pin row (card NOM N2a)
                 // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): each fold
                 // lambda reports its outcome, so the eq34 call sites below can tally
                 // the otherwise silent early returns per (constellation,signal), the
@@ -3552,6 +3577,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         }
                     }
                     pin_col.push_back(hit->second);
+                    if (const auto ap = StateKeys::parseAmbiguityKey(amb_key))
+                        pin_tag.push_back(makeRowTag(ContributionKind::AmbiguityPin,
+                                                     ap->satellite, ap->signal));
+                    else
+                        pin_tag.push_back(RowTag{ContributionKind::AmbiguityPin, {}, {}});
                     // Keep the exact legacy expression (−piv_x) when pinning to 0:
                     // "0.0 − x" flips the sign of a zero x, which would perturb the
                     // off-path golden hash.  A nonzero eq34 re-pin target uses the
@@ -3585,6 +3615,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     pin_col.push_back(hit->second);
                     pin_y.push_back(-piv_x(rpb_idx));
                     pin_w.push_back(1e10);   // hard pin (exact gauge)
+                    pin_tag.push_back(rxPhaseBiasTag(ContributionKind::Eq34RpbPin, rpb_key));
                     return kPinFolded;
                 };
                 if (phase_datum_prioritized) {
@@ -3642,6 +3673,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             pin_col.push_back(hit->second);
                             pin_y.push_back(-x0);
                             pin_w.push_back(eq34_rpb_prior_w);
+                            pin_tag.push_back(
+                                rxPhaseBiasTag(ContributionKind::Eq34RpbRankFloor, rpb_key));
                         }
                         if (eq34_rpb_q > 0.0) {
                             // Local δ_{r,σ} time-linking (D6 v2, local form):
@@ -3663,6 +3696,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                         pin_y.push_back(
                                             rc->second.value_abs - x0);
                                         pin_w.push_back(1.0 / v);
+                                        pin_tag.push_back(rxPhaseBiasTag(
+                                            ContributionKind::Eq34RpbTimeLink, rpb_key));
                                     }
                                 } else if (carryPastHorizon(pl_now_s, rc->second.last_seen_s,
                                                             pl_max_gap_s)) {
@@ -3692,6 +3727,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         R.w(m0 + k) = pin_w[k];   // 1e10 pins / 1/σ² RPB priors
                         R.y(m0 + k) = pin_y[k];
                     }
+                    R.row_tags.insert(R.row_tags.end(), pin_tag.begin(), pin_tag.end());
                     // Hard pins only: pd_pin_aware and the total_pins ledger
                     // must not count the soft RPB prior rows as gauge pins.
                     R.np = n_hard;
@@ -3723,15 +3759,22 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // the flag is off.
             if (config_.enableGlonassNetwork()) {
                 std::vector<int> anchor_cols;
+                std::vector<RowTag> anchor_tag;   // one contribution tag per anchor row (card NOM N2a)
                 for (const auto& [key, sidx] : st.sm->getCodeBiasStates()) {
                     if (!StateKeys::isGlonassPerSlotIfbKey(key)) continue;
                     const auto hit = h2local.find(static_cast<int>(sidx));
-                    if (hit != h2local.end()) anchor_cols.push_back(hit->second);
+                    if (hit != h2local.end()) {
+                        anchor_cols.push_back(hit->second);
+                        anchor_tag.push_back(RowTag{ContributionKind::GloIfbAnchor, {}, {}});
+                    }
                 }
                 for (const auto& [sat, sidx] : st.sm->getIonosphereStates()) {
                     if (systemOfSat(sat) != System::GLONASS) continue;  // GLONASS iono only
                     const auto hit = h2local.find(static_cast<int>(sidx));
-                    if (hit != h2local.end()) anchor_cols.push_back(hit->second);
+                    if (hit != h2local.end()) {
+                        anchor_cols.push_back(hit->second);
+                        anchor_tag.push_back(makeRowTag(ContributionKind::GloIonoAnchor, sat));
+                    }
                 }
                 const int ni = static_cast<int>(anchor_cols.size());
                 if (ni > 0) {
@@ -3748,6 +3791,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         R.w(m0 + k) = kGloAnchorWeight;
                         R.y(m0 + k) = 0.0;  // toward 0 (absolute solve, lin pt 0)
                     }
+                    R.row_tags.insert(R.row_tags.end(), anchor_tag.begin(), anchor_tag.end());
                 }
             }
 
@@ -3768,10 +3812,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                          (ctx.knobs.dw_admit_validate_k > 0.0
                                           && ctx.carry.dw_tie_seeded)
                                              ? &ctx.carry.dw_tie_seen : nullptr,
-                                         R.A_s, R.A_r, R.w, R.y);
+                                         R.A_s, R.A_r, R.w, R.y, R.row_tags);
             else if (config_.estimateNetworkSatCodeBias())
-                networkAppendGimIonoRows_(st, modeled[i], h2local, se.time,
-                                          R.A_s, R.A_r, R.w, R.y);
+                R.gim_rows = networkAppendGimIonoRows_(st, modeled[i], h2local, se.time,
+                                                       R.A_s, R.A_r, R.w, R.y, R.row_tags);
 
             // --- SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md) --------
             // Appended after the iono rows and before the block reaches
@@ -3780,7 +3824,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // the call then returns immediately (byte-identical).
             if (config_.getNetworkConfig().sd_ewl.enable)
                 networkAppendSdEwlRows_(st, est, modeled[i], h2local, se.time,
-                                        R.A_s, R.A_r, R.w, R.y, R.sd_ewl_trace,
+                                        R.A_s, R.A_r, R.w, R.y, R.row_tags, R.sd_ewl_trace,
                                         &ctx.carry.sd_ewl_fix, i);
 
             // --- Phase-leveling carry: record present ambiguities and build the
@@ -3850,12 +3894,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // pointer), so the gate is byte-identical there.
             if (legacy_local_inject || rx_cb_on || rx_cb_datum || iono_on || opin_on) {
                 const Eigen::VectorXd x_lin = st.sm->getStateVector();
-                std::vector<std::tuple<Eigen::Index, double, double>> inj;  // (col, Λ, η): legacy diagonal path
+                std::vector<std::tuple<Eigen::Index, double, double, RowTag>> inj;  // (col, Λ, η, tag): legacy diagonal path (the tag: card NOM N2a)
                 // The pre-PD half of the same channel (card RF-PD-fix).  Rows land here
                 // only under network.station_prior_before_pd, and then never in `inj`:
                 // the two are folded by different calls that do not sum.  Empty when
                 // off, so the finalize below is a no-op and R.prior_* stays empty.
-                std::vector<std::tuple<Eigen::Index, double, double>> inj_prior;  // (col, Λ, η): RF-PD-fix pre-PD datum rows
+                std::vector<std::tuple<Eigen::Index, double, double, RowTag>> inj_prior;  // (col, Λ, η, tag): RF-PD-fix pre-PD datum rows
                 // Per-sat re-level census (QUEUE 8b, scope=relevel), filled by the
                 // pl_amb walk below and consumed by the iono-carry block after it.
                 // freed = any band in the latched free set; seen/carried partition the
@@ -3961,15 +4005,19 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                              const std::string& sat = {},
                                              const std::string& signal = {}) {
                     if (!(var_eff > 0.0)) return;
+                    // The column's identity, for the row's or the prior's tag (card NOM N2a).
+                    const RowTag amb_tag =
+                        makeRowTag(ContributionKind::PriorAmbiguity, sat, signal);
                     if (carry_cpl_cond) {
-                        cb.buildCplRow(col, x_lin(amb_idx), lc, var_eff, gap_clamped);
+                        cb.buildCplRow(col, x_lin(amb_idx), lc, var_eff, gap_clamped,
+                                       amb_tag.sat, amb_tag.signal);
                         amb_state_note(sat, signal, var_eff, AmbFoldRoute::CouplingScalar);
                         return;
                     }
                     const double lambda = 1.0 / var_eff;
                     const double eta = lambda * (lc.value_abs - x_lin(amb_idx));
                     if (!std::isfinite(eta)) return;            // guard: a non-finite η must not reach u_r
-                    inj.emplace_back(col, lambda, eta);
+                    inj.emplace_back(col, lambda, eta, amb_tag);
                     amb_state_note(sat, signal, var_eff, AmbFoldRoute::Diag);
                 };
                 struct PlPend {   // an injectable column awaiting its LOS B_eff (F1 on route)
@@ -4215,6 +4263,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             icol, x_lin(iidx), &iit->second, ivar_eff,
                             std::max(0.0, igap), /*vce_fac=*/1.0,
                             /*is_zwd=*/false, /*is_iono=*/true});
+                        iono_bc.back().sat =
+                            makeRowTag(ContributionKind::BlockIono, isat).sat;   // card NOM N2a
                     }
                 }
                 // --- RX-CLK-in-block (network.carry_rx_clock_in_block): collect this
@@ -4388,6 +4438,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             /*vce_fac=*/1.0, /*is_zwd=*/false, /*is_iono=*/false,
                             /*var_add=*/0.0, /*is_rx_clk=*/false, /*is_rx_isb=*/false,
                             /*is_rx_cb=*/true});
+                        rxcb_bc.back().signal =
+                            rxCodeBiasTag(ContributionKind::BlockRxCodeBias, cb_key).signal;   // card NOM N2a
                     }
                 }
                 // Card LGM (network.phase_colour_state, section 4.1): the station's carried
@@ -4427,6 +4479,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                            &pr, pvar, std::max(0.0, pgap), /*vce_fac=*/1.0};
                         pcol.phi   = phi;
                         pcol.is_pc = true;
+                        pcol.sat   = makeRowTag(ContributionKind::BlockPhaseColour, pc_sat).sat;   // card NOM N2a
                         pc_bc.push_back(pcol);
                         R.pc_planned.push_back(pcol.col);
                     }
@@ -4490,6 +4543,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                 vce_apply.factor(NetworkCarryVceApply::kPl, p.sat),
                                 /*is_zwd=*/false, /*is_iono=*/false,
                                 /*var_add=*/p.var_add});
+                            {   // the column's identity, for its block row's tag (card NOM N2a)
+                                const RowTag t = makeRowTag(ContributionKind::BlockAmbiguity,
+                                                            p.sat, p.signal);
+                                bc.back().sat    = t.sat;
+                                bc.back().signal = t.signal;
+                            }
                         }
                         R.pl_blk_young_cols += static_cast<long long>(pl_young.size());
                         // "free" young legs must not fall through to the per-column fallback
@@ -4677,7 +4736,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                     ++R.pc_block_folds;
                                 } else {
                                     const std::size_t n0 = cb.crows.size();
-                                    cb.buildCplRow(pc.col, pc.x_lin, *pc.lc, pc.var_eff, pc.gap);
+                                    cb.buildCplRow(pc.col, pc.x_lin, *pc.lc, pc.var_eff, pc.gap,
+                                                   pc.sat, pc.signal);
                                     if (cb.crows.size() > n0) {
                                         R.pc_folded.push_back(pc.col);
                                         ++R.pc_fallback_folds;
@@ -4806,7 +4866,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (!std::isfinite(lam) || !std::isfinite(eta)) {
                             ++R.opin_no_column; continue;  // a non-finite row must not reach u_r
                         }
-                        inj.emplace_back(static_cast<Eigen::Index>(hit->second), lam, eta);
+                        inj.emplace_back(static_cast<Eigen::Index>(hit->second), lam, eta,
+                                         makeRowTag(ContributionKind::PriorOraclePin,
+                                                    parts->satellite, parts->signal));
                         ++R.opin_rows;
                     }
                 }
@@ -4844,14 +4906,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                             if (carry_cpl_cond) {
                                                 cb.buildCplRow(zcol, x_lin(tropo_idx),
                                                             zit->second, zvar_eff,
-                                                            std::max(0.0, zgap));
+                                                            std::max(0.0, zgap),
+                                                            SatId{}, SignalId{});
                                                 R.pl_zwd_injected = true;   // a carry was actually folded (L7)
                                             } else {
                                                 const double zlambda = 1.0 / zvar_eff;
                                                 const double zeta =
                                                     zlambda * (zit->second.value_abs - x_lin(tropo_idx));
                                                 if (std::isfinite(zeta)) {
-                                                    inj.emplace_back(zcol, zlambda, zeta);
+                                                    inj.emplace_back(zcol, zlambda, zeta,
+                                                                     RowTag{ContributionKind::PriorZwd, {}, {}});
                                                     R.pl_zwd_injected = true;   // a carry was actually folded (L7)
                                                 }
                                             }
@@ -4942,7 +5006,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         const double ieta =
                             ilambda * (iit->second.value_abs - x_lin(iidx));
                         if (!std::isfinite(ieta)) continue;
-                        inj.emplace_back(icol, ilambda, ieta);
+                        inj.emplace_back(icol, ilambda, ieta,
+                                         makeRowTag(ContributionKind::PriorIono, isat));
                         ++R.iono_carry_injected;
                         R.iono_injected_sats.insert(isat);
                     }
@@ -5010,8 +5075,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                 // original emplace at the original point in the walk, so
                                 // the coalesce order and every byte downstream are
                                 // unchanged.
-                                if (sta_prior_pre_pd) inj_prior.emplace_back(cbcol, lam, eta);
-                                else                  inj.emplace_back(cbcol, lam, eta);
+                                if (sta_prior_pre_pd)
+                                    inj_prior.emplace_back(cbcol, lam, eta,
+                                                           RowTag{ContributionKind::PriorRxcbDatumPrePd, {}, {}});
+                                else
+                                    inj.emplace_back(cbcol, lam, eta,
+                                                     RowTag{ContributionKind::PriorRxcbDatum, {}, {}});
                                 ++R.pl_cb_datum_rows;
                             }
                         }
@@ -5090,7 +5159,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         const double cb_lambda = 1.0 / cb_var_eff;
                         const double cb_eta = cb_lambda * cb_innov;
                         if (!std::isfinite(cb_eta)) continue;
-                        inj.emplace_back(cbcol, cb_lambda, cb_eta);
+                        inj.emplace_back(cbcol, cb_lambda, cb_eta,
+                                         rxCodeBiasTag(ContributionKind::PriorRxCodeBias, cb_key));
                         ++R.pl_cb_injected;
                         // Accumulation for the next epoch's μ (LV-2).  Only folded rows
                         // vote (a withheld row exerts no force), and the mean is taken
@@ -5126,12 +5196,15 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // addStationPrior twice (which does not sum).  Without such a pair
                     // every column contributes at most one row, the vector has no
                     // duplicates, and this leaves it byte-identical.
+                    // The tag travels with its entry; an entry merged into another keeps its
+                    // tag in carry_merged (card NOM N2a).
                     if (inj.size() > 1) {
                         std::size_t w = 0;
                         for (std::size_t r = 1; r < inj.size(); ++r) {
                             if (std::get<0>(inj[r]) == std::get<0>(inj[w])) {
                                 std::get<1>(inj[w]) += std::get<1>(inj[r]);
                                 std::get<2>(inj[w]) += std::get<2>(inj[r]);
+                                R.carry_merged.push_back(std::get<3>(inj[r]));
                             } else {
                                 inj[++w] = inj[r];
                             }
@@ -5142,10 +5215,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     R.carry_cols.resize(static_cast<size_t>(ninj));
                     R.carry_dNrr.resize(ninj);
                     R.carry_dur.resize(ninj);
+                    R.carry_tags.resize(static_cast<size_t>(ninj));
                     for (Eigen::Index k = 0; k < ninj; ++k) {
                         R.carry_cols[static_cast<size_t>(k)] = std::get<0>(inj[static_cast<size_t>(k)]);
                         R.carry_dNrr(k) = std::get<1>(inj[static_cast<size_t>(k)]);
                         R.carry_dur(k)  = std::get<2>(inj[static_cast<size_t>(k)]);
+                        R.carry_tags[static_cast<size_t>(k)] = std::get<3>(inj[static_cast<size_t>(k)]);
                     }
                     // The same finalize for the pre-PD datum rows (card RF-PD-fix):
                     // ascending column order for a deterministic fold, and the same
@@ -5161,6 +5236,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             if (std::get<0>(inj_prior[r]) == std::get<0>(inj_prior[w])) {
                                 std::get<1>(inj_prior[w]) += std::get<1>(inj_prior[r]);
                                 std::get<2>(inj_prior[w]) += std::get<2>(inj_prior[r]);
+                                R.prior_merged.push_back(std::get<3>(inj_prior[r]));   // card NOM N2a
                             } else {
                                 inj_prior[++w] = inj_prior[r];
                             }
@@ -5171,10 +5247,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     R.prior_cols.resize(static_cast<size_t>(npri));
                     R.prior_dNrr.resize(npri);
                     R.prior_dur.resize(npri);
+                    R.prior_tags.resize(static_cast<size_t>(npri));
                     for (Eigen::Index k = 0; k < npri; ++k) {
                         R.prior_cols[static_cast<size_t>(k)] = std::get<0>(inj_prior[static_cast<size_t>(k)]);
                         R.prior_dNrr(k) = std::get<1>(inj_prior[static_cast<size_t>(k)]);
                         R.prior_dur(k)  = std::get<2>(inj_prior[static_cast<size_t>(k)]);
+                        R.prior_tags[static_cast<size_t>(k)] = std::get<3>(inj_prior[static_cast<size_t>(k)]);
                     }
                 }
             }
@@ -5190,6 +5268,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             if (ctx.knobs.pc_on) {
                 const Eigen::VectorXd x_lin_pc = st.sm->getStateVector();
                 std::vector<std::tuple<Eigen::Index, double, double>> brows;   // (col, w, y)
+                std::vector<RowTag> brow_tag;   // one contribution tag per row (card NOM N2a)
                 for (const auto& [pc_sat, pc_sidx] : st.sm->getPhaseColourStates()) {
                     const int pidx = static_cast<int>(pc_sidx);
                     if (pidx < 0 || pidx >= x_lin_pc.size() || !std::isfinite(x_lin_pc(pidx)))
@@ -5205,10 +5284,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     brows.emplace_back(pcol, 1.0 / ctx.knobs.pcStationaryVar(elev),
                                        -x_lin_pc(pidx));
                     if (std::find(R.pc_planned.begin(), R.pc_planned.end(), pcol)
-                        != R.pc_planned.end())
+                        != R.pc_planned.end()) {
                         ++R.pc_backstop_rows;
-                    else
+                        brow_tag.push_back(makeRowTag(ContributionKind::PhaseColourBackstop, pc_sat));
+                    } else {
                         ++R.pc_birth_rows;
+                        brow_tag.push_back(makeRowTag(ContributionKind::PhaseColourBirth, pc_sat));
+                    }
                 }
                 const Eigen::Index nb = static_cast<Eigen::Index>(brows.size());
                 if (nb > 0) {
@@ -5225,6 +5307,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         R.w(m0 + k) = bc_w;
                         R.y(m0 + k) = bc_y;
                     }
+                    R.row_tags.insert(R.row_tags.end(), brow_tag.begin(), brow_tag.end());
                 }
             }
             // --- Unconditional Z-row capture (§17 finding 3): record the tropo
@@ -5698,6 +5781,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             try {
                 est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
                                     R.carry_cols, R.carry_dNrr, R.carry_dur);
+                R.carry_prior_folded = true;   // its entries count as folded (card NOM N2a)
             } catch (const std::exception& ex) {
                 log->warn("Network[phase-leveling]: station '{}' carry inject rejected "
                           "({}); proceeding without its carry this epoch", st.name, ex.what());
@@ -5820,6 +5904,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             std::chrono::steady_clock::now() - sec_asm_t0).count();
         sec_asm_wall_ms += sec_asm_ms_epoch;
     }
+
+    // Card NOM N2a: the station side of "contributions as armed" (the rows and diagonal
+    // entries of the stations the estimator took, per kind), and every assembled station's
+    // tags checked against its rows.  Serial, trace class; the epoch tail adds the shared
+    // folds and writes the table.
+    networkContributionsStationDrain(ctx.contributions, asm_res, est_index_of,
+                                     se.time.week, se.time.tow);
 
     if (!epoch_ok || est.numShared() == 0) {
         ++n_skipped;

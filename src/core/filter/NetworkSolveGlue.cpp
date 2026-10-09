@@ -466,6 +466,9 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     networkSignalRosterDatumPin(ctx, this_epoch_if_pin_real);
     if (cbd.H.rows() > 0) {
         est.attribTag("w6_cb_gauge");
+        // Card NOM N2a: one kind per row, by row type (the builder's row_kinds); a size
+        // mismatch would leave the fold without a kind, on the table's integrity line.
+        est.contributionRowKinds(&cbd.row_kinds);
         est.addSharedConstraintRows(cbd.H, cbd.z, NetworkSbasis::kCodeBiasGaugeWeight);
         // On-path telemetry (RF-0b).  In the no-constraint posture these rows are the
         // whole satellite code-bias datum, not a gauge beside an ionosphere constraint,
@@ -581,6 +584,7 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             registered_code_keys, config_.networkCbKaulaSigmaM());
         if (!kp.empty()) {
             est.attribTag("cb_kaula");
+            est.contributionKind(ContributionKind::CbKaula);   // card NOM N2a
             est.addSharedPrior(kp);
             // The RAIM within-epoch replay re-solves from a fresh beginEpoch();
             // a prior missing there would give the replayed solve a different
@@ -705,6 +709,7 @@ try {
 // has 0 rows and this is a no-op (byte-identical).
 if (plan.clock_constraint_H.rows() > 0) {
     est.attribTag("clock_datum_rows");
+    est.contributionKind(ContributionKind::ClockConstraintRows);   // card NOM N2a
     est.addSharedConstraintRows(plan.clock_constraint_H, plan.clock_constraint_z,
                                 plan.clock_constraint_weight);
 }
@@ -1002,6 +1007,7 @@ if (ctx.knobs.sbasis_complete_on) {
         // completion's own rows, value for value).
         const Eigen::MatrixXd sbc_H =
             ccl_sbc ? networkClockClonePadRows(sbc.H, est.numShared()) : sbc.H;
+        est.contributionKind(ContributionKind::SbasisCompletion);   // card NOM N2a
         est.addSharedConstraintRows(sbc_H, sbc.z,
                                     NetworkSbasis::kSbasisCompleteWeight);
         if (within_epoch_armed) {   // RAIM-replay capture (EpochWorkspace contract)
@@ -1343,6 +1349,7 @@ networkInjectClockOscPrior(ctx, ws, traces, se.time, est, registered_clock_sats,
             clk_anchor.push_back(p);
         }
         est.attribTag("clk_anchor");
+        est.contributionKind(ContributionKind::ColdClockAnchor);   // card NOM N2a
         est.addSharedPrior(clk_anchor);
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), clk_anchor.begin(), clk_anchor.end());
@@ -1732,6 +1739,9 @@ if (within_epoch_armed && carry_warm) {
         replay_fail_at.clear();
         replay_fail_idx = -1;
         we_free_replay = 0;
+        // Card NOM N2a: the replay's re-folds are counted apart from the primary build's
+        // contributions (switched off at the end, and by the callers' catch blocks).
+        est.contributionReplay(true);
         est.beginEpoch();
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!orig_added[i] || drop_stations.count(static_cast<int>(i))
@@ -1847,6 +1857,16 @@ if (within_epoch_armed && carry_warm) {
                                                    R.A_r.cols(), R.A_s.cols(), Hr, Hs, z);
                 const Eigen::Index nd = R.cpl_row_start;             // data + SH rows (unchanged)
                 const Eigen::Index nk = ok ? Hr.rows() : 0;          // surviving coupling rows
+                // Card NOM N2a: the rebuilt block's row tags, the rows before the coupling
+                // block then the kept coupling rows' (the re-whiten's keep rule), checked
+                // against the rebuilt rows.  Trace class: nothing reads them in this step.
+                {
+                    const std::vector<RowTag> replay_tags =
+                        rowTagsAfterJointRewhiten(R.row_tags, nd, R.cpl_raw, refloat_cols, nk);
+                    ++ctx.contributions.replay_realigned;
+                    if (static_cast<Eigen::Index>(replay_tags.size()) != nd + nk)
+                        ++ctx.contributions.replay_misaligned;
+                }
                 Eigen::MatrixXd As(nd + nk, R.A_s.cols()), Ar(nd + nk, R.A_r.cols());
                 Eigen::VectorXd rw(nd + nk), ry(nd + nk);
                 As.topRows(nd) = R.A_s.topRows(nd);
@@ -2017,7 +2037,9 @@ if (within_epoch_armed && carry_warm) {
         // them, and est_index_of was rebuilt above).  The predict is not re-run;
         // only the fold is rebuilt.  No-op when off (card 4 (M1), C3b).
         buildCarryDdPriors();
-        return est.solve(plan.shared_datum);
+        Eigen::VectorXd x_replay = est.solve(plan.shared_datum);
+        est.contributionReplay(false);   // card NOM N2a
+        return x_replay;
     };
 
     double sigma0 = 1.0;
@@ -2173,6 +2195,7 @@ if (within_epoch_armed && carry_warm) {
         we_adapt_attempted = true;
         try { x_try = resolve_dropping(); }
         catch (const std::exception& ex) {
+            est.contributionReplay(false);   // card NOM N2a: the replay ended in a throw
             // A re-solve can fail where the primary solve did not: the replay re-adds
             // edited blocks, and a replay that rebuilds a block differently from the
             // primary rejects a station the primary admitted (card RPD).  The throw
@@ -2221,6 +2244,7 @@ if (within_epoch_armed && carry_warm) {
                     x_s = resolve_dropping();
                     break;
                 } catch (const std::exception& ex2) {
+                    est.contributionReplay(false);   // card NOM N2a: the replay ended in a throw
                     const int bad = replay_fail_idx;
                     if (bad >= 0 && (phase_datum_prioritized || !stations[bad].is_pivot)
                         && static_cast<int>(undo_dropped.size()) < kMaxAdapt) {

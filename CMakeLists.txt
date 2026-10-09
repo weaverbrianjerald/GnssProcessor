@@ -255,6 +255,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkPbHoldClone.cpp
     src/core/filter/NetworkParamRegistry.cpp
     src/core/filter/NetworkParamInventory.cpp
+    src/core/filter/NetworkContributions.cpp
     src/core/filter/NetworkAmbStateTrace.cpp
     src/core/filter/NetworkAmbFloat.cpp
     src/core/filter/NetworkBiasAdmission.cpp
@@ -531,6 +532,7 @@ add_executable(gnss_tests
     tests/test_network_param_registry.cpp
     tests/test_gnss_identity.cpp
     tests/test_network_param_inventory.cpp
+    tests/test_network_contributions.cpp
     tests/test_phase_colour_state.cpp
     tests/test_exl_switch_on_resume.cpp
     tests/test_carry_disposition.cpp

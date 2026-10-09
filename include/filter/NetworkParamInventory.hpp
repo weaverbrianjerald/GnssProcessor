@@ -30,23 +30,27 @@
  *  - @ref ParamClass: one line of the table (registry kind, @ref ParamForm, constellation,
  *    signal or band).  @ref ParamInstanceId is a class plus the subject fields a line
  *    sums over (satellite, GLONASS slot, station).
- *  - @ref StateContainer: where a column sits in the station's @c StateManager, the
- *    classifier's input (not a second kind enum; see its documentation).
+ *  - @c StateContainer: where a column sits in the station's @c StateManager, the
+ *    classifier's input (not a second kind enum; see its documentation in
+ *    measurement/AbsorbedSharedStates.hpp).
  *  - @ref RxIfbRule: the declared rule behind the receiver IFB drop.
- *  - @ref AbsorbedReason: why a gate withheld a shared satellite state from a station, one
+ *  - @c AbsorbedReason: why a gate withheld a shared satellite state from a station, one
  *    value per gate, with its row in the reason table @ref absorbedReasonSpec (the rule,
- *    the code site, what takes the withheld state up).  @ref AbsorbedInstance is one
- *    withheld state; @ref StationAbsorbed is a station's list of them for one epoch.
+ *    the code site, what takes the withheld state up).  @c StationAbsorbed is a station's
+ *    list of the gates' notes for one epoch (measurement/AbsorbedSharedStates.hpp, kept
+ *    apart so that the user-side measurement header includes no network header);
+ *    @ref AbsorbedInstance is one note classified.
  *
  * ### The pieces, in the order a column passes through them
  *
  *  1. Before the split, a gate that withholds a shared satellite state (a satellite phase
  *     or code bias) from a station notes it: the station's state manager never holds the
- *     state (or the gate prunes it), so step 2 cannot see it.  @ref noteAbsorbed
- *     classifies the state's key with the one classifier (step 3) into the station's
- *     @ref StationAbsorbed list, kept for the epoch on the station's @c MeasurementModel
- *     (@c MeasurementModel::absorbedSharedStates).  The gates, in the order they run in an
- *     epoch:
+ *     state (or the gate prunes it), so step 2 cannot see it.  @c noteAbsorbed appends
+ *     the state's (container, key, reason) to the station's @c StationAbsorbed list, kept
+ *     for the epoch on the station's @c MeasurementModel
+ *     (@c MeasurementModel::absorbedSharedStates); step 5 classifies each note with the
+ *     one classifier (step 3, @ref classifyAbsorbed).  The gates, in the order they run
+ *     in an epoch:
  *      - PASS A, per station, @c MeasurementModel::ensureNetworkSharedStates (which clears
  *        the list at its start): the GLONASS code-only scope, the unmatched receiver
  *        antenna, the coverage allowlist, the legacy pivot allowlist and the CB-ADM
@@ -103,6 +107,7 @@
 
 #include "common/GnssIdentity.hpp"           // System, SatId, SignalId, StationId, FrequencyBand
 #include "filter/NetworkParamRegistry.hpp"   // NetworkParamKind
+#include "measurement/AbsorbedSharedStates.hpp"  // StateContainer, AbsorbedReason, StationAbsorbed (card NOM N1b)
 
 #include <array>
 #include <cstddef>
@@ -274,33 +279,10 @@ namespace GnssProcessor {
     // The station's state manager, listed and classified
     // =======================================================================
 
-    /**
-     * @brief Where a column sits in a station's @c StateManager: one value per index map the
-     *        network can populate, plus the fixed core.  The classifier's input.
-     *
-     * This is not a second parameter kind.  The kind cannot be read from a key alone: keys
-     * collide across containers ("G05" is the key of a slant-ionosphere state in
-     * @c getIonosphereStates() and of a phase-colour state in @c getPhaseColourStates()),
-     * and the fixed-core columns have no key at all.  The (container, key) pair is how the
-     * state manager itself addresses a column, so the classifier takes both.  The values
-     * are named after the @c StateManager accessors so they cannot be read as
-     * @c NetworkParamKind values.
-     */
-    enum class StateContainer : std::uint8_t {
-        PositionIndex = 0,        ///< @c getPositionIndex(): the three position columns (no key).
-        ClockIndex,               ///< @c getClockIndex(): the receiver clock (no key).
-        TropoIndex,               ///< @c getTropoIndex(): the zenith wet delay (no key).
-        SystemTimeOffsetStates,   ///< @c getSystemTimeOffsetStates(): key = system name.
-        IonosphereStates,         ///< @c getIonosphereStates(): key = satellite.
-        PhaseColourStates,        ///< @c getPhaseColourStates(): key = satellite (card LGM).
-        Ambiguities,              ///< @c getAmbiguities(): key per @c StateKeys::makeAmbiguityKey (or the NL / WL forms).
-        ReceiverPhaseBiasStates,  ///< @c getReceiverPhaseBiasStates(): key per @c StateKeys::makeReceiverPhaseBiasKey.
-        CodeBiasStates,           ///< @c getCodeBiasStates(): key per the DCB / IFB / ISC / per-slot makers.
-        SatClockStates,           ///< @c getSatClockStates(): key per @c StateKeys::makeSatClockKey.
-        SatPhaseBiasStates,       ///< @c getSatPhaseBiasStates(): key per @c StateKeys::makeSatPhaseBiasKey.
-        SatBiasStates,            ///< @c getSatBiasStates(): key per @c StateKeys::makeSatBiasKey.
-        Unlisted,                 ///< Any other column (velocity, clock rate, gradients, ...); key = its @c getStateLabels() label.
-    };
+    // StateContainer (where a column sits in a station's StateManager, the classifier's
+    // input) is declared in measurement/AbsorbedSharedStates.hpp, beside the absorbed-state
+    // record that uses it, so that the user-side measurement header includes no network
+    // header (card NOM2 section 1).
 
     /**
      * @brief The name of a container, used in the unclassified labels ("<container>:<key>").
@@ -357,28 +339,10 @@ namespace GnssProcessor {
     // Absorbed instances: shared states a gate withheld from a station
     // =======================================================================
 
-    /**
-     * @brief Why a shared satellite state was withheld from a station: one value per gate.
-     *
-     * A withheld state is a parameter instance with disposition @c Absorbed: the station's
-     * observation still builds its row, and another parameter of the station takes the
-     * withheld term up.  The reason table @ref absorbedReasonSpec gives each value its
-     * rule, its code site and what takes the state up.  The first five gates sit in
-     * @c MeasurementModel::ensureNetworkSharedStates (PASS A, at allocation), the last two
-     * prune states the station had allocated (serial, before PASS B).
-     */
-    enum class AbsorbedReason : std::uint8_t {
-        GlonassCodeOnlyScope = 0,  ///< GLONASS on the network's code-only scope: no satellite phase or code bias under FDMA.
-        UnmatchedAntenna,          ///< The station's receiver antenna has no ATX model (network.phase_bias_exclude_unmatched_antenna).
-        CoverageGate,              ///< The signal is outside the coverage allowlist (network.phase_bias_min_station_fraction).
-        Allowlist,                 ///< Legacy single-pivot datum: the key is not among the pivot station's phase-bias keys.
-        CodeCensusCogate,          ///< The CB-ADM census quarantined the signal's companion code pair (network.cb_admission).
-        AnchoredUnionCoverage,     ///< Fewer than network.phase_datum_min_stations stations hold the key this epoch.
-        AnchorHygieneBlock,        ///< eq34 hygiene: every candidate host arc is younger than network.eq34_anchor_min_arc_ep.
-    };
-
-    /// Number of @ref AbsorbedReason values.
-    inline constexpr std::size_t kAbsorbedReasons = 7;
+    // AbsorbedReason (one value per gate), kAbsorbedReasons, the station's record
+    // StationAbsorbed and noteAbsorbed are declared in measurement/AbsorbedSharedStates.hpp:
+    // the record lives on the station's MeasurementModel, whose header includes no network
+    // header (card NOM2 section 1).  This header classifies and counts the record.
 
     /**
      * @brief One row of the reason table: what a reader needs to know about a gate.
@@ -422,7 +386,7 @@ namespace GnssProcessor {
     const char* absorbedBy(AbsorbedReason r, NetworkParamKind kind);
 
     /**
-     * @brief One shared satellite state a gate withheld from a station this epoch.
+     * @brief One shared satellite state a gate withheld from a station this epoch, classified.
      */
     struct AbsorbedInstance {
         /// The instance: kind @c SatPhaseBias or @c SatCodeBias, its constellation, satellite
@@ -433,31 +397,22 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief A station's withheld shared states for one epoch.  Kept on the station's
-     *        @c MeasurementModel, written in network mode only, read by
-     *        @ref recordStationParams after the split.
+     * @brief Classify one withheld state a gate noted (@c noteAbsorbed): its key read by the
+     *        one classifier, @ref classifyStateColumn.
      *
-     * The gates see disjoint sets (each acts on the states the previous one left), so a
-     * (kind, satellite, signal) appears at most once.
+     * @param note The gate's note (container, key, reason).
+     * @return The instance with the note's reason, or @c std::nullopt for a key the
+     *         classifier refuses (the caller counts it unclassified under
+     *         @ref absorbedNoteLabel, never drops it).
      */
-    struct StationAbsorbed {
-        std::vector<AbsorbedInstance> instances;     ///< One per withheld state.
-        /// "<container>:<key>" of a withheld state whose key the classifier refused: counted
-        /// unclassified by @ref recordStationParams, never dropped.
-        std::vector<std::string>      unclassified;
-    };
+    std::optional<AbsorbedInstance> classifyAbsorbed(const AbsorbedNote& note);
 
     /**
-     * @brief Note one withheld state: classify its key and append it to a station's list.
-     *
-     * @param into      The station's list.
-     * @param container @c SatPhaseBiasStates or @c SatBiasStates: where the state would sit.
-     * @param key       The key the state has, or would have had
-     *                  (@c StateKeys::makeSatPhaseBiasKey, @c StateKeys::makeSatBiasKey).
-     * @param reason    The gate.
+     * @brief The label of a note in the unclassified list: "<container>:<key>".
+     * @param note The gate's note.
+     * @return @ref stateContainerName of the container, a colon and the key.
      */
-    void noteAbsorbed(StationAbsorbed& into, StateContainer container, std::string_view key,
-                      AbsorbedReason reason);
+    std::string absorbedNoteLabel(const AbsorbedNote& note);
 
     /**
      * @brief Does the station still hold the column that takes a withheld state up?

@@ -3501,6 +3501,7 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             }
         }
         est.attribTag("d2_sh");
+        est.contributionKind(ContributionKind::ShPrior);   // card NOM N2a
         est.addSharedPrior(sh_priors);
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), sh_priors.begin(), sh_priors.end());
@@ -3543,6 +3544,7 @@ void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             hp.push_back(p);
         }
         est.attribTag("phase_hold");
+        est.contributionKind(ContributionKind::PhaseHold);   // card NOM N2a
         est.addSharedPrior(hp);  // skips keys absent from this epoch's layout
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), hp.begin(), hp.end());
@@ -3578,6 +3580,7 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     }
     if (bp.empty()) return;
     est.attribTag("pin_bridge");
+    est.contributionKind(ContributionKind::PinBridge);   // card NOM N2a
     est.addSharedPrior(bp);   // skips keys absent from this epoch's layout
     if (within_epoch_armed)
         ws.cap_priors.insert(ws.cap_priors.end(), bp.begin(), bp.end());
@@ -3863,11 +3866,13 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         // the S-basis datum.  Non-clock entries fold identically either way, and the off
         // path is the original single call.
         if (ctx.knobs.carry_gauge_free) {
+            est.contributionKind(ContributionKind::BorderCarryGaugeFree);   // card NOM N2a
             const std::size_t gf = est.addSharedPriorClockGaugeFree(
                 priors, ctx.knobs.carry_gauge_free_closure);
             ctx.counters.cta_gf_keys += static_cast<long long>(gf);
             if (gf == 0) ++ctx.counters.cta_gf_inert;
         } else {
+            est.contributionKind(ContributionKind::BorderCarryDiagonal);   // card NOM N2a
             est.addSharedPrior(priors);  // skips params absent from this epoch's layout
         }
         if (within_epoch_armed)
@@ -4013,6 +4018,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                     ctx, ws, est, dkeys, drow, dvar_eff, dinflate, dreexp, cov_eff,
                     within_epoch_armed, anchor_info_trace.is_open() ? &clk_prior_info : nullptr);
                 if (!ccl_fold) {
+                    est.contributionKind(ContributionKind::BorderCarryDense);   // card NOM N2a
                     est.addSharedPriorDense(dkeys, cov_eff,
                                             anchor_info_trace.is_open() ? &lam : nullptr,
                                             ctx.knobs.carry_gauge_free,
@@ -4071,6 +4077,10 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         // clock is entirely gauge, so nothing is folded for it.  This is conservative by
         // construction: the fallback can under-anchor but cannot re-introduce gauge
         // information.
+        // Card NOM N2a: the leftovers are the border carry folded diagonally.
+        est.contributionKind(ctx.knobs.carry_gauge_free
+                                 ? ContributionKind::BorderCarryGaugeFree
+                                 : ContributionKind::BorderCarryDiagonal);
         if (ctx.knobs.carry_gauge_free)
             ctx.counters.cta_gf_keys +=
                 static_cast<long long>(est.addSharedPriorClockGaugeFree(
@@ -4376,6 +4386,7 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             clkp.push_back(p);
         }
         est.attribTag("clock_osc");
+        est.contributionKind(ContributionKind::ClockOscillator);   // card NOM N2a
         est.addSharedPrior(clkp);
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), clkp.begin(), clkp.end());

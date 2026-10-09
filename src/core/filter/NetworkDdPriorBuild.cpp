@@ -101,6 +101,7 @@ void networkBuildEnsembleGauges(NetworkEstimator& est,
         }
         gauges.push_back(std::move(gz));
     }
+    est.contributionKind(ContributionKind::EnsemblePhaseGauge);   // card NOM N2a
     est.setPhaseSumZeroGauges(std::move(gauges));
 }
 
@@ -756,6 +757,7 @@ void networkBuildCarryDdPriors(
     // bridge / fix rows are applied (no-op unless fold_blocked; LF-1 INC-1).  Runs on
     // every build including the RAIM re-solve, because the blocks are rebuilt each pass.
     carry_driver.finalizeLaneBatch(blocks);
+    est.contributionKind(ContributionKind::DdPriorBlock);   // card NOM N2a
     est.setDdPriors(std::move(blocks));
 }
 

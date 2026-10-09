@@ -758,8 +758,11 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
     // budget), with nothing folded; the caller's diagonal fallback then applies.  Card BCL-d:
     // a block that does not factor with the time t-1 states is folded without them (they are
     // then left free), so the clones cannot add a fallback card SCL would not take.
+    // Card NOM N2a: the stand-in block is the border carry in its dense form (each kind is
+    // named before its call, the retry included: a fold takes the kind it was given).
     if (!dlist.empty()) {
         try {
+            est.contributionKind(ContributionKind::BorderCarryDense);
             est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
                                     /*clock_gauge_free=*/false, /*require_closure=*/false);
         } catch (const std::exception&) {
@@ -768,14 +771,17 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
             cov = std::move(cov_nod);
             dlist.clear();
             if (walks.empty()) return false;   // nothing of card SCL's left to fold
+            est.contributionKind(ContributionKind::BorderCarryDense);
             est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
                                     /*clock_gauge_free=*/false, /*require_closure=*/false);
         }
     } else {
+        est.contributionKind(ContributionKind::BorderCarryDense);
         est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
                                 /*clock_gauge_free=*/false, /*require_closure=*/false);
     }
     est.attribTag("ccl_walk");
+    est.contributionKind(ContributionKind::CloneWalk);   // card NOM N2a
     est.addCloneWalkJoint(walks, Qw);
     long long n_clk_walks = 0;
     for (const auto& w : walks) {
@@ -906,6 +912,7 @@ void networkClockCloneFoldEnd(NetworkRunContext& ctx, EpochWorkspace& ws,
     }
     if (iso.empty()) return;
     est.attribTag("ccl_idle");
+    est.contributionKind(ContributionKind::ClonePrior);   // card NOM N2a
     est.addSharedPrior(iso);
     C.fold_isolated += static_cast<long long>(n_b1_iso);
     if (within_epoch_armed) ws.cap_ccl_idle = std::move(iso);
@@ -943,12 +950,16 @@ bool networkClockCloneRefloat(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
     // The block refold runs first: it builds both of its blocks before folding anything and
     // throws before any fold, so a throw leaves the shared system untouched (the caller then
     // has nothing to restore).
-    if (!block_drop.empty())
+    // Card NOM N2a: every withdrawal and refold here is the clock-anchor guard's (Q3).
+    if (!block_drop.empty()) {
+        est.contributionKind(ContributionKind::Q3Refold);
         est.refoldSharedPriorDenseDroppingClocks(ws.cap_ccl_keys, ws.cap_ccl_cov, block_drop,
                                                  restore, /*clock_gauge_free=*/false,
                                                  /*require_closure=*/false);
+    }
     if (!wd.empty()) {
         if (ws.cap_ccl_walkQ.size() == 0) {
+            est.contributionKind(ContributionKind::Q3Refold);
             est.addCloneWalk(wd, restore ? 1.0 : -1.0);
         } else {
             // Card PFQ: the walks are one joint factor, so a walk cannot be withdrawn on its
@@ -968,10 +979,18 @@ bool networkClockCloneRefloat(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
                     Qk(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b)) =
                         ws.cap_ccl_walkQ(idx[a], idx[b]);
             if (!restore) {
+                est.contributionKind(ContributionKind::Q3Refold);
                 est.addCloneWalkJoint(ws.cap_ccl_walk, ws.cap_ccl_walkQ, -1.0);
-                if (!kept.empty()) est.addCloneWalkJoint(kept, Qk, 1.0);
+                if (!kept.empty()) {
+                    est.contributionKind(ContributionKind::Q3Refold);
+                    est.addCloneWalkJoint(kept, Qk, 1.0);
+                }
             } else {
-                if (!kept.empty()) est.addCloneWalkJoint(kept, Qk, -1.0);
+                if (!kept.empty()) {
+                    est.contributionKind(ContributionKind::Q3Refold);
+                    est.addCloneWalkJoint(kept, Qk, -1.0);
+                }
+                est.contributionKind(ContributionKind::Q3Refold);
                 est.addCloneWalkJoint(ws.cap_ccl_walk, ws.cap_ccl_walkQ, 1.0);
             }
         }

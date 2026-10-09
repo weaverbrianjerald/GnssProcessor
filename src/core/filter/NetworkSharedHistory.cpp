@@ -276,6 +276,7 @@ void networkSharedHistoryFold(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
     }
     if (pri.empty()) return;
     est.attribTag("shx_hist");
+    est.contributionKind(ContributionKind::SharedHistory);   // card NOM N2a
     est.addSharedPrior(pri);
     ctx.counters.shx.fold_priors += static_cast<long long>(pri.size());
     if (within_epoch_armed) ws.cap_shx = std::move(pri);

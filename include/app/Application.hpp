@@ -46,6 +46,8 @@ struct NetStation;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
 struct StationAssembly;      // filter/NetworkRunTypes.hpp (decomposition INC-7)
 enum class ParamDisposition : std::uint8_t;  // filter/NetworkParamInventory.hpp (card NOM N1)
 struct RxIfbRule;            // filter/NetworkParamInventory.hpp (card NOM N1)
+struct RowTag;               // filter/NetworkContributions.hpp (card NOM N2a)
+enum class GimRowsOutcome : std::uint8_t;  // filter/NetworkContributions.hpp (card NOM N2a)
 struct ShDevCarry;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
 struct SyncedEpoch;          // rinex/MultiRinexSync.hpp, namespace scope (decomposition INC-7)
 class  NetworkEstimator;     // filter/NetworkEstimator.hpp (decomposition INC-7)
@@ -606,13 +608,20 @@ private:
      *        prerequisite), folded into station @p st's own block with the
      *        per-constellation common-mode-free R (decomposition INC-7).
      *        Implemented in @c ApplicationNetworkAssembly.cpp.
+     *
+     * @param[in,out] A_s,A_r,w,y  The station's design blocks, extended in place.
+     * @param[in,out] tags  The station's row tags (card NOM N2a): one @c GimIono tag per
+     *                      appended row, in row order.
+     * @return What the builder did (card NOM section 16, suspect 4): no GIM loaded, the
+     *         ionosphere weighting off, no qualifying line of sight, or rows appended.
      */
-    void networkAppendGimIonoRows_(NetStation& st,
+    GimRowsOutcome networkAppendGimIonoRows_(NetStation& st,
                                    const std::vector<PppObservation>& sta_obs,
                                    const std::map<int, int>& h2local,
                                    const GnssTime& t,
                                    Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
-                                   Eigen::VectorXd& w, Eigen::VectorXd& y) const;
+                                   Eigen::VectorXd& w, Eigen::VectorXd& y,
+                                   std::vector<RowTag>& tags) const;
 
     /**
      * @brief Co-estimated SH-VTEC ionosphere pseudo-observation rows: the
@@ -626,6 +635,9 @@ private:
      * @p sh_dev_on, @p sh_dev_carry (const: the serial pre-pass ages it, and
      * this function only looks entries up).  Implemented in
      * @c ApplicationNetworkAssembly.cpp.
+     *
+     * @param[in,out] tags  The station's row tags (card NOM N2a): one @c ShIonoTie tag per
+     *                      appended row (its line of sight's satellite), in row order.
      */
     void networkAppendShIonoRows_(NetStation& st, const NetworkEstimator& est,
                                   const std::vector<PppObservation>& sta_obs,
@@ -639,7 +651,8 @@ private:
                                   const std::set<std::string>& dw_row_held,
                                   const std::set<std::string>* dw_tie_admitted,
                                   Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
-                                  Eigen::VectorXd& w, Eigen::VectorXd& y) const;
+                                  Eigen::VectorXd& w, Eigen::VectorXd& y,
+                                  std::vector<RowTag>& tags) const;
 
     /**
      * @brief Append the SD pre-reduce EWL constraint rows to one station's own block.
@@ -707,6 +720,8 @@ private:
      * @param h2local   Global state index → local column within @p A_r.
      * @param t         Epoch time (trace stamp only).
      * @param[in,out] A_s,A_r,w,y  The station's design blocks, extended in place.
+     * @param[in,out] tags  The station's row tags (card NOM N2a): one @c SdEwl tag per
+     *                      appended row (its satellite), in row order.
      * @param[out] trace_rows  Pre-formatted @c network_sd_ewl.csv lines for this
      *                  station-epoch, drained by PASS B's serial consume.  Untouched
      *                  unless @c network.sd_ewl.trace.
@@ -743,6 +758,7 @@ private:
                                  const GnssTime& t,
                                  Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                                  Eigen::VectorXd& w, Eigen::VectorXd& y,
+                                 std::vector<RowTag>& tags,
                                  std::vector<std::string>& trace_rows,
                                  const std::map<std::pair<std::size_t, char>,
                                                 std::map<std::string, SdEwlFix>>* fix,

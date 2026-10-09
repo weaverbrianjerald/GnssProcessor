@@ -51,6 +51,7 @@
 #include <vector>
 
 #include "filter/NetworkNormalEquations.hpp"
+#include "filter/NetworkContributions.hpp"   // ContributionKind, SharedFoldLog (card NOM N2a)
 #include "products/NetworkProductEmitter.hpp"
 
 namespace spdlog { class logger; }
@@ -1144,7 +1145,10 @@ public:
      * @param gauges One sum-to-zero gauge per (satellite, signal) shared phase bias.
      */
     void setPhaseSumZeroGauges(std::vector<NetworkNormalEquations::SumZeroGauge> gauges) {
+        const TakenKind ck = takeContributionKind_();
+        const long long n = static_cast<long long>(gauges.size());
         phase_sumzero_gauges_ = std::move(gauges);
+        if (n > 0) noteFold_(ck, n);
     }
 
 
@@ -1169,7 +1173,10 @@ public:
      * @param blocks One rank-K DD-prior block per component.
      */
     void setDdPriors(std::vector<NetworkNormalEquations::DdPriorBlock> blocks) {
+        const TakenKind ck = takeContributionKind_();
+        const long long n = static_cast<long long>(blocks.size());
         dd_priors_ = std::move(blocks);
+        if (n > 0) noteFold_(ck, n);
     }
 
     /// Posterior mean of DD-prior block @p b given the solved shared estimate
@@ -1298,6 +1305,58 @@ public:
     void attribTag(const char* tag) { attrib_tag_ = tag; }
     /// @return This epoch's captured shared-info RHS increments (armed builds only).
     const std::vector<AttribCapture>& attribCaptures() const { return attrib_shared_; }
+
+    // --- Contribution kinds of the shared folds (card NOM N2a; filter/NetworkContributions) ---
+
+    /**
+     * @brief Name the kind of the next shared fold.
+     *
+     * Every shared fold (@ref addSharedPrior, @ref addSharedPriorDense,
+     * @ref addSharedPriorClockGaugeFree, the refold and withdraw calls, the clone walks,
+     * @ref addSharedConstraintRows, @ref setPhaseSumZeroGauges, @ref setDdPriors) takes the
+     * kind named here when it starts, and records it with its dimension in the epoch's
+     * @ref sharedFoldLog when it folds.  The kind is consumed by that one call, so a fold
+     * whose site named none is recorded without a kind and counted on the table's integrity
+     * line rather than under a stale kind.  Independent of @ref attribTag, whose strings the
+     * RHS attribution reads unchanged.
+     *
+     * @param k The kind of the next fold.
+     */
+    void contributionKind(ContributionKind k) {
+        contrib_kind_     = k;
+        contrib_kind_set_ = true;
+    }
+
+    /**
+     * @brief Name one kind per row of the next @ref addSharedConstraintRows (the W6
+     *        code-bias datum stack, whose rows are of several kinds).
+     *
+     * Consumed by that call.  A vector whose size is not the call's row count is ignored,
+     * and the rows are recorded under the kind of @ref contributionKind.
+     *
+     * @param kinds One kind per row of @c H (not owned; must outlive the call), or null.
+     */
+    void contributionRowKinds(const std::vector<ContributionKind>* kinds) {
+        contrib_row_kinds_ = kinds;
+    }
+
+    /**
+     * @brief Mark the folds that follow as a within-epoch replay's re-folds.
+     *
+     * A replay rebuilds the epoch on a fresh arrowhead; its re-folds are counted apart
+     * (@c SharedFoldLog::replay_folds) so that the log describes the primary build, and
+     * its solve does not replace the primary solve's pin count.  Each switch on counts one
+     * replay build.  @ref reset switches it off.
+     *
+     * @param on True at the start of a replay build, false at its end.
+     */
+    void contributionReplay(bool on) {
+        contrib_replay_ = on;
+        if (on) ++contrib_log_.replay_builds;
+    }
+
+    /// @return This epoch's shared folds, with their kinds (cleared by @ref reset).
+    const SharedFoldLog& sharedFoldLog() const { return contrib_log_; }
     /// @return The input DD-prior blocks set by @ref setDdPriors this epoch: the
     ///         (station, local column, coefficient) structure the attribution
     ///         recompute needs, which the kernel's folded factors do not retain.
@@ -1432,6 +1491,32 @@ private:
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
     std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< per-component invariant-carry DD priors (Card 4 (M1); empty = off, byte-identical)
+    /// The kind a fold site named for the next shared fold, taken by that fold (card NOM N2a).
+    struct TakenKind {
+        ContributionKind kind{ContributionKind::DataCode};  ///< The kind.
+        bool             set{false};                        ///< False: the site named none.
+    };
+    /// Take (and clear) the kind named by @ref contributionKind.
+    TakenKind takeContributionKind_() {
+        const TakenKind t{contrib_kind_, contrib_kind_set_};
+        contrib_kind_set_ = false;
+        return t;
+    }
+    /// Record one shared fold of dimension @p dim in @ref contrib_log_ (a replay's re-fold
+    /// counts apart).
+    void noteFold_(TakenKind k, long long dim) {
+        if (contrib_replay_) {
+            ++contrib_log_.replay_folds;
+            contrib_log_.replay_dim += dim;
+            return;
+        }
+        contrib_log_.folds.push_back(SharedFoldRecord{k.kind, k.set, dim});
+    }
+    ContributionKind contrib_kind_{ContributionKind::DataCode};  ///< Kind named for the next shared fold (card NOM N2a).
+    bool contrib_kind_set_{false};                               ///< @ref contrib_kind_ is live.
+    const std::vector<ContributionKind>* contrib_row_kinds_{nullptr};  ///< Per-row kinds for the next addSharedConstraintRows (not owned).
+    bool contrib_replay_{false};                                 ///< Folds are a within-epoch replay's re-folds.
+    SharedFoldLog contrib_log_;                                  ///< This epoch's shared folds (cleared by reset()).
     bool attrib_armed_{false};                   ///< RHS-attribution capture recorder armed (diagnostics)
     const char* attrib_tag_{"shared_untagged"};  ///< class tag for the next shared-info fold (string literal)
     std::vector<AttribCapture> attrib_shared_;   ///< captured shared-info RHS increments (armed epochs only)

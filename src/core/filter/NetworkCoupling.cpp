@@ -157,9 +157,18 @@ bool CouplingRowBuilder::readmitDiverted(const CoupledShared& cs) {
     return true;
 }
 
+ContributionKind localBlockColKind(const LocalBlockCol& c) {
+    if (c.is_zwd)    return ContributionKind::BlockZwd;
+    if (c.is_iono)   return ContributionKind::BlockIono;
+    if (c.is_rx_clk) return ContributionKind::BlockRxClock;
+    if (c.is_rx_cb)  return ContributionKind::BlockRxCodeBias;
+    if (c.is_pc)     return ContributionKind::BlockPhaseColour;
+    return ContributionKind::BlockAmbiguity;
+}
+
 void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                                      const LocalCarry& lc, double var_eff,
-                                     double gap) {
+                                     double gap, const SatId& sat, const SignalId& signal) {
     if (carry_cpl_joint) {
         // Joint path (card 1b): the same present/departed split as the scalar
         // path, but the departed columns become shared M_w columns (marginalized
@@ -167,6 +176,7 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
         CplRowRaw raw;
         raw.local_col = col;
         raw.var_eff   = var_eff;
+        raw.tag       = RowTag{ContributionKind::CouplingJoint, sat, signal};
         double rhs = lc.value_abs - x_lin_val;   // (r̂_prev − r_lin)
         std::vector<TuEnt> ents;                 // buffered present terms (card 1d)
         // With the gauge projection armed (card 1f), every present term is emitted
@@ -260,6 +270,7 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
     double sigma2 = 0.0;
     if (!scalarRowIngredients(col, x_lin_val, lc, var_eff, gap, row, sigma2)) return;
     row.w = 1.0 / sigma2;
+    row.tag = RowTag{ContributionKind::CouplingScalar, sat, signal};
     crows.push_back(std::move(row));
 }
 
@@ -606,6 +617,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         r.shared    = g.row.shared;
         r.rhs       = g.row.y;
         r.var_eff   = g.sigma2;
+        r.tag       = RowTag{localBlockColKind(*g.c), g.c->sat, g.c->signal};
         blk.rows.push_back(std::move(r));
         blk.Sigma(i, i) = g.sigma2;
     }
@@ -750,6 +762,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         }
         row.y = z(k);
         row.w = 1.0;                                     // unit-information whitened row
+        row.tag = blk.rows[static_cast<std::size_t>(k)].tag;   // the primary column's (card NOM N2a)
         crows.push_back(std::move(row));
     }
     R.pl_blk = std::move(blk);
@@ -783,6 +796,15 @@ void CouplingRowBuilder::appendCouplingRows() {
             for (Eigen::Index k = 0; k < add; ++k)
                 R.cpl_row_local_cols[static_cast<size_t>(k)] =
                     craw[static_cast<size_t>(k)].local_col;
+            // One tag per appended row (card NOM N2a): the joint rows, or on the scalar
+            // fallback below the same rows as scalar coupling rows.
+            const bool joint_ok = ok && Hr.rows() == add;
+            for (Eigen::Index k = 0; k < add; ++k) {
+                RowTag t = craw[static_cast<size_t>(k)].tag;
+                t.kind = joint_ok ? ContributionKind::CouplingJoint
+                                  : ContributionKind::CouplingScalar;
+                R.row_tags.push_back(t);
+            }
             if (ok && Hr.rows() == add) {
                 R.A_s.bottomRows(add) = Hs;
                 R.A_r.bottomRows(add) = Hr;
@@ -841,6 +863,7 @@ void CouplingRowBuilder::appendCouplingRows() {
                 R.w(m0 + k) = row.w;
                 R.y(m0 + k) = row.y;
                 R.cpl_row_local_cols[static_cast<size_t>(k)] = row.local_col;
+                R.row_tags.push_back(row.tag);   // card NOM N2a
             }
         }
     }

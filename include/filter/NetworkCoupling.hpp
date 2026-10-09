@@ -73,6 +73,11 @@ struct PendCplRow {
     /// columns.  Empty on every scalar-path row, so the append writes the single +1
     /// (off = byte-identical).
     std::vector<std::pair<Eigen::Index, double>> local{};
+    /// The row's contribution tag (card NOM N2a): @c CouplingScalar on a scalar row, the
+    /// primary column's block kind on a whitened block row, with that column's identity.
+    /// @ref CouplingRowBuilder::appendCouplingRows appends it to @c StationAssembly::row_tags
+    /// in lockstep with the row.
+    RowTag tag{};
 };
 
 /// One injectable carried column of a station as collected by the PASS-B inject
@@ -143,7 +148,24 @@ struct LocalBlockCol {
     /// The entry is a phase-colour column (card LGM).  Telemetry only: a refused column
     /// is recorded in @c R.pc_refused so the injector can give it a birth row.
     bool              is_pc{false};
+    /// The column's satellite, where it has one (an ambiguity, a slant ionosphere, a phase
+    /// colour): the identity of the block row whose primary column this is (card NOM N2a).
+    /// The row's kind follows from the flags above (@ref localBlockColKind).
+    SatId             sat{};
+    /// The column's signal, where it has one (an ambiguity's phase signal, a receiver code
+    /// bias's code signal; card NOM N2a).
+    SignalId          signal{};
 };
+
+/**
+ * @brief The contribution kind of the whitened block row whose primary column is @p c
+ *        (card NOM N2a): from the column's family flags, the ones the builder's telemetry
+ *        already reads.
+ * @param c The block column.
+ * @return @c BlockZwd, @c BlockIono, @c BlockRxClock (an ISB included), @c BlockRxCodeBias,
+ *         @c BlockPhaseColour, or @c BlockAmbiguity for a column with no flag.
+ */
+ContributionKind localBlockColKind(const LocalBlockCol& c);
 
 /// One buffered present-column term of a coupling row under the border time update
 /// (card 1d).  The κ-shrunk coefficient is held back so that the row can be
@@ -267,8 +289,12 @@ struct CouplingRowBuilder {
     /// @c carry_cpl_reinit off.
     bool tuReinitSince(const CoupledShared& cs, double since_s) const;
     /// Build one coupling row for carried local column @p col (buffered, not yet appended).
+    /// @p sat and @p signal name the column (card NOM N2a: the row's tag carries them, with
+    /// the kind @c CouplingScalar, or @c CouplingJoint on the joint path, which the builder
+    /// sets); the defaults name none (a column with no satellite, the wet delay).
     void buildCplRow(Eigen::Index col, double x_lin_val,
-                     const LocalCarry& lc, double var_eff, double gap);
+                     const LocalCarry& lc, double var_eff, double gap,
+                     const SatId& sat = SatId{}, const SignalId& signal = SignalId{});
     /// Scalar-path ingredients of one coupling row (card 1): the loop body of
     /// @ref buildCplRow's scalar path, factored out so that the F3 block path shares the
     /// same predicate chain.  Fills @p row's @c local_col / @c shared / @c y and returns

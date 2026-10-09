@@ -90,6 +90,7 @@ int healNearNullPhaseBias(NetworkEstimator& est,
         }
     }
     est.attribTag("pb_heal");
+    est.contributionKind(ContributionKind::PbHeal);   // card NOM N2a
     est.addSharedPrior(hp);
     if (within_epoch_armed)
         cap_priors.insert(cap_priors.end(), hp.begin(), hp.end());

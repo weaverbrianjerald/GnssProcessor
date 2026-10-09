@@ -16,6 +16,7 @@
 #include "filter/NetworkEstimator.hpp"      // SharedParamKind
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactCounters (StationAssembly, card CTU)
 #include "filter/NetworkParamInventory.hpp" // StationParamSlot (StationAssembly, card NOM N1)
+#include "filter/NetworkContributions.hpp" // RowTag, GimRowsOutcome (StationAssembly, card NOM N2a)
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "common/PppState.hpp"
@@ -549,6 +550,9 @@ struct CplRowRaw {
     std::vector<std::pair<int, double>>          departed;///< marginalized shared terms: (M_w column index, M_rj).
     double rhs{0.0};                                      ///< (r̂_prev − r_lin) + Σ_present M_rj·ŝ_prev,j.
     double var_eff{0.0};                                  ///< pure conditional variance (plus process noise); this row's own diagonal.
+    /// The row's contribution tag (card NOM N2a): its kind and the identity of its local
+    /// column, carried with the ingredients so that a re-whiten keeps the tags aligned.
+    RowTag tag{};
 };
 
 /// One station's jointly whitened phase-leveling carry block (F3,
@@ -1241,6 +1245,25 @@ struct StationAssembly {
     Eigen::VectorXd  w, y;                 ///< Per-row information weights + innovations.
     int              np{0};                ///< Pivot ambiguity pins folded in (pivot only).
     std::map<int,int> h2local;             ///< H-column -> A_r-column map (back-substitute the slant-iono nuisance for the viz trace).
+    /// One contribution tag per row of @c A_s / @c A_r, in row order (card NOM N2a,
+    /// filter/NetworkContributions.hpp): every site that appends rows appends their tags in
+    /// lockstep, so the row's kind, satellite and signal travel with it.  Trace class in this
+    /// step: no reader takes a decision from a tag.
+    std::vector<RowTag> row_tags;
+    /// One tag per entry of @c carry_cols (the post-PD diagonal channel), in entry order.  An
+    /// entry the coalesce built from two diagonal priors on one column keeps the tag of the
+    /// entry the sort placed first; the merged entries' tags are in @c carry_merged.
+    std::vector<RowTag> carry_tags;
+    std::vector<RowTag> carry_merged;   ///< Tags of the post-PD entries merged into another entry of the same column.
+    /// One tag per entry of @c prior_cols (the pre-PD channel); @c prior_merged as above.
+    std::vector<RowTag> prior_tags;
+    std::vector<RowTag> prior_merged;   ///< Tags of the pre-PD entries merged into another entry of the same column.
+    /// The serial consume folded @c carry_cols through @c addStationPrior (the entries count
+    /// as folded contributions only then).
+    bool carry_prior_folded{false};
+    /// What the GIM ionosphere row builder did on this station-epoch (card NOM section 16,
+    /// suspect 4: it was called and silently inert on the golden).
+    GimRowsOutcome gim_rows{GimRowsOutcome::NotCalled};
     /// The observation's own signal for each data row [0, H.rows()): the measurement's
     /// @c signal_types, row-aligned with H by the assembly's invariant; rows appended
     /// later (datum pins, ionosphere ties, coupling rows) have none (card OWD, O5).

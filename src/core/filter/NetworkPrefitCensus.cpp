@@ -38,19 +38,20 @@ namespace {
 constexpr int kTopoColEventCap = 64;
 
 /// One classified row: its class plus the satellite of the first labelled
-/// shared column it touches.
-struct RowTag {
+/// shared column it touches.  (Named apart from the declared contribution tag,
+/// RowTag of filter/NetworkContributions.hpp, card NOM N2a.)
+struct ClassifiedRow {
     NetRowClass cls{NetRowClass::ObsOther};
     std::string sat;
 };
 
 /// Classify every row of one station once (the walk's only O(rows × cols) pass).
 void classifyStation(const SharedColumnMap& cm, const StationAssembly& R,
-                     std::vector<RowTag>& tags) {
+                     std::vector<ClassifiedRow>& tags) {
     const Eigen::Index m = R.y.size();
-    tags.assign(static_cast<std::size_t>(std::max<Eigen::Index>(m, 0)), RowTag{});
+    tags.assign(static_cast<std::size_t>(std::max<Eigen::Index>(m, 0)), ClassifiedRow{});
     for (Eigen::Index row = 0; row < m; ++row) {
-        RowTag& tg = tags[static_cast<std::size_t>(row)];
+        ClassifiedRow& tg = tags[static_cast<std::size_t>(row)];
         tg.cls = classifyRow(cm, R, row, &tg.sat);
     }
 }
@@ -58,7 +59,7 @@ void classifyStation(const SharedColumnMap& cm, const StationAssembly& R,
 /// Robust per-type centres from a pre-classified station (the shared core of
 /// @ref prefitStationCentres and of both walks).
 PrefitStationCentres centresFrom(const StationAssembly& R,
-                                 const std::vector<RowTag>& tags) {
+                                 const std::vector<ClassifiedRow>& tags) {
     PrefitStationCentres out;
     std::vector<double> pool[kNetDataClasses];
     const Eigen::Index m = std::min<Eigen::Index>(
@@ -169,7 +170,7 @@ double prefitStandardizedDeviation(double y, double w, double m) {
 
 PrefitStationCentres prefitStationCentres(const SharedColumnMap& cm,
                                           const StationAssembly& R) {
-    std::vector<RowTag> tags;
+    std::vector<ClassifiedRow> tags;
     classifyStation(cm, R, tags);
     return centresFrom(R, tags);
 }
@@ -195,12 +196,12 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
         const StationAssembly& R = asm_res[i];
         if (!R.ok || R.A_s.cols() != n || R.y.size() == 0) continue;
 
-        std::vector<RowTag> tags;
+        std::vector<ClassifiedRow> tags;
         classifyStation(cm, R, tags);
         const PrefitStationCentres c = centresFrom(R, tags);
 
         for (Eigen::Index row = 0; row < R.y.size(); ++row) {
-            const RowTag& tg = tags[static_cast<std::size_t>(row)];
+            const ClassifiedRow& tg = tags[static_cast<std::size_t>(row)];
             const int ti = dataClassIndex(tg.cls);
             if (ti < 0) continue;                              // pins / coupling
             if (!(class_mask & dataClassBit(tg.cls))) continue;
@@ -240,7 +241,7 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
     auto& ctr = ctx.counters.pc;
     ++ctr.fuse_station_epochs;
 
-    std::vector<RowTag> tags;
+    std::vector<ClassifiedRow> tags;
     classifyStation(cm, R, tags);
     const PrefitStationCentres c = centresFrom(R, tags);
 
@@ -250,7 +251,7 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
     int capped = 0;
 
     for (Eigen::Index row = 0; row < R.y.size(); ++row) {
-        const RowTag& tg = tags[static_cast<std::size_t>(row)];
+        const ClassifiedRow& tg = tags[static_cast<std::size_t>(row)];
         const int ti = dataClassIndex(tg.cls);
         if (ti < 0) continue;                       // pins / coupling: never fused
         ++ctr.fuse_rows;
@@ -363,7 +364,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         const std::string& sname = stations[i].name;
         ++ctr.station_epochs;
 
-        std::vector<RowTag> tags;
+        std::vector<ClassifiedRow> tags;
         classifyStation(cm, R, tags);
         const PrefitStationCentres c = centresFrom(R, tags);
         for (int t = 0; t < kNetDataClasses; ++t)
@@ -405,7 +406,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         if (topo_on) tie_now[static_cast<int>(i)] = 0;
 
         for (Eigen::Index row = 0; row < R.y.size(); ++row) {
-            const RowTag& tg = tags[static_cast<std::size_t>(row)];
+            const ClassifiedRow& tg = tags[static_cast<std::size_t>(row)];
             const int ti = dataClassIndex(tg.cls);
             if (ti < 0) continue;                   // pins / coupling excluded
             const double w = (row < R.w.size()) ? R.w(row) : 1.0;

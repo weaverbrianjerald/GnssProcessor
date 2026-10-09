@@ -6,7 +6,7 @@
 #pragma once
 
 #include "filter/StateManager.hpp"
-#include "filter/NetworkParamInventory.hpp"   // StationAbsorbed (the network's withheld shared states)
+#include "measurement/AbsorbedSharedStates.hpp"  // StationAbsorbed (the network's withheld shared states, card NOM N1b)
 #include "model/PppModel.hpp"
 #include "config/GnssConfig.hpp"
 #include "common/Constants.hpp"
@@ -93,7 +93,8 @@ namespace GnssProcessor {
          * code-only scope, unmatched antenna, coverage allowlist, pivot allowlist,
          * CB-ADM co-gate) is noted in @ref absorbedSharedStates, which this call
          * clears first: the parameter inventory counts each as an absorbed instance
-         * (card NOM N1b, filter/NetworkParamInventory.hpp).
+         * (card NOM N1b; the record is measurement/AbsorbedSharedStates.hpp, the
+         * inventory filter/NetworkParamInventory.hpp).
          *
          * @param observations This station's modeled observations for the epoch.
          * @param allowed_phase_keys If non-empty, restrict phase-bias allocation to

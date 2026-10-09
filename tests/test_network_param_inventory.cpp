@@ -609,27 +609,32 @@ TEST(NetworkParamInventoryTest, ReasonTableNamesEveryGateAndWhatTakesItUp) {
 }
 
 TEST(NetworkParamInventoryTest, NoteAbsorbedClassifiesTheWithheldKey) {
+    // The gate notes the raw (container, key, reason); the inventory classifies the note.
     StationAbsorbed a;
     noteAbsorbed(a, SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey("G05", "L1W"),
                  AbsorbedReason::UnmatchedAntenna);
     noteAbsorbed(a, SC::SatBiasStates, K::makeSatBiasKey("R07", "C1C"),
                  AbsorbedReason::GlonassCodeOnlyScope);
     noteAbsorbed(a, SC::SatPhaseBiasStates, "not-a-key", AbsorbedReason::CoverageGate);
-    ASSERT_EQ(a.instances.size(), 2u);
-    const AbsorbedInstance& pb = a.instances[0];
+    ASSERT_EQ(a.notes.size(), 3u);
+    const auto pb_opt = classifyAbsorbed(a.notes[0]);
+    const auto cb_opt = classifyAbsorbed(a.notes[1]);
+    ASSERT_TRUE(pb_opt.has_value());
+    ASSERT_TRUE(cb_opt.has_value());
+    const AbsorbedInstance& pb = *pb_opt;
     EXPECT_EQ(pb.id.cls.kind, PK::SatPhaseBias);
     EXPECT_EQ(pb.id.cls.sys, System::GPS);
     EXPECT_EQ(pb.id.sat.str(), "G05");
     EXPECT_EQ(pb.id.cls.signal, sig(System::GPS, "L1W"));
     EXPECT_EQ(pb.reason, AbsorbedReason::UnmatchedAntenna);
-    const AbsorbedInstance& cb = a.instances[1];
+    const AbsorbedInstance& cb = *cb_opt;
     EXPECT_EQ(cb.id.cls.kind, PK::SatCodeBias);
     EXPECT_EQ(cb.id.cls.sys, System::GLONASS);
     EXPECT_EQ(cb.id.cls.signal, sig(System::GLONASS, "C1C"));
     EXPECT_EQ(cb.reason, AbsorbedReason::GlonassCodeOnlyScope);
     // A key the classifier refuses is kept, as a label, never dropped.
-    ASSERT_EQ(a.unclassified.size(), 1u);
-    EXPECT_EQ(a.unclassified[0], "sat_phase_bias_states:not-a-key");
+    EXPECT_FALSE(classifyAbsorbed(a.notes[2]).has_value());
+    EXPECT_EQ(absorbedNoteLabel(a.notes[2]), "sat_phase_bias_states:not-a-key");
 }
 
 TEST(NetworkParamInventoryTest, RecordAddsAnAbsorbedInstanceOnlyWithItsAbsorbingColumn) {
@@ -651,10 +656,10 @@ TEST(NetworkParamInventoryTest, RecordAddsAnAbsorbedInstanceOnlyWithItsAbsorbing
     noteAbsorbed(a, SC::SatBiasStates, K::makeSatBiasKey("R07", "C1C"),
                  AbsorbedReason::GlonassCodeOnlyScope);
     noteAbsorbed(a, SC::SatPhaseBiasStates, "not-a-key", AbsorbedReason::CoverageGate);
-    ASSERT_EQ(a.instances.size(), 3u);
-    EXPECT_TRUE(absorberPresent(sm, a.instances[0]));
-    EXPECT_FALSE(absorberPresent(sm, a.instances[1]));
-    EXPECT_TRUE(absorberPresent(sm, a.instances[2]));
+    ASSERT_EQ(a.notes.size(), 4u);
+    EXPECT_TRUE(absorberPresent(sm, *classifyAbsorbed(a.notes[0])));
+    EXPECT_FALSE(absorberPresent(sm, *classifyAbsorbed(a.notes[1])));
+    EXPECT_TRUE(absorberPresent(sm, *classifyAbsorbed(a.notes[2])));
 
     std::vector<ParamDisposition> disp(sm.getStateSize(), PD::EstimatedLocal);
     StationParamSlot slot;

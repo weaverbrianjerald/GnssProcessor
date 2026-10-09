@@ -6366,6 +6366,9 @@ int networkTeardown(
         // Card NOM N1: the instances of every kind over the run, with their treatments
         // ("parameters as armed", the run's table) and its manifest record.
         networkParamInventoryRunEnd(ctx, log, traces, config_.getNetworkConfig());
+        // Card NOM N2a: every contribution to the normal equations by its declared kind over
+        // the run ("contributions as armed", the run's table) and its manifest record.
+        networkContributionsRunEnd(ctx, log, traces, config_.getNetworkConfig());
         // Card PRM phase 1b: what the fold applied to the carried border over the run, per
         // kind and disposition (key-epochs), decided once before PASS B; the same counts go
         // to the run manifest as a `param_dispositions` record.

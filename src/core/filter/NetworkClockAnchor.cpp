@@ -768,10 +768,14 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 // refloat does nothing and returns false.
                 // The gauge-free flag has to match the fold, or the withdrawn block
                 // is not the block that was applied.
-                if (!networkClockCloneRefloat(ctx, ws, est, dense_drop, /*restore=*/false))
+                // Card NOM N2a: each withdrawal and refold below is named Q3Refold just
+                // before its call (the clone refloat names its own).
+                if (!networkClockCloneRefloat(ctx, ws, est, dense_drop, /*restore=*/false)) {
+                    est.contributionKind(ContributionKind::Q3Refold);
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
                                                              /*restore=*/false, gf, gfc);
+                }
                 folded_dense = true;
             }
             if (!diag_drop.empty()) {
@@ -780,6 +784,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 // moves the group's information-weighted mean, so every survivor's
                 // anchor target changes.  Re-fold the group instead of subtracting
                 // one entry.
+                est.contributionKind(ContributionKind::Q3Refold);   // card NOM N2a
                 if (gf) {
                     std::set<std::string> ds;
                     for (const auto& p : diag_drop) ds.insert(p.sat);
@@ -798,11 +803,14 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                       se_time.tow, ex.what(), trip_resolve.size());
             try {
                 if (folded_dense
-                    && !networkClockCloneRefloat(ctx, ws, est, dense_drop, /*restore=*/true))
+                    && !networkClockCloneRefloat(ctx, ws, est, dense_drop, /*restore=*/true)) {
+                    est.contributionKind(ContributionKind::Q3Refold);   // card NOM N2a
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
                                                              /*restore=*/true, gf, gfc);
+                }
                 if (!diag_drop.empty()) {
+                    est.contributionKind(ContributionKind::Q3Refold);   // card NOM N2a
                     if (gf) {
                         std::set<std::string> ds;
                         for (const auto& p : diag_drop) ds.insert(p.sat);

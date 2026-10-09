@@ -4655,6 +4655,11 @@ namespace GnssProcessor {
         /// read by the solve.  Tabled after the first emitted epoch and at run end
         /// ("parameters as armed").
         NetworkParamInventory  param_inventory;
+        /// The contributions to the normal equations, per declared kind (card NOM N2a,
+        /// filter/NetworkContributions.hpp): the station side drained at the end of PASS B,
+        /// the shared folds at the epoch tail.  Trace class: never read by the solve.
+        /// Tabled after the first emitted epoch and at run end ("contributions as armed").
+        NetworkContributionLedger contributions;
         NetworkCarryState      carry;
         NetworkServiceCounters counters;
         NetworkBiasAdmission   admission;   // latched census result of CB-ADM (active=false: the legacy path)

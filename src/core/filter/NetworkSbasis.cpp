@@ -1000,6 +1000,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         }
         if (row_ok && row.cwiseAbs().sum() > 0.0) {
             rows.push_back(std::move(row));
+            out.row_kinds.push_back(ContributionKind::CbIfPin);   // card NOM N2a
             zs.push_back(zval);
             // S-contract §1.5 declaration record, placed after the push so it records
             // only a pair whose IF row folded.  Guarded on a real dual-frequency pin
@@ -1126,6 +1127,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                         }
                     }
                     rows.push_back(std::move(srow));
+                    out.row_kinds.push_back(ContributionKind::CbSatGfPair);   // card NOM N2a
                     zs.push_back(target);
                     ++out.n_sat_gf_rows;
                     ++gcc.rows;
@@ -1274,6 +1276,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             } catch (...) { hrow.setZero(); h_ok = false; }
                             if (h_ok) {
                                 rows.push_back(std::move(hrow));
+                                out.row_kinds.push_back(ContributionKind::CbExtraBandHeld);   // card NOM N2a
                                 zs.push_back(0.0);
                                 ++out.n_extra_band_held;
                                 out.extra_band_held.insert(sat + "|" + sk);
@@ -1327,6 +1330,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                                 }
                             }
                             rows.push_back(std::move(krow));
+                            out.row_kinds.push_back(ContributionKind::CbExtraGf);   // card NOM N2a
                             zs.push_back(k_target);
                             ++out.n_sat_gf_extra_rows;
                             ++gcc.extra_rows;
@@ -1372,6 +1376,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 } catch (...) { grow.setZero(); gf_ok = false; }
                 if (gf_ok && grow.cwiseAbs().sum() > 0.0) {
                     rows.push_back(std::move(grow));
+                    out.row_kinds.push_back(ContributionKind::CbGfPin);   // card NOM N2a
                     zs.push_back(0.0);
                     ++out.n_gf_pin_sats;
                     // S-contract §1.5: this satellite's code-bias datum is the IF+GF
@@ -1457,6 +1462,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     } catch (...) { frow.setZero(); frow_ok = false; }
                     if (frow_ok && frow.cwiseAbs().sum() > 0.0) {
                         rows.push_back(std::move(frow));
+                        out.row_kinds.push_back(ContributionKind::CbFamilyGf);   // card NOM N2a
                         zs.push_back(0.0);
                         ++out.n_family_gf_rows;
                         // S-contract §1.5: record the secondary family's realized pair so
@@ -1509,6 +1515,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         for (auto& [cst, lrow] : if_level_row) {
             if (lrow.cwiseAbs().sum() <= 0.0) continue;
             rows.push_back(std::move(lrow));
+            out.row_kinds.push_back(ContributionKind::CbIfLevel);   // card NOM N2a
             zs.push_back(0.0);                 // absolute: the level, not its change
             ++out.n_if_level_rows;
             out.n_if_level_sats += if_level_n[cst];
@@ -1588,6 +1595,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         }
         if (srow.cwiseAbs().sum() > 0.0) {
             rows.push_back(std::move(srow));
+            out.row_kinds.push_back(ContributionKind::CbSumToZero);   // card NOM N2a
             zs.push_back(zval);
         }
     }
