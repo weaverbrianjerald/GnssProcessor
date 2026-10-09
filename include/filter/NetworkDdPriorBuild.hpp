@@ -10,7 +10,8 @@
  * functions, so the initial gauge/DD build and the within-epoch RAIM re-solve
  * (`resolve_dropping`) keep byte-identical capture semantics.  These functions own no
  * state.  Every WL run-state instance (ewl_lanes / wl_inject_epoch / mw_wl_layer /
- * mw_wl_f6 / ...) is a reference into the run TU.  Two inputs carry state across
+ * mw_wl_f6 / ...) is a member of the driver's @ref NetworkLaneRun, and the lane switches
+ * are read from NetworkKnobs (card NOM step TD1a).  Two inputs carry state across
  * epochs or passes and need care: carry_slipped_ambs, the driver's per-epoch slip
  * funnel, passed by reference, and lane_admit_pairs, read and written through
  * ctx.carry.  Every other argument keeps the name of the former runNetwork() capture.
@@ -22,6 +23,7 @@
 #include "filter/NetworkMwWlLayer.hpp"          // NetworkMwWlLayer (+ ::Config)
 #include "filter/NetworkRunTypes.hpp"           // NetStation / StationAssembly / CarryPrior
 #include "filter/NetworkWlRunTypes.hpp"         // EwlLane / WlInjectPlan / LaneTraceEntry / WlCounters / F6Capture
+#include "filter/NetworkRunGroups.hpp"          // NetworkLaneRun (card NOM step TD1a)
 #include "filter/NetworkZStore.hpp"             // ArcKey (carry_arc_amb_key maps)
 #include "rinex/MultiRinexSync.hpp"             // SyncedEpoch
 
@@ -58,8 +60,11 @@ void networkBuildEnsembleGauges(NetworkEstimator& est,
 /**
  * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and the WL/UWL
  *        lane rows, and install them via NetworkEstimator::setDdPriors.  Returns early
- *        unless carry_invariant, so with it off the output is byte-identical.  All WL
- *        run-state arguments are in/out references into instances owned by the run TU.
+ *        unless carry_invariant, so with it off the output is byte-identical.
+ * @param lane_run The driver's lane machinery; its per-build members are rewritten on
+ *                 every build (in/out).
+ * @param isUncarriedThirdBand Whether a (constellation, signal) is the EWL pair's
+ *                 uncarried band, left out of the carry while the EWL lane is armed.
  *
  * The lane wavelengths come from the identity layer (@c SignalId::wavelengthM, card
  * NOM step N0b); GLONASS never enters the carry, so no FDMA slot is needed.
@@ -91,36 +96,7 @@ void networkBuildCarryDdPriors(
     const std::set<std::string>* carry_we_drop_sats,
     const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
     int n_threads,
-    std::vector<EwlLane>& ewl_lanes,
-    const NetworkMwWlLayer::Config& ewl_cfg,
-    NetworkMwWlLayer& mw_wl_layer,
-    F6Capture& mw_wl_f6,
-    NetworkMwWlLayer::Counters& mw_wl_epoch,
-    std::vector<WlInjectPlan>& wl_inject_epoch,
-    std::vector<LaneTraceEntry>& lane_trace_epoch,
-    WlCounters& wl_epoch,
-    std::map<char, WlCounters>& wl_cons_epoch,
-    const std::function<bool(char, const std::string&)>& isUncarriedThirdBand,
-    bool carry_innov_gate,
-    bool mw_wl_on,
-    bool ewl_on,
-    bool uwl_on,
-    bool uwl_cold_on,
-    bool uwl_mid_on,
-    bool uwl_dual_on,
-    bool uwl_family_on,
-    bool uwl_sib_gate_on,
-    bool wl_inject_on,
-    bool bridge_debias_on,
-    bool ewl_carry_exclude,
-    bool lane_on,
-    bool lane_meas_on,
-    bool lane_bridge_on,
-    bool lane_fix_on,
-    bool lane_parallel_components,
-    bool mw_d5_dump,
-    bool mw_lane_trace,
-    bool mw_tagsets,
-    bool mw_wl_f6_dump);
+    NetworkLaneRun& lane_run,
+    const std::function<bool(char, const std::string&)>& isUncarriedThirdBand);
 
 } // namespace GnssProcessor

@@ -79,45 +79,56 @@ int networkTeardown(
     const std::shared_ptr<spdlog::logger>& log,
     NetworkRunTraces& traces,
     NetworkSetupResult& setup,
-    const NetworkEstimator& est,
-    const NetworkInvariantCarryDriver& carry_driver,
-    const NetworkCarryVce& carry_vce_est,
-    const NetworkPriorResidual& prires_est,
-    const SlipQcChannel& slip_qc,
-    const NetworkMwWlLayer::Counters& mw_wl_run,
-    const std::vector<EwlLane>& ewl_lanes,
-    const WlCounters& wl_run,
-    const std::map<char, WlCounters>& wl_cons_run,
-    const NetworkEmitRebase& emit_rebase_engine,
-    const NetworkPbEmitFilter& pb_filter_engine,
-    const NetworkClockEmitRebase& clk_rebase_engine,
-    const NetworkIonoDeweightGate& iono_deweight,
-    const std::vector<SubBlockTimer>& sec_sub,
-    const char* const* kSubNames,
-    const std::vector<SyncedEpoch>& synced,
-    bool carry_innov_gate,
-    bool mw_wl_on,
-    bool ewl_on,
-    bool wl_inject_on,
-    bool uwl_on,
-    bool lane_on,
-    bool sh_dev_on,
-    bool idw_on,
-    bool emit_rebase_on,
-    bool emit_pb_filter_on,
-    double sec_asm_wall_ms,
-    std::size_t sec_profiled_epochs,
-    const std::chrono::steady_clock::time_point& t_loop_begin,
-    std::size_t cl_epochs,
-    std::size_t cl_ar_ran,
-    std::size_t cl_ar_fixed,
-    long long cl_sum_fixed,
-    double cl_first_fix_tow,
-    int cl_first_fix_week,
-    const std::deque<double>& cl_recent_err3d,
-    const Eigen::Vector3d& cl_truth,
-    const Coordinates::Llh& cl_truth_llh,
-    const std::filesystem::path& log_dir_) {
+    const NetworkRunEndInputs& run) {
+    // --- Run-end inputs (card NOM step TD1a).  The former parameters, re-bound under their
+    //     old names from the bundle and from where the duplicates live, so the body below
+    //     reads as before.  TD1b replaces this block with what each report reads. ---
+    const NetworkEstimator& est = run.engines.est;
+    const NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;
+    const NetworkCarryVce& carry_vce_est = run.engines.carry_vce;
+    const NetworkPriorResidual& prires_est = run.engines.prires;
+    const SlipQcChannel& slip_qc = run.engines.slip_qc;
+    const NetworkIonoDeweightGate& iono_deweight = run.engines.iono_deweight;
+    const NetworkMwWlLayer::Counters& mw_wl_run = run.lanes.mw_wl_run;
+    const std::vector<EwlLane>& ewl_lanes = run.lanes.ewl_lanes;
+    const WlCounters& wl_run = run.lanes.wl_run;
+    const std::map<char, WlCounters>& wl_cons_run = run.lanes.wl_cons_run;
+    const NetworkEmitRebase& emit_rebase_engine = run.emit.rebase;
+    const NetworkPbEmitFilter& pb_filter_engine = run.emit.pb_filter;
+    const NetworkClockEmitRebase& clk_rebase_engine = run.emit.clk_rebase;
+    const std::vector<SubBlockTimer>& sec_sub = run.timing.sub_blocks;
+    const char* const* kSubNames = kSubBlockNames;
+    const double sec_asm_wall_ms = run.timing.asm_wall_ms;
+    const std::size_t sec_profiled_epochs = run.timing.profiled_epochs;
+    const std::chrono::steady_clock::time_point& t_loop_begin = run.timing.loop_begin;
+    // Read for its size only: the batch epoch list (the driver's `synced`), on a streaming
+    // run too.
+    const std::vector<SyncedEpoch>& synced = setup.sync->getSyncedEpochs();
+    const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
+    const bool mw_wl_on = ctx.knobs.mw_wl_on;
+    const bool ewl_on = ctx.knobs.ewl_on;
+    const bool wl_inject_on = ctx.knobs.wl_inject_on;
+    const bool uwl_on = ctx.knobs.uwl_on;
+    const bool lane_on = ctx.knobs.lane_on;
+    // As the driver resolves it: the SH-deviation carry runs when the SH model exists and
+    // its representation-error correlation time is positive.
+    const bool sh_dev_on =
+        (setup.sh_model ? config_.getGlobalVtecShConfig().rep_error_tau_s : 0.0) > 0.0;
+    const bool idw_on = iono_deweight.active();
+    const bool emit_rebase_on = ctx.knobs.emit_rebase_on;
+    const bool emit_pb_filter_on = ctx.knobs.emit_pb_filter_on;
+    const std::size_t cl_epochs = run.closed_loop.epochs;
+    const std::size_t cl_ar_ran = run.closed_loop.ar_ran;
+    const std::size_t cl_ar_fixed = run.closed_loop.ar_fixed;
+    const long long cl_sum_fixed = run.closed_loop.sum_fixed;
+    const double cl_first_fix_tow = run.closed_loop.first_fix_tow;
+    const int cl_first_fix_week = run.closed_loop.first_fix_week;
+    const std::deque<double>& cl_recent_err3d = run.closed_loop.recent_err3d;
+    // The consumer's truth, as the driver and networkEmitStore read it.
+    const Eigen::Vector3d& cl_truth = setup.cl_truth_arp;
+    const Coordinates::Llh cl_truth_llh =
+        setup.closed_loop_on ? Coordinates::ecefToLlh(cl_truth) : Coordinates::Llh{};
+    const std::filesystem::path& log_dir_ = traces.log_dir_;
     // --- Alias preamble (byte-copies of the run-TU pre-loop alias block). ---
     /// Verdict of the joint-block PD-fallback bar, folded into the run's return code at
     /// the tail.  0 until the bar below sets it (RF-1 step 3).
@@ -194,7 +205,6 @@ int networkTeardown(
     const IonoConstraintDeweightConfig& idw = config_.getIonoConstraintDeweightConfig();
     auto& n_loop_epochs = ctx.counters.n_loop_epochs;
     const bool sec_timers_on = nc.trace_section_timers;
-    const int SB_COUNT = static_cast<int>(sec_sub.size());  // reconstructed run-TU SubBlock count
 
     double loop_ms = 0.0;   // hoisted out of the timing block so the run-summary CSV / manifest can read it (L3/L15)
     {  // Timing: per-epoch scaling measurement (loop wall only; startup excluded)

@@ -20,6 +20,14 @@
  * the logging unit would make the logging unit depend on the estimation units (the INC-7
  * P3 anti-pattern).
  *
+ * Inputs (card NOM step TD1a): the run (context, configuration, logger, traces, setup)
+ * and one const bundle, @ref NetworkRunEndInputs, of the driver-owned groups (the
+ * engines, the emit engines, the lane run, the timing record and the closed-loop tally,
+ * filter/NetworkRunGroups.hpp).  The lane and emit-layer switches are read from
+ * NetworkKnobs; the values the driver used to pass twice are read where they live
+ * (the synced epoch list from setup.sync, the consumer truth from setup.cl_truth_arp, the
+ * log directory from traces).
+ *
  * Owns no state.  The body keeps the driver's indentation (dedent 0; runNetwork's body is
  * indented 4 spaces) and opens with an alias preamble that re-creates the run-TU
  * ctx/config/setup/traces aliases so the body reads the original names.  Apart from the
@@ -34,7 +42,8 @@
 #include "filter/NetworkCarryVce.hpp"     // NetworkCarryVce
 #include "filter/NetworkPriorResidual.hpp" // NetworkPriorResidual (prior-residual census run-end readout)
 #include "filter/NetworkMwWlLayer.hpp"    // NetworkMwWlLayer::Counters
-#include "filter/NetworkWlRunTypes.hpp"   // EwlLane / WlCounters / SubBlockTimer
+#include "filter/NetworkWlRunTypes.hpp"   // EwlLane / WlCounters / SubBlockTimer / kSubBlockNames
+#include "filter/NetworkRunGroups.hpp"    // NetworkRunEndInputs and its groups (card NOM step TD1a)
 #include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (card CLK-R)
 #include "products/NetworkEmitRebase.hpp"   // NetworkEmitRebase
 #include "products/NetworkPbEmitFilter.hpp" // NetworkPbEmitFilter
@@ -63,6 +72,14 @@ struct NetworkRunTraces;
 
 /**
  * @brief Run the network producer's end-of-run readout tail and return the exit code.
+ * @param ctx     The run context: knobs, carry state and service counters.
+ * @param config_ The run configuration.
+ * @param log     The main_log logger every run-end line goes to (three consumer summaries
+ *                go to rt_engine).
+ * @param traces  The run's trace streams; closed here (closeAll), and the run manifest's
+ *                run-end records are appended through it.
+ * @param setup   The setup handoff; the product writer is closed here (the B6 round trip).
+ * @param run     The driver-owned run groups the reports read.
  * @return 1 when no epoch was emitted; otherwise the injection result when nonzero,
  *         otherwise the joint-block PD-fallback verdict (0 or 1).
  * @see The file banner for the readout inventory and the reason this is a separate seam.
@@ -73,44 +90,6 @@ int networkTeardown(
     const std::shared_ptr<spdlog::logger>& log,
     NetworkRunTraces& traces,
     NetworkSetupResult& setup,
-    const NetworkEstimator& est,
-    const NetworkInvariantCarryDriver& carry_driver,
-    const NetworkCarryVce& carry_vce_est,
-    const NetworkPriorResidual& prires_est,
-    const SlipQcChannel& slip_qc,
-    const NetworkMwWlLayer::Counters& mw_wl_run,
-    const std::vector<EwlLane>& ewl_lanes,
-    const WlCounters& wl_run,
-    const std::map<char, WlCounters>& wl_cons_run,
-    const NetworkEmitRebase& emit_rebase_engine,
-    const NetworkPbEmitFilter& pb_filter_engine,
-    const NetworkClockEmitRebase& clk_rebase_engine,
-    const NetworkIonoDeweightGate& iono_deweight,
-    const std::vector<SubBlockTimer>& sec_sub,
-    const char* const* kSubNames,
-    const std::vector<SyncedEpoch>& synced,
-    bool carry_innov_gate,
-    bool mw_wl_on,
-    bool ewl_on,
-    bool wl_inject_on,
-    bool uwl_on,
-    bool lane_on,
-    bool sh_dev_on,
-    bool idw_on,
-    bool emit_rebase_on,
-    bool emit_pb_filter_on,
-    double sec_asm_wall_ms,
-    std::size_t sec_profiled_epochs,
-    const std::chrono::steady_clock::time_point& t_loop_begin,
-    std::size_t cl_epochs,
-    std::size_t cl_ar_ran,
-    std::size_t cl_ar_fixed,
-    long long cl_sum_fixed,
-    double cl_first_fix_tow,
-    int cl_first_fix_week,
-    const std::deque<double>& cl_recent_err3d,
-    const Eigen::Vector3d& cl_truth,
-    const Coordinates::Llh& cl_truth_llh,
-    const std::filesystem::path& log_dir_);
+    const NetworkRunEndInputs& run);
 
 } // namespace GnssProcessor

@@ -20,7 +20,9 @@
  * engine objects (NetworkEstimator, NetworkInvariantCarryDriver, NetworkCarryVce,
  * NetworkIonoDeweightGate, NetworkEmitRebase, NetworkPbEmitFilter, the WL/UWL
  * lane machinery and its function-local types), the D0/D0b section-timer
- * instrumentation, and the closed-loop consumer metrics.
+ * instrumentation, and the closed-loop consumer metrics.  The driver holds them in
+ * the groups of filter/NetworkRunGroups.hpp (engines, emit engines, lane run, run
+ * timing, closed-loop tally), which the seams receive by reference.
  */
 
 #include "filter/NetworkRunTypes.hpp"
@@ -96,8 +98,9 @@ namespace GnssProcessor {
 
     /// @internal Const snapshot of every run-loop config knob (decomposition
     /// INC-4).  snapshot() reads the getters in the original order; members are
-    /// value copies under the original local names and types.  The WL/UWL-zone
-    /// knob consts stay in the run TU with their machinery.
+    /// value copies under the original local names and types.  The WL/UWL lane and
+    /// emit-layer on/off flags joined it at card NOM step TD1a; the lane machinery
+    /// itself (layers, tallies) stays with the driver in NetworkLaneRun.
     struct NetworkKnobs {
         double q_clock{};
         double q_pb{};
@@ -1016,6 +1019,37 @@ namespace GnssProcessor {
         double adm_revet_bound_m{};   ///< the tighter |z| bound (m) a re-entering / vetting channel answers to; == adm_bound_m when the scale is 1.0.  Resolved to metres here so the seam never re-multiplies.
         bool   adm_revet_census{};    ///< consult the previous epoch's PREFIT obs_code exceedance flags inside a vet window.
         bool   adm_revet_hold{};      ///< strict posture: withhold a clean re-entry until the adm_heal_ep path readmits it.
+        // --- invariant-carry gate, WL/EWL/UWL lanes and emit layers (card NOM step TD1a) ---
+        // Resolved here, with the driver's former conjunctions unchanged, so the driver, the
+        // DD-prior build, the install, the emit store and the run end read one bool each
+        // instead of each receiving it as a parameter.  Every one is false unless
+        // carry_invariant (pb_filter_emit_sigma excepted, which is read only under
+        // emit_pb_filter_on).  Read from the configuration, never written; the snapshot
+        // fingerprint does not read them (it reads the configuration getters it needs).
+        bool carry_innov_gate{};         ///< D5 estimation-side fine-slip innovation gate: carry_invariant and network.carry_invariant_innov_gate.
+        bool lane_on{};                  ///< Lane-coordinate carry (WL-3): carry_invariant and network.lane_carry.enable.
+        bool lane_joint{};               ///< The lane shape of WL-3 (joint pair blocks, lane prior and rows, fold-on-change fixing): lane_on with any lane feature off its isotropic or off sentinel.
+        bool mw_wl_on{};                 ///< MW-seeded wide-lane pseudo-observation layer (WL-1): carry_invariant and network.mw_wl.enable.
+        bool ewl_on{};                   ///< EWL lane (WL-2): carry_invariant and network.mw_wl.ewl_enable.  Also the third-band carry exclusion: the EWL pair's uncarried leg is left out of the carry exactly when the lane is armed.
+        bool uwl_on{};                   ///< Per-constellation top tier (UWL-1): ewl_on and network.mw_wl.uwl_enable.  Also selects the lane-tier table for the uncarried band.
+        bool uwl_cold_on{};              ///< UWL-1 cold fix (n = 1 unlagged statistics on long-λ tiers): uwl_on and network.mw_wl.uwl_cold_fix.
+        bool bridge_debias_on{};         ///< Per-sample iono-de-biased GF bridge (the 60-epoch age-bias fix): ewl_on and network.mw_wl.bridge_sample_debias.
+        bool uwl_mid_on{};               ///< Mid-ladder bridge hop through E6: uwl_on and network.mw_wl.uwl_mid_enable.
+        bool uwl_dual_on{};              ///< Per-cycle preferred and fallback Galileo top rung (increment 5): uwl_on and network.mw_wl.uwl_dual_top.
+        bool uwl_sib_gate_on{};          ///< Hard untaken-sibling closure gate: uwl_dual_on and network.mw_wl.uwl_sib_gate.
+        bool uwl_family_on{};            ///< Census recovery: minority receiver-family pair groups: uwl_on, lane_on and network.mw_wl.uwl_family_pairs.
+        bool wl_inject_on{};             ///< WL-2 phase-bridge decision and NL-preserving inject: ewl_on, network.mw_wl.wl_inject_enable and not lane_on (WL-3 supersedes it).
+        bool lane_meas_on{};             ///< WL-3 per-epoch MW(1,2) lane increments: lane_on, lane_joint and network.lane_carry.lane_meas.
+        bool lane_bridge_on{};           ///< WL-3 per-epoch bridge lane increments: lane_on, lane_joint and network.lane_carry.bridge_meas.
+        bool lane_fix_on{};              ///< WL-3 fold-on-change FFR fix walk: lane_on and lane_joint (no separate knob).
+        bool lane_parallel_components{}; ///< Fan the MW lane-increment folds across components: lane_on, lane_joint and network.lane_carry.parallel_components.
+        bool mw_d5_dump{};               ///< F-A D5 attribution dump (log-only): any of ewl_on, wl_inject_on, lane_on, and network.mw_wl.d5_dump.
+        bool mw_lane_trace{};            ///< F-B lane trace (log-only): wl_inject_on or lane_fix_on, and network.mw_wl.lane_trace.
+        bool mw_tagsets{};               ///< The hold and inject tag sets, which feed both dumps: mw_d5_dump or mw_lane_trace.
+        bool mw_wl_f6_dump{};            ///< One-shot F6 WL attribution dump: mw_wl_on and network.mw_wl.f6_dump.
+        bool emit_rebase_on{};           ///< Emit-layer frame re-base of the emitted phase biases (card 4 phase D): carry_invariant and network.carry_invariant_emit_rebase.
+        bool emit_pb_filter_on{};        ///< Phase-bias emission-continuity filter: emit_rebase_on and network.emit_pb_filter.
+        bool pb_filter_emit_sigma{};     ///< Emit the filter's posterior sigma with each filtered bias: network.emit_pb_filter_emit_sigma.
 
         /// One-shot factory: the knob-snapshot statements, in the original read order
         /// (parameter names match the former use sites).

@@ -125,41 +125,45 @@ void networkBuildCarryDdPriors(
     const std::set<std::string>* carry_we_drop_sats,
     const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
     int n_threads,
-    std::vector<EwlLane>& ewl_lanes,
-    const NetworkMwWlLayer::Config& ewl_cfg,
-    NetworkMwWlLayer& mw_wl_layer,
-    F6Capture& mw_wl_f6,
-    NetworkMwWlLayer::Counters& mw_wl_epoch,
-    std::vector<WlInjectPlan>& wl_inject_epoch,
-    std::vector<LaneTraceEntry>& lane_trace_epoch,
-    WlCounters& wl_epoch,
-    std::map<char, WlCounters>& wl_cons_epoch,
-    const std::function<bool(char, const std::string&)>& isUncarriedThirdBand,
-    bool carry_innov_gate,
-    bool mw_wl_on,
-    bool ewl_on,
-    bool uwl_on,
-    bool uwl_cold_on,
-    bool uwl_mid_on,
-    bool uwl_dual_on,
-    bool uwl_family_on,
-    bool uwl_sib_gate_on,
-    bool wl_inject_on,
-    bool bridge_debias_on,
-    bool ewl_carry_exclude,
-    bool lane_on,
-    bool lane_meas_on,
-    bool lane_bridge_on,
-    bool lane_fix_on,
-    bool lane_parallel_components,
-    bool mw_d5_dump,
-    bool mw_lane_trace,
-    bool mw_tagsets,
-    bool mw_wl_f6_dump) {
+    NetworkLaneRun& lane_run,
+    const std::function<bool(char, const std::string&)>& isUncarriedThirdBand) {
     // --- Alias preamble: copies of the run-TU aliases the relocated
     //     buildCarryDdPriors body reads (nmw/trace and the ctx.carry aliases). ----
     const auto& nmw = config_.getNetworkConfig().mw_wl;
     auto& trace = traces.trace;
+    // The lane machinery (NetworkLaneRun) and the lane switches (NetworkKnobs), under their
+    // former parameter names (card NOM step TD1a).  The third band is excluded from the
+    // carry exactly when the EWL lane is armed, so ewl_carry_exclude is ewl_on.
+    std::vector<EwlLane>& ewl_lanes = lane_run.ewl_lanes;
+    const NetworkMwWlLayer::Config& ewl_cfg = lane_run.ewl_cfg;
+    NetworkMwWlLayer& mw_wl_layer = lane_run.mw_wl_layer;
+    F6Capture& mw_wl_f6 = lane_run.mw_wl_f6;
+    NetworkMwWlLayer::Counters& mw_wl_epoch = lane_run.mw_wl_epoch;
+    std::vector<WlInjectPlan>& wl_inject_epoch = lane_run.wl_inject_epoch;
+    std::vector<LaneTraceEntry>& lane_trace_epoch = lane_run.lane_trace_epoch;
+    WlCounters& wl_epoch = lane_run.wl_epoch;
+    std::map<char, WlCounters>& wl_cons_epoch = lane_run.wl_cons_epoch;
+    const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
+    const bool mw_wl_on = ctx.knobs.mw_wl_on;
+    const bool ewl_on = ctx.knobs.ewl_on;
+    const bool uwl_on = ctx.knobs.uwl_on;
+    const bool uwl_cold_on = ctx.knobs.uwl_cold_on;
+    const bool uwl_mid_on = ctx.knobs.uwl_mid_on;
+    const bool uwl_dual_on = ctx.knobs.uwl_dual_on;
+    const bool uwl_family_on = ctx.knobs.uwl_family_on;
+    const bool uwl_sib_gate_on = ctx.knobs.uwl_sib_gate_on;
+    const bool wl_inject_on = ctx.knobs.wl_inject_on;
+    const bool bridge_debias_on = ctx.knobs.bridge_debias_on;
+    const bool ewl_carry_exclude = ctx.knobs.ewl_on;
+    const bool lane_on = ctx.knobs.lane_on;
+    const bool lane_meas_on = ctx.knobs.lane_meas_on;
+    const bool lane_bridge_on = ctx.knobs.lane_bridge_on;
+    const bool lane_fix_on = ctx.knobs.lane_fix_on;
+    const bool lane_parallel_components = ctx.knobs.lane_parallel_components;
+    const bool mw_d5_dump = ctx.knobs.mw_d5_dump;
+    const bool mw_lane_trace = ctx.knobs.mw_lane_trace;
+    const bool mw_tagsets = ctx.knobs.mw_tagsets;
+    const bool mw_wl_f6_dump = ctx.knobs.mw_wl_f6_dump;
     auto& carry_glonass_warned = ctx.carry.carry_glonass_warned;
     auto& carry_group_id = ctx.carry.carry_group_id;
     const bool carry_invariant = ctx.knobs.carry_invariant;

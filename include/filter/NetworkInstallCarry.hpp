@@ -18,7 +18,9 @@
  *
  * Owns no state: every carry object is an explicit reference into the caller's
  * NetworkRunContext, and every cross-epoch WL run-state instance (ewl_lanes /
- * wl_inject_epoch / mw_wl_run / mw_wl_f6 / ...) is passed by reference from the run TU.
+ * wl_inject_epoch / mw_wl_run / mw_wl_f6 / ...) is a member of the driver's
+ * @ref NetworkLaneRun, passed by reference.  The lane switches (carry_innov_gate,
+ * mw_wl_on, lane_on, ...) are read from NetworkKnobs (card NOM step TD1a).
  */
 
 #include "filter/NetworkEstimator.hpp"          // NetworkEstimator
@@ -26,6 +28,7 @@
 #include "filter/NetworkInvariantCarryDriver.hpp" // NetworkInvariantCarryDriver
 #include "filter/NetworkRunTypes.hpp"           // NetStation
 #include "filter/NetworkWlRunTypes.hpp"         // EwlLane/WlInjectPlan/LaneTraceEntry/WlCounters/F6Capture (+ NetworkMwWlLayer::Counters)
+#include "filter/NetworkRunGroups.hpp"          // NetworkLaneRun (card NOM step TD1a)
 #include "slip/NetworkRawObservables.hpp"       // SlipQcChannel
 #include "filter/NetworkZStore.hpp"             // ArcKey (carry_arc_amb_key maps)
 #include "rinex/MultiRinexSync.hpp"             // SyncedEpoch
@@ -48,8 +51,9 @@ struct NetworkRunTraces;
 
 /**
  * @brief Install the accepted DD posterior and fold the WL zone-4 tallies for this epoch.
- * @see NetworkInstallCarry.hpp file banner for the ordering contract.  All WL run-state
- *      parameters are in/out references into the instances owned by the run TU.
+ * @see NetworkInstallCarry.hpp file banner for the ordering contract.
+ * @param lane_run The driver's lane machinery: the per-build members are read and folded
+ *                 into its run totals here (in/out).
  */
 void networkInstallCarry(
     NetworkRunContext& ctx,
@@ -65,30 +69,9 @@ void networkInstallCarry(
     SlipQcChannel& slip_qc,
     const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
     const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
-    const std::filesystem::path& log_dir_,
     bool carry_par,
     int n_threads,
     int seam_threads,
-    bool carry_innov_gate,
-    bool mw_wl_on,
-    bool lane_on,
-    bool ewl_on,
-    bool uwl_on,
-    bool wl_inject_on,
-    bool lane_fix_on,
-    bool mw_d5_dump,
-    bool mw_lane_trace,
-    bool mw_tagsets,
-    bool mw_wl_f6_dump,
-    std::vector<EwlLane>& ewl_lanes,
-    std::vector<WlInjectPlan>& wl_inject_epoch,
-    std::vector<LaneTraceEntry>& lane_trace_epoch,
-    NetworkMwWlLayer::Counters& mw_wl_run,
-    NetworkMwWlLayer::Counters& mw_wl_epoch,
-    WlCounters& wl_run,
-    WlCounters& wl_epoch,
-    std::map<char, WlCounters>& wl_cons_run,
-    std::map<char, WlCounters>& wl_cons_epoch,
-    F6Capture& mw_wl_f6);
+    NetworkLaneRun& lane_run);
 
 } // namespace GnssProcessor

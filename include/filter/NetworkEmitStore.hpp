@@ -38,6 +38,7 @@
 #include "app/NetworkSetupResult.hpp"        // NetworkSetupResult
 #include "common/PppObservation.hpp"         // PppObservation (modeled)
 #include "filter/NetworkEstimator.hpp"       // NetworkEstimator
+#include "filter/NetworkRunGroups.hpp"       // NetworkEmitEngines, ClosedLoopTally (card NOM step TD1a)
 #include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (Card CLK-R)
 #include "products/NetworkEmitRebase.hpp"    // NetworkEmitRebase
 #include "products/NetworkPbEmitFilter.hpp"  // NetworkPbEmitFilter
@@ -67,8 +68,10 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp (included in the .cp
  *        file banner for the full step list and the ordering contract.  Parameters
  *        beyond ctx/config_/log/traces/setup carry the epoch-local assembly state,
  *        the five @ref NetworkSolPrepResult locals (@c sol is re-based in place), the
- *        emit-rebase / PB-filter / clock-rebase engines, and the run-level closed-loop
- *        accumulators.
+ *        emit-layer engines (@ref NetworkEmitEngines; their switches are
+ *        NetworkKnobs::emit_rebase_on, emit_pb_filter_on and pb_filter_emit_sigma), and the
+ *        run-level closed-loop tally (@ref ClosedLoopTally), which this function
+ *        accumulates.
  */
 void networkEmitStore(
     NetworkRunContext& ctx,
@@ -87,12 +90,7 @@ void networkEmitStore(
                      bool global_bump,
                      const std::set<char>& serialized_consts,
                      const std::set<std::string>& retro_emit_sats,
-                     bool emit_rebase_on,
-                     bool emit_pb_filter_on,
-                     bool pb_filter_emit_sigma,
-                     NetworkEmitRebase& emit_rebase_engine,
-                     NetworkPbEmitFilter& pb_filter_engine,
-                     NetworkClockEmitRebase& clk_rebase_engine,
+                     NetworkEmitEngines& emit_engines,
                      const std::vector<bool>& present,
                      const std::vector<int>& est_index_of,
                      const std::vector<std::vector<PppObservation>>& modeled,
@@ -100,12 +98,6 @@ void networkEmitStore(
                      const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                      bool we_t2_opp,
                      bool we_t2_flag,
-                     std::size_t& cl_epochs,
-                     std::size_t& cl_ar_ran,
-                     std::size_t& cl_ar_fixed,
-                     long long& cl_sum_fixed,
-                     double& cl_first_fix_tow,
-                     int& cl_first_fix_week,
-                     std::deque<double>& cl_recent_err3d);
+                     ClosedLoopTally& cl_tally);
 
 } // namespace GnssProcessor

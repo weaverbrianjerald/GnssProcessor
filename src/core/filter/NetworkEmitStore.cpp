@@ -5,7 +5,9 @@
  *        at decomposition INC-11.
  *
  * The alias preamble reproduces the driver's names, with five locals reconstructed
- * here (cl / shc / cl_truth / cl_truth_llh / kClRecentWindow).  The Iono-2
+ * here (cl / shc / cl_truth / cl_truth_llh / kClRecentWindow), and re-binds the emit
+ * engines, the emit-layer switches and the closed-loop tally under their former
+ * parameter names (card NOM step TD1a).  The Iono-2
  * dual-layer path (sh_model2) is inert unless that layer is armed.  See
  * NetworkEmitStore.hpp for the step list and the ordering contract.
  */
@@ -58,12 +60,7 @@ void networkEmitStore(
                      bool global_bump,
                      const std::set<char>& serialized_consts,
                      const std::set<std::string>& retro_emit_sats,
-                     bool emit_rebase_on,
-                     bool emit_pb_filter_on,
-                     bool pb_filter_emit_sigma,
-                     NetworkEmitRebase& emit_rebase_engine,
-                     NetworkPbEmitFilter& pb_filter_engine,
-                     NetworkClockEmitRebase& clk_rebase_engine,
+                     NetworkEmitEngines& emit_engines,
                      const std::vector<bool>& present,
                      const std::vector<int>& est_index_of,
                      const std::vector<std::vector<PppObservation>>& modeled,
@@ -71,13 +68,7 @@ void networkEmitStore(
                      const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                      bool we_t2_opp,
                      bool we_t2_flag,
-                     std::size_t& cl_epochs,
-                     std::size_t& cl_ar_ran,
-                     std::size_t& cl_ar_fixed,
-                     long long& cl_sum_fixed,
-                     double& cl_first_fix_tow,
-                     int& cl_first_fix_week,
-                     std::deque<double>& cl_recent_err3d) {
+                     ClosedLoopTally& cl_tally) {
     // --- Alias preamble: the Application::runNetwork aliases plus 5 reconstructed
     //     locals, so the relocated SB_EMITSTORE body reads the driver's names. ---
     const auto& nc = config_.getNetworkConfig();
@@ -110,7 +101,22 @@ void networkEmitStore(
     const Eigen::Vector3d cl_truth = setup.cl_truth_arp;   // ARP-referenced (setup owns the reduction)
     const Coordinates::Llh cl_truth_llh =
         closed_loop_on ? Coordinates::ecefToLlh(cl_truth) : Coordinates::Llh{};
-    constexpr std::size_t kClRecentWindow = 30;
+    constexpr std::size_t kClRecentWindow = ClosedLoopTally::kRecentWindow;
+    // The emit-layer switches (NetworkKnobs) and engines, and the closed-loop tally, under
+    // their former parameter names (card NOM step TD1a).
+    const bool emit_rebase_on = ctx.knobs.emit_rebase_on;
+    const bool emit_pb_filter_on = ctx.knobs.emit_pb_filter_on;
+    const bool pb_filter_emit_sigma = ctx.knobs.pb_filter_emit_sigma;
+    NetworkEmitRebase& emit_rebase_engine = emit_engines.rebase;
+    NetworkPbEmitFilter& pb_filter_engine = emit_engines.pb_filter;
+    NetworkClockEmitRebase& clk_rebase_engine = emit_engines.clk_rebase;
+    std::size_t& cl_epochs = cl_tally.epochs;
+    std::size_t& cl_ar_ran = cl_tally.ar_ran;
+    std::size_t& cl_ar_fixed = cl_tally.ar_fixed;
+    long long& cl_sum_fixed = cl_tally.sum_fixed;
+    double& cl_first_fix_tow = cl_tally.first_fix_tow;
+    int& cl_first_fix_week = cl_tally.first_fix_week;
+    std::deque<double>& cl_recent_err3d = cl_tally.recent_err3d;
 
     // An engaged SH health gate withholds this epoch's emission: no store push, no
     // product write, no closed-loop consume or iono supply, no n_emitted advance

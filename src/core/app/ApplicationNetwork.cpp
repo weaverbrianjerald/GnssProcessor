@@ -100,6 +100,7 @@
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, systemFromLetter, rinexLetter, systemName
 #include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
 #include "filter/NetworkWlRunTypes.hpp" // WL and RAII types hoisted out of runNetwork() (INC-9b)
+#include "filter/NetworkRunGroups.hpp"  // the driver-owned run groups: engines, emit engines, lane run, timing, closed-loop tally (card NOM TD1a)
 #include "filter/NetworkRobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
 #include "filter/NetworkPhaseDatum.hpp"    // census, ensemble datum, anchor election, drop-and-heal (INC-8b)
 #include "filter/NetworkAmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
@@ -249,17 +250,11 @@ int Application::runNetwork() {
     NetworkProductEmitter& emitter = *setup.emitter;
     auto& consumer = setup.consumer;
 
-    // Closed-loop metrics + trace.  ARP-referenced truth (setup owns the marker ->
-    // ARP reduction; see NetworkSetupResult::cl_truth_arp) so the consumer's ENU
-    // error is not offset by the station's antenna eccentricity.
-    const Eigen::Vector3d cl_truth = setup.cl_truth_arp;
-    const Coordinates::Llh cl_truth_llh =
-        closed_loop_on ? Coordinates::ecefToLlh(cl_truth) : Coordinates::Llh{};
-    std::size_t cl_epochs = 0, cl_ar_ran = 0, cl_ar_fixed = 0;
-    long long   cl_sum_fixed = 0;
-    double cl_first_fix_tow = -1.0; int cl_first_fix_week = -1;
-    std::deque<double> cl_recent_err3d;   // last-N 3D errors → converged-segment RMS
-    constexpr std::size_t kClRecentWindow = 30;
+    // Closed-loop metrics, accumulated by networkEmitStore and summarized at the run end.
+    // The consumer is graded against the ARP-referenced truth setup.cl_truth_arp (setup
+    // owns the marker -> ARP reduction), so its ENU error is not offset by the station's
+    // antenna eccentricity.
+    ClosedLoopTally cl_tally;
 
     // ------------------------------------------------------------------
     // The network run context (INC-4).  ctx.knobs holds the const config
@@ -691,9 +686,8 @@ int Application::runNetwork() {
     carry_cfg.qz = config_.networkCarryInvariantQz();
     // Estimation-side fine-slip innovation gate: the invariant-carry-native
     // replacement for the RAIM fine-slip layer that the invariant bypass empties.
-    // Requires carry_invariant (rejected at config load otherwise); off, the output is
-    // byte-identical.
-    const bool carry_innov_gate = carry_invariant && config_.networkCarryInvariantInnovGate();
+    // Resolved in NetworkKnobs::snapshot; off, the output is byte-identical.
+    const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
     carry_cfg.innov_gate = carry_innov_gate;
     carry_cfg.innov_k    = config_.networkCarryInvariantInnovK();
     // LS-VCE calibration of the gate threshold (σ̂₀²); requires innov_gate, rejected at
@@ -721,16 +715,11 @@ int Application::runNetwork() {
     carry_cfg.carry_lin    = carry_invariant
                              && config_.getNetworkConfig().state_snapshot_carry_lin;
     carry_cfg.carry_rebase = carry_invariant && config_.networkResumeCarryRebase();
-    // Lane-coordinate carry (card M5 WL-3).  The loader enforces carry_invariant and
-    // mw_wl.ewl_enable.  lane_joint separates the lane shape (joint 2K pair blocks, lane
-    // prior/q, lane measurement rows, fold-on-change fixing) from the §6.1 equivalence
-    // shape (every lane feature at its isotropic/off sentinel ⇒ split per-band emission,
-    // information-identical to the per-band carry).
+    // Lane-coordinate carry (card M5 WL-3).  lane_on and lane_joint (the lane shape as
+    // against the §6.1 equivalence shape) are resolved in NetworkKnobs::snapshot.
     const auto& lane_cfg = config_.getNetworkConfig().lane_carry;
-    const bool lane_on = carry_invariant && lane_cfg.enable;
-    const bool lane_joint = lane_on
-        && (lane_cfg.q_wl_scale != 1.0 || lane_cfg.sigma_wl_fresh_cyc > 0.0
-            || lane_cfg.lane_meas || lane_cfg.bridge_meas);
+    const bool lane_on = ctx.knobs.lane_on;
+    const bool lane_joint = ctx.knobs.lane_joint;
     if (lane_on) {
         carry_cfg.q_wl_scale         = lane_cfg.q_wl_scale;
         carry_cfg.sigma_wl_fresh_cyc = lane_cfg.sigma_wl_fresh_cyc;
@@ -743,27 +732,28 @@ int Application::runNetwork() {
         carry_cfg.skip_pinned_within_n   = lane_cfg.skip_pinned_within_n;
     }
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
-    // MW-seeded wide-lane pseudo-observation layer (card M5 WL-1).  It uses the carry
-    // driver's chord basis, so it requires carry_invariant (rejected at config load
-    // otherwise).  Off (mw_wl.enable=false) ⇒ NetworkMwWlLayer::build returns no blocks and
-    // the per-station MW detectors are not built for it, so the producer is byte-identical.
-    const bool mw_wl_on = carry_invariant && config_.networkMwWlSeed();
-    // With the EWL lane armed (card M5 WL-2), the constellation's third band (the EWL
-    // pair's uncarried leg: GPS L5, Galileo E5b) is excluded from the invariant-carry
-    // driver, so that lane acquires no unearned stiff prior (the F6 wall) and its EWL rows
-    // are not opposed by a carried value.  The band stays in the eq34 election and datum
-    // (shared_phase_keys and pins are built upstream and are untouched).  Off ⇒ the third
-    // band is carried like the others (byte-identical).  v1 covers GPS and Galileo; GLONASS
-    // is never carried.
+    // MW-seeded wide-lane pseudo-observation layer (card M5 WL-1), resolved in
+    // NetworkKnobs::snapshot.  Off (mw_wl.enable=false) ⇒ NetworkMwWlLayer::build returns
+    // no blocks and the per-station MW detectors are not built for it, so the producer is
+    // byte-identical.
+    const bool mw_wl_on = ctx.knobs.mw_wl_on;
+    // With the EWL lane armed (card M5 WL-2, ctx.knobs.ewl_on), the constellation's third
+    // band (the EWL pair's uncarried leg: GPS L5, Galileo E5b) is excluded from the
+    // invariant-carry driver, so that lane acquires no unearned stiff prior (the F6 wall)
+    // and its EWL rows are not opposed by a carried value.  The band stays in the eq34
+    // election and datum (shared_phase_keys and pins are built upstream and are
+    // untouched).  Off ⇒ the third band is carried like the others (byte-identical).  v1
+    // covers GPS and Galileo; GLONASS is never carried.  The exclusion itself is applied in
+    // networkBuildCarryDdPriors through the predicate below.
     const auto& nmw = config_.getNetworkConfig().mw_wl;
-    const bool ewl_carry_exclude = carry_invariant && nmw.ewl_enable;
-    // With card M5 UWL-1 armed, the uncarried band comes from the per-constellation
-    // lane-tier table (Galileo's top band is selectable: '7' = E5b, lane λ 9.768 m;
-    // '8' = E5 AltBOC, lane λ 19.537 m).  uwl_enable=false keeps the legacy digits
-    // verbatim, which is the §6.1(b) gate: arming a constellation without the card
-    // changes nothing.  For GPS (and Galileo at the default '7') the table reproduces the
-    // legacy digits, so armed GPS-only runs stay bit-identical too.
-    const bool uwl_excl_on = ewl_carry_exclude && nmw.uwl_enable;
+    // With card M5 UWL-1 armed (ctx.knobs.uwl_on, the exclusion and UWL-1 together), the
+    // uncarried band comes from the per-constellation lane-tier table (Galileo's top band
+    // is selectable: '7' = E5b, lane λ 9.768 m; '8' = E5 AltBOC, lane λ 19.537 m).
+    // uwl_enable=false keeps the legacy digits verbatim, which is the §6.1(b) gate: arming
+    // a constellation without the card changes nothing.  For GPS (and Galileo at the
+    // default '7') the table reproduces the legacy digits, so armed GPS-only runs stay
+    // bit-identical too.
+    const bool uwl_excl_on = ctx.knobs.uwl_on;
     const char uwl_gal_top = nmw.uwl_gal_top_band;
     const bool uwl_dual    = nmw.uwl_dual_top;   // increment 5: both {b_top, b_top2} uncarried
     auto isUncarriedThirdBand = [uwl_excl_on, uwl_gal_top, uwl_dual](
@@ -788,7 +778,6 @@ int Application::runNetwork() {
     mw_wl_cfg.sigma_floor_cyc    = config_.getNetworkConfig().mw_wl.sigma_floor_cyc;
     mw_wl_cfg.max_rows_per_epoch = config_.getNetworkConfig().mw_wl.max_rows_per_epoch;
     mw_wl_cfg.debug_r_scale      = config_.getNetworkConfig().mw_wl.debug_r_scale;   // diagnostic probe (F6)
-    NetworkMwWlLayer mw_wl_layer(mw_wl_cfg);
     if (mw_wl_on && mw_wl_cfg.debug_r_scale != 1.0)
         log->warn("Network (M5/WL-1): network.mw_wl.debug_r_scale = {} — DIAGNOSTIC probe, the WL "
                   "rows' Pz is scaled (not honest MW variance).  Do NOT grade this run.",
@@ -796,31 +785,10 @@ int Application::runNetwork() {
     // EWL lane (card M5 WL-2): the same layer, run on the (band2, band5) pair with FFR
     // statistic-gated fixing.  The third band is uncarried (excluded above), so these rows
     // meet no opposing F6 prior; a passed FFR folds an integer-hard row.  It uses the
-    // primary-sig1 cycle basis, as WL-1 does.
-    const bool ewl_on = carry_invariant && nmw.ewl_enable;
-    // Per-constellation top tier (card M5 UWL-1).  uwl_on generalizes the EWL lane's
-    // hard-coded GPS band digits to the lane-tier table (Galileo UWL (E5b|E5,E5a)); the
-    // cold fix also admits n=1 unlagged statistics to the decision on tiers with
-    // λ ≥ uwl_cold_min_lambda_m (SPEC §3.3; GPS's 5.861 m EWL is excluded on purpose).
-    const bool uwl_on      = ewl_on && nmw.uwl_enable;
-    const bool uwl_cold_on = uwl_on && nmw.uwl_cold_fix;
-    // 60-epoch age-bias fix: the bridge accumulates per-sample iono-de-biased GF, so every
-    // read-time C_iono·Σc·ı̃ subtraction is disabled.  The two frames must not mix:
-    // subtracting twice re-creates the bias with the opposite sign.
-    const bool bridge_debias_on = ewl_on && nmw.bridge_sample_debias;
-    // Mid-ladder bridge hop through E6 (motivated by the census): the WL decision is
-    // chained through the Galileo (E6,E5a) λ 2.931 m rung; re-rounding at λ_MID removes the
-    // top hop's λ-scale phase/iono amplification before it reaches the 0.751 m WL statistic.
-    const bool uwl_mid_on  = uwl_on && nmw.uwl_mid_enable;
-    // Per-cycle preferred ('8') / fallback ('7') Galileo top rung, plus the
-    // untaken-sibling closure statistic 2·N(8,5) = N(7,5) (increment 5).  The hard gate
-    // is off by default until the residual distribution is measured (SPEC
-    // reconciliation note 2).
-    const bool uwl_dual_on = uwl_on && nmw.uwl_dual_top;
-    const bool uwl_sib_gate_on = uwl_dual_on && nmw.uwl_sib_gate;
-    // Census recovery (v2): minority receiver-family primary pairs get their own lane
-    // pair groups (an admissible set of census pairs instead of the single majority pair).
-    const bool uwl_family_on = uwl_on && lane_on && nmw.uwl_family_pairs;
+    // primary-sig1 cycle basis, as WL-1 does.  ewl_on, the UWL-1 top tier (uwl_on) and the
+    // other lane switches are resolved in NetworkKnobs::snapshot.
+    const bool ewl_on = ctx.knobs.ewl_on;
+    const bool uwl_on = ctx.knobs.uwl_on;
     NetworkMwWlLayer::Config ewl_cfg;
     ewl_cfg.enable              = ewl_on;
     ewl_cfg.min_arc_epochs      = nmw.ewl_min_arc_epochs;
@@ -831,13 +799,17 @@ int Application::runNetwork() {
     ewl_cfg.fix_frac_cyc        = nmw.ewl_fix_frac_cyc;
     ewl_cfg.fix_weight_sigma_cyc= nmw.fix_weight_sigma_cyc;
     ewl_cfg.max_abs_xlin_m      = nmw.lane_max_abs_xlin_m;
+    // The lane machinery of the run (filter/NetworkRunGroups.hpp): the WL-1 layer, the EWL
+    // lanes, their run and per-build tallies, and the per-build inject and lane-trace
+    // plans.  networkBuildCarryDdPriors writes the per-build members, networkInstallCarry
+    // folds them into the run totals, and the run end reports the run totals.
+    NetworkLaneRun lane_run(mw_wl_cfg, ewl_cfg);
     // With the card armed there is one statistic-layer instance per tabled
     // constellation, so the telemetry is per constellation (the F-A dump showed that
     // pooled lines hide which lane the events come from).  Otherwise a single
     // filterless instance runs (the legacy shape; for a GPS-only run the 'G'-filtered
     // instance is bit-identical to it, because the filter never fires).  An armed
     // constellation that decides 0 cycles still prints its 0 line (invariant #4).
-    std::vector<EwlLane> ewl_lanes;
     if (ewl_on) {
         if (uwl_on) {
             for (const System sys : { System::GPS, System::Galileo }) {
@@ -853,126 +825,43 @@ int Application::runNetwork() {
                 // did not: a cycle with any arc lacking the preferred band ends there
                 // as skip_missing_band, the per-cycle "where tracked" resolution
                 // (increment 5).
-                ewl_lanes.push_back(EwlLane{ cons, tier->b_top, NetworkMwWlLayer(cfg), {}, {} });
+                lane_run.ewl_lanes.push_back(EwlLane{ cons, tier->b_top, NetworkMwWlLayer(cfg), {}, {} });
                 if (tier->b_top2 != '\0')
-                    ewl_lanes.push_back(EwlLane{ cons, tier->b_top2,
-                                                 NetworkMwWlLayer(cfg), {}, {} });
+                    lane_run.ewl_lanes.push_back(EwlLane{ cons, tier->b_top2,
+                                                          NetworkMwWlLayer(cfg), {}, {} });
             }
         } else {
-            ewl_lanes.push_back(EwlLane{ '\0', '\0', NetworkMwWlLayer(ewl_cfg), {}, {} });
+            lane_run.ewl_lanes.push_back(EwlLane{ '\0', '\0', NetworkMwWlLayer(ewl_cfg), {}, {} });
         }
     }
-    // WL lane (card M5 WL-2, SPEC §3.3/§3.4): the phase-bridge WL decision plus the
-    // NL-preserving inject.  The bridge path needs the EWL integers, so it runs only when
-    // both masters are on.  wl_inject alone would run the MW(1,2) fallback path (§3.5),
-    // which is deferred: v1 requires the bridge, and without it no WL decision is produced
-    // and the lane is armed but inert.  WL-3 supersedes the WL-2 hold/inject walk at
-    // runtime (the loader warns): under lane_carry the decided integers become
-    // fold-on-change lane fixes on the pair blocks, and the inject primitive remains only
-    // as the pair-block fallback.
-    const bool wl_inject_on = ewl_on && nmw.wl_inject_enable && !lane_on;
-    // Per-epoch lane measurement sources (WL-3).  The FFR fix walk runs whenever the
-    // joint lane shape is armed (fold-on-change is the §3.3 core and has no separate knob).
-    const bool lane_meas_on   = lane_on && lane_joint && lane_cfg.lane_meas;
-    const bool lane_bridge_on = lane_on && lane_joint && lane_cfg.bridge_meas;
-    const bool lane_fix_on    = lane_on && lane_joint;
-    // Fan the MW lane-increment folds across components (byte-identical to serial).
-    const bool lane_parallel_components = lane_on && lane_joint && lane_cfg.parallel_components;
-    // One decided WL inject: the two bands' carry groups, the shared chord ArcKey, the integer
-    // target, the per-band linearization DD sums (F5 correction frame) and the wavelengths.
-    // Computed in buildCarryDdPriors from detector statistics (§3.0.1 decision source) and
-    // applied after the solve against the fresh posterior, so the preserved NL sum is this
-    // epoch's.  Refreshed each build; the last build before the accepted solve wins, as for
-    // ewl_epoch.
-    std::vector<WlInjectPlan> wl_inject_epoch;   // per-build; consumed post-installPosterior.
-    // F-A attribution dump (network.mw_wl.d5_dump, log-only): adjacency tags for each D5
-    // flag.  They are the (station, sat) pairs an EWL-fixed cycle touched this build, the
-    // chords of hold-folded cycles this build, and the chords injected in the previous epoch
-    // (an inject's residual tension lands in the next install; the injected chord itself is
-    // exempt, its component siblings are not).  All are rebuilt per accepted build and stay
-    // empty unless d5_dump is set.
-    const bool mw_d5_dump = (ewl_on || wl_inject_on || lane_on) && nmw.d5_dump;
-    // F-B lane trace (network.mw_wl.lane_trace, log-only): per epoch, the carried WL lane
-    // value of every primary cycle whose chord is carried in both bands.  The constrained
-    // (held or injected) and unconstrained populations come from one run, so the
-    // injected-cycle circR can be graded (scripts/grade_lane_trace.py).  Entries are built
-    // per accepted build and written after the install against the fresh posterior.
-    const bool mw_lane_trace = (wl_inject_on || lane_fix_on) && nmw.lane_trace;
-    const bool mw_tagsets    = mw_d5_dump || mw_lane_trace;   // hold/inject tag sets feed both
-    // Both dumps are ordinary NetworkRunTraces streams, opened once (truncating, with
-    // their header) before the epoch loop.  The open sits here rather than in openAll
-    // because the arming expressions above are not yet derived at that point.  The D5
-    // arm includes carry_innov_gate for the same reason its writer does: without the gate
-    // there are no flags, so an unarmed gate yields no file rather than an empty one, and
-    // the artifact set shows what actually ran.
-    traces.openMwWlDumps(mw_d5_dump && carry_innov_gate, mw_lane_trace, log);
-    std::vector<LaneTraceEntry> lane_trace_epoch;   // per-build; consumed post-install.
-    WlCounters wl_run, wl_epoch;
-    // Per-constellation WL-walk tallies when the card is armed (pooled lines hide
-    // which lane the events come from).  wl_run stays the aggregate; the per-epoch
-    // constellation tallies fold into both at the accepted-install accumulation.
-    std::map<char, WlCounters> wl_cons_epoch, wl_cons_run;
-    // Accepted-install accumulation helper, kept in one place so the field list cannot
-    // drift between two copies.
-    auto wlAccumulate = [](WlCounters& a, const WlCounters& b) {
-        a.rows_seen           += b.rows_seen;
-        a.cycles_decided      += b.cycles_decided;
-        a.holds_folded        += b.holds_folded;
-        a.injects             += b.injects;
-        a.inject_abs_sum      += b.inject_abs_sum;
-        a.skip_bridge_missing += b.skip_bridge_missing;
-        a.skip_no_iono        += b.skip_no_iono;
-        a.skip_bridge_wide    += b.skip_bridge_wide;
-        a.skip_not_fixed      += b.skip_not_fixed;
-        a.skip_closure        += b.skip_closure;
-        a.skip_quarantine     += b.skip_quarantine;
-        a.skip_basis          += b.skip_basis;
-        a.sum_bridge_R        += b.sum_bridge_R;
-        a.lane_mw_rows        += b.lane_mw_rows;
-        a.lane_bridge_rows    += b.lane_bridge_rows;
-        a.lane_fix_folded     += b.lane_fix_folded;
-        a.lane_fix_unchanged  += b.lane_fix_unchanged;
-        a.lane_skip_meas      += b.lane_skip_meas;
-        a.lane_pinned_skips   += b.lane_pinned_skips;
-        a.cold_bridge_cycles  += b.cold_bridge_cycles;
-        a.mid_decided         += b.mid_decided;
-        a.mid_fallback        += b.mid_fallback;
-        a.mid_closure         += b.mid_closure;
-        a.mid_disagree        += b.mid_disagree;
-        a.top2_decided        += b.top2_decided;
-        a.dual_dedupe         += b.dual_dedupe;
-        a.sib_checked         += b.sib_checked;
-        a.sib_unavail         += b.sib_unavail;
-        a.sib_int_off         += b.sib_int_off;
-        a.sib_blocked         += b.sib_blocked;
-        a.sib_abs_frac_sum    += b.sib_abs_frac_sum;
-    };
-    NetworkMwWlLayer::Counters mw_wl_run;    // run-total eligibility/skip tallies (invariant #4)
-    NetworkMwWlLayer::Counters mw_wl_epoch;  // per-build tallies (the last build before the accepted solve wins)
-    // One-shot F6 diagnostic (card M5 WL-1): a per-arc, per-row attribution dump of the
-    // WL rows of the first arming epoch.  Populated in buildCarryDdPriors at build time
-    // (z_MW, z_lin, z_corr and the per-arc MW̄ and x_lin, where the resolver and revmap
-    // are in scope) and finalized after the solve (reconstructed_abs from
-    // reconstructStation plus the kernel's WL-block innovation).  Log-only; off by
-    // default.
-    const bool mw_wl_f6_dump = mw_wl_on && config_.getNetworkConfig().mw_wl.f6_dump;
-    F6Capture mw_wl_f6;
-    // Emit-layer frame re-base (card 4 phase D).  It re-references the emitted
-    // per-(sat,σ) phase biases onto the previous emission frame, so the per-epoch gauge
-    // churn of the freely re-realized eq34 datum does not send the consumer spurious
-    // ambiguity resets; the integer step of a genuine reference-path slip is left
-    // intact, so the emitter jump test still fires.  On by default when carry_invariant
-    // is armed (spec D7); the off path is carry_invariant=false, which never touches
-    // the engine (byte-identical).
-    const bool emit_rebase_on = carry_invariant && config_.networkCarryInvariantEmitRebase();
-    NetworkEmitRebase emit_rebase_engine;
-    // PB emission-continuity filter (an M5 prerequisite): a slip-gated per-key scalar KF
-    // on the re-based emitted biases, plus a self-tuning k·σ̂_step jump gate that clears
-    // the threshold-in-noise discontinuity floor.  It runs inside the re-base block (it
-    // filters the re-based emission frame), so it requires emit_rebase_on.  Off by
-    // default ⇒ filterEpoch is never called; the engine is constructed like
-    // emit_rebase_engine but stays inert (byte-identical).
-    const bool emit_pb_filter_on = emit_rebase_on && config_.networkEmitPbFilter();
+    // The F-A D5 attribution dump and the F-B lane trace (network.mw_wl.d5_dump and
+    // network.mw_wl.lane_trace, log-only; armed as ctx.knobs.mw_d5_dump and
+    // ctx.knobs.mw_lane_trace) are ordinary NetworkRunTraces streams, opened once
+    // (truncating, with their header) before the epoch loop.  The open sits here rather
+    // than in openAll, beside the lane machinery they trace.  The D5 arm includes
+    // carry_innov_gate for the same reason its writer does: without the gate there are no
+    // flags, so an unarmed gate yields no file rather than an empty one, and the artifact
+    // set shows what actually ran.
+    traces.openMwWlDumps(ctx.knobs.mw_d5_dump && carry_innov_gate, ctx.knobs.mw_lane_trace, log);
+    // The emit-layer engines (filter/NetworkRunGroups.hpp), run by networkEmitStore on every
+    // emitted epoch:
+    //  - the emit-layer frame re-base (card 4 phase D, ctx.knobs.emit_rebase_on).  It
+    //    re-references the emitted per-(sat,σ) phase biases onto the previous emission
+    //    frame, so the per-epoch gauge churn of the freely re-realized eq34 datum does not
+    //    send the consumer spurious ambiguity resets; the integer step of a genuine
+    //    reference-path slip is left intact, so the emitter jump test still fires.  On by
+    //    default when carry_invariant is armed (spec D7); the off path is
+    //    carry_invariant=false, which never touches the engine (byte-identical).
+    //  - the PB emission-continuity filter (an M5 prerequisite, ctx.knobs.emit_pb_filter_on):
+    //    a slip-gated per-key scalar KF on the re-based emitted biases, plus a self-tuning
+    //    k·σ̂_step jump gate that clears the threshold-in-noise discontinuity floor.  It
+    //    runs inside the re-base block (it filters the re-based emission frame), so it
+    //    requires emit_rebase_on.  Off by default ⇒ filterEpoch is never called; the engine
+    //    is constructed like the re-base engine but stays inert (byte-identical).
+    //  - the clock emission re-base (card CLK-R): the common-mode frame hold (stage 1) and
+    //    the per-satellite step marks (stage 2).  Both knobs are off by default ⇒
+    //    rebaseEpoch is never called (byte-identical).  It affects outputs only: the solve
+    //    is byte-identical even when armed.
     NetworkPbEmitFilter::Config pb_filter_cfg;
     pb_filter_cfg.q_m2_s         = config_.networkEmitPbFilterQ();
     pb_filter_cfg.jump_k         = config_.networkEmitPbFilterJumpK();
@@ -980,20 +869,14 @@ int Application::runNetwork() {
     pb_filter_cfg.max_gap_s      = config_.networkEmitPbFilterMaxGapS();
     pb_filter_cfg.window_epochs  = config_.networkEmitPbFilterWindowEpochs();
     pb_filter_cfg.gate_v2        = config_.networkEmitPbFilterGateV2();  // PB-gate-v2 merge point (leaf wiring)
-    NetworkPbEmitFilter pb_filter_engine(pb_filter_cfg);
-    const bool pb_filter_emit_sigma = config_.networkEmitPbFilterEmitSigma();
-    // Clock emission re-base (card CLK-R): the common-mode frame hold (stage 1) and the
-    // per-satellite step marks (stage 2).  A run-TU local like the PB engines
-    // (NetworkRunContext banner rule).  Both knobs are off by default ⇒ rebaseEpoch is
-    // never called (byte-identical).  It affects outputs only: the solve is
-    // byte-identical even when armed.
     NetworkClockEmitRebase::Config clk_rebase_cfg;
     clk_rebase_cfg.frame_hold = ctx.knobs.clk_frame_hold;
     clk_rebase_cfg.leash_m    = config_.networkClockFrameLeashM();
     clk_rebase_cfg.jump_test  = ctx.knobs.clk_jump_test;
     clk_rebase_cfg.jump_m     = config_.networkClockDiscJumpM();
     clk_rebase_cfg.gap_jump_m = config_.networkClockDiscGapJumpM();
-    NetworkClockEmitRebase clk_rebase_engine(clk_rebase_cfg);
+    NetworkEmitEngines emit_engines{ NetworkEmitRebase{}, NetworkPbEmitFilter(pb_filter_cfg),
+                                     NetworkClockEmitRebase(clk_rebase_cfg) };
     auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
     auto& carry_group_id = ctx.carry.carry_group_id;
     auto& carry_prev_tow = ctx.carry.carry_prev_tow;
@@ -1076,8 +959,11 @@ int Application::runNetwork() {
     // [TIMING] Wall clock of the per-epoch loop alone (excluding startup: product
     // cache load and per-station RINEX parse).  It isolates the per-epoch compute that
     // scales with station count, which is the scaling metric, and counts only epochs
-    // that entered processing (past the max-duration cutoff).
-    const auto t_loop_begin = std::chrono::steady_clock::now();
+    // that entered processing (past the max-duration cutoff).  The run's timing record
+    // (filter/NetworkRunGroups.hpp) also holds the D0 assembly wall, the profiled-epoch
+    // count and the D0b sub-block totals below; the run end reports all of them.
+    NetworkRunTiming timing;
+    timing.loop_begin = std::chrono::steady_clock::now();
     auto& n_loop_epochs = ctx.counters.n_loop_epochs;
     auto& decim_counter = ctx.counters.decim_counter;
     auto& sh_converged_latch = ctx.carry.sh_converged_latch;
@@ -1171,8 +1057,8 @@ int Application::runNetwork() {
     // Byte-identical off.
     carry_driver.setPerfTiming(sec_timers_on);
     carry_driver.resetPerfTimers();
-    double sec_asm_wall_ms = 0.0;      // run-total driver-side assembly wall, produce + serial scatter (D0)
-    std::size_t sec_profiled_epochs = 0;  // epochs that reached the post-solve per-epoch readout (D0)
+    // The D0 run totals the driver keeps (the assembly wall and the profiled-epoch count)
+    // are timing.asm_wall_ms and timing.profiled_epochs.
     if (sec_timers_on)
         log->info("Network (D0): per-epoch section timers ARMED "
                   "(assembly / reduce / solve / cov-inverse / cov-consumers).");
@@ -1190,47 +1076,10 @@ int Application::runNetwork() {
     // emitted-epoch readout; the residual (other − Σ net) is logged as "unattributed".
     // With the toggle off, the subBegin/subEnd lambdas return early (no clock reads, no
     // est.sectionTimers() calls), so the output is byte-identical to an untimed run.
-    enum SubBlock {
-        SB_SLIP = 0,     // block 1: PASS-A slip scans (MW refloat + IF-TD jumps), pre-assembly
-        SB_PREASM,       //          pre-assembly measurement build (post-slip → assembly wall)
-        SB_GAUGEBUILD,   //          buildEnsembleGauges (Σz=0 gauges); the ensemble datum is off in the tier
-        SB_DDBUILD,      //          buildCarryDdPriors: eq34 arc graph + carry_driver.buildDdPriors
-                         //          (W·Pᶻ·Wᵀ dense DD-cov projection over K carried chords) (card 4)
-        SB_SOLVEGLUE,    //          pre-solve prep + clock predict + solve + within-epoch re-solve
-                         //          (net removes the internal solve/reduce)
-        SB_INSTALL,      //          carry_driver.installPosterior (DD posterior mean/cov readback) (card 4)
-        SB_NETAR,        //          producer-side network AR, phase 2 (log-only; off in the tier)
-        SB_SOLPREP,      //          toSolutionEpoch + per-sat discontinuity signalling
-        SB_EMITSTORE,    // block 7: emit re-base + PB-emit filter + store push + solution CSV
-        SB_IONODIAG,     // block 4: iono / ZWD / anchor-info viz traces (per-station recon sweeps)
-        SB_DDFRAC,       // block 6: cross-station DD fractional-residual (B5) trace
-        SB_SHDEV_VTEC,   // block 4: T5 SH-deviation carry KF + co-estimated VTEC coeff trace
-        SB_T1A,          // block 3: T1a SH-field health probe + fused H1 adaptive-deweight gate
-        SB_LEVELING,     // block 5: phase-leveling carry harvest + D2/C1 stash + T1d SH-conv
-        SB_RAIM,         // block 2: post-fit network RAIM pass-1/2 + median-polish attribution
-        SB_CLOCKUPD,     // block 8: two-state clock update + fault QC + retro-flag feed
-        SB_FRAMEDIAG,    // shared-normal spectrum + post-fit sigma0, both off by default (P1-3/P1-4)
-        SB_STASH_STATUS, // block 5/8: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
-        SB_ROSTER,       // signal-roster build and arc-ledger advance at the top of the
-                         //       epoch, and the disagreement pass after the clock update
-                         //       (card SID phase 1).  Both brackets accumulate into one
-                         //       entry: they are the same observatory, and the cost of
-                         //       interest is what the card adds to an epoch.
-        SB_FASTCLOCK,    // fast-clock anchor harvest + the shadow-mode grading tick (FC-1).
-                         //       The tick on decimated-out epochs is outside the loop and
-                         //       untimed here; it has its own ctx.counters.fc_wall_ms
-                         //       accumulator, because a tick is not a loop epoch and must
-                         //       not enter the D0 wall.
-        SB_COUNT
-    };
-    static constexpr const char* kSubNames[SB_COUNT] = {
-        "slip-scans", "pre-asm", "gauge-build", "dd-build", "solve-glue", "install-post",
-        "netar", "sol-prep", "emit-store", "iono-diag", "dd-frac", "shdev-vtec",
-        "t1a-health", "leveling", "raim", "clock-upd", "frame-diag", "stash-status",
-        "roster", "fast-clock"
-    };
-    std::vector<SubBlockTimer> sec_sub(SB_COUNT);        // run totals
-    std::vector<SubBlockTimer> sec_sub_ep0(SB_COUNT);    // per-epoch loop-top snapshot of sec_sub
+    // The sub-blocks (enum SubBlock) and their printed names (kSubBlockNames) are declared
+    // beside SubBlockTimer in filter/NetworkWlRunTypes.hpp; their run totals are
+    // timing.sub_blocks.
+    std::vector<SubBlockTimer> sec_sub_ep0(SB_COUNT);    // per-epoch loop-top snapshot of timing.sub_blocks
     std::vector<std::chrono::steady_clock::time_point> sub_wall0(SB_COUNT);
     std::vector<NetworkNormalEquations::SectionTimers>  sub_tmr0(SB_COUNT);
     auto subBegin = [&](SubBlock b) {
@@ -1241,15 +1090,15 @@ int Application::runNetwork() {
     auto subEnd = [&](SubBlock b) {
         if (!sec_timers_on) return;
         const auto& t = est.sectionTimers();
-        sec_sub[b].wall_ms += std::chrono::duration<double, std::milli>(
+        timing.sub_blocks[b].wall_ms += std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - sub_wall0[b]).count();
-        sec_sub[b].timed_ms +=
+        timing.sub_blocks[b].timed_ms +=
             (t.reduce_ms        - sub_tmr0[b].reduce_ms)
           + (t.solve_ms         - sub_tmr0[b].solve_ms)
           + (t.cov_inverse_ms   - sub_tmr0[b].cov_inverse_ms)
           + (t.cov_consumers_ms - sub_tmr0[b].cov_consumers_ms);
-        sec_sub[b].covcon_ms += t.cov_consumers_ms   - sub_tmr0[b].cov_consumers_ms;
-        sec_sub[b].covcalls  += t.cov_consumer_calls - sub_tmr0[b].cov_consumer_calls;
+        timing.sub_blocks[b].covcon_ms += t.cov_consumers_ms   - sub_tmr0[b].cov_consumers_ms;
+        timing.sub_blocks[b].covcalls  += t.cov_consumer_calls - sub_tmr0[b].cov_consumer_calls;
     };
 
     // === State snapshot and warm resume (RTB-7(a)) ============================
@@ -1264,9 +1113,9 @@ int Application::runNetwork() {
     }
     networkSnapshotFingerprint(ctx, config_, stations);
     networkTryWarmResume(ctx, config_, sync, emitter, carry_driver, log,
-                         &clk_rebase_engine,    // the CLK-R held frame is restored too (§18.10),
-                         &emit_rebase_engine,   // as are the two phase-bias emit layers,
-                         &pb_filter_engine);    //   for the same reason (RS-5 §21.10)
+                         &emit_engines.clk_rebase,  // the CLK-R held frame is restored too (§18.10),
+                         &emit_engines.rebase,      // as are the two phase-bias emit layers,
+                         &emit_engines.pb_filter);  //   for the same reason (RS-5 §21.10)
     // Applies the canonical-signal latch the resume just staged (RS-8, §21.16).  This
     // happens here rather than inside networkTryWarmResume because the latch lives in
     // each station's PppModel and the roster is in scope only in the driver.  It must
@@ -1566,7 +1415,7 @@ int Application::runNetwork() {
         if (sec_timers_on) {
             sec_t0 = est.sectionTimers();
             sec_epoch_t0 = std::chrono::steady_clock::now();
-            sec_sub_ep0 = sec_sub;   // per-epoch deltas of the sub-block run totals (D0b)
+            sec_sub_ep0 = timing.sub_blocks;   // per-epoch deltas of the sub-block run totals (D0b)
         }
 
         // Rotation of the unbounded service CSVs (P1); the body is in NetworkRunTraces
@@ -1575,7 +1424,7 @@ int Application::runNetwork() {
 
         // Health heartbeat (RTB-6); the body is in NetworkRunTraces (INC-4), and the
         // window anchors and last_health_write_s live in ctx.counters.
-        traces.writeHealthRow(se.time, nc, ctx.counters, t_loop_begin,
+        traces.writeHealthRow(se.time, nc, ctx.counters, timing.loop_begin,
                               ura_on, raim_on, pl_on, ura_sigma0_ewma,
                               last_pivot, grade_metric_s);
 
@@ -2478,7 +2327,7 @@ int Application::runNetwork() {
                           registered_clock_sats, registered_code_keys,
                           n_clock, n_pb, n_present,
                           asm_res, est_index_of, total_pins,
-                          sec_asm_ms_epoch, sec_asm_wall_ms) == EpochAction::SkipEpoch)
+                          sec_asm_ms_epoch, timing.asm_wall_ms) == EpochAction::SkipEpoch)
             return LoopSignal::Next;
         subBegin(SB_GAUGEBUILD); // buildEnsembleGauges + carry-driver lambdas, pre-DD-build (D0b)
 
@@ -2659,14 +2508,7 @@ int Application::runNetwork() {
                                       est_index_of, present, shared_phase_keys, se, carry_arc_amb_key,
                                       carry_arc_amb_key2, carry_slipped_ambs, carry_slipped_raw,
                                       carry_we_drop_sats,
-                                      carry_we_drop_arcs, n_threads, ewl_lanes, ewl_cfg, mw_wl_layer,
-                                      mw_wl_f6, mw_wl_epoch, wl_inject_epoch, lane_trace_epoch,
-                                      wl_epoch, wl_cons_epoch, isUncarriedThirdBand, carry_innov_gate, mw_wl_on,
-                                      ewl_on, uwl_on, uwl_cold_on, uwl_mid_on, uwl_dual_on, uwl_family_on,
-                                      uwl_sib_gate_on, wl_inject_on, bridge_debias_on, ewl_carry_exclude,
-                                      lane_on, lane_meas_on, lane_bridge_on, lane_fix_on,
-                                      lane_parallel_components, mw_d5_dump, mw_lane_trace, mw_tagsets,
-                                      mw_wl_f6_dump);
+                                      carry_we_drop_arcs, n_threads, lane_run, isUncarriedThirdBand);
         };
         subEnd(SB_GAUGEBUILD);   // close gauge build and carry-driver setup (D0b)
         subBegin(SB_DDBUILD);    // carry_driver.beginEpoch + buildCarryDdPriors, W·Pᶻ·Wᵀ (D0b)
@@ -2718,11 +2560,8 @@ int Application::runNetwork() {
         // start).  No-op when off.
         if (carry_invariant) {
             networkInstallCarry(ctx, config_, log, traces, carry_driver, est, x_s, plan, se, stations,
-                                slip_qc, carry_arc_amb_key, carry_arc_amb_key2, log_dir_, carry_par,
-                                n_threads, seam_threads, carry_innov_gate, mw_wl_on, lane_on, ewl_on, uwl_on,
-                                wl_inject_on, lane_fix_on, mw_d5_dump, mw_lane_trace, mw_tagsets,
-                                mw_wl_f6_dump, ewl_lanes, wl_inject_epoch, lane_trace_epoch, mw_wl_run,
-                                mw_wl_epoch, wl_run, wl_epoch, wl_cons_run, wl_cons_epoch, mw_wl_f6);
+                                slip_qc, carry_arc_amb_key, carry_arc_amb_key2, carry_par,
+                                n_threads, seam_threads, lane_run);
         }
         subEnd(SB_INSTALL);     // close installPosterior, the card-4 posterior readback (D0b)
         subBegin(SB_NETAR);     // producer-side network AR phase 2, log-only, off in the tier (D0b)
@@ -2765,12 +2604,9 @@ int Application::runNetwork() {
         subBegin(SB_EMITSTORE); // block 7: re-base + PB-emit filter + store push + solution CSV (D0b)
         networkEmitStore(ctx, config_, log, traces, setup, se, est, x_s, pl_now_s,
                          datum_changed, sigma0_adapt, sol, epoch_withheld_consts, global_bump,
-                         serialized_consts, retro_emit_sats, emit_rebase_on, emit_pb_filter_on,
-                         pb_filter_emit_sigma, emit_rebase_engine, pb_filter_engine,
-                         clk_rebase_engine, present,
+                         serialized_consts, retro_emit_sats, emit_engines, present,
                          est_index_of, modeled, shared_phase_keys, carry_slipped_ambs,
-                         we_t2_opp, we_t2_flag, cl_epochs, cl_ar_ran, cl_ar_fixed, cl_sum_fixed,
-                         cl_first_fix_tow, cl_first_fix_week, cl_recent_err3d);
+                         we_t2_opp, we_t2_flag, cl_tally);
         subEnd(SB_EMITSTORE);   // close block 7: emit/store, order-sensitive, serial (D0b)
         // Harvests the fast anchor from this epoch's emitted solution.  `sol` is read after
         // networkEmitStore, so the cached c0 values are the re-based, PB-filtered ones the
@@ -3070,7 +2906,7 @@ int Application::runNetwork() {
                 stmr.cov_consumer_calls - sec_t0.cov_consumer_calls;
             const double d_other = d_total - sec_asm_ms_epoch - d_reduce - d_solve
                                    - d_covinv - d_covcon;
-            ++sec_profiled_epochs;
+            ++timing.profiled_epochs;
             log->info("Network (D0) TOW {:.1f}: total {:.1f} ms | assembly-wall {:.1f} "
                       "| reduce {:.1f} | solve {:.1f} | cov-inv {:.1f} | cov-consumers {:.1f} "
                       "({} calls) | other {:.1f} | est.addStation {:.1f} (cross-cutting) | "
@@ -3085,10 +2921,10 @@ int Application::runNetwork() {
             std::string d0b;
             double d0b_net_sum = 0.0;
             for (int b = 0; b < SB_COUNT; ++b) {
-                const double net = (sec_sub[b].wall_ms  - sec_sub_ep0[b].wall_ms)
-                                 - (sec_sub[b].timed_ms - sec_sub_ep0[b].timed_ms);
+                const double net = (timing.sub_blocks[b].wall_ms  - sec_sub_ep0[b].wall_ms)
+                                 - (timing.sub_blocks[b].timed_ms - sec_sub_ep0[b].timed_ms);
                 d0b_net_sum += net;
-                d0b += fmt::format("{}={:.1f} ", kSubNames[b], net);
+                d0b += fmt::format("{}={:.1f} ", kSubBlockNames[b], net);
             }
             log->info("Network (D0b) TOW {:.1f}: other-net ms [ {}] Σnet {:.1f} | other {:.1f} "
                       "| unattributed {:.1f}",
@@ -3103,9 +2939,9 @@ int Application::runNetwork() {
                                                          //   lives in the station models)
                                                          //   and RL x_lin rows (RS-9 §21.18)
                                   log,
-                                  &clk_rebase_engine,    // frame rows, v2 (§18.10)
-                                  &emit_rebase_engine,   // emit-layer rows (RS-5 §21.10):
-                                  &pb_filter_engine,     //   ER / PF / PS
+                                  &emit_engines.clk_rebase,  // frame rows, v2 (§18.10)
+                                  &emit_engines.rebase,      // emit-layer rows (RS-5 §21.10):
+                                  &emit_engines.pb_filter,   //   ER / PF / PS
                                   setup.consumer.get()); // consumer snapshot beside each history copy (card CC (B))
         return LoopSignal::Next;
     };
@@ -3138,7 +2974,11 @@ int Application::runNetwork() {
 
     if (parallel_on) Eigen::setNbThreads(eigen_threads_saved);  // restore Eigen's own threading
 
-    return networkTeardown(ctx, config_, log, traces, setup, est, carry_driver, carry_vce_est, prires_est, slip_qc, mw_wl_run, ewl_lanes, wl_run, wl_cons_run, emit_rebase_engine, pb_filter_engine, clk_rebase_engine, iono_deweight, sec_sub, kSubNames, synced, carry_innov_gate, mw_wl_on, ewl_on, wl_inject_on, uwl_on, lane_on, sh_dev_on, idw_on, emit_rebase_on, emit_pb_filter_on, sec_asm_wall_ms, sec_profiled_epochs, t_loop_begin, cl_epochs, cl_ar_ran, cl_ar_fixed, cl_sum_fixed, cl_first_fix_tow, cl_first_fix_week, cl_recent_err3d, cl_truth, cl_truth_llh, log_dir_);
+    // The run end reads the run's groups through one const bundle (card NOM step TD1a).
+    const NetworkRunEngines engines{ est, carry_driver, carry_vce_est, prires_est, slip_qc,
+                                     iono_deweight };
+    return networkTeardown(ctx, config_, log, traces, setup,
+                           NetworkRunEndInputs{ engines, emit_engines, lane_run, timing, cl_tally });
 }
 
 } // namespace GnssProcessor

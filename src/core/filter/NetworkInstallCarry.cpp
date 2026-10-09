@@ -50,37 +50,40 @@ void networkInstallCarry(
     SlipQcChannel& slip_qc,
     const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
     const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
-    const std::filesystem::path& log_dir_,
     bool carry_par,
     int n_threads,
     int seam_threads,
-    bool carry_innov_gate,
-    bool mw_wl_on,
-    bool lane_on,
-    bool ewl_on,
-    bool uwl_on,
-    bool wl_inject_on,
-    bool lane_fix_on,
-    bool mw_d5_dump,
-    bool mw_lane_trace,
-    bool mw_tagsets,
-    bool mw_wl_f6_dump,
-    std::vector<EwlLane>& ewl_lanes,
-    std::vector<WlInjectPlan>& wl_inject_epoch,
-    std::vector<LaneTraceEntry>& lane_trace_epoch,
-    NetworkMwWlLayer::Counters& mw_wl_run,
-    NetworkMwWlLayer::Counters& mw_wl_epoch,
-    WlCounters& wl_run,
-    WlCounters& wl_epoch,
-    std::map<char, WlCounters>& wl_cons_run,
-    std::map<char, WlCounters>& wl_cons_epoch,
-    F6Capture& mw_wl_f6) {
+    NetworkLaneRun& lane_run) {
     // --- Alias preamble: reconstructs the run-TU aliases the relocated
     //     SB_INSTALL body reads (nc/nmw/trace, the ctx.carry aliases, and the
     //     wlAccumulate lambda).  Copies of the former runNetwork() lines. ----
     const auto& nc  = config_.getNetworkConfig();
     const auto& nmw = config_.getNetworkConfig().mw_wl;
     auto& trace = traces.trace;
+    // The lane switches (NetworkKnobs), the lane machinery (NetworkLaneRun) and the log
+    // directory, under their former parameter names (card NOM step TD1a).
+    const std::filesystem::path& log_dir_ = traces.log_dir_;
+    const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
+    const bool mw_wl_on = ctx.knobs.mw_wl_on;
+    const bool lane_on = ctx.knobs.lane_on;
+    const bool ewl_on = ctx.knobs.ewl_on;
+    const bool uwl_on = ctx.knobs.uwl_on;
+    const bool wl_inject_on = ctx.knobs.wl_inject_on;
+    const bool lane_fix_on = ctx.knobs.lane_fix_on;
+    const bool mw_d5_dump = ctx.knobs.mw_d5_dump;
+    const bool mw_lane_trace = ctx.knobs.mw_lane_trace;
+    const bool mw_tagsets = ctx.knobs.mw_tagsets;
+    const bool mw_wl_f6_dump = ctx.knobs.mw_wl_f6_dump;
+    std::vector<EwlLane>& ewl_lanes = lane_run.ewl_lanes;
+    std::vector<WlInjectPlan>& wl_inject_epoch = lane_run.wl_inject_epoch;
+    std::vector<LaneTraceEntry>& lane_trace_epoch = lane_run.lane_trace_epoch;
+    NetworkMwWlLayer::Counters& mw_wl_run = lane_run.mw_wl_run;
+    NetworkMwWlLayer::Counters& mw_wl_epoch = lane_run.mw_wl_epoch;
+    WlCounters& wl_run = lane_run.wl_run;
+    WlCounters& wl_epoch = lane_run.wl_epoch;
+    std::map<char, WlCounters>& wl_cons_run = lane_run.wl_cons_run;
+    std::map<char, WlCounters>& wl_cons_epoch = lane_run.wl_cons_epoch;
+    F6Capture& mw_wl_f6 = lane_run.mw_wl_f6;
     auto& d5_ewl_stasat = ctx.carry.d5_ewl_stasat;
     auto& d5_hold_chords = ctx.carry.d5_hold_chords;
     auto& d5_inject_chords_prev = ctx.carry.d5_inject_chords_prev;
