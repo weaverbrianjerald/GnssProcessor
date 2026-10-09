@@ -54,7 +54,7 @@ are an artifact.
 
 ## Start with the tables
 
-Three tables at the top of `logs\main_log.log` say what the run estimates, before any
+Four tables at the top of `logs\main_log.log` say what the run estimates, before any
 residual or plot is read.
 
 **The model as armed** (`Network (param model)`, card PRM): one line per kind of
@@ -145,8 +145,32 @@ residual traces, the right-hand-side attribution) reads the row's tag. The row c
 the outlier pool's admission rule is one declared predicate there (`raimPoolAdmitsKind`);
 `NetworkRaim` counts each kind the pool admits.
 
-All three tables are also written to the run manifest as JSON records (`param_model`,
-`param_inventory`, `contributions`).
+**The signals as planned** (`Network (signals as planned)`, card NOM step N3a): for each
+constellation and frequency band, which signal every station models, the companions, the
+datum signals and the signals left out, with a reason and a station count. The roster
+behind it (`include\app\SignalRoster.hpp`) is built on every run.
+
+```
+system   band role          signals
+GPS      1    phase         L1C 40, L1W 18
+GPS      1    code          C1C 40, C1W 18
+GPS      1    datum         code: C1C 58 | pinned by: C1C 32 | phase: L1C 40
+GPS      5    stations      58 report the band, 0 model it
+GPS      5    excluded      no_latch: C5X 30, L5X 30, C5Q 28, L5Q 28
+decision site      compared_epoch disagree_epoch compared_run disagree_run  group | where it is decided ...
+if_pin_pair                   116             18          116           18  signal | the S-basis ionosphere-free pin pair ...
+```
+
+The excerpt is the 2 h field golden: 40 stations model GPS L1 on L1C/C1C and 18 on
+L1W/C1W, and nobody models L5 on this posture. The decision-site rows below the band rows
+compare the roster with the other places in the code that decide the same question, one
+row per place: the epoch's count, the run's count, and how many disagree. A disagreement
+is not an error by itself; it marks where two rules choose differently (here, the
+ionosphere-free pin uses C1C on band 1, while 18 stations model C1W). Card NOM step N3b
+turns each such row into a reader of the roster or a decision for the author.
+
+All four tables are also written to the run manifest as JSON records (`param_model`,
+`param_inventory`, `contributions`, `signals_as_planned`).
 
 ## The identities
 

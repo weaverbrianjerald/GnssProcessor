@@ -98,7 +98,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   N0b/N0c (identity reads through the typed layer) LANDED, byte-identical; N2 specified; network code tour started.
 - [RPA](RPA_raim_pool_data_rows_2026-10-08.md): closed, 2026-10-08: RAIM pools on observation rows only: KEEP_OFF,
   FAILED G3 (clock wire +69 %); the prior rows were the only check of a G07 clock runaway after a slip at BSHM00ISR.
-- [NOM2](NOM2_network_object_model_rows_2026-10-09.md): open, 2026-10-09: card NOM's continuation; N2a and N2b LANDED
+- [NOM2](NOM2_network_object_model_rows_2026-10-09.md): open, 2026-10-09: card NOM's continuation; N2a, N2b and N3a LANDED (the "signals as planned" table)
   (57 contribution kinds, a tag on every row and fold; every reader on the tags; RAIM pool admission declared; solve
   unchanged, trace moves explained).
 - [ICF](ICF_ignition_code_fault_2026-10-09.md): open, 2026-10-09: pre-registered. A faulty L1 receiver channel at
