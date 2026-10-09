@@ -2086,7 +2086,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         // roster has no answer (the undecided first epoch and nothing else), and both
         // outcomes are counted, so a run reports how much of the work the roster did
         // (standing invariant 4).
-        const bool roster_tracker = config_.networkRosterTracker() && ctx.roster.armed;
+        const bool roster_tracker = config_.networkRosterTracker() && ctx.roster.active;
         const TrackerLatchLookup roster_lu =
             [&ctx, &stations](int sta, const std::string& system, char band) -> std::string {
                 auto& c = ctx.counters.sid;
@@ -2417,7 +2417,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // would make every arc look continuous.  Disarmed, `sid` stays empty and both
     // drains take their raw-driven path, byte for byte.
     ArcReentryEpoch sid;
-    sid.armed = qc.params.ledger_reentry && ctx.roster.armed;
+    sid.armed = qc.params.ledger_reentry && ctx.roster.active;
     sid.refloat_no_verdict = qc.params.ledger_reentry_refloat;
     if (sid.armed) {
         std::set<ArcLedger::Key> admitted;
@@ -2428,10 +2428,11 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                    ctx.knobs.pl_max_gap_s, sid);
     }
     // The per-arc outcome sink of the unified "answered" census (R4) is written
-    // in both knob states wherever the observatory is armed, so the four-way
-    // split is comparable across the flip.
+    // in both states of network.ledger_reentry on every run (the roster is built
+    // on every run since card NOM step N3a), so the four-way split is comparable
+    // across the flip.  A record only: nothing in the solve reads it.
     ArcReentryOutcomeMap* sid_out =
-        ctx.roster.armed ? &ctx.carry.sid_reentry_outcome : nullptr;
+        ctx.roster.active ? &ctx.carry.sid_reentry_outcome : nullptr;
     networkSlipDrainGapReentry(stations, present, i_lo, n_sta_total,
                                carry_invariant, carry_warm, carry_slipped_ambs,
                                qc.epoch, qc.params,
@@ -2440,7 +2441,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                relevel_ptr,
                                relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
                                sid.armed ? &sid : nullptr, sid_out,
-                               ctx.roster.armed ? &ctx.arc_ledger : nullptr);
+                               ctx.roster.active ? &ctx.arc_ledger : nullptr);
 
     // ---- The same response, keyed on the signal (card GRS) ------------------
     // (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md.)  The drain above

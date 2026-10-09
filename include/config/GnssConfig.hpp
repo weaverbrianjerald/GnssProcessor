@@ -6845,11 +6845,20 @@ namespace GnssProcessor {
         bool networkStationMarkerToArp() const { return network_station_marker_to_arp_; }
 
         /**
-         * @brief Build the per-station signal roster and the arc ledger once per
-         *        epoch, as an observatory nothing reads
-         *        (@c network.signal_roster; card SID phase 1).
+         * @brief Write the arc ledger's trace (@c network.signal_roster; card SID
+         *        phase 1, a trace switch since card NOM step N3a).
          *
-         * The signal-identity audit (`runs/_msc/sid_audit_report_2026-09-22.md`,
+         * Since card NOM step N3a the per-station signal roster, the arc ledger and
+         * their disagreement census are built on every network run, and a "signals as
+         * planned" table is logged and written to the run manifest.  This key decides
+         * only whether the ledger's trace is written: @c logs/network_arc_ledger.csv
+         * (one row per arc transition) and the @c ARC event rows of the roster's build
+         * and audit in @c network_events.csv.  It keeps its name, so a config that
+         * arms it loads and gets the trace it asked for.  The readers of the roster
+         * (@ref networkRosterTracker, @ref networkLedgerReentry,
+         * @ref networkLedgerScreens, @ref networkLedgerEmit) no longer need it.
+         *
+         * Why the roster exists (card SID phase 1): the signal-identity audit (`runs/_msc/sid_audit_report_2026-09-22.md`,
          * summarized in docs/refound/SID_signal_identity_2026-09-22.md) lists 128 sites
          * in 38 files that decide which signal stands for a band, under at least nine
          * rules and six independent implementations of "the two lowest distinct
@@ -6859,17 +6868,16 @@ namespace GnssProcessor {
          * band-1 re-entries at those cells was answered, and the wire's L1W
          * phase-bias family was absent for 23.6 per cent of satellite-epochs.
          *
-         * Armed, one call in the epoch body fills @c NetworkRunContext::roster from
-         * the station canonical latch, the epoch's raw records and the config, and
+         * One call in the epoch body fills @c NetworkRunContext::roster from the
+         * station canonical latch, the epoch's raw records and the config, and
          * advances @c NetworkRunContext::arc_ledger; a second, read-only pass counts
          * every disagreement between the roster or the ledger and the site that
-         * currently decides the same question.  Nothing else reads either object, so
-         * the solve, the wire and every graded trace are byte-identical with the knob
-         * on and off (invariant #6 in both states).  The outputs are the
-         * run-end table, the @c ARC event tier and @c logs/network_arc_ledger.csv.
+         * currently decides the same question.  With no SID reader armed nothing
+         * else reads either object, so the solve, the wire and every graded trace are
+         * byte-identical with this key on and off (invariant #6 in both states).
          *
          * Not fingerprinted: no carried quantity changes meaning across the flip, so
-         * the knob is legal on a warm resume (the trace-class knob precedent).
+         * the key is legal on a warm resume (the trace-class knob precedent).
          * Network mode only.  Default false.
          */
         bool networkSignalRoster() const { return network_signal_roster_; }
@@ -6892,9 +6900,9 @@ namespace GnssProcessor {
          * with either.  Both may be armed; the roster read supersedes the latch
          * lookup and the loader says so.
          *
-         * Refused without @c network.signal_roster: there is no roster to read, and
-         * a silent fallback to the latch would make an armed run look like it had
-         * exercised the reader.
+         * The roster it reads is built on every network run (card NOM step N3a), so
+         * the knob needs no other; the run-end counters say how many lookups the
+         * roster answered and how many fell back to the latch.
          *
          * Not fingerprinted: the tracker's own history is exempt from the state
          * snapshot (card GRK's precedent) and no carried quantity changes meaning
@@ -6919,10 +6927,10 @@ namespace GnssProcessor {
          * Solve-affecting when armed: it changes which carried levels survive a
          * break. Graded as a behaviour change, never as a refactor.
          *
-         * Refused (error and disarm) without @c network.signal_roster and
-         * @c network.roster_tracker: without the observatory there is no ledger to
-         * read, and without the roster read the tracker's rows would still name
-         * bands by a different rule than the population does.
+         * Refused (error and disarm) without @c network.roster_tracker: without the
+         * roster read the tracker's rows would still name bands by a different rule
+         * than the population does.  The ledger it reads is built on every network
+         * run (card NOM step N3a).
          *
          * Fingerprinted (armed-only append, following card SCC): a warm resume
          * across the flip would restore carried levels that the other side of the
@@ -6961,8 +6969,8 @@ namespace GnssProcessor {
          *
          * Observatory: nothing in the solve reads any of it, so the solve, the
          * wire and every graded trace are byte-identical armed and disarmed
-         * (invariant #6 in both states). Refused (error plus disarm) without
-         * @ref networkSignalRoster. Not fingerprinted. Network mode only.
+         * (invariant #6 in both states). The ledger it folds into is built on every
+         * network run (card NOM step N3a). Not fingerprinted. Network mode only.
          */
         bool networkLedgerScreens() const { return network_ledger_screens_; }
 
@@ -7004,9 +7012,9 @@ namespace GnssProcessor {
          *
          * Observatory: nothing on the producer reads either back, so the solve and
          * every C / B / P / E record are byte-identical against an unarmed run;
-         * the only difference in @c products.txt is the @c N records. Refused
-         * (error plus disarm) without @ref networkSignalRoster, whose roster and
-         * ledger are both inputs. Not fingerprinted. Network mode only.
+         * the only difference in @c products.txt is the @c N records. Its two
+         * inputs, the roster and the ledger, are built on every network run (card
+         * NOM step N3a). Not fingerprinted. Network mode only.
          */
         bool networkLedgerEmit() const { return network_ledger_emit_; }
 
@@ -9341,11 +9349,11 @@ namespace GnssProcessor {
         double network_phase_bias_min_station_fraction_{0.0}; ///< Phase-bias coverage gate: a signal below this network coverage keeps its observation but gets no satellite phase-bias state (float ambiguity absorbs it, signal not AR-eligible); the "float, not drop" alternative. 0 = off (every phase signal gets a bias, byte-identical). Network mode only.
         bool   network_phase_bias_exclude_unmatched_antenna_{false}; ///< Exclude a station whose receiver antenna has no ATX model match (zero receiver PCO/PCV → uncalibrated carrier phase) from every satellite phase-bias state; its arc is absorbed by the local float ambiguity (like phase_bias_min_station_fraction, but per-station and all-signals) while it still feeds the satellite clock/code-bias/iono/position. The clock-datum pivot is never excluded (warned instead). Off = every station contributes (byte-identical). Network mode only.
         bool   network_station_marker_to_arp_{false};              ///< Reduce every roster station's configured position_ecef from the monument to the antenna reference point at setup (network.station_marker_to_arp; card UPO), via Coordinates::markerToArp with that station's RINEX `ANTENNA: DELTA H/E/N`: the helper and frame the held-out consumer's truth already uses. The roster is held fixed at a published (monument) coordinate while the observations refer to the antenna and the ATX model is ARP-relative, so the station misfits every range by H·sin(elev); its zenith wet delay absorbs about a quarter of H and the rest leaks into the satellite clocks regionally. A station whose header has no eccentricity record is left unchanged and warned; a zero eccentricity is an exact no-op. Off = byte-identical (eccentricities are read and reported only). Fingerprinted (armed-only append). Network mode only.
-        bool   network_signal_roster_{false};                      ///< Build the per-station signal roster (tracked / modelled / companion / excluded per station, constellation and band digit, reproduced from the canonical latch) and the arc ledger (Absent / Tracking / Gap / Reentered / Dead per (station, satellite, signal)) once per epoch (network.signal_roster; card SID phase 1), and count every disagreement between them and the site that currently decides the same question. Observatory: nothing but the counters and the trace reads either object, so the solve is byte-identical armed and disarmed. Outputs: the run-end table, the ARC event tier, logs/network_arc_ledger.csv. Not fingerprinted. Network mode only.
-        bool   network_roster_tracker_{false};                     ///< The arc-level slip tracker (networkComputeRawObservables) names each band by the roster's modelled_phase for that (station, constellation, band) when that phase is reported with its matching code this epoch, falling back to the lexical rule only where the roster names none (network.roster_tracker; card SID phase 2). The first reader of the phase-1 observatory; supersedes network.cycle_slip.tracker_modeled_first by construction (the roster's modelled role is that knob's latch), and both may be armed. Refused (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
-        bool   network_ledger_reentry_{false};                     ///< The gap re-entry response takes its population from the arc ledger's admitted lifecycle (network.ledger_reentry; card SID phase 3): every arc whose admitted state goes Gap to Reentered this epoch, whose signal the roster calls Modelled, and whose gap is inside phase_leveling_max_gap_s; it looks the raw tiers' verdict up per arc instead of being driven by them. The raw tiers keep running unchanged. An arc no raw tier saw has no verdict and is handled by network.ledger_reentry_no_verdict. Solve-affecting when armed (it changes which carried levels survive a break). Refused (error + disarm) without network.signal_roster and network.roster_tracker. Fingerprinted (armed-only append). Network mode only.
-        bool   network_ledger_screens_{false};                     ///< Reason-mask writers at every screen that removes a modelled row, a satellite or a station, folded into the ledger so an admitted gap carries the reason(s) that opened it, plus the anchor election read against the ledger (first-sighting-on-return cases, the coverage-gate drop edges' arc states and generation test, the anchor_arc_age comparison) (network.ledger_screens; card SID phase 4a). Observatory: byte-identical armed. Refused (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
-        bool   network_ledger_emit_{false};                        ///< The emitter's per-family bookkeeping read against the arc ledger (card PBH's hold generation against the ledger's admitted arc births, both directions; the emitter's first-sighting test against the ledger's memory of the family) and the producer's declaration of its signal roster on the wire as a block of N records (network.ledger_emit; card SID phase 5a). Observatory: the solve and every C / B / P / E record are byte-identical armed; the only wire difference is the N records. Refused (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
+        bool   network_signal_roster_{false};                      ///< Write the arc ledger's trace (network.signal_roster; card SID phase 1, a trace switch since card NOM step N3a): logs/network_arc_ledger.csv and the ARC event rows of the roster's build and audit. The per-station signal roster, the arc ledger and their disagreement census are built on every network run whatever this says. Trace class. Not fingerprinted. Network mode only.
+        bool   network_roster_tracker_{false};                     ///< The arc-level slip tracker (networkComputeRawObservables) names each band by the roster's modelled_phase for that (station, constellation, band) when that phase is reported with its matching code this epoch, falling back to the lexical rule only where the roster names none (network.roster_tracker; card SID phase 2). The first reader of the roster, which is built on every run (card NOM step N3a); supersedes network.cycle_slip.tracker_modeled_first by construction (the roster's modelled role is that knob's latch), and both may be armed. Not fingerprinted. Network mode only.
+        bool   network_ledger_reentry_{false};                     ///< The gap re-entry response takes its population from the arc ledger's admitted lifecycle (network.ledger_reentry; card SID phase 3): every arc whose admitted state goes Gap to Reentered this epoch, whose signal the roster calls Modelled, and whose gap is inside phase_leveling_max_gap_s; it looks the raw tiers' verdict up per arc instead of being driven by them. The raw tiers keep running unchanged. An arc no raw tier saw has no verdict and is handled by network.ledger_reentry_no_verdict. Solve-affecting when armed (it changes which carried levels survive a break). Refused (error + disarm) without network.roster_tracker. Fingerprinted (armed-only append). Network mode only.
+        bool   network_ledger_screens_{false};                     ///< Reason-mask writers at every screen that removes a modelled row, a satellite or a station, folded into the ledger so an admitted gap carries the reason(s) that opened it, plus the anchor election read against the ledger (first-sighting-on-return cases, the coverage-gate drop edges' arc states and generation test, the anchor_arc_age comparison) (network.ledger_screens; card SID phase 4a). Observatory: byte-identical armed. Not fingerprinted. Network mode only.
+        bool   network_ledger_emit_{false};                        ///< The emitter's per-family bookkeeping read against the arc ledger (card PBH's hold generation against the ledger's admitted arc births, both directions; the emitter's first-sighting test against the ledger's memory of the family) and the producer's declaration of its signal roster on the wire as a block of N records (network.ledger_emit; card SID phase 5a). Observatory: the solve and every C / B / P / E record are byte-identical armed; the only wire difference is the N records. Not fingerprinted. Network mode only.
         bool   consumer_roster_latch_{false};                      ///< Consumer side (network.closed_loop.roster_latch; card SID phase 5b): the consumer's per-band canonical latch follows the producer's declared roster where it tracks a declared signal, and a freshness flip on a signal the declaration does not name is not a staleness event. Inert (logged once) on a wire with no declaration. Derived onto the closed-loop consumer config only.
         bool   network_ledger_anchor_{false};                      ///< A family the coverage gate's drop edge erased and that returns with arcs of the same generation restores its previous incumbent as the candidate of record (subject to the election's existing rules) instead of being elected as a first sighting (network.ledger_anchor; card SID phase 4b); a new-generation return is elected as without the knob. anchor_arc_age becomes a reader of the ledger's admitted age. Solve-affecting when armed. Refused (error + disarm) without network.ledger_screens. Fingerprinted (armed-only append). Network mode only.
         LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Response to a re-entry with no raw verdict (network.ledger_reentry_no_verdict; card SID phase 3): `bridge` (default) leaves it to the PASS-B inject and only counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as unmeasurable, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.

@@ -7217,13 +7217,14 @@ int networkTeardown(
     // guard for the same reason as the injector's clause: a rule that withheld the whole
     // network has to be visible on a run that also produced nothing.
     networkCanonicalPairRunEnd(ctx, log);
-    // Signal-roster observatory run-end (SID phase 1, app/SignalRoster.cpp): the roster's
-    // build census with its bar-0 self-check, every disagreement class with its
-    // denominator, and the arc ledger's transitions, horizon and cost.  Silent when the
-    // knob is disarmed.  Read here, before the zero-emit guard, for the reason the two
+    // Signal-roster run-end (SID phase 1, app/SignalRoster.cpp): the "signals as
+    // planned" table with its run-manifest record (card NOM step N3a), then the
+    // roster's build census with its bar-0 self-check, every disagreement class with
+    // its denominator, and the arc ledger's transitions, horizon and cost.  Written on
+    // every network run.  Read here, before the zero-emit guard, for the reason the two
     // clauses above give: the observatory's table matters most on a run that produced
     // nothing.
-    networkSignalRosterRunEnd(ctx, log);
+    networkSignalRosterRunEnd(ctx, config_, log, traces);
     // All-channel family census and cross-channel exposure (SID phase 6b), beside the
     // roster's table because the two answer the same question at different
     // granularities.  Returns on its first line when the widening is not active.

@@ -476,7 +476,7 @@ struct SlipQcParams {
     /// solve-affecting: the population is a different set (an arc can be
     /// raw-Tracking and admitted-Gap at the same epoch), so which carried levels
     /// survive a break changes.  The loader refuses it without
-    /// @c network.signal_roster, @c network.roster_tracker and @c gap_reentry.
+    /// @c network.roster_tracker and @c gap_reentry.
     bool   ledger_reentry{false};
     /// True when @c network.ledger_reentry_no_verdict is `refloat`: an arc in the
     /// ledger's population that no raw tier saw this epoch is treated as

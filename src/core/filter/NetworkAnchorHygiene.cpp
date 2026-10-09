@@ -97,7 +97,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     // network.eq34_anchor_min_arc_ep, the pin bridge or the fresh-pin ramp armed.
     // On a posture with none of them the class has a zero denominator, and the
     // run-end table reports dead wiring rather than agreement.
-    const bool sid_age_read = ctx.roster.armed && config_.networkLedgerScreens();
+    const bool sid_age_read = ctx.roster.active && config_.networkLedgerScreens();
     const bool sid_age_use  = sid_age_read && config_.networkLedgerAnchor();
     const long long sid_now_ep = ctx.arc_ledger.epochIndex();
     auto& sid_ctr = ctx.counters.sid;

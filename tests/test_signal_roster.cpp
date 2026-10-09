@@ -329,7 +329,7 @@ namespace {
 SignalRoster oneStationRoster(const std::vector<std::string>& tracked,
                               const std::vector<RosterLatchRow>& rows) {
     SignalRoster rs;
-    rs.armed = true;
+    rs.active = true;
     rs.by_station.assign(1, {});
     rs.by_station[0]["GPS"] = signalRosterBuildCells(tracked, rows, {}, false, nullptr);
     return rs;

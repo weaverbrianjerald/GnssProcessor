@@ -1291,9 +1291,8 @@ int Application::runNetwork() {
     // Signal roster and arc ledger (card SID phase 1,
     // docs/refound/SID_signal_identity_2026-09-22.md section 5): sizes the roster's
     // per-station caches, resolves the arc ledger's horizon from the readers' own gap
-    // windows, and records the station names.  Disarmed (network.signal_roster absent),
-    // every member of ctx.roster and ctx.arc_ledger is untouched and both seams are
-    // unreachable.
+    // windows, and records the station names.  Every network run sets them up (card NOM
+    // step N3a); network.signal_roster switches the ledger's trace only.
     networkSignalRosterArm(ctx, config_, log, stations);
     // Emitter read against the ledger, and the wire declaration (card SID phase 5a,
     // docs/refound/SID_signal_identity_2026-09-22.md section 4).  Disarmed
@@ -1462,12 +1461,11 @@ int Application::runNetwork() {
         // detectors, networkComputeRawObservables, assembly, the RAIM pools and the
         // traces, so the roster answers "which signal stands for this band at this
         // station" from the same RinexObservation all of them derive from.  It fills
-        // ctx.roster and advances ctx.arc_ledger.  In phase 1 only the disagreement
-        // counters and the trace read either object, so with the roster alone armed
-        // the solve, the wire and every graded trace are byte-identical; later SID
-        // phases (the ledger re-entry response, the anchor hygiene, the ledger emit)
-        // also read them.  Disarmed, it returns on its first line (no walk, no
-        // allocation, no counter moved).
+        // ctx.roster and advances ctx.arc_ledger on every epoch (card NOM step N3a).
+        // The disagreement census, the "signals as planned" table and the trace read
+        // them; the solve reads them only through a SID reader armed by its own knob
+        // (the roster tracker, the ledger re-entry response, the anchor hygiene, the
+        // ledger emit), so with none armed the solve and the wire are unchanged.
         subBegin(SB_ROSTER);
         networkBuildSignalRoster(ctx, config_, log, traces, se, stations);
         subEnd(SB_ROSTER);
@@ -1942,7 +1940,7 @@ int Application::runNetwork() {
                 // every unarmed run, which leaves every branch on the pointer
                 // unreachable inside the election.
                 AnchorReentry pd_reentry;
-                pd_reentry.observe = config_.networkLedgerScreens() && ctx.roster.armed;
+                pd_reentry.observe = config_.networkLedgerScreens() && ctx.roster.active;
                 pd_reentry.restore = pd_reentry.observe && config_.networkLedgerAnchor();
                 pd_reentry.led     = &ctx.arc_ledger;
                 pd_reentry.state   = &ctx.carry.sid_anchor_reentry;
@@ -2863,12 +2861,14 @@ int Application::runNetwork() {
         // (networkLeveling), the ambiguity states are post-assembly, the anchor
         // incumbents are post-election, the freed-ambiguity set carries this epoch's slip
         // responses, and `sol` is the solution the wire received.  Read-only; every class
-        // is a counter.  Disarmed, it returns on its first line.
+        // is a counter.  It also closes the epoch's decision-site census and, after the
+        // first emitted epoch whose roster carries a modelled role, logs the "signals as
+        // planned" table with its run-manifest record (card NOM step N3a).
         subBegin(SB_ROSTER);
         // Phase 2 adds `modeled` and `present`: the admitted row set that feeds the
         // second lifecycle.  They are in the same scope as every other input of the pass,
         // which is why the pass runs here and not at the build seam.
-        networkSignalRosterAudit(ctx, log, traces, se, stations, modeled, present,
+        networkSignalRosterAudit(ctx, config_, log, traces, se, stations, modeled, present,
                                  slip_qc.epoch.computed ? &slip_qc.epoch : nullptr,
                                  carry_slipped_ambs, sol,
                                  ctx.counters.n_emitted != fc_n_emitted_before);

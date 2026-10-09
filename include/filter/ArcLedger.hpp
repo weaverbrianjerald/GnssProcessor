@@ -15,9 +15,10 @@
  * absent from the one container the producer depends on.  Audit:
  * `runs/_msc/sid_audit_report_2026-09-22.md`, Part B.
  *
- * This ledger is one state machine those containers can read.  In phase 1 nothing
- * reads it: it is built, counts and traces, and the solve is byte-identical with it
- * armed and disarmed.
+ * This ledger is one state machine those containers can read.  It is built on
+ * every network run (card NOM step N3a); the solve reads it only through a card SID
+ * reader armed by its own knob, so with none armed it counts and traces and the
+ * solve is unchanged.
  *
  * ### The machine
  *
@@ -340,7 +341,10 @@ namespace GnssProcessor {
         /**
          * @brief Open one processed epoch.
          *
-         * @param epoch_idx Monotonic processed-epoch index (the ledger's own clock).
+         * @param epoch_idx Processed-epoch index (the ledger's own clock), strictly
+         *                  increasing from one call to the next: an arc observed or
+         *                  admitted at the open epoch is recognized by its
+         *                  @c ep_last_seen / @c ep_last_admitted stamp equalling it.
          * @param t_s       Continuous GPS seconds of the epoch.
          */
         void beginEpoch(long long epoch_idx, double t_s);
@@ -376,7 +380,9 @@ namespace GnssProcessor {
         /**
          * @brief Advance the admitted lifecycle of the open epoch (card SID phase 2).
          *
-         * Called once per epoch, downstream of the raw pass, with the arcs whose
+         * Called once per epoch (at most once per @ref beginEpoch: the sweep
+         * recognizes this epoch's admitted arcs by their @c ep_last_admitted stamp),
+         * downstream of the raw pass, with the arcs whose
          * modelled row survived the elevation mask, the allow list and the admission
          * screens.  The machine is the one the raw side runs, on its own
          * timestamps, so an arc can be raw-Tracking and admitted-Gap at the same
@@ -451,7 +457,6 @@ namespace GnssProcessor {
         long long epoch_idx_{ -1 };
         double    t_s_{ 0.0 };
         std::map<Key, ArcRecord> arcs_;
-        std::set<Key> seen_;                              ///< observed at the open epoch.
         std::map<std::pair<int, int>, long long> ev_last_; ///< (station, transition) -> epoch of its last event.
     };
 

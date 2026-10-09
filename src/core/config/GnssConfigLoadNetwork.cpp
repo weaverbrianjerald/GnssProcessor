@@ -6799,17 +6799,19 @@ namespace GnssProcessor {
         network_station_marker_to_arp_ =
             jval<bool>(json, "network.station_marker_to_arp",
                        "network_station_marker_to_arp", false);
-        // Per-station signal roster and arc ledger (card SID phase 1;
-        // docs/refound/SID_signal_identity_2026-09-22.md section 5), built once per
-        // epoch and read only by the disagreement counters and the trace.  Default
-        // off; on is byte-identical on the solve, the wire and every graded trace,
-        // which is the phase's own bar (invariant 6 in both knob states).
+        // The arc ledger's trace switch (card SID phase 1;
+        // docs/refound/SID_signal_identity_2026-09-22.md section 5).  Since card NOM
+        // step N3a the per-station signal roster, the arc ledger and their census are
+        // built on every network run, and this key only decides whether the ledger's
+        // trace is written (logs/network_arc_ledger.csv and the ARC event rows of the
+        // build and the audit).  The key keeps its name, so a config that arms it loads
+        // and gets the trace it asked for.  Default off; trace class.
         network_signal_roster_ =
             jval<bool>(json, "network.signal_roster", "network_signal_roster", false);
         // The arc-level slip tracker becomes the roster's first reader
-        // (card SID phase 2, section 6 of the same card).  Default off; the interlock
-        // against a roster that was never built, and the supersession notice against
-        // card GRK's knob, are raised in validateNetworkPhaseDatum_, late in the section.
+        // (card SID phase 2, section 6 of the same card).  Default off; the supersession
+        // notice against card GRK's knob is raised in validateNetworkPhaseDatum_, late in
+        // the section.  The roster it reads is built on every run (card NOM step N3a).
         network_roster_tracker_ =
             jval<bool>(json, "network.roster_tracker", "network_roster_tracker", false);
         // The gap re-entry response keys on the ledger's admitted lifecycle instead of
@@ -11381,31 +11383,19 @@ namespace GnssProcessor {
                       "absorbs about a quarter of H and the rest reaches the satellite clocks.  "
                       "Per-station lines and a summary follow at station build; a station whose "
                       "header carries no eccentricity record is left unchanged and warned.");
-        // Armed line for card SID phase 1.  Trace-class and byte-identical on the solve in
-        // both states, so there is no inert case; the line tells a reader that this run
-        // pays the observatory's cost and writes its extra artifacts.
+        // Armed line for the ledger's trace switch.  Trace class: the roster, the ledger
+        // and their census are built on every run whatever the key says (card NOM step
+        // N3a), so the line names only the files this run writes in addition.
         if (network_signal_roster_)
-            log->info("Network producer (card SID phase 1): network.signal_roster is ON — the "
-                      "per-station SIGNAL ROSTER (tracked / modelled / companion / excluded per "
-                      "station, constellation and band digit, reproduced from the canonical latch) "
-                      "and the ARC LEDGER (Absent / Tracking / Gap / Reentered / Dead per "
-                      "(station, satellite, signal)) are built once per epoch and read by NOTHING "
-                      "but the disagreement counters and the trace, so the solve, the wire and "
-                      "every graded trace are byte-identical against an unarmed run.  Extra "
-                      "artifacts: logs/network_arc_ledger.csv (one row per transition), the ARC "
-                      "event tier in network_events.csv (holdoff-throttled), and the run-end "
-                      "disagreement table.");
-        // SID phase 2 (the tracker reads the roster) is refused without the observatory:
-        // the reader would have no roster to read, and a silent fallback to the canonical
-        // latch would make an armed run look as if it had exercised the reader
-        // (invariant 4: the counter has to mean what its name says).
-        if (network_roster_tracker_ && !network_signal_roster_) {
-            log->error("Network producer (card SID phase 2): network.roster_tracker is armed "
-                       "WITHOUT network.signal_roster, so there is no roster to read.  "
-                       "DISARMED.  Arm network.signal_roster (the phase-1 observatory, "
-                       "byte-identical on the solve) alongside it.");
-            network_roster_tracker_ = false;
-        }
+            log->info("Network producer (card SID phase 1): network.signal_roster is ON: the "
+                      "ARC LEDGER's trace is written, logs/network_arc_ledger.csv (one row per "
+                      "arc transition) and the ARC event rows of the roster's build and audit in "
+                      "network_events.csv (holdoff-throttled).  The signal roster, the ledger "
+                      "and their disagreement census are built on every run whatever this key "
+                      "says (card NOM step N3a), so the solve and the wire are unchanged by it.");
+        // SID phase 2 (the tracker reads the roster) needs no other knob: the roster it
+        // reads is built on every run (card NOM step N3a), so the refusal that guarded an
+        // unbuilt roster is gone.
         if (network_roster_tracker_)
             log->info("Network producer (card SID phase 2): network.roster_tracker is ON — the "
                       "arc-level slip tracker (networkComputeRawObservables) names each band by "
@@ -11425,19 +11415,15 @@ namespace GnssProcessor {
                       "The result is identical either way (the roster's modelled role IS that "
                       "latch, phase 1's roster_latch_disagree counter at its bar of 0), so this "
                       "is a notice and not a conflict.");
-        // SID phase 3 (the response keys on the ledger) is refused without both
-        // predecessors: without the observatory there is no admitted lifecycle to read,
-        // and without the roster read the tracker's rows would name a band by a different
-        // rule than the population does, reintroducing card GRK's defect one layer up.
-        if (network_ledger_reentry_
-            && (!network_signal_roster_ || !network_roster_tracker_)) {
+        // SID phase 3 (the response keys on the ledger) is refused without the roster
+        // read: the tracker's rows would otherwise name a band by a different rule than
+        // the population does, reintroducing card GRK's defect one layer up.  The arc
+        // ledger it reads is built on every run (card NOM step N3a).
+        if (network_ledger_reentry_ && !network_roster_tracker_) {
             log->error("Network producer (card SID phase 3): network.ledger_reentry is armed "
-                       "WITHOUT network.signal_roster{}, so there is {}.  DISARMED.  Arm the "
-                       "phase-1 observatory and the phase-2 roster read alongside it.",
-                       network_roster_tracker_ ? "" : " and network.roster_tracker",
-                       network_signal_roster_
-                           ? "no roster read behind the tracker's band names"
-                           : "no arc ledger to take the population from");
+                       "WITHOUT network.roster_tracker, so there is no roster read behind the "
+                       "tracker's band names.  DISARMED.  Arm the phase-2 roster read "
+                       "alongside it.");
             network_ledger_reentry_ = false;
         }
         if (network_ledger_reentry_ && !network_config_.slip_qc.gap_reentry) {
@@ -11465,18 +11451,8 @@ namespace GnssProcessor {
                             "network.cycle_slip.gap_reentry_relevel_unmeasurable then decides)"
                           : "bridge (a no-verdict re-entry is left to the PASS-B inject, as "
                             "today, but COUNTED and EVENTED as ARC arc_reentry verdict=none)");
-        // SID phase 4a (the reason-mask writers and the anchor observatory) is refused
-        // without the phase-1 observatory: there is no ledger to fold a reason into and
-        // no arc state for the election read to ask about, and a silent no-op would make
-        // an armed run look as if it had measured something.
-        if (network_ledger_screens_ && !network_signal_roster_) {
-            log->error("Network producer (card SID phase 4a): network.ledger_screens is armed "
-                       "WITHOUT network.signal_roster, so there is no arc ledger to fold a "
-                       "reason into and no arc state for the anchor read.  DISARMED.  Arm "
-                       "network.signal_roster (the phase-1 observatory, byte-identical on the "
-                       "solve) alongside it.");
-            network_ledger_screens_ = false;
-        }
+        // SID phase 4a (the reason-mask writers and the anchor observatory) needs no
+        // other knob: the ledger it folds into is built on every run (card NOM step N3a).
         if (network_ledger_screens_)
             log->info("Network producer (card SID phase 4a): network.ledger_screens is ON — every "
                       "screen that removes a modelled row, a satellite or a station (the "
@@ -11523,21 +11499,11 @@ namespace GnssProcessor {
             log->warn("Network producer (card SID phase 4b): network.ledger_anchor is armed with "
                       "network.phase_datum_min_stations at 1, so the coverage gate never drops a "
                       "family and the restore has no population.  The knob is INERT here.");
-        // SID phase 5a (the emitter read and the declared roster) is refused without the
-        // phase-1 observatory, which owns both inputs: the arc ledger the emitter's
-        // bookkeeping is compared with, and the roster the declaration is built from.  A
-        // silent no-op would write an empty declaration to the wire, which says "the
-        // network carries nothing", a false statement a consumer would act on.
-        if (network_ledger_emit_ && !network_signal_roster_) {
-            log->error("Network producer (card SID phase 5a): network.ledger_emit is armed "
-                       "WITHOUT network.signal_roster, so there is no arc ledger to read the "
-                       "emitter's bookkeeping against and no roster to build the declaration "
-                       "from: the wire would carry an EMPTY declaration, which tells a "
-                       "consumer the network carries no family for any signal.  DISARMED.  Arm "
-                       "network.signal_roster (the phase-1 observatory, byte-identical on the "
-                       "solve) alongside it.");
-            network_ledger_emit_ = false;
-        }
+        // SID phase 5a (the emitter read and the declared roster) needs no other knob:
+        // its two inputs, the arc ledger and the roster the declaration is built from,
+        // exist on every run (card NOM step N3a).  An epoch whose roster has no modelled
+        // role still yields no declaration (networkLedgerEmitBuildDeclaration refuses an
+        // empty one).
         if (network_ledger_emit_)
             log->info("Network producer (card SID phase 5a): network.ledger_emit is ON: the "
                       "emitter's per-family bookkeeping is READ against the arc ledger (card "

@@ -683,12 +683,12 @@ std::vector<std::string> activeFrequencyBands(
             for (const auto& [key, cand] : best)
                 constellation_canonical_[cons][key] = cand.signal;
             constellation_canonical_decided_.insert(cons);
-            // Retain the candidate list so the observatory can evaluate a second
-            // rule over the same first-epoch counts, such as what the count rule
-            // would have latched here (card SID phase 1).  A pure store behind
-            // network.signal_roster: nothing on the latch path reads it, and with the
-            // knob off nothing is allocated and no branch changes.
-            if (config_.networkSignalRoster()) canonical_candidates_[cons] = candidates;
+            // Retain the candidate list so the signal roster's census can evaluate a
+            // second rule over the same first-epoch counts, such as what the count
+            // rule would have latched here (card SID phase 1).  A pure store, kept on
+            // every run since the roster is built on every network run (card NOM step
+            // N3a): nothing on the latch path reads it, so no branch changes.
+            canonical_candidates_[cons] = candidates;
 
             log_manager_.getLogger("ppp_model")->info(
                 "Canonical signals locked for {} ({} sats this epoch): {}",

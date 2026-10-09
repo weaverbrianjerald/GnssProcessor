@@ -168,7 +168,6 @@ namespace GnssProcessor {
     void ArcLedger::beginEpoch(long long epoch_idx, double t_s) {
         epoch_idx_ = epoch_idx;
         t_s_       = t_s;
-        seen_.clear();
     }
 
     const ArcRecord* ArcLedger::find(const Key& key) const {
@@ -195,7 +194,6 @@ namespace GnssProcessor {
     }
 
     ArcStep ArcLedger::observe(const Key& key, bool modelled) {
-        seen_.insert(key);
         auto it = arcs_.find(key);
         if (it == arcs_.end()) it = arcs_.emplace(key, ArcRecord{}).first;
         ArcRecord& a = it->second;
@@ -269,7 +267,14 @@ namespace GnssProcessor {
                 continue;
             }
             if (!present_stations.count(sta)) continue;   // station absent: frozen
-            if (seen_.count(key)) continue;               // observed this epoch
+            // Observed this epoch: observe() stamps ep_last_seen with the open
+            // epoch's index, and nothing else writes it, so the stamp is the
+            // record of the sighting (the epoch index strictly increases from one
+            // beginEpoch to the next).  It replaces a per-epoch set of the observed
+            // keys that held the same fact at the cost of one tree insert per
+            // observation and one lookup per arc (card NOM step N3a, where the
+            // ledger became part of every run).
+            if (a.ep_last_seen == epoch_idx_) continue;
 
             ArcStep s;
             s.from = a.state;
@@ -386,7 +391,11 @@ namespace GnssProcessor {
         for (auto& [key, a] : arcs_) {
             if (a.adm_state == ArcState::Absent || a.adm_state == ArcState::Dead) continue;
             if (!present.count(std::get<0>(key))) continue;   // station absent: frozen
-            if (admitted.count(key)) continue;                // admitted this epoch
+            // Admitted this epoch: step (1) stamped ep_last_admitted with the open
+            // epoch's index, the only write to it, so the stamp answers what a
+            // lookup in `admitted` would (this call runs once per epoch; card NOM
+            // step N3a, as for the raw side's sighting stamp).
+            if (a.ep_last_admitted == epoch_idx_) continue;
 
             ArcStep s;
             s.from = a.adm_state;

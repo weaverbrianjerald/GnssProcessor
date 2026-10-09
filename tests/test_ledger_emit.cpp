@@ -579,13 +579,15 @@ TEST(LedgerEmitTest, DisarmedTheSeamsDoNothing) {
     EXPECT_EQ(ctx.counters.le.first_phase, 0);
 }
 
-/// The loader refuses the knob without the phase-1 observatory, because an empty
-/// declaration on the wire is a false statement a consumer would act on.
-TEST(LedgerEmitTest, LedgerEmitIsRefusedWithoutTheRoster) {
+/// The knob needs no other since card NOM step N3a: the roster and the ledger it
+/// reads are built on every network run, and network.signal_roster is only the
+/// ledger's trace switch.  The loader used to refuse it without that key, when an
+/// unbuilt roster would have put an empty declaration on the wire.
+TEST(LedgerEmitTest, LedgerEmitNeedsNoTraceSwitch) {
     Loaded L("norost", "    \"ledger_emit\": true,\n");
     EXPECT_FALSE(L.cfg.networkSignalRoster());
-    EXPECT_FALSE(L.cfg.networkLedgerEmit())
-        << "network.ledger_emit must be disarmed without network.signal_roster";
+    EXPECT_TRUE(L.cfg.networkLedgerEmit())
+        << "network.ledger_emit must stay armed without network.signal_roster";
 }
 
 // ---------------------------------------------------------------------------
@@ -595,7 +597,7 @@ TEST(LedgerEmitTest, LedgerEmitIsRefusedWithoutTheRoster) {
 TEST(LedgerEmitTest, DeclarationIsBuiltFromTheRosterInSupportOrder) {
     Loaded L("build", "    \"signal_roster\": true,\n    \"ledger_emit\": true,\n");
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
-    ctx.roster.armed = true;
+    ctx.roster.active = true;
     ctx.roster.by_station.assign(3, {});
     // Two stations model L1C, one models L1W: the declaration states both and
     // puts the better-supported one first, which is the order a consumer keyed
@@ -632,15 +634,16 @@ TEST(LedgerEmitTest, DeclarationIsBuiltFromTheRosterInSupportOrder) {
     const NetworkSignalDeclaration d2 = networkLedgerEmitBuildDeclaration(ctx, no_stations);
     EXPECT_TRUE(d2.find("GPS", '1')->datum_code.empty());
 
-    // With the roster disarmed there is nothing to declare, and `present` says so.
-    ctx.roster.armed = false;
+    // With no roster set up (a context no run armed) there is nothing to declare,
+    // and `present` says so.
+    ctx.roster.active = false;
     EXPECT_FALSE(networkLedgerEmitBuildDeclaration(ctx, no_stations).present);
 
     // A roster whose cells carry no modelled role names nothing a consumer can
     // act on, so the build refuses it rather than declaring an empty network.
     // A constellation's first epoch produces this case, and without the refusal
     // it would be the declaration the consumer's own latch is decided against.
-    ctx.roster.armed = true;
+    ctx.roster.active = true;
     for (int i = 0; i < 3; ++i) {
         ctx.roster.by_station[i]["GPS"]['1'] = BandRoster{};
         ctx.roster.by_station[i]["GPS"]['1'].datum_code = "C1C";

@@ -100,7 +100,7 @@ NetworkSignalDeclaration networkLedgerEmitBuildDeclaration(
     NetworkSignalDeclaration decl;
     const auto& rs  = ctx.roster;
     auto&       ctr = ctx.counters.le;
-    if (!rs.armed) return decl;     // no roster, nothing to declare
+    if (!rs.active) return decl;    // no roster, nothing to declare
 
     // (constellation, band) -> signal -> stations that model it this epoch.
     std::map<std::pair<std::string, char>, std::map<std::string, long long>> ph, co, comp;
@@ -151,8 +151,8 @@ NetworkSignalDeclaration networkLedgerEmitBuildDeclaration(
         decl.bands[k.first][k.second] = std::move(row);
     }
     // An empty declaration is never put on the wire: it would tell a consumer that
-    // the network models nothing, the same false statement for which the loader
-    // disarms the knob when network.signal_roster is off.  Counted as its own class.
+    // the network models nothing, a false statement a consumer would act on.
+    // Counted as its own class.
     if (decl.bands.empty()) {
         ++ctr.decl_empty;
         return NetworkSignalDeclaration{};

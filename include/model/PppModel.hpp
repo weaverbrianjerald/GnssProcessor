@@ -651,15 +651,15 @@ namespace GnssProcessor {
          * a second rule can be evaluated, so card SID's counter of what the count
          * rule would have latched needs them outside the class.
          *
-         * Retained only when @c network.signal_roster is armed, so an unarmed run
-         * allocates nothing and is byte-identical; no decision reads the stored
-         * candidates.  Filled at the constellation's decision epoch and never
-         * revised, like the latch itself.
+         * Retained on every run (card NOM step N3a: the signal roster's census is
+         * built on every network run); no decision reads the stored candidates.
+         * Filled at the constellation's decision epoch and never revised, like the
+         * latch itself.
          *
          * @return Constellation display name -> its candidates, in priority order.
-         *         Empty on any run that did not arm the knob, for a constellation
-         *         that has not been decided yet, and for one whose latch
-         *         @ref restoreCanonicalSignals restored (no tally ran for it).
+         *         Empty for a constellation that has not been decided yet, and for one
+         *         whose latch @ref restoreCanonicalSignals restored (no tally ran for
+         *         it).
          */
         const std::map<std::string, std::vector<CanonicalCandidate>>&
         canonicalCandidates() const { return canonical_candidates_; }
@@ -943,10 +943,9 @@ namespace GnssProcessor {
         /**
          * @brief The candidates the latch decided on, retained (card SID phase 1).
          *
-         * Filled at the constellation's decision epoch only when
-         * @c network.signal_roster is armed, and read only by
-         * @ref canonicalCandidates.  Nothing in the decision path reads it, so an
-         * unarmed run neither allocates nor branches differently.
+         * Filled at the constellation's decision epoch on every run (card NOM step
+         * N3a), and read only by @ref canonicalCandidates.  Nothing in the decision
+         * path reads it, so the store changes no decision.
          */
         std::map<std::string, std::vector<CanonicalCandidate>> canonical_candidates_;
 

@@ -2209,8 +2209,9 @@ namespace GnssProcessor {
         /// R4), recorded by the response and read by the roster's audit pass, where the
         /// admitted-side census lives.  Cleared at the build seam, so it never describes a
         /// previous epoch.  Written in both states of network.ledger_reentry (unarmed, the
-        /// raw tiers record their own outcomes), and only while network.signal_roster is
-        /// armed.  Observatory: nothing in the solve reads it.
+        /// raw tiers record their own outcomes), on every network run (the roster is built
+        /// on every run since card NOM step N3a).  Observatory: nothing in the solve reads
+        /// it.
         ArcReentryOutcomeMap sid_reentry_outcome;
         /// The anchor election's own datum history per (satellite, signal) family (card SID
         /// phase 4, S2 / B1): what each coverage-gate drop edge left behind (the incumbent,
@@ -4631,8 +4632,9 @@ namespace GnssProcessor {
 
         /// --- The signal roster / arc ledger observatory (card SID phase 1).
         /// Every disagreement class is a named counter with its own denominator (standing
-        /// invariant 4), and the run-end table prints all of them.  Untouched unless
-        /// network.signal_roster.
+        /// invariant 4), and the run-end table prints all of them.  Counted on every
+        /// network run since card NOM step N3a (network.signal_roster switches the
+        /// ledger's trace only).
         NetworkSignalRosterCounters sid;
 
         /// --- The emitter's per-family bookkeeping read against the arc ledger, and the
@@ -4690,9 +4692,9 @@ namespace GnssProcessor {
         /// docs/refound/SID_signal_identity_2026-09-22.md section 5).  Kept outside the
         /// warm-resume fingerprint and the state snapshot on purpose: nothing here is read by
         /// the solve, so a resumed run re-seats every cell at its first post-resume epoch,
-        /// the right posture for a fresh observer.  armed == false (the default,
-        /// network.signal_roster off) leaves every member untouched and both seams
-        /// unreachable.
+        /// the right posture for a fresh observer.  Built on every network run since card
+        /// NOM step N3a (networkSignalRosterArm sets active); active == false, the default,
+        /// is a context no run set up, where every seam returns on its first line.
         SignalRoster           roster;
         /// The arc lifecycle machine, one record per (station, satellite, signal) (card SID
         /// phase 1).  Same exemption and same reason as @ref roster; advanced by the same

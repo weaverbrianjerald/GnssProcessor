@@ -5860,10 +5860,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     // The decoupling edge of the carry itself (card SID phase 3, R3a).
                     // The key is buffered for the roster's audit pass, which owns the
                     // trace bundle and the epoch time and writes the
-                    // `ARC arc_death reason=horizon` row; without that, this retirement
-                    // would emit nothing.  Untouched without the observatory: the vector
-                    // stays empty and nothing reads it.
-                    if (ctx.roster.armed)
+                    // `ARC arc_death reason=horizon` row (under its trace switch) and
+                    // counts it; without that, this retirement would leave no record.
+                    // The audit pass drains the vector every epoch.  A record only:
+                    // nothing in the solve reads it.
+                    if (ctx.roster.active)
                         ctx.carry.sid_carry_prune_deaths.push_back(it->first);
                     // Card PRM phase 3a: an arc the float vehicle's drop already dropped
                     // this epoch (networkAmbFloatApplyDrops stamps dropped_ep with this
