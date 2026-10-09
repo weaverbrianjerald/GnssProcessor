@@ -201,6 +201,11 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.corrections.pole_tide        = jval(s, "corrections.pole_tide",        "", cfg.corrections.pole_tide);
     cfg.corrections.sat_antenna      = jval(s, "corrections.sat_antenna",      "", cfg.corrections.sat_antenna);
     cfg.corrections.signal_bias      = jval(s, "corrections.signal_bias",      "", cfg.corrections.signal_bias);
+    cfg.corrections.signal_bias_scope =
+        jval(s, "corrections.signal_bias_scope", "", cfg.corrections.signal_bias_scope);
+    if (cfg.corrections.signal_bias_scope != "both" && cfg.corrections.signal_bias_scope != "code" &&
+        cfg.corrections.signal_bias_scope != "phase")
+        return fail("sim config 'corrections.signal_bias_scope' must be \"both\", \"code\" or \"phase\"");
     cfg.corrections.phase_windup     = jval(s, "corrections.phase_windup",     "", cfg.corrections.phase_windup);
     cfg.corrections.ocean_tide       = jval(s, "corrections.ocean_tide",       "", cfg.corrections.ocean_tide);
     if (const nlohmann::json* nc = resolvePath(s, "corrections.eot20_nc_path")) {

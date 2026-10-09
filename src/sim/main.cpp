@@ -834,7 +834,9 @@ int runSppReference(const std::filesystem::path& truth_dir, const sim::SimConfig
     // Leg 2 corrects the observables with the same OSBs the synthesizer injected.
     // Without the .BIA the two leg-2 variants coincide with no other sign, so a
     // warning is printed.
-    const bool want_osb = scfg.corrections.signal_bias && std::filesystem::exists(bia);
+    // A phase-only scope (card ARL) injected no code OSB, so leg 2 removes none.
+    const bool want_osb = scfg.corrections.signal_bias && std::filesystem::exists(bia) &&
+                          scfg.corrections.signal_bias_scope != "phase";
     if (scfg.corrections.signal_bias && !want_osb)
         std::cerr << "[" << tag << "] WARN: corrections.signal_bias is set but the .BIA is "
                      "missing; leg 2 runs bias-blind\n";
@@ -2590,10 +2592,14 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                         // records the total, which is what the estimator must reproduce,
                         // with the split alongside so a grader can tell a product bias
                         // from an injected one without re-deriving either.
-                        const double prod_code  = eph.signalBiasMetres(sat, band.code,  t);
-                        const double prod_phase = eph.signalBiasMetres(sat, band.phase, t);
-                        const double syn_code   = synthOsb(sat, band.code);
-                        const double syn_phase  = synthOsb(sat, band.phase);
+                        // corrections.signal_bias_scope (card ARL) drops one side: the
+                        // excluded observable gets 0 and truth_bias.csv records 0 for it.
+                        const bool osb_code  = scfg.corrections.signal_bias_scope != "phase";
+                        const bool osb_phase = scfg.corrections.signal_bias_scope != "code";
+                        const double prod_code  = osb_code  ? eph.signalBiasMetres(sat, band.code,  t) : 0.0;
+                        const double prod_phase = osb_phase ? eph.signalBiasMetres(sat, band.phase, t) : 0.0;
+                        const double syn_code   = osb_code  ? synthOsb(sat, band.code)  : 0.0;
+                        const double syn_phase  = osb_phase ? synthOsb(sat, band.phase) : 0.0;
                         bias_code  = prod_code  + syn_code;
                         bias_phase = prod_phase + syn_phase;
                         auto record = [&](const std::string& sig, double osb_m,

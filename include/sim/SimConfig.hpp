@@ -437,6 +437,13 @@ struct SimConfig {
         /// combination is ≈0.  Truth per (satellite, observable) is written to
         /// @c truth_bias.csv.  Needs the .BIA fixture for the date.
         bool signal_bias{ false };
+        /// Which observables @c signal_bias reaches: "both" (the default, the historical
+        /// behaviour), "code" (code OSBs only, phase rows unbiased) or "phase" (phase OSBs
+        /// only).  Test-only staging for card ARL (the integer-ambiguity ladder), which
+        /// adds the satellite code and phase biases one layer at a time.  The synthetic
+        /// OSB (@c signals.synth_osb_amp_m) follows the same scope, and
+        /// @c truth_bias.csv records what was injected (0 for the excluded observable).
+        std::string signal_bias_scope{ "both" };
         /// Carrier-phase wind-up (Wu et al. 1993), injected by reusing the processor's
         /// own @c GnssCorrections::computePhaseWindUp in accumulated (unwrapped) mode:
         /// the injected term is continuous within each tracked arc, so the phase
