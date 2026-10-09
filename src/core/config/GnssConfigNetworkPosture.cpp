@@ -649,6 +649,16 @@ namespace GnssProcessor {
               "10 m at full weight 100 -> 32, census 13 of 16 sites better on hours 4 to 6 with "
               "none worse, WTZZ00DEU within 0.003 m, clock wire 0.0045 -> 0.0041 m; the hold "
               "(gross_los_bound) FALSIFIED, the station tier OFF" },
+            // (card ICF response 1, armed 2026-10-09 at the author's ruling) The screen's
+            // cold-start bound: inside the maturity horizon a line of sight whose post-fit
+            // code residual exceeds the bound is declared at once and reconnects on a fresh
+            // ambiguity.  Regime: the screen itself.
+            { nc.gross_los_screen,
+              nc.gross_los_cold_bound_m > 0.0,
+              Tier::ON, false, "network.gross_los_cold_bound_m",
+              "the cold-start runaway of a faulty receiver channel (BSHM00ISR G07: 11.7 m "
+              "without the prior-row refloats, 3 m with them) held within 0.03 m; hours 2 to 6 "
+              "clock-wire median +12 % on three arcs, accepted for stability" },
             // --- SCOPED tier: emission and product knobs ------------------------------
             { nc.closed_loop.enable || network_service_mode_,
               network_emit_clock_disc_,
