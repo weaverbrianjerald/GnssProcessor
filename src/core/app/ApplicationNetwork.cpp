@@ -14,7 +14,8 @@
  * single-concern seams, which hold the bodies relocated verbatim from the former
  * monolith.  New network code goes in the matching seam, not here; CLAUDE.md
  * carries the placement decision tree:
- *   Setup / teardown    app/ApplicationNetworkSetup.cpp · filter/NetworkTeardown
+ *   Setup / run end     app/ApplicationNetworkSetup.cpp · filter/NetworkTeardown (the
+ *                       run-end table, filter/NetworkRunEnd)
  *   Assembly (PASS A/B) app/ApplicationNetworkAssembly.cpp
  *   Datum / solve       filter/NetworkSbasis · NetworkChainDatum · NetworkPhaseDatum ·
  *                       NetworkSolveGlue · NetworkInstallCarry · NetworkDdPriorBuild ·

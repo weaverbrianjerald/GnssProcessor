@@ -366,7 +366,7 @@ void RealTimeEngine::flush() {
     logOrbitEchoMismatchSummary("end of run");
     // The declared-step carry counters, silent unless armed (card CC (A)).  The
     // closed-loop harness never calls flush(); its consumer's counters go out on
-    // the closed-loop summary in NetworkTeardown instead.
+    // the closed-loop summary (networkClosedLoopRunEnd) instead.
     logPbDiscCarrySummary_("end of run");
     // The every-step translation counters (card PBT (A)).
     logPbStepTranslateSummary_("end of run");

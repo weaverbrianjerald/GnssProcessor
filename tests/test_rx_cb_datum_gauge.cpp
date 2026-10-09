@@ -5,7 +5,7 @@
  *
  * `n_rxcb_gauges` is the only instrument that distinguishes a live
  * zero-mean-receiver-DCB datum from an armed but inert one, which the run-end
- * RXCB-DATUM line in NetworkTeardown asserts under standing invariant #4.  The
+ * RXCB-DATUM line in networkSbasisDatumRunEnd asserts under standing invariant #4.  The
  * datum and the rx-CB carry are independent knobs, and datum without carry is the
  * canonical posture, so the accumulation in networkHarvestLocalCarries sits
  * outside the carry bracket (`if (ctx.knobs.rx_cb_on)`).  Inside it, a datum-only

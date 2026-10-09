@@ -105,7 +105,7 @@ struct NetworkRaimCiTallies {
  * classifier (filter/NetworkRowClassify.hpp, @c raimPoolAdmitsKind); this counter of what
  * the rule admitted is RAIM telemetry and lives here.  The post-fit pool
  * (@ref networkPostFitRaim) and the within-epoch assess pool (NetworkSolveGlue.cpp) each
- * keep one in @c NetworkRunContext::counters, read at run end (NetworkTeardown.cpp).
+ * keep one in @c NetworkRunContext::counters, read at run end by networkRaimPoolRunEnd.
  *
  * A pool walks the rows of each station once per ambiguity column of its pool, so a row
  * that clears 0.5 on two columns is visited twice and enters the pool's sample twice:

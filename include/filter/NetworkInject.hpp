@@ -280,7 +280,8 @@ namespace GnssProcessor {
      *
      * @return 0 when every armed event fired at least once (or the injector is
      *         unarmed), 1 when at least one armed event never fired; the caller
-     *         (@c networkTeardown) returns it as the process exit code.
+     *         (the run-end table's row, the overload below) returns it as its verdict,
+     *         which @c networkTeardown makes the process exit code.
      */
     int networkInjectRunEnd(const NetworkRunContext& ctx,
                             const std::shared_ptr<spdlog::logger>& log);

@@ -2287,7 +2287,7 @@ namespace GnssProcessor {
                     : "");
             // This is not the phase-3 `ledger_reentry_no_verdict` population: that one
             // is every admitted return inside the carry horizon and is attributed by
-            // the response's own line in NetworkTeardown.cpp.  This is the
+            // the response's own line in networkSlipGapRefGateRunEnd.  This is the
             // bridged-with-no-verdict bucket of the R4 split, whose population is
             // narrowed to returns after 2 to 30 missed epochs.  The two are logged
             // separately; a single "no-verdict by reason" number would be one or the

@@ -3183,7 +3183,7 @@ namespace GnssProcessor {
         // declared − bridged in any epoch ran with an under-constrained datum that reads
         // like a working one (standing invariant #4); the W6+SH n-invariant L2W near-null
         // is the suspect that motivated the audit.  Accumulated serially after PASS B's
-        // consume; logged once by NetworkTeardown.  All zero unless
+        // consume; logged once by networkChainDatumRunEnd.  All zero unless
         // network.phase_datum_eq34.
         struct Eq34PinAudit {
             std::map<std::string, long long> declared;         ///< Σ per-epoch gauge dim (n_c+m_c)
@@ -3222,18 +3222,19 @@ namespace GnssProcessor {
         long long seed_round_rehost_cold    = 0;
         double    seed_round_rehost_max_step_m = 0.0;
         // Run tallies of eq34 reattach hygiene; every field is documented on the struct.
-        // Bumped only when ctx.knobs.anchor_hygiene_on, and reported by the run-end block
-        // in filter/NetworkTeardown.cpp.
+        // Bumped only when ctx.knobs.anchor_hygiene_on, and reported by
+        // networkAnchorHygieneRunEnd (filter/NetworkAnchorHygiene.cpp).
         NetworkAnchorTallies hyg;
         // Run tallies of flicker/gap signal integrity; every field is documented on the
-        // struct.  Bumped only when ctx.knobs.sig_integrity_on, and reported by the
-        // run-end block in filter/NetworkTeardown.cpp.  `demoted_rows` is summed there
-        // from the per-station NetStation::si_rows_demoted counters (the fold runs inside
-        // the parallel produce, so the row tally cannot live here).
+        // struct.  Bumped only when ctx.knobs.sig_integrity_on, and reported by
+        // networkSignalIntegrityRunEnd (filter/NetworkSignalIntegrity.cpp).  `demoted_rows`
+        // stays 0 here: the report sums the per-station NetStation::si_rows_demoted counters
+        // into its own copy (the fold runs inside the parallel produce, so the row tally
+        // cannot live here).
         NetworkSignalIntegrityTallies sig;
         // Run tallies of iono-deweight release hygiene; every field is documented on the
-        // struct.  Bumped only when ctx.knobs.dw_hygiene_on, and reported by the run-end
-        // block in filter/NetworkTeardown.cpp.
+        // struct.  Bumped only when ctx.knobs.dw_hygiene_on, and reported by
+        // networkDwReleaseHygieneRunEnd (filter/NetworkIonoDwRelease.cpp).
         NetworkIonoDwReleaseTallies dwr;
         /// Run-end telemetry of the RAIM pool re-host.  All zero unless
         /// ctx.knobs.raim_ci_on; the denominators separate "seam never ran" from "census
@@ -3247,7 +3248,7 @@ namespace GnssProcessor {
         NetworkGrossLosTallies gross_los;
         // Run tallies of product-referenced measurement admission; every field is
         // documented on the struct.  Bumped only when ctx.knobs.adm_on, and reported by
-        // the run-end block in filter/NetworkTeardown.cpp.  Named `adm` and not reachable
+        // networkMeasurementAdmissionRunEnd.  Named `adm` and not reachable
         // as `ctx.admission` on purpose: that name belongs to the CB-ADM W6 code-bias
         // admission census (@ref NetworkBiasAdmission below), a different mechanism, and
         // the two are easy to confuse.
@@ -3589,8 +3590,6 @@ namespace GnssProcessor {
         // restore acted, and a zero one says the seam epoch happened to agree.
         long long n_resume_canon_stations = 0; ///< stations whose canonical latch was restored (CN)
         long long n_resume_canon_entries  = 0; ///< canonical entries restored across those stations
-        long long n_resume_canon_audited  = 0; ///< restored entries the first post-resume epoch's tally could be compared against
-        long long n_resume_canon_disagree = 0; ///< ...of those, the ones this run would have decided differently
         // Resume rx-CB linearization-point restore (RS-9, network.resume_rxcb_lin_restore,
         // SPEC_event_harness §21.18): the re-coupling edge's identities for the frame
         // against which the rx-CB inject gate judges the restored carry.  0 entries under an
@@ -4144,11 +4143,6 @@ namespace GnssProcessor {
         /// on a two-band lineage; a `primary` run reporting zero on a three-band lineage is
         /// dead wiring (standing invariant #4).
         long long n_mw_pair_scope_skipped = 0;
-        /// Code rows folded at the scaled sigma, and code rows whose constellation had no
-        /// resolvable ionosphere-free pin pair, which keep their unscaled weight (card L5P,
-        /// network.extra_band_code_sigma_scale).  Summed from the per-station NetStation
-        /// counters at teardown, as the gross-LOS row counter is.
-        long long n_eb_rows_deweighted = 0, n_eb_rows_no_pin = 0;
         /// Run-end telemetry of the second code channel, including both edges of standing
         /// invariant #7 (card SCC, docs/refound/SCC_second_code_channel_2026-09-21.md, R7).
         /// Everything except @c rows / @c fallback_rows is reduced in the serial post-PASS-A
@@ -4363,8 +4357,8 @@ namespace GnssProcessor {
         // the opportunity denominator differs (station-epoch-constellations, not per-sat
         // samples) and so does the threshold (hardened: max(k*s_eff, floor_frac*lambda_IF);
         // legacy: a bare physical floor), and merging it into T1 would hide that asymmetry
-        // again.  Aggregated at teardown from each station detector's RefGateCounters.
-        FlagRate fr_if_refgate;
+        // again.  Summed at run end from each station detector's RefGateCounters by the
+        // run-summary report (networkRunSummaryRunEnd), which hands it to the writer.
         FlagRate fr_we_trigger; // tier T2: per warm within-epoch epoch, σ̂0_first > trig, k=sigma0_trigger
         FlagRate fr_raim_cell;  // tier T3: per (sat,station) standardized residual, k=raim_k
         FlagRate fr_raim_sat;   // tier T3 consensus: per spiked sat (>=min_sta), k=raim_k
@@ -4609,7 +4603,7 @@ namespace GnssProcessor {
 
         /// Tallies of the prefit census, structural fuse, seed-birth tripwire, topology
         /// ledger and flight recorder.  Every field is documented on the struct; reported by
-        /// the run-end block in filter/NetworkTeardown.cpp.  Standing invariant #4 applies
+        /// networkPrefitCensusRunEnd (filter/NetworkPrefitCensus.cpp).  Standing invariant #4 applies
         /// directly: the census is a tripwire, and a tripwire that never fires looks like a
         /// tripwire that was never connected; only `epochs` / `rows` / `rec_consults`
         /// separate them.
@@ -4629,7 +4623,7 @@ namespace GnssProcessor {
         // goes indefinite can freeze most of the carried state for the rest of the run
         // while every downstream reading stays blind to the carry.
         //
-        // Reported by the run-end block in filter/NetworkTeardown.cpp.  The per-epoch
+        // Reported by networkCarryDdFoldRunEnd (filter/NetworkInvariantCarryDriver.cpp).  The per-epoch
         // halves are not parked here: both epoch-status writers read them directly from
         // @ref NetworkEstimator::ddFoldStats (see NetworkCarryState).
         long long ddfold_epochs        = 0;  ///< accepted installs whose fold reached a factorization (the denominator).
@@ -4855,8 +4849,8 @@ namespace GnssProcessor {
     /// map allocation) unless @c ctx.carry.rxcb_lin_restore is non-empty, so an unarmed
     /// or cold run reaches no new code at all.
     /// The applied / uncovered halves are read back at the run-end readout directly from
-    /// @c ctx.carry.rxcb_lin_sta_counts (@c networkTeardown has no station roster and
-    /// needs none: the tallies are indexed, not named).
+    /// @c ctx.carry.rxcb_lin_sta_counts (the run-end report needs no station roster:
+    /// the tallies are indexed, not named).
     void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config_,
                                     std::vector<NetStation>& stations,
                                     const std::shared_ptr<spdlog::logger>& log);

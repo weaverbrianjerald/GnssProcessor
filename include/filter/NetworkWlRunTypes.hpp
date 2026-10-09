@@ -144,7 +144,7 @@ struct CarryEigenScope {
 
 // SubBlockTimer: per-sub-block timing accumulator (run-cumulative wall against timed
 // sections), D0b.  Kept here, like CarryEigenScope, as a former runNetwork()-local type
-// that the NetworkTeardown readout seam needs; the run totals are
+// that the run-timing report (networkRunTimingRunEnd) needs; the run totals are
 // NetworkRunTiming::sub_blocks (filter/NetworkRunGroups.hpp).
 struct SubBlockTimer {
     double      wall_ms{0.0};    // driver wall time bracketing the block (run cumulative)

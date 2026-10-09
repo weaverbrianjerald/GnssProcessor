@@ -2599,7 +2599,7 @@ TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipOffIsInert) {
 //
 // The install seam calls reset() mid-run from its exception handler (the catch around
 // installPosterior in NetworkInstallCarry, reachable because the ddPriorPosterior*
-// read-backs throw).  Both readers of these counters are run-scoped: NetworkTeardown's
+// read-backs throw).  Both readers of these counters are run-scoped: networkCarryDdFoldRunEnd's
 // run-end INC-0 line reads the live driver counter, and the seam assigns the cumulative
 // totals into ctx.carry and differences them against the previous epoch's snapshot.
 // Zeroing on reset would under-report the run total and drive the per-epoch churn deltas

@@ -21,8 +21,8 @@
  *     identity, float value, formal σ, subset membership and returned integer, so the
  *     search can be graded against simulator truth offline
  *     (`scripts/simnet_producer_ar_grade.py`); a fix count alone is not a grade.  The
- *     run-end readout is the "Network (producer AR, Phase 2 log-only)" clause in
- *     filter/NetworkTeardown.cpp, fed by the `ctx.counters.netar_*` tallies.
+ *     run-end readout is the "Network (producer AR, Phase 2 log-only)" clause of
+ *     networkProducerArRunEnd (below), fed by the `ctx.counters.netar_*` tallies.
  *  2. **One-shot NEQ export** (`network.neq_export_epoch`): a post-solve, read-only dump
  *     of the assembled arrowhead normal equations (border N_ss raw and reduced, with
  *     RHS; each station's N_sr / N_rr / u_r; shared and local column labels) as

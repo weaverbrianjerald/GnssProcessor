@@ -457,8 +457,8 @@ GrossLosColdEdge networkGrossLosColdStep(GrossLosState& s, const GrossLosVerdict
  * reached the bound, or the guard held everything), and a bound set but resolved off
  * (the screen off, or the hold on) prints a warning.
  *
- * Called once from the run-end tail (filter/NetworkTeardown.cpp), right after the
- * screen's own section.
+ * Called once by its row of the run-end table (the overload taking the view, below),
+ * right after the screen's own report, networkGrossLosRunEnd.
  *
  * @param ctx     Run context (knobs, the per-LOS states, the tallies).
  * @param config_ Live config (the configured bound and the horizon).

@@ -1295,7 +1295,8 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                               NetworkPriorResidual& prires);
 
 /**
- * @brief Run-end readout of the census (called from @c NetworkTeardown).
+ * @brief Run-end readout of the census (called by its row of the run-end table, the
+ *        overload taking the view below, under @c ctx.knobs.prires_on).
  *
  * Standing invariant #4 applied to the ladders: a family with @c n_rows = 0
  * must read as "ran, saw nothing" and not as "never ran", so the readout

@@ -382,7 +382,8 @@ void networkMdbFlush(NetworkRunContext& ctx, const GnssConfig& config_,
  *
  * The body lives next to the aggregation that produces the numbers rather than in
  * the teardown TU, so the numbers and the text that interprets them stay together.
- * Called from @c networkTeardown under @c ctx.knobs.mdb_on.
+ * Called by its row of the run-end table (the overload taking the view, below) under
+ * @c ctx.knobs.mdb_on.
  */
 void networkMdbRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
                       const std::shared_ptr<spdlog::logger>& log);

@@ -21,7 +21,7 @@
  *    first and the last emit, the pivot handovers between emitted products, and
  *    the declared dimension (one clock direction per constellation in pin mode);
  *  - the geometry-free datum counters of @c NetworkSbasis split per constellation
- *    (the global line in @c NetworkTeardown keeps its text);
+ *    (the global line in @c networkSbasisDatumRunEnd keeps its text);
  *  - the (constellation, signal) family census of card SID phase 6b, which on a
  *    single-channel posture runs only because this telemetry is active;
  *  - the guarded temporal clock anchor's folds and trips per constellation.
