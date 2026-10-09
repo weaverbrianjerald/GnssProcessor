@@ -242,6 +242,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkRelevel.cpp
     src/core/filter/NetworkFastClock.cpp
     src/core/filter/NetworkTeardown.cpp
+    src/core/filter/NetworkRunEnd.cpp
     src/core/filter/NetworkInject.cpp
     src/core/filter/NetworkCanonicalPairAdmission.cpp
     src/core/filter/ArcLedger.cpp
