@@ -7224,6 +7224,16 @@ namespace GnssProcessor {
                           "while network.gross_los_screen is OFF; the seam is never entered, so "
                           "the bound is INERT.  Read this as a miswired arm, not as a null "
                           "result.", gnc.gross_los_cold_bound_m);
+            // Test-only zero-ionosphere rows (card ARL).  Clamped to 0 when not a
+            // non-negative number of metres; loud when armed, since it is wrong on real data.
+            gnc.sim_zero_iono_sigma_m =
+                jval<double>(json, "network.sim_zero_iono_sigma_m", "sim_zero_iono_sigma_m", 0.0);
+            if (!(std::isfinite(gnc.sim_zero_iono_sigma_m) && gnc.sim_zero_iono_sigma_m >= 0.0))
+                gnc.sim_zero_iono_sigma_m = 0.0;
+            if (gnc.sim_zero_iono_sigma_m > 0.0)
+                log->warn("Network (card ARL): network.sim_zero_iono_sigma_m = {:g} m: every slant "
+                          "ionosphere is tied to absolute zero.  TEST-ONLY, for a fixture simulated "
+                          "without ionosphere; wrong on real data.", gnc.sim_zero_iono_sigma_m);
             gnc.gross_los_warmup_epochs =
                 jval<int>(json, "network.gross_los_warmup_epochs", "gross_los_warmup_epochs", 120);
             gnc.gross_los_max_station_frac =

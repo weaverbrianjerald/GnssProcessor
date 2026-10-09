@@ -111,6 +111,7 @@ NetRowClass rowClassOfKind(ContributionKind k, double w) {
         case CK::Eq34RpbTimeLink:
         case CK::GloIfbAnchor:
         case CK::GloIonoAnchor:
+        case CK::SimZeroIono:
         case CK::GimIono:
         case CK::SdEwl:
         case CK::PhaseColourBirth:

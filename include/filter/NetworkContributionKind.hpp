@@ -52,6 +52,7 @@ namespace GnssProcessor {
         Eq34RpbTimeLink,          ///< The eq34 receiver phase-bias time link toward the carried value.
         GloIfbAnchor,             ///< Zero-mean anchor rows on the GLONASS per-slot receiver IFB columns.
         GloIonoAnchor,            ///< Zero-mean anchor rows on the GLONASS slant-ionosphere columns.
+        SimZeroIono,              ///< Test-only rows tying every slant ionosphere to absolute zero (network.sim_zero_iono_sigma_m; card ARL, a fixture simulated without ionosphere).
         ShIonoTie,                ///< Slant-ionosphere to SH-VTEC tie rows (whitened per constellation).
         GimIono,                  ///< External GIM slant-ionosphere rows (whitened per constellation).
         SdEwl,                    ///< Between-satellite single-differenced EWL rows (whitened per constellation).

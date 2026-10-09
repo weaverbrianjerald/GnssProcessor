@@ -136,6 +136,10 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
     {CK::GloIonoAnchor, "glonass_iono_anchor", CC::StationRows, CG::BeforeGate, CS::StationLos,
      CU::Rows, bit(PK::SlantIono),
      "kGloAnchorWeight = 1.0, 1/(1 m)^2 (function-local constant)", kGloFold, false, nullptr},
+    {CK::SimZeroIono, "sim_zero_iono", CC::StationRows, CG::BeforeGate, CS::StationLos,
+     CU::Rows, bit(PK::SlantIono),
+     "1/network.sim_zero_iono_sigma_m^2 (test-only; a fixture simulated without ionosphere)",
+     kGloFold, false, nullptr},
     {CK::ShIonoTie, "sh_iono_tie", CC::StationRows, CG::BeforeGate, CS::StationLos, CU::Rows,
      bit(PK::SlantIono) | bit(PK::VtecSh),
      "unit (whitened); R from estimation.global_vtec_sh.representation_sigma_tecu, floored at "

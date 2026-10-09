@@ -53,6 +53,7 @@ TEST(NetworkRowClassifyTest, OneMapCoversEveryKind) {
     const std::set<CK> phase{CK::DataPhase, CK::DataPhaseSecond};
     const std::set<CK> pins{CK::AmbiguityPin, CK::Eq34RpbPin, CK::Eq34RpbRankFloor,
                             CK::Eq34RpbTimeLink, CK::GloIfbAnchor, CK::GloIonoAnchor,
+                            CK::SimZeroIono,
                             CK::GimIono, CK::SdEwl, CK::PhaseColourBirth,
                             CK::PhaseColourBackstop};
     for (const CK k : allKinds()) {

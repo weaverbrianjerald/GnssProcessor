@@ -3800,6 +3800,44 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 }
             }
 
+            // Test-only zero-ionosphere rows (card ARL, network.sim_zero_iono_sigma_m).
+            // A fixture simulated without ionosphere is matched on the estimator side by
+            // one row per slant-ionosphere column of this station, +1 on the column, aimed
+            // at absolute zero: the column is an increment on the state's linearization
+            // value, so the row's target is minus that value.  Off (0) adds nothing.
+            if (config_.getNetworkConfig().sim_zero_iono_sigma_m > 0.0) {
+                const double zi_sig = config_.getNetworkConfig().sim_zero_iono_sigma_m;
+                const Eigen::VectorXd zi_xlin = st.sm->getStateVector();
+                std::vector<int> zi_cols;
+                std::vector<double> zi_y;
+                std::vector<RowTag> zi_tag;
+                for (const auto& [sat, sidx] : st.sm->getIonosphereStates()) {
+                    const auto hit = h2local.find(static_cast<int>(sidx));
+                    if (hit == h2local.end()) continue;
+                    const int si = static_cast<int>(sidx);
+                    if (si < 0 || si >= zi_xlin.size() || !std::isfinite(zi_xlin(si))) continue;
+                    zi_cols.push_back(hit->second);
+                    zi_y.push_back(-zi_xlin(si));
+                    zi_tag.push_back(makeRowTag(ContributionKind::SimZeroIono, sat));
+                }
+                const int nz = static_cast<int>(zi_cols.size());
+                if (nz > 0) {
+                    const Eigen::Index m0 = R.A_s.rows();
+                    R.A_s.conservativeResize(m0 + nz, Eigen::NoChange);
+                    R.A_s.bottomRows(nz).setZero();
+                    R.A_r.conservativeResize(m0 + nz, Eigen::NoChange);
+                    R.A_r.bottomRows(nz).setZero();
+                    R.w.conservativeResize(m0 + nz);
+                    R.y.conservativeResize(m0 + nz);
+                    for (int k = 0; k < nz; ++k) {
+                        R.A_r(m0 + k, zi_cols[k]) = 1.0;
+                        R.w(m0 + k) = 1.0 / (zi_sig * zi_sig);
+                        R.y(m0 + k) = zi_y[k];
+                    }
+                    R.row_tags.insert(R.row_tags.end(), zi_tag.begin(), zi_tag.end());
+                }
+            }
+
             // Ionosphere constraint (W6): the between-satellite structure that makes
             // the satellite DCB observable against the free slant iono.  The
             // co-estimated SH-VTEC field (the network's own iono) when enabled,

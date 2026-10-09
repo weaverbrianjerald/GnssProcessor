@@ -2479,6 +2479,13 @@ namespace GnssProcessor {
         /// like the screen's other knobs (it changes which rows are trusted, not what a
         /// carried state means).
         double gross_los_cold_bound_m{ 0.0 };
+        /// Test-only (card ARL, the integer-ambiguity ladder): when > 0, PASS B appends
+        /// one row per slant-ionosphere column tying it to absolute zero with this sigma
+        /// (metres), so the estimator matches a fixture simulated without ionosphere
+        /// (gnss_simulator: iono.background_source analytic, quiet_vtec_tecu 0,
+        /// storm_scale 0).  Never meaningful on real data.  0 (the default) = off,
+        /// byte-identical.  Solve-affecting; not fingerprinted.
+        double sim_zero_iono_sigma_m{ 0.0 };
         // --- Datum graph census (docs/SPEC_datum_graph_census.md;
         //     filter/NetworkDatumGraph) ----------------------------------------
         // Measure-only, default-off and fingerprint-safe, like the blocks around it.
