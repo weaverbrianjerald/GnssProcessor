@@ -115,3 +115,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [ICF](ICF_ignition_code_fault_2026-10-09.md): closed, 2026-10-09: KEEP_OFF, FAILED G2's clock-wire clause. The
   faulty BSHM00ISR line of sight, made redundant by its carried ambiguity, moves G07's clock in the cold start (gate A,
   instrument A'); the 12 m cold-start bound holds it within 0.03 m but the hours 2 to 6 clock-wire median is 12 % worse.
+- [GFC](GFC_galileo_family_clock_datum_2026-10-10.md): open, 2026-10-10: pre-registered. Galileo's clock pin follows
+  code-family coverage, so the inter-family offset is realized twice and pair changes re-seed the pin: two default-off
+  knobs (pair continuity, a family-difference datum) against card GAL2's field leftovers.

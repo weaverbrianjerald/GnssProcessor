@@ -283,6 +283,12 @@ NetworkSolveGlueResult networkSolveGlue(
 // selection cannot reach the emit-site comparison.  In the default config
 // (emit_clock_disc off) the map is empty and the clear is a no-op.
 this_epoch_if_pin_sel.clear();
+// Card GFC: the pair holds, the pair changes and the family-row realizations get the same
+// unconditional clear, so an entry from an epoch that was then withheld can neither be
+// counted nor suppress a later declaration.
+ctx.carry.this_epoch_if_pin_holds.clear();
+ctx.carry.this_epoch_if_pin_changes.clear();
+ctx.carry.this_epoch_cb_family_rows.clear();
 // The S-contract §1.5 declaration scratch gets the same unconditional per-epoch clear,
 // so a prior epoch's pair cannot reach the emit-site fill.
 this_epoch_if_pin_real.clear();
@@ -458,7 +464,17 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         this_epoch_if_pin_real, this_epoch_gf_pin_real,
         ctx.carry.this_epoch_family_gf_pin_real,
         this_epoch_cb_ifpin, this_epoch_cb_reseed,
-        basis_relatch_disc_pending, emitEvent);
+        basis_relatch_disc_pending, emitEvent,
+        // Card GFC's two arms; the builder reads them only under the time link.
+        NetworkSbasis::CodeDatumFamilyArms{config_.networkCodeDatumPairContinuity(),
+                                           config_.networkCodeDatumFamilyDifference()});
+    // Card GFC: hand this epoch's pair holds, pair changes and family-row realizations to
+    // the emit site, which counts them once per kept epoch
+    // (networkCodeDatumFamilyKeptEpoch).  The maps are empty unless an arm is effective,
+    // so the default path copies nothing.
+    ctx.carry.this_epoch_if_pin_holds = cbd.if_pin_pair_holds;
+    ctx.carry.this_epoch_if_pin_changes = cbd.if_pin_pair_changes;
+    ctx.carry.this_epoch_cb_family_rows = cbd.family_rows;
     // Record the IF pin pair election in the signal roster.  This is the only site that
     // knows which signals the S-basis pinned this epoch (the realized pair, after the
     // basis hold and any re-latch).  It fills BandRoster::datum_code / datum_phase and a

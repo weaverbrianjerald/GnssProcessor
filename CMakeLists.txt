@@ -604,6 +604,7 @@ add_executable(gnss_tests
     tests/test_second_phase_channel.cpp
     tests/test_channel_mode_all.cpp
     tests/test_galileo_network.cpp
+    tests/test_code_datum_family.cpp
     tests/test_clock_level_carry.cpp
     tests/test_coupling_exact_update.cpp
     tests/test_coupling_long_horizon.cpp

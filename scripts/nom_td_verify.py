@@ -326,10 +326,14 @@ def main():
         problems.append(f"frozen line {i} is outside the function body")
     n_code = sum(1 for i in range(body_first, body_last + 1) if fcode[i].strip())
 
-    # 3. The table.
+    # 3. The table.  A row added after the cut (filter/NetworkRunEnd.hpp, "Adding a report")
+    #    has no frozen body and is not in the manifest: it is named below, not failed, and
+    #    the cut's own rows must still appear in the manifest's order with their homes.
     rows = table_rows(m["table"])
-    names = [r[2] for r in rows]
     want = [e["func"] for e in m["reports"]]
+    post_cut = [r[2] for r in rows if r[2] not in set(want)]
+    rows = [r for r in rows if r[2] in set(want)]
+    names = [r[2] for r in rows]
     if names != want:
         problems.append(f"the table lists {len(names)} rows; the manifest {len(want)} reports, "
                         f"and they differ (first at {next((k for k in range(min(len(names), len(want))) if names[k] != want[k]), min(len(names), len(want)))})")
@@ -361,6 +365,8 @@ def main():
 
     for p in problems:
         print("FAIL " + p)
+    if post_cut:
+        print(f"table rows added after the cut (not verified here): {', '.join(post_cut)}")
     print(f"\n{n_ok} of {len(funcs)} bodies verbatim in code ({len(m['reports'])} reports + "
           f"networkTeardown); {n_code} frozen code lines, {len(missing)} uncovered, "
           f"{len(twice)} carried twice; table {len(names)} rows; print order {len(fev_cmp)} "

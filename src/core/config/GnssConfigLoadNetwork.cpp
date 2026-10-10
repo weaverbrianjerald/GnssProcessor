@@ -54,6 +54,7 @@
 #include "filter/NetworkOraclePinScope.hpp" // oraclePinParseScope (the one grammar for the oracle_pin scope)
 #include "filter/NetworkSecondCodeScope.hpp" // secondCodeAllowEntryValid (card SCC allow-list grammar)
 #include "filter/NetworkSecondPhaseScope.hpp" // secondPhaseAllowEntryValid (card SID phase 6a)
+#include "filter/NetworkSbasis.hpp"         // pinPairContinuityBlocker (card GFC)
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
@@ -8362,6 +8363,18 @@ namespace GnssProcessor {
         network_code_datum_time_linked_ =
             jval<bool>(json, "network.code_datum_time_linked",
                        "network_code_datum_time_linked", false);
+        // Card GFC: two refinements of the time-linked datum, read only under it.  Pair
+        // continuity holds the IF-pin pair while it stays registered and keeps the
+        // satellite clock across a pair change that does happen; the family
+        // difference realizes the inter-family code offset as Sum (d_X - d_P) instead of
+        // the combined channel's sum-to-zero.  Validated with the time link (inert
+        // warning, INFO when effective).
+        network_code_datum_pair_continuity_ =
+            jval<bool>(json, "network.code_datum_pair_continuity",
+                       "network_code_datum_pair_continuity", false);
+        network_code_datum_family_difference_ =
+            jval<bool>(json, "network.code_datum_family_difference",
+                       "network_code_datum_family_difference", false);
         network_scoped_handover_response_ =
             jval<bool>(json, "network.scoped_handover_response",
                        "network_scoped_handover_response", false);
@@ -10387,6 +10400,73 @@ namespace GnssProcessor {
                           "first split re-seeds at 0 with a per-satellite disc bump so the value "
                           "step coincides with a signalled discontinuity.  Eliminates the set-mean "
                           "wander/relaxation after every satellite rise/set.");
+        }
+        // Card GFC's two arms refine the time-linked datum and are read only under it (and
+        // under the W6 satellite code bias it re-times); pair continuity also only where no
+        // row re-asserts an absolute target at a pin pair change
+        // (NetworkSbasis::pinPairContinuityBlocker, the builder's own test).  Not forced
+        // off: an inert arm is warned here, naming only what is missing, and reported as
+        // inert at run end.
+        if (network_code_datum_pair_continuity_ || network_code_datum_family_difference_) {
+            const bool pc = network_code_datum_pair_continuity_;
+            const bool fd = network_code_datum_family_difference_;
+            std::string missing;
+            if (!network_code_datum_time_linked_) missing = "network.code_datum_time_linked";
+            if (!estimate_network_sat_code_bias_)
+                missing += std::string(missing.empty() ? "" : " and ")
+                         + "network.estimate_sat_code_bias";
+            if (!missing.empty()) {
+                log->warn("Network (GFC): {} {} INERT without {}.  {} the time-linked code "
+                          "datum, so this run realizes the datum without {}.",
+                          pc && fd ? "network.code_datum_pair_continuity and "
+                                     "network.code_datum_family_difference"
+                          : pc     ? "network.code_datum_pair_continuity"
+                                   : "network.code_datum_family_difference",
+                          pc && fd ? "are" : "is", missing,
+                          pc && fd ? "Both refine" : "It refines", pc && fd ? "them" : "it");
+            } else {
+                const char* pc_blocker = NetworkSbasis::pinPairContinuityBlocker(
+                    network_code_bias_gf_datum_, network_config_.sat_gf_datum,
+                    network_config_.sat_gf_datum_time_linked,
+                    network_config_.sat_if_level_datum);
+                if (pc && pc_blocker)
+                    log->warn("Network (GFC): network.code_datum_pair_continuity is INERT "
+                              "under {}.  A continued pin would hold the new pair's "
+                              "ionosphere-free combination while that row moves its other "
+                              "combination, a step no discontinuity declares, so the pin "
+                              "follows the selection and every pin pair change re-seeds as "
+                              "without the arm.",
+                              pc_blocker);
+                else if (pc)
+                    log->info("Network producer (GFC): IF-pin PAIR CONTINUITY ON (hold, then "
+                              "continue).  At an entering edge a satellite keeps its last "
+                              "kept pin pair for the one kept epoch the entering signal "
+                              "needs to get a previous solved value (the held pair's own "
+                              "previous combination carries; each hold's begin and end is a "
+                              "CLK_BASIS/held event); no hold where the held pair has no "
+                              "previous values or, under sat_gf_datum broadcast_tgd, the "
+                              "group delay describes the selected pair and not the held one.  "
+                              "At a pair change whose two new signals both have a previous "
+                              "solved value (a released hold or a leaving signal), the pin "
+                              "targets the new pair's previous solved ionosphere-free "
+                              "combination, so the satellite clock continues: no re-seed "
+                              "mark, and with network.emit_clock_disc no re-selection "
+                              "discontinuity (a CLK_BASIS/continued event).  Without previous "
+                              "values the re-seed at 0 stands, and a channel-level re-seed "
+                              "still marks the satellites it re-references.  Unvalidated "
+                              "(card GFC).");
+                if (fd)
+                    log->info("Network producer (GFC): FAMILY-DIFFERENCE code datum ON "
+                              "(Galileo).  A secondary-family (X) code channel whose "
+                              "sum-to-zero row survives carries Sum (d_X - d_P) over the "
+                              "satellites tracking it and its same-band primary-family partner "
+                              "instead (the inter-family mean zero of COD's convention), "
+                              "time-linked on the satellites with previous values on both; the "
+                              "sum-to-zero row is kept with no partner, no common satellite, "
+                              "spanned columns all pinned by other rows, or for the one epoch "
+                              "a family re-seed would replace a carried level.  Each switch is "
+                              "a CB_DATUM/family_row event.  Unvalidated (card GFC).");
+            }
         }
         // The sum-to-zero clock gauge re-references on a clock-satellite set change; with the
         // clock-disc channel live, that re-reference must bump the clock disc counters or the

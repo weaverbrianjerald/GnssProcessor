@@ -202,6 +202,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkRxCodeBiasCarryRunEnd.cpp", networkRxCodeBiasCarryRunEnd},
     {"the S-basis datum arms",
      "filter/NetworkSbasis.cpp", networkSbasisDatumRunEnd},
+    {"card GFC's code-datum arms: pair continuity, family difference",
+     "filter/NetworkSbasis.cpp", networkCodeDatumFamilyRunEnd},
     {"the MW/WL lanes: WL-1, EWL, the WL inject, UWL, WL-3",
      "filter/NetworkMwWlLayer.cpp", networkLanesRunEnd},
     {"the D5 fine-slip innovation gate and its variants",

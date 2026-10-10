@@ -5067,6 +5067,118 @@ namespace GnssProcessor {
         bool networkCodeDatumTimeLinked() const { return network_code_datum_time_linked_; }
 
         /**
+         * @brief Continue the satellite clock across an ionosphere-free pin pair change,
+         *        holding the old pair for the epoch an entering signal needs to become
+         *        continuable (@c network.code_datum_pair_continuity, card GFC).
+         *
+         * @par The problem it addresses
+         * Under @ref networkCodeDatumTimeLinked the per-satellite IF pin carries its
+         * previous solved combination only while the pin pair is unchanged.  The pair is
+         * re-selected every epoch from the code signals registered at two or more
+         * stations (@c NetworkSbasis::selectIfPinPair), so on a two-family Galileo roster
+         * it moves between (C1C, C5Q), (C1C, C5X) and (C1X, C5X) as the pilot family's
+         * coverage of the satellite comes and goes.  Each move re-seeds the pin at 0, steps
+         * the emitted clock by the satellite's inter-family code bias, and marks the
+         * satellite for a code and clock discontinuity; with @c network.emit_clock_disc the
+         * emit site also declares the re-selection as a full-scope discontinuity (card GFC
+         * section 1: the Galileo clock wire's steps fall at these changes).
+         *
+         * @par The fix: hold, then continue
+         * 1. Hold.  At an ENTERING edge (a lower-ordered signal reaching two stations,
+         *    e.g. C5Q beside a pinned (C1C, C5X) when the pilot family returns to E11 or
+         *    E12) the entering signal has no previous solved value, so the change cannot
+         *    be continued.  The satellite then keeps its last kept pair for that epoch,
+         *    its pin carrying the held pair's own previous combination as for an
+         *    unchanged pair (no pair change and no re-seed of the pin).  The entering
+         *    signal is solved meanwhile, so at the next kept epoch the hold is released
+         *    and the pin moves to the selection by step 2, without a clock step.  A hold
+         *    therefore lasts one kept epoch per entering signal, and from then on the pin
+         *    pair is again a function of the epoch's signal set (a lasting per-satellite
+         *    split would drop the constellation's @c cbpin= declaration).  No hold when
+         *    the held pair has no previous values (its pin would re-seed anyway), nor under
+         *    @c network.sat_gf_datum broadcast_tgd when the group delay describes the
+         *    selected pair and not the held one (the entering signal would anchor at the
+         *    held pair's zero instead of the group delay); the change then re-seeds as
+         *    without the arm.  Each held satellite-epoch is counted, with those a
+         *    channel-level re-seed marked anyway, and the begin and the end of each hold
+         *    are "CLK_BASIS"/"held" events.
+         * 2. Continue.  At a pin pair change where both signals of the new pair have a
+         *    previous solved value (the release of a hold, or a LEAVING edge: a pinned
+         *    signal dropped below two stations), the pin's target is the new pair's
+         *    previous solved IF combination a1·b̂(σ1') + a2·b̂(σ2').  Those values were
+         *    realized against the old pin, so the target is the one that leaves the clock
+         *    where it was.  The satellite is not marked for a re-seed, the emit site leaves
+         *    the re-selection discontinuity undeclared when its last emitted pair is the
+         *    pair continued from, and the change is logged as a "CLK_BASIS"/"continued"
+         *    event and counted once per kept epoch.
+         * A new pair without previous values and without a hold (a held signal left in
+         * the same epoch a signal entered, or one of the refusals above) re-seeds as
+         * without the arm.
+         *
+         * Both steps keep the clock only when every other row on the satellite's code-bias
+         * columns also carries its previous value: no geometry-free datum, or
+         * @c network.sat_gf_datum with @c network.sat_gf_datum_time_linked, and neither
+         * @c network.code_bias_gf_datum nor @c network.sat_if_level_datum
+         * (@c NetworkSbasis::pinPairContinuityBlocker; under any of those the arm is inert
+         * with a warning, because those rows re-assert an absolute target on the new pair
+         * and the step would go out undeclared).  The geometry-free pair and extra rows
+         * follow the pinned (held) pair.  A channel-level re-seed (the sum-to-zero or
+         * family-difference row of a channel with no veteran) still marks the satellites
+         * it re-references, held or continued ones included, and that mark is declared.
+         *
+         * Read only under @ref networkCodeDatumTimeLinked (and the W6 satellite code
+         * bias it re-times); inert with a warning otherwise.  Changes the realized datum,
+         * so it is in the snapshot fingerprint when armed (fresh convergence only).
+         * Unvalidated (card GFC, pre-registered).  Default false: the selection every
+         * epoch and the re-seed at every pair change (byte-identical).
+         *
+         * @see networkCodeDatumFamilyDifference, NetworkSbasis::buildCodeBiasDatumRows
+         */
+        bool networkCodeDatumPairContinuity() const { return network_code_datum_pair_continuity_; }
+
+        /**
+         * @brief Realize the inter-family code offset as a family difference instead of
+         *        a sum-to-zero (@c network.code_datum_family_difference, card GFC).
+         *
+         * @par The problem it addresses
+         * With no receiver tracking both of a constellation's channel families (Galileo
+         * pilot C1C/C5Q against combined C1X/C5X), the offset between the families is a
+         * datum quantity.  Today the time-linked sum-to-zero row of the combined channel
+         * (E|C1X) realizes it, seeded at 0 over the satellites present at ignition, and
+         * the realization differs between satellites first pinned on one family and on
+         * the other (card GFC section 1: C1X minus C1C about +1.1 m on pilot-born
+         * satellites, about 0 on combined-born ones; COD puts it at 0.000 m mean).
+         *
+         * @par The fix
+         * For a secondary-family (attribute X) Galileo code channel whose sum-to-zero row
+         * is not suppressed by the geometry-free datum and that has a primary-family
+         * channel on the same band, the row is replaced by Σ (d_X − d_P) over the
+         * satellites carrying both channels, the inter-family mean zero of COD's
+         * convention.  The partner is the same-band primary channel with the most
+         * satellites in common (ties: the lexically first signal).  The time link is the
+         * sum-to-zero one: veterans (previous solved values on both columns) carry Σ of
+         * their previous differences; a row with no veteran re-seeds at 0, with the
+         * channel's satellites seen before marked for a discontinuity, but only when the
+         * channel's own sum-to-zero time link would re-seed too (otherwise the sum-to-zero
+         * row carries the level for that epoch and the family row continues from it).
+         * The sum-to-zero row is also kept with no satellite carrying both channels, and
+         * when every satellite the family row would span has its X column pinned by a
+         * geometry-free row or an extra-band hold (the family row would then add no rank).
+         * Every outcome is counted per band, and every switch between the two rows is a
+         * "CB_DATUM"/"family_row" event.  Galileo only: the card's evidence and COD's
+         * convention are Galileo's; a GPS or BeiDou X channel keeps its sum-to-zero row.
+         *
+         * Read only under @ref networkCodeDatumTimeLinked (and the W6 satellite code
+         * bias it re-times); inert with a warning otherwise.  Changes the realized datum,
+         * so it is in the snapshot fingerprint when armed (fresh convergence only).
+         * Unvalidated (card GFC, pre-registered).  Default false: the sum-to-zero row
+         * (byte-identical).
+         *
+         * @see networkCodeDatumPairContinuity, NetworkSbasis::channelFamilyOf
+         */
+        bool networkCodeDatumFamilyDifference() const { return network_code_datum_family_difference_; }
+
+        /**
          * @brief Whether the satellite phase-bias gauge is realized by a
          *        per-(satellite,signal) prioritized anchor receiver instead of the
          *        single clock-pivot station (@c network.phase_datum_prioritized).
@@ -9461,6 +9573,8 @@ namespace GnssProcessor {
         bool   network_clock_datum_broadcast_anchored_{false}; ///< brdc_rts only: realize the clock gauge by per-satellite soft anchors to each satellite's own broadcast clock (the a-priori; σ = resolveNetworkAprioriClockAnchorSigmaM(), folded before the gate as the datum): no pivot, no handover seam, and unlike sum-to-zero no common-mode redistribution wander on rise/set, so the absolute clock-product frame holds still against the broadcast reference. Mutually exclusive with clock_datum_sum_to_zero; requires apriori_source=brdc_rts (fail-loud). Off = unchanged (byte-identical).
         bool   network_clock_signal_basis_hold_{false};    ///< Hold the per-satellite clock↔code-bias IF-pin reference pair (the ionosphere-free "signal basis" the emitted satellite clock is anchored to) fixed across epochs (W6 only; latch on first registration, re-latch only when a held reference signal leaves the ≥2-station set), so the emitted (δtˢ, dˢ) split is time-consistent (the IGS fixed-clock-convention analogue) instead of re-anchoring by the satellite's inter-channel bias every time a sparse channel enters/leaves coverage (defect-2 differential-clock wander). Requires estimate_sat_code_bias (inert and warned otherwise); orthogonal to the per-constellation gauge. Off = per-epoch re-selection (byte-identical).
         bool   network_code_datum_time_linked_{false};     ///< Impose the code-bias datum (per-sat IF pin + per-(const,signal) sum-to-zero) as a time datum (card 2, W6 only): pin the change from the previous epoch's solved values (veteran-referenced sum-to-zero RHS Σ b̂_prev, IF-pin RHS a1·b̂_prev(σ1)+a2·b̂_prev(σ2)) instead of the level to zero. Same row count (rank unchanged), so no set-mean wander/relaxation and no conflict between gauge and carry weights; a no-veteran channel or first split re-seeds at 0 with a per-sat disc bump (value step ↔ signalled discontinuity). The prev-value map crosses a warm resume only with state_snapshot_datum_capture + resume_datum_restore; otherwise a warm resume re-seeds, signalled. Mutually exclusive with clock_signal_basis_hold (both re-target the IF-pin row; fail-loud). Requires estimate_sat_code_bias (inert and warned otherwise). Off = legacy zero-target datum (byte-identical).
+        bool   network_code_datum_pair_continuity_{false};  ///< Card GFC, hold then continue: at an IF-pin pair change with previous solved values on both new signals, target the new pair's previous IF combination (the clock continues) instead of re-seeding at 0, with no re-seed mark and the re-selection discontinuity left undeclared when the last emitted pair is the pair continued from; where an entering signal has no previous value yet, keep the last kept pair (its own previous combination carries) for the one kept epoch until it has, unless the held pair has no previous values or, under broadcast_tgd, the group delay describes the selected pair and not the held one. Read only under code_datum_time_linked and where no row re-asserts an absolute target at a pair change (NetworkSbasis::pinPairContinuityBlocker); inert and warned otherwise. Fingerprinted when armed. Off = re-seed at every pair change (byte-identical).
+        bool   network_code_datum_family_difference_{false}; ///< Card GFC: replace a secondary-family (X) Galileo code channel's surviving sum-to-zero row by Sigma (d_X - d_P) over the satellites carrying both it and its same-band primary-family partner (time-linked like the sum-to-zero row; the sum-to-zero row kept with no partner, no common satellite, all spanned X columns pinned, or for the one epoch a family re-seed would replace a carried level). Read only under code_datum_time_linked (inert and warned otherwise). Fingerprinted when armed. Off = the sum-to-zero row (byte-identical).
         bool   network_scoped_handover_response_{false};   ///< Scope the producer's internal pivot-handover response (RTA-2; D2 carry skip, clock-oscillator clear, clock-monitor jump suppression) to the constellation(s) whose datum changed; off = global response (byte-identical).
         bool   network_handover_stransform_{false};        ///< At a clock-pivot handover, transform the changed constellation's carried shared means along NetworkSbasis::clockNullDirection (c0 = x_q/v_c[q]; x -= v_c*c0; var += v_c^2*var_q) and then fold them instead of skipping (queue 1(b)); the carried information is valid, only expressed in the retired datum. Requires scoped_handover_response (inert and warned otherwise); inert under an anchor-free clock datum. Fingerprinted when armed (armed-only token) ⇒ fresh convergence only. Off = the legacy one-epoch drop (byte-identical).
         bool   network_handover_stransform_before_rows_{false};  ///< Run the handover S-transform before the fold decision and PASS B, through the traversal of carried references, so the coupling rows read the re-expressed carry (card PRM phase 2).  Requires handover_stransform (inert and warned otherwise); refused with apriori_source brdc_rts.  Fingerprinted when armed.  Off = the transform after PASS B (byte-identical).
