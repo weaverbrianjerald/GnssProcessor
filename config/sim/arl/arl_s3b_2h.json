@@ -1,0 +1,2032 @@
+{
+ "_comment": [
+  "Card ARL slip ladder rung S3B: rung 3b (arl_r3b_2h.json) plus a false LLI flag on L2W, no slip at S43000SIM, epoch 31 (TOW 261930). Pairs exactly with runs/simarl_r3b (scripted slips use no random stream)."
+ ],
+ "date": {
+  "year": 2024,
+  "doy": 129
+ },
+ "trajectory": {
+  "interval_s": 30.0,
+  "n_epochs": 240,
+  "start_tow_s": 261030.0,
+  "clock_bias0_s": 0.0001,
+  "clock_drift_sps": 1e-09,
+  "clock_rw_q_m2ps": 0.003
+ },
+ "geometry": {
+  "elevation_mask_deg": 10.0
+ },
+ "noise": {
+  "code_sigma_zen_m": 0.3,
+  "phase_sigma_zen_m": 0.0005
+ },
+ "atmosphere": {
+  "zwd_m": 0.12,
+  "zwd_rw_sigma_m": 0.01,
+  "zwd_rw_tau_s": 3600.0
+ },
+ "iono": {
+  "storm_scale": 0.0,
+  "background_source": "gim",
+  "shell_height_km": 350.0,
+  "center_lat_deg": 0.0947,
+  "center_lon_deg": 0.3552
+ },
+ "cycle_slips": {
+  "rate_base": 0.0
+ },
+ "corrections": {
+  "relativity": true,
+  "shapiro": true,
+  "solid_earth_tide": true,
+  "pole_tide": true,
+  "sat_antenna": true,
+  "rx_antenna_type": "TRM59800.00     NONE",
+  "phase_windup": true,
+  "signal_bias": true,
+  "signal_bias_scope": "both"
+ },
+ "network_stations": [
+  {
+   "name": "S01000SIM",
+   "lat_deg": -69.2614,
+   "lon_deg": 0.0,
+   "h_m": 50.0,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.0
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.48
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.0
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0515
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0241
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S02000SIM",
+   "lat_deg": -64.6225,
+   "lon_deg": 137.5078,
+   "h_m": 778.8,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.5182
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.3485
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.2524
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0788
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0771
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S03000SIM",
+   "lat_deg": -60.6687,
+   "lon_deg": -84.9845,
+   "h_m": 1507.6,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.3471
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.026
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.4413
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0691
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0653
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S04000SIM",
+   "lat_deg": -57.1507,
+   "lon_deg": 52.5233,
+   "h_m": 266.7,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.2858
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.3107
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.5193
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0268
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0422
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S05000SIM",
+   "lat_deg": -53.9397,
+   "lon_deg": -169.9689,
+   "h_m": 995.5,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.5385
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4772
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.4669
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0281
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0879
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S06000SIM",
+   "lat_deg": -50.9591,
+   "lon_deg": -32.4612,
+   "h_m": 1724.2,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.0749
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.3821
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.2971
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0697
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0049
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S07000SIM",
+   "lat_deg": -48.1586,
+   "lon_deg": 105.0466,
+   "h_m": 483.3,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.4883
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.0777
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.0526
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0786
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0853
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S08000SIM",
+   "lat_deg": -45.5034,
+   "lon_deg": -117.4457,
+   "h_m": 1212.1,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.402
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.2694
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.2051
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0505
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0505
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S09000SIM",
+   "lat_deg": -42.9681,
+   "lon_deg": 20.0621,
+   "h_m": 1940.9,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.2191
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.4688
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.4112
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0013
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0583
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S10000SIM",
+   "lat_deg": -40.5332,
+   "lon_deg": 157.5699,
+   "h_m": 700.0,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.5487
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4113
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.514
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0526
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0817
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S11000SIM",
+   "lat_deg": -38.1838,
+   "lon_deg": -64.9224,
+   "h_m": 1428.8,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.1484
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.1284
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.4876
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0791
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0146
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S12000SIM",
+   "lat_deg": -35.908,
+   "lon_deg": 72.5854,
+   "h_m": 187.9,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.4493
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.2248
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.3387
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0684
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0895
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S13000SIM",
+   "lat_deg": -33.6958,
+   "lon_deg": -149.9068,
+   "h_m": 916.7,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.4493
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4549
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.1047
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0255
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0333
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S14000SIM",
+   "lat_deg": -31.5392,
+   "lon_deg": -12.3991,
+   "h_m": 1645.5,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.1484
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.4356
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.1557
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0293
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0717
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S15000SIM",
+   "lat_deg": -29.4313,
+   "lon_deg": 125.1087,
+   "h_m": 404.5,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.5487
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.1777
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.3769
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0704
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0716
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S16000SIM",
+   "lat_deg": -27.3663,
+   "lon_deg": -97.3835,
+   "h_m": 1133.3,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.2191
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.1777
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.5034
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0783
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0334
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S17000SIM",
+   "lat_deg": -25.3391,
+   "lon_deg": 40.1242,
+   "h_m": 1862.1,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.402
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.4356
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.5034
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0495
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0895
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S18000SIM",
+   "lat_deg": -23.3454,
+   "lon_deg": 177.632,
+   "h_m": 621.2,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.4883
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4549
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.3769
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0027
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0145
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S19000SIM",
+   "lat_deg": -21.3812,
+   "lon_deg": -44.8602,
+   "h_m": 1350.0,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.0749
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.2248
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.1557
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0536
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0817
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S20000SIM",
+   "lat_deg": -19.4431,
+   "lon_deg": 92.6475,
+   "h_m": 109.1,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.5385
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.1284
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.1047
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0792
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0582
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S21000SIM",
+   "lat_deg": -17.5278,
+   "lon_deg": -129.8447,
+   "h_m": 837.9,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.2858
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4113
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.3387
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0677
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0506
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S22000SIM",
+   "lat_deg": -15.6325,
+   "lon_deg": 7.663,
+   "h_m": 1566.7,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.3471
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.4688
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.4876
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0242
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0853
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S23000SIM",
+   "lat_deg": -13.7546,
+   "lon_deg": 145.1708,
+   "h_m": 325.8,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.5182
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.2694
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.514
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0306
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0049
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S24000SIM",
+   "lat_deg": -11.8917,
+   "lon_deg": -77.3214,
+   "h_m": 1054.5,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.0
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.0777
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.4112
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.071
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0879
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S25000SIM",
+   "lat_deg": -10.0414,
+   "lon_deg": 60.1863,
+   "h_m": 1783.3,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.5182
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.3821
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.2051
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0781
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0421
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S26000SIM",
+   "lat_deg": -8.2017,
+   "lon_deg": -162.3059,
+   "h_m": 542.4,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.3471
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4772
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.0526
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0484
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0654
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S27000SIM",
+   "lat_deg": -6.3705,
+   "lon_deg": -24.7981,
+   "h_m": 1271.2,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.2858
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.3107
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.2971
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.004
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0771
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S28000SIM",
+   "lat_deg": -4.5457,
+   "lon_deg": 112.7096,
+   "h_m": 2000.0,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.5385
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.026
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.4669
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0546
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0242
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S29000SIM",
+   "lat_deg": -2.7256,
+   "lon_deg": -109.7826,
+   "h_m": 759.1,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.0749
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.3485
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.5193
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0794
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.09
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S30000SIM",
+   "lat_deg": -0.9082,
+   "lon_deg": 27.7252,
+   "h_m": 1487.9,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.4883
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.48
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.4413
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0669
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.024
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S31000SIM",
+   "lat_deg": 0.9082,
+   "lon_deg": 165.2329,
+   "h_m": 247.0,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.402
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.3485
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.2524
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.023
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0772
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S32000SIM",
+   "lat_deg": 2.7256,
+   "lon_deg": -57.2593,
+   "h_m": 975.8,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.2191
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.026
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.0
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0318
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0653
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S33000SIM",
+   "lat_deg": 4.5457,
+   "lon_deg": 80.2484,
+   "h_m": 1704.5,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.5487
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.3107
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.2524
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0716
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0422
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S34000SIM",
+   "lat_deg": 6.3705,
+   "lon_deg": -142.2438,
+   "h_m": 463.6,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.1484
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4772
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.4413
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0777
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0879
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S35000SIM",
+   "lat_deg": 8.2017,
+   "lon_deg": -4.736,
+   "h_m": 1192.4,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.4493
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.3821
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.5193
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0473
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0048
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S36000SIM",
+   "lat_deg": 10.0414,
+   "lon_deg": 132.7717,
+   "h_m": 1921.2,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.4493
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.0777
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.4669
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0054
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0853
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S37000SIM",
+   "lat_deg": 11.8917,
+   "lon_deg": -89.7205,
+   "h_m": 680.3,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.1484
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.2694
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.2971
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0555
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0504
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S38000SIM",
+   "lat_deg": 13.7546,
+   "lon_deg": 47.7873,
+   "h_m": 1409.1,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.5487
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.4688
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.0526
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0796
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0583
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S39000SIM",
+   "lat_deg": 15.6325,
+   "lon_deg": -174.705,
+   "h_m": 168.2,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.2191
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4113
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.2051
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0662
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0816
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S40000SIM",
+   "lat_deg": 17.5278,
+   "lon_deg": -37.1972,
+   "h_m": 897.0,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.402
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.1284
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.4112
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0217
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0147
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S41000SIM",
+   "lat_deg": 19.4431,
+   "lon_deg": 100.3106,
+   "h_m": 1625.8,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.4883
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.2248
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.514
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.033
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0895
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S42000SIM",
+   "lat_deg": 21.3812,
+   "lon_deg": -122.1817,
+   "h_m": 384.8,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.0749
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4549
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.4876
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0722
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0332
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S43000SIM",
+   "lat_deg": 23.3454,
+   "lon_deg": 15.3261,
+   "h_m": 1113.6,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.5385
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.4356
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.3387
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0774
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0717
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.006,
+   "phase_colour_tau_s": 300.0,
+   "scripted_slips": [
+    {
+     "sat": "G14",
+     "signal": "L2W",
+     "epoch": 31,
+     "delta_cycles": 0,
+     "flag_lli": true
+    }
+   ]
+  },
+  {
+   "name": "S44000SIM",
+   "lat_deg": 25.3391,
+   "lon_deg": 152.8339,
+   "h_m": 1842.4,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.2858
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.1777
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.1047
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0462
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0716
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S45000SIM",
+   "lat_deg": 27.3663,
+   "lon_deg": -69.6584,
+   "h_m": 601.5,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.3471
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.1777
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.1557
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0067
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0334
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S46000SIM",
+   "lat_deg": 29.4313,
+   "lon_deg": 67.8494,
+   "h_m": 1330.3,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.5182
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.4356
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.3769
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0565
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0895
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S47000SIM",
+   "lat_deg": 31.5392,
+   "lon_deg": -154.6429,
+   "h_m": 89.4,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.0
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4549
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.5034
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0797
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0144
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S48000SIM",
+   "lat_deg": 33.6958,
+   "lon_deg": -17.1351,
+   "h_m": 818.2,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.5182
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.2248
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.5034
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0654
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0817
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S49000SIM",
+   "lat_deg": 35.908,
+   "lon_deg": 120.3727,
+   "h_m": 1547.0,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.3471
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.1284
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.3769
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0204
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0582
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S50000SIM",
+   "lat_deg": 38.1838,
+   "lon_deg": -102.1196,
+   "h_m": 306.1,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.2858
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4113
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.1557
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0343
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0506
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S51000SIM",
+   "lat_deg": 40.5332,
+   "lon_deg": 35.3882,
+   "h_m": 1034.8,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.5385
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.4688
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.1047
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0728
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0852
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S52000SIM",
+   "lat_deg": 42.9681,
+   "lon_deg": 172.896,
+   "h_m": 1763.6,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.0749
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.2694
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.3387
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0771
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.005
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S53000SIM",
+   "lat_deg": 45.5034,
+   "lon_deg": -49.5963,
+   "h_m": 522.7,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.4883
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.0777
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.4876
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0451
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0879
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S54000SIM",
+   "lat_deg": 48.1586,
+   "lon_deg": 87.9115,
+   "h_m": 1251.5,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.402
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.3821
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.514
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0081
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.042
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S55000SIM",
+   "lat_deg": 50.9591,
+   "lon_deg": -134.5807,
+   "h_m": 1980.3,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.2191
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.4772
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.4112
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0574
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0654
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S56000SIM",
+   "lat_deg": 53.9397,
+   "lon_deg": 2.927,
+   "h_m": 739.4,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.5487
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.3107
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.2051
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0798
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.077
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S57000SIM",
+   "lat_deg": 57.1507,
+   "lon_deg": 140.4348,
+   "h_m": 1468.2,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.1484
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.026
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.0526
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0646
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0242
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S58000SIM",
+   "lat_deg": 60.6687,
+   "lon_deg": -82.0574,
+   "h_m": 227.3,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": 0.4493
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.3485
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.2971
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": 0.0191
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.09
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S59000SIM",
+   "lat_deg": 64.6225,
+   "lon_deg": 55.4503,
+   "h_m": 956.1,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.4493
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.48
+    },
+    {
+     "code": "C5Q",
+     "value_m": 0.4669
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0355
+    },
+    {
+     "code": "L2W",
+     "value_m": 0.0239
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "S60000SIM",
+   "lat_deg": 69.2614,
+   "lon_deg": -167.0419,
+   "h_m": 1684.8,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.1484
+    },
+    {
+     "code": "C2W",
+     "value_m": -0.3485
+    },
+    {
+     "code": "C5Q",
+     "value_m": -0.5193
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0733
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0772
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0044,
+   "phase_colour_tau_s": 300.0
+  },
+  {
+   "name": "SZZ000SIM",
+   "lat_deg": 28.5,
+   "lon_deg": -16.5,
+   "h_m": 600.0,
+   "consumer": true,
+   "rx_code_bias": [
+    {
+     "code": "C1C",
+     "value_m": -0.37
+    },
+    {
+     "code": "C2W",
+     "value_m": 0.41
+    }
+   ],
+   "rx_phase_bias": [
+    {
+     "code": "L1C",
+     "value_m": -0.0767
+    },
+    {
+     "code": "L2W",
+     "value_m": -0.0652
+    }
+   ],
+   "phase_colour_sigma_zen_m": 0.0049,
+   "phase_colour_tau_s": 300.0
+  }
+ ],
+ "_roster": "GENERATED by scripts/simnet_make_roster.py --n 60 --consumer (Fibonacci lattice, |lat| <= 72.0 deg, name-scheme legacy2). Do not hand-edit \u2014 regenerate.",
+ "signals": {
+  "gps_l5": false,
+  "galileo_e5b": false,
+  "synth_osb_amp_m": {}
+ },
+ "ambiguity": {
+  "regime": "field",
+  "half_width_cycles": 48
+ },
+ "multipath": {
+  "phase_amp_zen_m": 0.0,
+  "code_amp_gps_l1_m": 0.0,
+  "code_amp_gps_l2_m": 0.0,
+  "code_amp_gal_e1_m": 0.0,
+  "code_amp_gal_e5a_m": 0.0,
+  "code_amp_gps_l5_m": 0.0,
+  "code_amp_gal_e5b_m": 0.0
+ },
+ "phase_colour": {
+  "elev_factor_floor_deg": 20.0
+ }
+}
