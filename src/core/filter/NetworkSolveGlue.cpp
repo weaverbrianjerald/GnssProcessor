@@ -290,6 +290,7 @@ this_epoch_gf_pin_real.clear();
 ctx.carry.this_epoch_family_gf_pin_real.clear();
 this_epoch_cb_ifpin.clear();   // this epoch's IF-pin pairs, persisted at harvest (card 2)
 this_epoch_cb_reseed.clear();  // this epoch's re-seeds, merged into the pending disc set at the emit site, which withheld epochs never reach (card 2)
+ctx.carry.this_epoch_cb_reseed_channels.clear();  // their channels, read by the harvest of card L5B
 // This epoch's held extra-band keys get the same unconditional per-epoch clear: a stale
 // hold would withhold a bias that the current epoch determined (B5D).
 ctx.carry.this_epoch_extra_band_held.clear();
@@ -459,6 +460,9 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         ctx.carry.this_epoch_family_gf_pin_real,
         this_epoch_cb_ifpin, this_epoch_cb_reseed,
         basis_relatch_disc_pending, emitEvent);
+    // The channels whose sum-to-zero row re-seeded, for the receiver IFB carry of card L5B
+    // (the harvest erases the entries of a re-seeded family; nothing reads it otherwise).
+    ctx.carry.this_epoch_cb_reseed_channels = cbd.reseed_channels;
     // Record the IF pin pair election in the signal roster.  This is the only site that
     // knows which signals the S-basis pinned this epoch (the realized pair, after the
     // basis hold and any re-latch).  It fills BandRoster::datum_code / datum_phase and a

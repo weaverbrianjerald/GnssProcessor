@@ -1781,6 +1781,13 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // unarmed run's manifest bytes are unchanged.
                << (nc.sat_gf_extra_band_free
                        ? std::string("\"sat_gf_extra_band_free\":true,") : std::string())
+               // Its receiver-side counterpart (card L5B): whether the receiver extra-band
+               // code delay was estimated or held at its seed is part of the same frame (the
+               // receiver delay and the satellite extra-band code biases share one null
+               // direction).  Emitted only when armed, so an unarmed run's manifest bytes
+               // are unchanged.
+               << (nc.estimate_rx_extra_band_code_delay
+                       ? std::string("\"estimate_rx_extra_band_code_delay\":true,") : std::string())
                // Both knobs affect the solve when armed (card L5P): the pair scope
                // changes which arcs refloat and the sigma scale changes the normal
                // equations, so an archived logs/ folder has to be able to say which

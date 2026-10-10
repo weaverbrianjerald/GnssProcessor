@@ -1060,6 +1060,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Appended only when armed, like the others.
         if (config_.networkRxCodeBiasDatum())
             add(fmt::format("rxcbdatum:{}", config_.networkRxCodeBiasDatumSigmaM()));
+        // The receiver extra-band code delay estimated (card L5B): the receiver IFB columns
+        // join the local block and the carried receiver code-bias set, so a snapshot written
+        // with them held carries a different state set.  Appended only when the knob turned
+        // the drop off (the rule's own flag), so a snapshot written without it keeps its
+        // fingerprint.
+        if (ctx.param_inventory.rx_ifb.estimated_by_knob) add("rxifbest:1");
         add(fmt::format("{}", q_clock)); add(fmt::format("{}", q_pb)); add(fmt::format("{}", q_cb));
         add(fmt::format("{}", nc.warmup_ura_floor_m)); add(fmt::format("{}", nc.warmup_epochs));
         // Slant-iono carry (queue 8b) affects the solve: the leveling levels a chain
@@ -6329,6 +6335,21 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         continue;
                     }
                     const auto key = std::make_pair(static_cast<int>(i), cb_key);
+                    // Card L5B: the satellite sum-to-zero of this receiver IFB's family
+                    // re-seeded this epoch (no veteran satellite), so the satellite side
+                    // realizes a new level of the family's null direction while a carried
+                    // entry holds the old one.  Erase it (reset, not repair; counted) and
+                    // skip this epoch's stash, whose posterior folded the old level: the
+                    // next harvest re-seeds from a solve the stale entry no longer reaches.
+                    // A column with no entry carried no old level and is stashed as usual
+                    // (the cold start, where every channel seeds, is that case).
+                    if (ctx.param_inventory.rx_ifb.estimated_by_knob
+                        && rxIfbFamilyReseeded(stations[i].l5b, cb_key,
+                                               ctx.carry.this_epoch_cb_reseed_channels)
+                        && rx_cb_carry.erase(key) > 0) {
+                        ++stations[i].l5b.reseed_erase;
+                        continue;
+                    }
                     // Event response (invariant #1): the step between this harvest's
                     // absolute and the carried one, against both variances, the random
                     // walk over the gap and the diagonal route's 0.5 m guard, at 10 sigma.
@@ -6798,6 +6819,16 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                        ? vard(a) : -1.0;
                 if (!std::isfinite(value_abs) || !(var > 0.0)
                     || !std::isfinite(var)) continue;
+                // Card L5B: a re-seeded family's carried receiver IFB entries are erased and
+                // not re-stashed this epoch, as in the block harvest above (reset, not
+                // repair; counted).
+                if (ctx.param_inventory.rx_ifb.estimated_by_knob
+                    && rxIfbFamilyReseeded(stations[i].l5b, cb_key,
+                                           ctx.carry.this_epoch_cb_reseed_channels)
+                    && rx_cb_carry.erase({static_cast<int>(i), cb_key}) > 0) {
+                    ++stations[i].l5b.reseed_erase;
+                    continue;
+                }
                 // Prior-residual census hook (INC-2).  `folded` is re-derived by calling
                 // rxCbInjectGate with the same arguments PASS B used: the gate is a pure
                 // function, and every input is still in hand and unchanged at this point

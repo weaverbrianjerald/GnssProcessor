@@ -242,6 +242,12 @@ struct NetStation {
     /// (card L5P).  Those rows keep their unscaled weight; a nonzero count means the
     /// knob is partly inert, and the run-end line says so (standing invariant #4).
     long long eb_rows_no_pin{ 0 };
+    /// The receiver IFB columns network.estimate_rx_extra_band_code_delay estimates at
+    /// this station (card L5B): the counts and edge state of
+    /// filter/NetworkParamInventory.hpp, written by the station's own split and inject
+    /// inside the parallel produce phase and by the serial harvest, summed by the run-end
+    /// report.  Untouched unless the knob is effective.
+    RxIfbStationState l5b;
 
     // --- second code channel, card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md)
     /// This epoch's companion cells at this station, as "<satellite>|<signal>" keys
@@ -1462,6 +1468,11 @@ struct StationAssembly {
     /// block (RXCB-IN-BLOCK).  Empty with the knob off, on a station-epoch that pushed
     /// none, and on a non-SPD block.
     std::vector<Eigen::Index> pl_rxcb_blk_cols;
+    /// The receiver code-bias columns of @ref pl_rxcb_blk_cols that the block builder's
+    /// scalar screen refused (@c CouplingRowBuilder::buildLocalBlock; counted in
+    /// @c pl_blk_col_refused): pushed, but never rows of the block.  Read only by the
+    /// fold count of card L5B, which counts a column as folded only when it is absent here.
+    std::vector<Eigen::Index> rxcb_refused;
     // Age-aware young-arc inflation (network.phase_leveling_young_inflate_var_m2,
     // SPEC_amb_iono_split_overcount §6.17–§6.18): per-station telemetry, folded serially
     // like every other block counter.  Counted at the compute site (once per carried

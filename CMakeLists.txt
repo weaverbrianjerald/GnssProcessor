@@ -548,6 +548,7 @@ add_executable(gnss_tests
     tests/test_network_param_registry.cpp
     tests/test_gnss_identity.cpp
     tests/test_network_param_inventory.cpp
+    tests/test_network_rx_extra_band_delay.cpp
     tests/test_network_contributions.cpp
     tests/test_network_knobs_lane_emit.cpp
     tests/test_network_row_classify.cpp

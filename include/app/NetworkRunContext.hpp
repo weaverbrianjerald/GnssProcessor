@@ -1668,6 +1668,12 @@ namespace GnssProcessor {
         // needed that would destroy a bump legitimately deferred for a satellite re-seeded
         // while pruned from the emission.
         std::set<std::string> this_epoch_cb_reseed;
+        // The channels ("<constellation letter>|<signal>") whose sum-to-zero row re-seeded
+        // this epoch (CodeBiasDatumRows::reseed_channels), cleared with
+        // this_epoch_cb_reseed.  Read only by the harvest of card L5B
+        // (network.estimate_rx_extra_band_code_delay), which erases the receiver IFB carry
+        // entries of a re-seeded family.
+        std::set<std::string> this_epoch_cb_reseed_channels;
         // Satellites whose code-bias split has ever been harvested: a later re-seed of one
         // of these is a return (disc bump), not a first appearance (seeded silently).
         // Accumulates for the whole process.  Snapshotted and restored with

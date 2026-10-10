@@ -152,37 +152,63 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         shared_cols.insert(static_cast<int>(kv.second));
     }
 
-    // Receiver inter-frequency-bias (IFB) columns on non-primary bands: when the
-    // satellite code bias is estimated, the receiver IFB is dropped on every band
-    // outside the iono-free reference pair (the "sys_IFB<band>" states).  An
-    // explicit non-primary receiver IFB absorbs the code information that
-    // otherwise separates that band's satellite clock from its phase bias, and
-    // the L5/E5b/... phase-bias product degrades to a near-gauge: with the IFB
-    // kept, the per-constellation L5Q phase-bias common mode falls below the
-    // null-space cutoff and the whole epoch is withheld.  Dropping it folds the
-    // receiver's non-primary code delay into the per-(rx,constellation) slant-iono
-    // common mode, which the GIM weighting leaves free by design (the
-    // L1-referenced convention).  The satellite code bias on that band stays
-    // observable through the GIM's between-satellite iono structure (a per-
-    // satellite quantity, so the per-receiver delay averages out across the
-    // network), not through an explicit receiver counterpart.  The receiver DCB
-    // between the two primary bands ("sys_DCB") is kept, and the GLONASS per-slot
-    // IFB (a different state family) is untouched.
+    // Receiver inter-frequency-bias (IFB) columns on the bands outside each
+    // constellation's clock-reference pair (the "<sys>_IFB<band>" states, e.g.
+    // GPS_IFB5): two treatments, chosen once per run by the declared rule
+    // (networkRxIfbRule, card NOM N1, passed in as ifb_rule).  The receiver DCB between
+    // the two pair bands ("<sys>_DCB") is always kept, and the GLONASS per-slot IFB (a
+    // different form, not governed by the rule) is untouched.
     //
-    // Card NOM N1: the drop is a declared rule (networkRxIfbRule, built once per run
-    // and passed in as ifb_rule): whether it drops, the disposition the column gets
-    // (held at its first-epoch seed), and the premise above (GIM weighting), with
-    // whether that premise holds on this run.  The rule names the columns through the
-    // parameter classifier: a receiver code-bias key of the IFB form, the one test
-    // RxIfbRule::governs.  These are the columns the former substring test on "_IFB"
-    // named.  The parameter inventory prints the instances the rule holds, and a
-    // WARNING when the premise does not hold.
+    //  - Dropped (network.estimate_sat_code_bias on, the knob below off): the column is
+    //    left out of the local block and held at the value the state initializer seeded
+    //    on the station's first epoch, so it enters every extra-band code row as a
+    //    constant.  The station's geometry-free level direction (slant ionosphere level,
+    //    receiver DCB and ambiguities moving together, which leaves every pair-band row
+    //    unchanged) needs the extra-band delay to move with it, so the held value closes
+    //    that direction with the extra-band code rows' information.  The drop was
+    //    introduced on the 2026-06-29 GIM posture (GIM rows leaving each station's level
+    //    almost free, the legacy pivot datum, rank tolerance 1e-9), with the record that
+    //    keeping the column drove the per-constellation L5Q phase-bias common mode below
+    //    the null-space cutoff and withheld the epoch.  The likely mechanism (a rank model
+    //    of the observation equations, not a run): with the column kept, the level
+    //    direction of a station whose ambiguities are pinned was closed only by the GIM
+    //    common mode, and its footprint on the shared columns is that phase-bias common
+    //    mode.  The rule's premise (the GIM weighting leaves the level free to absorb the
+    //    delay) is false without the weighting (network.w6_iono_constraint none, the
+    //    goldens); the held value is then a seed error in every extra-band code row, and
+    //    the parameter inventory prints a WARNING.
+    //  - Estimated (network.estimate_rx_extra_band_code_delay, card L5B): the column takes
+    //    the ordinary path below (a local column unless no row informs it) and from there
+    //    the receiver code-bias carry, harvest, snapshot and trace paths, which key on the
+    //    local columns.  An extra-band code row whose satellite code bias is not a shared
+    //    column carries that bias unmodelled and is excluded (zero weight,
+    //    rxIfbExcludedRows); a local column left with no weighted row is left out.  The
+    //    new null direction (per constellation, extra-band code family and connected
+    //    component of the family's station-satellite graph, the receivers' delays against
+    //    the satellites' extra-band code biases) is closed by the satellite code-bias
+    //    datum rows, and the station geometry-free level direction by
+    //    network.rx_code_bias_datum.
+    //
+    // The rule names the columns through the parameter classifier: a receiver code-bias
+    // key of the IFB form, the one test RxIfbRule::governs (the columns the former
+    // substring test on "_IFB" named).  The parameter inventory prints the instances and
+    // their treatment.
     std::set<int> drop_cols;
     if (ifb_rule.drop) {
         for (const auto& kv : st.sm->getCodeBiasStates()) {
             const auto id = classifyStateColumn(StateContainer::CodeBiasStates, kv.first);
             if (id && ifb_rule.drops(*id))
                 drop_cols.insert(static_cast<int>(kv.second));
+        }
+    }
+    // Card L5B: the extra-band code rows excluded at zero weight (empty unless the knob
+    // turned the drop off), as a row mask for the column test below.
+    std::vector<char> excluded_row;
+    if (ifb_rule.estimated_by_knob) {
+        const std::vector<int> ex = rxIfbExcludedRows(st.l5b, *st.sm, em, shared_cols);
+        if (!ex.empty()) {
+            excluded_row.assign(static_cast<std::size_t>(m), 0);
+            for (const int r : ex) excluded_row[static_cast<std::size_t>(r)] = 1;
         }
     }
 
@@ -218,6 +244,18 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
             disp = ParamDisposition::Unobserved;
             continue;
         }
+        // The same for a column whose only rows are excluded rows (card L5B): with zero
+        // weight they inform nothing, so the column (a receiver IFB with no shared-column
+        // row, a station-local sponge) would make N_rr singular.
+        if (!excluded_row.empty()) {
+            bool weighted = false;
+            for (Eigen::Index r = 0; r < m && !weighted; ++r)
+                weighted = em.H(r, c) != 0.0 && !excluded_row[static_cast<std::size_t>(r)];
+            if (!weighted) {
+                disp = ParamDisposition::Unobserved;
+                continue;
+            }
+        }
         disp = ParamDisposition::EstimatedLocal;
         h2local[c] = static_cast<int>(local_cols.size());
         local_cols.push_back(c);
@@ -251,12 +289,26 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
     A_r.resize(m, static_cast<Eigen::Index>(local_cols.size()));
     for (size_t j = 0; j < local_cols.size(); ++j)
         A_r.col(static_cast<Eigen::Index>(j)) = em.H.col(local_cols[j]);
+    // Card L5B: a station-epoch with a receiver IFB column in the block counts once.
+    if (ifb_rule.estimated_by_knob) {
+        bool ifb_estimated = false;
+        for (const auto& [key, sidx] : st.sm->getCodeBiasStates()) {
+            const auto id = classifyStateColumn(StateContainer::CodeBiasStates, key);
+            if (id && RxIfbRule::governs(id->cls) && h2local.count(static_cast<int>(sidx)))
+                ifb_estimated = true;
+        }
+        if (ifb_estimated) ++st.l5b.est_epochs;
+    }
 
     w = em.R_v.cwiseInverse();   // per-obs information = 1/σ²
     // One contribution tag per data row (card NOM N2a): code or phase with the row's
     // satellite and signal.  The weight passes below that scale a row as a second-channel
     // row change its kind where they decide it, so a tag and a weight cannot disagree.
     tagDataRows(tags, m, em.satellite_ids, em.signal_types);
+    // Card L5B: the excluded extra-band code rows carry no information (rxIfbExcludedRows).
+    // The scalings below keep a zero at zero.
+    for (std::size_t r = 0; r < excluded_row.size(); ++r)
+        if (excluded_row[r]) w(static_cast<Eigen::Index>(r)) = 0.0;
     // --- Flicker/gap signal integrity (docs/SPEC_flicker_gap_integrity.md, INC-2) ---
     // Down-weight the phase rows of every line of sight that is currently unvetted:
     // one that re-entered, flickered a band, is degraded, or is new, i.e. one inside
@@ -3467,6 +3519,24 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // absorbed instance (N1b), into this station's own slot (no shared write;
             // drained serially below).  Trace class.
             recordStationParams(*st.sm, i, col_disp, st.mm->absorbedSharedStates(), R.param_inv);
+            // Card L5B: the re-coupling edge of an estimated receiver IFB (invariant #7).  A
+            // governed column back in the block after at least one loop epoch out of it,
+            // with its carry entry still live, re-couples through that entry's stored
+            // regression; counted, since its coupling row is gauge-restored per
+            // (constellation, kind) and not per signal.  The carry map is read-only here.
+            if (ctx.param_inventory.rx_ifb.estimated_by_knob) {
+                const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+                for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
+                    if (!h2local.count(static_cast<int>(cb_sidx))) continue;
+                    const auto id = classifyStateColumn(StateContainer::CodeBiasStates, cb_key);
+                    if (!id || !RxIfbRule::governs(id->cls)) continue;
+                    const auto lit = st.l5b.last_est_epoch.find(cb_key);
+                    if (lit != st.l5b.last_est_epoch.end() && lit->second < ep - 1
+                        && ctx.carry.rx_cb_carry.count({static_cast<int>(i), cb_key}))
+                        ++st.l5b.recouple;
+                    st.l5b.last_est_epoch[cb_key] = ep;
+                }
+            }
             // The observation's own signal of every data row travels in its row tag
             // (R.row_tags, set by the split): the post-fit row writer reads it there
             // (card OWD, O5; card NOM step N2b).
@@ -4453,6 +4523,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 // harvested absolutes, at the harvest (the receiver clock's rule).  The
                 // carry map is read-only here; the columns point at the entries.
                 std::vector<LocalBlockCol> rxcb_bc;
+                // Card L5B: which of rxcb_bc are receiver IFB columns, for the fold count
+                // (filled only when network.estimate_rx_extra_band_code_delay is effective).
+                std::vector<char> rxcb_ifb;
                 if (rxcb_blk_on) {
                     for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
                         if (StateKeys::isGlonassPerSlotIfbKey(cb_key)) continue;  // anchored family
@@ -4490,6 +4563,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             /*var_add=*/0.0, /*is_rx_clk=*/false, /*is_rx_isb=*/false,
                             /*is_rx_cb=*/true});
                         rxcb_bc.back().signal = rxCodeBiasSignal(cb_key);   // its block row's tag (card NOM N2a)
+                        if (ctx.param_inventory.rx_ifb.estimated_by_knob) {
+                            const auto id = classifyStateColumn(StateContainer::CodeBiasStates, cb_key);
+                            rxcb_ifb.resize(rxcb_bc.size(), 0);
+                            rxcb_ifb.back() = (id && RxIfbRule::governs(id->cls)) ? 1 : 0;
+                        }
                     }
                 }
                 // Card LGM (network.phase_colour_state, section 4.1): the station's carried
@@ -4771,6 +4849,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             R.pl_rxcb_blk_cols.clear();
                         } else if (blk_done) {
                             R.pl_cb_injected += static_cast<int>(rxcb_bc.size());
+                            // Card L5B: the receiver IFB columns that became rows of this
+                            // factorized block (a column the scalar screen refused is not one).
+                            for (std::size_t k = 0; k < rxcb_ifb.size(); ++k)
+                                if (rxcb_ifb[k]
+                                    && std::find(R.rxcb_refused.begin(), R.rxcb_refused.end(),
+                                                 rxcb_bc[k].col) == R.rxcb_refused.end())
+                                    ++st.l5b.blk_folds;
                         }
                         // Card LGM: a phase-colour column folded through the block unless the
                         // scalar screen refused it; on a non-SPD block each column takes the
@@ -5141,6 +5226,14 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (rxcb_blk_on) continue;
                         const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
                         if (cbit == rx_cb_carry.end()) continue;   // cold: the harvest seeds it
+                        // Card L5B: a receiver IFB column's folds and withholds on this route,
+                        // counted at its own station (nothing is counted unless the knob is
+                        // effective).
+                        bool cb_is_ifb = false;
+                        if (ctx.param_inventory.rx_ifb.estimated_by_knob) {
+                            const auto id = classifyStateColumn(StateContainer::CodeBiasStates, cb_key);
+                            cb_is_ifb = id && RxIfbRule::governs(id->cls);
+                        }
                         double cb_var_eff = 0.0;
                         const double cb_innov_raw = cbit->second.value_abs - x_lin(cb_idx);
                         // --- Family-mean demean (card LV-2) --------------------------
@@ -5198,6 +5291,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (act == RxCbInjectAction::SkipInnov) {
                             ++R.pl_cb_innov_skips;   // receiver-reset response: withhold, harvest re-seeds
                             ++R.prm_rxcb_jump_skip;  // card PRM phase 3a
+                            if (cb_is_ifb) ++st.l5b.diag_innov_skips;
                             continue;
                         }
                         if (act != RxCbInjectAction::Fold) {
@@ -5213,6 +5307,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         inj.emplace_back(cbcol, cb_lambda, cb_eta,
                                          rxCodeBiasTag(ContributionKind::PriorRxCbCarry, cb_key));
                         ++R.pl_cb_injected;
+                        if (cb_is_ifb) ++st.l5b.diag_folds;
                         // Accumulation for the next epoch's μ (LV-2).  Only folded rows
                         // vote (a withheld row exerts no force), and the mean is taken
                         // over the raw innovation: μ must estimate the common content of

@@ -1592,6 +1592,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 // site because a withheld epoch does not reach that site, and its
                 // re-seed is still a fact about the datum this run realized.
                 ++out.n_s2z_reseed_rows;
+                out.reseed_channels.insert(skey);
                 for (const auto& sat : present_sats)
                     if (code_bias_sat_seen_.count(sat) || code_bias_datum_resumed_) {
                         this_epoch_cb_reseed.insert(sat);

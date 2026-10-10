@@ -5,20 +5,28 @@
 #include "filter/NetworkParamInventory.hpp"
 
 #include "app/NetworkRunContext.hpp"     // NetworkRunContext::param_inventory
+#include "app/NetworkSetupResult.hpp"    // NetworkSetupResult::stations (the card L5B run-end report)
+#include "common/EpochMeasurement.hpp"   // rxIfbExcludedRows (card L5B)
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunTypes.hpp"    // StationAssembly::param_inv, ok, threw
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/NetworkRunTraces.hpp"  // appendRunManifestRecord
+#include "model/PppModel.hpp"            // getAllowedBandDigits (rxExtraBandTracked, card L5B)
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <map>
+#include <set>
+#include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 // The run-end reports at the end of this file (card NOM step TD1b):
 #include "filter/NetworkRunEnd.hpp"
@@ -130,6 +138,9 @@ std::string classNote(const ParamClass& c, const RxIfbRule& rule) {
         if (rule.drop)
             return fmt::format("rule rx_ifb: {} ({}); dropped: {}",
                                paramDispositionName(rule.disposition), rule.source, rule.dropped_by);
+        if (rule.estimated_by_knob)   // card L5B: the drop turned off by its own knob
+            return fmt::format("rule rx_ifb: estimated ({}); not dropped by {}",
+                               rule.estimated_by, rule.dropped_by);
         return fmt::format("rule rx_ifb: not armed ({} off), estimated", rule.dropped_by);
     }
     return {};
@@ -497,11 +508,88 @@ bool absorberPresent(const StateManager& sm, const AbsorbedInstance& a) {
 
 RxIfbRule networkRxIfbRule(const GnssConfig& config) {
     RxIfbRule r;
-    r.drop           = config.estimateNetworkSatCodeBias();
+    // Card L5B: network.estimate_rx_extra_band_code_delay turns the drop off where it can
+    // act.  Unarmed, or armed where it cannot act, this is the former single assignment
+    // (drop = estimateNetworkSatCodeBias()).
+    r.extra_band_tracked = rxExtraBandTracked(config.getFrequencyMode(), config.getActiveSystems());
+    r.estimated_by_knob  = rxExtraBandDelayEffective(config);
+    r.drop               = config.estimateNetworkSatCodeBias() && !r.estimated_by_knob;
     r.iono_weighting = config.getIonosphereWeightingConfig().enabled;
     r.w6_iono_none   = config.getNetworkConfig().w6_iono_constraint == NetworkW6IonoConstraint::None;
     r.premise_holds  = r.iono_weighting && !r.w6_iono_none;
     return r;
+}
+
+bool rxExtraBandTracked(FrequencyMode mode, const std::vector<std::string>& active_systems) {
+    for (const std::string& name : active_systems) {
+        const System sys = systemFromName(name);
+        if (sys == System::Unknown || traitsOf(sys).fdma) continue;
+        if (getAllowedBandDigits(systemName(sys), mode).size() > 2) return true;
+    }
+    return false;
+}
+
+bool rxExtraBandDelayEffective(const GnssConfig& config) {
+    return config.getNetworkConfig().estimate_rx_extra_band_code_delay
+        && config.estimateNetworkSatCodeBias()
+        && rxExtraBandTracked(config.getFrequencyMode(), config.getActiveSystems());
+}
+
+bool rxIfbFamilyReseeded(const RxIfbStationState& s, const std::string& ifb_key,
+                         const std::set<std::string>& reseed_channels) {
+    if (reseed_channels.empty()) return false;
+    const auto sit = s.signals.find(ifb_key);
+    if (sit == s.signals.end()) return false;
+    const auto id = classifyStateColumn(StateContainer::CodeBiasStates, ifb_key);
+    if (!id || !RxIfbRule::governs(id->cls)) return false;
+    const std::string cst = constellationKey(id->cls.sys);
+    for (const std::string& sig : sit->second)
+        if (reseed_channels.count(cst + "|" + sig)) return true;
+    return false;
+}
+
+std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StateManager& sm,
+                                   const EpochMeasurement& em, const std::set<int>& shared_cols) {
+    std::set<int> excluded;
+    const Eigen::Index nstate = em.H.cols();
+    const Eigen::Index mr = std::min<Eigen::Index>(
+        em.H.rows(), static_cast<Eigen::Index>(
+            std::min(em.satellite_ids.size(), em.signal_types.size())));
+    std::map<std::string, bool> registered_now;
+    for (const auto& [key, sidx] : sm.getCodeBiasStates()) {
+        const auto id = classifyStateColumn(StateContainer::CodeBiasStates, key);
+        if (!id || !RxIfbRule::governs(id->cls)) continue;
+        const int c = static_cast<int>(sidx);
+        if (c < 0 || c >= nstate) continue;
+        std::set<std::string> signals;
+        long long n_rows = 0, n_excluded = 0;
+        for (Eigen::Index r = 0; r < mr; ++r) {
+            if (em.H(r, c) == 0.0) continue;
+            ++n_rows;
+            const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
+            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            signals.insert(sig);
+            const std::string row_key = K::makeSatBiasKey(sat, sig);
+            const int hc = sm.getSatBiasIndex(row_key);
+            const bool registered = hc >= 0 && shared_cols.count(hc) != 0;
+            // The edges of invariant #7: the row joins or leaves the solve with its
+            // satellite column (a row seen for the first time is neither).
+            const auto pit = s.row_registered.find(row_key);
+            if (pit != s.row_registered.end() && pit->second != registered)
+                ++(registered ? s.reg_edges : s.dereg_edges);
+            registered_now[row_key] = registered;
+            if (!registered) {
+                excluded.insert(static_cast<int>(r));
+                ++n_excluded;
+            }
+        }
+        if (n_rows == 0) continue;
+        s.signals[key] = std::move(signals);
+        s.rows_unregistered += n_excluded;
+        if (n_excluded == n_rows) ++s.cols_unregistered;
+    }
+    s.row_registered.swap(registered_now);
+    return std::vector<int>(excluded.begin(), excluded.end());
 }
 
 // ---------------------------------------------------------------------------
@@ -807,12 +895,16 @@ std::string paramInventoryJson(const ParamInventoryTally& tally, const RxIfbRule
     }
     j += fmt::format("],\"rules\":[{{\"rule\":\"rx_ifb\",\"drop\":{},\"disposition\":\"{}\","
                      "\"source\":\"{}\",\"dropped_by\":\"{}\",\"premise\":\"{}\","
-                     "\"ionosphere_weighting\":{},\"w6_iono_constraint\":\"{}\",\"premise_holds\":{}}}],"
-                     "\"reasons\":[",
+                     "\"ionosphere_weighting\":{},\"w6_iono_constraint\":\"{}\",\"premise_holds\":{}",
                      rule.drop ? "true" : "false", paramDispositionName(rule.disposition),
                      jsonEscape(rule.source), jsonEscape(rule.dropped_by), jsonEscape(rule.premise),
                      rule.iono_weighting ? "true" : "false", w6IonoText(rule),
                      rule.premise_holds ? "true" : "false");
+    // Card L5B: the knob that turned the drop off, only when it did (an unarmed record's
+    // bytes are unchanged).
+    if (rule.estimated_by_knob)
+        j += fmt::format(",\"estimated_by\":\"{}\"", jsonEscape(rule.estimated_by));
+    j += "}],\"reasons\":[";
     // The reason table itself, so the record names what each absorbed count means.
     for (std::size_t k = 0; k < kAbsorbedReasons; ++k) {
         const AbsorbedReasonSpec& s = absorbedReasonSpec(static_cast<AbsorbedReason>(k));
@@ -948,5 +1040,167 @@ int networkParamInventoryRunEnd(const NetworkRunEndView& v) {
 }
 
 // ---- End of the run-end reports ----
+
+// ---- Run-end reports added after the cut (hand-written; not in scripts/nom_td_manifest.json,
+//      so scripts/nom_td_verify.py names their table rows instead of proving them) ----
+
+// Run-end report: the receiver extra-band code delay (card L5B), as lines.
+std::vector<RxIfbReportLine> rxExtraBandDelayReport(
+    const RxIfbRule& rule, const ParamInventoryTally& whole_run,
+    const std::vector<std::pair<std::string, const RxIfbStationState*>>& stations,
+    const std::map<std::pair<int, std::string>, double>& carried,
+    bool carry_on, bool in_block) {
+    std::vector<RxIfbReportLine> out;
+    const auto info = [&](std::string s) { out.push_back({false, std::move(s)}); };
+    const auto warn = [&](std::string s) { out.push_back({true, std::move(s)}); };
+
+    // 1. Inert: the rule kept its drop (or had none to turn off).
+    if (!rule.estimated_by_knob) {
+        warn(fmt::format(
+            "network.estimate_rx_extra_band_code_delay was ARMED and INERT: {}, so the rule "
+            "rx_ifb did not change on this run.",
+            !rule.extra_band_tracked
+                ? std::string("no active constellation tracks a band outside a two-band pair "
+                              "under processing.frequency_mode (no receiver IFB column exists)")
+                : fmt::format("{} is off (no receiver IFB column is dropped)", rule.dropped_by)));
+        return out;
+    }
+
+    // 2. The split's dispositions of the governed classes, from the inventory.
+    long long est_total = 0;
+    for (const auto& [cls, cnt] : whole_run.classes) {
+        if (!RxIfbRule::governs(cls)) continue;
+        const long long est  = cnt.count(ParamDisposition::EstimatedLocal);
+        const long long unob = cnt.count(ParamDisposition::Unobserved);
+        const long long held = cnt.count(ParamDisposition::HeldAtSeed);
+        est_total += est;
+        info(fmt::format("{}: estimated in the local block on {} station-epoch(s); unobserved "
+                         "on {} (no row informed it: an all-zero H column, or only rows "
+                         "without a shared satellite column); held at the seed on {}; {} "
+                         "station(s).",
+                         paramClassLabel(cls), est, unob, held, cnt.nStations()));
+        if (held > 0)
+            warn(fmt::format("{}: {} station-epoch(s) HELD at the seed while the knob is "
+                             "effective: the split dropped a column the rule no longer drops "
+                             "(a defect).", paramClassLabel(cls), held));
+    }
+    if (est_total == 0) {
+        warn("network.estimate_rx_extra_band_code_delay is armed and effective, but no "
+             "receiver IFB column was estimated over the whole run: no station brought a code "
+             "outside its clock-reference pair into the solve (check processing.frequency_mode "
+             "and processing.signal_priorities).  The knob was inert on this run.");
+        return out;
+    }
+
+    // 3 and 4. The per-station counts, summed; the stations the carry never folded.
+    RxIfbStationState sum;
+    std::vector<std::string> never_folded;
+    for (const auto& [name, s] : stations) {
+        if (!s) continue;
+        sum.est_epochs        += s->est_epochs;
+        sum.rows_unregistered += s->rows_unregistered;
+        sum.cols_unregistered += s->cols_unregistered;
+        sum.reg_edges         += s->reg_edges;
+        sum.dereg_edges       += s->dereg_edges;
+        sum.recouple          += s->recouple;
+        sum.blk_folds         += s->blk_folds;
+        sum.diag_folds        += s->diag_folds;
+        sum.diag_innov_skips  += s->diag_innov_skips;
+        sum.reseed_erase      += s->reseed_erase;
+        // The first estimate seeds the carry at the harvest, so a station estimated on one
+        // epoch is never folded by design; from the second on, a zero is the carry not
+        // acting (withheld every epoch, or never warm).
+        if (carry_on && s->est_epochs > 1 && s->blk_folds + s->diag_folds == 0)
+            never_folded.push_back(name);
+    }
+    info(fmt::format("{} extra-band code row(s) excluded at zero weight (no shared column for "
+                     "the row's satellite code bias: held by fewer than two stations, or a "
+                     "CB-ADM sponge); {} station-epoch(s) whose IFB column had no other row "
+                     "(unobserved); {} registration and {} deregistration edge(s) of such rows.",
+                     sum.rows_unregistered, sum.cols_unregistered, sum.reg_edges,
+                     sum.dereg_edges));
+    if (!carry_on) {
+        info("carry: off (network.carry_rx_code_bias): the receiver IFB is re-estimated every "
+             "epoch from that epoch's rows.");
+    } else {
+        info(fmt::format(
+            "carry: {}; {} re-coupling(s) after at least one epoch out of the block with a live "
+            "entry (their coupling row is gauge-restored per (constellation, kind), not per "
+            "signal); {} carry entry erase(s) because the family's satellite sum-to-zero "
+            "re-seeded.",
+            in_block ? fmt::format("{} fold(s) as rows of a factorized station block "
+                                   "(network.carry_rx_code_bias_in_block)", sum.blk_folds)
+                     : fmt::format("{} diagonal fold(s), {} withheld by the inject screen "
+                                   "(network.carry_rx_code_bias, diagonal route)",
+                                   sum.diag_folds, sum.diag_innov_skips),
+            sum.recouple, sum.reseed_erase));
+        if (!never_folded.empty()) {
+            std::string names;
+            for (std::size_t k = 0; k < never_folded.size() && k < 20; ++k)
+                names += (k ? ", " : "") + never_folded[k];
+            if (never_folded.size() > 20) names += ", ...";
+            warn(fmt::format("the receiver code-bias carry never folded the receiver IFB at {} "
+                             "station(s) estimated on more than one epoch ({}): the column was "
+                             "re-estimated from each epoch's rows alone there.",
+                             never_folded.size(), names));
+        }
+    }
+
+    // 5. The carried values at run end, per (key, family): the level and the spread.
+    std::map<std::string, std::vector<double>> by_family;
+    for (const auto& [sk, value] : carried) {
+        if (!std::isfinite(value)) continue;
+        const auto id = classifyStateColumn(StateContainer::CodeBiasStates, sk.second);
+        if (!id || !RxIfbRule::governs(id->cls)) continue;
+        std::string family;
+        const int i = sk.first;
+        if (i >= 0 && static_cast<std::size_t>(i) < stations.size() && stations[i].second) {
+            const auto fit = stations[i].second->signals.find(sk.second);
+            if (fit != stations[i].second->signals.end())
+                for (const std::string& sig : fit->second)
+                    family += (family.empty() ? "" : "+") + sig;
+        }
+        by_family[sk.second + " (" + (family.empty() ? "?" : family) + ")"].push_back(value);
+    }
+    const auto rank = [](const std::vector<double>& s, double q) {
+        const std::size_t k = static_cast<std::size_t>(std::ceil(q * static_cast<double>(s.size())));
+        return s[std::min(s.size() - 1, k > 0 ? k - 1 : 0)];
+    };
+    for (auto& [fam, vals] : by_family) {
+        std::sort(vals.begin(), vals.end());
+        const double med = rank(vals, 0.5);
+        std::vector<double> dev;
+        dev.reserve(vals.size());
+        for (const double x : vals) dev.push_back(std::abs(x - med));
+        std::sort(dev.begin(), dev.end());
+        info(fmt::format("{} carried at {} station(s) at run end: median {:.3f} m (a level the "
+                         "satellite-side datum realizes, not gradeable on its own); "
+                         "|value - median| p90 {:.3f} m, max {:.3f} m (the between-station "
+                         "spread, datum-invariant).",
+                         fam, vals.size(), med, rank(dev, 0.9), dev.back()));
+    }
+    if (carry_on && by_family.empty())
+        info("no receiver IFB entry in the receiver code-bias carry at run end (pruned past its "
+             "gap horizon, or never harvested).");
+    return out;
+}
+
+// Run-end report: the receiver extra-band code delay (card L5B).
+int networkRxExtraBandDelayRunEnd(const NetworkRunEndView& v) {
+    if (!v.config.getNetworkConfig().estimate_rx_extra_band_code_delay) return 0;
+    const NetworkRunContext& ctx = v.ctx;
+    std::vector<std::pair<std::string, const RxIfbStationState*>> stations;
+    stations.reserve(v.setup.stations.size());
+    for (const NetStation& st : v.setup.stations) stations.emplace_back(st.name, &st.l5b);
+    std::map<std::pair<int, std::string>, double> carried;
+    for (const auto& [sk, lc] : ctx.carry.rx_cb_carry) carried[sk] = lc.value_abs;
+    for (const RxIfbReportLine& l :
+         rxExtraBandDelayReport(ctx.param_inventory.rx_ifb, ctx.param_inventory.whole_run,
+                                stations, carried, ctx.knobs.rx_cb_on, ctx.knobs.rxcb_blk)) {
+        if (l.warn) v.log->warn("Network (card L5B): {}", l.text);
+        else        v.log->info("Network (card L5B, receiver extra-band code delay): {}", l.text);
+    }
+    return 0;
+}
 
 }  // namespace GnssProcessor

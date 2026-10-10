@@ -200,6 +200,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkShDevVtec.cpp", networkShDevCarryRunEnd},
     {"the receiver code-bias carry family",
      "filter/NetworkRxCodeBiasCarryRunEnd.cpp", networkRxCodeBiasCarryRunEnd},
+    {"the receiver extra-band code delay (card L5B)",
+     "filter/NetworkParamInventory.cpp", networkRxExtraBandDelayRunEnd},
     {"the S-basis datum arms",
      "filter/NetworkSbasis.cpp", networkSbasisDatumRunEnd},
     {"the MW/WL lanes: WL-1, EWL, the WL inject, UWL, WL-3",

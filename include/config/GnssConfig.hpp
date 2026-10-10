@@ -9029,6 +9029,11 @@ namespace GnssProcessor {
                                          const std::shared_ptr<spdlog::logger>& log);
         bool validateNetworkCarryPosture_(const nlohmann::json& json,
                                           const std::shared_ptr<spdlog::logger>& log);
+        /// The interlock warnings and the posture line of
+        /// @c network.estimate_rx_extra_band_code_delay (card L5B); prints nothing unless
+        /// the knob is armed.  Called after @c validateNetworkCarryPosture_, so the carry
+        /// and datum knobs it names are final.
+        void logNetworkRxExtraBandDelay_(const std::shared_ptr<spdlog::logger>& log) const;
         void loadNetworkClosedLoop_(const nlohmann::json& nw,
                                     const std::shared_ptr<spdlog::logger>& log);
         /// Parse @c network.inject (scripted producer-side faults; event harness).

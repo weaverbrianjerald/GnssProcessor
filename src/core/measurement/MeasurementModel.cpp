@@ -949,12 +949,17 @@ namespace GnssProcessor {
                     if (!std::isfinite(bias.coefficient) || bias.state_key.empty()) continue;
                     // GLONASS network producer: allocate only the GLONASS per-FCN-slot
                     // IFB.  GPS/Galileo receiver DCB/IFB states are intentionally absent
-                    // (as in the GPS+Galileo network): a non-reference-band IFB has no
-                    // IFB-free reference code to anchor the slant iono, so creating one
-                    // adds a per-satellite iono<->IFB<->ambiguity rank deficiency to the
-                    // absolute per-epoch local block.  The GPS+Galileo network avoids it
-                    // by absorbing the receiver code bias into the clock/iono (the L1-
-                    // referenced convention), so those bands stay IFB-free here.  The
+                    // here, as in a GPS+Galileo network that does not estimate the
+                    // satellite code biases: a non-reference-band IFB has no IFB-free
+                    // reference code to anchor the slant iono, so creating one adds a
+                    // per-satellite iono<->IFB<->ambiguity rank deficiency to the
+                    // absolute per-epoch local block.  Such a network absorbs the
+                    // receiver code bias into the clock/iono (the L1-referenced
+                    // convention).  (Under network.estimate_sat_code_bias, which the
+                    // GLONASS producer refuses, estimate_ifb is forced and these states
+                    // are allocated; the station split keeps the DCB and holds the
+                    // extra-band IFB at its seed unless
+                    // network.estimate_rx_extra_band_code_delay is armed.)  The
                     // GLONASS per-slot IFB is the one receiver bias the network needs
                     // (its FDMA group delay cannot be modelled otherwise); its residual
                     // iono/common-mode gauges are pinned by soft anchors in the driver.

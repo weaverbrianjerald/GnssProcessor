@@ -125,6 +125,8 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
     class GnssConfig;
+    enum class FrequencyMode;   // config/GnssConfigTypes.hpp
+    struct EpochMeasurement;    // common/EpochMeasurement.hpp
     class StateManager;
     struct NetworkConfig;
     struct NetworkRunContext;
@@ -447,11 +449,29 @@ namespace GnssProcessor {
      * each station's ionosphere level free, so the band's receiver delay folds into it.
      * Without the weighting (or with the W6 ionosphere constraint @c none) nothing takes
      * the delay up, and the table says so.
+     *
+     * @c network.estimate_rx_extra_band_code_delay (card L5B) turns the drop off where it
+     * can act (@ref rxExtraBandDelayEffective, the one predicate the loader, this rule,
+     * the snapshot fingerprint and the run-end report read): @ref drop is then false,
+     * @ref estimated_by_knob is true, and the governed columns take the split's ordinary
+     * path (estimated in the local block unless no row informs them).  The table's note
+     * and the manifest record then name the knob.  Armed where it cannot act, the rule
+     * is the unarmed one.
      */
     struct RxIfbRule {
-        bool             drop{false};                                ///< IFB columns are dropped on this run (network.estimate_sat_code_bias).
+        bool             drop{false};                                ///< IFB columns are dropped on this run (network.estimate_sat_code_bias, unless @ref estimated_by_knob).
         ParamDisposition disposition{ParamDisposition::HeldAtSeed}; ///< The disposition a dropped instance gets.
         const char*      dropped_by{"network.estimate_sat_code_bias"};  ///< The knob whose arming drops the columns.
+        /// The drop is turned off by @ref estimated_by on this run
+        /// (@ref rxExtraBandDelayEffective): the satellite code biases are estimated (the
+        /// drop would apply), the knob is armed and some active constellation tracks a band
+        /// outside a two-band pair, so the governed columns are estimated (card L5B).
+        bool             estimated_by_knob{false};
+        const char*      estimated_by{"network.estimate_rx_extra_band_code_delay"};  ///< The knob that turns the drop off.
+        /// Some active constellation tracks a band outside a two-band pair under the run's
+        /// frequency mode (@ref rxExtraBandTracked).  Read only to name why an armed knob is
+        /// inert; it changes nothing printed on an unarmed run.
+        bool             extra_band_tracked{false};
         const char*      source{"first-epoch seed, StateInitializer"};  ///< Where the held value comes from.
         /// The premise the drop rests on.
         const char*      premise{"GIM weighting leaves the station ionosphere level free to "
@@ -488,11 +508,155 @@ namespace GnssProcessor {
      * @brief The receiver IFB rule of this run.
      *
      * @param config The run's configuration.
-     * @return The rule: @c drop from @c estimateNetworkSatCodeBias(), the premise from
-     *         @c getIonosphereWeightingConfig().enabled and
+     * @return The rule: @c estimated_by_knob from @ref rxExtraBandDelayEffective, @c drop
+     *         from @c estimateNetworkSatCodeBias() unless @c estimated_by_knob, the
+     *         premise from @c getIonosphereWeightingConfig().enabled and
      *         @c getNetworkConfig().w6_iono_constraint.
      */
     RxIfbRule networkRxIfbRule(const GnssConfig& config);
+
+    /**
+     * @brief Does some active constellation track a band outside a two-band pair under a
+     *        frequency mode?  The configuration-time answer to "can a receiver IFB column
+     *        exist on this run" (card L5B).
+     *
+     * A constellation counts when it is not FDMA (GLONASS never has a per-band receiver
+     * IFB: @c StateInitializer::resolveReceiverBias gives it the per-slot form) and the
+     * mode admits more than two of its bands (@c getAllowedBandDigits, the band map the
+     * measurement model reads).  It rests on the two bands of @c FrequencyMode::Dual being
+     * the constellation's clock-reference pair (GPS L1/L2, Galileo E1/E5a, BeiDou B1I/B3,
+     * QZSS L1/L2), which is what the BIA products declare; a product whose clock
+     * reference is another pair would leave an IFB column on a dual-band run, and the knob
+     * then stays inert on it (the rule holds the column, as unarmed).  SBAS has two bands
+     * in every mode.
+     *
+     * @param mode           @c processing.frequency_mode.
+     * @param active_systems @c processing.active_systems (names as the configuration
+     *                       writes them; an unknown name counts for nothing).
+     * @return True when some active constellation has a third band.
+     */
+    bool rxExtraBandTracked(FrequencyMode mode, const std::vector<std::string>& active_systems);
+
+    /**
+     * @brief Is @c network.estimate_rx_extra_band_code_delay effective on this run?  The
+     *        one predicate of card L5B: the loader's interlocks and posture line, the rule
+     *        (@ref RxIfbRule::estimated_by_knob), the snapshot fingerprint token and the
+     *        run-end report all read it, so none of them can call an armed knob effective
+     *        where another calls it inert.
+     *
+     * @param config The run's configuration.
+     * @return The knob armed, @c estimateNetworkSatCodeBias() (otherwise nothing is
+     *         dropped) and @ref rxExtraBandTracked for the run's frequency mode and active
+     *         systems (otherwise no governed column exists).
+     */
+    bool rxExtraBandDelayEffective(const GnssConfig& config);
+
+    /**
+     * @brief One station's state and counts for the receiver IFB columns that
+     *        @c network.estimate_rx_extra_band_code_delay estimates (card L5B): the ON-path
+     *        telemetry of standing invariants #4 and #7, and the edge state the split and
+     *        the harvest need.
+     *
+     * A member of @c NetStation (filter/NetworkRunTypes.hpp), written inside the parallel
+     * produce phase by the station's own split and inject, as @c eb_rows_deweighted is,
+     * and by the serial harvest; summed by @ref networkRxExtraBandDelayRunEnd.  Untouched
+     * unless @ref RxIfbRule::estimated_by_knob.  The split's dispositions of the governed
+     * columns are not counted here: the parameter inventory owns them
+     * (@c NetworkParamInventory::whole_run).
+     */
+    struct RxIfbStationState {
+        // --- Counts over the run ---
+        /// Station-epochs whose split estimated a governed column in the local block (the
+        /// per-station view the zero-fold warning needs; the run's totals are the
+        /// inventory's, which also leaves out station-epochs rejected after the split).
+        long long est_epochs{0};
+        /// Extra-band code rows excluded (zero weight, @ref rxIfbExcludedRows): the row's
+        /// satellite code bias has no shared column this epoch (held by fewer than two
+        /// stations and pruned, or a CB-ADM sponge), so the row carries an unmodelled
+        /// satellite bias of metres.
+        long long rows_unregistered{0};
+        /// Station-epochs whose governed column had only such rows, so no weighted row
+        /// informed it and it was left out of the block (@c ParamDisposition::Unobserved).
+        long long cols_unregistered{0};
+        long long reg_edges{0};    ///< Governed rows whose satellite column registered since the station's previous split: the row joins the solve (invariant #7, re-coupling edge).
+        long long dereg_edges{0};  ///< Governed rows whose satellite column deregistered since the previous split: the row leaves the solve (decoupling edge).
+        /// Governed columns estimated again after at least one loop epoch out of the block
+        /// while a carry entry was live: the column's re-coupling edge.  The coupling row
+        /// of such an entry is gauge-restored per (constellation, kind), not per signal
+        /// (@c CouplingRowBuilder::tuGaugeRestore, as for the receiver DCB); this count is
+        /// how often that applies.
+        long long recouple{0};
+        long long blk_folds{0};         ///< Governed columns folded as rows of a factorized station block by the in-block carry (scalar-screen survivors only).
+        long long diag_folds{0};        ///< Governed columns folded as diagonal priors (diagonal carry route).
+        long long diag_innov_skips{0};  ///< Governed columns the diagonal route's inject screen withheld.
+        /// Carry entries erased at the harvest because the satellite sum-to-zero of the
+        /// column's family re-seeded this epoch (no veteran satellite): the entry holds the
+        /// old level of the family's null direction and the satellite side now realizes
+        /// another (reset, not repair).
+        long long reseed_erase{0};
+
+        // --- Edge state ---
+        /// "<sat>|<signal>" of every governed row at the station's previous split, with
+        /// whether its satellite column was registered then.
+        std::map<std::string, bool> row_registered;
+        /// Governed key -> the code signals of its rows at the latest split that had any:
+        /// the station's extra-band code family ("C5Q", "C5X").
+        std::map<std::string, std::set<std::string>> signals;
+        /// Governed key -> the loop epoch of its latest estimate in the local block.
+        std::map<std::string, long long> last_est_epoch;
+    };
+
+    /**
+     * @brief The extra-band code rows of a station that the split excludes (zero weight)
+     *        because the knob estimates the receiver IFB (card L5B), with the station's
+     *        counts and edge state kept.
+     *
+     * An extra-band code row carries the satellite's extra-band code bias.  When that bias
+     * is a shared column this epoch the column takes it, and the row informs the receiver
+     * IFB.  When it is not (the satellite's key is held by fewer than two stations, so
+     * PASS A pruned it, or CB-ADM keeps it as a station-local sponge) the row carries the
+     * whole satellite bias, metres, with nothing to take it up: an estimated, carried IFB
+     * would integrate a share of it and push it onto the station's other extra-band rows
+     * and their ionosphere, and with the IFB term held instead the row closes the
+     * station's geometry-free level direction with that bias (the ionosphere, the receiver
+     * DCB and the ambiguities move with it).  Neither is information, so the row is
+     * excluded: the split sets its weight to zero, and a local column that then has no
+     * weighted row (the IFB itself, a sponge) is left out of the block.  A zero weight is
+     * a defined case for every reader of the row weights (the block cofactor check counts
+     * such a block as not checkable; the standardized residuals read zero).
+     *
+     * Called by @c Application::networkSplitStation_ only when
+     * @ref RxIfbRule::estimated_by_knob, inside the parallel produce phase: it reads the
+     * station's state manager and measurement update and writes only the station's own
+     * @p s (the rows excluded, the governed columns left with no weighted row, the
+     * registration edges, and the family signals).
+     *
+     * @param s           The station's card L5B state (written).
+     * @param sm          The station's state manager (governed columns, satellite code-bias
+     *                    columns).
+     * @param em          The station's measurement update (H and the row identities
+     *                    @c satellite_ids / @c signal_types).
+     * @param shared_cols The H columns the split scattered into the shared border.
+     * @return The data rows to exclude, ascending.
+     */
+    std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StateManager& sm,
+                                       const EpochMeasurement& em,
+                                       const std::set<int>& shared_cols);
+
+    /**
+     * @brief Did the satellite sum-to-zero of the family a station's receiver IFB column
+     *        belongs to re-seed this epoch?
+     *
+     * @param s               The station's state (its @c signals of @p ifb_key).
+     * @param ifb_key         The governed key ("GPS_IFB5").
+     * @param reseed_channels The channels whose sum-to-zero row re-seeded this epoch,
+     *                        "<constellation letter>|<signal>"
+     *                        (@c NetworkSbasis::CodeBiasDatumRows::reseed_channels).
+     * @return True when one of the key's signals at this station is such a channel of the
+     *         key's constellation.
+     */
+    bool rxIfbFamilyReseeded(const RxIfbStationState& s, const std::string& ifb_key,
+                             const std::set<std::string>& reseed_channels);
 
     // =======================================================================
     // Per-station slot (written in the parallel produce phase)
@@ -806,5 +970,69 @@ namespace GnssProcessor {
     int networkParamInventoryRunEnd(const NetworkRunEndView& v);
 
     // ---- End of the run-end reports ----
+
+    // ---- Run-end reports added after the cut (hand-written) ----
+
+    /**
+     * @brief One line of a report: its text and whether it is logged as a warning.
+     */
+    struct RxIfbReportLine {
+        bool        warn{false};  ///< Logged at warn level (else info).
+        std::string text;         ///< The line, without the "Network (card L5B...)" prefix.
+    };
+
+    /**
+     * @brief The receiver extra-band code delay report (card L5B) as lines: the content
+     *        of @ref networkRxExtraBandDelayRunEnd, from plain inputs so that a test can
+     *        build it.
+     *
+     * Lines, in order:
+     *  1. When the rule did not turn the drop off: one warning naming why the armed knob
+     *     was inert (the satellite code biases not estimated, or no band outside a
+     *     two-band pair under the frequency mode), and nothing else.
+     *  2. Per governed class of @p whole_run (the inventory, the one owner of the split's
+     *     dispositions): the station-epochs estimated in the local block, unobserved and
+     *     held at the seed, and the stations.  A warning per class with held columns (a
+     *     defect with the knob effective), and one when no governed column was estimated
+     *     over the run.
+     *  3. The rows left out of the receiver IFB for want of a shared satellite column, the
+     *     station-epochs whose column had no other row, and the registration edges.
+     *  4. The carry: the in-block folds, or the diagonal folds and withholds; the
+     *     re-coupling edges and the re-seed erases; a warning naming the stations with a
+     *     column estimated on more than one epoch that the carry never folded.
+     *  5. Per (governed key, extra-band code family) of the carried values at run end: the
+     *     station count, the median (a level the satellite-side datum realizes, so not
+     *     gradeable on its own, invariant #5) and the p90 and maximum of
+     *     |value - median| (the between-station spread, which the datum does not move).
+     *
+     * @param rule          The run's receiver IFB rule.
+     * @param whole_run     The inventory's run tally.
+     * @param stations      Per roster station: its name and its state.
+     * @param carried       (roster station, governed key) -> carried absolute value (m).
+     * @param carry_on      @c network.carry_rx_code_bias.
+     * @param in_block      @c network.carry_rx_code_bias_in_block.
+     * @return The lines.
+     */
+    std::vector<RxIfbReportLine> rxExtraBandDelayReport(
+        const RxIfbRule& rule, const ParamInventoryTally& whole_run,
+        const std::vector<std::pair<std::string, const RxIfbStationState*>>& stations,
+        const std::map<std::pair<int, std::string>, double>& carried,
+        bool carry_on, bool in_block);
+
+    /**
+     * @brief Run-end report: the receiver extra-band code delay (card L5B).
+     *
+     * The ON-path telemetry (invariants #4 and #7) of
+     * @c network.estimate_rx_extra_band_code_delay: @ref rxExtraBandDelayReport over the
+     * inventory's run tally, every station's @ref RxIfbStationState and the receiver
+     * code-bias carry at run end.
+     *
+     * Gate: @c network.estimate_rx_extra_band_code_delay armed; prints nothing otherwise,
+     * so an unarmed run's log is unchanged.
+     *
+     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @return 0 (this report does not set the exit code).
+     */
+    int networkRxExtraBandDelayRunEnd(const NetworkRunEndView& v);
 
 } // namespace GnssProcessor

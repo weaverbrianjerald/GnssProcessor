@@ -52,6 +52,7 @@
 #include "filter/NetworkCarryVce.hpp"       // parseComponents (prior-residual census family list)
 #include "filter/NetworkCarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
 #include "filter/NetworkOraclePinScope.hpp" // oraclePinParseScope (the one grammar for the oracle_pin scope)
+#include "filter/NetworkParamInventory.hpp" // rxExtraBandDelayEffective (card L5B, the one predicate)
 #include "filter/NetworkSecondCodeScope.hpp" // secondCodeAllowEntryValid (card SCC allow-list grammar)
 #include "filter/NetworkSecondPhaseScope.hpp" // secondPhaseAllowEntryValid (card SID phase 6a)
 #include "config/GnssConfigJsonHelpers.hpp"
@@ -170,6 +171,7 @@ namespace GnssProcessor {
         loadNetworkContractHardening_(json, log);
         applyNetworkServiceProfile_(json, log);
         if (!validateNetworkCarryPosture_(json, log)) return false;
+        logNetworkRxExtraBandDelay_(log);
         loadNetworkClosedLoop_(nw, log);
         // The event harness loads last, so its cross-knob warnings read final values
         // (a check beside a knob's own parse would read the code defaults of knobs
@@ -3440,6 +3442,14 @@ namespace GnssProcessor {
         network_config_.sat_gf_extra_band_free =
             jval<bool>(json, "network.sat_gf_extra_band_free",
                        "sat_gf_extra_band_free", false);
+        // The receiver-side counterpart (card L5B): estimate the receiver's extra-band
+        // code delay instead of holding it at its seed (RxIfbRule,
+        // filter/NetworkParamInventory.hpp).  Its interlocks need the resolved carry and
+        // datum knobs, so they are logged by logNetworkRxExtraBandDelay_ after the carry
+        // posture is validated.
+        network_config_.estimate_rx_extra_band_code_delay =
+            jval<bool>(json, "network.estimate_rx_extra_band_code_delay",
+                       "estimate_rx_extra_band_code_delay", false);
         // Code-weight half of the band-5-code-removed emulation (card L5P).  With B5D
         // armed, the extra-band code-bias column stays determined by the extra-band
         // code rows alone, so raising their sigma keeps the wire's band-5 code bias
@@ -4099,11 +4109,23 @@ namespace GnssProcessor {
                 // information cannot create a new near-zero, the same argument that
                 // makes W6's per-signal over-pinning safe), but the log states it, so
                 // the datum does not read as what keeps the run alive.
-                log->info("Network producer (RXCB-DATUM): receiver code-bias sum-to-zero ON "
-                          "ALONGSIDE the W6 satellite code-bias gauge.  Legal (disjoint column "
-                          "sets, redundant coverage is PSD-safe) but the receiver half is "
-                          "already determined through the satellite gauge here — this datum is "
-                          "load-bearing only under network.external_sat_code_bias.");
+                // Card L5B: with the receiver extra-band code delay estimated, the held
+                // delay no longer closes each station's geometry-free level direction, and
+                // this datum is what does; the line says so instead of "redundant".  The
+                // unarmed text is unchanged.
+                if (rxExtraBandDelayEffective(*this))
+                    log->info("Network producer (RXCB-DATUM): receiver code-bias sum-to-zero ON "
+                              "ALONGSIDE the W6 satellite code-bias gauge, and LOAD-BEARING on this "
+                              "run: with network.estimate_rx_extra_band_code_delay effective (card "
+                              "L5B) the receiver extra-band code delay is estimated, so it is the "
+                              "only closure of each station's geometry-free level direction "
+                              "(ionosphere level, receiver DCB, ambiguities).");
+                else
+                    log->info("Network producer (RXCB-DATUM): receiver code-bias sum-to-zero ON "
+                              "ALONGSIDE the W6 satellite code-bias gauge.  Legal (disjoint column "
+                              "sets, redundant coverage is PSD-safe) but the receiver half is "
+                              "already determined through the satellite gauge here — this datum is "
+                              "load-bearing only under network.external_sat_code_bias.");
             } else {
                 log->info("Network producer (RXCB-DATUM): receiver code-bias datum ON — a loose "
                           "zero-mean prior d_r ~ N(0, {:.1f}^2 m) on every station's receiver DCB, "
@@ -13375,6 +13397,119 @@ namespace GnssProcessor {
                       "normalization is not (it drops rows at the r_i floor).");
 
         return true;
+    }
+
+    // =================================================================
+    //  network subsection helper: logNetworkRxExtraBandDelay_
+    // =================================================================
+    /**
+     * @brief The interlocks and the posture line of
+     *        @c network.estimate_rx_extra_band_code_delay (card L5B).
+     *
+     * Warnings only, never a refusal (standing invariant #4: an armed knob that changes
+     * nothing says so).  Whether the knob acts is decided by @c rxExtraBandDelayEffective
+     * (filter/NetworkParamInventory.hpp), the predicate the rule, the snapshot fingerprint
+     * and the run-end report read too.  Runs after @c validateNetworkCarryPosture_, so the
+     * carry and datum knobs it names are final.  Prints nothing unless the knob is armed.
+     *
+     * @param log The "gnss_config" logger.
+     */
+    void GnssConfig::logNetworkRxExtraBandDelay_(const std::shared_ptr<spdlog::logger>& log) const {
+        if (!network_config_.estimate_rx_extra_band_code_delay) return;
+
+        // Inert without W6: the station split drops the receiver IFB columns only when the
+        // satellite code biases are estimated.  This also covers network.estimate_glonass,
+        // whose allocation skips every receiver IFB except the GLONASS per-slot one
+        // (MeasurementModel::ensureRequiredStates): W6 refuses it
+        // (loadNetworkAprioriAndGlonass_), so the knob can be effective only without it.
+        if (!estimate_network_sat_code_bias_) {
+            log->warn("Network (card L5B): network.estimate_rx_extra_band_code_delay is INERT "
+                      "without network.estimate_sat_code_bias: the receiver IFB columns are "
+                      "left out of the station block only when the satellite code biases are "
+                      "estimated, so there is no drop to turn off.");
+            return;
+        }
+        // Inert when no active constellation tracks a band outside a two-band pair under the
+        // frequency mode (rxExtraBandTracked: a CDMA constellation with a third band).
+        if (!rxExtraBandDelayEffective(*this)) {
+            const char* mode = frequency_mode_ == FrequencyMode::Dual        ? "dual"
+                             : frequency_mode_ == FrequencyMode::Triple      ? "triple"
+                             : frequency_mode_ == FrequencyMode::All         ? "all"
+                                                                             : "independent";
+            log->warn("Network (card L5B): network.estimate_rx_extra_band_code_delay is INERT "
+                      "on processing.frequency_mode {} with active systems [{}]: no active "
+                      "CDMA constellation has a band outside a two-band pair under this mode, "
+                      "so no station holds a receiver IFB column to estimate (the rule keeps "
+                      "its drop, as unarmed).",
+                      mode, detail::joinStrings(active_systems_));
+            return;
+        }
+
+        // The datum of the new null direction (per constellation, extra-band code family and
+        // connected component of the family's station-satellite graph, a common shift of the
+        // receivers' extra-band delays against the satellites' extra-band code biases).
+        const bool sum_to_zero = network_config_.sat_gf_datum == NetworkSatGfDatum::NoneMode
+                              || network_config_.sat_gf_extra_band_free;
+        const std::string closure = sum_to_zero
+            ? fmt::format("the per-(constellation, signal) sum-to-zero rows of the satellite "
+                          "code-bias datum ({}); one row per signal, so a family whose graph "
+                          "splits into k components leaves k - 1 directions to the S-basis "
+                          "completion or the rank gate",
+                          network_config_.sat_gf_datum == NetworkSatGfDatum::NoneMode
+                              ? "network.sat_gf_datum none"
+                              : "network.sat_gf_extra_band_free on")
+            : std::string("the per-signal assertion rows of network.sat_gf_datum (each "
+                          "extra-band satellite code bias held at its broadcast target; "
+                          "network.sat_gf_extra_band_free off)");
+        const std::string carry = !network_carry_rx_code_bias_
+            ? std::string("not carried (network.carry_rx_code_bias off): re-estimated every epoch")
+            : network_carry_rx_code_bias_in_block_
+                ? std::string("carried in the station's whitened block "
+                              "(network.carry_rx_code_bias_in_block)")
+                : std::string("carried as a diagonal prior (network.carry_rx_code_bias)");
+        log->info("Network producer (card L5B): the receiver extra-band code delay (receiver IFB "
+                  "outside each constellation's clock-reference pair, e.g. GPS_IFB5) is ESTIMATED "
+                  "as a local column of each station's block, {}; the drop of rule rx_ifb "
+                  "(network.estimate_sat_code_bias) is turned off.  An extra-band code row whose "
+                  "satellite code bias is not a shared column carries that bias unmodelled and "
+                  "is excluded (zero weight).  New null direction, one per (constellation, "
+                  "extra-band code family) and per connected component of that family's "
+                  "station-satellite graph: a common shift of the receivers' extra-band delays "
+                  "against the satellites' extra-band code biases, closed on this run by {}.  "
+                  "The station geometry-free level direction (ionosphere level, receiver DCB, "
+                  "ambiguities) loses the closure the held delay gave it and is closed by "
+                  "network.rx_code_bias_datum{}.",
+                  carry, closure,
+                  network_rx_code_bias_datum_
+                      ? fmt::format(" (sigma {:.1f} m)", network_rx_code_bias_datum_sigma_m_)
+                      : std::string(", which is OFF on this run"));
+        if (!network_rx_code_bias_datum_)
+            log->warn("Network (card L5B): network.rx_code_bias_datum is OFF.  With the receiver "
+                      "extra-band code delay estimated, the extra-band code rows no longer close "
+                      "each station's geometry-free level direction (ionosphere level, receiver "
+                      "DCB, ambiguities); the receiver DCB datum is the closure this posture "
+                      "relies on.  Arm network.rx_code_bias_datum.");
+        else if (!network_config_.station_prior_before_pd)
+            log->warn("Network (card L5B): network.station_prior_before_pd is OFF.  The receiver "
+                      "DCB datum is the only closure of each station's geometry-free level "
+                      "direction on this posture, and without the fix its rows fold after the "
+                      "station's positive-definite test, which then sees that direction as a "
+                      "near-null first.  Arm network.station_prior_before_pd.");
+        // The diagonal route's per-key tools act on the state key, and one key
+        // ("GPS_IFB5") spans every extra-band code family of the constellation (C5Q and C5X
+        // stations), whose levels two independent satellite-side datums realize: a
+        // per-key mean or step population mixes the two frames.  The in-block route refuses
+        // these tools already (validateNetworkCarryPosture_).
+        if (network_carry_rx_code_bias_ && !network_carry_rx_code_bias_in_block_
+            && (network_rx_cb_carry_demean_ || network_rx_cb_carry_demean_within_
+                || network_rx_cb_carry_step_gate_ || network_rx_cb_harvest_demean_))
+            log->warn("Network (card L5B): the LV-2 / LV-5 de-mean, the LV-4 step gate or the "
+                      "S2H harvest de-mean is armed on the diagonal receiver code-bias carry.  "
+                      "Each acts on one population per state key, and a receiver IFB key "
+                      "(GPS_IFB5) spans the stations of every extra-band code family (C5Q, "
+                      "C5X), whose levels independent satellite-side datum rows realize: the "
+                      "mean and the step scale mix two frames.  Use "
+                      "network.carry_rx_code_bias_in_block, or disarm those tools.");
     }
 
     // =================================================================

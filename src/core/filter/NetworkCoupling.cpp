@@ -580,6 +580,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                                   wsx ? &g.xr : nullptr)) {
             ++R.pl_blk_col_refused;
             if (c.is_pc) R.pc_refused.push_back(c.col);   // card LGM: the injector backstops it
+            if (c.is_rx_cb) R.rxcb_refused.push_back(c.col);   // card L5B: not a fold
             continue;
         }
         // The ZWD column (B9-in-block) is counted only after it survives the scalar

@@ -1918,6 +1918,57 @@ namespace GnssProcessor {
         /// Default off: RF-0d's pin-everything behaviour, byte-identical.  Inert without
         /// @ref sat_gf_datum.
         bool sat_gf_extra_band_free{ false };
+        /// Estimate the receiver's extra-band code delay (the receiver IFB of a band
+        /// outside the constellation's clock-reference pair, state key
+        /// "<system>_IFB<band>", e.g. "GPS_IFB5") as a column of the station's local
+        /// block, instead of holding it at its first-epoch seed (card L5B, step R-1b of
+        /// the L5 return plan; card L5R section 4).
+        ///
+        /// Why: with @c network.estimate_sat_code_bias armed, the station split leaves
+        /// every such column out of the local block under the declared rule
+        /// @c RxIfbRule (filter/NetworkParamInventory.hpp).  The rule rests on a premise
+        /// (the GIM ionosphere weighting leaves each station's ionosphere level free to
+        /// absorb the delay) that the goldens do not satisfy: @c w6_iono_constraint none
+        /// turns the weighting off.  The held value is then a constant in every
+        /// extra-band code row, a mis-scaled one-epoch median, which card L5R measured
+        /// on the field as station-constant band-5 code misfits of metres.
+        ///
+        /// What it does: the rule stops dropping, and the columns take the ordinary
+        /// path of the split (estimated in the local block unless no row informs them).
+        /// An extra-band code row whose satellite code bias is not a shared column (held
+        /// by fewer than two stations, or a CB-ADM sponge) carries that bias unmodelled and
+        /// is excluded (zero weight); a local column left with no weighted row is left out
+        /// of the block.  From there the columns pass through the receiver code-bias paths
+        /// that key on the station's local columns rather than on the key form: the carry
+        /// (in block or diagonal), its harvest and snapshot rows, and the receiver-state
+        /// trace.  A family whose satellite sum-to-zero re-seeds has its carried receiver
+        /// IFB entries erased at that harvest.
+        ///
+        /// The null direction it opens: per (constellation, extra-band code family) and
+        /// per connected component of the family's station-satellite graph, a common
+        /// shift of the receivers' extra-band delays against the satellites' extra-band
+        /// code biases.  The satellite side closes it: the per-signal assertion rows of
+        /// @ref sat_gf_datum when @ref sat_gf_extra_band_free is off, or the
+        /// per-(constellation, signal) sum-to-zero rows when it is on or when
+        /// @ref sat_gf_datum is none (one row per signal: a family whose graph splits
+        /// leaves the extra components to the S-basis completion or the rank gate).
+        /// Estimating the column also removes the closure the held value gave each
+        /// station's geometry-free level direction (ionosphere level, receiver DCB,
+        /// ambiguities), which then rests on @c network.rx_code_bias_datum alone.
+        ///
+        /// Default off: the drop, byte-identical (no log line, manifest field,
+        /// fingerprint token or run-end line is written unless armed).  Effective only
+        /// with @c network.estimate_sat_code_bias (otherwise nothing is dropped) and when
+        /// some active CDMA constellation has more than two bands under
+        /// @c processing.frequency_mode (on dual no constellation does), the one
+        /// predicate @c rxExtraBandDelayEffective (filter/NetworkParamInventory.hpp);
+        /// armed where it is not effective, the rule, the fingerprint and the outputs are
+        /// the unarmed ones and the loader warns.  It also warns when
+        /// @c network.rx_code_bias_datum or @c network.station_prior_before_pd is off,
+        /// and when a per-key tool of the diagonal receiver code-bias carry (LV-2, LV-5,
+        /// LV-4, S2H) is armed.  Fingerprinted when effective (the carried receiver
+        /// code-bias set changes).
+        bool estimate_rx_extra_band_code_delay{ false };
         /// A network station contributes, as code-only rows, every allow-listed band-1
         /// code it reports for a satellite besides the code its canonical latch selected
         /// (card SCC, docs/refound/SCC_second_code_channel_2026-09-21.md, R1).

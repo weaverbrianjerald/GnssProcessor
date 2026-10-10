@@ -372,6 +372,10 @@ public:
         int n_extra_band_held{0};     ///< Extra-band columns the data did not determine at a first sighting (B5D).  With nothing to carry, a single level row in the channel's own frame holds the column (never the absolute broadcast target, which would pull a sum-to-zero family into the broadcast frame) and the bias is withheld from the wire.  This count is the data that shows whether the case occurs at all (standing invariant #3).
         int n_s2z_reseed_rows{0};     ///< Per-(constellation, signal) sum-to-zero rows whose veteran link re-seeded this epoch: no veteran was present, so the channel's level re-references (B5D, invariant #7).  The affected satellites are marked in @c this_epoch_cb_reseed and disc-bumped at the emit site; this count covers the decoupling edge.
         int n_s2z_reseed_sats{0};     ///< Satellites marked by those re-seeds, the marks the consumer reacts to (B5D, invariant #7).  A satellite with no previous kept epoch is not marked unless the run resumed.
+        /// The channels of those re-seeds, "<constellation letter>|<signal>" (the
+        /// sum-to-zero row's key).  Read by card L5B's harvest: a receiver IFB carried in
+        /// the old level of its family's null direction is erased when the family re-seeds.
+        std::set<std::string> reseed_channels;
         /// The `"sat|signal"` keys of the extra-band columns held this epoch (see
         /// @ref n_extra_band_held; B5D).  Returned rather than re-derived by the caller
         /// because the hold verdict is a three-way branch over the determination roster

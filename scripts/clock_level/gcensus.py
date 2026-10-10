@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """The 16-site census for cards GAL2 and L5R (2026-10-08): consumer-only replays of a 6 h field wire.
 
-make  : python gcensus.py make <key> <consumer base run> <wire run> <exe> [key.path=value ...]
+make  : python gcensus.py make <key> <consumer base run> <wire run> <exe> [key.path=value ...] [--rinex OP ...]
         Replays at WTZZ00DEU (the base's own consumer) and the 16 sites of runs/_msc/site_list.json,
         6 h, built with rapid_arm.py make from <consumer base run>/arm.json (so every consumer knob is
         that run's: the wire's own arm for a consumer of the wire's posture, the dual control's arm for
         a dual GPS consumer of another wire), reading <wire run>/products.txt.  Tags <key>_<site4>.
+        Each --rinex OP goes to rapid_arm.py make with the census site already installed as the closed-loop
+        consumer, so an op with consumer=1 edits the site's own RINEX copy; `{SITE}` in an op is replaced by the
+        site's name, so stations={SITE};consumer=1 edits the consumer's file alone (card L5B).
 grade : python gcensus.py grade <refkey> <key> [<key> ...]
         Per key: the median over sites of the site's hourly p50 (3D, hours from 00:00), and against
         <refkey> the paired change of each site's mean hourly p50 over hours 2 to 6 and of hour 1,
@@ -21,19 +24,44 @@ NAMES = ['wtzz'] + [s['name'][:4].lower() for s in SL]
 
 
 def make(key, base, wire, exe, extra):
+    rinex = []
+    while '--rinex' in extra:
+        i = extra.index('--rinex')
+        rinex.append(extra[i + 1])
+        extra = extra[:i] + extra[i + 2:]
     tags = []
     for s4 in NAMES:
         tag = f'{key}_{s4}'
-        cmd = [sys.executable, '-I', ROOT + '/scripts/rapid_arm.py', 'make', '--base', f'{RUNS}/{base}/arm.json',
+        base_json = f'{RUNS}/{base}/arm.json'
+        site = []
+        if s4 != 'wtzz':
+            s = next(x for x in SL if x['name'][:4].lower() == s4)
+            site = [('network.closed_loop.station.name', s['name']),
+                    ('network.closed_loop.station.rinex_path', s['path']),
+                    ('network.closed_loop.station.position_ecef', s['ecef'])]
+        if rinex and site:
+            # rapid_arm.py applies RINEX ops before --set, to the base's own consumer: write a per-site base
+            # whose closed-loop consumer already is the census site, so a consumer=1 op edits the site's file.
+            cfg = json.load(open(base_json))
+            for k, v in site:
+                node = cfg
+                for part in k.split('.')[:-1]:
+                    node = node[part]
+                node[k.split('.')[-1]] = v
+            os.makedirs(f'{RUNS}/_gcensus_bases', exist_ok=True)
+            base_json = f'{RUNS}/_gcensus_bases/{tag}.json'
+            json.dump(cfg, open(base_json, 'w'), indent=2)
+            site = []
+        cmd = [sys.executable, '-I', ROOT + '/scripts/rapid_arm.py', 'make', '--base', base_json,
                '--tag', tag, '--hours', str(NH),
                '--set', f'network.closed_loop.replay_products_path={RUNS}/{wire}/products.txt']
         for kv in extra:
             cmd += ['--set', kv]
-        if s4 != 'wtzz':
-            s = next(x for x in SL if x['name'][:4].lower() == s4)
-            cmd += ['--set', f"network.closed_loop.station.name={s['name']}",
-                    '--set', f"network.closed_loop.station.rinex_path={s['path']}",
-                    '--set', 'network.closed_loop.station.position_ecef=' + json.dumps(s['ecef'])]
+        site_name = s['name'] if s4 != 'wtzz' else json.load(open(f'{RUNS}/{base}/arm.json'))['network']['closed_loop']['station']['name']
+        for op in rinex:
+            cmd += ['--rinex', op.replace('{SITE}', site_name)]
+        for k, v in site:
+            cmd += ['--set', f'{k}=' + (json.dumps(v) if isinstance(v, list) else v)]
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
         assert r.returncode == 0, (tag, r.stdout[-400:], r.stderr[-400:])
         tags.append(tag)
