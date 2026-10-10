@@ -44,6 +44,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -231,6 +232,57 @@ void networkProducerAr(NetworkRunContext& ctx,
         std::vector<DDrow> dds;
         int n_const_signal = 0;
         for (auto& [cs, satmap] : ar_pool) {
+            if (netar.tree_basis) {
+                // Card ARL: a greedy spanning tree of station baselines.  Each station is
+                // attached to the in-tree station it shares the most satellites with; the
+                // baseline contributes one DD per common satellite against the first common
+                // one.  Every baseline brings in a new station's ambiguities, so the set is
+                // independent by construction.
+                const std::optional<SignalId> tsig =
+                    SignalId::fromObsCode(systemFromName(cs.first), cs.second);
+                const double t_lambda = tsig ? tsig->wavelengthM(0) : 0.0;
+                if (!(std::isfinite(t_lambda) && t_lambda > 0.0)) continue;
+                std::map<std::size_t, std::map<std::string, const ArRec*>> sky;  // station -> sat -> rec
+                for (auto& [sat, sm] : satmap)
+                    for (auto& [sta_i, rec] : sm) sky[sta_i][sat] = &rec;
+                if (sky.size() < 2) continue;
+                std::size_t root = sky.begin()->first;
+                for (auto& [sta_i, sats] : sky)
+                    if (sats.size() > sky[root].size()) root = sta_i;
+                std::set<std::size_t> in_tree{root};
+                auto common = [&](std::size_t a, std::size_t b) {
+                    std::vector<std::string> c;
+                    for (auto& [sat, rec] : sky[a]) { (void)rec; if (sky[b].count(sat)) c.push_back(sat); }
+                    return c;
+                };
+                ++n_const_signal;
+                while (in_tree.size() < sky.size()) {
+                    std::size_t best_r = 0, best_p = 0, best_n = 0;
+                    for (auto& [r, rs] : sky) {
+                        (void)rs;
+                        if (in_tree.count(r)) continue;
+                        for (std::size_t p : in_tree) {
+                            const std::size_t n = common(r, p).size();
+                            if (n > best_n) { best_n = n; best_r = r; best_p = p; }
+                        }
+                    }
+                    if (best_n < 2) break;   // the rest share fewer than two satellites
+                    in_tree.insert(best_r);
+                    const std::vector<std::string> c = common(best_r, best_p);
+                    const std::string& tref = c.front();
+                    for (std::size_t k = 1; k < c.size(); ++k) {
+                        const ArRec& rj = *sky[best_r][c[k]];
+                        const ArRec& rp = *sky[best_r][tref];
+                        const ArRec& fj = *sky[best_p][c[k]];
+                        const ArRec& fp = *sky[best_p][tref];
+                        dds.push_back(DDrow{ reqOf(rj), reqOf(rp), reqOf(fj), reqOf(fp),
+                                             (rj.value_m - rp.value_m) - (fj.value_m - fp.value_m),
+                                             t_lambda, cs.first, cs.second, c[k], tref,
+                                             stations[best_r].name, stations[best_p].name });
+                    }
+                }
+                continue;
+            }
             std::string ref_sat; std::size_t best = 0;
             for (auto& [sat, sm] : satmap)
                 if (sm.size() > best) { best = sm.size(); ref_sat = sat; }

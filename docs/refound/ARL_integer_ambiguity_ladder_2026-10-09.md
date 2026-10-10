@@ -146,3 +146,18 @@ Three cumulative fixtures, each the previous plus one layer from the golden bed 
 - **Phase colour is the costly layer**: the share of pairs fixed falls from 42 % to 19 %, the narrow-lane float error in the wide-lane-only class grows from 0.068 to 0.098 cycle, and among pairs with the wide lane free the narrow-lane error grows from 0.062 to 0.147. No fix is wrong: the gates hold the fixing back rather than accepting coloured floats.
 - **The slip is handled.** At TOW 261930 the producer flags G22 at S43000SIM by the Melbourne-Wubbena test (`T0_mw_detect`) and the ionosphere-free time difference (`T1_if_slip`), refloats both bands (band scope `common_band`, no exoneration of L2W), and the arc re-converges. Graded against the truth that includes the +25 cycles, the arc's double differences after the slip have float error p50 0.074 (L1C) and 0.103 cycle (L2W), and all 86 fixes on it are correct.
 - **The search sees a fifth of the network.** The arc enters the search basis only at TOW 262980, when the reference station changes to one that sees G22. The basis is a star per (constellation, signal): one reference satellite and one reference station, one DD per (station, satellite) that both the station and the reference station track. At TOW 264000 it holds 136 DDs from 190 undifferenced ambiguities, while the network carries 460 ambiguities per band; about 370 per band are independent (ambiguities minus stations minus satellites plus one). Every fix rate on this card is a share of the star's 68 per band. Building a full independent basis (a spanning tree of baselines, each with its own common reference satellite) is the step that makes the search a network search.
+
+## 9. 2026-10-09: a spanning-tree basis for the search (first version)
+
+`network.ambiguity_resolution.tree_basis` (new, default off; the star is unchanged when off): per (constellation, signal) a greedy spanning tree of station baselines, rooted at the station with the most satellites; each outside station is attached to the in-tree station it shares the most satellites with (at least two), and the baseline contributes one DD per common satellite against the first common one. Each baseline brings in a new station's ambiguities, so the set is independent by construction. Exe `gnss_processor_arl4.exe`, with `decorrelated_partial`; runs `runs/_rap_arl_r2tree`, `runs/_rap_arl_r3ctree`.
+
+| settled hour | star (`_r2dp3` / `_r3cdp`) | tree |
+| --- | --- | --- |
+| DDs searched, both bands, p50 | 112 | 682 |
+| rung 2: epochs with a fix; single-signal DDs fixed, correct | 94 of 110; 5 572, 5 572 | 110 of 110; 6 508, 6 508 |
+| rung 3c: epochs with a fix; single-signal DDs fixed, correct | 75 of 110; 2 496, 2 496 | 110 of 110; 3 854, 3 854 |
+| first hour, rung 3c: epochs; fixed, correct | 53 of 120; 772, 772 | 76 of 120; 1 540, 1 540 |
+| run time, 2 h of data | about 105 s | about 560 s |
+
+- Six times the basis, more integers fixed in absolute terms, every epoch fixing, and no wrong fix. The share of pairs fixed is lower (rung 2: 8.6 % fixed, 19.1 % wide lane only, 72.2 % wide lane free; rung 3c: 5.1 / 13.2 / 81.7 %): the tree reaches the young and long baselines the star never saw, and one joint ratio test over about 680 dimensions is stricter than over 112.
+- Open: the shares (a ratio test per baseline or per block, or a lower joint threshold, against the 0.9999 bootstrap bar), the run time of the larger search, one owner shared with the chain datum, then the harder slips.

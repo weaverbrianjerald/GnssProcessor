@@ -909,6 +909,12 @@ namespace GnssProcessor {
         /// Conditional sigma (cycles) at or below which a single-signal DD counts as determined
         /// by the fixed decorrelated components (decorrelated_partial only).
         double decorrelated_determined_sigma_cyc{ 0.05 };
+        /// Card ARL: build the search's DD basis as a greedy spanning tree of station baselines
+        /// (each new station attached to the in-tree station it shares the most satellites with;
+        /// one DD per common satellite against the first common one) instead of the star (one
+        /// reference station and satellite), which reaches only the reference station's sky.
+        /// Off (default) = the star.
+        bool   tree_basis{ false };
         int    min_epochs{ 10 };              ///< Let the network float converge before fixing.
         int    ils_max_dim{ 0 };              ///< Cap on the ILS (MLAMBDA) search dimension: when > 0, only the
                                               ///< @c ils_max_dim lowest-formal-σ DDs enter the integer search
