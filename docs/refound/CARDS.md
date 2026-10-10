@@ -115,4 +115,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [ICF](ICF_ignition_code_fault_2026-10-09.md): closed, 2026-10-09: KEEP_OFF, FAILED G2's clock-wire clause. The
   faulty BSHM00ISR line of sight, made redundant by its carried ambiguity, moves G07's clock in the cold start (gate A,
   instrument A'); the 12 m cold-start bound holds it within 0.03 m but the hours 2 to 6 clock-wire median is 12 % worse.
-- [L5B](L5B_band5_receiver_delay_2026-10-10.md): open, 2026-10-10: pre-registered. L5 step R-1b: the receiver band-5 code delay estimated and carried in the network solve (network.estimate_rx_extra_band_code_delay, default off), graded by card L5R's P3, then its bars against a same-exe control.
+- [L5B](L5B_band5_receiver_delay_2026-10-10.md): open, 2026-10-10: L5 step R-1b, the receiver band-5 code delay
+  estimated (network.estimate_rx_extra_band_code_delay): band-5 offsets 18 to 3 stations, bands 1/2 still contaminated;
+  cause one bridged re-acquisition at MAJU00MHL at ignition. L5 SEQUENCED, step R-1c next.

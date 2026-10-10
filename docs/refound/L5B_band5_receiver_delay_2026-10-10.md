@@ -5,14 +5,14 @@
 - **id:** L5B
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Pre-registered. Card L5R found that the receiver's band-5 code delay (`GPS_IFB5`) is dropped from the network solve and held at a mis-scaled first-epoch seed whenever the satellite code biases are estimated, leaving station-constant band-5 code misfits of metres on the field. This card estimates and carries it behind a default-off knob and grades it by L5R's P3 first, then by L5R's bars against a same-exe control on the current goldens.
+- **summary:** L5 SEQUENCED. Built and gated 2026-10-10: the estimated band-5 receiver delay removes the station-constant band-5 offsets (18 to 3 stations) and every structural gate passes, but bands 1 and 2 of the field network stay contaminated (17 / 12 stations) and the census fails. Attribution: one re-acquisition at MAJU00MHL (G08) at ignition, bridged by the per-signal gap re-entry and absorbed by the weakly held station level, contaminates the whole network; removing it leaves the network clean. Next: step R-1c, co-resumed signals share the re-entry verdict.
 - **source:** [L5R](L5R_l5_return_on_the_exact_update_2026-10-08.md) section 4 (the root and step R-1b); [L5P](L5P_l5_phase_posture_2026-09-21.md) section 4 (the return plan); [B5D](B5D_band5_code_datum_2026-09-20.md) (the band-5 satellite code datum); [NOM](NOM_network_object_model_2026-10-08.md) step N1 (the receiver IFB drop as a declared rule, treatment `HeldAtSeed`); the author's directive that L5 is never closed
 - **knobs / posture:** new `network.estimate_rx_extra_band_code_delay` (default false); the goldens of 2026-10-09 (`03461e4`, card ICF's cold-start bound armed) plus `processing.frequency_mode` triple, the GPS band-5 types appended to `processing.signal_priorities.GPS` (the list of `runs/_rap_l5r_t0_f6`), and per arm `network.sat_gf_extra_band_free`
 - **dates in the text:** 2026-10-10
 - **hashes / run dirs:** controls `runs/_rap_l5g_ctl_{f6,s6}` and census key `l5c_ctl` (exe `gnss_processor_l5g0.exe`, main `47fb634`, sha256 `31081ec3b36875a1`; 2 h identity to `runs/_rap_g15_{f2,s2}` verified); arms `runs/_rap_l5b_*`; census keys `l5c_b*`
 - **gates (frozen at pre-registration):** section 4
 
-**Outcome.** Pre-registered; no result yet.
+**Outcome.** Question: with the receiver band-5 code delay estimated, do the station-constant band-5 offsets vanish and is the three-band wire clean? The offsets vanish (P3 band 5: 3 stations against 18) and the sim passes, but bands 1 and 2 stay contaminated, the clock wire is six times the dual control's and the census fails (section 5). Section 6 traces it to one event: MAJU00MHL re-acquires G08 at ignition, the per-signal re-entry bridges a signal that jumped with its partner, and the weakly held station level absorbs it; without that event the network is clean. L5 SEQUENCED: step R-1c next.
 
 ## 1. The question
 
@@ -69,3 +69,45 @@ Reading rules, frozen:
 - Whatever passes, L5 is not adopted by this card: R-2 and R-3 are not built, the ledger has no rows for the three L5 knobs, and under triple the ledger row of `network.estimate_iono_sh` enters regime and needs a documented golden exception. A missed bar is reported as L5 SEQUENCED with the next step named.
 
 <!-- Results are appended below this line under dated headings. -->
+
+## 5. 2026-10-10: result of the frozen gates (every number read by the lead from `runs/`)
+
+Exe `gnss_processor_l5b1.exe` (sha256 `85682d27bb9ec4b9`, worktree `l5g/base` commit `30f40dc`: the build after three adversarial reviews and a fix round). The fix round added one rule: an extra-band code row whose satellite code bias is not a shared column (held by fewer than two stations) carries that bias unmodelled and is excluded at zero weight (833 rows on the field arm, 0 on the sim). The three-band control `l5b_t1off_{f6,s6}` (card L5R's `t1` on the current golden) ran on `gnss_processor_l5g0.exe`; a 2 h knob-off three-band arm on the new exe (`l5b_g0t_f2`) is identical to its first 240 epochs.
+
+| gate | measured | verdict |
+| --- | --- | --- |
+| G0 | `l5b_g0_{f2,s2}` and `l5b_g0d_f2` (the knob on the dual golden) identical to `l5g_g0_{f2,s2}`; the knob is inert on dual and says so; `l5b_g0t_f2` identical to `l5b_t1off_f6` | PASS |
+| P0 | every ON arm 720 of 720 emitted; rank gate declared = observed (1 GPS-only) at every epoch at 1e-11; 0 completions | PASS |
+| P1 | field `t1on`: GPS_IFB5 estimated on 41 569 station-epochs at 58 stations, 189 unobserved, 0 held at the seed; 41 157 in-block folds; 3 re-couplings. Sim: 43 200 station-epochs at 60 stations, 0 excluded rows | PASS |
+| P3 band 5 (`t1on_f6`) | 3 stations above 0.10 m (bar 3), median abs mean 0.033 m (bar 0.03); control `t1off` 18 and 0.054 m; assertion posture `t0on` 36 and 0.133 m | band-5 offsets removed; the median misses its bar by 3 mm |
+| P3 bands 1 and 2 | 17 and 12 stations above 0.10 m, medians 0.066 and 0.054 m (dual control 0 and 0, 0.016 and 0.012 m; `t1off` 20 and 14) | FAIL |
+| B1 WTZZ00DEU | 0.126 0.030 0.022 0.035 0.058 0.045 m against 0.113 0.023 0.016 0.020 0.030 0.026 m (hour 5 +0.028) | PASS (narrowly) |
+| B2 clock wire | 0.1443 / 0.0850 m against 0.0242 / 0.0198 m (`t1off` 0.1071 / 0.0745) | FAIL |
+| B3 sim | `t1on_s6` 0.149 0.101 0.080 0.020 0.020 0.024 m against 0.227 0.098 0.081 0.019 0.020 0.026 m; `t0on_s6` 0.210 0.072 0.071 0.023 0.022 0.026 m | PASS |
+| B4 census | triple consumers `l5c_b1on`: hours 2 to 6 median +0.0373 m, 2 better, 13 worse (`l5c_b1off` +0.0297); dual consumers on the wire `l5c_b1ond`: +0.0060 m, 1 better, 7 worse (`l5c_b1offd` +0.0132; bar +0.005); hour 1 halves (+0.09 against +0.18 m) | FAIL |
+
+**What the gates say.** The build does what it states: the station-constant band-5 offsets are gone (18 to 3 stations), every structural gate passes, and the dual users of the three-band wire lose half as much. But bands 1 and 2 of the network stay contaminated and the clock wire is six times the dual control's. By the frozen reading rules this is neither the held delay alone nor a second station-constant band-5 term (band 5 is clean). Section 6 finds what it is.
+
+## 6. 2026-10-10: the attribution (one-change 3 h and 6 h arms on `t1on`, same exe)
+
+P3 counts are stations with a band-1 / band-2 code mean above 0.10 m (hours 2 to end); `ref` is `t1on` at 3 h.
+
+| arm | change | bands 1 / 2 | reading |
+| --- | --- | --- | --- |
+| `l5x_ref_f3` | none | 10 / 6 | the contamination grows over the run (CAS100ATA 5 to 33 cm, WARK00NZL 4 to 36 cm over 6 h) |
+| `l5b_t2on_f6`, `l5b_t3on_f6` | band-5 code at sigma times 10 / times 100 | 13 / 13; 38 / 27 | not the band-5 code weight |
+| `l5b_t2mwp_f6` | plus `cycle_slip.mw_detect_pairs` primary | 16 / 13 | not the wide-lane detector |
+| `l5x_diag_f3` | receiver code-bias carry on the diagonal route | 15 / 10 | not the carry route |
+| `l5x_pbq9_f3`, `l5x_pbq7_f3` | satellite phase biases as random walks (3e-9, 3e-7 m2/s) | 9 / 6; 9 / 5 | not the Block IIF inter-frequency clock |
+| `l5b_t3s_f6` | band-5 code stripped at every network station | 2 / 1 | clean |
+| `l5x_nol5ph_f3` | band-5 phase stripped at every station | 2 / 0 | clean |
+| `l5x_noiif_f3` | band 5 stripped on Block IIF satellites | 1 / 0 | clean |
+| `l5x_iifnol_f3`, `l5x_iifnoc_f3` | IIF band-5 phase only / IIF band-5 code only stripped | 1 / 0; 5 / 2 | clean; partly |
+| `l5x_nomaju_f3` | band 5 stripped at MAJU00MHL alone | 2 / 0 | clean |
+| `l5x_g08fresh_f3` | G08 removed at MAJU00MHL for 17 min (its arc restarts fresh) | 2 / 0 | clean |
+
+Every contaminated arm, and none of the clean ones, has a burst of clock-anchor decouples at TOW 260040 (20 to 30 satellites, `e_phi` up to 16 m; 0 to 3 on the clean arms). At that epoch MAJU00MHL re-acquires G08, a Block IIF satellite, after a one- to two-epoch gap on L1C and L2W while L5Q tracks through. Every G08 code residual at MAJU becomes 7 to 9 m; the per-signal re-entry tier (card GRS) judges L2W shifted against the L5Q partner (11.98 m) and refloats it, and judges L1C clean (0.026 m) and BRIDGES its carry. L1C and L5Q had jumped together, which a geometry-free test against L5Q cannot see; in the same epoch MAJU's receiver code states move along the station level direction (DCB -2.2 to -9.3 m, band-5 delay 8.4 to 26.1 m, the second code channel's ISC 1.3 to 14.4 m), the anchored phase biases carry the move into the network clock, and the anchor guard decouples 20 satellites. On the dual posture L1C and L2W return together, are judged together and are both refloated, and the post-fit tier refloats the arc: no trip. With G08's arc restarted fresh, MAJU's band-5 delay stays at 8.2 to 8.4 m all run: the "+32 m" of `t1on` was the event's absorption, not the receiver.
+
+**Reading.** Two defects compound. (a) The per-signal re-entry bridges a co-resumed signal on a geometry-free test that is blind to a common jump of the signal and its partner. (b) With the band-5 delay estimated, the station's level direction is closed only by the zero-mean DCB prior (sigma 10 m), so during ignition a single line-of-sight fault is absorbed into the station's receiver states instead of being exposed to the post-fit test, and the absorption spreads through the anchored phase biases. Neither is a property of L5: (a) is card GRS's rule meeting its first three-band re-acquisition, (b) is the datum this card chose. The Block IIF signature (`noiif` clean) is MAJU's G08 being an IIF satellite.
+
+**Standing.** L5 SEQUENCED, not closed. In L5's favour: the band-5 offsets are gone, the sim passes, the dual users of the wire halve their loss, and one station's one event explains the field's network contamination. Next, step R-1c (being built): co-resumed signals of a line of sight share the re-entry verdict (`network.cycle_slip.gap_reentry_coresumed_share`, default off), graded by P3 and B1 to B4 as frozen. Then, if needed, a firmer closure of the station level direction under the estimated delay. The triple consumers' own loss (WTZZ00DEU's hours 4 to 6 are the same on every network posture, including `t3s`) is R-2's.
