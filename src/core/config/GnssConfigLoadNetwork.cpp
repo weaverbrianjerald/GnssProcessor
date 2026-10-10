@@ -1164,6 +1164,8 @@ namespace GnssProcessor {
                 ar.decorrelated_determined_sigma_cyc = 0.05;
             ar.tree_basis = jval<bool>(json, "network.ambiguity_resolution.tree_basis",
                                        "network_ar_tree_basis", false);
+            ar.block_search = jval<bool>(json, "network.ambiguity_resolution.block_search",
+                                         "network_ar_block_search", false);
             ar.min_epochs = jval<int>(json, "network.ambiguity_resolution.min_epochs",
                                       "network_ar_min_epochs", 10);
             // Cap on the MLAMBDA search dimension (0 = uncapped legacy).  Required at

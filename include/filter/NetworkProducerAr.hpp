@@ -34,6 +34,7 @@
  * state.  The caller keeps the @c subBegin/subEnd(SB_NETAR) brackets.
  */
 
+#include "filter/IlsCore.hpp"            // ils::IlsResult / IlsGateConfig (blockDecorrelatedFix)
 #include "filter/NetworkEstimator.hpp"   // NetworkEstimator
 #include "filter/NetworkSbasis.hpp"      // NetworkSbasis::Plan (shared_datum)
 #include "filter/NetworkRunTypes.hpp"    // NetStation / StationAssembly
@@ -135,6 +136,32 @@ struct DdPairKey {
  * @return One string per basis DD: ",wl_float_sigma,wl_cond,wl_cond_sigma,nl_cond_sigma"
  *         (leading comma; empty fields where undefined).
  */
+/**
+ * @brief The decorrelated partial fix run block by block (card ARL, block_search).
+ *
+ * Search rows sharing a @p block_of id (one baseline: its L1 and L2 DDs) are fixed
+ * together by @ref ils::ilsFixDecorrelatedPartial on their marginal covariance, each
+ * with its own bootstrap and ratio test, so one weak baseline no longer refuses the
+ * whole network and the search cost is the sum of small blocks instead of one large
+ * one.  The merged result: @c kept / @c afix over all blocks (search indices,
+ * ascending), @c z_fixed / @c z_total summed, @c ratio the smallest accepted block
+ * ratio, @c p_succ the product of the accepted blocks' bootstrap rates (a bound for
+ * the epoch), @c full_ratio the smallest block ratio tried.  @c a_cond / @c Q_cond
+ * hold each fixed block's conditioned values inside its block and the floats
+ * (@p y, @p Q) elsewhere, so a combination inside one block reads its conditioned
+ * value.  Pure.
+ *
+ * @param y        Search floats (cycles).
+ * @param Q        Search covariance (cycles²).
+ * @param block_of Block id per search row (any integers; rows with equal ids share a block).
+ * @param gates    Acceptance gates, as for @ref ils::ilsFixDecorrelatedPartial.
+ * @param determined_sigma_cyc As for @ref ils::ilsFixDecorrelatedPartial.
+ */
+ils::IlsResult blockDecorrelatedFix(const Eigen::VectorXd& y, const Eigen::MatrixXd& Q,
+                                    const std::vector<int>& block_of,
+                                    const ils::IlsGateConfig& gates,
+                                    double determined_sigma_cyc);
+
 std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
                                          const std::vector<int>& search_of, int n_search,
                                          const Eigen::MatrixXd& Q_search,

@@ -161,3 +161,21 @@ Three cumulative fixtures, each the previous plus one layer from the golden bed 
 
 - Six times the basis, more integers fixed in absolute terms, every epoch fixing, and no wrong fix. The share of pairs fixed is lower (rung 2: 8.6 % fixed, 19.1 % wide lane only, 72.2 % wide lane free; rung 3c: 5.1 / 13.2 / 81.7 %): the tree reaches the young and long baselines the star never saw, and one joint ratio test over about 680 dimensions is stricter than over 112.
 - Open: the shares (a ratio test per baseline or per block, or a lower joint threshold, against the 0.9999 bootstrap bar), the run time of the larger search, one owner shared with the chain datum, then the harder slips.
+
+## 10. 2026-10-09: the search block by block (one block per baseline)
+
+`network.ambiguity_resolution.block_search` (new, default off; with `decorrelated_partial`): the search rows of one baseline (its L1 and L2 DDs, keyed by constellation, sta_r and ref_sta) are fixed together by `ils::ilsFixDecorrelatedPartial` on their marginal covariance, each block with its own bootstrap (0.9999) and ratio test (3.0), in `netar::blockDecorrelatedFix`. The trace's ratio is the smallest accepted block ratio and its p_succ the product of the accepted blocks' bootstrap rates. Two unit tests (suite `BlockDecorrelatedFix`). Exe `gnss_processor_arl5.exe`; runs `runs/_rap_arl_r2blk`, `runs/_rap_arl_r3cblk` (tree basis, decorrelated, block search).
+
+| settled hour | tree, one joint search (section 9) | tree, block search |
+| --- | --- | --- |
+| rung 2: single-signal DDs fixed, correct | 6 508, 6 508 | **37 072, 37 072** |
+| rung 2: pairs fixed / WL only / WL free | 8.6 / 19.1 / 72.2 % | **49.2 / 27.6 / 23.2 %** |
+| rung 3c: single-signal DDs fixed, correct | 3 854, 3 854 | **36 212, 36 212** |
+| rung 3c: pairs fixed / WL only / WL free | 5.1 / 13.2 / 81.7 % | **48.1 / 28.3 / 23.7 %** |
+| rung 3c first hour: epochs with a fix; fixed, correct | 76 of 120; 1 540, 1 540 | 109 of 120; 10 128, 10 128 |
+| run time, 2 h of data | about 560 s | about 189 s |
+
+- **One weak baseline no longer refuses the network.** On the realistic rung (phase colour and a slip) about half of all the tree's pairs are fixed in the settled hour, against 19 % of the star's much smaller basis (section 8), with no wrong fix in 46 340 kept integers over the run.
+- **Faster**: the cost of the joint search (one ~680-dimensional search, shrunk one component at a time on a failed ratio test) is gone; what remains is the covariance readback and the rest of the run (the star without the decorrelated search ran about 190 s).
+- **Caveat**: each block is fixed on its marginal covariance, ignoring the correlation with the other baselines. Each block's bootstrap rate is at least 0.9999, so an epoch's bound is the product (about 60 blocks: about 0.994); the run's zero wrong fixes are the measurement, not a guarantee.
+- Open: the shared owner with the chain datum; the harder slips; feeding the fixes back (Phase 3).

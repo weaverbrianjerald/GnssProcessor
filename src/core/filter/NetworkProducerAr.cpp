@@ -97,6 +97,65 @@ std::vector<DdFixLabel> mapFixToBasis(int n_dd,
     return out;
 }
 
+ils::IlsResult blockDecorrelatedFix(const Eigen::VectorXd& y, const Eigen::MatrixXd& Q,
+                                    const std::vector<int>& block_of,
+                                    const ils::IlsGateConfig& gates,
+                                    double determined_sigma_cyc) {
+    ils::IlsResult out;
+    const int n = static_cast<int>(y.size());
+    out.z_total = n;
+    out.a_cond = y;
+    out.Q_cond = Q;
+    if (n <= 0 || static_cast<int>(block_of.size()) != n) return out;
+    std::map<int, std::vector<int>> blocks;   // block id -> search rows
+    for (int i = 0; i < n; ++i) blocks[block_of[static_cast<std::size_t>(i)]].push_back(i);
+    std::vector<std::pair<int, double>> fixed;   // (search row, integer)
+    double p_all = 1.0;
+    bool any_block = false;
+    for (const auto& [id, rows] : blocks) {
+        (void)id;
+        const int m = static_cast<int>(rows.size());
+        Eigen::VectorXd yb(m);
+        Eigen::MatrixXd Qb(m, m);
+        for (int a = 0; a < m; ++a) {
+            yb(a) = y(rows[static_cast<std::size_t>(a)]);
+            for (int b = 0; b < m; ++b)
+                Qb(a, b) = Q(rows[static_cast<std::size_t>(a)], rows[static_cast<std::size_t>(b)]);
+        }
+        const ils::IlsResult r = ils::ilsFixDecorrelatedPartial(yb, Qb, gates, determined_sigma_cyc);
+        if (r.full_ratio > 0.0)
+            out.full_ratio = (out.full_ratio == 0.0) ? r.full_ratio : std::min(out.full_ratio, r.full_ratio);
+        if (r.z_fixed <= 0) continue;
+        out.z_fixed += r.z_fixed;
+        p_all *= r.p_succ;
+        out.ratio = any_block ? std::min(out.ratio, r.ratio) : r.ratio;
+        any_block = true;
+        for (int a = 0; a < m; ++a) {
+            const int ra = rows[static_cast<std::size_t>(a)];
+            out.a_cond(ra) = r.a_cond(a);
+            for (int b = 0; b < m; ++b)
+                out.Q_cond(ra, rows[static_cast<std::size_t>(b)]) = r.Q_cond(a, b);
+        }
+        for (std::size_t k = 0; k < r.kept.size(); ++k) {
+            fixed.emplace_back(rows[static_cast<std::size_t>(r.kept[k])],
+                               r.afix(static_cast<Eigen::Index>(k)));
+            out.max_frac = std::max(out.max_frac, r.max_frac);
+        }
+    }
+    std::sort(fixed.begin(), fixed.end());
+    out.afix.resize(static_cast<Eigen::Index>(fixed.size()));
+    for (std::size_t k = 0; k < fixed.size(); ++k) {
+        out.kept.push_back(fixed[k].first);
+        out.afix(static_cast<Eigen::Index>(k)) = fixed[k].second;
+    }
+    out.p_succ = any_block ? p_all : 0.0;
+    out.full_p_succ = out.p_succ;
+    out.ok = !out.kept.empty();
+    out.partial = static_cast<int>(out.kept.size()) < n;
+    if (!any_block) { out.a_cond.resize(0); out.Q_cond.resize(0, 0); }
+    return out;
+}
+
 std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
                                          const std::vector<int>& search_of, int n_search,
                                          const Eigen::MatrixXd& Q_search,
@@ -382,10 +441,24 @@ void networkProducerAr(NetworkRunContext& ctx,
                 try {
                     // Card ARL: the decorrelated-space partial fix reports the
                     // single-signal DDs its fixed combinations determine.
-                    fix = netar.decorrelated_partial
-                        ? ils::ilsFixDecorrelatedPartial(y_fix, Q_fix, gates,
-                                                         netar.decorrelated_determined_sigma_cyc)
-                        : ils::ilsFix(y_fix, Q_fix, gates);
+                    if (netar.decorrelated_partial && netar.block_search) {
+                        // One block per baseline (its L1 and L2 DDs): sta_r and ref_sta.
+                        std::map<std::string, int> block_id;
+                        std::vector<int> block_of(static_cast<std::size_t>(nd_fix));
+                        for (int s = 0; s < nd_fix; ++s) {
+                            const DDrow& d = dds[static_cast<std::size_t>(order[static_cast<std::size_t>(s)])];
+                            const auto it = block_id.emplace(d.cons + "|" + d.sta_r + "|" + d.ref_sta,
+                                                             static_cast<int>(block_id.size())).first;
+                            block_of[static_cast<std::size_t>(s)] = it->second;
+                        }
+                        fix = netar::blockDecorrelatedFix(y_fix, Q_fix, block_of, gates,
+                                                          netar.decorrelated_determined_sigma_cyc);
+                    } else {
+                        fix = netar.decorrelated_partial
+                            ? ils::ilsFixDecorrelatedPartial(y_fix, Q_fix, gates,
+                                                             netar.decorrelated_determined_sigma_cyc)
+                            : ils::ilsFix(y_fix, Q_fix, gates);
+                    }
                 }
                 catch (...) { fix = ils::IlsResult(); }
                 // Median DD formal σ (cycles) is the convergence gauge: as the

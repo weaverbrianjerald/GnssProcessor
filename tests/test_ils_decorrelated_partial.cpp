@@ -142,5 +142,32 @@ TEST(ProducerArPairLanes, NoConditioningLeavesConditionedColumnsEmpty) {
     EXPECT_EQ(cols[0].substr(cols[0].size() - 3), ",,,");
 }
 
+
+TEST(BlockDecorrelatedFix, EachBaselineBlockFixesOnItsOwn) {
+    const Eigen::Vector4d N(-40.0, 5.0, 17.0, -3.0);
+    Eigen::MatrixXd Q = pairCovariance(0.05, 0.005);
+    Q.block(2, 2, 2, 2) = pairCovariance(0.05, 0.4).block(2, 2, 2, 2);
+    const Eigen::VectorXd a = pairFloats(N, 0.04, -0.035);
+    const ils::IlsResult r = netar::blockDecorrelatedFix(a, Q, {7, 7, 3, 3}, defaultGates(), 0.05);
+    ASSERT_TRUE(r.ok);
+    ASSERT_EQ(r.kept.size(), 2u);
+    EXPECT_EQ(r.kept[0], 0);
+    EXPECT_EQ(r.kept[1], 1);
+    EXPECT_DOUBLE_EQ(r.afix(0), N(0));
+    EXPECT_DOUBLE_EQ(r.afix(1), N(1));
+    EXPECT_GE(r.p_succ, 0.9999);
+    ASSERT_EQ(r.a_cond.size(), 4);
+    EXPECT_DOUBLE_EQ(r.a_cond(2), a(2));   // the unfixed block keeps its floats
+}
+
+TEST(BlockDecorrelatedFix, NothingFixedLeavesNoConditioning) {
+    const Eigen::Vector4d N(-40.0, 5.0, 17.0, -3.0);
+    const ils::IlsResult r = netar::blockDecorrelatedFix(
+        pairFloats(N, 0.04, -0.035), pairCovariance(0.05, 0.4), {0, 0, 1, 1}, defaultGates(), 0.05);
+    EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.z_fixed, 0);
+    EXPECT_EQ(r.a_cond.size(), 0);
+}
+
 }  // namespace
 }  // namespace GnssProcessor

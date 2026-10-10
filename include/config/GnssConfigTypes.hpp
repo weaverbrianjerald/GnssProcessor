@@ -915,6 +915,10 @@ namespace GnssProcessor {
         /// reference station and satellite), which reaches only the reference station's sky.
         /// Off (default) = the star.
         bool   tree_basis{ false };
+        /// Card ARL: with decorrelated_partial, fix each baseline's block (its L1 and L2 DDs)
+        /// separately (netar::blockDecorrelatedFix), each with its own bootstrap and ratio
+        /// test, instead of one joint search.  Off (default) = one joint search.
+        bool   block_search{ false };
         int    min_epochs{ 10 };              ///< Let the network float converge before fixing.
         int    ils_max_dim{ 0 };              ///< Cap on the ILS (MLAMBDA) search dimension: when > 0, only the
                                               ///< @c ils_max_dim lowest-formal-σ DDs enter the integer search
