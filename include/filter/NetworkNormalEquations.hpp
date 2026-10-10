@@ -1017,6 +1017,26 @@ public:
         const Eigen::MatrixXd& cov_free_xs, bool carry_aware = false) const;
 
     /**
+     * @brief The blocks of @ref jointConditionalCovariance only (card ARL, block search).
+     *
+     * Same expression as the uncorrected (@c carry_aware false) joint covariance,
+     * @f$m_a^\top \mathrm{Cov}_{free} m_b + [s_a = s_b](N_{rr}^{-1})_{c_a c_b}@f$, but
+     * evaluated only for the pairs inside each block of @p blocks, with
+     * @f$\mathrm{Cov}_{free} M@f$ formed as one product.  Costs the sum of the
+     * squared block sizes instead of @f$k^2@f$; a search that never reads a
+     * cross-block entry needs nothing else.
+     *
+     * @param requests    As for @ref jointConditionalCovariance.
+     * @param cov_free_xs As for @ref jointConditionalCovariance.
+     * @param blocks      Each a list of indices into @p requests.
+     * @return One symmetric matrix per block, in @p blocks order and index order.
+     */
+    std::vector<Eigen::MatrixXd> blockConditionalCovariances(
+        const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+        const Eigen::MatrixXd& cov_free_xs,
+        const std::vector<std::vector<int>>& blocks) const;
+
+    /**
      * @brief Baarda per-row redundancy numbers for a batch of one station's
      *        measurement rows (B2), using the cached Schur factors.
      *

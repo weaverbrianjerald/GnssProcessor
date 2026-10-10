@@ -1699,6 +1699,60 @@ NetworkNormalEquations::stationRegression(std::size_t station,
     return out;
 }
 
+std::vector<Eigen::MatrixXd> NetworkNormalEquations::blockConditionalCovariances(
+    const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+    const Eigen::MatrixXd& cov_free_xs,
+    const std::vector<std::vector<int>>& blocks) const {
+    const Eigen::Index k = static_cast<Eigen::Index>(requests.size());
+    std::vector<Eigen::MatrixXd> out;
+    out.reserve(blocks.size());
+    if (k == 0) {
+        for (const auto& b : blocks) out.emplace_back(Eigen::MatrixXd::Zero(
+            static_cast<Eigen::Index>(b.size()), static_cast<Eigen::Index>(b.size())));
+        return out;
+    }
+    if (cov_free_xs.rows() != n_shared_ || cov_free_xs.cols() != n_shared_) {
+        fail("blockConditionalCovariances: cov_free_xs size mismatch");
+    }
+    // n_c = N_rr⁻¹ e_c per request, and M = [N_sr n_c] (shared x k), as in
+    // jointConditionalCovariance; Cov_free M is then one product.
+    std::vector<Eigen::VectorXd> n(static_cast<std::size_t>(k));
+    Eigen::MatrixXd M(n_shared_, k);
+    for (Eigen::Index i = 0; i < k; ++i) {
+        const std::size_t s = requests[static_cast<std::size_t>(i)].first;
+        const Eigen::Index c = requests[static_cast<std::size_t>(i)].second;
+        if (s >= n_active_) {
+            throw std::out_of_range("NetworkNormalEquations::blockConditionalCovariances: "
+                                    "station index out of range");
+        }
+        const Station& st = stations_[s];
+        if (c < 0 || c >= st.n_local) fail("blockConditionalCovariances: local column out of range");
+        Eigen::VectorXd e_c = Eigen::VectorXd::Zero(st.n_local);
+        e_c(c) = 1.0;
+        n[static_cast<std::size_t>(i)] = st.Nrr_ldlt.solve(e_c);
+        if (n_shared_ > 0) M.col(i) = st.N_sr * n[static_cast<std::size_t>(i)];
+    }
+    const Eigen::MatrixXd CM = (n_shared_ > 0) ? Eigen::MatrixXd(cov_free_xs * M)
+                                               : Eigen::MatrixXd();
+    for (const auto& b : blocks) {
+        const Eigen::Index m = static_cast<Eigen::Index>(b.size());
+        Eigen::MatrixXd C(m, m);
+        for (Eigen::Index x = 0; x < m; ++x) {
+            const int ia = b[static_cast<std::size_t>(x)];
+            for (Eigen::Index y = x; y < m; ++y) {
+                const int ib = b[static_cast<std::size_t>(y)];
+                double v = (n_shared_ > 0) ? M.col(ia).dot(CM.col(ib)) : 0.0;
+                if (requests[static_cast<std::size_t>(ia)].first == requests[static_cast<std::size_t>(ib)].first)
+                    v += n[static_cast<std::size_t>(ia)](requests[static_cast<std::size_t>(ib)].second);
+                C(x, y) = v;
+                C(y, x) = v;
+            }
+        }
+        out.push_back(std::move(C));
+    }
+    return out;
+}
+
 Eigen::MatrixXd NetworkNormalEquations::jointConditionalCovariance(
     const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
     const Eigen::MatrixXd& cov_free_xs, bool carry_aware) const {

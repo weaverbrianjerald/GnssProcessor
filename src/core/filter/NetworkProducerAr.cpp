@@ -39,6 +39,9 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <array>
+#include <bitset>
+#include <cstdint>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -301,43 +304,82 @@ void networkProducerAr(NetworkRunContext& ctx,
                     SignalId::fromObsCode(systemFromName(cs.first), cs.second);
                 const double t_lambda = tsig ? tsig->wavelengthM(0) : 0.0;
                 if (!(std::isfinite(t_lambda) && t_lambda > 0.0)) continue;
-                std::map<std::size_t, std::map<std::string, const ArRec*>> sky;  // station -> sat -> rec
+                // Prim's algorithm on satellite bitmasks: every outside station keeps its
+                // best in-tree partner (most common satellites, then the lowest station
+                // index), updated once per attachment, so a tree costs O(stations^2)
+                // popcounts.  Ties resolve as an exhaustive scan in (station, partner)
+                // order would.
+                std::vector<std::string> sat_names;                  // lexical (satmap order)
+                for (auto& [sat, sm] : satmap) { (void)sm; sat_names.push_back(sat); }
+                const std::size_t n_sat = sat_names.size();
+                const std::size_t n_words = (n_sat + 63) / 64;
+                std::vector<std::size_t> sta_ids;                    // ascending station index
+                std::map<std::size_t, std::size_t> pos_of_sta;
                 for (auto& [sat, sm] : satmap)
-                    for (auto& [sta_i, rec] : sm) sky[sta_i][sat] = &rec;
-                if (sky.size() < 2) continue;
-                std::size_t root = sky.begin()->first;
-                for (auto& [sta_i, sats] : sky)
-                    if (sats.size() > sky[root].size()) root = sta_i;
-                std::set<std::size_t> in_tree{root};
-                auto common = [&](std::size_t a, std::size_t b) {
-                    std::vector<std::string> c;
-                    for (auto& [sat, rec] : sky[a]) { (void)rec; if (sky[b].count(sat)) c.push_back(sat); }
+                    for (auto& [sta_i, rec] : sm) { (void)rec; pos_of_sta.emplace(sta_i, 0); }
+                for (auto& [sta_i, pp] : pos_of_sta) { pp = sta_ids.size(); sta_ids.push_back(sta_i); }
+                const std::size_t n_sta = sta_ids.size();
+                if (n_sta < 2) continue;
+                std::vector<std::uint64_t> mask(n_sta * n_words, 0);
+                std::vector<const ArRec*> rec_of(n_sta * n_sat, nullptr);
+                std::vector<std::size_t> n_seen(n_sta, 0);
+                {
+                    std::size_t k = 0;
+                    for (auto& [sat, sm] : satmap) {
+                        (void)sat;
+                        for (auto& [sta_i, rec] : sm) {
+                            const std::size_t r = pos_of_sta[sta_i];
+                            mask[r * n_words + k / 64] |= (std::uint64_t{1} << (k % 64));
+                            rec_of[r * n_sat + k] = &rec;
+                            ++n_seen[r];
+                        }
+                        ++k;
+                    }
+                }
+                auto n_common = [&](std::size_t a, std::size_t b) {
+                    std::size_t c = 0;
+                    for (std::size_t w = 0; w < n_words; ++w)
+                        c += std::bitset<64>(mask[a * n_words + w] & mask[b * n_words + w]).count();
                     return c;
                 };
+                std::size_t root = 0;
+                for (std::size_t r = 1; r < n_sta; ++r)
+                    if (n_seen[r] > n_seen[root]) root = r;
+                std::vector<char> in_tree(n_sta, 0);
+                std::vector<std::size_t> best_n(n_sta, 0), best_p(n_sta, root);
+                in_tree[root] = 1;
+                for (std::size_t r = 0; r < n_sta; ++r)
+                    if (!in_tree[r]) best_n[r] = n_common(r, root);
                 ++n_const_signal;
-                while (in_tree.size() < sky.size()) {
-                    std::size_t best_r = 0, best_p = 0, best_n = 0;
-                    for (auto& [r, rs] : sky) {
-                        (void)rs;
-                        if (in_tree.count(r)) continue;
-                        for (std::size_t p : in_tree) {
-                            const std::size_t n = common(r, p).size();
-                            if (n > best_n) { best_n = n; best_r = r; best_p = p; }
-                        }
-                    }
-                    if (best_n < 2) break;   // the rest share fewer than two satellites
-                    in_tree.insert(best_r);
-                    const std::vector<std::string> c = common(best_r, best_p);
-                    const std::string& tref = c.front();
-                    for (std::size_t k = 1; k < c.size(); ++k) {
-                        const ArRec& rj = *sky[best_r][c[k]];
-                        const ArRec& rp = *sky[best_r][tref];
-                        const ArRec& fj = *sky[best_p][c[k]];
-                        const ArRec& fp = *sky[best_p][tref];
+                for (std::size_t added = 1; added < n_sta; ++added) {
+                    std::size_t r_pick = n_sta, n_pick = 0;
+                    for (std::size_t r = 0; r < n_sta; ++r)
+                        if (!in_tree[r] && best_n[r] > n_pick) { n_pick = best_n[r]; r_pick = r; }
+                    if (r_pick == n_sta || n_pick < 2) break;   // the rest share fewer than two satellites
+                    const std::size_t p_pick = best_p[r_pick];
+                    in_tree[r_pick] = 1;
+                    std::vector<std::size_t> c;                  // common satellites, lexical
+                    for (std::size_t k = 0; k < n_sat; ++k)
+                        if (rec_of[r_pick * n_sat + k] && rec_of[p_pick * n_sat + k]) c.push_back(k);
+                    const std::size_t tref = c.front();
+                    for (std::size_t q = 1; q < c.size(); ++q) {
+                        const ArRec& rj = *rec_of[r_pick * n_sat + c[q]];
+                        const ArRec& rp = *rec_of[r_pick * n_sat + tref];
+                        const ArRec& fj = *rec_of[p_pick * n_sat + c[q]];
+                        const ArRec& fp = *rec_of[p_pick * n_sat + tref];
                         dds.push_back(DDrow{ reqOf(rj), reqOf(rp), reqOf(fj), reqOf(fp),
                                              (rj.value_m - rp.value_m) - (fj.value_m - fp.value_m),
-                                             t_lambda, cs.first, cs.second, c[k], tref,
-                                             stations[best_r].name, stations[best_p].name });
+                                             t_lambda, cs.first, cs.second, sat_names[c[q]],
+                                             sat_names[tref], stations[sta_ids[r_pick]].name,
+                                             stations[sta_ids[p_pick]].name });
+                    }
+                    for (std::size_t s2 = 0; s2 < n_sta; ++s2) {
+                        if (in_tree[s2]) continue;
+                        const std::size_t cn = n_common(s2, r_pick);
+                        if (cn > best_n[s2] || (cn == best_n[s2] && r_pick < best_p[s2])) {
+                            best_n[s2] = cn;
+                            best_p[s2] = r_pick;
+                        }
                     }
                 }
                 continue;
@@ -379,34 +421,103 @@ void networkProducerAr(NetworkRunContext& ctx,
         }
         if (!dds.empty() && reqs.size() >= 2) {
             const bool ar_carry_aware = ctx.knobs.carry_aware_covariance;
-            Eigen::MatrixXd cov_undiff;
-            // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  With the
-            // knob off (default), Q_cyc, and with it FFR, ADOP and the partial-AR
-            // ordering below, is built from a covariance the solve does not use; that
-            // expression is kept unchanged.  With it on, the probe uses the
-            // estimator's own covariance.
-            try { cov_undiff = est.jointConditionalCovariance(reqs, plan.shared_datum,
-                                                              ar_carry_aware); }
-            catch (...) { cov_undiff = Eigen::MatrixXd(); }
-            if (cov_undiff.rows() == static_cast<Eigen::Index>(reqs.size())
-                && cov_undiff.rows() > 0) {
-                const int nd = static_cast<int>(dds.size());
-                Eigen::MatrixXd D = Eigen::MatrixXd::Zero(nd, static_cast<int>(reqs.size()));
-                Eigen::VectorXd y_cyc(nd);
-                std::vector<double> lam(nd);
+            const int nd = static_cast<int>(dds.size());
+            Eigen::VectorXd y_cyc(nd);
+            std::vector<double> lam(nd);
+            for (int a = 0; a < nd; ++a) {
+                y_cyc(a) = dds[static_cast<std::size_t>(a)].dd_m / dds[static_cast<std::size_t>(a)].lambda;
+                lam[static_cast<std::size_t>(a)] = dds[static_cast<std::size_t>(a)].lambda;
+            }
+            Eigen::MatrixXd Q_cyc;
+            bool have_q = false;
+            // Card ARL: the block search reads no cross-baseline entry, so in block mode
+            // only each baseline's block of the covariance is read back
+            // (blockConditionalCovariances) and differenced in place; the entries
+            // between blocks stay zero.  Same expression as the uncorrected joint
+            // readback inside each block.
+            const bool block_cov = netar.decorrelated_partial && netar.block_search
+                                && !ar_carry_aware && netar.ils_max_dim <= 0;
+            if (block_cov) {
+                std::map<std::string, std::vector<int>> dd_blocks;   // baseline -> DDs
                 for (int a = 0; a < nd; ++a) {
-                    const DDrow& d = dds[a];
-                    D(a, d.i_rj) += 1.0; D(a, d.i_rp) -= 1.0;
-                    D(a, d.i_fj) -= 1.0; D(a, d.i_fp) += 1.0;
-                    y_cyc(a) = d.dd_m / d.lambda;
-                    lam[a] = d.lambda;
+                    const DDrow& d = dds[static_cast<std::size_t>(a)];
+                    dd_blocks[d.cons + "|" + d.sta_r + "|" + d.ref_sta].push_back(a);
                 }
-                Eigen::MatrixXd cov_dd_m = D * cov_undiff * D.transpose();
-                Eigen::MatrixXd Q_cyc(nd, nd);
-                for (int a = 0; a < nd; ++a)
-                    for (int b = 0; b < nd; ++b)
-                        Q_cyc(a, b) = cov_dd_m(a, b) / (lam[a] * lam[b]);
-                Q_cyc = 0.5 * (Q_cyc + Q_cyc.transpose());
+                std::vector<std::vector<int>> req_blocks;
+                std::vector<std::map<int, int>> pos_of;              // per block: req -> row
+                for (const auto& [key, members] : dd_blocks) {
+                    (void)key;
+                    std::map<int, int> pos;
+                    std::vector<int> rb;
+                    for (int a : members) {
+                        const DDrow& d = dds[static_cast<std::size_t>(a)];
+                        for (int r : {d.i_rj, d.i_rp, d.i_fj, d.i_fp})
+                            if (pos.emplace(r, static_cast<int>(rb.size())).second) rb.push_back(r);
+                    }
+                    req_blocks.push_back(std::move(rb));
+                    pos_of.push_back(std::move(pos));
+                }
+                std::vector<Eigen::MatrixXd> covs;
+                try { covs = est.blockConditionalCovariances(reqs, plan.shared_datum, req_blocks); }
+                catch (...) { covs.clear(); }
+                if (covs.size() == req_blocks.size()) {
+                    Q_cyc = Eigen::MatrixXd::Zero(nd, nd);
+                    std::size_t bi = 0;
+                    for (const auto& [key, members] : dd_blocks) {
+                        (void)key;
+                        const Eigen::MatrixXd& Cb = covs[bi];
+                        const std::map<int, int>& pos = pos_of[bi];
+                        ++bi;
+                        auto terms = [&](int a) {
+                            const DDrow& d = dds[static_cast<std::size_t>(a)];
+                            return std::array<std::pair<int, double>, 4>{{
+                                {pos.at(d.i_rj), 1.0}, {pos.at(d.i_rp), -1.0},
+                                {pos.at(d.i_fj), -1.0}, {pos.at(d.i_fp), 1.0}}};
+                        };
+                        for (std::size_t x = 0; x < members.size(); ++x) {
+                            const auto ta = terms(members[x]);
+                            for (std::size_t y = x; y < members.size(); ++y) {
+                                const auto tb = terms(members[y]);
+                                double v = 0.0;
+                                for (const auto& [pa, sa] : ta)
+                                    for (const auto& [pb, sb] : tb) v += sa * sb * Cb(pa, pb);
+                                const int a = members[x], b = members[y];
+                                const double q = v / (lam[static_cast<std::size_t>(a)] * lam[static_cast<std::size_t>(b)]);
+                                Q_cyc(a, b) = q;
+                                Q_cyc(b, a) = q;
+                            }
+                        }
+                    }
+                    have_q = true;
+                }
+            } else {
+                Eigen::MatrixXd cov_undiff;
+                // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  With the
+                // knob off (default), Q_cyc, and with it FFR, ADOP and the partial-AR
+                // ordering below, is built from a covariance the solve does not use; that
+                // expression is kept unchanged.  With it on, the probe uses the
+                // estimator's own covariance.
+                try { cov_undiff = est.jointConditionalCovariance(reqs, plan.shared_datum,
+                                                                  ar_carry_aware); }
+                catch (...) { cov_undiff = Eigen::MatrixXd(); }
+                if (cov_undiff.rows() == static_cast<Eigen::Index>(reqs.size())
+                    && cov_undiff.rows() > 0) {
+                    Eigen::MatrixXd D = Eigen::MatrixXd::Zero(nd, static_cast<int>(reqs.size()));
+                    for (int a = 0; a < nd; ++a) {
+                        const DDrow& d = dds[static_cast<std::size_t>(a)];
+                        D(a, d.i_rj) += 1.0; D(a, d.i_rp) -= 1.0;
+                        D(a, d.i_fj) -= 1.0; D(a, d.i_fp) += 1.0;
+                    }
+                    Eigen::MatrixXd cov_dd_m = D * cov_undiff * D.transpose();
+                    Q_cyc.resize(nd, nd);
+                    for (int a = 0; a < nd; ++a)
+                        for (int b = 0; b < nd; ++b)
+                            Q_cyc(a, b) = cov_dd_m(a, b) / (lam[static_cast<std::size_t>(a)] * lam[static_cast<std::size_t>(b)]);
+                    Q_cyc = 0.5 * (Q_cyc + Q_cyc.transpose());
+                    have_q = true;
+                }
+            }
+            if (have_q) {
                 // --- ILS dimension cap (network.ambiguity_resolution.ils_max_dim) ---
                 // MLAMBDA's search does not return on the uncapped full-network basis
                 // (about 2500 DDs at 305 stations).  When armed (> 0), only the

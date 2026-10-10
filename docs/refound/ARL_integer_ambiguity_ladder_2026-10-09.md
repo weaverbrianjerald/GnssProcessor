@@ -179,3 +179,23 @@ Three cumulative fixtures, each the previous plus one layer from the golden bed 
 - **Faster**: the cost of the joint search (one ~680-dimensional search, shrunk one component at a time on a failed ratio test) is gone; what remains is the covariance readback and the rest of the run (the star without the decorrelated search ran about 190 s).
 - **Caveat**: each block is fixed on its marginal covariance, ignoring the correlation with the other baselines. Each block's bootstrap rate is at least 0.9999, so an epoch's bound is the product (about 60 blocks: about 0.994); the run's zero wrong fixes are the measurement, not a guarantee.
 - Open: the shared owner with the chain datum; the harder slips; feeding the fixes back (Phase 3).
+
+## 11. 2026-10-10: 300 stations, and the search made cheap
+
+**Fixture** `runs/simarl_n300` (`config/sim/arl/arl_n300_2h.json`): rung 3b (every hardware bias, the GIM-shaped ionosphere, the troposphere, phase colour; no slip) on the 300-station roster of `simnet300_quiet_12h.json` plus its held-out consumer; receiver phase biases as on the 60-station rungs; one network-level phase colour (5.0 mm at zenith, tau 300 s). Producer `config/sim/arl/arl_n300_producer.json` (`scripts/simnet_make_producer_config.py` from the rung-3c block arm; elected datum station S14801SIM), with `decorrelated_partial`, `tree_basis` and `block_search`.
+
+**Integers at 300 stations** (`runs/_rap_arl_n300blk`, settled hour): 4 022 DDs searched per epoch (p50) from about 5 000 undifferenced ambiguities; 110 of 110 epochs fixed; **312 218 single-signal integers fixed, every one correct** (first hour: 117 of 120 epochs, 108 744, all correct). Pairs: 70.6 % fixed, 5.3 % wide lane only, 24.1 % wide lane free (60 stations: 48.1 / 28.3 / 23.7 %): the denser network gives shorter baselines.
+
+**Cost.** Two changes, both with identical decisions (every trace row: 938 094 at 300 stations, 159 036 at 60; the 60-station products and trace byte-identical):
+
+- `NetworkNormalEquations::blockConditionalCovariances` (and its `NetworkEstimator` wrapper): in block mode the producer reads back only each baseline's block of the joint conditional covariance (the same uncorrected expression, with Cov_free M formed as one product) and differences it in place, instead of the full k x k readback (k about 5 000) and two dense products with a 4 000 x 5 000 differencing matrix. Used when `block_search` is armed without the carry-aware covariance and without `ils_max_dim`.
+- The spanning tree is built by Prim's algorithm on satellite bitmasks (each outside station keeps its best in-tree partner), O(stations^2) popcounts, with the same tie-breaking as the exhaustive scan.
+
+| 2 h, ms per epoch | 60 stations | 300 stations |
+| --- | --- | --- |
+| producer, search off | not run | 863 (`_rap_arl_n300off`) |
+| tree + blocks, full readback | 633 (`_r3cblk`) | 39 624 (`_n300blk`) |
+| + block readback | 302 (`_r3cblk6`) | 7 678 (`_n300blk6`) |
+| + Prim tree | 286 (`_r3cblk7`) | **1 106** (`_n300blk7`) |
+
+At 300 stations the integer step now costs about 0.24 s per epoch on top of the producer's 0.86 s (exes `gnss_processor_arl6.exe`, `gnss_processor_arl7.exe`). (At 60 stations no search-off arm was run; `_rap_arl_r2off`, 663 ms per epoch, ran the entry-by-entry search on the star.)

@@ -559,6 +559,22 @@ Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(
     return neq_.jointConditionalCovariance(requests, cov_free, carry_aware);
 }
 
+std::vector<Eigen::MatrixXd> NetworkEstimator::blockConditionalCovariances(
+    const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+    const Datum& datum, const std::vector<std::vector<int>>& blocks) const {
+    CovTimer _t(neq_);
+    // The same datum-as-known frame as jointConditionalCovariance.
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    zeroPhaseGaugeColumns(cov_free);
+    return neq_.blockConditionalCovariances(requests, cov_free, blocks);
+}
+
 Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
     std::size_t station, const std::vector<Eigen::Index>& local_cols,
     const Datum& datum, bool carry_aware) const {

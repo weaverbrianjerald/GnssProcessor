@@ -508,6 +508,19 @@ public:
         const Datum& datum, bool carry_aware = false) const;
 
     /**
+     * @brief Only the blocks of @ref jointConditionalCovariance (uncorrected form), in
+     *        the same datum-as-known frame (card ARL, block search).  See
+     *        @ref NetworkNormalEquations::blockConditionalCovariances.
+     * @param requests (station, local column) pairs.
+     * @param datum    The S-basis pins.
+     * @param blocks   Each a list of indices into @p requests.
+     * @return One symmetric matrix per block.  Requires a prior @ref solve.
+     */
+    std::vector<Eigen::MatrixXd> blockConditionalCovariances(
+        const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+        const Datum& datum, const std::vector<std::vector<int>>& blocks) const;
+
+    /**
      * @brief Diagonal conditional variances for a subset of a station's local
      *        columns in the datum-as-known frame (the carried-ambiguity harvest).
      *
