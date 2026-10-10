@@ -204,6 +204,16 @@ namespace GnssProcessor {
     inline constexpr const char* kProducerArHeader =
         "week,tow,cons,signal,sat_j,ref_sat,sta_r,ref_sta,lambda_m,float_cyc,"
         "sigma_cyc,in_subset,fixed_int,kept,ratio,p_succ,n_dd,n_search,n_fixed\n";
+    /// The same header with network.ambiguity_resolution.decorrelated_partial armed (card
+    /// ARL): four pair columns, equal on the two rows of an L1/L2 pair and empty on a DD
+    /// without a partner in the search.  wl_float_sigma_cyc is the pair's wide-lane formal
+    /// sigma before the fix; wl_cond_cyc / wl_cond_sigma_cyc its wide lane conditioned on
+    /// the fixed decorrelated components; nl_cond_sigma_cyc the conditioned narrow lane
+    /// (ionosphere-free part, (f1 a1 - f2 a2) / (f1 - f2) narrow-lane cycles).
+    inline constexpr const char* kProducerArHeaderDecorrelated =
+        "week,tow,cons,signal,sat_j,ref_sat,sta_r,ref_sta,lambda_m,float_cyc,"
+        "sigma_cyc,in_subset,fixed_int,kept,ratio,p_succ,n_dd,n_search,n_fixed,"
+        "wl_float_sigma_cyc,wl_cond_cyc,wl_cond_sigma_cyc,nl_cond_sigma_cyc\n";
     /// network_block_baarda.csv header (docs/SPEC_redundancy_census.md BB-INC-1..3).
     /// One row per (constellation family x label) per epoch that swept a block.
     ///

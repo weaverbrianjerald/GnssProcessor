@@ -106,6 +106,41 @@ std::vector<DdFixLabel> mapFixToBasis(int n_dd,
                                       const std::vector<int>& kept,
                                       const Eigen::VectorXd& afix);
 
+/// One basis DD's pair identity for @ref pairLaneColumns: two DDs with the same
+/// @c key (constellation, sat_j, ref_sat, sta_r, ref_sta) and different
+/// wavelengths are the two bands of one pair.
+struct DdPairKey {
+    std::string key;     ///< Pair identity without the signal.
+    double lambda = 0.0; ///< The DD's wavelength (m).
+};
+
+/**
+ * @brief The trace's four pair columns per basis DD (card ARL, decorrelated_partial).
+ *
+ * For each basis DD whose pair partner (same @c key, other wavelength) is also in
+ * the search: the pair's wide lane a1 - a2 formal sigma before the fix (from
+ * @p Q_search), its wide lane conditioned on the fixed decorrelated components
+ * (value and sigma, from @p a_cond / @p Q_cond), and the conditioned narrow lane
+ * sigma, (f1 a1 - f2 a2) / (f1 - f2) in narrow-lane cycles, where band 1 is the
+ * shorter wavelength.  Both rows of a pair get the same text.  Without a partner,
+ * or with @p a_cond empty (nothing fixed), the conditioned columns are empty.
+ *
+ * @param keys      One entry per basis DD.
+ * @param search_of Search row ↦ basis index (@ref lowestSigmaOrder); rows past
+ *                  @p n_search are not searched.
+ * @param n_search  Search dimension.
+ * @param Q_search  Search covariance (cycles²), search order.
+ * @param a_cond    @c IlsResult::a_cond (search order), may be empty.
+ * @param Q_cond    @c IlsResult::Q_cond (search order), may be empty.
+ * @return One string per basis DD: ",wl_float_sigma,wl_cond,wl_cond_sigma,nl_cond_sigma"
+ *         (leading comma; empty fields where undefined).
+ */
+std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
+                                         const std::vector<int>& search_of, int n_search,
+                                         const Eigen::MatrixXd& Q_search,
+                                         const Eigen::VectorXd& a_cond,
+                                         const Eigen::MatrixXd& Q_cond);
+
 } // namespace netar
 
 /**

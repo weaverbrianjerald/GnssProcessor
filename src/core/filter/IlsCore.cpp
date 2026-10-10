@@ -526,9 +526,11 @@ IlsResult ilsFixDecorrelatedPartial(const Eigen::VectorXd& a_hat_cycles,
     if (Q_zz_f.info() != Eigen::Success) { res.full_fail = IlsFailReason::MlambdaFailed; return res; }
     const Eigen::VectorXd a_c = a_hat_cycles - Q_az * Q_zz_f.solve(z_hat.tail(m) - z_fix_t);
     const Eigen::MatrixXd K = Q_zz_f.solve(Q_az.transpose());     // m x n
+    res.a_cond = a_c;
+    res.Q_cond = Q_cycles - Q_az * K;
     std::vector<double> afix;
     for (int i = 0; i < n; ++i) {
-        const double var_c = Q_cycles(i, i) - Q_az.row(i).dot(K.col(i));
+        const double var_c = res.Q_cond(i, i);
         const double sig_c = std::sqrt(std::max(0.0, var_c));
         const double frac = std::abs(a_c(i) - std::round(a_c(i)));
         if (sig_c <= determined_sigma_cyc && frac <= gates.nl_max_per_pair_frac) {

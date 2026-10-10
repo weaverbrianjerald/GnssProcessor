@@ -104,7 +104,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   epoch fixed, every fix correct (the 14 apparent misses are one arc's wind-up branch; the grader now counts it).
   Rung 1: satellite and receiver code biases, then phase biases, then both: unchanged, every fix correct.
   Rung 2: ionosphere on, estimated free: a partial fix in the decorrelated space determines 42 % of the single-signal
-  integers, every one correct (the entry-by-entry search fixes none).
+  integers, every one correct (the entry-by-entry search fixes none). The pairs left float are limited by arc age;
+  a Melbourne-Wubbena wide lane is no better than the float's own.
 - [NOM3](NOM3_network_giants_2026-10-09.md): open, 2026-10-09: pre-registered. The four giant network functions (the per-epoch
   driver, PASS B, the solve, the carry harvest) cut by the run-end method; card WCF first (the within-epoch culprit
   withhold, unreachable since 2026-07-24).

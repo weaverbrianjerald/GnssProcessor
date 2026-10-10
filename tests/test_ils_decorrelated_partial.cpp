@@ -14,8 +14,13 @@
 #include <gtest/gtest.h>
 
 #include "filter/IlsCore.hpp"
+#include "filter/NetworkProducerAr.hpp"
 
 #include <Eigen/Dense>
+
+#include <cstdio>
+#include <string>
+#include <vector>
 
 namespace GnssProcessor {
 namespace {
@@ -101,6 +106,40 @@ TEST(IlsDecorrelatedPartialTest, OnePreciseOneImprecisePairFixesOnlyThePrecisePa
     EXPECT_EQ(r.kept[1], 1);
     EXPECT_DOUBLE_EQ(r.afix(0), N(0));
     EXPECT_DOUBLE_EQ(r.afix(1), N(1));
+}
+
+
+TEST(ProducerArPairLanes, ConditionedWideLaneIsIntegerAndSharedByBothRows) {
+    const Eigen::Vector4d N(-40.0, 5.0, 17.0, -3.0);
+    const Eigen::MatrixXd Q = pairCovariance(0.05, 0.005);
+    const ils::IlsResult r =
+        ils::ilsFixDecorrelatedPartial(pairFloats(N, 0.04, -0.035), Q, defaultGates(), 0.05);
+    ASSERT_EQ(r.a_cond.size(), 4);
+    // Basis order: pair A L2 first, then pair B, then pair A L1 (the pairing is by key).
+    const std::vector<netar::DdPairKey> keys = {
+        {"G|G05|G01|S02|S01", kC / kF2}, {"G|G07|G01|S02|S01", kC / kF1},
+        {"G|G07|G01|S02|S01", kC / kF2}, {"G|G05|G01|S02|S01", kC / kF1}};
+    // Search row s holds basis DD search_of[s]: rows 0,1 = pair A (L1, L2), rows 2,3 = pair B.
+    const std::vector<int> search_of = {3, 0, 1, 2};
+    const auto cols = netar::pairLaneColumns(keys, search_of, 4, Q, r.a_cond, r.Q_cond);
+    ASSERT_EQ(cols.size(), 4u);
+    EXPECT_EQ(cols[0], cols[3]);
+    EXPECT_EQ(cols[1], cols[2]);
+    double wl_float_sig = 0, wl_cond = 0, wl_cond_sig = 0, nl_cond_sig = 0;
+    ASSERT_EQ(std::sscanf(cols[3].c_str(), ",%lf,%lf,%lf,%lf", &wl_float_sig, &wl_cond,
+                          &wl_cond_sig, &nl_cond_sig), 4);
+    EXPECT_NEAR(wl_cond, N(0) - N(1), 1e-6);
+    EXPECT_LT(wl_cond_sig, 1e-3);
+    EXPECT_LT(nl_cond_sig, 1e-3);
+    EXPECT_GT(wl_float_sig, wl_cond_sig);
+}
+
+TEST(ProducerArPairLanes, NoConditioningLeavesConditionedColumnsEmpty) {
+    const std::vector<netar::DdPairKey> keys = {{"k", kC / kF1}, {"k", kC / kF2}};
+    const auto cols = netar::pairLaneColumns(keys, {0, 1}, 2, Eigen::Matrix2d::Identity(),
+                                             Eigen::VectorXd(), Eigen::MatrixXd());
+    EXPECT_EQ(cols[0], cols[1]);
+    EXPECT_EQ(cols[0].substr(cols[0].size() - 3), ",,,");
 }
 
 }  // namespace

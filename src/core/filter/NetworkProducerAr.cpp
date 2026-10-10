@@ -96,6 +96,53 @@ std::vector<DdFixLabel> mapFixToBasis(int n_dd,
     return out;
 }
 
+std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
+                                         const std::vector<int>& search_of, int n_search,
+                                         const Eigen::MatrixXd& Q_search,
+                                         const Eigen::VectorXd& a_cond,
+                                         const Eigen::MatrixXd& Q_cond) {
+    const int n_dd = static_cast<int>(keys.size());
+    std::vector<std::string> out(static_cast<std::size_t>(n_dd), ",,,,");
+    // Basis index -> search row, for the searched DDs only.
+    std::vector<int> row_of(static_cast<std::size_t>(n_dd), -1);
+    for (int s = 0; s < n_search && s < static_cast<int>(search_of.size()); ++s) {
+        const int b = search_of[static_cast<std::size_t>(s)];
+        if (b >= 0 && b < n_dd) row_of[static_cast<std::size_t>(b)] = s;
+    }
+    std::map<std::string, std::vector<int>> by_key;   // pair key -> searched basis DDs
+    for (int b = 0; b < n_dd; ++b)
+        if (row_of[static_cast<std::size_t>(b)] >= 0) by_key[keys[static_cast<std::size_t>(b)].key].push_back(b);
+    const bool have_cond = a_cond.size() == n_search && Q_cond.rows() == n_search;
+    constexpr double kC = 299792458.0;
+    for (const auto& [key, members] : by_key) {
+        (void)key;
+        if (members.size() != 2) continue;
+        int b1 = members[0], b2 = members[1];
+        const double l1 = keys[static_cast<std::size_t>(b1)].lambda;
+        const double l2 = keys[static_cast<std::size_t>(b2)].lambda;
+        if (!(l1 > 0.0 && l2 > 0.0) || l1 == l2) continue;
+        if (l1 > l2) std::swap(b1, b2);                      // band 1 = shorter wavelength
+        const int i = row_of[static_cast<std::size_t>(b1)], j = row_of[static_cast<std::size_t>(b2)];
+        const double f1 = kC / keys[static_cast<std::size_t>(b1)].lambda;
+        const double f2 = kC / keys[static_cast<std::size_t>(b2)].lambda;
+        const double c1 = f1 / (f1 - f2), c2 = -f2 / (f1 - f2);   // narrow-lane cycles
+        auto wlVar = [&](const Eigen::MatrixXd& Q) { return Q(i, i) + Q(j, j) - 2.0 * Q(i, j); };
+        auto nlVar = [&](const Eigen::MatrixXd& Q) {
+            return c1 * c1 * Q(i, i) + c2 * c2 * Q(j, j) + 2.0 * c1 * c2 * Q(i, j);
+        };
+        std::string s = fmt::format(",{:.6f}", std::sqrt(std::max(0.0, wlVar(Q_search))));
+        if (have_cond)
+            s += fmt::format(",{:.6f},{:.6f},{:.6f}", a_cond(i) - a_cond(j),
+                             std::sqrt(std::max(0.0, wlVar(Q_cond))),
+                             std::sqrt(std::max(0.0, nlVar(Q_cond))));
+        else
+            s += ",,,";
+        out[static_cast<std::size_t>(b1)] = s;
+        out[static_cast<std::size_t>(b2)] = s;
+    }
+    return out;
+}
+
 } // namespace netar
 
 void networkProducerAr(NetworkRunContext& ctx,
@@ -361,12 +408,27 @@ void networkProducerAr(NetworkRunContext& ctx,
                     // grader splits on it).
                     const double ep_ratio  = fix.ok ? fix.ratio  : fix.full_ratio;
                     const double ep_psucc  = fix.ok ? fix.p_succ : fix.full_p_succ;
+                    // Card ARL pair columns (decorrelated_partial only): each L1/L2 pair's
+                    // wide lane before the fix and its wide lane and narrow lane conditioned
+                    // on the fixed decorrelated components, so a pair left float can be read
+                    // as "wide lane fixed, narrow lane not" or "neither".
+                    std::vector<std::string> pair_cols;
+                    if (netar.decorrelated_partial) {
+                        std::vector<netar::DdPairKey> keys;
+                        keys.reserve(dds.size());
+                        for (const DDrow& d : dds)
+                            keys.push_back({d.cons + "|" + d.sat_j + "|" + d.ref_sat + "|"
+                                                + d.sta_r + "|" + d.ref_sta,
+                                            d.lambda});
+                        pair_cols = netar::pairLaneColumns(keys, order, nd_fix, Q_fix,
+                                                           fix.a_cond, fix.Q_cond);
+                    }
                     for (int a = 0; a < nd; ++a) {
                         const DDrow& d = dds[static_cast<std::size_t>(a)];
                         const auto& lb = labels[static_cast<std::size_t>(a)];
                         const double sig = Q_cyc(a, a) > 0.0 ? std::sqrt(Q_cyc(a, a)) : -1.0;
                         os << fmt::format("{},{:.1f},{},{},{},{},{},{},{:.9f},{:.6f},"
-                                          "{:.6f},{},{},{},{:.4f},{:.6f},{},{},{}\n",
+                                          "{:.6f},{},{},{},{:.4f},{:.6f},{},{},{}{}\n",
                                           se.time.week, se.time.tow,
                                           d.cons, d.signal, d.sat_j, d.ref_sat,
                                           d.sta_r, d.ref_sta, d.lambda,
@@ -374,7 +436,9 @@ void networkProducerAr(NetworkRunContext& ctx,
                                           lb.in_subset ? 1 : 0,
                                           lb.kept ? static_cast<long long>(std::llround(lb.fixed_int)) : 0LL,
                                           lb.kept ? 1 : 0,
-                                          ep_ratio, ep_psucc, nd, nd_fix, n_fixed);
+                                          ep_ratio, ep_psucc, nd, nd_fix, n_fixed,
+                                          pair_cols.empty() ? std::string()
+                                                            : pair_cols[static_cast<std::size_t>(a)]);
                     }
                     c.netar_rows += nd;
                 }

@@ -302,7 +302,8 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     if (nc.ambiguity_resolution.trace && nc.ambiguity_resolution.enable) {
         producer_ar_trace.open(producer_ar_trace_path);
         if (producer_ar_trace) {
-            producer_ar_trace << kProducerArHeader;
+            producer_ar_trace << (nc.ambiguity_resolution.decorrelated_partial
+                                      ? kProducerArHeaderDecorrelated : kProducerArHeader);
         } else {
             log->warn("Network: failed to open producer-AR trace {}",
                       producer_ar_trace_path.string());
