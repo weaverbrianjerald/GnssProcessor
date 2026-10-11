@@ -12,17 +12,17 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
+#include "filter/NetworkArcGraph.hpp"    // the group graph, its components and the chain forest (card AGT)
 #include "filter/NetworkCoupling.hpp"
 #include "filter/NetworkResponses.hpp"   // prmRespond / ResponseSite (card PRM phase 3a)
 #include "filter/StateKeySchema.hpp"
-#include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, rinexLetter, constellationKey, SignalId, wavelengthM
+#include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, rinexLetter, constellationKey, SignalId, SatId, StationId, wavelengthM
 
 #include <algorithm>
 #include <cmath>
-#include <deque>
 #include <limits>
 #include <map>
-#include <queue>
+#include <optional>
 #include <tuple>
 #include <utility>
 
@@ -215,7 +215,6 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     };
     std::map<GKey, std::set<std::string>>                      grp_sats;
     std::map<GKey, std::map<size_t, std::vector<std::string>>> grp_arcs;  // group -> station -> sats
-    std::map<GKey, std::map<std::string, std::vector<size_t>>> grp_satrx; // group -> sat -> stations
     for (size_t i = 0; i < stations.size(); ++i) {
         if (!present[i]) continue;
         for (const auto& [amb, pbkey] : usable_keys[i]) {
@@ -225,7 +224,6 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             const GKey g{ systemOfSat(p->satellite), p->signal };
             grp_sats[g].insert(p->satellite);
             grp_arcs[g][i].push_back(p->satellite);
-            grp_satrx[g][p->satellite].push_back(i);
         }
     }
 
@@ -262,13 +260,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         const std::string sys_str = systemName(grp_sys);
         const std::string rpb_key = StateKeys::makeReceiverPhaseBiasKey(sys_str, grp_sig);
         const std::string dr_key  = constellationKey(grp_sys) + "|" + grp_sig;
-        auto& arcs  = grp_arcs[g];
-        auto& satrx = grp_satrx[g];
-        // Graph vertices are named "R<station index>" (a receiver) and "S<sat>" (a
-        // satellite); the prefix is the vertex kind, not a constellation letter.
-        auto rV = [](size_t i){ return "R" + std::to_string(i); };
-        auto sV = [](const std::string& s){ return "S" + s; };
-        auto isSatVertex = [](const std::string& v) { return v[0] == 'S'; };
+        auto& arcs = grp_arcs[g];
 
         // Longevity score of arc (station ri, sat) (I4): higher means a longer
         // expected life and so a better new tree edge (fewer future deaths,
@@ -290,8 +282,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             // refloats instead of the one DD the slip affects.  Demote it below every
             // clean arc (the clean band is [0,180]) and keep the ordering within the
             // slipped set, so that if the graph leaves no alternative the completion
-            // picks the most durable slipped arc.  The counter increments on every
-            // evaluation, including repeated comparator calls during a sort.
+            // picks the most durable slipped arc.  The score is read once per arc and
+            // epoch, as the arc's durability in the group graph below, so the counter
+            // counts each slipped arc once per epoch (card AGT step AGT-4; it counted
+            // the sort's comparator calls before).
             const double life = el + (rising ? 90.0 : 0.0);
             if (arcSlipped(ri, sat, grp_sig)) {
                 ++ctx.counters.eq34_slip_demoted;
@@ -300,6 +294,55 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             return life;
         };
 
+        // The group's observation graph (card AGT step AGT-4, filter/NetworkArcGraph).
+        // Station slots follow the roster index (ascending) and satellite slots the
+        // group's string order, the vertex order of the string graph this replaced; the
+        // arcs follow usable_keys, the order the components are united in.  Each arc
+        // carries what the walk reads: its slip bit (the slip-aware election), its
+        // longevity score (read only under the longevity election) and the hygiene's host
+        // verdict.  A satellite name without a canonical SatId is left out of the graph
+        // and warned about; none is expected, because the keys are built from canonical
+        // names.
+        std::map<std::string, SatId> sat_id;   // the group's satellite name -> its id
+        int n_noncanonical = 0;
+        for (const auto& s : sats) {
+            const std::optional<SatId> k = SatId::parse(s);
+            if (k && k->str() == s) sat_id.emplace(s, *k);
+            else                    ++n_noncanonical;
+        }
+        if (n_noncanonical > 0)
+            log->warn("Network[eq34]: {} satellite name(s) of group {} have no canonical "
+                      "SatId; their arcs are left out of the chain datum's graph.",
+                      n_noncanonical, dr_key);
+        std::vector<StationId> station_order;
+        for (const auto& [i, slist] : arcs) station_order.push_back(StationId{static_cast<int>(i)});
+        std::vector<SatId> sat_order;
+        for (const auto& [name, id] : sat_id) sat_order.push_back(id);
+        std::vector<arcgraph::ArcRow> rows;
+        for (const auto& [i, slist] : arcs)
+            for (const auto& s : slist) {
+                const auto id = sat_id.find(s);
+                if (id == sat_id.end()) continue;
+                arcgraph::ArcRow row;
+                row.station       = StationId{static_cast<int>(i)};
+                row.sat           = id->second;
+                row.present       = 1;
+                row.slipped       = arcSlipped(i, s, grp_sig) ? 1 : 0;
+                row.durability    = eq34_longevity ? arcLife(i, s) : 0.0;
+                row.eligible_host = hyg.eligibleHost(i, StateKeys::makeAmbiguityKey(s, grp_sig));
+                rows.push_back(row);
+            }
+        arcgraph::ArcFamily family;
+        family.sys = grp_sys;
+        if (const auto signal = SignalId::fromObsCode(grp_sys, grp_sig)) family.bands.push_back(*signal);
+        const arcgraph::ArcGraph graph =
+            arcgraph::buildArcGraph(family, station_order, sat_order, rows);
+        // A station slot's roster index and a satellite slot's name.
+        auto staIdx = [&](int slot) {
+            return static_cast<size_t>(graph.stations[static_cast<size_t>(slot)].index);
+        };
+        auto satName = [&](int slot) { return graph.sats[static_cast<size_t>(slot)].str(); };
+
         // Sticky-tree seed (spec D2 step 3): the incumbent tree edges
         // (sat-side parents in anchor_incumbent, "sat_signal" → station;
         // receiver-side parents in eq34_rx_parent, "station|c|σ" → sat)
@@ -307,17 +350,20 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         // arcs and still tracking the satellite).  Both maps are replaced
         // wholesale each election, so together they hold last epoch's tree
         // with each edge in one map.  Any live subset of a tree is a
-        // forest, so seeding it cannot close a cycle.
-        std::set<std::pair<size_t, std::string>> arc_set;
-        std::map<std::string, size_t> name2idx;
-        for (const auto& [i, slist] : arcs) {
-            name2idx[stations[i].name] = i;
-            for (const auto& s : slist) arc_set.insert({i, s});
-        }
-        std::map<std::string, std::vector<std::string>> inc_adj;
+        // forest, so seeding it cannot close a cycle.  The seed is a list of
+        // the graph's arcs in seed order.
+        std::map<std::string, int> slot_of_name;   // station name -> station slot
+        for (int s = 0; s < static_cast<int>(graph.stations.size()); ++s)
+            slot_of_name[stations[staIdx(s)].name] = s;
+        std::map<std::string, int> slot_of_sat;    // satellite name -> satellite slot
+        for (int k = 0; k < static_cast<int>(graph.sats.size()); ++k) slot_of_sat[satName(k)] = k;
+        std::vector<int> incumbent_arcs;
         auto seedEdge = [&](const std::string& sta, const std::string& sat) {
-            auto ni = name2idx.find(sta);
-            if (ni == name2idx.end() || !arc_set.count({ni->second, sat})) return;
+            const auto ni = slot_of_name.find(sta);
+            const auto ki = slot_of_sat.find(sat);
+            if (ni == slot_of_name.end() || ki == slot_of_sat.end()) return;
+            const int arc = arcgraph::arcIndex(graph, ni->second, ki->second);
+            if (arc < 0) return;
             // Slip-aware (Card 3/4): a slipped incumbent loses its sticky seed.  The
             // incumbent queue drains before the new-edge walk, so a seeded edge is in
             // effect unconditional, and an incumbent that slipped this epoch should
@@ -327,12 +373,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             // last under longevity), so it is re-admitted only if the component has no
             // other route to the vertex.  The resulting mass refloat is then forced by
             // the topology.
-            if (arcSlipped(ni->second, sat, grp_sig)) {
+            if (arcSlipped(staIdx(ni->second), sat, grp_sig)) {
                 ++ctx.counters.eq34_slip_deseeded;
                 return;
             }
-            inc_adj[rV(ni->second)].push_back(sV(sat));
-            inc_adj[sV(sat)].push_back(rV(ni->second));
+            incumbent_arcs.push_back(arc);
         };
         for (const auto& [amb, sta] : anchor_incumbent) {
             const auto a = StateKeys::parseAmbiguityKey(amb);
@@ -348,30 +393,52 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             seedEdge(rxkey.substr(0, rxkey.size() - rx_suffix.size()), sat);
         }
 
-        // --- Union-find over vertices "R<idx>" / "S<sat>". ---
-        std::map<std::string, std::string> uf;
-        auto find = [&](std::string v) -> std::string {
-            auto it = uf.find(v);
-            while (it != uf.end() && it->second != v) { v = it->second; it = uf.find(v); }
-            return v;
-        };
-        auto unite = [&](const std::string& a, const std::string& b) {
-            if (!uf.count(a)) uf[a] = a;
-            if (!uf.count(b)) uf[b] = b;
-            const std::string ra = find(a), rb = find(b);
-            if (ra != rb) uf[ra] = rb;
-        };
-        for (const auto& [i, slist] : arcs)
-            for (const auto& s : slist) unite(rV(i), sV(s));
+        // The connected components, in the order of their roots.  Under the shared link
+        // rule (a station is united under a satellite, arc by arc) every root is a
+        // satellite, so the components come in the string order of their root
+        // satellites; legacyChainVertexRank also orders the second pass's frontier
+        // (receivers by the decimal string of their roster index, then satellites).
+        const std::vector<int> chain_rank = arcgraph::legacyChainVertexRank(graph);
+        const std::vector<arcgraph::Component> comps =
+            arcgraph::arcComponents(graph, /*band_mask=*/1, chain_rank);
 
-        std::map<std::string, std::vector<size_t>>      comp_rx;
-        std::map<std::string, std::vector<std::string>> comp_sat;
-        for (const auto& [i, slist] : arcs)  comp_rx[find(rV(i))].push_back(i);
-        for (const auto& s : sats)           comp_sat[find(sV(s))].push_back(s);
+        // The walk's new-edge rules.  A new tree edge is grown only onto an arc whose
+        // ambiguity has converged (age ≥ eq34_anchor_min_arc_ep; INC-1).  The walk runs
+        // twice: the first pass admits eligible edges only, so a mature host wins over a
+        // fresh one regardless of the I4/longevity rank order; if that leaves vertices
+        // unreachable (their only connection to the component runs through a fresh arc),
+        // the second pass admits everything and counts each unavoidable cold pin.  The
+        // incumbent queue is not filtered: keeping the incumbent is not a reattach, and
+        // blocking it would cause the handover this card is meant to prevent.
+        // Slip-aware (Card 3/4): a slipped arc is refused in the first pass on the same
+        // terms as a cold host, and admitted in the second.  The refusal is a rule of its
+        // own, not only the arcLife ranking, because arcLife is read only under the
+        // longevity election; relying on it would leave slip avoidance inactive wherever
+        // longevity is off (its default).  Avoiding a slipped tree edge is a correctness
+        // preference, not a longevity heuristic.  Without this refusal, de-seeding an
+        // incumbent (above) would be worse than no action: the walk would hand the edge
+        // straight back and pay a datum handover for it.  Under longevity a receiver tries
+        // its longest-lived satellites first, and a satellite its most durable tracker
+        // (highest per-constellation coverage, the robust receiver of spec D2 step 3, then
+        // the arc's own longevity); off, the legacy satellite-name and station-index
+        // orders.
+        arcgraph::ForestRules rules;
+        rules.band_mask               = 1;
+        rules.refuse_ineligible_first = hyg.active && hyg.min_arc_ep > 0;
+        rules.refuse_slipped_first    = eq34_slip_aware;
+        rules.by_durability           = eq34_longevity;
+        std::vector<int> station_rank;   // per station slot: the coverage
+        for (int s = 0; s < static_cast<int>(graph.stations.size()); ++s)
+            station_rank.push_back(cov(grp_sys, staIdx(s)));
 
         std::string best_datum_rx; size_t best_comp = 0;
-        for (auto& [root, rx_list] : comp_rx) {
-            std::sort(rx_list.begin(), rx_list.end());   // determinism
+        for (const arcgraph::Component& comp : comps) {
+            // The component's stations (ascending roster index, as their slots are) and
+            // satellites (string order).
+            std::vector<size_t> rx_list;
+            for (int s : comp.stations) rx_list.push_back(staIdx(s));
+            std::vector<std::string> comp_sats;
+            for (int k : comp.sats) comp_sats.push_back(satName(k));
 
             // Elect r1: config pref → per-component sticky (sat-root
             // vote) → group incumbent → highest coverage.
@@ -388,7 +455,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             // fragment re-level.  Vote ties break by station name.
             if (r1 == static_cast<size_t>(-1)) {
                 std::map<std::string, int> root_votes;
-                for (const auto& s : comp_sat[root]) {
+                for (const auto& s : comp_sats) {
                     auto rt = eq34_sat_root.find(StateKeys::makeAmbiguityKey(s, grp_sig));
                     if (rt != eq34_sat_root.end()) ++root_votes[rt->second];
                 }
@@ -428,42 +495,47 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             stations[r1].pinned_rpb_keys.insert(rpb_key);
             ++eq34_n_pins;
             eq34_gauge_dim += static_cast<int>(rx_list.size()
-                            + comp_sat[root].size());   // n_c + m_c
+                            + comp_sats.size());   // n_c + m_c
             ctx.carry.eq34_epoch_declared[dr_key] +=
-                static_cast<int>(rx_list.size() + comp_sat[root].size());
+                static_cast<int>(rx_list.size() + comp_sats.size());
 
-            // Sticky spanning tree (two-queue BFS from r1).  The
-            // incumbent queue drains completely before any new graph edge
-            // is explored, so a surviving old subtree, even one detached
-            // upstream, is re-attached through its own old edges (one new
-            // edge per detached fragment) and is not re-wired vertex by
-            // vertex: a tree-edge pin moves only when its arc died (or,
-            // under slip-aware election, slipped).  One ambiguity pin per
-            // tree edge; each attachment records (child, parent,
-            // edge-changed) for the dirty walk below.
+            // Sticky spanning tree (arcgraph::growChainForest, a two-queue BFS
+            // from r1).  The incumbent queue drains completely before any new
+            // graph edge is explored, so a surviving old subtree, even one
+            // detached upstream, is re-attached through its own old edges (one
+            // new edge per detached fragment) and is not re-wired vertex by
+            // vertex: a tree-edge pin moves only when its arc died (or, under
+            // slip-aware election, slipped).  One ambiguity pin per tree edge.
+            // recordEdge is replayed over the forest's edges in attachment
+            // order once the walk is done, which is exact because the walk
+            // reads nothing recordEdge writes; each edge records (child,
+            // parent, edge-changed) for the dirty walk below.
             //
             // recordEdge records one tree edge (r,s): pin ambiguity z^s_r
             // at station r.  Target = 0 on a first-sighting edge (unless
             // seed-round applies, below); on a re-pin of an already-lit
             // (sat,σ) (pin-to-round), the |·|-minimizing integer
             // λ·round(carried float/λ), so the emitted-bias frame step is
-            // ≈ 0 cyc.  sat_is_child selects which endpoint the edge
+            // ≈ 0 cyc.  The edge's attach side selects which endpoint it
             // attaches: the sat (parent edge → this_epoch_anchor) or the
             // receiver (parent edge → new_rx_parent).
-            std::set<std::string> visited;
-            std::deque<std::string> inc_q, new_q;
-            // (child, parent, pinmove, known, frame_shiftable): pinmove =
-            // this pin's exact displacement of its pinned float vs last
-            // epoch's frame; known = false where the step is not computable
+            //
+            // (child, parent, pinmove, known, frame_shiftable), the child and
+            // the parent as graph vertices: pinmove = this pin's exact
+            // displacement of its pinned float vs last epoch's frame;
+            // known = false where the step is not computable
             // (re-pin without a carry; root handover, a common fractional
             // step that no integer transform can express);
             // frame_shiftable (INC-2) = this step came from the new host's
             // own state and may be S-transformed even with the global
             // carry-shift knob off (always false unless INC-2 is armed).
-            std::vector<std::tuple<std::string, std::string, double, bool, bool>>
-                order;
-            auto recordEdge = [&](size_t ri, const std::string& sat,
-                                  bool sat_is_child) {
+            std::vector<std::tuple<int, int, double, bool, bool>> order;
+            auto recordEdge = [&](const arcgraph::TreeEdge& edge) {
+                const int         sta_slot     = graph.row_station[static_cast<size_t>(edge.arc)];
+                const int         sat_slot     = graph.row_sat[static_cast<size_t>(edge.arc)];
+                const size_t      ri           = staIdx(sta_slot);
+                const std::string sat          = satName(sat_slot);
+                const bool        sat_is_child = edge.attaches_sat;
                 const std::string amb = StateKeys::makeAmbiguityKey(sat, grp_sig);
                 // Slip-aware (Card 3/4): this arc is becoming a tree edge.  If it slipped
                 // this epoch, the election could not avoid it (the component has no other
@@ -655,16 +727,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         ++ctx.counters.hyg.fresh_pin_ramps;
                     }
                 }
-                order.emplace_back(sat_is_child ? sV(sat) : rV(ri),
-                                   sat_is_child ? rV(ri) : sV(sat),
+                const int rv = arcgraph::stationVertex(graph, sta_slot);
+                const int sv = arcgraph::satVertex(graph, sat_slot);
+                order.emplace_back(sat_is_child ? sv : rv, sat_is_child ? rv : sv,
                                    pinmove, known, frame_shiftable);
             };
-            auto attach = [&](const std::string& v) {
-                visited.insert(v);
-                inc_q.push_back(v);
-                new_q.push_back(v);
-            };
-            attach(rV(r1));
             // eq34 reattach hygiene INC-2: a bridged satellite's gauge is realized on
             // the shared side, by a soft pseudo-obs row holding b_s at its last solved
             // level (networkInjectPinBridgePrior).  It enters the walk already
@@ -673,136 +740,26 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             // rooted at {r1} ∪ {bridged sats}, and the rank arithmetic still closes:
             // 1 RPB pin + B bridge rows + (n_c + m_c − 1 − B) tree edges = n_c + m_c.
             // Bridge rows are counted as pins for that cross-check.
-            std::vector<std::string> bridged_roots;
+            const int r1_slot = comp.stations[static_cast<size_t>(
+                std::find(rx_list.begin(), rx_list.end(), r1) - rx_list.begin())];
+            std::vector<int> roots{arcgraph::stationVertex(graph, r1_slot)};
             if (hyg.active && !hyg.bridged.empty()) {
-                for (const auto& s : comp_sat[root]) {
-                    if (!hyg.isBridged(StateKeys::makeAmbiguityKey(s, grp_sig))) continue;
-                    if (visited.count(sV(s))) continue;
-                    attach(sV(s));
-                    bridged_roots.push_back(sV(s));
+                for (int k : comp.sats) {
+                    if (!hyg.isBridged(StateKeys::makeAmbiguityKey(satName(k), grp_sig))) continue;
+                    roots.push_back(arcgraph::satVertex(graph, k));
                     ++eq34_n_pins;
                     // Audit: a bridge pin is realized on the shared side, so the
                     // station-side fold expectation is declared − bridged.
                     ++ctx.carry.eq34_epoch_bridged[dr_key];
                 }
             }
-            // A new tree edge is grown only onto an arc whose ambiguity has converged
-            // (age ≥ eq34_anchor_min_arc_ep; INC-1).  The walk runs twice: the
-            // first pass admits eligible edges only, so a mature host wins over a
-            // fresh one regardless of the I4/longevity rank order; if that leaves
-            // vertices unreachable (their only connection to the component runs
-            // through a fresh arc), the second pass admits everything and counts
-            // each unavoidable cold pin.  The incumbent queue is not filtered:
-            // keeping the incumbent is not a reattach, and blocking it would cause
-            // the handover this card is meant to prevent.
-            const std::size_t comp_vertices =
-                rx_list.size() + comp_sat[root].size();
-            bool allow_cold = !hyg.active || hyg.min_arc_ep <= 0;
-            // Slip-aware (Card 3/4): a slipped arc is refused in the first pass on the
-            // same terms as a cold host, and admitted in the second.  The refusal is
-            // here and not only in the arcLife ranking because arcLife is read only
-            // under the longevity election; relying on it would leave slip avoidance
-            // inactive wherever longevity is off (its default).
-            // Avoiding a slipped tree edge is a correctness preference, not a longevity
-            // heuristic, so it has its own second-chance flag.  Without this refusal,
-            // de-seeding an incumbent (above) would be worse than no action: the walk
-            // would hand the edge straight back and pay a datum handover for it.
-            bool allow_slipped = !eq34_slip_aware;
-            auto newEdgeOk = [&](size_t ri, const std::string& sat) {
-                if (!allow_slipped && arcSlipped(ri, sat, grp_sig)) return false;
-                if (hyg.eligibleHost(ri, StateKeys::makeAmbiguityKey(sat, grp_sig))) return true;
-                if (!allow_cold) return false;
-                ++ctx.counters.hyg.cold_fallback_pins;
-                return true;
-            };
-            for (int pass = 0; pass < 2; ++pass) {
-                if (pass == 1) {
-                    // Everything reachable through eligible edges is in; anything
-                    // left needs the cold fallback.  `visited` is an ordered set, so
-                    // the rebuilt frontier is deterministic.  Both refusals share the
-                    // pass: a vertex still unreached may be behind a cold host, a
-                    // slipped arc, or both, and there is no third pass to separate them.
-                    if ((allow_cold && allow_slipped) || visited.size() >= comp_vertices)
-                        break;
-                    allow_cold = true;
-                    allow_slipped = true;
-                    for (const auto& v : visited) new_q.push_back(v);
-                }
-                while (!inc_q.empty() || !new_q.empty()) {
-                if (!inc_q.empty()) {
-                    const std::string v = inc_q.front(); inc_q.pop_front();
-                    auto ia = inc_adj.find(v);
-                    if (ia == inc_adj.end()) continue;
-                    for (const auto& u : ia->second) {
-                        if (visited.count(u)) continue;
-                        if (isSatVertex(u))
-                            recordEdge(static_cast<size_t>(
-                                           std::stoul(v.substr(1))),
-                                       u.substr(1), /*sat_is_child=*/true);
-                        else
-                            recordEdge(static_cast<size_t>(
-                                           std::stoul(u.substr(1))),
-                                       v.substr(1), /*sat_is_child=*/false);
-                        attach(u);
-                    }
-                } else {
-                    const std::string v = new_q.front(); new_q.pop_front();
-                    if (!isSatVertex(v)) {
-                        const size_t ri =
-                            static_cast<size_t>(std::stoul(v.substr(1)));
-                        std::vector<std::string> ss = arcs[ri];
-                        // Longevity (I4): attach this receiver's
-                        // longest-lived unvisited sats first (rising or
-                        // high-elevation), so the new edge is picked to
-                        // outlive the epoch.  Off: legacy sat-name order
-                        // (byte-identical).
-                        if (eq34_longevity)
-                            std::sort(ss.begin(), ss.end(),
-                                      [&](const std::string& a, const std::string& b) {
-                                          const double la = arcLife(ri, a),
-                                                       lb = arcLife(ri, b);
-                                          if (la != lb) return la > lb;
-                                          return a < b;   // deterministic tie-break
-                                      });
-                        else
-                            std::sort(ss.begin(), ss.end());
-                        for (const auto& s : ss) {
-                            if (visited.count(sV(s))) continue;
-                            if (!newEdgeOk(ri, s)) continue;   // pass 1 refuses a fresh host or slipped arc (INC-1)
-                            recordEdge(ri, s, /*sat_is_child=*/true);
-                            attach(sV(s));
-                        }
-                    } else {
-                        const std::string s = v.substr(1);
-                        std::vector<size_t> rr = satrx[s];
-                        // Longevity (I4): attach this sat through its most
-                        // durable unvisited tracker first: highest
-                        // per-constellation coverage (the robust receiver,
-                        // spec D2 step 3), then the arc's own longevity at
-                        // that station.
-                        // Off: legacy station-index order (byte-identical).
-                        if (eq34_longevity)
-                            std::sort(rr.begin(), rr.end(),
-                                      [&](size_t a, size_t b) {
-                                          const int ca = cov(grp_sys, a),
-                                                    cb = cov(grp_sys, b);
-                                          if (ca != cb) return ca > cb;
-                                          const double la = arcLife(a, s),
-                                                       lb = arcLife(b, s);
-                                          if (la != lb) return la > lb;
-                                          return a < b;   // deterministic tie-break
-                                      });
-                        else
-                            std::sort(rr.begin(), rr.end());
-                        for (size_t ri : rr) {
-                            if (visited.count(rV(ri))) continue;
-                            if (!newEdgeOk(ri, s)) continue;   // pass 1 refuses a fresh host or slipped arc (INC-1)
-                            recordEdge(ri, s, /*sat_is_child=*/false);
-                            attach(rV(ri));
-                        }
-                    }
-                }
-                }
+            const arcgraph::SpanningForest forest = arcgraph::growChainForest(
+                graph, comp, roots, incumbent_arcs, rules, chain_rank, station_rank);
+            for (const arcgraph::TreeEdge& edge : forest.edges) {
+                // A new edge on a non-eligible host is an unavoidable cold pin (the
+                // second pass admitted it).
+                if (edge.ineligible_host) ++ctx.counters.hyg.cold_fallback_pins;
+                recordEdge(edge);
             }
             // Shift walk: the carry S-transformation (spec D4 "v2 =
             // SHIFT", realized at election, where the step is known, so
@@ -818,18 +775,18 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             // handover (common fractional), and, with the shift off,
             // any nonzero step (see the loop).  `order` is in attachment
             // order, parents strictly first, so one forward pass works.
-            std::map<std::string, double> vshift;
-            std::map<std::string, bool>   vknown;
-            vshift[rV(r1)] = 0.0;
-            vknown[rV(r1)] = true;
-            // A bridged satellite (INC-2) is a further root whose frame does not move
-            // (the bridge row holds b_s at its previous value), so it seeds the walk
-            // with a known zero shift.  The subtree below it therefore keeps its
-            // carries instead of being re-referenced (no eq34_reref entry, no
-            // local-carry erase); this is the purpose of the bridge.
-            for (const auto& v : bridged_roots) {
-                vshift[v] = 0.0;
-                vknown[v] = true;
+            // The vertices are graph slots.
+            const size_t n_vertices = graph.stations.size() + graph.sats.size();
+            std::vector<double> vshift(n_vertices, 0.0);
+            std::vector<char>   vknown(n_vertices, 0);
+            // r1 and every bridged satellite (INC-2) are roots of the walk.  A bridged
+            // satellite's frame does not move either (the bridge row holds b_s at its
+            // previous value), so it seeds the walk with a known zero shift.  The subtree
+            // below it therefore keeps its carries instead of being re-referenced (no
+            // eq34_reref entry, no local-carry erase); this is the purpose of the bridge.
+            for (int r : roots) {
+                vshift[static_cast<size_t>(r)] = 0.0;
+                vknown[static_cast<size_t>(r)] = 1;
             }
             for (const auto& [v, p, pinmove, known, shiftable] : order) {
                 // Shift off (default): any nonzero pin displacement is
@@ -841,18 +798,18 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 // composes with the walk unchanged: the nonzero vshift it
                 // seeds propagates through the (pinmove == 0) frozen edges
                 // below it as it would in a shift-on run.
-                const bool   k = known && vknown[p]
+                const bool   k = known && vknown[static_cast<size_t>(p)]
                               && (eq34_shift_on || pinmove == 0.0 || shiftable);
-                const double s = k ? (-vshift[p] - pinmove) : 0.0;
-                vshift[v] = s;
-                vknown[v] = k;
-                if (isSatVertex(v)) {
-                    const std::string sat = v.substr(1);
+                const double s = k ? (-vshift[static_cast<size_t>(p)] - pinmove) : 0.0;
+                vshift[static_cast<size_t>(v)] = s;
+                vknown[static_cast<size_t>(v)] = k ? 1 : 0;
+                if (arcgraph::isSatVertex(graph, v)) {
+                    const std::string sat =
+                        satName(v - static_cast<int>(graph.stations.size()));
                     if (!k)          eq34_reref.insert({sat, grp_sig});
                     else if (s != 0.0) shift_sat[{sat, grp_sig}] = s;
                 } else {
-                    const int idx =
-                        static_cast<int>(std::stoul(v.substr(1)));
+                    const int idx = static_cast<int>(staIdx(v));
                     if (!k) {
                         // Unknown frame step: the carried δ̂_{r,σ}
                         // belongs to an unrecoverable retired frame.
@@ -1194,8 +1151,9 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
         const long long ds = ctx.counters.eq34_slip_deseeded;
         const long long ra = ctx.counters.eq34_slip_readmitted;
         log->info("Network (Card 3/4 slip-aware election): {} slipped incumbent(s) DE-SEEDED "
-                  "from the sticky tree, {} arcLife demotion(s) (sort comparisons, inert "
-                  "without the longevity election), and {} slipped arc(s) became a tree edge "
+                  "from the sticky tree, {} arcLife demotion(s) (slipped arcs ranked last, "
+                  "each counted once per epoch; inert without the longevity election), "
+                  "and {} slipped arc(s) became a tree edge "
                   "ANYWAY because the component had no other route to the vertex.  A slipped "
                   "TREE edge refloats every fundamental cycle through it; a slipped CHORD "
                   "costs one DD — so (de-seeded − re-admitted) is the mass-refloat this "

@@ -43,6 +43,8 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       anchor_info_trace_path(log_dir_ / "network_anchor_info.csv"),
       dd_frac_trace_path(log_dir_ / "network_dd_fractional.csv"),
       producer_ar_trace_path(log_dir_ / "network_producer_ar.csv"),
+      ar_lattice_trace_path(log_dir_ / "network_ar_lattice.csv"),
+      ar_lattice_events_trace_path(log_dir_ / "network_ar_lattice_events.csv"),
       slip_raw_trace_path(log_dir_ / "network_slip_raw.csv"),
       epoch_status_trace_path(log_dir_ / "network_epoch_status.csv"),
       health_trace_path(log_dir_ / "network_service_health.csv"),
@@ -308,11 +310,27 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // header's newline.
             if (nc.ambiguity_resolution.suspect_epochs > 0)
                 header.insert(header.size() - 1, kProducerArSuspectColumns);
+            // Card AGT: the cycle basis's four columns, armed only, after those.
+            if (nc.ambiguity_resolution.cycle_basis)
+                header.insert(header.size() - 1, kProducerArCycleBasisColumns);
             producer_ar_trace << header;
         } else {
             log->warn("Network: failed to open producer-AR trace {}",
                       producer_ar_trace_path.string());
         }
+    }
+    // Card AGT (step AGT-6): the lattice observatory's two files, gated like the search trace
+    // (its rows are a by-product of the search; the loader arms trace_lattice only with the
+    // cycle basis).
+    if (nc.ambiguity_resolution.trace_lattice && nc.ambiguity_resolution.enable) {
+        ar_lattice_trace.open(ar_lattice_trace_path);
+        if (ar_lattice_trace) ar_lattice_trace << kArLatticeHeader;
+        else log->warn("Network: failed to open lattice-observatory trace {}",
+                       ar_lattice_trace_path.string());
+        ar_lattice_events_trace.open(ar_lattice_events_trace_path);
+        if (ar_lattice_events_trace) ar_lattice_events_trace << kArLatticeEventsHeader;
+        else log->warn("Network: failed to open lattice-observatory events trace {}",
+                       ar_lattice_events_trace_path.string());
     }
     if (nc.trace_slip_raw) {
         slip_raw_trace.open(slip_raw_trace_path);
@@ -2619,6 +2637,8 @@ void NetworkRunTraces::closeAll() {
     if (raim_trace.is_open()) raim_trace.close();
     if (raim_attrib_trace.is_open()) raim_attrib_trace.close();
     if (producer_ar_trace.is_open()) producer_ar_trace.close();
+    if (ar_lattice_trace.is_open()) ar_lattice_trace.close();                 // card AGT, AGT-6
+    if (ar_lattice_events_trace.is_open()) ar_lattice_events_trace.close();   // card AGT, AGT-6
     if (epoch_status_trace.is_open()) epoch_status_trace.close();
     if (health_trace.is_open()) health_trace.close();
     // Closed explicitly, not left to the destructor, because the stream rotates (FC-1):

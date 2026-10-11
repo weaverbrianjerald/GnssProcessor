@@ -115,3 +115,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [ICF](ICF_ignition_code_fault_2026-10-09.md): closed, 2026-10-09: KEEP_OFF, FAILED G2's clock-wire clause. The
   faulty BSHM00ISR line of sight, made redundant by its carried ambiguity, moves G07's clock in the cold start (gate A,
   instrument A'); the 12 m cold-start bound holds it within 0.03 m but the hours 2 to 6 clock-wire median is 12 % worse.
+- [AGT](AGT_arc_graph_shared_tree_2026-10-10.md): closed, 2026-10-11 (results in AGTB). One owner of the observation graph
+  (`filter/NetworkArcGraph`) for the chain datum, the Card-4 carry, the census, the emit re-base and the producer AR
+  search, migrated with identical output; then a sticky, L1/L2-consistent, full-coverage cycle basis for the search
+  (`network.ambiguity_resolution.cycle_basis`, default off) and a measure-only lattice of fixed cycles.
+- [AGTB](AGTB_arc_graph_continued_2026-10-10.md): closed, 2026-10-11: card AGT's continuation, from AGT-3 on. All steps
+  landed; cycle basis 45 026 / 365 566 settled integers at 60 / 300 stations, 0 wrong; two bars missed narrowly. AGT-3
+  LANDED: the Card-4 driver, the census and the emit re-base on the shared union-find, identical output on every run.

@@ -994,6 +994,32 @@ namespace GnssProcessor {
         /// solve-affecting search.  Today's search is log-only, so the products are
         /// byte-identical either way.  0 (default) = off.
         int    suspect_epochs{ 0 };
+        /// Card AGT (step AGT-5): search a sticky, L1/L2-consistent, full-coverage short-cycle
+        /// basis (filter/NetworkArCycleBasis.hpp) instead of the per-signal tree_basis.  Per
+        /// constellation the two signals with the most arcs share one graph (each further
+        /// signal its own); a baseline forest kept from search to search (the incumbent links)
+        /// is closed into one double difference per chord of every band, against the link
+        /// parent or an earlier station sharing the most satellites, so the search covers the
+        /// whole cycle lattice (E - V + C per band; a chord no double difference can close is
+        /// counted as a fundamental fallback and not searched).  One search block per station
+        /// (cons|sta_r).  Requires @ref tree_basis, @ref decorrelated_partial and
+        /// @ref block_search; otherwise the loader forces it off with a warning.  Log-only, so
+        /// fingerprint-safe; the trace gains the columns cycle_kind, band_only, basis_age_ep
+        /// and map_state.  Off (default) = tree_basis unchanged.
+        bool   cycle_basis{ false };
+        /// Card AGT control arm: keep the cycle basis's incumbent links from one search to the
+        /// next (true, default); false rebuilds the forest from scratch every search.  Inert
+        /// without @ref cycle_basis.
+        bool   cycle_basis_sticky{ true };
+        /// Card AGT (step AGT-6): the measure-only lattice observatory
+        /// (filter/NetworkArLattice.hpp).  Each search epoch it releases every arc of the lattice
+        /// of fixed cycles whose life ended (vanished, first seen, freed, or a stamp change, as the
+        /// search read it), then offers the search's determined DDs (added, confirmed,
+        /// contradicted or not primitive); logs/network_ar_lattice.csv (one row per epoch),
+        /// logs/network_ar_lattice_events.csv (one row per release and per offer that is not a
+        /// confirmation) and a run-end report.  Requires @ref cycle_basis; otherwise the loader
+        /// forces it off with a warning.  Nothing the solve reads is written.  Off (default).
+        bool   trace_lattice{ false };
         int    min_epochs{ 10 };              ///< Let the network float converge before fixing.
         int    ils_max_dim{ 0 };              ///< Cap on the ILS (MLAMBDA) search dimension: when > 0, only the
                                               ///< @c ils_max_dim lowest-formal-σ DDs enter the integer search

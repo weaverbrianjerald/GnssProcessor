@@ -33,6 +33,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/NetworkArcGraph.hpp"   // arcgraph::Dsu (card AGT)
 #include "filter/StateKeySchema.hpp"
 #include "logging/NetworkRunTraces.hpp"
 
@@ -46,43 +47,6 @@
 namespace GnssProcessor {
 
 namespace {
-
-// ===========================================================================
-//  Union-find (Deo 1974's forest, path halving, union by size)
-// ===========================================================================
-
-class UnionFind {
-public:
-    int make() {
-        parent_.push_back(static_cast<int>(parent_.size()));
-        size_.push_back(1);
-        return static_cast<int>(parent_.size()) - 1;
-    }
-    int find(int v) {
-        while (parent_[static_cast<std::size_t>(v)] != v) {
-            // Path halving: same amortized bound as full compression, one pass,
-            // no recursion (the graph can carry a few thousand vertices at 305
-            // stations and this runs every epoch).
-            parent_[static_cast<std::size_t>(v)] =
-                parent_[static_cast<std::size_t>(parent_[static_cast<std::size_t>(v)])];
-            v = parent_[static_cast<std::size_t>(v)];
-        }
-        return v;
-    }
-    void unite(int a, int b) {
-        a = find(a);
-        b = find(b);
-        if (a == b) return;
-        if (size_[static_cast<std::size_t>(a)] < size_[static_cast<std::size_t>(b)])
-            std::swap(a, b);
-        parent_[static_cast<std::size_t>(b)] = a;
-        size_[static_cast<std::size_t>(a)] += size_[static_cast<std::size_t>(b)];
-    }
-
-private:
-    std::vector<int> parent_;
-    std::vector<int> size_;
-};
 
 // ===========================================================================
 //  Small shared helpers
@@ -170,9 +134,10 @@ netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges) {
     // untracked satellite or a station that folded nothing would inflate k with
     // vertices that carry no datum.
     struct Build {
-        UnionFind                  uf;
+        arcgraph::Dsu              dsu;     // the shared union-find (card AGT)
         std::map<int, int>         sta_v;   // station index  -> vertex
         std::map<std::string, int> sat_v;   // satellite id   -> vertex
+        int                        n_vertices{0};
         int                        n_edges{0};
     };
     std::map<char, Build> build;
@@ -181,10 +146,10 @@ netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges) {
         if (e.sat.empty() || e.station < 0) continue;
         Build& b = build[letterOfSat(e.sat)];
         auto its = b.sta_v.find(e.station);
-        if (its == b.sta_v.end()) its = b.sta_v.emplace(e.station, b.uf.make()).first;
+        if (its == b.sta_v.end()) its = b.sta_v.emplace(e.station, b.n_vertices++).first;
         auto itv = b.sat_v.find(e.sat);
-        if (itv == b.sat_v.end()) itv = b.sat_v.emplace(e.sat, b.uf.make()).first;
-        b.uf.unite(its->second, itv->second);
+        if (itv == b.sat_v.end()) itv = b.sat_v.emplace(e.sat, b.n_vertices++).first;
+        arcgraph::dsuUnite(b.dsu, its->second, itv->second);   // station, then satellite
         ++b.n_edges;
     }
 
@@ -198,15 +163,16 @@ netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges) {
 
         // Reduce to components.  Both source maps are ordered, so the first
         // station / satellite reaching a root is the smallest one in it and the
-        // sample identities are deterministic without a second pass.
+        // sample identities are deterministic without a second pass.  Every value
+        // depends on the partition alone, never on which vertex is the root.
         std::map<int, NetDatumGraphComponent> comp;
         for (const auto& [sta, v] : b.sta_v) {
-            NetDatumGraphComponent& c = comp[b.uf.find(v)];
+            NetDatumGraphComponent& c = comp[arcgraph::dsuFind(b.dsu, v)];
             ++c.n_stations;
             if (c.sample_station < 0) c.sample_station = sta;
         }
         for (const auto& [sat, v] : b.sat_v) {
-            NetDatumGraphComponent& c = comp[b.uf.find(v)];
+            NetDatumGraphComponent& c = comp[arcgraph::dsuFind(b.dsu, v)];
             ++c.n_sats;
             if (c.sample_sat.empty()) c.sample_sat = sat;
         }

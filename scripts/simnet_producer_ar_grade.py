@@ -36,6 +36,12 @@ longer than the accumulator's 300 s continuity horizon starts a new arc) and the
 wind-up there (<fixture>/<sta>/truth_windup.csv), and grades against N_sim + k.  --no-windup-branch
 grades against the simulator's raw integers.
 
+**The cycle basis (card AGT, network.ambiguity_resolution.cycle_basis).**  When the trace carries
+the column `cycle_kind` (partner or borrowed, with `band_only` 1 on a chord that exists in one band
+only), the kept and correct fixes, and every wrong fix, are also split by kind: "partner",
+"borrowed", and the same with "/band_only".  Borrowed DDs sit on longer baselines than partner DDs,
+so zero wrong fixes is graded per kind (card AGT section 6).
+
 Plus the reference sat/station identity over time and its switch count, because every DD in this
 file is differenced against one such pair and inherits its error (SPEC_amb_iono_split_overcount
 §6.12: any grade built on a single reference element must report that element's share or difference
@@ -148,6 +154,17 @@ def branch_at(branches, sta, sat, tow):
     return k
 
 
+def cycle_kind_of(row, i_kind, i_band_only):
+    """The cycle basis's kind of a trace row ("partner", "borrowed", "partner/band_only", ...),
+    or None on a trace without the column (card AGT)."""
+    if i_kind is None:
+        return None
+    kind = row[i_kind]
+    if i_band_only is not None and row[i_band_only] == "1":
+        kind += "/band_only"
+    return kind
+
+
 def sigma_bin(s):
     for lo, hi, nm in SIGMA_BINS:
         if lo <= s < hi:
@@ -218,6 +235,9 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout, windup_branch=T
     if missing:
         raise SystemExit("trace is missing columns %s -- is this a pre-card file?" % missing)
     ix = {c: hdr.index(c) for c in need}
+    # Card AGT: the cycle basis's kind columns, present only when it was armed.
+    i_kind = hdr.index("cycle_kind") if "cycle_kind" in hdr else None
+    i_band_only = hdr.index("band_only") if "band_only" in hdr else None
 
     # Two windows: the settled one (the verdict) and h0-h12 (ignition, reported for contrast --
     # SPEC_level_information_budget §14's lesson that a short window measures ignition).
@@ -225,7 +245,8 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout, windup_branch=T
     acc = {w: {"all": collections.defaultdict(Acc), "subset": collections.defaultdict(Acc)}
            for w in W}
     pooled = {w: {"all": Acc(), "subset": Acc()} for w in W}
-    fixed = {w: {"n": 0, "correct": 0, "wrong": [], "by_band": collections.Counter(),
+    fixed = {w: {"n": 0, "correct": 0, "wrong": [], "by_kind": collections.Counter(),
+                 "by_kind_ok": collections.Counter(), "by_band": collections.Counter(),
                  "by_band_ok": collections.Counter(), "by_sigma": collections.Counter(),
                  "by_sigma_ok": collections.Counter()} for w in W}
     ceiling = {w: {"n": 0, "ok": 0, "by_band": collections.Counter(),
@@ -293,19 +314,24 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout, windup_branch=T
             sg = float(row[ix["sigma_cyc"]])
             sb = sigma_bin(sg)
             fx = int(round(float(row[ix["fixed_int"]])))
+            kind = cycle_kind_of(row, i_kind, i_band_only)
             F = fixed[w]
             F["n"] += 1
             F["by_band"][band] += 1
             F["by_sigma"][sb] += 1
+            if kind:
+                F["by_kind"][kind] += 1
             if fx == dd_true:
                 F["correct"] += 1
                 F["by_band_ok"][band] += 1
                 F["by_sigma_ok"][sb] += 1
+                if kind:
+                    F["by_kind_ok"][kind] += 1
             else:
                 F["wrong"].append({"tow": tow, "band": band, "sat_j": sat_j, "ref_sat": ref_sat,
                                    "sta_r": sta_r, "ref_sta": ref_sta, "fixed": fx,
                                    "true": dd_true, "err_cyc": e, "sigma_cyc": sg,
-                                   "sigma_bin": sb})
+                                   "sigma_bin": sb, "cycle_kind": kind})
     f.close()
 
     # Reference identity + switches (per (cons, signal) family, in time order).
@@ -380,6 +406,9 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout, windup_branch=T
             "float_subset_by_band": {b: a.summary() for b, a in sorted(acc[w]["subset"].items())},
             "correct_by_band": {b: {"kept": F["by_band"][b], "correct": F["by_band_ok"][b]}
                                 for b in sorted(F["by_band"])},
+            "correct_by_kind": {k: {"kept": F["by_kind"][k], "correct": F["by_kind_ok"][k],
+                                    "wrong": F["by_kind"][k] - F["by_kind_ok"][k]}
+                                for k in sorted(F["by_kind"])},
             "correct_by_sigma": {b: {"kept": F["by_sigma"][b], "correct": F["by_sigma_ok"][b]}
                                  for b in sorted(F["by_sigma"])},
         }
@@ -410,6 +439,10 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout, windup_branch=T
             print("    %-12s kept %6d  correct %6d  %5.1f%%"
                   % (b, F["by_band"][b], F["by_band_ok"][b],
                      100.0 * F["by_band_ok"][b] / F["by_band"][b]), file=out)
+        for k in sorted(F["by_kind"]):
+            print("    kind %-20s kept %6d  correct %6d  wrong %4d"
+                  % (k, F["by_kind"][k], F["by_kind_ok"][k], F["by_kind"][k] - F["by_kind_ok"][k]),
+                  file=out)
         for b in sorted(F["by_sigma"]):
             print("    sigma %-10s kept %6d  correct %6d  %5.1f%%"
                   % (b, F["by_sigma"][b], F["by_sigma_ok"][b],
@@ -520,6 +553,24 @@ def selftest():
     chk(w2["correct_fix"] == 2 and w2["wrong_fix"] == 0, "wind-up branch: both fixes correct")
     r3 = grade(fx, run, settle_h=0.0, out=io.StringIO(), windup_branch=False)
     chk(r3["windows"]["settled"]["wrong_fix"] == 1, "without the branch: G03 graded wrong")
+    # The cycle basis's columns (card AGT): the fixes split by kind.  G02 a partner DD fixed
+    # right, G03 a borrowed band-only DD fixed wrong.
+    with open(os.path.join(run, "logs", "network_producer_ar.csv"), "w", newline="") as f:
+        f.write("week,tow,cons,signal,sat_j,ref_sat,sta_r,ref_sta,lambda_m,float_cyc,"
+                "sigma_cyc,in_subset,fixed_int,kept,ratio,p_succ,n_dd,n_search,n_fixed,"
+                "cycle_kind,band_only,basis_age_ep,map_state\n")
+        for sat, fl, sg, insub, fx_int, kept, kind, bo in (
+                ("G02", dd_true("G02") + 0.04, 0.02, 1, dd_true("G02"), 1, "partner", 0),
+                ("G03", dd_true("G03") + 0.60, 0.20, 1, dd_true("G03") + 1, 1, "borrowed", 1)):
+            f.write("2313,100.0,G,L1C,%s,G01,S02,S01,0.190293673,%.6f,%.6f,%d,%d,%d,"
+                    "5.00,0.999900,2,2,2,%s,%d,3,same\n" % (sat, fl, sg, insub, fx_int, kept, kind, bo))
+    r4 = grade(fx, run, settle_h=0.0, out=io.StringIO(), windup_branch=False)
+    k4 = r4["windows"]["settled"]["correct_by_kind"]
+    chk(k4.get("partner") == {"kept": 1, "correct": 1, "wrong": 0}, "kind split: partner")
+    chk(k4.get("borrowed/band_only") == {"kept": 1, "correct": 0, "wrong": 1},
+        "kind split: borrowed band-only")
+    chk(r4["windows"]["settled"]["wrong_fixes"][0]["cycle_kind"] == "borrowed/band_only",
+        "kind on the wrong fix")
     print("selftest " + ("PASS" if ok else "FAILED"))
     return 0 if ok else 1
 

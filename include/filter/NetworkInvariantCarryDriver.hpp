@@ -56,7 +56,9 @@
  *
  * ## Scope and conventions
  *
- * Pure numeric leaf that depends only on `NetworkZStore` (cycle algebra) and the
+ * Pure numeric leaf that depends only on `NetworkArcGraph` (the cycle algebra: the
+ * union-find, the tree, the fundamental cycles and the W rows; card AGT, which took
+ * them over from `NetworkZStore`) and the
  * `NetworkEstimator` kernel (the fold and the posterior readout).  It does not depend on
  * `ApplicationNetwork`: the caller (the live epoch loop or a unit test) resolves each
  * arc to a stable (rx_vertex, sat_vertex) pair (disjoint id ranges, receiver <
@@ -75,7 +77,7 @@
  * DatumFreedom gate compares carried chords, which are basis-exact).
  */
 
-#include "filter/NetworkZStore.hpp"          // ArcKey + ZComponent cycle algebra
+#include "filter/NetworkArcGraph.hpp"        // ArcKey + the cycle algebra (card AGT)
 #include "filter/NetworkEstimator.hpp"       // DdPriorBlock, Pin/Datum, posterior readout
 #include "filter/NetworkCarryVce.hpp"        // LS-VCE robust inflation of Cov(v) (card 4, D5 v2)
 

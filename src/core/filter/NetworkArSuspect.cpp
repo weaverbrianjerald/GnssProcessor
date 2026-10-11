@@ -14,6 +14,7 @@
 
 #include "app/NetworkRunContext.hpp"     // ctx.counters.netar_suspect, ctx.carry.ar_suspect (run end)
 #include "config/GnssConfig.hpp"         // network.ambiguity_resolution (run-end gate)
+#include "filter/NetworkArcLife.hpp"     // carryLifeOf: the one reader of the carry's life fields
 #include "filter/NetworkRunEnd.hpp"      // NetworkRunEndView
 #include "filter/StateKeySchema.hpp"     // StateKeys::parseAmbiguityKey
 
@@ -147,22 +148,24 @@ void arSuspectFoldEpoch(ArSuspectLedger& L, long long now_ep, double now_s, int 
         if (newest <= 0 || now_ep - newest >= window_ep) it = L.corners.erase(it);
         else ++it;
     }
-    // (3) The carry stamps (file banner, the ledger table).
+    // (3) The carry stamps (file banner, the ledger table), read through the one reader of
+    //     the carry's life fields that the arc life stamp shares (card AGT section 3).
     for (const auto& [key, lc] : local_carry) {
         const int sta = std::get<0>(key);
         const std::string& sat = std::get<1>(key);
+        const CarryLife life = carryLifeOf(lc);
         // A drop no earlier fold has seen: this epoch's pre-search drop (the latch and the
         // stale gap), or one on an epoch whose search never ran.  A drop at the previous
         // fold's own epoch was written after that fold, by RAIM, whose own stamp owns it.
-        if (lc.dropped_ep > prev_fold_ep && lc.dropped_ep <= now_ep
-            && now_ep - lc.dropped_ep < window_ep)
+        if (life.dropped_ep > prev_fold_ep && life.dropped_ep <= now_ep
+            && now_ep - life.dropped_ep < window_ep)
             arSuspectNote(L, sta, sat, now_ep, kArSuspectDrop, c);
         // The re-level safety net: a relevel_s that is not a first stash, not written by
         // the drop of the same epoch and not the harvest re-stash of an arc in that
         // epoch's latch.
-        if (lc.relevel_s > 0.0 && lc.relevel_s != lc.birth_s) {
-            const long long e = arSuspectEpochOfSecond(L.recent, lc.relevel_s);
-            if (e <= 0 || e == lc.dropped_ep) continue;
+        if (life.relevel_s > 0.0 && life.relevel_s != life.birth_s) {
+            const long long e = arSuspectEpochOfSecond(L.recent, life.relevel_s);
+            if (e <= 0 || e == life.dropped_ep) continue;
             const std::optional<SatId> s = SatId::parse(sat);
             if (!s || sta < 0) continue;
             const LosId los{StationId{sta}, *s};

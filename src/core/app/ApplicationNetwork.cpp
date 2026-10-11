@@ -129,6 +129,7 @@
 #include "filter/NetworkPbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
 #include "filter/NetworkCarryDisposition.hpp"  // the decided-once fold disposition (card PRM phase 1b)
 #include "filter/NetworkProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
+#include "filter/NetworkArLattice.hpp"  // the search's lattice observatory, measure-only (card AGT)
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkCanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
 #include "app/SignalRoster.hpp"  // signal roster and arc-ledger observatory (card SID phase 1)
@@ -2574,8 +2575,9 @@ int Application::runNetwork() {
         }
         subEnd(SB_INSTALL);     // close installPosterior, the card-4 posterior readback (D0b)
         subBegin(SB_NETAR);     // producer-side network AR phase 2, log-only, off in the tier (D0b)
-        networkProducerAr(ctx, config_, log, traces, se, est, x_s, stations,
-                          est_index_of, asm_res, plan, log_dir_);
+        const ArEpochFixes ar_fixes = networkProducerAr(ctx, config_, log, traces, se, est, x_s, stations,
+                                                        est_index_of, asm_res, plan, log_dir_);
+        networkArLattice(ctx, config_, log, traces, se, stations, ar_fixes);   // measure-only (card AGT)
         subEnd(SB_NETAR);      // close producer AR / pre-emit tail (D0b)
         subBegin(SB_SOLPREP);  // toSolutionEpoch + per-satellite discontinuity signalling (D0b)
         // Decision half of the gross-LOS screen (RF-3b B3,

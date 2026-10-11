@@ -196,15 +196,10 @@ void networkEmitStore(
 
         // (b) Connected-component partition of the (receiver,satellite) bipartite
         //     graph per (const,signal): the common fractional δ is shared only within
-        //     a component (each elects its own datum receiver r1).  Union-find over
-        //     this epoch's shared arcs, the same walk buildCarryDdPriors does.
-        std::map<std::pair<char, std::string>, std::map<std::string, std::string>> dsu;
-        auto findRoot = [](const std::map<std::string, std::string>& p,
-                           std::string v) -> std::string {
-            auto it = p.find(v);
-            while (it != p.end() && it->second != v) { v = it->second; it = p.find(v); }
-            return v;
-        };
+        //     a component (each elects its own datum receiver r1).  This epoch's shared
+        //     arcs, the same walk buildCarryDdPriors does, go to the shared union-find
+        //     (networkEmitRebaseComponents, on arcgraph::Dsu since card AGT).
+        EmitRebaseArcs rb_arcs;   // (const,signal) -> (station index, satellite), walk order
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i] || est_index_of[i] < 0) continue;
             for (const auto& [amb, sidx] : stations[i].sm->getAmbiguities()) {
@@ -216,28 +211,12 @@ void networkEmitStore(
                 if (!shared_phase_keys.count(
                         StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal)))
                     continue;   // not an eq34 graph arc (gated/legacy lump)
-                auto& p = dsu[{letterOfSat(parts->satellite), parts->signal}];
-                const std::string rv = "R" + std::to_string(i);
-                const std::string sv = "S" + parts->satellite;
-                if (!p.count(rv)) p[rv] = rv;
-                if (!p.count(sv)) p[sv] = sv;
-                p[findRoot(p, rv)] = findRoot(p, sv);   // union
+                rb_arcs[{letterOfSat(parts->satellite), parts->signal}].emplace_back(
+                    static_cast<int>(i), parts->satellite);
             }
         }
-        // (sat,signal) -> global component id (1-based; 0 = unassigned sentinel).
-        std::map<std::string, int> comp_of;
-        int next_comp = 0;
-        for (auto& [g, p] : dsu) {
-            std::map<std::string, int> root2id;
-            for (const auto& [v, par] : p) {
-                (void)par;
-                if (v.empty() || v[0] != 'S') continue;   // satellite vertices only
-                const std::string root = findRoot(p, v);
-                int& id = root2id[root];
-                if (id == 0) id = ++next_comp;
-                comp_of[v.substr(1) + "|" + g.second] = id;
-            }
-        }
+        // (sat,signal) -> global component id (1-based).
+        const std::map<std::string, int> comp_of = networkEmitRebaseComponents(rb_arcs);
 
         // (c) Build re-base entries from the emitted phase biases.  GLONASS and non-eq34
         //     keys are excluded, so their raw emitted frame is untouched.  λ per (const,σ).

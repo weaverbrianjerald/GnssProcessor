@@ -222,6 +222,56 @@ namespace GnssProcessor {
     /// one the ils_max_dim cap left out.  reentry is 1 on a searched DD one of whose corners
     /// the mask released at this search (the DD's first search after the release).
     inline constexpr const char* kProducerArSuspectColumns = ",suspect_bits,reentry";
+    /// The four columns appended after those (before the header's newline) when
+    /// network.ambiguity_resolution.cycle_basis is armed (card AGT, step AGT-5,
+    /// filter/NetworkArCycleBasis.hpp).  cycle_kind is how the DD closes its chord: partner
+    /// (against the station's link parent and link reference) or borrowed (against an earlier
+    /// station sharing the most satellites); a chord no DD closes is a fundamental fallback,
+    /// counted at the run end and never a row.  band_only is 1 when the chord exists in this
+    /// band only.  basis_age_ep is the epochs since this DD identity (signal, sta_r, ref_sta,
+    /// sat_j, ref_sat) entered the basis without a break (0 on its first epoch).  map_state is
+    /// the DD's cycle against the last search's basis: same (that very cycle), mapped (an
+    /// integer combination of its cycles), fresh_life (through an arc whose integer may have
+    /// changed: freed this epoch or a new life stamp) or fresh_new (outside its span: a new arc,
+    /// or no stored basis).
+    inline constexpr const char* kProducerArCycleBasisColumns = ",cycle_kind,band_only,basis_age_ep,map_state";
+    /// network_ar_lattice.csv header (card AGT, step AGT-6; filter/NetworkArLattice.hpp;
+    /// network.ambiguity_resolution.trace_lattice).  One row per epoch the search built the
+    /// cycle basis, after the observatory released the lattice arcs whose life ended and
+    /// offered the search's determined DDs, in that order.
+    ///
+    /// rows / arcs: the lattice dimension and the distinct band-arcs its rows hold, after the
+    /// epoch.  fixes: the DDs offered (the trace's kept rows); added + confirmed + contradicted
+    /// + not_primitive = fixes.  released: the lattice arcs released (rel_vanished, the search
+    /// did not read the arc; rel_first_seen, the last search did not; rel_freed, this epoch's
+    /// free-epoch latch; rel_stamp, a change of the arc's life stamp that is not the echo of a
+    /// life the last search began; their sum is released).  released_touching: those that still
+    /// held a row when eliminated.  dims_lost: the rows dropped; it equals released_touching
+    /// unless an elimination found no row holding the arc at +-1 (no_unit counts those, which
+    /// drop every row that holds the arc).  max_len / mean_len: the longest and the mean row
+    /// (arcs) after the epoch.  The evidence is valid only while no hold pulls the floats the
+    /// search fixes.
+    inline constexpr const char* kArLatticeHeader =
+        "week,tow,rows,arcs,fixes,added,confirmed,contradicted,not_primitive,released,"
+        "released_touching,dims_lost,no_unit,rel_vanished,rel_first_seen,rel_freed,rel_stamp,"
+        "max_len,mean_len\n";
+    /// network_ar_lattice_events.csv header (card AGT, step AGT-6).  One row per released
+    /// lattice arc (event `release`) and per offer that is not a confirmation (event `added`,
+    /// `contradicted` or `not_primitive`), in the observatory's order (the releases, then the
+    /// offers); a kept DD of network_producer_ar.csv at the same epoch with no row here was
+    /// confirmed.  An offer row names the DD (sat_j, ref_sat, sta_r, ref_sta) and its offered
+    /// integer (`value`); `implied` is the lattice's integer on a contradiction and `len` the
+    /// new row's length on an addition.  A release row names the arc (sat_j, sta_r, signal; the
+    /// reference columns empty), its `cause` (vanished, first_seen, freed, stamp), the rows that
+    /// held it and the rows dropped, the changed life-stamp fields (`change_bits`, the
+    /// ArcLifeField bits: 1 adm_generation, 2 adm_run_start, 4 has_carry, 8 birth_ep, 16
+    /// dropped_ep, 32 relevel_s, 64 flag_ep) and the free-epoch latch's cause bits
+    /// (`free_cause`: 1 MW, 2 LLI, 4 IF-TD, 8 T4 attribution, 16 T3 consensus, 32 wind-up,
+    /// 64 gap re-entry, 128 GF jump).  Graded against truth by
+    /// scripts/simnet_ar_lattice_grade.py.
+    inline constexpr const char* kArLatticeEventsHeader =
+        "week,tow,event,cons,signal,sat_j,ref_sat,sta_r,ref_sta,value,implied,len,cause,"
+        "rows_touched,rows_dropped,change_bits,free_cause\n";
     /// network_block_baarda.csv header (docs/SPEC_redundancy_census.md BB-INC-1..3).
     /// One row per (constellation family x label) per epoch that swept a block.
     ///
@@ -492,6 +542,15 @@ namespace GnssProcessor {
         /// Diagnostic only: the emitted product is byte-identical with it on or off.
         std::ofstream producer_ar_trace;
         const std::filesystem::path producer_ar_trace_path;
+        /// The producer AR search's lattice observatory (card AGT, step AGT-6;
+        /// network.ambiguity_resolution.trace_lattice with .enable): one row per search epoch
+        /// (@ref kArLatticeHeader) and one per release or non-confirming offer
+        /// (@ref kArLatticeEventsHeader).  Written by filter/NetworkArLattice.cpp.
+        /// Measure-only: the emitted product is byte-identical with it on or off.
+        std::ofstream ar_lattice_trace;
+        const std::filesystem::path ar_lattice_trace_path;
+        std::ofstream ar_lattice_events_trace;
+        const std::filesystem::path ar_lattice_events_trace_path;
         /// Raw cycle-slip observables per (station, sat) every epoch
         /// (network.trace_slip_raw): Melbourne-Wübbena, geometry-free L1−L2, first-signal
         /// phase-minus-code (all m) and the per-band RINEX LLI, computed from

@@ -27,6 +27,8 @@
 
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkArSuspect.hpp"      // ArSuspectLedger / ArSuspectCounters (card ARL)
+#include "filter/NetworkArCycleBasis.hpp"   // ArBasisMemory / ArCycleBasisCounters (card AGT)
+#include "filter/NetworkArLattice.hpp"      // ArLatticeState / ArLatticeCounters (card AGT, AGT-6)
 #include "filter/NetworkParamRegistry.hpp" // NetworkParamRegistry: one declared property set per parameter kind (card PRM)
 #include "filter/NetworkParamInventory.hpp" // NetworkParamInventory: every parameter instance with its disposition (card NOM N1)
 #include "filter/NetworkCarrySites.hpp"     // CarrySite / CarryMechanism: the carried references of the border (card PRM phase 2)
@@ -2254,6 +2256,19 @@ namespace GnssProcessor {
         /// knobs.ar_suspect_epochs > 0.  Not snapshotted (a resumed leg starts with every
         /// corner clean).
         ArSuspectLedger              ar_suspect;
+        /// The producer AR search's cycle-basis memory (card AGT, step AGT-5,
+        /// filter/NetworkArCycleBasis.hpp): per family (keyed by its bands), the last search's
+        /// links, basis, arc life tracks and DD identities, which the next search keeps its
+        /// links from and maps its basis against.  Written and read at SB_NETAR only.  Empty
+        /// and untouched unless network.ambiguity_resolution.cycle_basis.  Not snapshotted and
+        /// not fingerprinted (the search is log-only): a resumed leg rebuilds, counted.
+        std::map<ArFamilyKey, ArBasisMemory> ar_basis;
+        /// The producer AR search's lattice observatory (card AGT, step AGT-6,
+        /// filter/NetworkArLattice.hpp): the lattice of fixed cycles, released and offered once
+        /// per search epoch at SB_NETAR, after the search.  Empty and untouched unless
+        /// network.ambiguity_resolution.trace_lattice.  Not snapshotted and not fingerprinted
+        /// (measure-only): a resumed leg starts with an empty lattice.
+        ArLatticeState               ar_lattice;
         /// Retap piece (relevel_retap_statistical): per-arc consecutive-retap streak
         /// (key → last continuous-GPS s, streak).  An arc that re-trips
         /// relevel_retap_streak_max times inside the 120 s window falls back to the erase
@@ -3179,9 +3194,10 @@ namespace GnssProcessor {
         // All three are needed to read the mechanism, because two of them are the policy
         // working and the third is the graph refusing it:
         //   * deseeded:   slipped incumbents denied their sticky tree seat;
-        //   * demoted:    arcLife rankings pushed below the clean band (inert unless the
-        //                 longevity election is armed; counted per comparison, so it is a
-        //                 sort-effort number, not a count of distinct arcs);
+        //   * demoted:    slipped arcs whose arcLife ranking was pushed below the clean
+        //                 band (inert unless the longevity election is armed); each slipped
+        //                 arc counts once per epoch (card AGT step AGT-4; it counted the
+        //                 sort's comparator calls before);
         //   * readmitted: slipped arcs that became tree edges anyway, because the
         //                 component had no other route to the vertex.  Those still
         //                 mass-refloat, and a large share here means the topology, not the
@@ -4687,6 +4703,16 @@ namespace GnssProcessor {
         /// DDs got at the first search after the release.  All zero unless
         /// knobs.ar_suspect_epochs > 0.
         ArSuspectCounters   netar_suspect;
+        /// The search's cycle basis (card AGT, filter/NetworkArCycleBasis.hpp): coverage per
+        /// band against the lattice dimension, rows by kind, links kept and re-seats, the map
+        /// against the stored basis, the arc lives and the build cost.  All zero unless
+        /// network.ambiguity_resolution.cycle_basis.
+        ArCycleBasisCounters netar_cycle;
+        /// The search's lattice observatory (card AGT step AGT-6, filter/NetworkArLattice.hpp):
+        /// offers by verdict, releases by cause with the rows they held and the dimensions
+        /// lost, the lattice's size and row lengths, the cost.  All zero unless
+        /// network.ambiguity_resolution.trace_lattice.
+        ArLatticeCounters    netar_lattice;
 
         /// --- Run-end telemetry of canonical-pair admission (card CPA).
         /// The on-path readout of the rule (standing invariant 4): a `withheld_total` of

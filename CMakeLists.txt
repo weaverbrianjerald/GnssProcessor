@@ -236,6 +236,10 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkStashStatus.cpp
     src/core/filter/NetworkProducerAr.cpp
     src/core/filter/NetworkArSuspect.cpp
+    src/core/filter/NetworkArcGraph.cpp
+    src/core/filter/NetworkArcLife.cpp
+    src/core/filter/NetworkArCycleBasis.cpp
+    src/core/filter/NetworkArLattice.cpp
     src/core/filter/NetworkInstallCarry.cpp
     src/core/filter/NetworkDdPriorBuild.cpp
     src/core/filter/NetworkMwWlGlue.cpp
@@ -423,6 +427,12 @@ add_executable(gnss_tests
     tests/test_border_clone.cpp
     tests/test_network_iono_deweight_gate.cpp
     tests/test_network_zstore.cpp
+    tests/test_network_arc_graph.cpp
+    tests/test_network_arc_graph_oracles.cpp
+    tests/test_network_arc_life.cpp
+    tests/test_producer_ar_cycle_basis.cpp
+    tests/test_ar_cycle_basis_config.cpp
+    tests/test_network_ar_lattice.cpp
     tests/test_network_robust_stats.cpp
     tests/test_network_slip_qc.cpp
     tests/test_gap_reentry_relevel.cpp

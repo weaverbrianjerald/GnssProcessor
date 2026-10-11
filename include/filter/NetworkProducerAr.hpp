@@ -28,7 +28,14 @@
  *     last few epochs stays in the basis and the trace but is kept out of the search
  *     (filter/NetworkArSuspect.hpp, @ref netar::maskedSearchOrder); the trace then
  *     carries the DD's suspect cause bits and its re-entry flag, and the release back
- *     into the search is counted (@ref netar::reentryOutcome).
+ *     into the search is counted (@ref netar::reentryOutcome).  The basis is the star
+ *     unless `tree_basis` (card ARL: a spanning tree of station baselines per
+ *     (constellation, signal)) or `cycle_basis` (card AGT: a sticky, full-coverage cycle
+ *     basis per family of a constellation's signals, filter/NetworkArCycleBasis.hpp,
+ *     searched one block per station, @ref netar::searchBlockKey) is armed.  Under
+ *     `trace_lattice` (card AGT step AGT-6) the seam returns the epoch's determined DDs as
+ *     cycles with every band-arc's life reading (@ref ArEpochFixes), which the measure-only
+ *     lattice observatory (filter/NetworkArLattice.hpp) reads next in the same bracket.
  *  2. **One-shot NEQ export** (`network.neq_export_epoch`): a post-solve, read-only dump
  *     of the assembled arrowhead normal equations (border N_ss raw and reduced, with
  *     RHS; each station's N_sr / N_rr / u_r; shared and local column labels) as
@@ -41,6 +48,7 @@
  */
 
 #include "filter/IlsCore.hpp"            // ils::IlsResult / IlsGateConfig (blockDecorrelatedFix)
+#include "filter/NetworkArCycleBasis.hpp" // ArEpochFixes (the lattice observatory's input; card AGT)
 #include "filter/NetworkArSuspect.hpp"   // ArSuspectReentry (reentryOutcome; card ARL)
 #include "filter/NetworkEstimator.hpp"   // NetworkEstimator
 #include "filter/NetworkSbasis.hpp"      // NetworkSbasis::Plan (shared_datum)
@@ -249,6 +257,20 @@ ArSuspectReentry reentryOutcome(const std::vector<char>& reentry,
                                 const std::vector<DdFixLabel>& labels,
                                 const std::vector<PairLane>& lanes, double det_sigma_cyc);
 
+/**
+ * @brief The search block of a DD: "cons|sta_r|ref_sta" (one block per baseline, card ARL
+ *        block_search), or "cons|sta_r" under the cycle basis (one block per station, card
+ *        AGT: a station's partner and borrowed DDs in every band, so the two bands of a chord
+ *        share a block).  The covariance readback and the search use the same key.
+ * @param cons        Constellation key ("G").
+ * @param sta_r       The DD's station.
+ * @param ref_sta     Its reference station.
+ * @param per_station True under @c network.ambiguity_resolution.cycle_basis.
+ * @return The block key.
+ */
+std::string searchBlockKey(const std::string& cons, const std::string& sta_r, const std::string& ref_sta,
+                           bool per_station);
+
 } // namespace netar
 
 /**
@@ -265,8 +287,16 @@ ArSuspectReentry reentryOutcome(const std::vector<char>& reentry,
  *                      keeps every DD with a suspect corner out of the search,
  *                      counts the corners it releases back into the search and
  *                      what their DDs get there (`carry.ar_suspect.masking`), and
- *                      adds to `counters.netar_suspect`.  Taken whole for
- *                      seam-family uniformity.
+ *                      adds to `counters.netar_suspect`.  Under
+ *                      `network.ambiguity_resolution.cycle_basis` (card AGT) it reads
+ *                      each family's memory in `carry.ar_basis` (the last search's
+ *                      links, basis and arc lives), the arc ledger, `carry.local_carry`,
+ *                      `carry.amb_flag_ep` and `carry.relevel.free_ambs` (the arc life
+ *                      stamps, filter/NetworkArcLife.hpp), stores the memory back after
+ *                      the search and adds to `counters.netar_cycle`.  Under
+ *                      `trace_lattice` it also reads `carry.relevel.free_cause` (each
+ *                      freed arc's cause bits, for the observatory's attribution).  Taken
+ *                      whole for seam-family uniformity.
  * @param config_       Reconstructs `nc = config_.getNetworkConfig()` and
  *                      `netar = nc.ambiguity_resolution`.
  * @param log           "main_log": the Phase-2 AR summary and NEQ-export info rows.
@@ -283,19 +313,23 @@ ArSuspectReentry reentryOutcome(const std::vector<char>& reentry,
  * @param asm_res       Per-station assembly results (h2local for local-column labels).
  * @param plan          S-basis plan (shared_datum for the conditional covariance).
  * @param log_dir_      Output root for the NEQ-export artifacts (log_dir_/neq_export).
+ * @return What the lattice observatory reads this epoch (card AGT step AGT-6): the cycle
+ *         basis built, the determined DDs as cycles and every band-arc's life reading.
+ *         Empty (@c searched false) unless `network.ambiguity_resolution.trace_lattice` and
+ *         the search block ran.
  */
-void networkProducerAr(NetworkRunContext& ctx,
-                       const GnssConfig& config_,
-                       const std::shared_ptr<spdlog::logger>& log,
-                       NetworkRunTraces& traces,
-                       const SyncedEpoch& se,
-                       const NetworkEstimator& est,
-                       const Eigen::VectorXd& x_s,
-                       const std::vector<NetStation>& stations,
-                       const std::vector<int>& est_index_of,
-                       const std::vector<StationAssembly>& asm_res,
-                       const NetworkSbasis::Plan& plan,
-                       const std::filesystem::path& log_dir_);
+ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
+                               const GnssConfig& config_,
+                               const std::shared_ptr<spdlog::logger>& log,
+                               NetworkRunTraces& traces,
+                               const SyncedEpoch& se,
+                               const NetworkEstimator& est,
+                               const Eigen::VectorXd& x_s,
+                               const std::vector<NetStation>& stations,
+                               const std::vector<int>& est_index_of,
+                               const std::vector<StationAssembly>& asm_res,
+                               const NetworkSbasis::Plan& plan,
+                               const std::filesystem::path& log_dir_);
 
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
 

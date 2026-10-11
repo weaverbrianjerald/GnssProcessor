@@ -78,16 +78,27 @@
  *   - phase D: the emit-layer frame re-basing, the run-end counter line, the
  *     config toggles (`network.carry_invariant*`), and the field falsifier.
  *
- * Production use: `gnss_core` includes this header.  @ref ArcKey keys the carry
+ * Production use: `gnss_core` includes this header.  @ref ArcKey (defined in
+ * NetworkArcGraph.hpp since card AGT, included here) keys the carry
  * maps (NetworkRunContext, NetworkDdPriorBuild, NetworkInstallCarry,
- * NetworkWlRunTypes), and `NetworkInvariantCarryDriver` builds a @ref ZComponent
- * per component for its fundamental cycles, only under
- * `network.carry_invariant`.  The @ref NetworkZStore container, the lifecycle
+ * NetworkWlRunTypes).  The @ref NetworkZStore container, the lifecycle
  * transforms and the Kalman recursion on z are exercised by the unit gates (the
  * driver's gate uses them as the phase-B oracle), not by the producer.
+ *
+ * Since card AGT (step AGT-3) the producer builds no @ref ZComponent either:
+ * `NetworkInvariantCarryDriver` takes its trees and fundamental cycles from
+ * filter/NetworkArcGraph (`arcgraph::singleTreeOf`, `arcgraph::fundamentalCycle`).
+ * @ref ZComponent stays here as the phase-B test oracle: of the z-store gates
+ * (tests/test_network_zstore.cpp), of the driver's gate, and of the arc-graph
+ * oracles that prove those two functions equal to its constructor and its
+ * @ref ZComponent::fundamentalCycle (tests/test_network_arc_graph_oracles.cpp).
+ * Two tree-path implementations therefore coexist until the retired lineage that
+ * runs the carry is deleted.
  */
 
 #include <Eigen/Dense>
+
+#include "filter/NetworkArcGraph.hpp"   // ArcKey (moved there verbatim by card AGT, AGT-1)
 
 #include <algorithm>
 #include <cstddef>
@@ -102,38 +113,6 @@
 namespace GnssProcessor {
 
 /**
- * @brief An undirected arc of the observation graph, identified by its two
- *        vertex ids in a canonical (ascending) orientation.
- *
- * Vertices are opaque integer ids in one flat id space per @f$(\text{const},
- * \sigma)@f$ group; the store does not distinguish receiver ids from satellite
- * ids (the cycle-space algebra is identical for any bipartite graph).  The
- * caller allocates disjoint id ranges for receivers and satellites (phase C maps
- * a receiver pool index and a satellite label to two ids).  There is at most one
- * arc between any (receiver, satellite) pair, so the unordered vertex pair is a
- * unique arc identity; @ref u < @ref v is enforced so equal arcs compare equal.
- * The +1 reference orientation of an arc is @ref u → @ref v (min → max); every
- * signed cycle sum uses that convention (the physical DD sign matters only to the
- * phase-D emit re-basing, which uses the same convention on both sides).
- */
-struct ArcKey {
-    int u{0};  ///< lower-id endpoint (reference-orientation tail).
-    int v{0};  ///< higher-id endpoint (reference-orientation head).
-
-    ArcKey() = default;
-    /// Construct in canonical (ascending) orientation from any endpoint order.
-    ArcKey(int a, int b) : u(a < b ? a : b), v(a < b ? b : a) {}
-    /// The canonical factory (identical to the two-arg constructor; explicit for call sites).
-    static ArcKey make(int a, int b) { return ArcKey(a, b); }
-
-    bool operator==(const ArcKey& o) const { return u == o.u && v == o.v; }
-    bool operator!=(const ArcKey& o) const { return !(*this == o); }
-    bool operator<(const ArcKey& o) const { return u != o.u ? u < o.u : v < o.v; }
-    /// The other endpoint of the arc given one endpoint (undefined if @p w is neither).
-    int other(int w) const { return w == u ? v : u; }
-};
-
-/**
  * @brief One connected @f$(\text{const},\sigma)@f$ component's z-block: its chord
  *        set (the DD basis), the carried DD means @f$\hat z@f$ and covariance
  *        @f$P^z@f$, and the spanning tree that defines the fundamental cycles.
@@ -143,6 +122,10 @@ struct ArcKey {
  * arcs.  The tree is stored as undirected adjacency; every arc's `ArcKey`
  * (hence its sign) is recovered from a vertex pair, so no separate edge list is
  * needed.  The z-vector index of a chord is its position in @ref chords_ .
+ *
+ * @note The phase-B test oracle since card AGT step AGT-3: no production code
+ *       constructs it (the carry driver's trees and cycles come from
+ *       filter/NetworkArcGraph); see the file banner.
  */
 class ZComponent {
 public:

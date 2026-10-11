@@ -1210,6 +1210,60 @@ namespace GnssProcessor {
                           "next {} search(es) (still traced, in_subset 0, with the "
                           "suspect_bits and reentry columns).  The release is time-only.  "
                           "Log-only: the products do not change.", ar.suspect_epochs);
+            // Card AGT (step AGT-5): the sticky full-coverage cycle basis
+            // (filter/NetworkArCycleBasis.hpp).  It replaces tree_basis's per-signal Prim and
+            // keeps decorrelated_partial's search and block_search's blocks, so it needs all
+            // three; otherwise it is named and forced off.
+            ar.cycle_basis = jval<bool>(json, "network.ambiguity_resolution.cycle_basis",
+                                        "network_ar_cycle_basis", false);
+            ar.cycle_basis_sticky = jval<bool>(json, "network.ambiguity_resolution.cycle_basis_sticky",
+                                               "network_ar_cycle_basis_sticky", true);
+            if (ar.cycle_basis && !(ar.tree_basis && ar.decorrelated_partial && ar.block_search)) {
+                log->warn("Network producer AR: ambiguity_resolution.cycle_basis requires "
+                          "tree_basis, decorrelated_partial and block_search (here {}, {}, {}); "
+                          "the cycle basis is forced OFF.",
+                          ar.tree_basis ? "on" : "off", ar.decorrelated_partial ? "on" : "off",
+                          ar.block_search ? "on" : "off");
+                ar.cycle_basis = false;
+            }
+            if (ar.cycle_basis && !ar.enable)
+                log->warn("Network producer AR: ambiguity_resolution.cycle_basis is ON but "
+                          ".enable is OFF; the search never runs, so the cycle basis is INERT.");
+            else if (ar.cycle_basis)
+                log->info("Network producer AR: cycle basis ARMED (card AGT): per constellation "
+                          "the two signals with the most arcs share one graph; a {} baseline "
+                          "forest is closed into one DD per chord of every band (the whole "
+                          "cycle lattice, E - V + C per band; fundamental fallbacks counted, "
+                          "not searched), one search block per station.  Trace columns "
+                          "cycle_kind, band_only, basis_age_ep, map_state.  Log-only: the "
+                          "products do not change.",
+                          ar.cycle_basis_sticky ? "sticky (incumbent links kept)"
+                                                : "NON-sticky (rebuilt every search)");
+            if (!ar.cycle_basis_sticky && !ar.cycle_basis)
+                log->warn("Network producer AR: ambiguity_resolution.cycle_basis_sticky is false "
+                          "but cycle_basis is OFF; the setting is INERT.");
+            // Card AGT (step AGT-6): the measure-only lattice observatory
+            // (filter/NetworkArLattice.hpp).  Its offers are the cycle basis's determined DDs and
+            // its releases the cycle basis's arc life readings, so it needs the cycle basis;
+            // otherwise it is named and forced off.
+            ar.trace_lattice = jval<bool>(json, "network.ambiguity_resolution.trace_lattice",
+                                          "network_ar_trace_lattice", false);
+            if (ar.trace_lattice && !ar.cycle_basis) {
+                log->warn("Network producer AR: ambiguity_resolution.trace_lattice requires "
+                          "cycle_basis (OFF here, or forced off above); the lattice observatory "
+                          "is forced OFF.");
+                ar.trace_lattice = false;
+            }
+            if (ar.trace_lattice && !ar.enable)
+                log->warn("Network producer AR: ambiguity_resolution.trace_lattice is ON but "
+                          ".enable is OFF; the search never runs, so the lattice observatory is "
+                          "INERT (no file is opened).");
+            else if (ar.trace_lattice)
+                log->info("Network producer AR: lattice observatory ARMED (card AGT): each search "
+                          "epoch releases the lattice arcs whose life ended, then offers the "
+                          "determined DDs (logs/network_ar_lattice.csv, "
+                          "logs/network_ar_lattice_events.csv, a run-end report).  Measure-only: "
+                          "the products do not change.");
             ar.min_epochs = jval<int>(json, "network.ambiguity_resolution.min_epochs",
                                       "network_ar_min_epochs", 10);
             // Cap on the MLAMBDA search dimension (0 = uncapped legacy).  Required at
@@ -1249,7 +1303,7 @@ namespace GnssProcessor {
                           "network COULD fix, and re-pin / re-solve is Phase 3 and unbuilt.  "
                           "Live gates: FFR>={:.4f}, ratio>={:.1f} (<{:.0e}), per-pair "
                           "frac<={:.2f} cyc, partial_ar {}, ils_max_dim {}, trace {}.  "
-                          "INERT: wl_cascade{}.  GPS+Galileo only; GLONASS stays float.",
+                          "INERT: wl_cascade{}.  GPS+Galileo only; GLONASS stays float.{}",
                           ar.min_epochs, ar.min_success_rate, ar.ratio_threshold,
                           ar.ratio_upper_bound, ar.nl_max_per_pair_frac,
                           ar.enable_partial_ar ? "on" : "off",
@@ -1257,7 +1311,13 @@ namespace GnssProcessor {
                                              : std::string("uncapped"),
                           ar.trace ? "ON (logs/network_producer_ar.csv)" : "off",
                           ar.wl_cascade ? " (set true, but no consumer reads it)"
-                                        : "");
+                                        : "",
+                          // Card AGT: named only when armed, so an unarmed line is unchanged.
+                          std::string(ar.cycle_basis ? (ar.cycle_basis_sticky
+                                                            ? "  Basis: cycle_basis, sticky."
+                                                            : "  Basis: cycle_basis, NON-sticky (control).")
+                                                     : "")
+                              + (ar.trace_lattice ? "  Lattice observatory ON." : ""));
             }
         }
     }
