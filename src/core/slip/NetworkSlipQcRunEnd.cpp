@@ -951,6 +951,8 @@ int networkIfTdReseedRunEnd(const NetworkRunEndView& v) {
                   "post-flag evaluation followed.  Either every re-seeded satellite left its "
                   "chain at the next epoch or the mark never reached the pool; check the "
                   "wiring before reading this arm as re-seeded.", reseeded);
+    return 0;
+}
 
 // Run-end report: the co-resumed share of the per-signal gap re-entry tier
 // (network.cycle_slip.gap_reentry_coresumed_share).  A row added after the cut, so it
