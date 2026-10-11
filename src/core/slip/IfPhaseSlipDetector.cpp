@@ -1178,6 +1178,9 @@ namespace GnssProcessor {
                 // The chain this sample came from (§14.10), so a driver that flags
                 // it can restart that chain alone.
                 info.state_key    = sys_str;
+                // The post-flag evaluation of a re-seeded gradient (card ARL): the
+                // sample a reset would have left out.
+                info.after_reseed = (cs.reseeded.count(sat) > 0);
                 // The all-pairs cache is a superset and is always filled; the
                 // per-satellite cache holds the first pair only, as with the knob off.
                 if (!info.sig1.empty() && !info.sig2.empty())
@@ -1185,9 +1188,11 @@ namespace GnssProcessor {
                 if (first_pair_chain) last_if_jumps_[sat] = info;
             }
 
-            // Store gradients for next epoch (exclude reset satellites)
+            // Store gradients for next epoch (exclude reset satellites).  The
+            // re-seed marks described the gradients being replaced, so they go too.
             cs.prev_grad.clear();
             cs.prev_los.clear();
+            cs.reseeded.clear();
             for (const auto& [sat, g] : grad_phi_if) {
                 bool was_reset = false;
                 for (const auto& key : reset_keys)
@@ -1223,6 +1228,7 @@ namespace GnssProcessor {
                 logger->debug("Cleared IF phase history for {} in constellation {}", satellite, sys);
                 cs.prev_grad.erase(it);
                 cs.prev_los.erase(satellite);
+                cs.reseeded.erase(satellite);
             }
             if (cs.ref_satellite == satellite) {
                 logger->debug("Reference satellite {} for {} was reset, will reselect next epoch", satellite, sys);
@@ -1246,6 +1252,7 @@ namespace GnssProcessor {
             logger->debug("Cleared IF phase history for {} in chain {}", satellite, state_key);
             cs.prev_grad.erase(it);
             cs.prev_los.erase(satellite);
+            cs.reseeded.erase(satellite);
         }
         if (cs.ref_satellite == satellite) {
             logger->debug("Reference satellite {} for chain {} was reset, will reselect next epoch",
@@ -1253,6 +1260,48 @@ namespace GnssProcessor {
             cs.ref_satellite.clear();
             cs.ref_elevation = 0.0;
         }
+    }
+
+    // =================================================================
+    // External re-seed (card ARL, slip-ladder defect 2)
+    // =================================================================
+
+    bool IfPhaseSlipDetector::reseedInChain(const std::string& state_key,
+        ConstellationState& cs, const std::string& satellite) {
+        // Between the flag epoch's detect() and the next one, prev_grad holds the
+        // flag epoch's own single difference for every satellite it saw (in
+        // deferred mode only a reference-arm key excludes one).  That gradient
+        // already contains the step, so it is kept as it stands: nothing is
+        // rewritten, the entry is only marked so the next sample can say it is the
+        // post-flag evaluation.  The reference handling is the reset's.
+        auto logger = log_manager_.getLogger("if_slip_detector");
+        const bool kept = (cs.prev_grad.count(satellite) > 0);
+        if (kept) {
+            cs.reseeded.insert(satellite);
+            logger->debug("Re-seeded IF phase history for {} in chain {} from the flag epoch",
+                satellite, state_key);
+        }
+        if (cs.ref_satellite == satellite) {
+            logger->debug("Reference satellite {} for chain {} was re-seeded, will reselect "
+                "next epoch", satellite, state_key);
+            cs.ref_satellite.clear();
+            cs.ref_elevation = 0.0;
+        }
+        return kept;
+    }
+
+    bool IfPhaseSlipDetector::reseedSatellite(const std::string& satellite) {
+        bool kept = false;
+        for (auto& [key, cs] : constellation_state_)
+            kept = reseedInChain(key, cs, satellite) || kept;
+        return kept;
+    }
+
+    bool IfPhaseSlipDetector::reseedSatelliteInState(const std::string& state_key,
+        const std::string& satellite) {
+        auto sit = constellation_state_.find(state_key);
+        if (sit == constellation_state_.end()) return false;
+        return reseedInChain(state_key, sit->second, satellite);
     }
 
     void IfPhaseSlipDetector::resetAll() {

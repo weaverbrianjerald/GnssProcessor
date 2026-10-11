@@ -67,6 +67,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -193,6 +194,54 @@ namespace GnssProcessor {
                                    const std::string& satellite);
 
         /**
+         * @brief Keep a flagged satellite's gradient as the origin of the next
+         *        double difference instead of clearing it (card ARL, slip-ladder
+         *        defect 2; @c network.cycle_slip.if_phase_td_reseed_on_flag).
+         *
+         * The alternative to @ref resetSatellite for a driver that flags from the
+         * pooled test (@ref setDeferFlagging).  It is called after the flag epoch's
+         * detect() and before the next one.  At that point every chain's stored
+         * gradient for @p satellite is the flag epoch's own between-satellite
+         * single difference, which already contains the step.  Keeping it means
+         * the next epoch's double difference measures only what happened between
+         * the two epochs: about 0 on an arc that stays clean, and the size of a
+         * second step if the slip repeats in that epoch.  A reset leaves that
+         * epoch with no double difference, so a slip repeated there passes the
+         * detector unseen (repetition 2 of slip-ladder rung S7).
+         *
+         * The reference handling is that of a reset: a chain whose reference is
+         * @p satellite clears it, and the next epoch elects one again.  The
+         * satellite's next sample on each re-seeded chain is published with
+         * IfJumpInfo::after_reseed set.
+         *
+         * A one-epoch outlier (a spike, not a step) reads with the opposite sign in
+         * the next epoch, so under re-seeding it is flagged twice where a reset
+         * flags it once.
+         *
+         * @param satellite Satellite identifier (e.g. "G01").
+         * @return true when at least one chain held a flag-epoch gradient for the
+         *         satellite, so the next epoch has a double difference; false when
+         *         there was none to keep (the call then acts as a reset).
+         */
+        bool reseedSatellite(const std::string& satellite);
+
+        /**
+         * @brief Keep a flagged satellite's gradient in one gradient chain.
+         *
+         * Per-pair counterpart of @ref reseedSatellite, as
+         * @ref resetSatelliteInState is of @ref resetSatellite (§14.10).  A
+         * @p state_key with no entry is a silent no-op and returns false.
+         *
+         * @param state_key Chain key, i.e. @ref IfJumpInfo::state_key of the
+         *                  flagged sample.
+         * @param satellite Satellite identifier (e.g. "G01").
+         * @return true when the chain held a flag-epoch gradient for the
+         *         satellite; false otherwise.
+         */
+        bool reseedSatelliteInState(const std::string& state_key,
+                                    const std::string& satellite);
+
+        /**
          * @brief Clear all internal state (all constellations).
          *
          * Called after a complete filter reset.
@@ -232,6 +281,11 @@ namespace GnssProcessor {
             /// per-pair decisions depend on each other, which per-pair evaluation
             /// must avoid.
             std::string state_key;
+            /// True when a driver re-seeded this chain's gradient for the satellite
+            /// after the previous epoch's flag (@ref reseedSatellite): this sample is
+            /// the post-flag evaluation that a reset leaves out.  Always false
+            /// while no driver re-seeds.
+            bool after_reseed{ false };
         };
 
         /**
@@ -560,7 +614,9 @@ namespace GnssProcessor {
          * outlier flag.  It therefore does not exclude per-satellite-flagged
          * arcs from the next epoch's gradients: the caller calls
          * @ref resetSatellite (or @ref resetSatelliteInState for one chain) on
-         * the arcs it flags from the pool.  The reference-satellite slip check
+         * the arcs it flags from the pool, or @ref reseedSatellite
+         * (@ref reseedSatelliteInState) to keep the flag epoch's gradient as the
+         * next epoch's origin.  The reference-satellite slip check
          * still runs, since it is a per-station common-mode test the network
          * pool cannot see.  Default false (self-contained per-station flagging,
          * the original behaviour).
@@ -644,6 +700,13 @@ namespace GnssProcessor {
              *  uses the current-epoch LOS vectors. */
             std::map<std::string, Eigen::Vector3d> prev_los;
 
+            /** Satellites whose prev_grad entry a driver kept after a flag
+             *  (@ref reseedSatellite).  Read by the next published sample
+             *  (IfJumpInfo::after_reseed) and cleared with prev_grad when the chain
+             *  stores that epoch's gradients, so a mark lives exactly as long as
+             *  the gradient it describes.  Empty while no driver re-seeds. */
+            std::set<std::string> reseeded;
+
             /** Receiver position at the previous epoch (ECEF meters). */
             Eigen::Vector3d prev_position{ Eigen::Vector3d::Zero() };
 
@@ -675,6 +738,22 @@ namespace GnssProcessor {
             /** Satellite the escalation excludes from the next election. */
             std::string ref_exclude;
         };
+
+        /**
+         * @brief Keep @p satellite's stored gradient in one chain: the body of
+         *        @ref reseedSatellite and @ref reseedSatelliteInState.
+         *
+         * Marks the entry in ConstellationState::reseeded when the chain holds one,
+         * and clears the chain's reference when it is @p satellite, as a reset
+         * does.
+         *
+         * @param state_key Chain key (for the debug log line only).
+         * @param cs        The chain's state.
+         * @param satellite Satellite identifier (e.g. "G01").
+         * @return true when the chain held a gradient for @p satellite.
+         */
+        bool reseedInChain(const std::string& state_key, ConstellationState& cs,
+                           const std::string& satellite);
 
         /** Per-gradient-chain state.  Keyed by system string ("GPS") for a
          *  satellite's first band pair (the key used with the knob off, so the

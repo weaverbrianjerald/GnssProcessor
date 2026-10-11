@@ -214,6 +214,14 @@ namespace GnssProcessor {
         "week,tow,cons,signal,sat_j,ref_sat,sta_r,ref_sta,lambda_m,float_cyc,"
         "sigma_cyc,in_subset,fixed_int,kept,ratio,p_succ,n_dd,n_search,n_fixed,"
         "wl_float_sigma_cyc,wl_cond_cyc,wl_cond_sigma_cyc,nl_cond_sigma_cyc\n";
+    /// The two columns appended to either header above (before its newline) when
+    /// network.ambiguity_resolution.suspect_epochs is armed (card ARL,
+    /// filter/NetworkArSuspect.hpp).  suspect_bits is the OR of the DD's four corners'
+    /// ArSuspectCause bits (1 free, 2 relevel, 4 drop, 8 raim, 16 mw_unknown, 32 gf_jump):
+    /// non-zero means the mask kept the DD out of the search, which tells a masked DD from
+    /// one the ils_max_dim cap left out.  reentry is 1 on a searched DD one of whose corners
+    /// the mask released at this search (the DD's first search after the release).
+    inline constexpr const char* kProducerArSuspectColumns = ",suspect_bits,reentry";
     /// network_block_baarda.csv header (docs/SPEC_redundancy_census.md BB-INC-1..3).
     /// One row per (constellation family x label) per epoch that swept a block.
     ///

@@ -373,6 +373,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_invariant = k.phase_datum_eq34 && config_.networkCarryInvariant();
     k.carry_invariant_pd_safe = k.carry_invariant && config_.networkCarryInvariantPdSafe();
     k.carry_aware_covariance = k.carry_invariant && config_.networkCarryAwareCovariance();
+    // Card ARL: the search's suspect-corner mask has nothing to mask without the search.
+    k.ar_suspect_epochs = nc.ambiguity_resolution.enable
+                              ? std::max(0, nc.ambiguity_resolution.suspect_epochs) : 0;
     // RAIM pool re-host (network.raim_carry_invariant).  Resolved here, beside the other
     // carry_invariant-derived knobs rather than with the raim_* family, so that one bool
     // tells all three consumers whether the re-hosted census is live: the driver's
@@ -1386,7 +1389,11 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   measurement admission   adm_{screen,bound_m,min_sats,heal_ep,max_frac,
         //                           trace} and adm_revet{,_gap_ep,_ep,_census,_hold}
         //   carry hygiene           phase_anchor_carry_reref
-        //   slip response           cycle_slip.{relevel_free_epoch,relevel_delta_bridge}
+        //   slip response           cycle_slip.{relevel_free_epoch,relevel_delta_bridge},
+        //                           cycle_slip.gf_arc_jump{,_m,_k,_window,_min_count}
+        //                           (card ARL; its per-arc state is never serialized),
+        //                           cycle_slip.if_phase_td_reseed_on_flag (card ARL; the
+        //                           IF-TD gradient chains are never serialized)
         //   resume response         zwd_seam_reseed, resume_frame_restore,
         //                           resume_slip_warmup_ep, resume_coupling_restore,
         //                           resume_carry_rebase, resume_d5_warmup_ep,

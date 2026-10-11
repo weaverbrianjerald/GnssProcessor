@@ -480,6 +480,30 @@ namespace GnssProcessor {
                       "SOLVE-AFFECTING through the detections and the response; the "
                       "gap_tracker_key_mismatch and gap_reentry_unreachable counters are "
                       "reported at run end in BOTH knob states.");
+        // Arc-scoped GF jump trigger interlock (card ARL; include/slip/NetworkGfArcJump.hpp),
+        // placed here for the load-order reason above.  It warns and does not disarm, as
+        // the card-G checks do: without the free-epoch latch the trigger still marks
+        // pending-reseed, and its run-end flag closure states what it did.
+        if (network_config_.slip_qc.gf_arc_jump) {
+            const auto& sq = network_config_.slip_qc;
+            if (!network_cycle_slip_relevel_free_epoch_ && !network_carry_invariant_
+                && network_phase_leveling_)
+                log->warn("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump is "
+                          "armed on a phase-leveling lineage with "
+                          "network.cycle_slip.relevel_free_epoch OFF.  A flag marks the pair "
+                          "pending-reseed, and PASS B's measurement pre-pass consumes that "
+                          "mark before the leveling inject reads it, so the stale level "
+                          "still folds (SPEC_slip_relevel_walk section 6).  Arm "
+                          "relevel_free_epoch to make the trigger act.");
+            log->info("Network (GF arc jump, card ARL): arc-scoped GF jump trigger ON.  Per "
+                      "dual-band arc, r = d(t) - d(last clean step), d the one-epoch "
+                      "geometry-free phase step; a flag when |r| > max({:.3f} m, {} * 1.4826 * "
+                      "MAD of the arc's last {} clean r, once {} are held) frees both bands of "
+                      "the pair (cause gf_jump).  SOLVE-AFFECTING; not fingerprinted (a "
+                      "forward-only slip response).",
+                      sq.gf_arc_jump_m, sq.gf_arc_jump_k, sq.gf_arc_jump_window,
+                      sq.gf_arc_jump_min_count);
+        }
         // Interlocks for the sim-only oracle slip response
         // (include/slip/NetworkSlipOracle.hpp), placed here for the same load-order
         // reason as the blocks above: carry_invariant and phase_leveling are both
@@ -1166,6 +1190,26 @@ namespace GnssProcessor {
                                        "network_ar_tree_basis", false);
             ar.block_search = jval<bool>(json, "network.ambiguity_resolution.block_search",
                                          "network_ar_block_search", false);
+            // Card ARL: the suspect-corner mask (filter/NetworkArSuspect.hpp), in loop
+            // epochs; 0 = off.  A negative window is named and replaced by off.
+            ar.suspect_epochs = jval<int>(json, "network.ambiguity_resolution.suspect_epochs",
+                                          "network_ar_suspect_epochs", 0);
+            if (ar.suspect_epochs < 0) {
+                log->warn("Network producer AR: ambiguity_resolution.suspect_epochs = {} is "
+                          "negative; the suspect-corner mask is OFF (0).", ar.suspect_epochs);
+                ar.suspect_epochs = 0;
+            }
+            if (ar.suspect_epochs > 0 && !ar.enable)
+                log->warn("Network producer AR: ambiguity_resolution.suspect_epochs = {} but "
+                          ".enable is OFF; the search never runs, so the suspect-corner mask "
+                          "is INERT.", ar.suspect_epochs);
+            else if (ar.suspect_epochs > 0)
+                log->info("Network producer AR: suspect-corner mask ARMED (card ARL): a DD "
+                          "with a (station, satellite) corner freed, re-levelled, dropped, "
+                          "RAIM-dropped, MW-unknown or GF-jump flagged is kept out of the "
+                          "next {} search(es) (still traced, in_subset 0, with the "
+                          "suspect_bits and reentry columns).  The release is time-only.  "
+                          "Log-only: the products do not change.", ar.suspect_epochs);
             ar.min_epochs = jval<int>(json, "network.ambiguity_resolution.min_epochs",
                                       "network_ar_min_epochs", 10);
             // Cap on the MLAMBDA search dimension (0 = uncapped legacy).  Required at
@@ -6503,6 +6547,70 @@ namespace GnssProcessor {
             sq.tracker_modeled_first =
                 jval<bool>(json, "network.cycle_slip.tracker_modeled_first",
                            "network_cycle_slip_tracker_modeled_first", false);
+            // Arc-scoped GF jump trigger (card ARL): the pre-solve witness of the slips
+            // MW and the IF-phase TD both miss.  Changes the solve; default off.
+            sq.gf_arc_jump =
+                jval<bool>(json, "network.cycle_slip.gf_arc_jump",
+                           "network_cycle_slip_gf_arc_jump", false);
+            sq.gf_arc_jump_m =
+                jval<double>(json, "network.cycle_slip.gf_arc_jump_m",
+                             "network_cycle_slip_gf_arc_jump_m", 0.04);
+            sq.gf_arc_jump_k =
+                jval<double>(json, "network.cycle_slip.gf_arc_jump_k",
+                             "network_cycle_slip_gf_arc_jump_k", 0.0);
+            sq.gf_arc_jump_window =
+                jval<int>(json, "network.cycle_slip.gf_arc_jump_window",
+                          "network_cycle_slip_gf_arc_jump_window", 20);
+            sq.gf_arc_jump_min_count =
+                jval<int>(json, "network.cycle_slip.gf_arc_jump_min_count",
+                          "network_cycle_slip_gf_arc_jump_min_count", 10);
+            // A bar that is not a positive finite number would flag every step (or none)
+            // and read as a detector result; a typo is named and the default taken.
+            if (!(sq.gf_arc_jump_m > 0.0) || !std::isfinite(sq.gf_arc_jump_m)) {
+                log->error("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump_m "
+                           "= {} is not a positive finite length; the default 0.04 m is used.",
+                           sq.gf_arc_jump_m);
+                sq.gf_arc_jump_m = 0.04;
+            }
+            if (!(sq.gf_arc_jump_k >= 0.0) || !std::isfinite(sq.gf_arc_jump_k)) {
+                log->error("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump_k "
+                           "= {} is negative or non-finite; 0 (the scale term off) is used.",
+                           sq.gf_arc_jump_k);
+                sq.gf_arc_jump_k = 0.0;
+            }
+            if (sq.gf_arc_jump_window < 1) {
+                log->error("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump_window "
+                           "= {} is below 1; the default 20 is used.", sq.gf_arc_jump_window);
+                sq.gf_arc_jump_window = 20;
+            }
+            if (sq.gf_arc_jump_min_count < 1 || sq.gf_arc_jump_min_count > sq.gf_arc_jump_window) {
+                const int clamped = std::clamp(sq.gf_arc_jump_min_count, 1, sq.gf_arc_jump_window);
+                log->warn("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump_min_count "
+                          "= {} lies outside [1, window = {}]; {} is used (a count the window "
+                          "cannot hold would leave the scale term off for the whole run).",
+                          sq.gf_arc_jump_min_count, sq.gf_arc_jump_window, clamped);
+                sq.gf_arc_jump_min_count = clamped;
+            }
+            // IF-TD post-flag re-seed (card ARL): keep a flagged satellite's gradient so
+            // the epoch after the flag has a double difference.  Changes the solve only
+            // through what that evaluation flags; default off.  network_cycle_slip_if_phase_td_
+            // is parsed above in this helper, so the interlock can sit here.
+            sq.if_phase_td_reseed_on_flag =
+                jval<bool>(json, "network.cycle_slip.if_phase_td_reseed_on_flag",
+                           "network_cycle_slip_if_phase_td_reseed_on_flag", false);
+            if (sq.if_phase_td_reseed_on_flag) {
+                if (!network_cycle_slip_if_phase_td_)
+                    log->warn("Network (IF-TD re-seed, card ARL): "
+                              "network.cycle_slip.if_phase_td_reseed_on_flag is armed without "
+                              "network.cycle_slip.if_phase_td.  No IF-TD detector is built, so "
+                              "nothing is flagged or re-seeded: the knob is INERT.");
+                else
+                    log->info("Network (IF-TD re-seed, card ARL): post-flag re-seed ON.  A pooled "
+                              "IF-TD flag keeps the satellite's flag-epoch gradient as the next "
+                              "epoch's origin instead of restarting its chain, so the epoch after "
+                              "a flag is evaluated and a slip repeated there is seen.  "
+                              "SOLVE-AFFECTING through those evaluations; not fingerprinted.");
+            }
             // Sim-only oracle slip response (include/slip/NetworkSlipOracle.hpp): shifts
             // the carried level by the true integer jump instead of freeing the arc, to
             // measure the ceiling of a level-preserving re-level.  Changes the solve;

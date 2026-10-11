@@ -350,6 +350,14 @@ int Application::runNetwork() {
         // anyConsumer and cardsArmed; the member's doc records the failure
         // measured when only the former was armed.
         sp.lane_snap           = config_.networkCycleSlipRelevelLaneSnap();
+        // The arc-scoped GF jump trigger (card ARL) reads the raw rows and keeps its own
+        // per-arc steps, so it arms the compute pass (anyConsumer) and not the qualify
+        // pass.
+        sp.gf_jump.armed       = sq.gf_arc_jump;
+        sp.gf_jump.floor_m     = sq.gf_arc_jump_m;
+        sp.gf_jump.k           = sq.gf_arc_jump_k;
+        sp.gf_jump.window      = sq.gf_arc_jump_window;
+        sp.gf_jump.min_count   = sq.gf_arc_jump_min_count;
         slip_qc.hist.resize(stations.size());
     }
     // Oracle slip response, simulation only (network.cycle_slip.oracle_relevel,

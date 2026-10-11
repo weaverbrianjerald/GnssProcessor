@@ -270,7 +270,7 @@ long long carryGapPrune(Map& m, double now_s, double horizon_s, OnErase on_erase
  * those the ones that held a carried entry at the response (the float vehicle's drop pass;
  * the leveling vehicle's inject reads the same set).
  */
-inline constexpr int kLatchCauses = 8;   ///< seven cause bits and "none"
+inline constexpr int kLatchCauses = 9;   ///< eight cause bits and "none"
 
 /// Short name of latch cause row @p i (bit order of @c RelevelEpochState, then "none").
 const char* latchCauseName(int i);
