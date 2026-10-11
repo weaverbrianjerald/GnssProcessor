@@ -5,14 +5,14 @@
 - **id:** GFC
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** RESULT 2026-10-10: the family-difference datum is the fix (Galileo clock wire 0.105 to 0.035 m, pilot-family users 0.8-0.9 to 0.16-0.26 m from hour 3, WTZZ00DEU hour-3 hump gone, census neutral against the Galileo control); pair continuity KEEP_OFF (it preserves birth realizations, worse for pilot users). Not armed. Pre-registered text: Card GAL2's field leftovers (the Galileo clock wire 0.106 m against 0.009 m on the sim, HARB00ZAF and DAV100ATA worse on pilot channels, E11 and E12's C5Q gross rows at SEYG00SYC) trace to one root read on 2026-10-10: a Galileo satellite's ionosphere-free code pin falls on whichever code family covers it, the inter-family offset (a constellation constant the data cannot see) is realized at about +1.1 m on pilot-born satellites and about 0 on combined-born ones, and every pair change re-seeds the pin at zero. Two default-off knobs: continuity at a pair change, and a family-difference datum in place of the combined channel's sum-to-zero.
+- **summary:** RESULT 2026-10-10: the Galileo clock datum fixed in two steps, both default off. Step 1, the family-difference datum: Galileo clock wire 0.105 to 0.035 m, the two inter-family groups collapse, census neutral; pair continuity KEEP_OFF. Step 2, the first-sighting family prior (sigma 0.10 m): truth-bed error 0.83 to 0.05 m, pilot-family users halved again, Galileo clock wire 0.022 m (level with GPS). The Galileo package for adoption: census -0.020 m against GPS only, hour 1 -0.22 m. Not armed.
 - **source:** [GAL2](GAL2_galileo_on_the_exact_update_2026-10-08.md) section 6 (the owed list); [GAL](GAL_gps_galileo_dual_2026-09-22.md) section 3.2 (the family rows); [OWD](OWD_owed_defects_2026-09-22.md); two code and run reads of 2026-10-10 (no new run; section 1)
 - **knobs / posture:** new `network.code_datum_pair_continuity` and `network.code_datum_family_difference` (both default false); the goldens of 2026-10-09 plus card GAL2's four Galileo keys (`processing.active_systems`, `processing.signal_priorities.Galileo`, `estimation.clock_disc_isb_reinflate_std` 10, `model_corrections.enable_receiver_cross_system_atx_fallback`)
 - **dates in the text:** 2026-10-10
 - **hashes / run dirs:** Galileo controls `runs/_rap_l5g_gal_{f6,s6}` and census key `l5c_gal` (exe `gnss_processor_l5g0.exe`, main `47fb634`); GPS-only controls `runs/_rap_l5g_ctl_{f6,s6}`, census `l5c_ctl`; arms `runs/_rap_gfc_*`
 - **gates (frozen at pre-registration):** section 4
 
-**Outcome.** Question: does one clock datum per constellation across Galileo's two code families clear card GAL2's field leftovers? The family-difference datum alone does: the two C1X-minus-C1C groups collapse (median 0.001 m), the Galileo clock wire falls from 0.105 to 0.035 m, pilot-family users see 0.16 to 0.26 m instead of 0.8 to 0.9 m from hour 3, and WTZZ00DEU loses its hour-3 hump, census neutral. Missed: pair continuity is harmful (KEEP_OFF), HARB00ZAF / DAV100ATA and SEYG00SYC's IOV rows are untouched, and the residual R-a error stays (section 6).
+**Outcome.** Question: does one clock datum per constellation across Galileo's two code families clear card GAL2's field leftovers? Mostly. The family-difference datum (step 1) collapses the two inter-family groups and cuts the Galileo clock wire threefold; the first-sighting family prior (step 2, card GAL2's reading R-a) takes the truth-bed code error from 0.83 to 0.05 m and the clock wire to 0.022 m. The census gains against GPS only (-0.020 m, 10 better, 2 worse) and is neutral between steps. Missed: hour-2 clauses, DAV100ATA, SEYG00SYC; pair continuity is harmful (KEEP_OFF). Sections 6 and 8.
 
 ## 1. What the reads of 2026-10-10 found (no new run)
 
@@ -111,3 +111,23 @@ Exe `gnss_processor_gfc1.exe` (sha256 `13fd071e05894df3`, worktree `gfc/build` c
 - **G1 (truth):** `gfc2_hx_s6` ionosphere-free code error from hour 3 at or below 0.30 m (`gfc2_hxfd_s6` reported; step 1's both-knob arm 0.88 m); no satellite above 0.5 m; the consumer not worse than `gfc2_hxfd_s6` by more than 0.010 m in any hour from hour 2.
 - **G2 (field, against `gfc_fd_f6`):** pilot-family users' wire error at or below 0.30 m in every hour from hour 2 (0.586 in hour 2 today); combined-family users not worse by more than 0.02 m in any hour; the Galileo clock wire not worse than 0.040 m; WTZZ00DEU within 0.010 m by hour from hour 2.
 - **G3 (census, against `gfc_fd`):** paired hours 2 to 6 median at or below 0, no more sites worse than better (1 cm).
+
+## 8. 2026-10-10: step 2 result
+
+Exe `gnss_processor_gfc3.exe` (sha256 `33a9a91687b8a119`, commit `cfd3eed`: step 2 after its build, a restart of a hung implementer, two reviews and a fix round). Arms: `gfc2_g0_f2`, `gfc2_fd_f6` (Galileo keys + family difference + prior 0.10 m), `gfc2_fd_s6` (uniform sim), `gfc2_hxfd_s6` and `gfc2_hx_s6` (the hemisphere split with the family difference, without and with the prior; their RINEX files are those of `gfc_hx_both_s6`, whose op list was copied into their `rapid.json` for the truth grader).
+
+| gate | measured | verdict |
+| --- | --- | --- |
+| G0 | prior 0 (`gfc2_g0_f2`) identical to `gfc_fd_f6` over 240 epochs; `gfc2_fd_s6` identical to `l5g_gal_s6` (no X channel) | PASS |
+| G1 truth, ionosphere-free code error from hour 3 | `gfc2_hx_s6` 0.050 m (raw C1X 0.046, datum C1X 0.022 m; injected sigma 0.05 m) against `gfc2_hxfd_s6` 0.826 m; worst satellite-hour block 0.22 m (E15) | PASS |
+| G1 truth, consumer | `gfc2_hx_s6` 0.578 0.082 0.061 0.014 0.042 0.057 m against `gfc2_hxfd_s6` 0.488 0.068 0.073 0.018 0.042 0.052 m | FAIL in hour 2 (+0.014 m against a 0.010 m bar); better in hours 3 and 4 |
+| G2 (i) pilot-family users, field | 0.833 0.411 0.170 0.112 0.098 0.087 m against `gfc_fd_f6` 1.457 0.586 0.264 0.204 0.184 0.161 m | hour 2 FAIL (0.41 against 0.30 m); hours 3 to 6 PASS |
+| G2 (ii) combined-family users | 0.098 0.099 0.087 0.069 0.062 0.058 m against 0.115 0.101 0.092 0.091 0.088 0.080 m | PASS (better every hour) |
+| G2 (iii) Galileo clock wire | 0.0220 / 0.0127 m against 0.0352 / 0.0239 m (GPS on the same wire: 0.023 / 0.020 m) | PASS |
+| G2 (iv) WTZZ00DEU | 0.058 0.011 0.018 0.010 0.015 0.011 m against 0.058 0.011 0.018 0.010 0.015 0.010 m | PASS |
+| G3 census against `gfc_fd` | hours 2 to 6 median -0.0001 m, 2 better, 0 worse; hour 1 -0.004 m, 7 better, 2 worse | PASS |
+| census against `l5c_ctl` (GPS only, reported) | hours 2 to 6 -0.0198 m, 10 better, 2 worse; hour 1 -0.220 m, 14 better, 2 worse. HARB00ZAF 0.137 0.058 0.042 0.037 0.032 0.025 m (Galileo control 0.237 0.188 0.168 0.126 0.067 0.042); DAV100ATA +0.06 m | read |
+
+**Reading.** Reading R-a is confirmed and answered: tying each newborn combined-family band-1 column to its pilot partner at the realized family mean (one soft row per birth, sigma 0.10 m) takes the truth-bed error from 0.83 to 0.05 m, at the level of the injected inter-family scatter, and on the field halves the pilot-family users' error again in every hour and brings the Galileo clock wire level with GPS's. The census does not move against step 1 (as step 1 did not against the Galileo control): the float consumers already absorbed most of the code-level inconsistency, so the gain is in the product's code biases, which a code user, an integer user or a different consumer design will see. Two clauses miss in hour 2 (the pilot users' 0.41 m and the truth-bed consumer's +0.014 m), both inside the convergence of births at ignition.
+
+**Standing.** The Galileo package for the author's adoption decision is card GAL2's four keys plus `network.code_datum_family_difference` and `network.code_family_birth_prior_sigma_m` 0.10: census -0.020 m against GPS only (10 better, 2 worse), hour 1 -0.22 m, the Galileo clock wire 0.022 m. `network.code_datum_pair_continuity` stays KEEP_OFF. Still open: DAV100ATA (pilot channels, hours 2 to 4), SEYG00SYC's IOV rows (a sparse-coverage transient of a newly registered C5Q column: 4.4 m decaying to 0.2 m over three hours), the yaw law (card OWD O7), the health mode, the cost.
