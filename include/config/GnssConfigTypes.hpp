@@ -648,6 +648,48 @@ namespace GnssProcessor {
         /// witness is the measured failure case, and unlike after a whole-satellite
         /// gap, the carry of a satellite that never left is certain to be folded.
         bool   gap_reentry_per_signal_unmeasurable{ true };
+        /**
+         * @brief Co-resumed share (@c network.cycle_slip.gap_reentry_coresumed_share)
+         *        of the per-signal tier @ref gap_reentry_per_signal.
+         *
+         * The per-signal tier judges each returning signal on its own, by its
+         * geometry-free level against a partner that tracked through the gap.  That
+         * test is blind to a step common to the candidate and its partner.  Measured
+         * case (field, three-band GPS, MAJU00MHL G08 at TOW 260040): L1C and L2W
+         * dropped for one or two epochs while L5Q tracked through; at the return
+         * L1C and L5Q stepped together by about 7.5 m in code and phase (a channel
+         * delay change at re-acquisition), so L1C read clean against L5Q (d_gf
+         * 0.026 m) and its carry was bridged, while L2W read shifted (d_gf 11.98 m)
+         * and was freed.  The bridged L1C carry then held the pre-gap level against
+         * the step, and the station's receiver code states moved 7 to 13 m in one
+         * epoch.
+         *
+         * Armed, the signals of one (station, satellite) that resumed from a gap at
+         * the same epoch are treated as one re-acquisition: when any of them has a
+         * verdict (shifted; LLI under @ref gap_reentry_lli; unmeasurable under
+         * @ref gap_reentry_per_signal_unmeasurable), every other co-resumed signal
+         * of that (station, satellite) is freed through the same response, with the
+         * cause `shared` and the triggering signal named in its event.  A signal
+         * that tracked through the gap is not co-resumed and is never freed by the
+         * share; a co-resumed group with no verdict is bridged as without the knob.
+         * Under @c network.ledger_reentry a shared verdict is a verdict on that
+         * ledger arc.  A signal an earlier drain of the same epoch already freed (the
+         * MW drain, for instance) is not freed a second time.
+         *
+         * Scope, wider than the measured mechanism: the trigger may be any signal of
+         * the per-signal resumption list, which holds every phase with a matching
+         * code whether the station models it or not (an L5Q or L2L return on an
+         * L1/L2 posture can free a co-resumed modelled L1C), and an LLI or
+         * unmeasurable verdict triggers like a level shift, while the measured case
+         * was a shifted trigger.  The run end splits the shared frees by the
+         * trigger's primary cause and counts the lines of sight whose trigger had no
+         * leveling carry, so a field arm can see which part of this scope acted.
+         *
+         * Solve-affecting; default off (byte-identical).  A rider of
+         * @ref gap_reentry_per_signal, which is itself a rider of @ref gap_reentry:
+         * armed without either, the loader warns and the share stays inert.
+         */
+        bool   gap_reentry_coresumed_share{ false };
 
         // --- The tracker's signal per band, keyed on the model (card GRK) --
         /**

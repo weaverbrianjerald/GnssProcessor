@@ -450,6 +450,42 @@ namespace GnssProcessor {
                           ? "FREED (a partial dropout with no witness is the measured poison "
                             "case)"
                           : "left alone");
+        // Co-resumed share interlock (network.cycle_slip.gap_reentry_coresumed_share).
+        // It warns and leaves the knob armed but inert, as the GRS interlock above
+        // does: the share reads the per-signal resumption list and acts through the
+        // per-signal response, so without that tier (and the row-level response it
+        // rides on) there is nothing to share.  The run-end line states the inertness.
+        if (network_config_.slip_qc.gap_reentry_coresumed_share
+            && !(network_config_.slip_qc.gap_reentry_per_signal
+                 && network_config_.slip_qc.gap_reentry)) {
+            log->warn("Network (slip-QC co-resumed share): "
+                      "network.cycle_slip.gap_reentry_coresumed_share is armed WITHOUT {}.  "
+                      "The share reads the per-signal resumption list and frees through the "
+                      "per-signal response, so it is INERT in this posture: no co-resumed "
+                      "signal is freed and every share counter in the run-end line reads 0 "
+                      "(armed-and-inert, not a quiet run).",
+                      !network_config_.slip_qc.gap_reentry_per_signal
+                          ? (!network_config_.slip_qc.gap_reentry
+                                 ? "network.cycle_slip.gap_reentry_per_signal and "
+                                   "network.cycle_slip.gap_reentry_relevel"
+                                 : "network.cycle_slip.gap_reentry_per_signal")
+                          : "network.cycle_slip.gap_reentry_relevel");
+        }
+        if (network_config_.slip_qc.gap_reentry_coresumed_share
+            && network_config_.slip_qc.gap_reentry_per_signal
+            && network_config_.slip_qc.gap_reentry)
+            log->info("Network (slip-QC co-resumed share): CO-RESUMED SHARE ON.  The phase "
+                      "signals of one (station, satellite) that return from a gap at the SAME "
+                      "epoch are one re-acquisition: when the per-signal tier gives any of "
+                      "them a verdict (shifted, LLI {}, unmeasurable {}), every other "
+                      "co-resumed signal of that line of sight is freed too (cause `shared`, "
+                      "event scope=los_shared).  A geometry-free test against a partner that "
+                      "tracked through cannot see a step common to both, which a channel "
+                      "delay change at re-acquisition is.  Signals that tracked through the "
+                      "gap are never freed by the share.  SOLVE-AFFECTING.",
+                      network_config_.slip_qc.gap_reentry_lli ? "ON" : "OFF",
+                      network_config_.slip_qc.gap_reentry_per_signal_unmeasurable ? "ON"
+                                                                                   : "OFF");
         // Tracker-key interlock (card GRK;
         // docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md).  The knob changes
         // which signal the arc-level tracker names per band.  With no card-G consumer
@@ -6519,6 +6555,13 @@ namespace GnssProcessor {
             sq.gap_reentry_per_signal_unmeasurable =
                 jval<bool>(json, "network.cycle_slip.gap_reentry_per_signal_unmeasurable",
                            "network_cycle_slip_gap_reentry_per_signal_unmeasurable", true);
+            // The per-signal tier's co-resumed share: the signals of one line of sight
+            // that return at the same epoch are one re-acquisition, so a verdict on one
+            // frees the others.  A rider of the per-signal knob above, inert (and warned)
+            // without it.
+            sq.gap_reentry_coresumed_share =
+                jval<bool>(json, "network.cycle_slip.gap_reentry_coresumed_share",
+                           "network_cycle_slip_gap_reentry_coresumed_share", false);
             // The arc-level tracker's per-band signal, chosen from the model rather than
             // lexically, so the tracker, the carried ambiguity key and the gap re-entry
             // response name the same signal (card GRK).

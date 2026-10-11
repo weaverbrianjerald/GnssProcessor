@@ -19,7 +19,7 @@
 
 #include "slip/NetworkSlipQc.hpp"
 
-#include "common/GnssIdentity.hpp"      // obsTypeOf, systemOfSat, SignalId
+#include "common/GnssIdentity.hpp"      // obsTypeOf, systemOfSat, SignalId, LosId
 #include "config/GnssConfig.hpp"        // networkCycleSlip* getters
 #include "filter/StateKeySchema.hpp"    // StateKeys::parseAmbiguityKey (refloat lambdas)
 #include "rinex/MultiRinexSync.hpp"     // SyncedEpoch (se.time in log/event rows)
@@ -2116,12 +2116,18 @@ const char* gapCauseName(GapCause c) {
     return c == GapCause::Shifted ? "shifted" : (c == GapCause::Lli ? "lli" : "unmeas");
 }
 
+/// The closure bucket of @ref GapReentryLedger that one reached arc landed in, so a
+/// caller keeping sub-counts of the ledger (the co-resumed share) sorts its arcs
+/// exactly as the responder did rather than re-deriving the rule.
+enum class GapArcBucket { None, Freed, ColdSkipped, NoRelevel, DdOnly };
+
 /// What one arc's gap re-entry response did: everything its event must state.
 struct GapArcOutcome {
-    bool        reached{false};     ///< A protectable carry existed (the arc entered the closure).
-    bool        pl_bridged{false};  ///< …a live leveling carry entry (false ⇒ the carry_invariant vehicle).
-    bool        state_live{false};  ///< The ambiguity column already existed at drain time.
-    const char* action{"none"};     ///< The event row's `action` field.
+    bool         reached{false};     ///< A protectable carry existed (the arc entered the closure).
+    bool         pl_bridged{false};  ///< …a live leveling carry entry (false ⇒ the carry_invariant vehicle).
+    bool         state_live{false};  ///< The ambiguity column already existed at drain time.
+    const char*  action{"none"};     ///< The event row's `action` field.
+    GapArcBucket bucket{GapArcBucket::None};  ///< The ledger bucket (None when not reached); a freed arc's cause is the caller's `primary`.
 };
 
 /**
@@ -2288,6 +2294,7 @@ GapArcOutcome gapReentryRespondArc(
     }
     if (!carry_warm) {
         ++led.cold_skipped;
+        out.bucket = GapArcBucket::ColdSkipped;
     } else if (!relevel && carry_invariant) {
         // Under carry_invariant the leveling local carry is superseded and
         // structurally empty (which is why the loader disarms
@@ -2296,17 +2303,18 @@ GapArcOutcome gapReentryRespondArc(
         // from `no_relevel`: this one is by design, the other is a response
         // that could not land.
         ++led.dd_only;
+        out.bucket = GapArcBucket::DdOnly;
     } else if (!relevel) {
         // The mark alone does not deliver the free epoch (PASS B consumes
         // it before the inject), so this bucket records that instead of
         // reporting a response that cannot land.
         ++led.no_relevel;
-    } else if (primary == GapCause::Shifted) {
-        ++led.freed_shifted;
-    } else if (primary == GapCause::Lli) {
-        ++led.freed_lli;
+        out.bucket = GapArcBucket::NoRelevel;
     } else {
-        ++led.freed_unmeas;
+        if (primary == GapCause::Shifted)  ++led.freed_shifted;
+        else if (primary == GapCause::Lli) ++led.freed_lli;
+        else                               ++led.freed_unmeas;
+        out.bucket = GapArcBucket::Freed;
     }
     out.action = (carry_warm && relevel)
                      ? "refloat"
@@ -2400,6 +2408,7 @@ struct SidVerdict {
     bool lli{false};
     bool unmeas{false};
     bool from_signal{false};///< the verdict came from the per-signal tier.
+    bool shared{false};     ///< taken from a co-resumed sibling (the co-resumed share).
     GapCause primary{GapCause::Unmeas};
     std::string cause_txt;
 };
@@ -2432,6 +2441,137 @@ SidVerdict sidSigVerdict(const SigResumption& g, const SlipQcParams& qc) {
     if (v.shifted) v.cause_txt = "shifted";
     if (v.lli)     v.cause_txt += v.cause_txt.empty() ? "lli" : "|lli";
     if (v.unmeas)  v.cause_txt += v.cause_txt.empty() ? "unmeas" : "|unmeas";
+    return v;
+}
+
+// ---------------------------------------------------------------------------
+// The co-resumed share (network.cycle_slip.gap_reentry_coresumed_share)
+// ---------------------------------------------------------------------------
+//
+// The per-signal tier judges each returning signal by its geometry-free level
+// against a partner that tracked through the gap, and that test cannot see a step
+// common to the candidate and its partner.  The signals of one (station,
+// satellite) that return at the same epoch are one re-acquisition of that line of
+// sight, so the share lets a verdict on one of them stand for all of them.  Only
+// co-resumed signals are grouped: a signal that tracked through has no resumption
+// and is never in a group.
+//
+// The trigger may be any signal of the list, which holds every phase with a
+// matching code (NetworkRawObservables.cpp), modelled or not, and an LLI or
+// unmeasurable verdict triggers like a level shift.  That is wider than the
+// measured case (a shifted, modelled trigger); the ledger counts the lines of
+// sight whose trigger had no leveling carry, and splits the frees by the trigger's
+// cause, so a field arm can see which part of the scope acted.
+
+/// The line of sight of station @p i and @p satellite, or nullopt when the satellite
+/// id does not parse (such a resumption is not grouped: it never triggers and is
+/// never shared).
+std::optional<LosId> coresumedLos(int i, const std::string& satellite) {
+    const std::optional<SatId> sat = SatId::parse(satellite);
+    if (!sat) return std::nullopt;
+    return LosId{ StationId{ i }, *sat };
+}
+
+/// One line of sight's per-signal resumptions at this epoch, and the first of them
+/// (in list order) with a verdict of its own.
+struct CoresumedGroup {
+    int                  n_signals{0};    ///< co-resumed signals of this (station, satellite).
+    const SigResumption* trigger{nullptr};///< first with its own verdict; null when all are clean.
+    SidVerdict           trigger_v;       ///< that verdict (not clean when @ref trigger is set).
+};
+
+/// Line of sight -> its co-resumed group.
+using CoresumedGroups = std::map<LosId, CoresumedGroup>;
+
+/// Group this epoch's per-signal resumptions by line of sight.  The verdict is
+/// @ref sidSigVerdict, the per-signal tier's own ladder, so a trigger is exactly a
+/// resumption the tier would answer for itself.  The list is built station by
+/// station and, within a row, in the row's signal order, so the trigger choice is
+/// deterministic.
+CoresumedGroups coresumedGroups(const RawSlipEpoch& raw, const SlipQcParams& qc) {
+    CoresumedGroups out;
+    for (const auto& g : raw.sig_resumptions) {
+        const std::optional<LosId> los = coresumedLos(g.station, g.satellite);
+        if (!los) continue;
+        CoresumedGroup& grp = out[*los];
+        ++grp.n_signals;
+        if (grp.trigger != nullptr) continue;
+        const SidVerdict v = sidSigVerdict(g, qc);
+        if (!v.clean) {
+            grp.trigger   = &g;
+            grp.trigger_v = v;
+        }
+    }
+    return out;
+}
+
+/// The group whose verdict a clean co-resumed signal of (@p i, @p satellite)
+/// takes, or null when no co-resumed signal of that line of sight was judged (or
+/// the share is not active, which leaves @p groups empty).  A clean signal is never
+/// its own group's trigger, so a non-null group always names a sibling.
+const CoresumedGroup* coresumedShareFor(const CoresumedGroups& groups, int i,
+                                        const std::string& satellite) {
+    if (groups.empty()) return nullptr;
+    const std::optional<LosId> los = coresumedLos(i, satellite);
+    if (!los) return nullptr;
+    const auto it = groups.find(*los);
+    if (it == groups.end() || it->second.trigger == nullptr) return nullptr;
+    return &it->second;
+}
+
+/// True when an earlier drain of this epoch (the MW, LLI, IF-TD or wind-up drain)
+/// already put the ambiguity of (@p i, @p satellite, @p sig) in the free set.  The
+/// share then has nothing to add: the set is idempotent, and a second response
+/// would only count the arc twice and trace it twice.  Always false without the
+/// free-epoch latch (relevel_free_epoch off), where there is no such set to read.
+bool gapReentryAlreadyFreed(const RelevelEpochState* relevel, int i,
+                            const std::string& satellite, const std::string& sig) {
+    return relevel != nullptr
+        && relevel->free_ambs.count({ i, StateKeys::makeAmbiguityKey(satellite, sig) }) != 0;
+}
+
+/// The `pl_bridged` predicate of the responder for one (station, satellite,
+/// signal): a leveling carry entry last seen inside the max-gap window.  Used by
+/// the share to state whether its trigger was a carried signal.
+bool gapReentryCarryProtectable(
+    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+    int i, const std::string& satellite, const std::string& sig,
+    double pl_now_s, double pl_max_gap_s) {
+    const auto cit = local_carry.find(std::make_tuple(i, satellite, sig));
+    if (cit == local_carry.end()) return false;
+    const double gap_s = pl_now_s - cit->second.last_seen_s;
+    return gap_s >= 0.0 && gap_s <= pl_max_gap_s;
+}
+
+/// Sort one shared signal's response into the share's ledger, bucket for bucket as
+/// the responder sorted it into the tier's (freed split by the trigger's cause).
+void coresumedShareTally(CoresumedShareLedger& sh, const GapArcOutcome& out,
+                         GapCause trigger_primary) {
+    if (!out.reached) { ++sh.no_carry; return; }
+    switch (out.bucket) {
+    case GapArcBucket::Freed:
+        if (trigger_primary == GapCause::Shifted)  ++sh.freed_shifted;
+        else if (trigger_primary == GapCause::Lli) ++sh.freed_lli;
+        else                                       ++sh.freed_unmeas;
+        break;
+    case GapArcBucket::ColdSkipped: ++sh.cold_skipped; break;
+    case GapArcBucket::NoRelevel:   ++sh.no_relevel;   break;
+    case GapArcBucket::DdOnly:      ++sh.dd_only;      break;
+    case GapArcBucket::None:        break;   // a reached arc always has a bucket
+    }
+}
+
+/// The verdict a clean co-resumed signal takes from its group: the trigger's
+/// primary cause, so the freed buckets keep their partition, under the cause text
+/// `shared`.
+SidVerdict sidSharedVerdict(const CoresumedGroup& grp) {
+    SidVerdict v;
+    v.has         = true;
+    v.clean       = false;
+    v.from_signal = true;
+    v.shared      = true;
+    v.primary     = grp.trigger_v.primary;
+    v.cause_txt   = "shared";
     return v;
 }
 
@@ -2623,6 +2763,10 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         qc_cnt.ledger_reentry_not_modelled    += sid->not_modelled;
         const auto row_index = sidIndexRowResumptions(raw);
         const auto sig_index = sidIndexSigResumptions(raw);
+        // The co-resumed share, grouped only when it is active, so the default path
+        // looks nothing new up.
+        CoresumedGroups share_groups;
+        if (qc.coresumedShareActive()) share_groups = coresumedGroups(raw, qc);
         for (const ArcReentryArc& a : sid->arcs) {
             const int i = a.station;
             if (i < 0 || i >= n_sta_total || i >= static_cast<int>(stations.size())) continue;
@@ -2639,6 +2783,18 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             SidVerdict v;
             if (sit != sig_index.end())      v = sidSigVerdict(*sit->second, qc);
             else if (rit != row_index.end()) v = sidRowVerdict(*rit->second, a.signal, qc);
+            // The co-resumed share: a clean per-signal verdict whose line of sight
+            // has a judged co-resumed sibling takes that sibling's verdict.  The arc
+            // is then routed to the per-signal tier below, which frees it, rather
+            // than being counted bridged here.  An arc an earlier drain already
+            // freed keeps its clean verdict, as the per-signal tier decides the same
+            // way (gapReentryAlreadyFreed; nothing between the two drains frees it).
+            if (v.has && v.from_signal && v.clean) {
+                const CoresumedGroup* grp = coresumedShareFor(share_groups, i, a.satellite);
+                if (grp != nullptr
+                    && !gapReentryAlreadyFreed(relevel, i, a.satellite, a.signal))
+                    v = sidSharedVerdict(*grp);
+            }
 
             if (v.has) {
                 ++qc_cnt.ledger_reentry_with_verdict;
@@ -2654,6 +2810,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                 if (v.primary == GapCause::Shifted)   ++qc_cnt.ledger_reentry_v_shifted;
                 else if (v.primary == GapCause::Lli)  ++qc_cnt.ledger_reentry_v_lli;
                 else                                  ++qc_cnt.ledger_reentry_v_unmeas;
+                if (v.shared) ++qc_cnt.ledger_reentry_v_shared;
             } else {
                 ++qc_cnt.ledger_reentry_no_verdict;
                 // Attribute the no-verdict return (Card SID phase 4a, S1).  This
@@ -2821,6 +2978,25 @@ void networkSlipDrainGapReentryPerSignal(
     int n_resp = 0;
     std::string detail_log;
     GapReentryLedger& led = qc_cnt.gap_sig;   // this tier owns its own ledger
+    // The co-resumed share (network.cycle_slip.gap_reentry_coresumed_share): this
+    // epoch's resumptions grouped by line of sight, each group with its first
+    // judged signal as the trigger.  Grouped only when the share is active, so the
+    // default path reads and counts nothing new.  The denominator counts only the
+    // groups at a station this walk answers (in range, present, not gauge-pinned).
+    CoresumedShareLedger& sh = qc_cnt.gap_sig_share;
+    CoresumedGroups share_groups;
+    std::set<LosId> share_answered;   // lines of sight the share passed to the responder
+    if (qc.coresumedShareActive()) {
+        share_groups = coresumedGroups(raw, qc);
+        for (const auto& [los, grp] : share_groups) {
+            const int i = los.station.index;
+            if (grp.n_signals < 2 || i < 0 || i < i_lo || i >= n_sta_total
+                || i >= static_cast<int>(stations.size()))
+                continue;
+            if (i < static_cast<int>(present.size()) && !present[i]) continue;
+            ++sh.los_coresumed;
+        }
+    }
     // Station-ordered by the qualify pass, and this walk touches only station
     // i's own StateManager plus the two epoch-scoped sets, so it is
     // deterministic.
@@ -2855,7 +3031,23 @@ void networkSlipDrainGapReentryPerSignal(
                                      g.partner.empty() ? std::string("none") : g.partner,
                                      g.partner_through ? 1 : 0, g.lli,
                                      pl_bridged ? "bridged" : "fresh"));
-        if (!g.shifted && !lli_set && !unmeas) {
+        // The co-resumed share: a signal with no verdict of its own takes the
+        // verdict of a co-resumed sibling, if one was judged.  Null when the share
+        // is not active (the group map is then empty).  A signal an earlier drain
+        // already freed this epoch is left as clean: a second response would add
+        // nothing to the solve and count and trace the arc twice.
+        const CoresumedGroup* share =
+            (!g.shifted && !lli_set && !unmeas)
+                ? coresumedShareFor(share_groups, i, g.satellite)
+                : nullptr;
+        if (share != nullptr) {
+            ++sh.signals;
+            if (gapReentryAlreadyFreed(relevel, i, g.satellite, g.signal)) {
+                ++sh.already_freed;
+                share = nullptr;
+            }
+        }
+        if (!g.shifted && !lli_set && !unmeas && share == nullptr) {
             // Clean: bridged by design, and recorded so the unified census (R4)
             // can separate it from an arc nothing looked at.
             sidRecordOutcome(sid_out, i, g.satellite, g.signal,
@@ -2863,16 +3055,37 @@ void networkSlipDrainGapReentryPerSignal(
             continue;
         }
         ++led.verdicts;
-        if (i < i_lo) { ++led.pivot_skipped; continue; }   // gauge-pinned legacy pivot
+        if (i < i_lo) {                                     // gauge-pinned legacy pivot
+            ++led.pivot_skipped;
+            if (share != nullptr) ++sh.skipped;
+            continue;
+        }
         // With the ledger armed, the population is the ledger's (Card SID phase
         // 3).  A raw per-signal resumption whose arc is not in the admitted
         // population (the estimator never lost the row, or the gap outran the
         // carry horizon) is still detected, given a verdict and traced, but gets
-        // no response.
+        // no response.  A shared verdict is a verdict here too.
         if (ledger_driven
-            && !sid_pop.count(std::make_tuple(i, g.satellite, g.signal))) continue;
+            && !sid_pop.count(std::make_tuple(i, g.satellite, g.signal))) {
+            if (share != nullptr) ++sh.skipped;
+            continue;
+        }
+        // The share answers this line of sight (counted once per line of sight,
+        // with whether its trigger was a carried signal).
+        if (share != nullptr) {
+            const std::optional<LosId> los = coresumedLos(i, g.satellite);
+            if (los && share_answered.insert(*los).second) {
+                ++sh.los_answered;
+                if (!gapReentryCarryProtectable(local_carry, i, g.satellite,
+                                                share->trigger->signal, pl_now_s,
+                                                pl_max_gap_s))
+                    ++sh.los_trigger_uncarried;
+            }
+        }
         std::string cause_txt;
-        {
+        if (share != nullptr) {
+            cause_txt = "shared";
+        } else {
             const auto add = [&cause_txt](const char* t) {
                 if (!cause_txt.empty()) cause_txt += '|';
                 cause_txt += t;
@@ -2881,8 +3094,13 @@ void networkSlipDrainGapReentryPerSignal(
             if (lli_set)   add("lli");
             if (unmeas)    add("unmeas");
         }
-        const GapCause primary = g.shifted ? GapCause::Shifted
-                                           : (lli_set ? GapCause::Lli : GapCause::Unmeas);
+        // A shared free is bucketed under the trigger's primary cause, so the
+        // tier's freed buckets still partition its reached arcs.
+        const GapCause primary = share != nullptr
+                                     ? share->trigger_v.primary
+                                     : (g.shifted ? GapCause::Shifted
+                                                  : (lli_set ? GapCause::Lli
+                                                             : GapCause::Unmeas));
         // Band-scoped: only the signal that broke is freed.  The other bands of
         // this satellite tracked through, so their carried levels are still
         // valid, and freeing them would add the response cost that
@@ -2909,29 +3127,58 @@ void networkSlipDrainGapReentryPerSignal(
             if (out.reached) ++qc_cnt.ledger_reentry_freed;
             else             ++qc_cnt.ledger_reentry_no_carry;
         }
+        if (share != nullptr) coresumedShareTally(sh, out, share->trigger_v.primary);
         if (!out.reached) continue;   // no carry to protect: the inject would not bridge it
-        // The re-coupling edge: `scope=signal` separates these rows from the
-        // row-level tier's in network_events.csv, so a grader can count the two
-        // populations apart without re-deriving them.
-        traces.emitEvent(se.time, "T0_gap", "reentry_relevel", g.satellite, sta_name,
-                         g.measurable ? std::optional<double>(g.d_gf) : std::nullopt,
-                         g.measurable ? std::optional<double>(g.gate_gf) : std::nullopt,
-                         out.action,
-                         fmt::format("{};scope=signal;gap_ep={};dGF={};partner={};"
-                                     "through={};lli={};cause={};carry={};state={}",
-                                     g.signal, g.gap_epochs,
-                                     g.measurable ? fmt::format("{:.4f}", g.d_gf)
-                                                  : std::string{},
-                                     g.partner.empty() ? std::string("none") : g.partner,
-                                     g.partner_through ? 1 : 0, g.lli, cause_txt,
-                                     out.pl_bridged ? "pl" : "dd",
-                                     out.state_live ? "live" : "absent"));
+        if (share != nullptr) {
+            // The re-coupling edge of a shared free.  `scope=los_shared` separates
+            // these rows from the tier's own `scope=signal` rows, and the trigger
+            // fields name the co-resumed signal whose verdict this one took.  The
+            // dGF field is this signal's own level test, which read clean.
+            traces.emitEvent(se.time, "T0_gap", "reentry_relevel", g.satellite, sta_name,
+                             g.measurable ? std::optional<double>(g.d_gf) : std::nullopt,
+                             g.measurable ? std::optional<double>(g.gate_gf) : std::nullopt,
+                             out.action,
+                             fmt::format("{};scope=los_shared;gap_ep={};dGF={};partner={};"
+                                         "through={};lli={};cause={};trigger={};"
+                                         "trigger_cause={};trigger_dGF={};carry={};state={}",
+                                         g.signal, g.gap_epochs,
+                                         g.measurable ? fmt::format("{:.4f}", g.d_gf)
+                                                      : std::string{},
+                                         g.partner.empty() ? std::string("none") : g.partner,
+                                         g.partner_through ? 1 : 0, g.lli, cause_txt,
+                                         share->trigger->signal, share->trigger_v.cause_txt,
+                                         share->trigger->measurable
+                                             ? fmt::format("{:.4f}", share->trigger->d_gf)
+                                             : std::string{},
+                                         out.pl_bridged ? "pl" : "dd",
+                                         out.state_live ? "live" : "absent"));
+        } else {
+            // The re-coupling edge: `scope=signal` separates these rows from the
+            // row-level tier's in network_events.csv, so a grader can count the two
+            // populations apart without re-deriving them.
+            traces.emitEvent(se.time, "T0_gap", "reentry_relevel", g.satellite, sta_name,
+                             g.measurable ? std::optional<double>(g.d_gf) : std::nullopt,
+                             g.measurable ? std::optional<double>(g.gate_gf) : std::nullopt,
+                             out.action,
+                             fmt::format("{};scope=signal;gap_ep={};dGF={};partner={};"
+                                         "through={};lli={};cause={};carry={};state={}",
+                                         g.signal, g.gap_epochs,
+                                         g.measurable ? fmt::format("{:.4f}", g.d_gf)
+                                                      : std::string{},
+                                         g.partner.empty() ? std::string("none") : g.partner,
+                                         g.partner_through ? 1 : 0, g.lli, cause_txt,
+                                         out.pl_bridged ? "pl" : "dd",
+                                         out.state_live ? "live" : "absent"));
+        }
         if (carry_warm) gapReentryVoidPends(i, g.satellite, relevel_pend, qc_cnt);
         if (++n_resp <= 12)
             detail_log += fmt::format("{}{}/{}/{} [{}]",
                                       detail_log.empty() ? "" : ", ",
                                       sta_name, g.satellite, g.signal,
-                                      gapCauseName(primary));
+                                      share != nullptr
+                                          ? fmt::format("shared<-{}",
+                                                        share->trigger->signal)
+                                          : std::string(gapCauseName(primary)));
     }
     if (n_resp > 0)
         log->info("Network[gap-reentry/signal]: TOW {:.1f} marked {} arc(s) slipped at a "

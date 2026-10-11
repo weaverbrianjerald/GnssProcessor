@@ -188,6 +188,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "slip/NetworkSlipOracle.cpp", networkSlipOracleRunEnd},
     {"slip QC: the gap instrument, re-entry, GRS, the IF-TD reference gate",
      "slip/NetworkSlipQcRunEnd.cpp", networkSlipGapRefGateRunEnd},
+    {"slip QC: the co-resumed share of the per-signal gap re-entry",
+     "slip/NetworkSlipQcRunEnd.cpp", networkSlipGapCoresumedShareRunEnd},
     {"the eq34 chain datum: re-references, pin audit, seed round, slip-aware election",
      "filter/NetworkChainDatum.cpp", networkChainDatumRunEnd},
     {"the card 4/M1 invariant carry",

@@ -91,4 +91,26 @@ int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/**
+ * @brief Run-end report: the co-resumed share of the per-signal gap re-entry tier.
+ *
+ * States the population the share can act on (lines of sight re-acquired with at
+ * least two co-resumed signals at a station the tier answers), the lines of sight it
+ * answered and how many of those had a trigger with no leveling carry, and the closed
+ * disposition of the shared signals (@c CoresumedShareLedger: already freed, skipped,
+ * no carry, freed by the trigger's cause, cold, not acted, funnel only), plus the
+ * ledger arcs given a shared verdict under @c network.ledger_reentry.  Logs an
+ * error when the disposition does not close, and flags the share as inert by
+ * configuration when it is armed without the per-signal tier.  A row added after
+ * the cut, placed right after @ref networkSlipGapRefGateRunEnd, whose per-signal
+ * line it qualifies.
+ *
+ * Gate: `nc.slip_qc.gap_reentry_coresumed_share`; with the knob off it prints
+ * nothing, so an unarmed run's run end is unchanged.
+ *
+ * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+int networkSlipGapCoresumedShareRunEnd(const NetworkRunEndView& v);
+
 } // namespace GnssProcessor

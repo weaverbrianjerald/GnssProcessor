@@ -920,4 +920,62 @@ int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
+// Run-end report: the co-resumed share of the per-signal gap re-entry tier
+// (network.cycle_slip.gap_reentry_coresumed_share).  A row added after the cut, so it
+// is not one of the generated reports above.
+int networkSlipGapCoresumedShareRunEnd(const NetworkRunEndView& v) {
+    const std::shared_ptr<spdlog::logger>& log = v.log;
+    const NetworkConfig& nc = v.config.getNetworkConfig();
+    const SlipQcChannel& slip_qc = v.run.engines.slip_qc;
+    if (!nc.slip_qc.gap_reentry_coresumed_share) return 0;   // unarmed: no line at all
+
+    const CoresumedShareLedger& sh = slip_qc.counters.gap_sig_share;
+    const bool active = nc.slip_qc.gap_reentry && nc.slip_qc.gap_reentry_per_signal;
+    const long long freed = sh.freed_shifted + sh.freed_lli + sh.freed_unmeas;
+    log->info("Network (slip-QC co-resumed share / PER-SIGNAL gap re-entry): {} line(s) "
+              "of sight re-acquired with >= 2 CO-RESUMED signals at a station the tier "
+              "answers [unit: (station, satellite) at one epoch]; the share answered {} of "
+              "them, {} with a trigger that had NO leveling carry (a signal the station "
+              "does not carry, e.g. unmodelled).  {} co-resumed signal(s) with no verdict "
+              "of their own had a judged sibling = {} already freed this epoch by an "
+              "earlier drain (no second response) + {} skipped (gauge-pinned station, or "
+              "outside the ledger population) + {} with no carry to protect + {} FREED "
+              "(refloat; by the TRIGGER's cause: {} shifted + {} lli + {} unmeasurable) + "
+              "{} cold-skipped + {} NOT ACTED (relevel_free_epoch off) + {} answered by the "
+              "C3c funnel alone.  Sub-counts of the GRS per-signal line above, bucket for "
+              "bucket: all but the already-freed are in its judged count, and each reached "
+              "one is in the GRS bucket of the same name (a freed one under its trigger's "
+              "cause).  Signals that tracked through the gap are never freed by the "
+              "share.{}{}{}",
+              sh.los_coresumed, sh.los_answered, sh.los_trigger_uncarried, sh.signals,
+              sh.already_freed, sh.skipped, sh.no_carry, freed, sh.freed_shifted,
+              sh.freed_lli, sh.freed_unmeas, sh.cold_skipped, sh.no_relevel, sh.dd_only,
+              slip_qc.params.ledger_reentry
+                  ? fmt::format("  Ledger (card SID phase 3): {} ledger arc(s) took a "
+                                "shared verdict instead of a clean one and were answered by "
+                                "the per-signal tier.",
+                                slip_qc.counters.ledger_reentry_v_shared)
+                  : std::string{},
+              (active && sh.los_coresumed == 0)
+                  ? "  No line of sight co-resumed two signals: the share had nothing to "
+                    "read (a statement about the data, not dead wiring)."
+                  : "",
+              !active
+                  ? "  ⚠ INERT BY CONFIGURATION: the share is armed without "
+                    "cycle_slip.gap_reentry_per_signal and cycle_slip.gap_reentry_relevel "
+                    "both on, so it has no per-signal list to read and no response to act "
+                    "through."
+                  : "");
+    // Closure, in signals: every shared signal lands in exactly one disposition.
+    const long long closure = sh.already_freed + sh.skipped + sh.no_carry + freed
+                            + sh.cold_skipped + sh.no_relevel + sh.dd_only;
+    if (closure != sh.signals)
+        log->error("Network (slip-QC co-resumed share): closure BROKEN: {} shared signal(s) "
+                   "vs {} disposed (already_freed {} + skipped {} + no_carry {} + freed {} + "
+                   "cold {} + no_relevel {} + dd_only {}).",
+                   sh.signals, closure, sh.already_freed, sh.skipped, sh.no_carry, freed,
+                   sh.cold_skipped, sh.no_relevel, sh.dd_only);
+    return 0;
+}
+
 } // namespace GnssProcessor

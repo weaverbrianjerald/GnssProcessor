@@ -455,6 +455,23 @@ struct SlipQcParams {
     /// arc whose satellite stayed present is the one whose carry survives the gap
     /// to be folded.
     bool   gap_reentry_per_signal_unmeasurable{true};
+    /// Co-resumed share (network.cycle_slip.gap_reentry_coresumed_share): the
+    /// per-signal resumptions of one (station, satellite) at one epoch are one
+    /// re-acquisition, so a verdict on any of them frees every other co-resumed
+    /// signal of that line of sight (cause `shared`).  A signal that tracked through
+    /// the gap is not in the resumption list and is never freed by it.  The trigger
+    /// may be any signal of the list, which holds every phase with a matching code,
+    /// modelled or not (see @ref CoresumedShareLedger::los_trigger_uncarried).  Off by
+    /// default; with it off, the run is byte-identical.  Acts only with
+    /// @ref gap_reentry and @ref gap_reentry_per_signal (see
+    /// @ref coresumedShareActive); it arms no collection of its own, since the
+    /// per-signal list it reads is the rider's.
+    bool   gap_reentry_coresumed_share{false};
+
+    /// True when the co-resumed share can act: the knob and both tiers it rides on.
+    bool coresumedShareActive() const {
+        return gap_reentry_coresumed_share && gap_reentry && gap_reentry_per_signal;
+    }
 
     // --- Latched tracker signal (card GRK; network.cycle_slip.tracker_modeled_first) ---
     /// Choose the arc-level tracker's signal on each band from the station's
@@ -576,6 +593,63 @@ struct GapReentryLedger {
     long long no_relevel{0};    ///< Arcs that would have been freed but relevel_free_epoch is off.
     long long dd_only{0};       ///< Arcs answered by the C3c funnel alone (carry_invariant).
     long long dd_marked{0};     ///< Ambiguities fed into the C3c funnel (orthogonal).
+};
+
+/**
+ * @brief Ledger of the per-signal tier's co-resumed share
+ *        (network.cycle_slip.gap_reentry_coresumed_share), in signals and in lines
+ *        of sight.
+ *
+ * Every count is 0 unless the share is active (@c SlipQcParams::coresumedShareActive).
+ * A shared signal that reaches the responder is also counted in the tier's own
+ * @ref GapReentryLedger (`verdicts`, `arcs` and the bucket its response landed in),
+ * so the tier's closure is unchanged; the buckets below are the share's sub-counts
+ * of those, one for one, so the GRS line can be reconciled from the run end alone:
+ * GRS `freed_shifted` = the tier's own shifted frees + @ref freed_shifted here, and
+ * likewise for `freed_lli`, `freed_unmeas`, `cold_skipped`, `no_relevel`, `dd_only`
+ * and `no_carry`.  Closure, in signals:
+ *
+ *   signals == already_freed + skipped + no_carry + freed_shifted + freed_lli
+ *              + freed_unmeas + cold_skipped + no_relevel + dd_only
+ *
+ * The freed buckets are split by the TRIGGER's primary cause: a shared signal's own
+ * test read clean, so the cause is the sibling's.  @ref already_freed and
+ * @ref skipped are outside the tier's `verdicts`/`arcs` (an already-freed signal is
+ * given no verdict; a skipped one is given a verdict and no response, as the tier's
+ * own skips are).
+ *
+ * Invariant #4: armed, @ref los_coresumed above 0 with @ref signals at 0 says that
+ * every co-resumed group was uniformly clean or uniformly judged, a statement about
+ * the data; @ref los_coresumed at 0 says there was nothing for the share to read.
+ */
+struct CoresumedShareLedger {
+    /// (station, satellite) re-acquisitions with at least two co-resumed signals at a
+    /// station the tier answers (in range, present, not gauge-pinned): the population
+    /// the share can act on, in lines of sight.
+    long long los_coresumed{0};
+    /// …at which the share passed at least one co-resumed signal to the responder.
+    long long los_answered{0};
+    /// …of @ref los_answered, those whose trigger had no leveling carry entry inside
+    /// the max-gap window: a signal the station does not carry (unmodelled, such as
+    /// L5Q or L2L on an L1/L2 posture) or one with nothing carried.  Under the
+    /// carry_invariant vehicle the leveling carry is empty, so every trigger counts.
+    long long los_trigger_uncarried{0};
+    /// Co-resumed signals with no verdict of their own whose line of sight has a
+    /// judged sibling (the share's population, in signals).
+    long long signals{0};
+    /// …already in this epoch's free set (an earlier drain, such as the MW drain,
+    /// freed the same ambiguity): given no verdict and no second response.
+    long long already_freed{0};
+    /// …given the shared verdict and no response: at a gauge-pinned station, or,
+    /// under network.ledger_reentry, outside the ledger's admitted population.
+    long long skipped{0};
+    long long no_carry{0};      ///< …responded to with no carry to protect.
+    long long freed_shifted{0}; ///< …freed (refloat), trigger's primary cause = level shift.
+    long long freed_lli{0};     ///< …freed (refloat), trigger's primary cause = RINEX LLI.
+    long long freed_unmeas{0};  ///< …freed (refloat), trigger's primary cause = unmeasurable.
+    long long cold_skipped{0};  ///< …reached, not freed: the leveling carry is cold.
+    long long no_relevel{0};    ///< …reached, not freed: relevel_free_epoch is off.
+    long long dd_only{0};       ///< …reached, answered by the C3c funnel alone (carry_invariant).
 };
 
 /**
@@ -779,6 +853,12 @@ struct SlipQcCounters {
     /// to be bridged into (see @ref GapReentryLedger for the closure).
     GapReentryLedger gap_sig;
 
+    /// The per-signal tier's co-resumed share
+    /// (network.cycle_slip.gap_reentry_coresumed_share), sub-counts of
+    /// @ref gap_sig; all 0 unless the share is active (see
+    /// @ref CoresumedShareLedger for the closure).
+    CoresumedShareLedger gap_sig_share;
+
     // --- Ledger-driven re-entry population (card SID phase 3) -----------------
     //
     // Every counter here is zero unless @c SlipQcParams::ledger_reentry is armed,
@@ -793,6 +873,14 @@ struct SlipQcCounters {
     long long ledger_reentry_v_lli{0};        ///< …of those, primary verdict = RINEX LLI at the return epoch.
     long long ledger_reentry_v_unmeas{0};     ///< …of those, primary verdict = unmeasurable under the tier's sub-knob.
     long long ledger_reentry_v_clean{0};      ///< …of those, the tier saw the return and called it clean (bridged by verdict).
+    /// …of @ref ledger_reentry_v_shifted, @ref ledger_reentry_v_lli and
+    /// @ref ledger_reentry_v_unmeas, the arcs whose own per-signal verdict was clean
+    /// and that took a co-resumed sibling's verdict
+    /// (network.cycle_slip.gap_reentry_coresumed_share; an arc already in this
+    /// epoch's free set keeps its clean verdict).  Counted in the bucket of
+    /// the sibling's primary cause, so the verdict partition is unchanged; 0 unless
+    /// the share is active.
+    long long ledger_reentry_v_shared{0};
     long long ledger_reentry_no_verdict{0};   ///< …that no raw tier saw this epoch (raw Tracking while the admitted side gapped).
     long long ledger_reentry_freed{0};        ///< Arcs the response actually reached (a carry existed and the mark landed).
     long long ledger_reentry_bridged{0};      ///< Arcs deliberately left to the PASS-B inject (clean verdict, or no verdict under `bridge`).

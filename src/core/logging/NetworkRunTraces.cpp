@@ -2205,6 +2205,15 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << (nc.slip_qc.tracker_modeled_first
                        ? std::string("\"tracker_modeled_first\":true,")
                        : std::string())
+               // The per-signal tier's co-resumed share
+               // (network.cycle_slip.gap_reentry_coresumed_share) frees co-resumed
+               // signals the tier read clean, so it affects the solve and an archived
+               // logs/ folder has to say which side of it its products came from.
+               // Emitted only when armed, as above, so an unarmed run's manifest bytes
+               // are unchanged.
+               << (nc.slip_qc.gap_reentry_coresumed_share
+                       ? std::string("\"gap_reentry_coresumed_share\":true,")
+                       : std::string())
                // The signal roster and arc ledger's own record (card SID phase 1).  They
                // do not affect the solve, but the run-end census and the
                // signals_as_planned records are read against the ledger's horizon,

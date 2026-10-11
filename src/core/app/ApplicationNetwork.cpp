@@ -319,6 +319,10 @@ int Application::runNetwork() {
         // never builds or reads a per-signal list.
         sp.gap_reentry_per_signal  = sq.gap_reentry_per_signal;
         sp.gap_reentry_per_signal_unmeasurable = sq.gap_reentry_per_signal_unmeasurable;
+        // The co-resumed share of the per-signal tier: a verdict on one returning
+        // signal of a line of sight frees its co-resumed siblings.  It reads the
+        // rider's list and arms nothing of its own.
+        sp.gap_reentry_coresumed_share = sq.gap_reentry_coresumed_share;
         // The arc-level tracker takes its per-band signal from the model, so the
         // tracker, the carried ambiguity key and the gap re-entry response's
         // lookup name the same signal.  Read at the compute pass only (card GRK).

@@ -425,6 +425,7 @@ add_executable(gnss_tests
     tests/test_network_slip_qc.cpp
     tests/test_gap_reentry_relevel.cpp
     tests/test_gap_reentry_per_signal.cpp
+    tests/test_gap_reentry_coresumed.cpp
     tests/test_tracker_modeled_first.cpp
     tests/test_signal_roster.cpp
     tests/test_signal_roster_plan.cpp

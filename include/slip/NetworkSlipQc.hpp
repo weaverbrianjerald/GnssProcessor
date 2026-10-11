@@ -904,6 +904,28 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
  * as well as for what it did, and `T0_gap reentry_relevel` with `scope=signal`
  * for each freed signal.
  *
+ * ## The co-resumed share (@c SlipQcParams::gap_reentry_coresumed_share)
+ *
+ * The level test differences a candidate against a partner that tracked through,
+ * so a step common to both is invisible to it.  A channel delay change at
+ * re-acquisition is such a step: in the measured field case L1C and L5Q stepped
+ * together by about 7.5 m, L1C read clean against L5Q and its carry was bridged
+ * while the co-resumed L2W read shifted.  Armed (and only with the tier itself
+ * active, @c SlipQcParams::coresumedShareActive), the resumptions of one
+ * (station, satellite) at this epoch are one re-acquisition: the first of them
+ * with a verdict of its own is the trigger, and every other one without a verdict
+ * is freed through the same responder, bucketed under the trigger's primary cause
+ * (so the tier's closure is unchanged), with the cause text `shared`, the event
+ * `T0_gap reentry_relevel` with `scope=los_shared` naming the trigger, and the
+ * sub-counts @c SlipQcCounters::gap_sig_share (@c CoresumedShareLedger).  A signal
+ * that tracked through has no resumption and is never in a group; a group with no
+ * verdict is bridged as without the knob; a signal an earlier drain of this epoch
+ * already freed (it is in the free-epoch set) is left as clean and counted
+ * `already_freed`.  Under the ledger the share is a verdict on a ledger arc: the
+ * row-level drain's ledger loop routes such an arc here instead of counting it
+ * bridged (@c SlipQcCounters::ledger_reentry_v_shared), with the same already-freed
+ * exception.
+ *
  * No-op unless both @c SlipQcParams::gap_reentry and
  * @c SlipQcParams::gap_reentry_per_signal are set.  Called in the slip-drain band
  * of PASS A immediately after the row-level drain, for the same reasons.
