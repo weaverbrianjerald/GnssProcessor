@@ -1227,6 +1227,19 @@ namespace GnssProcessor {
         /// same discipline as @ref this_epoch_if_pin_changes.  Empty unless the arm is on
         /// under the time link.
         std::map<std::string, NetworkSbasis::FamilyRowRealization> this_epoch_cb_family_rows;
+        /// This epoch's first-sighting family prior rows, one record per row folded (card
+        /// GFC step 2, @c network.code_family_birth_prior_sigma_m;
+        /// @c NetworkSbasis::CodeBiasDatumRows::family_birth_priors).  Main-pass scratch with
+        /// the same discipline as @ref this_epoch_if_pin_changes: a row folded on a withheld
+        /// pass is neither counted nor declared (it is folded again at the next pass, whose
+        /// record replaces it).  Empty unless the prior is effective.
+        std::vector<NetworkSbasis::FamilyBirthPrior> this_epoch_cb_family_births;
+        /// This epoch's common satellites the first-sighting family prior folded no row on
+        /// (card GFC step 2; @c NetworkSbasis::CodeBiasDatumRows::family_birth_skips): a
+        /// READMIT seed or the D2 fold continuing a column without a previous value, or a
+        /// birth with no realized family mean.  Main-pass scratch with the same discipline
+        /// as @ref this_epoch_cb_family_births.  Empty unless the prior is effective.
+        std::vector<NetworkSbasis::FamilyBirthSkipRecord> this_epoch_cb_family_birth_skips;
         /// The family-difference partner each secondary-family channel's level was realized
         /// against at the last kept epoch, empty for the sum-to-zero row (card GFC).  The
         /// baseline a switch between the two rows is declared against
@@ -3992,6 +4005,12 @@ namespace GnssProcessor {
         /// @c networkCodeDatumFamilyRunEnd; empty unless an arm is effective.
         std::map<System, NetworkSbasis::CodeDatumPairCounts> cb_pair_by_const;
         std::map<std::pair<System, char>, NetworkSbasis::CodeDatumFamilyCounts> cb_family_by_band;
+        /// The first-sighting family prior rows, and the satellites given no row, per
+        /// (constellation, band digit) (card GFC step 2,
+        /// @c network.code_family_birth_prior_sigma_m), counted once per kept epoch
+        /// by @c networkCodeDatumFamilyKeptEpoch and read only by
+        /// @c networkCodeDatumFamilyRunEnd; empty unless the prior is effective.
+        std::map<std::pair<System, char>, NetworkSbasis::CodeFamilyBirthCounts> cb_family_birth_by_band;
         /// Kept epochs with at least one secondary-family channel realized (card GFC), the
         /// denominator of the family-difference run-end line, and the switches of a
         /// channel between the family-difference row and the sum-to-zero row (or between

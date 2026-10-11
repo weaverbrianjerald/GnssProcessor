@@ -5179,6 +5179,58 @@ namespace GnssProcessor {
         bool networkCodeDatumFamilyDifference() const { return network_code_datum_family_difference_; }
 
         /**
+         * @brief Standard deviation, in metres, of the first-sighting family prior
+         *        (@c network.code_family_birth_prior_sigma_m, card GFC step 2); 0 is off.
+         *
+         * @par The problem it addresses
+         * With the family-difference datum (@ref networkCodeDatumFamilyDifference) the
+         * inter-family code offset has one realization, but a secondary-family (X) column
+         * born beside an uncertain satellite clock still absorbs part of that clock error
+         * (in ionosphere-free terms all of it), and with the stiff satellite code-bias
+         * process noise it keeps it: the data that would pull it back arrive only through
+         * the code of the other family's stations (card GAL2's reading R-a; card GFC
+         * section 7: 1 to 2.4 m of ionosphere-free code error on the hemisphere-split sim
+         * satellites that never changed pin pair).
+         *
+         * @par The prior
+         * For Galileo band 1 (the band the family-difference row acts on; the partner is
+         * the step-1 choice, the same-band primary-family channel with the most satellites
+         * in common), at an epoch where a satellite's secondary (X) column or its partner
+         * column is born (the carry does not continue it: no carried value, a park past
+         * the seed horizon, or a clock-monitor reinit) while the other column of that
+         * satellite is registered too, one soft shared row
+         * @f$d_X - d_P = \mu@f$ is folded with information @f$1/\sigma^2@f$.
+         * @f$\mu@f$ is the mean of @f$(\hat d_X - \hat d_P)_{k-1}@f$ over the veterans of
+         * the family row (the satellites carrying both columns this epoch with a previous
+         * value on both); under the family row on veterans it is the realized family mean
+         * the row holds.  With no veteran it is 0 only where the family row re-seeds the
+         * offset at 0; a birth on a channel whose level the sum-to-zero frame carries
+         * instead (bridged, or dependent with no veteran) has no realized family mean to
+         * target and folds no row (counted).  The row is folded once per (satellite,
+         * birth): the birth test reads the carry, so the born column is carried from the
+         * next kept epoch on and gets no second row (a per-epoch soft row on a carried
+         * state would accumulate into a hard one), and a return inside
+         * @c network.readmit_seed_horizon_s, which READMIT seeds from the column's parked
+         * pre-gap carry, is not a birth (counted).  A return past the horizon is.  A
+         * withheld epoch advances no carry, so its row is folded again at the next epoch,
+         * which is not a second fold of the same information.  Each fold is counted per
+         * (constellation, band) and declared as a "CB_DATUM" / "family_birth_prior" event
+         * once per kept epoch.  A sigma at or below about 0.032 m (information at or above
+         * the code-bias gauge weight 1e3) is warned at load, and one below 0.01 m refused:
+         * the prior would compete with the datum rows it refines.
+         *
+         * Read only with @ref networkCodeDatumFamilyDifference under
+         * @ref networkCodeDatumTimeLinked (and the W6 satellite code bias); inert with a
+         * warning otherwise.  Changes the realized code biases, so it is in the snapshot
+         * fingerprint when armed (fresh convergence only).  Unvalidated (card GFC step 2,
+         * pre-registered).  Default 0: no row (byte-identical).  A negative, non-finite or
+         * sub-centimetre value is refused at load.
+         *
+         * @see networkCodeDatumFamilyDifference, NetworkSbasis::codeFamilyBirthPriors
+         */
+        double networkCodeFamilyBirthPriorSigmaM() const { return network_code_family_birth_prior_sigma_m_; }
+
+        /**
          * @brief Whether the satellite phase-bias gauge is realized by a
          *        per-(satellite,signal) prioritized anchor receiver instead of the
          *        single clock-pivot station (@c network.phase_datum_prioritized).
@@ -9575,6 +9627,7 @@ namespace GnssProcessor {
         bool   network_code_datum_time_linked_{false};     ///< Impose the code-bias datum (per-sat IF pin + per-(const,signal) sum-to-zero) as a time datum (card 2, W6 only): pin the change from the previous epoch's solved values (veteran-referenced sum-to-zero RHS Σ b̂_prev, IF-pin RHS a1·b̂_prev(σ1)+a2·b̂_prev(σ2)) instead of the level to zero. Same row count (rank unchanged), so no set-mean wander/relaxation and no conflict between gauge and carry weights; a no-veteran channel or first split re-seeds at 0 with a per-sat disc bump (value step ↔ signalled discontinuity). The prev-value map crosses a warm resume only with state_snapshot_datum_capture + resume_datum_restore; otherwise a warm resume re-seeds, signalled. Mutually exclusive with clock_signal_basis_hold (both re-target the IF-pin row; fail-loud). Requires estimate_sat_code_bias (inert and warned otherwise). Off = legacy zero-target datum (byte-identical).
         bool   network_code_datum_pair_continuity_{false};  ///< Card GFC, hold then continue: at an IF-pin pair change with previous solved values on both new signals, target the new pair's previous IF combination (the clock continues) instead of re-seeding at 0, with no re-seed mark and the re-selection discontinuity left undeclared when the last emitted pair is the pair continued from; where an entering signal has no previous value yet, keep the last kept pair (its own previous combination carries) for the one kept epoch until it has, unless the held pair has no previous values or, under broadcast_tgd, the group delay describes the selected pair and not the held one. Read only under code_datum_time_linked and where no row re-asserts an absolute target at a pair change (NetworkSbasis::pinPairContinuityBlocker); inert and warned otherwise. Fingerprinted when armed. Off = re-seed at every pair change (byte-identical).
         bool   network_code_datum_family_difference_{false}; ///< Card GFC: replace a secondary-family (X) Galileo code channel's surviving sum-to-zero row by Sigma (d_X - d_P) over the satellites carrying both it and its same-band primary-family partner (time-linked like the sum-to-zero row; the sum-to-zero row kept with no partner, no common satellite, all spanned X columns pinned, or for the one epoch a family re-seed would replace a carried level). Read only under code_datum_time_linked (inert and warned otherwise). Fingerprinted when armed. Off = the sum-to-zero row (byte-identical).
+        double network_code_family_birth_prior_sigma_m_{0.0}; ///< Card GFC step 2: sigma (m) of the first-sighting family prior, one soft shared row d_X - d_P = mu (mu = the family row's veteran mean of the previous differences, 0 with no veteran) folded once per (satellite, birth) when a Galileo band-1 secondary (X) column or its primary partner is born (the carry does not continue it; a READMIT seed does) while the other is registered; no row where no realized family mean exists (bridged / dependent without a veteran). Read only with code_datum_family_difference under code_datum_time_linked (inert and warned otherwise). Fingerprinted when armed. 0 = off (byte-identical); negative, non-finite or < 0.01 m refused at load, <= 1/sqrt(1e3) m warned.
         bool   network_scoped_handover_response_{false};   ///< Scope the producer's internal pivot-handover response (RTA-2; D2 carry skip, clock-oscillator clear, clock-monitor jump suppression) to the constellation(s) whose datum changed; off = global response (byte-identical).
         bool   network_handover_stransform_{false};        ///< At a clock-pivot handover, transform the changed constellation's carried shared means along NetworkSbasis::clockNullDirection (c0 = x_q/v_c[q]; x -= v_c*c0; var += v_c^2*var_q) and then fold them instead of skipping (queue 1(b)); the carried information is valid, only expressed in the retired datum. Requires scoped_handover_response (inert and warned otherwise); inert under an anchor-free clock datum. Fingerprinted when armed (armed-only token) ⇒ fresh convergence only. Off = the legacy one-epoch drop (byte-identical).
         bool   network_handover_stransform_before_rows_{false};  ///< Run the handover S-transform before the fold decision and PASS B, through the traversal of carried references, so the coupling rows read the re-expressed carry (card PRM phase 2).  Requires handover_stransform (inert and warned otherwise); refused with apriori_source brdc_rts.  Fingerprinted when armed.  Off = the transform after PASS B (byte-identical).

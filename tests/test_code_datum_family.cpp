@@ -24,7 +24,14 @@
  *    the satellites carrying it and its same-band primary partner, time-linked
  *    (@c NetworkSbasis::codeFamilyDiffTimeLink), with the sum-to-zero row kept with no
  *    partner, no common satellite, all spanned X columns pinned, or for the one epoch a
- *    family re-seed would replace a carried level.
+ *    family re-seed would replace a carried level;
+ *  - step 2, the first-sighting family prior
+ *    (@c network.code_family_birth_prior_sigma_m, read only with the family
+ *    difference): one soft row d_X - d_P = mu per Galileo band-1 satellite whose X or
+ *    partner column is born (the carry does not continue it), mu the veterans' mean
+ *    previous difference, or 0 where the family row re-seeds, and no row without either
+ *    (@c NetworkSbasis::codeFamilyBirthPriors), returned apart from the gauge stack at
+ *    weight 1/sigma^2 and folded by @c NetworkSbasis::foldFamilyBirthRows.
  *
  * These cases pin: the default path unchanged; the pair hold (the held pair, its carried
  * target, the rows that follow it, its release at the next kept epoch, the fallback when
@@ -34,8 +41,13 @@
  * family row's coefficients, target, re-seed marks and every
  * sum-to-zero outcome; the datum's reach over the code-bias null directions; the
  * kept-epoch bookkeeping (counts once, declares hold edges and row switches); the emit-site
- * declaration rule and its attribution of a dropped cbpin= to a hold; the loader; and the
- * run-end readout.
+ * declaration rule and its attribution of a dropped cbpin= to a hold; the loader; the
+ * run-end readout; and step 2's prior (its planner, its row, coefficients, target and
+ * weight, one fold per birth, both directions of a birth, its absence with no partner
+ * or with the prior inert, its kept-epoch counts and events, its knob and its run-end
+ * line; its birth test on the carry, through the stash and the fold decision across a
+ * READMIT park and seed and a clock-monitor reinit; no target on a bridged channel; the
+ * carry map; and the fold at its own weight and kind).
  *
  * Suite name @c CodeDatumFamilyTest is owned by this file alone (one suite name, one
  * file).
@@ -52,12 +64,14 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -66,12 +80,15 @@
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
+#include "filter/NetworkCarryDisposition.hpp"   // networkCarryDecide (step 2: the birth test reads the carry)
 #include "filter/NetworkContributionKind.hpp"
+#include "filter/NetworkContributions.hpp"       // contributionSpec (step 2: CbFamilyBirth)
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkSolPrep.hpp"
 #include "logging/LogManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
+#include "math/TimeUtils.hpp"                   // continuousGpsSeconds (the READMIT clock)
 #include "products/NetworkProductEmitter.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
@@ -137,6 +154,7 @@ struct Harness {
     bool sat_gf_extra_band_free{false};
     std::set<std::string> extra_band_determined;
     NetworkSbasis::CodeDatumFamilyArms arms;
+    NetworkSbasis::CodeBiasCarryMap    carry;   ///< The carry's fold per code-bias column (step 2's birth test); empty: the map alone.
 
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
     std::map<std::string, Pair>                          code_bias_ifpin_pair;
@@ -167,7 +185,7 @@ struct Harness {
                    const char* action, const std::string& detail) {
                 events.push_back({tier, event, sat, action, detail});
             },
-            arms);
+            arms, carry);
     }
 };
 
@@ -1698,4 +1716,880 @@ TEST(CodeDatumFamilyTest, RunEndReadoutSaysInertOrCounts) {
                   std::string::npos);
         EXPECT_NE(s.find("2 switch(es)"), std::string::npos);
     }
+}
+
+// ===========================================================================
+// (g) Step 2: the first-sighting family prior (network.code_family_birth_prior_sigma_m)
+// ===========================================================================
+
+namespace {
+
+using Side = NetworkSbasis::FamilyBirthSide;
+
+/// The family-difference arm with the first-sighting prior at @p sigma.
+void armBirthPrior(Harness& h, double sigma) {
+    h.arms.family_difference   = true;
+    h.arms.birth_prior_sigma_m = sigma;
+}
+
+/// The gauge stack and every step-1 side channel of two builds agree.
+void expectSameGaugeStack(const NetworkSbasis::CodeBiasDatumRows& a, const Harness& ha,
+                          const NetworkSbasis::CodeBiasDatumRows& b, const Harness& hb) {
+    ASSERT_EQ(a.H.rows(), b.H.rows());
+    EXPECT_TRUE(a.H == b.H);
+    EXPECT_TRUE(a.z == b.z);
+    EXPECT_EQ(a.row_kinds, b.row_kinds);
+    EXPECT_EQ(ha.cb_reseed, hb.cb_reseed);
+    ASSERT_EQ(a.family_rows.size(), b.family_rows.size());
+    for (const auto& [chan, r] : a.family_rows) {
+        EXPECT_EQ(r.outcome, b.family_rows.at(chan).outcome) << chan;
+        EXPECT_EQ(r.partner, b.family_rows.at(chan).partner) << chan;
+    }
+}
+
+}  // namespace
+
+// The pure planner with no carry map (the previous-value map alone): mu is the mean
+// previous difference over the veterans (a previous value on both columns) and nothing
+// else; a common satellite missing either value is born, tagged with the column(s) born,
+// in the order of the common set; a veteran gets no row.  With no veteran mu is 0 and
+// defined only where the family row re-seeds the offset at 0.
+TEST(CodeDatumFamilyTest, BirthPlannerTakesMuOverVeteransOnly) {
+    const std::vector<std::string> common = {"E01", "E02", "E03", "E04", "E05"};
+    const std::map<std::string, NetworkSbasis::CodeBiasCarry> no_carry;
+    const auto bp = NetworkSbasis::codeFamilyBirthPriors(
+        common,
+        /*prev_x=*/{{"E01", 1.5}, {"E02", 0.4}, {"E03", 2.0}, {"E09", 7.0}},
+        /*prev_p=*/{{"E01", 0.5}, {"E02", 0.1}, {"E04", 3.0}, {"E09", -7.0}}, no_carry,
+        no_carry, /*family_reseed=*/false);
+    EXPECT_EQ(bp.n_veterans, 2);   // E01, E02; E09 is not common this epoch
+    EXPECT_NEAR(bp.mu_m, ((1.5 - 0.5) + (0.4 - 0.1)) / 2.0, 1e-15);
+    EXPECT_TRUE(bp.mu_defined);
+    const std::vector<NetworkSbasis::FamilyBirth> want = {
+        {"E03", Side::Partner, false}, {"E04", Side::Secondary, false},
+        {"E05", Side::Both, false}};
+    EXPECT_EQ(bp.births, want);
+    EXPECT_TRUE(bp.carried.empty());
+
+    const auto none = NetworkSbasis::codeFamilyBirthPriors(common, {}, {{"E02", 0.3}},
+                                                           no_carry, no_carry, false);
+    EXPECT_EQ(none.n_veterans, 0);
+    EXPECT_DOUBLE_EQ(none.mu_m, 0.0);
+    EXPECT_FALSE(none.mu_defined);   // no veteran and no re-seed: no realized family mean
+    ASSERT_EQ(none.births.size(), common.size());
+    EXPECT_EQ(none.births[1], (NetworkSbasis::FamilyBirth{"E02", Side::Secondary, false}));
+    EXPECT_EQ(none.births[0].side, Side::Both);
+    const auto reseed = NetworkSbasis::codeFamilyBirthPriors(common, {}, {{"E02", 0.3}},
+                                                             no_carry, no_carry, true);
+    EXPECT_TRUE(reseed.mu_defined);   // the family row re-seeds the offset at 0
+    EXPECT_DOUBLE_EQ(reseed.mu_m, 0.0);
+
+    const auto all_vet = NetworkSbasis::codeFamilyBirthPriors(
+        {"E01"}, {{"E01", 1.0}}, {{"E01", 0.25}}, no_carry, no_carry, false);
+    EXPECT_TRUE(all_vet.births.empty());
+    EXPECT_NEAR(all_vet.mu_m, 0.75, 1e-15);
+
+    EXPECT_STREQ(NetworkSbasis::familyBirthSideName(Side::Secondary), "x_born");
+    EXPECT_STREQ(NetworkSbasis::familyBirthSideName(Side::Partner), "partner_born");
+    EXPECT_STREQ(NetworkSbasis::familyBirthSideName(Side::Both), "both_born");
+}
+
+// Sigma 0 (the default) with the family difference armed: no prior row, no record, the
+// step-1 output unchanged, although E03's C1X column is at its first sighting.
+TEST(CodeDatumFamilyTest, BirthPriorOffFoldsNoRow) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, kTwoFamily);
+    Harness h;
+    allVeterans(h);
+    h.code_bias_prev["E|C1X"].erase("E03");
+    armBirthPrior(h, 0.0);
+    const auto rows = h.build(est, keys);
+    EXPECT_EQ(rows.family_birth_H.rows(), 0);
+    EXPECT_EQ(rows.family_birth_z.size(), 0);
+    EXPECT_DOUBLE_EQ(rows.family_birth_weight, 0.0);
+    EXPECT_TRUE(rows.family_birth_priors.empty());
+
+    Harness step1 = h;
+    step1.arms = {};
+    step1.arms.family_difference = true;   // the step-1 arms, no prior field set
+    const auto r1 = step1.build(est, keys);
+    expectSameGaugeStack(rows, h, r1, step1);
+}
+
+// E03's C1X column is new beside its veteran C1C (E01 and E02 veterans on both): one soft
+// row, +1 on E03|C1X and -1 on E03|C1C only, target the veterans' mean previous
+// difference (the family row's RHS over its two veterans), weight 1/sigma^2, apart from the
+// gauge stack, which is the sigma-0 stack.  A band-5 first sighting gets none.
+TEST(CodeDatumFamilyTest, BirthPriorTiesANewSecondaryColumnToItsVeteranPartner) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, kTwoFamily);
+    Harness h;
+    allVeterans(h);
+    h.code_bias_prev["E|C1X"].erase("E03");
+    armBirthPrior(h, 0.10);
+    const auto rows = h.build(est, keys);
+
+    ASSERT_EQ(rows.family_birth_H.rows(), 1);
+    ASSERT_EQ(rows.family_birth_z.size(), 1);
+    const Eigen::Index cx = est.codeBiasColumn("E03", "C1X");
+    const Eigen::Index cp = est.codeBiasColumn("E03", "C1C");
+    EXPECT_DOUBLE_EQ(rows.family_birth_H(0, cx), 1.0);
+    EXPECT_DOUBLE_EQ(rows.family_birth_H(0, cp), -1.0);
+    EXPECT_DOUBLE_EQ(rows.family_birth_H.row(0).cwiseAbs().sum(), 2.0);
+    const auto& px = h.code_bias_prev["E|C1X"];
+    const auto& pp = h.code_bias_prev["E|C1C"];
+    const double mu = ((px.at("E01") - pp.at("E01")) + (px.at("E02") - pp.at("E02"))) / 2.0;
+    EXPECT_NEAR(rows.family_birth_z(0), mu, 1e-12);
+    EXPECT_NEAR(rows.family_birth_weight, 1.0 / (0.10 * 0.10), 1e-9);
+    // The target is the family mean the family row holds this epoch: its RHS over its count.
+    const Eigen::Index r1 = levelRowOn(rows, est.codeBiasColumn("E01", "C1X"));
+    ASSERT_GE(r1, 0);
+    EXPECT_NEAR(rows.family_birth_z(0) * 2.0, rows.z(r1), 1e-12);
+
+    ASSERT_EQ(rows.family_birth_priors.size(), 1u);
+    const auto& b = rows.family_birth_priors[0];
+    EXPECT_EQ(b.sat, "E03");
+    EXPECT_EQ(b.channel.sys, System::Galileo);
+    EXPECT_EQ(b.channel.digit, '1');
+    EXPECT_EQ(b.x_signal, "C1X");
+    EXPECT_EQ(b.partner, "C1C");
+    EXPECT_EQ(b.born, Side::Secondary);
+    EXPECT_NEAR(b.mu_m, mu, 1e-12);
+    EXPECT_EQ(b.n_veterans, 2);
+    EXPECT_DOUBLE_EQ(b.sigma_m, 0.10);
+    EXPECT_TRUE(b.seen_before);
+
+    Harness off = h;
+    off.arms.birth_prior_sigma_m = 0.0;
+    const auto r_off = off.build(est, keys);
+    expectSameGaugeStack(rows, h, r_off, off);
+
+    // A band-5 first sighting gets no prior row: band 1 only.
+    Harness b5 = h;
+    allVeterans(b5);
+    b5.code_bias_prev["E|C5X"].erase("E03");
+    const auto r5 = b5.build(est, keys);
+    EXPECT_EQ(r5.family_birth_H.rows(), 0);
+    EXPECT_TRUE(r5.family_birth_priors.empty());
+}
+
+// Folded once: at the next kept epoch the harvest has given E03|C1X a previous value, so
+// the column is a veteran and no row is folded again.
+TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOncePerBirth) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, kTwoFamily);
+    Harness h;
+    allVeterans(h);
+    const double born_value = h.code_bias_prev["E|C1X"].at("E03");
+    h.code_bias_prev["E|C1X"].erase("E03");
+    armBirthPrior(h, 0.10);
+    ASSERT_EQ(h.build(est, keys).family_birth_H.rows(), 1);
+
+    h.code_bias_prev["E|C1X"]["E03"] = born_value;   // the kept epoch's harvest
+    const auto next = h.build(est, keys);
+    EXPECT_EQ(next.family_birth_H.rows(), 0);
+    EXPECT_TRUE(next.family_birth_priors.empty());
+    EXPECT_EQ(next.family_rows.at("E|C1X").outcome, Outcome::FamilyVeteran);
+}
+
+// Symmetric: E03's C1C column is new beside its veteran C1X.  The same row (+1 on the X
+// column, -1 on the partner's, target the veteran mean of E01 and E02), tagged partner
+// born.  With both columns new (a rising satellite tracked by both families) one row,
+// tagged both.
+TEST(CodeDatumFamilyTest, BirthPriorTiesANewPartnerColumnToItsVeteranSecondary) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, kTwoFamily);
+    Harness h;
+    allVeterans(h);
+    h.code_bias_prev["E|C1C"].erase("E03");
+    armBirthPrior(h, 0.10);
+    const auto rows = h.build(est, keys);
+    ASSERT_EQ(rows.family_birth_H.rows(), 1);
+    EXPECT_DOUBLE_EQ(rows.family_birth_H(0, est.codeBiasColumn("E03", "C1X")), 1.0);
+    EXPECT_DOUBLE_EQ(rows.family_birth_H(0, est.codeBiasColumn("E03", "C1C")), -1.0);
+    const auto& px = h.code_bias_prev["E|C1X"];
+    const auto& pp = h.code_bias_prev["E|C1C"];
+    EXPECT_NEAR(rows.family_birth_z(0),
+                ((px.at("E01") - pp.at("E01")) + (px.at("E02") - pp.at("E02"))) / 2.0, 1e-12);
+    ASSERT_EQ(rows.family_birth_priors.size(), 1u);
+    EXPECT_EQ(rows.family_birth_priors[0].born, Side::Partner);
+
+    Harness both = h;
+    allVeterans(both);
+    both.code_bias_prev["E|C1C"].erase("E03");
+    both.code_bias_prev["E|C1X"].erase("E03");
+    const auto rb = both.build(est, keys);
+    ASSERT_EQ(rb.family_birth_priors.size(), 1u);
+    EXPECT_EQ(rb.family_birth_priors[0].born, Side::Both);
+    EXPECT_EQ(rb.family_birth_priors[0].n_veterans, 2);
+}
+
+// No partner on the satellite: E04 (combined family only) with a new C1X column gets no
+// row, and a roster with no same-band primary channel gets none either.  At the run's first
+// epoch (no veteran anywhere) every common satellite is born on both columns and its row
+// targets 0, the convention the family row re-seeds at.
+TEST(CodeDatumFamilyTest, BirthPriorNeedsThePartnerOnTheSatellite) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, kTwoFamily);
+    Harness h;
+    allVeterans(h);
+    h.code_bias_prev["E|C1X"].erase("E04");
+    armBirthPrior(h, 0.10);
+    const auto rows = h.build(est, keys);
+    EXPECT_EQ(rows.family_birth_H.rows(), 0);
+    EXPECT_TRUE(rows.family_birth_priors.empty());
+
+    NetworkEstimator est2;
+    const auto keys2 = registerRoster(est2, {{"E01", {"C1X", "C5Q"}}, {"E02", {"C1X", "C5Q"}}});
+    Harness h2;
+    armBirthPrior(h2, 0.10);
+    const auto rows2 = h2.build(est2, keys2);
+    EXPECT_EQ(rows2.family_rows.at("E|C1X").outcome, Outcome::NoPartner);
+    EXPECT_EQ(rows2.family_birth_H.rows(), 0);
+
+    Harness first;   // empty previous-value maps: the run's first epoch
+    armBirthPrior(first, 0.10);
+    const auto r_first = first.build(est, keys);
+    EXPECT_EQ(r_first.family_rows.at("E|C1X").outcome, Outcome::FamilyReseed);
+    ASSERT_EQ(r_first.family_birth_priors.size(), 3u);   // E01, E02, E03
+    for (Eigen::Index r = 0; r < r_first.family_birth_z.size(); ++r)
+        EXPECT_DOUBLE_EQ(r_first.family_birth_z(r), 0.0);
+    for (const auto& b : r_first.family_birth_priors) {
+        EXPECT_EQ(b.born, Side::Both) << b.sat;
+        EXPECT_EQ(b.n_veterans, 0) << b.sat;
+        EXPECT_FALSE(b.seen_before) << b.sat;
+    }
+}
+
+// The prior refines the time-linked family difference: without the family difference, or
+// without the time link, a positive sigma folds nothing.
+TEST(CodeDatumFamilyTest, BirthPriorIsInertWithoutTheFamilyDifference) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, kTwoFamily);
+    Harness h;
+    allVeterans(h);
+    h.code_bias_prev["E|C1X"].erase("E03");
+    h.arms.birth_prior_sigma_m = 0.10;   // family difference off
+    const auto rows = h.build(est, keys);
+    EXPECT_EQ(rows.family_birth_H.rows(), 0);
+    EXPECT_TRUE(rows.family_birth_priors.empty());
+    EXPECT_TRUE(rows.family_rows.empty());
+
+    Harness untimed = h;
+    armBirthPrior(untimed, 0.10);
+    untimed.cb_time_linked = false;
+    const auto r_untimed = untimed.build(est, keys);
+    EXPECT_EQ(r_untimed.family_birth_H.rows(), 0);
+    EXPECT_TRUE(r_untimed.family_birth_priors.empty());
+}
+
+// The kept-epoch bookkeeping counts each prior row per (constellation, band), with its
+// satellite, the column born and the zero-convention rows, and declares each once as a
+// CB_DATUM/family_birth_prior event (statistic mu, threshold sigma, action the column
+// born, detail the satellite, the column born, mu and sigma).
+TEST(CodeDatumFamilyTest, KeptEpochCountsAndDeclaresBirthPriors) {
+    LogManager logman;
+    GnssConfig cfg;
+    ASSERT_TRUE(loadWith("", cfg, logman, "kept_birth"));
+    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    struct Row {
+        std::string tier, event, sat, action, detail;
+        std::optional<double> stat, thr;
+    };
+    std::vector<Row> events;
+    const auto sink = [&](const char* tier, const char* event, const std::string& sat,
+                          const std::string&, std::optional<double> stat,
+                          std::optional<double> thr, const char* action,
+                          const std::string& detail) {
+        events.push_back({tier, event, sat, action, detail, stat, thr});
+    };
+    const SignalId e1x = *SignalId::fromObsCode(System::Galileo, "C1X");
+    NetworkSbasis::FamilyBirthPrior a;
+    a.sat = "E03"; a.channel = e1x; a.x_signal = "C1X"; a.partner = "C1C";
+    a.born = Side::Secondary; a.mu_m = 0.0123; a.n_veterans = 17; a.sigma_m = 0.1;
+    a.seen_before = true;
+    NetworkSbasis::FamilyBirthPrior b = a;
+    b.sat = "E07"; b.born = Side::Both; b.mu_m = 0.0; b.n_veterans = 0; b.seen_before = false;
+    ctx.carry.this_epoch_cb_family_births = {a, b};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+
+    const auto& c = ctx.counters.cb_family_birth_by_band.at({System::Galileo, '1'});
+    EXPECT_EQ(c.rows, 2);
+    EXPECT_EQ(c.x_born, 1);
+    EXPECT_EQ(c.partner_born, 0);
+    EXPECT_EQ(c.both_born, 1);
+    EXPECT_EQ(c.no_veteran, 1);
+    EXPECT_EQ(c.seen_before, 1);
+    EXPECT_DOUBLE_EQ(c.max_abs_mu_m, 0.0123);
+    EXPECT_EQ(c.sats, (std::set<std::string>{"E03", "E07"}));
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].tier, "CB_DATUM");
+    EXPECT_EQ(events[0].event, "family_birth_prior");
+    EXPECT_EQ(events[0].sat, "E03");
+    EXPECT_EQ(events[0].action, "x_born");
+    EXPECT_EQ(events[0].stat, std::optional<double>(0.0123));
+    EXPECT_EQ(events[0].thr, std::optional<double>(0.1));
+    EXPECT_EQ(events[0].detail,
+              "E03: C1X-C1C = mu, the secondary column born (C1X, satellite seen before); "
+              "mu +0.0123 m over 17 veteran(s); sigma 0.100 m");
+    EXPECT_EQ(events[1].action, "both_born");
+    EXPECT_EQ(events[1].detail,
+              "E07: C1X-C1C = mu, both columns born (C1X+C1C); mu +0.0000 m over 0 "
+              "veteran(s) (none: the family row's re-seed at 0); sigma 0.100 m");
+
+    // A kept epoch without prior rows adds nothing.
+    events.clear();
+    ctx.carry.this_epoch_cb_family_births.clear();
+    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    EXPECT_TRUE(events.empty());
+    EXPECT_EQ(ctx.counters.cb_family_birth_by_band.at({System::Galileo, '1'}).rows, 2);
+}
+
+// The knob: default 0 (off), loads a positive sigma, refuses a negative one.
+TEST(CodeDatumFamilyTest, BirthPriorKnobDefaultsOffAndLoads) {
+    {
+        LogManager log; GnssConfig cfg;
+        ASSERT_TRUE(loadWith("", cfg, log, "bp_off"));
+        EXPECT_DOUBLE_EQ(cfg.networkCodeFamilyBirthPriorSigmaM(), 0.0);
+    }
+    {
+        LogManager log; GnssConfig cfg;
+        ASSERT_TRUE(loadWith(std::string(kArmedEffective)
+                                 + "    \"code_family_birth_prior_sigma_m\": 0.1,\n",
+                             cfg, log, "bp_on"));
+        EXPECT_DOUBLE_EQ(cfg.networkCodeFamilyBirthPriorSigmaM(), 0.1);
+    }
+    {
+        LogManager log; GnssConfig cfg;
+        EXPECT_FALSE(loadWith(std::string(kArmedEffective)
+                                  + "    \"code_family_birth_prior_sigma_m\": -0.1,\n",
+                              cfg, log, "bp_neg"));
+    }
+    // Below 0.01 m (information above ten times the gauge weight) the prior would override
+    // the datum rows it refines: refused.  At 0.02 m (information 2500, above the gauge
+    // weight 1e3) it loads, with a warning.
+    {
+        LogManager log; GnssConfig cfg;
+        EXPECT_FALSE(loadWith(std::string(kArmedEffective)
+                                  + "    \"code_family_birth_prior_sigma_m\": 0.005,\n",
+                              cfg, log, "bp_stiff"));
+    }
+    {
+        LogManager log; GnssConfig cfg;
+        ASSERT_TRUE(loadWith(std::string(kArmedEffective)
+                                 + "    \"code_family_birth_prior_sigma_m\": 0.02,\n",
+                             cfg, log, "bp_gauge"));
+        EXPECT_DOUBLE_EQ(cfg.networkCodeFamilyBirthPriorSigmaM(), 0.02);
+    }
+}
+
+// The run-end readout of the prior: nothing at sigma 0; INERT without the family
+// difference or the time link, naming what is missing; ZERO rows warned; the counts read
+// back when it folded.
+TEST(CodeDatumFamilyTest, RunEndReadsTheBirthPrior) {
+    const auto readout = [](const std::string& extra, const std::string& tag,
+                            const std::function<void(NetworkRunContext&)>& fill) {
+        LogManager log; GnssConfig cfg;
+        EXPECT_TRUE(loadWith(extra, cfg, log, tag));
+        NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+        if (fill) fill(ctx);
+        std::ostringstream oss;
+        auto lg = captureLogger(oss);
+        networkCodeDatumFamilyRunEnd(ctx, cfg, lg);
+        lg->flush();
+        return oss.str();
+    };
+    const std::string fd_only = "    \"estimate_sat_code_bias\": true,\n"
+                                "    \"code_datum_time_linked\": true,\n"
+                                "    \"code_datum_family_difference\": true,\n";
+    EXPECT_EQ(readout(fd_only, "re_bp_zero_sigma", nullptr).find("birth prior"),
+              std::string::npos);
+
+    const std::string no_fd = readout("    \"estimate_sat_code_bias\": true,\n"
+                                      "    \"code_datum_time_linked\": true,\n"
+                                      "    \"code_family_birth_prior_sigma_m\": 0.1,\n",
+                                      "re_bp_nofd", nullptr);
+    EXPECT_NE(no_fd.find("GFC family birth prior): network.code_family_birth_prior_sigma_m "
+                         "= 0.1 m ARMED but INERT without network.code_datum_family_difference."),
+              std::string::npos);
+
+    const std::string no_tl = readout("    \"estimate_sat_code_bias\": true,\n"
+                                      "    \"code_datum_family_difference\": true,\n"
+                                      "    \"code_family_birth_prior_sigma_m\": 0.1,\n",
+                                      "re_bp_notl", nullptr);
+    EXPECT_NE(no_tl.find("= 0.1 m ARMED but INERT without network.code_datum_time_linked."),
+              std::string::npos);
+
+    // Neither the family difference nor the time link: both named.
+    const std::string neither = readout("    \"estimate_sat_code_bias\": true,\n"
+                                        "    \"code_family_birth_prior_sigma_m\": 0.1,\n",
+                                        "re_bp_neither", nullptr);
+    EXPECT_NE(neither.find("= 0.1 m ARMED but INERT without "
+                           "network.code_datum_family_difference and "
+                           "network.code_datum_time_linked."),
+              std::string::npos);
+
+    const std::string armed = fd_only + "    \"code_family_birth_prior_sigma_m\": 0.1,\n";
+    EXPECT_NE(readout(armed, "re_bp_none", nullptr).find("ARMED but ZERO soft rows folded"),
+              std::string::npos);
+    // Only skips counted: still zero rows, with the skips named.
+    const std::string skips_only = readout(armed, "re_bp_skips", [](NetworkRunContext& ctx) {
+        NetworkSbasis::CodeFamilyBirthCounts c;
+        c.seeded = 2; c.no_reference = 1;
+        ctx.counters.cb_family_birth_by_band[{System::Galileo, '1'}] = c;
+    });
+    EXPECT_NE(skips_only.find("ARMED but ZERO soft rows folded"), std::string::npos);
+    EXPECT_NE(skips_only.find("no row on 2 READMIT seed(s), 0 carried column(s) without a "
+                              "previous value, 1 birth(s) with no realized family mean"),
+              std::string::npos);
+
+    const std::string s = readout(armed, "re_bp_on", [](NetworkRunContext& ctx) {
+        NetworkSbasis::CodeFamilyBirthCounts c;
+        c.rows = 25; c.x_born = 20; c.partner_born = 3; c.both_born = 2; c.no_veteran = 2;
+        c.seen_before = 4; c.loosened = 1; c.max_abs_mu_m = 0.0425;
+        c.sats = {"E01", "E02", "E03"};
+        c.seeded = 6; c.carried = 0; c.no_reference = 3;
+        ctx.counters.cb_family_birth_by_band[{System::Galileo, '1'}] = c;
+    });
+    EXPECT_EQ(s.find("INERT"), std::string::npos);
+    EXPECT_NE(s.find("sigma 0.1 m (information 100); over the kept epochs 25 soft row(s) "
+                     "d_X - d_P = mu folded, once per (satellite, birth), on 3 satellite(s): "
+                     "E band 1: 25 row(s) on 3 satellite(s) (secondary column born 20, "
+                     "partner born 3, both 2; 4 on satellites seen before; 1 on a loosened "
+                     "carry; 2 at the family row's re-seed target 0; max |mu| 0.0425 m); no "
+                     "row on 6 READMIT seed(s), 0 carried column(s) without a previous value, "
+                     "3 birth(s) with no realized family mean"),
+              std::string::npos);
+}
+
+// ===========================================================================
+// (h) Step 2's birth test reads the carry, and the fold path (the review of 2026-10-10)
+// ===========================================================================
+
+namespace {
+
+using Fold = NetworkSbasis::CodeBiasCarry;
+using Skip = NetworkSbasis::FamilyBirthSkip;
+
+/// A solved shared estimate over @p keys, epoch open and closed: a prior on every
+/// code-bias column at a value of its own, enough for the stash, which reads the solve's
+/// values and covariance.  No station: the priors make the shared system full rank.
+Eigen::VectorXd solveOver(NetworkEstimator& est, const std::vector<Pair>& keys) {
+    est.beginEpoch();
+    std::vector<NetworkEstimator::SharedPrior> pri;
+    double v = 0.05;
+    for (const auto& [sat, sig] : keys) {
+        NetworkEstimator::SharedPrior pr;
+        pr.kind   = SharedParamKind::CodeBias;
+        pr.sat    = sat;
+        pr.signal = sig;
+        pr.value  = v;
+        pr.info   = 100.0;
+        pri.push_back(pr);
+        v += 0.11;
+    }
+    est.addSharedPrior(pri);
+    return est.solve({});
+}
+
+}  // namespace
+
+// The planner reads the carry.  A column the previous-value map lacks continues when the
+// carry folds it (a READMIT seed, or a plain fold the map missed): no row, recorded with
+// the column(s) the carry continues.  A column the clock monitor's reinit loosens is born
+// although the map has its value, flagged loosened.  The mean is taken over the map's
+// veterans as before (E06, loosened, is one).
+TEST(CodeDatumFamilyTest, BirthPlannerReadsTheCarry) {
+    const std::vector<std::string> common = {"E01", "E02", "E03", "E04",
+                                             "E05", "E06", "E07", "E08"};
+    const std::map<std::string, double> prev_x = {
+        {"E01", 1.0}, {"E02", 0.6}, {"E03", 0.2}, {"E06", 0.9}, {"E07", 0.3}, {"E08", 0.4}};
+    const std::map<std::string, double> prev_p = {
+        {"E01", 0.5}, {"E02", 0.4}, {"E05", 0.1}, {"E06", 0.3}};
+    const std::map<std::string, Fold> carry_x = {
+        {"E01", Fold::Carried}, {"E02", Fold::Carried}, {"E03", Fold::Carried},
+        {"E04", Fold::Seeded},  {"E05", Fold::Carried}, {"E06", Fold::Loosened},
+        {"E07", Fold::Carried}, {"E08", Fold::Loosened}};
+    const std::map<std::string, Fold> carry_p = {
+        {"E01", Fold::Carried}, {"E02", Fold::Carried}, {"E03", Fold::Seeded},
+        {"E04", Fold::Seeded},  {"E05", Fold::Carried}, {"E06", Fold::Carried}};
+    const auto bp = NetworkSbasis::codeFamilyBirthPriors(common, prev_x, prev_p, carry_x,
+                                                         carry_p, false);
+    EXPECT_EQ(bp.n_veterans, 3);   // E01, E02, E06: a previous value on both columns
+    EXPECT_NEAR(bp.mu_m, ((1.0 - 0.5) + (0.6 - 0.4) + (0.9 - 0.3)) / 3.0, 1e-15);
+    EXPECT_TRUE(bp.mu_defined);
+    const std::vector<NetworkSbasis::FamilyBirth> births = {
+        {"E06", Side::Secondary, true},   // the reinit gave its X carry up
+        {"E07", Side::Partner, false},    // no partner value, no partner carry
+        {"E08", Side::Both, true}};       // X loosened, no partner at all
+    EXPECT_EQ(bp.births, births);
+    using Carried = std::tuple<std::string, Skip, Side>;
+    const std::vector<Carried> carried = {
+        {"E03", Skip::Seeded, Side::Partner},    // a return inside the seed horizon
+        {"E04", Skip::Seeded, Side::Both},       // the whole satellite returned
+        {"E05", Skip::Carried, Side::Secondary}};   // a carry the map missed
+    EXPECT_EQ(bp.carried, carried);
+    EXPECT_STREQ(NetworkSbasis::familyBirthSkipName(Skip::Seeded), "seeded");
+    EXPECT_STREQ(NetworkSbasis::familyBirthSkipName(Skip::Carried), "carried");
+    EXPECT_STREQ(NetworkSbasis::familyBirthSkipName(Skip::NoReference), "no_reference");
+}
+
+// The builder with the carry map: E03's C1C column has no previous value, but a READMIT
+// seed carries it, so no row is folded and the skip is recorded.  Without the carry map
+// (the previous-value map alone, the defect of the first build) the same epoch folds a
+// second row; with the park past the horizon (no carry entry) the return is a birth.
+TEST(CodeDatumFamilyTest, BirthPriorSkipsAReturnTheSeedCarries) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, kTwoFamily);
+    Harness h;
+    allVeterans(h);
+    h.code_bias_prev["E|C1C"].erase("E03");
+    armBirthPrior(h, 0.10);
+    for (const auto& [sat, sig] : keys) h.carry[{sat, sig}] = Fold::Carried;
+    h.carry[{"E03", "C1C"}] = Fold::Seeded;
+    const auto rows = h.build(est, keys);
+    EXPECT_EQ(rows.family_birth_H.rows(), 0);
+    EXPECT_TRUE(rows.family_birth_priors.empty());
+    ASSERT_EQ(rows.family_birth_skips.size(), 1u);
+    const auto& s = rows.family_birth_skips[0];
+    EXPECT_EQ(s.sat, "E03");
+    EXPECT_EQ(s.why, Skip::Seeded);
+    EXPECT_EQ(s.side, Side::Partner);
+    EXPECT_EQ(s.x_signal, "C1X");
+    EXPECT_EQ(s.partner, "C1C");
+    EXPECT_EQ(s.outcome, Outcome::FamilyVeteran);
+
+    Harness map_only = h;
+    map_only.carry.clear();
+    const auto r_map = map_only.build(est, keys);
+    ASSERT_EQ(r_map.family_birth_priors.size(), 1u);
+    EXPECT_EQ(r_map.family_birth_priors[0].sat, "E03");
+    EXPECT_TRUE(r_map.family_birth_skips.empty());
+
+    Harness expired = h;
+    expired.carry.erase({"E03", "C1C"});   // parked past the horizon: no carry entry
+    const auto r_exp = expired.build(est, keys);
+    ASSERT_EQ(r_exp.family_birth_priors.size(), 1u);
+    EXPECT_EQ(r_exp.family_birth_priors[0].born, Side::Partner);
+    EXPECT_FALSE(r_exp.family_birth_priors[0].loosened);
+    EXPECT_TRUE(r_exp.family_birth_skips.empty());
+    expectSameGaugeStack(rows, h, r_exp, expired);   // the prior never touches the gauge rows
+}
+
+// The mirror: the map has E03's C1X value, but the clock monitor's reinit loosens its carry,
+// so the column is born again and folds one row, flagged loosened, target the veterans'
+// mean (E03 still one of them: the family row spans it).
+TEST(CodeDatumFamilyTest, BirthPriorFoldsOnALoosenedCarry) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, kTwoFamily);
+    Harness h;
+    allVeterans(h);
+    armBirthPrior(h, 0.10);
+    for (const auto& [sat, sig] : keys) h.carry[{sat, sig}] = Fold::Carried;
+    h.carry[{"E03", "C1X"}] = Fold::Loosened;
+    const auto rows = h.build(est, keys);
+    ASSERT_EQ(rows.family_birth_priors.size(), 1u);
+    const auto& b = rows.family_birth_priors[0];
+    EXPECT_EQ(b.sat, "E03");
+    EXPECT_EQ(b.born, Side::Secondary);
+    EXPECT_TRUE(b.loosened);
+    EXPECT_EQ(b.n_veterans, 3);
+    const auto& px = h.code_bias_prev["E|C1X"];
+    const auto& pp = h.code_bias_prev["E|C1C"];
+    double sum = 0.0;
+    for (const char* sat : {"E01", "E02", "E03"}) sum += px.at(sat) - pp.at(sat);
+    EXPECT_NEAR(rows.family_birth_z(0), sum / 3.0, 1e-12);
+    EXPECT_TRUE(rows.family_birth_skips.empty());
+}
+
+// A bridged channel (no family veteran, the sum-to-zero time link carries the X level):
+// the offset this epoch is what the sum-to-zero frame holds, so the births have no realized
+// family mean to target.  No row; each birth recorded as no_reference with the outcome.
+TEST(CodeDatumFamilyTest, BirthPriorHasNoTargetOnABridgedChannel) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, kTwoFamily);
+    Harness h;
+    allVeterans(h);
+    for (const std::string sat : {"E01", "E02", "E03"}) h.code_bias_prev["E|C1X"].erase(sat);
+    armBirthPrior(h, 0.10);
+    const auto rows = h.build(est, keys);
+    ASSERT_EQ(rows.family_rows.at("E|C1X").outcome, Outcome::Bridged);
+    EXPECT_EQ(rows.family_birth_H.rows(), 0);
+    EXPECT_TRUE(rows.family_birth_priors.empty());
+    ASSERT_EQ(rows.family_birth_skips.size(), 3u);
+    for (const auto& s : rows.family_birth_skips) {
+        EXPECT_EQ(s.why, Skip::NoReference) << s.sat;
+        EXPECT_EQ(s.side, Side::Secondary) << s.sat;
+        EXPECT_EQ(s.outcome, Outcome::Bridged) << s.sat;
+    }
+    Harness off = h;
+    off.arms.birth_prior_sigma_m = 0.0;
+    const auto r_off = off.build(est, keys);
+    expectSameGaugeStack(rows, h, r_off, off);
+}
+
+// The carry map the driver hands the builder: Folded is carried, Seeded seeded, Reinit
+// loosened, Parked and every non-code-bias entry absent; an undecided entry is read from
+// its own record.
+TEST(CodeDatumFamilyTest, CodeBiasCarryMapReadsTheFoldDecisions) {
+    LogManager logman;
+    GnssConfig cfg;
+    ASSERT_TRUE(loadWith("", cfg, logman, "carry_map"));
+    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    const auto entry = [](SharedParamKind kind, const std::string& sat, const std::string& sig,
+                          CarryDisposition d) {
+        CarryPrior cp;
+        cp.kind = kind; cp.sat = sat; cp.signal = sig; cp.value = 0.1; cp.var = 1e-3;
+        cp.fold.disposition = d;
+        return cp;
+    };
+    CarryPrior undecided_live = entry(SharedParamKind::CodeBias, "E06", "C1C",
+                                      CarryDisposition::Undecided);
+    CarryPrior undecided_flag = entry(SharedParamKind::CodeBias, "E07", "C1C",
+                                      CarryDisposition::Undecided);
+    undecided_flag.inflate_q = true;
+    CarryPrior undecided_park = entry(SharedParamKind::CodeBias, "E08", "C1C",
+                                      CarryDisposition::Undecided);
+    undecided_park.t_park_s = 1.0;
+    ctx.carry.prev_carry = {
+        entry(SharedParamKind::CodeBias, "E01", "C1X", CarryDisposition::Folded),
+        entry(SharedParamKind::CodeBias, "E02", "C1C", CarryDisposition::Seeded),
+        entry(SharedParamKind::CodeBias, "E03", "C1X", CarryDisposition::Reinit),
+        entry(SharedParamKind::CodeBias, "E04", "C1C", CarryDisposition::Parked),
+        entry(SharedParamKind::Clock, "E05", "", CarryDisposition::Folded),
+        entry(SharedParamKind::PhaseBias, "E05", "L1C", CarryDisposition::Folded),
+        undecided_live, undecided_flag, undecided_park};
+    const NetworkSbasis::CodeBiasCarryMap m = networkCodeBiasCarryMap(ctx);
+    const NetworkSbasis::CodeBiasCarryMap want = {
+        {{"E01", "C1X"}, Fold::Carried}, {{"E02", "C1C"}, Fold::Seeded},
+        {{"E03", "C1X"}, Fold::Loosened}, {{"E06", "C1C"}, Fold::Carried},
+        {{"E07", "C1C"}, Fold::Loosened}};
+    EXPECT_EQ(m, want);
+}
+
+// End to end through the stash and the decision (the review's double fold): a column that
+// leaves the layout is parked by READMIT and dropped from the previous-value map; back
+// 20 min later it is seeded from the park and is NOT a birth (the map alone would fold a
+// second row).  Back past the 65 min horizon it is.  Once the seeded epoch is kept the
+// column is an ordinary veteran.  A clock-monitor reinit at a later stash loosens a
+// satellite's carry, and its columns are born again.
+TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
+    LogManager logman;
+    GnssConfig cfg;
+    ASSERT_TRUE(loadWith("    \"estimate_sat_code_bias\": true,\n"
+                         "    \"code_datum_time_linked\": true,\n"
+                         "    \"code_datum_family_difference\": true,\n"
+                         "    \"code_family_birth_prior_sigma_m\": 0.1,\n"
+                         "    \"readmit_seed_horizon_s\": 3900.0,\n",
+                         cfg, logman, "readmit_once"));
+    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    ASSERT_TRUE(ctx.knobs.cb_time_linked);
+    ASSERT_TRUE(ctx.knobs.readmit_seed_cb);
+    ASSERT_GT(ctx.knobs.readmit_seed_horizon_s, 0.0);
+    ASSERT_GT(ctx.knobs.clk_mon_reinit_sig, 0.0);   // a flagged satellite is loosened, not dropped
+    const fs::path dir = fs::temp_directory_path() / "gfc_readmit_once_traces";
+    fs::create_directories(dir);
+    auto traces = std::make_unique<NetworkRunTraces>(dir);
+    traces->openAll(cfg, cfg.getNetworkConfig(), cfg.getGlobalVtecShConfig(),
+                    /*sh_model=*/nullptr, /*cl_trace_armed=*/false, nullLogger());
+    const NetworkSbasis::Plan plan;
+
+    std::vector<std::pair<std::string, std::vector<std::string>>> gone_roster = kTwoFamily;
+    gone_roster[2].second = {"C5Q", "C1X", "C5X"};   // E03 without C1C
+    const auto at = [](double tow) { return GnssTime{2313, tow}; };
+    // Keep an epoch: the solve over the layout, then the stash (with the READMIT clock the
+    // D2 inject would set).
+    const auto keep = [&](NetworkEstimator& est, const std::vector<Pair>& keys, double tow,
+                          const std::set<std::string>& refloat = {}) {
+        const Eigen::VectorXd x = solveOver(est, keys);
+        ctx.carry.readmit_now_s = TimeUtils::continuousGpsSeconds(at(tow));
+        networkStashCarry(ctx, cfg, *traces, at(tow), est, x, plan, nullptr, nullptr, refloat,
+                          /*registered_clock_sats=*/{}, /*shared_phase_keys=*/{}, keys,
+                          nullLogger());
+    };
+    // The builder at this epoch, from the context's maps and (optionally) the carry.
+    const auto build = [&](const NetworkEstimator& est, const std::vector<Pair>& keys,
+                           bool with_carry) {
+        Harness h;
+        armBirthPrior(h, 0.10);
+        h.code_bias_prev       = ctx.carry.code_bias_prev_;
+        h.code_bias_sat_seen   = ctx.carry.code_bias_sat_seen_;
+        h.code_bias_ifpin_pair = ctx.carry.code_bias_ifpin_pair_;
+        if (with_carry) h.carry = networkCodeBiasCarryMap(ctx);
+        return h.build(est, keys);
+    };
+    const auto rowsOn = [](const NetworkSbasis::CodeBiasDatumRows& r, const std::string& sat) {
+        int n = 0;
+        for (const auto& b : r.family_birth_priors) n += b.sat == sat ? 1 : 0;
+        return n;
+    };
+
+    // t1: every column registered; kept.
+    const double t1 = 259200.0;
+    NetworkEstimator e1;
+    const auto keys_all = registerRoster(e1, kTwoFamily);
+    keep(e1, keys_all, t1);
+    ASSERT_EQ(ctx.carry.code_bias_prev_.at("E|C1C").count("E03"), 1u);
+
+    // t2: E03's C1C column leaves the layout; kept, so READMIT parks its carry and the
+    // previous-value map drops it.
+    NetworkEstimator e2;
+    const auto keys_gone = registerRoster(e2, gone_roster);
+    networkCarryDecide(ctx, e2, at(t1 + 30.0), 30.0);
+    keep(e2, keys_gone, t1 + 30.0);
+    EXPECT_EQ(ctx.counters.n_readmit_parked, 1);
+    EXPECT_EQ(ctx.carry.code_bias_prev_.at("E|C1C").count("E03"), 0u);
+
+    // t3 = t2 + 20 min: back, seeded from the park.  No birth; a second row without the carry.
+    NetworkEstimator e3;
+    registerRoster(e3, kTwoFamily);
+    const double t3 = t1 + 30.0 + 1200.0;
+    networkCarryDecide(ctx, e3, at(t3), 1200.0);
+    EXPECT_EQ(networkCodeBiasCarryMap(ctx).at({"E03", "C1C"}), Fold::Seeded);
+    const auto r3 = build(e3, keys_all, true);
+    EXPECT_EQ(rowsOn(r3, "E03"), 0);
+    ASSERT_EQ(r3.family_birth_skips.size(), 1u);
+    EXPECT_EQ(r3.family_birth_skips[0].sat, "E03");
+    EXPECT_EQ(r3.family_birth_skips[0].why, Skip::Seeded);
+    EXPECT_EQ(rowsOn(build(e3, keys_all, false), "E03"), 1);   // the map alone: a double fold
+
+    // The same return past the horizon (t1 + 5000 s since the park): parked, a birth.
+    networkCarryDecide(ctx, e3, at(t1 + 5000.0), 3770.0);
+    EXPECT_EQ(networkCodeBiasCarryMap(ctx).count({"E03", "C1C"}), 0u);
+    const auto r3b = build(e3, keys_all, true);
+    EXPECT_EQ(rowsOn(r3b, "E03"), 1);
+    EXPECT_TRUE(r3b.family_birth_skips.empty());
+
+    // Keep the seeded epoch: the column is a veteran of the map again, and nothing folds.
+    networkCarryDecide(ctx, e3, at(t3), 1200.0);
+    keep(e3, keys_all, t3);
+    NetworkEstimator e4;
+    registerRoster(e4, kTwoFamily);
+    networkCarryDecide(ctx, e4, at(t3 + 30.0), 30.0);
+    const auto r4 = build(e4, keys_all, true);
+    EXPECT_EQ(r4.family_birth_H.rows(), 0);
+    EXPECT_TRUE(r4.family_birth_skips.empty());
+
+    // A clock-monitor reinit of E01 at the next stash: its carry is loosened, and its
+    // columns are born again (one row, flagged loosened), though the map has their values.
+    keep(e4, keys_all, t3 + 30.0, {"E01"});
+    NetworkEstimator e5;
+    registerRoster(e5, kTwoFamily);
+    networkCarryDecide(ctx, e5, at(t3 + 60.0), 30.0);
+    const auto r5 = build(e5, keys_all, true);
+    ASSERT_EQ(r5.family_birth_priors.size(), 1u);
+    EXPECT_EQ(r5.family_birth_priors[0].sat, "E01");
+    EXPECT_EQ(r5.family_birth_priors[0].born, Side::Both);
+    EXPECT_TRUE(r5.family_birth_priors[0].loosened);
+
+    traces.reset();
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+// The fold path: the rows fold at their own weight 1/sigma^2 under CbFamilyBirth, one
+// fold record of their dimension; with two weak column priors at 0 the solved difference
+// is the closed form 2 w mu / (eps + 2 w).  The RAIM replay folds its captured copy
+// through the same helper and solves identically.  No rows: no fold record.
+TEST(CodeDatumFamilyTest, FamilyBirthRowsFoldAtTheirOwnWeightAndKind) {
+    const double mu = 0.3, w = 1.0 / (0.1 * 0.1), eps = 1e-4;
+    const auto solveWith = [&](const Eigen::MatrixXd& H, const Eigen::VectorXd& z,
+                               double weight, std::vector<SharedFoldRecord>* folds) {
+        NetworkEstimator est;
+        est.registerCodeBias("E03", "C1X");
+        est.registerCodeBias("E03", "C1C");
+        est.beginEpoch();
+        std::vector<NetworkEstimator::SharedPrior> pri(2);
+        pri[0].kind = SharedParamKind::CodeBias; pri[0].sat = "E03"; pri[0].signal = "C1X";
+        pri[1].kind = SharedParamKind::CodeBias; pri[1].sat = "E03"; pri[1].signal = "C1C";
+        pri[0].info = pri[1].info = eps;
+        est.addSharedPrior(pri);
+        NetworkSbasis::foldFamilyBirthRows(est, H, z, weight);
+        if (folds) *folds = est.sharedFoldLog().folds;
+        const Eigen::VectorXd x = est.solve({});
+        return Eigen::Vector2d(x(est.codeBiasColumn("E03", "C1X")),
+                               x(est.codeBiasColumn("E03", "C1C")));
+    };
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(1, 2);
+    {
+        NetworkEstimator layout;   // the column order of the layout above
+        H(0, layout.registerCodeBias("E03", "C1X")) = 1.0;
+        H(0, layout.registerCodeBias("E03", "C1C")) = -1.0;
+    }
+    const Eigen::VectorXd z = Eigen::VectorXd::Constant(1, mu);
+    std::vector<SharedFoldRecord> folds;
+    const Eigen::Vector2d x = solveWith(H, z, w, &folds);
+    ASSERT_FALSE(folds.empty());
+    EXPECT_EQ(folds.back().kind, ContributionKind::CbFamilyBirth);
+    EXPECT_EQ(folds.back().dim, 1);
+    EXPECT_NEAR(x(0) - x(1), 2.0 * w * mu / (eps + 2.0 * w), 1e-12);
+
+    // The replay's re-fold of the captured copy: the same solution, bit for bit.
+    const Eigen::MatrixXd cap_H = H;
+    const Eigen::VectorXd cap_z = z;
+    const Eigen::Vector2d xr = solveWith(cap_H, cap_z, w, nullptr);
+    EXPECT_EQ(xr(0), x(0));
+    EXPECT_EQ(xr(1), x(1));
+
+    std::vector<SharedFoldRecord> none;
+    solveWith(Eigen::MatrixXd(0, 2), Eigen::VectorXd(0), 0.0, &none);
+    for (const auto& f : none) EXPECT_NE(f.kind, ContributionKind::CbFamilyBirth);
+
+    const ContributionSpec& spec = contributionSpec(ContributionKind::CbFamilyBirth);
+    EXPECT_STREQ(spec.name, "cb_family_birth");
+    EXPECT_EQ(spec.channel, ContributionChannel::SharedRows);
+    EXPECT_EQ(spec.unit, ContributionUnit::Rows);
+    EXPECT_EQ(spec.subject, ContributionSubject::Satellite);
+}
+
+// The kept-epoch bookkeeping of the skips: each counted per (constellation, band); a birth
+// with no target declared as a "no_reference" event, a seeded or carried satellite not
+// declared (READMIT declares the seed).  A loosened row says so in its detail.
+TEST(CodeDatumFamilyTest, KeptEpochCountsBirthSkipsAndDeclaresNoReference) {
+    LogManager logman;
+    GnssConfig cfg;
+    ASSERT_TRUE(loadWith("", cfg, logman, "kept_skip"));
+    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    std::vector<Event> events;
+    const auto sink = [&](const char* tier, const char* event, const std::string& sat,
+                          const std::string&, std::optional<double>, std::optional<double>,
+                          const char* action, const std::string& detail) {
+        events.push_back({tier, event, sat, action, detail});
+    };
+    const SignalId e1x = *SignalId::fromObsCode(System::Galileo, "C1X");
+    NetworkSbasis::FamilyBirthSkipRecord seeded;
+    seeded.sat = "E03"; seeded.channel = e1x; seeded.x_signal = "C1X"; seeded.partner = "C1C";
+    seeded.why = Skip::Seeded; seeded.side = Side::Partner;
+    seeded.outcome = Outcome::FamilyVeteran;
+    NetworkSbasis::FamilyBirthSkipRecord carried = seeded;
+    carried.sat = "E04"; carried.why = Skip::Carried;
+    NetworkSbasis::FamilyBirthSkipRecord noref = seeded;
+    noref.sat = "E05"; noref.why = Skip::NoReference; noref.side = Side::Secondary;
+    noref.outcome = Outcome::Bridged;
+    ctx.carry.this_epoch_cb_family_birth_skips = {seeded, carried, noref};
+    NetworkSbasis::FamilyBirthPrior loose;
+    loose.sat = "E06"; loose.channel = e1x; loose.x_signal = "C1X"; loose.partner = "C1C";
+    loose.born = Side::Both; loose.loosened = true; loose.mu_m = 0.02; loose.n_veterans = 3;
+    loose.sigma_m = 0.1; loose.seen_before = true;
+    ctx.carry.this_epoch_cb_family_births = {loose};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+
+    const auto& c = ctx.counters.cb_family_birth_by_band.at({System::Galileo, '1'});
+    EXPECT_EQ(c.rows, 1);
+    EXPECT_EQ(c.loosened, 1);
+    EXPECT_EQ(c.seeded, 1);
+    EXPECT_EQ(c.carried, 1);
+    EXPECT_EQ(c.no_reference, 1);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].action, "both_born");
+    EXPECT_EQ(events[0].detail,
+              "E06: C1X-C1C = mu, both columns born (C1X+C1C, a loosened carry, satellite "
+              "seen before); mu +0.0200 m over 3 veteran(s); sigma 0.100 m");
+    EXPECT_EQ(events[1].tier, "CB_DATUM");
+    EXPECT_EQ(events[1].event, "family_birth_prior");
+    EXPECT_EQ(events[1].sat, "E05");
+    EXPECT_EQ(events[1].action, "no_reference");
+    EXPECT_EQ(events[1].detail,
+              "E05: C1X-C1C, C1X born with no realized family mean to target (channel "
+              "bridged, no veteran): no row");
 }

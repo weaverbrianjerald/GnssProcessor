@@ -1293,6 +1293,11 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // fingerprint is unchanged.
         if (config_.networkCodeDatumPairContinuity()) add("cbpaircont=1");
         if (config_.networkCodeDatumFamilyDifference()) add("cbfamdiff=1");
+        // Card GFC step 2: the first-sighting family prior changes the carried code biases
+        // of every satellite born beside its family partner, by an amount set by sigma, so
+        // the token carries the value.  Armed-only, as for the two arms above.
+        if (config_.networkCodeFamilyBirthPriorSigmaM() > 0.0)
+            add(fmt::format("cbfambirth={:g}", config_.networkCodeFamilyBirthPriorSigmaM()));
         // The border time update changes what an injected coupling row means (a κ-shrunk,
         // re-independenced pseudo-observation of the moved border against the raw
         // harvest-epoch row), and the κ inputs (per-column P_prev and the q ladder) are not

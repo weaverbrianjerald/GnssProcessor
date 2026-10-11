@@ -85,6 +85,7 @@ namespace GnssProcessor {
         CbFamilyGf,               ///< W6 code-bias datum: a secondary family's geometry-free row (FAMILY-GF).
         CbIfLevel,                ///< W6 code-bias datum: the per-constellation ionosphere-free level row (RF-0e e1).
         CbSumToZero,              ///< W6 code-bias datum: the (constellation, signal) sum-to-zero row.
+        CbFamilyBirth,            ///< Soft first-sighting family prior on a satellite's inter-family code-bias difference (card GFC step 2): one row per (satellite, birth), at 1/sigma^2, apart from the gauge rows.
         ClockConstraintRows,      ///< Constraint-realized clock datum rows (sum-to-zero or broadcast-anchored).
         SbasisCompletion,         ///< S-basis completion rows on the directions the declared datum misses (SBC).
         // --- Shared priors -------------------------------------------------------------

@@ -903,7 +903,8 @@ namespace GnssProcessor {
               "W6 code datum pinned in TIME not level: cures the ~0.92 m hysteretic OSB/clock "
               "wander after each rise/set" },
             // Card GFC's refinements of the time-linked datum above,
-            // network.code_datum_pair_continuity and network.code_datum_family_difference,
+            // network.code_datum_pair_continuity and network.code_datum_family_difference
+            // (and step 2's network.code_family_birth_prior_sigma_m on the latter),
             // are UNVALIDATED (pre-registered, default off) and have no posture row, like the
             // other unvalidated knobs: this table lists RECOMMEND_* ledger verdicts only, and
             // `config_posture_check.py --verify-loader` fails on a row without one.  A row is

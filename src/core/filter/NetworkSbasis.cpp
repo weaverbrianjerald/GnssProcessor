@@ -844,12 +844,48 @@ FamilyPartner familyPartnerOf(
     return out;
 }
 
+/// The previous kept-epoch solved values of a family pair's common satellites (card GFC):
+/// what the family row's time link and the first-sighting prior both read.
+struct FamilyPrev {
+    std::vector<std::string>      common_sats;   ///< The common satellites, in the secondary channel's order.
+    std::map<std::string, double> prev_x;        ///< Satellite → previous solved bias on the secondary channel.
+    std::map<std::string, double> prev_p;        ///< Satellite → previous solved bias on the partner channel.
+};
+
+/**
+ * @brief Collect the previous solved values of a family pair's common satellites.
+ *
+ * @param fp             The partner, with its common satellites.
+ * @param xkey           The secondary channel's key.
+ * @param code_bias_prev The previous kept epoch's solved code biases, by channel key.
+ * @return The common satellites and their previous values on both columns (a satellite
+ *         without one is absent from that map).
+ */
+FamilyPrev familyPrevOf(const FamilyPartner& fp, const std::string& xkey,
+                        const std::map<std::string, std::map<std::string, double>>& code_bias_prev) {
+    const auto prevOf = [&](const std::string& key) {
+        const auto it = code_bias_prev.find(key);
+        return it == code_bias_prev.end() ? nullptr : &it->second;
+    };
+    const std::map<std::string, double>* xprev = prevOf(xkey);
+    const std::map<std::string, double>* pprev = prevOf(fp.key);
+    FamilyPrev out;
+    for (const FamilyCommonSat& c : fp.common) {
+        out.common_sats.push_back(c.sat);
+        if (xprev) if (const auto v = xprev->find(c.sat); v != xprev->end()) out.prev_x[c.sat] = v->second;
+        if (pprev) if (const auto v = pprev->find(c.sat); v != pprev->end()) out.prev_p[c.sat] = v->second;
+    }
+    return out;
+}
+
 /// Card GFC's decision for one secondary-family channel: which row realizes its level,
 /// and the family-difference row's span and target when it is that row.
 struct FamilyRowPlan {
     NetworkSbasis::FamilyRowRealization realization;   ///< The outcome and the partner.
     std::vector<FamilyCommonSat>        span;          ///< The satellites the family row spans; empty unless @c realization.familyRow().
     double                              rhs{0.0};      ///< The family row's target.
+    FamilyPartner                       partner;       ///< The partner and the common satellites (step 2's first-sighting prior reads them whatever the outcome); an empty key for NoPartner.
+    FamilyPrev                          prev;          ///< The common satellites' previous values; empty for NoPartner and NoCommon.
 };
 
 /**
@@ -902,29 +938,19 @@ FamilyRowPlan planFamilyRow(
     FamilyRowPlan plan;
     NetworkSbasis::FamilyRowRealization& r = plan.realization;
     r.channel = x.id;
-    const FamilyPartner fp = familyPartnerOf(x, entries, channels, idents);
+    plan.partner = familyPartnerOf(x, entries, channels, idents);
+    const FamilyPartner& fp = plan.partner;
     r.partner = fp.signal;
     if (fp.key.empty())     { r.outcome = Outcome::NoPartner; return plan; }
     if (fp.common.empty())  { r.outcome = Outcome::NoCommon;  return plan; }
 
     // The previous solved values of the common satellites on both columns.
-    const auto prevOf = [&](const std::string& key) {
-        const auto it = code_bias_prev.find(key);
-        return it == code_bias_prev.end() ? nullptr : &it->second;
-    };
-    const std::map<std::string, double>* xprev = prevOf(xkey);
-    const std::map<std::string, double>* pprev = prevOf(fp.key);
-    std::vector<std::string>      common_sats;
-    std::map<std::string, double> prev_x, prev_p;
+    plan.prev = familyPrevOf(fp, xkey, code_bias_prev);
     std::map<std::string, const FamilyCommonSat*> by_sat;
-    for (const FamilyCommonSat& c : fp.common) {
-        common_sats.push_back(c.sat);
-        by_sat[c.sat] = &c;
-        if (xprev) if (const auto v = xprev->find(c.sat); v != xprev->end()) prev_x[c.sat] = v->second;
-        if (pprev) if (const auto v = pprev->find(c.sat); v != pprev->end()) prev_p[c.sat] = v->second;
-    }
+    for (const FamilyCommonSat& c : fp.common) by_sat[c.sat] = &c;
     const NetworkSbasis::CodeFamilyDiffTimeLink tl =
-        NetworkSbasis::codeFamilyDiffTimeLink(common_sats, prev_x, prev_p);
+        NetworkSbasis::codeFamilyDiffTimeLink(plan.prev.common_sats, plan.prev.prev_x,
+                                              plan.prev.prev_p);
 
     bool reaches_level = false;
     for (const std::string& sat : tl.jac_sats) {
@@ -1068,6 +1094,117 @@ NetworkSbasis::CodeFamilyDiffTimeLink NetworkSbasis::codeFamilyDiffTimeLink(
     return out;
 }
 
+const char* NetworkSbasis::familyBirthSideName(FamilyBirthSide s) {
+    switch (s) {
+        case FamilyBirthSide::Secondary: return "x_born";
+        case FamilyBirthSide::Partner:   return "partner_born";
+        case FamilyBirthSide::Both:      return "both_born";
+    }
+    return "unknown";
+}
+
+const char* NetworkSbasis::familyBirthSkipName(FamilyBirthSkip s) {
+    switch (s) {
+        case FamilyBirthSkip::Seeded:      return "seeded";
+        case FamilyBirthSkip::Carried:     return "carried";
+        case FamilyBirthSkip::NoReference: return "no_reference";
+    }
+    return "unknown";
+}
+
+NetworkSbasis::CodeFamilyBirthPlan NetworkSbasis::codeFamilyBirthPriors(
+    const std::vector<std::string>& common_sats,
+    const std::map<std::string, double>& prev_x,
+    const std::map<std::string, double>& prev_p,
+    const std::map<std::string, CodeBiasCarry>& carry_x,
+    const std::map<std::string, CodeBiasCarry>& carry_p,
+    bool family_reseed) {
+    CodeFamilyBirthPlan out;
+    // The target first: the mean previous difference over the veterans (a previous value
+    // on both columns), the satellites the family row's time link spans.  It is a realized
+    // family mean when a veteran exists, or when the family row re-seeds the offset at 0.
+    double sum = 0.0;
+    for (const std::string& sat : common_sats) {
+        const auto x = prev_x.find(sat);
+        const auto p = prev_p.find(sat);
+        if (x != prev_x.end() && p != prev_p.end()) {
+            sum += x->second - p->second;
+            ++out.n_veterans;
+        }
+    }
+    if (out.n_veterans > 0) out.mu_m = sum / out.n_veterans;
+    out.mu_defined = out.n_veterans > 0 || family_reseed;
+    // One column's standing: whether it continues (the carry folds it on, or it has a
+    // previous value the carry keeps), and whether the carry alone makes it continue.
+    struct Column {
+        bool continues{false};
+        bool loosened{false};               // a previous value the carry gives up
+        std::optional<CodeBiasCarry> by;    // the carry, when it continues a column the map lacks
+    };
+    const auto column = [](const std::string& sat, const std::map<std::string, double>& prev,
+                           const std::map<std::string, CodeBiasCarry>& carry) {
+        Column c;
+        const bool in_map = prev.count(sat) != 0;
+        const auto it = carry.find(sat);
+        const bool has_carry = it != carry.end();
+        if (has_carry && it->second == CodeBiasCarry::Loosened) {
+            c.loosened = in_map;
+            return c;   // born: the carried information is given up
+        }
+        c.continues = in_map || has_carry;
+        if (!in_map && has_carry) c.by = it->second;
+        return c;
+    };
+    const auto sideOf = [](bool x, bool p) {
+        return x && p ? FamilyBirthSide::Both
+             : x      ? FamilyBirthSide::Secondary
+                      : FamilyBirthSide::Partner;
+    };
+    // Then the births: a common satellite with a column that does not continue.  A
+    // satellite whose columns both continue is carried and gets no row; it is recorded
+    // when the carry alone continues a column the previous-value map lacks.
+    for (const std::string& sat : common_sats) {
+        const Column x = column(sat, prev_x, carry_x);
+        const Column p = column(sat, prev_p, carry_p);
+        if (!x.continues || !p.continues) {
+            out.births.push_back({sat, sideOf(!x.continues, !p.continues),
+                                  (!x.continues && x.loosened) || (!p.continues && p.loosened)});
+            continue;
+        }
+        if (x.by || p.by) {
+            // A READMIT seed is named before a plain fold: it is the return the map misses.
+            const bool seeded = (x.by && *x.by == CodeBiasCarry::Seeded)
+                             || (p.by && *p.by == CodeBiasCarry::Seeded);
+            out.carried.emplace_back(sat,
+                                     seeded ? FamilyBirthSkip::Seeded : FamilyBirthSkip::Carried,
+                                     sideOf(x.by.has_value(), p.by.has_value()));
+        }
+    }
+    return out;
+}
+
+void NetworkSbasis::CodeFamilyBirthCounts::add(const FamilyBirthPrior& b) {
+    ++rows;
+    switch (b.born) {
+        case FamilyBirthSide::Secondary: ++x_born;       break;
+        case FamilyBirthSide::Partner:   ++partner_born; break;
+        case FamilyBirthSide::Both:      ++both_born;    break;
+    }
+    if (b.n_veterans == 0) ++no_veteran;
+    if (b.seen_before) ++seen_before;
+    if (b.loosened) ++loosened;
+    max_abs_mu_m = std::max(max_abs_mu_m, std::abs(b.mu_m));
+    sats.insert(b.sat);
+}
+
+void NetworkSbasis::CodeFamilyBirthCounts::add(const FamilyBirthSkipRecord& s) {
+    switch (s.why) {
+        case FamilyBirthSkip::Seeded:      ++seeded;       break;
+        case FamilyBirthSkip::Carried:     ++carried;      break;
+        case FamilyBirthSkip::NoReference: ++no_reference; break;
+    }
+}
+
 const char* NetworkSbasis::pinPairContinuityBlocker(bool gf_datum, NetworkSatGfDatum sat_gf_datum,
                                                     bool sat_gf_datum_time_linked,
                                                     bool sat_if_level_datum) {
@@ -1111,7 +1248,8 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                              const std::string&, std::optional<double>,
                              std::optional<double>, const char*,
                              const std::string&)>& emitEvent,
-    const CodeDatumFamilyArms& family_arms) {
+    const CodeDatumFamilyArms& family_arms,
+    const CodeBiasCarryMap& code_bias_carry) {
     CodeBiasDatumRows out;
     const Eigen::Index nshared = est.numShared();
     // Card GFC: both arms refine the time link and are read only under it.  Pair
@@ -1124,6 +1262,12 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                                                    sat_gf_datum_time_linked,
                                                    sat_if_level_datum) == nullptr;
     const bool family_difference = cb_time_linked && family_arms.family_difference;
+    // Card GFC step 2: the first-sighting family prior refines the family difference and
+    // is read only with it (the loader refuses a negative or non-finite sigma).
+    const double birth_sigma = family_arms.birth_prior_sigma_m;
+    const bool   birth_prior = family_difference && std::isfinite(birth_sigma) && birth_sigma > 0.0;
+    std::vector<Eigen::VectorXd> birth_rows;   // its soft rows, folded apart from `rows`
+    std::vector<double>          birth_zs;
 
     std::map<std::string, std::vector<std::string>> sat_signals;  // sat -> code signals
     std::vector<std::string> sat_order;
@@ -2031,6 +2175,88 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                                 ++plan.realization.reseed_sats;
                             }
                 }
+                // --- Card GFC step 2: the first-sighting family prior ---
+                // (network.code_family_birth_prior_sigma_m.)  The family row fixes the
+                // inter-family offset as a constellation mean, but a column born beside an
+                // uncertain satellite clock still takes up that clock's error, and the stiff
+                // code-bias process noise keeps it (card GAL2's reading R-a).  So a common
+                // satellite whose X or partner column is born this epoch gets one soft row
+                // d_X - d_P = mu, whatever row realized the channel's level: the prior is on
+                // the satellite's own difference, which no level row reaches.  Band 1 only:
+                // it is the band the family row acts on under the goldens' datum (the RF-0d
+                // extra rows already tie a band-5 X column to the pinned pair), and the band
+                // of the card's evidence.
+                //
+                // Born is read from the carry (codeFamilyBirthPriors, code_bias_carry), not
+                // from the previous-value map alone: the map drops a departed column, while
+                // READMIT parks its carry and seeds the column from it on a return inside
+                // the seed horizon, so the map would call that return born and fold a second
+                // row on information the seed already holds.  A column the clock monitor's
+                // reinit loosens is born although it has a previous value.  That keeps the
+                // fold to once per (satellite, birth): a born column is carried from the
+                // next kept epoch on.
+                //
+                // mu is the family row's veteran mean, or 0 when the family row re-seeds
+                // the offset at 0.  A birth with neither (Bridged, or Dependent with no
+                // veteran) has no realized family mean to target, because the offset this
+                // epoch is what the channel's sum-to-zero frame carries, so it folds no row
+                // and is recorded (FamilyBirthSkip::NoReference).  The rows are kept out of
+                // `rows`: they are soft priors, not gauge rows, and go to the driver with
+                // their own weight (CodeBiasDatumRows::family_birth_H).
+                if (birth_prior && id->second.id.digit == '1' && !plan.prev.common_sats.empty()) {
+                    std::map<std::string, CodeBiasCarry> carry_x, carry_p;
+                    if (!code_bias_carry.empty())
+                        for (const std::string& sat : plan.prev.common_sats) {
+                            const auto cx = code_bias_carry.find({sat, id->second.code});
+                            if (cx != code_bias_carry.end()) carry_x[sat] = cx->second;
+                            const auto cp = code_bias_carry.find({sat, plan.partner.signal});
+                            if (cp != code_bias_carry.end()) carry_p[sat] = cp->second;
+                        }
+                    const NetworkSbasis::CodeFamilyBirthPlan bp = NetworkSbasis::codeFamilyBirthPriors(
+                        plan.prev.common_sats, plan.prev.prev_x, plan.prev.prev_p, carry_x,
+                        carry_p,
+                        plan.realization.outcome == FamilyRowOutcome::FamilyReseed);
+                    const auto skip = [&](const std::string& sat, FamilyBirthSkip why,
+                                          FamilyBirthSide side) {
+                        NetworkSbasis::FamilyBirthSkipRecord s;
+                        s.sat      = sat;
+                        s.channel  = id->second.id;
+                        s.x_signal = id->second.code;
+                        s.partner  = plan.partner.signal;
+                        s.why      = why;
+                        s.side     = side;
+                        s.outcome  = plan.realization.outcome;
+                        out.family_birth_skips.push_back(std::move(s));
+                    };
+                    for (const auto& [sat, why, side] : bp.carried) skip(sat, why, side);
+                    for (const NetworkSbasis::FamilyBirth& b : bp.births) {
+                        if (!bp.mu_defined) {
+                            skip(b.sat, FamilyBirthSkip::NoReference, b.side);
+                            continue;
+                        }
+                        const auto c = std::find_if(
+                            plan.partner.common.begin(), plan.partner.common.end(),
+                            [&](const FamilyCommonSat& s) { return s.sat == b.sat; });
+                        if (c == plan.partner.common.end()) continue;   // defensive: births come from the common set
+                        Eigen::VectorXd brow = Eigen::VectorXd::Zero(nshared);
+                        brow(c->x_col) = 1.0;
+                        brow(c->p_col) = -1.0;
+                        birth_rows.push_back(std::move(brow));
+                        birth_zs.push_back(bp.mu_m);
+                        NetworkSbasis::FamilyBirthPrior rec;
+                        rec.sat         = b.sat;
+                        rec.channel     = id->second.id;
+                        rec.x_signal    = id->second.code;
+                        rec.partner     = plan.partner.signal;
+                        rec.born        = b.side;
+                        rec.loosened    = b.loosened;
+                        rec.mu_m        = bp.mu_m;
+                        rec.n_veterans  = bp.n_veterans;
+                        rec.sigma_m     = birth_sigma;
+                        rec.seen_before = code_bias_sat_seen_.count(b.sat) != 0;
+                        out.family_birth_priors.push_back(std::move(rec));
+                    }
+                }
                 out.family_rows[skey] = std::move(plan.realization);
             }
         }
@@ -2105,8 +2331,48 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         out.H = std::move(H);
         out.z = std::move(z);
     }
+    // Card GFC step 2: the first-sighting family prior rows, stacked apart from the gauge
+    // rows with their own weight (the driver folds and captures them on their own).
+    if (!birth_rows.empty()) {
+        const Eigen::Index nb = static_cast<Eigen::Index>(birth_rows.size());
+        out.family_birth_H.resize(nb, nshared);
+        out.family_birth_z.resize(nb);
+        for (Eigen::Index r = 0; r < nb; ++r) {
+            out.family_birth_H.row(r) = birth_rows[static_cast<std::size_t>(r)];
+            out.family_birth_z(r)     = birth_zs[static_cast<std::size_t>(r)];
+        }
+        out.family_birth_weight = 1.0 / (birth_sigma * birth_sigma);
+    }
     out.n_if_pin_sats  = static_cast<int>(sat_order.size());
     out.n_s2z_channels = static_cast<int>(st0_chan.size());
+    return out;
+}
+
+void NetworkSbasis::foldFamilyBirthRows(NetworkEstimator& est, const Eigen::MatrixXd& H,
+                                        const Eigen::VectorXd& z, double weight) {
+    if (H.rows() == 0) return;
+    est.contributionKind(ContributionKind::CbFamilyBirth);   // card NOM N2a
+    est.addSharedConstraintRows(H, z, weight);
+}
+
+// The carry's fold of each code-bias column, for the first-sighting prior (see the header).
+NetworkSbasis::CodeBiasCarryMap networkCodeBiasCarryMap(const NetworkRunContext& ctx) {
+    using Fold = NetworkSbasis::CodeBiasCarry;
+    NetworkSbasis::CodeBiasCarryMap out;
+    for (const CarryPrior& cp : ctx.carry.prev_carry) {
+        if (cp.kind != SharedParamKind::CodeBias) continue;
+        std::optional<Fold> f;
+        switch (cp.fold.disposition) {
+            case CarryDisposition::Folded:   f = Fold::Carried;  break;
+            case CarryDisposition::Seeded:   f = Fold::Seeded;   break;
+            case CarryDisposition::Reinit:   f = Fold::Loosened; break;
+            case CarryDisposition::Undecided:   // no decision pass reached it: its own record
+                if (!(cp.t_park_s > 0.0)) f = cp.inflate_q ? Fold::Loosened : Fold::Carried;
+                break;
+            default: break;   // Parked (absent, or past the horizon); no other applies to a code bias
+        }
+        if (f) out[{cp.sat, cp.signal}] = *f;
+    }
     return out;
 }
 
@@ -2219,6 +2485,47 @@ void networkCodeDatumFamilyKeptEpoch(
                           + NetworkSbasis::familyRowOutcomeName(r.outcome) + ")");
         }
         ctx.carry.last_cb_family_partner[chan] = partner;
+    }
+    // The first-sighting family prior of this kept epoch (card GFC step 2,
+    // network.code_family_birth_prior_sigma_m): each soft row folded on this kept epoch,
+    // counted per (constellation, band) and declared once, and each common satellite given
+    // no row, counted; a birth with no target is declared too (a birth the prior missed).
+    const auto columnsOf = [](NetworkSbasis::FamilyBirthSide side, const std::string& x,
+                              const std::string& p) {
+        return side == NetworkSbasis::FamilyBirthSide::Partner     ? p
+             : side == NetworkSbasis::FamilyBirthSide::Secondary   ? x
+                                                                    : x + "+" + p;
+    };
+    for (const NetworkSbasis::FamilyBirthPrior& b : ctx.carry.this_epoch_cb_family_births) {
+        ctx.counters.cb_family_birth_by_band[{b.channel.sys, b.channel.digit}].add(b);
+        const char* born_text = b.born == NetworkSbasis::FamilyBirthSide::Secondary
+                                    ? "the secondary column born"
+                              : b.born == NetworkSbasis::FamilyBirthSide::Partner
+                                    ? "the partner column born"
+                                    : "both columns born";
+        emitEvent("CB_DATUM", "family_birth_prior", b.sat, "", b.mu_m, b.sigma_m,
+                  NetworkSbasis::familyBirthSideName(b.born),
+                  fmt::format("{}: {}-{} = mu, {} ({}{}{}); mu {:+.4f} m over {} veteran(s){}; "
+                              "sigma {:.3f} m",
+                              b.sat, b.x_signal, b.partner, born_text,
+                              columnsOf(b.born, b.x_signal, b.partner),
+                              b.loosened ? ", a loosened carry" : "",
+                              b.seen_before ? ", satellite seen before" : "",
+                              b.mu_m, b.n_veterans,
+                              b.n_veterans == 0 ? " (none: the family row's re-seed at 0)" : "",
+                              b.sigma_m));
+    }
+    for (const NetworkSbasis::FamilyBirthSkipRecord& s :
+         ctx.carry.this_epoch_cb_family_birth_skips) {
+        ctx.counters.cb_family_birth_by_band[{s.channel.sys, s.channel.digit}].add(s);
+        if (s.why != NetworkSbasis::FamilyBirthSkip::NoReference) continue;
+        emitEvent("CB_DATUM", "family_birth_prior", s.sat, "", std::nullopt, std::nullopt,
+                  NetworkSbasis::familyBirthSkipName(s.why),
+                  fmt::format("{}: {}-{}, {} born with no realized family mean to target "
+                              "(channel {}, no veteran): no row",
+                              s.sat, s.x_signal, s.partner,
+                              columnsOf(s.side, s.x_signal, s.partner),
+                              NetworkSbasis::familyRowOutcomeName(s.outcome)));
     }
 }
 
@@ -2512,22 +2819,36 @@ void networkCodeDatumFamilyRunEnd(const NetworkRunContext& ctx, const GnssConfig
                                   const std::shared_ptr<spdlog::logger>& log) {
     const bool pc = config_.networkCodeDatumPairContinuity();
     const bool fd = config_.networkCodeDatumFamilyDifference();
-    if (!pc && !fd) return;
-    // Both arms refine the time-linked code datum, which exists only with the W6 satellite
+    // Step 2's first-sighting family prior (network.code_family_birth_prior_sigma_m).
+    const double bp_sigma = config_.networkCodeFamilyBirthPriorSigmaM();
+    const bool bp = bp_sigma > 0.0;
+    if (!pc && !fd && !bp) return;
+    // Every arm refines the time-linked code datum, which exists only with the W6 satellite
     // code bias; without either the builder never read them (standing invariant #4).
     std::string missing;
     if (!config_.networkCodeDatumTimeLinked()) missing = "network.code_datum_time_linked";
     if (!config_.estimateNetworkSatCodeBias())
         missing += std::string(missing.empty() ? "" : " and ") + "network.estimate_sat_code_bias";
     if (!missing.empty()) {
-        log->warn("Network (GFC): {} ARMED but INERT without {}.  {} the time-linked code "
-                  "datum, which this run does not realize, so the builder never read {} and "
-                  "the run is the unarmed posture (standing invariant #4).",
-                  pc && fd ? "network.code_datum_pair_continuity and "
-                             "network.code_datum_family_difference"
-                  : pc     ? "network.code_datum_pair_continuity"
-                           : "network.code_datum_family_difference",
-                  missing, pc && fd ? "Both refine" : "It refines", pc && fd ? "them" : "it");
+        if (pc || fd)
+            log->warn("Network (GFC): {} ARMED but INERT without {}.  {} the time-linked code "
+                      "datum, which this run does not realize, so the builder never read {} "
+                      "and the run is the unarmed posture (standing invariant #4).",
+                      pc && fd ? "network.code_datum_pair_continuity and "
+                                 "network.code_datum_family_difference"
+                      : pc     ? "network.code_datum_pair_continuity"
+                               : "network.code_datum_family_difference",
+                      missing, pc && fd ? "Both refine" : "It refines", pc && fd ? "them" : "it");
+        // The prior also needs the family difference: name it too when it is off, so the
+        // line lists every prerequisite the loader's warning does.
+        if (bp)
+            log->warn("Network (GFC family birth prior): network.code_family_birth_prior_sigma_m "
+                      "= {:g} m ARMED but INERT without {}.  The prior refines the time-linked "
+                      "family-difference datum, so the builder never read it and folded no "
+                      "row (standing invariant #4).",
+                      bp_sigma,
+                      fd ? missing
+                         : "network.code_datum_family_difference and " + missing);
         return;
     }
     if (pc) {
@@ -2650,6 +2971,50 @@ void networkCodeDatumFamilyRunEnd(const NetworkRunContext& ctx, const GnssConfig
                           "row was never built (every channel-epoch kept the sum-to-zero row "
                           "for the reasons above), so this run is the unarmed posture "
                           "(standing invariant #4).");
+        }
+    }
+    // Step 2: the first-sighting family prior.  It is read only with the family
+    // difference; with it, 0 rows means no first sighting with a target beside a partner
+    // ever occurred on a kept epoch (or no secondary-family channel at all), which the
+    // counters cannot tell from inert wiring, so it is a warning (standing invariant #4).
+    if (bp) {
+        int rows = 0;
+        std::set<std::string> sats;
+        std::string per;
+        for (const auto& [band, c] : ctx.counters.cb_family_birth_by_band) {
+            rows += c.rows;
+            sats.insert(c.sats.begin(), c.sats.end());
+            per += fmt::format("{}{} band {}: {} row(s) on {} satellite(s) (secondary "
+                               "column born {}, partner born {}, both {}; {} on satellites "
+                               "seen before; {} on a loosened carry; {} at the family row's "
+                               "re-seed target 0; max |mu| {:.4f} m); no row on {} READMIT "
+                               "seed(s), {} carried column(s) without a previous value, {} "
+                               "birth(s) with no realized family mean",
+                               per.empty() ? "" : "; ", constellationKey(band.first),
+                               band.second, c.rows, c.sats.size(), c.x_born,
+                               c.partner_born, c.both_born, c.seen_before, c.loosened,
+                               c.no_veteran, c.max_abs_mu_m, c.seeded, c.carried,
+                               c.no_reference);
+        }
+        if (!fd) {
+            log->warn("Network (GFC family birth prior): network.code_family_birth_prior_sigma_m "
+                      "= {:g} m ARMED but INERT without network.code_datum_family_difference.  "
+                      "The prior refines the family-difference datum, so the builder never "
+                      "read it and folded no row (standing invariant #4).",
+                      bp_sigma);
+        } else if (rows == 0) {
+            log->warn("Network (GFC family birth prior): sigma {:g} m ARMED but ZERO soft rows "
+                      "folded: no Galileo band-1 secondary-family (X) column or partner was at "
+                      "its first sighting beside the other with a realized family mean on any "
+                      "kept epoch (or no such channel kept a level row), so this run is the "
+                      "unarmed posture (standing invariant #4).{}",
+                      bp_sigma, per.empty() ? std::string() : "  Counted: " + per + ".");
+        } else {
+            log->info("Network (GFC family birth prior): sigma {:g} m (information {:g}); over "
+                      "the kept epochs {} soft row(s) d_X - d_P = mu folded, once per "
+                      "(satellite, birth), on {} satellite(s): {}.  Events: "
+                      "network_events.csv CB_DATUM/family_birth_prior.",
+                      bp_sigma, 1.0 / (bp_sigma * bp_sigma), rows, sats.size(), per);
         }
     }
 }
