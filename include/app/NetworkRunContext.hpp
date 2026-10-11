@@ -1197,6 +1197,64 @@ namespace GnssProcessor {
         // first emit, so it must not fabricate a disc it cannot verify.
         std::map<std::string, std::pair<std::string, std::string>> this_epoch_if_pin_sel;
         std::map<std::string, std::pair<std::string, std::string>> last_if_pin_sel;
+        /// This epoch's ionosphere-free pin pair changes per satellite, with their outcome
+        /// (card GFC, @c network.code_datum_pair_continuity;
+        /// @c NetworkSbasis::CodeBiasDatumRows::if_pin_pair_changes).  The emit site
+        /// counts them once per kept epoch and leaves the pair re-selection discontinuity
+        /// undeclared for a continued satellite whose last emitted pair is the pair the
+        /// builder continued from.  A main-pass scratch with the discipline of
+        /// @ref this_epoch_if_pin_sel: cleared unconditionally each epoch before the
+        /// builder runs and read only at the emit site, which a withheld epoch never
+        /// reaches, so a withheld epoch's entry can neither be counted nor suppress a
+        /// later declaration.  Empty unless the arm is effective.
+        std::map<std::string, NetworkSbasis::PinPairChange> this_epoch_if_pin_changes;
+        /// This epoch's ionosphere-free pin pair holds per satellite: the satellites whose
+        /// pin kept the last kept epoch's pair while the selection named another (card
+        /// GFC, @c network.code_datum_pair_continuity;
+        /// @c NetworkSbasis::CodeBiasDatumRows::if_pin_pair_holds).  Main-pass scratch
+        /// with the discipline of @ref this_epoch_if_pin_changes.  Empty unless the arm
+        /// is effective.
+        std::map<std::string, NetworkSbasis::PinPairHold> this_epoch_if_pin_holds;
+        /// The pin pair holds of the last kept epoch (card GFC), the baseline the begin and
+        /// the end of a hold are declared against (@c networkCodeDatumFamilyKeptEpoch,
+        /// "CLK_BASIS"/"held"), advanced only on kept epochs.  Telemetry only, not
+        /// snapshotted: see @ref if_pin_holds_resume_pending.  Empty unless the arm is
+        /// effective.
+        std::map<std::string, NetworkSbasis::PinPairHold> last_if_pin_holds;
+        /// One-shot latch set by @ref networkTryWarmResume beside
+        /// @ref resume_datum_first_ep and consumed by the first
+        /// @c networkCodeDatumFamilyKeptEpoch call (card GFC).  With
+        /// @ref last_if_pin_holds not snapshotted, the first kept epoch after a resume
+        /// cannot tell a hold that begins there from one the writer's last kept epoch
+        /// carried, so the holds it finds are declared "hold_resumed" and counted apart
+        /// from the holds begun.  Telemetry only: nothing reads it when no hold exists.
+        /// Never serialized.
+        bool if_pin_holds_resume_pending{false};
+        /// This epoch's secondary-family Galileo code-channel level realizations per
+        /// channel key (card GFC, @c network.code_datum_family_difference;
+        /// @c NetworkSbasis::CodeBiasDatumRows::family_rows).  Main-pass scratch with the
+        /// same discipline as @ref this_epoch_if_pin_changes.  Empty unless the arm is on
+        /// under the time link.
+        std::map<std::string, NetworkSbasis::FamilyRowRealization> this_epoch_cb_family_rows;
+        /// This epoch's first-sighting family prior rows, one record per row folded (card
+        /// GFC step 2, @c network.code_family_birth_prior_sigma_m;
+        /// @c NetworkSbasis::CodeBiasDatumRows::family_birth_priors).  Main-pass scratch with
+        /// the same discipline as @ref this_epoch_if_pin_changes: a row folded on a withheld
+        /// pass is neither counted nor declared (it is folded again at the next pass, whose
+        /// record replaces it).  Empty unless the prior is effective.
+        std::vector<NetworkSbasis::FamilyBirthPrior> this_epoch_cb_family_births;
+        /// This epoch's common satellites the first-sighting family prior folded no row on
+        /// (card GFC step 2; @c NetworkSbasis::CodeBiasDatumRows::family_birth_skips): a
+        /// READMIT seed or the D2 fold continuing a column without a previous value, or a
+        /// birth with no realized family mean.  Main-pass scratch with the same discipline
+        /// as @ref this_epoch_cb_family_births.  Empty unless the prior is effective.
+        std::vector<NetworkSbasis::FamilyBirthSkipRecord> this_epoch_cb_family_birth_skips;
+        /// The family-difference partner each secondary-family channel's level was realized
+        /// against at the last kept epoch, empty for the sum-to-zero row (card GFC).  The
+        /// baseline a switch between the two rows is declared against
+        /// (@c networkCodeDatumFamilyKeptEpoch), advanced only on kept epochs.  Empty unless
+        /// the family-difference arm is on under the time link.
+        std::map<std::string, std::string> last_cb_family_partner;
         // S-contract §1.5 declaration scratch: the realized code-bias datum pair per
         // satellite, recorded unconditionally (the only guard is a real dual-frequency pin,
         // f1, f2 > 0) and read only by the cbpin=/gfpin= fill in NetworkSolPrep.  It is
@@ -3963,6 +4021,35 @@ namespace GnssProcessor {
         // consumer's discontinuity channel.
         size_t n_extra_band_free = 0, n_extra_band_carried = 0, n_extra_band_held = 0;
         size_t n_s2z_reseed_rows = 0, n_s2z_reseed_sats = 0;
+        /// Card GFC (docs/refound/GFC_galileo_family_clock_datum_2026-10-10.md): the pin
+        /// pair holds and changes per constellation
+        /// (@c network.code_datum_pair_continuity) and the
+        /// secondary-family level realizations per (constellation, band digit)
+        /// (@c network.code_datum_family_difference), counted once per kept epoch by
+        /// @c networkCodeDatumFamilyKeptEpoch.  Read only by
+        /// @c networkCodeDatumFamilyRunEnd; empty unless an arm is effective.
+        std::map<System, NetworkSbasis::CodeDatumPairCounts> cb_pair_by_const;
+        std::map<std::pair<System, char>, NetworkSbasis::CodeDatumFamilyCounts> cb_family_by_band;
+        /// The first-sighting family prior rows, and the satellites given no row, per
+        /// (constellation, band digit) (card GFC step 2,
+        /// @c network.code_family_birth_prior_sigma_m), counted once per kept epoch
+        /// by @c networkCodeDatumFamilyKeptEpoch and read only by
+        /// @c networkCodeDatumFamilyRunEnd; empty unless the prior is effective.
+        std::map<std::pair<System, char>, NetworkSbasis::CodeFamilyBirthCounts> cb_family_birth_by_band;
+        /// Kept epochs with at least one secondary-family channel realized (card GFC), the
+        /// denominator of the family-difference run-end line, and the switches of a
+        /// channel between the family-difference row and the sum-to-zero row (or between
+        /// partners) declared as "CB_DATUM"/"family_row" events.
+        size_t n_cb_family_epochs = 0, n_cb_family_switches = 0;
+        /// Emit-site outcome of the continued pair changes (card GFC, emit_clock_disc
+        /// only): re-selection discontinuities left undeclared for a continued satellite
+        /// (its last emitted pair was the pair the builder continued from, and no re-seed
+        /// was marked or pending); declared anyway (the last emitted pair differed, as for
+        /// a satellite pruned from an earlier kept epoch's emission, or a re-seed was
+        /// marked or pending); and continued satellites outside that epoch's emission,
+        /// compared when they next emit (the conservative direction).
+        size_t n_if_pin_continued_undeclared = 0, n_if_pin_continued_declared = 0,
+               n_if_pin_continued_unemitted = 0;
         // Zero-mean receiver code-bias prior rows folded over the run, one per
         // station-epoch per constellation (card RXCB-DATUM).  0 with the toggle armed is
         // the standing invariant #4 reading: no receiver DCB column ever existed.

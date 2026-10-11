@@ -55,6 +55,7 @@
 #include "filter/NetworkParamInventory.hpp" // rxExtraBandDelayEffective (card L5B, the one predicate)
 #include "filter/NetworkSecondCodeScope.hpp" // secondCodeAllowEntryValid (card SCC allow-list grammar)
 #include "filter/NetworkSecondPhaseScope.hpp" // secondPhaseAllowEntryValid (card SID phase 6a)
+#include "filter/NetworkSbasis.hpp"         // pinPairContinuityBlocker (card GFC)
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
@@ -8535,6 +8536,25 @@ namespace GnssProcessor {
         network_code_datum_time_linked_ =
             jval<bool>(json, "network.code_datum_time_linked",
                        "network_code_datum_time_linked", false);
+        // Card GFC: two refinements of the time-linked datum, read only under it.  Pair
+        // continuity holds the IF-pin pair while it stays registered and keeps the
+        // satellite clock across a pair change that does happen; the family
+        // difference realizes the inter-family code offset as Sum (d_X - d_P) instead of
+        // the combined channel's sum-to-zero.  Validated with the time link (inert
+        // warning, INFO when effective).
+        network_code_datum_pair_continuity_ =
+            jval<bool>(json, "network.code_datum_pair_continuity",
+                       "network_code_datum_pair_continuity", false);
+        network_code_datum_family_difference_ =
+            jval<bool>(json, "network.code_datum_family_difference",
+                       "network_code_datum_family_difference", false);
+        // Card GFC step 2: the first-sighting family prior, a refinement of the family
+        // difference (read only with it, under the time link).  0 is off.  Validated with
+        // the two arms (validateNetworkDatumCoherence_: a negative or non-finite sigma is
+        // refused, an inert arm warned).
+        network_code_family_birth_prior_sigma_m_ =
+            jval<double>(json, "network.code_family_birth_prior_sigma_m",
+                         "network_code_family_birth_prior_sigma_m", 0.0);
         network_scoped_handover_response_ =
             jval<bool>(json, "network.scoped_handover_response",
                        "network_scoped_handover_response", false);
@@ -10560,6 +10580,140 @@ namespace GnssProcessor {
                           "first split re-seeds at 0 with a per-satellite disc bump so the value "
                           "step coincides with a signalled discontinuity.  Eliminates the set-mean "
                           "wander/relaxation after every satellite rise/set.");
+        }
+        // Card GFC's two arms refine the time-linked datum and are read only under it (and
+        // under the W6 satellite code bias it re-times); pair continuity also only where no
+        // row re-asserts an absolute target at a pin pair change
+        // (NetworkSbasis::pinPairContinuityBlocker, the builder's own test).  Not forced
+        // off: an inert arm is warned here, naming only what is missing, and reported as
+        // inert at run end.
+        if (network_code_datum_pair_continuity_ || network_code_datum_family_difference_) {
+            const bool pc = network_code_datum_pair_continuity_;
+            const bool fd = network_code_datum_family_difference_;
+            std::string missing;
+            if (!network_code_datum_time_linked_) missing = "network.code_datum_time_linked";
+            if (!estimate_network_sat_code_bias_)
+                missing += std::string(missing.empty() ? "" : " and ")
+                         + "network.estimate_sat_code_bias";
+            if (!missing.empty()) {
+                log->warn("Network (GFC): {} {} INERT without {}.  {} the time-linked code "
+                          "datum, so this run realizes the datum without {}.",
+                          pc && fd ? "network.code_datum_pair_continuity and "
+                                     "network.code_datum_family_difference"
+                          : pc     ? "network.code_datum_pair_continuity"
+                                   : "network.code_datum_family_difference",
+                          pc && fd ? "are" : "is", missing,
+                          pc && fd ? "Both refine" : "It refines", pc && fd ? "them" : "it");
+            } else {
+                const char* pc_blocker = NetworkSbasis::pinPairContinuityBlocker(
+                    network_code_bias_gf_datum_, network_config_.sat_gf_datum,
+                    network_config_.sat_gf_datum_time_linked,
+                    network_config_.sat_if_level_datum);
+                if (pc && pc_blocker)
+                    log->warn("Network (GFC): network.code_datum_pair_continuity is INERT "
+                              "under {}.  A continued pin would hold the new pair's "
+                              "ionosphere-free combination while that row moves its other "
+                              "combination, a step no discontinuity declares, so the pin "
+                              "follows the selection and every pin pair change re-seeds as "
+                              "without the arm.",
+                              pc_blocker);
+                else if (pc)
+                    log->info("Network producer (GFC): IF-pin PAIR CONTINUITY ON (hold, then "
+                              "continue).  At an entering edge a satellite keeps its last "
+                              "kept pin pair for the one kept epoch the entering signal "
+                              "needs to get a previous solved value (the held pair's own "
+                              "previous combination carries; each hold's begin and end is a "
+                              "CLK_BASIS/held event); no hold where the held pair has no "
+                              "previous values or, under sat_gf_datum broadcast_tgd, the "
+                              "group delay describes the selected pair and not the held one.  "
+                              "At a pair change whose two new signals both have a previous "
+                              "solved value (a released hold or a leaving signal), the pin "
+                              "targets the new pair's previous solved ionosphere-free "
+                              "combination, so the satellite clock continues: no re-seed "
+                              "mark, and with network.emit_clock_disc no re-selection "
+                              "discontinuity (a CLK_BASIS/continued event).  Without previous "
+                              "values the re-seed at 0 stands, and a channel-level re-seed "
+                              "still marks the satellites it re-references.  Unvalidated "
+                              "(card GFC).");
+                if (fd)
+                    log->info("Network producer (GFC): FAMILY-DIFFERENCE code datum ON "
+                              "(Galileo).  A secondary-family (X) code channel whose "
+                              "sum-to-zero row survives carries Sum (d_X - d_P) over the "
+                              "satellites tracking it and its same-band primary-family partner "
+                              "instead (the inter-family mean zero of COD's convention), "
+                              "time-linked on the satellites with previous values on both; the "
+                              "sum-to-zero row is kept with no partner, no common satellite, "
+                              "spanned columns all pinned by other rows, or for the one epoch "
+                              "a family re-seed would replace a carried level.  Each switch is "
+                              "a CB_DATUM/family_row event.  Unvalidated (card GFC).");
+            }
+        }
+        // Card GFC step 2: the first-sighting family prior refines the family difference and
+        // is read only with it, under the time link and the W6 satellite code bias.  A
+        // negative or non-finite sigma would fold a hard pin, or nothing, under a "soft
+        // prior" label, so it is refused.  So is a sigma whose information exceeds ten times
+        // the code-bias gauge weight (sigma < 0.01 m): the rows would then override the
+        // family row, the sum-to-zero row and the ionosphere-free / geometry-free pins they
+        // refine wherever they disagree.  At or above the gauge weight itself (sigma at or
+        // below 1/sqrt(1e3), about 0.032 m) the prior is as stiff as a datum row, which is
+        // warned.  Not forced off when inert: the warning names only what is missing, and
+        // the run end reports the arm as inert.
+        {
+            const double bp_sigma = network_code_family_birth_prior_sigma_m_;
+            if (!(std::isfinite(bp_sigma) && bp_sigma >= 0.0)) {
+                log->error("Network (GFC): network.code_family_birth_prior_sigma_m must be "
+                           "finite and >= 0 (got {:g}); it is the standard deviation of the "
+                           "first-sighting family prior (information 1/sigma^2), and 0 is off.",
+                           bp_sigma);
+                return false;
+            }
+            constexpr double kBirthMinSigmaM = 0.01;   // information 1e4 = 10 x the gauge weight
+            const double gauge_w = NetworkSbasis::kCodeBiasGaugeWeight;
+            if (bp_sigma > 0.0 && bp_sigma < kBirthMinSigmaM) {
+                log->error("Network (GFC): network.code_family_birth_prior_sigma_m = {:g} m is "
+                           "below {:g} m: its information {:g} exceeds ten times the code-bias "
+                           "gauge weight {:g}, so the soft prior would override the datum rows "
+                           "it refines (the family row, the sum-to-zero row, the "
+                           "ionosphere-free and geometry-free pins) wherever they disagree.",
+                           bp_sigma, kBirthMinSigmaM, 1.0 / (bp_sigma * bp_sigma), gauge_w);
+                return false;
+            }
+            if (bp_sigma > 0.0 && 1.0 / (bp_sigma * bp_sigma) >= gauge_w)
+                log->warn("Network (GFC): network.code_family_birth_prior_sigma_m = {:g} m gives "
+                          "information {:g}, at or above the code-bias gauge weight {:g} (sigma "
+                          "<= {:.4f} m): the first-sighting prior is as stiff as the datum rows "
+                          "it refines and competes with them where they disagree, rather than "
+                          "acting as a soft prior.",
+                          bp_sigma, 1.0 / (bp_sigma * bp_sigma), gauge_w,
+                          1.0 / std::sqrt(gauge_w));
+            if (bp_sigma > 0.0) {
+                std::string missing;
+                const auto need = [&](bool have, const char* knob) {
+                    if (!have) missing += std::string(missing.empty() ? "" : " and ") + knob;
+                };
+                need(network_code_datum_family_difference_, "network.code_datum_family_difference");
+                need(network_code_datum_time_linked_, "network.code_datum_time_linked");
+                need(estimate_network_sat_code_bias_, "network.estimate_sat_code_bias");
+                if (!missing.empty())
+                    log->warn("Network (GFC): network.code_family_birth_prior_sigma_m = {:g} m "
+                              "is INERT without {}.  The prior refines the time-linked "
+                              "family-difference datum, so this run folds no first-sighting "
+                              "family row.",
+                              bp_sigma, missing);
+                else
+                    log->info("Network producer (GFC): first-sighting FAMILY PRIOR ON, sigma "
+                              "{:g} m (Galileo band 1).  When a satellite's secondary-family "
+                              "(X) code column or its primary partner's is born (the carry "
+                              "does not continue it; a READMIT seed does) while the other is "
+                              "registered, one soft shared row d_X - d_P = mu (mu = the mean "
+                              "previous difference over the family row's veterans, or 0 where "
+                              "the family row re-seeds at 0; no row where neither exists) is "
+                              "folded with information {:g}, once per (satellite, birth): the "
+                              "column is carried from the next kept epoch on.  Each fold is a "
+                              "CB_DATUM/family_birth_prior event.  Unvalidated (card GFC step "
+                              "2).",
+                              bp_sigma, 1.0 / (bp_sigma * bp_sigma));
+            }
         }
         // The sum-to-zero clock gauge re-references on a clock-satellite set change; with the
         // clock-disc channel live, that re-reference must bump the clock disc counters or the

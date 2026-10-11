@@ -139,6 +139,13 @@ NetworkSolPrepResult networkSolPrep(
                          action, detail);
     };
 
+    // Card GFC: count this kept epoch's pin pair changes and family-row realizations, and
+    // declare each family-row switch.  It sits before the SH health gate's early return
+    // below because it is datum bookkeeping, not emission: the harvest that advances the
+    // builder's comparison baselines runs on such an epoch too.  Both scratch maps are
+    // empty unless an arm is effective, so otherwise it does nothing.
+    networkCodeDatumFamilyKeptEpoch(ctx, emitEvent);
+
     // An engaged SH health gate withholds this epoch's emission
     // (SPEC_day129_frame_guards Phase 2.2).  Every step below is emit machinery
     // (solution serialization, present/pending landing of disc bumps, the
@@ -994,14 +1001,43 @@ NetworkSolPrepResult networkSolPrep(
         std::set<std::string> present;
         for (const auto& s : sol.sats) present.insert(s.sat);
         std::set<std::string> mark;
+        // Card GFC (network.code_datum_pair_continuity): a satellite the builder continued
+        // this epoch changed pair without moving its datum (the new pair's target is its
+        // previous solved combination).  Its re-selection is left undeclared only when the
+        // comparison here is the one the builder made: the last emitted pair is the pair
+        // the builder continued from (it compared against the last KEPT pair, which
+        // differs for a satellite pruned from an earlier kept epoch's emission, whose
+        // earlier re-selection then still needs this declaration), and no re-seed marked
+        // the satellite this epoch or is pending for it.  The map is this epoch's
+        // main-pass scratch, empty unless the arm is effective.  A continued satellite
+        // outside this emission keeps its last emitted pair as the baseline and is
+        // compared when it next emits (the conservative side).
+        const auto& changes = ctx.carry.this_epoch_if_pin_changes;
+        using PinOutcome = NetworkSbasis::PinPairOutcome;
+        for (const auto& [sat, change] : changes)
+            if (change.outcome == PinOutcome::Continued && !present.count(sat))
+                ++ctx.counters.n_if_pin_continued_unemitted;
         for (const auto& [sat, sel] : this_epoch_if_pin_sel) {
             if (!present.count(sat)) continue;   // not emitted this epoch: baseline untouched
             const auto prev = last_if_pin_sel.find(sat);
             if (prev != last_if_pin_sel.end() && prev->second != sel) {
-                mark.insert(sat);
+                const auto change = changes.find(sat);
+                const bool continued = change != changes.end()
+                                    && change->second.outcome == PinOutcome::Continued;
+                const bool cont = continued && change->second.from == prev->second
+                               && change->second.to == sel
+                               && !this_epoch_cb_reseed.count(sat)
+                               && !cb_reseed_disc_pending.count(sat);
+                if (cont) {
+                    ++ctx.counters.n_if_pin_continued_undeclared;
+                } else {
+                    mark.insert(sat);
+                    if (continued) ++ctx.counters.n_if_pin_continued_declared;
+                }
                 if (events_trace.is_open())
-                    emitEvent("CLK_BASIS", "reselect", sat, "", std::nullopt, std::nullopt,
-                              "if_pin_reference_moved",
+                    emitEvent("CLK_BASIS", cont ? "reselect_continued" : "reselect", sat, "",
+                              std::nullopt, std::nullopt,
+                              cont ? "if_pin_reference_continued" : "if_pin_reference_moved",
                               prev->second.first + "+" + prev->second.second +
                                   "->" + sel.first + "+" + sel.second);
             }
@@ -1197,6 +1233,10 @@ NetworkSolPrepResult networkSolPrep(
         std::map<char, std::pair<int, int>> gf_by_const;   // const → (gf-pinned, total)
         std::set<std::string> emitted_sats;
         for (const auto& s : sol.sats) emitted_sats.insert(s.sat);
+        // Card GFC: the constellations with a satellite emitted on a held pin pair
+        // (network.code_datum_pair_continuity), so that a split that drops the cbpin=
+        // declaration is attributed to the hold when one took part.  Empty unless armed.
+        std::map<char, System> held_const;
         for (const auto& [sat, sel] : this_epoch_if_pin_real)
             if (!sat.empty() && emitted_sats.count(sat)) {
                 const char cons = letterOfSat(sat);
@@ -1204,6 +1244,8 @@ NetworkSolPrepResult networkSolPrep(
                 auto& tally = gf_by_const[cons];
                 if (this_epoch_gf_pin_real.count(sat)) ++tally.first;
                 ++tally.second;
+                if (ctx.carry.this_epoch_if_pin_holds.count(sat))
+                    held_const.emplace(cons, systemOfSat(sat));
             }
         std::map<std::string, std::string> cb_decl, gf_decl;
         std::string split_note;
@@ -1211,6 +1253,8 @@ NetworkSolPrepResult networkSolPrep(
             if (pairs.size() != 1) {
                 split_note += fmt::format("{}{}:{} IF-pin pairs", split_note.empty() ? "" : " ",
                                           cst, pairs.size());
+                if (const auto h = held_const.find(cst); h != held_const.end())
+                    ++ctx.counters.cb_pair_by_const[h->second].hold_split_decl;
                 continue;
             }
             const auto& p = *pairs.begin();

@@ -2642,6 +2642,11 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 ///   - cap_H / cap_z / cap_constraint_weight / cap_has_constraint / cap_row_kinds: the W6
 ///     satellite code-bias datum constraint rows and their kinds (SB_SOLVEGLUE, W6
 ///     block; the kinds name the replay's re-fold, card NOM step N2b).
+///   - cap_birth_H / cap_birth_z / cap_birth_weight: card GFC step 2's first-sighting
+///     family prior rows (SB_SOLVEGLUE, network.code_family_birth_prior_sigma_m), soft
+///     priors captured apart from the gauge rows above and re-applied at their own weight
+///     1/sigma^2 under ContributionKind::CbFamilyBirth, through the helper the primary fold
+///     uses (NetworkSbasis::foldFamilyBirthRows).  rows() == 0 means nothing to re-apply.
 ///   - cap_sbc_H / cap_sbc_z: the SBC S-basis completion gauge rows
 ///     (SB_SOLVEGLUE, network.sbasis_complete block; re-applied at
 ///     NetworkSbasis::kSbasisCompleteWeight, a compile-time constant, so no weight
@@ -2679,6 +2684,9 @@ struct EpochWorkspace {
     double cap_constraint_weight = 0.0;
     bool   cap_has_constraint = false;
     std::vector<ContributionKind> cap_row_kinds;   ///< One kind per row of cap_H (the W6 builder's row kinds; card NOM N2b)
+    Eigen::MatrixXd cap_birth_H;          ///< Card GFC step 2's first-sighting family prior rows (see writer-site list)
+    Eigen::VectorXd cap_birth_z;          ///< Their targets
+    double          cap_birth_weight = 0.0;  ///< Their weight, 1/sigma^2
     Eigen::MatrixXd cap_sbc_H;   ///< SBC completion rows (see writer-site list)
     Eigen::VectorXd cap_sbc_z;   ///< SBC completion targets
     std::vector<NetworkEstimator::SharedPrior> cap_priors;

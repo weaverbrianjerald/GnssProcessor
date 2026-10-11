@@ -230,6 +230,14 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      bit(PK::SatCodeBias), kCbW, kCbDatum, false, nullptr},
     {CK::CbSumToZero, "cb_sum_to_zero", CC::SharedRows, CG::BeforeGate, CS::None, CU::Rows,
      bit(PK::SatCodeBias), kCbW, kCbDatum, false, nullptr},
+    {CK::CbFamilyBirth, "cb_family_birth", CC::SharedRows, CG::BeforeGate, CS::Satellite,
+     CU::Rows, bit(PK::SatCodeBias),
+     "1/network.code_family_birth_prior_sigma_m^2 (a soft prior, not the gauge weight)",
+     "NetworkSbasis::buildCodeBiasDatumRows via codeFamilyBirthPriors (NetworkSbasis.cpp), "
+     "folded by NetworkSbasis::foldFamilyBirthRows from networkSolveGlue",
+     false,
+     "card GFC step 2: one row d_X - d_P = mu per (satellite, birth) on Galileo band 1, "
+     "folded once"},
     {CK::ClockConstraintRows, "clock_constraint_rows", CC::SharedRows, CG::BeforeGate, CS::None,
      CU::Rows, bit(PK::SatClock),
      "NetworkSbasis::kClockGaugeWeight = 1e3 (sum-to-zero) or 1/sigma^2 (broadcast-anchored)",

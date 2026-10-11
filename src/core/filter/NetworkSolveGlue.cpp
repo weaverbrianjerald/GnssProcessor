@@ -283,6 +283,14 @@ NetworkSolveGlueResult networkSolveGlue(
 // selection cannot reach the emit-site comparison.  In the default config
 // (emit_clock_disc off) the map is empty and the clear is a no-op.
 this_epoch_if_pin_sel.clear();
+// Card GFC: the pair holds, the pair changes and the family-row realizations get the same
+// unconditional clear, so an entry from an epoch that was then withheld can neither be
+// counted nor suppress a later declaration.
+ctx.carry.this_epoch_if_pin_holds.clear();
+ctx.carry.this_epoch_if_pin_changes.clear();
+ctx.carry.this_epoch_cb_family_rows.clear();
+ctx.carry.this_epoch_cb_family_births.clear();   // card GFC step 2's prior rows, the same rule
+ctx.carry.this_epoch_cb_family_birth_skips.clear();   // and its satellites given no row
 // The S-contract §1.5 declaration scratch gets the same unconditional per-epoch clear,
 // so a prior epoch's pair cannot reach the emit-site fill.
 this_epoch_if_pin_real.clear();
@@ -438,6 +446,13 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         }
     }
 
+    // Card GFC step 2: the first-sighting family prior keys its birth test on how this
+    // epoch's carry folds each code-bias column (decided before PASS B by
+    // networkCarryDecide), so a READMIT seed is not a birth.  Collected only with the prior
+    // armed; the builder reads it only then.
+    const NetworkSbasis::CodeBiasCarryMap cb_carry =
+        config_.networkCodeFamilyBirthPriorSigmaM() > 0.0 ? networkCodeBiasCarryMap(ctx)
+                                                          : NetworkSbasis::CodeBiasCarryMap{};
     const auto cbd = NetworkSbasis::buildCodeBiasDatumRows(
         est, registered_code_keys, freqOf,
         cb_time_linked, clock_signal_basis_hold, emit_clock_disc,
@@ -459,7 +474,22 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         this_epoch_if_pin_real, this_epoch_gf_pin_real,
         ctx.carry.this_epoch_family_gf_pin_real,
         this_epoch_cb_ifpin, this_epoch_cb_reseed,
-        basis_relatch_disc_pending, emitEvent);
+        basis_relatch_disc_pending, emitEvent,
+        // Card GFC's arms; the builder reads them only under the time link (and step 2's
+        // first-sighting prior only with the family difference).
+        NetworkSbasis::CodeDatumFamilyArms{config_.networkCodeDatumPairContinuity(),
+                                           config_.networkCodeDatumFamilyDifference(),
+                                           config_.networkCodeFamilyBirthPriorSigmaM()},
+        cb_carry);
+    // Card GFC: hand this epoch's pair holds, pair changes, family-row realizations and
+    // first-sighting prior rows and skips to the emit site, which counts them once per kept
+    // epoch (networkCodeDatumFamilyKeptEpoch).  The containers are empty unless an arm is
+    // effective, so the default path copies nothing.
+    ctx.carry.this_epoch_if_pin_holds = cbd.if_pin_pair_holds;
+    ctx.carry.this_epoch_if_pin_changes = cbd.if_pin_pair_changes;
+    ctx.carry.this_epoch_cb_family_rows = cbd.family_rows;
+    ctx.carry.this_epoch_cb_family_births = cbd.family_birth_priors;
+    ctx.carry.this_epoch_cb_family_birth_skips = cbd.family_birth_skips;
     // The channels whose sum-to-zero row re-seeded, for the receiver IFB carry of card L5B
     // (the harvest erases the entries of a re-seeded family; nothing reads it otherwise).
     ctx.carry.this_epoch_cb_reseed_channels = cbd.reseed_channels;
@@ -575,6 +605,34 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ws.cap_row_kinds = cbd.row_kinds;   // the replay names the same kinds (card NOM N2b)
             cap_constraint_weight = NetworkSbasis::kCodeBiasGaugeWeight;
             cap_has_constraint = true;
+        }
+    }
+    // --- Card GFC step 2: the first-sighting family prior (network.code_family_birth_prior_sigma_m) ---
+    // One soft row d_X - d_P = mu per satellite whose Galileo band-1 X column or partner
+    // column is born this epoch (NetworkSbasis::codeFamilyBirthPriors).  The fold path is
+    // its own call at its own weight 1/sigma^2 (NetworkSbasis::foldFamilyBirthRows, kind
+    // CbFamilyBirth), and the rows are captured for the RAIM replay in their own slot
+    // (EpochWorkspace::cap_birth_*), not stacked into the gauge capture above.  The
+    // alternative, scaling each soft row by sqrt(w_soft/w_gauge) inside cbd.H so the one
+    // H/z/weight capture carries it, folds the same information only to rounding
+    // (w_gauge * s * s is not exactly 1/sigma^2), and it would make cbd.H stop being the
+    // gauge stack it is documented as: the first-N W6 log would count soft priors as gauge
+    // rows, and every per-row reader of the stack (the row kinds, the per-kind RHS capture
+    // of addSharedConstraintRows) would have to tell the two apart.  A separate capture
+    // costs three workspace fields and one re-fold through the same helper, and keeps
+    // "gauge row" meaning one thing.  Contribution kind: CbFamilyBirth, its own line in the
+    // "contributions as armed" table (shared_rows, satellite, rows, weight
+    // 1/sigma^2), which reads 0 on every run without the prior.  Folded once per
+    // (satellite, birth): the builder's birth test reads the carry, so a born column is a
+    // veteran from the next kept epoch on and a READMIT seed is not a birth.  Empty unless
+    // the prior is effective (no fold, no capture).
+    if (cbd.family_birth_H.rows() > 0) {
+        NetworkSbasis::foldFamilyBirthRows(est, cbd.family_birth_H, cbd.family_birth_z,
+                                           cbd.family_birth_weight);
+        if (within_epoch_armed) {
+            ws.cap_birth_H      = cbd.family_birth_H;
+            ws.cap_birth_z      = cbd.family_birth_z;
+            ws.cap_birth_weight = cbd.family_birth_weight;
         }
     }
     // --- Loose physical-bound prior on the admitted OSB columns (card KP) ---
@@ -2010,6 +2068,12 @@ if (within_epoch_armed && carry_warm) {
             est.contributionRowKinds(&ws.cap_row_kinds);
             est.addSharedConstraintRows(cap_H, cap_z, cap_constraint_weight);
         }
+        // Card GFC step 2's first-sighting family prior rows, re-folded through the helper
+        // the primary fold uses, at their own weight under CbFamilyBirth (captured apart
+        // from the gauge rows; see the primary fold site).  0 rows unless the prior folded
+        // this epoch: a no-op.
+        NetworkSbasis::foldFamilyBirthRows(est, ws.cap_birth_H, ws.cap_birth_z,
+                                           ws.cap_birth_weight);
         // Re-apply the constraint-realized clock gauge rows (sum-to-zero or
         // broadcast-anchored) on the fresh arrowhead.  plan is in scope, and its rows
         // are frozen with the layout for the epoch, so they match the primary solve.

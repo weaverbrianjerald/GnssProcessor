@@ -15,10 +15,12 @@
 #include <functional>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -773,6 +775,450 @@ void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
 }
 
 
+namespace {
+
+/// A registered code channel's identity, kept beside its channel key so card GFC's
+/// family-difference arm never re-parses "<constellation>|<signal>".
+struct ChannelIdent {
+    SignalId    id;     ///< Constellation, band digit, tracking attribute.
+    std::string code;   ///< The RINEX code ("C1X"), the key of the previous-value map.
+};
+
+/// One satellite carrying both channels of a family-difference pair (card GFC).
+struct FamilyCommonSat {
+    std::string  sat;     ///< RINEX satellite id.
+    Eigen::Index x_col;   ///< Its secondary-family (X) code-bias column.
+    Eigen::Index p_col;   ///< Its primary-family partner's code-bias column.
+};
+
+/// The partner of a secondary-family code channel for the family-difference row (card
+/// GFC, network.code_datum_family_difference).
+struct FamilyPartner {
+    std::string key;                       ///< The partner's channel key ("E|C1C"); empty when no same-band primary channel is registered.
+    std::string signal;                    ///< The partner's code ("C1C"); empty as @ref key.
+    std::vector<FamilyCommonSat> common;   ///< The satellites carrying both channels, in the secondary channel's order.
+};
+
+/**
+ * @brief Find the primary-family partner of a secondary-family code channel.
+ *
+ * The partner is a registered channel of the same constellation and RINEX band whose
+ * signal is in the primary family (@ref NetworkSbasis::channelFamilyOf).  Of several, the
+ * one sharing the most satellites with the channel this epoch is chosen, because the
+ * row's information is the common satellites; a tie goes to the lexically first signal
+ * (@p channels is sorted by key, and only a strictly larger overlap replaces the
+ * incumbent), so the choice is a pure function of this epoch's register.
+ *
+ * @param x        The secondary-family channel.
+ * @param entries  Its (satellite, column) pairs this epoch.
+ * @param channels Every registered channel, by channel key.
+ * @param idents   Every registered channel's identity, by channel key.
+ * @return The partner; an empty @c key when no same-band primary channel is registered.
+ */
+FamilyPartner familyPartnerOf(
+    const ChannelIdent& x,
+    const std::vector<std::pair<std::string, Eigen::Index>>& entries,
+    const std::map<std::string, std::vector<std::pair<std::string, Eigen::Index>>>& channels,
+    const std::map<std::string, ChannelIdent>& idents) {
+    FamilyPartner out;
+    const std::string cst = constellationKey(x.id.sys);
+    for (const auto& [pkey, pentries] : channels) {
+        const auto pit = idents.find(pkey);
+        if (pit == idents.end()) continue;
+        const ChannelIdent& p = pit->second;
+        if (p.id.sys != x.id.sys || p.id.digit != x.id.digit) continue;   // another constellation or band
+        if (NetworkSbasis::channelFamilyOf(cst, p.code) != NetworkSbasis::ChannelFamily::Primary)
+            continue;
+        const std::map<std::string, Eigen::Index> p_col_of(pentries.begin(), pentries.end());
+        std::vector<FamilyCommonSat> common;
+        for (const auto& [sat, x_col] : entries) {
+            const auto it = p_col_of.find(sat);
+            if (it != p_col_of.end()) common.push_back({sat, x_col, it->second});
+        }
+        if (out.key.empty() || common.size() > out.common.size()) {
+            out.key    = pkey;
+            out.signal = p.code;
+            out.common = std::move(common);
+        }
+    }
+    return out;
+}
+
+/// The previous kept-epoch solved values of a family pair's common satellites (card GFC):
+/// what the family row's time link and the first-sighting prior both read.
+struct FamilyPrev {
+    std::vector<std::string>      common_sats;   ///< The common satellites, in the secondary channel's order.
+    std::map<std::string, double> prev_x;        ///< Satellite → previous solved bias on the secondary channel.
+    std::map<std::string, double> prev_p;        ///< Satellite → previous solved bias on the partner channel.
+};
+
+/**
+ * @brief Collect the previous solved values of a family pair's common satellites.
+ *
+ * @param fp             The partner, with its common satellites.
+ * @param xkey           The secondary channel's key.
+ * @param code_bias_prev The previous kept epoch's solved code biases, by channel key.
+ * @return The common satellites and their previous values on both columns (a satellite
+ *         without one is absent from that map).
+ */
+FamilyPrev familyPrevOf(const FamilyPartner& fp, const std::string& xkey,
+                        const std::map<std::string, std::map<std::string, double>>& code_bias_prev) {
+    const auto prevOf = [&](const std::string& key) {
+        const auto it = code_bias_prev.find(key);
+        return it == code_bias_prev.end() ? nullptr : &it->second;
+    };
+    const std::map<std::string, double>* xprev = prevOf(xkey);
+    const std::map<std::string, double>* pprev = prevOf(fp.key);
+    FamilyPrev out;
+    for (const FamilyCommonSat& c : fp.common) {
+        out.common_sats.push_back(c.sat);
+        if (xprev) if (const auto v = xprev->find(c.sat); v != xprev->end()) out.prev_x[c.sat] = v->second;
+        if (pprev) if (const auto v = pprev->find(c.sat); v != pprev->end()) out.prev_p[c.sat] = v->second;
+    }
+    return out;
+}
+
+/// Card GFC's decision for one secondary-family channel: which row realizes its level,
+/// and the family-difference row's span and target when it is that row.
+struct FamilyRowPlan {
+    NetworkSbasis::FamilyRowRealization realization;   ///< The outcome and the partner.
+    std::vector<FamilyCommonSat>        span;          ///< The satellites the family row spans; empty unless @c realization.familyRow().
+    double                              rhs{0.0};      ///< The family row's target.
+    FamilyPartner                       partner;       ///< The partner and the common satellites (step 2's first-sighting prior reads them whatever the outcome); an empty key for NoPartner.
+    FamilyPrev                          prev;          ///< The common satellites' previous values; empty for NoPartner and NoCommon.
+};
+
+/**
+ * @brief Decide the level row of one secondary-family code channel (card GFC).
+ *
+ * In order: no same-band primary channel registered (NoPartner), no satellite carrying
+ * both (NoCommon), the family row's span reaching the channel's level only through
+ * columns another row already pins (Dependent), the family row without a veteran while
+ * the sum-to-zero time link has one (Bridged), else the family-difference row on its
+ * veterans (FamilyVeteran) or re-seeded at 0 (FamilyReseed).
+ *
+ * Dependent is a rank guard.  The family row adds the channel's level to the datum only
+ * through a spanned satellite whose secondary column no other row fixes: if every spanned
+ * satellite's secondary column is pinned by a geometry-free row (pair, extra or carried
+ * extra) or held by an extra-band hold, the row is a combination of those rows, while the
+ * channel's sum-to-zero row, which survived the completeness test because some satellite
+ * outside the span has a free column, would have pinned that satellite's level.  The
+ * sum-to-zero row is then kept.
+ *
+ * Bridged is a continuity guard.  A family veteran needs a previous value on both
+ * columns, so the common satellites are never veterans on the epoch the family row
+ * (re)starts.  Re-seeding there would re-realize the inter-family offset over a new set
+ * and mark every satellite of the channel, while the channel's own sum-to-zero time link
+ * carries its level.  The sum-to-zero row is kept for that epoch, and the family row
+ * continues from it at the next one.  The family row re-seeds only when the sum-to-zero
+ * row would re-seed too (the run's first epoch, or a channel with no veteran at all).
+ *
+ * @param x               The secondary-family channel.
+ * @param xkey            Its channel key.
+ * @param entries         Its (satellite, column) pairs this epoch.
+ * @param channels        Every registered channel, by channel key.
+ * @param idents          Every registered channel's identity, by channel key.
+ * @param code_bias_prev  The previous kept epoch's solved code biases, by channel key.
+ * @param x_pinned        Satellites whose secondary column a geometry-free row pins this
+ *                        epoch (nullptr: none).
+ * @param extra_band_held This epoch's extra-band holds, "sat|signal".
+ * @param s2z_veteran     Whether the channel's sum-to-zero time link has a veteran.
+ * @return The decision.
+ */
+FamilyRowPlan planFamilyRow(
+    const ChannelIdent& x, const std::string& xkey,
+    const std::vector<std::pair<std::string, Eigen::Index>>& entries,
+    const std::map<std::string, std::vector<std::pair<std::string, Eigen::Index>>>& channels,
+    const std::map<std::string, ChannelIdent>& idents,
+    const std::map<std::string, std::map<std::string, double>>& code_bias_prev,
+    const std::set<std::string>* x_pinned,
+    const std::set<std::string>& extra_band_held,
+    bool s2z_veteran) {
+    using Outcome = NetworkSbasis::FamilyRowOutcome;
+    FamilyRowPlan plan;
+    NetworkSbasis::FamilyRowRealization& r = plan.realization;
+    r.channel = x.id;
+    plan.partner = familyPartnerOf(x, entries, channels, idents);
+    const FamilyPartner& fp = plan.partner;
+    r.partner = fp.signal;
+    if (fp.key.empty())     { r.outcome = Outcome::NoPartner; return plan; }
+    if (fp.common.empty())  { r.outcome = Outcome::NoCommon;  return plan; }
+
+    // The previous solved values of the common satellites on both columns.
+    plan.prev = familyPrevOf(fp, xkey, code_bias_prev);
+    std::map<std::string, const FamilyCommonSat*> by_sat;
+    for (const FamilyCommonSat& c : fp.common) by_sat[c.sat] = &c;
+    const NetworkSbasis::CodeFamilyDiffTimeLink tl =
+        NetworkSbasis::codeFamilyDiffTimeLink(plan.prev.common_sats, plan.prev.prev_x,
+                                              plan.prev.prev_p);
+
+    bool reaches_level = false;
+    for (const std::string& sat : tl.jac_sats) {
+        const bool pinned = x_pinned && x_pinned->count(sat) != 0;
+        const bool held   = extra_band_held.count(sat + "|" + x.code) != 0;
+        if (!pinned && !held) { reaches_level = true; break; }
+    }
+    if (!reaches_level)            { r.outcome = Outcome::Dependent; return plan; }
+    if (tl.reseed && s2z_veteran)  { r.outcome = Outcome::Bridged;   return plan; }
+
+    r.outcome = tl.reseed ? Outcome::FamilyReseed : Outcome::FamilyVeteran;
+    for (const std::string& sat : tl.jac_sats) plan.span.push_back(*by_sat.at(sat));
+    plan.rhs = tl.rhs;
+    return plan;
+}
+
+/**
+ * @brief The pin pair a satellite can hold under network.code_datum_pair_continuity (card
+ *        GFC), or nothing when the hold is broken.
+ *
+ * The held pair is the satellite's pin pair at the last kept epoch.  It is a candidate
+ * while both of its signals are registered this epoch and still form an ionosphere-free
+ * pair (two distinct finite positive frequencies, the test
+ * @ref NetworkSbasis::selectIfPinPair applies to its second signal).  A satellite with no
+ * pair at the last kept epoch (a first sighting or a return) has none.  Whether the hold
+ * applies is decided by the caller (the other conditions on
+ * @ref NetworkSbasis::PinPairHold).
+ *
+ * @param sat                   RINEX satellite id.
+ * @param sigs                  The satellite's registered code signals this epoch.
+ * @param code_bias_ifpin_pair_ Satellite → its pin pair at the last kept epoch.
+ * @param freqOf                Carrier-frequency oracle (satellite, signal) → Hz.
+ * @return The held pair; nothing when the satellite has none or a signal of it left.
+ */
+std::optional<std::pair<std::string, std::string>> heldIfPinPair(
+    const std::string& sat, const std::vector<std::string>& sigs,
+    const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
+    const std::function<double(const std::string&, const std::string&)>& freqOf) {
+    const auto pit = code_bias_ifpin_pair_.find(sat);
+    if (pit == code_bias_ifpin_pair_.end()) return std::nullopt;
+    const auto registered = [&](const std::string& s) {
+        return !s.empty() && std::find(sigs.begin(), sigs.end(), s) != sigs.end();
+    };
+    const auto& [h1, h2] = pit->second;
+    if (!registered(h1) || !registered(h2)) return std::nullopt;
+    const double f1 = freqOf(sat, h1);
+    const double f2 = freqOf(sat, h2);
+    if (!std::isfinite(f1) || !std::isfinite(f2) || !(f1 > 0.0) || !(f2 > 0.0)
+        || std::abs(f1 - f2) <= 1.0)
+        return std::nullopt;
+    return pit->second;
+}
+
+/**
+ * @brief Whether the broadcast group delay refuses a satellite's pin pair hold (card GFC,
+ *        the last condition on @ref NetworkSbasis::PinPairHold).
+ *
+ * Under @c network.sat_gf_datum broadcast_tgd a signal's first-sighting geometry-free row
+ * anchors at the target of the pair pinned that epoch (@ref
+ * NetworkSbasis::satGfBroadcastTarget).  An entering signal under a held pair the group
+ * delay does not describe (Galileo (C1C, C7Q)) would anchor at that pair's zero, and the
+ * time link would carry the zero onto the selected pair ((C1C, C5Q), which the group delay
+ * does describe) when the hold is released, for the life of the satellite.  The hold is
+ * refused in that case, so the selected pair is pinned at once and anchors at the group
+ * delay, as without the arm.
+ *
+ * Whether a pair is described is @ref NetworkSbasis::broadcastGroupDelayDescribesPair, the
+ * rule @ref NetworkSbasis::satGfBroadcastTarget applies first.  A described pair whose
+ * satellite broadcasts exactly zero, or has no navigation record, also anchors at zero; the
+ * hold is still refused there, which costs a re-seed where it changes no value but keeps
+ * the rule a property of the pair alone.
+ *
+ * @param sat          RINEX satellite id.
+ * @param held         The held pair.
+ * @param selected     The pair @ref NetworkSbasis::selectIfPinPair names.
+ * @param sat_gf_datum network.sat_gf_datum.
+ * @return true under broadcast_tgd when the group delay describes @p selected and not
+ *         @p held; false otherwise (always false under any other geometry-free datum).
+ */
+bool groupDelayRefusesPinHold(const std::string& sat,
+                              const std::pair<std::string, std::string>& held,
+                              const std::pair<std::string, std::string>& selected,
+                              NetworkSatGfDatum sat_gf_datum) {
+    if (sat_gf_datum != NetworkSatGfDatum::BroadcastTgd) return false;
+    const auto described = [&](const std::pair<std::string, std::string>& p) {
+        return NetworkSbasis::broadcastGroupDelayDescribesPair(sat, p.first, p.second);
+    };
+    return described(selected) && !described(held);
+}
+
+}  // namespace
+
+const char* NetworkSbasis::familyRowOutcomeName(FamilyRowOutcome o) {
+    switch (o) {
+        case FamilyRowOutcome::FamilyVeteran: return "family_veteran";
+        case FamilyRowOutcome::FamilyReseed:  return "family_reseed";
+        case FamilyRowOutcome::Bridged:       return "bridged";
+        case FamilyRowOutcome::NoCommon:      return "no_common";
+        case FamilyRowOutcome::NoPartner:     return "no_partner";
+        case FamilyRowOutcome::Dependent:     return "dependent";
+    }
+    return "unknown";
+}
+
+void NetworkSbasis::CodeDatumFamilyCounts::add(const FamilyRowRealization& r) {
+    switch (r.outcome) {
+        case FamilyRowOutcome::FamilyVeteran: ++family_veteran; break;
+        case FamilyRowOutcome::FamilyReseed:  ++family_reseed;  break;
+        case FamilyRowOutcome::Bridged:       ++bridged;        break;
+        case FamilyRowOutcome::NoCommon:      ++no_common;      break;
+        case FamilyRowOutcome::NoPartner:     ++no_partner;     break;
+        case FamilyRowOutcome::Dependent:     ++dependent;      break;
+    }
+    reseed_sats += r.reseed_sats;
+}
+
+NetworkSbasis::CodeFamilyDiffTimeLink NetworkSbasis::codeFamilyDiffTimeLink(
+    const std::vector<std::string>& common_sats,
+    const std::map<std::string, double>& prev_x,
+    const std::map<std::string, double>& prev_p) {
+    CodeFamilyDiffTimeLink out;
+    // Veterans: common satellites with a previous solved value on both columns.  The row
+    // spans them with RHS the sum of their previous differences, which pins the change of
+    // their mean difference; each is referenced to its own previous difference, so
+    // membership changes do not move the target.
+    for (const std::string& sat : common_sats) {
+        const auto x = prev_x.find(sat);
+        const auto p = prev_p.find(sat);
+        if (x != prev_x.end() && p != prev_p.end()) {
+            out.jac_sats.push_back(sat);
+            out.rhs += x->second - p->second;
+        }
+    }
+    // No veteran: every common satellite at RHS 0, the zero inter-family mean.  A real
+    // re-reference of the offset, which the caller signals (reseed = true).
+    if (out.jac_sats.empty()) {
+        out.jac_sats = common_sats;
+        out.rhs      = 0.0;
+        out.reseed   = true;
+    }
+    return out;
+}
+
+const char* NetworkSbasis::familyBirthSideName(FamilyBirthSide s) {
+    switch (s) {
+        case FamilyBirthSide::Secondary: return "x_born";
+        case FamilyBirthSide::Partner:   return "partner_born";
+        case FamilyBirthSide::Both:      return "both_born";
+    }
+    return "unknown";
+}
+
+const char* NetworkSbasis::familyBirthSkipName(FamilyBirthSkip s) {
+    switch (s) {
+        case FamilyBirthSkip::Seeded:      return "seeded";
+        case FamilyBirthSkip::Carried:     return "carried";
+        case FamilyBirthSkip::NoReference: return "no_reference";
+    }
+    return "unknown";
+}
+
+NetworkSbasis::CodeFamilyBirthPlan NetworkSbasis::codeFamilyBirthPriors(
+    const std::vector<std::string>& common_sats,
+    const std::map<std::string, double>& prev_x,
+    const std::map<std::string, double>& prev_p,
+    const std::map<std::string, CodeBiasCarry>& carry_x,
+    const std::map<std::string, CodeBiasCarry>& carry_p,
+    bool family_reseed) {
+    CodeFamilyBirthPlan out;
+    // The target first: the mean previous difference over the veterans (a previous value
+    // on both columns), the satellites the family row's time link spans.  It is a realized
+    // family mean when a veteran exists, or when the family row re-seeds the offset at 0.
+    double sum = 0.0;
+    for (const std::string& sat : common_sats) {
+        const auto x = prev_x.find(sat);
+        const auto p = prev_p.find(sat);
+        if (x != prev_x.end() && p != prev_p.end()) {
+            sum += x->second - p->second;
+            ++out.n_veterans;
+        }
+    }
+    if (out.n_veterans > 0) out.mu_m = sum / out.n_veterans;
+    out.mu_defined = out.n_veterans > 0 || family_reseed;
+    // One column's standing: whether it continues (the carry folds it on, or it has a
+    // previous value the carry keeps), and whether the carry alone makes it continue.
+    struct Column {
+        bool continues{false};
+        bool loosened{false};               // a previous value the carry gives up
+        std::optional<CodeBiasCarry> by;    // the carry, when it continues a column the map lacks
+    };
+    const auto column = [](const std::string& sat, const std::map<std::string, double>& prev,
+                           const std::map<std::string, CodeBiasCarry>& carry) {
+        Column c;
+        const bool in_map = prev.count(sat) != 0;
+        const auto it = carry.find(sat);
+        const bool has_carry = it != carry.end();
+        if (has_carry && it->second == CodeBiasCarry::Loosened) {
+            c.loosened = in_map;
+            return c;   // born: the carried information is given up
+        }
+        c.continues = in_map || has_carry;
+        if (!in_map && has_carry) c.by = it->second;
+        return c;
+    };
+    const auto sideOf = [](bool x, bool p) {
+        return x && p ? FamilyBirthSide::Both
+             : x      ? FamilyBirthSide::Secondary
+                      : FamilyBirthSide::Partner;
+    };
+    // Then the births: a common satellite with a column that does not continue.  A
+    // satellite whose columns both continue is carried and gets no row; it is recorded
+    // when the carry alone continues a column the previous-value map lacks.
+    for (const std::string& sat : common_sats) {
+        const Column x = column(sat, prev_x, carry_x);
+        const Column p = column(sat, prev_p, carry_p);
+        if (!x.continues || !p.continues) {
+            out.births.push_back({sat, sideOf(!x.continues, !p.continues),
+                                  (!x.continues && x.loosened) || (!p.continues && p.loosened)});
+            continue;
+        }
+        if (x.by || p.by) {
+            // A READMIT seed is named before a plain fold: it is the return the map misses.
+            const bool seeded = (x.by && *x.by == CodeBiasCarry::Seeded)
+                             || (p.by && *p.by == CodeBiasCarry::Seeded);
+            out.carried.emplace_back(sat,
+                                     seeded ? FamilyBirthSkip::Seeded : FamilyBirthSkip::Carried,
+                                     sideOf(x.by.has_value(), p.by.has_value()));
+        }
+    }
+    return out;
+}
+
+void NetworkSbasis::CodeFamilyBirthCounts::add(const FamilyBirthPrior& b) {
+    ++rows;
+    switch (b.born) {
+        case FamilyBirthSide::Secondary: ++x_born;       break;
+        case FamilyBirthSide::Partner:   ++partner_born; break;
+        case FamilyBirthSide::Both:      ++both_born;    break;
+    }
+    if (b.n_veterans == 0) ++no_veteran;
+    if (b.seen_before) ++seen_before;
+    if (b.loosened) ++loosened;
+    max_abs_mu_m = std::max(max_abs_mu_m, std::abs(b.mu_m));
+    sats.insert(b.sat);
+}
+
+void NetworkSbasis::CodeFamilyBirthCounts::add(const FamilyBirthSkipRecord& s) {
+    switch (s.why) {
+        case FamilyBirthSkip::Seeded:      ++seeded;       break;
+        case FamilyBirthSkip::Carried:     ++carried;      break;
+        case FamilyBirthSkip::NoReference: ++no_reference; break;
+    }
+}
+
+const char* NetworkSbasis::pinPairContinuityBlocker(bool gf_datum, NetworkSatGfDatum sat_gf_datum,
+                                                    bool sat_gf_datum_time_linked,
+                                                    bool sat_if_level_datum) {
+    if (gf_datum)
+        return "network.code_bias_gf_datum (its geometry-free row targets 0 on every pin pair)";
+    if (sat_gf_datum != NetworkSatGfDatum::NoneMode && !sat_gf_datum_time_linked)
+        return "network.sat_gf_datum without network.sat_gf_datum_time_linked (its "
+               "geometry-free rows re-assert their absolute target on a new pin pair)";
+    if (sat_if_level_datum)
+        return "network.sat_if_level_datum (its ionosphere-free level row targets the "
+               "absolute level every epoch)";
+    return nullptr;
+}
+
 NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     const NetworkEstimator& est,
     const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
@@ -801,9 +1247,27 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     const std::function<void(const char*, const char*, const std::string&,
                              const std::string&, std::optional<double>,
                              std::optional<double>, const char*,
-                             const std::string&)>& emitEvent) {
+                             const std::string&)>& emitEvent,
+    const CodeDatumFamilyArms& family_arms,
+    const CodeBiasCarryMap& code_bias_carry) {
     CodeBiasDatumRows out;
     const Eigen::Index nshared = est.numShared();
+    // Card GFC: both arms refine the time link and are read only under it.  Pair
+    // continuity (the pin pair hold and the continued change) is read only where it keeps
+    // the datum: with no row that re-asserts an absolute target on a new pin pair
+    // (pinPairContinuityBlocker).
+    const bool pair_continuity =
+        cb_time_linked && family_arms.pair_continuity
+        && NetworkSbasis::pinPairContinuityBlocker(gf_datum, sat_gf_datum,
+                                                   sat_gf_datum_time_linked,
+                                                   sat_if_level_datum) == nullptr;
+    const bool family_difference = cb_time_linked && family_arms.family_difference;
+    // Card GFC step 2: the first-sighting family prior refines the family difference and
+    // is read only with it (the loader refuses a negative or non-finite sigma).
+    const double birth_sigma = family_arms.birth_prior_sigma_m;
+    const bool   birth_prior = family_difference && std::isfinite(birth_sigma) && birth_sigma > 0.0;
+    std::vector<Eigen::VectorXd> birth_rows;   // its soft rows, folded apart from `rows`
+    std::vector<double>          birth_zs;
 
     std::map<std::string, std::vector<std::string>> sat_signals;  // sat -> code signals
     std::vector<std::string> sat_order;
@@ -840,12 +1304,18 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     // time-linking each row spans the channel's veterans with RHS Σ b̂_prev instead
     // of all present satellites with RHS 0.
     std::map<std::string, std::vector<std::pair<std::string, Eigen::Index>>> st0_chan;
+    // Card GFC: each channel's typed identity beside its key, kept only when the
+    // family-difference arm reads it.
+    std::map<std::string, ChannelIdent> chan_ident;
     for (const auto& kv : registered_code_keys) {
         Eigen::Index col;
         try { col = est.codeBiasColumn(kv.first, kv.second); } catch (...) { continue; }
-        const std::string skey =
-            constellationKey(systemOfSat(kv.first)) + "|" + kv.second;
+        const System sys = systemOfSat(kv.first);
+        const std::string skey = constellationKey(sys) + "|" + kv.second;
         st0_chan[skey].emplace_back(kv.first, col);
+        if (family_difference && !chan_ident.count(skey))
+            if (const std::optional<SignalId> id = SignalId::fromObsCode(sys, kv.second))
+                chan_ident.emplace(skey, ChannelIdent{*id, kv.second});
     }
 
     // (constellation|signal) -> the satellites whose column the geometry-free datum
@@ -875,6 +1345,9 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         std::string sig2 = if_pin.second;
         double      f1   = sig1.empty() ? 0.0 : freqOf(sat, sig1);
         double      f2   = sig2.empty() ? 0.0 : freqOf(sat, sig2);
+        // Card GFC: set when the group-delay test refused this satellite's pin pair hold,
+        // so that the re-seeded change below can say why it was not held.
+        bool hold_refused_gd = false;
         // network.clock_signal_basis_hold: anchor this satellite's clock to one
         // ionosphere-free reference pair for the whole run, so the emitted (δtˢ, dˢ)
         // split is time-consistent.  Re-selecting the pair from each epoch's
@@ -919,6 +1392,47 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 }
                 held_clock_ref[sat] = { sig1, sig2 };
             }
+        } else if (pair_continuity) {
+            // Card GFC, network.code_datum_pair_continuity, step 1 (hold).  The selection
+            // above is a function of this epoch's registered set, so a lower-ordered
+            // signal reaching two stations (Galileo C5Q beside a pinned (C1C, C5X))
+            // re-selects the pin, and the entering signal has no previous solved value to
+            // continue from.  Instead the satellite keeps the last kept epoch's pair for
+            // as long as the selected pair cannot be continued, and the time link below
+            // carries that pair's own previous combination as for an unchanged pair (no
+            // pair change, no re-seed of the pin, no event).  The entering signal is
+            // registered meanwhile, so the harvest of this kept epoch gives it a previous
+            // value, and at the next kept epoch the hold is released: the pin moves to the
+            // selection through step 2 (the continuity branch of the time link below)
+            // without a clock step.  A hold therefore lasts one kept epoch per entering
+            // signal, and the pin does not depend on the satellite's history beyond it
+            // (a lasting per-satellite split would drop the constellation's cbpin=
+            // declaration).  No hold where it buys nothing (the held pair has no previous
+            // values, so its pin would re-seed as the selection's does) or where it would
+            // anchor the entering signal in the wrong geometry-free frame (the group-delay
+            // test; see PinPairHold).  Everything keyed on sig1/sig2 from here on (the
+            // geometry-free pair and extra rows, the extra-band roster key, the disc and
+            // declaration records, this_epoch_cb_ifpin) follows the pinned pair, as under
+            // the clock signal-basis hold above.  The `else` keeps the two holds
+            // exclusive; the loader refuses that hold with the time link in any case.
+            const auto held = heldIfPinPair(sat, sigs, code_bias_ifpin_pair_, freqOf);
+            if (held && *held != if_pin) {
+                double unused = 0.0;
+                const auto hasPrev = [&](const std::string& s) { return prevCb(sat, s, unused); };
+                const bool held_carries       = hasPrev(held->first) && hasPrev(held->second);
+                const bool selected_continues = hasPrev(if_pin.first) && hasPrev(if_pin.second);
+                if (held_carries && !selected_continues) {
+                    if (groupDelayRefusesPinHold(sat, *held, if_pin, sat_gf_datum)) {
+                        hold_refused_gd = true;   // the selection stands and re-seeds
+                    } else {
+                        out.if_pin_pair_holds[sat] = PinPairHold{if_pin, *held};
+                        sig1 = held->first;
+                        sig2 = held->second;
+                        f1   = freqOf(sat, sig1);
+                        f2   = freqOf(sat, sig2);
+                    }
+                }
+            }
         }
         // Hold off: the pin is re-derived from each epoch's coverage.  With the
         // deterministic selection above, the pair is a pure function of the
@@ -932,13 +1446,15 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         // the same emit-only rule.  Guarded by emit_clock_disc and a real IF pair
         // (f1, f2 > 0), so it is byte-identical when the disc channel is off or the
         // satellite is single-frequency.  Skipped under hold, whose re-latch
-        // signalling is above.
+        // signalling is above.  Under card GFC's pair hold the record is the pinned
+        // (held) pair, so a held satellite matches its last emitted pair and is not
+        // compared as a re-selection; only a broken hold moves it.
         if (!clock_signal_basis_hold && emit_clock_disc && f1 > 0.0 && f2 > 0.0)
             this_epoch_if_pin_sel[sat] = { sig1, sig2 };
         // The S-contract §1.5 declaration record is kept separate from the disc
         // scratch above and is deliberately not guarded by either knob.  sig1/sig2 are
-        // post-hold here, so this is the pair the datum realizes on both the held and
-        // the re-selected path.  The scratch above cannot serve as the declaration: it
+        // post-hold here (either hold), so this is the pair the datum realizes on both the
+        // held and the re-selected path.  The scratch above cannot serve as the declaration: it
         // is gated on the QC-channel knob emit_clock_disc (default false), and a
         // product whose run leaves it off would declare no cbpin= token.  The record is
         // read only by the NetworkSolPrep fill, so the solve and every emitted numeric
@@ -964,8 +1480,15 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             // C1C↔C1W flip, or a band entering or leaving) re-references the split by
             // the satellite's inter-channel bias even when both new signals have prior
             // values, so the row re-seeds to 0 and the satellite is marked for a disc
-            // bump; otherwise the emitted clock would step without a signal.  The bump
-            // (this_epoch_cb_reseed) applies to any re-seed that is not the
+            // bump; otherwise the emitted clock would step without a signal.  (Under
+            // card GFC's network.code_datum_pair_continuity the re-reference is avoided
+            // where it can be: with previous values on both new signals the row targets
+            // their previous IF combination, which the old pin realized, so the clock does
+            // not step, provided every other row on the satellite's columns carries its
+            // previous value too (see pinPairContinuityBlocker); and a change the hold
+            // above deferred, because a new signal had no previous value yet, reaches here
+            // at the next kept epoch with one.)
+            // The bump (this_epoch_cb_reseed) applies to any re-seed that is not the
             // satellite's first appearance (seen before, or the run resumed), so the
             // value step coincides with a signalled discontinuity.  This epoch's pair
             // is recorded for the next epoch's comparison (persisted at the harvest,
@@ -993,10 +1516,33 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 const bool pair_same =
                     pit != code_bias_ifpin_pair_.end() &&
                     pit->second.first == sig1 && pit->second.second == sig2;
-                if (h1 && h2 && pair_same)
+                // Card GFC: a pair change is a satellite pinned at the last kept epoch on
+                // a different pair (absent at the last kept epoch is a return, not a
+                // change).  Recorded only while the arm is effective.
+                const bool pair_changed =
+                    pair_continuity && pit != code_bias_ifpin_pair_.end() && !pair_same;
+                if (h1 && h2 && pair_same) {
                     zval = a1 * v1 + a2 * v2;
-                else if (code_bias_sat_seen_.count(sat) || code_bias_datum_resumed_)
-                    this_epoch_cb_reseed.insert(sat);
+                } else if (pair_changed && h1 && h2) {
+                    // Card GFC, pair continuity.  The new pair's previous solved values
+                    // were realized against the old pin, so their ionosphere-free
+                    // combination is the value that keeps the satellite clock where the
+                    // last kept epoch put it: the pin changes pair without moving the
+                    // datum, so there is no re-seed to mark.  The emit site reads the
+                    // record to leave the re-selection discontinuity undeclared, and the
+                    // reconciliation after the level rows below demotes the record if a
+                    // channel-level re-seed marks the satellite after all.
+                    zval = a1 * v1 + a2 * v2;
+                    out.if_pin_pair_changes[sat] =
+                        PinPairChange{pit->second, {sig1, sig2}, PinPairOutcome::Continued};
+                } else {
+                    if (pair_changed)
+                        out.if_pin_pair_changes[sat] =
+                            PinPairChange{pit->second, {sig1, sig2}, PinPairOutcome::Reseeded,
+                                          hold_refused_gd};
+                    if (code_bias_sat_seen_.count(sat) || code_bias_datum_resumed_)
+                        this_epoch_cb_reseed.insert(sat);
+                }
                 this_epoch_cb_ifpin[sat] = { sig1, sig2 };
             }
         } else {
@@ -1565,9 +2111,13 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         }
         Eigen::VectorXd srow = Eigen::VectorXd::Zero(nshared);
         double zval = 0.0;
+        // The channel's sum-to-zero time link (card 2): its veterans and RHS.  Computed
+        // ahead of card GFC's family-difference decision below, which reads its veteran
+        // test; the sum-to-zero row is built from it unchanged.
+        std::vector<std::string>            present_sats;
+        std::map<std::string, Eigen::Index> col_of;
+        NetworkSbasis::CodeS2zTimeLink      s2z_tl;
         if (cb_time_linked) {
-            std::vector<std::string>            present_sats;
-            std::map<std::string, Eigen::Index> col_of;
             present_sats.reserve(entries.size());
             for (const auto& [sat, col] : entries) {
                 present_sats.push_back(sat);
@@ -1580,30 +2130,170 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     const auto vit = pit->second.find(sat);
                     if (vit != pit->second.end()) prev_vals[sat] = vit->second;
                 }
-            const auto tl = NetworkSbasis::codeS2zTimeLink(present_sats, prev_vals);
-            for (const auto& sat : tl.jac_sats) srow(col_of[sat]) += 1.0;
-            zval = tl.rhs;
-            if (tl.reseed) {
-                // A re-seed is the channel's level re-referencing, so it is an event
-                // at both edges (standing invariant #7, B5D).  The marks (the
-                // decoupling edge) drive the emit-site disc bumps; the counters let a
-                // run summary tell "the level never re-referenced" apart from "nothing
-                // was instrumented".  They are counted here rather than at the emit
-                // site because a withheld epoch does not reach that site, and its
-                // re-seed is still a fact about the datum this run realized.
-                ++out.n_s2z_reseed_rows;
-                out.reseed_channels.insert(skey);
-                for (const auto& sat : present_sats)
-                    if (code_bias_sat_seen_.count(sat) || code_bias_datum_resumed_) {
-                        this_epoch_cb_reseed.insert(sat);
-                        ++out.n_s2z_reseed_sats;
+            s2z_tl = NetworkSbasis::codeS2zTimeLink(present_sats, prev_vals);
+        }
+        // --- Card GFC: the family-difference row (network.code_datum_family_difference) ---
+        // A secondary-family Galileo channel (combined I+Q, attribute X) that keeps its row
+        // here carries a level no other row fixes: with no receiver tracking both families,
+        // the offset between the families is a datum quantity, and this channel's
+        // sum-to-zero row is what realizes it (seeded at 0 over the satellites present at
+        // its first epoch).  The arm realizes it instead as Σ (d_X − d_P) over the
+        // satellites that carry both channels, the inter-family mean of zero that COD's
+        // product uses, so a satellite's clock sits on the same realization of the offset
+        // whichever family pins it.  The row takes the sum-to-zero row's slot, so the row
+        // order is unchanged.  planFamilyRow (above this function) decides, and keeps the
+        // sum-to-zero row where the family row would add no rank or would re-seed a level
+        // the sum-to-zero time link carries.  Galileo only: the card's evidence and COD's
+        // convention are Galileo's, and a GPS or BeiDou X channel keeps its row.
+        bool family_row = false;
+        if (family_difference) {
+            const auto id = chan_ident.find(skey);
+            if (id != chan_ident.end() && id->second.id.sys == System::Galileo
+                && NetworkSbasis::channelFamilyOf(constellationKey(System::Galileo),
+                                                  id->second.code)
+                       == ChannelFamily::Secondary) {
+                const auto xp = sat_gf_pinned.find(skey);
+                FamilyRowPlan plan = planFamilyRow(
+                    id->second, skey, entries, st0_chan, chan_ident, code_bias_prev_,
+                    xp == sat_gf_pinned.end() ? nullptr : &xp->second, out.extra_band_held,
+                    !s2z_tl.reseed);
+                if (plan.realization.familyRow()) {
+                    family_row = true;
+                    for (const FamilyCommonSat& c : plan.span) {
+                        srow(c.x_col) += 1.0;
+                        srow(c.p_col) -= 1.0;
                     }
+                    zval = plan.rhs;
+                    // A re-seed of the inter-family offset is the same decoupling edge as
+                    // a sum-to-zero re-seed (standing invariant #7): the channel's
+                    // satellites seen before (all of them on a resumed run) are marked for
+                    // the emit site's discontinuity, as the sum-to-zero re-seed marks them.
+                    if (plan.realization.outcome == FamilyRowOutcome::FamilyReseed)
+                        for (const auto& sat : present_sats)
+                            if (code_bias_sat_seen_.count(sat) || code_bias_datum_resumed_) {
+                                this_epoch_cb_reseed.insert(sat);
+                                ++plan.realization.reseed_sats;
+                            }
+                }
+                // --- Card GFC step 2: the first-sighting family prior ---
+                // (network.code_family_birth_prior_sigma_m.)  The family row fixes the
+                // inter-family offset as a constellation mean, but a column born beside an
+                // uncertain satellite clock still takes up that clock's error, and the stiff
+                // code-bias process noise keeps it (card GAL2's reading R-a).  So a common
+                // satellite whose X or partner column is born this epoch gets one soft row
+                // d_X - d_P = mu, whatever row realized the channel's level: the prior is on
+                // the satellite's own difference, which no level row reaches.  Band 1 only:
+                // it is the band the family row acts on under the goldens' datum (the RF-0d
+                // extra rows already tie a band-5 X column to the pinned pair), and the band
+                // of the card's evidence.
+                //
+                // Born is read from the carry (codeFamilyBirthPriors, code_bias_carry), not
+                // from the previous-value map alone: the map drops a departed column, while
+                // READMIT parks its carry and seeds the column from it on a return inside
+                // the seed horizon, so the map would call that return born and fold a second
+                // row on information the seed already holds.  A column the clock monitor's
+                // reinit loosens is born although it has a previous value.  That keeps the
+                // fold to once per (satellite, birth): a born column is carried from the
+                // next kept epoch on.
+                //
+                // mu is the family row's veteran mean, or 0 when the family row re-seeds
+                // the offset at 0.  A birth with neither (Bridged, or Dependent with no
+                // veteran) has no realized family mean to target, because the offset this
+                // epoch is what the channel's sum-to-zero frame carries, so it folds no row
+                // and is recorded (FamilyBirthSkip::NoReference).  The rows are kept out of
+                // `rows`: they are soft priors, not gauge rows, and go to the driver with
+                // their own weight (CodeBiasDatumRows::family_birth_H).
+                if (birth_prior && id->second.id.digit == '1' && !plan.prev.common_sats.empty()) {
+                    std::map<std::string, CodeBiasCarry> carry_x, carry_p;
+                    if (!code_bias_carry.empty())
+                        for (const std::string& sat : plan.prev.common_sats) {
+                            const auto cx = code_bias_carry.find({sat, id->second.code});
+                            if (cx != code_bias_carry.end()) carry_x[sat] = cx->second;
+                            const auto cp = code_bias_carry.find({sat, plan.partner.signal});
+                            if (cp != code_bias_carry.end()) carry_p[sat] = cp->second;
+                        }
+                    const NetworkSbasis::CodeFamilyBirthPlan bp = NetworkSbasis::codeFamilyBirthPriors(
+                        plan.prev.common_sats, plan.prev.prev_x, plan.prev.prev_p, carry_x,
+                        carry_p,
+                        plan.realization.outcome == FamilyRowOutcome::FamilyReseed);
+                    const auto skip = [&](const std::string& sat, FamilyBirthSkip why,
+                                          FamilyBirthSide side) {
+                        NetworkSbasis::FamilyBirthSkipRecord s;
+                        s.sat      = sat;
+                        s.channel  = id->second.id;
+                        s.x_signal = id->second.code;
+                        s.partner  = plan.partner.signal;
+                        s.why      = why;
+                        s.side     = side;
+                        s.outcome  = plan.realization.outcome;
+                        out.family_birth_skips.push_back(std::move(s));
+                    };
+                    for (const auto& [sat, why, side] : bp.carried) skip(sat, why, side);
+                    for (const NetworkSbasis::FamilyBirth& b : bp.births) {
+                        if (!bp.mu_defined) {
+                            skip(b.sat, FamilyBirthSkip::NoReference, b.side);
+                            continue;
+                        }
+                        const auto c = std::find_if(
+                            plan.partner.common.begin(), plan.partner.common.end(),
+                            [&](const FamilyCommonSat& s) { return s.sat == b.sat; });
+                        if (c == plan.partner.common.end()) continue;   // defensive: births come from the common set
+                        Eigen::VectorXd brow = Eigen::VectorXd::Zero(nshared);
+                        brow(c->x_col) = 1.0;
+                        brow(c->p_col) = -1.0;
+                        birth_rows.push_back(std::move(brow));
+                        birth_zs.push_back(bp.mu_m);
+                        NetworkSbasis::FamilyBirthPrior rec;
+                        rec.sat         = b.sat;
+                        rec.channel     = id->second.id;
+                        rec.x_signal    = id->second.code;
+                        rec.partner     = plan.partner.signal;
+                        rec.born        = b.side;
+                        rec.loosened    = b.loosened;
+                        rec.mu_m        = bp.mu_m;
+                        rec.n_veterans  = bp.n_veterans;
+                        rec.sigma_m     = birth_sigma;
+                        rec.seen_before = code_bias_sat_seen_.count(b.sat) != 0;
+                        out.family_birth_priors.push_back(std::move(rec));
+                    }
+                }
+                out.family_rows[skey] = std::move(plan.realization);
             }
-        } else {
-            for (const auto& [sat, col] : entries) srow(col) += 1.0;
+        }
+        if (!family_row) {
+            if (cb_time_linked) {
+                for (const auto& sat : s2z_tl.jac_sats) srow(col_of[sat]) += 1.0;
+                zval = s2z_tl.rhs;
+                if (s2z_tl.reseed) {
+                    // A re-seed is the channel's level re-referencing, so it is an event
+                    // at both edges (standing invariant #7, B5D).  The marks (the
+                    // decoupling edge) drive the emit-site disc bumps; the counters let a
+                    // run summary tell "the level never re-referenced" apart from "nothing
+                    // was instrumented".  They are counted here rather than at the emit
+                    // site because a withheld epoch does not reach that site, and its
+                    // re-seed is still a fact about the datum this run realized.
+                    ++out.n_s2z_reseed_rows;
+                    out.reseed_channels.insert(skey);   // card L5B: the receiver IFB carry of this family
+                    for (const auto& sat : present_sats)
+                        if (code_bias_sat_seen_.count(sat) || code_bias_datum_resumed_) {
+                            this_epoch_cb_reseed.insert(sat);
+                            ++out.n_s2z_reseed_sats;
+                        }
+                }
+            } else {
+                for (const auto& [sat, col] : entries) srow(col) += 1.0;
+            }
         }
         if (srow.cwiseAbs().sum() > 0.0) {
             rows.push_back(std::move(srow));
+            // A card GFC family-difference row is tagged as the sum-to-zero row it
+            // replaces, deliberately.  The "contributions as armed" table and its manifest
+            // record print every kind on every run, armed or not, so a kind of its own
+            // would change every unarmed run's log and manifest, which the card's
+            // default-path byte-identity rule forbids.  Which row realized each channel
+            // is reported instead by the "CB_DATUM"/"family_row" events at every switch
+            // and by the card's run-end line (networkCodeDatumFamilyRunEnd); a kind of
+            // its own is a one-line change once a table line on every run is accepted.
             out.row_kinds.push_back(ContributionKind::CbSumToZero);   // card NOM N2a
             zs.push_back(zval);
         }
@@ -1616,6 +2306,19 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     // set and cannot fire a bump without an emitted value step.  This is the emit-only
     // rule, and it needs no erase; an erase would drop a bump legitimately deferred
     // for a satellite re-seeded while pruned from the emission.
+    //
+    // Card GFC: a satellite whose pin continued at a pair change but that a channel-level
+    // re-seed above marked anyway had its datum moved by that re-seed, so its pair change
+    // is declared as without the arm (the emit site does not suppress it).
+    for (auto& [sat, change] : out.if_pin_pair_changes)
+        if (change.outcome == PinPairOutcome::Continued && this_epoch_cb_reseed.count(sat))
+            change.outcome = PinPairOutcome::LevelReseeded;
+    // The same for a held satellite: the hold kept its pin's own combination, but a
+    // channel-level re-seed (typically the entering signal's channel with no veteran)
+    // marked it, so the emit site declares a discontinuity for it and the run end must
+    // not count it as a clean hold.
+    for (auto& [sat, hold] : out.if_pin_pair_holds)
+        if (this_epoch_cb_reseed.count(sat)) hold.reseeded = true;
 
     if (!rows.empty()) {
         Eigen::MatrixXd H(static_cast<Eigen::Index>(rows.size()), nshared);
@@ -1629,9 +2332,202 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         out.H = std::move(H);
         out.z = std::move(z);
     }
+    // Card GFC step 2: the first-sighting family prior rows, stacked apart from the gauge
+    // rows with their own weight (the driver folds and captures them on their own).
+    if (!birth_rows.empty()) {
+        const Eigen::Index nb = static_cast<Eigen::Index>(birth_rows.size());
+        out.family_birth_H.resize(nb, nshared);
+        out.family_birth_z.resize(nb);
+        for (Eigen::Index r = 0; r < nb; ++r) {
+            out.family_birth_H.row(r) = birth_rows[static_cast<std::size_t>(r)];
+            out.family_birth_z(r)     = birth_zs[static_cast<std::size_t>(r)];
+        }
+        out.family_birth_weight = 1.0 / (birth_sigma * birth_sigma);
+    }
     out.n_if_pin_sats  = static_cast<int>(sat_order.size());
     out.n_s2z_channels = static_cast<int>(st0_chan.size());
     return out;
+}
+
+void NetworkSbasis::foldFamilyBirthRows(NetworkEstimator& est, const Eigen::MatrixXd& H,
+                                        const Eigen::VectorXd& z, double weight) {
+    if (H.rows() == 0) return;
+    est.contributionKind(ContributionKind::CbFamilyBirth);   // card NOM N2a
+    est.addSharedConstraintRows(H, z, weight);
+}
+
+// The carry's fold of each code-bias column, for the first-sighting prior (see the header).
+NetworkSbasis::CodeBiasCarryMap networkCodeBiasCarryMap(const NetworkRunContext& ctx) {
+    using Fold = NetworkSbasis::CodeBiasCarry;
+    NetworkSbasis::CodeBiasCarryMap out;
+    for (const CarryPrior& cp : ctx.carry.prev_carry) {
+        if (cp.kind != SharedParamKind::CodeBias) continue;
+        std::optional<Fold> f;
+        switch (cp.fold.disposition) {
+            case CarryDisposition::Folded:   f = Fold::Carried;  break;
+            case CarryDisposition::Seeded:   f = Fold::Seeded;   break;
+            case CarryDisposition::Reinit:   f = Fold::Loosened; break;
+            case CarryDisposition::Undecided:   // no decision pass reached it: its own record
+                if (!(cp.t_park_s > 0.0)) f = cp.inflate_q ? Fold::Loosened : Fold::Carried;
+                break;
+            default: break;   // Parked (absent, or past the horizon); no other applies to a code bias
+        }
+        if (f) out[{cp.sat, cp.signal}] = *f;
+    }
+    return out;
+}
+
+// Card GFC's kept-epoch bookkeeping (see the header).
+void networkCodeDatumFamilyKeptEpoch(
+    NetworkRunContext& ctx,
+    const std::function<void(const char*, const char*, const std::string&,
+                             const std::string&, std::optional<double>,
+                             std::optional<double>, const char*,
+                             const std::string&)>& emitEvent) {
+    using Outcome = NetworkSbasis::PinPairOutcome;
+    // The pin pair holds of this kept epoch (network.code_datum_pair_continuity): each
+    // held satellite-epoch is counted, and a hold is declared at both edges against the
+    // last kept epoch's holds (standing invariant #7: the pin stops following the
+    // selection at one edge and resumes at the other).
+    const auto pairText = [](const std::pair<std::string, std::string>& p) {
+        return p.first + "+" + p.second;
+    };
+    const auto holdText = [&](const NetworkSbasis::PinPairHold& h) {
+        return "selected " + pairText(h.selected) + " vs held " + pairText(h.held);
+    };
+    const auto startText = [&](const NetworkSbasis::PinPairHold& h) {
+        return holdText(h) + (h.reseeded ? "; marked by a channel-level re-seed" : "");
+    };
+    // The hold baseline is not snapshotted, so the first kept epoch after a warm resume
+    // cannot tell a hold that begins here from one the writer's last kept epoch carried:
+    // such a hold is declared "hold_resumed" and counted apart from the holds begun.
+    const bool after_resume = std::exchange(ctx.carry.if_pin_holds_resume_pending, false);
+    const auto& holds = ctx.carry.this_epoch_if_pin_holds;
+    for (const auto& [sat, hold] : holds) {
+        NetworkSbasis::CodeDatumPairCounts& c = ctx.counters.cb_pair_by_const[systemOfSat(sat)];
+        ++c.held;
+        if (hold.reseeded) ++c.held_reseeded;
+        if (ctx.carry.last_if_pin_holds.count(sat) != 0) continue;
+        if (after_resume) {
+            ++c.hold_resumed;
+            emitEvent("CLK_BASIS", "held", sat, "", std::nullopt, std::nullopt, "hold_resumed",
+                      startText(hold) + "; first kept epoch after a warm resume");
+        } else {
+            ++c.hold_begun;
+            emitEvent("CLK_BASIS", "held", sat, "", std::nullopt, std::nullopt, "hold_begin",
+                      startText(hold));
+        }
+    }
+    for (const auto& [sat, hold] : ctx.carry.last_if_pin_holds) {
+        if (holds.count(sat) != 0) continue;
+        ++ctx.counters.cb_pair_by_const[systemOfSat(sat)].hold_ended;
+        // What ended it, from the pair the satellite is pinned on now: still the held pair
+        // (the selection named it again: the entering signal left), another pair (the pin
+        // moved by a pair change, named with its outcome: continued when the hold was
+        // released or a held signal left with previous values on the new pair), or no pin
+        // (the satellite has no ionosphere-free pin this kept epoch).
+        const auto now = ctx.carry.this_epoch_cb_ifpin.find(sat);
+        std::string ending;
+        if (now == ctx.carry.this_epoch_cb_ifpin.end()) {
+            ending = "; not pinned now";
+        } else if (now->second == hold.held) {
+            ending = "; pinned " + pairText(now->second) + " (the selection named it again)";
+        } else {
+            const auto change = ctx.carry.this_epoch_if_pin_changes.find(sat);
+            const char* how = "a pair change";
+            if (change != ctx.carry.this_epoch_if_pin_changes.end()) {
+                switch (change->second.outcome) {
+                    case Outcome::Continued:     how = "continued"; break;
+                    case Outcome::Reseeded:      how = "re-seeded"; break;
+                    case Outcome::LevelReseeded: how = "continued, re-seeded by a level row"; break;
+                }
+            }
+            ending = "; pinned " + pairText(now->second) + " (" + how + ")";
+        }
+        emitEvent("CLK_BASIS", "held", sat, "", std::nullopt, std::nullopt, "hold_end",
+                  holdText(hold) + ending);
+    }
+    ctx.carry.last_if_pin_holds = holds;
+    // The pin pair changes of this kept epoch (network.code_datum_pair_continuity).
+    for (const auto& [sat, change] : ctx.carry.this_epoch_if_pin_changes) {
+        NetworkSbasis::CodeDatumPairCounts& c = ctx.counters.cb_pair_by_const[systemOfSat(sat)];
+        switch (change.outcome) {
+            case Outcome::Continued:
+                ++c.continued;
+                emitEvent("CLK_BASIS", "continued", sat, "", std::nullopt, std::nullopt,
+                          "if_pin_pair_continued",
+                          change.from.first + "+" + change.from.second + "->"
+                              + change.to.first + "+" + change.to.second);
+                break;
+            case Outcome::Reseeded:
+                ++c.reseeded;
+                if (change.hold_refused_gd) ++c.hold_refused_gd;
+                break;
+            case Outcome::LevelReseeded: ++c.level_reseeded; break;
+        }
+    }
+    // The secondary-family level realizations (network.code_datum_family_difference).  A
+    // channel's row identity is the family row with its partner, or the sum-to-zero row
+    // (empty partner); a change of identity against the last kept epoch is declared.
+    const auto& rows = ctx.carry.this_epoch_cb_family_rows;
+    if (!rows.empty()) ++ctx.counters.n_cb_family_epochs;
+    const auto rowText = [](const std::string& partner) {
+        return partner.empty() ? std::string("sum_to_zero") : "family_difference/" + partner;
+    };
+    for (const auto& [chan, r] : rows) {
+        ctx.counters.cb_family_by_band[{r.channel.sys, r.channel.digit}].add(r);
+        const std::string partner = r.familyRow() ? r.partner : std::string();
+        const auto last = ctx.carry.last_cb_family_partner.find(chan);
+        if (last != ctx.carry.last_cb_family_partner.end() && last->second != partner) {
+            ++ctx.counters.n_cb_family_switches;
+            emitEvent("CB_DATUM", "family_row", "", "", std::nullopt, std::nullopt,
+                      partner.empty() ? "to_sum_to_zero" : "to_family_difference",
+                      chan + ": " + rowText(last->second) + "->" + rowText(partner) + " ("
+                          + NetworkSbasis::familyRowOutcomeName(r.outcome) + ")");
+        }
+        ctx.carry.last_cb_family_partner[chan] = partner;
+    }
+    // The first-sighting family prior of this kept epoch (card GFC step 2,
+    // network.code_family_birth_prior_sigma_m): each soft row folded on this kept epoch,
+    // counted per (constellation, band) and declared once, and each common satellite given
+    // no row, counted; a birth with no target is declared too (a birth the prior missed).
+    const auto columnsOf = [](NetworkSbasis::FamilyBirthSide side, const std::string& x,
+                              const std::string& p) {
+        return side == NetworkSbasis::FamilyBirthSide::Partner     ? p
+             : side == NetworkSbasis::FamilyBirthSide::Secondary   ? x
+                                                                    : x + "+" + p;
+    };
+    for (const NetworkSbasis::FamilyBirthPrior& b : ctx.carry.this_epoch_cb_family_births) {
+        ctx.counters.cb_family_birth_by_band[{b.channel.sys, b.channel.digit}].add(b);
+        const char* born_text = b.born == NetworkSbasis::FamilyBirthSide::Secondary
+                                    ? "the secondary column born"
+                              : b.born == NetworkSbasis::FamilyBirthSide::Partner
+                                    ? "the partner column born"
+                                    : "both columns born";
+        emitEvent("CB_DATUM", "family_birth_prior", b.sat, "", b.mu_m, b.sigma_m,
+                  NetworkSbasis::familyBirthSideName(b.born),
+                  fmt::format("{}: {}-{} = mu, {} ({}{}{}); mu {:+.4f} m over {} veteran(s){}; "
+                              "sigma {:.3f} m",
+                              b.sat, b.x_signal, b.partner, born_text,
+                              columnsOf(b.born, b.x_signal, b.partner),
+                              b.loosened ? ", a loosened carry" : "",
+                              b.seen_before ? ", satellite seen before" : "",
+                              b.mu_m, b.n_veterans,
+                              b.n_veterans == 0 ? " (none: the family row's re-seed at 0)" : "",
+                              b.sigma_m));
+    }
+    for (const NetworkSbasis::FamilyBirthSkipRecord& s :
+         ctx.carry.this_epoch_cb_family_birth_skips) {
+        ctx.counters.cb_family_birth_by_band[{s.channel.sys, s.channel.digit}].add(s);
+        if (s.why != NetworkSbasis::FamilyBirthSkip::NoReference) continue;
+        emitEvent("CB_DATUM", "family_birth_prior", s.sat, "", std::nullopt, std::nullopt,
+                  NetworkSbasis::familyBirthSkipName(s.why),
+                  fmt::format("{}: {}-{}, {} born with no realized family mean to target "
+                              "(channel {}, no veteran): no row",
+                              s.sat, s.x_signal, s.partner,
+                              columnsOf(s.side, s.x_signal, s.partner),
+                              NetworkSbasis::familyRowOutcomeName(s.outcome)));
+    }
 }
 
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
@@ -1916,6 +2812,217 @@ int networkSbasisDatumRunEnd(const NetworkRunEndView& v) {
                       1.0 / (config_.networkRxCodeBiasDatumSigmaM()
                              * config_.networkRxCodeBiasDatumSigmaM()));
     }
+    return 0;
+}
+
+// Card GFC's run-end readout (see the header).
+void networkCodeDatumFamilyRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
+                                  const std::shared_ptr<spdlog::logger>& log) {
+    const bool pc = config_.networkCodeDatumPairContinuity();
+    const bool fd = config_.networkCodeDatumFamilyDifference();
+    // Step 2's first-sighting family prior (network.code_family_birth_prior_sigma_m).
+    const double bp_sigma = config_.networkCodeFamilyBirthPriorSigmaM();
+    const bool bp = bp_sigma > 0.0;
+    if (!pc && !fd && !bp) return;
+    // Every arm refines the time-linked code datum, which exists only with the W6 satellite
+    // code bias; without either the builder never read them (standing invariant #4).
+    std::string missing;
+    if (!config_.networkCodeDatumTimeLinked()) missing = "network.code_datum_time_linked";
+    if (!config_.estimateNetworkSatCodeBias())
+        missing += std::string(missing.empty() ? "" : " and ") + "network.estimate_sat_code_bias";
+    if (!missing.empty()) {
+        if (pc || fd)
+            log->warn("Network (GFC): {} ARMED but INERT without {}.  {} the time-linked code "
+                      "datum, which this run does not realize, so the builder never read {} "
+                      "and the run is the unarmed posture (standing invariant #4).",
+                      pc && fd ? "network.code_datum_pair_continuity and "
+                                 "network.code_datum_family_difference"
+                      : pc     ? "network.code_datum_pair_continuity"
+                               : "network.code_datum_family_difference",
+                      missing, pc && fd ? "Both refine" : "It refines", pc && fd ? "them" : "it");
+        // The prior also needs the family difference: name it too when it is off, so the
+        // line lists every prerequisite the loader's warning does.
+        if (bp)
+            log->warn("Network (GFC family birth prior): network.code_family_birth_prior_sigma_m "
+                      "= {:g} m ARMED but INERT without {}.  The prior refines the time-linked "
+                      "family-difference datum, so the builder never read it and folded no "
+                      "row (standing invariant #4).",
+                      bp_sigma,
+                      fd ? missing
+                         : "network.code_datum_family_difference and " + missing);
+        return;
+    }
+    if (pc) {
+        const auto& nc = config_.getNetworkConfig();
+        const char* blocker = NetworkSbasis::pinPairContinuityBlocker(
+            config_.networkCodeBiasGfDatum(), nc.sat_gf_datum, nc.sat_gf_datum_time_linked,
+            nc.sat_if_level_datum);
+        if (blocker) {
+            log->warn("Network (GFC pair continuity): ARMED but INERT under {}.  A continued "
+                      "pin would hold the new pair's ionosphere-free combination while that "
+                      "row moves the pair's other combination, a step no discontinuity "
+                      "declares, so the builder did not read the arm: the pin followed the "
+                      "selection and every pair change re-seeded (standing invariant #4).",
+                      blocker);
+        } else {
+            NetworkSbasis::CodeDatumPairCounts sum;
+            std::string per, per_hold;
+            for (const auto& [sys, c] : ctx.counters.cb_pair_by_const) {
+                sum.continued += c.continued;
+                sum.reseeded += c.reseeded;
+                sum.level_reseeded += c.level_reseeded;
+                sum.held += c.held;
+                sum.hold_begun += c.hold_begun;
+                sum.hold_ended += c.hold_ended;
+                sum.held_reseeded += c.held_reseeded;
+                sum.hold_resumed += c.hold_resumed;
+                sum.hold_refused_gd += c.hold_refused_gd;
+                sum.hold_split_decl += c.hold_split_decl;
+                if (c.continued + c.reseeded + c.level_reseeded > 0)
+                    per += fmt::format("{}{} {}/{}/{}", per.empty() ? "" : ", ",
+                                       constellationKey(sys), c.continued, c.reseeded,
+                                       c.level_reseeded);
+                if (c.held + c.hold_begun + c.hold_ended + c.hold_resumed + c.hold_refused_gd
+                        + c.hold_split_decl > 0)
+                    per_hold += fmt::format("{}{} {}/{}/{}/{}/{}/{}/{}",
+                                            per_hold.empty() ? "" : ", ",
+                                            constellationKey(sys), c.held, c.held_reseeded,
+                                            c.hold_begun, c.hold_ended, c.hold_resumed,
+                                            c.hold_refused_gd, c.hold_split_decl);
+            }
+            // Step 1, the hold: the pin kept the last kept epoch's pair while the selected
+            // pair could not be continued yet (an entering signal without a previous
+            // value), so no pair change happened that epoch; the next kept epoch normally
+            // releases it through a continued change (step 2, the next line).
+            log->info("Network (GFC pair hold): over the kept epochs, {} satellite-epoch(s) "
+                      "HELD the last kept pin pair while the selected pair could not be "
+                      "continued yet (a lower-ordered signal had entered without a previous "
+                      "solved value; the held pair's own previous combination carried, so the "
+                      "pin neither changed pair nor re-seeded), {} of them marked anyway by a "
+                      "channel-level re-seed (declared as a discontinuity); {} hold(s) begun, "
+                      "{} ended and {} found at the first kept epoch after a warm resume; {} "
+                      "hold(s) refused because the broadcast group delay describes the "
+                      "selected pair and not the held one (re-seeded instead); {} emitted "
+                      "epoch(s) dropped a constellation's cbpin= declaration for a pin pair "
+                      "split that included a held satellite{}.  Events: network_events.csv "
+                      "CLK_BASIS/held.",
+                      sum.held, sum.held_reseeded, sum.hold_begun, sum.hold_ended,
+                      sum.hold_resumed, sum.hold_refused_gd, sum.hold_split_decl,
+                      per_hold.empty()
+                          ? ""
+                          : fmt::format(" (per constellation, held/re-seeded/begun/ended/"
+                                        "resumed/refused/cbpin dropped: {})", per_hold));
+            // Step 2, the continuation: the pair changes that did happen (the release of a
+            // hold, a held signal leaving, or a satellite with no hold).
+            log->info("Network (GFC pair continuity): over the kept epochs, {} ionosphere-free "
+                      "pin pair change(s) CONTINUED (the target was the new pair's previous "
+                      "solved combination, so the satellite clock did not step and no re-seed "
+                      "was marked), {} RE-SEEDED at 0 (a signal of the new pair had no "
+                      "previous solved value) and {} continued but "
+                      "re-seeded by a channel level row the same epoch{}.  At the emit site "
+                      "{} pair re-selection discontinuity(ies) were left undeclared for "
+                      "continued satellites, {} declared anyway (the last emitted pair was not "
+                      "the pair continued from, or a re-seed was marked or pending) and {} "
+                      "continued satellite-epoch(s) were outside the emission and compared at "
+                      "their next emit{}.  Events: network_events.csv CLK_BASIS/continued.",
+                      sum.continued, sum.reseeded, sum.level_reseeded,
+                      per.empty() ? ""
+                                  : fmt::format(" (per constellation, continued/re-seeded/"
+                                                "level re-seeded: {})", per),
+                      ctx.counters.n_if_pin_continued_undeclared,
+                      ctx.counters.n_if_pin_continued_declared,
+                      ctx.counters.n_if_pin_continued_unemitted,
+                      ctx.knobs.emit_clock_disc
+                          ? ""
+                          : "; network.emit_clock_disc is off, so this run declares no pair "
+                            "re-selection discontinuity at all");
+        }
+    }
+    if (fd) {
+        if (ctx.counters.cb_family_by_band.empty()) {
+            log->warn("Network (GFC family difference): ARMED but no secondary-family (X) "
+                      "Galileo code channel kept a level row on any kept epoch (none "
+                      "registered, or each suppressed by the geometry-free datum), so the "
+                      "arm never acted and this run is the unarmed posture (standing "
+                      "invariant #4).");
+        } else {
+            std::string per;
+            int family_rows = 0;
+            for (const auto& [band, c] : ctx.counters.cb_family_by_band) {
+                family_rows += c.family_veteran + c.family_reseed;
+                per += fmt::format("{}{} band {}: {} family row(s) on veterans, {} re-seeded "
+                                   "(marking {} satellite(s)); the sum-to-zero row kept {} "
+                                   "time(s) bridging a family re-seed, {} with no common "
+                                   "satellite, {} with no same-band primary channel, {} "
+                                   "dependent on pinned columns",
+                                   per.empty() ? "" : "; ", constellationKey(band.first),
+                                   band.second, c.family_veteran, c.family_reseed,
+                                   c.reseed_sats, c.bridged, c.no_common, c.no_partner,
+                                   c.dependent);
+            }
+            log->info("Network (GFC family difference): over {} kept epoch(s) with a "
+                      "secondary-family channel, {} channel-epoch(s) carried Sum (d_X - d_P) "
+                      "over the satellites tracking both families in place of the sum-to-zero "
+                      "row (the inter-family mean, COD's convention): {}.  {} switch(es) "
+                      "between the two rows declared (network_events.csv CB_DATUM/family_row).",
+                      ctx.counters.n_cb_family_epochs, family_rows, per,
+                      ctx.counters.n_cb_family_switches);
+            if (family_rows == 0)
+                log->warn("Network (GFC family difference): ARMED but the family-difference "
+                          "row was never built (every channel-epoch kept the sum-to-zero row "
+                          "for the reasons above), so this run is the unarmed posture "
+                          "(standing invariant #4).");
+        }
+    }
+    // Step 2: the first-sighting family prior.  It is read only with the family
+    // difference; with it, 0 rows means no first sighting with a target beside a partner
+    // ever occurred on a kept epoch (or no secondary-family channel at all), which the
+    // counters cannot tell from inert wiring, so it is a warning (standing invariant #4).
+    if (bp) {
+        int rows = 0;
+        std::set<std::string> sats;
+        std::string per;
+        for (const auto& [band, c] : ctx.counters.cb_family_birth_by_band) {
+            rows += c.rows;
+            sats.insert(c.sats.begin(), c.sats.end());
+            per += fmt::format("{}{} band {}: {} row(s) on {} satellite(s) (secondary "
+                               "column born {}, partner born {}, both {}; {} on satellites "
+                               "seen before; {} on a loosened carry; {} at the family row's "
+                               "re-seed target 0; max |mu| {:.4f} m); no row on {} READMIT "
+                               "seed(s), {} carried column(s) without a previous value, {} "
+                               "birth(s) with no realized family mean",
+                               per.empty() ? "" : "; ", constellationKey(band.first),
+                               band.second, c.rows, c.sats.size(), c.x_born,
+                               c.partner_born, c.both_born, c.seen_before, c.loosened,
+                               c.no_veteran, c.max_abs_mu_m, c.seeded, c.carried,
+                               c.no_reference);
+        }
+        if (!fd) {
+            log->warn("Network (GFC family birth prior): network.code_family_birth_prior_sigma_m "
+                      "= {:g} m ARMED but INERT without network.code_datum_family_difference.  "
+                      "The prior refines the family-difference datum, so the builder never "
+                      "read it and folded no row (standing invariant #4).",
+                      bp_sigma);
+        } else if (rows == 0) {
+            log->warn("Network (GFC family birth prior): sigma {:g} m ARMED but ZERO soft rows "
+                      "folded: no Galileo band-1 secondary-family (X) column or partner was at "
+                      "its first sighting beside the other with a realized family mean on any "
+                      "kept epoch (or no such channel kept a level row), so this run is the "
+                      "unarmed posture (standing invariant #4).{}",
+                      bp_sigma, per.empty() ? std::string() : "  Counted: " + per + ".");
+        } else {
+            log->info("Network (GFC family birth prior): sigma {:g} m (information {:g}); over "
+                      "the kept epochs {} soft row(s) d_X - d_P = mu folded, once per "
+                      "(satellite, birth), on {} satellite(s): {}.  Events: "
+                      "network_events.csv CB_DATUM/family_birth_prior.",
+                      bp_sigma, 1.0 / (bp_sigma * bp_sigma), rows, sats.size(), per);
+        }
+    }
+}
+
+// Run-end report: card GFC's two code-datum arms.
+int networkCodeDatumFamilyRunEnd(const NetworkRunEndView& v) {
+    networkCodeDatumFamilyRunEnd(v.ctx, v.config, v.log);
     return 0;
 }
 

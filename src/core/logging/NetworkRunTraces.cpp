@@ -1793,6 +1793,21 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // are unchanged.
                << (nc.estimate_rx_extra_band_code_delay
                        ? std::string("\"estimate_rx_extra_band_code_delay\":true,") : std::string())
+               // Card GFC: the two code-datum arms change which combination realizes the
+               // inter-family code offset and whether a pin pair change re-seeds the
+               // clock, so they are part of the product's frame.  Emitted only when armed
+               // (as for sat_gf_extra_band_free above), so an unarmed run's manifest bytes
+               // are unchanged.
+               << (config_.networkCodeDatumPairContinuity()
+                       ? std::string("\"code_datum_pair_continuity\":true,") : std::string())
+               << (config_.networkCodeDatumFamilyDifference()
+                       ? std::string("\"code_datum_family_difference\":true,") : std::string())
+               // Card GFC step 2: the first-sighting family prior's sigma, emitted only when
+               // armed (as for the two arms above).
+               << (config_.networkCodeFamilyBirthPriorSigmaM() > 0.0
+                       ? fmt::format("\"code_family_birth_prior_sigma_m\":{:g},",
+                                     config_.networkCodeFamilyBirthPriorSigmaM())
+                       : std::string())
                // Both knobs affect the solve when armed (card L5P): the pair scope
                // changes which arcs refloat and the sigma scale changes the normal
                // equations, so an archived logs/ folder has to be able to say which

@@ -1295,6 +1295,18 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // armed, so a snapshot written with it off keeps its fingerprint.
         if (cb_time_linked)
             add(fmt::format("cbtimelink={}", cb_time_linked));
+        // Card GFC: pair continuity changes which satellites re-seed their clock at a pin
+        // pair change, and the family difference changes which combination realizes the
+        // inter-family code offset, so a carried code-bias map was realized under a
+        // different datum across either flip.  Armed-only tokens, so every existing
+        // fingerprint is unchanged.
+        if (config_.networkCodeDatumPairContinuity()) add("cbpaircont=1");
+        if (config_.networkCodeDatumFamilyDifference()) add("cbfamdiff=1");
+        // Card GFC step 2: the first-sighting family prior changes the carried code biases
+        // of every satellite born beside its family partner, by an amount set by sigma, so
+        // the token carries the value.  Armed-only, as for the two arms above.
+        if (config_.networkCodeFamilyBirthPriorSigmaM() > 0.0)
+            add(fmt::format("cbfambirth={:g}", config_.networkCodeFamilyBirthPriorSigmaM()));
         // The border time update changes what an injected coupling row means (a κ-shrunk,
         // re-independenced pseudo-observation of the moved border against the raw
         // harvest-epoch row), and the κ inputs (per-column P_prev and the q ladder) are not
@@ -2629,6 +2641,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // downstream branches on it, so the off path stays byte-identical (like
                     // anchor_age_resume_seed and adm_resume_pending).
                     ctx.carry.resume_datum_first_ep = true;
+                    // Card GFC: the pin pair hold baseline is not snapshotted, so the first
+                    // kept epoch's holds are declared as found at a resume, not as begun.
+                    // Telemetry only (empty hold maps unless code_datum_pair_continuity).
+                    ctx.carry.if_pin_holds_resume_pending = true;
                     // One-shot latch of the declaration half (RS-4, §21.9), set beside the
                     // RS-3 telemetry latch and for the same reason: every warm resume arms
                     // it, so an A/B's control leg is read by the same instrument.

@@ -118,3 +118,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [L5B](L5B_band5_receiver_delay_2026-10-10.md): open, 2026-10-10: L5 step R-1b, the receiver band-5 code delay
   estimated (network.estimate_rx_extra_band_code_delay): band-5 offsets 18 to 3 stations, bands 1/2 still contaminated;
   cause one bridged re-acquisition at MAJU00MHL at ignition. L5 SEQUENCED, step R-1c next.
+- [GFC](GFC_galileo_family_clock_datum_2026-10-10.md): open, 2026-10-10: Galileo clock datum across the two code
+  families. The family-difference datum (network.code_datum_family_difference) is the fix: Galileo clock wire 0.105 to
+  0.035 m, pilot-family users 0.8-0.9 to 0.16-0.26 m from hour 3, census neutral; pair continuity KEEP_OFF. Not armed.
