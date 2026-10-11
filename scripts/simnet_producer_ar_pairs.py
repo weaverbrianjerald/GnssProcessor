@@ -12,7 +12,15 @@ pair-epoch of the window into:
                     lane is the limiter;
   WL not fixed      the wide lane still free: the wide lane is the limiter;
   no fix epoch      the search fixed no decorrelated component that epoch;
-  unpaired          the DD's partner band was not in the search.
+  masked            the suspect-corner mask kept the pair out of the search (card ARL,
+                    network.ambiguity_resolution.suspect_epochs: the trace's suspect_bits
+                    column is non-zero);
+  unpaired          the DD's partner band was not in the search for another reason (no
+                    partner in the basis, or the ils_max_dim cap).
+
+On a trace written with the mask armed, the pairs flagged in its reentry column (a corner
+released by the mask at that search: the pair's first search after the release) are also
+classed and graded on their own, the release edge of the mask (invariant 7).
 
 For the second and third classes it reports the truth errors of the floats (wide lane in
 wide-lane cycles, ionosphere-free part in narrow-lane cycles, (f1 e1 - f2 e2)/(f1 - f2)) and,
@@ -71,6 +79,7 @@ def main():
         if "wl_cond_sigma_cyc" not in rd.fieldnames:
             raise SystemExit("trace has no pair columns: arm "
                              "network.ambiguity_resolution.decorrelated_partial")
+        has_mask = "suspect_bits" in rd.fieldnames
         for r in rd:
             t = float(r["tow"])
             tow0 = t if tow0 is None else tow0
@@ -79,12 +88,19 @@ def main():
             key = (r["cons"], r["sat_j"], r["ref_sat"], r["sta_r"], r["ref_sta"])
             pairs[(t, key)][r["signal"]] = r
 
+    def masked(r):
+        return has_mask and r.get("suspect_bits", "0") not in ("", "0")
+
     cls = collections.Counter()
     err = {"wl_only": {"wl": [], "nl": []}, "wl_free": {"wl": [], "nl": [], "wl_fsig": []}}
     ok = collections.Counter()
+    re_cls = collections.Counter()   # the mask's re-entered pairs (first search after release)
+    re_ok = collections.Counter()
+    re_wrong = []
     for (t, key), rows in pairs.items():
         if len(rows) != 2:
-            cls["unpaired"] += len(rows)
+            for r in rows.values():
+                cls["masked" if masked(r) else "unpaired"] += 1
             continue
         (s1, r1), (s2, r2) = sorted(rows.items(), key=lambda kv: float(kv[1]["lambda_m"]))
         l1, l2 = float(r1["lambda_m"]), float(r2["lambda_m"])
@@ -102,23 +118,43 @@ def main():
             continue
         e1, e2 = float(r1["float_cyc"]) - T1, float(r2["float_cyc"]) - T2
         e_wl, e_nl = e1 - e2, (f1 * e1 - f2 * e2) / (f1 - f2)
+        reentry = has_mask and r1.get("reentry") == "1" and r2.get("reentry") == "1"
         if r1["kept"] == "1" and r2["kept"] == "1":
             cls["singles fixed"] += 1
-            ok["singles fixed"] += int(int(r1["fixed_int"]) == T1 and int(r2["fixed_int"]) == T2)
+            good = int(r1["fixed_int"]) == T1 and int(r2["fixed_int"]) == T2
+            ok["singles fixed"] += int(good)
+            if reentry:
+                re_cls["singles fixed"] += 1
+                re_ok["singles fixed"] += int(good)
+                if not good:
+                    re_wrong.append((t, key, "singles", r1["fixed_int"], r2["fixed_int"], T1, T2))
+            continue
+        if masked(r1) or masked(r2):
+            cls["masked"] += 1
             continue
         if r1["wl_float_sigma_cyc"] == "":
             cls["unpaired"] += 1
             continue
         if r1["wl_cond_sigma_cyc"] == "":
             cls["no fix epoch"] += 1
+            if reentry:
+                re_cls["no fix epoch"] += 1
             continue
         if float(r1["wl_cond_sigma_cyc"]) <= a.det_sigma:
             cls["WL fixed only"] += 1
-            ok["WL fixed only"] += int(round(float(r1["wl_cond_cyc"])) == T1 - T2)
+            good = round(float(r1["wl_cond_cyc"])) == T1 - T2
+            ok["WL fixed only"] += int(good)
+            if reentry:
+                re_cls["WL fixed only"] += 1
+                re_ok["WL fixed only"] += int(good)
+                if not good:
+                    re_wrong.append((t, key, "WL", r1["wl_cond_cyc"], "", T1 - T2, ""))
             err["wl_only"]["wl"].append(abs(e_wl))
             err["wl_only"]["nl"].append(abs(e_nl))
         else:
             cls["WL not fixed"] += 1
+            if reentry:
+                re_cls["WL not fixed"] += 1
             err["wl_free"]["wl"].append(abs(e_wl))
             err["wl_free"]["nl"].append(abs(e_nl))
             err["wl_free"]["wl_fsig"].append(float(r1["wl_float_sigma_cyc"]))
@@ -126,7 +162,8 @@ def main():
     n = sum(cls.values())
     print("PAIR CLASSES  run=%s  settled >= h%g  determined: conditional sigma <= %.3f cycle"
           % (a.run, a.settle_h, a.det_sigma))
-    for c in ("singles fixed", "WL fixed only", "WL not fixed", "no fix epoch", "unpaired", "no truth"):
+    for c in ("singles fixed", "WL fixed only", "WL not fixed", "no fix epoch", "masked",
+              "unpaired", "no truth"):
         if cls[c] or c in ("singles fixed", "WL fixed only", "WL not fixed"):
             extra = ""
             if c in ok:
@@ -143,6 +180,17 @@ def main():
         if "wl_fsig" in E:
             print("  %s: WL formal sigma before the fix p50 %.3f p90 %.3f cycle"
                   % (label, q(E["wl_fsig"], .5), q(E["wl_fsig"], .9)))
+    if has_mask:
+        n_re = sum(re_cls.values())
+        print("RE-ENTRY (suspect-corner mask release; the pair's first search after it): %d pair(s)"
+              % n_re)
+        for c in ("singles fixed", "WL fixed only", "WL not fixed", "no fix epoch"):
+            extra = ""
+            if c in ("singles fixed", "WL fixed only"):
+                extra = "   integer correct %d of %d" % (re_ok[c], re_cls[c])
+            print("  %-15s %7d%s" % (c, re_cls[c], extra))
+        for w in sorted(re_wrong):
+            print("  WRONG at re-entry: tow %.1f %s %s determined %s %s truth %s %s" % w)
     return 0
 
 

@@ -38,8 +38,10 @@
  * follows the same empirical pattern.
  */
 
+#include "common/GnssIdentity.hpp"       // LosId (RawSlipEpoch::gf_jump_flagged)
 #include "common/PppObservation.hpp"
 #include "common/PppUtils.hpp"
+#include "slip/NetworkGfArcJump.hpp"   // GfArcJumpParams / GfArcJumpArc / GfArcJumpCounters (card ARL)
 
 #include <functional>
 #include <map>
@@ -341,6 +343,13 @@ struct RawSlipHistory {
     long long lli_corr_gf{0};       ///< Assertions corroborated by a GF step (and not MW).
     long long lli_unmeasurable{0};  ///< Assertions with no measurable step (first sighting / gap / single-band).
     long long lli_offpair{0};       ///< Assertions whose LLI'd band sits outside the primary pair (unwitnessable by MW/GF).
+
+    // --- Arc-scoped GF jump trigger (card ARL; network.cycle_slip.gf_arc_jump) ---
+    /// satellite → that arc's state.  Mutated only by @c networkSlipDrainGfArcJump;
+    /// empty and untouched while the trigger is off.
+    std::map<std::string, GfArcJumpArc> gf_arcs;
+    long long gf_jump_tests{0};     ///< Steps this station tested (the run-end per-station rate's denominator).
+    long long gf_jump_flags{0};     ///< ...of those, flagged.
 };
 
 /**
@@ -369,6 +378,11 @@ struct RawSlipEpoch {
     /// (station index, satellite) pairs whose raw level stepped this epoch: the
     /// cheap membership test the D5 attribution site needs (card G1c).
     std::set<std::pair<int, std::string>> stepped;
+    /// The lines of sight the arc GF jump trigger flagged this epoch, whatever its
+    /// action (refloat, coincident, cb_kept, no_arc, diagnostic, pivot).  Filled by
+    /// @c networkSlipDrainGfArcJump; read by the producer AR search's suspect-corner
+    /// stamp (card ARL, filter/NetworkArSuspect.hpp).  Empty while the trigger is off.
+    std::set<LosId> gf_jump_flagged;
     /// True once @ref networkComputeRawObservables has run this epoch (the
     /// consumers' "is there evidence at all" guard).
     bool computed{false};
@@ -382,6 +396,7 @@ struct RawSlipEpoch {
         resumptions.clear();
         sig_resumptions.clear();
         stepped.clear();
+        gf_jump_flagged.clear();
         computed = false;
     }
 };
@@ -519,11 +534,16 @@ struct SlipQcParams {
     /// skip channel is counted separately.
     bool   lane_snap{false};
 
+    /// The arc-scoped GF jump trigger (card ARL; @c network.cycle_slip.gf_arc_jump*).
+    /// It reads the raw rows only (its own per-arc state forms the steps), so it arms
+    /// @ref anyConsumer and not @ref SlipQcChannel::cardsArmed.
+    GfArcJumpParams gf_jump;
+
     /// True when any consumer needs the raw observables computed this run.
     bool anyConsumer(bool trace_slip_raw) const {
         return trace_slip_raw || lli_corroborate || gap_instrument || bridge_gf
             || iono_cs || retap_corr || lane_snap || gap_reentry
-            || gap_reentry_per_signal;
+            || gap_reentry_per_signal || gf_jump.armed;
     }
 };
 
@@ -541,6 +561,13 @@ struct IfTdPairTally {
     long long evaluated{0};  ///< (station, satellite) samples thresholded on this pair.
     long long flagged{0};    ///< …of those, flagged by the pooled test.
     long long refloated{0};  ///< …of those, whose refloat actually freed ≥1 ambiguity (warm carry, not vetoed by the common-band scope, not oracle-handled).
+
+    // --- Post-flag re-seed (card ARL; network.cycle_slip.if_phase_td_reseed_on_flag) ---
+    // All zero while the knob is off.
+    long long reseeded{0};             ///< Flags whose gradient was kept for the next epoch.
+    long long reseed_nothing_kept{0};  ///< Flags with no flag-epoch gradient to keep (acted as a reset).
+    long long post_flag_evaluated{0};  ///< Samples thresholded in the epoch after a re-seed (the evaluations a reset leaves out).
+    long long post_flag_flagged{0};    ///< …of those, flagged: a slip repeated in the epoch after a flag (or a spike's return).
 };
 
 /// Pair label ("&lt;sig1&gt;_&lt;sig2&gt;") → tally; ordered, so the run-end line is deterministic.
@@ -902,6 +929,9 @@ struct SlipQcCounters {
     long long bridge_ewl_joint{0};            ///< EWL integers filled same-epoch at pend creation.
     long long bridge_ewl_belated{0};          ///< EWL integers filled belatedly in the MW drain.
     long long bridge_band3_applied{0};        ///< Applies that chained and replaced band 3.
+
+    // --- Arc-scoped GF jump trigger (card ARL; network.cycle_slip.gf_arc_jump) ---
+    GfArcJumpCounters gf_jump;                ///< Tests, flags and the flag closure (networkGfArcJumpRunEnd).
 };
 
 /**

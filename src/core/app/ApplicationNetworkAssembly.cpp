@@ -43,6 +43,7 @@
 #include "filter/NetworkParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
 #include "filter/NetworkContributions.hpp" // row tags and the contribution tallies (card NOM N2a)
 #include "filter/NetworkPrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
+#include "filter/NetworkArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps (card ARL)
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
 #include "filter/NetworkRobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
@@ -1524,6 +1525,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
     const bool carry_invariant         = ctx.knobs.carry_invariant;
     const bool trace_flag_rates = ctx.knobs.trace_flag_rates;
+    // Card ARL: the producer AR search's suspect-corner mask is armed (the MW admission
+    // records its unknown-integer identities only then).
+    const bool ar_suspect_armed = ctx.knobs.ar_suspect_epochs > 0;
     auto& local_carry = ctx.carry.local_carry;
     auto& fr_if_slip = ctx.counters.fr_if_slip;
     // CB-ADM phase co-gate feed (see networkPassAHead_): null unless the flag is
@@ -1679,7 +1683,10 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                             if (d.via_evidence)    ++ac.evidence_admitted;
                             if (d.would_admit)     ++ac.evidence_would_admit;
                             if (d.drop_loose)      ++ac.drop_loose;
-                            if (d.drop_unknown)    ++ac.drop_unknown;
+                            if (d.drop_unknown) {
+                                ++ac.drop_unknown;
+                                if (ar_suspect_armed) ac.drop_unknown_sats.push_back(r.satellite);
+                            }
                             if (d.admitted)
                                 sta_mw_refloat[i].push_back(PassABuffers::MwRefloatCand{
                                     r.satellite, r.sig1, r.sig2,
@@ -2205,7 +2212,10 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                 if (d.via_evidence) ++ac.evidence_admitted;
                 if (d.would_admit)  ++ac.evidence_would_admit;
                 if (d.drop_loose)   ++ac.drop_loose;
-                if (d.drop_unknown) ++ac.drop_unknown;
+                if (d.drop_unknown) {
+                    ++ac.drop_unknown;
+                    if (ar_suspect_armed) ac.drop_unknown_sats.push_back(r.satellite);
+                }
                 if (d.admitted)
                     sta_mw_refloat[0].push_back(PassABuffers::MwRefloatCand{
                         r.satellite, r.sig1, r.sig2,
@@ -2228,6 +2238,15 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         ctx.counters.n_mw_drop_loose           += ac.drop_loose;
         ctx.counters.n_mw_drop_unknown         += ac.drop_unknown;
         ctx.counters.n_mw_pair_scope_skipped   += ac.scope_skipped;   // pair scope (card L5P)
+        // The producer AR search's suspect-corner mask (card ARL,
+        // filter/NetworkArSuspect.hpp): an MW verdict refused for want of an integer still
+        // says the arc's wide lane moved, so its corner is stamped (PASS A runs before the
+        // search: this epoch's stamp).
+        if (ar_suspect_armed)
+            for (const std::string& sat : ac.drop_unknown_sats)
+                arSuspectNote(ctx.carry.ar_suspect, i, sat,
+                              static_cast<long long>(ctx.counters.n_loop_epochs),
+                              kArSuspectMwUnknown, &ctx.counters.netar_suspect);
     }
 
     // Serial slip-QC drains (INC-6), implemented in slip/NetworkSlipQc.cpp: the
@@ -2362,6 +2381,29 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                           // Counters only; the solve, the products and the event
                           // rows are untouched while the knob is `first`.
                           &ctx.counters.n_iftd_pair);
+
+    // ---- Arc-scoped GF jump trigger (card ARL) ---------------------------------
+    // (include/slip/NetworkGfArcJump.hpp.)  The pre-solve witness of the slips the MW
+    // drain and the IF-TD driver above both miss: the equal count (1,1), the 60/77
+    // family, and a slip repeated in the epoch after an IF-TD flag.  Sited after the
+    // IF-TD driver, so a band that driver already freed takes only the cause bit (its
+    // response and bridge pend stay as they were), and before the wind-up, gap
+    // re-entry and injected-free drains and the lane observatory, like every freeing
+    // site, so this epoch's PASS-B inject and the anchor-slip handover read the latch
+    // it fills.  No-op unless network.cycle_slip.gf_arc_jump.
+    networkSlipDrainGfArcJump(qc, stations, present, i_lo, n_sta_total,
+                              carry_invariant, carry_warm, carry_slipped_ambs,
+                              se, traces, log, relevel_ptr,
+                              relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
+                              common_band_ptr);
+    // The producer AR search's suspect-corner mask (card ARL,
+    // filter/NetworkArSuspect.hpp): every GF flag stamps its corner, whatever the drain
+    // did with it (a cold, pinned or common-band-kept flag still names a doubtful arc).
+    if (ar_suspect_armed)
+        for (const LosId& los : qc.epoch.gf_jump_flagged)
+            arSuspectNote(ctx.carry.ar_suspect, los,
+                          static_cast<long long>(ctx.counters.n_loop_epochs),
+                          kArSuspectGfJump, &ctx.counters.netar_suspect);
 
     // ---- Wind-up accumulator-restart response (§10.4) ------------------------
     // (SPEC_phase_windup_sign §10.4.)  Drains the per-station restart ledgers that

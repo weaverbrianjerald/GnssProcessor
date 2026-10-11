@@ -684,6 +684,65 @@ namespace GnssProcessor {
          */
         bool   tracker_modeled_first{ false };
 
+        // --- Arc-scoped geometry-free jump trigger (card ARL) ---------------
+        /**
+         * @brief Master arm (@c network.cycle_slip.gf_arc_jump) for the arc-scoped GF
+         *        jump trigger (include/slip/NetworkGfArcJump.hpp; card ARL, slip-ladder
+         *        defect 1).
+         *
+         * A pre-solve slip test per (station, satellite) dual-frequency arc on the
+         * raw geometry-free phase: r = d(t) - d(last clean step), with d the one-epoch
+         * GF step, flagged when |r| exceeds max(@ref gf_arc_jump_m,
+         * @ref gf_arc_jump_k times the arc's robust scale).  It is the one pre-fit
+         * witness of the slips MW and the IF-phase TD both miss: the equal count
+         * (1,1), the 60/77 family ((4,5) and its kin), and a slip repeated in the
+         * epoch after an IF-TD flag.  A flag frees the pair's two bands as the IF-TD
+         * pair refloat does, under the cause bit
+         * @c RelevelEpochState::kCauseGfJump.
+         *
+         * Solve-affecting; default off (byte-identical).  Not fingerprinted: a
+         * forward-only slip response, like relevel_free_epoch, whose per-arc state is
+         * never serialized.  The free epoch needs @c relevel_free_epoch on the
+         * leveling vehicle (the loader warns otherwise).
+         */
+        bool   gf_arc_jump{ false };
+        /// Physical floor on |r| in metres (@c network.cycle_slip.gf_arc_jump_m).
+        /// 0.04 sits below the (1,1) GF step, 0.0539 m, and above the largest clean
+        /// |r| of the sim control, 0.0343 m (115 901 samples).
+        double gf_arc_jump_m{ 0.04 };
+        /// Multiplier on the arc's robust scale, 1.4826 times the MAD of its recent
+        /// clean r (@c network.cycle_slip.gf_arc_jump_k).  0 (the default) turns the
+        /// scale term off, so the bar is the floor alone.
+        double gf_arc_jump_k{ 0.0 };
+        /// Clean r values kept per arc for the scale
+        /// (@c network.cycle_slip.gf_arc_jump_window; 20 epochs = 10 min at 30 s).
+        int    gf_arc_jump_window{ 20 };
+        /// Clean values an arc must hold before the scale term applies
+        /// (@c network.cycle_slip.gf_arc_jump_min_count); clamped to the window.
+        int    gf_arc_jump_min_count{ 10 };
+
+        // --- IF-TD post-flag re-seed (card ARL) ------------------------------
+        /**
+         * @brief Arm (@c network.cycle_slip.if_phase_td_reseed_on_flag) for keeping
+         *        a flagged satellite's IF-TD gradient instead of restarting its chain
+         *        (card ARL, slip-ladder defect 2).
+         *
+         * Unarmed, a pooled IF-TD flag erases the satellite's stored gradient
+         * (IfPhaseSlipDetector::resetSatellite), so the epoch after the flag has no
+         * double difference for it, and a second slip in that epoch passes every
+         * pre-fit tier (rung S7, repetition 2).  Armed, the driver calls
+         * IfPhaseSlipDetector::reseedSatellite instead: the flag epoch's own
+         * gradient, which already contains the step, is the next epoch's origin, so
+         * that epoch is evaluated like any other.  Response, band scope and event
+         * rows of a flag are unchanged; a flag in the post-flag epoch carries the
+         * detail token @c post_flag.
+         *
+         * Solve-affecting only through what the restored evaluation flags; default
+         * off (byte-identical).  Not fingerprinted: the detector's gradient chains
+         * are never serialized.  Inert without @c network.cycle_slip.if_phase_td.
+         */
+        bool   if_phase_td_reseed_on_flag{ false };
+
         // --- Oracle slip response, simulation only (the level-preserving ceiling) ---
         /**
          * @brief Master arm (@c network.cycle_slip.oracle_relevel) for the
@@ -919,6 +978,22 @@ namespace GnssProcessor {
         /// separately (netar::blockDecorrelatedFix), each with its own bootstrap and ratio
         /// test, instead of one joint search.  Off (default) = one joint search.
         bool   block_search{ false };
+        /// Card ARL (slip-ladder defect 3): keep out of the integer search every DD with a
+        /// corner (station, satellite) that was freed (the free-epoch latch, any cause),
+        /// re-levelled or dropped (the LocalCarry @c relevel_s / @c dropped_ep stamps),
+        /// dropped or erased by RAIM T4 / T3, had an MW verdict dropped as an unknown
+        /// integer, or was flagged by the arc GF jump trigger (filter/NetworkArSuspect.hpp).
+        /// Each such event masks exactly @c suspect_epochs searches, starting with the first
+        /// search that can act on it (a post-search RAIM event starts at the next epoch's).
+        /// The DD stays in the basis and the trace (in_subset 0, with the armed-only columns
+        /// suspect_bits and reentry); the epoch's log line counts the masked DDs by cause and
+        /// the corners released.  The release is TIME-ONLY: when the window expires the DD
+        /// returns to the search with nothing re-validated, and the integers it gets there are
+        /// counted, not checked.  The mask therefore bounds the exposure to an undetected slip
+        /// by the window and does not end it, which makes it FIELD-BLOCKING as the guard of a
+        /// solve-affecting search.  Today's search is log-only, so the products are
+        /// byte-identical either way.  0 (default) = off.
+        int    suspect_epochs{ 0 };
         int    min_epochs{ 10 };              ///< Let the network float converge before fixing.
         int    ils_max_dim{ 0 };              ///< Cap on the ILS (MLAMBDA) search dimension: when > 0, only the
                                               ///< @c ils_max_dim lowest-formal-σ DDs enter the integer search

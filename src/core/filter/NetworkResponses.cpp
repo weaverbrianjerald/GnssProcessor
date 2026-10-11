@@ -469,7 +469,8 @@ void networkResponseLatchTally(NetworkRunContext& ctx) {
 
 const char* latchCauseName(int i) {
     static const char* const kNames[kLatchCauses] = {
-        "mw", "lli", "if_td", "t4_attrib", "t3_consensus", "windup", "gap_reentry", "none"};
+        "mw", "lli", "if_td", "t4_attrib", "t3_consensus", "windup", "gap_reentry", "gf_jump",
+        "none"};
     return (i >= 0 && i < kLatchCauses) ? kNames[i] : "?";
 }
 

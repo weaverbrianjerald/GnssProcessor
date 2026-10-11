@@ -26,6 +26,7 @@
  */
 
 #include "filter/NetworkRunTypes.hpp"
+#include "filter/NetworkArSuspect.hpp"      // ArSuspectLedger / ArSuspectCounters (card ARL)
 #include "filter/NetworkParamRegistry.hpp" // NetworkParamRegistry: one declared property set per parameter kind (card PRM)
 #include "filter/NetworkParamInventory.hpp" // NetworkParamInventory: every parameter instance with its disposition (card NOM N1)
 #include "filter/NetworkCarrySites.hpp"     // CarrySite / CarryMechanism: the carried references of the border (card PRM phase 2)
@@ -796,6 +797,14 @@ namespace GnssProcessor {
         /// exactly two trace files.  A solve-affecting successor would need its own
         /// fingerprinted knob.
         bool carry_aware_covariance{};
+        /// @c network.ambiguity_resolution.suspect_epochs, resolved against
+        /// @c ambiguity_resolution.enable (0 when the search is off): the window, in
+        /// searches, of the search's suspect-corner mask (card ARL,
+        /// filter/NetworkArSuspect.hpp).  0 = off: no site writes the ledger and the search
+        /// is byte-identical.  Not fingerprinted: the ledger is never serialized and the
+        /// search it feeds is log-only (its time-only release makes it field-blocking as
+        /// the guard of a solve-affecting search).
+        int ar_suspect_epochs{};
         double eq34_rpb_prior_sigma{};
         double eq34_rpb_prior_w{};
         double eq34_rpb_q{};
@@ -2293,6 +2302,16 @@ namespace GnssProcessor {
         /// first epochs degrade to the path without the response, the conservative
         /// direction, by the same argument as the pending re-reference queues above).
         RelevelEpochState            relevel;
+        /// The producer AR search's suspect-corner ledger (card ARL,
+        /// filter/NetworkArSuspect.hpp): per (station, satellite), the stamp of each slip
+        /// cause's last event (the loop epoch of the first search that can act on it), and
+        /// the corners awaiting their release back into the search.  Written in PASS A (MW
+        /// unknown drops, GF jump flags), at SB_NETAR (the free-epoch latch and the carry
+        /// stamps, the search's masking set) and at SB_RAIM (T4 / T3, stamped for the next
+        /// epoch), read by the search.  Empty and untouched unless
+        /// knobs.ar_suspect_epochs > 0.  Not snapshotted (a resumed leg starts with every
+        /// corner clean).
+        ArSuspectLedger              ar_suspect;
         /// Retap piece (relevel_retap_statistical): per-arc consecutive-retap streak
         /// (key → last continuous-GPS s, streak).  An arc that re-trips
         /// relevel_retap_streak_max times inside the 120 s window falls back to the erase
@@ -4750,6 +4769,11 @@ namespace GnssProcessor {
         std::vector<double> netar_ratio;     ///< per-epoch accepted-fix ratio
         std::vector<double> netar_p_succ;    ///< per-epoch accepted-fix bootstrap success rate
         std::vector<double> netar_med_sigma; ///< per-epoch median DD formal σ (cycles): the convergence gauge
+        /// The search's suspect-corner mask (card ARL, filter/NetworkArSuspect.hpp), both
+        /// edges: events and stamps by cause, DDs masked, corners released and what their
+        /// DDs got at the first search after the release.  All zero unless
+        /// knobs.ar_suspect_epochs > 0.
+        ArSuspectCounters   netar_suspect;
 
         /// --- Run-end telemetry of canonical-pair admission (card CPA).
         /// The on-path readout of the rule (standing invariant 4): a `withheld_total` of
