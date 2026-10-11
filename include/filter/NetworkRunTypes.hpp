@@ -958,6 +958,7 @@ struct RelevelEpochState {
         kCauseT4Consens = 16,  ///< RAIM per-satellite consensus erase (T3).
         kCauseWindup    = 32,  ///< Wind-up accumulator restart response (§10.4).
         kCauseGap       = 64,  ///< Gap re-entry response (card G, §G3-W1): the arc came back across a tracking break that, by the raw level or the receiver's LLI, it did not survive.
+        kCauseGfJump    = 128, ///< Arc-scoped geometry-free jump trigger (card ARL; slip/NetworkGfArcJump.hpp): the arc's GF step departed from its last clean step.
     };
     /// (station idx, amb key) marked pending-reseed by a detector this epoch.  The
     /// inject site skips these, which gives each marked arc its free epoch.

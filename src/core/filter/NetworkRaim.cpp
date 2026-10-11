@@ -20,6 +20,7 @@
 #include "filter/NetworkRobustStats.hpp"      // medianPolish2Way / robustProminence / medianCopy / MedianPolish
 #include "filter/NetworkAmbStateTrace.hpp"    // ambStateNoteErase (RF-1 §7.4 D3 erase inventory)
 #include "filter/NetworkAmbFloat.hpp"          // ambFloatDrop (RF-1 step 4: the bounded drop)
+#include "filter/NetworkArSuspect.hpp"         // arSuspectNote (card ARL: the search's suspect-corner mask)
 #include "filter/StateManager.hpp"            // stations[i].sm->markAmbiguityPendingReseed
 #include "logging/NetworkRunTraces.hpp"       // trace streams + emitEvent
 #include "products/NetworkStateSnapshot.hpp"  // networkWarmupRampLifted
@@ -1037,6 +1038,15 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                             if (ctx.knobs.pd_held_basis)
                                 ctx.carry.amb_flag_ep[{static_cast<int>(i), pa.amb_key}] =
                                     static_cast<long long>(ctx.counters.n_loop_epochs);
+                            // The producer AR search's suspect-corner mask (card ARL): a
+                            // T4 drop or erase stamps the corner.  This site runs after the
+                            // epoch's search, so the stamp is the next epoch's, the first
+                            // search that can act on it.
+                            if (ctx.knobs.ar_suspect_epochs > 0)
+                                arSuspectNote(ctx.carry.ar_suspect, static_cast<int>(i), pa.sat,
+                                              arSuspectPostSearchEpoch(static_cast<long long>(
+                                                  ctx.counters.n_loop_epochs)),
+                                              kArSuspectRaim, &ctx.counters.netar_suspect);
                             const auto lane_lk = std::make_tuple(i, pa.sat, pa.signal);
                             const auto lane_lit = local_carry.find(lane_lk);
                             if (lane_lit != local_carry.end()) {
@@ -1295,6 +1305,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         if (ctx.knobs.pd_held_basis)
                             ctx.carry.amb_flag_ep[{static_cast<int>(i), pa.amb_key}] =
                                 static_cast<long long>(ctx.counters.n_loop_epochs);
+                        // Suspect-corner stamp (card ARL), the next epoch's; see the
+                        // attribution site.
+                        if (ctx.knobs.ar_suspect_epochs > 0)
+                            arSuspectNote(ctx.carry.ar_suspect, static_cast<int>(i), pa.sat,
+                                          arSuspectPostSearchEpoch(static_cast<long long>(
+                                              ctx.counters.n_loop_epochs)),
+                                          kArSuspectRaim, &ctx.counters.netar_suspect);
                         const auto lane_lk =
                             std::make_tuple(static_cast<int>(i), pa.sat, pa.signal);
                         const auto lane_lit = local_carry.find(lane_lk);

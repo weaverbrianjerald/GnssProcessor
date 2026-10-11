@@ -920,6 +920,38 @@ int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
+// ---- Run-end reports added after the cut (hand-written; not in scripts/nom_td_manifest.json,
+//      so scripts/nom_td_verify.py names their table rows instead of proving them) ----
+
+// Run-end report: slip QC: the IF-TD post-flag re-seed (card ARL).
+int networkIfTdReseedRunEnd(const NetworkRunEndView& v) {
+    const GnssConfig& config_ = v.config;
+    if (!config_.networkCycleSlipIfPhaseTd()
+        || !config_.getNetworkConfig().slip_qc.if_phase_td_reseed_on_flag)
+        return 0;
+    const std::shared_ptr<spdlog::logger>& log = v.log;
+
+    // Summed over the pair kinds of the IF-TD tally (one kind on a dual-band posture).
+    long long reseeded = 0, nothing_kept = 0, post_eval = 0, post_flag = 0;
+    for (const auto& [pair, t] : v.ctx.counters.n_iftd_pair) {
+        reseeded     += t.reseeded;
+        nothing_kept += t.reseed_nothing_kept;
+        post_eval    += t.post_flag_evaluated;
+        post_flag    += t.post_flag_flagged;
+    }
+    log->info("Network (IF-TD re-seed, card ARL): {} flag(s) kept their flag-epoch gradient, "
+              "{} had none to keep (acted as a reset); post-flag eval {} / post-flag flag {} "
+              "(the evaluations a reset leaves out, and the slips repeated in them or a "
+              "spike's return).", reseeded, nothing_kept, post_eval, post_flag);
+    // Invariant #4: a re-seed that no evaluation followed is dead wiring until shown
+    // otherwise (each re-seeded satellite would have had to leave its chain at the next
+    // epoch).
+    if (reseeded > 0 && post_eval == 0)
+        log->warn("Network (IF-TD re-seed, card ARL): {} flag(s) were re-seeded and no "
+                  "post-flag evaluation followed.  Either every re-seeded satellite left its "
+                  "chain at the next epoch or the mark never reached the pool; check the "
+                  "wiring before reading this arm as re-seeded.", reseeded);
+
 // Run-end report: the co-resumed share of the per-signal gap re-entry tier
 // (network.cycle_slip.gap_reentry_coresumed_share).  A row added after the cut, so it
 // is not one of the generated reports above.

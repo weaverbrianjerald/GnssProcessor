@@ -29,7 +29,9 @@
 #include "common/GnssIdentity.hpp"       // systemOfSat, systemFromName, constellationKey, SignalId
 #include "common/GnssTypes.hpp"          // System
 #include "filter/IlsCore.hpp"            // ils::IlsGateConfig / IlsResult / ilsFix
+#include "filter/NetworkArSuspect.hpp"   // the suspect-corner mask (card ARL)
 #include "filter/StateKeySchema.hpp"     // StateKeys::parseAmbiguityKey
+#include "math/TimeUtils.hpp"            // TimeUtils::continuousGpsSeconds (the mask's fold clock)
 #include "filter/StateManager.hpp"       // stations[i].sm-> ...
 #include "logging/NetworkRunTraces.hpp"  // traces.producer_ar_trace
 
@@ -69,6 +71,23 @@ std::vector<int> lowestSigmaOrder(const Eigen::MatrixXd& Q_cyc, int cap) {
     std::vector<int> order(static_cast<std::size_t>(std::max(0, n)));
     std::iota(order.begin(), order.end(), 0);
     if (cap <= 0 || cap >= n) return order;   // uncapped: identity, un-sorted
+    std::sort(order.begin(), order.end(), [&](int a, int b) {
+        return Q_cyc(a, a) < Q_cyc(b, b);
+    });
+    order.resize(static_cast<std::size_t>(cap));
+    return order;
+}
+
+std::vector<int> maskedSearchOrder(const Eigen::MatrixXd& Q_cyc, int cap,
+                                   const std::vector<char>& masked) {
+    if (std::none_of(masked.begin(), masked.end(), [](char m) { return m != 0; }))
+        return lowestSigmaOrder(Q_cyc, cap);
+    const int n = static_cast<int>(std::min(Q_cyc.rows(), Q_cyc.cols()));
+    std::vector<int> order;
+    for (int a = 0; a < n; ++a)
+        if (static_cast<std::size_t>(a) >= masked.size() || masked[static_cast<std::size_t>(a)] == 0)
+            order.push_back(a);
+    if (cap <= 0 || cap >= static_cast<int>(order.size())) return order;
     std::sort(order.begin(), order.end(), [&](int a, int b) {
         return Q_cyc(a, a) < Q_cyc(b, b);
     });
@@ -159,13 +178,13 @@ ils::IlsResult blockDecorrelatedFix(const Eigen::VectorXd& y, const Eigen::Matri
     return out;
 }
 
-std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
-                                         const std::vector<int>& search_of, int n_search,
-                                         const Eigen::MatrixXd& Q_search,
-                                         const Eigen::VectorXd& a_cond,
-                                         const Eigen::MatrixXd& Q_cond) {
+std::vector<PairLane> pairLanes(const std::vector<DdPairKey>& keys,
+                                const std::vector<int>& search_of, int n_search,
+                                const Eigen::MatrixXd& Q_search,
+                                const Eigen::VectorXd& a_cond,
+                                const Eigen::MatrixXd& Q_cond) {
     const int n_dd = static_cast<int>(keys.size());
-    std::vector<std::string> out(static_cast<std::size_t>(n_dd), ",,,,");
+    std::vector<PairLane> out(static_cast<std::size_t>(n_dd));
     // Basis index -> search row, for the searched DDs only.
     std::vector<int> row_of(static_cast<std::size_t>(n_dd), -1);
     for (int s = 0; s < n_search && s < static_cast<int>(search_of.size()); ++s) {
@@ -193,15 +212,65 @@ std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
         auto nlVar = [&](const Eigen::MatrixXd& Q) {
             return c1 * c1 * Q(i, i) + c2 * c2 * Q(j, j) + 2.0 * c1 * c2 * Q(i, j);
         };
-        std::string s = fmt::format(",{:.6f}", std::sqrt(std::max(0.0, wlVar(Q_search))));
-        if (have_cond)
-            s += fmt::format(",{:.6f},{:.6f},{:.6f}", a_cond(i) - a_cond(j),
-                             std::sqrt(std::max(0.0, wlVar(Q_cond))),
-                             std::sqrt(std::max(0.0, nlVar(Q_cond))));
+        PairLane p;
+        p.wl_float_sigma = std::sqrt(std::max(0.0, wlVar(Q_search)));
+        p.have_cond      = have_cond;
+        if (have_cond) {
+            p.wl_cond       = a_cond(i) - a_cond(j);
+            p.wl_cond_sigma = std::sqrt(std::max(0.0, wlVar(Q_cond)));
+            p.nl_cond_sigma = std::sqrt(std::max(0.0, nlVar(Q_cond)));
+        }
+        p.partner = b2;
+        out[static_cast<std::size_t>(b1)] = p;
+        p.partner = b1;
+        out[static_cast<std::size_t>(b2)] = p;
+    }
+    return out;
+}
+
+std::vector<std::string> pairLaneText(const std::vector<PairLane>& lanes) {
+    std::vector<std::string> out(lanes.size(), ",,,,");
+    for (std::size_t b = 0; b < lanes.size(); ++b) {
+        const PairLane& p = lanes[b];
+        if (p.partner < 0) continue;
+        std::string s = fmt::format(",{:.6f}", p.wl_float_sigma);
+        if (p.have_cond)
+            s += fmt::format(",{:.6f},{:.6f},{:.6f}", p.wl_cond, p.wl_cond_sigma, p.nl_cond_sigma);
         else
             s += ",,,";
-        out[static_cast<std::size_t>(b1)] = s;
-        out[static_cast<std::size_t>(b2)] = s;
+        out[b] = s;
+    }
+    return out;
+}
+
+std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
+                                         const std::vector<int>& search_of, int n_search,
+                                         const Eigen::MatrixXd& Q_search,
+                                         const Eigen::VectorXd& a_cond,
+                                         const Eigen::MatrixXd& Q_cond) {
+    return pairLaneText(pairLanes(keys, search_of, n_search, Q_search, a_cond, Q_cond));
+}
+
+ArSuspectReentry reentryOutcome(const std::vector<char>& reentry,
+                                const std::vector<DdFixLabel>& labels,
+                                const std::vector<PairLane>& lanes, double det_sigma_cyc) {
+    ArSuspectReentry out;
+    const std::size_t n = std::min(reentry.size(), labels.size());
+    for (std::size_t a = 0; a < n; ++a) {
+        if (reentry[a] == 0) continue;
+        ++out.dd;
+        if (labels[a].kept) ++out.dd_fixed;
+        // Each pair once, from its lower basis index, when both of its DDs re-entered.
+        if (a >= lanes.size()) continue;
+        const int p = lanes[a].partner;
+        if (p < 0 || static_cast<std::size_t>(p) <= a || static_cast<std::size_t>(p) >= n
+            || reentry[static_cast<std::size_t>(p)] == 0)
+            continue;
+        ++out.pairs;
+        if (labels[a].kept && labels[static_cast<std::size_t>(p)].kept)
+            ++out.pairs_singles;
+        else if (lanes[a].have_cond && lanes[a].wl_cond_sigma <= det_sigma_cyc)
+            ++out.pairs_wl_only;
     }
     return out;
 }
@@ -226,6 +295,18 @@ void networkProducerAr(NetworkRunContext& ctx,
     const auto& netar     = nc.ambiguity_resolution;
     auto&       n_emitted = ctx.counters.n_emitted;
 
+    // --- Card ARL: the suspect-corner mask's per-epoch fold (filter/NetworkArSuspect.hpp).
+    //     It runs ahead of the search gate, so the ledger's clock and stamps stay current
+    //     through the epochs before min_epochs.  Window 0 (off): every arSuspect* call
+    //     below is a no-op, nothing is read or written, and the search runs as before. --
+    const int       suspect_window = ctx.knobs.ar_suspect_epochs;
+    const long long suspect_now_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+    if (suspect_window > 0)
+        arSuspectFoldEpoch(ctx.carry.ar_suspect, suspect_now_ep,
+                           TimeUtils::continuousGpsSeconds(se.time), suspect_window,
+                           ctx.carry.relevel, ctx.carry.local_carry,
+                           &ctx.counters.netar_suspect);
+
     // --- Producer-side network AR (Phase 2: DD fixability attempt, log only) ---
     // The between-station double-difference ambiguities are datum-invariant
     // estimable quantities, so this fix attempt is independent of the phase-bias
@@ -237,11 +318,15 @@ void networkProducerAr(NetworkRunContext& ctx,
     // network.ambiguity_resolution.enable and min_epochs; byte-identical when off.
     if (netar.enable && n_emitted >= static_cast<size_t>(std::max(0, netar.min_epochs))
         && x_s.size() > 0) {
-        struct ArRec { double value_m; std::size_t est_id; Eigen::Index col; };
+        // `suspect`: the corner's state under the suspect-corner mask at this search (card
+        // ARL): its live cause bits and whether this search releases it; clean while off.
+        struct ArRec { double value_m; std::size_t est_id; Eigen::Index col; ArSuspectCornerState suspect; };
         // (const,signal) -> sat -> station index -> absolute float ambiguity + its
         // (est id, A_r column) for the covariance request.  GPS+Galileo only.
         std::map<std::pair<std::string, std::string>,
                  std::map<std::string, std::map<std::size_t, ArRec>>> ar_pool;
+        // Card ARL: this search's mask, filled as the pool and the basis are built.
+        ArSuspectSearch mask = arSuspectOpenSearch(suspect_now_ep, suspect_window);
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
             Eigen::VectorXd x_r;
@@ -264,9 +349,11 @@ void networkProducerAr(NetworkRunContext& ctx,
                     || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
                 const double value_m = x_lin(amb_idx) + x_r(hit->second);
                 if (!std::isfinite(value_m)) continue;
+                const ArSuspectCornerState suspect = arSuspectPoolCorner(
+                    mask, ctx.carry.ar_suspect, static_cast<int>(i), parts->satellite);
                 ar_pool[{cst, parts->signal}][parts->satellite][i] =
                     ArRec{value_m, static_cast<std::size_t>(est_index_of[i]),
-                          static_cast<Eigen::Index>(hit->second)};
+                          static_cast<Eigen::Index>(hit->second), suspect};
             }
         }
         // Independent DD basis: per (const,signal), a reference sat (tracked at the
@@ -287,9 +374,12 @@ void networkProducerAr(NetworkRunContext& ctx,
         // trace gives only a fix count.  They are filled unconditionally: the block is
         // already gated on `netar.enable`, and six short strings per DD cost little
         // next to the joint conditional covariance below.
+        // `suspect`: the four corners' mask states combined (card ARL); a DD with any
+        // cause bit set stays in the basis and the trace but is not searched.
         struct DDrow {
             int i_rj, i_rp, i_fj, i_fp; double dd_m, lambda;
             std::string cons, signal, sat_j, ref_sat, sta_r, ref_sta;
+            ArSuspectCornerState suspect{};
         };
         std::vector<DDrow> dds;
         int n_const_signal = 0;
@@ -372,6 +462,8 @@ void networkProducerAr(NetworkRunContext& ctx,
                                              t_lambda, cs.first, cs.second, sat_names[c[q]],
                                              sat_names[tref], stations[sta_ids[r_pick]].name,
                                              stations[sta_ids[p_pick]].name });
+                        dds.back().suspect =
+                            arSuspectCombine(rj.suspect, rp.suspect, fj.suspect, fp.suspect);
                     }
                     for (std::size_t s2 = 0; s2 < n_sta; ++s2) {
                         if (in_tree[s2]) continue;
@@ -416,6 +508,8 @@ void networkProducerAr(NetworkRunContext& ctx,
                                          reqOf(fj_it->second), reqOf(fp), dd_m, lambda,
                                          cs.first, cs.second, sat, ref_sat,
                                          stations[sta_i].name, stations[ref_i].name });
+                    dds.back().suspect = arSuspectCombine(rj.suspect, rp_it->second.suspect,
+                                                          fj_it->second.suspect, fp.suspect);
                 }
             }
         }
@@ -525,21 +619,41 @@ void networkProducerAr(NetworkRunContext& ctx,
                 // subset, ascending Q_aa) and the rest stay float.  The summary
                 // statistics (med σ / med frac / near-int) use the full basis, so the
                 // convergence gauge is unaffected by the cap.
-                Eigen::VectorXd y_fix = y_cyc;
-                Eigen::MatrixXd Q_fix = Q_cyc;
-                int nd_fix = nd;
+                // Card ARL: the suspect-corner mask.  A DD with a suspect corner is left
+                // out of the search before the cap applies; it keeps its trace row
+                // (in_subset 0).  mask.masked stays empty while the mask is off.
+                if (mask.window > 0) {
+                    std::vector<ArSuspectCornerState> dd_state;
+                    dd_state.reserve(dds.size());
+                    for (const DDrow& d : dds) dd_state.push_back(d.suspect);
+                    arSuspectMaskBasis(mask, dd_state);
+                }
+                const bool capped =
+                    netar.ils_max_dim > 0 && nd - mask.n_masked > netar.ils_max_dim;
                 // search row -> basis index.  Computed outside the cap branch because
                 // the trace has to invert it (see netar::mapFixToBasis).
-                const std::vector<int> order = netar::lowestSigmaOrder(Q_cyc, netar.ils_max_dim);
-                if (netar.ils_max_dim > 0 && nd > netar.ils_max_dim) {
-                    nd_fix = netar.ils_max_dim;
+                const std::vector<int> order =
+                    netar::maskedSearchOrder(Q_cyc, netar.ils_max_dim, mask.masked);
+                // The search vector and covariance: the basis itself when every DD is
+                // searched (the order is then the identity), else the subset copied
+                // column by column.  Q_cyc is stored by column and an uncapped masked
+                // order is ascending, so the copy reads it nearly in storage order; at
+                // 300 stations (about 4000 DDs, a 130 MB matrix) a row-by-row copy costs
+                // half a second per epoch.
+                const int nd_fix = static_cast<int>(order.size());
+                Eigen::VectorXd y_fix;
+                Eigen::MatrixXd Q_fix;
+                if (nd_fix == nd) {
+                    y_fix = y_cyc;
+                    Q_fix = Q_cyc;
+                } else {
                     y_fix.resize(nd_fix);
                     Q_fix.resize(nd_fix, nd_fix);
-                    for (int a = 0; a < nd_fix; ++a) {
-                        y_fix(a) = y_cyc(order[static_cast<std::size_t>(a)]);
-                        for (int b = 0; b < nd_fix; ++b)
-                            Q_fix(a, b) = Q_cyc(order[static_cast<std::size_t>(a)],
-                                                order[static_cast<std::size_t>(b)]);
+                    for (int b = 0; b < nd_fix; ++b) {
+                        const int cb = order[static_cast<std::size_t>(b)];
+                        y_fix(b) = y_cyc(cb);
+                        for (int a = 0; a < nd_fix; ++a)
+                            Q_fix(a, b) = Q_cyc(order[static_cast<std::size_t>(a)], cb);
                     }
                 }
                 ils::IlsGateConfig gates;
@@ -549,7 +663,9 @@ void networkProducerAr(NetworkRunContext& ctx,
                 gates.nl_max_per_pair_frac = netar.nl_max_per_pair_frac;
                 gates.enable_partial_ar    = netar.enable_partial_ar;
                 ils::IlsResult fix;
-                try {
+                // An empty search (the mask left nothing) is not run: the result stays
+                // the empty IlsResult, the same as a search that threw.
+                if (nd_fix > 0) try {
                     // Card ARL: the decorrelated-space partial fix reports the
                     // single-signal DDs its fixed combinations determine.
                     if (netar.decorrelated_partial && netar.block_search) {
@@ -593,22 +709,51 @@ void networkProducerAr(NetworkRunContext& ctx,
                 };
                 const double med_sig  = med(dsig);
                 const double med_frac = med(dfrac);
+                // The search mapped back onto the basis (the trace's columns, and the
+                // mask's re-entry outcome).
+                const std::vector<netar::DdFixLabel> labels =
+                    netar::mapFixToBasis(nd, order, fix.kept, fix.afix);
+                // Card ARL pair lanes (decorrelated_partial only): each L1/L2 pair's wide
+                // lane before the fix and its wide lane and narrow lane conditioned on the
+                // fixed decorrelated components, so a pair left float can be read as "wide
+                // lane fixed, narrow lane not" or "neither".  Built for the trace and for
+                // the mask's re-entered pairs.
+                std::vector<netar::PairLane> lanes;
+                if (netar.decorrelated_partial
+                    && (traces.producer_ar_trace.is_open() || mask.n_reentry > 0)) {
+                    std::vector<netar::DdPairKey> keys;
+                    keys.reserve(dds.size());
+                    for (const DDrow& d : dds)
+                        keys.push_back({d.cons + "|" + d.sat_j + "|" + d.ref_sat + "|"
+                                            + d.sta_r + "|" + d.ref_sta,
+                                        d.lambda});
+                    lanes = netar::pairLanes(keys, order, nd_fix, Q_fix, fix.a_cond, fix.Q_cond);
+                }
+                // Card ARL: close the mask's search epoch (both edges tallied, the released
+                // corners leave the ledger's masking set) and take its log clause; empty
+                // while the mask is off.
+                const std::string mask_text = arSuspectCloseSearch(
+                    mask, ctx.carry.ar_suspect, ctx.counters.netar_suspect,
+                    netar::reentryOutcome(mask.reentry, labels, lanes,
+                                          netar.decorrelated_determined_sigma_cyc),
+                    se.time.tow);
                 // The covariance mode is logged on the same line because med_DD_sigma
                 // and every ratio/p_succ derived from the covariance mean different
                 // things under the two forms (docs/SPEC_carry_aware_covariance.md §4).
                 log->info("Network AR (Phase 2, log-only): TOW {:.1f} — {} DD / {} undiff-amb / "
                           "{} (const,signal); fixed {}{} of {} searched{} (ratio {:.2f}, "
                           "p_succ {:.4f}, med_DD_sigma {:.4f} cyc, med_DD_frac {:.3f}, "
-                          "near_int {}/{}), cov {}{}",
+                          "near_int {}/{}), cov {}{}{}",
                           se.time.tow, nd, static_cast<int>(reqs.size()), n_const_signal,
                           fix.ok ? static_cast<int>(fix.kept.size()) : 0,
                           fix.partial ? " partial" : "", nd_fix,
-                          nd_fix < nd ? " (ILS-capped)" : "", fix.ratio, fix.p_succ,
+                          capped ? " (ILS-capped)" : "", fix.ratio, fix.p_succ,
                           med_sig, med_frac, n_near, nd,
                           ar_carry_aware ? "CARRY-AWARE" : "carry-blind",
                           netar.decorrelated_partial
                               ? fmt::format(", decorrelated {} of {} fixed", fix.z_fixed, fix.z_total)
-                              : std::string());
+                              : std::string(),
+                          mask_text);
                 // --- Run-end tallies (invariant #4): the log line above is per-epoch;
                 //     the tallies give the run a denominator, so an armed but inert
                 //     search is distinguishable from a quiet one. ---------------------
@@ -634,7 +779,6 @@ void networkProducerAr(NetworkRunContext& ctx,
                 // within 0.25 cyc of truth) refers to the population the cap chose
                 // from, which a subset-only trace cannot provide.
                 if (traces.producer_ar_trace.is_open()) {
-                    const auto labels = netar::mapFixToBasis(nd, order, fix.kept, fix.afix);
                     auto& os = traces.producer_ar_trace;
                     // ratio / p_succ: the accepted fix's values on a fixed epoch, the
                     // full-set attempt's otherwise.  IlsResult zeroes the accepted fields
@@ -644,27 +788,22 @@ void networkProducerAr(NetworkRunContext& ctx,
                     // grader splits on it).
                     const double ep_ratio  = fix.ok ? fix.ratio  : fix.full_ratio;
                     const double ep_psucc  = fix.ok ? fix.p_succ : fix.full_p_succ;
-                    // Card ARL pair columns (decorrelated_partial only): each L1/L2 pair's
-                    // wide lane before the fix and its wide lane and narrow lane conditioned
-                    // on the fixed decorrelated components, so a pair left float can be read
-                    // as "wide lane fixed, narrow lane not" or "neither".
-                    std::vector<std::string> pair_cols;
-                    if (netar.decorrelated_partial) {
-                        std::vector<netar::DdPairKey> keys;
-                        keys.reserve(dds.size());
-                        for (const DDrow& d : dds)
-                            keys.push_back({d.cons + "|" + d.sat_j + "|" + d.ref_sat + "|"
-                                                + d.sta_r + "|" + d.ref_sta,
-                                            d.lambda});
-                        pair_cols = netar::pairLaneColumns(keys, order, nd_fix, Q_fix,
-                                                           fix.a_cond, fix.Q_cond);
-                    }
+                    // The pair columns (decorrelated_partial only; empty vector otherwise).
+                    const std::vector<std::string> pair_cols = netar::pairLaneText(lanes);
                     for (int a = 0; a < nd; ++a) {
                         const DDrow& d = dds[static_cast<std::size_t>(a)];
                         const auto& lb = labels[static_cast<std::size_t>(a)];
                         const double sig = Q_cyc(a, a) > 0.0 ? std::sqrt(Q_cyc(a, a)) : -1.0;
+                        // Card ARL mask columns (armed only, kProducerArSuspectColumns): the
+                        // DD's suspect cause bits and its re-entry flag.
+                        const std::string mask_cols =
+                            mask.window > 0
+                                ? fmt::format(",{},{}",
+                                              static_cast<int>(mask.dd_bits[static_cast<std::size_t>(a)]),
+                                              static_cast<int>(mask.reentry[static_cast<std::size_t>(a)]))
+                                : std::string();
                         os << fmt::format("{},{:.1f},{},{},{},{},{},{},{:.9f},{:.6f},"
-                                          "{:.6f},{},{},{},{:.4f},{:.6f},{},{},{}{}\n",
+                                          "{:.6f},{},{},{},{:.4f},{:.6f},{},{},{}{}{}\n",
                                           se.time.week, se.time.tow,
                                           d.cons, d.signal, d.sat_j, d.ref_sat,
                                           d.sta_r, d.ref_sta, d.lambda,
@@ -674,7 +813,8 @@ void networkProducerAr(NetworkRunContext& ctx,
                                           lb.kept ? 1 : 0,
                                           ep_ratio, ep_psucc, nd, nd_fix, n_fixed,
                                           pair_cols.empty() ? std::string()
-                                                            : pair_cols[static_cast<std::size_t>(a)]);
+                                                            : pair_cols[static_cast<std::size_t>(a)],
+                                          mask_cols);
                     }
                     c.netar_rows += nd;
                 }

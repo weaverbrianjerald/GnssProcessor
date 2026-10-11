@@ -302,8 +302,13 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     if (nc.ambiguity_resolution.trace && nc.ambiguity_resolution.enable) {
         producer_ar_trace.open(producer_ar_trace_path);
         if (producer_ar_trace) {
-            producer_ar_trace << (nc.ambiguity_resolution.decorrelated_partial
-                                      ? kProducerArHeaderDecorrelated : kProducerArHeader);
+            std::string header = nc.ambiguity_resolution.decorrelated_partial
+                                     ? kProducerArHeaderDecorrelated : kProducerArHeader;
+            // Card ARL: the suspect-corner mask's two columns, armed only, before the
+            // header's newline.
+            if (nc.ambiguity_resolution.suspect_epochs > 0)
+                header.insert(header.size() - 1, kProducerArSuspectColumns);
+            producer_ar_trace << header;
         } else {
             log->warn("Network: failed to open producer-AR trace {}",
                       producer_ar_trace_path.string());

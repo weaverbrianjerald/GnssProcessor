@@ -144,6 +144,7 @@ add_library(gnss_core STATIC
 	src/core/slip/NetworkSlipQc.cpp
 	src/core/slip/NetworkSlipOracle.cpp
 	src/core/slip/NetworkCommonBandScope.cpp
+	src/core/slip/NetworkGfArcJump.cpp
     src/core/aiding/AidingSourceRegistry.cpp
     src/core/aiding/ImuAidingSource.cpp
     src/core/aiding/ZuptAidingSource.cpp
@@ -234,6 +235,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkLeveling.cpp
     src/core/filter/NetworkStashStatus.cpp
     src/core/filter/NetworkProducerAr.cpp
+    src/core/filter/NetworkArSuspect.cpp
     src/core/filter/NetworkInstallCarry.cpp
     src/core/filter/NetworkDdPriorBuild.cpp
     src/core/filter/NetworkMwWlGlue.cpp
@@ -437,6 +439,7 @@ add_executable(gnss_tests
     tests/test_slip_oracle.cpp
     tests/test_if_phase_slip_detector.cpp
     tests/test_if_td_pair_width.cpp
+    tests/test_if_td_reseed_on_flag.cpp
     tests/test_iftd_ref_arm_all.cpp
     tests/test_network_coupling.cpp
     tests/test_network_invariant_carry_driver.cpp
@@ -587,6 +590,8 @@ add_executable(gnss_tests
     tests/test_handover_stransform_dense.cpp
     tests/test_mw_evidence_refloat.cpp
     tests/test_mw_pivot_reset.cpp
+    tests/test_network_gf_arc_jump.cpp
+    tests/test_network_ar_suspect.cpp
     tests/test_common_band_scope.cpp
     tests/test_candidacy_usable.cpp
     tests/test_restored_arc_age.cpp

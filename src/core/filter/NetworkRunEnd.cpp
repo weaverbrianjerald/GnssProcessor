@@ -25,6 +25,7 @@
 #include "filter/NetworkAmbFloat.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
 #include "filter/NetworkAnchorHygiene.hpp"
+#include "filter/NetworkArSuspect.hpp"
 #include "filter/NetworkBiasAdmission.hpp"
 #include "filter/NetworkBlockBaarda.hpp"
 #include "filter/NetworkBrdcWire.hpp"
@@ -85,6 +86,7 @@
 #include "products/NetworkEmitRebase.hpp"
 #include "products/NetworkPbEmitFilter.hpp"
 #include "slip/NetworkCommonBandScope.hpp"
+#include "slip/NetworkGfArcJump.hpp"
 #include "slip/NetworkSlipOracle.hpp"
 #include "slip/NetworkSlipQcRunEnd.hpp"
 
@@ -144,6 +146,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkInvariantCarryDriver.cpp", networkCarryDdFoldRunEnd},
     {"the producer ambiguity-resolution search",
      "filter/NetworkProducerAr.cpp", networkProducerArRunEnd},
+    {"the producer AR search's suspect-corner mask (card ARL)",
+     "filter/NetworkArSuspect.cpp", networkArSuspectRunEnd},
     {"the carry-aware covariance mode",
      "filter/NetworkEstimator.cpp", networkCarryAwareCovarianceRunEnd},
     {"the SD pre-reduce EWL rows and integer fix",
@@ -174,6 +178,10 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "slip/NetworkCommonBandScope.cpp", networkCommonBandScopeRunEnd},
     {"slip QC: IF-TD pairs, band-scoped responses, the lane observatory, retap corroboration",
      "slip/NetworkSlipQcRunEnd.cpp", networkSlipBandResponsesRunEnd},
+    {"slip QC: the IF-TD post-flag re-seed (card ARL)",
+     "slip/NetworkSlipQcRunEnd.cpp", networkIfTdReseedRunEnd},
+    {"slip QC: the arc-scoped GF jump trigger (card ARL)",
+     "slip/NetworkGfArcJump.cpp", networkGfArcJumpRunEnd},
     {"the slant-ionosphere carry",
      "app/NetworkStationIonoRunEnd.cpp", networkIonoCarryRunEnd},
     {"the withhold era, the R2 station factor, the R4 rate hygiene",

@@ -23,6 +23,12 @@
  *     (`scripts/simnet_producer_ar_grade.py`); a fix count alone is not a grade.  The
  *     run-end readout is the "Network (producer AR, Phase 2 log-only)" clause of
  *     networkProducerArRunEnd (below), fed by the `ctx.counters.netar_*` tallies.
+ *     With `network.ambiguity_resolution.suspect_epochs` (card ARL) every DD with a
+ *     (station, satellite) corner that the slip layer freed, dropped or flagged in the
+ *     last few epochs stays in the basis and the trace but is kept out of the search
+ *     (filter/NetworkArSuspect.hpp, @ref netar::maskedSearchOrder); the trace then
+ *     carries the DD's suspect cause bits and its re-entry flag, and the release back
+ *     into the search is counted (@ref netar::reentryOutcome).
  *  2. **One-shot NEQ export** (`network.neq_export_epoch`): a post-solve, read-only dump
  *     of the assembled arrowhead normal equations (border N_ss raw and reduced, with
  *     RHS; each station's N_sr / N_rr / u_r; shared and local column labels) as
@@ -35,6 +41,7 @@
  */
 
 #include "filter/IlsCore.hpp"            // ils::IlsResult / IlsGateConfig (blockDecorrelatedFix)
+#include "filter/NetworkArSuspect.hpp"   // ArSuspectReentry (reentryOutcome; card ARL)
 #include "filter/NetworkEstimator.hpp"   // NetworkEstimator
 #include "filter/NetworkSbasis.hpp"      // NetworkSbasis::Plan (shared_datum)
 #include "filter/NetworkRunTypes.hpp"    // NetStation / StationAssembly
@@ -81,6 +88,24 @@ namespace netar {
  */
 std::vector<int> lowestSigmaOrder(const Eigen::MatrixXd& Q_cyc, int cap);
 
+/**
+ * @brief The search subset under the suspect-corner mask (card ARL,
+ *        filter/NetworkArSuspect.hpp).
+ *
+ * With @p masked empty or all zero this is exactly @ref lowestSigmaOrder, so an unarmed
+ * or quiet epoch searches the same subset in the same order.  Otherwise the masked DDs
+ * are left out first and the cap applies to the rest: uncapped (or a cap at or above the
+ * eligible count) gives the eligible DDs in basis order, a cap below it gives the @p cap
+ * lowest-formal-σ eligible DDs.
+ *
+ * @param Q_cyc   DD covariance in cycles²; only the diagonal is read.
+ * @param cap     Search-dimension cap (@c network.ambiguity_resolution.ils_max_dim).
+ * @param masked  One flag per basis DD (non-zero = kept out of the search), or empty.
+ * @return `search_of`: search row a ↦ its index in the full DD basis.
+ */
+std::vector<int> maskedSearchOrder(const Eigen::MatrixXd& Q_cyc, int cap,
+                                   const std::vector<char>& masked);
+
 /// Per-basis-DD outcome of one epoch's search: the content of the trace's
 /// @c in_subset / @c fixed_int / @c kept columns.
 struct DdFixLabel {
@@ -116,27 +141,6 @@ struct DdPairKey {
 };
 
 /**
- * @brief The trace's four pair columns per basis DD (card ARL, decorrelated_partial).
- *
- * For each basis DD whose pair partner (same @c key, other wavelength) is also in
- * the search: the pair's wide lane a1 - a2 formal sigma before the fix (from
- * @p Q_search), its wide lane conditioned on the fixed decorrelated components
- * (value and sigma, from @p a_cond / @p Q_cond), and the conditioned narrow lane
- * sigma, (f1 a1 - f2 a2) / (f1 - f2) in narrow-lane cycles, where band 1 is the
- * shorter wavelength.  Both rows of a pair get the same text.  Without a partner,
- * or with @p a_cond empty (nothing fixed), the conditioned columns are empty.
- *
- * @param keys      One entry per basis DD.
- * @param search_of Search row ↦ basis index (@ref lowestSigmaOrder); rows past
- *                  @p n_search are not searched.
- * @param n_search  Search dimension.
- * @param Q_search  Search covariance (cycles²), search order.
- * @param a_cond    @c IlsResult::a_cond (search order), may be empty.
- * @param Q_cond    @c IlsResult::Q_cond (search order), may be empty.
- * @return One string per basis DD: ",wl_float_sigma,wl_cond,wl_cond_sigma,nl_cond_sigma"
- *         (leading comma; empty fields where undefined).
- */
-/**
  * @brief The decorrelated partial fix run block by block (card ARL, block_search).
  *
  * Search rows sharing a @p block_of id (one baseline: its L1 and L2 DDs) are fixed
@@ -162,11 +166,88 @@ ils::IlsResult blockDecorrelatedFix(const Eigen::VectorXd& y, const Eigen::Matri
                                     const ils::IlsGateConfig& gates,
                                     double determined_sigma_cyc);
 
+/// One basis DD's pair lanes (card ARL, decorrelated_partial): the values behind the
+/// trace's four pair columns, equal on the two rows of a pair.
+struct PairLane {
+    int    partner        = -1;     ///< Basis index of the other band's DD; -1 = no partner in the search.
+    double wl_float_sigma = 0.0;    ///< The pair's wide lane a1 - a2 formal sigma before the fix (cycles).
+    bool   have_cond      = false;  ///< The search returned a conditioned solution (something fixed).
+    double wl_cond        = 0.0;    ///< The wide lane conditioned on the fixed components (cycles).
+    double wl_cond_sigma  = 0.0;    ///< Its sigma (cycles).
+    double nl_cond_sigma  = 0.0;    ///< The conditioned narrow lane's sigma (narrow-lane cycles).
+};
+
+/**
+ * @brief The pair lanes per basis DD (card ARL, decorrelated_partial).
+ *
+ * For each basis DD whose pair partner (same @c key, other wavelength) is also in
+ * the search: the pair's wide lane a1 - a2 formal sigma before the fix (from
+ * @p Q_search), its wide lane conditioned on the fixed decorrelated components
+ * (value and sigma, from @p a_cond / @p Q_cond), and the conditioned narrow lane
+ * sigma, (f1 a1 - f2 a2) / (f1 - f2) in narrow-lane cycles, where band 1 is the
+ * shorter wavelength.  Both DDs of a pair get the same values.  Without a partner the
+ * entry stays default (@c partner -1); with @p a_cond empty (nothing fixed) the
+ * conditioned values are unset (@c have_cond false).
+ *
+ * @param keys      One entry per basis DD.
+ * @param search_of Search row ↦ basis index (@ref lowestSigmaOrder); rows past
+ *                  @p n_search are not searched.
+ * @param n_search  Search dimension.
+ * @param Q_search  Search covariance (cycles²), search order.
+ * @param a_cond    @c IlsResult::a_cond (search order), may be empty.
+ * @param Q_cond    @c IlsResult::Q_cond (search order), may be empty.
+ * @return One entry per basis DD.
+ */
+std::vector<PairLane> pairLanes(const std::vector<DdPairKey>& keys,
+                                const std::vector<int>& search_of, int n_search,
+                                const Eigen::MatrixXd& Q_search,
+                                const Eigen::VectorXd& a_cond,
+                                const Eigen::MatrixXd& Q_cond);
+
+/**
+ * @brief The trace's four pair columns from @ref pairLanes.
+ * @param lanes One entry per basis DD.
+ * @return One string per basis DD: ",wl_float_sigma,wl_cond,wl_cond_sigma,nl_cond_sigma"
+ *         (leading comma, six decimals; ",,,," without a partner, the last three fields
+ *         empty without a conditioned solution).
+ */
+std::vector<std::string> pairLaneText(const std::vector<PairLane>& lanes);
+
+/**
+ * @brief @ref pairLaneText of @ref pairLanes: the trace's four pair columns per basis DD.
+ * @param keys      One entry per basis DD.
+ * @param search_of Search row ↦ basis index.
+ * @param n_search  Search dimension.
+ * @param Q_search  Search covariance (cycles²), search order.
+ * @param a_cond    @c IlsResult::a_cond (search order), may be empty.
+ * @param Q_cond    @c IlsResult::Q_cond (search order), may be empty.
+ * @return One string per basis DD.
+ */
 std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
                                          const std::vector<int>& search_of, int n_search,
                                          const Eigen::MatrixXd& Q_search,
                                          const Eigen::VectorXd& a_cond,
                                          const Eigen::MatrixXd& Q_cond);
+
+/**
+ * @brief What the DDs the suspect-corner mask released got at their first search (card
+ *        ARL, the release edge of filter/NetworkArSuspect.hpp).
+ *
+ * Counts the DDs flagged in @p reentry and those of them kept, and over the L1/L2 pairs
+ * whose two DDs both re-entered (each pair once): both singles kept, or else the wide lane
+ * determined (@c have_cond and @c wl_cond_sigma <= @p det_sigma_cyc), the classes of
+ * scripts/simnet_producer_ar_pairs.py.  Pure.
+ *
+ * @param reentry        One flag per basis DD (@ref ArSuspectSearch::reentry); empty = none.
+ * @param labels         @ref mapFixToBasis of this search.
+ * @param lanes          @ref pairLanes of this search; empty = no pair counts.
+ * @param det_sigma_cyc  The wide-lane determination bar
+ *                       (@c network.ambiguity_resolution.decorrelated_determined_sigma_cyc).
+ * @return The counts.
+ */
+ArSuspectReentry reentryOutcome(const std::vector<char>& reentry,
+                                const std::vector<DdFixLabel>& labels,
+                                const std::vector<PairLane>& lanes, double det_sigma_cyc);
 
 } // namespace netar
 
@@ -176,7 +257,15 @@ std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
  * @param ctx           [in,out] run context: reads `counters.n_emitted` (the
  *                      min_epochs and NEQ-export gates) and
  *                      `knobs.carry_aware_covariance`, and adds to the
- *                      `counters.netar_*` run-end tallies.  Taken whole for
+ *                      `counters.netar_*` run-end tallies.  With
+ *                      `knobs.ar_suspect_epochs` > 0 (card ARL, the suspect-corner
+ *                      mask, filter/NetworkArSuspect.hpp) it also folds this epoch's
+ *                      `carry.relevel` latch and `carry.local_carry` stamps into
+ *                      `carry.ar_suspect` at loop epoch `counters.n_loop_epochs`,
+ *                      keeps every DD with a suspect corner out of the search,
+ *                      counts the corners it releases back into the search and
+ *                      what their DDs get there (`carry.ar_suspect.masking`), and
+ *                      adds to `counters.netar_suspect`.  Taken whole for
  *                      seam-family uniformity.
  * @param config_       Reconstructs `nc = config_.getNetworkConfig()` and
  *                      `netar = nc.ambiguity_resolution`.

@@ -1213,7 +1213,9 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
     //     (1,1)-integer floor kept in raw m so a real slip is caught at any
     //     elevation.  Flag if |dd_i − med| exceeds it.
     //  4. A flagged arc has its detector gradient reset (a fresh arc next epoch,
-    //     whatever the carry state) and, when the carry is warm, both band
+    //     whatever the carry state); under if_phase_td_reseed_on_flag the gradient is
+    //     kept instead as the next epoch's origin, so that epoch is still evaluated
+    //     (card ARL).  When the carry is warm, both band
     //     ambiguities are marked pending-reseed so PASS B refloats them (less any
     //     band the band scope or the common-band scope keeps).  Clean survivors
     //     then update the station-pair EWMA; slips are excluded, so the scale does
@@ -1242,6 +1244,12 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         // pairs are a pure addition.
         const bool iftd_all_pairs =
             config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All;
+
+        // Post-flag re-seed (card ARL, slip-ladder defect 2): a flag keeps the
+        // satellite's flag-epoch gradient instead of restarting its chain, so the next
+        // epoch has a double difference (see step 4 below).
+        const bool reseed_on_flag =
+            config_.getNetworkConfig().slip_qc.if_phase_td_reseed_on_flag;
 
         // Sim-only oracle outcome for one flagged IF pair (see refloat_signal's
         // SignalAction).  `handled` is set when any band was handled; the pend gate
@@ -1363,8 +1371,10 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         // restarts that chain alone (resetSatelliteInState) instead of every pair
         // of the satellite, which keeps the pair decisions independent.  Unused
         // under `first`, where there is one chain per system.
+        // `after_reseed` marks the evaluation a re-seed restored (the epoch after a
+        // flag; always false with the re-seed off).
         struct PairSample { int sta; std::string sat, sig1, sig2; double dd, el, lambda;
-                            bool is_ref; std::string state_key; };
+                            bool is_ref; std::string state_key; bool after_reseed; };
         std::map<std::string, std::vector<PairSample>> by_pair;
         for (int i = i_lo; i < n_sta_total; ++i) {
             if (!present[i] || !stations[i].if_slip) continue;
@@ -1375,7 +1385,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     const std::string pair = jp.sig1 + "_" + jp.sig2;
                     by_pair[pair].push_back({i, sat, jp.sig1, jp.sig2,
                                              jp.delta_grad_m, jp.elevation_deg, jp.lambda_if_m,
-                                             jp.is_reference, jp.state_key});
+                                             jp.is_reference, jp.state_key, jp.after_reseed});
                 }
             } else {
                 for (const auto& [key, jp] : stations[i].if_slip->getLastIfJumpsAllPairs()) {
@@ -1384,7 +1394,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     by_pair[key.second].push_back({i, key.first, jp.sig1, jp.sig2,
                                                    jp.delta_grad_m, jp.elevation_deg,
                                                    jp.lambda_if_m,
-                                                   jp.is_reference, jp.state_key});
+                                                   jp.is_reference, jp.state_key,
+                                                   jp.after_reseed});
                 }
             }
         }
@@ -1493,18 +1504,33 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     // (invariant #4).
                     IfTdPairTally* tally = pair_tally ? &(*pair_tally)[pair] : nullptr;
                     if (tally) { ++tally->evaluated; if (flagged) ++tally->flagged; }
+                    // The evaluation a re-seed restored (card ARL); never set with
+                    // the re-seed off.
+                    if (tally && sp->after_reseed) {
+                        ++tally->post_flag_evaluated;
+                        if (flagged) ++tally->post_flag_flagged;
+                    }
                     if (flagged) {
                         // Restart only this pair's chain (§14.10 rule).  Resetting
                         // the satellite would discard the other pairs' clean
                         // gradient histories and make one pair's decision depend
                         // on another's flag, which the per-pair-kind pools exist
                         // to prevent.  Under `first` there is one chain per system
-                        // and the two calls do the same thing.
-                        if (iftd_all_pairs)
-                            stations[sp->sta].if_slip->resetSatelliteInState(sp->state_key,
-                                                                             sp->sat);
-                        else
-                            stations[sp->sta].if_slip->resetSatellite(sp->sat);  // restart arc
+                        // and the two calls do the same thing.  Under the re-seed
+                        // (card ARL) the chain keeps the flag epoch's gradient
+                        // instead, with the same scoping, so the next epoch is
+                        // evaluated rather than left blind.
+                        IfPhaseSlipDetector& det = *stations[sp->sta].if_slip;
+                        if (reseed_on_flag) {
+                            const bool kept = iftd_all_pairs
+                                ? det.reseedSatelliteInState(sp->state_key, sp->sat)
+                                : det.reseedSatellite(sp->sat);
+                            if (tally) ++(kept ? tally->reseeded : tally->reseed_nothing_kept);
+                        } else if (iftd_all_pairs) {
+                            det.resetSatelliteInState(sp->state_key, sp->sat);
+                        } else {
+                            det.resetSatellite(sp->sat);  // restart arc
+                        }
                         // Band scope (§Z rule): called once, because it updates
                         // counters; the event row reads the hoisted value instead
                         // of deciding again.
@@ -1536,7 +1562,12 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                   // restricted it, so every unscoped row keeps the
                                   // pre-knob text.
                                   + (pact.cb_kept.empty() ? std::string{}
-                                       : ";cb_kept=" + pact.cb_kept));
+                                       : ";cb_kept=" + pact.cb_kept)
+                                  // A flag in the epoch after a re-seed (card ARL):
+                                  // a slip repeated there.  Absent with the re-seed
+                                  // off, so those rows keep the pre-knob text.
+                                  + (sp->after_reseed ? std::string{";post_flag"}
+                                                      : std::string{}));
                         // Bridge v2, flagged path: create the pend (or refresh it;
                         // refloat_pair above just voided any stale one) with the
                         // pre-slip capture and this δIF.  A station whose IF-TD

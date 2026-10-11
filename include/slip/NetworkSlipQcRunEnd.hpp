@@ -91,6 +91,21 @@ int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+// ---- Run-end reports added after the cut (hand-written) ----
+
+/**
+ * @brief Run-end report: slip QC: the IF-TD post-flag re-seed (card ARL, slip-ladder
+ *        defect 2).
+ *
+ * The ON-path telemetry (invariant #4) of
+ * @c network.cycle_slip.if_phase_td_reseed_on_flag, summed over the IF-TD pair kinds
+ * (IfTdPairTally): flags whose flag-epoch gradient was kept, flags with none to keep,
+ * the post-flag evaluations that the reset used to leave out, and how many of those
+ * flagged.  Warns when flags were re-seeded and no post-flag evaluation followed.
+ *
+ * Gate: @c network.cycle_slip.if_phase_td and the re-seed knob both armed; prints
+ * nothing otherwise, so an unarmed run's log is unchanged.
+
 /**
  * @brief Run-end report: the co-resumed share of the per-signal gap re-entry tier.
  *
@@ -111,6 +126,8 @@ int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v);
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
+int networkIfTdReseedRunEnd(const NetworkRunEndView& v);
+
 int networkSlipGapCoresumedShareRunEnd(const NetworkRunEndView& v);
 
 } // namespace GnssProcessor

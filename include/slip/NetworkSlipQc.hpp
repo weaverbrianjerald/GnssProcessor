@@ -378,6 +378,11 @@ struct PassABuffers {
     struct MwAdmitCounts {
         long long drop_loose{ 0 };            ///< Known integer, residual too loose, refused.
         long long drop_unknown{ 0 };          ///< No usable integer, refused.
+        /// The satellite of each @ref drop_unknown verdict, in detector order (one entry
+        /// per refused pair).  The identity the producer AR search's suspect-corner mask
+        /// stamps (card ARL, filter/NetworkArSuspect.hpp); filled only while that mask is
+        /// armed, and read nowhere else.
+        std::vector<std::string> drop_unknown_sats;
         long long evidence_admitted{ 0 };     ///< Admitted by the evidence rule alone (knob on).
         long long evidence_would_admit{ 0 };  ///< Knob off; the evidence rule alone would have admitted it.
         long long legacy_admitted{ 0 };       ///< Admitted by the legacy integer gate.
@@ -1109,7 +1114,10 @@ bool networkSlipFillEwlSlot(RelevelPend& pd, const MwBridgeCand& cand,
  *        clean survivors back into the EWMA (slips excluded).
  *
  * Gated inside on network.cycle_slip.if_phase_td; call it unconditionally.  The
- * five threshold knobs are read inside.  The algorithm description, the
+ * five threshold knobs are read inside, and so is
+ * network.cycle_slip.if_phase_td_reseed_on_flag (card ARL): armed, a flag keeps
+ * the satellite's flag-epoch gradient (IfPhaseSlipDetector::reseedSatellite)
+ * instead of restarting its chain, so the next epoch is evaluated too.  The algorithm description, the
  * refloat_pair lambda and the PairSample struct are in the driver body in the
  * .cpp.  The per-(station, pair) EWMA scale is cross-epoch state kept in
  * NetStation::if_pair_scale and updated through @p stations.  The driver also
