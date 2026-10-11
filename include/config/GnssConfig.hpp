@@ -9036,6 +9036,10 @@ namespace GnssProcessor {
         /// fixture that silently does not exist would be graded as a null).
         bool loadNetworkInject_(const nlohmann::json& nw,
                                 const std::shared_ptr<spdlog::logger>& log);
+        /// The fixed-cycle fold's interlocks (card FCF), on the resolved values of the knobs
+        /// they read (several are parsed after @ref loadNetworkProducerAr_).  Throws
+        /// std::runtime_error on a refused posture (loadFromJson then returns false).
+        void validateNetworkFixedCycles_(const std::shared_ptr<spdlog::logger>& log) const;
         void logNetworkSummary_(const std::shared_ptr<spdlog::logger>& log) const;
         void finalizeNetworkProcessNoise_(const nlohmann::json& json,
                                           const std::shared_ptr<spdlog::logger>& log);

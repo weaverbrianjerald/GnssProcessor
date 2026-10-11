@@ -3,7 +3,8 @@
  * @brief Unit gates of the producer AR search's lattice observatory (card AGT, step AGT-6;
  *        filter/NetworkArLattice.hpp).
  *
- * Suite @c NetworkArLattice (the observatory's step, pure):
+ * Suite @c NetworkArLattice (the ledger's steps, pure; card AGT step AGT-6 as re-scoped by card
+ * FCF step FCF-3, run here with @c persist_ep 1, the observatory's immediate offers):
  *  - the order: an arc released this epoch is eliminated before the epoch's fixes are offered,
  *    so a DD fixed again on it enters as a new row (offered first, it would contradict);
  *  - the attribution: each released arc carries its cause (vanished, first seen, freed, stamp
@@ -13,8 +14,12 @@
  *    still imply the DDs between their satellites; a satellite that vanishes at four stations
  *    costs one dimension per released arc that still holds rows (three), the last arc holding
  *    none;
- *  - a contradiction leaves the lattice unchanged and reports the implied integer;
- *  - the run tallies count stamp fields and free causes on the releases that held rows only.
+ *  - a contradiction releases the arcs of its cycle (card FCF; AGT-6 left the lattice
+ *    unchanged) and reports the implied integer;
+ *  - the run tallies count stamp fields and free causes on the arc releases that held rows only.
+ * Card FCF's release seam (the evidence, the cycle releases, the seam gap, the admission
+ * streak, the re-validation) is suite @c NetworkFixedCycleRelease
+ * (tests/test_network_fixed_cycle_release.cpp).
  *
  * Suite @c NetworkArLatticeConfig (the loader): the knob defaults off, arms with the cycle basis
  * and is forced off without it; the two files' headers.
@@ -86,6 +91,18 @@ CycleLattice heldLattice(const std::vector<ArFixedCycle>& fixes) {
 
 int verdictCount(const ArLatticeEpoch& e, LatticeVerdict v) { return e.verdicts[static_cast<std::size_t>(v)]; }
 
+/// One ledger epoch on @p L with no outside evidence and immediate offers (persist_ep 1): the
+/// AGT-6 observatory's step, through card FCF's functions.
+ArLatticeEpoch stepOf(CycleLattice& L, const ArEpochFixes& fixes) {
+    ArLatticeState S;
+    S.lattice = L;
+    ArLatticeEpoch e = arLatticeBegin(S, fixes, ArLatticeEvidence{}, 1);
+    arLatticeAdmit(S, fixes, 1, 1, e);
+    arLatticeClose(S, 1, e);
+    L = S.lattice;
+    return e;
+}
+
 // ============================== the step ==============================
 
 TEST(NetworkArLattice, ReleasesBeforeOfferingSoARefixOfANewLifeIsAdded) {
@@ -104,7 +121,7 @@ TEST(NetworkArLattice, ReleasesBeforeOfferingSoARefixOfANewLifeIsAdded) {
     EXPECT_EQ(arcgraph::latticeOffer(offered_first, fixes.fixed[0].cycle, 11), LatticeVerdict::Contradicted);
     // ... so the step releases first, and the fix enters the new life.
     CycleLattice L = held;
-    const ArLatticeEpoch e = arLatticeStep(L, fixes);
+    const ArLatticeEpoch e = stepOf(L, fixes);
     ASSERT_EQ(e.releases.size(), 1u);
     EXPECT_EQ(e.releases[0].arc, arcOf(0, 2, l1));
     EXPECT_EQ(e.releases[0].cause, ArLatticeRelease::Freed);
@@ -138,7 +155,7 @@ TEST(NetworkArLattice, AttributesEachReleaseToItsReadingInArcOrder) {
     arcs[arcOf(0, 1, l1)] = ArArcReading{ArcLifeEdge::Echo, kArcLifeAdmRunStart | kArcLifeHasCarry, 0};  // kept
     arcs[arcOf(0, 4, l2)] = ArArcReading{ArcLifeEdge::None, 0u, 0};                                      // kept
 
-    const std::vector<ArLatticeReleaseEvent> rel = arLatticeReleases(held, arcs);
+    const std::vector<ArLatticeReleaseEvent> rel = arLatticeEvidenceReleases(held, arcs, ArLatticeEvidence{});
     ASSERT_EQ(rel.size(), 4u);
     EXPECT_TRUE(std::is_sorted(rel.begin(), rel.end(),
                                [](const ArLatticeReleaseEvent& a, const ArLatticeReleaseEvent& b) { return a.arc < b.arc; }));
@@ -162,7 +179,7 @@ TEST(NetworkArLattice, AttributesEachReleaseToItsReadingInArcOrder) {
     ArEpochFixes fixes;
     fixes.searched = true;
     fixes.arcs     = arcs;
-    const ArLatticeEpoch e = arLatticeStep(L, fixes);
+    const ArLatticeEpoch e = stepOf(L, fixes);
     EXPECT_EQ(e.released_by[static_cast<std::size_t>(ArLatticeRelease::Vanished)], 1);
     EXPECT_EQ(e.released_by[static_cast<std::size_t>(ArLatticeRelease::FirstSeen)], 1);
     EXPECT_EQ(e.released_by[static_cast<std::size_t>(ArLatticeRelease::Freed)], 1);
@@ -183,7 +200,7 @@ TEST(NetworkArLattice, TenHeldDdsOnAReleasedReferenceLoseOneDimension) {
     fixes.arcs[arcOf(0, 1, l1)] = ArArcReading{ArcLifeEdge::Freed, 0u, RelevelEpochState::kCauseMw};
     fixes.fixed    = {fixOf(0, 1, 5, 9, l1, 50 - 90)};   // between two held satellites: implied
     CycleLattice L = held;
-    const ArLatticeEpoch e = arLatticeStep(L, fixes);
+    const ArLatticeEpoch e = stepOf(L, fixes);
     ASSERT_EQ(e.releases.size(), 1u);
     // The reference is the lowest arc of the first DD, so the reduced echelon form made it that
     // row's pivot and removed it from the other nine: one reduced row holds it.
@@ -210,7 +227,7 @@ TEST(NetworkArLattice, AVanishedSatelliteCostsOneDimensionPerArcThatStillHoldsRo
     fixes.arcs     = continuing(held);
     for (int s = 0; s <= 3; ++s) fixes.arcs.erase(arcOf(s, 1, l1));   // G01 sets everywhere
     CycleLattice L = held;
-    const ArLatticeEpoch e = arLatticeStep(L, fixes);
+    const ArLatticeEpoch e = stepOf(L, fixes);
     EXPECT_EQ(e.releases.size(), 4u);
     EXPECT_EQ(e.released_by[static_cast<std::size_t>(ArLatticeRelease::Vanished)], 4);
     EXPECT_EQ(e.released_touching, 3);   // the last arc of G01 holds no row: a cycle cannot end there
@@ -222,23 +239,31 @@ TEST(NetworkArLattice, AVanishedSatelliteCostsOneDimensionPerArcThatStillHoldsRo
     EXPECT_EQ(arcgraph::latticeImplied(L, dd(2, 0, 2, 3, l1)), (20 + 2) - (20 + 3));
 }
 
-TEST(NetworkArLattice, AContradictionLeavesTheLatticeAndReportsTheImpliedInteger) {
+TEST(NetworkArLattice, AContradictionReleasesTheArcsOfItsCycleAndReportsTheImpliedInteger) {
     const SignalId l1 = sigOf("L1C");
     const CycleLattice held = heldLattice({fixOf(0, 1, 2, 3, l1, 7)});
     ArEpochFixes fixes;
     fixes.searched = true;
     fixes.arcs     = continuing(held);
-    fixes.fixed    = {fixOf(0, 1, 2, 3, l1, 8), fixOf(0, 1, 2, 3, l1, 7), fixOf(0, 1, 4, 3, l1, 1)};
+    fixes.fixed    = {fixOf(0, 1, 2, 3, l1, 8), fixOf(0, 1, 4, 3, l1, 1)};
     CycleLattice L = held;
-    const ArLatticeEpoch e = arLatticeStep(L, fixes);
-    ASSERT_EQ(e.offers.size(), 3u);
+    const ArLatticeEpoch e = stepOf(L, fixes);
+    ASSERT_EQ(e.offers.size(), 2u);
     EXPECT_EQ(e.offers[0].verdict, LatticeVerdict::Contradicted);
     EXPECT_EQ(e.offers[0].implied, 7);
-    EXPECT_EQ(e.offers[1].verdict, LatticeVerdict::Confirmed);
-    EXPECT_EQ(e.offers[2].verdict, LatticeVerdict::Added);
-    EXPECT_TRUE(e.releases.empty());
-    EXPECT_EQ(e.rows, 2);
-    EXPECT_EQ(arcgraph::latticeImplied(L, dd(0, 1, 2, 3, l1)), 7);
+    // Card FCF: the contradiction released the arcs of the cycle, and with them its row (AGT-6
+    // kept it); the contradicting fix waits for its next epoch; the other fix enters.
+    ASSERT_EQ(e.releases.size(), 1u);
+    EXPECT_EQ(e.releases[0].cause, ArLatticeRelease::Contradiction);
+    EXPECT_EQ(e.releases[0].scope, ArLatticeScope::Cycle);
+    EXPECT_EQ(e.releases[0].rows_touched, 1);
+    EXPECT_EQ(e.releases[0].offered, 8);
+    EXPECT_EQ(e.releases[0].implied, 7);
+    EXPECT_EQ(e.releases[0].rows_dropped, 1);
+    EXPECT_EQ(e.dims_lost, 1);
+    EXPECT_EQ(e.offers[1].verdict, LatticeVerdict::Added);
+    EXPECT_EQ(e.rows, 1);
+    EXPECT_FALSE(arcgraph::latticeImplied(L, dd(0, 1, 2, 3, l1)).has_value());
 }
 
 TEST(NetworkArLattice, TheTalliesCountFieldsAndCausesOnReleasesThatHeldRows) {
@@ -272,10 +297,10 @@ TEST(NetworkArLattice, TheTalliesCountFieldsAndCausesOnReleasesThatHeldRows) {
     EXPECT_EQ(c.change_by[5], 0);   // relevel_s: only on the release that held no row
     EXPECT_EQ(c.free_by[1], 1);     // LLI
     EXPECT_EQ(c.free_by[5], 0);     // wind-up: only on the release that held no row
-    EXPECT_EQ(c.dims_mismatch_epochs, 0);
-    e.dims_lost = 2;                // an elimination without a unit row
+    EXPECT_EQ(c.dims_by[static_cast<std::size_t>(ArLatticeRelease::StampChange)], 1);
+    EXPECT_EQ(c.dims_lost, 1);
     arLatticeTally(c, e, 261960.0, 0.5);
-    EXPECT_EQ(c.dims_mismatch_epochs, 1);
+    EXPECT_EQ(c.contradicted_epochs, 2);
     EXPECT_DOUBLE_EQ(c.first_contradicted_tow, 261930.0);
 }
 
@@ -284,6 +309,13 @@ TEST(NetworkArLattice, NamesTheCausesAndVerdictsAsTheTraceWritesThem) {
     EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::FirstSeen), "first_seen");
     EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::Freed), "freed");
     EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::StampChange), "stamp");
+    EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::ReplayCulprit), "replay");
+    EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::GrossLos), "gross");
+    EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::Contradiction), "contradiction");
+    EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::Revalidation), "revalidation");
+    EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::Acceptance), "acceptance");
+    EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::Degenerate), "degenerate");
+    EXPECT_STREQ(arLatticeReleaseName(ArLatticeRelease::SeamGap), "seam_gap");
     EXPECT_STREQ(arLatticeVerdictName(LatticeVerdict::Added), "added");
     EXPECT_STREQ(arLatticeVerdictName(LatticeVerdict::Confirmed), "confirmed");
     EXPECT_STREQ(arLatticeVerdictName(LatticeVerdict::Contradicted), "contradicted");
@@ -354,8 +386,9 @@ TEST(NetworkArLatticeConfig, TheTwoFilesHaveTheirDocumentedColumns) {
         return static_cast<int>(std::count(h.begin(), h.end(), ',')) + 1;
     };
     const std::string epoch = kArLatticeHeader, events = kArLatticeEventsHeader;
-    EXPECT_EQ(columns(epoch), 19);
+    EXPECT_EQ(columns(epoch), 29);   // AGT-6's 19, then card FCF's 10 (step FCF-3)
     EXPECT_EQ(epoch.rfind("week,tow,rows,arcs,fixes,added,confirmed,contradicted,not_primitive,", 0), 0u);
+    EXPECT_NE(epoch.find(",max_len,mean_len,waiting,rel_replay,"), std::string::npos);
     EXPECT_EQ(columns(events), 17);
     EXPECT_EQ(events.rfind("week,tow,event,cons,signal,sat_j,ref_sat,sta_r,ref_sta,", 0), 0u);
     EXPECT_EQ(epoch.back(), '\n');

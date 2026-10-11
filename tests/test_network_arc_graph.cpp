@@ -904,6 +904,36 @@ TEST(NetworkArcGraph, LatticeContradictsAPlantedWrongInteger) {
     EXPECT_EQ(L.rows.size(), 2u);
 }
 
+TEST(NetworkArcGraph, LatticeKeepsEntryEpochsAndAPlantedShift) {
+    // Card FCF's amendments: the entry epoch of each row (a reduced row takes the later one), the
+    // newest entry behind an implied integer, and a planted shift on one arc.
+    const SignalId l1 = sigOf("L1C");
+    CycleLattice L;
+    ASSERT_EQ(latticeOffer(L, dd(0, 1, 2, 3, l1), 7, 4), LatticeVerdict::Added);
+    ASSERT_EQ(latticeOffer(L, dd(0, 1, 4, 3, l1), -2, 9), LatticeVerdict::Added);
+    ASSERT_EQ(L.entered_ep.size(), 2u);
+    // The second offer reduced the first row (it held the new pivot), so both rows are from 9.
+    EXPECT_EQ(L.entered_ep[0], 9);
+    EXPECT_EQ(L.entered_ep[1], 9);
+    ASSERT_EQ(latticeOffer(L, dd(2, 1, 2, 3, l1), 5, 12), LatticeVerdict::Added);
+    // The third offer's pivot (1, G02) was held by the first row, which takes epoch 12.
+    EXPECT_EQ(L.entered_ep, (std::vector<long long>{12, 9, 12}));
+    long long newest = 0;
+    ASSERT_EQ(latticeImplied(L, dd(0, 1, 2, 4, l1), &newest), 9);
+    EXPECT_EQ(newest, 12);   // rows 0 and 2
+    ASSERT_EQ(latticeImplied(L, dd(0, 1, 4, 3, l1), &newest), -2);
+    EXPECT_EQ(newest, 9);    // row 1 alone
+    ASSERT_EQ(latticeImplied(L, dd(2, 0, 2, 3, l1), &newest), 5 - 7);
+    EXPECT_EQ(newest, 12);
+    expectReducedEchelon(L);
+    // A planted shift of +3 on (1, G03), which all three rows hold: a cycle through it at +1
+    // moves by 3, and one that misses it keeps its integer.
+    EXPECT_EQ(latticeShiftArc(L, ArcId{sta(1), gps(3), l1}, 3), 3);
+    EXPECT_EQ(latticeImplied(L, dd(2, 1, 2, 3, l1)), 5 + 3);
+    EXPECT_EQ(latticeImplied(L, dd(0, 1, 2, 4, l1)), 9);
+    EXPECT_EQ(latticeShiftArc(L, ArcId{sta(7), gps(7), l1}, 3), 0); // an arc no row holds
+}
+
 TEST(NetworkArcGraph, LatticeRefusesANonPrimitiveResidual) {
     const SignalId l1 = sigOf("L1C");
     CycleLattice L;

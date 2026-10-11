@@ -15,7 +15,7 @@
  *
  * ### Where each kind acts
  *
- * Seven kinds exist.  Four are corruptions of the producer's input (@c slip,
+ * Eight kinds exist.  Four are corruptions of the producer's input (@c slip,
  * @c outage, @c sat_clock_step, @c rx_clock_step) and are applied to a per-epoch
  * mutable copy of the @c SyncedEpoch at the top of the epoch body: before
  * @c networkFastClockTick, @c computeModels, every T0 detector, the
@@ -45,15 +45,17 @@
  * Applying them here keeps the injector out of @c ModelGeometry, which has no
  * access to the run context.
  *
- * Two kinds are not observation faults: they force a decision the producer
- * would otherwise make on the data, so they are staged here and consumed by the
- * seam that owns that decision:
+ * Three kinds are not observation faults: they force a decision the producer
+ * would otherwise make on the data, or plant a state the producer would otherwise
+ * hold, so they are staged here and consumed by the seam that owns it:
  *
- *   * @c anchor_handover  -> @c networkElectPhaseAnchors (filter/NetworkPhaseDatum)
- *   * @c arc_erase        -> the T4 attribution refloat (filter/NetworkRaim), or the
- *                            PASS-A slip drain for mode @c free_epoch
+ *   * @c anchor_handover   -> @c networkElectPhaseAnchors (filter/NetworkPhaseDatum)
+ *   * @c arc_erase         -> the T4 attribution refloat (filter/NetworkRaim), or the
+ *                             PASS-A slip drain for mode @c free_epoch
+ *   * @c fixed_cycle_plant -> the fixed-cycle seam's ledger (filter/NetworkFixedCycles,
+ *                             card FCF): a wrong integer planted on one arc
  *
- * The seventh, @c oracle_pin (simulation only), is not handled by this seam
+ * The eighth, @c oracle_pin (simulation only), is not handled by this seam
  * beyond the arming summary: filter/NetworkOraclePin reads it from the config
  * and feeds @c NetworkInjectState::n_applied itself.
  *
@@ -181,6 +183,24 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief A staged @c fixed_cycle_plant directive (card FCF, step FCF-3), consumed by the
+     *        fixed-cycle seam (filter/NetworkFixedCycles.hpp).
+     *
+     * Staged at every epoch from its @c tow until it fires: it fires at the first epoch at which
+     * the ledger of fixed cycles holds the arc, where every row's integer is shifted by
+     * @c delta times the row's coefficient on the arc (a wrong integer planted in the ledger,
+     * for its float re-validation to find).  An arc never held leaves the event unfired, which
+     * the run end reports as a hard error.
+     */
+    struct InjectFixedCyclePlant {
+        std::string station;          ///< Station name (roster-matched by the seam).
+        std::string sat;              ///< Satellite id.
+        std::string signal;           ///< RINEX-3 phase code of the arc's band.
+        long long   delta{ 0 };       ///< The integer shift (cycles).
+        std::size_t ev_index{ 0 };    ///< Index into @c NetworkInjectState::events (ledger updates).
+    };
+
+    /**
      * @brief Run-scope state of the injector: the schedule, its firing ledger and
      *        the one-epoch directives other seams consume.
      *
@@ -213,6 +233,8 @@ namespace GnssProcessor {
         std::vector<InjectAnchorDirective> anchor_now_slip;
         /// This epoch's staged arc-erase directives (station, satellite, mode).
         std::vector<InjectArcErase> arc_erase_now;
+        /// This epoch's staged fixed-cycle plants (card FCF), re-staged until they fire.
+        std::vector<InjectFixedCyclePlant> fixed_cycle_plant_now;
         long long n_arc_erase_acted{ 0 };  ///< Chords actually refloated by injected erases.
         /// Study-1 path census: mode -> chords the injected event actually acted on.
         /// A zero here on an armed leg means the wiring is inert (invariant #4),

@@ -29,6 +29,7 @@
 #include "filter/NetworkArSuspect.hpp"      // ArSuspectLedger / ArSuspectCounters (card ARL)
 #include "filter/NetworkArCycleBasis.hpp"   // ArBasisMemory / ArCycleBasisCounters (card AGT)
 #include "filter/NetworkArLattice.hpp"      // ArLatticeState / ArLatticeCounters (card AGT, AGT-6)
+#include "filter/NetworkFixedCycles.hpp"    // FixedCycleCounters (card FCF)
 #include "filter/NetworkParamRegistry.hpp" // NetworkParamRegistry: one declared property set per parameter kind (card PRM)
 #include "filter/NetworkParamInventory.hpp" // NetworkParamInventory: every parameter instance with its disposition (card NOM N1)
 #include "filter/NetworkCarrySites.hpp"     // CarrySite / CarryMechanism: the carried references of the border (card PRM phase 2)
@@ -2263,12 +2264,18 @@ namespace GnssProcessor {
         /// and untouched unless network.ambiguity_resolution.cycle_basis.  Not snapshotted and
         /// not fingerprinted (the search is log-only): a resumed leg rebuilds, counted.
         std::map<ArFamilyKey, ArBasisMemory> ar_basis;
-        /// The producer AR search's lattice observatory (card AGT, step AGT-6,
-        /// filter/NetworkArLattice.hpp): the lattice of fixed cycles, released and offered once
-        /// per search epoch at SB_NETAR, after the search.  Empty and untouched unless
-        /// network.ambiguity_resolution.trace_lattice.  Not snapshotted and not fingerprinted
-        /// (measure-only): a resumed leg starts with an empty lattice.
+        /// The ledger of fixed cycles (card AGT step AGT-6, card FCF step FCF-3,
+        /// filter/NetworkArLattice.hpp): the lattice of fixed cycles, the streaks of fixes
+        /// waiting to enter it and its last step, stepped once per search epoch by the
+        /// fixed-cycle seam at SB_SOLPREP.  Empty and untouched unless
+        /// network.ambiguity_resolution.trace_lattice or a fixed-cycle fold with source
+        /// lattice.  Not snapshotted and not fingerprinted (measure-only): a resumed leg starts
+        /// with an empty ledger.
         ArLatticeState               ar_lattice;
+        /// The fixed-cycle fold's run state (card FCF step FCF-3, filter/NetworkFixedCycles.hpp):
+        /// the units folded at the last step, for the fold's edges.  Empty and untouched unless
+        /// the fold runs with source lattice.  Not snapshotted.
+        FixedCycleState              fixed_cycles;
         /// Retap piece (relevel_retap_statistical): per-arc consecutive-retap streak
         /// (key → last continuous-GPS s, streak).  An arc that re-trips
         /// relevel_retap_streak_max times inside the 120 s window falls back to the erase
@@ -4708,11 +4715,18 @@ namespace GnssProcessor {
         /// against the stored basis, the arc lives and the build cost.  All zero unless
         /// network.ambiguity_resolution.cycle_basis.
         ArCycleBasisCounters netar_cycle;
-        /// The search's lattice observatory (card AGT step AGT-6, filter/NetworkArLattice.hpp):
-        /// offers by verdict, releases by cause with the rows they held and the dimensions
-        /// lost, the lattice's size and row lengths, the cost.  All zero unless
-        /// network.ambiguity_resolution.trace_lattice.
+        /// The ledger of fixed cycles (card AGT step AGT-6, card FCF step FCF-3,
+        /// filter/NetworkArLattice.hpp): fixes by verdict and waiting, releases by cause with the
+        /// rows they found and the dimensions lost, the units implied and failing, the lattice's
+        /// size and row lengths, the cost.  All zero unless the ledger runs
+        /// (network.ambiguity_resolution.trace_lattice, or the fold with source lattice).
         ArLatticeCounters    netar_lattice;
+        /// The fixed-cycle fold (card FCF, filter/NetworkFixedCycles.hpp): epochs with a
+        /// determined pair and held solves, units by fate, blocks, the guards' refusals, the
+        /// unit statistic, block acceptance against its stated mean, the float reproduction,
+        /// the shift and the cost.  All zero unless network.ambiguity_resolution.fixed_cycles.
+        /// fold is armed.
+        FixedCycleCounters   fixed_cycles;
 
         /// --- Run-end telemetry of canonical-pair admission (card CPA).
         /// The on-path readout of the rule (standing invariant 4): a `withheld_total` of

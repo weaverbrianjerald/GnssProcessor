@@ -26,6 +26,17 @@ and answers the questions of the card's AGT-6 gate:
      with --slip-tow and --slip-arc, every release at that epoch, and whether the injected arc's
      bands were released and held rows.
 
+Card FCF (step FCF-3) widened both files (the ledger of fixed cycles): fixes now wait for
+persist_ep epochs at one integer before they are offered (the epoch file's `waiting` column), a
+contradiction releases the arcs of its cycle (an event `release_cycle` beside the `contradicted`
+row; `release_support` in runs before card FCFC section 8, which dropped the rows behind the
+cycle), and the re-validation, the fold's refusals and a seam gap release rows too
+(`release_cycle`, `release_all`; the epoch file's rel_* columns after `mean_len`).  This script
+reads either format: a kept DD with no event row is "confirmed" in an AGT-6 run and "confirmed or
+waiting" in an FCF-3 run (the held integers are graded per unit by
+scripts/simnet_fixed_cycle_grade.py); the verdict sum includes the waiting fixes; and the
+one-dimension-per-released-arc check runs on the epochs whose releases are all arc releases.
+
 Reads:  <run>/logs/network_ar_lattice.csv, <run>/logs/network_ar_lattice_events.csv,
         <run>/logs/network_producer_ar.csv, <run>/logs/network_slip_raw.csv (wind-up branches),
         <fixture>/<sta>/truth_ambiguities.csv + truth_slips.csv + truth_windup.csv
@@ -52,6 +63,9 @@ TRACE_REL = os.path.join("logs", "network_producer_ar.csv")
 
 VERDICTS = ("added", "confirmed", "contradicted", "not_primitive")
 CAUSES = ("vanished", "first_seen", "freed", "stamp")
+#: Card FCF's causes (step FCF-3), columns rel_<cause> of the widened epoch file.
+FCF_CAUSES = ("replay", "gross", "contradiction", "revalidation", "acceptance", "degenerate",
+              "seam_gap")
 STAMP_FIELDS = ("adm_generation", "adm_run_start", "has_carry", "birth_ep", "dropped_ep",
                 "relevel_s", "flag_ep")
 FREE_CAUSES = ("mw", "lli", "if_td", "t4_attrib", "t3_consensus", "windup", "gap_reentry",
@@ -102,28 +116,34 @@ class Truth:
 def check_epochs(run):
     """Gate part 1 from the per-epoch file alone."""
     ix, rows = rows_of(os.path.join(run, EPOCH_REL))
+    fcf = "waiting" in ix
     out = {"epochs": len(rows), "verdicts": collections.Counter(), "released": 0,
            "released_touching": 0, "dims_lost": 0, "no_unit": 0, "causes": collections.Counter(),
            "sum_mismatch": [], "rows_mismatch": [], "dims_mismatch": [], "fixes_by_tow": {},
-           "max_rows": 0, "max_len": 0, "mean_len_last": 0.0}
+           "max_rows": 0, "max_len": 0, "mean_len_last": 0.0, "fcf": fcf, "waiting": 0}
     prev_rows = 0
     for r in rows:
         tow = float(r[ix["tow"]])
         g = {c: int(r[ix[c]]) for c in ("rows", "fixes", "added", "confirmed", "contradicted",
                                         "not_primitive", "released", "released_touching",
                                         "dims_lost", "no_unit", "max_len")}
+        waiting = int(r[ix["waiting"]]) if fcf else 0
+        out["waiting"] += waiting
         for v in VERDICTS:
             out["verdicts"][v] += g[v]
-        for c in CAUSES:
+        for c in CAUSES + (FCF_CAUSES if fcf else ()):
             out["causes"][c] += int(r[ix["rel_" + c]])
         for c in ("released", "released_touching", "dims_lost", "no_unit"):
             out[c] += g[c]
         out["fixes_by_tow"][tow] = g["fixes"]
-        if sum(g[v] for v in VERDICTS) != g["fixes"]:
+        if sum(g[v] for v in VERDICTS) + waiting != g["fixes"]:
             out["sum_mismatch"].append(tow)
         if g["rows"] != prev_rows + g["added"] - g["dims_lost"]:
             out["rows_mismatch"].append(tow)
-        if g["dims_lost"] != g["released_touching"]:
+        # One dimension per released arc that held rows, on epochs of arc releases only (a
+        # support or seam-gap release costs every row behind it).
+        support = fcf and any(int(r[ix["rel_" + c]]) for c in FCF_CAUSES)
+        if not support and g["dims_lost"] != g["released_touching"]:
             out["dims_mismatch"].append((tow, g["dims_lost"], g["released_touching"], g["no_unit"]))
         prev_rows = g["rows"]
         out["max_rows"] = max(out["max_rows"], g["rows"])
@@ -142,8 +162,13 @@ def grade(fixture, run, slip_tow=None, slip_arc=None, windup_branch=True, out=sy
     eix, events = rows_of(os.path.join(run, EVENTS_REL))
     offer_ev = {}
     releases = []
+    support_releases = []
     for r in events:
         tow = float(r[eix["tow"]])
+        if r[eix["event"]] in ("release_cycle", "release_support", "release_all"):
+            support_releases.append({"tow": tow, "event": r[eix["event"]], "cause": r[eix["cause"]],
+                                     "rows_dropped": int(r[eix["rows_dropped"]] or 0)})
+            continue
         if r[eix["event"]] == "release":
             releases.append({"tow": tow, "signal": r[eix["signal"]], "sat": r[eix["sat_j"]],
                              "sta": r[eix["sta_r"]], "cause": r[eix["cause"]],
@@ -159,7 +184,7 @@ def grade(fixture, run, slip_tow=None, slip_arc=None, windup_branch=True, out=sy
 
     # Every kept DD of the search's trace, with its verdict and its truth.
     tix, trows = rows_of(os.path.join(run, TRACE_REL))
-    matrix = {v: collections.Counter() for v in VERDICTS}
+    matrix = {v: collections.Counter() for v in VERDICTS + ("confirmed_or_waiting",)}
     contra = collections.Counter()
     wrong = []
     kept_by_tow = collections.Counter()
@@ -174,6 +199,8 @@ def grade(fixture, run, slip_tow=None, slip_arc=None, windup_branch=True, out=sy
                r[tix["ref_sta"]])
         fixed = int(round(float(r[tix["fixed_int"]])))
         verdict, value, implied = offer_ev.get(key, ("confirmed", fixed, None))
+        if verdict == "confirmed" and key not in offer_ev and ep["fcf"]:
+            verdict = "confirmed_or_waiting"
         if key in offer_ev:
             matched.add(key)
             if value != fixed:
@@ -227,20 +254,29 @@ def grade(fixture, run, slip_tow=None, slip_arc=None, windup_branch=True, out=sy
     P("     lattice: at most %d rows; longest row %d arcs; mean row length at the end %.3f"
       % (ep["max_rows"], ep["max_len"], ep["mean_len_last"]))
     P("  2. offers against truth (verdict: correct / wrong / no truth):")
-    for v in VERDICTS:
+    for v in VERDICTS + (("confirmed_or_waiting",) if ep["fcf"] else ()):
         m = matrix[v]
         P("     %-14s %8d / %4d / %d" % (v, m["correct"], m["wrong"], m["no_truth"]))
-    P("     lock-in (a wrong integer confirmed): %d; wrong rows added: %d"
-      % (matrix["confirmed"]["wrong"], matrix["added"]["wrong"]))
+    P("     lock-in (a wrong integer confirmed, or waiting under card FCF): %d; wrong rows added: %d"
+      % (matrix["confirmed"]["wrong"] + matrix["confirmed_or_waiting"]["wrong"], matrix["added"]["wrong"]))
     if contra:
         P("     contradictions: " + "; ".join("%s %d" % kv for kv in sorted(contra.items())))
     for w in wrong[:12]:
         P("     wrong: %s" % w)
-    P("  3. releases: %d (%s); %d held rows (%s); by stamp field [%s]; by free cause [%s]"
-      % (len(releases), ", ".join("%s %d" % (c, rel_by[c]) for c in CAUSES),
-         sum(touch_by.values()), ", ".join("%s %d" % (c, touch_by[c]) for c in CAUSES),
+    arc_causes = CAUSES + (FCF_CAUSES if ep["fcf"] else ())
+    P("  3. arc releases: %d (%s); %d held rows (%s); by stamp field [%s]; by free cause [%s]"
+      % (len(releases), ", ".join("%s %d" % (c, rel_by[c]) for c in arc_causes if rel_by[c] or c in CAUSES),
+         sum(touch_by.values()), ", ".join("%s %d" % (c, touch_by[c]) for c in arc_causes if touch_by[c] or c in CAUSES),
          ", ".join("%s %d" % kv for kv in sorted(field_by.items())) or "none",
          ", ".join("%s %d" % kv for kv in sorted(free_by.items())) or "none"))
+    if ep["fcf"]:
+        sup_by = collections.Counter(x["cause"] for x in support_releases)
+        sup_dims = collections.Counter()
+        for x in support_releases:
+            sup_dims[x["cause"]] += x["rows_dropped"]
+        P("     support and seam-gap releases (card FCF): %d [%s], rows dropped [%s]; fixes waiting %d"
+          % (len(support_releases), ", ".join("%s %d" % kv for kv in sorted(sup_by.items())) or "none",
+             ", ".join("%s %d" % kv for kv in sorted(sup_dims.items())) or "none", ep["waiting"]))
     P("     re-released one epoch after a release, holding rows again: %d" % rereleased)
     slip = None
     if slip_tow is not None:
@@ -273,7 +309,8 @@ def grade(fixture, run, slip_tow=None, slip_arc=None, windup_branch=True, out=sy
             "dims_mismatch_epochs": len(ep["dims_mismatch"]), "no_unit": ep["no_unit"],
             "max_rows": ep["max_rows"], "max_len": ep["max_len"],
             "matrix": {v: dict(matrix[v]) for v in VERDICTS},
-            "lock_in": matrix["confirmed"]["wrong"], "wrong_added": matrix["added"]["wrong"],
+            "lock_in": matrix["confirmed"]["wrong"] + matrix["confirmed_or_waiting"]["wrong"],
+            "wrong_added": matrix["added"]["wrong"],
             "contradictions": dict(contra), "wrong": wrong,
             "releases": dict(rel_by), "releases_held": dict(touch_by),
             "by_field": dict(field_by), "by_free": dict(free_by), "rereleased": rereleased,

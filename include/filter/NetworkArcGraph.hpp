@@ -667,6 +667,10 @@ struct CycleLattice {
     std::vector<Cycle>     rows;       ///< Fixed lattice elements.
     std::vector<long long> values;     ///< Integer of each row (cycles).
     std::map<ArcId, int>   pivot_row;  ///< Pivot arc -> row.
+    /// Loop epoch each row entered (card FCF): the epoch passed to @ref latticeOffer; a row
+    /// reduced by another row takes the later of the two epochs.  0 for a row offered without
+    /// an epoch (every caller before card FCF).
+    std::vector<long long> entered_ep;
 };
 
 /// Outcome of offering a fixed cycle.
@@ -681,22 +685,26 @@ enum class LatticeVerdict : std::uint8_t {
  * @brief Reduce a fixed cycle by the pivots, then add, confirm, contradict or refuse it.
  *
  * Added: the residual's first unit entry in arc order becomes the new pivot (the row is negated
- * when that entry is -1) and is eliminated from every other row.
+ * when that entry is -1) and is eliminated from every other row.  The new row's entry epoch is
+ * @p epoch, and every row it reduces takes @p epoch as well.
  *
  * @param L     The lattice.
  * @param c     The fixed cycle.
  * @param value Its integer.
+ * @param epoch The loop epoch of the offer (card FCF; 0 for a caller that keeps no epochs).
  * @return The verdict.
  */
-LatticeVerdict latticeOffer(CycleLattice& L, const Cycle& c, long long value);
+LatticeVerdict latticeOffer(CycleLattice& L, const Cycle& c, long long value, long long epoch = 0);
 
 /**
  * @brief The integer the lattice implies for a cycle.
- * @param L The lattice.
- * @param c The cycle.
+ * @param L      The lattice.
+ * @param c      The cycle.
+ * @param newest When not null and the cycle is in the span: the latest entry epoch of the rows
+ *               the implication uses (its support; card FCF), or -1 when it uses none.
  * @return The integer, or @c std::nullopt outside the lattice's span.
  */
-std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c);
+std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c, long long* newest = nullptr);
 
 /**
  * @brief Remove all dependence on one arc.
@@ -704,13 +712,33 @@ std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c);
  * When a row holds the arc at +-1 (the shortest such row, lowest index on ties; the pivot row
  * when the arc is a pivot), every other row is reduced by it and it is dropped: exactly one
  * dimension is lost, and the survivors re-reference (ten held DDs on a slipped reference become
- * nine).  When no row holds it at +-1, every row that touches it is dropped.
+ * nine; a reduced survivor takes the later of its own and the eliminating row's entry epochs).
+ * When no row holds it at +-1, every row that touches it is dropped.
+ *
+ * What remains is the part of the lattice that holds the arc at 0, so no integer it implies
+ * depends on the arc's old integer: a slip of the arc leaves every remaining value right (card
+ * FCF: a cycle whose integer is in question is released through its arcs, never through the rows
+ * behind it alone, since other rows can hold one of its arcs as a non-pivot term).
  *
  * @param L   The lattice.
  * @param arc The released arc.
  * @return The rows dropped.
  */
 int latticeEliminateArc(CycleLattice& L, const ArcId& arc);
+
+/**
+ * @brief Plant a wrong integer on one arc (card FCF's event harness, @c fixed_cycle_plant):
+ *        every row's integer moves by @p delta times the row's coefficient on @p arc.
+ *
+ * The lattice then implies, for every cycle in its span, its integer plus @p delta times the
+ * cycle's coefficient on @p arc: the lattice of an arc whose integer it holds @p delta too high.
+ *
+ * @param L     The lattice.
+ * @param arc   The arc.
+ * @param delta The integer shift (cycles).
+ * @return The rows that hold the arc (0: nothing planted).
+ */
+int latticeShiftArc(CycleLattice& L, const ArcId& arc, long long delta);
 
 }  // namespace arcgraph
 }  // namespace GnssProcessor

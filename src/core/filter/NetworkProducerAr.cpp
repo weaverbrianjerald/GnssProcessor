@@ -58,6 +58,7 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -698,6 +699,48 @@ void arCycleBasisStore(std::map<ArFamilyKey, ArBasisMemory>& memory, std::vector
     }
 }
 
+/// Card FCF: every cycle-basis search row with its float, its variance and its covariance with
+/// the same DD in the pair's other band (its twin: the same constellation, stations and
+/// satellites, the other signal), and whether the search determined it.  A row is a twin only
+/// when its identity occurs exactly twice, on two signals; the twins share one search block
+/// (cons|sta_r), so their covariance is the readback's own.  Basis order.
+std::vector<SearchedCycle> arSearchedCycles(const std::vector<DDrow>& dds, const Eigen::VectorXd& y_cyc,
+                                            const Eigen::MatrixXd& Q_cyc,
+                                            const std::vector<netar::DdFixLabel>& labels) {
+    std::vector<SearchedCycle> out;
+    out.reserve(dds.size());
+    using PairKey = std::tuple<std::string, StationId, StationId, SatId, SatId>;
+    std::map<PairKey, std::vector<int>> by_key;
+    for (std::size_t a = 0; a < dds.size(); ++a) {
+        const DDrow& d = dds[a];
+        const netar::DdFixLabel& lb = labels[a];
+        SearchedCycle s;
+        s.id       = d.cycle_id;
+        s.cycle    = d.cycle;
+        s.y_cyc    = y_cyc(static_cast<Eigen::Index>(a));
+        s.var_cyc2 = Q_cyc(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(a));
+        s.fixed    = lb.kept;
+        s.integer  = lb.kept ? static_cast<long long>(std::llround(lb.fixed_int)) : 0LL;
+        const auto& [sig, sta_r, ref_sta, sat_j, ref_sat] = d.cycle_id;
+        (void)sig;
+        by_key[PairKey{d.cons, sta_r, ref_sta, sat_j, ref_sat}].push_back(static_cast<int>(a));
+        out.push_back(std::move(s));
+    }
+    for (const auto& [key, rows] : by_key) {
+        (void)key;
+        if (rows.size() != 2) continue;
+        const int a = rows[0], b = rows[1];
+        if (std::get<0>(out[static_cast<std::size_t>(a)].id) == std::get<0>(out[static_cast<std::size_t>(b)].id))
+            continue;
+        out[static_cast<std::size_t>(a)].twin = b;
+        out[static_cast<std::size_t>(b)].twin = a;
+        const double c = Q_cyc(a, b);
+        out[static_cast<std::size_t>(a)].cov_twin_cyc2 = c;
+        out[static_cast<std::size_t>(b)].cov_twin_cyc2 = c;
+    }
+    return out;
+}
+
 }  // namespace
 
 ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
@@ -718,9 +761,15 @@ ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
     const auto& netar     = nc.ambiguity_resolution;
     auto&       n_emitted = ctx.counters.n_emitted;
     // Card AGT, step AGT-6: what this search hands the lattice observatory (filled only under
-    // trace_lattice, which the loader arms only with the cycle basis).
+    // trace_lattice, which the loader arms only with the cycle basis).  Card FCF: the same
+    // hand-over goes to the fixed-cycle fold, which also receives every searched DD's float
+    // and every pooled arc's live column (fold_armed; the loader arms the fold only with the
+    // cycle basis).  Neither is read by anything the solve or the emission reads unless the
+    // fold is armed.
     ArEpochFixes lattice_fixes;
     const bool   lattice_armed = netar.cycle_basis && netar.trace_lattice;
+    const bool   fold_armed    = netar.cycle_basis && netar.fixed_cycle_fold != FixedCycleFold::Off;
+    const bool   handover      = lattice_armed || fold_armed;
 
     // --- Card ARL: the suspect-corner mask's per-epoch fold (filter/NetworkArSuspect.hpp).
     //     It runs ahead of the search gate, so the ledger's clock and stamps stay current
@@ -777,6 +826,16 @@ ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
                 ar_pool[{cst, parts->signal}][parts->satellite][i] =
                     ArRec{value_m, static_cast<std::size_t>(est_index_of[i]),
                           static_cast<Eigen::Index>(hit->second), suspect};
+                // Card FCF: the band-arc's live column, where a fixed cycle through it lands.
+                if (fold_armed) {
+                    const std::optional<SatId>    sat_id = SatId::parse(parts->satellite);
+                    const std::optional<SignalId> sig_id = SignalId::fromObsCode(sys, parts->signal);
+                    if (sat_id && sig_id)
+                        lattice_fixes.columns[ArcId{StationId{static_cast<int>(i)}, *sat_id, *sig_id}] =
+                            ArcColumn{static_cast<std::size_t>(est_index_of[i]),
+                                      static_cast<std::ptrdiff_t>(hit->second), x_lin(amb_idx),
+                                      sig_id->wavelengthM(0)};
+                }
             }
         }
         // The covariance request: each pool entry's (est id, A_r column) once, in first-use
@@ -801,9 +860,9 @@ ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
             netar.cycle_basis
                 ? arCycleBasisRows(ctx, netar.cycle_basis_sticky, ar_pool, suspect_now_ep, stations,
                                    reqOf, dds, cycle_epoch, cycle_text,
-                                   lattice_armed ? &lattice_fixes.arcs : nullptr)
+                                   handover ? &lattice_fixes.arcs : nullptr)
                 : arSignalBasisRows(netar.tree_basis, ar_pool, se, stations, reqOf, dds, log);
-        lattice_fixes.searched = lattice_armed;
+        lattice_fixes.searched = handover;
         if (!dds.empty() && reqs.size() >= 2) {
             const bool ar_carry_aware = ctx.knobs.carry_aware_covariance;
             const int nd = static_cast<int>(dds.size());
@@ -1011,7 +1070,7 @@ ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
                     netar::mapFixToBasis(nd, order, fix.kept, fix.afix);
                 // Card AGT, step AGT-6: the determined DDs (the trace's kept rows) as cycles,
                 // the lattice observatory's offers.
-                if (lattice_armed)
+                if (handover)
                     for (int a = 0; a < nd; ++a) {
                         const netar::DdFixLabel& lb = labels[static_cast<std::size_t>(a)];
                         if (!lb.kept) continue;
@@ -1019,6 +1078,10 @@ ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
                         lattice_fixes.fixed.push_back(
                             ArFixedCycle{d.cycle, static_cast<long long>(std::llround(lb.fixed_int)), d.cycle_id});
                     }
+                // Card FCF: every searched DD with its float from this readback, the twin in
+                // the pair's other band, and whether it was determined.
+                if (fold_armed)
+                    lattice_fixes.floats = arSearchedCycles(dds, y_cyc, Q_cyc, labels);
                 // Card ARL pair lanes (decorrelated_partial only): each L1/L2 pair's wide
                 // lane before the fix and its wide lane and narrow lane conditioned on the
                 // fixed decorrelated components, so a pair left float can be read as "wide

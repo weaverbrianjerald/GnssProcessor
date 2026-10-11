@@ -58,7 +58,10 @@
  * reading of this search (@ref ArArcReading).  The observatory (filter/NetworkArLattice.hpp)
  * releases a lattice arc on that reading, so the search and the observatory share one rule of
  * what ends a life (@ref arcLifeStep, its echo rule included) and keep no second record of it.
- * Filled only under @c network.ambiguity_resolution.trace_lattice.
+ * Filled only under @c network.ambiguity_resolution.trace_lattice or an armed fixed-cycle fold
+ * (card FCF, filter/NetworkFixedCycles.hpp), which also receives every searched DD's float and
+ * covariance with its L1/L2 twin (@ref SearchedCycle) and every pooled arc's live column
+ * (@ref ArcColumn).
  */
 
 #include "common/GnssIdentity.hpp"     // System, StationId, SatId, SignalId, ArcId
@@ -244,12 +247,37 @@ struct ArFixedCycle {
     ArDdIdentity    id{};      ///< (signal, sta_r, ref_sta, sat_j, ref_sat).
 };
 
-/// What one search hands the lattice observatory (file banner).  Empty (searched false) unless
-/// @c network.ambiguity_resolution.trace_lattice, which requires the cycle basis.
+/// One pooled band-arc's live ambiguity column at this search, as the search placed it (card
+/// FCF: where a fixed cycle's terms land in the estimator).
+struct ArcColumn {
+    std::size_t    est_station{0};  ///< Estimator station index (the term's @c station).
+    std::ptrdiff_t local_col{-1};   ///< Ambiguity column in that station's local block (the assembly's h2local).
+    double         x_lin_m{0.0};    ///< The ambiguity's linearization point this epoch (m); a fixed cycle's target is re-based on it.
+    double         lambda_m{0.0};   ///< The wavelength of the arc's signal (m).
+};
+
+/// One searched basis DD with its float from the search's own covariance readback (card FCF).
+struct SearchedCycle {
+    ArDdIdentity    id{};                ///< (signal, sta_r, ref_sta, sat_j, ref_sat).
+    arcgraph::Cycle cycle;               ///< The DD as its basis cycle (band-tagged signed arcs).
+    double          y_cyc{0.0};          ///< The float DD (cycles; the trace's float_cyc).
+    double          var_cyc2{0.0};       ///< Its float variance (cycles squared; the trace's sigma_cyc squared).
+    int             twin{-1};            ///< Index in @ref ArEpochFixes::floats of the same DD in the pair's other band, or -1 (band-only: never a fold unit).
+    double          cov_twin_cyc2{0.0};  ///< Float covariance with the twin (cycles squared; the pair shares one search block).
+    bool            fixed{false};        ///< The search determined it at this epoch.
+    long long       integer{0};          ///< Its integer when fixed.
+};
+
+/// What one search hands the lattice observatory and the fixed-cycle fold (file banner).  Empty
+/// (searched false) unless @c network.ambiguity_resolution.trace_lattice or a fixed-cycle fold
+/// (card FCF) is armed, both of which require the cycle basis; @c floats and @c columns are
+/// filled only under the fold.
 struct ArEpochFixes {
     bool                          searched{false};  ///< The cycle basis was built at this search (the search block ran).
     std::vector<ArFixedCycle>     fixed;            ///< The determined DDs (the trace's kept rows), in basis order.
     std::map<ArcId, ArArcReading> arcs;             ///< Every band-arc this search read, with its life reading.
+    std::vector<SearchedCycle>    floats;           ///< (card FCF) Every PartnerDd and BorrowedDd row of the search with its float, in basis order; empty unless the fold is armed or the covariance did not return.
+    std::map<ArcId, ArcColumn>    columns;          ///< (card FCF) Every pooled band-arc's live column; empty unless the fold is armed.
 };
 
 /**

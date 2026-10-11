@@ -73,6 +73,7 @@
 
 #include <cmath>      // std::isfinite (the carry-aware readback's refuse-never-clamp screen)
 #include <cstddef>
+#include <memory>     // std::shared_ptr (the detached fold's opaque factor, card FCF)
 #include <utility>
 #include <vector>
 
@@ -406,6 +407,13 @@ public:
      */
     void foldReducedSumZeroGauges(const std::vector<SumZeroGauge>& gauges);
 
+    /// @return Number of sum-to-zero gauges folded into the current reduced system
+    ///         (0 when none folded since the last @ref reduce or @ref reset; a skipped
+    ///         degenerate gauge is not counted).  Read by
+    ///         @ref NetworkEstimator::solveHeldDetached, which refuses a folded system
+    ///         (card FCF).
+    std::size_t numSumZeroGauges() const { return sumzero_gauges_.size(); }
+
     /// The rank-K double-difference prior of one connected (const,signal)
     /// component: the invariant-carry z-store's contribution to the producer solve
     /// (Card-4, M1 phase C).  Each of the K rows is a DD ambiguity constraint
@@ -610,6 +618,137 @@ public:
     /// @return Number of DD-prior blocks (== the input count of the last
     ///         @ref foldReducedDdPriors; degenerate/chordless blocks are inert slots).
     std::size_t numDdPriorBlocks() const { return dd_priors_.size(); }
+
+    // --- Detached fold of fixed integer cycles (card FCF) ----------------------
+    //
+    // The second DD-fold path of this class, beside the Card-4 dense fold above
+    // (@ref foldReducedDdPriors, which stays unchanged and is this path's unit
+    // oracle).  The two never share an epoch: the fixed-cycle fold's loader refuses
+    // carry_invariant.  The algebra is the same Woodbury fold; what differs is that
+    // nothing is written into this object.  The result is handed back as operands
+    // (@ref DetachedFold) that a caller adds to a copy of the reduced normals, so
+    // the reduced system, the per-station factors and every reconstruction stay
+    // those of the float solve.  Implemented in NetworkNormalEquationsDetached.cpp.
+
+    /**
+     * @brief One fixed integer cycle as a soft constraint on local ambiguity
+     *        columns, in the increment frame (card FCF).
+     *
+     * The constraint reads
+     * @f$\sum_t c_t\,x_{r_t}[\mathrm{col}_t] \sim N(\hat z, P^z)@f$: the signed sum
+     * of the terms' local increments (metres) is held at @c zhat_m with variance
+     * @c pz_m2.  For a fixed cycle with integer @f$N@f$ on a band of wavelength
+     * @f$\lambda@f$, @f$\hat z=\lambda N-\sum_t c_t\,x^{\mathrm{lin}}_t@f$: the fixed
+     * value re-based on this epoch's linearization points.
+     */
+    struct CycleRow {
+        std::vector<DdPriorBlock::Term> terms;  ///< (station, local column, signed coefficient) terms; the DdPriorBlock term, reused.  Repeated (station, column) terms add.
+        double zhat_m{0.0};                     ///< Target @f$\lambda N-\sum c\,x^{\mathrm{lin}}@f$ (m), re-based every epoch.
+        double pz_m2{0.0};                      ///< Hold variance (m², finite, ≥ 0).  The fixed-cycle seam passes @f$(\sigma\lambda)^2>0@f$; 0 is a hard constraint.  At any hold, rows that are linearly dependent make their block degenerate (the independence screen on @f$B@f$ alone, @ref DetachedFoldBlock::dependent).
+    };
+
+    /// The sparse factor of one block's equilibrated @f$D(P^z+B)D@f$ (an AMD-ordered
+    /// sparse LDLᵀ).  Opaque here, defined in NetworkNormalEquationsDetached.cpp, so this
+    /// header does not pull Eigen's sparse modules into every translation unit that
+    /// includes it.
+    struct DetachedFoldFactor;
+
+    /**
+     * @brief The fold operands of one block of cycle rows (card FCF).
+     *
+     * A block's stations are touched by no other block, so the per-block Woodbury
+     * corrections add exactly (no block-Jacobi truncation).  With @f$K@f$ rows and
+     * @f$C_r@f$ the rows' signed sub-matrix on station @f$r@f$'s columns:
+     * @f$G=\sum_r N_{sr}N_{rr}^{-1}C_r^\top@f$,
+     * @f$z_{\mathrm{free}}=\sum_r C_rN_{rr}^{-1}u_r@f$,
+     * @f$B=\sum_r C_rN_{rr}^{-1}C_r^\top@f$ and @f$A=P^z+B@f$ (sparse: rows that share
+     * no station do not couple).  @f$A@f$ is factored as @f$D A D@f$ with
+     * @f$D=\mathrm{diag}(A)^{-1/2}@f$.
+     *
+     * @par Two screens
+     * @f$B@f$ is singular exactly when the rows are linearly dependent (the
+     * per-station @f$N_{rr}^{-1}@f$ are positive definite), whatever the hold; a
+     * positive @f$P^z@f$ hides that from any screen on @f$A@f$.  So @f$B@f$ alone is
+     * equilibrated and factored first, and a block whose rows fail that screen is
+     * @c dependent: a repeated cycle would double its hold, and a contradictory
+     * dependent set (@f$c_3=c_1+c_2@f$ held at @f$N_3\ne N_1+N_2@f$) would be averaged
+     * into the held solve.  Then @f$DAD@f$ is factored and screened the same way.
+     */
+    struct DetachedFoldBlock {
+        Eigen::MatrixXd G;        ///< @f$\sum_r N_{sr}N_{rr}^{-1}C_r^\top@f$ (n_shared × K).
+        Eigen::VectorXd z_free;   ///< @f$\sum_r C_rN_{rr}^{-1}u_r@f$ (K): the data-implied cycle values given @f$x_s=0@f$.
+        Eigen::VectorXd zhat;     ///< The rows' targets (K, m).
+        Eigen::VectorXd scale;    ///< The Jacobi scale @f$D=\mathrm{diag}(A)^{-1/2}@f$ of the factored @f$DAD@f$ (K).
+        std::shared_ptr<const DetachedFoldFactor> factor;  ///< Factor of @f$DAD@f$; null when the block is degenerate or has no rows.
+        bool      dependent{false};   ///< The rows are linearly dependent: the equilibrated @f$B@f$ alone failed its factorization or the relative-pivot screen.  Implies @c degenerate.
+        bool      degenerate{false};  ///< The block folds nothing: its rows are @c dependent, or the factorization of @f$DAD@f$ failed or its relative-pivot screen refused it.
+        double    b_min_pivot_rel{0.0}; ///< Smallest pivot of the equilibrated @f$B@f$ relative to the largest: the rows' independence margin (0 when nothing was factored).
+        double    min_pivot_rel{0.0}; ///< Smallest pivot of the factored @f$DAD@f$ relative to the largest (0 when it was not factored).
+        long long factor_nnz{0};      ///< Nonzeros of the stored sparse factor (cost telemetry).
+        Eigen::MatrixXd X;            ///< @f$A^{-1}G^\top@f$ (K × n_shared); empty unless the block folds.  With the held covariance @f$\Sigma_h@f$ it gives @f$S^{-1}=A^{-1}-X\Sigma_hX^\top@f$ (@ref NetworkEstimator::HeldSolve::chi2_expect).
+        Eigen::VectorXd ainv_diag;    ///< @f$\mathrm{diag}(A^{-1})@f$ (K), by a selected inversion of the factor on its own sparsity pattern; empty unless the block folds.
+        Eigen::MatrixXd dN;           ///< This block's increment @f$G A^{-1}G^\top=GX@f$ (n_shared × n_shared, symmetric); empty unless the block folds.  Kept so that a caller can fold the block alone (its own test statistic, @ref NetworkEstimator::HeldSolve::chi2).
+        Eigen::VectorXd du;           ///< This block's increment @f$G A^{-1}(z_{\mathrm{free}}-\hat z)@f$ (n_shared); empty unless the block folds.
+    };
+
+    /// Every block's operands and the shared-system increments of their fold (card FCF).
+    struct DetachedFold {
+        std::vector<DetachedFoldBlock> blocks;  ///< One per input block, input order.
+        Eigen::MatrixXd dN;                     ///< @f$\sum_b G_bA_b^{-1}G_b^\top@f$ over the blocks that fold (n_shared × n_shared, symmetric); the sum of the blocks' @c dN in input order.
+        Eigen::VectorXd du;                     ///< @f$\sum_b G_bA_b^{-1}(z_{\mathrm{free},b}-\hat z_b)@f$ over the blocks that fold (n_shared).
+    };
+
+    /**
+     * @brief The @ref foldReducedDdPriors algebra for blocks of fixed cycles, from the
+     *        cached per-station factors, without modifying this object (card FCF).
+     *
+     * Adding @c dN and @c du to a copy of @ref reducedSharedNormals and
+     * @ref reducedSharedRhs gives the reduced system of the float data plus every
+     * non-degenerate block's rows as the soft constraints of @ref CycleRow (the
+     * Woodbury identity of @ref foldReducedDdPriors with @f$M=A^{-1}@f$); the caller
+     * then applies its datum and solves (@ref NetworkEstimator::solveHeldDetached).
+     *
+     * Per block, each station assembles only the @f$K_r@f$ rows that touch it: the
+     * compact @f$C_r^\top@f$ (@f$n_r\times K_r@f$) is solved once against the cached
+     * factor, @f$Y=N_{rr}^{-1}C_r^\top@f$; @f$C_rY@f$ enters @f$B@f$ as triplets,
+     * @f$N_{sr}Y@f$ the matching columns of @f$G@f$, and @f$C_rN_{rr}^{-1}u_r@f$ the
+     * matching entries of @f$z_{\mathrm{free}}@f$.  @f$B@f$ and @f$A=P^z+B@f$ are sparse
+     * matrices, each Jacobi-equilibrated and factored by an AMD-ordered sparse LDLᵀ.
+     * The block is degenerate (it folds nothing) when either factorization fails or
+     * a pivot is non-positive or below @p pivot_floor_rel times the largest: on
+     * @f$B@f$ the screen finds linearly dependent rows (@ref DetachedFoldBlock), on
+     * @f$DAD@f$ an ill-conditioned hold.  A block that folds keeps @f$X=A^{-1}G^\top@f$
+     * and @f$\mathrm{diag}(A^{-1})@f$ for the held solve's statistics.  The arithmetic
+     * is deterministic for a fixed input order and equals the dense fold to
+     * tolerance, not bitwise.
+     *
+     * @param blocks          The blocks of cycle rows; an empty block is an inert slot
+     *                        (no factor, not degenerate).
+     * @param pivot_floor_rel Relative-pivot floor of both screens (default 1e-12, the
+     *                        value of the dense fold's PD-safe screen).
+     * @return The operands of every block and the summed increments; @c dN and @c du
+     *         are zero when no block folds.
+     * @throws std::invalid_argument when two blocks touch one station, a row has no
+     *         terms, a coefficient, target or hold variance is not finite, a hold
+     *         variance is negative, or a local column is out of range;
+     *         std::out_of_range on a station index that is not active this epoch.
+     *         Every input is checked before anything is factored.  std::logic_error
+     *         if a sparse factor's pattern is not closed under elimination (the selected
+     *         inversion's precondition, which the factorization guarantees).
+     */
+    DetachedFold foldCycleRowsDetached(const std::vector<std::vector<CycleRow>>& blocks,
+                                       double pivot_floor_rel = 1e-12) const;
+
+    /**
+     * @brief @f$A_b^{-1}r@f$ through a block's equilibrated factor:
+     *        @f$D\,(DAD)^{-1}D\,r@f$ (card FCF).
+     * @param b A block from @ref foldCycleRowsDetached with a factor.
+     * @param r A vector of the block's row count.
+     * @return @f$A_b^{-1}r@f$.
+     * @throws std::logic_error when the block has no factor (degenerate or empty);
+     *         std::invalid_argument on a size mismatch.
+     */
+    static Eigen::VectorXd solveFoldBlock(const DetachedFoldBlock& b, const Eigen::VectorXd& r);
 
     // --- PD-safe invariant-DD fold ----------------
 
@@ -1251,6 +1390,14 @@ public:
 
     /// Zero the section-timer accumulators (see @ref SectionTimers).
     void resetSectionTimers() const { timers_ = SectionTimers{}; }
+
+    /// Put back accumulators read earlier from @ref sectionTimers, discarding whatever was
+    /// timed since.  For a caller whose solves are not the float path's own: the detached
+    /// held solve (card FCF, @ref NetworkEstimator::solveHeldDetached) restores them on exit,
+    /// so the D0 run-end line and the driver's per-bracket accounting count the float solves
+    /// alone, and the held solves' cost is read from the fixed-cycle seam's own timer.
+    /// @param saved Accumulators previously returned by @ref sectionTimers.
+    void restoreSectionTimers(const SectionTimers& saved) const { timers_ = saved; }
 
     /// @return The section-timer accumulators (cumulative since construction /
     ///         the last @ref resetSectionTimers).  Meaningful only when

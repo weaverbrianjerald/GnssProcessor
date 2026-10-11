@@ -1357,47 +1357,66 @@ Cycle combineCycles(const CycleBasis& b, const Coordinates& coeffs) {
 
 namespace {
 
-/// Reduce a cycle by the pivots: each pivot it holds is removed by its own row (rows hold no
-/// other row's pivot, so the order is free).  Returns the residual and the implied integer.
-std::pair<Cycle, long long> latticeReduce(const CycleLattice& L, const Cycle& c) {
+/// One entry epoch per row (a lattice filled before card FCF, or by hand, has none: 0).
+void alignEntered(CycleLattice& L) {
+    if (L.entered_ep.size() != L.rows.size()) L.entered_ep.resize(L.rows.size(), 0);
+}
+
+/// A cycle reduced by the pivots: each pivot it holds is removed by its own row (rows hold no
+/// other row's pivot, so the order is free).
+struct LatticeReduction {
+    Cycle            residual;      ///< What no pivot removes (empty: the cycle is in the span).
+    long long        implied{0};    ///< The integer the removed part carries.
+    std::vector<int> support;       ///< The rows used, in the cycle's arc order.
+};
+
+LatticeReduction latticeReduce(const CycleLattice& L, const Cycle& c) {
     std::map<ArcId, long long> held;   // the offered cycle, terms merged
     for (const CycleTerm& t : c.terms) held[t.arc] += t.coeff;
     std::map<ArcId, long long> acc = held;
-    long long implied = 0;
+    LatticeReduction red;
     for (const auto& [arc, coef] : held) {
         if (coef == 0) continue;
         const auto pr = L.pivot_row.find(arc);
         if (pr == L.pivot_row.end()) continue;
         const Cycle& row = L.rows[static_cast<std::size_t>(pr->second)];
         for (const CycleTerm& u : row.terms) acc[u.arc] -= coef * u.coeff;
-        implied += coef * L.values[static_cast<std::size_t>(pr->second)];
+        red.implied += coef * L.values[static_cast<std::size_t>(pr->second)];
+        red.support.push_back(pr->second);
     }
-    return {cycleOf(acc), implied};
+    red.residual = cycleOf(acc);
+    return red;
 }
 
 /// Drop rows (ascending indices) and re-index the pivots.
 void dropRows(CycleLattice& L, const std::vector<int>& drop) {
+    alignEntered(L);
     std::vector<int> new_index(L.rows.size(), -1);
     std::vector<Cycle> rows;
-    std::vector<long long> values;
+    std::vector<long long> values, entered;
     for (std::size_t k = 0; k < L.rows.size(); ++k) {
         if (std::binary_search(drop.begin(), drop.end(), static_cast<int>(k))) continue;
         new_index[k] = static_cast<int>(rows.size());
         rows.push_back(std::move(L.rows[k]));
         values.push_back(L.values[k]);
+        entered.push_back(L.entered_ep[k]);
     }
     std::map<ArcId, int> pivots;
     for (const auto& [arc, k] : L.pivot_row)
         if (new_index[static_cast<std::size_t>(k)] >= 0) pivots.emplace(arc, new_index[static_cast<std::size_t>(k)]);
-    L.rows      = std::move(rows);
-    L.values    = std::move(values);
-    L.pivot_row = std::move(pivots);
+    L.rows       = std::move(rows);
+    L.values     = std::move(values);
+    L.pivot_row  = std::move(pivots);
+    L.entered_ep = std::move(entered);
 }
 
 }  // namespace
 
-LatticeVerdict latticeOffer(CycleLattice& L, const Cycle& c, long long value) {
-    auto [residual, implied] = latticeReduce(L, c);
+LatticeVerdict latticeOffer(CycleLattice& L, const Cycle& c, long long value, long long epoch) {
+    alignEntered(L);
+    LatticeReduction red = latticeReduce(L, c);
+    Cycle& residual = red.residual;
+    const long long implied = red.implied;
     if (residual.terms.empty()) return implied == value ? LatticeVerdict::Confirmed : LatticeVerdict::Contradicted;
     long long rv = value - implied;
     const auto unit = std::find_if(residual.terms.begin(), residual.terms.end(),
@@ -1413,20 +1432,30 @@ LatticeVerdict latticeOffer(CycleLattice& L, const Cycle& c, long long value) {
         if (d == 0) continue;
         L.rows[k] = addScaled(L.rows[k], -d, residual);
         L.values[k] -= d * rv;
+        L.entered_ep[k] = std::max(L.entered_ep[k], epoch);
     }
     L.rows.push_back(std::move(residual));
     L.values.push_back(rv);
+    L.entered_ep.push_back(epoch);
     L.pivot_row[pivot] = static_cast<int>(L.rows.size()) - 1;
     return LatticeVerdict::Added;
 }
 
-std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c) {
-    const auto [residual, implied] = latticeReduce(L, c);
-    if (!residual.terms.empty()) return std::nullopt;
-    return implied;
+std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c, long long* newest) {
+    const LatticeReduction red = latticeReduce(L, c);
+    if (!red.residual.terms.empty()) return std::nullopt;
+    if (newest) {
+        *newest = -1;
+        for (int k : red.support) {
+            const std::size_t i = static_cast<std::size_t>(k);
+            *newest = std::max(*newest, i < L.entered_ep.size() ? L.entered_ep[i] : 0LL);
+        }
+    }
+    return red.implied;
 }
 
 int latticeEliminateArc(CycleLattice& L, const ArcId& arc) {
+    alignEntered(L);
     std::vector<int> touching;
     for (std::size_t k = 0; k < L.rows.size(); ++k)
         if (coeffOf(L.rows[k], arc) != 0) touching.push_back(static_cast<int>(k));
@@ -1454,9 +1483,22 @@ int latticeEliminateArc(CycleLattice& L, const ArcId& arc) {
         const long long d = coeffOf(L.rows[static_cast<std::size_t>(k)], arc) * s0;   // d * s0 = d / s0
         L.rows[static_cast<std::size_t>(k)] = addScaled(L.rows[static_cast<std::size_t>(k)], -d, L.rows[static_cast<std::size_t>(k0)]);
         L.values[static_cast<std::size_t>(k)] -= d * L.values[static_cast<std::size_t>(k0)];
+        L.entered_ep[static_cast<std::size_t>(k)] =
+            std::max(L.entered_ep[static_cast<std::size_t>(k)], L.entered_ep[static_cast<std::size_t>(k0)]);
     }
     dropRows(L, {k0});
     return 1;
+}
+
+int latticeShiftArc(CycleLattice& L, const ArcId& arc, long long delta) {
+    int touched = 0;
+    for (std::size_t k = 0; k < L.rows.size(); ++k) {
+        const long long c = coeffOf(L.rows[k], arc);
+        if (c == 0) continue;
+        L.values[k] += c * delta;
+        ++touched;
+    }
+    return touched;
 }
 
 }  // namespace arcgraph

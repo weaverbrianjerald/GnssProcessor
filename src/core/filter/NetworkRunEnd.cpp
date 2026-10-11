@@ -49,6 +49,7 @@
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkExtraBandScope.hpp"
 #include "filter/NetworkFastClock.hpp"
+#include "filter/NetworkFixedCycles.hpp"
 #include "filter/NetworkFrameDiag.hpp"
 #include "filter/NetworkGrossLos.hpp"
 #include "filter/NetworkHandoverStransform.hpp"
@@ -151,6 +152,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkArSuspect.cpp", networkArSuspectRunEnd},
     {"the producer AR search's lattice observatory (card AGT)",
      "filter/NetworkArLattice.cpp", networkArLatticeRunEnd},
+    {"the fixed-cycle fold (card FCF)",
+     "filter/NetworkFixedCycles.cpp", networkFixedCyclesRunEnd},
     {"the carry-aware covariance mode",
      "filter/NetworkEstimator.cpp", networkCarryAwareCovarianceRunEnd},
     {"the SD pre-reduce EWL rows and integer fix",

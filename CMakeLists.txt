@@ -187,6 +187,7 @@ add_library(gnss_core STATIC
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
     src/core/filter/NetworkNormalEquations.cpp
+    src/core/filter/NetworkNormalEquationsDetached.cpp
     src/core/filter/NetworkEstimator.cpp
     src/core/filter/NetworkInvariantCarryDriver.cpp
     src/core/filter/NetworkMwWlLayer.cpp
@@ -240,6 +241,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkArcLife.cpp
     src/core/filter/NetworkArCycleBasis.cpp
     src/core/filter/NetworkArLattice.cpp
+    src/core/filter/NetworkFixedCycles.cpp
     src/core/filter/NetworkInstallCarry.cpp
     src/core/filter/NetworkDdPriorBuild.cpp
     src/core/filter/NetworkMwWlGlue.cpp
@@ -309,6 +311,11 @@ if(MSVC)
     # tests/test_network_shared_history.cpp (card SCL2 X2b, gate U5): the smoothed hold's
     # clone types and the projection cases cross the Debug section limit (C1128).
     set_source_files_properties(tests/test_network_shared_history.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_network_detached_fold.cpp (card FCF, FCF-1): the dense oracles (LDLT,
+    # pivoted LU, the rank and condition-number references) cross the Debug section
+    # limit (C1128).
+    set_source_files_properties(tests/test_network_detached_fold.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
     # src/core/app/NetworkRunContext.cpp: card AIL's ambiguity-information instrument
     # (0f9b2a5) tipped it over the Debug section limit (C1128); Release was unaffected.
@@ -413,6 +420,7 @@ add_executable(gnss_tests
     tests/test_rinex3_blank_prn.cpp
     tests/test_rinex3_phase_shift.cpp
     tests/test_network_normal_equations.cpp
+    tests/test_network_detached_fold.cpp
     tests/test_neq_station_prior_before_pd.cpp
     tests/test_pd_safe_fold.cpp
     tests/test_carry_aware_covariance.cpp
@@ -433,6 +441,9 @@ add_executable(gnss_tests
     tests/test_producer_ar_cycle_basis.cpp
     tests/test_ar_cycle_basis_config.cpp
     tests/test_network_ar_lattice.cpp
+    tests/test_network_fixed_cycles.cpp
+    tests/test_network_fixed_cycle_release.cpp
+    tests/test_fixed_cycle_config.cpp
     tests/test_network_robust_stats.cpp
     tests/test_network_slip_qc.cpp
     tests/test_gap_reentry_relevel.cpp
