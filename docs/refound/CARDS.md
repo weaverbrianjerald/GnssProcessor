@@ -117,7 +117,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   instrument A'); the 12 m cold-start bound holds it within 0.03 m but the hours 2 to 6 clock-wire median is 12 % worse.
 - [L5B](L5B_band5_receiver_delay_2026-10-10.md): open, 2026-10-10: L5 steps R-1b (the receiver band-5 code delay
   estimated: band-5 offsets 18 to 3 stations) and R-1c (co-resumed signals share the re-entry verdict), both default off;
-  the field contamination is one code fault at MAJU00MHL absorbed by young receiver states; consumer cost = Block IIF L5
+  the field contamination is one event at MAJU00MHL moving its station level direction; consumer cost = Block IIF L5
   phase. L5 SEQUENCED: R-1d (robust ignition of receiver code states) is the author's design call.
 - [GFC](GFC_galileo_family_clock_datum_2026-10-10.md): open, 2026-10-10: Galileo clock datum across the two code
   families, two default-off steps: the family-difference datum (clock wire 0.105 to 0.035 m) and the first-sighting
