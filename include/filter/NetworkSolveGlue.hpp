@@ -80,6 +80,9 @@ struct NetworkSolveGlueResult {
     bool                                             we_t2_opp{false};
     bool                                             we_t2_flag{false};
     EpochAction                                      action{EpochAction::Proceed};
+    /// The landed within-epoch replay's culprits (card FCF), copied from its drop sets before
+    /// they leave scope; empty without a replay.  Read by the fixed-cycle ledger only.
+    WithinEpochCulprits                              we_landed;
 };
 
 /**

@@ -184,7 +184,9 @@ struct NetDatumGraphConsCensus {
 /**
  * @brief Union-find the admitted support graph, per constellation.
  *
- * O(E·α(V)) with a path-halving, union-by-size forest.  Vertices with no edge are
+ * On the shared @ref arcgraph::Dsu (card AGT; path compression without union by
+ * size, so O(E log V) amortized at worst), which links the station under the
+ * satellite; every output depends on the partition alone.  Vertices with no edge are
  * not created: a satellite no station tracks and a station that folded nothing
  * belong to no component, and counting them would inflate @f$k@f$ with vertices
  * that carry no datum.

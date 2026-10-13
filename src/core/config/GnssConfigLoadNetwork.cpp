@@ -116,6 +116,113 @@ namespace GnssProcessor {
             return std::nullopt;
         }
 
+        /**
+         * @brief Parse the fixed-cycle fold's knobs (card FCF,
+         *        @c network.ambiguity_resolution.fixed_cycles.*) into @p ar.
+         *
+         * Values only, each checked on its own: an unknown mode or source name, a hold sigma
+         * that is not a positive finite number, an alpha outside (0, 1), a negative pass
+         * count, a non-positive shift bound, a @c persist_ep below 1 or a negative @c lapse_ep
+         * is refused (the fold would change the emitted product, so a value is never silently
+         * replaced).  @c persist_ep is the ledger's admission streak (step FCF-3), read whenever
+         * the ledger runs (@c trace_lattice, or the fold with source lattice); @c lapse_ep is
+         * read under source lattice only.  The cross-knob interlocks
+         * read knobs parsed in later helpers and run at the end of the section
+         * (@c GnssConfig::validateNetworkFixedCycles_).
+         *
+         * @param json Parsed root config object.
+         * @param ar   The producer AR block being filled.
+         * @throws std::runtime_error on a refused value.
+         */
+        void loadFixedCycleKnobs(const nlohmann::json& json, NetworkArConfig& ar) {
+            const std::string pre = "network.ambiguity_resolution.fixed_cycles.";
+            auto refuse = [&](const std::string& key, const std::string& why) {
+                throw std::runtime_error(pre + key + " " + why + " (card FCF)");
+            };
+            const std::string fold = jval<std::string>(json, pre + "fold", "", "off");
+            if (fold == "off")          ar.fixed_cycle_fold = FixedCycleFold::Off;
+            else if (fold == "observe") ar.fixed_cycle_fold = FixedCycleFold::Observe;
+            else if (fold == "emit")    ar.fixed_cycle_fold = FixedCycleFold::Emit;
+            else refuse("fold", "= '" + fold + "' is not one of off, observe, emit");
+            const std::string source = jval<std::string>(json, pre + "source", "", "");
+            if (source.empty())         ar.fixed_cycle_source = FixedCycleSource::Unset;
+            else if (source == "epoch") ar.fixed_cycle_source = FixedCycleSource::Epoch;
+            else if (source == "lattice") ar.fixed_cycle_source = FixedCycleSource::Lattice;
+            else refuse("source", "= '" + source + "' is not one of epoch, lattice");
+            ar.fixed_cycle_sigma_cyc = jval<double>(json, pre + "sigma_cyc", "", 0.003);
+            if (!(std::isfinite(ar.fixed_cycle_sigma_cyc) && ar.fixed_cycle_sigma_cyc > 0.0))
+                refuse("sigma_cyc", "must be a positive finite number of cycles");
+            ar.fixed_cycle_unit_alpha = jval<double>(json, pre + "unit_alpha", "", 1e-6);
+            if (!(ar.fixed_cycle_unit_alpha > 0.0 && ar.fixed_cycle_unit_alpha < 1.0))
+                refuse("unit_alpha", "must lie in (0, 1)");
+            ar.fixed_cycle_gate_alpha = jval<double>(json, pre + "gate_alpha", "", 1e-4);
+            if (!(ar.fixed_cycle_gate_alpha > 0.0 && ar.fixed_cycle_gate_alpha < 1.0))
+                refuse("gate_alpha", "must lie in (0, 1)");
+            ar.fixed_cycle_max_iter = jval<int>(json, pre + "max_iter", "", 3);
+            if (ar.fixed_cycle_max_iter < 0) refuse("max_iter", "must be 0 or more");
+            ar.fixed_cycle_max_shift_m = jval<double>(json, pre + "max_shift_m", "", 0.5);
+            if (!(std::isfinite(ar.fixed_cycle_max_shift_m) && ar.fixed_cycle_max_shift_m > 0.0))
+                refuse("max_shift_m", "must be a positive finite number of metres");
+            ar.fixed_cycle_persist_ep = jval<int>(json, pre + "persist_ep", "", 10);
+            if (ar.fixed_cycle_persist_ep < 1) refuse("persist_ep", "must be 1 or more");
+            ar.fixed_cycle_lapse_ep = jval<int>(json, pre + "lapse_ep", "", 0);
+            if (ar.fixed_cycle_lapse_ep < 0) refuse("lapse_ep", "must be 0 (off) or more");
+            ar.fixed_cycle_trace = jval<bool>(json, pre + "trace", "", false);
+            ar.fixed_cycle_emit_measurement_only =
+                jval<bool>(json, pre + "emit_measurement_only", "", false);
+        }
+
+        /**
+         * @brief The producer AR record's warning in its Emit variant (card FCF section 2).
+         *
+         * Printed in place of the record's "the emitted product stays FLOAT" warning by a
+         * run that arms @c fixed_cycles.fold emit, whose first clause would otherwise be
+         * false.  Every run without Emit prints the record's own text, unchanged.
+         *
+         * @param ar The resolved producer AR block.
+         * @return The warning's text.
+         */
+        std::string fixedCycleEmitWarning(const NetworkArConfig& ar) {
+            return fmt::format(
+                "Network producer AR ARMED with fixed_cycles.fold EMIT (card FCF): the emitted "
+                "product of this run is NOT the float solve.  Solution prep and the emitter read "
+                "the held solve of a single-epoch search (source epoch: this epoch's determined "
+                "L1/L2 pairs, held at {} cycle), screened by a per-unit test (alpha {:.0e}) and "
+                "block acceptance (alpha {:.0e}), which see a wrong integer only where the float "
+                "disagrees with it; against a slip no detector flags (a stale zero-q float) the "
+                "guard is the slip fixes of card ARL section 13, required here.  The estimator, "
+                "the carry, the search, the DD trace, post-fit QC and every emitted sigma stay "
+                "float.  This is a measurement "
+                "arm of card FCF decision D1 on a sim fixture, not a product: the producer AR "
+                "record (docs/network_ambiguity_resolution_design.md) stands until the author "
+                "rules.  Search gates: min_epochs={}, FFR>={:.4f}, ratio>={:.1f}, trace {}.",
+                ar.fixed_cycle_sigma_cyc, ar.fixed_cycle_unit_alpha, ar.fixed_cycle_gate_alpha,
+                ar.min_epochs, ar.min_success_rate, ar.ratio_threshold, ar.trace ? "ON" : "off");
+        }
+
+        /**
+         * @brief The stations whose RINEX file does not lie in a sim fixture (card FCF, the
+         *        check behind @c fixed_cycles.emit_measurement_only).
+         *
+         * A sim fixture writes @c truth_ambiguities.csv beside each station's RINEX file (the
+         * rule @c scripts/simnet_fixed_cycle_grade.py's @c fixture_of reads), so a station
+         * whose path is empty or whose directory lacks that file is not on a sim bed.
+         *
+         * @param stations The network roster.
+         * @return Their names, in roster order; empty when every station is on a sim bed.
+         */
+        std::vector<std::string> stationsOffSimFixture(const std::vector<StationConfig>& stations) {
+            std::vector<std::string> off;
+            for (const StationConfig& s : stations) {
+                std::error_code ec;
+                const bool on_bed = !s.rinex_path.empty()
+                    && std::filesystem::is_regular_file(
+                           std::filesystem::path(s.rinex_path).parent_path() / "truth_ambiguities.csv", ec);
+                if (!on_bed) off.push_back(s.name);
+            }
+            return off;
+        }
+
     } // namespace
 
     // =================================================================
@@ -215,6 +322,11 @@ namespace GnssProcessor {
                                          "(card SMH's smoothed hold, the hold the posture was "
                                          "measured with; card NBP)");
         }
+
+        // Card FCF: the fixed-cycle fold's interlocks, here for the reason given for the
+        // smoothed hold's refusals above: most of the knobs they read are parsed after the
+        // fold's own knobs (loadNetworkProducerAr_).
+        validateNetworkFixedCycles_(log);
 
         // Feed interlock for network.carry_coupling_reinit_sources (card 1g).  It sits
         // here, at the end of the section, rather than beside the knob's own parse:
@@ -1249,6 +1361,61 @@ namespace GnssProcessor {
                           "next {} search(es) (still traced, in_subset 0, with the "
                           "suspect_bits and reentry columns).  The release is time-only.  "
                           "Log-only: the products do not change.", ar.suspect_epochs);
+            // Card AGT (step AGT-5): the sticky full-coverage cycle basis
+            // (filter/NetworkArCycleBasis.hpp).  It replaces tree_basis's per-signal Prim and
+            // keeps decorrelated_partial's search and block_search's blocks, so it needs all
+            // three; otherwise it is named and forced off.
+            ar.cycle_basis = jval<bool>(json, "network.ambiguity_resolution.cycle_basis",
+                                        "network_ar_cycle_basis", false);
+            ar.cycle_basis_sticky = jval<bool>(json, "network.ambiguity_resolution.cycle_basis_sticky",
+                                               "network_ar_cycle_basis_sticky", true);
+            if (ar.cycle_basis && !(ar.tree_basis && ar.decorrelated_partial && ar.block_search)) {
+                log->warn("Network producer AR: ambiguity_resolution.cycle_basis requires "
+                          "tree_basis, decorrelated_partial and block_search (here {}, {}, {}); "
+                          "the cycle basis is forced OFF.",
+                          ar.tree_basis ? "on" : "off", ar.decorrelated_partial ? "on" : "off",
+                          ar.block_search ? "on" : "off");
+                ar.cycle_basis = false;
+            }
+            if (ar.cycle_basis && !ar.enable)
+                log->warn("Network producer AR: ambiguity_resolution.cycle_basis is ON but "
+                          ".enable is OFF; the search never runs, so the cycle basis is INERT.");
+            else if (ar.cycle_basis)
+                log->info("Network producer AR: cycle basis ARMED (card AGT): per constellation "
+                          "the two signals with the most arcs share one graph; a {} baseline "
+                          "forest is closed into one DD per chord of every band (the whole "
+                          "cycle lattice, E - V + C per band; fundamental fallbacks counted, "
+                          "not searched), one search block per station.  Trace columns "
+                          "cycle_kind, band_only, basis_age_ep, map_state.  Log-only: the "
+                          "products do not change.",
+                          ar.cycle_basis_sticky ? "sticky (incumbent links kept)"
+                                                : "NON-sticky (rebuilt every search)");
+            if (!ar.cycle_basis_sticky && !ar.cycle_basis)
+                log->warn("Network producer AR: ambiguity_resolution.cycle_basis_sticky is false "
+                          "but cycle_basis is OFF; the setting is INERT.");
+            // Card AGT (step AGT-6): the measure-only lattice observatory
+            // (filter/NetworkArLattice.hpp).  Its offers are the cycle basis's determined DDs and
+            // its releases the cycle basis's arc life readings, so it needs the cycle basis;
+            // otherwise it is named and forced off.
+            ar.trace_lattice = jval<bool>(json, "network.ambiguity_resolution.trace_lattice",
+                                          "network_ar_trace_lattice", false);
+            if (ar.trace_lattice && !ar.cycle_basis) {
+                log->warn("Network producer AR: ambiguity_resolution.trace_lattice requires "
+                          "cycle_basis (OFF here, or forced off above); the lattice observatory "
+                          "is forced OFF.");
+                ar.trace_lattice = false;
+            }
+            if (ar.trace_lattice && !ar.enable)
+                log->warn("Network producer AR: ambiguity_resolution.trace_lattice is ON but "
+                          ".enable is OFF; the search never runs, so the lattice observatory is "
+                          "INERT (no file is opened).");
+            else if (ar.trace_lattice)
+                log->info("Network producer AR: lattice observatory ARMED (card AGT): each search "
+                          "epoch releases the lattice arcs whose life ended, then offers the "
+                          "determined DDs (logs/network_ar_lattice.csv, "
+                          "logs/network_ar_lattice_events.csv, a run-end report).  Measure-only: "
+                          "the products do not change.");
+            loadFixedCycleKnobs(json, ar);
             ar.min_epochs = jval<int>(json, "network.ambiguity_resolution.min_epochs",
                                       "network_ar_min_epochs", 10);
             // Cap on the MLAMBDA search dimension (0 = uncapped legacy).  Required at
@@ -1268,7 +1435,13 @@ namespace GnssProcessor {
                           "nothing to trace.  network_producer_ar.csv is NOT opened "
                           "(no header-only file).  Arm .enable to get rows.");
             }
-            if (ar.enable) {
+            if (ar.enable && ar.fixed_cycle_fold == FixedCycleFold::Emit) {
+                // Card FCF section 2: under fixed_cycles.fold emit (the D1 measurement arms) the
+                // record's first clause below, that the emitted product stays float, would be
+                // false, so that run prints this variant instead.  Every run without Emit prints
+                // the record's text, on its condition, unchanged.
+                log->warn("{}", fixedCycleEmitWarning(ar));
+            } else if (ar.enable) {
                 // networkProducerAr() (src/core/filter/NetworkProducerAr.cpp, INC-9b), the
                 // Phase-2 DD-fixability diagnostic, consumes eight of these nine gates:
                 // min_epochs and ils_max_dim directly, and min_success_rate /
@@ -1288,7 +1461,7 @@ namespace GnssProcessor {
                           "network COULD fix, and re-pin / re-solve is Phase 3 and unbuilt.  "
                           "Live gates: FFR>={:.4f}, ratio>={:.1f} (<{:.0e}), per-pair "
                           "frac<={:.2f} cyc, partial_ar {}, ils_max_dim {}, trace {}.  "
-                          "INERT: wl_cascade{}.  GPS+Galileo only; GLONASS stays float.",
+                          "INERT: wl_cascade{}.  GPS+Galileo only; GLONASS stays float.{}",
                           ar.min_epochs, ar.min_success_rate, ar.ratio_threshold,
                           ar.ratio_upper_bound, ar.nl_max_per_pair_frac,
                           ar.enable_partial_ar ? "on" : "off",
@@ -1296,9 +1469,201 @@ namespace GnssProcessor {
                                              : std::string("uncapped"),
                           ar.trace ? "ON (logs/network_producer_ar.csv)" : "off",
                           ar.wl_cascade ? " (set true, but no consumer reads it)"
-                                        : "");
+                                        : "",
+                          // Card AGT: named only when armed, so an unarmed line is unchanged.
+                          std::string(ar.cycle_basis ? (ar.cycle_basis_sticky
+                                                            ? "  Basis: cycle_basis, sticky."
+                                                            : "  Basis: cycle_basis, NON-sticky (control).")
+                                                     : "")
+                              + (ar.trace_lattice ? "  Lattice observatory ON." : ""));
             }
         }
+    }
+
+    // =================================================================
+    //  network validator: validateNetworkFixedCycles_ (card FCF)
+    // =================================================================
+    /**
+     * @brief The fixed-cycle fold's interlocks (card FCF sections 2 and 4), on resolved values.
+     *
+     * Called at the end of @c loadNetworkSection_, because the knobs it reads are parsed by
+     * later helpers.  With the fold off it only names fold knobs set without it.  With the
+     * fold on it refuses (throws) every posture card FCF does not cover:
+     *  - the fold needs the search (@c .enable) on card AGT's cycle basis (its units are the
+     *    basis's L1/L2 pairs), the float vehicle (@c network.ambiguity_vehicle float_kf) and
+     *    the held S-basis (@c network.phase_datum_held_basis);
+     *  - it refuses @c carry_invariant (the held solve reads the unfolded station factors, and
+     *    the Card-4 DD priors would fold into the same normals), @c phase_datum_ensemble and
+     *    @c phase_datum_eq34 (other phase datums, never measured with the fold),
+     *    @c cycle_slip.turbo_edit and @c cycle_slip.relevel_delta_bridge (integer repairs of
+     *    the float the fold reads), and @c sd_ewl.fix_enable (a second integer path);
+     *  - the source is always named; @c lattice (the ledger of fixed cycles, step FCF-3) runs
+     *    under Observe only, and Emit with it is refused (decision D1 failed, so step FCF-4 is
+     *    not built, and the author's ruling is not quoted);
+     *  - Emit requires the slip fixes of card ARL section 13 and what makes them act (the GF
+     *    arc trigger at k at most 6 with the free epoch, the IF-TD detector with its post-flag
+     *    re-seed, the suspect-corner mask): the per-unit test and block acceptance see a wrong
+     *    integer only where the float disagrees with it, and a slip no detector flags leaves
+     *    the zero-q float on the wrong integer (card FCFB section 5).  Observe without them is
+     *    named;
+     *  - Emit refuses @c emit_pb_hold_smoothed (its clock clones are estimator-side and read
+     *    the float) and @c network.state_snapshot_path (a snapshot written under Emit carries
+     *    emitter state derived from held values into whatever leg resumes it, and a resume
+     *    into Emit would read state the snapshot does not carry);
+     *  - until the author's ruling on the producer AR record, Emit requires source epoch,
+     *    @c emit_measurement_only, and every station's RINEX file in a sim fixture (the D1
+     *    measurement arms, section 2: the acknowledgement is checked, not trusted).
+     * A gross-LOS screen without @c gross_los_emit_exclude is named: its declarations at an
+     * epoch then act after that epoch's fold.  @c lapse_ep set under source epoch is named
+     * inert (it acts under source lattice only).
+     *
+     * @param log The "gnss_config" logger.
+     * @throws std::runtime_error on a refused posture.
+     */
+    void GnssConfig::validateNetworkFixedCycles_(const std::shared_ptr<spdlog::logger>& log) const {
+        const NetworkArConfig& ar = network_config_.ambiguity_resolution;
+        if (ar.fixed_cycle_fold == FixedCycleFold::Off) {
+            if (ar.fixed_cycle_trace || ar.fixed_cycle_emit_measurement_only
+                || ar.fixed_cycle_source != FixedCycleSource::Unset || ar.fixed_cycle_lapse_ep != 0)
+                log->warn("Network producer AR (card FCF): a fixed_cycles knob is set but "
+                          "fixed_cycles.fold is OFF; the fixed-cycle fold is INERT (no held solve, "
+                          "no trace).");
+            return;
+        }
+        const char* const mode = ar.fixed_cycle_fold == FixedCycleFold::Emit ? "emit" : "observe";
+        auto refuse = [&](const std::string& why) {
+            throw std::runtime_error(std::string("network.ambiguity_resolution.fixed_cycles.fold ")
+                                     + mode + " " + why + " (card FCF)");
+        };
+        if (!ar.enable)
+            refuse("requires network.ambiguity_resolution.enable: the fold holds what the search fixed");
+        if (!ar.cycle_basis)
+            refuse("requires network.ambiguity_resolution.cycle_basis (card AGT, with tree_basis, "
+                   "decorrelated_partial and block_search): its units are the basis's L1/L2 pairs");
+        if (network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf)
+            refuse("requires network.ambiguity_vehicle float_kf, the only vehicle it was designed on");
+        if (!network_phase_datum_held_basis_)
+            refuse("requires network.phase_datum_held_basis, the only phase datum it was designed on");
+        if (network_carry_invariant_)
+            refuse("refuses network.carry_invariant: the held solve reads the unfolded station "
+                   "factors, and the Card-4 DD priors fold into the same normals");
+        if (network_phase_datum_ensemble_)
+            refuse("refuses network.phase_datum_ensemble (a phase datum never measured with the fold)");
+        if (network_phase_datum_eq34_)
+            refuse("refuses network.phase_datum_eq34 (a phase datum never measured with the fold)");
+        if (network_cycle_slip_turbo_edit_)
+            refuse("refuses network.cycle_slip.turbo_edit (an integer repair of the float the fold reads)");
+        if (network_cycle_slip_relevel_delta_bridge_)
+            refuse("refuses network.cycle_slip.relevel_delta_bridge (an integer repair of the float "
+                   "the fold reads)");
+        if (network_config_.sd_ewl.fix_enable)
+            refuse("refuses network.sd_ewl.fix_enable (a second integer path)");
+        if (ar.fixed_cycle_source == FixedCycleSource::Unset)
+            refuse("requires fixed_cycles.source (epoch or lattice): the source is always named");
+        if (ar.fixed_cycle_source == FixedCycleSource::Lattice && ar.fixed_cycle_fold == FixedCycleFold::Emit)
+            refuse("refuses fixed_cycles.source lattice: the hold from the ledger (step FCF-4) is not "
+                   "built (decision D1 failed, card FCFB section 4) and the author's ruling on the "
+                   "producer AR record is not quoted in card FCF; source lattice runs under observe");
+
+        // The guard against a slip no detector flags (card FCFB section 5).  The per-unit test
+        // and block acceptance see a wrong integer only where the float disagrees with it; a
+        // missed slip leaves the zero-q float carry on the wrong integer, so both are blind
+        // there (the S8 twin without the GF trigger: one stale pair over 30 epochs, its T 0.18 to
+        // 7.9 against a bar of 27.6, folded at 24 of them).  The guard is card ARL section 13's slip fixes, with
+        // the knobs that make two of them act: the GF arc trigger frees through the free epoch,
+        // and the post-flag re-seed is inert without the IF-TD detector.
+        const SlipQcConfig& sq = network_config_.slip_qc;
+        std::vector<std::string> slip_missing;
+        if (!sq.gf_arc_jump)
+            slip_missing.push_back("network.cycle_slip.gf_arc_jump");
+        else if (sq.gf_arc_jump_k > 6.0)
+            slip_missing.push_back(fmt::format("network.cycle_slip.gf_arc_jump_k at most 6 (it is {})",
+                                               sq.gf_arc_jump_k));
+        if (!network_cycle_slip_relevel_free_epoch_)
+            slip_missing.push_back("network.cycle_slip.relevel_free_epoch");
+        if (!network_cycle_slip_if_phase_td_)
+            slip_missing.push_back("network.cycle_slip.if_phase_td");
+        if (!sq.if_phase_td_reseed_on_flag)
+            slip_missing.push_back("network.cycle_slip.if_phase_td_reseed_on_flag");
+        if (ar.suspect_epochs <= 0)
+            slip_missing.push_back("network.ambiguity_resolution.suspect_epochs above 0");
+        const std::string slip_list = detail::joinStrings(slip_missing, ", ");
+
+        if (ar.fixed_cycle_fold == FixedCycleFold::Emit) {
+            if (!slip_missing.empty())
+                refuse("requires the slip fixes of card ARL section 13 (missing: " + slip_list
+                       + "): the per-unit test and block acceptance cannot see a slip no detector "
+                         "flags, because the zero-q float then sits on the wrong integer (card "
+                         "FCFB section 5)");
+            if (network_config_.emit_pb_hold_smoothed)
+                refuse("refuses network.emit_pb_hold_smoothed: its clock clones are estimator-side "
+                       "and read the float");
+            if (!network_config_.state_snapshot_path.empty())
+                refuse("refuses network.state_snapshot_path: a snapshot written under Emit carries "
+                       "emitter state derived from held values into any leg that resumes it, and a "
+                       "resume into Emit would read state the snapshot does not carry");
+            if (ar.fixed_cycle_source != FixedCycleSource::Epoch || !ar.fixed_cycle_emit_measurement_only)
+                refuse("requires fixed_cycles.source epoch and fixed_cycles.emit_measurement_only "
+                       "true until the author's ruling on the producer AR record is quoted in card "
+                       "FCF: only the D1 measurement arms emit (card FCF section 2)");
+            const std::vector<std::string> off_bed = stationsOffSimFixture(network_config_.stations);
+            if (!off_bed.empty())
+                refuse("with fixed_cycles.emit_measurement_only requires every station's RINEX file "
+                       "in a sim fixture (a truth_ambiguities.csv beside it): the D1 arms are sim "
+                       "measurements (card FCF section 2); not on a sim bed: "
+                       + detail::joinStrings(std::vector<std::string>(
+                                         off_bed.begin(),
+                                         off_bed.begin() + std::min<std::size_t>(off_bed.size(), 5)),
+                                     ", ")
+                       + (off_bed.size() > 5 ? fmt::format(" and {} more", off_bed.size() - 5) : ""));
+        } else if (!slip_missing.empty()) {
+            log->warn("Network producer AR (card FCF): fixed_cycles.fold observe runs without the "
+                      "slip fixes of card ARL section 13 (missing: {}).  A slip no detector flags "
+                      "leaves the zero-q float on the wrong integer, which the per-unit test and "
+                      "block acceptance cannot see, so the {} it and traces it as folded "
+                      "(cards FCFB section 5, FCFC section 5).  Measure-only: the products do not "
+                      "change.",
+                      slip_list,
+                      ar.fixed_cycle_source == FixedCycleSource::Lattice
+                          ? "ledger keeps holding it, also after the search stops fixing it, until "
+                            "its arc leaves the pool, the float moves away or fixed_cycles.lapse_ep "
+                            "ends its folding, and the fold folds"
+                          : "probe folds");
+        }
+        if (ar.fixed_cycle_lapse_ep > 0 && ar.fixed_cycle_source != FixedCycleSource::Lattice)
+            log->warn("Network producer AR (card FCF): fixed_cycles.lapse_ep is set and INERT under "
+                      "source epoch (each epoch's units are the pairs the search determined at that "
+                      "epoch); it acts under source lattice.");
+        if (network_config_.gross_los_screen && !network_config_.gross_los_emit_exclude)
+            log->warn("Network producer AR (card FCF): network.gross_los_screen is on without "
+                      "network.gross_los_emit_exclude, so a gross line-of-sight declaration at an "
+                      "epoch acts after that epoch's fixed-cycle fold (a unit through it is held "
+                      "for one epoch).");
+        const bool lattice = ar.fixed_cycle_source == FixedCycleSource::Lattice;
+        log->info("Network producer AR (card FCF): fixed-cycle fold ARMED, mode {}, source {}: hold "
+                  "{} cycle, unit test alpha {:.0e} (chi-square, 2 dof), block acceptance alpha "
+                  "{:.0e} with up to {} drop-and-refold pass(es), shift bound {} m; trace {}.  {}",
+                  mode,
+                  lattice ? fmt::format("lattice (the L1/L2 pairs the ledger of fixed cycles implies, "
+                                        "admitted after {} epoch(s) at one integer, re-validated "
+                                        "against the search's float every epoch; {})",
+                                        ar.fixed_cycle_persist_ep,
+                                        ar.fixed_cycle_lapse_ep > 0
+                                            ? fmt::format("a unit lapses after {} epoch(s) the search "
+                                                          "does not determine its pair",
+                                                          ar.fixed_cycle_lapse_ep)
+                                            : std::string("no lapse"))
+                          : std::string("epoch (this epoch's determined L1/L2 pairs; no memory)"),
+                  ar.fixed_cycle_sigma_cyc, ar.fixed_cycle_unit_alpha,
+                  ar.fixed_cycle_gate_alpha, ar.fixed_cycle_max_iter, ar.fixed_cycle_max_shift_m,
+                  ar.fixed_cycle_trace
+                      ? (lattice ? "ON (logs/network_fixed_cycles.csv, logs/network_fixed_cycle_shift.csv, "
+                                   "logs/network_fixed_cycle_events.csv)"
+                                 : "ON (logs/network_fixed_cycles.csv, logs/network_fixed_cycle_shift.csv)")
+                      : "off",
+                  ar.fixed_cycle_fold == FixedCycleFold::Emit
+                      ? "Solution prep and the emitter read the held solve (a D1 measurement arm)."
+                      : "Measure-only: the products do not change.");
     }
 
     // =================================================================
@@ -14425,10 +14790,10 @@ namespace GnssProcessor {
                 if (ev.kind != "slip" && ev.kind != "outage"
                     && ev.kind != "anchor_handover" && ev.kind != "arc_erase"
                     && ev.kind != "sat_clock_step" && ev.kind != "rx_clock_step"
-                    && ev.kind != "oracle_pin") {
+                    && ev.kind != "oracle_pin" && ev.kind != "fixed_cycle_plant") {
                     log->error("Config: {}.kind '{}' is not one of slip | outage | "
                                "anchor_handover | arc_erase | sat_clock_step | "
-                               "rx_clock_step | oracle_pin.",
+                               "rx_clock_step | oracle_pin | fixed_cycle_plant.",
                                where, ev.kind);
                     return false;
                 }
@@ -14504,6 +14869,16 @@ namespace GnssProcessor {
                 } else if (ev.kind == "sat_clock_step") {
                     if (!need(!ev.sat.empty(), "a sat")) return false;
                     if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;
+                } else if (ev.kind == "fixed_cycle_plant") {
+                    // Card FCF (step FCF-3): a wrong integer planted in the ledger of fixed
+                    // cycles on one arc, consumed by the fixed-cycle seam.
+                    if (!need(!ev.station.empty(), "a station")) return false;
+                    if (!need(!ev.sat.empty(), "a sat")) return false;
+                    if (!need(!ev.signal.empty() && ev.signal[0] == 'L',
+                              "a PHASE signal code (leading L), the arc's band")) return false;
+                    if (!need(ev.delta_cycles != 0.0
+                                  && ev.delta_cycles == std::round(ev.delta_cycles),
+                              "a non-zero integer delta_cycles")) return false;
                 } else if (ev.kind == "oracle_pin") {
                     // Sim-only diagnostic (include/filter/NetworkOraclePin.hpp).  Both
                     // fields are validated, and a failure names the field: a scope

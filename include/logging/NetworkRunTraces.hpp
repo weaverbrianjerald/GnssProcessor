@@ -222,6 +222,101 @@ namespace GnssProcessor {
     /// one the ils_max_dim cap left out.  reentry is 1 on a searched DD one of whose corners
     /// the mask released at this search (the DD's first search after the release).
     inline constexpr const char* kProducerArSuspectColumns = ",suspect_bits,reentry";
+    /// The four columns appended after those (before the header's newline) when
+    /// network.ambiguity_resolution.cycle_basis is armed (card AGT, step AGT-5,
+    /// filter/NetworkArCycleBasis.hpp).  cycle_kind is how the DD closes its chord: partner
+    /// (against the station's link parent and link reference) or borrowed (against an earlier
+    /// station sharing the most satellites); a chord no DD closes is a fundamental fallback,
+    /// counted at the run end and never a row.  band_only is 1 when the chord exists in this
+    /// band only.  basis_age_ep is the epochs since this DD identity (signal, sta_r, ref_sta,
+    /// sat_j, ref_sat) entered the basis without a break (0 on its first epoch).  map_state is
+    /// the DD's cycle against the last search's basis: same (that very cycle), mapped (an
+    /// integer combination of its cycles), fresh_life (through an arc whose integer may have
+    /// changed: freed this epoch or a new life stamp) or fresh_new (outside its span: a new arc,
+    /// or no stored basis).
+    inline constexpr const char* kProducerArCycleBasisColumns = ",cycle_kind,band_only,basis_age_ep,map_state";
+    /// network_ar_lattice.csv header (card AGT, step AGT-6, widened by card FCF step FCF-3;
+    /// filter/NetworkArLattice.hpp; network.ambiguity_resolution.trace_lattice).  One row per
+    /// ledger step (an epoch the search built the cycle basis), after the seam gap, the evidence
+    /// releases, the contradictions, the fold's re-validation, the admission and the fold's own
+    /// releases, in that order.
+    ///
+    /// rows / arcs: the lattice dimension and the distinct band-arcs its rows hold, after the
+    /// epoch.  fixes: the DDs the search determined (the trace's kept rows); added + confirmed
+    /// + contradicted + not_primitive + waiting = fixes (waiting: not yet persist_ep epochs at
+    /// one integer).  released: the releases (rel_vanished, the search did not read the arc;
+    /// rel_first_seen, the last search did not; rel_freed, this epoch's free-epoch latch;
+    /// rel_stamp, a change of the arc's life stamp that is not the echo of a life the last
+    /// search began; rel_replay, the landed within-epoch replay's culprits; rel_gross, the
+    /// gross-LOS Decide; rel_contradiction, a fix that contradicted the lattice; rel_revalidation,
+    /// a unit that failed its float test; rel_acceptance, a unit dropped by held-solve block
+    /// acceptance; rel_degenerate, a unit in a block the kernel refused; rel_seam_gap, a skipped
+    /// epoch; their sum is released).  released_touching: those that found rows.  dims_lost: the
+    /// rows dropped (an arc release costs one when a row holds the arc at +-1, every row
+    /// through it otherwise, counted by no_unit; a support release costs its rows).  max_len /
+    /// mean_len: the longest and the mean row (arcs) after the epoch.  units / units_failed:
+    /// the L1/L2 units the lattice implied and those that failed their float test (the fold,
+    /// source lattice).  The evidence is valid only while no hold pulls the floats the search
+    /// fixes (card FCF keeps the estimator float).
+    inline constexpr const char* kArLatticeHeader =
+        "week,tow,rows,arcs,fixes,added,confirmed,contradicted,not_primitive,released,"
+        "released_touching,dims_lost,no_unit,rel_vanished,rel_first_seen,rel_freed,rel_stamp,"
+        "max_len,mean_len,waiting,rel_replay,rel_gross,rel_contradiction,rel_revalidation,"
+        "rel_acceptance,rel_degenerate,rel_seam_gap,units,units_failed\n";
+    /// network_ar_lattice_events.csv header (card AGT, step AGT-6; card FCF step FCF-3).  One row
+    /// per release, in application order, then one per offer that is neither a confirmation nor
+    /// waiting (event `added`, `contradicted` or `not_primitive`); a kept DD of
+    /// network_producer_ar.csv at the same epoch with no row here was confirmed or waiting.  An
+    /// offer row names the DD (sat_j, ref_sat, sta_r, ref_sta) and its offered integer
+    /// (`value`); `implied` is the lattice's integer on a contradiction and `len` the new row's
+    /// length on an addition.  An arc release (event `release`) names the arc (sat_j, sta_r,
+    /// signal; the reference columns empty), its `cause`, the rows that held it and the rows
+    /// dropped, the changed life-stamp fields (`change_bits`, the ArcLifeField bits: 1
+    /// adm_generation, 2 adm_run_start, 4 has_carry, 8 birth_ep, 16 dropped_ep, 32 relevel_s,
+    /// 64 flag_ep) and the free-epoch latch's cause bits (`free_cause`: 1 MW, 2 LLI, 4 IF-TD,
+    /// 8 T4 attribution, 16 T3 consensus, 32 wind-up, 64 gap re-entry, 128 GF jump).  A cycle
+    /// release (event `release_cycle`) names the DD whose arcs were released, its cause
+    /// (contradiction with `value` and `implied`, revalidation, acceptance, degenerate), the rows
+    /// that held any of its arcs and the rows dropped; a seam gap (event `release_all`) the rows
+    /// dropped.  Graded against truth by scripts/simnet_ar_lattice_grade.py and
+    /// scripts/simnet_fixed_cycle_grade.py.
+    inline constexpr const char* kArLatticeEventsHeader =
+        "week,tow,event,cons,signal,sat_j,ref_sat,sta_r,ref_sta,value,implied,len,cause,"
+        "rows_touched,rows_dropped,change_bits,free_cause\n";
+    /// network_fixed_cycles.csv header (card FCF, filter/NetworkFixedCycles.hpp;
+    /// network.ambiguity_resolution.fixed_cycles.trace).  One row per unit-epoch: a DD
+    /// identity (cons, sat_j, ref_sat, sta_r, ref_sta) the search determined in both bands
+    /// (sig1 the shorter wavelength), with its integers n1 / n2, its floats y1_cyc / y2_cyc,
+    /// their sigmas sd1_cyc / sd2_cyc and correlation rho from the search's readback, the unit
+    /// statistic t_unit = v' Sigma^-1 v (v = y - n, chi-square with 2 dof under right
+    /// integers), and its fate: the block it was placed in at the deciding pass (-1 when never
+    /// placed), that block's rows block_k, its own statistic block_chi2, the statistic's mean
+    /// under right integers block_chi2_expect and its bar chi2_K(1 - gate_alpha) block_bar, the
+    /// deciding pass, and the action (folded, unit_refused, unplaced, dropped, left_float,
+    /// degenerate, float_mismatch, non_finite, kernel_error, shift_refused; under source lattice
+    /// also released and lapsed).  Graded against truth by scripts/simnet_fixed_cycle_grade.py.
+    inline constexpr const char* kFixedCyclesHeader =
+        "week,tow,cons,sig1,sig2,sat_j,ref_sat,sta_r,ref_sta,n1,n2,y1_cyc,y2_cyc,sd1_cyc,sd2_cyc,"
+        "rho,t_unit,block,block_k,block_chi2,block_chi2_expect,block_bar,pass,action\n";
+    /// network_fixed_cycle_shift.csv header (card FCF).  One row per emitted quantity of every
+    /// epoch with an accepted held solve: kind clock (signal empty), code_bias, phase_bias or
+    /// phase_visible (the phase bias minus the clock, the phase side a consumer applies), its
+    /// value from the float shared estimate (float_m), from the held one (held_m) and their
+    /// difference delta_m = held_m - float_m, in metres, before any emission filter or hold.
+    inline constexpr const char* kFixedCycleShiftHeader =
+        "week,tow,sat,kind,signal,float_m,held_m,delta_m\n";
+    /// network_fixed_cycle_events.csv header (card FCF step FCF-3, source lattice; written under
+    /// fixed_cycles.trace).  One row per edge of a folded unit: `onset` (the unit folded at this
+    /// epoch and not at the step before, or folded again with other integers), `offset` (folded
+    /// at the step before and not now; `cause` is its fate now: a unit action such as
+    /// unit_refused, released, lapsed, dropped or left_float, else the release cause that took
+    /// one of its arcs, else not_implied or out_of_basis), and `late_t3t4` (an arc of a unit folded at
+    /// the step before whose life stamp now carries a post-fit flag: RAIM T3 / T4 or the
+    /// gross-LOS Act acted after the emission of that step; the arc in `detail`).  The unit is
+    /// its DD identity (cons, sig1 / sig2, sat_j, ref_sat, sta_r, ref_sta) with its integers
+    /// n1 / n2; run_ep is the length of the folded run that ended (offset) or 0.
+    inline constexpr const char* kFixedCycleEventsHeader =
+        "week,tow,event,cons,sig1,sig2,sat_j,ref_sat,sta_r,ref_sta,n1,n2,run_ep,cause,detail\n";
     /// network_block_baarda.csv header (docs/SPEC_redundancy_census.md BB-INC-1..3).
     /// One row per (constellation family x label) per epoch that swept a block.
     ///
@@ -492,6 +587,27 @@ namespace GnssProcessor {
         /// Diagnostic only: the emitted product is byte-identical with it on or off.
         std::ofstream producer_ar_trace;
         const std::filesystem::path producer_ar_trace_path;
+        /// The producer AR search's lattice observatory (card AGT, step AGT-6;
+        /// network.ambiguity_resolution.trace_lattice with .enable): one row per search epoch
+        /// (@ref kArLatticeHeader) and one per release or non-confirming offer
+        /// (@ref kArLatticeEventsHeader).  Written by filter/NetworkArLattice.cpp.
+        /// Measure-only: the emitted product is byte-identical with it on or off.
+        std::ofstream ar_lattice_trace;
+        const std::filesystem::path ar_lattice_trace_path;
+        std::ofstream ar_lattice_events_trace;
+        const std::filesystem::path ar_lattice_events_trace_path;
+        /// The fixed-cycle fold (card FCF; network.ambiguity_resolution.fixed_cycles.trace
+        /// with the fold armed): one row per unit-epoch (@ref kFixedCyclesHeader) and the held
+        /// minus float of every emitted quantity on an accepted epoch
+        /// (@ref kFixedCycleShiftHeader).  Written by filter/NetworkFixedCycles.cpp.
+        std::ofstream fixed_cycles_trace;
+        const std::filesystem::path fixed_cycles_trace_path;
+        std::ofstream fixed_cycle_shift_trace;
+        const std::filesystem::path fixed_cycle_shift_trace_path;
+        /// The fold's edges under source lattice (card FCF step FCF-3,
+        /// @ref kFixedCycleEventsHeader).
+        std::ofstream fixed_cycle_events_trace;
+        const std::filesystem::path fixed_cycle_events_trace_path;
         /// Raw cycle-slip observables per (station, sat) every epoch
         /// (network.trace_slip_raw): Melbourne-Wübbena, geometry-free L1−L2, first-signal
         /// phase-minus-code (all m) and the per-band RINEX LLI, computed from

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>      // the held solve's NaN / infinity sentinels (card FCF)
 #include <stdexcept>
 
 #include <fmt/format.h>
@@ -401,13 +402,41 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
 
     // Apply the explicit minimum-constraint datum to a copy of the reduced shared
     // system (the kernel's W5 seam), so the kernel's own reduced normals stay
-    // unmodified for reconstructStation().  Each gauge is realized as an exact hard
-    // pin (Dirichlet elimination): its known contribution moves to the RHS, then its
-    // row and column are zeroed and the pinned diagonal is set so x_col = value.
+    // unmodified for reconstructStation().  The pins are applyDatumPins (card FCF moved
+    // them there verbatim, so the detached held solve pins exactly as this solve does).
     Eigen::MatrixXd N = neq_.reducedSharedNormals();
     Eigen::VectorXd u = neq_.reducedSharedRhs();
+    applyDatumPins(N, u, datum);
+
+    // Solve the datum-constrained reduced system and recover the shared covariance
+    // from the same LDLᵀ factor: the kernel factorizes the constrained N once and
+    // fills shared_cov_ (the inverse of the datum-constrained reduced normals), so N
+    // is not factorized a second time here.  shared_cov_ feeds the driver's
+    // between-epoch carry-forward prior (its diagonal; W4-S2b D2) and producer-side
+    // network AR (the full block, via conditionalLocalCovariance).
+    const Eigen::VectorXd x_s = neq_.solveSharedConstrained(N, u, &shared_cov_);
+
+    solved_ = true;
+    // The clock pivots of the primary build's last solve (card NOM N2a); a replay's
+    // solve uses the same datum and is counted with the replay.
+    if (!contrib_replay_) {
+        contrib_log_.pins   = static_cast<long long>(datum.size());
+        contrib_log_.solved = true;
+    }
+    return x_s;
+}
+
+void NetworkEstimator::applyDatumPins(Eigen::MatrixXd& N, Eigen::VectorXd& u,
+                                      const Datum& datum) {
+    // Moved verbatim out of solve() (card FCF); the one change is the range bound,
+    // N.rows() for numShared(), which are equal at every call (solve() pins the reduced
+    // normals of the open epoch, which beginEpoch sized to numShared()).
+    //
+    // Each gauge is realized as an exact hard pin (Dirichlet elimination): its known
+    // contribution moves to the RHS, then its row and column are zeroed and the pinned
+    // diagonal is set so x_col = value.
     for (const Pin& p : datum) {
-        if (p.column < 0 || p.column >= numShared()) {
+        if (p.column < 0 || p.column >= N.rows()) {
             throw std::out_of_range("NetworkEstimator::solve: datum pin column "
                                     "out of range");
         }
@@ -438,23 +467,167 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
         N(p.column, p.column) = pin_scale;
         u(p.column) = pin_scale * p.value;
     }
+}
 
-    // Solve the datum-constrained reduced system and recover the shared covariance
-    // from the same LDLᵀ factor: the kernel factorizes the constrained N once and
-    // fills shared_cov_ (the inverse of the datum-constrained reduced normals), so N
-    // is not factorized a second time here.  shared_cov_ feeds the driver's
-    // between-epoch carry-forward prior (its diagonal; W4-S2b D2) and producer-side
-    // network AR (the full block, via conditionalLocalCovariance).
-    const Eigen::VectorXd x_s = neq_.solveSharedConstrained(N, u, &shared_cov_);
-
-    solved_ = true;
-    // The clock pivots of the primary build's last solve (card NOM N2a); a replay's
-    // solve uses the same datum and is counted with the replay.
-    if (!contrib_replay_) {
-        contrib_log_.pins   = static_cast<long long>(datum.size());
-        contrib_log_.solved = true;
+NetworkEstimator::HeldSolve NetworkEstimator::solveHeldDetached(
+    const Datum& datum, const Eigen::VectorXd& x_float,
+    const std::vector<std::vector<NetworkNormalEquations::CycleRow>>& blocks) const {
+    // Preconditions, read from the kernel's own state: its reduced normals are those of a
+    // float solve, and nothing else is folded into them that the held solve would have to
+    // undo.  (The request lists dd_priors_ / phase_sumzero_gauges_ may be changed after
+    // the solve; what was folded is what the kernel holds.)
+    if (!solved_) {
+        throw std::logic_error("NetworkEstimator::solveHeldDetached: requires a prior solve()");
     }
-    return x_s;
+    if (!neq_.isReduced()) {
+        throw std::logic_error("NetworkEstimator::solveHeldDetached: the kernel's reduction is "
+                               "not current (the cached system did not produce the float)");
+    }
+    if (neq_.numDdPriorBlocks() > 0 || neq_.numSumZeroGauges() > 0) {
+        throw std::logic_error(
+            "NetworkEstimator::solveHeldDetached: the float solve folded Card-4 DD priors or "
+            "sum-to-zero phase gauges; the detached fold reads the unfolded station factors "
+            "and composing the two is inexact (the fixed-cycle loader refuses both)");
+    }
+    if (x_float.size() != numShared()) {
+        throw std::invalid_argument("NetworkEstimator::solveHeldDetached: x_float size mismatch");
+    }
+    const Eigen::MatrixXd& N0 = neq_.reducedSharedNormals();
+    const Eigen::VectorXd& u0 = neq_.reducedSharedRhs();
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+
+    // The held solves are not the float path's: the kernel's section timers are put back on
+    // every exit (a throw included), so the D0 run-end line and the driver's per-bracket
+    // accounting count the float solves alone.  The fixed-cycle seam times itself.
+    struct KernelTimersRestore {
+        const NetworkNormalEquations& kernel;
+        const NetworkNormalEquations::SectionTimers saved;
+        ~KernelTimersRestore() { kernel.restoreSectionTimers(saved); }
+    } const timers_restore{neq_, neq_.sectionTimers()};
+
+    HeldSolve h;
+    h.x_s = x_float;   // the contract: x_float, bitwise, unless the held estimate is accepted
+
+    // (1) Float reproduction: the normwise backward error of x_float on the pinned
+    // unfolded copy.  For the float this cache produced it is round-off whatever the
+    // conditioning (a residual relative to |u| alone grows with cond(N) when the float
+    // increment lies in weakly determined directions); a cache that no longer produced
+    // x_float (a later re-solve, a post-solve shared fold) leaves it far above round-off.
+    if (numShared() > 0) {
+        if (!x_float.allFinite()) {
+            h.float_repro_rel = kInf;
+        } else {
+            Eigen::MatrixXd Np = N0;
+            Eigen::VectorXd up = u0;
+            applyDatumPins(Np, up, datum);
+            const double r_inf = (Np * x_float - up).lpNorm<Eigen::Infinity>();
+            const double n_inf = Np.cwiseAbs().rowwise().sum().maxCoeff();   // ||N_p||_inf
+            const double den   = n_inf * x_float.lpNorm<Eigen::Infinity>()
+                               + up.lpNorm<Eigen::Infinity>();
+            h.float_repro_rel = (den > 0.0) ? r_inf / den : (r_inf > 0.0 ? kInf : 0.0);
+            if (!std::isfinite(h.float_repro_rel)) h.float_repro_rel = kInf;
+        }
+    }
+
+    const std::size_t nb = blocks.size();
+    h.v.resize(nb);
+    h.kappa.resize(nb);
+    h.chi2.assign(nb, 0.0);
+    h.chi2_expect.assign(nb, 0.0);
+    h.degenerate.assign(nb, 0);
+    h.dependent.assign(nb, 0);
+    if (nb == 0) return h;   // nothing to fold: the float, unchanged
+
+    // (2) The fold operands, from the kernel's cached per-station factors (read only).
+    const NetworkNormalEquations::DetachedFold fold = neq_.foldCycleRowsDetached(blocks);
+    int n_folded = 0;
+    for (std::size_t b = 0; b < nb; ++b) {
+        const NetworkNormalEquations::DetachedFoldBlock& fb = fold.blocks[b];
+        h.degenerate[b] = fb.degenerate ? 1 : 0;
+        h.dependent[b]  = fb.dependent ? 1 : 0;
+        h.factor_nnz += fb.factor_nnz;
+        // v = z_free - G^T x_float - zhat: the float cycle value minus its target.
+        h.v[b] = fb.z_free - fb.G.transpose() * x_float - fb.zhat;
+        if (fb.factor) ++n_folded;
+        if (fb.degenerate) h.chi2[b] = h.chi2_expect[b] = kNaN;
+    }
+    if (n_folded == 0) return h;
+
+    // One held solve: fold the increments onto a copy, pin it with the same datum, and
+    // solve once; the held covariance with it, the pinned columns exact (zero), as the
+    // statistics' means read it.
+    auto heldSolve = [&](const Eigen::MatrixXd& dN, const Eigen::VectorXd& du,
+                         Eigen::MatrixXd& cov) {
+        Eigen::MatrixXd N = N0 + dN;
+        Eigen::VectorXd u = u0 + du;
+        applyDatumPins(N, u, datum);
+        Eigen::VectorXd x = neq_.solveSharedConstrained(N, u, &cov);
+        for (const Pin& p : datum) {
+            cov.row(p.column).setZero();
+            cov.col(p.column).setZero();
+        }
+        return x;
+    };
+    // A block's kappa against a held estimate: A^-1 (z_free - G^T x - zhat).
+    auto kappaAt = [](const NetworkNormalEquations::DetachedFoldBlock& fb,
+                      const Eigen::VectorXd& x) {
+        return NetworkNormalEquations::solveFoldBlock(fb, fb.z_free - fb.G.transpose() * x - fb.zhat);
+    };
+    // A block's share of tr(S^-1 P^z) under the held covariance cov:
+    // sum_k pz_k (S^-1)_kk with (S^-1)_kk = (A^-1)_kk - x_k' cov x_k, x_k the k-th row of
+    // X = A^-1 G^T (the Woodbury form of S = A + G' Sigma_float G; A is block diagonal over
+    // the blocks, so the rows of the joint X are the blocks' rows).
+    auto holdTrace = [&](std::size_t b, const Eigen::MatrixXd& cov) {
+        const NetworkNormalEquations::DetachedFoldBlock& fb = fold.blocks[b];
+        const Eigen::VectorXd q = (fb.X * cov).cwiseProduct(fb.X).rowwise().sum();
+        double tr = 0.0;
+        for (Eigen::Index k = 0; k < q.size(); ++k)
+            tr += blocks[b][static_cast<std::size_t>(k)].pz_m2 * (fb.ainv_diag(k) - q(k));
+        return tr;
+    };
+
+    // (3) Every block folded together: the held estimate and its covariance.
+    Eigen::MatrixXd cov_held;
+    const Eigen::VectorXd x_held = heldSolve(fold.dN, fold.du, cov_held);
+
+    // (4) kappa = S^-1 v over every folded row, S = Var(float cycles) + P^z, so v^T kappa
+    // is the joint chi-square statistic, of mean K - tr(S^-1 P^z) under right targets.  A
+    // block's own statistic is v_b^T kappa_b only when no other block folds (the float
+    // cycles of two blocks are correlated through the shared border); otherwise it comes
+    // from a held solve of that block alone, and so does its mean.
+    for (std::size_t b = 0; b < nb; ++b) {
+        const NetworkNormalEquations::DetachedFoldBlock& fb = fold.blocks[b];
+        if (!fb.factor) continue;
+        const double K_b = static_cast<double>(h.v[b].size());
+        h.kappa[b] = kappaAt(fb, x_held);
+        const double share = h.v[b].dot(h.kappa[b]);
+        const double share_tr = holdTrace(b, cov_held);
+        h.chi2_joint        += share;
+        h.chi2_joint_expect += K_b - share_tr;
+        h.dof_joint         += static_cast<long long>(h.v[b].size());
+        if (n_folded == 1) {
+            h.chi2[b]        = share;
+            h.chi2_expect[b] = K_b - share_tr;
+        } else {
+            Eigen::MatrixXd cov_b;
+            const Eigen::VectorXd x_b = heldSolve(fb.dN, fb.du, cov_b);
+            h.chi2[b]        = h.v[b].dot(kappaAt(fb, x_b));
+            h.chi2_expect[b] = K_b - holdTrace(b, cov_b);
+        }
+    }
+
+    // (5) Acceptance: a finite held estimate on a reproduced float.  Only then is x_s the
+    // held estimate; otherwise it stays x_float, bitwise.
+    // (The checks are explicit: Eigen's maxCoeff may skip a NaN.)
+    const bool finite = x_held.allFinite();
+    if (numShared() > 0) {
+        h.max_shift_m = (finite && x_float.allFinite())
+                      ? (x_held - x_float).lpNorm<Eigen::Infinity>() : kInf;
+    }
+    h.ok = finite && (h.float_repro_rel <= kHeldFloatReproTol);
+    if (h.ok) h.x_s = x_held;
+    return h;
 }
 
 void NetworkEstimator::addStationPrior(std::size_t station,

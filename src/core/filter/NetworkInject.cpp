@@ -110,6 +110,7 @@ namespace GnssProcessor {
             if (!e.sat.empty())     list += " sat=" + e.sat;
             if (!e.signal.empty())  list += " sig=" + e.signal;
             if (e.kind == "slip")           list += fmt::format(" d={:.3f}cyc", e.delta_cycles);
+            if (e.kind == "fixed_cycle_plant") list += fmt::format(" d={:.0f}cyc", e.delta_cycles);
             if (e.kind == "outage")         list += fmt::format(" dur={:.0f}s", e.duration_s);
             if (e.kind == "anchor_handover")list += " mode=" + e.mode;
             if (e.kind == "sat_clock_step" || e.kind == "rx_clock_step")
@@ -142,6 +143,7 @@ namespace GnssProcessor {
         st.anchor_now.clear();
         st.arc_erase_now.clear();
         st.anchor_now_slip.clear();
+        st.fixed_cycle_plant_now.clear();
 
         if (!st.armed) return se_raw;          // byte-identical path: no copy
 
@@ -304,6 +306,11 @@ namespace GnssProcessor {
                 // every erase mode, the PASS-A drain for free_epoch), so a
                 // directive that no seam could act on still reaches the
                 // never-fired hard error.
+            } else if (e.kind == "fixed_cycle_plant") {
+                // Re-staged at every epoch until the fixed-cycle seam closes the ledger
+                // entry: it fires at the first epoch at which the ledger holds the arc.
+                st.fixed_cycle_plant_now.push_back(InjectFixedCyclePlant{
+                    e.station, e.sat, e.signal, std::llround(e.delta_cycles), i});
             }
         }
         return *out;

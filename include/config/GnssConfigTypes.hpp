@@ -983,6 +983,31 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Where the producer AR search's fixed integer cycles go (card FCF,
+     *        @c network.ambiguity_resolution.fixed_cycles.fold).
+     *
+     * The fold is a second solve of the shared parameters, beside the float solve of the
+     * same epoch, built from a copy of the float solve's reduced normals with the fixed
+     * L1/L2 pairs held (filter/NetworkFixedCycles.hpp).  The estimator, the carry, the
+     * search, the DD trace and post-fit QC stay float in every mode.
+     */
+    enum class FixedCycleFold {
+        Off,      ///< (default) Nothing runs; byte-identical.
+        Observe,  ///< The held solve runs beside the float one, traced and counted; nothing is emitted from it and nothing is carried.
+        Emit      ///< As Observe, and solution prep and the emitter read the held shared estimate; every other reader keeps the float (card FCF section 5).
+    };
+
+    /**
+     * @brief Which fixed integer cycles the fold holds (card FCF,
+     *        @c network.ambiguity_resolution.fixed_cycles.source).
+     */
+    enum class FixedCycleSource {
+        Unset,    ///< Not named: refused whenever the fold is not off (the source is always named).
+        Epoch,    ///< This epoch's determined L1/L2 pairs only: no memory, nothing to release (the FCF-2 probe).
+        Lattice   ///< The L1/L2 pairs the ledger of fixed cycles implies (the hold, step FCF-3; filter/NetworkArLattice.hpp), re-validated every epoch against the search's float.  Observe only: Emit with it is refused (decision D1 failed, and the author's ruling is not quoted).
+    };
+
+    /**
      * @brief Producer-side network ambiguity-resolution gates.
      *
      * Controls integer fixing of the network's own between-station,
@@ -1036,6 +1061,88 @@ namespace GnssProcessor {
         /// solve-affecting search.  Today's search is log-only, so the products are
         /// byte-identical either way.  0 (default) = off.
         int    suspect_epochs{ 0 };
+        /// Card AGT (step AGT-5): search a sticky, L1/L2-consistent, full-coverage short-cycle
+        /// basis (filter/NetworkArCycleBasis.hpp) instead of the per-signal tree_basis.  Per
+        /// constellation the two signals with the most arcs share one graph (each further
+        /// signal its own); a baseline forest kept from search to search (the incumbent links)
+        /// is closed into one double difference per chord of every band, against the link
+        /// parent or an earlier station sharing the most satellites, so the search covers the
+        /// whole cycle lattice (E - V + C per band; a chord no double difference can close is
+        /// counted as a fundamental fallback and not searched).  One search block per station
+        /// (cons|sta_r).  Requires @ref tree_basis, @ref decorrelated_partial and
+        /// @ref block_search; otherwise the loader forces it off with a warning.  Log-only, so
+        /// fingerprint-safe; the trace gains the columns cycle_kind, band_only, basis_age_ep
+        /// and map_state.  Off (default) = tree_basis unchanged.
+        bool   cycle_basis{ false };
+        /// Card AGT control arm: keep the cycle basis's incumbent links from one search to the
+        /// next (true, default); false rebuilds the forest from scratch every search.  Inert
+        /// without @ref cycle_basis.
+        bool   cycle_basis_sticky{ true };
+        /// Card AGT (step AGT-6), re-scoped by card FCF (step FCF-3): the ledger of fixed cycles
+        /// (filter/NetworkArLattice.hpp), stepped in the fixed-cycle seam at SB_SOLPREP.  Each
+        /// search epoch it releases what ended (a skipped epoch; arcs vanished, first seen,
+        /// freed, with a stamp change, or named by the landed within-epoch replay or the gross-LOS
+        /// Decide; a fix that contradicts it), then offers the fixes that persisted
+        /// @ref fixed_cycle_persist_ep epochs (added, confirmed or not primitive);
+        /// logs/network_ar_lattice.csv (one row per epoch), logs/network_ar_lattice_events.csv
+        /// (one row per release and per offer that is not a confirmation) and a run-end report.
+        /// Requires @ref cycle_basis; otherwise the loader forces it off with a warning.  Nothing
+        /// the solve reads is written.  Off (default).
+        bool   trace_lattice{ false };
+        /// Card FCF (@c fixed_cycles.fold): fold the search's fixed L1/L2 pairs into a detached
+        /// held solve of the shared parameters (filter/NetworkFixedCycles.hpp).  Off (default)
+        /// is byte-identical; Observe traces and counts the held solve; Emit hands it to
+        /// solution prep and the emitter only.  The loader refuses a fold that is not off
+        /// unless .enable and @ref cycle_basis are on, @c network.ambiguity_vehicle is
+        /// float_kf and @c network.phase_datum_held_basis is on, and refuses it with
+        /// @c network.carry_invariant, @c phase_datum_ensemble, @c phase_datum_eq34,
+        /// @c cycle_slip.turbo_edit, @c cycle_slip.relevel_delta_bridge or
+        /// @c sd_ewl.fix_enable.  Emit also refuses @c emit_pb_hold_smoothed and a
+        /// @c network.state_snapshot_path, and requires the slip fixes of card ARL section
+        /// 13 (the per-unit test cannot see a slip no detector flags; card FCFB section 5).
+        /// Until the author's ruling on the producer-AR record is quoted in card FCF, Emit
+        /// requires @ref fixed_cycle_source Epoch, @ref fixed_cycle_emit_measurement_only and
+        /// a sim fixture behind every station (the D1 measurement arms, card FCF section 2).
+        FixedCycleFold   fixed_cycle_fold{ FixedCycleFold::Off };
+        /// Card FCF (@c fixed_cycles.source): epoch or lattice; refused unset whenever the fold
+        /// is not off.  Lattice runs under Observe only (Emit with it is refused: decision D1
+        /// failed, and the author's ruling is not quoted).
+        FixedCycleSource fixed_cycle_source{ FixedCycleSource::Unset };
+        /// Card FCF (@c fixed_cycles.sigma_cyc): hold sigma per folded row, in cycles of its
+        /// band; the row's variance is @f$P^z=(\sigma\lambda)^2>0@f$, so @f$P^z+B@f$ is positive
+        /// definite.  Default 0.003 (card FCFB section 3).
+        double fixed_cycle_sigma_cyc{ 0.003 };
+        /// Card FCF (@c fixed_cycles.unit_alpha): false-refusal probability per unit-epoch of the
+        /// per-unit test, T = v' Sigma_pair^-1 v against chi-square with 2 degrees of freedom.
+        double fixed_cycle_unit_alpha{ 1e-6 };
+        /// Card FCF (@c fixed_cycles.gate_alpha): probability of each block's acceptance test on
+        /// the held solve, its own statistic against chi-square with K degrees of freedom.
+        double fixed_cycle_gate_alpha{ 1e-4 };
+        /// Card FCF (@c fixed_cycles.max_iter): drop-the-worst-unit-and-refold passes before a
+        /// block that still fails acceptance stays float for the epoch.
+        int    fixed_cycle_max_iter{ 3 };
+        /// Card FCF (@c fixed_cycles.max_shift_m): a held shared estimate further than this
+        /// from the float on any column is refused for the epoch (m).
+        double fixed_cycle_max_shift_m{ 0.5 };
+        /// Card FCF (@c fixed_cycles.persist_ep, step FCF-3): consecutive epochs a fix must keep
+        /// one integer, with no new life on its four arcs, before the ledger of fixed cycles
+        /// admits it (@ref trace_lattice and @c source lattice alike).  At least 1; default 10.
+        int    fixed_cycle_persist_ep{ 10 };
+        /// Card FCF (@c fixed_cycles.lapse_ep, the review of step FCF-3, card FCFC section 8):
+        /// under source lattice, a unit the ledger implies is not folded once the search has
+        /// not determined its pair for this many consecutive epochs (its rows stay; the count
+        /// resets at an epoch the search determines it).  0 (default) is off; at least 0.
+        int    fixed_cycle_lapse_ep{ 0 };
+        /// Card FCF (@c fixed_cycles.trace): write logs/network_fixed_cycles.csv (one row per
+        /// unit-epoch) and logs/network_fixed_cycle_shift.csv (held minus float per emitted
+        /// clock, code bias, phase bias and phase-visible correction), and under source lattice
+        /// logs/network_fixed_cycle_events.csv (the fold's edges).  Requires the fold.
+        bool   fixed_cycle_trace{ false };
+        /// Card FCF (@c fixed_cycles.emit_measurement_only): the acknowledgement that a
+        /// @c fold: emit run is a sim measurement arm of decision D1 (card FCF section 2).  Its
+        /// only effect is to let the loader accept Emit before the author's ruling; the loader
+        /// checks it (every station's RINEX file lies in a sim fixture) rather than trusting it.
+        bool   fixed_cycle_emit_measurement_only{ false };
         int    min_epochs{ 10 };              ///< Let the network float converge before fixing.
         int    ils_max_dim{ 0 };              ///< Cap on the ILS (MLAMBDA) search dimension: when > 0, only the
                                               ///< @c ils_max_dim lowest-formal-σ DDs enter the integer search
@@ -1675,16 +1782,19 @@ namespace GnssProcessor {
      */
     struct NetworkInjectEvent {
         /// @c slip | @c outage | @c anchor_handover | @c arc_erase | @c sat_clock_step
-        /// | @c rx_clock_step | @c oracle_pin.
+        /// | @c rx_clock_step | @c oracle_pin | @c fixed_cycle_plant (card FCF: at the first
+        /// epoch from @ref tow at which the ledger of fixed cycles holds the arc (@ref station,
+        /// @ref sat, @ref signal), every row's integer is shifted by @ref delta_cycles times
+        /// the row's coefficient on that arc, a planted wrong integer for the re-validation).
         std::string kind;
         /// GPS seconds-of-week at which the event starts.  The run's week is implied
         /// (a leg never spans a rollover); matched with a +/-0.25 s half-epoch guard.
         double      tow{ -1.0 };
-        std::string station;        ///< Station name (slip, outage, arc_erase, rx_clock_step).
+        std::string station;        ///< Station name (slip, outage, arc_erase, rx_clock_step, fixed_cycle_plant).
         std::string sat;            ///< Satellite id, e.g. "G05" (every kind but a station-wide one).
-        /// RINEX-3 phase code, e.g. "L1C" (slip); "all" or a code (anchor_handover).
+        /// RINEX-3 phase code, e.g. "L1C" (slip, fixed_cycle_plant); "all" or a code (anchor_handover).
         std::string signal;
-        double      delta_cycles{ 0.0 };  ///< slip: cycles added to the phase observable.
+        double      delta_cycles{ 0.0 };  ///< slip: cycles added to the phase observable; fixed_cycle_plant: the integer shift of the arc (a non-zero integer).
         bool        flag_lli{ false };    ///< slip: also raise LLI bit 0x1 on the onset epoch.
         double      duration_s{ 0.0 };    ///< outage: window length; the return is a natural re-admission.
         /// @c anchor_handover: "cold" | "continuous".

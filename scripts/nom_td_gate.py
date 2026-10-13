@@ -35,11 +35,12 @@ What is compared, in order:
      seconds).
 
 The masks, and why each exists (measured on same-build pairs, card NOM2 section 6):
-  - Values: `-?<number> ms` becomes `<MS> ms` (and `<number>ms` becomes `<MS>ms`), and
-    `in <number>.<number> s` becomes `in <T> s`.  Wall-clock durations sit inside otherwise
-    deterministic counter lines (the datum graph, prior-residual, redundancy, MDB,
-    block-Baarda, congruence, roster and ledger-emit cost figures; the B6 round trip's
-    "in {:.2f} s").
+  - Values: `-?<number> ms` becomes `<MS> ms` (and `<number>ms` becomes `<MS>ms`), a pair
+    `<number> / <number> ms` becomes `<MS> / <MS> ms`, and `in <number>.<number> s` becomes
+    `in <T> s`.  Wall-clock durations sit inside otherwise deterministic counter lines (the
+    datum graph, prior-residual, redundancy, MDB, block-Baarda, congruence, roster and
+    ledger-emit cost figures; card AGT's cycle-basis cost clause, which prints p50 and max
+    as one `p50 / max` pair; the B6 round trip's "in {:.2f} s").
   - Whole lines dropped, because their presence, their order or every number in them is
     wall clock: `Network[timing]`; `Network (D0)` and `Network (D0b)` (the D0b rows are
     ranked by wall time with an unstable sort, so two 0 ms rows can swap); the D0 per-op
@@ -69,6 +70,9 @@ import prm_ab  # noqa: E402  (the products and traces comparison)
 
 START = 'Network[timing]: epoch-loop wall'
 VALUE_MASKS = [
+    # A `p50 / max` pair (card AGT's cost clauses): the first figure carries no unit of its
+    # own, so the single-figure mask below would leave it.  Applied first.
+    (re.compile(r'-?\d+(?:\.\d+)?(\s*/\s*)-?\d+(?:\.\d+)?(\s*)ms\b'), r'<MS>\1<MS>\2ms'),
     (re.compile(r'-?\d+(?:\.\d+)?(\s*)ms\b'), r'<MS>\1ms'),
     (re.compile(r'\bin \d+\.\d+ s\b'), 'in <T> s'),
 ]

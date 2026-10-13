@@ -29,6 +29,9 @@
 #include "common/GnssIdentity.hpp"       // systemOfSat, systemFromName, constellationKey, SignalId
 #include "common/GnssTypes.hpp"          // System
 #include "filter/IlsCore.hpp"            // ils::IlsGateConfig / IlsResult / ilsFix
+#include "filter/NetworkArcGraph.hpp"    // arcgraph:: the observation graph and its tree basis (card AGT)
+#include "filter/NetworkArCycleBasis.hpp" // the sticky full-coverage cycle basis (card AGT, AGT-5)
+#include "filter/NetworkArcLife.hpp"     // the arc life stamp and the search's track of a life (card AGT)
 #include "filter/NetworkArSuspect.hpp"   // the suspect-corner mask (card ARL)
 #include "filter/StateKeySchema.hpp"     // StateKeys::parseAmbiguityKey
 #include "math/TimeUtils.hpp"            // TimeUtils::continuousGpsSeconds (the mask's fold clock)
@@ -42,18 +45,20 @@
 
 #include <algorithm>
 #include <array>
-#include <bitset>
-#include <cstdint>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <limits>
 #include <map>
 #include <set>
 #include <numeric>
 #include <optional>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -275,25 +280,496 @@ ArSuspectReentry reentryOutcome(const std::vector<char>& reentry,
     return out;
 }
 
+std::string searchBlockKey(const std::string& cons, const std::string& sta_r, const std::string& ref_sta,
+                           bool per_station) {
+    return per_station ? cons + "|" + sta_r : cons + "|" + sta_r + "|" + ref_sta;
+}
+
 } // namespace netar
 
-void networkProducerAr(NetworkRunContext& ctx,
-                       const GnssConfig& config_,
-                       const std::shared_ptr<spdlog::logger>& log,
-                       NetworkRunTraces& traces,
-                       const SyncedEpoch& se,
-                       const NetworkEstimator& est,
-                       const Eigen::VectorXd& x_s,
-                       const std::vector<NetStation>& stations,
-                       const std::vector<int>& est_index_of,
-                       const std::vector<StationAssembly>& asm_res,
-                       const NetworkSbasis::Plan& plan,
-                       const std::filesystem::path& log_dir_) {
+namespace {
+
+/// One entry of the producer AR pool: a station's absolute float ambiguity on one satellite and
+/// signal, its (est id, A_r column) for the covariance request, and `suspect`, the corner's state
+/// under the suspect-corner mask at this search (card ARL): its live cause bits and whether this
+/// search releases it; clean while the mask is off.
+struct ArRec { double value_m; std::size_t est_id; Eigen::Index col; ArSuspectCornerState suspect; };
+
+/// One (constellation, signal) pool of the search: satellite -> station index -> entry.
+using ArSatPool = std::map<std::string, std::map<std::size_t, ArRec>>;
+
+/// The tree basis of one pool (card ARL tree_basis).
+struct ArTreeBasis {
+    int                  n_stations{0};  ///< Stations in the pool (a basis needs two).
+    int                  n_refused{0};   ///< Pool satellites left out: the name does not round-trip through SatId (0 expected).
+    arcgraph::CycleBasis basis;          ///< One DD (r, p; j, k) per cycle, in the search's order.
+};
+
+/// Card ARL's tree_basis, grown by the observation-graph module (card AGT, step AGT-2).
+///
+/// The pool becomes a one-band graph: stations by ascending index, satellites in the pool's string
+/// order (every tie breaks by these slots), one arc per entry.  A baseline forest is grown with the
+/// tree_basis rules: each outside station joins the in-tree station it shares the most satellites
+/// with (lowest index on ties) through their first common satellite, until no outside station
+/// shares two.  The parent-only closure then gives, for each link r -> p with reference k, one DD
+/// (r, p; j, k) per further common satellite j.  Every link brings in a new station's ambiguities,
+/// so the set is independent by construction.
+ArTreeBasis arTreeBasis(System sys, const SignalId& sig, const ArSatPool& pool) {
+    ArTreeBasis out;
+    std::set<std::size_t>         station_set;
+    std::vector<SatId>            sat_order;
+    std::vector<arcgraph::ArcRow> rows;
+    for (const auto& [sat, by_station] : pool) {
+        for (const auto& [i, rec] : by_station) { (void)rec; station_set.insert(i); }
+        const std::optional<SatId> id = SatId::parse(sat);
+        if (!id || id->str() != sat) { ++out.n_refused; continue; }
+        sat_order.push_back(*id);
+        for (const auto& [i, rec] : by_station) {
+            (void)rec;
+            arcgraph::ArcRow row;
+            row.station = StationId{static_cast<int>(i)};
+            row.sat     = *id;
+            row.present = 1;
+            rows.push_back(row);
+        }
+    }
+    out.n_stations = static_cast<int>(station_set.size());
+    if (out.n_stations < 2) return out;
+    std::vector<StationId> station_order;
+    for (std::size_t i : station_set) station_order.push_back(StationId{static_cast<int>(i)});
+
+    arcgraph::ForestRules rules;      // the tree_basis rules
+    rules.band_mask   = 1;            // the one band
+    rules.min_common  = 2;            // a link needs two common satellites ...
+    rules.stop_at_gap = true;         // ... and the tree stops when none reaches two
+    const arcgraph::ArcGraph g =
+        arcgraph::buildArcGraph(arcgraph::ArcFamily{sys, {sig}}, station_order, sat_order, rows);
+    const arcgraph::SpanningForest forest =
+        arcgraph::growBaselineForest(g, arcgraph::wholeGraph(g, rules.band_mask), {}, rules);
+    out.basis = arcgraph::shortCycleBasis(g, forest, arcgraph::BasisCoverage::ParentOnly);
+    return out;
+}
+
+/// The search's pools: (constellation, signal) -> satellite -> station index -> entry.
+using ArPools = std::map<std::pair<std::string, std::string>, ArSatPool>;
+
+/// A pool entry's index in the covariance request (its (est id, A_r column), added on first use).
+using ArRequestOf = std::function<int(const ArRec&)>;
+
+/// One search row: the double difference (r, p; j, k) = (r,j) - (r,k) - (p,j) + (p,k) of four
+/// pool entries (their covariance request indices), its float (m) and its wavelength.
+///
+/// The identity fields (cons, signal, sat_j, ref_sat, sta_r, ref_sta) let a traced DD be joined
+/// to truth_ambiguities.csv and the star reference be differenced away
+/// (SPEC_amb_iono_split_overcount §6.12); without them the trace gives only a fix count.  They
+/// are filled unconditionally: the block is already gated on `netar.enable`, and six short
+/// strings per DD cost little next to the joint conditional covariance.
+/// `suspect`: the four corners' mask states combined (card ARL); a DD with any cause bit set
+/// stays in the basis and the trace but is not searched.
+/// The cycle-basis fields (card AGT) are set only under cycle_basis: the first four are the
+/// trace's columns, the last two what the lattice observatory is offered when the DD is fixed.
+struct DDrow {
+    int i_rj, i_rp, i_fj, i_fp; double dd_m, lambda;
+    std::string cons, signal, sat_j, ref_sat, sta_r, ref_sta;
+    ArSuspectCornerState suspect{};
+    arcgraph::CycleKind cycle_kind{arcgraph::CycleKind::PartnerDd};  ///< How the DD closes its chord.
+    bool       band_only{false};                 ///< The chord exists in this band only.
+    long long  basis_age_ep{0};                  ///< Epochs since this DD identity entered the basis without a break.
+    ArMapState map_state{ArMapState::FreshNew};  ///< The DD's cycle against the last search's basis.
+    arcgraph::Cycle cycle;                       ///< The DD as its basis cycle (step AGT-6).
+    ArDdIdentity    cycle_id{};                  ///< Its typed identity (step AGT-6).
+};
+
+/// The per-(constellation, signal) basis of card ARL: tree_basis (see arTreeBasis), else the star.
+///
+/// The star, per (constellation, signal): a reference satellite (tracked at the most stations)
+/// and a reference station (tracking the reference satellite and the most satellites); one DD per
+/// (other station r, other satellite j) that both r and the reference station track.  Appends one
+/// row per DD; returns the (constellation, signal) pools that took part.
+int arSignalBasisRows(bool tree_basis, ArPools& ar_pool, const SyncedEpoch& se,
+                      const std::vector<NetStation>& stations, const ArRequestOf& reqOf,
+                      std::vector<DDrow>& dds, const std::shared_ptr<spdlog::logger>& log) {
+    int n_const_signal = 0;
+    for (auto& [cs, satmap] : ar_pool) {
+        if (tree_basis) {
+            // Card ARL tree_basis (see arTreeBasis): a greedy spanning tree of station
+            // baselines, one DD per further common satellite of each link.
+            const System t_sys = systemFromName(cs.first);
+            const std::optional<SignalId> tsig = SignalId::fromObsCode(t_sys, cs.second);
+            const double t_lambda = tsig ? tsig->wavelengthM(0) : 0.0;
+            if (!(std::isfinite(t_lambda) && t_lambda > 0.0)) continue;
+            const ArTreeBasis tree = arTreeBasis(t_sys, *tsig, satmap);
+            if (tree.n_refused > 0)
+                log->warn("Network AR tree basis: TOW {:.1f} {}/{}: {} satellite(s) left out of the "
+                          "basis, their names do not round-trip through SatId",
+                          se.time.tow, cs.first, cs.second, tree.n_refused);
+            if (tree.n_stations < 2) continue;
+            ++n_const_signal;
+            // Each cycle (r, p; j, k) is the DD (r,j) - (r,k) - (p,j) + (p,k).
+            for (const arcgraph::BasisCycle& bc : tree.basis.cycles) {
+                const std::string sat_j = bc.sat.str(), ref_sat = bc.ref_sat.str();
+                const std::size_t r = static_cast<std::size_t>(bc.station.index);
+                const std::size_t p = static_cast<std::size_t>(bc.partner.index);
+                const ArRec& rj = satmap.at(sat_j).at(r);
+                const ArRec& rp = satmap.at(ref_sat).at(r);
+                const ArRec& fj = satmap.at(sat_j).at(p);
+                const ArRec& fp = satmap.at(ref_sat).at(p);
+                dds.push_back(DDrow{ reqOf(rj), reqOf(rp), reqOf(fj), reqOf(fp),
+                                     (rj.value_m - rp.value_m) - (fj.value_m - fp.value_m),
+                                     t_lambda, cs.first, cs.second, sat_j, ref_sat,
+                                     stations[r].name, stations[p].name });
+                dds.back().suspect =
+                    arSuspectCombine(rj.suspect, rp.suspect, fj.suspect, fp.suspect);
+            }
+            continue;
+        }
+        std::string ref_sat; std::size_t best = 0;
+        for (auto& [sat, sm] : satmap)
+            if (sm.size() > best) { best = sm.size(); ref_sat = sat; }
+        if (ref_sat.empty() || satmap[ref_sat].size() < 2) continue;
+        std::size_t ref_i = 0, ref_cnt = 0; bool have_ref = false;
+        for (auto& [sta_i, rec] : satmap[ref_sat]) {
+            (void)rec;
+            std::size_t cnt = 0;
+            for (auto& [sat, sm] : satmap) if (sm.count(sta_i)) ++cnt;
+            if (!have_ref || cnt > ref_cnt) { ref_cnt = cnt; ref_i = sta_i; have_ref = true; }
+        }
+        if (!have_ref) continue;
+        const System sys = systemFromName(cs.first);   // "G" or "E"
+        const std::optional<SignalId> amb_sig = SignalId::fromObsCode(sys, cs.second);
+        const double lambda = amb_sig ? amb_sig->wavelengthM(0) : 0.0;   // CDMA: no FDMA slot
+        if (!(std::isfinite(lambda) && lambda > 0.0)) continue;
+        const ArRec& fp = satmap[ref_sat].at(ref_i);   // ref station, ref sat
+        ++n_const_signal;
+        for (auto& [sat, sm] : satmap) {
+            if (sat == ref_sat) continue;
+            const auto fj_it = sm.find(ref_i);          // ref station, sat j
+            if (fj_it == sm.end()) continue;
+            for (const auto& [sta_i, rj] : sm) {
+                if (sta_i == ref_i) continue;
+                const auto rp_it = satmap[ref_sat].find(sta_i);   // station r, ref sat
+                if (rp_it == satmap[ref_sat].end()) continue;
+                const double dd_m = (rj.value_m - rp_it->second.value_m)
+                                  - (fj_it->second.value_m - fp.value_m);
+                dds.push_back(DDrow{ reqOf(rj), reqOf(rp_it->second),
+                                     reqOf(fj_it->second), reqOf(fp), dd_m, lambda,
+                                     cs.first, cs.second, sat, ref_sat,
+                                     stations[sta_i].name, stations[ref_i].name });
+                dds.back().suspect = arSuspectCombine(rj.suspect, rp_it->second.suspect,
+                                                      fj_it->second.suspect, fp.suspect);
+            }
+        }
+    }
+    return n_const_signal;
+}
+
+// ---- Card AGT, step AGT-5: the cycle basis (filter/NetworkArCycleBasis.hpp) ----------------------
+
+/// One family's build at this search, held until it becomes the family's memory after the search.
+struct ArCycleFamilyEpoch {
+    ArFamilyKey                       key;       ///< The family's bands.
+    ArCycleBuild                      build;     ///< Its graph, forest and basis.
+    std::map<ArcId, ArcLifeTrack>     arcs;      ///< Its band-arcs' tracks after this search.
+    std::map<ArDdIdentity, long long> first_ep;  ///< Its DD identities' first epochs in the basis.
+};
+
+/// One family's rows read from the pools (step 2 of the NetworkArCycleBasis.hpp banner): per
+/// (satellite, station) the bands present, the bands whose life reading is slipped, and the
+/// weaker band's durability (epochs since its life began).  Every band-arc's life reading is
+/// tallied and its new track kept in @p tracks, and, for the lattice observatory (step AGT-6),
+/// the reading itself in @p readings unless it is null.  Slots: stations by ascending roster
+/// index, satellites in the pools' string order; a name that does not round-trip through SatId
+/// holds no slot (none expected: pool names come from state keys, as for tree_basis).
+ArCycleInput arCycleInputOf(const NetworkRunContext& ctx, const ArFamilySpec& fam, const std::string& cons,
+                            const ArPools& pools, const ArBasisMemory& mem, long long now_ep,
+                            std::map<ArcId, ArcLifeTrack>& tracks, ArCycleBasisCounters& c,
+                            std::map<ArcId, ArArcReading>* readings) {
+    ArCycleInput in;
+    in.family = arcgraph::ArcFamily{fam.sys, fam.bands};
+    std::set<std::size_t>      station_set;
+    std::map<std::string, int> sat_slot;   // pool name -> satellite slot (string order)
+    for (const std::string& sig : fam.signals) {
+        const auto pit = pools.find({cons, sig});
+        if (pit == pools.end()) continue;
+        for (const auto& [sat, by_station] : pit->second) {
+            const std::optional<SatId> id = SatId::parse(sat);
+            if (!id || id->str() != sat) continue;
+            sat_slot.emplace(sat, 0);
+            for (const auto& [i, rec] : by_station) { (void)rec; station_set.insert(i); }
+        }
+    }
+    for (auto& [name, slot] : sat_slot) {
+        slot = static_cast<int>(in.sats.size());
+        in.sats.push_back(*SatId::parse(name));
+    }
+    std::vector<int> station_slot(station_set.empty() ? 0 : *station_set.rbegin() + 1, -1);
+    for (std::size_t i : station_set) {
+        station_slot[i] = static_cast<int>(in.stations.size());
+        in.stations.push_back(StationId{static_cast<int>(i)});
+    }
+
+    // One row per (satellite, station), dense; each band-arc's keys are built once and serve the
+    // free-latch lookup and the stamp.
+    const std::size_t n_sta = in.stations.size();
+    std::vector<arcgraph::ArcRow> dense(in.sats.size() * n_sta);
+    for (std::size_t k = 0; k < fam.signals.size(); ++k) {
+        const auto pit = pools.find({cons, fam.signals[k]});
+        if (pit == pools.end()) continue;
+        const std::uint8_t bit = static_cast<std::uint8_t>(1u << k);
+        for (const auto& [sat, by_station] : pit->second) {
+            const auto ks = sat_slot.find(sat);
+            if (ks == sat_slot.end()) continue;
+            const SatId& sat_id = in.sats[static_cast<std::size_t>(ks->second)];
+            for (const auto& [i, rec] : by_station) {
+                (void)rec;
+                const ArcId arc{StationId{static_cast<int>(i)}, sat_id, fam.bands[k]};
+                const ArcLifeKeys keys{std::make_tuple(static_cast<int>(i), sat, fam.signals[k]),
+                                       {static_cast<int>(i), StateKeys::makeAmbiguityKey(sat, fam.signals[k])}};
+                const bool freed = ctx.carry.relevel.free_ambs.count(keys.amb) > 0;
+                const auto last = mem.arcs.find(arc);
+                const ArcLifeStep step =
+                    arcLifeStep(last == mem.arcs.end() ? nullptr : &last->second, mem.last_search_ep,
+                                arcLifeStamp(ctx, keys), freed, now_ep);
+                arCycleTallyLife(c, step);
+                tracks.emplace_hint(tracks.end(), arc, step.track);
+                if (readings) {
+                    const auto fc = ctx.carry.relevel.free_cause.find(keys.amb);
+                    readings->emplace(arc, ArArcReading{step.edge, step.change,
+                                                        fc == ctx.carry.relevel.free_cause.end()
+                                                            ? std::uint8_t{0} : fc->second});
+                }
+                arcgraph::ArcRow& row =
+                    dense[static_cast<std::size_t>(ks->second) * n_sta + static_cast<std::size_t>(station_slot[i])];
+                if (row.present == 0) {
+                    row.station    = arc.station;
+                    row.sat        = arc.sat;
+                    row.durability = std::numeric_limits<double>::infinity();
+                }
+                row.present = static_cast<std::uint8_t>(row.present | bit);
+                if (step.slipped()) row.slipped = static_cast<std::uint8_t>(row.slipped | bit);
+                row.durability =
+                    std::min(row.durability, static_cast<double>(now_ep - step.track.life_start));
+            }
+        }
+    }
+    for (const arcgraph::ArcRow& row : dense)
+        if (row.present != 0) in.rows.push_back(row);
+    return in;
+}
+
+/// One family's search rows (step 4 of the banner): one DD row per PartnerDd or BorrowedDd cycle,
+/// in basis order, with its cycle columns; a fundamental fallback is never a row.  Each DD
+/// identity's first epoch in the basis goes to @p first_ep.
+void arCycleRows(const ArFamilySpec& fam, const std::string& cons, const ArPools& pools,
+                 const ArCycleBuild& b, const std::vector<ArMapState>& states, const ArBasisMemory& mem,
+                 long long now_ep, const std::vector<NetStation>& stations, const ArRequestOf& reqOf,
+                 std::vector<DDrow>& dds, std::map<ArDdIdentity, long long>& first_ep) {
+    for (std::size_t i = 0; i < b.basis.cycles.size(); ++i) {
+        const arcgraph::BasisCycle& bc = b.basis.cycles[i];
+        if (bc.kind == arcgraph::CycleKind::Fundamental) continue;
+        const std::size_t k = static_cast<std::size_t>(bc.band);
+        const ArSatPool& pool = pools.at({cons, fam.signals[k]});
+        const std::string sat_j = bc.sat.str(), ref_sat = bc.ref_sat.str();
+        const std::size_t r = static_cast<std::size_t>(bc.station.index);
+        const std::size_t p = static_cast<std::size_t>(bc.partner.index);
+        // The cycle (r, p; j, k) is the DD (r,j) - (r,k) - (p,j) + (p,k).
+        const ArRec& rj = pool.at(sat_j).at(r);
+        const ArRec& rp = pool.at(ref_sat).at(r);
+        const ArRec& fj = pool.at(sat_j).at(p);
+        const ArRec& fp = pool.at(ref_sat).at(p);
+        dds.push_back(DDrow{ reqOf(rj), reqOf(rp), reqOf(fj), reqOf(fp),
+                             (rj.value_m - rp.value_m) - (fj.value_m - fp.value_m),
+                             fam.bands[k].wavelengthM(0), cons, fam.signals[k], sat_j, ref_sat,
+                             stations[r].name, stations[p].name });
+        DDrow& d = dds.back();
+        d.suspect    = arSuspectCombine(rj.suspect, rp.suspect, fj.suspect, fp.suspect);
+        d.cycle_kind = bc.kind;
+        d.band_only  = bc.band_only;
+        d.map_state  = states[i];
+        const ArDdIdentity id{fam.bands[k], bc.station, bc.partner, bc.sat, bc.ref_sat};
+        const auto f = mem.first_ep.find(id);
+        const long long first = (f == mem.first_ep.end()) ? now_ep : f->second;
+        first_ep[id]   = first;
+        d.basis_age_ep = now_ep - first;
+        d.cycle        = bc.cycle;
+        d.cycle_id     = id;
+    }
+}
+
+/// The run totals one epoch's log clause reads as differences.
+struct ArCycleEpochFigures {
+    long long rows{0}, fundamental{0}, lattice{0}, links{0}, links_kept{0};
+    long long same{0}, mapped{0}, fresh_life{0}, fresh_new{0};
+};
+
+/// The run totals of the cycle-basis counters.
+ArCycleEpochFigures arCycleEpochFiguresOf(const ArCycleBasisCounters& c) {
+    ArCycleEpochFigures f;
+    f.rows        = c.rows_partner + c.rows_borrowed;
+    f.fundamental = c.rows_fundamental;
+    f.lattice     = c.lattice_total;
+    f.links       = c.links;
+    f.links_kept  = c.links_kept;
+    f.same        = c.map_same;
+    f.mapped      = c.map_mapped;
+    f.fresh_life  = c.map_fresh_life;
+    f.fresh_new   = c.map_fresh_new;
+    return f;
+}
+
+/// The cycle basis's search rows for every family of every constellation in the pools (card AGT,
+/// step AGT-5; filter/NetworkArCycleBasis.hpp).  Per family: the rows with their life readings,
+/// the forest and the basis, the map against the stored basis, the tallies and the search rows.
+/// Each family's build is kept in @p epoch for the memory store after the search, and @p clause
+/// receives the epoch's log clause; every band-arc's life reading goes to @p readings unless it
+/// is null (the lattice observatory, step AGT-6).  Returns the (constellation, signal) pools
+/// that took part.
+int arCycleBasisRows(NetworkRunContext& ctx, bool sticky, const ArPools& pools, long long now_ep,
+                     const std::vector<NetStation>& stations, const ArRequestOf& reqOf,
+                     std::vector<DDrow>& dds, std::vector<ArCycleFamilyEpoch>& epoch,
+                     std::string& clause, std::map<ArcId, ArArcReading>* readings) {
+    using Clock = std::chrono::steady_clock;
+    using Ms    = std::chrono::duration<double, std::milli>;
+    ArCycleBasisCounters& c = ctx.counters.netar_cycle;
+    const ArCycleEpochFigures before = arCycleEpochFiguresOf(c);
+    ++c.epochs;
+    // The signals of each constellation, in pool order, with their arc counts.  A signal with no
+    // wavelength is left out, as tree_basis leaves it out.
+    std::map<std::string, std::vector<std::pair<std::string, std::size_t>>> signals_of;
+    for (const auto& [cs, satmap] : pools) {
+        const std::optional<SignalId> sig = SignalId::fromObsCode(systemFromName(cs.first), cs.second);
+        const double lambda = sig ? sig->wavelengthM(0) : 0.0;
+        if (!(std::isfinite(lambda) && lambda > 0.0)) continue;
+        std::size_t n_arcs = 0;
+        for (const auto& [sat, by_station] : satmap) { (void)sat; n_arcs += by_station.size(); }
+        signals_of[cs.first].emplace_back(cs.second, n_arcs);
+    }
+    const ArBasisMemory none;
+    const std::vector<arcgraph::IncumbentLink> no_links;
+    int n_pools = 0;
+    Ms stamp_ms{0.0}, build_ms{0.0}, map_ms{0.0};
+    for (const auto& [cons, sigs] : signals_of) {
+        for (const ArFamilySpec& fam : arCycleFamilies(systemFromName(cons), sigs)) {
+            ArCycleFamilyEpoch fe;
+            fe.key = fam.bands;
+            const auto mit = ctx.carry.ar_basis.find(fe.key);
+            const ArBasisMemory& mem = (mit == ctx.carry.ar_basis.end()) ? none : mit->second;
+            const auto t0 = Clock::now();
+            const ArCycleInput in = arCycleInputOf(ctx, fam, cons, pools, mem, now_ep, fe.arcs, c, readings);
+            const auto t1 = Clock::now();
+            stamp_ms += t1 - t0;
+            if (in.stations.size() < 2) continue;
+            const std::vector<arcgraph::IncumbentLink>& incumbent = sticky ? mem.links : no_links;
+            fe.build = arCycleBuild(in, incumbent, sticky ? &mem.basis : nullptr);
+            const auto t2 = Clock::now();
+            const std::vector<ArMapState> states =
+                arCycleMapStates(mem.basis, fe.build.basis, fe.build.invalidated);
+            const auto t3 = Clock::now();
+            build_ms += t2 - t1;
+            map_ms   += t3 - t2;
+            arCycleTally(c, fam, fe.build, states, incumbent, mem.basis.cycles.empty());
+            arCycleRows(fam, cons, pools, fe.build, states, mem, now_ep, stations, reqOf, dds, fe.first_ep);
+            n_pools += static_cast<int>(fam.bands.size());
+            epoch.push_back(std::move(fe));
+        }
+    }
+    c.stamp_ms.push_back(stamp_ms.count());
+    c.build_ms.push_back(build_ms.count());
+    c.map_ms.push_back(map_ms.count());
+    const ArCycleEpochFigures now = arCycleEpochFiguresOf(c);
+    clause = fmt::format(", cycle basis {} DD + {} fallback(s) of {} lattice direction(s), {}/{} "
+                         "link(s) kept, map {} same / {} mapped / {} fresh (life) / {} fresh (new)",
+                         now.rows - before.rows, now.fundamental - before.fundamental,
+                         now.lattice - before.lattice, now.links_kept - before.links_kept,
+                         now.links - before.links, now.same - before.same, now.mapped - before.mapped,
+                         now.fresh_life - before.fresh_life, now.fresh_new - before.fresh_new);
+    return n_pools;
+}
+
+/// Each family built at this search becomes its memory for the next search (after the search).
+void arCycleBasisStore(std::map<ArFamilyKey, ArBasisMemory>& memory, std::vector<ArCycleFamilyEpoch>& epoch,
+                       long long now_ep) {
+    for (ArCycleFamilyEpoch& fe : epoch) {
+        ArBasisMemory& m = memory[fe.key];
+        m.last_search_ep = now_ep;
+        m.links          = arcgraph::incumbentLinksOf(fe.build.graph, fe.build.forest);
+        m.basis          = std::move(fe.build.basis);
+        m.arcs           = std::move(fe.arcs);
+        m.first_ep       = std::move(fe.first_ep);
+    }
+}
+
+/// Card FCF: every cycle-basis search row with its float, its variance and its covariance with
+/// the same DD in the pair's other band (its twin: the same constellation, stations and
+/// satellites, the other signal), and whether the search determined it.  A row is a twin only
+/// when its identity occurs exactly twice, on two signals; the twins share one search block
+/// (cons|sta_r), so their covariance is the readback's own.  Basis order.
+std::vector<SearchedCycle> arSearchedCycles(const std::vector<DDrow>& dds, const Eigen::VectorXd& y_cyc,
+                                            const Eigen::MatrixXd& Q_cyc,
+                                            const std::vector<netar::DdFixLabel>& labels) {
+    std::vector<SearchedCycle> out;
+    out.reserve(dds.size());
+    using PairKey = std::tuple<std::string, StationId, StationId, SatId, SatId>;
+    std::map<PairKey, std::vector<int>> by_key;
+    for (std::size_t a = 0; a < dds.size(); ++a) {
+        const DDrow& d = dds[a];
+        const netar::DdFixLabel& lb = labels[a];
+        SearchedCycle s;
+        s.id       = d.cycle_id;
+        s.cycle    = d.cycle;
+        s.y_cyc    = y_cyc(static_cast<Eigen::Index>(a));
+        s.var_cyc2 = Q_cyc(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(a));
+        s.fixed    = lb.kept;
+        s.integer  = lb.kept ? static_cast<long long>(std::llround(lb.fixed_int)) : 0LL;
+        const auto& [sig, sta_r, ref_sta, sat_j, ref_sat] = d.cycle_id;
+        (void)sig;
+        by_key[PairKey{d.cons, sta_r, ref_sta, sat_j, ref_sat}].push_back(static_cast<int>(a));
+        out.push_back(std::move(s));
+    }
+    for (const auto& [key, rows] : by_key) {
+        (void)key;
+        if (rows.size() != 2) continue;
+        const int a = rows[0], b = rows[1];
+        if (std::get<0>(out[static_cast<std::size_t>(a)].id) == std::get<0>(out[static_cast<std::size_t>(b)].id))
+            continue;
+        out[static_cast<std::size_t>(a)].twin = b;
+        out[static_cast<std::size_t>(b)].twin = a;
+        const double c = Q_cyc(a, b);
+        out[static_cast<std::size_t>(a)].cov_twin_cyc2 = c;
+        out[static_cast<std::size_t>(b)].cov_twin_cyc2 = c;
+    }
+    return out;
+}
+
+}  // namespace
+
+ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
+                               const GnssConfig& config_,
+                               const std::shared_ptr<spdlog::logger>& log,
+                               NetworkRunTraces& traces,
+                               const SyncedEpoch& se,
+                               const NetworkEstimator& est,
+                               const Eigen::VectorXd& x_s,
+                               const std::vector<NetStation>& stations,
+                               const std::vector<int>& est_index_of,
+                               const std::vector<StationAssembly>& asm_res,
+                               const NetworkSbasis::Plan& plan,
+                               const std::filesystem::path& log_dir_) {
     // --- Alias preamble: byte-copies of the former Application::runNetwork aliases,
     //     so the relocated SB_NETAR body below reads the original names. ----------
     const auto& nc        = config_.getNetworkConfig();
     const auto& netar     = nc.ambiguity_resolution;
     auto&       n_emitted = ctx.counters.n_emitted;
+    // Card AGT, step AGT-6: what this search hands the lattice observatory (filled only under
+    // trace_lattice, which the loader arms only with the cycle basis).  Card FCF: the same
+    // hand-over goes to the fixed-cycle fold, which also receives every searched DD's float
+    // and every pooled arc's live column (fold_armed; the loader arms the fold only with the
+    // cycle basis).  Neither is read by anything the solve or the emission reads unless the
+    // fold is armed.
+    ArEpochFixes lattice_fixes;
+    const bool   lattice_armed = netar.cycle_basis && netar.trace_lattice;
+    const bool   fold_armed    = netar.cycle_basis && netar.fixed_cycle_fold != FixedCycleFold::Off;
+    const bool   handover      = lattice_armed || fold_armed;
 
     // --- Card ARL: the suspect-corner mask's per-epoch fold (filter/NetworkArSuspect.hpp).
     //     It runs ahead of the search gate, so the ledger's clock and stamps stay current
@@ -318,13 +794,9 @@ void networkProducerAr(NetworkRunContext& ctx,
     // network.ambiguity_resolution.enable and min_epochs; byte-identical when off.
     if (netar.enable && n_emitted >= static_cast<size_t>(std::max(0, netar.min_epochs))
         && x_s.size() > 0) {
-        // `suspect`: the corner's state under the suspect-corner mask at this search (card
-        // ARL): its live cause bits and whether this search releases it; clean while off.
-        struct ArRec { double value_m; std::size_t est_id; Eigen::Index col; ArSuspectCornerState suspect; };
         // (const,signal) -> sat -> station index -> absolute float ambiguity + its
-        // (est id, A_r column) for the covariance request.  GPS+Galileo only.
-        std::map<std::pair<std::string, std::string>,
-                 std::map<std::string, std::map<std::size_t, ArRec>>> ar_pool;
+        // (est id, A_r column) for the covariance request (ArRec).  GPS+Galileo only.
+        std::map<std::pair<std::string, std::string>, ArSatPool> ar_pool;
         // Card ARL: this search's mask, filled as the pool and the basis are built.
         ArSuspectSearch mask = arSuspectOpenSearch(suspect_now_ep, suspect_window);
         for (size_t i = 0; i < stations.size(); ++i) {
@@ -354,11 +826,20 @@ void networkProducerAr(NetworkRunContext& ctx,
                 ar_pool[{cst, parts->signal}][parts->satellite][i] =
                     ArRec{value_m, static_cast<std::size_t>(est_index_of[i]),
                           static_cast<Eigen::Index>(hit->second), suspect};
+                // Card FCF: the band-arc's live column, where a fixed cycle through it lands.
+                if (fold_armed) {
+                    const std::optional<SatId>    sat_id = SatId::parse(parts->satellite);
+                    const std::optional<SignalId> sig_id = SignalId::fromObsCode(sys, parts->signal);
+                    if (sat_id && sig_id)
+                        lattice_fixes.columns[ArcId{StationId{static_cast<int>(i)}, *sat_id, *sig_id}] =
+                            ArcColumn{static_cast<std::size_t>(est_index_of[i]),
+                                      static_cast<std::ptrdiff_t>(hit->second), x_lin(amb_idx),
+                                      sig_id->wavelengthM(0)};
+                }
             }
         }
-        // Independent DD basis: per (const,signal), a reference sat (tracked at the
-        // most stations) and a reference station (tracking ref-sat + the most sats);
-        // one DD per (other station r, other sat j) that both r and ref-station track.
+        // The covariance request: each pool entry's (est id, A_r column) once, in first-use
+        // order.
         std::vector<std::pair<std::size_t, Eigen::Index>> reqs;
         std::map<std::pair<std::size_t, Eigen::Index>, int> req_idx;
         auto reqOf = [&](const ArRec& r) -> int {
@@ -368,151 +849,20 @@ void networkProducerAr(NetworkRunContext& ctx,
             const int idx = static_cast<int>(reqs.size());
             reqs.push_back(k); req_idx[k] = idx; return idx;
         };
-        // The identity fields (cons, signal, sat_j, ref_sat, sta_r, ref_sta) let a
-        // traced DD be joined to truth_ambiguities.csv and the star reference be
-        // differenced away (SPEC_amb_iono_split_overcount §6.12); without them the
-        // trace gives only a fix count.  They are filled unconditionally: the block is
-        // already gated on `netar.enable`, and six short strings per DD cost little
-        // next to the joint conditional covariance below.
-        // `suspect`: the four corners' mask states combined (card ARL); a DD with any
-        // cause bit set stays in the basis and the trace but is not searched.
-        struct DDrow {
-            int i_rj, i_rp, i_fj, i_fp; double dd_m, lambda;
-            std::string cons, signal, sat_j, ref_sat, sta_r, ref_sta;
-            ArSuspectCornerState suspect{};
-        };
+        // The DD basis, one search row per DD: card AGT's cycle basis, per family of a
+        // constellation's signals (arCycleBasisRows), else card ARL's tree basis or the star,
+        // per (constellation, signal) (arSignalBasisRows).  Under the cycle basis each
+        // family's build is held in cycle_epoch and stored as its memory after the search.
         std::vector<DDrow> dds;
-        int n_const_signal = 0;
-        for (auto& [cs, satmap] : ar_pool) {
-            if (netar.tree_basis) {
-                // Card ARL: a greedy spanning tree of station baselines.  Each station is
-                // attached to the in-tree station it shares the most satellites with; the
-                // baseline contributes one DD per common satellite against the first common
-                // one.  Every baseline brings in a new station's ambiguities, so the set is
-                // independent by construction.
-                const std::optional<SignalId> tsig =
-                    SignalId::fromObsCode(systemFromName(cs.first), cs.second);
-                const double t_lambda = tsig ? tsig->wavelengthM(0) : 0.0;
-                if (!(std::isfinite(t_lambda) && t_lambda > 0.0)) continue;
-                // Prim's algorithm on satellite bitmasks: every outside station keeps its
-                // best in-tree partner (most common satellites, then the lowest station
-                // index), updated once per attachment, so a tree costs O(stations^2)
-                // popcounts.  Ties resolve as an exhaustive scan in (station, partner)
-                // order would.
-                std::vector<std::string> sat_names;                  // lexical (satmap order)
-                for (auto& [sat, sm] : satmap) { (void)sm; sat_names.push_back(sat); }
-                const std::size_t n_sat = sat_names.size();
-                const std::size_t n_words = (n_sat + 63) / 64;
-                std::vector<std::size_t> sta_ids;                    // ascending station index
-                std::map<std::size_t, std::size_t> pos_of_sta;
-                for (auto& [sat, sm] : satmap)
-                    for (auto& [sta_i, rec] : sm) { (void)rec; pos_of_sta.emplace(sta_i, 0); }
-                for (auto& [sta_i, pp] : pos_of_sta) { pp = sta_ids.size(); sta_ids.push_back(sta_i); }
-                const std::size_t n_sta = sta_ids.size();
-                if (n_sta < 2) continue;
-                std::vector<std::uint64_t> mask(n_sta * n_words, 0);
-                std::vector<const ArRec*> rec_of(n_sta * n_sat, nullptr);
-                std::vector<std::size_t> n_seen(n_sta, 0);
-                {
-                    std::size_t k = 0;
-                    for (auto& [sat, sm] : satmap) {
-                        (void)sat;
-                        for (auto& [sta_i, rec] : sm) {
-                            const std::size_t r = pos_of_sta[sta_i];
-                            mask[r * n_words + k / 64] |= (std::uint64_t{1} << (k % 64));
-                            rec_of[r * n_sat + k] = &rec;
-                            ++n_seen[r];
-                        }
-                        ++k;
-                    }
-                }
-                auto n_common = [&](std::size_t a, std::size_t b) {
-                    std::size_t c = 0;
-                    for (std::size_t w = 0; w < n_words; ++w)
-                        c += std::bitset<64>(mask[a * n_words + w] & mask[b * n_words + w]).count();
-                    return c;
-                };
-                std::size_t root = 0;
-                for (std::size_t r = 1; r < n_sta; ++r)
-                    if (n_seen[r] > n_seen[root]) root = r;
-                std::vector<char> in_tree(n_sta, 0);
-                std::vector<std::size_t> best_n(n_sta, 0), best_p(n_sta, root);
-                in_tree[root] = 1;
-                for (std::size_t r = 0; r < n_sta; ++r)
-                    if (!in_tree[r]) best_n[r] = n_common(r, root);
-                ++n_const_signal;
-                for (std::size_t added = 1; added < n_sta; ++added) {
-                    std::size_t r_pick = n_sta, n_pick = 0;
-                    for (std::size_t r = 0; r < n_sta; ++r)
-                        if (!in_tree[r] && best_n[r] > n_pick) { n_pick = best_n[r]; r_pick = r; }
-                    if (r_pick == n_sta || n_pick < 2) break;   // the rest share fewer than two satellites
-                    const std::size_t p_pick = best_p[r_pick];
-                    in_tree[r_pick] = 1;
-                    std::vector<std::size_t> c;                  // common satellites, lexical
-                    for (std::size_t k = 0; k < n_sat; ++k)
-                        if (rec_of[r_pick * n_sat + k] && rec_of[p_pick * n_sat + k]) c.push_back(k);
-                    const std::size_t tref = c.front();
-                    for (std::size_t q = 1; q < c.size(); ++q) {
-                        const ArRec& rj = *rec_of[r_pick * n_sat + c[q]];
-                        const ArRec& rp = *rec_of[r_pick * n_sat + tref];
-                        const ArRec& fj = *rec_of[p_pick * n_sat + c[q]];
-                        const ArRec& fp = *rec_of[p_pick * n_sat + tref];
-                        dds.push_back(DDrow{ reqOf(rj), reqOf(rp), reqOf(fj), reqOf(fp),
-                                             (rj.value_m - rp.value_m) - (fj.value_m - fp.value_m),
-                                             t_lambda, cs.first, cs.second, sat_names[c[q]],
-                                             sat_names[tref], stations[sta_ids[r_pick]].name,
-                                             stations[sta_ids[p_pick]].name });
-                        dds.back().suspect =
-                            arSuspectCombine(rj.suspect, rp.suspect, fj.suspect, fp.suspect);
-                    }
-                    for (std::size_t s2 = 0; s2 < n_sta; ++s2) {
-                        if (in_tree[s2]) continue;
-                        const std::size_t cn = n_common(s2, r_pick);
-                        if (cn > best_n[s2] || (cn == best_n[s2] && r_pick < best_p[s2])) {
-                            best_n[s2] = cn;
-                            best_p[s2] = r_pick;
-                        }
-                    }
-                }
-                continue;
-            }
-            std::string ref_sat; std::size_t best = 0;
-            for (auto& [sat, sm] : satmap)
-                if (sm.size() > best) { best = sm.size(); ref_sat = sat; }
-            if (ref_sat.empty() || satmap[ref_sat].size() < 2) continue;
-            std::size_t ref_i = 0, ref_cnt = 0; bool have_ref = false;
-            for (auto& [sta_i, rec] : satmap[ref_sat]) {
-                (void)rec;
-                std::size_t cnt = 0;
-                for (auto& [sat, sm] : satmap) if (sm.count(sta_i)) ++cnt;
-                if (!have_ref || cnt > ref_cnt) { ref_cnt = cnt; ref_i = sta_i; have_ref = true; }
-            }
-            if (!have_ref) continue;
-            const System sys = systemFromName(cs.first);   // "G" or "E"
-            const std::optional<SignalId> amb_sig = SignalId::fromObsCode(sys, cs.second);
-            const double lambda = amb_sig ? amb_sig->wavelengthM(0) : 0.0;   // CDMA: no FDMA slot
-            if (!(std::isfinite(lambda) && lambda > 0.0)) continue;
-            const ArRec& fp = satmap[ref_sat].at(ref_i);   // ref station, ref sat
-            ++n_const_signal;
-            for (auto& [sat, sm] : satmap) {
-                if (sat == ref_sat) continue;
-                const auto fj_it = sm.find(ref_i);          // ref station, sat j
-                if (fj_it == sm.end()) continue;
-                for (const auto& [sta_i, rj] : sm) {
-                    if (sta_i == ref_i) continue;
-                    const auto rp_it = satmap[ref_sat].find(sta_i);   // station r, ref sat
-                    if (rp_it == satmap[ref_sat].end()) continue;
-                    const double dd_m = (rj.value_m - rp_it->second.value_m)
-                                      - (fj_it->second.value_m - fp.value_m);
-                    dds.push_back(DDrow{ reqOf(rj), reqOf(rp_it->second),
-                                         reqOf(fj_it->second), reqOf(fp), dd_m, lambda,
-                                         cs.first, cs.second, sat, ref_sat,
-                                         stations[sta_i].name, stations[ref_i].name });
-                    dds.back().suspect = arSuspectCombine(rj.suspect, rp_it->second.suspect,
-                                                          fj_it->second.suspect, fp.suspect);
-                }
-            }
-        }
+        std::vector<ArCycleFamilyEpoch> cycle_epoch;
+        std::string cycle_text;
+        const int n_const_signal =
+            netar.cycle_basis
+                ? arCycleBasisRows(ctx, netar.cycle_basis_sticky, ar_pool, suspect_now_ep, stations,
+                                   reqOf, dds, cycle_epoch, cycle_text,
+                                   handover ? &lattice_fixes.arcs : nullptr)
+                : arSignalBasisRows(netar.tree_basis, ar_pool, se, stations, reqOf, dds, log);
+        lattice_fixes.searched = handover;
         if (!dds.empty() && reqs.size() >= 2) {
             const bool ar_carry_aware = ctx.knobs.carry_aware_covariance;
             const int nd = static_cast<int>(dds.size());
@@ -532,10 +882,12 @@ void networkProducerAr(NetworkRunContext& ctx,
             const bool block_cov = netar.decorrelated_partial && netar.block_search
                                 && !ar_carry_aware && netar.ils_max_dim <= 0;
             if (block_cov) {
-                std::map<std::string, std::vector<int>> dd_blocks;   // baseline -> DDs
+                // baseline (cycle basis: station) -> DDs, the search's own blocks
+                std::map<std::string, std::vector<int>> dd_blocks;
                 for (int a = 0; a < nd; ++a) {
                     const DDrow& d = dds[static_cast<std::size_t>(a)];
-                    dd_blocks[d.cons + "|" + d.sta_r + "|" + d.ref_sta].push_back(a);
+                    dd_blocks[netar::searchBlockKey(d.cons, d.sta_r, d.ref_sta, netar.cycle_basis)]
+                        .push_back(a);
                 }
                 std::vector<std::vector<int>> req_blocks;
                 std::vector<std::map<int, int>> pos_of;              // per block: req -> row
@@ -669,13 +1021,16 @@ void networkProducerAr(NetworkRunContext& ctx,
                     // Card ARL: the decorrelated-space partial fix reports the
                     // single-signal DDs its fixed combinations determine.
                     if (netar.decorrelated_partial && netar.block_search) {
-                        // One block per baseline (its L1 and L2 DDs): sta_r and ref_sta.
+                        // One block per baseline (its L1 and L2 DDs): sta_r and ref_sta; under
+                        // the cycle basis one block per station (card AGT: its partner and
+                        // borrowed DDs in both bands).
                         std::map<std::string, int> block_id;
                         std::vector<int> block_of(static_cast<std::size_t>(nd_fix));
                         for (int s = 0; s < nd_fix; ++s) {
                             const DDrow& d = dds[static_cast<std::size_t>(order[static_cast<std::size_t>(s)])];
-                            const auto it = block_id.emplace(d.cons + "|" + d.sta_r + "|" + d.ref_sta,
-                                                             static_cast<int>(block_id.size())).first;
+                            const auto it = block_id.emplace(
+                                netar::searchBlockKey(d.cons, d.sta_r, d.ref_sta, netar.cycle_basis),
+                                static_cast<int>(block_id.size())).first;
                             block_of[static_cast<std::size_t>(s)] = it->second;
                         }
                         fix = netar::blockDecorrelatedFix(y_fix, Q_fix, block_of, gates,
@@ -713,6 +1068,20 @@ void networkProducerAr(NetworkRunContext& ctx,
                 // mask's re-entry outcome).
                 const std::vector<netar::DdFixLabel> labels =
                     netar::mapFixToBasis(nd, order, fix.kept, fix.afix);
+                // Card AGT, step AGT-6: the determined DDs (the trace's kept rows) as cycles,
+                // the lattice observatory's offers.
+                if (handover)
+                    for (int a = 0; a < nd; ++a) {
+                        const netar::DdFixLabel& lb = labels[static_cast<std::size_t>(a)];
+                        if (!lb.kept) continue;
+                        const DDrow& d = dds[static_cast<std::size_t>(a)];
+                        lattice_fixes.fixed.push_back(
+                            ArFixedCycle{d.cycle, static_cast<long long>(std::llround(lb.fixed_int)), d.cycle_id});
+                    }
+                // Card FCF: every searched DD with its float from this readback, the twin in
+                // the pair's other band, and whether it was determined.
+                if (fold_armed)
+                    lattice_fixes.floats = arSearchedCycles(dds, y_cyc, Q_cyc, labels);
                 // Card ARL pair lanes (decorrelated_partial only): each L1/L2 pair's wide
                 // lane before the fix and its wide lane and narrow lane conditioned on the
                 // fixed decorrelated components, so a pair left float can be read as "wide
@@ -743,7 +1112,7 @@ void networkProducerAr(NetworkRunContext& ctx,
                 log->info("Network AR (Phase 2, log-only): TOW {:.1f} — {} DD / {} undiff-amb / "
                           "{} (const,signal); fixed {}{} of {} searched{} (ratio {:.2f}, "
                           "p_succ {:.4f}, med_DD_sigma {:.4f} cyc, med_DD_frac {:.3f}, "
-                          "near_int {}/{}), cov {}{}{}",
+                          "near_int {}/{}), cov {}{}{}{}",
                           se.time.tow, nd, static_cast<int>(reqs.size()), n_const_signal,
                           fix.ok ? static_cast<int>(fix.kept.size()) : 0,
                           fix.partial ? " partial" : "", nd_fix,
@@ -753,7 +1122,7 @@ void networkProducerAr(NetworkRunContext& ctx,
                           netar.decorrelated_partial
                               ? fmt::format(", decorrelated {} of {} fixed", fix.z_fixed, fix.z_total)
                               : std::string(),
-                          mask_text);
+                          mask_text, cycle_text);
                 // --- Run-end tallies (invariant #4): the log line above is per-epoch;
                 //     the tallies give the run a denominator, so an armed but inert
                 //     search is distinguishable from a quiet one. ---------------------
@@ -802,8 +1171,15 @@ void networkProducerAr(NetworkRunContext& ctx,
                                               static_cast<int>(mask.dd_bits[static_cast<std::size_t>(a)]),
                                               static_cast<int>(mask.reentry[static_cast<std::size_t>(a)]))
                                 : std::string();
+                        // Card AGT cycle-basis columns (armed only, kProducerArCycleBasisColumns).
+                        const std::string cycle_cols =
+                            netar.cycle_basis
+                                ? fmt::format(",{},{},{},{}", arCycleKindName(d.cycle_kind),
+                                              d.band_only ? 1 : 0, d.basis_age_ep,
+                                              arMapStateName(d.map_state))
+                                : std::string();
                         os << fmt::format("{},{:.1f},{},{},{},{},{},{},{:.9f},{:.6f},"
-                                          "{:.6f},{},{},{},{:.4f},{:.6f},{},{},{}{}{}\n",
+                                          "{:.6f},{},{},{},{:.4f},{:.6f},{},{},{}{}{}{}\n",
                                           se.time.week, se.time.tow,
                                           d.cons, d.signal, d.sat_j, d.ref_sat,
                                           d.sta_r, d.ref_sta, d.lambda,
@@ -814,12 +1190,15 @@ void networkProducerAr(NetworkRunContext& ctx,
                                           ep_ratio, ep_psucc, nd, nd_fix, n_fixed,
                                           pair_cols.empty() ? std::string()
                                                             : pair_cols[static_cast<std::size_t>(a)],
-                                          mask_cols);
+                                          mask_cols, cycle_cols);
                     }
                     c.netar_rows += nd;
                 }
             }
         }
+        // Card AGT: each family's build becomes its memory for the next search, whether or not
+        // this one ran (no covariance, no row): stickiness follows the basis, not the search.
+        if (netar.cycle_basis) arCycleBasisStore(ctx.carry.ar_basis, cycle_epoch, suspect_now_ep);
     }
 
     // --- One-shot full-arrowhead NEQ export (network.neq_export_epoch) -----------
@@ -912,6 +1291,7 @@ void networkProducerAr(NetworkRunContext& ctx,
                   dir.string(), nc.neq_export_epoch, est.numShared(),
                   kernel.numStations());
     }
+    return lattice_fixes;
 }
 
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
@@ -988,6 +1368,9 @@ int networkProducerArRunEnd(const NetworkRunEndView& v) {
                   "is structurally empty (standing invariant #4); this run is evidence "
                   "about NOTHING in the card.", nc.ambiguity_resolution.min_epochs);
     }
+    // Card AGT: the cycle basis's clause (filter/NetworkArCycleBasis.hpp), armed only.
+    if (nc.ambiguity_resolution.cycle_basis)
+        arCycleBasisRunEndClause(c.netar_cycle, nc.ambiguity_resolution.cycle_basis_sticky, log);
     return 0;
 }
 

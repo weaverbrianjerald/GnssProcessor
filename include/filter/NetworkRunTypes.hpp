@@ -2620,6 +2620,16 @@ struct EpochStatusRow {
     std::string           we_clk_move_max_sat;   // empty = blank
 };
 
+/// The landed within-epoch replay's culprits (card FCF, @c NetworkSolveGlueResult::we_landed):
+/// what the replay that this epoch kept refloated or excluded.  The replay withholds the carried
+/// priors of these lines of sight for the epoch's solve but writes no durable stamp, so the
+/// fixed-cycle ledger reads them here (filter/NetworkArLattice.hpp).  Empty without a replay.
+struct WithinEpochCulprits {
+    std::set<std::string>                sats;      ///< Satellites refloated at every station.
+    std::map<int, std::set<std::string>> arcs;      ///< Station roster index -> satellites refloated at that station.
+    std::set<int>                        stations;  ///< Stations excluded (roster index).
+};
+
 /// Disposition of a relocated epoch-loop phase, consumed at the runNetwork call site
 /// (decomposition INC-7, plan §Control flow).  SkipEpoch stands for an epoch-loop
 /// `continue`; the site-specific bookkeeping (n_skipped, trace row, epoch-status row,

@@ -2463,6 +2463,11 @@ if (within_epoch_armed && carry_warm) {
     ctx.carry.ep_we_clk_move_max = std::abs(we_clk_move_max);
     ctx.carry.ep_we_clk_move_sat = we_clk_move_sat;
 
+    // Card FCF: the landed replay's culprits, for the fixed-cycle ledger.  The sets hold the
+    // landed state here (an undone replay restored them above) and leave scope with this
+    // block; the by-value aliases retired below are left as they are.
+    result.we_landed = WithinEpochCulprits{drop_sats, drop_arcs, drop_stations};
+
     sigma0_adapt = sigma0;   // publish the final within-epoch σ̂0 for the withhold gate (A4)
 }
 // drop_sats / drop_arcs leave scope with the RAIM block, so retire the aliases and the

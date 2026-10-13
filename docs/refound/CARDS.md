@@ -122,3 +122,35 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [GFC](GFC_galileo_family_clock_datum_2026-10-10.md): open, 2026-10-10: Galileo clock datum across the two code
   families, two default-off steps: the family-difference datum (clock wire 0.105 to 0.035 m) and the first-sighting
   family prior (truth 0.83 to 0.05 m, clock wire 0.022 m); census -0.020 m against GPS only. Pair continuity KEEP_OFF.
+- [AGT](AGT_arc_graph_shared_tree_2026-10-10.md): closed, 2026-10-11 (results in AGTB). One owner of the observation graph
+  (`filter/NetworkArcGraph`) for the chain datum, the Card-4 carry, the census, the emit re-base and the producer AR
+  search, migrated with identical output; then a sticky, L1/L2-consistent, full-coverage cycle basis for the search
+  (`network.ambiguity_resolution.cycle_basis`, default off) and a measure-only lattice of fixed cycles.
+- [AGTB](AGTB_arc_graph_continued_2026-10-10.md): closed, 2026-10-11: card AGT's continuation, from AGT-3 on. All steps
+  landed; cycle basis 45 026 / 365 566 settled integers at 60 / 300 stations, 0 wrong; two bars missed narrowly. AGT-3
+  LANDED: the Card-4 driver, the census and the emit re-base on the shared union-find, identical output on every run.
+- [FCF](FCF_fixed_cycle_fold_2026-10-11.md): closed, 2026-10-11 (close-out in FCFC section 9; D1 and D2 FAILED): pre-registered. Fix and hold, detached: the search's fixed
+  integer cycles folded into a second solve that only the emission reads; the estimator, carry, search, DD trace and QC
+  stay float. Decision D1 (does a held solve reach the consumer through the phase-bias hold; predicted not) before the
+  lattice ledger, D2 before Emit; Emit from the ledger waits for the author's ruling on the DO-NOT-BUILD record (a
+  single-epoch Emit probe for D1's sim arms lands before it, a declared departure). Hold arms carry the ARL slip fixes.
+  D1 FAILED (card FCFB section 4): M9 binding; FCF-3 and FCF-4 stay unbuilt, the kernel and the probe stay as instruments.
+  2026-10-11, later: FCF-3 built under Observe as a declared departure (card FCFC); D2 FAILED; FCF-4 unbuilt.
+- [FCFB](FCFB_fixed_cycle_fold_continued_2026-10-11.md): closed, 2026-10-11: card FCF's continuation, from FCF-1 on. FCF-1
+  LANDED, no caller: the detached kernel and the held solve, identical output; the identity is joint over the blocks;
+  chi2/K under right integers 0.57 at the default hold of 0.01 cycle (a missed bar). After review, FCF-2 gains a
+  per-unit gate (the overall test cannot see one (1, 1) pair at 300 stations) and a hold of 0.003 cycle. FCF-2
+  LANDED default off: no wrong integer folded, Observe identical; D1 FAILED (golden-wire consumer 0.2 %, unheld
+  wire 17 and 41 % worse, held product 6 % better within arc against a 30 % bar): M9 binding, FCF-3 and FCF-4
+  unbuilt. Missed: the calibrations (the float's ionosphere-free variance 1.4 to 1.9 times formal) and the cost.
+  Review fixes (section 5): the unit test cannot see a slip no detector flags (a stale zero-q float), so Emit
+  requires card ARL's slip fixes; Emit refuses a snapshot path and checks the sim bed; held solves leave the D0 timers.
+  2026-10-11, later: FCF-3 built under Observe as a declared departure (card FCFC); D2 FAILED; FCF-4 unbuilt.
+- [FCFC](FCFC_fixed_cycle_ledger_2026-10-11.md): closed, 2026-10-11 (section 9: the hold does not reach or help the
+  consumer on this posture; kept as default-off instruments; an integer-recovering datum is the lever): card FCF's second continuation, step FCF-3: the
+  ledger of fixed cycles (card AGT's lattice as the one owner of held integers), its one release seam, the float
+  re-validation and the slip ladder, under Observe; built after D1 failed (a declared departure). LANDED default off:
+  0 wrong folded with the slip fixes; without them the S8 twin's stale pair is held and folded 63 epochs. D2 FAILED
+  (planted collateral 7 dims, bar 2; clean-arc releases 30 and 779 per 2 h, bars 2 and 5). FCF-4 stays unbuilt.
+  Review fixes (section 8): a verdict on a cycle releases its arcs (a released stale integer came back before); the
+  ledger alone held the S8 twin's stale pair 34 epochs past the search; a default-off lapse measured; D2(b) untested.

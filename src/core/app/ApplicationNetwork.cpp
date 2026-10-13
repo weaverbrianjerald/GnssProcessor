@@ -129,6 +129,7 @@
 #include "filter/NetworkPbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
 #include "filter/NetworkCarryDisposition.hpp"  // the decided-once fold disposition (card PRM phase 1b)
 #include "filter/NetworkProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
+#include "filter/NetworkFixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads (card FCF)
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkCanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
 #include "app/SignalRoster.hpp"  // signal roster and arc-ledger observatory (card SID phase 1)
@@ -2578,8 +2579,8 @@ int Application::runNetwork() {
         }
         subEnd(SB_INSTALL);     // close installPosterior, the card-4 posterior readback (D0b)
         subBegin(SB_NETAR);     // producer-side network AR phase 2, log-only, off in the tier (D0b)
-        networkProducerAr(ctx, config_, log, traces, se, est, x_s, stations,
-                          est_index_of, asm_res, plan, log_dir_);
+        const ArEpochFixes ar_fixes = networkProducerAr(ctx, config_, log, traces, se, est, x_s, stations,
+                                                        est_index_of, asm_res, plan, log_dir_);
         subEnd(SB_NETAR);      // close producer AR / pre-emit tail (D0b)
         subBegin(SB_SOLPREP);  // toSolutionEpoch + per-satellite discontinuity signalling (D0b)
         // Decision half of the gross-LOS screen (RF-3b B3,
@@ -2593,7 +2594,19 @@ int Application::runNetwork() {
             networkGrossLosScreen(ctx, config_, log, traces, se, stations, est, x_s,
                                   asm_res, est_index_of, pl_now_s,
                                   GrossLosPhase::Decide);
-        NetworkSolPrepResult sp_ = networkSolPrep(ctx, config_, log, traces, setup, se, est, x_s,
+        // The fixed-cycle fold (card FCF, filter/NetworkFixedCycles.hpp) and the ledger of
+        // fixed cycles it steps (filter/NetworkArLattice.hpp, card AGT's lattice, moved here
+        // from SB_NETAR at step FCF-3): the search's fixed L1/L2 pairs, or the pairs the ledger
+        // implies, folded into a held solve beside the float one.  After the gross-LOS Decide,
+        // so its declarations release this epoch, and inside this bracket for the reason given
+        // above.  Under fold emit with an accepted held solve, solution prep and the emitter
+        // read the held vector (x_emit); every other seam keeps the float x_s.  Unreachable
+        // unless the fold is armed or network.ambiguity_resolution.trace_lattice.
+        const FixedCycleEmission fce = networkFixedCycles(ctx, config_, log, traces, se, est, x_s,
+                                                          plan.shared_datum, ar_fixes, sg_.we_landed,
+                                                          stations);
+        const Eigen::VectorXd& x_emit = fce.emit ? fce.x_held : x_s;
+        NetworkSolPrepResult sp_ = networkSolPrep(ctx, config_, log, traces, setup, se, est, x_emit,
                                                   plan, pl_now_s, datum_changed, changed_consts,
                                                   sigma0_adapt, perconst_active, perconst_publish,
                                                   perconst_dec_withhold, perconst_stats);
@@ -2615,7 +2628,7 @@ int Application::runNetwork() {
         // hold reads them at emit.  No-op off.
         networkPbHoldCloneUpdate(ctx, log, est, x_s, ws, plan.shared_datum);
         subBegin(SB_EMITSTORE); // block 7: re-base + PB-emit filter + store push + solution CSV (D0b)
-        networkEmitStore(ctx, config_, log, traces, setup, se, est, x_s, pl_now_s,
+        networkEmitStore(ctx, config_, log, traces, setup, se, est, x_emit, pl_now_s,
                          datum_changed, sigma0_adapt, sol, epoch_withheld_consts, global_bump,
                          serialized_consts, retro_emit_sats, emit_engines, present,
                          est_index_of, modeled, shared_phase_keys, carry_slipped_ambs,

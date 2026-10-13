@@ -435,6 +435,131 @@ public:
     Eigen::VectorXd solve(const Datum& datum);
 
     /**
+     * @brief Apply the datum pins to a reduced shared system exactly as @ref solve does
+     *        (Dirichlet elimination at the max-diagonal scale).
+     *
+     * Each pin's known contribution moves to the right-hand side (with the normals as
+     * passed), then the pinned row and column are zeroed and the diagonal set to the
+     * pin scale @f$s=\max(1,\max_i|N_{ii}|)@f$ with @f$u_{col}=s\cdot\mathrm{value}@f$, so
+     * @f$x_{col}=\mathrm{value}@f$ exactly.  @ref solve and @ref solveHeldDetached share
+     * this one implementation (card FCF moved it verbatim out of @ref solve), so the held
+     * solve is pinned exactly as the float one.
+     *
+     * @param[in,out] N     Reduced shared normals (square); pinned in place.
+     * @param[in,out] u     Matching right-hand side; pinned in place.
+     * @param         datum The pins.
+     * @throws std::out_of_range when a pin column is outside @p N.
+     */
+    static void applyDatumPins(Eigen::MatrixXd& N, Eigen::VectorXd& u, const Datum& datum);
+
+    /**
+     * @brief The held solve of one epoch, beside the float one (card FCF).
+     *
+     * Filled by @ref solveHeldDetached.  Per-block vectors are in input block order;
+     * a degenerate block has an empty @c kappa and a NaN @c chi2 and @c chi2_expect, an
+     * empty block an empty @c kappa and zeros.
+     *
+     * @par The contract on x_s
+     * @c x_s is the held estimate only when @c ok; otherwise it is @c x_float, bitwise,
+     * whatever was computed (a refused float reproduction, a held estimate that is not
+     * finite, nothing folded).  A reader of @c x_s therefore never receives a held vector
+     * built on a cache that did not produce the float.  When @c ok is false the
+     * statistics are diagnostic only.
+     *
+     * @par The two statistics
+     * The blocks touch disjoint stations, but their float cycle values are correlated
+     * through the shared border, so the identity @f$\kappa=S^{-1}v@f$ holds over all the
+     * folded rows together, with @f$S=\mathrm{Var}(\text{float cycles})+P^z@f$ the joint
+     * matrix: @c kappa is that joint vector, block by block, and @c chi2_joint is
+     * @f$v^\top S^{-1}v@f$ over every folded row.  A block's own statistic
+     * @f$v_b^\top S_{bb}^{-1}v_b@f$ is not @f$v_b^\top\kappa_b@f$ when another block
+     * folds; @c chi2 holds the own statistic, from a held solve of the block alone
+     * (one more shared solve per folded block, taken only when two or more fold).
+     *
+     * @par Their mean under right targets
+     * With right targets @f$v\sim N(0,S-P^z)@f$, so each statistic has the mean
+     * @f$K-\mathrm{tr}(S^{-1}P^z)@f$, which is @f$K@f$ only where the hold variance is
+     * small against the float variance in every direction of the rows (at a hold of
+     * 0.01 cycle on a settled L1/L2 pair it is about 0.6 K).  @c chi2_expect and
+     * @c chi2_joint_expect state it every epoch, from
+     * @f$S^{-1}=A^{-1}-X\Sigma_hX^\top@f$ (@f$X=A^{-1}G^\top@f$, @f$\Sigma_h@f$ the held
+     * shared covariance with the pinned columns exact, @f$\mathrm{diag}(A^{-1})@f$ by
+     * selected inversion), so a calibration is graded against it, not against
+     * @f$K@f$.  Each statistic is an overall test: one wrong unit among @f$K@f$ rows
+     * shifts its mean by that unit's non-centrality alone, while the bar grows with
+     * @f$K@f$, so a single error that keeps the wide lane (a (1, 1) pair) is
+     * invisible to it at network size.  A test per unit is the caller's (card FCF,
+     * continuation FCFB).
+     */
+    struct HeldSolve {
+        bool   ok{false};                    ///< The held estimate is accepted: at least one block folded (non-degenerate, non-empty), the held estimate is finite and the float reproduced (@c float_repro_rel ≤ @ref kHeldFloatReproTol).
+        Eigen::VectorXd x_s;                 ///< The held shared estimate when @c ok; otherwise @c x_float itself, bitwise.
+        std::vector<Eigen::VectorXd> v;      ///< Per block: @f$z_{\mathrm{free}}-G^\top x_{\mathrm{float}}-\hat z@f$, the float cycle values minus their targets (m).
+        std::vector<Eigen::VectorXd> kappa;  ///< Per block: @f$A^{-1}(z_{\mathrm{free}}-G^\top x_{\mathrm{held}}-\hat z)@f$, the block's part of the joint @f$S^{-1}v@f$ (m⁻¹).  The posterior cycle values are @f$\hat z+P^z\kappa@f$.
+        std::vector<double> chi2;            ///< Per block: the block's own statistic @f$v_b^\top S_{bb}^{-1}v_b@f$ (@f$v_b^\top\kappa_b@f$ when it is the only block that folds; otherwise from a held solve of the block alone).
+        std::vector<double> chi2_expect;     ///< Per block: the mean of @c chi2 under right targets, @f$K_b-\mathrm{tr}(S_{bb}^{-1}P^z_b)@f$.
+        double chi2_joint{0.0};              ///< @f$v^\top S^{-1}v=\sum_b v_b^\top\kappa_b@f$ over every folded row (0 when nothing folded).
+        double chi2_joint_expect{0.0};       ///< The mean of @c chi2_joint under right targets, @f$K-\mathrm{tr}(S^{-1}P^z)@f$ (0 when nothing folded).
+        long long dof_joint{0};              ///< The number of folded rows, the degrees of freedom of @c chi2_joint.
+        std::vector<char>   degenerate;      ///< Per block: 1 when it folded nothing (dependent rows, or the pivot screen on its hold refused it).
+        std::vector<char>   dependent;       ///< Per block: 1 when its rows are linearly dependent (@ref NetworkNormalEquations::DetachedFoldBlock::dependent); implies @c degenerate.
+        double float_repro_rel{0.0};         ///< The normwise backward error of @c x_float on the pinned unfolded copy of the cached reduced system, @f$\|N_px-u_p\|_\infty/(\|N_p\|_\infty\|x\|_\infty+\|u_p\|_\infty)@f$: round-off for the float this cache produced, whatever the conditioning; large when the cache no longer produced @c x_float.  Infinite when @c x_float is not finite.
+        double max_shift_m{0.0};             ///< @f$\max|x_{\mathrm{held}}-x_{\mathrm{float}}|@f$ over the shared columns of the computed held estimate, also when @c ok is false (0 when nothing folded; infinite when the held estimate is not finite).
+        long long factor_nnz{0};             ///< Sum of the blocks' factor nonzeros (cost telemetry).
+    };
+
+    /// Bar on @ref HeldSolve::float_repro_rel above which the held solve is not @c ok:
+    /// the cached reduced system did not produce the float passed in (card FCF).  A
+    /// backward-stable solve leaves a normwise backward error of order the dimension
+    /// times the unit round-off; the bar leaves six orders of magnitude above that.
+    static constexpr double kHeldFloatReproTol = 1e-8;
+
+    /**
+     * @brief Fold blocks of fixed integer cycles onto a copy of the last solve's reduced
+     *        normals, pin with @p datum and solve once; the estimator is not modified
+     *        (card FCF).
+     *
+     * The steps: (1) copy the cached reduced normals and RHS, pin the unfolded copy with
+     * @ref applyDatumPins and measure @c float_repro_rel from @p x_float; (2) form the
+     * blocks' fold operands from the cached per-station factors
+     * (@ref NetworkNormalEquations::foldCycleRowsDetached); (3) add @c dN and @c du to the
+     * copy, pin it the same way and solve once through
+     * @ref NetworkNormalEquations::solveSharedConstrained, with the held covariance for
+     * the statistics' means; (4) per block, @c v and @c kappa, the joint statistic, each
+     * block's own statistic (a solve of each folded block alone when two or more fold;
+     * see @ref HeldSolve), their means under right targets, and the largest shift from
+     * the float; (5) acceptance: @c ok, and @c x_s the held estimate only then.
+     *
+     * Fold-then-pin is exactly what @ref solve does with Card-4 DD priors set
+     * (@ref setDdPriors), so for rows with a diagonal @f$P^z@f$ the held estimate and the
+     * posterior cycles @f$\hat z+P^z\kappa@f$ equal that path's solve and
+     * @ref ddPriorPosteriorMean.  The reduced normals, the shared covariance and every
+     * @ref reconstructStation stay those of the float solve: nothing here writes to the
+     * estimator or its kernel.  The kernel's section timers
+     * (@ref NetworkNormalEquations::sectionTimers) are restored on every exit, so with the
+     * timers armed the held solves are neither timed nor counted there (card FCFB section 5);
+     * their cost is the caller's to time.
+     *
+     * @param datum   The datum passed to the float @ref solve.
+     * @param x_float The float shared estimate that @ref solve returned.
+     * @param blocks  Blocks of cycle rows over disjoint station sets (one per connected
+     *                station component).
+     * @return The held solve; @c x_s is @p x_float, bitwise, and @c ok false when
+     *         @p blocks is empty, no block folds, the held estimate is not finite or the
+     *         float is not reproduced.
+     * @throws std::logic_error before a @ref solve, when the kernel's reduction is not
+     *         current, or when the kernel holds folded Card-4 DD priors or sum-to-zero
+     *         gauges (read from the kernel's state, not from the request lists, which
+     *         may change after the solve); std::invalid_argument on an @p x_float size
+     *         mismatch;
+     *         whatever @ref NetworkNormalEquations::foldCycleRowsDetached throws (two
+     *         blocks touching one station, a malformed row); std::invalid_argument when
+     *         the folded, pinned system is not positive definite.
+     */
+    HeldSolve solveHeldDetached(const Datum& datum, const Eigen::VectorXd& x_float,
+                                const std::vector<std::vector<NetworkNormalEquations::CycleRow>>& blocks) const;
+
+    /**
      * @brief Inject a carried-ambiguity (phase-leveling) prior onto one station's
      *        local block; forwards to @ref NetworkNormalEquations::addStationPrior.
      *

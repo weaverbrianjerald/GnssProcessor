@@ -6,6 +6,8 @@
 
 #include "filter/NetworkInvariantCarryDriver.hpp"
 
+#include "filter/NetworkArcGraph.hpp"   // Dsu, singleTreeOf, fundamentalCycle, promoteBridgingArcs, chordRestriction (card AGT)
+
 #include <fmt/format.h>
 
 #include <algorithm>
@@ -15,10 +17,10 @@
 #include <cstdlib>
 #include <istream>
 #include <limits>
+#include <optional>
 #include <ostream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 // The run-end reports at the end of this file (card NOM step TD1b):
@@ -70,24 +72,15 @@ inline double laneMetersPerCycle(double lambda1, double lambda2) {
     return 1.0 / std::sqrt(a * a + b * b);
 }
 
-/// A tiny path-compressing union-find over the (small, per-group) integer vertex set.
-class UnionFind {
-public:
-    int find(int x) {
-        auto it = parent_.find(x);
-        if (it == parent_.end()) { parent_[x] = x; return x; }
-        int r = x;
-        while (parent_[r] != r) r = parent_[r];
-        while (parent_[x] != r) { int nx = parent_[x]; parent_[x] = r; x = nx; }
-        return r;
-    }
-    void unite(int a, int b) {
-        int ra = find(a), rb = find(b);
-        if (ra != rb) parent_[ra] = rb;
-    }
-private:
-    std::unordered_map<int, int> parent_;
-};
+/// The W row of one new chord as the fold reads it: the coefficient of each old chord in the
+/// chord's fundamental cycle (arcgraph::chordRestriction), in old-chord order, as doubles.
+Eigen::VectorXd wRowOf(const std::map<ArcKey, int>& cycle, const std::vector<ArcKey>& old_chords) {
+    const std::vector<int> coeff = arcgraph::chordRestriction(cycle, old_chords);
+    Eigen::VectorXd w = Eigen::VectorXd::Zero(static_cast<Eigen::Index>(coeff.size()));
+    for (std::size_t j = 0; j < coeff.size(); ++j)
+        w(static_cast<Eigen::Index>(j)) = static_cast<double>(coeff[j]);
+    return w;
+}
 
 // --- Carry-blob (de)serialization helpers (RTB-7).  Self-contained: the snapshot
 //     layer stores the CARRY..CEND blob verbatim, as it does the emitter blob. ---
@@ -622,7 +615,8 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
         };
         std::map<ArcKey, ArcInfo> arcinfo;
         std::set<ArcKey>          slipped_arcs;   // arcs whose carried ambiguity slipped this epoch (C3c)
-        UnionFind uf;
+        // The shared link rule (card AGT): root(rx) under root(sat), in g.arcs order, never sorted.
+        arcgraph::Dsu uf;
         std::vector<ArcKey> group_tree_edges;   // for per-component tree extraction
         std::set<ArcKey> slipped2_arcs;   // pair groups: band 2's own slips, see ArcInput::slipped2 (WL-3)
         for (const ArcInput& a : g.arcs) {
@@ -630,7 +624,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
             const ArcKey k(a.rx_vertex, a.sat_vertex);
             arcinfo[k] = {a.est_station, a.local_col, a.local_col2, a.tree_edge,
                           a.x_lin, a.x_lin2};
-            uf.unite(a.rx_vertex, a.sat_vertex);
+            arcgraph::dsuUnite(uf, a.rx_vertex, a.sat_vertex);
             if (a.tree_edge) group_tree_edges.push_back(k);
             if (a.slipped) slipped_arcs.insert(k);
             if (g.pair && a.slipped2) slipped2_arcs.insert(k);
@@ -644,7 +638,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
         std::map<int, std::vector<ArcKey>> comp_arcs;
         std::map<int, std::set<int>>       comp_vertices;
         for (const auto& [k, info] : arcinfo) {
-            const int root = uf.find(k.u);
+            const int root = arcgraph::dsuFind(uf, k.u);
             comp_arcs[root].push_back(k);
             comp_vertices[root].insert(k.u);
             comp_vertices[root].insert(k.v);
@@ -671,37 +665,19 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
             // connect disjoint tree fragments.  Homogeneous regions keep the eq34 basis
             // unchanged (the §6.1 equivalence); fragmented regions stay carried instead of
             // being dropped whole by the tree guards below. (WL-3)
-            if (g.pair && !chords.empty()) {
-                UnionFind tf;
-                for (const ArcKey& t : tree_edges) tf.unite(t.u, t.v);
-                std::vector<ArcKey> kept;
-                kept.reserve(chords.size());
-                for (const ArcKey& c : chords) {
-                    if (tf.find(c.u) != tf.find(c.v)) {
-                        tf.unite(c.u, c.v);
-                        tree_edges.push_back(c);   // promoted: completes the forest
-                        ++counters_.pair_tree_promotions;
-                    } else {
-                        kept.push_back(c);
-                    }
-                }
-                chords.swap(kept);
-            }
+            if (g.pair && !chords.empty())
+                counters_.pair_tree_promotions += arcgraph::promoteBridgingArcs(tree_edges, chords);
             if (chords.empty()) continue;   // spanning tree only → no DD to carry
 
-            // The cycle algebra: build a phase-B ZComponent from the tree.  A malformed
-            // (non-spanning or cyclic) tree from the election is not representable, so the
-            // component is skipped rather than folded with a wrong cycle.
-            ZComponent zc;
-            try {
-                zc = ZComponent(tree_edges);
-            } catch (const std::exception&) {
-                continue;
-            }
+            // The cycle algebra (arcgraph, card AGT): the tree of the component's tree edges.
+            // A malformed (non-spanning or cyclic) tree from the election is not representable,
+            // so the component is skipped rather than folded with a wrong cycle.
+            const std::optional<arcgraph::IntTree> tree = arcgraph::singleTreeOf(tree_edges);
+            if (!tree) continue;
             // Every chord's endpoints must be tree-connected (guard fundamentalCycle).
             bool tree_ok = true;
             for (const ArcKey& c : chords)
-                if (!zc.hasVertex(c.u) || !zc.hasVertex(c.v)) { tree_ok = false; break; }
+                if (!tree->vertices.count(c.u) || !tree->vertices.count(c.v)) { tree_ok = false; break; }
             if (!tree_ok) continue;
 
             // Gather contributing previous blocks (any shared vertex), concatenated
@@ -806,7 +782,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
             // z_free, so ẑ + zl is the arc-space absolute DD.  Empty unless lin_on. (RS-2)
             std::vector<double> zl_rows, zl_rows2;
             for (const ArcKey& c : chords) {
-                const std::map<ArcKey, int> cyc = zc.fundamentalCycle(c);
+                const std::map<ArcKey, int> cyc = arcgraph::fundamentalCycle(*tree, c);
 
                 // Foldable when every cycle arc resolves to a live (station, local col); for a
                 // pair group, in both bands (membership requires band 2, §2, WL-3).
@@ -871,11 +847,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                     const bool carried = would_carry && !slip_in_cycle;
                     Eigen::VectorXd w;
                     if (carried) {
-                        w = Eigen::VectorXd::Zero(n_old);
-                        for (Eigen::Index j = 0; j < n_old; ++j) {
-                            auto it = cyc.find(old_chords[static_cast<std::size_t>(j)]);
-                            if (it != cyc.end()) w(j) = static_cast<double>(it->second);
-                        }
+                        w = wRowOf(cyc, old_chords);
                         ++counters_.chords_carried;
                     } else {
                         ++counters_.chords_born;
@@ -903,13 +875,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 const bool c1 = would_carry && !(cfg_.lane_joint ? union_slip : slip_in_cycle);
                 const bool c2 = would_carry && !(cfg_.lane_joint ? union_slip : slip2_in_cycle);
                 Eigen::VectorXd w;
-                if (would_carry) {
-                    w = Eigen::VectorXd::Zero(n_old);
-                    for (Eigen::Index j = 0; j < n_old; ++j) {
-                        auto it = cyc.find(old_chords[static_cast<std::size_t>(j)]);
-                        if (it != cyc.end()) w(j) = static_cast<double>(it->second);
-                    }
-                }
+                if (would_carry) w = wRowOf(cyc, old_chords);
                 counters_.chords_carried += (c1 ? 1 : 0) + (c2 ? 1 : 0);
                 counters_.chords_born    += (c1 ? 0 : 1) + (c2 ? 0 : 1);
                 if (would_carry && !c1) ++counters_.slip_kills;

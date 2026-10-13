@@ -113,6 +113,14 @@ void eq34ShiftCarry(NetworkCarryState& carry,
  * (re-reference erase + S-transformation apply + I2 extend-only merge-back) and
  * advances the sticky baselines.
  *
+ * The graph, its components and the tree are those of filter/NetworkArcGraph (card
+ * AGT step AGT-4): arcgraph::buildArcGraph per group (stations in roster order,
+ * satellites in string order, arcs in usable_keys order), arcgraph::arcComponents in
+ * the legacy order (arcgraph::legacyChainVertexRank) and arcgraph::growChainForest per
+ * component (roots r1 and the bridged satellites, the live incumbent arcs as the
+ * sticky seed).  The pins are recorded by replaying the tree's edges in attachment
+ * order after the walk, which is exact because the walk reads nothing a pin writes.
+ *
  * @param ctx           [in/out] carry + counters.  The whole context is passed
  *                      instead of about twenty individual references because the
  *                      body value-mutates local_carry / rpb_carry / prev_carry, all
