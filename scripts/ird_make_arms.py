@@ -8,13 +8,18 @@ bundle, plus at most one knob under test, made through scripts/rapid_arm.py.
         [--knob key=value] [--drop-station NAME ...] [--dry-run]
     python scripts/ird_make_arms.py --selftest
 
-The base of every arm is config/golden/golden_{sim,field}_refound.json at main 3524acb, read
-with `git show` and refused unless its sha256 is the pinned one (the working tree may hold
-another card's golden edits; card IRD's base-drift rule re-bases at most once, before IRD-2).
+The base of every arm is config/golden/golden_{sim,field}_refound.json at main a02ccfb (card
+GAD's GPS + Galileo goldens; card IRD section 13.4: the one re-base, taken at IRD-0r), read
+with `git show` and refused unless its sha256 is the pinned one.  IRD-0 ran on 3524acb.
 A sim bed re-points every station's and the consumer's RINEX at the bed's fixture; the golden
-sim bed keeps the 24 h fixture and starts at 00:30:15 (start_offset_hours 0.504167).  The base
+sim bed keeps the 24 h fixture and starts at 00:30:15 (start_offset_hours 0.504167).  The ARL
+beds exclude Galileo with the bed knob processing.active_systems=["GPS"] (card ARL's record is
+GPS-only); the golden sim and field beds keep GPS + Galileo, Galileo unclaimed.  The base
 file is written to runs/_ird_bases/, rapid_arm.py makes the arm from it, and the arm's
 rapid.json gains an "ird" block (golden revision and sha256, bed, arm, knob sets).
+
+Field arms are refused before IRD-6 (invariant 1), except arm G, the golden unchanged (the
+negative control of section 13, not an ON arm).
 
 An arm is refused when it sets a key the config loader does not read (a quoted literal in
 src/core/config/*.cpp): the loader ignores an unknown key without a word, so such an arm would
@@ -31,12 +36,12 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace(os.sep, "/")
 RUNS = ROOT + "/runs"
-GOLDEN_REV = "3524acb"
+GOLDEN_REV = "a02ccfb"
 GOLDEN = {
     "sim": ("config/golden/golden_sim_refound.json",
-            "9080e7ecaf57200e8c18de1bd638d339ea1407931362e6e072282e240c69e57e"),
+            "613f0016b1b21175d233312a735a4f40eed2f7bc7515a4ce613cd8f326a90eab"),
     "field": ("config/golden/golden_field_refound.json",
-              "cb08c38210b634637bc1b0cd8c517224b36e5b896102f845e7534a81811481fc"),
+              "a392a0bc9f1efb82fca8f1120bbfb483d61a623d053293e175e19a0fea0ede43"),
 }
 SIM_START_H = "0.504167"
 
@@ -64,9 +69,13 @@ IRD_TRACES = ["network.trace_chain_datum=true", "network.trace_pb_prehold=true",
               "network.trace_rpb_states=true"]
 BUNDLE_A0 = CHAIN_ON + HELD_OFF + FLOAT_REPIN_OFF + SLIP_SET + SEARCH_LOG
 MICROSCOPE = ["network.sim_zero_iono_sigma_m=0.001"]
+# Card IRD section 13.4: the ARL beds are GPS-only (card ARL's record); the golden beds keep
+# the golden's GPS + Galileo, with Galileo unclaimed.
+ARL_GPS_ONLY = ['processing.active_systems=["GPS"]']
 
 # name -> (knob list on top of the base, what it is)
 ARMS = {
+    "G": ([], "the golden unchanged (the negative control, card IRD section 13)"),
     "R1": (SLIP_SET + SEARCH_LOG + IRD_TRACES, "reference: golden + slip set + search + traces"),
     "A0": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0, "R1 + bundle A0"),
     "A0h": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
@@ -83,13 +92,13 @@ ARMS = {
 BEDS = {
     "golden": ("sim", None, ["network.start_offset_hours=" + SIM_START_H],
                "the golden sim bed, graded from 00:30:15"),
-    "microscope": ("sim", "runs/simarl_r1c", MICROSCOPE,
+    "microscope": ("sim", "runs/simarl_r1c", ARL_GPS_ONLY + MICROSCOPE,
                    "ARL r1c (receiver phase biases) with zero-ionosphere rows"),
-    "r1c": ("sim", "runs/simarl_r1c", [], "ARL rung 1c"),
-    "r2": ("sim", "runs/simarl_r2", [], "ARL rung 2 (ionosphere)"),
-    "r3b": ("sim", "runs/simarl_r3b", [], "ARL rung 3b (the slip-ladder control)"),
-    "r3c": ("sim", "runs/simarl_r3c", [], "ARL rung 3c (troposphere, phase colour)"),
-    "field": ("field", None, [], "the field golden (no ON arm before IRD-6, invariant 1)"),
+    "r1c": ("sim", "runs/simarl_r1c", ARL_GPS_ONLY, "ARL rung 1c"),
+    "r2": ("sim", "runs/simarl_r2", ARL_GPS_ONLY, "ARL rung 2 (ionosphere)"),
+    "r3b": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY, "ARL rung 3b (the slip-ladder control)"),
+    "r3c": ("sim", "runs/simarl_r3c", ARL_GPS_ONLY, "ARL rung 3c (troposphere, phase colour)"),
+    "field": ("field", None, [], "the field golden (only arm G before IRD-6, invariant 1)"),
 }
 
 
@@ -159,6 +168,11 @@ def compose(arm, bed, knob=None):
     return sets
 
 
+def field_allowed(arm, knob):
+    """Before IRD-6 the only field arm is G with no knob (the golden unchanged, section 13)."""
+    return arm == "G" and not knob
+
+
 def make(a):
     which, fixture, _, _ = BEDS[a.bed]
     sets = compose(a.arm, a.bed, a.knob)
@@ -166,9 +180,9 @@ def make(a):
     if missing:
         raise SystemExit("refused: the loader does not read %s (an arm setting them would "
                          "silently be its base)" % ", ".join(missing))
-    if which == "field":
+    if which == "field" and not field_allowed(a.arm, a.knob):
         raise SystemExit("refused: no new field arm before IRD-6 has passed (card IRD sections 6 "
-                         "and 11, invariant 1); the field census arms already exist")
+                         "and 11, invariant 1) except arm G, the golden unchanged")
     base = json.loads(golden_bytes(which))
     if fixture:
         base = repoint(base, ROOT + "/" + fixture)
@@ -250,6 +264,14 @@ def selftest():
     finally:
         ARMS.pop("_bad", None)
     chk(all(len(v[1]) == 64 for v in GOLDEN.values()), "both goldens pinned by a full sha256")
+    chk(all(ARL_GPS_ONLY[0] in compose("A0", b) for b in ("microscope", "r1c", "r2", "r3b", "r3c"))
+        and not any(kv.startswith("processing.active_systems") for kv in compose("A0", "golden")),
+        "the ARL beds are GPS-only; the golden bed keeps GPS + Galileo")
+    chk(compose("G", "field") == [] and field_allowed("G", None)
+        and not field_allowed("A0", None) and not field_allowed("G", "network.x=1"),
+        "the field bed takes arm G only (the golden unchanged), never a knob")
+    chk(compose("G", "golden") == ["network.start_offset_hours=" + SIM_START_H],
+        "arm G on the golden sim bed is the golden started at 00:30:15")
     try:
         b = golden_bytes("sim")
         chk(sha256_bytes(b) == GOLDEN["sim"][1], "the sim golden at %s matches its pin" % GOLDEN_REV)

@@ -580,24 +580,62 @@ def weighted_quantile(vals, w, q):
     return float(vals[o][min(np.searchsorted(c, q * c[-1]), vals.size - 1)])
 
 
-def size_matched_null(n_units, ia, ib, w, mc=2000, seed=20261013):
-    """The size-matched null of the p50 |wrap| statistic (card IRD section 8).
+def size_matched_null_draws(n_units, ia, ib, w, mc=2000, seed=20261013):
+    """The mc draws of the size-matched null of the p50 |wrap| statistic (card IRD section 8).
 
     One uniform fraction per unit; a record is a unit (ib None) or a pair of units
-    (ia, ib), with occupancy weights w (pair-epochs or arc-epochs per record).  Returns
-    (mean, p2.5, p97.5) of the weighted p50 of |wrap(u_a - u_b)| (or |u_a|) over mc draws."""
+    (ia, ib), with occupancy weights w (pair-epochs or arc-epochs per record).  Each draw is
+    the weighted p50 of |wrap(u_a - u_b)| (or |u_a|); empty when there is no record."""
     rng = np.random.default_rng(seed)
     ia = np.asarray(ia, int)
     ib = None if ib is None else np.asarray(ib, int)
     w = np.asarray(w, float)
     if ia.size == 0:
-        return float("nan"), float("nan"), float("nan")
+        return np.empty(0)
     out = np.empty(mc)
     for k in range(mc):
         u = rng.uniform(-0.5, 0.5, n_units)
         v = np.abs(u[ia]) if ib is None else np.abs(wrapf(u[ia] - u[ib]))
         out[k] = weighted_quantile(v, w, 0.5)
-    return float(out.mean()), float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5))
+    return out
+
+
+def null_summary(draws):
+    """{null, null_lo, null_hi, null_lo99, null_hi99}: the draws' mean, their 95 % band
+    (2.5 and 97.5 percentiles) and their two-sided 99 % band (0.5 and 99.5 percentiles)."""
+    if draws.size == 0:
+        return {k: float("nan") for k in ("null", "null_lo", "null_hi", "null_lo99", "null_hi99")}
+    lo99, lo, hi, hi99 = np.percentile(draws, [0.5, 2.5, 97.5, 99.5])
+    return {"null": float(draws.mean()), "null_lo": float(lo), "null_hi": float(hi),
+            "null_lo99": float(lo99), "null_hi99": float(hi99)}
+
+
+def size_matched_null(n_units, ia, ib, w, mc=2000, seed=20261013):
+    """(mean, p2.5, p97.5) of the size-matched null (size_matched_null_draws)."""
+    d = null_summary(size_matched_null_draws(n_units, ia, ib, w, mc=mc, seed=seed))
+    return d["null"], d["null_lo"], d["null_hi"]
+
+
+# Card IRD section 13.3: the negative control re-registered by the author's ruling of
+# 2026-10-13.  A cell passes when p50 |wrap| > 0.15 cycle (far from integer) and its gap to the
+# null lies within max(0.05 cycle, the null's own two-sided 99 % band) on each side, with n > 0.
+CONTROL_FAR_CYC = 0.15
+CONTROL_GAP_FLOOR_CYC = 0.05
+
+
+def control_ird0r(p50, null, lo99, hi99, n):
+    """(ok, tol_lo, tol_hi, why) of one cell under the re-registered control (section 13.3)."""
+    tol_lo = max(CONTROL_GAP_FLOOR_CYC, null - lo99)
+    tol_hi = max(CONTROL_GAP_FLOOR_CYC, hi99 - null)
+    why = []
+    if not n > 0:
+        why.append("n = 0")
+    if not p50 > CONTROL_FAR_CYC:
+        why.append("p50 %.4f not above %.2f" % (p50, CONTROL_FAR_CYC))
+    g = p50 - null
+    if not -tol_lo <= g <= tol_hi:
+        why.append("gap %+.4f outside [-%.4f, +%.4f]" % (g, tol_lo, tol_hi))
+    return not why, tol_lo, tol_hi, "; ".join(why)
 
 
 def _tokens(fields):
@@ -801,7 +839,7 @@ def dual_grade(epochs, osb, sc_truth, bands=("L1C", "L2W"), systems=("G",), star
         ia = [ix[ua] for (ua, ub), _ in pairs]
         ib = [ix[ub] for (ua, ub), _ in pairs]
         w = [n for _, n in pairs]
-        null, lo, hi = size_matched_null(len(units), ia, ib, w, mc=mc, seed=seed + h)
+        nl = null_summary(size_matched_null_draws(len(units), ia, ib, w, mc=mc, seed=seed + h))
         row = {"n": len(recs[h]["E1"]), "units": len(units),
                "rabs_p50": float(np.median(rabs[h])) if rabs[h] else float("nan")}
         for c in DUAL_CHANNELS:
@@ -811,7 +849,7 @@ def dual_grade(epochs, osb, sc_truth, bands=("L1C", "L2W"), systems=("G",), star
                       "in15": float(np.mean(v <= 0.15)) if v.size else float("nan"),
                       "in20": float(np.mean(v <= 0.20)) if v.size else float("nan"),
                       "in25": float(np.mean(v <= 0.25)) if v.size else float("nan"),
-                      "null": null, "null_lo": lo, "null_hi": hi, "gap": p50 - null}
+                      "gap": p50 - nl["null"], **nl}
         sp = {}
         for key, chans in spl[h].items():
             kind, lab = key.split("|", 1)
@@ -824,10 +862,14 @@ def dual_grade(epochs, osb, sc_truth, bands=("L1C", "L2W"), systems=("G",), star
     return out
 
 
-def dual_print(res, label, null_tol=None, channels=("E1", "E2", "WL", "NL", "MW")):
-    """Print the hourly grade; with null_tol, the negative-control verdict per hour and
-    channel (|p50 - null| <= null_tol and n > 0).  Returns the list of failing cells."""
+def dual_print(res, label, null_tol=None, channels=("E1", "E2", "WL", "NL", "MW"),
+               control=None, control_channels=("E1", "E2", "WL")):
+    """Print the hourly grade; with null_tol, the IRD-0 negative-control verdict per hour and
+    channel (|p50 - null| <= null_tol and n > 0); with control "ird0r", the re-registered
+    control of card IRD section 13.3 on `control_channels`.  Returns the list of failing cells
+    (the IRD-0 ones, then the ird0r ones)."""
     fails = []
+    cfails, ccells = [], []
     print("== %s" % label)
     print("   h      n units  |r|p50_m  " + "  ".join("%-27s" % c for c in channels))
     for h, row in sorted(res.items()):
@@ -837,6 +879,15 @@ def dual_print(res, label, null_tol=None, channels=("E1", "E2", "WL", "NL", "MW"
             cells.append("%.3f p99 %.2f gap %+.3f" % (d["p50"], d["p99"], d["gap"]))
             if null_tol is not None and (row["n"] <= 0 or not abs(d["gap"]) <= null_tol):
                 fails.append((label, h, c, d["p50"], d["null"], d["gap"], row["n"]))
+        if control == "ird0r":
+            for c in control_channels:
+                d = row[c]
+                ok, tlo, thi, why = control_ird0r(d["p50"], d["null"], d["null_lo99"],
+                                                  d["null_hi99"], row["n"])
+                ccells.append((label, h, c, d["p50"], d["null"], d["gap"], tlo, thi, row["n"],
+                               "PASS" if ok else "FAIL: " + why))
+                if not ok:
+                    cfails.append(ccells[-1])
         print("   h%-3d %7d %5d  %8.4f  " % (h, row["n"], row["units"], row["rabs_p50"])
               + "  ".join("%-27s" % x for x in cells))
         print("        null %.3f [%.3f, %.3f]; within 0.15/0.20/0.25 (WL): %.2f / %.2f / %.2f"
@@ -852,7 +903,14 @@ def dual_print(res, label, null_tol=None, channels=("E1", "E2", "WL", "NL", "MW"
               % (null_tol, "PASS" if not fails else "FAIL in %d cell(s)" % len(fails)))
         for f in fails:
             print("     FAIL %s h%d %s: p50 %.4f null %.4f gap %+.4f n %d" % f)
-    return fails
+    if control == "ird0r":
+        print("   re-registered control (card IRD 13.3: p50 > %.2f and gap within "
+              "max(%.2f, null 99 %% band); %d cell(s)): %s"
+              % (CONTROL_FAR_CYC, CONTROL_GAP_FLOOR_CYC, len(ccells),
+                 "PASS" if not cfails else "FAIL in %d cell(s)" % len(cfails)))
+        for c in ccells:
+            print("     %s h%d %-2s: p50 %.4f null %.4f gap %+.4f tol [-%.4f, +%.4f] n %d  %s" % c)
+    return fails + cfails
 
 
 def start_from_hms(first_tow, hms):
@@ -866,7 +924,12 @@ def dual_load(fixture, run, source="products"):
     stations = station_dirs(fixture)
     if not stations:
         raise SystemExit("no station with truth_bias.csv under %s" % fixture)
-    osb, _ = load_osb_truth(stations)
+    osb, disagree = load_osb_truth(stations)
+    print("truth OSB: %d (satellite, signal) keys over %d station(s); cross-station "
+          "disagreements %d" % (len(osb), len(stations), disagree))
+    if disagree:
+        raise SystemExit("refused: %d truth-OSB values disagree across the stations of %s (the "
+                         "satellite OSB must be one value per key)" % (disagree, fixture))
     sc_truth, _, _ = load_satclock_truth(stations)
     prod = run if run.endswith(".txt") else os.path.join(run, "products.txt")
     _, epochs, census = parse_products_tokens(prod)
@@ -896,17 +959,19 @@ def dual_main(args):
           % (run, args.source, "/".join(bands), "on" if args.xcorr else "OFF (raw W)", start,
              ", %.2f h" % args.hours if args.hours else ""))
     print("record census: %s" % ", ".join("%s=%d" % kv for kv in sorted(census.items())))
-    fails = dual_print(res, os.path.basename(run.rstrip("/\\")), args.null_tol, chans)
+    fails = dual_print(res, os.path.basename(run.rstrip("/\\")), args.null_tol, chans,
+                       control=args.control)
     if args.events:
         import simnet_chain_frame_grade as FG          # one owner of the event steps
-        FG.print_event_steps(FG.event_steps(epochs, osb, sc_truth, bands,
-                                            FG.load_chain_events(run), xcorr=args.xcorr))
+        ev = FG.load_chain_events(run)
+        FG.print_event_steps(FG.event_steps(epochs, osb, sc_truth, bands, ev, xcorr=args.xcorr),
+                             chain_rows=len(ev))
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump({"run": run, "source": args.source, "bands": bands, "start_tow": start,
                        "hours": {str(h): v for h, v in res.items()},
                        "null_fail": [list(f) for f in fails]}, fh, indent=1, default=float)
-    return 1 if (args.null_tol is not None and fails) else 0
+    return 1 if ((args.null_tol is not None or args.control) and fails) else 0
 
 
 def dual_selftest():
@@ -1039,6 +1104,37 @@ def dual_selftest():
             % (hi8 - lo8, hi - lo))
         chk(weighted_quantile([0.1, 0.2, 0.3], [1, 1, 10], 0.5) == 0.3,
             "the weighted median follows the occupancy")
+        dr = size_matched_null_draws(8, [0, 0, 1], [1, 2, 2], [5, 5, 5], mc=400)
+        ns = null_summary(dr)
+        chk(ns["null_lo99"] <= ns["null_lo"] < ns["null"] < ns["null_hi"] <= ns["null_hi99"]
+            and abs(ns["null"] - nm8) < 1e-12,
+            "the 99 % band contains the 95 % band; the same draws as size_matched_null")
+        ok1 = control_ird0r(0.25, 0.25, 0.22, 0.28, 100)
+        ok2 = control_ird0r(0.14, 0.25, 0.22, 0.28, 100)
+        ok3 = control_ird0r(0.19, 0.25, 0.22, 0.28, 100)
+        ok4 = control_ird0r(0.19, 0.25, 0.18, 0.28, 100)
+        ok5 = control_ird0r(0.25, 0.25, 0.22, 0.28, 0)
+        chk(ok1[0] and not ok2[0] and not ok3[0] and ok4[0] and not ok5[0]
+            and abs(ok1[1] - 0.05) < 1e-12 and abs(ok4[1] - 0.07) < 1e-12,
+            "control ird0r: the null passes; 0.14 fails part 1; gap -0.06 fails at the 0.05 "
+            "floor and passes when the 99 % band reaches 0.07; n = 0 fails")
+        _, _, _, res_t = grade(truth_vals)
+        fails = dual_print(res_t, "selftest", channels=("E1", "E2", "WL"), control="ird0r")
+        chk(len(fails) == 6, "a truth wire fails the control in every cell (2 hours x 3 channels)")
+
+        fxd = os.path.join(td, "fx_disagree")
+        for k, sta in enumerate(("S01000SIM", "S02000SIM")):
+            os.makedirs(os.path.join(fxd, sta))
+            with open(os.path.join(fxd, sta, "truth_bias.csv"), "w", newline="") as fh:
+                fh.write("satellite,signal,osb_ns,osb_m,product_m,synth_m,source\n")
+                for (s, g), v in truth.items():
+                    fh.write("%s,%s,0,%.9f,%.9f,0,product\n"
+                             % (s, g, v + 0.01 * k * (s == "G02"), v))
+        try:
+            dual_load(fxd, os.path.join(td, "products.txt"))
+            chk(False, "a fixture whose truth OSB disagrees across stations is refused")
+        except SystemExit:
+            chk(True, "a fixture whose truth OSB disagrees across stations is refused")
 
         p = os.path.join(td, "empty.txt")
         with open(p, "w") as fh:
@@ -1105,6 +1201,9 @@ def main():
     ap.add_argument("--null-mc", type=int, default=2000, help="dual-band: null draws")
     ap.add_argument("--null-tol", type=float, default=None,
                     help="dual-band: print the negative-control verdict |p50 - null| <= tol")
+    ap.add_argument("--control", choices=("ird0r",), default=None,
+                    help="dual-band: the re-registered negative control (card IRD section 13.3) "
+                         "on E_L1, E_L2 and WL")
     ap.add_argument("--settle-h", type=float, default=12.0)
     ap.add_argument("--out", default=None, help="output dir (default <run>/artrack)")
     ap.add_argument("--json", default=None, help="explicit json path")

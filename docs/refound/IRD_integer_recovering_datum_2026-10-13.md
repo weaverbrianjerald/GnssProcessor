@@ -4,15 +4,15 @@
 
 - **id:** IRD
 - **topic:** network-vehicle
-- **status:** parked
-- **summary:** Pre-registered 2026-10-13 (step IRD-0, before any grading run): a frame-preserving event algebra for the eq34 de Jonge chain on the float vehicle, observatory first, proven end to end on the sim. The frame is the pin set {(arc, k_e)} plus the root receiver's phase-bias pin; a re-host keeps the frame only when its target is the new edge's integer in the incumbent frame, read at t-1. The card freezes the S-basis derivation, the event table, bundle A0, the reference arm R1, every bar, every decision rule and the bar-calibration rule (sections 3 to 11). IRD-0 (section 12): six graders landed, every selftest passes; the positive control (a truth wire from `simarl_r1c`) grades 0; the wire's E_b predicts the consumer's float (slopes 1.015 and 0.987). STOPPED by the negative-control rule: on the golden arms the chord wide lane (gaps +0.022, +0.022, -0.020 to -0.029) and the 6 h golden wire's E_L1 (-0.026 to -0.028) read more than 0.02 cycle from the size-matched null, so the instruments are void and the card stops. The census reproduces the as-built chain at the null (chord WL 0.251 to 0.253, R 0.33, receiver DCB sd 9.5 to 13.0 m). Nothing from IRD-1 on is built; resuming needs the author's ruling.
+- **status:** open
+- **summary:** Pre-registered 2026-10-13 (step IRD-0, before any grading run): a frame-preserving event algebra for the eq34 de Jonge chain on the float vehicle, observatory first, proven end to end on the sim. The frame is the pin set {(arc, k_e)} plus the root receiver's phase-bias pin; a re-host keeps the frame only when its target is the new edge's integer in the incumbent frame, read at t-1. The card freezes the S-basis derivation, the event table, bundle A0, the reference arm R1, every bar, every decision rule and the bar-calibration rule (sections 3 to 11). IRD-0 (section 12): six graders landed, every selftest passes; the positive control (a truth wire from `simarl_r1c`) grades 0; the wire's E_b predicts the consumer's float (slopes 1.015 and 0.987). The IRD-0 negative control FAILED (nine hour-cells beyond its 0.02 cycle tolerance, a tolerance inside the null's own 95 % band) and the card stopped. The census reproduces the as-built chain at the null (chord WL 0.251 to 0.253, R 0.33, receiver DCB sd 9.5 to 13.0 m). By the author's ruling of 2026-10-13 the control was re-registered before any new grade (section 13): every channel above 0.15 cycle and within max(0.05, the null's own 99 % band) of the null, on 44 cells including the goldens re-based onto main `a02ccfb` (GPS + Galileo; Galileo unclaimed on the golden beds, excluded on the ARL beds). It PASSES in 44 of 44 cells (smallest p50 0.220, largest gap 0.029; section 13.6); the card continues with IRD-1.
 - **source:** the author's directive of 2026-10-13 ("Proceed with the integer-recovering datum on the chain", implementation authorized); [FCFC](FCFC_fixed_cycle_ledger_2026-10-11.md) section 9 (the held producer solve does not reach the consumer; the integer-recovering datum is the lever); [ARL](ARL_integer_ambiguity_ladder_2026-10-09.md) sections 4, 5 and 13; [AGT](AGT_arc_graph_shared_tree_2026-10-10.md); [AGTB](AGTB_arc_graph_continued_2026-10-10.md) sections 3 to 5; [SBASIS-THEORY-E](../cards/network-vehicle/SBASIS-THEORY-E.md) E4 and E6; [CHAIN-SLANT-ODIJK](../cards/network-vehicle/CHAIN-SLANT-ODIJK.md) 14.2; [SPEC_eq34_seed_round](../SPEC_eq34_seed_round.md); [SPEC_eq34_reattach_hygiene](../SPEC_eq34_reattach_hygiene.md); [PRM3](PRM3_responses_2026-10-02.md); [CONFIG_promotion_ledger.md](../CONFIG_promotion_ledger.md) lines 619 to 623 and 1183; the design panel's critic findings C1 to C8 (section 2)
-- **knobs / posture:** bundle A0 of existing keys (section 6); the new knobs of section 7, every one default off (none built: the card stopped at IRD-0); base goldens pinned by sha256 at main `3524acb` (section 6)
+- **knobs / posture:** bundle A0 of existing keys (section 6); the new knobs of section 7, every one default off (none built yet); base goldens pinned by sha256 at main `3524acb` for IRD-0 (section 6), re-based once onto main `a02ccfb` at IRD-0r (section 13.4; ARL beds carry `processing.active_systems` `["GPS"]`)
 - **dates in the text:** 2026-10-13
-- **hashes / run dirs:** base `config/golden/golden_sim_refound.json` at `3524acb` sha256 `9080e7ecaf57200e8c18de1bd638d339ea1407931362e6e072282e240c69e57e`, `golden_field_refound.json` at `3524acb` sha256 `cb08c38210b634637bc1b0cd8c517224b36e5b896102f845e7534a81811481fc`; census arms `D:/GnssProcessorSupport/runs/_rap_prm_k3x2_{qs,qf,es,ef}` and `_rap_prm_q3ah6_{gs,gf}`, `runs/_rf0hv14_sim6`; positive-control template `runs/_rap_arl_r1c/products.txt` on fixture `runs/simarl_r1c`, truth wires `runs/_ird0_truthwire_r1c{,_gauge}/products.txt`; every IRD-0 grading output in `runs/_ird0_census/` (section 12)
+- **hashes / run dirs:** IRD-0 base `config/golden/golden_sim_refound.json` at `3524acb` sha256 `9080e7ecaf57200e8c18de1bd638d339ea1407931362e6e072282e240c69e57e`, `golden_field_refound.json` at `3524acb` sha256 `cb08c38210b634637bc1b0cd8c517224b36e5b896102f845e7534a81811481fc`; from IRD-0r the base at `a02ccfb`, sim sha256 `613f0016b1b21175d233312a735a4f40eed2f7bc7515a4ce613cd8f326a90eab`, field sha256 `a392a0bc9f1efb82fca8f1120bbfb483d61a623d053293e175e19a0fea0ede43`; IRD-0r exe `build/x64-Release/gnss_processor_ird0r.exe` (main `b08cb1f`), re-based golden arms `runs/_rap_ird0r_{gs,gf}`, grades in `runs/_ird0r_census/`; census arms `D:/GnssProcessorSupport/runs/_rap_prm_k3x2_{qs,qf,es,ef}` and `_rap_prm_q3ah6_{gs,gf}`, `runs/_rf0hv14_sim6`; positive-control template `runs/_rap_arl_r1c/products.txt` on fixture `runs/simarl_r1c`, truth wires `runs/_ird0_truthwire_r1c{,_gauge}/products.txt`; every IRD-0 grading output in `runs/_ird0_census/` (section 12)
 - **gates (frozen at pre-registration):** sections 8 to 11 (the grader definitions of section 8 included)
 
-**Outcome.** Question: can the eq34 chain on the float vehicle be made integer-recovering through events, with a held-out consumer fixing correct integers? IRD-0 built the graders (every selftest passes); the positive control grades a truth wire at 0 and the wire's E_b predicts the consumer's float (slopes 1.015, 0.987). The negative control FAILED: on the golden arms the chord wide lane and the 6 h wire's E_L1 read up to 0.029 cycle from the size-matched null against a 0.02 tolerance, so by its rule the instruments are void and the card stops. Standing: stopped at IRD-0 (section 12); resuming needs the author's ruling.
+**Outcome.** Question: can the eq34 chain on the float vehicle be made integer-recovering through events, with a held-out consumer fixing correct integers? IRD-0 built the graders (every selftest passes); the positive control grades a truth wire at 0 and the wire's E_b predicts the consumer's float (slopes 1.015, 0.987). The IRD-0 negative control FAILED: on the golden arms the chord wide lane and the 6 h wire's E_L1 read up to 0.029 cycle from the size-matched null against a 0.02 tolerance, and the card stopped (section 12). By the author's ruling the control was re-registered (section 13): far from integer (above 0.15 cycle) and at the null within max(0.05, the null's 99 % band), on 44 cells including the goldens re-based onto `a02ccfb`. It PASSES in all 44 (section 13.6). Standing: open; IRD-1 next, on the `a02ccfb` base.
 
 ## 1. The question
 
@@ -248,3 +248,91 @@ The eq34 sim wire (held): E_L1 0.249 and 0.251, E_L2 0.254 and 0.257, WL 0.253 a
 **Base drift.** Card GAD landed on main during IRD-0 (`a02ccfb`, golden sim sha256 `613f0016...`, GPS plus Galileo). No IRD-0 reading used the golden as a base, so IRD-0 stays on the `3524acb` pin; by section 6's rule the card re-bases once, before IRD-2's runs, if it resumes (`ird_make_arms.py` `GOLDEN_REV` and both sha256 pins change together).
 
 **Standing.** Stopped at IRD-0 by the negative-control rule as written. Nothing from IRD-1 on is built, and no producer arm was run. The graders, the arm maker and the truth wires stay as instruments. Resuming requires the author's ruling on the negative control; a re-registered control would be a new pre-registration written before any new run, not a re-wording of this one.
+
+## 13. 2026-10-13: Re-registration of the negative control (the author's ruling, 2026-10-13)
+
+Sections 13.1 to 13.5 were written before any arm of this step was made and before any new grade was computed. The rule of section 11 (IRD-0 gate 2) and its result in section 12 stay as written.
+
+### 13.1 The ruling and what was already seen
+
+The author's ruling of 2026-10-13 on the failed control: "re-register and resume".
+
+Disclosure. The IRD-0 control failed (section 12): with the tolerance |p50 - null| <= 0.02 cycle, nine cells breached it: chord WL `_rap_prm_q3ah6_gs` h1 0.272 (+0.022), `_rap_prm_q3ah6_gf` h1 0.272 (+0.022), `_rf0hv14_sim6` h2 0.230 (-0.020), h3 0.221 (-0.029), h5 0.228 (-0.022); wire E_L1 `_rf0hv14_sim6` h1 to h4 0.224, 0.224, 0.223, 0.222 (-0.026 to -0.028). Section 12's table omits the Melbourne-Wubbena wide lane, which also breached on `_rf0hv14_sim6` h0 0.223 (-0.027) and h1 0.224 (-0.026) (`runs/_ird0_census/neg_wire_rf0hv14_sim6.txt`); the stop held under either reading of WL. Every value of the 34 IRD-0 cells (section 12's table) was seen before this rule was written. All 34 lie above 0.22 cycle and within 0.030 of their nulls, so the new rule passes them by inspection; the only cells it grades unseen are the 10 cells of the re-based golden arms (section 13.3).
+
+### 13.2 The purpose of the control
+
+The graders must read a non-integer product as far from integer, so that a later integer reading is meaningful. The golden's wire and chords carry no integer structure (no chain, no receiver phase-bias states), so the instrument must place them near the uniform null and well away from the integer bars of section 9 (W-WL p50 <= 0.08, W-NL p50 <= 0.10). A control whose tolerance lies inside the null's own sampling band (the IRD-0 rule: 0.02 against a 95 % band of about +/-0.022) tests the null's tail, not the instrument.
+
+### 13.3 The new rule (frozen)
+
+On every golden arm and hour-cell, every channel passes both parts:
+
+1. **Far from integer:** p50 |wrap| > 0.15 cycle.
+2. **At the null:** with g = p50 - null (the null value: the mean of the size-matched null's draws for that cell's n and occupancy), and q_0.5, q_99.5 the 0.5 and 99.5 percentiles of the same draws (the null's own two-sided 99 % band), -max(0.05, null - q_0.5) <= g <= max(0.05, q_99.5 - null).
+
+with n > 0 in every cell. A breach of either part in any cell, or n = 0, stops the card again: status parked, nothing from IRD-1 on built. If every cell passes, the card continues with IRD-1.
+
+Channels: the chord wide lane (GPS L1C, else L1W, with L2W, pooled; `scripts/ird_chord_census.py`) and the wire E_L1, E_L2 and WL (D_1 - D_2, the consumer's wide lane of section 8; `scripts/simnet_wire_integer_consistency.py --bands L1C,L2W --systems G`). The field arms carry the chord wide lane only (no truth). The Melbourne-Wubbena wide lane and the NL are reported without a bar. Both graders read GPS only; the null is 2000 draws with the seeds of IRD-0.
+
+Cells (44):
+
+| arm | window | channels | hours | cells |
+| --- | --- | --- | --- | --- |
+| `_rap_prm_q3ah6_gs` | 2 h from 00:30:15 | chord WL, E_L1, E_L2, WL | 2 | 8 |
+| `_rap_prm_q3ah6_gf` (field) | 2 h from 00:00 | chord WL | 2 | 2 |
+| `runs/_rf0hv14_sim6` | 00:30:15 to the end (h5 a half hour) | chord WL, E_L1, E_L2, WL | 6 | 24 |
+| `_rap_ird0r_gs` (re-based sim golden) | 2 h from 00:30:15 | chord WL, E_L1, E_L2, WL | 2 | 8 |
+| `_rap_ird0r_gf` (re-based field golden) | 2 h from 00:00 | chord WL | 2 | 2 |
+
+The two re-based arms are the a02ccfb goldens unchanged (no knob under test), made with `scripts/ird_make_arms.py --arm G` and run on `build/x64-Release/gnss_processor_ird0r.exe` (main `b08cb1f`, which contains `a02ccfb`). A field arm of the unchanged golden is not an ON arm; invariant 1's refusal of field arms before IRD-6 stays for every other arm.
+
+### 13.4 The re-base onto main a02ccfb
+
+By section 6's rule the card re-bases once, before IRD-2's runs; it does so now, before IRD-1, and does not re-base again. `ird_make_arms.py` pins `GOLDEN_REV` `a02ccfb` with sim sha256 `613f0016b1b21175d233312a735a4f40eed2f7bc7515a4ce613cd8f326a90eab` and field sha256 `a392a0bc9f1efb82fca8f1120bbfb483d61a623d053293e175e19a0fea0ede43`, changed together.
+
+What card GAD changed in both goldens (and nothing else): `processing.active_systems` `["GPS","Galileo"]`; `processing.signal_priorities.Galileo` `["C1C","C1X","L1C","L1X","C5Q","C5X","L5Q","L5X"]`; `estimation.clock_disc_isb_reinflate_std` 10.0; `model_corrections.enable_receiver_cross_system_atx_fallback` true; `network.code_datum_family_difference` true; `network.code_family_birth_prior_sigma_m` 0.10.
+
+How the IRD arms treat Galileo:
+
+- **The golden sim and field beds keep GPS + Galileo** (the golden posture). Galileo runs unclaimed (section 1 and the design's base-drift note): no integer claim, no bar, and the chain on the A0 arms grows Galileo forests that no grader reads.
+- **The ARL beds (microscope, r1c, r2, r3b, r3c) exclude Galileo** by an explicit bed knob, `processing.active_systems=["GPS"]`, written into every arm's `rapid.json` `ird` block. The ARL fixtures carry Galileo E1/E5a, but card ARL's rungs, its slip-set validation and the r3c search reference of IRD-1 gate 1 (`network_producer_ar.csv` hash `aa6779cc`) were all measured GPS-only; the bed knob keeps those beds comparable to that record and keeps the microscope's reading free of a second constellation. With one system, card GAD's five `n_sys >= 2` keys are out of regime (ledger A16). Whether the r3c hash reproduces on the re-based GPS-only bed is read at IRD-1 and recorded; IRD-1's identity gates are same-build comparisons either way.
+- **Every IRD grader reads GPS only** (the chord census filters GPS satellites; the wire, frame and consumer graders take `--systems G`). The claim stays GPS L1C/L2W on the sim.
+
+### 13.5 Annotations to sections 3 and 12 (the IRD-0 review)
+
+The body text above is not rewritten; these annotations correct or complete it.
+
+1. **Section 12, gate 2, third bullet:** `_rap_prm_q3ah6_gs` is not an older build. It is the later run (products 2026-10-03 against 2026-10-01 for `_rf0hv14_sim6`) of the same posture, differing in one knob: `network.start_offset_hours` 0.504167 (first E record 00:31:00 against 00:00:30). Its holds froze 30 minutes later, outside the fixture's start artifact, while 64 of `_rf0hv14_sim6`'s 74 PB_HOLD generations start at TOW 259230 (00:00:30), inside it. The start, not the build, is the likelier reason the two frozen realizations differ.
+2. **Section 12, gate 2 table:** the MW row of the `_rf0hv14_sim6` wire (h0 to h5): 0.223 (-0.027), 0.224 (-0.026), 0.244 (-0.007), 0.248 (-0.002), 0.253 (+0.003), 0.245 (-0.005); on `_rap_prm_q3ah6_gs` 0.235 (-0.016) and 0.238 (-0.012). Under the MW reading of WL two more cells breach (h0, h1); the stop held under either definition.
+3. **Section 12, gate 5 (invariant 4):** `network.carry_rebase_complete` is byte-identical on the sim (`_rap_prm_k3x2_qs` against `_es`: `products.txt` and `logs/network_amb_state.csv` identical at 77 shift calls), although the run-end line of `_es` lists ten sites as moved. That line is a declaration of the sites, not a count of moved values. Open item: per-site moved-value counts are owed before A0 relies on the knob at IRD-2 (the IRD-1 run-end row counts them). On the field the two arms differ (`products.txt` line 29872).
+4. **Section 3, sign:** with phi = ... + delta_r - delta^s + lambda N and the pin delta_r1 := c_1, the estimables are b~^s = delta^s - delta_r1 + c_1 + lambda z^s and d~_r = delta_r - delta_r1 + c_1 + lambda z_r. Section 3's "delta^s - c_1" and "delta_r - c_1" drop the term delta_r1. The frame formula (Delta b^s = lambda Delta z^s + Delta c) and the integer-recovery argument are unaffected, because delta_r1 - c_1 is common to the component.
+5. **Section 12, the reproduction sentence:** the design panel's golden per-arc circular R of 0.998 does not reproduce: 0.960 measured on `_rap_prm_q3ah6_gs` (2 h) and 0.992 on `_rf0hv14_sim6`.
+6. **`scripts/simnet_chain_frame_grade.py`** now fails a run that carries no CHAIN row unless `--allow-empty` is passed (an unarmed or inert `trace_chain_datum` would otherwise read as no failure, invariant 4), and scans every non-event epoch: an integer step there is an undeclared integer step and fails bar I-b; a fractional step above the bar there is counted and reported (the frozen fractional bar is scoped to event epochs). The declared-count against observed-count check and the adversarial arm's report at IRD-6 read this scan.
+7. **The two diagnostics** of section 12 are promoted from `runs/_ird0_census/` to `scripts/ird0_station_R.py` and `scripts/ird0_anchor_split.py`. The dual-band wire grader now prints the truth-OSB cross-station disagreement count and refuses a fixture where it is nonzero, as `scripts/simnet_truth_wire.py` does.
+
+### 13.6 Result: the re-registered control PASSES in 44 of 44 cells
+
+Graded after sections 13.1 to 13.5 were written. Exe `gnss_processor_ird0r.exe` (Release at main `b08cb1f`). The arms `runs/_rap_ird0r_gs` (241 epochs, 267 s) and `runs/_rap_ird0r_gf` (240 epochs, 432 s) exited 0; `_rap_ird0r_gf/products.txt` is byte-identical to card GAD's 2 h identity arm `runs/_rap_galp3_id_f2`. The edited graders reproduce every IRD-0 value exactly (p50, null and band; the draws and seeds are unchanged). Truth OSB: 342 keys over 61 stations, 0 cross-station disagreements. Outputs: `runs/_ird0r_census/` (`ctl_wire_*`, `ctl_chord_*`, `selftests.txt`).
+
+p50 |wrap| by hour, gap to the size-matched null in brackets:
+
+| arm | channel | h0 | h1 | h2 | h3 | h4 | h5 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `_rap_prm_q3ah6_gs` | chord WL | 0.265 (+0.015) | 0.272 (+0.022) | | | | |
+| | E_L1 / E_L2 / WL | 0.250 / 0.245 / 0.238 | 0.255 / 0.245 / 0.241 | | | | |
+| `_rap_prm_q3ah6_gf` | chord WL | 0.249 (-0.001) | 0.272 (+0.022) | | | | |
+| `_rf0hv14_sim6` | chord WL | 0.240 (-0.010) | 0.243 (-0.007) | 0.230 (-0.020) | 0.221 (-0.029) | 0.233 (-0.017) | 0.228 (-0.022) |
+| | E_L1 | 0.231 (-0.020) | 0.224 (-0.026) | 0.224 (-0.026) | 0.223 (-0.027) | 0.222 (-0.028) | 0.233 (-0.017) |
+| | E_L2 | 0.246 (-0.004) | 0.244 (-0.006) | 0.251 (+0.000) | 0.257 (+0.007) | 0.254 (+0.004) | 0.251 (+0.000) |
+| | WL | 0.256 (+0.005) | 0.254 (+0.003) | 0.256 (+0.005) | 0.256 (+0.006) | 0.258 (+0.008) | 0.258 (+0.008) |
+| `_rap_ird0r_gs` | chord WL | 0.265 (+0.015) | 0.266 (+0.016) | | | | |
+| | E_L1 | 0.244 (-0.007) | 0.243 (-0.008) | | | | |
+| | E_L2 | 0.244 (-0.006) | 0.244 (-0.006) | | | | |
+| | WL | 0.250 (-0.000) | 0.249 (-0.001) | | | | |
+| `_rap_ird0r_gf` | chord WL | 0.256 (+0.007) | 0.233 (-0.017) | | | | |
+
+The `_rap_prm_q3ah6_gs` wire gaps are -0.001 / -0.005 / -0.012 (h0) and +0.005 / -0.005 / -0.010 (h1). n is 27 245 to 59 520 per cell. Smallest p50 0.220 and largest |gap| 0.029 (`_rf0hv14_sim6` chord WL h3). The null's 99 % half-bands are 0.027 to 0.048 below and 0.020 to 0.032 above the null, so the 0.05 floor set the tolerance in every cell. The 10 cells unseen before the rule read p50 0.233 to 0.266 with |gap| at most 0.017. Reported without a bar: MW and NL lie within 0.028 of their nulls in every cell (largest MW `_rf0hv14_sim6` h0, -0.027).
+
+Readings on the re-based goldens (no bar): sim per-arc circular R 0.959, receiver DCB sd 0.073 and 0.054 m; field R 0.809, DCB sd 1.106 and 0.932 m, per-epoch wide-lane jump p99 1.70 cycle. These are IRD-2's same-base golden references.
+
+**Verdict.** Every cell passes both parts, so the card continues with IRD-1 on the `a02ccfb` base. Gates of this step: grader selftests 72 checks, 0 failures; `docs_index_check.py` and `make_golden_config.py --verify` pass (77 armed in regime on both goldens). The card is near the 60 KB bar: results from IRD-1 on go to a continuation card.

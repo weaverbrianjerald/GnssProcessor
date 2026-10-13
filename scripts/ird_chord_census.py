@@ -23,11 +23,14 @@ The census reads, per run and per hour from the grading start:
     shift calls, RPB erases, the pin audit, and the emitted epochs (E records).
 
 The negative control of IRD-0 (gate 2) reads the chord wide lane of the golden arms: within
-0.02 cycle of the null in every hour (--null-tol 0.02).
+0.02 cycle of the null in every hour (--null-tol 0.02).  The control re-registered at IRD-0r
+(card IRD section 13.3; --control ird0r): p50 above 0.15 cycle and the gap to the null within
+max(0.05 cycle, the null's own two-sided 99 % band) in every hour.
 
 Usage:
     python scripts/ird_chord_census.py <run> [<run> ...] [--start-hms 00:30:15 | --start-tow T]
-        [--hours 2] [--null-mc 2000] [--null-tol 0.02] [--split station] [--json out.json]
+        [--hours 2] [--null-mc 2000] [--null-tol 0.02] [--control ird0r] [--split station]
+        [--json out.json]
     python scripts/ird_chord_census.py --selftest
 """
 import argparse
@@ -113,9 +116,11 @@ def wide_lanes(df):
 
 
 def null_for(groups, mc, seed):
-    """Size-matched null of p50 |wrap| for one uniform per group, weighted by group size."""
+    """Size-matched null of p50 |wrap| for one uniform per group, weighted by group size:
+    WIC.null_summary's {null, null_lo, null_hi, null_lo99, null_hi99}."""
     w = groups.size().values
-    return WIC.size_matched_null(len(w), np.arange(len(w)), None, w, mc=mc, seed=seed)
+    return WIC.null_summary(WIC.size_matched_null_draws(len(w), np.arange(len(w)), None, w,
+                                                        mc=mc, seed=seed))
 
 
 def circ_R_cells(wl, start):
@@ -214,10 +219,10 @@ def census(run, start, end, mc=2000, split=()):
         g = wl[wl["h"] == h]
         if len(g):
             v = np.abs(WIC.wrapf(g["wl"].values))
-            nm, lo, hi = null_for(g.groupby(["station", "sat"]), mc, 100 + h)
+            nl = null_for(g.groupby(["station", "sat"]), mc, 100 + h)
             row["WL"] = {"n": int(v.size), "arcs": int(g.groupby(["station", "sat"]).ngroups),
                          "p50": float(np.median(v)), "in15": float(np.mean(v <= 0.15)),
-                         "null": nm, "null_lo": lo, "null_hi": hi, "gap": float(np.median(v)) - nm}
+                         "gap": float(np.median(v)) - nl["null"], **nl}
             for l1 in ("L1C", "L1W"):
                 gg = g[g["l1sig"] == l1]
                 if len(gg):
@@ -227,7 +232,7 @@ def census(run, start, end, mc=2000, split=()):
             g = df[(df["h"] == h) & (df["signal"] == sig)]
             if len(g):
                 v = np.abs(WIC.wrapf(g["cyc"].values))
-                nm, _, _ = null_for(g.groupby(["station", "sat"]), min(mc, 500), 200 + h)
+                nm = null_for(g.groupby(["station", "sat"]), min(mc, 500), 200 + h)["null"]
                 row[sig] = {"n": int(v.size), "p50": float(np.median(v)), "null": nm,
                             "gap": float(np.median(v)) - nm}
         if "station" in split and len(wl[wl["h"] == h]):
@@ -249,8 +254,12 @@ def census(run, start, end, mc=2000, split=()):
     return res
 
 
-def print_census(res, null_tol=None):
+def print_census(res, null_tol=None, control=None):
+    """Print the census; with null_tol the IRD-0 verdict on the chord wide lane, with control
+    "ird0r" the re-registered one (card IRD section 13.3).  Returns the failing cells."""
     fails = []
+    cfails, ccells = [], []
+    label = os.path.basename(res["run"].rstrip("/\\"))
     print("== %s (start TOW %.3f; %d pinned rows excluded)"
           % (os.path.basename(res["run"].rstrip("/\\")), res["start_tow"], res["pinned_rows_excluded"]))
     for h, row in sorted(res["hours"].items()):
@@ -261,6 +270,18 @@ def print_census(res, null_tol=None):
                      w["null_hi"], w["gap"])
                   + "".join("  (%s n %d p50 %.3f)" % (k, row[k]["n"], row[k]["p50"])
                             for k in ("WL_L1C", "WL_L1W") if k in row))
+        if control == "ird0r":
+            if w:
+                ok, tlo, thi, why = WIC.control_ird0r(w["p50"], w["null"], w["null_lo99"],
+                                                      w["null_hi99"], w["n"])
+                ccells.append((label, h, "chordWL", w["p50"], w["null"], w["gap"], tlo, thi,
+                               w["n"], "PASS" if ok else "FAIL: " + why))
+            else:
+                ok = False
+                ccells.append((label, h, "chordWL", float("nan"), float("nan"), float("nan"),
+                               float("nan"), float("nan"), 0, "FAIL: n = 0"))
+            if not ok:
+                cfails.append(ccells[-1])
         if null_tol is not None and (not w or w["n"] <= 0 or not abs(w["gap"]) <= null_tol):
             fails.append((os.path.basename(res["run"].rstrip("/\\")), h, "chordWL",
                           w["p50"] if w else float("nan"), w["null"] if w else float("nan"),
@@ -289,7 +310,14 @@ def print_census(res, null_tol=None):
               % (null_tol, "PASS" if not fails else "FAIL in %d hour(s)" % len(fails)))
         for f in fails:
             print("     FAIL %s h%d %s: p50 %.4f null %.4f gap %+.4f n %d" % f)
-    return fails
+    if control == "ird0r":
+        print("   re-registered control, chord WL (card IRD 13.3: p50 > %.2f and gap within "
+              "max(%.2f, null 99 %% band); %d cell(s)): %s"
+              % (WIC.CONTROL_FAR_CYC, WIC.CONTROL_GAP_FLOOR_CYC, len(ccells),
+                 "PASS" if not cfails else "FAIL in %d cell(s)" % len(cfails)))
+        for c in ccells:
+            print("     %s h%d %s: p50 %.4f null %.4f gap %+.4f tol [-%.4f, +%.4f] n %d  %s" % c)
+    return fails + cfails
 
 
 def selftest():
@@ -374,6 +402,13 @@ def selftest():
             "run-end counters parsed")
         fails = print_census(b, null_tol=1e-6)
         chk(len(fails) == 2, "a tolerance of 1e-6 fails both hours (the verdict is wired)")
+        w = b["hours"][0]["WL"]
+        chk(w["null_lo99"] <= w["null_lo"] < w["null"] < w["null_hi"] <= w["null_hi99"],
+            "the chord null carries its 99 % band")
+        chk(print_census(b, control="ird0r") == [],
+            "random chords pass the re-registered control in both hours")
+        chk(len(print_census(a, control="ird0r")) == 2,
+            "integer chords fail the re-registered control in both hours")
     print("chord-census selftest: %s" % ("PASS" if ok[0] else "FAIL"))
     return 0 if ok[0] else 1
 
@@ -387,6 +422,8 @@ def main():
     ap.add_argument("--hours", type=float, default=None)
     ap.add_argument("--null-mc", type=int, default=2000)
     ap.add_argument("--null-tol", type=float, default=None)
+    ap.add_argument("--control", choices=("ird0r",), default=None,
+                    help="the re-registered negative control of card IRD section 13.3")
     ap.add_argument("--split", default="")
     ap.add_argument("--json", default=None)
     ap.add_argument("--selftest", action="store_true")
@@ -402,12 +439,12 @@ def main():
             WIC.start_from_hms(t0, a.start_hms) if a.start_hms else t0)
         end = start + a.hours * 3600.0 if a.hours else None
         res = census(run, start, end, a.null_mc, tuple(x for x in a.split.split(",") if x))
-        allfails += print_census(res, a.null_tol)
+        allfails += print_census(res, a.null_tol, a.control)
         allres.append(res)
     if a.json:
         with open(a.json, "w", encoding="utf-8") as fh:
             json.dump(allres, fh, indent=1, default=float)
-    return 1 if (a.null_tol is not None and allfails) else 0
+    return 1 if ((a.null_tol is not None or a.control) and allfails) else 0
 
 
 if __name__ == "__main__":

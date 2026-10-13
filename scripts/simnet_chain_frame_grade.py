@@ -23,12 +23,20 @@ and a pair is declared when either of its keys is declared at t.  Bar I-b (froze
     lane (elsewhere); every integer step (round(step) != 0) declared; every event class
     reaches n >= 1 on its own fixture (an unexercised class reads FAILED).
 
-An epoch with several classes counts for each of them.
+An epoch with several classes counts for each of them.  Every other epoch is graded as the
+class `non_event` (card IRD section 13.5, item 6): no event declares anything there, so an
+integer step at a non-event epoch is an undeclared integer step and fails bar I-b; a fractional
+step above the bar there is counted and reported (the frozen fractional bar is scoped to event
+epochs).  This scan is what the declared-count against observed-count check and the
+adversarial arm's report of IRD-6 read.
+
+A run that carries no CHAIN row fails (an unarmed or inert network.trace_chain_datum would
+otherwise read as no failure, invariant 4) unless --allow-empty is passed.
 
 Usage:
     python scripts/simnet_chain_frame_grade.py <fixture> --run <run> [--source prehold|products]
         [--bands L1C,L2W] [--mode microscope|free] [--require-class rehost,root_handover]
-        [--json out.json]
+        [--allow-empty] [--json out.json]
     python scripts/simnet_chain_frame_grade.py --selftest
 """
 import argparse
@@ -47,6 +55,7 @@ EVENT_CLASSES = ("rehost", "cut_release", "root_handover", "returning", "slip_de
                  "merge", "split")
 BAR_BAND_MICRO = 0.02
 BAR_WL = 0.05
+NON_EVENT = "non_event"        # every graded epoch without a CHAIN event row
 
 
 def _detail_tokens(detail):
@@ -83,16 +92,18 @@ def _declared(decl, sat, sig):
 
 
 def event_steps(epochs, osb, sc_truth, bands, chain_events, xcorr=True, systems=("G",)):
-    """Per event class: {"events": n epochs, channel: {"und": [steps], "dec": [steps]}}."""
+    """Per event class, and NON_EVENT for every other epoch: {"events": n epochs, channel:
+    {"und": [steps], "dec": [steps]}}."""
     b1, b2 = bands
     res = defaultdict(lambda: {"events": 0, **{c: {"und": [], "dec": []}
                                                for c in ("E1", "E2", "WL")}})
     prev_vals = None
     for ep in epochs:
         vals = WIC.dual_sat_values(ep, osb, sc_truth, bands, xcorr)
-        ev = chain_events.get(ep["tow"])
-        if ev and prev_vals is not None and ev["classes"]:
-            for cls in ev["classes"]:
+        ev = chain_events.get(ep["tow"]) or {"classes": Counter(), "declared": set()}
+        classes = list(ev["classes"]) or [NON_EVENT]
+        if prev_vals is not None:
+            for cls in classes:
                 res[cls]["events"] += 1
             for sysl in systems:
                 sats = sorted(s for s in vals if s[0] == sysl and s in prev_vals)
@@ -108,7 +119,7 @@ def event_steps(epochs, osb, sc_truth, bands, chain_events, xcorr=True, systems=
                                "E2": _declared(ev["declared"], s, b2)
                                or _declared(ev["declared"], p, b2)}
                         dec["WL"] = dec["E1"] or dec["E2"]
-                        for cls in ev["classes"]:
+                        for cls in classes:
                             for c in ("E1", "E2", "WL"):
                                 res[cls][c]["dec" if dec[c] else "und"].append(steps[c])
         prev_vals = vals
@@ -117,7 +128,9 @@ def event_steps(epochs, osb, sc_truth, bands, chain_events, xcorr=True, systems=
 
 def verdict(res, mode="free", require=()):
     """Bar I-b per class: (rows, failed).  mode "microscope" grades E1 and E2 at 0.02 cycle and
-    the wide lane at 0.05; "free" grades the wide lane at 0.05 (the bands are reported)."""
+    the wide lane at 0.05; "free" grades the wide lane at 0.05 (the bands are reported).  The
+    NON_EVENT row fails on an undeclared integer step only; its steps above the bar are
+    reported."""
     rows, failed = [], False
     graded = (("E1", BAR_BAND_MICRO), ("E2", BAR_BAND_MICRO), ("WL", BAR_WL)) \
         if mode == "microscope" else (("WL", BAR_WL),)
@@ -132,24 +145,33 @@ def verdict(res, mode="free", require=()):
         for c in ("E1", "E2", "WL"):
             und = np.asarray(r[c]["und"])
             n_int_und += int(np.sum(np.round(und) != 0)) if und.size else 0
+        over = []
         for c, bar in graded:
             und = np.abs(WIC.wrapf(np.asarray(r[c]["und"])))
             if und.size and float(und.max()) > bar:
-                bad.append("%s max %.3f > %.2f (%d pairs)" % (c, float(und.max()), bar,
-                                                               int(np.sum(und > bar))))
+                over.append("%s max %.3f > %.2f (%d pairs)" % (c, float(und.max()), bar,
+                                                                int(np.sum(und > bar))))
+        if cls != NON_EVENT:
+            bad += over
         if n_int_und:
             bad.append("%d undeclared integer step(s)" % n_int_und)
-        rows.append((cls, r["events"], "PASS" if not bad else "FAIL: " + "; ".join(bad)))
+        note = "" if cls != NON_EVENT or not over else \
+            " (reported, not graded: %s)" % "; ".join(over)
+        rows.append((cls, r["events"], ("PASS" if not bad else "FAIL: " + "; ".join(bad)) + note))
         failed |= bool(bad)
     return rows, failed
 
 
-def print_event_steps(res, mode="free", require=()):
-    """Print the per-class step table and bar I-b's verdict; returns True when it fails."""
-    print("chain-frame steps at event epochs (D(t) - D(t_prev), cycles; mode %s)" % mode)
-    if not res and not require:
-        print("  no CHAIN rows: nothing to grade (network.trace_chain_datum, card IRD-1)")
-        return False
+def print_event_steps(res, mode="free", require=(), chain_rows=None, allow_empty=False):
+    """Print the per-class step table and bar I-b's verdict; returns True when it fails.  With
+    chain_rows 0 (the run carries no CHAIN row) it fails unless allow_empty."""
+    print("chain-frame steps at event and non-event epochs (D(t) - D(t_prev), cycles; mode %s)"
+          % mode)
+    empty_fail = chain_rows == 0 and not allow_empty
+    if chain_rows == 0:
+        print("  no CHAIN rows (network.trace_chain_datum, card IRD-1): %s"
+              % ("FAIL (pass --allow-empty to grade an untraced run)" if empty_fail
+                 else "allowed; only the non-event scan is graded"))
     for cls in sorted(res):
         r = res[cls]
         for c in ("E1", "E2", "WL"):
@@ -167,7 +189,7 @@ def print_event_steps(res, mode="free", require=()):
     rows, failed = verdict(res, mode, require)
     for cls, n, v in rows:
         print("  I-b %-14s n %4d  %s" % (cls, n, v))
-    return failed
+    return failed or empty_fail
 
 
 def selftest():
@@ -207,6 +229,10 @@ def selftest():
                         p1 += 0.3 * l1                 # undeclared fraction (a shift)
                     if t >= t_ev + 60 and s == "G05":
                         p2 += 2 * l2                   # undeclared integer step on L2
+                    if t >= t_ev + 90 and s == "G06":
+                        p1 += l1                       # integer step at a non-event epoch
+                    if t >= t_ev + 120 and s == "G02":
+                        p1 += 0.1 * l1                 # fraction at a non-event epoch
                     fh.write("P,%s,L1C,%.9f,1,0,gen=1\nP,%s,L2W,%.9f,1,0,gen=1\n" % (s, p1, s, p2))
         with open(os.path.join(run, "logs", "network_events.csv"), "w", newline="") as fh:
             fh.write("week,tow,tier,event,sat,station,statistic,threshold,action,detail\n")
@@ -239,8 +265,21 @@ def selftest():
             "a required class with n = 0 reads FAILED")
         chk(any(r[0] == "root_handover" and "undeclared integer" in r[2] for r in rows),
             "free mode still fails an undeclared integer step")
+        ne = res[NON_EVENT]
+        une = np.asarray(ne["E1"]["und"])
+        chk(ne["events"] == 7 and int(np.sum(np.abs(np.abs(une) - 1.0) < 1e-6)) == 5
+            and int(np.sum(np.abs(np.abs(une) - 0.1) < 1e-6)) == 5,
+            "the non-event scan sees G06's +1 and G02's 0.1 on their 5 pairs each (7 epochs)")
+        rows, failed = verdict(res, "free")
+        chk(failed and any(r[0] == NON_EVENT and "undeclared integer" in r[2]
+                           and "reported, not graded: WL max 0.100" in r[2] for r in rows),
+            "an integer step at a non-event epoch fails I-b; the fraction is reported")
         empty = event_steps(eps, osb, sc, ("L1C", "L2W"), {})
-        chk(empty == {} and not verdict(empty)[1], "no CHAIN rows: nothing graded, nothing failed")
+        chk(set(empty) == {NON_EVENT} and empty[NON_EVENT]["events"] == 9,
+            "no CHAIN rows: every epoch is a non-event epoch")
+        chk(print_event_steps(empty, chain_rows=0)
+            and print_event_steps(empty, chain_rows=0, allow_empty=True),
+            "no CHAIN rows fails, and with --allow-empty the non-event integer steps still fail")
     print("chain-frame selftest: %s" % ("PASS" if ok[0] else "FAIL"))
     return 0 if ok[0] else 1
 
@@ -256,6 +295,8 @@ def main():
     ap.add_argument("--require-class", default="",
                     help="comma list of event classes that must reach n >= 1 (bar I-b)")
     ap.add_argument("--no-xcorr", dest="xcorr", action="store_false", default=True)
+    ap.add_argument("--allow-empty", action="store_true",
+                    help="grade a run that carries no CHAIN row (only the non-event scan)")
     ap.add_argument("--json", default=None)
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -268,7 +309,8 @@ def main():
     require = tuple(x for x in a.require_class.split(",") if x)
     res = event_steps(eps, osb, sc, tuple(a.bands.split(",")), ev, a.xcorr)
     print("run %s, source %s, %d epochs, %d CHAIN event epochs" % (a.run, a.source, len(eps), len(ev)))
-    failed = print_event_steps(res, a.mode, require)
+    failed = print_event_steps(res, a.mode, require, chain_rows=len(ev),
+                               allow_empty=a.allow_empty)
     if a.json:
         with open(a.json, "w", encoding="utf-8") as fh:
             json.dump({"run": a.run, "verdict": verdict(res, a.mode, require)[0]}, fh, indent=1)
