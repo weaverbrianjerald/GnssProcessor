@@ -1424,7 +1424,38 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
     // x_r = N_rr^{-1} (u_r − N_rs x_s),  N_rs = N_sr^ᵀ.
     const Eigen::VectorXd rhs = st.u_r - st.N_sr.transpose() * x_s;
     Eigen::VectorXd x_r = st.Nrr_ldlt.solve(rhs);
+    applySumZeroCorrection(station, x_s, x_r);
+    applyDdPriorCorrection(station, x_s, x_r);
+    return x_r;
+}
 
+NetworkNormalEquations::StationReconstructionParts
+NetworkNormalEquations::reconstructStationParts(std::size_t station,
+                                                const Eigen::VectorXd& x_s) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::reconstructStationParts: "
+                                "station index out of range");
+    }
+    if (x_s.size() != n_shared_) {
+        fail("reconstructStationParts: x_s size mismatch");
+    }
+    StationReconstructionParts p;
+    p.x_r = reconstructStation(station, x_s);
+    const Station& st = stations_[station];
+    if (st.n_local == 0) return p;
+    p.free     = st.Nrr_ldlt.solve(st.u_r);
+    p.feedback = -st.Nrr_ldlt.solve(st.N_sr.transpose() * x_s);
+    p.sumzero  = Eigen::VectorXd::Zero(st.n_local);
+    p.ddprior  = Eigen::VectorXd::Zero(st.n_local);
+    applySumZeroCorrection(station, x_s, p.sumzero);
+    applyDdPriorCorrection(station, x_s, p.ddprior);
+    return p;
+}
+
+void NetworkNormalEquations::applySumZeroCorrection(std::size_t station,
+                                                    const Eigen::VectorXd& x_s,
+                                                    Eigen::VectorXd& x_r) const {
+    const Station& st = stations_[station];
     // Anchor-free sum-to-zero gauge correction (@ref foldReducedSumZeroGauges):
     // the fold constrained the reduced solve, so the matching constrained locals
     // are x_r −= n_r·(γ − gᵀ x_s)/β for each gauge this station is a term of
@@ -1443,7 +1474,12 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
             x_r.noalias() -= n_r * (s_unc / fg.beta);
         }
     }
+}
 
+void NetworkNormalEquations::applyDdPriorCorrection(std::size_t station,
+                                                    const Eigen::VectorXd& x_s,
+                                                    Eigen::VectorXd& x_r) const {
+    const Station& st = stations_[station];
     // DD-prior correction (@ref foldReducedDdPriors, Card 4): the constrained locals
     // are x_r −= N_rr⁻¹ C_{L,r}ᵀ κ, with κ = M(z_free − Gᵀ x_s − ẑ) shared across this
     // station's terms of each block.  Only the DD (cycle) directions change.  With no
@@ -1463,7 +1499,6 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
         }
         x_r.noalias() -= st.Nrr_ldlt.solve(e);
     }
-    return x_r;
 }
 
 // ---------------------------------------------------------------------------------

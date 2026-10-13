@@ -842,6 +842,38 @@ public:
                                        const Eigen::VectorXd& x_s) const;
 
     /**
+     * @brief The terms of @ref reconstructStation, held apart (card L5B: the station-local
+     *        attribution of filter/NetworkRhsAttrib reads them).
+     *
+     * @f$x_r = N_{rr}^{-1}u_r - N_{rr}^{-1}N_{rs}x_s + c_{\text{sumzero}} + c_{\text{dd}}@f$,
+     * each term computed with the cached factor and folds the solve used.
+     */
+    struct StationReconstructionParts {
+        Eigen::VectorXd free;      ///< @f$N_{rr}^{-1}u_r@f$: the local solution with every shared column at zero.
+        Eigen::VectorXd feedback;  ///< @f$-N_{rr}^{-1}N_{rs}x_s@f$: the shared solution's feedback.
+        Eigen::VectorXd sumzero;   ///< The sum-to-zero gauge correction (zero when no folded gauge has a term at the station).
+        Eigen::VectorXd ddprior;   ///< The DD-prior correction (zero when no folded DD prior has a term at the station).
+        Eigen::VectorXd x_r;       ///< @ref reconstructStation itself, computed as the solve computes it.
+    };
+
+    /**
+     * @brief @ref reconstructStation with its terms held apart (diagnostics only).
+     *
+     * The two constraint corrections are the ones @ref reconstructStation applies (one
+     * implementation serves both), each applied to a zero vector.  The terms sum to
+     * @ref StationReconstructionParts::x_r up to rounding: @c x_r solves
+     * @f$u_r - N_{rs}x_s@f$ in one pass, the parts in two.  Read-only on the cached
+     * factor and folds, so a call changes nothing the solve reads.
+     *
+     * @param station Index returned by @ref addStation / @ref addStationObservations.
+     * @param x_s     The shared estimate (length @c n_shared).
+     * @return The parts, each of length @c n_local (empty when the station has no locals).
+     * @throws std::out_of_range / std::invalid_argument on a bad index or size.
+     */
+    StationReconstructionParts reconstructStationParts(std::size_t station,
+                                                       const Eigen::VectorXd& x_s) const;
+
+    /**
      * @brief Conditional covariance of a station's nuisance block, propagating
      *        the shared-parameter covariance @p cov_free_xs into the locals.
      *
@@ -1410,6 +1442,26 @@ private:
     /// One (block, row, col, coeff) term of a station's DD-prior reconstruction correction.
     struct DdStationTerm { std::size_t block; Eigen::Index row; Eigen::Index col; double coeff; };
     std::vector<std::vector<DdStationTerm>> station_ddprior_;  ///< station → its DD-prior terms
+    /**
+     * @brief Apply the sum-to-zero gauge correction of @ref reconstructStation to @p x_r in
+     *        place: @f$x_r \mathrel{-}= n_r(\gamma - g^\top x_s)/\beta@f$ per folded gauge
+     *        with a term at @p station.  No-op when no gauge is folded.
+     * @param station A valid station index (checked by the caller).
+     * @param x_s     The shared estimate (size checked by the caller).
+     * @param x_r     [in,out] length @c n_local of the station.
+     */
+    void applySumZeroCorrection(std::size_t station, const Eigen::VectorXd& x_s,
+                                Eigen::VectorXd& x_r) const;
+    /**
+     * @brief Apply the DD-prior correction of @ref reconstructStation to @p x_r in place:
+     *        @f$x_r \mathrel{-}= N_{rr}^{-1}C_{L,r}^\top\kappa@f$.  No-op when no DD prior
+     *        has a term at @p station.
+     * @param station A valid station index (checked by the caller).
+     * @param x_s     The shared estimate (size checked by the caller).
+     * @param x_r     [in,out] length @c n_local of the station.
+     */
+    void applyDdPriorCorrection(std::size_t station, const Eigen::VectorXd& x_s,
+                                Eigen::VectorXd& x_r) const;
     /**
      * @brief The batched rank-K carry correction for a request set
      *        (@ref hasCarryCovCorrection; docs/SPEC_carry_aware_covariance.md §5a).

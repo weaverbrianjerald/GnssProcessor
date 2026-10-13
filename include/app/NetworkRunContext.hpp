@@ -2573,6 +2573,9 @@ namespace GnssProcessor {
 
         // --- Reduced-RHS class attribution (filter/NetworkRhsAttrib) ---
         int rhs_attrib_done = 0;   ///< armed target epochs already dumped (caps network.rhs_attrib_n_ep)
+        /// The station-local labels of network.rhs_attrib_columns (and the no-x_s condition of
+        /// a trip dump) already named in the log, so each is named once per run (card L5B).
+        std::set<std::string> rhs_attrib_loc_warned;
 
         // --- Spectrum bookkeeping (P1-3) ---
         long long sh_spectrum_epochs      = 0;      ///< traced epochs (also drives the mode-detail stride)

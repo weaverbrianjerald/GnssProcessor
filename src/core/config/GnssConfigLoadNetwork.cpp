@@ -2119,7 +2119,8 @@ namespace GnssProcessor {
                       std::max(1, network_config_.rhs_attrib_n_ep));
         }
         // The attribution's named columns (card ICF instrument A'): each dump also writes
-        // cols_<tow>.csv, the solution share of every (station, kind) at these columns.
+        // cols_<tow>.csv, the solution share of every (station, kind) at these columns, and
+        // for the station-local labels LOC:<station>:<key> loc_<tow>.csv (card L5B).
         // Same class as rhs_attrib_tow (diagnostics only, not fingerprinted).  The string
         // entries of an array are kept in order, without duplicates; anything else is
         // refused by name and the list stays empty, so the knob is inert, never wrong.
@@ -2129,8 +2130,8 @@ namespace GnssProcessor {
         if (cols) {
             if (!cols->is_array()) {
                 log->error("Network (rhs-attrib, card ICF): network.rhs_attrib_columns must be "
-                           "an array of shared-column labels (e.g. [\"CLK:G07\", "
-                           "\"CB:G07:C1W\"]); ignored.");
+                           "an array of column labels (e.g. [\"CLK:G07\", "
+                           "\"CB:G07:C1W\", \"LOC:MAJU00MHL:GPS_DCB\"]); ignored.");
             } else {
                 for (const auto& c : *cols) {
                     if (!c.is_string() || c.get<std::string>().empty()) {
@@ -2148,15 +2149,29 @@ namespace GnssProcessor {
         }
         if (!network_rhs_attrib_columns_.empty()) {
             std::string names;
-            for (const auto& c : network_rhs_attrib_columns_)
+            bool any_local = false;
+            for (const auto& c : network_rhs_attrib_columns_) {
                 names += (names.empty() ? "" : ", ") + c;
+                any_local = any_local || c.rfind("LOC:", 0) == 0;
+            }
+            const bool on_trip = jval<bool>(json, "network.rhs_attrib_on_trip",
+                                            "rhs_attrib_on_trip", false);
             log->info("Network: reduced-RHS attribution solution shares at {} named column(s) "
-                      "[{}] (diagnostics-only; logs/rhs_attrib/cols_<tow>.csv at every dump{})",
+                      "[{}] (diagnostics-only; logs/rhs_attrib/cols_<tow>.csv for the shared "
+                      "labels at every dump, loc_<tow>.csv for the LOC:<station>:<key> labels "
+                      "at the armed dumps and a trip's current-epoch dump{})",
                       network_rhs_attrib_columns_.size(), names,
-                      (network_config_.rhs_attrib_tow < 0.0
-                       && !jval<bool>(json, "network.rhs_attrib_on_trip",
-                                      "rhs_attrib_on_trip", false))
+                      (network_config_.rhs_attrib_tow < 0.0 && !on_trip)
                           ? "; no dump is armed, so nothing is written" : "");
+            // The station-local readout needs the solve's x_s, which a trip's retained
+            // previous frame does not hold: with the trip recorder alone, the LOC labels
+            // are decomposed only at the epoch a trip fires, never at the frame before it.
+            if (any_local && network_config_.rhs_attrib_tow < 0.0 && on_trip)
+                log->warn("Network (rhs-attrib, card L5B): network.rhs_attrib_columns names "
+                          "LOC:<station>:<key> labels with only network.rhs_attrib_on_trip "
+                          "armed: loc_<tow>.csv is written for a trip's own epoch only, never "
+                          "for the retained previous frame (it holds no solve x_s); arm "
+                          "network.rhs_attrib_tow to decompose a chosen epoch.");
         }
         // Redundancy / testability census (docs/SPEC_redundancy_census.md).
         // Measure-only and not fingerprinted, the same class as the rhs_attrib block

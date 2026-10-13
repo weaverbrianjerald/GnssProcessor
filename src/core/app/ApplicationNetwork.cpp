@@ -2853,7 +2853,7 @@ int Application::runNetwork() {
         // "before" frame.  Last in the group, so a trip dump sees the same kernel state
         // every other diagnostic just read.
         networkRhsAttribTrip(ctx, config_, log, traces, se, stations, est,
-                             plan.shared_datum, asm_res, est_index_of);
+                             plan.shared_datum, asm_res, est_index_of, &x_s);
         subEnd(SB_FRAMEDIAG);
         subBegin(SB_STASH_STATUS); // D2/C1/SH carry re-stash + VCE fold + epoch-status QC (D0b)
         networkStashStatus(ctx, config_, log, traces, setup, se, est, x_s, plan, carry_vce_est,
