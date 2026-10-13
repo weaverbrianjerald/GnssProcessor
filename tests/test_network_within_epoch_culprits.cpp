@@ -17,7 +17,9 @@
  *  - any other disagreement: OutOfStep, at warn level;
  *  - the withheld totals do not move the verdict.
  *
- * Suite @c WithinEpochCulpritReport (the run-end report's gate):
+ * Suite @c WithinEpochCulpritReport (the run-end report's gate and its quiet clause):
+ *  - the quiet clause names the case: leveling off, never assessed, an empty phase pool
+ *    (the carry_invariant lineage, deferral D1), or rows assessed (no clause);
  *  - armed only with the DD carry and the tier both on;
  *  - off on both goldens, loaded from config/golden/ (the tier armed, the DD carry off).
  *
@@ -161,6 +163,21 @@ TEST(WithinEpochCulpritVerdict, TheWithheldTotalsDoNotMoveTheVerdict) {
               WithinEpochCulpritVerdict::NoCulprit);
     EXPECT_EQ(withinEpochCulpritVerdict(tally(2, 2, 0)).verdict,
               WithinEpochCulpritVerdict::Agree);
+}
+
+TEST(WithinEpochCulpritReport, QuietReasonNamesWhichQuietCaseTheRunIs) {
+    // Phase leveling off: the tier never runs.
+    EXPECT_NE(withinEpochCulpritQuietReason(false, 0, 0).find("network.phase_leveling"),
+              std::string::npos);
+    // Leveling on, no assessment: no warm carry.
+    EXPECT_NE(withinEpochCulpritQuietReason(true, 0, 0).find("never assessed"),
+              std::string::npos);
+    // Assessments over an empty pool: the carry_invariant lineage, structurally idle (D1).
+    const std::string idle = withinEpochCulpritQuietReason(true, 57, 0);
+    EXPECT_NE(idle.find("admitted no row in 57 assessment(s)"), std::string::npos);
+    EXPECT_NE(idle.find("deferral D1"), std::string::npos);
+    // Rows assessed and no culprit named: a quiet run, nothing to add.
+    EXPECT_TRUE(withinEpochCulpritQuietReason(true, 57, 1200).empty());
 }
 
 TEST(WithinEpochCulpritReport, ArmedOnlyWithTheDdCarryAndTheTier) {

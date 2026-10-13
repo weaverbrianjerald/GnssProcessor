@@ -15,6 +15,7 @@
 #include "config/GnssConfig.hpp"       // network.raim_within_epoch (run-end gate)
 #include "filter/NetworkRunEnd.hpp"    // NetworkRunEndView
 
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
 namespace GnssProcessor {
@@ -39,6 +40,22 @@ bool withinEpochCulpritReportArmed(bool carry_invariant, bool raim_within_epoch)
     return carry_invariant && raim_within_epoch;
 }
 
+std::string withinEpochCulpritQuietReason(bool pl_on, long long pool_walks, long long pool_rows) {
+    if (!pl_on)
+        return " (the tier runs only with network.phase_leveling, which is off)";
+    if (pool_walks == 0)
+        return " (the tier never assessed: it runs only on a warm phase-leveling carry)";
+    if (pool_rows == 0)
+        return fmt::format(
+            " (the tier's phase pool admitted no row in {} assessment(s): under "
+            "network.carry_invariant the assembly fills no leveling ambiguity column, so the "
+            "tier cannot name a satellite or arc culprit and the withhold is structurally idle "
+            "until the within-epoch pool is re-hosted, docs/SPEC_raim_pool_rehost.md deferral "
+            "D1)",
+            pool_walks);
+    return "";
+}
+
 int networkWithinEpochCulpritWithholdRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     if (!withinEpochCulpritReportArmed(ctx.knobs.carry_invariant,
@@ -46,11 +63,16 @@ int networkWithinEpochCulpritWithholdRunEnd(const NetworkRunEndView& v) {
         return 0;
     const WithinEpochCulpritTally& t = ctx.counters.we_culprit_withhold;
     const WithinEpochCulpritReading r = withinEpochCulpritVerdict(t);
-    // The tier assesses only on a warm phase-leveling carry, so a quiet run without it is
-    // named as such rather than read as a quiet field.
-    const char* note = (r.verdict == WithinEpochCulpritVerdict::NoCulprit && !ctx.knobs.pl_on)
-                           ? " (the tier runs only with network.phase_leveling, which is off)"
-                           : "";
+    // A run with no culprit says which quiet case it is (the tier never assessed, its phase
+    // pool was empty, or it assessed rows and named none), so a structurally idle withhold is
+    // not read as a quiet field.
+    std::string note;
+    if (r.verdict == WithinEpochCulpritVerdict::NoCulprit) {
+        const RaimPoolAdmissionTally& pool = ctx.counters.raim_pool_within;
+        long long pool_rows = 0;
+        for (const long long n : pool.rows) pool_rows += n;
+        note = withinEpochCulpritQuietReason(ctx.knobs.pl_on, pool.walks, pool_rows);
+    }
     v.log->log(r.warn ? spdlog::level::warn : spdlog::level::info,
                "Network (T2 culprit withhold, DD carry): {} re-solve(s) ran with a satellite "
                "or arc culprit; {} DD-carry rebuild(s) read one and withheld {} satellite(s) "

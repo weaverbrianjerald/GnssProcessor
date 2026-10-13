@@ -183,6 +183,32 @@ WithinEpochCulpritReading withinEpochCulpritVerdict(const WithinEpochCulpritTall
 bool withinEpochCulpritReportArmed(bool carry_invariant, bool raim_within_epoch);
 
 /**
+ * @brief The clause that says why a run's re-solves had no satellite or arc culprit
+ *        (verdict NoCulprit), from what the tier's phase pool saw.
+ *
+ * The tier names a satellite or an arc culprit only from its phase pool, which walks the
+ * leveling ambiguity columns of each station block (@c StationAssembly::pl_amb).  Under
+ * @c network.carry_invariant the assembly fills none of them, so the pool admits no row and
+ * the tier cannot name such a culprit: on that lineage the withhold is structurally idle
+ * until the within-epoch pool is re-hosted onto the carry-neutral census, as the post-fit
+ * pool was (docs/SPEC_raim_pool_rehost.md, deferral D1).  The clause tells the three quiet
+ * cases apart, so a structurally idle withhold is not read as a quiet field (standing
+ * invariant 4): the tier never assessed, it assessed an empty pool every time, or it
+ * assessed rows and named no culprit.
+ *
+ * Pure.
+ *
+ * @param pl_on      @c network.phase_leveling (@c NetworkKnobs::pl_on); the tier assesses
+ *                   only on a warm phase-leveling carry.
+ * @param pool_walks The within-epoch pool's assess walks over the run
+ *                   (@c NetworkServiceCounters::raim_pool_within).
+ * @param pool_rows  The rows that pool admitted over the run, every kind summed.
+ * @return The clause, opening with a space and a parenthesis; empty when the tier assessed
+ *         admitted rows (then the run was quiet).
+ */
+std::string withinEpochCulpritQuietReason(bool pl_on, long long pool_walks, long long pool_rows);
+
+/**
  * @brief Run-end report: the culprit withhold on the DD carry, both ends of the hand-off
  *        and the verdict (one line).
  *
