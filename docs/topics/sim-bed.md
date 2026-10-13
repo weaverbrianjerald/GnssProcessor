@@ -18,6 +18,8 @@ bench, the dashboard, the stability campaign and the datum-wander arm.
 
 **Current posture (2026-09-14)** — the sim golden restricted to GPS dual is one of the
 two beds of [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md); sim first, then field, for every card.
+From 2026-10-13 the sim golden is GPS + Galileo (card [GAD](../refound/GAD_galileo_adoption_2026-10-13.md)); the fixture has
+the pilot Galileo family only, so card GFC's family datum is inert on it.
 
 ## Cards, oldest first
 

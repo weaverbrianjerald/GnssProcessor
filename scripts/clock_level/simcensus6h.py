@@ -7,7 +7,9 @@ between two wires of one solve is what is read).  Stations S01, S05, ..., S57 an
 
 make : python scripts/clock_level/simcensus6h.py make <key> <wire run dir, bare> <exe>
        tags smc6_<station>_<key>, base runs/_rf0hv13_sim6/arm.json (the sim golden's consumer on
-       the re-based fixture, PBF on; $SIMCENSUS_BASE overrides it), 6 h.
+       the re-based fixture, PBF on; $SIMCENSUS_BASE overrides it), 6 h.  Since card GAD (2026-10-13)
+       the sim golden is GPS + Galileo while this default base is GPS only: set SIMCENSUS_BASE to the
+       wire's own arm (for example runs/_rf0hv15_sim6/arm.json) to census the golden's consumers.
 grade: python scripts/clock_level/simcensus6h.py grade <refkey> <key> [<key> ...]
 
 The replay's start: a replay inherits the base arm's network.start_offset_hours (0.504167 on the sim golden) and the

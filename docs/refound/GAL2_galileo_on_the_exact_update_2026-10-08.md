@@ -4,15 +4,15 @@
 
 - **id:** GAL2
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** NOT ARMED; the consumer case for adoption is strong. On the exact-update golden Galileo passes G0, G1, G2, G4 and the census (hours 2 to 6 median -0.018 m, 11 of 16 sites better; hour 1 -0.23 m; GPS-only consumers unchanged); the inter-system bias sits on truth. Missed: the second channel family's recovery (0.05 m against 0.02, from 0.87), WTZZ00DEU hour 3 (+0.035 m) and the GPS clock wire (+14 %, card OWD's O8). Adoption is the author's decision.
+- **status:** closed
+- **summary:** ARMED 2026-10-13 with card GFC's family datum by card [GAD](GAD_galileo_adoption_2026-10-13.md) (ledger A16; this card armed nothing). The consumer case for adoption was strong. On the exact-update golden Galileo passes G0, G1, G2, G4 and the census (hours 2 to 6 median -0.018 m, 11 of 16 sites better; hour 1 -0.23 m; GPS-only consumers unchanged); the inter-system bias sits on truth. Missed: the second channel family's recovery (0.05 m against 0.02, from 0.87), WTZZ00DEU hour 3 (+0.035 m) and the GPS clock wire (+14 %, card OWD's O8). Adoption is the author's decision.
 - **source:** the author's decision of 2026-10-08 ("Proceed with Galileo on the COD posture, run L5 alongside"); [GAL](GAL_gps_galileo_dual_2026-09-22.md) sections 4 to 6 (the gates, the root, the owed list); [OWD](OWD_owed_defects_2026-09-22.md) (five owed defects fixed); [EXL](EXL_exact_update_lah_promotion_2026-10-01.md) (the posture); [CTU](CTU_coupling_time_update_2026-09-28.md) section 11 (the family split classified as a datum question); [CLV2](CLV2_clock_level_batch2_2026-09-25.md) section 6.6 (the families' level read before a Galileo arm); [HLT](HLT_broadcast_health_2026-09-25.md) section 4.4 (the ignition re-draw); [SFR](SFR_sim_fixture_coloured_phase_2026-10-01.md) (the sim fixture, now with E05, E11 and E12)
 - **knobs / posture:** the goldens `config/golden/golden_{field,sim}_refound.json` (generated 2026-10-01, d241f27) plus four keys: `processing.active_systems` `["GPS","Galileo"]`, `processing.signal_priorities.Galileo` `["C1C","C1X","L1C","L1X","C5Q","C5X","L5Q","L5X"]`, `estimation.clock_disc_isb_reinflate_std` 10.0, `model_corrections.enable_receiver_cross_system_atx_fallback` true. `frequency_mode` stays dual (E1 and E5a; E5b not modelled). Nothing is armed by this card.
 - **dates in the text:** 2026-10-08
 - **hashes / run dirs:** exe `gnss_processor_gal2.exe`, built from a clean worktree at main `a4cda77` (no uncommitted source of any session); arms `runs/_rap_gal2_*`; census tags `_rap_g2c_*`
 - **gates (frozen at pre-registration):** G0 to G6 in section 4
 
-**Outcome.** Question: which of card GAL's missed bars does the exact update clear? Most of them. The consumer's inter-system bias is within 0.02 m of truth (0.5 to 0.95 m before), E12's 715 field gross rows fall to 3, and the 16-site census improves (hours 2 to 6 median -0.018 m, 11 better and 2 worse; hour 1 -0.23 m). Still missed: C1X recovery 0.05 m against 0.02 (from 0.87), WTZZ00DEU hour 3 +0.035 m, the GPS clock wire +14 %. Not armed; the owed list is in section 6.
+**Outcome.** Question: which of card GAL's missed bars does the exact update clear? Most of them. The consumer's inter-system bias is within 0.02 m of truth (0.5 to 0.95 m before), E12's 715 field gross rows fall to 3, and the 16-site census improves (hours 2 to 6 median -0.018 m, 11 better and 2 worse; hour 1 -0.23 m). Still missed: C1X recovery 0.05 m against 0.02 (from 0.87), WTZZ00DEU hour 3 +0.035 m, the GPS clock wire +14 %. Not armed by this card (the owed list is in section 6); adopted 2026-10-13 with card GFC's datum by [GAD](GAD_galileo_adoption_2026-10-13.md).
 
 ## 1. The question
 

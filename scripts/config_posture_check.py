@@ -283,7 +283,10 @@ def loader_knobs(path=LOADER):
     out = set()
     for lit in re.findall(r'"((?:[^"\\]|\\.)*)"', body):
         head = lit.split(" ")[0].rstrip(".,;:")
-        if re.fullmatch(r"(network|estimation|processing|filter)\.[A-Za-z0-9_.]+", head):
+        # model_corrections.* since the Galileo package (ledger A16): its receiver ATX
+        # cross-system fallback row is the first posture row outside the four sections.
+        if re.fullmatch(r"(network|estimation|processing|filter|model_corrections)\.[A-Za-z0-9_.]+",
+                        head):
             out.add(head)
     return out
 

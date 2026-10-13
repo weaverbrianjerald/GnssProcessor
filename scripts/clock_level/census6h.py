@@ -8,6 +8,9 @@ make : python scripts/clock_level/census6h.py make <key> <wire run dir, bare> <e
        mode); since card WUP (2026-10-01) the golden's consumer accumulates, so a census of the
        golden consumer passes estimation.accumulate_phase_windup=true (card WUP's key `wup`), and
        keys made with and without it are not compared with each other.
+       Since card GAD (2026-10-13) the goldens are GPS + Galileo while this base is GPS only: a
+       replay of a golden wire here gives GPS-only consumers.  The golden's own consumers are
+       censused with scripts/clock_level/gcensus.py (it builds from the wire's own arm).
 grade: python scripts/clock_level/census6h.py grade <refkey> <key> [<key> ...]
        Per hour: the median over sites of the site p50, and the paired change against the reference
        (median, better / worse at 1 cm), split by the site's latched band-1 code.

@@ -4,15 +4,15 @@
 
 - **id:** GFC
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** RESULT 2026-10-10: the Galileo clock datum fixed in two steps, both default off. Step 1, the family-difference datum: Galileo clock wire 0.105 to 0.035 m, the two inter-family groups collapse, census neutral; pair continuity KEEP_OFF. Step 2, the first-sighting family prior (sigma 0.10 m): truth-bed error 0.83 to 0.05 m, pilot-family users halved again, Galileo clock wire 0.022 m (level with GPS). The Galileo package for adoption: census -0.020 m against GPS only, hour 1 -0.22 m. Not armed.
+- **status:** closed
+- **summary:** RESULT 2026-10-10: the Galileo clock datum fixed in two steps, both default off. Step 1, the family-difference datum: Galileo clock wire 0.105 to 0.035 m, the two inter-family groups collapse, census neutral; pair continuity KEEP_OFF. Step 2, the first-sighting family prior (sigma 0.10 m): truth-bed error 0.83 to 0.05 m, pilot-family users halved again, Galileo clock wire 0.022 m (level with GPS). The Galileo package for adoption: census -0.020 m against GPS only, hour 1 -0.22 m. ARMED 2026-10-13 with card GAL2's keys by card [GAD](GAD_galileo_adoption_2026-10-13.md) (ledger A16).
 - **source:** [GAL2](GAL2_galileo_on_the_exact_update_2026-10-08.md) section 6 (the owed list); [GAL](GAL_gps_galileo_dual_2026-09-22.md) section 3.2 (the family rows); [OWD](OWD_owed_defects_2026-09-22.md); two code and run reads of 2026-10-10 (no new run; section 1)
 - **knobs / posture:** new `network.code_datum_pair_continuity` and `network.code_datum_family_difference` (both default false); the goldens of 2026-10-09 plus card GAL2's four Galileo keys (`processing.active_systems`, `processing.signal_priorities.Galileo`, `estimation.clock_disc_isb_reinflate_std` 10, `model_corrections.enable_receiver_cross_system_atx_fallback`)
 - **dates in the text:** 2026-10-10
 - **hashes / run dirs:** Galileo controls `runs/_rap_l5g_gal_{f6,s6}` and census key `l5c_gal` (exe `gnss_processor_l5g0.exe`, main `47fb634`); GPS-only controls `runs/_rap_l5g_ctl_{f6,s6}`, census `l5c_ctl`; arms `runs/_rap_gfc_*`
 - **gates (frozen at pre-registration):** section 4
 
-**Outcome.** Question: does one clock datum per constellation across Galileo's two code families clear card GAL2's field leftovers? Mostly. The family-difference datum (step 1) collapses the two inter-family groups and cuts the Galileo clock wire threefold; the first-sighting family prior (step 2, card GAL2's reading R-a) takes the truth-bed code error from 0.83 to 0.05 m and the clock wire to 0.022 m. The census gains against GPS only (-0.020 m, 10 better, 2 worse) and is neutral between steps. Missed: hour-2 clauses, DAV100ATA, SEYG00SYC; pair continuity is harmful (KEEP_OFF). Sections 6 and 8.
+**Outcome.** Question: does one clock datum per constellation across Galileo's two code families clear card GAL2's field leftovers? Mostly. The family-difference datum (step 1) collapses the two inter-family groups and cuts the Galileo clock wire threefold; the first-sighting family prior (step 2, card GAL2's reading R-a) takes the truth-bed code error from 0.83 to 0.05 m and the clock wire to 0.022 m. The census gains against GPS only (-0.020 m, 10 better, 2 worse) and is neutral between steps. Missed: hour-2 clauses, DAV100ATA, SEYG00SYC; pair continuity is harmful (KEEP_OFF). Sections 6 and 8; adopted 2026-10-13 by [GAD](GAD_galileo_adoption_2026-10-13.md).
 
 ## 1. What the reads of 2026-10-10 found (no new run)
 

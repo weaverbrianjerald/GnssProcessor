@@ -18,6 +18,8 @@ constellation-specific bias work (BeiDou W6, GLONASS IFB).
 
 **Current posture (2026-09-14)** — W6 OSB on the field golden, GPS dual-frequency under
 the re-founding's scope cut. See [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md).
+From 2026-10-13 the goldens carry Galileo E1 / E5a in both code families with one Galileo clock datum across the
+families (card [GAD](../refound/GAD_galileo_adoption_2026-10-13.md); cards GAL2 and GFC).
 
 ## Cards, oldest first
 

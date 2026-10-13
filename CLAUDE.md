@@ -362,7 +362,8 @@ armed set from this prose or from an old arm — start every new network arm fro
 
 ```
 config/golden/golden_sim_refound.json      # sim truth bed, 60 sta   } ONE posture, two beds: the RE-FOUNDING
-config/golden/golden_field_refound.json    # field DOY-129, 59 sta   } posture (card RF-0g): GPS-only L1/L2,
+config/golden/golden_field_refound.json    # field DOY-129, 59 sta   } posture (card RF-0g): GPS L1/L2 (+ Galileo
+                                           #   E1/E5a since card GAD, 2026-10-13),
                                            #   self-contained (GF bias pinned at broadcast T_GD, no GIM, no
                                            #   Kaula prior), free slant iono (no SH), leveling vehicle +
                                            #   gauge projection + prioritized phase datum, Q3 clock anchor,
@@ -426,6 +427,21 @@ consumer at 3.9 m in hour 1, so the two ship together.  Baseline pair `runs/_rf0
 named regressions).  ⚠ FRESH CONVERGENCE ONLY: a snapshot written without these knobs is not resumed into a run that
 arms them unless `network.ctu_switch_on_resume` (default off; that seam failed card CTU's G5).  ⚠ The sim golden
 starts inside the fixture's start artifact: grade the sim from 00:30:15 (`start_offset_hours` 0.504167).
+Card GAD (2026-10-13): the GALILEO PACKAGE adopted at the author's decision (ledger A16, 77 armed in regime): Galileo
+beside GPS (`processing.active_systems` `["GPS","Galileo"]`, E1 / E5a in both code families
+`["C1C","C1X","L1C","L1X","C5Q","C5X","L5Q","L5X"]`, `frequency_mode` still dual), the consumer's
+`estimation.clock_disc_isb_reinflate_std` 10 and `model_corrections.enable_receiver_cross_system_atx_fallback` (card
+GAL2), and one Galileo clock datum across the two code families (`network.code_datum_family_difference` with
+`network.code_family_birth_prior_sigma_m` 0.10, card GFC; `code_datum_pair_continuity` KEEP_OFF).  Baseline pair
+`runs/_rf0hv15_{field,sim}6` (exe `gnss_processor_galp2.exe`): field WTZZ00DEU 0.058 0.011 0.018 0.010 0.015 0.011 m
+by hour, byte-identical to card GFC's graded arm; sim 0.137 0.072 0.031 0.024 0.026 0.018 m from the run start.  The
+16-site field census is 0.020 m better than GPS only at the median site in hours 2 to 6 (10 better, 2 worse: DAV100ATA,
+HARB00ZAF), the sim census 0.030 m; GPS-only users of the new wire are unchanged at the median (ARHT00ATA +0.20 m).
+⚠ Every golden arm is now GPS + Galileo and 2 to 6 times slower (load-dependent; 2 to 3 on one shared load); constellation-blind graders pool the two
+(`rapid_arm.py score` counts Galileo E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`), and
+`census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
+⚠ FRESH CONVERGENCE ONLY (the two GFC knobs are fingerprinted).  Open: DAV100ATA, the GFC hour-2 clauses, SEYG00SYC's
+E11 / E12 C5Q rows, nominal yaw steering only, E14 / E18 broadcast unhealthy and kept (card GAD section 4).
 
 They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
 + `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base

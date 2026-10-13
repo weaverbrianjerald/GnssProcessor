@@ -87,7 +87,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   clone extended to the phase and code biases, BCL-a, and to every key card CTU re-attributes, BCL-d). BCL-a nil at +40 %
   wall time (only the code biases pass the screen); BCL-d exact at events but FAILED G2 on the held-out consumer
   (+15 / +17 mm), census neutral. Both default off, nothing armed.
-- [GAL2](GAL2_galileo_on_the_exact_update_2026-10-08.md): open, 2026-10-08: Galileo on the exact-update golden, NOT ARMED:
+- [GAL2](GAL2_galileo_on_the_exact_update_2026-10-08.md): closed, 2026-10-08: Galileo on the exact-update golden; ARMED
+  2026-10-13 with card GFC's datum by card GAD (was NOT ARMED):
   census hours 2 to 6 -0.018 m (11 of 16 better), hour 1 -0.23 m, inter-system bias on truth; missed C1X recovery
   (0.05 m against 0.02), WTZZ00DEU hour 3, GPS clock wire +14 %. Adoption is the author's decision.
 - [L5R](L5R_l5_return_on_the_exact_update_2026-10-08.md): open, 2026-10-08: L5 R-1 on the exact-update golden: sim
@@ -120,9 +121,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   the field contamination is one event at MAJU00MHL moving its station level direction; consumer cost = Block IIF L5
   phase. 2026-10-13: a station-local attribution (section 9) shows MAJU's own rows carry centimetres; the move
   comes through the shared solution. L5 SEQUENCED: R-1d (robust ignition of receiver code states) is the author's design call.
-- [GFC](GFC_galileo_family_clock_datum_2026-10-10.md): open, 2026-10-10: Galileo clock datum across the two code
+- [GFC](GFC_galileo_family_clock_datum_2026-10-10.md): closed, 2026-10-10: Galileo clock datum across the two code
   families, two default-off steps: the family-difference datum (clock wire 0.105 to 0.035 m) and the first-sighting
   family prior (truth 0.83 to 0.05 m, clock wire 0.022 m); census -0.020 m against GPS only. Pair continuity KEEP_OFF.
+  ARMED 2026-10-13 with card GAL2's keys by card GAD.
 - [AGT](AGT_arc_graph_shared_tree_2026-10-10.md): closed, 2026-10-11 (results in AGTB). One owner of the observation graph
   (`filter/NetworkArcGraph`) for the chain datum, the Card-4 carry, the census, the emit re-base and the producer AR
   search, migrated with identical output; then a sticky, L1/L2-consistent, full-coverage cycle basis for the search
@@ -155,3 +157,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   (planted collateral 7 dims, bar 2; clean-arc releases 30 and 779 per 2 h, bars 2 and 5). FCF-4 stays unbuilt.
   Review fixes (section 8): a verdict on a cycle releases its arcs (a released stale integer came back before); the
   ledger alone held the S8 twin's stale pair 34 epochs past the search; a default-off lapse measured; D2(b) untested.
+- [GAD](GAD_galileo_adoption_2026-10-13.md): closed, 2026-10-13: the Galileo package of cards GAL2 and GFC ARMED at the
+  author's decision (ledger A16, 77 armed in regime): field baseline byte-identical to card GFC's arm, census -0.020 m
+  (10 better, 2 worse), sim census -0.030 m, GPS-only users unchanged at the median (ARHT00ATA +0.20 m); baseline
+  pair `_rf0hv15`; 2 to 6 times the GPS-only epoch time depending on the load.

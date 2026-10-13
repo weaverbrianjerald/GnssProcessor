@@ -15,7 +15,8 @@ producer. It is the entry point for the network from this date on.**
 
 - **The frozen posture (RF-0):** the leveling vehicle + gauge projection + phase-datum
   family, free slant iono, the physical clock time-link, the clock step test; scope cut
-  to GPS-only dual-frequency, no lanes, no F3, no seams.
+  to GPS-only dual-frequency, no lanes, no F3, no seams (Galileo added back on the goldens 2026-10-13, card
+  [GAD](refound/GAD_galileo_adoption_2026-10-13.md)).
 - **The only two bars:** the cold 6 h consumer, and the wire-vs-CODE census. Everything
   else is diagnostic.
 - **The card order:** RF-0 (freeze + baseline) → RF-1 (ambiguities as float states) →

@@ -553,7 +553,7 @@ namespace GnssProcessor {
               "after a gap above 300 s): unanswered, the carry folds across an integer-cycle "
               "step; 6 h field golden 27 of 28 in-horizon restarts answered (52 arcs), sim 14 "
               "of 15, none bridged, consumers unchanged" },
-            // --- The canonical-signal latch (card CSL).  A value knob, and the only
+            // --- The canonical-signal latch (card CSL).  A value knob, and the first
             //     processing.* row in this table: the default string "count" is truthy, so
             //     the armed test is an explicit comparison on canonical_signal_rule_ (a
             //     direct GnssConfig member, not part of network_config_ and not a
@@ -568,6 +568,46 @@ namespace GnssProcessor {
               "pair latches the civil signal for the whole run): field dual epochs below "
               "a decimetre 162 -> 603 of 720, 12 h 275 -> 994 of 1440, triple 6 -> 314; "
               "byte-identical on the sim; mechanism half read (a station subset)" },
+            // --- The Galileo package (cards GAL2 and GFC, adopted 2026-10-13, ledger A16).
+            //     Four processing / estimation / model_corrections value rows; like the CSL
+            //     row above, each armed test is an explicit comparison on a direct GnssConfig
+            //     member.  Regime: the float vehicle in dual-frequency mode (the package was
+            //     graded dual only) on a GPS / Galileo set.  The
+            //     active_systems row is in regime on a GPS-only set too (it is the row that
+            //     reports a GPS-only float run as a gap); the three rows that only act with
+            //     Galileo present need n_sys >= 2 (gps_gal_only keeps the count honest: an
+            //     absent active_systems loads all six systems).
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && gps_gal_only,
+              std::find(active_systems_.begin(), active_systems_.end(), "Galileo")
+                  != active_systems_.end(),
+              Tier::SCOPED, false, "processing.active_systems",
+              "GPS + Galileo (cards GAL2, GFC): census median -0.020 m against GPS only in "
+              "hours 2 to 6 (10 of 16 sites better, 2 worse) and -0.22 m in hour 1; WTZZ00DEU "
+              "0.058 0.011 0.018 0.010 0.015 0.011 m by hour against 0.113 0.023 0.016 0.020 "
+              "0.030 0.026; 2 to 6 times the GPS-only epoch time depending on the load" },
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.n_sys >= 2
+                  && gps_gal_only,
+              signal_priorities_.count("Galileo") != 0
+                  && signal_priorities_.at("Galileo")
+                         == std::vector<std::string>{ "C1C", "C1X", "L1C", "L1X",
+                                                      "C5Q", "C5X", "L5Q", "L5X" },
+              Tier::SCOPED, false, "processing.signal_priorities.Galileo",
+              "E1 / E5a in both code families (pilot C/Q first, combined X second), E5b left "
+              "out: the dual-frequency pair the Galileo package was graded on (card GAL2)" },
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.n_sys >= 2
+                  && gps_gal_only,
+              clock_disc_isb_reinflate_std_ >= 9.99,
+              Tier::SCOPED, false, "estimation.clock_disc_isb_reinflate_std",
+              "re-inflate the consumer's Galileo inter-system bias to 10 m on a consumed clock "
+              "datum discontinuity: without it the first GPS + Galileo sim consumer diverged "
+              "to 2.44 m in hour 6 (card GAL); inert without Galileo" },
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.n_sys >= 2
+                  && gps_gal_only,
+              model_corrections_.enable_receiver_cross_system_atx_fallback,
+              Tier::SCOPED, false, "model_corrections.enable_receiver_cross_system_atx_fallback",
+              "a receiver antenna without Galileo PCO / PCV takes its nearest GPS band (E1 -> "
+              "G01, E5a -> G05) instead of dropping the station's Galileo: 6 field stations "
+              "(card GAL2); never applied to a satellite antenna" },
             { true,
               network_exclude_unmodeled_antenna_stations_,
               Tier::SCOPED, false, "network.exclude_unmodeled_antenna_stations",
@@ -902,13 +942,29 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.code_datum_time_linked",
               "W6 code datum pinned in TIME not level: cures the ~0.92 m hysteretic OSB/clock "
               "wander after each rise/set" },
-            // Card GFC's refinements of the time-linked datum above,
-            // network.code_datum_pair_continuity and network.code_datum_family_difference
-            // (and step 2's network.code_family_birth_prior_sigma_m on the latter),
-            // are UNVALIDATED (pre-registered, default off) and have no posture row, like the
-            // other unvalidated knobs: this table lists RECOMMEND_* ledger verdicts only, and
-            // `config_posture_check.py --verify-loader` fails on a row without one.  A row is
-            // added here with the ledger entry when the card's gates pass.
+            // --- Card GFC's refinements of the time-linked datum above (the Galileo package,
+            //     adopted 2026-10-13, ledger A16).  network.code_datum_pair_continuity is
+            //     KEEP_OFF (it preserves the birth realizations; pilot-family users worse) and
+            //     has no row: this table lists RECOMMEND_* ledger verdicts only.  Both rows
+            //     act on Galileo band 1 alone and are inert on a fixture without the combined
+            //     (X) family (the sim), which arming does not change.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.n_sys >= 2
+                  && gps_gal_only && estimate_network_sat_code_bias_
+                  && network_code_datum_time_linked_,
+              network_code_datum_family_difference_,
+              Tier::SCOPED, true , "network.code_datum_family_difference",
+              "one Galileo clock datum across the two code families (the X channel's "
+              "sum-to-zero row replaced by the family difference): field Galileo clock wire "
+              "0.105 -> 0.035 m, the two inter-family groups collapse, census neutral" },
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.n_sys >= 2
+                  && gps_gal_only && estimate_network_sat_code_bias_
+                  && network_code_datum_time_linked_ && network_code_datum_family_difference_,
+              network_code_family_birth_prior_sigma_m_ >= 0.099
+                  && network_code_family_birth_prior_sigma_m_ <= 0.101,
+              Tier::SCOPED, true , "network.code_family_birth_prior_sigma_m",
+              "a first-sighting family prior at 0.10 m (the family difference's veteran mean): "
+              "truth-bed code error from hour 3 0.83 -> 0.05 m, field Galileo clock wire 0.022 "
+              "m (level with GPS); hour-2 bars missed (convergence of births at ignition)" },
             { lane,
               network_cold_clock_seed_,
               Tier::SCOPED, false, "network.cold_clock_seed",
