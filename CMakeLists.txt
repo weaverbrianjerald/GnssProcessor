@@ -246,6 +246,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkDdPriorBuild.cpp
     src/core/filter/NetworkMwWlGlue.cpp
     src/core/filter/NetworkSolveGlue.cpp
+    src/core/filter/NetworkWithinEpochCulprits.cpp
     src/core/filter/NetworkLevelAuthority.cpp
     src/core/filter/NetworkRelevel.cpp
     src/core/filter/NetworkFastClock.cpp
@@ -603,6 +604,7 @@ add_executable(gnss_tests
     tests/test_band_scoped_response.cpp
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp
+    tests/test_network_within_epoch_culprits.cpp
     tests/test_canonical_pair_admission.cpp
     tests/test_oracle_pin.cpp
     tests/test_warm_resume_require.cpp

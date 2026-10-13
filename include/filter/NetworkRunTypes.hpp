@@ -17,6 +17,7 @@
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactCounters (StationAssembly, card CTU)
 #include "filter/NetworkParamInventory.hpp" // StationParamSlot (StationAssembly, card NOM N1)
 #include "filter/NetworkContributions.hpp" // RowTag, GimRowsOutcome (StationAssembly, card NOM N2a)
+#include "filter/NetworkWithinEpochCulprits.hpp" // WithinEpochCulprits (EpochWorkspace::we_culprits, card WCF)
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "common/PppState.hpp"
@@ -2620,16 +2621,6 @@ struct EpochStatusRow {
     std::string           we_clk_move_max_sat;   // empty = blank
 };
 
-/// The landed within-epoch replay's culprits (card FCF, @c NetworkSolveGlueResult::we_landed):
-/// what the replay that this epoch kept refloated or excluded.  The replay withholds the carried
-/// priors of these lines of sight for the epoch's solve but writes no durable stamp, so the
-/// fixed-cycle ledger reads them here (filter/NetworkArLattice.hpp).  Empty without a replay.
-struct WithinEpochCulprits {
-    std::set<std::string>                sats;      ///< Satellites refloated at every station.
-    std::map<int, std::set<std::string>> arcs;      ///< Station roster index -> satellites refloated at that station.
-    std::set<int>                        stations;  ///< Stations excluded (roster index).
-};
-
 /// Disposition of a relocated epoch-loop phase, consumed at the runNetwork call site
 /// (decomposition INC-7, plan §Control flow).  SkipEpoch stands for an epoch-loop
 /// `continue`; the site-specific bookkeeping (n_skipped, trace row, epoch-status row,
@@ -2641,8 +2632,8 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 /// @internal Per-epoch workspace of Application::runNetwork (decomposition INC-4).
 /// Constructed fresh at the top of every epoch iteration and never hoisted for
 /// reuse: fresh construction is the per-epoch reset.  Its scope is the RAIM-replay
-/// capture channel plus the two clock maps at the end; other per-epoch state joins as
-/// its consuming blocks move out of the run-loop TU (INC-7/9).
+/// capture channel, the two clock maps and the T2 culprit sets at the end; other per-epoch
+/// state joins as its consuming blocks move out of the run-loop TU (INC-7/9).
 ///
 /// RAIM-replay capture channel (network.raim_within_epoch): the within-epoch re-solve
 /// (resolve_dropping) replays the epoch over a fresh beginEpoch(), so every
@@ -2718,6 +2709,13 @@ struct EpochWorkspace {
     /// only when the anchor-info trace is open and consumed by the B7 anchor-fraction
     /// diagnostic after the solve (B7, P1-4).
     std::map<std::string, double> clk_prior_info;
+    /// The within-epoch RAIM tier's culprit sets (card WCF; the hand-off is described in
+    /// filter/NetworkWithinEpochCulprits.hpp).  Written only by the T2 block of
+    /// networkSolveGlue, which clears it when it starts and when it ends; read by the
+    /// DD-carry rebuild of each of the block's re-solves (the driver's rebuild callback
+    /// reads this member of the same workspace).  Empty at every other time, so the
+    /// epoch's primary build withholds nothing.
+    WithinEpochCulprits we_culprits;
 };
 
 /**

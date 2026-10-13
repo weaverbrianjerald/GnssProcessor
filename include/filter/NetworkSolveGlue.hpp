@@ -27,6 +27,11 @@
  * std::function so the within-epoch re-solve re-invokes them with byte-identical
  * capture semantics.  The seam owns no state; every carry object is a reference into
  * ctx.
+ *
+ * The within-epoch re-solve hands its culprit sets to buildCarryDdPriors through the
+ * epoch workspace (@ref EpochWorkspace::we_culprits, card WCF): the T2 block adapts the
+ * sets in that member, the driver's rebuild lambda reads the member of the same
+ * workspace, and the block clears it when it ends.
  */
 
 #include "filter/NetworkEstimator.hpp"   // NetworkEstimator (+ PerConstSigma0)
@@ -80,8 +85,10 @@ struct NetworkSolveGlueResult {
     bool                                             we_t2_opp{false};
     bool                                             we_t2_flag{false};
     EpochAction                                      action{EpochAction::Proceed};
-    /// The landed within-epoch replay's culprits (card FCF), copied from its drop sets before
-    /// they leave scope; empty without a replay.  Read by the fixed-cycle ledger only.
+    /// The landed within-epoch replay's culprits (card FCF), copied from the epoch
+    /// workspace's culprit sets (@ref EpochWorkspace::we_culprits) before the T2 block clears
+    /// them; empty without a replay.  Read by the fixed-cycle ledger only (its evidence,
+    /// networkArLatticeEvidence).
     WithinEpochCulprits                              we_landed;
 };
 
@@ -129,8 +136,6 @@ NetworkSolveGlueResult networkSolveGlue(
     int n_cb,
     int n_present,
     int total_pins,
-    const std::set<std::string>* carry_we_drop_sats,
-    const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
     bool carry_warm,
     bool within_epoch_armed,
     double dt,

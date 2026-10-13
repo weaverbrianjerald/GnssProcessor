@@ -44,6 +44,7 @@
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
 #include "filter/NetworkIonoDwRelease.hpp"   // NetworkIonoDwReleaseTallies (iono-deweight release hygiene)
 #include "filter/NetworkRaim.hpp"            // NetworkRaimCiTallies (RAIM pool re-host), RaimPoolAdmissionTally (card NOM N2b)
+#include "filter/NetworkWithinEpochCulprits.hpp" // WithinEpochCulpritTally (card WCF)
 #include "filter/NetworkGrossLos.hpp"        // NetworkGrossLosTallies / GrossLosState (card GL)
 #include "filter/NetworkPrefitCensus.hpp"    // NetworkPrefitCensusTallies (prefit census / fuse / topology / recorder)
 #include "filter/NetworkCarryVceApply.hpp"   // NetworkCarryVceApply (M2 v2 carry variance-factor state)
@@ -4615,6 +4616,11 @@ namespace GnssProcessor {
         long long   we_restore_failed   = 0;   ///< undos that could not complete (epoch skipped)
         double      we_resolve_fail_tow = 0.0; ///< TOW of the first failed re-solve
         std::string we_resolve_fail_at;        ///< where it failed: a station name, or "shared system"
+        /// The culprit withhold on the DD carry (card WCF): the re-solves that ran with a
+        /// satellite or arc culprit (the writer's end), the DD-carry rebuilds that read one
+        /// and what they withheld (the reader's end).  Reported by
+        /// networkWithinEpochCulpritWithholdRunEnd (filter/NetworkWithinEpochCulprits).
+        WithinEpochCulpritTally we_culprit_withhold;
 
         // Split-cadence fast-clock telemetry (FC-1, network.fast_clock).  Standing
         // invariant #4 matters most here: the fast tier runs on epochs the full pipeline

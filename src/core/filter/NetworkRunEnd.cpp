@@ -84,6 +84,7 @@
 #include "filter/NetworkSignalIntegrity.hpp"
 #include "filter/NetworkSolPrep.hpp"
 #include "filter/NetworkStationBlock.hpp"
+#include "filter/NetworkWithinEpochCulprits.hpp"
 #include "products/NetworkClockEmitRebase.hpp"
 #include "products/NetworkEmitRebase.hpp"
 #include "products/NetworkPbEmitFilter.hpp"
@@ -114,6 +115,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkDatumGraph.cpp", networkDatumGraphRunEnd},
     {"within-epoch RAIM: the WE-CI screen and the T2 responses",
      "filter/NetworkRaim.cpp", networkWithinEpochRaimRunEnd},
+    {"the T2 culprit withhold on the DD carry: both ends of the hand-off (card WCF)",
+     "filter/NetworkWithinEpochCulprits.cpp", networkWithinEpochCulpritWithholdRunEnd},
     {"the KP prior and the CB-ADM code-pair admission",
      "filter/NetworkBiasAdmission.cpp", networkBiasAdmissionRunEnd},
     {"the adaptive ionosphere process noise",
