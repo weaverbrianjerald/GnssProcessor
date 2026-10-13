@@ -81,7 +81,7 @@ constexpr const char* kBlock   = "CouplingRowBuilder::buildLocalBlock, appendCou
                                  "(NetworkCoupling.cpp)";
 constexpr const char* kCbDatum = "NetworkSbasis::buildCodeBiasDatumRows (NetworkSbasis.cpp), "
                                  "folded by networkSolveGlue";
-constexpr const char* kD2      = "networkInjectD2CarryPrior (NetworkRunContext.cpp)";
+constexpr const char* kD2      = "networkInjectD2CarryPrior (NetworkBorderPrior.cpp)";
 constexpr const char* kQ3      = "networkClockAnchorGuard (NetworkClockAnchor.cpp), "
                                  "networkClockCloneRefloat (NetworkClockClone.cpp)";
 
@@ -256,13 +256,13 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      "healNearNullPhaseBias (NetworkPhaseDatum.cpp)", false, nullptr},
     {CK::ShPrior, "sh_prior", CC::SharedPrior, CG::BeforeGate, CS::None, CU::Keys, bit(PK::VtecSh),
      "the carried SH information, aged by its process noise",
-     "networkInjectShVtecPrior (NetworkRunContext.cpp)", false, nullptr},
+     "networkInjectShVtecPrior (NetworkBorderPrior.cpp)", false, nullptr},
     {CK::PhaseHold, "phase_hold", CC::SharedPrior, CG::BeforeGate, CS::SatelliteSignal, CU::Keys,
      bit(PK::SatPhaseBias), "1/var of the held phase bias (network.phase_datum_hold_sigma_m)",
-     "networkInjectPhaseHoldPrior (NetworkRunContext.cpp)", false, nullptr},
+     "networkInjectPhaseHoldPrior (NetworkBorderPrior.cpp)", false, nullptr},
     {CK::PinBridge, "pin_bridge", CC::SharedPrior, CG::BeforeGate, CS::SatelliteSignal, CU::Keys,
      bit(PK::SatPhaseBias), "1/network.phase_datum_bridge_sigma_m^2",
-     "networkInjectPinBridgePrior (NetworkRunContext.cpp)", false, nullptr},
+     "networkInjectPinBridgePrior (NetworkBorderPrior.cpp)", false, nullptr},
     {CK::BorderCarryDiagonal, "border_carry_diagonal", CC::SharedPrior, CG::AfterGate,
      CS::SatelliteSignal, CU::Keys, kBorder,
      "1/(var + q*dt) per key (the registry's q; card Q3's anchored q on the clocks)", kD2, false,
@@ -274,7 +274,7 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      kD2, false, nullptr},
     {CK::BorderCarryDense, "border_carry_dense", CC::SharedDensePrior, CG::AfterGate, CS::None,
      CU::Keys, kBorder, "(P_prev + Q)^-1 (network.shared_carry_full_cov)",
-     "networkInjectD2CarryPrior (NetworkRunContext.cpp), networkClockCloneDenseFold "
+     "networkInjectD2CarryPrior (NetworkBorderPrior.cpp), networkClockCloneDenseFold "
      "(NetworkClockClone.cpp)",
      false, "keys of the dense block, one call per epoch (a retry without the time t-1 states is a second call)"},
     {CK::Q3Withdraw, "q3_withdraw", CC::SharedDensePrior, CG::AfterSolve, CS::Satellite, CU::Keys,
@@ -298,7 +298,7 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      "networkSharedHistoryFold (NetworkSharedHistory.cpp)", false, nullptr},
     {CK::ClockOscillator, "clock_oscillator", CC::SharedPrior, CG::AfterGate, CS::Satellite,
      CU::Keys, bit(PK::SatClock), "1/p00 of the two-state clock model (network.clock_model)",
-     "networkInjectClockOscPrior (NetworkRunContext.cpp)", false, nullptr},
+     "networkInjectClockOscPrior (NetworkBorderPrior.cpp)", false, nullptr},
     {CK::ColdClockAnchor, "cold_clock_anchor", CC::SharedPrior, CG::AfterGate, CS::Satellite,
      CU::Keys, bit(PK::SatClock),
      "1/sigma^2, sigma = network.apriori_clock_anchor_sigma_m when set, else 3 m on the "
