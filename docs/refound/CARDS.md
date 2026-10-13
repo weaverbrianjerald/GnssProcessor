@@ -161,3 +161,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   author's decision (ledger A16, 77 armed in regime): field baseline byte-identical to card GFC's arm, census -0.020 m
   (10 better, 2 worse), sim census -0.030 m, GPS-only users unchanged at the median (ARHT00ATA +0.20 m); baseline
   pair `_rf0hv15`; 2 to 6 times the GPS-only epoch time depending on the load.
+- [IRD](IRD_integer_recovering_datum_2026-10-13.md): parked, 2026-10-13: the integer-recovering datum on the eq34
+  chain (a frame-preserving event algebra on the float vehicle, observatory first, proven end to end on the sim);
+  S-basis derivation, event table, bundle A0, every bar and decision rule frozen. IRD-0 STOPPED by its negative
+  control: golden chord WL and 6 h wire E_L1 up to 0.029 cycle off the null (tolerance 0.02); graders, truth-wire
+  positive control and the E_b slope pass. Nothing from IRD-1 on built; resuming is the author's ruling.

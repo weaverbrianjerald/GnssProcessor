@@ -527,13 +527,584 @@ def pctl(a, q):
 
 
 # --------------------------------------------------------------------------- #
+# dual-band mode (card IRD section 8)
+# --------------------------------------------------------------------------- #
+# The three-band path above selects nothing on a dual-band product (every candidate
+# needs L5).  The dual-band mode grades one band pair, all satellite pairs, with the
+# code-implied ionosphere offset x the consumer adopts:
+#
+#   Wp_b = dC - dP_b,  Wc_b = dC - dB_b          (wire errors, metres; dX = emitted - truth)
+#   x    = (Wc_1 - Wc_2) / (mu_1 - mu_2)          (mu_b = (f_1 / f_b)^2, band 1 first)
+#   E_b  = (Wp_b + mu_b x) / lambda_b             (what the consumer's float absorbs, cycles)
+#   r    = Wc_1 - mu_1 x                          (the range-like code term; 0 when the IF code
+#                                                  lump sits in the clock)
+#
+# Between satellites s and p of one system: D_b = E_b^s - E_b^p; D_WL = D_1 - D_2 (the
+# consumer's wide lane); g = D_1 + f_2/(f_1 - f_2) (D_WL - round(D_WL)) (the ionosphere-free
+# part given the wide lane, NL cycles; 3.529 for L1/L2); the Melbourne-Wubbena wide lane MW,
+# equal to D_WL - (r^s - r^p)/lambda_WL.  Every statistic is |wrap| over all pair-epochs,
+# quoted against a size-matched null: one uniform fraction per unit (a satellite with its
+# hold generations), the same statistic over the same occupancy.
+DUAL_FREQ = {"G": {"1": 1575.42e6, "2": 1227.60e6, "5": 1176.45e6},
+             "E": {"1": 1575.42e6, "5": 1176.45e6, "7": 1207.14e6, "6": 1278.75e6,
+                   "8": 1191.795e6}}
+DUAL_CHANNELS = ("E1", "E2", "WL", "NL", "MW")
+PREHOLD_HEADER = ("week", "tow", "sat", "signal", "est_pb_m", "est_pb_sigma_m", "est_clk_m",
+                  "phase_visible_m", "emit_pb_m", "gen", "role", "comp", "r1", "attach_sta",
+                  "depth")
+
+
+def dual_freq(sat, sig):
+    """Carrier frequency (Hz) of a RINEX phase or code signal of satellite `sat`."""
+    return DUAL_FREQ[sat[0]][sig[1]]
+
+
+def code_of(phase_sig):
+    """The code signal paired with a phase signal (L1C -> C1C, L2W -> C2W)."""
+    return "C" + phase_sig[1:]
+
+
+def wrapf(v):
+    """Fraction in [-0.5, 0.5] (array or scalar)."""
+    return v - np.round(v)
+
+
+def weighted_quantile(vals, w, q):
+    """The q-quantile of `vals` with integer or real weights `w` (the lower sample at the
+    cumulative weight q; a plain sample quantile when every weight is 1)."""
+    vals, w = np.asarray(vals, float), np.asarray(w, float)
+    if vals.size == 0:
+        return float("nan")
+    o = np.argsort(vals)
+    c = np.cumsum(w[o])
+    return float(vals[o][min(np.searchsorted(c, q * c[-1]), vals.size - 1)])
+
+
+def size_matched_null(n_units, ia, ib, w, mc=2000, seed=20261013):
+    """The size-matched null of the p50 |wrap| statistic (card IRD section 8).
+
+    One uniform fraction per unit; a record is a unit (ib None) or a pair of units
+    (ia, ib), with occupancy weights w (pair-epochs or arc-epochs per record).  Returns
+    (mean, p2.5, p97.5) of the weighted p50 of |wrap(u_a - u_b)| (or |u_a|) over mc draws."""
+    rng = np.random.default_rng(seed)
+    ia = np.asarray(ia, int)
+    ib = None if ib is None else np.asarray(ib, int)
+    w = np.asarray(w, float)
+    if ia.size == 0:
+        return float("nan"), float("nan"), float("nan")
+    out = np.empty(mc)
+    for k in range(mc):
+        u = rng.uniform(-0.5, 0.5, n_units)
+        v = np.abs(u[ia]) if ib is None else np.abs(wrapf(u[ia] - u[ib]))
+        out[k] = weighted_quantile(v, w, 0.5)
+    return float(out.mean()), float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5))
+
+
+def _tokens(fields):
+    """key=value tokens of a product record's tail."""
+    out = {}
+    for f in fields:
+        if "=" in f:
+            k, v = f.split("=", 1)
+            out[k] = v
+    return out
+
+
+def parse_products_tokens(path):
+    """(s_fields, epochs, census) from a products.txt, keeping the P record tokens.
+
+    Each epoch: {tow, C {sat: m}, B {(sat, sig): m}, P {(sat, sig): m},
+    attr {(sat, sig): {"si": signal_integer, "gen": .., "cmp": .., "genc": ..}}}.
+    The record census guard of simnet_grade.parse_products is kept: a product with no C,
+    B or P record is refused rather than graded as an empty (perfect-looking) wire."""
+    s_fields, epochs, cur = None, [], None
+    census = Counter()
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for raw in fh:
+            line = raw.rstrip("\n").rstrip("\r")
+            if not line or line.startswith("#"):
+                continue
+            p = line.split(",")
+            census[p[0]] += 1
+            if p[0] == "S":
+                s_fields = p
+            elif p[0] == "E":
+                cur = {"tow": round(float(p[2]), 3), "C": {}, "B": {}, "P": {}, "attr": {}}
+                epochs.append(cur)
+            elif cur is None:
+                continue
+            elif p[0] == "C":
+                cur["C"][p[1]] = float(p[2])
+            elif p[0] == "B":
+                cur["B"][(p[1], p[2])] = float(p[3])
+            elif p[0] == "P":
+                key = (p[1], p[2])
+                cur["P"][key] = float(p[3])
+                tok = _tokens(p[4:])
+                cur["attr"][key] = {"si": int(p[4]) if len(p) > 4 and p[4].lstrip("-").isdigit()
+                                    else None,
+                                    "gen": tok.get("gen"), "cmp": tok.get("cmp"),
+                                    "genc": tok.get("genc")}
+    if census["C"] == 0 or census["B"] == 0 or census["P"] == 0:
+        raise SystemExit("products %s carries no C, B or P record (census %s): refused, an empty "
+                         "wire would grade as perfect" % (path, dict(census)))
+    return s_fields, epochs, census
+
+
+def load_prehold(path, product_epochs):
+    """Epochs in parse_products_tokens' shape from logs/network_pb_prehold.csv (card IRD
+    section 7): P = est_pb_m and C = est_clk_m, sampled immediately before the phase-bias
+    hold; B (the code biases, which the hold does not touch) from the products at the same
+    epoch.  attr carries gen, role, comp, r1, attach_sta and depth."""
+    by_tow = {ep["tow"]: ep for ep in product_epochs}
+    out = {}
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        rd = csv.reader(l for l in fh if not l.startswith("#"))
+        hdr = tuple(next(rd))
+        if hdr[:len(PREHOLD_HEADER)] != PREHOLD_HEADER:
+            raise SystemExit("unexpected network_pb_prehold.csv header: %s" % (hdr,))
+        ix = {c: i for i, c in enumerate(hdr)}
+        for r in rd:
+            if len(r) < len(PREHOLD_HEADER):
+                continue
+            tow = round(float(r[ix["tow"]]), 3)
+            ep = out.get(tow)
+            if ep is None:
+                src = by_tow.get(tow)
+                ep = {"tow": tow, "C": {}, "B": dict(src["B"]) if src else {}, "P": {},
+                      "attr": {}}
+                out[tow] = ep
+            sat, sig = r[ix["sat"]], r[ix["signal"]]
+            ep["P"][(sat, sig)] = float(r[ix["est_pb_m"]])
+            if r[ix["est_clk_m"]] != "":
+                ep["C"][sat] = float(r[ix["est_clk_m"]])
+            ep["attr"][(sat, sig)] = {"si": None, "gen": r[ix["gen"]], "cmp": r[ix["comp"]],
+                                      "genc": None, "role": r[ix["role"]],
+                                      "depth": r[ix["depth"]], "r1": r[ix["r1"]],
+                                      "attach_sta": r[ix["attach_sta"]]}
+    return [out[t] for t in sorted(out)]
+
+
+def dual_sat_values(ep, osb, sc_truth, bands, xcorr=True):
+    """sat -> {E1, E2, MWs, r, x, unit attrs} for every satellite of the epoch with a clock,
+    both codes and both phases of `bands` and their truth.  E_b is x-corrected unless
+    xcorr is False (then raw Wp_b / lambda_b, the reading that misgrades an integer wire)."""
+    b1, b2 = bands
+    out = {}
+    for s, c0 in ep["C"].items():
+        if not s or s[0] not in DUAL_FREQ:
+            continue
+        ck = [(s, code_of(b1)), (s, code_of(b2))]
+        pk = [(s, b1), (s, b2)]
+        if any(k not in ep["B"] or k not in osb for k in ck) or \
+           any(k not in ep["P"] or k not in osb for k in pk):
+            continue
+        f1, f2 = dual_freq(s, b1), dual_freq(s, b2)
+        l1, l2 = C_LIGHT / f1, C_LIGHT / f2
+        mu1, mu2 = 1.0, (f1 / f2) ** 2
+        dC = c0 - sc_truth.get((ep["tow"], s), 0.0)
+        wc1 = dC - (ep["B"][ck[0]] - osb[ck[0]])
+        wc2 = dC - (ep["B"][ck[1]] - osb[ck[1]])
+        w1 = dC - (ep["P"][pk[0]] - osb[pk[0]])
+        w2 = dC - (ep["P"][pk[1]] - osb[pk[1]])
+        x = (wc1 - wc2) / (mu1 - mu2)
+        r = wc1 - mu1 * x
+        if xcorr:
+            e1, e2 = (w1 + mu1 * x) / l1, (w2 + mu2 * x) / l2
+        else:
+            e1, e2 = w1 / l1, w2 / l2
+        lwl = C_LIGHT / (f1 - f2)
+        mw = ((f1 * w1 - f2 * w2) / (f1 - f2) - (f1 * wc1 + f2 * wc2) / (f1 + f2)) / lwl
+        a1, a2 = ep["attr"].get(pk[0], {}), ep["attr"].get(pk[1], {})
+        out[s] = {"E1": e1, "E2": e2, "MWs": mw, "r": r, "x": x,
+                  "knl": f2 / (f1 - f2), "unit": (s, a1.get("gen"), a2.get("gen")),
+                  "a1": a1, "a2": a2}
+    return out
+
+
+def dual_pair_channels(a, b):
+    """The five channels of the pair (s, p) = (a, b), unwrapped, in cycles (NL in NL cycles)."""
+    d1, d2 = a["E1"] - b["E1"], a["E2"] - b["E2"]
+    dwl = d1 - d2
+    return {"E1": d1, "E2": d2, "WL": dwl, "NL": d1 + a["knl"] * (dwl - round(dwl)),
+            "MW": a["MWs"] - b["MWs"]}
+
+
+def _split_label(kind, a, b):
+    """A pair's label for --split (card IRD section 8)."""
+    if kind == "comp":
+        ca, cb = a["a1"].get("cmp"), b["a1"].get("cmp")
+        if not ca or not cb:
+            return "na"
+        return "same:%s" % ca if ca == cb else "cross"
+    if kind == "depth":
+        da, db = a["a1"].get("depth"), b["a1"].get("depth")
+        try:
+            d = max(int(da), int(db))
+        except (TypeError, ValueError):
+            return "na"
+        return "d%d" % d if d < 5 else "d5+"
+    if kind == "gen":
+        ga, gb = a["a1"].get("genc"), b["a1"].get("genc")
+        if ga or gb:
+            return "genc:%s/%s" % tuple(sorted((ga or "-", gb or "-")))
+        ga, gb = a["a1"].get("gen"), b["a1"].get("gen")
+        if ga is None or gb is None:
+            return "na"
+        return "first" if str(ga) == "1" and str(gb) == "1" else "later"
+    if kind == "role":
+        ra, rb = a["a1"].get("role"), b["a1"].get("role")
+        if not ra or not rb:
+            return "na"
+        return "/".join(sorted((ra, rb)))
+    raise ValueError(kind)
+
+
+def dual_grade(epochs, osb, sc_truth, bands=("L1C", "L2W"), systems=("G",), start_tow=None,
+               end_tow=None, xcorr=True, splits=(), mc=2000, seed=20261013):
+    """Hourly all-pairs grade of the dual-band wire.  Returns
+    {hour: {"n": .., "units": .., "rabs_p50": .., channel: {p50, p99, in15, in20, in25,
+    null, null_lo, null_hi, gap}, "splits": {kind: {label: {channel: {n, p50}}}}}}."""
+    if start_tow is None:
+        start_tow = epochs[0]["tow"]
+    recs = defaultdict(lambda: {c: [] for c in DUAL_CHANNELS})
+    occ = defaultdict(Counter)
+    rabs = defaultdict(list)
+    spl = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    for ep in epochs:
+        t = ep["tow"]
+        if t < start_tow - 1e-3 or (end_tow is not None and t >= end_tow - 1e-3):
+            continue
+        h = int((t - start_tow) // 3600.0)
+        vals = dual_sat_values(ep, osb, sc_truth, bands, xcorr)
+        for s, v in vals.items():
+            rabs[h].append(abs(v["r"]))
+        for sysl in systems:
+            sats = sorted(s for s in vals if s[0] == sysl)
+            for i in range(len(sats)):
+                a = vals[sats[i]]
+                for j in range(i + 1, len(sats)):
+                    b = vals[sats[j]]
+                    ch = dual_pair_channels(a, b)
+                    for c in DUAL_CHANNELS:
+                        recs[h][c].append(ch[c])
+                    occ[h][(a["unit"], b["unit"])] += 1
+                    for kind in splits:
+                        lab = _split_label(kind, a, b)
+                        for c in DUAL_CHANNELS:
+                            spl[h][kind + "|" + lab][c].append(ch[c])
+    out = {}
+    for h in sorted(recs):
+        pairs = list(occ[h].items())
+        units = sorted({u for (ua, ub), _ in pairs for u in (ua, ub)}, key=str)
+        ix = {u: k for k, u in enumerate(units)}
+        ia = [ix[ua] for (ua, ub), _ in pairs]
+        ib = [ix[ub] for (ua, ub), _ in pairs]
+        w = [n for _, n in pairs]
+        null, lo, hi = size_matched_null(len(units), ia, ib, w, mc=mc, seed=seed + h)
+        row = {"n": len(recs[h]["E1"]), "units": len(units),
+               "rabs_p50": float(np.median(rabs[h])) if rabs[h] else float("nan")}
+        for c in DUAL_CHANNELS:
+            v = np.abs(wrapf(np.asarray(recs[h][c])))
+            p50 = float(np.median(v)) if v.size else float("nan")
+            row[c] = {"p50": p50, "p99": float(np.percentile(v, 99)) if v.size else float("nan"),
+                      "in15": float(np.mean(v <= 0.15)) if v.size else float("nan"),
+                      "in20": float(np.mean(v <= 0.20)) if v.size else float("nan"),
+                      "in25": float(np.mean(v <= 0.25)) if v.size else float("nan"),
+                      "null": null, "null_lo": lo, "null_hi": hi, "gap": p50 - null}
+        sp = {}
+        for key, chans in spl[h].items():
+            kind, lab = key.split("|", 1)
+            sp.setdefault(kind, {})[lab] = {
+                c: {"n": len(chans[c]),
+                    "p50": float(np.median(np.abs(wrapf(np.asarray(chans[c])))))}
+                for c in DUAL_CHANNELS}
+        row["splits"] = sp
+        out[h] = row
+    return out
+
+
+def dual_print(res, label, null_tol=None, channels=("E1", "E2", "WL", "NL", "MW")):
+    """Print the hourly grade; with null_tol, the negative-control verdict per hour and
+    channel (|p50 - null| <= null_tol and n > 0).  Returns the list of failing cells."""
+    fails = []
+    print("== %s" % label)
+    print("   h      n units  |r|p50_m  " + "  ".join("%-27s" % c for c in channels))
+    for h, row in sorted(res.items()):
+        cells = []
+        for c in channels:
+            d = row[c]
+            cells.append("%.3f p99 %.2f gap %+.3f" % (d["p50"], d["p99"], d["gap"]))
+            if null_tol is not None and (row["n"] <= 0 or not abs(d["gap"]) <= null_tol):
+                fails.append((label, h, c, d["p50"], d["null"], d["gap"], row["n"]))
+        print("   h%-3d %7d %5d  %8.4f  " % (h, row["n"], row["units"], row["rabs_p50"])
+              + "  ".join("%-27s" % x for x in cells))
+        print("        null %.3f [%.3f, %.3f]; within 0.15/0.20/0.25 (WL): %.2f / %.2f / %.2f"
+              % (row["E1"]["null"], row["E1"]["null_lo"], row["E1"]["null_hi"],
+                 row["WL"]["in15"], row["WL"]["in20"], row["WL"]["in25"]))
+        for kind, labs in sorted(row.get("splits", {}).items()):
+            for lab, chans in sorted(labs.items()):
+                print("        split %-6s %-22s " % (kind, lab)
+                      + "  ".join("%s n %d p50 %.3f" % (c, chans[c]["n"], chans[c]["p50"])
+                                  for c in channels))
+    if null_tol is not None:
+        print("   negative control (|p50 - null| <= %.3f, n > 0 every hour): %s"
+              % (null_tol, "PASS" if not fails else "FAIL in %d cell(s)" % len(fails)))
+        for f in fails:
+            print("     FAIL %s h%d %s: p50 %.4f null %.4f gap %+.4f n %d" % f)
+    return fails
+
+
+def start_from_hms(first_tow, hms):
+    """TOW of the clock time `hms` (HH:MM:SS) on the day of `first_tow`."""
+    hh, mm, ss = (float(x) for x in hms.split(":"))
+    return math.floor(first_tow / 86400.0) * 86400.0 + hh * 3600.0 + mm * 60.0 + ss
+
+
+def dual_load(fixture, run, source="products"):
+    """(osb, sc_truth, epochs, census) for the dual-band grade of `run` against `fixture`."""
+    stations = station_dirs(fixture)
+    if not stations:
+        raise SystemExit("no station with truth_bias.csv under %s" % fixture)
+    osb, _ = load_osb_truth(stations)
+    sc_truth, _, _ = load_satclock_truth(stations)
+    prod = run if run.endswith(".txt") else os.path.join(run, "products.txt")
+    _, epochs, census = parse_products_tokens(prod)
+    if source == "prehold":
+        ph = os.path.join(run, "logs", "network_pb_prehold.csv")
+        if not os.path.isfile(ph):
+            raise SystemExit("missing %s (network.trace_pb_prehold, card IRD-1)" % ph)
+        epochs = load_prehold(ph, epochs)
+    return osb, sc_truth, epochs, census
+
+
+def dual_main(args):
+    bands = tuple(args.bands.split(","))
+    if len(bands) != 2:
+        raise SystemExit("--bands takes exactly two phase signals, e.g. L1C,L2W")
+    run = os.path.abspath(args.run)
+    osb, sc_truth, epochs, census = dual_load(os.path.abspath(args.fixture), run, args.source)
+    t0 = epochs[0]["tow"]
+    start = args.start_tow if args.start_tow is not None else (
+        start_from_hms(t0, args.start_hms) if args.start_hms else t0)
+    end = start + args.hours * 3600.0 if args.hours else None
+    splits = tuple(s for s in (args.split or "").split(",") if s)
+    res = dual_grade(epochs, osb, sc_truth, bands, tuple(args.systems.split(",")), start, end,
+                     xcorr=args.xcorr, splits=splits, mc=args.null_mc)
+    chans = ["E1", "E2"] + (["WL", "MW"] if args.wl else []) + (["NL"] if args.nl else [])
+    print("dual-band wire grade: run %s, source %s, bands %s, x-correction %s, start TOW %.3f%s"
+          % (run, args.source, "/".join(bands), "on" if args.xcorr else "OFF (raw W)", start,
+             ", %.2f h" % args.hours if args.hours else ""))
+    print("record census: %s" % ", ".join("%s=%d" % kv for kv in sorted(census.items())))
+    fails = dual_print(res, os.path.basename(run.rstrip("/\\")), args.null_tol, chans)
+    if args.events:
+        import simnet_chain_frame_grade as FG          # one owner of the event steps
+        FG.print_event_steps(FG.event_steps(epochs, osb, sc_truth, bands,
+                                            FG.load_chain_events(run), xcorr=args.xcorr))
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump({"run": run, "source": args.source, "bands": bands, "start_tow": start,
+                       "hours": {str(h): v for h, v in res.items()},
+                       "null_fail": [list(f) for f in fails]}, fh, indent=1, default=float)
+    return 1 if (args.null_tol is not None and fails) else 0
+
+
+def dual_selftest():
+    """Synthetic truth and products: a truth wire grades 0, an integer gauge grades 0 wrapped,
+    a planted fraction is read back, the x correction removes an ionosphere-shaped code and
+    phase error that raw W misgrades, MW differs from D_WL by exactly r / lambda_WL, the NL
+    formula, the size-matched null, the census guard, the pre-hold reader and the hour bins."""
+    import tempfile
+    ok = [True]
+
+    def chk(cond, msg):
+        print("  %s  %s" % ("ok  " if cond else "FAIL", msg))
+        ok[0] &= bool(cond)
+
+    f1, f2 = DUAL_FREQ["G"]["1"], DUAL_FREQ["G"]["2"]
+    l1, l2 = C_LIGHT / f1, C_LIGHT / f2
+    mu2 = (f1 / f2) ** 2
+    sats = ["G%02d" % k for k in range(1, 9)]
+    truth = {}
+    for k, s in enumerate(sats):
+        truth[(s, "C1C")] = 1.0 + 0.1 * k
+        truth[(s, "C2W")] = -0.7 + 0.13 * k
+        truth[(s, "L1C")] = 0.031 * k
+        truth[(s, "L2W")] = -0.047 * k
+    with tempfile.TemporaryDirectory() as td:
+        fx = os.path.join(td, "fx")
+        for sta in ("S01000SIM", "S02000SIM"):
+            os.makedirs(os.path.join(fx, sta))
+            with open(os.path.join(fx, sta, "truth_bias.csv"), "w", newline="") as fh:
+                fh.write("satellite,signal,osb_ns,osb_m,product_m,synth_m,source\n")
+                for (s, g), v in truth.items():
+                    fh.write("%s,%s,0,%.9f,%.9f,0,product\n" % (s, g, v, v))
+
+        def write_products(path, edit, n_ep=240, gen_of=lambda s, t: 1):
+            with open(path, "w", newline="") as fh:
+                fh.write("# gnss_network_product v2\n")
+                fh.write("S,S01000SIM,1,nominal-wu93,2,0,1,0,0.05,1,x,G:G01\n")
+                for e in range(n_ep):
+                    t = 261030.0 + 30.0 * e
+                    fh.write("E,2313,%.4f,0,0,0,0\n" % t)
+                    for s in sats:
+                        v = edit(s, t)
+                        fh.write("C,%s,%.12f\n" % (s, v["C"]))
+                        for g in ("C1C", "C2W"):
+                            fh.write("B,%s,%s,%.12f\n" % (s, g, v[g]))
+                        for g in ("L1C", "L2W"):
+                            fh.write("P,%s,%s,%.12f,1,0,gen=%d,cmp=1\n" % (s, g, v[g], gen_of(s, t)))
+
+        def truth_vals(s, t):
+            return {"C": 0.0, "C1C": truth[(s, "C1C")], "C2W": truth[(s, "C2W")],
+                    "L1C": truth[(s, "L1C")], "L2W": truth[(s, "L2W")]}
+
+        def grade(edit, **kw):
+            p = os.path.join(td, "products.txt")
+            write_products(p, edit, **{k: v for k, v in kw.items() if k in ("n_ep", "gen_of")})
+            osb, sc, eps, _ = dual_load(fx, p)
+            res = dual_grade(eps, osb, sc, mc=200,
+                             **{k: v for k, v in kw.items() if k in ("xcorr", "start_tow")})
+            return osb, sc, eps, res
+
+        _, _, eps, res = grade(truth_vals)
+        chk(sorted(res) == [0, 1], "240 epochs at 30 s from 00:30:30 fall in hours 0 and 1")
+        chk(all(res[h][c]["p50"] == 0.0 and res[h][c]["p99"] < 1e-9 for h in res
+                for c in DUAL_CHANNELS), "a truth wire grades 0 on every channel")
+        chk(res[0]["n"] == 120 * 28, "all 28 pairs of 8 satellites in each of 120 epochs (n printed)")
+
+        def gauge(s, t):
+            v = truth_vals(s, t)
+            k = sats.index(s)
+            v["L1C"] += l1 * (3 * k - 7)
+            v["L2W"] += l2 * (-5 * k + 2)
+            v["C"] += 0.0
+            return v
+        _, _, _, res = grade(gauge)
+        chk(all(res[h][c]["p99"] < 1e-6 for h in res for c in DUAL_CHANNELS),
+            "an integer gauge on P grades 0 wrapped on every channel")
+
+        def planted(s, t):
+            v = truth_vals(s, t)
+            if s == "G02":
+                v["L1C"] += 0.3 * l1
+            return v
+        osb, sc, eps, res = grade(planted)
+        vals = dual_sat_values(eps[0], osb, sc, ("L1C", "L2W"))
+        chk(abs(vals["G02"]["E1"] + 0.3) < 1e-9 and abs(vals["G01"]["E1"]) < 1e-9,
+            "a +0.3 cycle P on G02 L1C reads E_L1 = -0.3 (W = dC - dP)")
+        chk(abs(dual_pair_channels(vals["G02"], vals["G01"])["NL"]
+                - (-0.3 + (f2 / (f1 - f2)) * (-0.3 - round(-0.3)))) < 1e-9,
+            "g = D1 + f2/(f1-f2) (D_WL - round(D_WL)) on the planted pair")
+        chk(abs(f2 / (f1 - f2) - 3.5294) < 1e-4, "f2/(f1-f2) = 3.529 for L1/L2")
+
+        def iono_shaped(s, t):
+            v = truth_vals(s, t)
+            a = 0.37 * (1 + sats.index(s))
+            v["C1C"] += a
+            v["C2W"] += mu2 * a
+            v["L1C"] -= a
+            v["L2W"] -= mu2 * a
+            return v
+        osb, sc, eps, res = grade(iono_shaped)
+        chk(all(res[h][c]["p99"] < 1e-6 for h in res for c in ("E1", "E2", "WL", "NL", "MW")),
+            "an ionosphere-shaped code+phase wire error grades 0 with the x correction")
+        _, _, _, res_raw = grade(iono_shaped, xcorr=False)
+        chk(res_raw[0]["E1"]["p50"] > 0.05, "the same error misgrades on raw W (p50 %.3f)"
+            % res_raw[0]["E1"]["p50"])
+
+        def ranged(s, t):
+            v = truth_vals(s, t)
+            if s == "G03":
+                v["C1C"] += 0.2
+                v["C2W"] += 0.2
+            return v
+        osb, sc, eps, _ = grade(ranged)
+        vals = dual_sat_values(eps[0], osb, sc, ("L1C", "L2W"))
+        ch = dual_pair_channels(vals["G03"], vals["G01"])
+        chk(abs(vals["G03"]["r"] + 0.2) < 1e-9 and abs(ch["WL"]) < 1e-9
+            and abs(ch["MW"] - (ch["WL"] - (vals["G03"]["r"] - vals["G01"]["r"])
+                                / (C_LIGHT / (f1 - f2)))) < 1e-9,
+            "a range-like code error: r = -0.2 m, D_WL 0, MW = D_WL - dr / lambda_WL")
+
+        _, _, _, res = grade(truth_vals, start_tow=261030.0 + 1800.0)
+        chk(sorted(res) == [0, 1] and res[0]["n"] == 120 * 28 and res[1]["n"] == 60 * 28,
+            "a later start re-bins the hours (120 then 60 epochs)")
+
+        nm, lo, hi = size_matched_null(400, list(range(400)), None, [1] * 400, mc=400)
+        chk(abs(nm - 0.25) < 0.01 and lo < 0.25 < hi,
+            "null of 400 independent units: mean %.3f, band [%.3f, %.3f]" % (nm, lo, hi))
+        nm8, lo8, hi8 = size_matched_null(8, [0, 0, 1], [1, 2, 2], [5, 5, 5], mc=400)
+        chk(hi8 - lo8 > hi - lo, "few units give a wider null band (%.3f against %.3f)"
+            % (hi8 - lo8, hi - lo))
+        chk(weighted_quantile([0.1, 0.2, 0.3], [1, 1, 10], 0.5) == 0.3,
+            "the weighted median follows the occupancy")
+
+        p = os.path.join(td, "empty.txt")
+        with open(p, "w") as fh:
+            fh.write("S,X,1,w,0,0,1,0,0.05,1,x\nE,2313,1.0,0,0,0,0\nH,2313,1.0,ok,1,0,-\n")
+        try:
+            parse_products_tokens(p)
+            chk(False, "the census guard refuses a wire with no C, B or P record")
+        except SystemExit:
+            chk(True, "the census guard refuses a wire with no C, B or P record")
+
+        p = os.path.join(td, "products.txt")
+        write_products(p, planted, n_ep=4)
+        os.makedirs(os.path.join(td, "logs"), exist_ok=True)
+        with open(os.path.join(td, "logs", "network_pb_prehold.csv"), "w", newline="") as fh:
+            fh.write(",".join(PREHOLD_HEADER) + "\n")
+            for e in range(4):
+                t = 261030.0 + 30.0 * e
+                for s in sats:
+                    for g in ("L1C", "L2W"):
+                        fh.write("2313,%.3f,%s,%s,%.12f,0.01,0.0,0,0,1,%s,%d,S01000SIM,S01000SIM,%d\n"
+                                 % (t, s, g, truth[(s, g)], "tree" if s < "G05" else "chord_only",
+                                    1 if s < "G07" else 2, sats.index(s) % 3))
+        osb, sc, eps, _ = dual_load(fx, td, source="prehold")
+        res = dual_grade(eps, osb, sc, mc=50, splits=("comp", "role", "depth", "gen"))
+        chk(len(eps) == 4 and res[0]["E1"]["p99"] < 1e-9,
+            "the pre-hold reader takes P from est_pb_m (the planted product fraction is gone)")
+        chk(set(res[0]["splits"]["comp"]) == {"same:1", "same:2", "cross"}
+            and res[0]["splits"]["comp"]["cross"]["E1"]["n"] == 4 * 12,
+            "the comp split separates same-component and cross-component pairs")
+        chk("chord_only/tree" in res[0]["splits"]["role"], "the role split labels pairs")
+    print("dual-band selftest: %s" % ("PASS" if ok[0] else "FAIL"))
+    return 0 if ok[0] else 1
+
+
+# --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("fixture")
-    ap.add_argument("--run", required=True)
+    ap.add_argument("fixture", nargs="?")
+    ap.add_argument("--run")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run the dual-band mode's selftest (card IRD) and exit")
+    ap.add_argument("--bands", default=None,
+                    help="dual-band mode (card IRD): two phase signals, e.g. L1C,L2W")
+    ap.add_argument("--xcorr", dest="xcorr", action="store_true", default=True,
+                    help="dual-band: apply the code-implied ionosphere offset x (default)")
+    ap.add_argument("--no-xcorr", dest="xcorr", action="store_false",
+                    help="dual-band: grade raw W instead (misgrades an integer wire)")
+    ap.add_argument("--wl", action="store_true", help="dual-band: report D_WL and MW")
+    ap.add_argument("--nl", action="store_true",
+                    help="dual-band: report g = D1 + f2/(f1-f2)(D_WL - round(D_WL))")
+    ap.add_argument("--source", choices=("products", "prehold"), default="products",
+                    help="dual-band: products.txt, or logs/network_pb_prehold.csv (card IRD-1)")
+    ap.add_argument("--split", default="", help="dual-band: comma list of comp,depth,gen,role")
+    ap.add_argument("--events", action="store_true",
+                    help="dual-band: pair steps at chain event epochs (simnet_chain_frame_grade)")
+    ap.add_argument("--systems", default="G", help="dual-band: systems graded (default G)")
+    ap.add_argument("--start-tow", type=float, default=None, help="dual-band: grading start TOW")
+    ap.add_argument("--start-hms", default=None,
+                    help="dual-band: grading start as HH:MM:SS on the run's day (e.g. 00:30:15)")
+    ap.add_argument("--hours", type=float, default=None, help="dual-band: graded span (h)")
+    ap.add_argument("--null-mc", type=int, default=2000, help="dual-band: null draws")
+    ap.add_argument("--null-tol", type=float, default=None,
+                    help="dual-band: print the negative-control verdict |p50 - null| <= tol")
     ap.add_argument("--settle-h", type=float, default=12.0)
     ap.add_argument("--out", default=None, help="output dir (default <run>/artrack)")
     ap.add_argument("--json", default=None, help="explicit json path")
@@ -542,7 +1113,16 @@ def main():
     ap.add_argument("--grid-check", type=int, default=200,
                     help="samples per window re-fitted on the literal 1 cm grid")
     ap.add_argument("--seed", type=int, default=20240315)
+    ap.add_argument("--json-dual", dest="json_dual", default=None,
+                    help="dual-band: write the hourly grade as JSON")
     args = ap.parse_args()
+    if args.selftest:
+        return dual_selftest()
+    if not args.fixture or not args.run:
+        ap.error("the fixture and --run are required (or --selftest)")
+    if args.bands:
+        args.json = args.json_dual or args.json
+        return dual_main(args)
 
     rng = np.random.default_rng(args.seed)
     fixture = os.path.abspath(args.fixture)
