@@ -2898,7 +2898,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // shifted PB column (SPEC_card1_coupling_carry §14).  A Card-1 coupling row's RHS is
     // y = (value_abs − x_lin) + Σ_j M_j·ŝ_prev,j , and `CoupledShared::s_prev` and
     // `CarryPrior::value` hold the same number for the same identity (both are
-    // `x_s(j)` at harvest: the NetworkRunContext.cpp s_prev assignment and the
+    // `x_s(j)` at harvest: the NetworkLocalCarryHarvest.cpp s_prev assignment and the
     // prev_carry stash).  For a gauge-invariant row the two moves cancel under a
     // known frame step; shifting one reference without the other injects the frame
     // step as row bias.  The same rule holds at NetworkRelevel.cpp's Card-6 eph

@@ -122,7 +122,7 @@ std::vector<CarryPrior> liveCarry() {
     return v;
 }
 
-/// The restore the driver performs (NetworkRunContext.cpp, the dense D2 covariance
+/// The restore the driver performs (NetworkWarmResume.cpp, the dense D2 covariance
 /// side-car block of SPEC_synthetic_minimum_network §18.12 (2a), which
 /// @c resume_border_restore also reaches), reproduced here so the convention is
 /// fixed by a test rather than by a comment: intersect the snapshot's key list

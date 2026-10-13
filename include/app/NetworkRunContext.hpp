@@ -12,8 +12,9 @@
  * aliases under those names, so the use sites read as before.
  *
  * Three-place rule: a NetworkCarryState field marked snapshot-member must be
- * added to the fingerprint, the restore and the snapshot write, all three in
- * src/core/app/NetworkRunContext.cpp.  A new cross-epoch field goes into
+ * added to the fingerprint, the restore and the snapshot write, in
+ * src/core/app/NetworkSnapshotFingerprint.cpp, NetworkWarmResume.cpp and
+ * NetworkStateSnapshotWrite.cpp.  A new cross-epoch field goes into
  * NetworkCarryState under that rule unless it is explicitly exempted; the
  * per-field "not snapshotted" notes below are the exemption record.
  * Kept out of this header on purpose (they stay locals of the run TU): the
@@ -1066,6 +1067,7 @@ namespace GnssProcessor {
 
         /// One-shot factory: the knob-snapshot statements, in the original read order
         /// (parameter names match the former use sites).
+        /// Defined in src/core/app/NetworkKnobs.cpp.
         static NetworkKnobs snapshot(const GnssConfig& config_, const NetworkConfig& nc);
     };
 
@@ -2784,7 +2786,8 @@ namespace GnssProcessor {
                  std::pair<long long, std::size_t>> sd_ewl_prev;
 
         // --- State-snapshot channel, RTB-7(a) (path resolved at the run-TU site;
-        // fingerprint, restore and write live in NetworkRunContext.cpp) ---
+        // fingerprint, restore and write live in NetworkSnapshotFingerprint.cpp,
+        // NetworkWarmResume.cpp and NetworkStateSnapshotWrite.cpp) ---
         std::filesystem::path snap_path;
         double   last_snapshot_write_s = -1.0;   // product time of the last snapshot write
         uint64_t live_fingerprint      = 0;
@@ -3734,7 +3737,7 @@ namespace GnssProcessor {
         long long n_resume_cpl_seed_reinit = 0;  ///< tu_reinit_hist seeds planted (loose anchor / eph cutover)
         long long n_resume_cpl_seam_present  = 0;  ///< first warm epoch: coupling terms that resolved to a live column
         long long n_resume_cpl_seam_departed = 0;  ///< ...that marginalized (departed or reinit-diverted)
-        long long n_resume_cpl_diag_border   = 0;  ///< border keys (C1) that folded diagonally at the first post-resume fold (the known one-epoch card-1 asymmetry; see networkInjectD2CarryPrior in NetworkRunContext.cpp)
+        long long n_resume_cpl_diag_border   = 0;  ///< border keys (C1) that folded diagonally at the first post-resume fold (the known one-epoch card-1 asymmetry; see networkInjectD2CarryPrior in NetworkBorderPrior.cpp)
         // First-post-resume-harvest observatory (measure-only, byte-identical): the restored
         // M against the epoch's own freshly derived M_d for the same key.  This is the only
         // direct evidence that the restored row was frame-valid, and it needs no second
@@ -4926,16 +4929,35 @@ namespace GnssProcessor {
 
     // ------------------------------------------------------------------
     // The relocated RTB-7 snapshot channel and carry lifecycle, as free functions over
-    // the context (decomposition INC-4).  The bodies are in NetworkRunContext.cpp, and
-    // each opens with an alias block.  They are free functions rather than Application
+    // the context (decomposition INC-4).  They are free functions rather than Application
     // member functions because none needs Application state beyond config_, which is
-    // passed explicitly (parameter names match the former use sites).
-    // The three-place rule: fingerprint terms live in networkSnapshotFingerprint, the
-    // restore in networkTryWarmResume, and the write in networkWriteStateSnapshot; a new
-    // snapshot field touches all three or documents its exemption at its
-    // NetworkCarryState declaration.
+    // passed explicitly (parameter names match the former use sites).  Where a body opens
+    // with an alias block, the block binds the driver's former local names to members of
+    // the context, so the relocated code keeps those names.
+    // The three-place rule: fingerprint terms live in networkSnapshotFingerprint
+    // (NetworkSnapshotFingerprint.cpp), the restore in networkTryWarmResume
+    // (NetworkWarmResume.cpp), and the write in networkWriteStateSnapshot
+    // (NetworkStateSnapshotWrite.cpp); a new snapshot field touches all three or documents
+    // its exemption at its NetworkCarryState declaration.
+    //
+    // The bodies, with NetworkKnobs::snapshot, are in seven files of src/core/app/, one
+    // per concern; each declaration names its file.  Card NOM3 step HV0 split them out of
+    // the former src/core/app/NetworkRunContext.cpp, so a citation of that file in the
+    // record resolves through this list:
+    //   NetworkKnobs.cpp                the knob snapshot (NetworkKnobs::snapshot)
+    //   NetworkSnapshotFingerprint.cpp  the snapshot fingerprint
+    //   NetworkWarmResume.cpp           the warm resume: read, validate, restore
+    //   NetworkStateSnapshotWrite.cpp   the snapshot write
+    //   NetworkBorderPrior.cpp          the priors folded on the shared (border) columns,
+    //                                   and the exact coupling update's inputs
+    //   NetworkLocalCarryHarvest.cpp    the station-local carries: harvest, stash, prune,
+    //                                   and the LV-5 receiver code-bias de-mean
+    //   NetworkBorderStash.cpp          the epoch-tail border stash and the retro-URA flags
     // ------------------------------------------------------------------
 
+    /// @brief Form the run's configuration fingerprint (RTB-7), which a state snapshot
+    ///        carries and a warm resume checks; a no-op without a snapshot path.
+    /// Defined in src/core/app/NetworkSnapshotFingerprint.cpp.
     void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config_,
                                     const std::vector<NetStation>& stations);
 
@@ -4950,6 +4972,9 @@ namespace GnssProcessor {
     // runNetwork locals, also outputs-only, also neither captured nor restored when
     // nullptr), so all three cross-epoch emit layers travel with the snapshot instead of
     // cold-starting at every seam.
+    /// @brief Read the state snapshot, validate it against the run, restore the carried
+    ///        layers, and stage the two that need the station roster (RTB-7).
+    /// Defined in src/core/app/NetworkWarmResume.cpp.
     void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               const MultiRinexSync& sync, NetworkProductEmitter& emitter,
                               NetworkInvariantCarryDriver& carry_driver,
@@ -4972,6 +4997,8 @@ namespace GnssProcessor {
      * Unarmed, unresumed, or given a snapshot with no @c CN rows, it does nothing, except
      * that in the armed, row-less case it warns once (standing invariant #4).
      *
+     * Defined in src/core/app/NetworkWarmResume.cpp.
+     *
      * @param ctx      Run context (reads the staged rows, writes the counters).
      * @param config_  Run configuration (the knob and the snapshot path).
      * @param stations The station roster; indices key the staged rows.
@@ -4981,6 +5008,10 @@ namespace GnssProcessor {
                                         std::vector<NetStation>& stations,
                                         const std::shared_ptr<spdlog::logger>& log);
 
+    /// @brief Write the periodic atomic state snapshot (RTB-7(a)): on the first call, then
+    ///        once per network.state_snapshot_interval_s of product time; a no-op without a
+    ///        snapshot path.
+    /// Defined in src/core/app/NetworkStateSnapshotWrite.cpp.
     /// @param stations The station roster, shared by two capture groups that cannot be
     ///        read out of @c ctx.carry.  RS-8 (§21.16) @c CN: the canonical-signal latch
     ///        lives in each station's @c PppModel.  RS-9 (§21.18) @c RL: the code-bias
@@ -5020,16 +5051,23 @@ namespace GnssProcessor {
     /// The applied / uncovered halves are read back at the run-end readout directly from
     /// @c ctx.carry.rxcb_lin_sta_counts (the run-end report needs no station roster:
     /// the tallies are indexed, not named).
+    /// Defined in src/core/app/NetworkWarmResume.cpp.
     void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config_,
                                     std::vector<NetStation>& stations,
                                     const std::shared_ptr<spdlog::logger>& log);
 
+    /// @brief Fold the SH-VTEC prior (Kaula bound and temporal random walk) on the SH
+    ///        coefficient columns, before the null-space rank gate.
+    /// Defined in src/core/app/NetworkBorderPrior.cpp.
     void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                   const GnssConfig& config_, NetworkEstimator& est,
                                   const SphericalHarmonicIonosphere* sh_model,
                                   const SphericalHarmonicIonosphere* sh_model2,
                                   bool datum_changed, double dt, bool within_epoch_armed);
 
+    /// @brief Fold the Fix-A held satellite phase-bias datum, before the null-space rank
+    ///        gate.
+    /// Defined in src/core/app/NetworkBorderPrior.cpp.
     void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                      NetworkEstimator& est, bool within_epoch_armed);
 
@@ -5051,6 +5089,8 @@ namespace GnssProcessor {
      * the next election) biases nothing measurably.  The K2-style margin of the row
      * information over the rank-gate cutoff is measured once and logged.
      *
+     * Defined in src/core/app/NetworkBorderPrior.cpp.
+     *
      * @param within_epoch_armed  append to @c ws.cap_priors so the within-epoch RAIM
      *                            re-solve replays the identical shared system.
      */
@@ -5058,6 +5098,9 @@ namespace GnssProcessor {
                                      NetworkEstimator& est, bool within_epoch_armed,
                                      const std::shared_ptr<spdlog::logger>& log);
 
+    /// @brief Fold the border carry stashed last epoch (the D2 diagonal or the C1 dense
+    ///        fold), after the null-space rank gate.
+    /// Defined in src/core/app/NetworkBorderPrior.cpp.
     void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                    NetworkRunTraces& traces, const GnssTime& t,
                                    NetworkEstimator& est, bool datum_changed,
@@ -5082,12 +5125,18 @@ namespace GnssProcessor {
      * Then @f$P_{SS}+Q_S@f$ is factored.  A no-op (with @c ok false) when the knob is off,
      * when no dense block was stashed, or when the stash stamp is not valid (the epoch
      * after a warm resume).
+     *
+     * Defined in src/core/app/NetworkBorderPrior.cpp.
+     *
      * @param dt the driver's inter-epoch step, the same value the fold receives.
      */
     void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator& est,
                                      const GnssTime& t, double dt,
                                      const std::shared_ptr<spdlog::logger>& log);
 
+    /// @brief Fold the two-state clock-model prior (network.clock_model) on the satellite
+    ///        clocks, after the null-space rank gate.
+    /// Defined in src/core/app/NetworkBorderPrior.cpp.
     void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                     NetworkRunTraces& traces, const GnssTime& t,
                                     NetworkEstimator& est,
@@ -5117,6 +5166,8 @@ namespace GnssProcessor {
      *
      * No-op unless @c network.rx_cb_carry_demean_within.
      *
+     * Defined in src/core/app/NetworkLocalCarryHarvest.cpp.
+     *
      * @param present  PASS-A presence flags (a station with no data this epoch must
      *                 not vote on the frame it will not be folded into).
      */
@@ -5125,6 +5176,8 @@ namespace GnssProcessor {
                                   const std::vector<bool>& present,
                                   double pl_now_s);
 
+    /// @brief Harvest, stash and prune the station-local carries from this epoch's solve.
+    /// Defined in src/core/app/NetworkLocalCarryHarvest.cpp.
     void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config_,
                                     NetworkEstimator& est, const Eigen::VectorXd& x_s,
                                     std::vector<NetStation>& stations,
@@ -5140,11 +5193,17 @@ namespace GnssProcessor {
                                     const std::set<std::string>& shared_phase_keys,
                                     const std::vector<std::pair<std::string, std::string>>& registered_code_keys);
 
+    /// @brief Record the satellites the QC tiers flagged, for the next emit's retro-bump
+    ///        and the post-refloat URA inflation horizon.
+    /// Defined in src/core/app/NetworkBorderStash.cpp.
     void networkRetroUraBookkeeping(NetworkRunContext& ctx,
                                     const std::set<std::string>& clock_refloat_sats,
                                     const std::set<std::string>& retro_flag_sats,
                                     bool retro_feed);
 
+    /// @brief Stash the border carry (prev_carry, prev_carry_cov) for the next epoch's D2
+    ///        fold, with the READMIT continuity bookkeeping.
+    /// Defined in src/core/app/NetworkBorderStash.cpp.
     void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                            NetworkRunTraces& traces, const GnssTime& t,
                            NetworkEstimator& est, const Eigen::VectorXd& x_s,

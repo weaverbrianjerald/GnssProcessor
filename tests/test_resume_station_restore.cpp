@@ -129,7 +129,7 @@ std::vector<std::string> lines(const std::string& t) {
 }
 
 /// The restore the driver performs for the rx-CB half (networkTryWarmResume in
-/// NetworkRunContext.cpp), reproduced here so the sentinel convention is locked by
+/// NetworkWarmResume.cpp), reproduced here so the sentinel convention is locked by
 /// a test rather than by a comment; the driver's own block is one `if` there.
 std::map<std::pair<int, std::string>, LocalCarry>
 restoreRxCb(const NetworkStateSnapshot& s) {

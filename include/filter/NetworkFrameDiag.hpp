@@ -24,7 +24,7 @@
  * touch no estimator or carry state.  Each is behind its own default-off toggle,
  * so an unarmed run is byte-identical and pays nothing (the function is not
  * called).  Neither toggle is in the warm-resume fingerprint (built in
- * `NetworkRunContext.cpp`), so both may be armed on a resume against an untraced
+ * `NetworkSnapshotFingerprint.cpp`), so both may be armed on a resume against an untraced
  * snapshot.
  *
  * A third function, @ref networkDatumInfoRatio, runs unconditionally from the

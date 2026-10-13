@@ -2954,7 +2954,7 @@ int Application::runNetwork() {
                       se.time.tow, d0b, d0b_net_sum, d_other, d_other - d0b_net_sum);
         }
 
-        // Periodic atomic snapshot (RTB-7(a)); the body is in NetworkRunContext.cpp
+        // Periodic atomic snapshot (RTB-7(a)); the body is in NetworkStateSnapshotWrite.cpp
         // (INC-4).  It stays after the prev_week/prev_tow advance, so the snapshot
         // captures this epoch.
         networkWriteStateSnapshot(ctx, config_, se.time, pl_now_s, emitter, carry_driver,

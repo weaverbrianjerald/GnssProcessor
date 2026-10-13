@@ -334,7 +334,7 @@ TEST(ResumeCouplingSnapshotTest, PinnedColumnZeroPPrevSurvives) {
 
 // 4. sh_layer is its own field.  The D record has no room for it and tags layer 1
 //    in the sat string as the literal "L1" (networkWriteStateSnapshot,
-//    NetworkRunContext.cpp).  Reusing that tag here would make resolveSharedCol
+//    NetworkStateSnapshotWrite.cpp).  Reusing that tag here would make resolveSharedCol
 //    (vtecCoeffColumn(n, m, trig, sh_layer)) bind a layer-1 coefficient to the
 //    live layer-0 column, which is strictly worse than departing.
 TEST(ResumeCouplingSnapshotTest, ShLayerRoundTripsAsItsOwnField) {
@@ -382,7 +382,7 @@ TEST(ResumeCouplingSnapshotTest, DistinctVintagesOfOneIdentityBothSurvive) {
 
 // 6. hasCouplingState() is deliberately separate from hasFrameState().  The latter
 //    also gates the resume-side frame restore (networkTryWarmResume,
-//    NetworkRunContext.cpp), so widening it would let a coupling-bearing snapshot
+//    NetworkWarmResume.cpp), so widening it would let a coupling-bearing snapshot
 //    with no PA/PT/CA rows claim frame state it does not have: the restore would
 //    proceed with an empty anchor_incumbent, the QUEUE-1(d) erase would fire
 //    anyway, and the carries this card restores would be erased without a warning.

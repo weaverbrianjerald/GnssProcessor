@@ -117,7 +117,13 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationNetworkSetup.cpp
     src/core/app/ApplicationConsumerReplay.cpp
     src/core/app/ApplicationNetworkAssembly.cpp
-    src/core/app/NetworkRunContext.cpp
+    src/core/app/NetworkKnobs.cpp
+    src/core/app/NetworkSnapshotFingerprint.cpp
+    src/core/app/NetworkWarmResume.cpp
+    src/core/app/NetworkStateSnapshotWrite.cpp
+    src/core/app/NetworkBorderPrior.cpp
+    src/core/app/NetworkBorderStash.cpp
+    src/core/app/NetworkLocalCarryHarvest.cpp
     src/core/app/SignalRoster.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
@@ -317,10 +323,6 @@ if(MSVC)
     # pivoted LU, the rank and condition-number references) cross the Debug section
     # limit (C1128).
     set_source_files_properties(tests/test_network_detached_fold.cpp
-        PROPERTIES COMPILE_FLAGS "/bigobj")
-    # src/core/app/NetworkRunContext.cpp: card AIL's ambiguity-information instrument
-    # (0f9b2a5) tipped it over the Debug section limit (C1128); Release was unaffected.
-    set_source_files_properties(src/core/app/NetworkRunContext.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)

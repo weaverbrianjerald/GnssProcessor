@@ -768,7 +768,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
 
     // Bind the staged coupling rows to their L / Z carries (§18.12 splice).  Every
     // failure here is a hard parse failure, never a partial restore.  The caller
-    // (networkTryWarmResume in NetworkRunContext.cpp) treats a parse failure as a
+    // (networkTryWarmResume in NetworkWarmResume.cpp) treats a parse failure as a
     // cold start, byte-identical to a run without a snapshot, or refuses the run
     // under network.state_snapshot_require.  A file
     // whose regressors cannot be read whole must not resume with truncated rows

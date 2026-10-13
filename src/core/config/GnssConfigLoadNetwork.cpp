@@ -2959,7 +2959,7 @@ namespace GnssProcessor {
             jval<bool>(json, "network.trace_epoch_status", "trace_epoch_status", false);
         // Trigger instrumentation (SPEC_day129_frame_guards P1-3/P1-4).  Both knobs are
         // trace-only and absent from the resume fingerprint (the config fingerprint in
-        // NetworkRunContext.cpp), so they may be armed on a warm resume against an
+        // NetworkSnapshotFingerprint.cpp), so they may be armed on a warm resume against an
         // untraced snapshot.
         network_config_.trace_sh_spectrum =
             jval<bool>(json, "network.trace_sh_spectrum", "trace_sh_spectrum", false);
@@ -2979,8 +2979,8 @@ namespace GnssProcessor {
                       "whenever this or trace_postfit_sigma0 is armed).");
         // Signed per-(station, satellite, signal) post-fit residual rows from the same
         // P1-4 pass (SPEC_event_harness §24.6).  Trace-only and fingerprint-safe (absent
-        // from NetworkRunContext.cpp's fingerprint list, like the two riders above); it
-        // makes the pass run even without the sigma0 / keyed traces.
+        // from NetworkSnapshotFingerprint.cpp's fingerprint list, like the two riders above);
+        // it makes the pass run even without the sigma0 / keyed traces.
         network_config_.trace_postfit_rows =
             jval<bool>(json, "network.trace_postfit_rows", "trace_postfit_rows", false);
         if (network_config_.trace_postfit_rows)
@@ -2990,7 +2990,7 @@ namespace GnssProcessor {
                       "(trace-only; the P1-4 residual pass runs whenever this, "
                       "trace_postfit_keyed or trace_postfit_sigma0 is armed).");
         // Per-station local-block audit (SPEC_event_harness §24.10, card ZP).
-        // Trace-only, fingerprint-safe (absent from NetworkRunContext.cpp's fingerprint
+        // Trace-only, fingerprint-safe (absent from NetworkSnapshotFingerprint.cpp's fingerprint
         // list, like the three riders above) and measure-only: it reads the solved
         // estimator through const accessors after the solve.
         network_config_.trace_station_block =
@@ -8409,7 +8409,7 @@ namespace GnssProcessor {
             jval<double>(json, "network.clock_monitor_reinit_sigma_m", "network_clock_monitor_reinit_sigma_m", 30.0);
         // SPEC_day129_frame_guards Phase 2.1: CB-carry event response (invariant #1).
         // Solve-determining when armed ⇒ conditional-appended to the resume
-        // fingerprint (NetworkRunContext.cpp), so an unarmed run's fingerprint is
+        // fingerprint (NetworkSnapshotFingerprint.cpp), so an unarmed run's fingerprint is
         // byte-identical and a resume cannot cross a flip of the toggle.
         network_config_.cb_excursion_reinit =
             jval<bool>(json, "network.cb_excursion_reinit", "cb_excursion_reinit", false);

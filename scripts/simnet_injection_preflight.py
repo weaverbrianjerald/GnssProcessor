@@ -80,7 +80,7 @@ def derive(cfg):
     derivations a reader reconstructs wrongly from the JSON alone.
     """
     d = {}
-    # NetworkRunContext.cpp:164: carry_invariant without eq34 is a hard load
+    # NetworkKnobs.cpp: carry_invariant without eq34 is a hard load
     # error (GnssConfigLoadNetwork.cpp:6129-6135), so the conjunct is defensive.
     d["eq34"] = _b(cfg, "network.phase_datum_eq34")
     d["carry_invariant"] = d["eq34"] and _b(cfg, "network.carry_invariant")
@@ -154,10 +154,10 @@ def assess(d):
                 "arm network.phase_leveling, or carry_invariant for the funnel path")
 
     if d["datum_station_detect"]:
-        # NetworkRunContext.cpp:195-196: && !phase_datum_prioritized, and eq34 implies
+        # NetworkKnobs.cpp: && !phase_datum_prioritized, and eq34 implies
         # a no-pivot datum.
         add("slip_datum_station", INERT if d["eq34"] else LIVE,
-            "inert under eq34 / any no-pivot datum (NetworkRunContext.cpp:195-196)"
+            "inert under eq34 / any no-pivot datum (NetworkKnobs.cpp)"
             if d["eq34"] else "armed and reachable")
 
     # ---- post-fit RAIM (T3/T3c, + T4) --------------------------------------------
@@ -258,9 +258,9 @@ def eq34_hygiene(cfg, d):
         ("network.phase_datum_eq34_pin_round",
          "NetworkChainDatum.cpp:136-137 `&& !carry_invariant`"),
         ("network.phase_datum_eq34_carry_shift",
-         "NetworkRunContext.cpp:184 `&& !k.carry_invariant`"),
+         "NetworkKnobs.cpp `&& !k.carry_invariant`"),
         ("network.phase_datum_eq34_rpb_q_m2s",
-         "NetworkRunContext.cpp:183 ternary forces q to 0.0"),
+         "NetworkKnobs.cpp ternary forces q to 0.0"),
         ("network.phase_datum_eq34_seed_round_rehost_frame",
          "apply path transforms local_carry/rpb_carry/prev_carry, all empty under "
          "carry_invariant: measured 537 FRAMED re-hosts with byte-identical output "
