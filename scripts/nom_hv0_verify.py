@@ -8,20 +8,27 @@ The frozen source is src/core/app/NetworkRunContext.cpp at main e1a9ef0, read wi
 matching with comments and literals blanked (the lexer of scripts/rt_seam_verify.py, as in
 scripts/nom_td_verify.py): every function definition, and the anonymous namespace that holds
 the one file-local helper.  An item runs from the first non-blank line after the previous item
-(so a function's leading comment travels with it) to its closing brace.  Exit 0 only when all
-four checks pass:
+(so a function's leading comment travels with it) to its closing brace; its head is its code
+from that first line to the item's opening brace.  Exit 0 only when all four checks pass:
 
   1. The frozen file is accounted for.  Its items, its preamble (file comment, includes and
      the namespace opening, which every new file replaces with its own), the blank lines
-     between items and the namespace close cover every line, and outside its items it holds
-     only comments, #include lines and the namespace lines (no file-scope declaration,
-     using-declaration or macro that a new file would have to carry).
+     between items and the namespace close cover every line.  Outside its items it holds
+     only comments, #include lines and the namespace lines, and the head of every item is
+     one declarator: `namespace`, or a function signature with exactly one parameter list
+     (no `;`, no preprocessor line, no second parenthesized group).  So no file-scope
+     declaration, using-declaration or macro, between items or in front of one, rides along
+     with a body that a new file would carry and the others would not.
   2. Bodies.  Every frozen item appears byte-exact, comments and whitespace included, as an
      item of exactly one new file, and its text occurs nowhere else in the new files (the
-     checkout's CRLF, if any, is normalized to LF first; git stores LF).
+     checkout's CRLF, if any, is normalized to LF first; git stores LF).  The one exception
+     is COMMENT_EDITS: each is applied to the frozen text of its item first, must match
+     there exactly once, and must leave the item's comment-stripped text unchanged, so it
+     can only edit comments.
   3. Nothing added or dropped.  The new files hold no item that is not a frozen item; each
      holds the items SPLIT assigns it, in their frozen order; outside its items a file holds
-     only comments, #include lines and the namespace lines.  The old file is gone.
+     only comments, #include lines and the namespace lines, and every item's head is one
+     declarator, as in check 1.  The old file is gone.
   4. Build list and header.  CMakeLists.txt lists each new file once and never names the
      old one; every function the frozen file defines and include/app/NetworkRunContext.hpp
      declares carries, in the comment block above its declaration, exactly one line
@@ -61,6 +68,17 @@ SPLIT = {
                                "networkInjectClockOscPrior"],
     "NetworkBorderStash.cpp": ["networkRetroUraBookkeeping", "networkStashCarry"],
     "NetworkLocalCarryHarvest.cpp": ["networkRxCbDemeanPrepass", "networkHarvestLocalCarries"],
+}
+# Declared comment edits, item -> [(frozen text, new text)].  The review round of step HV0:
+# two comments in the knob table pointed at the fingerprint as "below", which it was in the
+# frozen file and is not after the split; they name its file instead.
+COMMENT_EDITS = {
+    "NetworkKnobs::snapshot": [
+        ("// card NBP (fingerprinted below)",
+         "// card NBP (fingerprinted in NetworkSnapshotFingerprint.cpp)"),
+        ("Not appended to the snapshot fingerprint below: a QC knob",
+         "Not appended to the snapshot fingerprint (NetworkSnapshotFingerprint.cpp): a QC knob"),
+    ],
 }
 # The three files of the snapshot channel, which the header's three-place rule names.
 THREE_PLACE = ("NetworkSnapshotFingerprint.cpp", "NetworkWarmResume.cpp",
@@ -103,8 +121,11 @@ def item_name(code_lines):
 
 
 def split_items(text, where):
-    """(items, outside) of a file: items are dicts {name, first, last, text} (0-based lines),
-    `outside` the 0-based indices of lines outside every item."""
+    """(items, outside) of a file: items are dicts {name, first, last, text, head, tail}
+    (0-based lines; `head` the item's (line, code) rows from its first line up to, not
+    including, its opening brace, and `tail` the code after its closing brace on its last
+    line, both with comments stripped and literals blanked), `outside` the 0-based indices
+    of lines outside every item."""
     lines = text.split("\n")
     code = strip_comments(text).split("\n")
     blank = blank_literals("\n".join(code)).split("\n")
@@ -113,10 +134,10 @@ def split_items(text, where):
         raise ValueError(f"{where}: {len(opens)} `namespace GnssProcessor {{` lines")
     depth, start, prev_end, items, close = 0, None, opens[0], [], None
     for i in range(opens[0] + 1, len(blank)):
-        for ch in blank[i]:
+        for j, ch in enumerate(blank[i]):
             if ch == "{":
                 if depth == 0:
-                    start = i
+                    start = (i, j)
                 depth += 1
             elif ch == "}":
                 depth -= 1
@@ -124,8 +145,11 @@ def split_items(text, where):
                     a = prev_end + 1
                     while not lines[a].strip():
                         a += 1
+                    head = [(k, blank[k]) for k in range(a, start[0])]
+                    head.append((start[0], blank[start[0]][:start[1]]))
                     items.append({"name": item_name(code[a:i + 1]), "first": a, "last": i,
-                                  "text": "\n".join(lines[a:i + 1])})
+                                  "text": "\n".join(lines[a:i + 1]), "head": head,
+                                  "tail": blank[i][j + 1:]})
                     prev_end, start = i, None
                 elif depth < 0:
                     close = i
@@ -153,6 +177,46 @@ def outside_is_frame(lines, code, outside, ns_open, ns_close):
     return bad
 
 
+DECLARATOR = re.compile(r"[\w:<>,\s\*&~]*?[A-Za-z_~][\w:~]*\s*")
+QUALIFIERS = re.compile(r"(?:\s*\b(?:const|noexcept|override|final)\b)*\s*")
+
+
+def head_problem(item):
+    """None when the item's head is one declarator (`namespace`, or a function signature
+    with exactly one parameter list) and nothing follows its closing brace on that line;
+    else (0-based line, what rides along with the body).  A declaration, using-declaration,
+    macro or preprocessor line placed between two items lands in the head of the second
+    (or, on the closing line, the tail of the first), so this is where check 1 and check 3
+    find it."""
+    if item["tail"].strip():
+        return item["last"], f"after its closing brace, code {item['tail'].strip()[:60]!r}"
+    rows = item["head"]
+    for k, t in rows:
+        if t.strip().startswith("#"):
+            return k, f"in front of its body, a preprocessor line {t.strip()[:60]!r}"
+        if ";" in t:
+            return k, f"in front of its body, a `;`-terminated declaration {t.strip()[:60]!r}"
+    text = "\n".join(t for _, t in rows)
+    if text.strip() == "namespace":
+        return None
+    depth, groups, lo, hi = 0, 0, None, None
+    for k, ch in enumerate(text):
+        if ch == "(":
+            if depth == 0:
+                groups += 1
+                lo = k if lo is None else lo
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0 and hi is None:
+                hi = k
+    if groups != 1 or depth != 0:
+        return rows[0][0], f"its head is not one declarator ({groups} parenthesized groups at its top level)"
+    if not DECLARATOR.fullmatch(text[:lo]) or not QUALIFIERS.fullmatch(text[hi + 1:]):
+        return rows[0][0], f"its head is not one declarator: {' '.join(text.split())[:80]!r}"
+    return None
+
+
 def main():
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -169,6 +233,10 @@ def main():
     flines, fcode, fitems, fout, fopen, fclose = split_items(frozen, f"{a.rev}:{FROZEN_PATH}")
     for i in outside_is_frame(flines, fcode, fout, fopen, fclose):
         problems.append(f"frozen line {i + 1} is code outside every item: {flines[i].strip()[:80]!r}")
+    for it in fitems:
+        hp = head_problem(it)
+        if hp:
+            problems.append(f"frozen line {hp[0] + 1}: {it['name']}: {hp[1]}")
     after = [i for i in fout if i > fclose and flines[i].strip()]
     if after:
         problems.append(f"frozen lines after the namespace close: {[i + 1 for i in after]}")
@@ -195,10 +263,36 @@ def main():
         new_items[f] = items
         for i in outside_is_frame(lines, code, out, nopen, nclose):
             problems.append(f"{path}:{i + 1} is code outside every item: {lines[i].strip()[:80]!r}")
+        for it in items:
+            hp = head_problem(it)
+            if hp:
+                problems.append(f"{path}:{hp[0] + 1}: {it['name']}: {hp[1]}")
         got = [it["name"] for it in items]
         if got != names:
             problems.append(f"{path} holds {got}, SPLIT assigns {names} (order included)")
     by_frozen = {it["name"]: it for it in fitems}
+
+    # The text each frozen item must have in its new file: the frozen text, with the
+    # declared comment edits applied and proved comment-only.
+    expected = {it["name"]: it["text"] for it in fitems}
+    n_edits = 0
+    for name, edits in COMMENT_EDITS.items():
+        if name not in expected:
+            problems.append(f"COMMENT_EDITS names {name}, which is not a frozen item")
+            continue
+        text = expected[name]
+        for old, new in edits:
+            n = text.count(old)
+            if n != 1:
+                problems.append(f"COMMENT_EDITS {name}: {old!r} occurs {n} times in the frozen "
+                                f"text, expected once")
+                continue
+            text = text.replace(old, new)
+            n_edits += 1
+        if strip_comments(text) != strip_comments(expected[name]):
+            problems.append(f"COMMENT_EDITS {name}: the edits change code, not only comments")
+        expected[name] = text
+
     n_ok = 0
     for f, items in new_items.items():
         for it in items:
@@ -206,8 +300,8 @@ def main():
             if fz is None:
                 problems.append(f"{APP + f}: item {it['name']} is not in the frozen file (added)")
                 continue
-            if it["text"] != fz["text"]:
-                fl, nl = fz["text"].split("\n"), it["text"].split("\n")
+            if it["text"] != expected[it["name"]]:
+                fl, nl = expected[it["name"]].split("\n"), it["text"].split("\n")
                 k = next((k for k in range(min(len(fl), len(nl))) if fl[k] != nl[k]),
                          min(len(fl), len(nl)))
                 problems.append(f"{APP + f}: {it['name']} differs from the frozen text at its line "
@@ -220,7 +314,7 @@ def main():
                 print(f"  {it['name']:36s} frozen {fz['first'] + 1:5d}-{fz['last'] + 1:5d} -> "
                       f"{APP + f}:{it['first'] + 1}-{it['last'] + 1}")
     for fz in fitems:
-        hits = sum(t.count(fz["text"]) for t in new_text.values())
+        hits = sum(t.count(expected[fz["name"]]) for t in new_text.values())
         if hits != 1:
             problems.append(f"{fz['name']}: its frozen text occurs {hits} times in the new files")
 
@@ -269,7 +363,8 @@ def main():
         print("FAIL " + p)
     n_new = sum(len(v) for v in new_items.values())
     print(f"{n_ok} of {len(fitems)} frozen items byte-exact in {len(new_items)} new files "
-          f"({n_new} items there); {n_decl} header declarations and {len(rules)} three-place "
+          f"({n_new} items there), {len(COMMENT_EDITS)} of them after {n_edits} declared "
+          f"comment-only edits; {n_decl} header declarations and {len(rules)} three-place "
           f"statements checked; "
           f"{'PASS' if not problems else 'FAIL'}")
     sys.exit(1 if problems else 0)

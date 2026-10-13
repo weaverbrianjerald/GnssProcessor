@@ -4,8 +4,9 @@
  *        (RTB-7(a)), written one record layer at a time as the mirror of the warm resume.
  *
  * One function, called by the driver (app/ApplicationNetwork.cpp) at the end of every
- * emitted epoch (a skipped epoch returns before the call).  With a snapshot path it writes
- * on its first call and then once per network.state_snapshot_interval_s of product time;
+ * kept epoch: an epoch the driver skips returns before the call, and an epoch the SH
+ * health gate withholds from emission still reaches it.  With a snapshot path it writes on
+ * its first call and then once per network.state_snapshot_interval_s of product time;
  * without one it does nothing.  The restore of each layer is in NetworkWarmResume.cpp,
  * and the fingerprint the snapshot carries is formed in NetworkSnapshotFingerprint.cpp.
  *

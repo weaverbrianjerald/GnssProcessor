@@ -119,7 +119,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
     k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
     k.pv_on        = config_.networkPhaseVisibleMonitor();     // card PVN (trace class)
-    k.nbp_on       = config_.networkAprioriBrdcClock();        // card NBP (fingerprinted below)
+    k.nbp_on       = config_.networkAprioriBrdcClock();        // card NBP (fingerprinted in NetworkSnapshotFingerprint.cpp)
     k.pv_window_ep = config_.networkPhaseVisibleWindowEp();
     k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();   // card CTU G5
     k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // card CTU G5; loader guarantees clm_on
@@ -389,7 +389,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.raim_ci_refloat = k.raim_ci_on && config_.networkRaimCarryInvariantRefloat();
     // Card RPA: the RAIM pools restricted to observation phase rows.  ANDed with raim_on
     // (the loader already guarantees it), so both pool walks and the run-end lines read
-    // one bool.  Not appended to the snapshot fingerprint below: a QC knob, like raim_*.
+    // one bool.  Not appended to the snapshot fingerprint (NetworkSnapshotFingerprint.cpp): a QC knob, like raim_*.
     k.raim_pool_data_rows_only = k.raim_on && config_.networkRaimPoolDataRowsOnly();
     k.eq34_rpb_prior_sigma = config_.networkPhaseDatumEq34RpbPriorSigmaM();
     k.eq34_rpb_prior_w = (k.phase_datum_eq34 && k.eq34_rpb_prior_sigma > 0.0) ? 1.0 / (k.eq34_rpb_prior_sigma * k.eq34_rpb_prior_sigma) : 0.0;

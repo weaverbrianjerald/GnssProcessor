@@ -6,7 +6,8 @@
 %
 %  Sources: filter/NetworkResponses, NetworkCarryDisposition,
 %  NetworkClockAnchor, NetworkGrossLos, NetworkSolPrep,
-%  NetworkPbHold, NetworkEmitStore; app/NetworkRunContext,
+%  NetworkPbHold, NetworkEmitStore; app/NetworkRunContext (the
+%  stash in NetworkBorderStash, the D2 fold in NetworkBorderPrior),
 %  ApplicationNetwork; slip/NetworkSlipQc, NetworkRawObservables;
 %  corrections/GnssCorrections; products/NetworkProductIO;
 %  realtime/RealTimeEngineSsrBreaks, PbHoldLedger; config loaders
@@ -192,7 +193,7 @@ and its clock and code-bias columns depart; on return they re-realize
 from code. \texttt{network.readmit\_seed\_horizon\_s} $=\wireRdHorizon$
 (loader default 0, off; goldens \SI{3900}{s}) bridges the absence.
 
-At departure the stash (\texttt{app/NetworkRunContext}) parks each D2
+At departure the stash (\texttt{app/NetworkBorderStash}) parks each D2
 clock entry whose column left the layout: it keeps the entry with its
 departure time $t_{\mathrm{park}}$, unfolded. Code-bias entries park too
 under \texttt{network.readmit\_seed\_code\_bias} (default true).

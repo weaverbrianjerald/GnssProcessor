@@ -11,7 +11,11 @@
 %  sat-phase-bias block), measurement/MeasurementBuilder
 %  (DifferencingMode::None), app/ApplicationNetwork.cpp (the thin
 %  epoch-loop orchestrator) + app/ApplicationNetworkSetup.cpp /
-%  ApplicationNetworkAssembly.cpp / NetworkRunContext.cpp + the
+%  ApplicationNetworkAssembly.cpp + include/app/NetworkRunContext.hpp
+%  and the seven files that define its functions (app/NetworkKnobs,
+%  NetworkSnapshotFingerprint, NetworkWarmResume,
+%  NetworkStateSnapshotWrite, NetworkBorderPrior, NetworkBorderStash,
+%  NetworkLocalCarryHarvest) + the
 %  filter/Network* epoch seams, and the S-system theory in
 %  foundations (\Cref{sec:diff}).
 % ============================================================
@@ -72,7 +76,7 @@ layered. The base layer is the \emph{diagonal} D2 shared carry: each
 shared parameter's posterior value and variance are re-injected as a
 diagonal prior on the next epoch's shared border, inflated by $q\,\dt$
 and dropped on a datum change (\texttt{networkInjectD2CarryPrior},
-\texttt{app/NetworkRunContext}), except where the clock-pivot handover
+\texttt{app/NetworkBorderPrior}), except where the clock-pivot handover
 S-transform (\texttt{network.handover\_stransform}, default off, armed
 by the goldens) has re-expressed it in the incoming datum. This layer
 has no enable flag, so the producer is always a filtered solve, never a
@@ -196,7 +200,11 @@ local behind \emph{forks} the carry with no diagnostic, and increment~12
 deleted 191 dead aliases that this pattern had left. Persistence follows
 the \emph{three-place rule}: a carry field that is a snapshot member
 appears in the warm-resume fingerprint, in the restore and in the
-snapshot write, all three in \texttt{NetworkRunContext}. A field present
+snapshot write, in \texttt{app/NetworkSnapshotFingerprint},
+\texttt{app/NetworkWarmResume} and \texttt{app/NetworkStateSnapshotWrite}
+respectively (the context's functions are defined in seven files by
+concern, each declaration in \texttt{app/NetworkRunContext} naming its
+file). A field present
 in only two of the three yields a warm resume that disagrees with the
 run that wrote it, with no error raised.
 
@@ -247,8 +255,8 @@ seam call (driver order) & concern (translation unit) \\
 \texttt{networkBuildPhaseDatum\-Candidates}, then \texttt{networkAnchorHygiene} and \texttt{networkElect\-PhaseAnchors} / \texttt{networkElect\-EnsembleDatum} / \texttt{networkElect\-ChainDatum} & election of the \emph{local} half of the datum: the candidate census and coverage gate, the eq34 reattach hygiene that governs anchor-host eligibility and the fresh-pin deweight ramp, then whichever realisation is armed (\texttt{filter/NetworkPhaseDatum}, \texttt{filter/NetworkAnchorHygiene}, \texttt{filter/NetworkChainDatum}) \\
 \texttt{networkAssembly\-RegisterColumns\_} & clear the layout, register this epoch's shared columns, open the arrowhead system (\texttt{app/ApplicationNetworkAssembly}) \\
 \texttt{networkSdEwlAr} & single-difference extra-widelane integer decision; \emph{default off} (\texttt{filter/NetworkSdEwlAr}) \\
-\texttt{networkRxCbDemeanPrepass} & receiver code-bias carry de-mean before assembly reads the map; \emph{default off} (\texttt{app/NetworkRunContext}) \\
-\texttt{networkCarryDecide}, \texttt{networkCoupling\-ExactPrepare} & the fold decision for every carried border entry, made once per epoch and read by both the coupling rows and the D2 fold (\texttt{filter/NetworkCarryDisposition}); the inputs of the exact coupling time update, \emph{default off}, armed by the goldens (\texttt{app/NetworkRunContext}) \\
+\texttt{networkRxCbDemeanPrepass} & receiver code-bias carry de-mean before assembly reads the map; \emph{default off} (\texttt{app/NetworkLocalCarryHarvest}) \\
+\texttt{networkCarryDecide}, \texttt{networkCoupling\-ExactPrepare} & the fold decision for every carried border entry, made once per epoch and read by both the coupling rows and the D2 fold (\texttt{filter/NetworkCarryDisposition}); the inputs of the exact coupling time update, \emph{default off}, armed by the goldens (\texttt{app/NetworkBorderPrior}) \\
 \texttt{networkPassB\_} & PASS~B produce/consume: the split design blocks handed to \texttt{addStation} (\texttt{app/ApplicationNetworkAssembly}, \texttt{filter/NetworkCoupling}) \\
 \texttt{networkBuildEnsembleGauges}, \texttt{networkBuildCarryDdPriors} & sum-to-zero phase gauges; Card-4 DD carry priors (\texttt{filter/NetworkDdPriorBuild}) \\
 \texttt{networkSolveGlue} & shared datum build, rank gate and drop-and-heal, D2 carry injection, the constrained solve, within-epoch RAIM re-solve, withhold gates (\texttt{filter/NetworkSolveGlue}, calling \texttt{NetworkSbasis}, \texttt{NetworkPhaseDatum}, \texttt{NetworkRelevel}) \\
@@ -269,7 +277,7 @@ seam call (driver order) & concern (translation unit) \\
 \texttt{networkDatumGraphCensus} & structural S-basis dimension predicted from the epoch's support topology and reconciled against the spectral observation; \emph{default off} (\texttt{filter/NetworkDatumGraph}) \\
 \texttt{networkRhsAttribution}, \texttt{networkRhsAttribTrip} & reduced-RHS class attribution, so a discharge attributes itself without an armed epoch; diagnostics-only, \emph{default off} (\texttt{filter/NetworkRhsAttrib}) \\
 \texttt{networkStashStatus} & carry re-stash and the epoch-status record (\texttt{filter/NetworkStashStatus}) \\
-\texttt{networkWriteStateSnapshot} & warm-resume state snapshot (\texttt{app/NetworkRunContext}) \\
+\texttt{networkWriteStateSnapshot} & warm-resume state snapshot (\texttt{app/NetworkStateSnapshotWrite}) \\
 \bottomrule
 \end{tabular}
 \end{center}
