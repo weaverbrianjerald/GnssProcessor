@@ -17,14 +17,27 @@
  *  - any other disagreement: OutOfStep, at warn level;
  *  - the withheld totals do not move the verdict.
  *
- * Both suite names are owned by this file alone (suite-hygiene rule in CLAUDE.md).
+ * Suite @c WithinEpochCulpritReport (the run-end report's gate):
+ *  - armed only with the DD carry and the tier both on;
+ *  - off on both goldens, loaded from config/golden/ (the tier armed, the DD carry off).
+ *
+ * Not certified here: the hand-off itself, i.e. that the DD-carry rebuild reads the object
+ * the T2 block writes (the defect card WCF closes).  The rebuild and the T2 block are not
+ * unit-testable seams; the hand-off is certified by a run on a carry_invariant posture with
+ * the tier armed where T2 trips, with the writer's count non-zero and equal to the
+ * reader's.
+ *
+ * The three suite names are owned by this file alone (suite-hygiene rule in CLAUDE.md).
  */
 
 #include <gtest/gtest.h>
 
+#include "config/GnssConfig.hpp"                  // the goldens' knobs (report gate)
 #include "filter/NetworkRunTypes.hpp"             // EpochWorkspace
 #include "filter/NetworkWithinEpochCulprits.hpp"
+#include "logging/LogManager.hpp"
 
+#include <filesystem>
 #include <string>
 #include <utility>
 
@@ -148,6 +161,31 @@ TEST(WithinEpochCulpritVerdict, TheWithheldTotalsDoNotMoveTheVerdict) {
               WithinEpochCulpritVerdict::NoCulprit);
     EXPECT_EQ(withinEpochCulpritVerdict(tally(2, 2, 0)).verdict,
               WithinEpochCulpritVerdict::Agree);
+}
+
+TEST(WithinEpochCulpritReport, ArmedOnlyWithTheDdCarryAndTheTier) {
+    EXPECT_TRUE(withinEpochCulpritReportArmed(true, true));
+    EXPECT_FALSE(withinEpochCulpritReportArmed(true, false));
+    EXPECT_FALSE(withinEpochCulpritReportArmed(false, false));
+}
+
+TEST(WithinEpochCulpritReport, OffOnBothGoldens) {
+    // Both goldens arm the tier with the DD carry off: the rebuild returns before it reads
+    // the sets, both counts stay 0, and the report prints nothing.  The effective knob
+    // (NetworkKnobs::carry_invariant) is the configured one and the eq34 phase datum, so
+    // the configured value off is enough.
+    for (const char* name : {"golden_field_refound.json", "golden_sim_refound.json"}) {
+        LogManager log;
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(
+            std::filesystem::path(GNSS_PROJECT_ROOT) / "config" / "golden" / name, log))
+            << name;
+        EXPECT_TRUE(cfg.networkRaimWithinEpoch()) << name;
+        EXPECT_FALSE(cfg.networkCarryInvariant()) << name;
+        EXPECT_FALSE(withinEpochCulpritReportArmed(cfg.networkCarryInvariant(),
+                                                   cfg.networkRaimWithinEpoch()))
+            << name;
+    }
 }
 
 } // namespace

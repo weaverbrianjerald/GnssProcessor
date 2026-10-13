@@ -2186,8 +2186,9 @@ int networkD5GateRunEnd(const NetworkRunEndView& v) {
                   "Read this against the {} slip refloat(s) the driver counted: the difference "
                   "is the churn this knob removed, and n_chord_births in "
                   "network_epoch_status.csv is where the chord-lifetime effect shows up.  "
-                  "[Counted per arc per build call — a within-epoch RAIM re-solve counts its "
-                  "arcs twice, the same convention as chords_born.]",
+                  "[Counted per arc per build call in which the arc survives: a within-epoch "
+                  "RAIM re-solve counts its arcs twice, the same convention as chords_born, "
+                  "except an arc a culprit of the re-solve kills (card WCF).]",
                   sup, carry_slipkills_total);
         if (sup == 0)
             log->warn("Network (Card 4/M1 D5 v4): re-tap-only is ARMED but suppressed NOTHING — "

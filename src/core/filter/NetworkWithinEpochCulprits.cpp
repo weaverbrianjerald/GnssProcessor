@@ -35,9 +35,15 @@ WithinEpochCulpritReading withinEpochCulpritVerdict(const WithinEpochCulpritTall
             "(card WCF)"};
 }
 
+bool withinEpochCulpritReportArmed(bool carry_invariant, bool raim_within_epoch) {
+    return carry_invariant && raim_within_epoch;
+}
+
 int networkWithinEpochCulpritWithholdRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
-    if (!ctx.knobs.carry_invariant || !v.config.networkRaimWithinEpoch()) return 0;
+    if (!withinEpochCulpritReportArmed(ctx.knobs.carry_invariant,
+                                       v.config.networkRaimWithinEpoch()))
+        return 0;
     const WithinEpochCulpritTally& t = ctx.counters.we_culprit_withhold;
     const WithinEpochCulpritReading r = withinEpochCulpritVerdict(t);
     // The tier assesses only on a warm phase-leveling carry, so a quiet run without it is
@@ -48,7 +54,8 @@ int networkWithinEpochCulpritWithholdRunEnd(const NetworkRunEndView& v) {
     v.log->log(r.warn ? spdlog::level::warn : spdlog::level::info,
                "Network (T2 culprit withhold, DD carry): {} re-solve(s) ran with a satellite "
                "or arc culprit; {} DD-carry rebuild(s) read one and withheld {} satellite(s) "
-               "and {} arc(s) summed over them, {} carried ambiguity(ies) marked slipped by a "
+               "and {} arc(s) summed over them, {} arc ambiguity(ies) of the carry graph "
+               "(tree edges included, so at most that many carried DDs) marked slipped by a "
                "culprit and not by the slip funnel; {}{}.",
                t.resolves, t.rebuilds, t.sats, t.arcs, t.ambs, r.text, note);
     return 0;

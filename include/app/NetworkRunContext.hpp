@@ -2446,7 +2446,9 @@ namespace GnssProcessor {
         // Carry arcs whose membership kill was suppressed by the above.  The tripwire of
         // invariant #4 for the knob: 0 with it armed means nothing reached it.  Counted per
         // arc per buildCarryDdPriors call, so a within-epoch RAIM re-solve counts its arcs
-        // twice (the same convention as the driver's chords_born / slip_kills).
+        // twice (the same convention as the driver's chords_born / slip_kills).  Only an
+        // arc that survives the call counts: one a T2 culprit kills in the re-solve does
+        // not (card WCF; it is counted in we_culprit_withhold.ambs).
         long long carry_innov_kill_suppressed = 0;
 
         // --- Per-epoch carry churn (SPEC_day129_frame_guards P1-1) ---
@@ -4618,8 +4620,9 @@ namespace GnssProcessor {
         std::string we_resolve_fail_at;        ///< where it failed: a station name, or "shared system"
         /// The culprit withhold on the DD carry (card WCF): the re-solves that ran with a
         /// satellite or arc culprit (the writer's end), the DD-carry rebuilds that read one
-        /// and what they withheld (the reader's end).  Reported by
-        /// networkWithinEpochCulpritWithholdRunEnd (filter/NetworkWithinEpochCulprits).
+        /// and what they withheld (the reader's end), both counted only under
+        /// carry_invariant.  Reported by networkWithinEpochCulpritWithholdRunEnd
+        /// (filter/NetworkWithinEpochCulprits).
         WithinEpochCulpritTally we_culprit_withhold;
 
         // Split-cadence fast-clock telemetry (FC-1, network.fast_clock).  Standing

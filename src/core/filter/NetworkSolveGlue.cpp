@@ -2132,8 +2132,10 @@ if (within_epoch_armed && carry_warm) {
         // only the fold is rebuilt.  No-op when off (card 4 (M1), C3b).  The rebuild
         // reads this re-solve's culprit sets from ws.we_culprits (card WCF); the count
         // here is the writer's end of that hand-off, read against the rebuild's own count
-        // at the run end.
-        if (ws.we_culprits.namesAmbiguities()) ++ctx.counters.we_culprit_withhold.resolves;
+        // at the run end.  It is gated on the knob the rebuild itself returns on, so the
+        // two ends count on the same postures.
+        if (ctx.knobs.carry_invariant && ws.we_culprits.namesAmbiguities())
+            ++ctx.counters.we_culprit_withhold.resolves;
         buildCarryDdPriors();
         Eigen::VectorXd x_replay = est.solve(plan.shared_datum);
         est.contributionReplay(false);   // card NOM N2a

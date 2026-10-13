@@ -118,14 +118,27 @@ struct WithinEpochCulprits {
  * The writer's count is taken by the re-solve just before it calls the rebuild, the
  * reader's by the rebuild itself where the withhold takes effect, so a hand-off that stops
  * reaching the rebuild shows as re-solves with a culprit and no rebuild that read one.
- * The MW wide-lane rows read the same set inside one rebuild and count nothing.
+ * Both ends count only under the effective @c network.carry_invariant
+ * (@c NetworkKnobs::carry_invariant), the knob without which the rebuild returns before it
+ * reads the sets, so the two counts are comparable on every posture (both stay 0 on the
+ * goldens, where T2 adapts without the DD carry).  The MW wide-lane rows read the same set
+ * inside one rebuild and count nothing.
+ *
+ * The unit suite certifies the set, this tally's verdict and the report's gate; the
+ * hand-off itself (the rebuild reading the object the T2 block writes) is certified only
+ * by a run on a @c carry_invariant posture with the tier armed where T2 trips, with
+ * @ref resolves non-zero and equal to @ref rebuilds.
  */
 struct WithinEpochCulpritTally {
-    long long resolves = 0;  ///< Writer: T2 re-solves (undo replays included) that ran with a satellite or arc culprit.
-    long long rebuilds = 0;  ///< Reader: DD-carry rebuilds that read a set naming a satellite or arc.
+    long long resolves = 0;  ///< Writer: T2 re-solves (undo replays included) that ran with a satellite or arc culprit, under carry_invariant.
+    long long rebuilds = 0;  ///< Reader: DD-carry rebuilds that read a set naming a satellite or arc (the rebuild runs only under carry_invariant).
     long long sats     = 0;  ///< Culprit satellites those rebuilds withheld, summed over the rebuilds.
     long long arcs     = 0;  ///< Culprit arcs those rebuilds withheld, summed over the rebuilds.
-    long long ambs     = 0;  ///< Carried ambiguities those rebuilds marked slipped for a culprit and not for the slip funnel, each counted once per rebuild.
+    /// Arc ambiguities of the carry graph that those rebuilds marked slipped for a culprit
+    /// and not for the slip funnel, each counted once per rebuild.  Every arc is counted,
+    /// tree edges (which carry no DD) and arcs born this epoch included, so this bounds the
+    /// carried DDs withheld from above.
+    long long ambs     = 0;
 };
 
 /// What the two ends of the hand-off say about each other at the run end.
@@ -155,12 +168,27 @@ struct WithinEpochCulpritReading {
 WithinEpochCulpritReading withinEpochCulpritVerdict(const WithinEpochCulpritTally& t);
 
 /**
+ * @brief Whether the culprit hand-off's run-end report is armed: the DD carry and the
+ *        within-epoch tier both on.
+ *
+ * Pure.  Off on both goldens, which arm the tier (@c network.raim_within_epoch) without
+ * the DD carry (@c network.carry_invariant false): the rebuild there returns before it
+ * reads the sets, and the tally stays 0.
+ *
+ * @param carry_invariant   The effective @c network.carry_invariant
+ *                          (@c NetworkKnobs::carry_invariant, i.e. with the eq34 phase datum).
+ * @param raim_within_epoch @c network.raim_within_epoch.
+ * @return True when both are armed.
+ */
+bool withinEpochCulpritReportArmed(bool carry_invariant, bool raim_within_epoch);
+
+/**
  * @brief Run-end report: the culprit withhold on the DD carry, both ends of the hand-off
  *        and the verdict (one line).
  *
- * Gate: the DD carry (@c network.carry_invariant, effective, i.e. with the eq34 phase
- * datum) and the within-epoch tier (@c network.raim_within_epoch) both armed; returns 0 at
- * once otherwise.  The row follows the within-epoch RAIM report in the run-end table.
+ * Gate: @ref withinEpochCulpritReportArmed on the effective @c network.carry_invariant and
+ * @c network.raim_within_epoch; returns 0 at once when it is false.  The row follows the
+ * within-epoch RAIM report in the run-end table.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).

@@ -69,3 +69,13 @@ The culprit sets travel to the DD-carry rebuild through the epoch (a member the 
 WCF first. EP0 and HV0 next, in parallel (disjoint files). Then EP1 alone (it changes every spine signature). Then SG, PB1 and HV1 in sequence or in parallel by file ownership, EP2 to EP4 beside them. Step TD2 (one run-end report per subsystem, card NOM2 section 6) follows. Card NOM step N3b waits for EP1, which changes the signatures it would touch. CLAUDE.md's routing rules and seam contract, its line counts and the network tour are rewritten in the step that changes them.
 
 <!-- Results are appended below this line under dated headings. -->
+
+## 2026-10-13: card WCF, what certifies the hand-off (review round, branch `nom/wcf`)
+
+The unit suite (`tests/test_network_within_epoch_culprits.cpp`) certifies the culprit set, the verdict over the two counts and the run-end report's gate, which is off on both goldens as loaded from `config/golden/`. It does not certify the hand-off itself, the DD-carry rebuild reading the object the T2 block writes (the defect class of section 2, finding 1): neither the rebuild nor the T2 block is a unit-testable seam. The hand-off is certified only by the section 4 gate on the retired `golden_field_gps_dual.json` posture with T2 tripping: the writer's count (`resolves`) non-zero and equal to the reader's (`rebuilds`). That gate is owed.
+
+Three telemetry corrections from the review, none of which moves a solve:
+
+1. The D5 v4 counter `carry_innov_kill_suppressed` counts a funnel entry the retap-only exception spared only when the arc survives the build. With the withhold live, a T2 culprit could kill a spared arc after it had been counted as surviving (the count, the D5 v4 run-end line and the WCF `ambs` count then disagreed about the same arc). Unreachable before WCF, since the culprit sets never reached the rebuild.
+2. `ambs` counts arc ambiguities of the carry graph, tree edges and arcs born that epoch included, so it bounds the carried DDs withheld from above; the run-end line says so.
+3. Both ends count only under the effective `network.carry_invariant`, the knob on which the rebuild returns, so the two counts compare on every posture. On the goldens (the tier armed, the DD carry off) both stay 0; before the correction the writer's count grew there with the reader's at 0, the INERT WIRING signature, hidden only by the report's gate.
