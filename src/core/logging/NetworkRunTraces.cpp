@@ -1046,8 +1046,10 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // FLEET rows: level = the two-tier reduction (per-station
             // information-weighted means, then the fleet median), disp =
             // 1.4826·MAD across station means (never a formal σ; the kernel
-            // variances are documented as optimistic), a00 filled only when the
-            // SH channel exists.  STA rows: the tier-1 station mean and its LOS
+            // variances are documented as optimistic), a00 a constant 0.0000
+            // placeholder under the SH channel (kept for the column layout; its
+            // producer, the SH health gate, is retired) and blank without it.
+            // STA rows: the tier-1 station mean and its LOS
             // count (level column reused; disp/n_sta/a00 blank).  All values are
             // vertical TECU in the pair-exact conversion.
             level_authority_trace << "week,tow,kind,station,level_tecu,"

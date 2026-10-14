@@ -2214,9 +2214,9 @@ int Application::runNetwork() {
         auto& retro_emit_sats = sp_.retro_emit_sats;
         subEnd(SB_SOLPREP);     // close sol-prep and discontinuity signalling (D0b)
         // Whether this epoch's solution reached the wire.  Every whole-epoch withhold
-        // (observability gate, A4 sigma0 ceiling, SH health gate) `continue`s or returns
-        // before networkEmitStore's emit site, and n_emitted is incremented exactly
-        // there, so comparing that counter across the call tests emission.  The tables
+        // (observability gate, A4 sigma0 ceiling) `continue`s or returns before
+        // networkEmitStore's emit site, and n_emitted is incremented exactly there,
+        // so comparing that counter across the call tests emission.  The tables
         // written once after the first emitted epoch (signals as planned, parameters as
         // armed, contributions as armed) key on it below.
         const std::size_t n_emitted_before = ctx.counters.n_emitted;

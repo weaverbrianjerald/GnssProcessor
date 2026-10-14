@@ -447,7 +447,7 @@ TEST(ParamResponses, GoldensDeclareTheAmbiguityGapHorizon) {
         EXPECT_EQ(r.spec(K::RxCodeBias).gap_horizon_s, kRxCbMaxGapS) << bed;
         for (const K kind : {K::SatClock, K::SatPhaseBias, K::SatCodeBias, K::VtecSh})
             EXPECT_TRUE(std::isnan(r.spec(kind).gap_horizon_s)) << bed << " " << paramKindName(kind);
-        // Neither slant-ionosphere carry is armed on the goldens: no carry in force, no horizon.
+        // The in-block slant-ionosphere carry is not armed on the goldens: no horizon.
         EXPECT_TRUE(std::isnan(r.spec(K::SlantIono).gap_horizon_s)) << bed;
         // The in-block route declares its own horizon (its prune reads it).
         NetworkKnobs kb = k;

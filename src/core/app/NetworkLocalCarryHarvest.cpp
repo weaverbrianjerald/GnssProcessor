@@ -1127,8 +1127,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         //     the absolute value, and prune the stale entries.
         //
         //     Independent loop (as for the ZWD), so it runs for stations whose
-        //     ambiguity harvest produced nothing.  It differs from the harvest of the
-        //     diagonal slant-iono carry (queue 8(b)) in three deliberate ways:
+        //     ambiguity harvest produced nothing.  It differed from the harvest of the
+        //     retired diagonal slant-iono carry (queue 8(b)) in three deliberate ways:
         //       * the cross terms are gathered (they subtract the B-fold over-count at
         //         inject); queue 8(b) took the diagonal alone;
         //       * the coupling row is harvested: an in-block column is folded like an

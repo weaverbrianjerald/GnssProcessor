@@ -749,10 +749,11 @@ TEST(PrefitCensusObservability, TopologyLedgerSeedsSilentlyThenEventsTieRowDelta
 //  10. The recorder latch is an era latch
 // ===========================================================================
 //
-// The SH health gate can hold an era for 95+ minutes (measured on DOY-129).  A latch
-// that fired per epoch would write ~190 attribution frame sets for one event; a
-// latch that never re-armed would miss the next era.  The latch trips once per era,
-// and the era clears when the condition does.
+// The retired SH health gate held an era for 95+ minutes (measured on DOY-129); its
+// "sh_gate" name stays below as a generic era literal.  A latch that fired per epoch
+// would write ~190 attribution frame sets for one such event; a latch that never
+// re-armed would miss the next era.  The latch trips once per era, and the era
+// clears when the condition does.
 TEST(PrefitCensusObservability, TripLatchFiresOncePerEraAndReArmsWhenItClears) {
     LogManager log;
     auto cfg = loadCfg(log, "trip", "    \"rhs_attrib_on_trip\": true,\n");
@@ -770,7 +771,7 @@ TEST(PrefitCensusObservability, TripLatchFiresOncePerEraAndReArmsWhenItClears) {
     EXPECT_FALSE(networkRhsTripEdge(ctx, "sh_gate", false));    // the era clears
     EXPECT_TRUE(networkRhsTripEdge(ctx, "sh_gate", true));      // and re-arms
 
-    // Eras are independent: a live SH-gate era must not mask a sigma0 trip.
+    // Eras are independent: a live "sh_gate" era must not mask a sigma0 trip.
     EXPECT_TRUE(networkRhsTripEdge(ctx, "sigma0", true));
 
     EXPECT_EQ(ctx.counters.pc.rec_trips, 3);

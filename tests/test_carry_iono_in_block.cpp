@@ -547,7 +547,8 @@ TEST(CarryIonoInBlockTest, T4EraseKeyClearsExactlyOneLosAndSparesSiblings) {
     EXPECT_EQ(carry.iono_blk_carry.count({1, std::string("G01")}), 1u);  // other station
     // Idempotent across the per-signal loop: a second band's erase counts nothing.
     EXPECT_EQ(carry.iono_blk_carry.erase({0, std::string("G01")}), 0u);
-    // The legacy diagonal map is a separate map; the two vehicles never share state.
+    // The retired diagonal vehicle's map is a separate map and stays empty: nothing
+    // writes it, and the in-block carry never shares its state.
     EXPECT_TRUE(carry.iono_carry.empty());
 }
 

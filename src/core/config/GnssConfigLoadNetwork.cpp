@@ -2293,8 +2293,8 @@ namespace GnssProcessor {
             if (network_config_.rhs_attrib_on_trip)
                 log->info("Network (rhs-attrib INC-5): flight recorder ARMED — the "
                           "capture recorder runs EVERY epoch and the attribution fires "
-                          "at the first trip of each QC era (SH-gate engage, sigma0 "
-                          "withhold, clock runaway, a00-band exit).  Previous-epoch "
+                          "at the first trip of each QC era (sigma0 withhold, clock "
+                          "runaway, a00-band exit).  Previous-epoch "
                           "retention {} (max {} stations).{}",
                           network_config_.rhs_attrib_on_trip_prev ? "ON" : "off",
                           network_config_.rhs_attrib_prev_max_stations,

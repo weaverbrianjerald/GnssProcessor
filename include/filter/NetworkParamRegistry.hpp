@@ -181,9 +181,9 @@ struct ParamSpec {
     /// network.carry_iono_in_block_max_gap_s for the slant ionosphere under the block
     /// carry; network.carry_rx_clock_max_gap_s for the receiver clock;
     /// the constant @c kRxCbMaxGapS for the receiver code bias.  NaN for a kind with no
-    /// gap horizon declared here: the slant ionosphere with neither carry armed, and the
-    /// border kinds, whose gap response is READMIT's park (its expiry, a GapPrune of the
-    /// parked entry, runs on network.readmit_seed_horizon_s against the park time).
+    /// gap horizon declared here: the slant ionosphere with the in-block carry unarmed,
+    /// and the border kinds, whose gap response is READMIT's park (its expiry, a GapPrune
+    /// of the parked entry, runs on network.readmit_seed_horizon_s against the park time).
     double       gap_horizon_s{std::numeric_limits<double>::quiet_NaN()};
     ParamRoute   route{ParamRoute::NotCarried};
     std::string  source;            ///< The knob(s) behind q, the floor and the route.

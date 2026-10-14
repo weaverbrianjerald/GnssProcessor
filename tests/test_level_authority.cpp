@@ -75,7 +75,7 @@ TEST(LevelAuthorityConfig, DefaultsAreOff) {
     EXPECT_EQ(cfg.networkLevelAuthorityMinLos(), 4);
 }
 
-TEST(LevelAuthorityConfig, ArmsWithoutTheIonoCarry) {
+TEST(LevelAuthorityConfig, ArmsOnItsOwn) {
     // The census arms the CS advance on its own (SPEC §3): no carry is required.
     GnssConfig cfg;
     const std::string extra = "    \"level_authority_csgf\": true,\n";

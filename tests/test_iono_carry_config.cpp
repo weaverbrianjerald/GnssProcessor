@@ -66,7 +66,7 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 
 // --- Bridge v3 rider interlocks (same loader region; parked here rather than
 // --- in the kernel file to keep that file's include set pure).
-TEST(IonoCarryConfig, BridgeV3RidersRequireDeltaBridge) {
+TEST(BridgeV3RiderConfig, BridgeV3RidersRequireDeltaBridge) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3nodb",
         networkConfig("    \"phase_leveling\": true,\n"
@@ -76,7 +76,7 @@ TEST(IonoCarryConfig, BridgeV3RidersRequireDeltaBridge) {
     EXPECT_FALSE(cfg.networkCycleSlipRelevelBridgeGf());
 }
 
-TEST(IonoCarryConfig, BridgeV3RidersSurviveWithDeltaBridge) {
+TEST(BridgeV3RiderConfig, BridgeV3RidersSurviveWithDeltaBridge) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3ok",
         networkConfig("    \"phase_leveling\": true,\n"
