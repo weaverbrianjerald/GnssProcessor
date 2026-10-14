@@ -162,7 +162,7 @@ TEST(NetworkRowClassifyTest, ObservationCodeComesFromTheTag) {
 
 TEST(NetworkRowClassifyTest, RaimPoolAdmitsThePhaseRowsAndTheRowsOnAmbiguitiesOnly) {
     const std::set<CK> admitted{CK::DataPhase,          CK::DataPhaseSecond,
-                                CK::CouplingScalar,     CK::CouplingJoint,
+                                CK::CouplingScalar,
                                 CK::BlockAmbiguityCarry, CK::BlockZwdCarry,
                                 CK::BlockIonoCarry,     CK::BlockRxClockCarry,
                                 CK::BlockRxCbCarry,     CK::BlockPhaseColourCarry,

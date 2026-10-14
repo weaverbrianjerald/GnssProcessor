@@ -2113,7 +2113,7 @@ namespace GnssProcessor {
         /// N(0, sigma(e)^2) by a pseudo-observation row.  It models the stations'
         /// time-correlated phase error (card SFR) that the network otherwise states as
         /// white.  Requires the float vehicle, phase_leveling and the conditional
-        /// coupling; refuses the joint whitening and carry_invariant.  Default false is
+        /// coupling; refuses carry_invariant.  Default false is
         /// byte-identical.
         bool phase_colour_state{ false };
         /// Zenith sigma of the state's stationary prior (m); the elevation law is

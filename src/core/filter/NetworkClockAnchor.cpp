@@ -487,13 +487,10 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
     const double abs_m   = ctx.knobs.cta_abs_m;
     const double s_floor = std::max(1e-12, ctx.knobs.cta_sigma_floor_m
                                          * ctx.knobs.cta_sigma_floor_m);
-    // The resolved predicate, not the Q3 knob (card C-GF).  A withdraw must un-fold
-    // exactly what was folded; reading a different flag than the fold used leaves a
+    // The resolved predicate, not the Q3 knob.  A withdraw must un-fold exactly what
+    // was folded; reading a different flag than the fold used leaves a
     // negative-semidefinite residue in the shared normals (see NetworkRunContext.hpp).
     const bool gf         = ctx.knobs.carry_gauge_free;     // the fold (what a withdraw must un-fold)
-    // Closure is part of what was folded: it selects which directions U spans, so
-    // every withdraw below passes it alongside `gf` (card C-GF).
-    const bool gfc        = ctx.knobs.carry_gauge_free_closure;
     const bool proj_post  = ctx.knobs.cta_stat_proj_post;   // the denominator's posterior half
     const bool proj_prior = ctx.knobs.cta_stat_proj_prior;  // …and its prior half
     int pass = 0;
@@ -781,7 +778,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     est.contributionKind(ContributionKind::Q3Withdraw);
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
-                                                             /*restore=*/false, gf, gfc);
+                                                             /*restore=*/false, gf);
                 }
                 folded_dense = true;
             }
@@ -795,7 +792,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     std::set<std::string> ds;
                     for (const auto& p : diag_drop) ds.insert(p.sat);
                     est.refoldSharedPriorClockGaugeFreeDropping(ws.cap_priors, ds,
-                                                                /*restore=*/false, gfc);
+                                                                /*restore=*/false);
                 } else {
                     est.withdrawSharedPrior(diag_drop);
                 }
@@ -813,7 +810,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     est.contributionKind(ContributionKind::Q3Restore);   // card NOM N2a
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
-                                                             /*restore=*/true, gf, gfc);
+                                                             /*restore=*/true, gf);
                 }
                 if (!diag_drop.empty()) {
                     est.contributionKind(ContributionKind::Q3Restore);   // card NOM N2a
@@ -821,7 +818,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                         std::set<std::string> ds;
                         for (const auto& p : diag_drop) ds.insert(p.sat);
                         est.refoldSharedPriorClockGaugeFreeDropping(ws.cap_priors, ds,
-                                                                    /*restore=*/true, gfc);
+                                                                    /*restore=*/true);
                     } else {
                         est.addSharedPrior(diag_drop);
                     }
@@ -1043,42 +1040,6 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
                         / static_cast<double>(c.cta_folded_anchored),
                   ctx.knobs.cta_var_floor, 1000.0 * std::sqrt(ctx.knobs.cta_var_floor),
                   std::max(0.0, ctx.knobs.cta_q) * 30.0);
-    return 0;
-}
-
-// Run-end report: the gauge-free shared carry (C-GF).
-int networkGaugeFreeCarryRunEnd(const NetworkRunEndView& v) {
-    const NetworkRunContext& ctx = v.ctx;
-    const std::shared_ptr<spdlog::logger>& log = v.log;
-    const NetworkEstimator& est = v.run.engines.est;
-
-    // Gauge-free shared carry readout (card C-GF), placed outside the Card-Q3 `cta_on`
-    // block above on purpose: the downdate can be armed by the carry
-    // (shared_carry_gauge_free) with the Q3 temporal anchor off, and the Q3 readout would
-    // then print nothing, leaving an armed mechanism with no telemetry (invariant #4).
-    if (ctx.knobs.carry_gauge_free && !ctx.knobs.cta_on) {
-        log->info("Network (Card C-GF): gauge-free shared carry active WITHOUT the Q3 clock "
-                  "anchor — {} clock prior key(s) gauge-downdated, {} epoch(s) inert, {} "
-                  "direction(s) DECLINED for partial support (closure test {}).",
-                  ctx.counters.cta_gf_keys, ctx.counters.cta_gf_inert,
-                  est.gaugeFreePartialSkipped(),
-                  ctx.knobs.carry_gauge_free_closure ? "ON" : "off");
-        if (ctx.counters.cta_gf_keys == 0)
-            log->warn("Network (Card C-GF): the gauge-free carry fold is ARMED but downdated "
-                      "ZERO keys — it is INERT for this run, and the carried block is folding "
-                      "information along the datum's own directions exactly as if the knob "
-                      "were off.  Any A/B against a raw-carry arm is measuring nothing.");
-    }
-    if (ctx.knobs.carry_gauge_free_closure && est.gaugeFreePartialSkipped() > 0)
-        log->info("Network (Card C-GF): {} datum direction(s) were left folded because their "
-                  "support was only PARTLY carried (some of the constellation's registered "
-                  "clocks were absent from the carried set).  That is the CORRECT refusal — "
-                  "restricted to a subset the direction is no longer the datum's functional, "
-                  "and downdating it would delete an estimable carried-vs-uncarried contrast "
-                  "rather than gauge.  A count comparable to the downdated-key total means "
-                  "the border turns over faster than the carry, so the gauge-free treatment "
-                  "is reaching only a minority of epochs.",
-                  est.gaugeFreePartialSkipped());
     return 0;
 }
 

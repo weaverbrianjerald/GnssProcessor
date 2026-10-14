@@ -763,7 +763,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         try {
             est.contributionKind(ContributionKind::BorderCarryDense);
             est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
-                                    /*clock_gauge_free=*/false, /*require_closure=*/false);
+                                    /*clock_gauge_free=*/false);
         } catch (const std::exception&) {
             ++C.bcl_d_fold_retry;
             keys.resize(nbase);
@@ -772,12 +772,12 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
             if (walks.empty()) return false;   // nothing of card SCL's left to fold
             est.contributionKind(ContributionKind::BorderCarryDense);
             est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
-                                    /*clock_gauge_free=*/false, /*require_closure=*/false);
+                                    /*clock_gauge_free=*/false);
         }
     } else {
         est.contributionKind(ContributionKind::BorderCarryDense);
         est.addSharedPriorDense(keys, cov, clk_prior_info ? &lam : nullptr,
-                                /*clock_gauge_free=*/false, /*require_closure=*/false);
+                                /*clock_gauge_free=*/false);
     }
     est.contributionKind(ContributionKind::CloneWalk);   // card NOM N2a
     est.addCloneWalkJoint(walks, Qw);
@@ -926,7 +926,7 @@ bool networkClockCloneReplayFold(const NetworkRunContext& ctx, const EpochWorksp
     if (!ws.cap_ccl_on) return false;
     est.contributionKind(ContributionKind::BorderCarryDense);
     est.addSharedPriorDense(ws.cap_ccl_keys, ws.cap_ccl_cov, nullptr,
-                            /*clock_gauge_free=*/false, /*require_closure=*/false);
+                            /*clock_gauge_free=*/false);
     est.contributionKind(ContributionKind::CloneWalk);
     est.addCloneWalkJoint(ws.cap_ccl_walk, ws.cap_ccl_walkQ);
     return true;
@@ -960,8 +960,7 @@ bool networkClockCloneRefloat(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
     if (!block_drop.empty()) {
         est.contributionKind(q3_kind);
         est.refoldSharedPriorDenseDroppingClocks(ws.cap_ccl_keys, ws.cap_ccl_cov, block_drop,
-                                                 restore, /*clock_gauge_free=*/false,
-                                                 /*require_closure=*/false);
+                                                 restore, /*clock_gauge_free=*/false);
     }
     if (!wd.empty()) {
         if (ws.cap_ccl_walkQ.size() == 0) {

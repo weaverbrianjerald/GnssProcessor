@@ -78,8 +78,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
     const bool   cb_time_linked = ctx.knobs.cb_time_linked;
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond;
     const bool   carry_cpl_tu = ctx.knobs.carry_cpl_tu;
-    const bool   carry_cpl_shmarg = ctx.knobs.carry_cpl_shmarg;
-    const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint;
 
     if (!snap_path.empty()) {
         // Config fingerprint over the datum-relevant fields.  A resume under a changed
@@ -324,16 +322,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Gauge-free fold (§2.1): a snapshot written by a gauge-free run holds a carry whose
         // clock information is in a different subspace, so a resume cannot cross the
         // flip.  Appended only when armed, so a plain-anchor lineage keeps its fingerprint.
-        // The token follows the resolved predicate (card C-GF), so arming the downdate
-        // through the carry knob invalidates a snapshot in the same way as arming it through
-        // the Q3 knob.  For a config with shared_carry_gauge_free off the token is
-        // unchanged, since carry_gauge_free == cta_on && cta_gauge_free there.  The closure
-        // test is part of the token, not a separate one: it changes which directions are
-        // marginalized out of the carried block, so crossing a closure flip is the same
-        // incompatibility as crossing the gauge-free flip.  The legacy arming (no closure)
-        // keeps the bare "cta:gf" token, so existing snapshots still match.
-        if (ctx.knobs.carry_gauge_free)
-            add(ctx.knobs.carry_gauge_free_closure ? "cta:gf+cl" : "cta:gf");
+        if (ctx.knobs.carry_gauge_free) add("cta:gf");
         // Guard statistic (§2.1 bisection): the denominator decides which epochs trip, and a
         // trip withdraws a prior and re-solves the epoch, so two runs that differ only here
         // produce different carried state and cannot resume across each other.  Appended
@@ -508,10 +497,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // only when armed (card CTU section 14).
         if (ctx.knobs.amb_drop_decouple_always)
             add("ambdropdecouple=true");
-        // Marginalized against carried SH coupling (card 1d-SH) changes what an armed
-        // carry means; appended only when armed, so existing fingerprints are unchanged.
-        if (carry_cpl_shmarg)
-            add(fmt::format("cplshmarg={}", carry_cpl_shmarg));
         // Gauge projection and source re-init (cards 1f and 1g) both change which
         // information an injected coupling row carries: 1f alters the coefficient vector
         // of every truncated row, and 1g moves whole columns onto the departed route.  Same
@@ -521,15 +506,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(fmt::format("carrycplgauge={}", ctx.knobs.carry_cpl_gauge));
         if (ctx.knobs.carry_cpl_reinit)
             add(fmt::format("carrycplreinit={}", ctx.knobs.carry_cpl_reinit));
-        // Joint whitening reshapes the injected coupling rows (departed columns go to a
-        // shared M_w marginalization instead of a per-row scalar σ²), which determines the
-        // solve in the same way as carry_cpl_cond/_tu/_shmarg above; all of them gate a
-        // resume.  Without this token, a warm resume that flips joint whitening with
-        // carry_cpl_cond still on would match fingerprints and diverge.  Appended only when
-        // armed, so a non-joint fingerprint is unchanged; joint requires carry_cpl_cond, so
-        // an armed-joint config also carries carrycplcond.
-        if (carry_cpl_joint)
-            add(fmt::format("carrycpljoint={}", carry_cpl_joint));
         // The CB-excursion guard (SPEC_day129_frame_guards phase 2.1) changes what a
         // carried code bias means across an excursion (a reinit-decorrelated state against
         // a stiff continuation), and its pending-bump queue is not snapshotted, so a resume

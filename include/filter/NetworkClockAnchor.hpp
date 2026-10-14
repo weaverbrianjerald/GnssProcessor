@@ -365,21 +365,6 @@ struct NetworkRunEndView;
  */
 int networkClockAnchorRunEnd(const NetworkRunEndView& v);
 
-/**
- * @brief Run-end report: the gauge-free shared carry (C-GF).
- *
- * The gauge-free shared carry (card C-GF) without the Q3 anchor, and the closure's
- * refusals.
- *
- * Gate: each section under its own condition, as in the teardown:
- * `ctx.knobs.carry_gauge_free && !ctx.knobs.cta_on`; `ctx.knobs.carry_gauge_free_closure
- * && est.gaugeFreePartialSkipped() > 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkGaugeFreeCarryRunEnd(const NetworkRunEndView& v);
-
 // ---- End of the run-end reports ----
 
 }  // namespace GnssProcessor

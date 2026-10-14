@@ -4,7 +4,7 @@
  * @brief Conditional local-carry coupling-row builder for the PPP-RTK network
  *        producer: the per-station assembly of the pseudo-observation rows that
  *        couple each carried phase-leveling ambiguity or ZWD to the free shared
- *        border (Odijk S-conditional carry; cards 1, 1b, 1d).
+ *        border (Odijk S-conditional carry; cards 1, 1d).
  *
  * The legacy phase-leveling carry folds an independent diagonal prior on each
  * carried local.  The conditional carry (network.carry_conditional_coupling)
@@ -12,10 +12,7 @@
  * @f$y=(\hat r_{\text{prev}}-r_{\text{lin}})+\sum_{\text{present}}M_{rj}\hat s_{\text{prev},j}@f$
  * and @f$\sigma^2=\text{var\_eff}+\sum_{\text{departed}}M_{rj}^2 P_{\text{prev},jj}@f$.
  * This removes the double count of shared information, so the recursion equals the
- * batch solve.  Card 1b (carry_coupling_joint_whiten) marginalizes the departed
- * columns jointly (an @f$M_w@f$ side-block, whitened via @ref whitenCouplingRows), which
- * keeps the between-row DD information that the scalar path drops.  Card 1d
- * (carry_coupling_time_update) shrinks each present column by
+ * batch solve.  Card 1d (carry_coupling_time_update) shrinks each present column by
  * @f$\kappa_j=P_{\text{prev}}/(P_{\text{prev}}+q_j\Delta t)@f$ and re-projects the
  * shrink gauge-orthogonally (@ref CouplingRowBuilder::tuGaugeRestore).  Card 1f
  * (carry_coupling_gauge_project) extends the same re-projection to the truncated
@@ -25,18 +22,15 @@
  * (ApplicationNetworkAssembly.cpp) at decomposition step INC-7b; see
  * docs/network_decomposition_plan.md.  @ref CouplingRowBuilder is constructed fresh
  * per station inside the PASS-B OpenMP produce loop.  It holds the per-station
- * scratch (the four containers @c crows / @c craw / @c white_pw / @c white_map) and
- * exposes the six former @c [&] lambdas as member functions over explicit const
- * references, so the function bodies are unchanged; it owns no cross-epoch state.
- * The coupling type vocabulary (@ref CoupledShared, @ref CplRowRaw,
- * @ref kCouplingSparsifyRelThresh, @ref whitenCouplingRows) and the per-station slot
- * @ref StationAssembly are defined in filter/NetworkRunTypes.hpp, which this header
- * @c \#includes.  @ref whitenCouplingRows stays header-inline so that its two callers
- * (the builder here and the within-epoch RAIM refloat re-whiten in
- * NetworkSolveGlue.cpp) share one codegen.
+ * scratch (the pending-row container @c crows) and exposes the former @c [&] lambdas
+ * as member functions over explicit const references, so the function bodies are
+ * unchanged; it owns no cross-epoch state.  The coupling type vocabulary
+ * (@ref CoupledShared, @ref CplRowRaw, @ref kCouplingSparsifyRelThresh) and the
+ * per-station slot @ref StationAssembly are defined in filter/NetworkRunTypes.hpp,
+ * which this header @c \#includes.
  */
 
-#include "filter/NetworkRunTypes.hpp"   // CoupledShared / CplRowRaw / LocalCarry / StationAssembly / whitenCouplingRows / SharedParamKind (via NetworkEstimator.hpp)
+#include "filter/NetworkRunTypes.hpp"   // CoupledShared / CplRowRaw / LocalCarry / StationAssembly / SharedParamKind (via NetworkEstimator.hpp)
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactRow (card CTU)
 
 #include <Eigen/Dense>
@@ -169,18 +163,18 @@ struct TuEnt {
     SharedParamKind kind{SharedParamKind::Clock};  ///< coupling kind
 };
 
-/// Per-station conditional coupling-row builder (cards 1, 1b, 1d).  Constructed fresh
+/// Per-station conditional coupling-row builder (cards 1, 1d).  Constructed fresh
 /// for each present carry-eligible station inside the PASS-B OpenMP produce loop and
 /// never hoisted: fresh construction is the per-station scratch reset.  It holds the
-/// per-station scratch (@c crows / @c craw / @c white_pw / @c white_map), the shared
+/// per-station scratch (@c crows), the shared
 /// slot @ref StationAssembly @c R, and the const inputs that the member functions
 /// read.  The driver calls @ref buildCplRow once per carried column (ambiguity and
 /// ZWD); @ref appendCouplingRows then batch-appends the accumulated rows into
 /// @c R.A_s / @c R.A_r / @c R.w / @c R.y.
 ///
-/// An aggregate (no user-declared constructor): the 12 leading const, value and
+/// An aggregate (no user-declared constructor): the 10 leading const, value and
 /// reference members (@c est through @c R) are set by brace-init at the construction
-/// site; the four scratch containers default-initialize empty, and @c readmit_marg /
+/// site; the scratch container @c crows default-initializes empty, and @c readmit_marg /
 /// @c loop_ep are assigned after construction when the re-admission window is armed.
 /// Owns no cross-epoch state: the carry map it reads (@c tu_reinit_hist) lives in
 /// NetworkRunContext and is passed by const reference.
@@ -190,9 +184,7 @@ struct CouplingRowBuilder {
     double                     q_clock;           ///< Clock per-epoch process noise (m²/s)
     double                     q_cb;              ///< CodeBias process noise
     double                     q_pb;              ///< PhaseBias process noise
-    bool                       carry_cpl_joint;   ///< joint-whiten departed cols (card 1b)
     bool                       carry_cpl_tu;      ///< border time update, κ shrink (card 1d)
-    bool                       carry_cpl_shmarg;  ///< marginalize VtecSh terms (card 1d-SH)
     /// Hold each (constellation, kind) coefficient sum at its harvest value when the row
     /// is truncated, instead of at the surviving-present value (card 1f,
     /// network.carry_coupling_gauge_project).  See @ref CouplingRowBuilder::tuGaugeRestore.
@@ -209,9 +201,6 @@ struct CouplingRowBuilder {
     StationAssembly&           R;                 ///< this thread's own PASS-B slot (= asm_res[i])
 
     std::vector<PendCplRow>    crows{};    ///< scalar-path pending rows (card 1)
-    std::vector<CplRowRaw>     craw{};     ///< joint-path pre-whitening ingredients (card 1b)
-    std::vector<double>        white_pw{}; ///< P_w per M_w column (departed marginal var)
-    std::map<std::string, int> white_map{};///< departed identity → M_w column
     /// Re-admission re-coupling edge (network.readmit_coupling_marg_ep): satellite →
     /// loop-epoch index at which its post-re-admission marginalization expires.  While
     /// @c loop_ep < expiry, every coupling term on that satellite's shared columns takes
@@ -242,8 +231,6 @@ struct CouplingRowBuilder {
     bool readmitDiverted(const CoupledShared& cs);
     /// Resolve @p cs to its shared-border column this epoch, or −1 if it has departed.
     Eigen::Index resolveSharedCol(const CoupledShared& cs) const;
-    /// Stable identity key of a departed shared column (rows share one M_w column).
-    static std::string couplingId(const CoupledShared& cs);
     /// Per-kind border process noise (m²/s): the dense-fold q ladder, and the per-degree
     /// SH value.
     double couplingQ(const CoupledShared& cs) const;
@@ -280,8 +267,8 @@ struct CouplingRowBuilder {
     bool tuReinitSince(const CoupledShared& cs, double since_s) const;
     /// Build one coupling row for carried local column @p col (buffered, not yet appended).
     /// @p sat and @p signal name the column (card NOM N2a: the row's tag carries them, with
-    /// the kind @c CouplingScalar, or @c CouplingJoint on the joint path, which the builder
-    /// sets); the defaults name none (a column with no satellite, the wet delay).
+    /// the kind @c CouplingScalar, which the builder sets); the defaults name none (a column
+    /// with no satellite, the wet delay).
     void buildCplRow(Eigen::Index col, double x_lin_val,
                      const LocalCarry& lc, double var_eff, double gap,
                      const SatId& sat = SatId{}, const SignalId& signal = SignalId{});
@@ -332,10 +319,9 @@ struct CouplingRowBuilder {
     /// Returns false when the factor is non-SPD after the ridge retry; nothing is then
     /// buffered, and the caller falls back to per-column rows and counts the fallback.  Returns true with nothing buffered when
     /// no column survives.  Columns refused by the scalar screen are dropped from the
-    /// block and counted.  Not valid under @c carry_cpl_joint (the caller's predicate
-    /// excludes it).
+    /// block and counted.
     bool buildLocalBlock(const std::vector<LocalBlockCol>& cols);
-    /// Batch-append the buffered rows into @c R (joint-whitened, or scalar per-row).
+    /// Batch-append the buffered rows into @c R (scalar per-row rows and whitened block rows).
     void appendCouplingRows();
 };
 
@@ -390,13 +376,11 @@ double phaseBiasShiftOf(const std::map<std::pair<std::string, std::string>, doub
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the coupling carry (cards 1, 1b, 1d).
+ * @brief Run-end report: the coupling carry (cards 1, 1d).
  *
- * The coupling carry (cards 1, 1b, 1d): non-SPD joint-whitening fallbacks and the carry
- * volume.
+ * The coupling carry (cards 1, 1d): the carry volume.
  *
- * Gate: each section under its own condition, as in the teardown: `carry_cpl_joint &&
- * n_cpl_joint_fallback > 0`; `carry_cpl_cond`.
+ * Gate: `carry_cpl_cond`.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).

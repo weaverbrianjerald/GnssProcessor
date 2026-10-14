@@ -287,7 +287,7 @@ TEST(NetworkRhsAttribClosureTest, ReplayPriorRefoldIsNamedPerKindAndFoldsTheSame
     for (const bool gauge_free : {false, true}) {
         SCOPED_TRACE(gauge_free ? "gauge-free" : "plain");
         auto fold = [&](NetworkEstimator& est) {
-            if (gauge_free) est.addSharedPriorClockGaugeFree(cap, false);
+            if (gauge_free) est.addSharedPriorClockGaugeFree(cap);
             else            est.addSharedPrior(cap);
         };
         NetworkEstimator unnamed, named;

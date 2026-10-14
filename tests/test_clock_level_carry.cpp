@@ -221,8 +221,7 @@ TEST(ClockLevelCarryTest, TimeUpdateTurnsAnAmbiguityRowIntoALevelStatement) {
         StationAssembly R;
         double sigma2 = 0.0;
         CouplingRowBuilder cb{est, shc, q_clock, q_cb, q_pb,
-                              /*joint=*/false, tu, /*shmarg=*/false, /*gauge=*/true,
-                              /*reinit=*/false, hist, R};
+                              tu, /*gauge=*/true, /*reinit=*/false, hist, R};
         EXPECT_TRUE(cb.scalarRowIngredients(/*col=*/1, /*x_lin=*/0.05, lc, 1e-4, gap, row,
                                             sigma2));
     };

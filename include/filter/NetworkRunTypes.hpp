@@ -8,8 +8,7 @@
  * Support header for the network run loop, not a public API; each type carries its
  * own documentation.  The types came from the anonymous namespace of
  * ApplicationNetwork.cpp (INC-2; see docs/network_decomposition_plan.md).  The
- * former file-static helpers (@ref sharedCarryKey, @ref whitenCouplingRows) are
- * @c inline with external linkage.
+ * former file-static helper @ref sharedCarryKey is @c inline with external linkage.
  */
 
 #include "filter/StateManager.hpp"
@@ -527,18 +526,14 @@ struct CoupledShared {
 /// couplings; the dropped near-zero entries contribute negligibly to the row.
 inline constexpr double kCouplingSparsifyRelThresh = 1e-8;
 
-/// Pre-whitening ingredients of one conditional coupling row (card 1b,
-/// network.carry_coupling_joint_whiten), retained per station so that a station's
-/// rows can be whitened jointly at build time and re-whitened if a within-epoch RAIM
-/// refloat later drops some of them.  @c shared holds the present shared terms, kept
-/// as ordinary @f$A_s@f$ coefficients as in card 1.  @c departed holds the departed
-/// shared terms, which are marginalized jointly: each references an @f$M_w@f$ column
-/// index shared across the station's rows, so that their common departed direction
-/// is correlated (the between-row information that the scalar path discards).
+/// Pre-whitening ingredients of one conditional coupling row: one column of a station's
+/// whitened local block (F3; @ref PlBlockRaw), retained so that the block can be
+/// re-whitened if a within-epoch RAIM refloat later drops some of its columns.
+/// @c shared holds the present shared terms, kept as ordinary @f$A_s@f$ coefficients as
+/// in card 1; the departed terms are already marginalized into @c var_eff.
 struct CplRowRaw {
     Eigen::Index local_col{0};                            ///< carried local (A_r) column this row targets (+1).
     std::vector<std::pair<Eigen::Index, double>> shared;  ///< present shared terms: (shared col, M_rj).
-    std::vector<std::pair<int, double>>          departed;///< marginalized shared terms: (M_w column index, M_rj).
     double rhs{0.0};                                      ///< (r̂_prev − r_lin) + Σ_present M_rj·ŝ_prev,j.
     double var_eff{0.0};                                  ///< pure conditional variance (plus process noise); this row's own diagonal.
     /// The row's contribution tag (card NOM N2a): its kind and the identity of its local
@@ -557,9 +552,8 @@ struct CplRowRaw {
 /// shared terms (κ-shrunk per card 1d, gauge-restored per card 1f), the RHS, and
 /// σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt, which the card 1 scalar row
 /// would have carried.  Here @c var_eff is that σ², i.e. the diagonal of Σ; the
-/// departed-column marginalization stays per row and diagonal, as on the scalar path
-/// (card 1b's joint departed marginalization is mutually exclusive with this block in
-/// the present build).  @c Sigma is the n×n joint prior covariance over those
+/// departed-column marginalization stays per row and diagonal, as on the scalar path.
+/// @c Sigma is the n×n joint prior covariance over those
 /// columns: that diagonal, and off the diagonal the harvested conditional cross
 /// covariances (N_rr⁻¹)_{c_i c_j} (scaled by the VCE factor), or 0 where the pair was
 /// harvested at different epochs.  Σ is then block-diagonal by harvest stamp, each
@@ -568,7 +562,7 @@ struct CplRowRaw {
 /// row k sits at A_s/A_r row @c cpl_row_start + row0 + k).  Empty unless the knob
 /// built a block for this station this epoch.
 struct PlBlockRaw {
-    std::vector<CplRowRaw> rows;    ///< per-column ingredients (@c departed is unused; it is already folded into @c var_eff)
+    std::vector<CplRowRaw> rows;    ///< per-column ingredients (the departed terms are already folded into @c var_eff)
     Eigen::MatrixXd        Sigma;   ///< n×n joint prior covariance (m²)
     Eigen::Index           row0{0}; ///< offset of the block's first row within the coupling block
 };
@@ -1244,16 +1238,6 @@ struct StationAssembly {
     // row can be zeroed).
     Eigen::Index              cpl_row_start{-1};
     std::vector<Eigen::Index> cpl_row_local_cols;
-    // Joint whitening of the coupling rows (card 1b, network.carry_coupling_joint_whiten):
-    // the rows' pre-whitening ingredients and the per-M_w-column marginalization
-    // variances, retained so that the within-epoch RAIM refloat can re-whiten the
-    // surviving rows (the whitening mixes rows within the station, so a refloat cannot
-    // zero a single output row).  Empty on the card 1 scalar path.
-    // cpl_joint_fallback = the joint LLT was non-SPD after the ridge retry, so this
-    // station fell back to the scalar path this epoch (counted in a run WARN).
-    std::vector<CplRowRaw>    cpl_raw;
-    std::vector<double>       cpl_white_pw;
-    bool                      cpl_joint_fallback{false};
     // Coupling-term counts of this station-epoch's injected rows (card 1 and 1d
     // observability): layout-present terms, departed (marginalized) terms, and present
     // terms κ-shrunk by the border time update.  Summed serially into run totals.
@@ -1340,9 +1324,8 @@ struct StationAssembly {
     /// the knob is off, when the station had no injectable carried column, or when the
     /// block's factorization fell back to per-column rows.  Read by the within-epoch
     /// RAIM refloat, which re-whitens the surviving columns (the whitening mixes the
-    /// block's rows, so a refloat cannot zero a single output row); the same contract as
-    /// @c cpl_raw for card 1b.  All F3 counts below are produce-phase local and summed
-    /// serially.
+    /// block's rows, so a refloat cannot zero a single output row).  All F3 counts below
+    /// are produce-phase local and summed serially.
     PlBlockRaw                pl_blk;
     long long                 pl_blk_blocks{0};        ///< Blocks whitened (0 or 1 per station-epoch; F3).
     long long                 pl_blk_rows{0};          ///< Whitened rows emitted (F3).
@@ -1533,90 +1516,22 @@ struct StationAssembly {
     std::vector<std::tuple<std::string, double, double>> pin_seed_targets;
 };
 
-/// Jointly whiten the kept coupling rows of one station, i.e. those whose
-/// @c local_col is not in @p skip (the refloat drop-set; empty for the primary build)
-/// (card 1b, network.carry_coupling_joint_whiten).  Builds the joint row covariance
-/// @f$R = \mathrm{diag}(\text{var\_eff}_r) + M_w\,\mathrm{diag}(P_w)\,M_w^\top@f$ over
-/// the kept rows (@p white_pw = @f$P_w@f$ per @f$M_w@f$ column), LLᵀ-factorizes it,
-/// and fills the whitened @c +1/local (@p Hr), @c M_r/shared (@p Hs) and RHS (@p z)
-/// blocks as unit-information rows (weight 1), as @c appendShIonoRows does.  On a
-/// non-SPD factor it retries once with a @f$10^{-12}\cdot\max|\mathrm{diag}|@f$ ridge;
-/// if the factor is still non-SPD it returns false, and the caller falls back to the
-/// card 1 scalar path.  @p Hr is @c m×ncol_r, @p Hs is @c m×nshared, @p z has length
-/// @c m, with @c m the kept-row count (m = 0 gives empty outputs and returns true).
-/// @p kept receives the indices into @p rows of the kept rows, in order (output row k
-/// belongs to @c rows[kept[k]]), as @ref whitenLocalBlock reports its own; it is filled
-/// before the factor, so it names the kept rows on a false return too (card NOM N2a: the
-/// re-whiten's row tags read it, so the keep rule exists once).
-inline bool whitenCouplingRows(const std::vector<CplRowRaw>& rows,
-                               const std::vector<double>& white_pw,
-                               const std::set<Eigen::Index>& skip,
-                               Eigen::Index ncol_r, Eigen::Index nshared,
-                               Eigen::MatrixXd& Hr, Eigen::MatrixXd& Hs,
-                               Eigen::VectorXd& z, std::vector<Eigen::Index>& kept) {
-    std::vector<const CplRowRaw*> keep;
-    keep.reserve(rows.size());
-    kept.clear();
-    for (std::size_t i = 0; i < rows.size(); ++i)
-        if (skip.find(rows[i].local_col) == skip.end()) {
-            keep.push_back(&rows[i]);
-            kept.push_back(static_cast<Eigen::Index>(i));
-        }
-    const Eigen::Index m = static_cast<Eigen::Index>(keep.size());
-    Hr = Eigen::MatrixXd::Zero(m, ncol_r);
-    Hs = Eigen::MatrixXd::Zero(m, nshared);
-    z.resize(m);
-    if (m == 0) return true;
-    const Eigen::Index nw = static_cast<Eigen::Index>(white_pw.size());
-    Eigen::MatrixXd Mw = Eigen::MatrixXd::Zero(m, nw);
-    Eigen::MatrixXd Rr = Eigen::MatrixXd::Zero(m, m);
-    for (Eigen::Index k = 0; k < m; ++k) {
-        const CplRowRaw& r = *keep[static_cast<std::size_t>(k)];
-        if (r.local_col >= 0 && r.local_col < ncol_r) Hr(k, r.local_col) = 1.0;
-        for (const auto& sc : r.shared)
-            if (sc.first >= 0 && sc.first < nshared) Hs(k, sc.first) = sc.second;
-        for (const auto& dc : r.departed)
-            if (dc.first >= 0 && dc.first < nw) Mw(k, dc.first) = dc.second;
-        z(k) = r.rhs;
-        Rr(k, k) = r.var_eff;
-    }
-    // R += M_w diag(P_w) M_wᵀ: the joint departed-column marginalization (its diagonal
-    // alone is the card 1 scalar dep_var; the off-diagonals are the between-row
-    // correlation that the scalar path drops).
-    for (Eigen::Index j = 0; j < nw; ++j)
-        if (white_pw[static_cast<std::size_t>(j)] > 0.0)
-            Rr.noalias() += white_pw[static_cast<std::size_t>(j)]
-                          * (Mw.col(j) * Mw.col(j).transpose());
-    Rr = (0.5 * (Rr + Rr.transpose())).eval();   // clean numerical asymmetry before LLT
-    Eigen::LLT<Eigen::MatrixXd> llt(Rr);
-    if (llt.info() != Eigen::Success) {
-        const double dmax = Rr.diagonal().cwiseAbs().maxCoeff();
-        Rr.diagonal().array() += (dmax > 0.0 ? 1e-12 * dmax : 1e-12);
-        llt.compute(Rr);
-        if (llt.info() != Eigen::Success) return false;   // caller falls back to scalar
-    }
-    Hr = llt.matrixL().solve(Hr);
-    Hs = llt.matrixL().solve(Hs);
-    z  = llt.matrixL().solve(z);
-    return true;
-}
-
 /// Whiten one station's phase-leveling carry block over its kept columns, i.e. those
 /// whose @c local_col is not in @p skip (the within-epoch RAIM refloat drop-set; empty
 /// for the primary build) (F3, network.phase_leveling_local_block).  The dropped
 /// columns are marginalized (their rows and columns are deleted from Σ before the
 /// factor, never conditioned on), which is exact: the kept columns' joint prior is the
 /// corresponding principal sub-block of Σ.  Factor Σ_kept = LLᵀ (one ridge retry at
-/// 1e-12·max|diag|, as in @ref whitenCouplingRows), then emit the unit-information
+/// 1e-12·max|diag|), then emit the unit-information
 /// rows L⁻¹·[I | M | y]: @p Hr (m×ncol_r, the dense lower-triangular L⁻¹ placed on the
 /// block's local columns), @p Hs (m×nshared, L⁻¹ times the per-column present-shared
 /// regressor rows) and @p z (L⁻¹y).  @p kept receives the indices into @c blk.rows of
 /// the surviving rows, in order (output row k belongs to @c blk.rows[kept[k]]).
 /// Returns false when @c blk.Sigma is not n×n or the factor is non-SPD after the retry
 /// (the caller falls back to per-column rows, or drops the block for a refloat
-/// re-solve); m = 0 returns true with empty outputs.  Header-inline for the same
-/// reason as @ref whitenCouplingRows: its two callers (the builder's primary build and
-/// the run-TU refloat re-whiten) must share one codegen, so that the re-whitened
+/// re-solve); m = 0 returns true with empty outputs.  Header-inline because its two
+/// callers (the builder's primary build and the run-TU refloat re-whiten) must share
+/// one codegen, so that the re-whitened
 /// survivors are the rows the primary build would have emitted for that column set.
 inline bool whitenLocalBlock(const PlBlockRaw& blk,
                              const std::set<Eigen::Index>& skip,

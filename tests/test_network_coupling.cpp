@@ -1,11 +1,9 @@
-// Unit tests for the conditional coupling-row seam of cards 1/1b/1d
+// Unit tests for the conditional coupling-row seam of cards 1/1d
 // (filter/NetworkCoupling.hpp, split out of Application::networkPassB_ at INC-7b).
 // They exercise branches the 50-station byte-gate arms do not reach even with
-// coupling live: the production whitenCouplingRows kernel, its refloat skip-set path
-// and non-SPD fallback, and the CouplingRowBuilder scalar / joint / departed /
-// kappa-shrink / SH-marginalize branches over a real registered estimator.  The
-// builder takes explicit references, so it is directly constructible without a
-// TestAccess shim.
+// coupling live: the CouplingRowBuilder scalar / departed / kappa-shrink branches over
+// a real registered estimator.  The builder takes explicit references, so it is
+// directly constructible without a TestAccess shim.
 
 #include <gtest/gtest.h>
 
@@ -25,134 +23,6 @@
 #include <vector>
 
 using namespace GnssProcessor;
-
-namespace {
-
-// Build the joint row covariance R = diag(var_eff) + M_w diag(P_w) M_w^T that
-// whitenCouplingRows factors, so a test can reconstruct L and assert the
-// production whitening is exactly L^{-1} applied to the raw rows.
-Eigen::MatrixXd jointCov(const std::vector<CplRowRaw>& rows,
-                         const std::vector<double>& white_pw) {
-    const Eigen::Index m = static_cast<Eigen::Index>(rows.size());
-    const Eigen::Index nw = static_cast<Eigen::Index>(white_pw.size());
-    Eigen::MatrixXd Mw = Eigen::MatrixXd::Zero(m, nw);
-    Eigen::MatrixXd R  = Eigen::MatrixXd::Zero(m, m);
-    for (Eigen::Index k = 0; k < m; ++k) {
-        for (const auto& dc : rows[static_cast<size_t>(k)].departed)
-            Mw(k, dc.first) = dc.second;
-        R(k, k) = rows[static_cast<size_t>(k)].var_eff;
-    }
-    for (Eigen::Index j = 0; j < nw; ++j)
-        R.noalias() += white_pw[static_cast<size_t>(j)] * (Mw.col(j) * Mw.col(j).transpose());
-    return R;
-}
-
-}  // namespace
-
-// --- whitenCouplingRows: the production kernel ------------------------------
-
-// The whitened +1/local (Hr), M_r/shared (Hs) and RHS (z) blocks are exactly L^{-1}
-// applied to the raw rows, where L L^T = R (the joint covariance).  The test
-// reconstructs L and asserts L * whitened == raw to 1e-12, the numerical contract
-// addStation relies on.
-TEST(NetworkCouplingTest, WhitenRowsAreExactInverseCholeskyOfJointCovariance) {
-    // Two locals (r0, r1) coupled to two present shared columns and sharing one
-    // departed shared column W (index 0 in the M_w block): the off-diagonal
-    // correlation that the scalar path drops.
-    std::vector<CplRowRaw> rows(2);
-    rows[0].local_col = 0;
-    rows[0].shared = {{0, 0.7}};
-    rows[0].departed = {{0, 0.5}};
-    rows[0].rhs = 1.25;
-    rows[0].var_eff = 0.04;
-    rows[1].local_col = 1;
-    rows[1].shared = {{1, -1.3}};
-    rows[1].departed = {{0, -0.9}};
-    rows[1].rhs = -0.5;
-    rows[1].var_eff = 0.09;
-    std::vector<double> white_pw = {2.5};   // P_w for the shared departed column
-
-    const Eigen::Index ncol_r = 2, nshared = 2;
-    Eigen::MatrixXd Hr, Hs;
-    Eigen::VectorXd z;
-    std::vector<Eigen::Index> kept;
-    ASSERT_TRUE(whitenCouplingRows(rows, white_pw, /*skip=*/{}, ncol_r, nshared, Hr, Hs, z,
-                                   kept));
-    EXPECT_EQ(kept, (std::vector<Eigen::Index>{0, 1}));   // no skip set: every row, in order
-    ASSERT_EQ(Hr.rows(), 2);
-    ASSERT_EQ(Hs.rows(), 2);
-
-    const Eigen::MatrixXd R = jointCov(rows, white_pw);
-    const Eigen::MatrixXd L = Eigen::LLT<Eigen::MatrixXd>(R).matrixL();
-
-    // Raw (un-whitened) blocks: Hr_raw = +1 at local_col, Hs_raw = M_r at shared, z_raw = rhs.
-    Eigen::MatrixXd Hr_raw = Eigen::MatrixXd::Zero(2, ncol_r);
-    Eigen::MatrixXd Hs_raw = Eigen::MatrixXd::Zero(2, nshared);
-    Eigen::VectorXd z_raw(2);
-    for (int k = 0; k < 2; ++k) {
-        Hr_raw(k, rows[k].local_col) = 1.0;
-        for (const auto& sc : rows[k].shared) Hs_raw(k, sc.first) = sc.second;
-        z_raw(k) = rows[k].rhs;
-    }
-    EXPECT_LT((L * Hr - Hr_raw).cwiseAbs().maxCoeff(), 1e-12);
-    EXPECT_LT((L * Hs - Hs_raw).cwiseAbs().maxCoeff(), 1e-12);
-    EXPECT_LT((L * z  - z_raw ).cwiseAbs().maxCoeff(), 1e-12);
-}
-
-// The refloat re-whiten path (the joint-coupling refloat block in NetworkSolveGlue.cpp)
-// passes a `skip` set of local A_r columns to drop; no gate arm exercises a coupling
-// refloat.  The kept rows are exactly those whose local_col is not in skip.
-TEST(NetworkCouplingTest, WhitenSkipSetDropsRefloatedRows) {
-    std::vector<CplRowRaw> rows(3);
-    for (int k = 0; k < 3; ++k) {
-        rows[static_cast<size_t>(k)].local_col = k;
-        rows[static_cast<size_t>(k)].var_eff = 0.05;
-        rows[static_cast<size_t>(k)].rhs = 0.1 * (k + 1);
-    }
-    std::vector<double> white_pw;   // no departed columns
-    std::set<Eigen::Index> skip = {1};   // refloat the middle local
-
-    Eigen::MatrixXd Hr, Hs;
-    Eigen::VectorXd z;
-    std::vector<Eigen::Index> kept;
-    ASSERT_TRUE(whitenCouplingRows(rows, white_pw, skip, 3, 0, Hr, Hs, z, kept));
-    ASSERT_EQ(Hr.rows(), 2);            // rows 0 and 2 survive
-    EXPECT_EQ(kept, (std::vector<Eigen::Index>{0, 2}));   // and the kernel reports them
-    // Surviving rows target locals 0 and 2 (diagonal +1 after unit-var whitening).
-    EXPECT_GT(Hr(0, 0), 0.0);
-    EXPECT_DOUBLE_EQ(Hr(0, 1), 0.0);
-    EXPECT_GT(Hr(1, 2), 0.0);
-    EXPECT_DOUBLE_EQ(Hr(1, 1), 0.0);
-}
-
-// A non-SPD joint covariance (here forced with a negative var_eff, a degenerate input
-// that production screens upstream, used only to reach the return path) fails the
-// ridge retry and returns false, so the caller falls back to the scalar per-row
-// marginalization.  No captured run has reached this fallback, so only a unit test
-// covers it.
-TEST(NetworkCouplingTest, WhitenNonSpdReturnsFalse) {
-    std::vector<CplRowRaw> rows(1);
-    rows[0].local_col = 0;
-    rows[0].var_eff = -1.0;            // indefinite: R(0,0) = -1, ridge (1e-12) cannot rescue it
-    rows[0].rhs = 0.0;
-    std::vector<double> white_pw;
-    Eigen::MatrixXd Hr, Hs;
-    Eigen::VectorXd z;
-    std::vector<Eigen::Index> kept;
-    EXPECT_FALSE(whitenCouplingRows(rows, white_pw, /*skip=*/{}, 1, 0, Hr, Hs, z, kept));
-}
-
-// An empty kept-row set is the documented success case (returns true, empty outputs).
-TEST(NetworkCouplingTest, WhitenEmptyIsSuccess) {
-    std::vector<CplRowRaw> rows;
-    std::vector<double> white_pw;
-    Eigen::MatrixXd Hr, Hs;
-    Eigen::VectorXd z;
-    std::vector<Eigen::Index> kept{7};   // cleared by the call
-    EXPECT_TRUE(whitenCouplingRows(rows, white_pw, /*skip=*/{}, 2, 2, Hr, Hs, z, kept));
-    EXPECT_EQ(Hr.rows(), 0);
-    EXPECT_TRUE(kept.empty());
-}
 
 // --- CouplingRowBuilder over a real registered estimator --------------------
 
@@ -177,7 +47,7 @@ struct BuilderFixture {
         clk_col = est.registerClock("G01");
         if (second_clock) clk2_col = est.registerClock("G02");
         pb_col  = est.registerPhaseBias("G01", "L1C");
-        sh_col  = est.registerVtecCoeff(1, 0, 'C');   // present SH column (SH-marginalize test)
+        sh_col  = est.registerVtecCoeff(1, 0, 'C');   // present SH column (the SH re-admission case)
         est.beginEpoch();
         R.A_s = Eigen::MatrixXd::Zero(0, est.numShared());
         R.A_r = Eigen::MatrixXd::Zero(0, 4);   // 4 local columns for the test
@@ -188,10 +58,9 @@ struct BuilderFixture {
     // `gauge` / `reinit` default to false, so every case that does not set them runs the
     // card 1f/1g code paths with those cards off.  Those cases, left unmodified, are the
     // proof that the cards change nothing when off.
-    CouplingRowBuilder make(bool joint, bool tu, bool shmarg,
-                            bool gauge = false, bool reinit = false) {
+    CouplingRowBuilder builder(bool tu, bool gauge = false, bool reinit = false) {
         return CouplingRowBuilder{est, shc, /*q_clock=*/1e-4, /*q_cb=*/1e-4, /*q_pb=*/1e-4,
-                                  joint, tu, shmarg, gauge, reinit, tu_reinit_hist, R};
+                                  tu, gauge, reinit, tu_reinit_hist, R};
     }
 };
 
@@ -206,11 +75,10 @@ TEST(NetworkCouplingTest, BuildScalarPresentColumnMakesPendRow) {
     lc.last_seen_s = 0.0;
     lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', /*sh_layer=*/0,
                                   /*coeff=*/0.8, /*s_prev=*/1.5, /*p_prev=*/0.2} };
-    auto cb = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false);
+    auto cb = f.builder(/*tu=*/false);
     cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.5, lc, /*var_eff=*/0.04, /*gap=*/30.0);
 
     ASSERT_EQ(cb.crows.size(), 1u);
-    ASSERT_TRUE(cb.craw.empty());
     const PendCplRow& row = cb.crows[0];
     EXPECT_EQ(row.local_col, 0);
     ASSERT_EQ(row.shared.size(), 1u);
@@ -233,7 +101,7 @@ TEST(NetworkCouplingTest, BuildScalarDepartedColumnMarginalizesIntoVariance) {
     lc.last_seen_s = 0.0;
     lc.coupling = { CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', /*sh_layer=*/0,
                                   /*coeff=*/0.5, /*s_prev=*/3.0, /*p_prev=*/9.0} };  // G99 not registered
-    auto cb = f.make(false, false, false);
+    auto cb = f.builder(/*tu=*/false);
     cb.buildCplRow(/*col=*/1, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
 
     ASSERT_EQ(cb.crows.size(), 1u);
@@ -254,7 +122,7 @@ TEST(NetworkCouplingTest, BuildScalarTimeUpdateShrinksPresentColumn) {
     lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', /*sh_layer=*/0,
                                   /*coeff=*/1.0, /*s_prev=*/0.0, /*p_prev=*/1.0} };
     const double q_clock = 1e-4, gap = 30.0;
-    auto cb = f.make(/*joint=*/false, /*tu=*/true, /*shmarg=*/false);
+    auto cb = f.builder(/*tu=*/true);
     cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.01, gap);
 
     ASSERT_EQ(cb.crows.size(), 1u);
@@ -292,7 +160,7 @@ TEST(NetworkCouplingTest, GaugeProjectOffLeavesTruncatedFamilySumShort) {
         CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
         CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},  // departed
     };
-    auto cb = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false, /*gauge=*/false);
+    auto cb = f.builder(/*tu=*/false, /*gauge=*/false);
     cb.buildCplRow(0, 0.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
 
     ASSERT_EQ(cb.crows.size(), 1u);
@@ -316,7 +184,7 @@ TEST(NetworkCouplingTest, GaugeProjectHoldsTruncatedFamilySumAtHarvestValue) {
         CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
         CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},  // departed
     };
-    auto cb = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false, /*gauge=*/true);
+    auto cb = f.builder(/*tu=*/false, /*gauge=*/true);
     cb.buildCplRow(0, 1.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
 
     ASSERT_EQ(cb.crows.size(), 1u);
@@ -348,7 +216,7 @@ TEST(NetworkCouplingTest, GaugeProjectCountsOrphanWhenWholeFamilyDeparted) {
         CoupledShared{SharedParamKind::Clock, "G98", "", 0, 0, 'C', 0, 0.4, 1.0, 0.1},  // departed
         CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 1.0, 0.1},  // departed
     };
-    auto cb = f.make(false, false, false, /*gauge=*/true);
+    auto cb = f.builder(/*tu=*/false, /*gauge=*/true);
     cb.buildCplRow(0, 0.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
 
     ASSERT_EQ(cb.crows.size(), 1u);
@@ -368,10 +236,10 @@ TEST(NetworkCouplingTest, GaugeProjectIsIdenticalWhenNothingTruncated) {
         CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, 0.5, 1.0, 0.2},
         CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
     };
-    auto off = f.make(false, false, false, /*gauge=*/false);
+    auto off = f.builder(/*tu=*/false, /*gauge=*/false);
     off.buildCplRow(0, 0.5, lc, 0.01, 30.0);
     BuilderFixture g(/*second_clock=*/true);
-    auto on = g.make(false, false, false, /*gauge=*/true);
+    auto on = g.builder(/*tu=*/false, /*gauge=*/true);
     on.buildCplRow(0, 0.5, lc, 0.01, 30.0);
 
     ASSERT_EQ(off.crows.size(), 1u);
@@ -403,8 +271,7 @@ TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
                                   /*coeff=*/0.7, /*s_prev=*/9.0, /*p_prev=*/0.25} };
 
     // kappa off, card 1g off: the stale column folds as a full-weight present term.
-    auto legacy = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false,
-                         /*gauge=*/false, /*reinit=*/false);
+    auto legacy = f.builder(/*tu=*/false, /*gauge=*/false, /*reinit=*/false);
     legacy.buildCplRow(0, 0.0, lc, 0.01, 30.0);
     ASSERT_EQ(legacy.crows.size(), 1u);
     EXPECT_EQ(legacy.crows[0].shared.size(), 1u);
@@ -413,7 +280,7 @@ TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
     // kappa still off, card 1g on: it takes the departed route (kappa = 0).
     BuilderFixture g;
     g.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", "L1C"}] = 100.0;
-    auto fixed = g.make(false, /*tu=*/false, false, /*gauge=*/false, /*reinit=*/true);
+    auto fixed = g.builder(/*tu=*/false, /*gauge=*/false, /*reinit=*/true);
     fixed.buildCplRow(0, 0.0, lc, 0.01, 30.0);
     ASSERT_EQ(fixed.crows.size(), 1u);
     EXPECT_TRUE(fixed.crows[0].shared.empty());
@@ -431,72 +298,10 @@ TEST(NetworkCouplingTest, ReinitSatWideWildcardMatchesAnySignal) {
     lc.last_seen_s = 50.0;
     lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C', 0,
                                   0.7, 9.0, 0.25} };
-    auto cb = f.make(false, /*tu=*/false, false, /*gauge=*/false, /*reinit=*/true);
+    auto cb = f.builder(/*tu=*/false, /*gauge=*/false, /*reinit=*/true);
     cb.buildCplRow(0, 0.0, lc, 0.01, 30.0);
     ASSERT_EQ(cb.crows.size(), 1u);
     EXPECT_TRUE(cb.crows[0].shared.empty());   // wildcard matched the L1C term
-    EXPECT_EQ(f.R.cpl_terms_departed, 1);
-}
-
-// Joint path: the same projection contract, on the card-1b branch.
-TEST(NetworkCouplingTest, GaugeProjectHoldsFamilySumOnJointPath) {
-    BuilderFixture f(/*second_clock=*/true);
-    LocalCarry lc;
-    lc.value_abs = 0.0;
-    lc.last_seen_s = 0.0;
-    lc.coupling = {
-        CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, 0.5, 1.0, 0.2},
-        CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
-        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},
-    };
-    auto cb = f.make(/*joint=*/true, /*tu=*/false, /*shmarg=*/false, /*gauge=*/true);
-    cb.buildCplRow(0, 0.0, lc, 0.01, 30.0);
-
-    ASSERT_EQ(cb.craw.size(), 1u);
-    double sum = 0.0;
-    for (const auto& sc : cb.craw[0].shared) sum += sc.second;
-    EXPECT_NEAR(sum, 1.0, 1e-12);
-    ASSERT_EQ(cb.craw[0].departed.size(), 1u);   // still jointly marginalized
-    EXPECT_EQ(f.R.cpl_gauge_held, 1);
-}
-
-// Joint path: the same present coupling produces a CplRowRaw (not a PendCplRow),
-// carrying its shared terms for the group whitening.
-TEST(NetworkCouplingTest, BuildJointPresentColumnMakesRawRow) {
-    BuilderFixture f;
-    LocalCarry lc;
-    lc.value_abs = 1.0;
-    lc.last_seen_s = 0.0;
-    lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C', /*sh_layer=*/0,
-                                  /*coeff=*/-0.6, /*s_prev=*/0.4, /*p_prev=*/0.1} };
-    auto cb = f.make(/*joint=*/true, /*tu=*/false, /*shmarg=*/false);
-    cb.buildCplRow(/*col=*/2, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.02, /*gap=*/30.0);
-
-    ASSERT_EQ(cb.craw.size(), 1u);
-    ASSERT_TRUE(cb.crows.empty());
-    EXPECT_EQ(cb.craw[0].local_col, 2);
-    ASSERT_EQ(cb.craw[0].shared.size(), 1u);
-    EXPECT_EQ(cb.craw[0].shared[0].first, f.pb_col);
-    EXPECT_TRUE(cb.craw[0].departed.empty());
-    EXPECT_EQ(f.R.cpl_terms_present, 1);
-}
-
-// SH marginalize (card 1d-SH): with carry_coupling_sh_marginalize a VtecSh coupling is
-// forced onto the departed (joint M_w) route even though its column is present.
-TEST(NetworkCouplingTest, BuildJointShMarginalizeRoutesVtecToDeparted) {
-    BuilderFixture f;   // SH column (1,0,'C') registered present in the fixture
-    LocalCarry lc;
-    lc.value_abs = 0.0;
-    lc.last_seen_s = 0.0;
-    lc.coupling = { CoupledShared{SharedParamKind::VtecSh, "", "", 1, 0, 'C',
-                                  /*sh_layer=*/0,
-                                  /*coeff=*/0.3, /*s_prev=*/0.0, /*p_prev=*/0.5} };
-    auto cb = f.make(/*joint=*/true, /*tu=*/false, /*shmarg=*/true);
-    cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.02, /*gap=*/30.0);
-
-    ASSERT_EQ(cb.craw.size(), 1u);
-    EXPECT_TRUE(cb.craw[0].shared.empty());                // SH term not kept present
-    ASSERT_EQ(cb.craw[0].departed.size(), 1u);             // routed to the joint M_w block
     EXPECT_EQ(f.R.cpl_terms_departed, 1);
 }
 
@@ -509,7 +314,7 @@ TEST(NetworkCouplingTest, AppendScalarScattersRowsIntoStationBlock) {
     lc.last_seen_s = 0.0;
     lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', /*sh_layer=*/0,
                                   0.8, 1.5, 0.2} };
-    auto cb = f.make(/*joint=*/false, false, false);
+    auto cb = f.builder(/*tu=*/false);
     cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.5, lc, /*var_eff=*/0.04, /*gap=*/30.0);
     cb.appendCouplingRows();
 
@@ -522,27 +327,6 @@ TEST(NetworkCouplingTest, AppendScalarScattersRowsIntoStationBlock) {
     EXPECT_DOUBLE_EQ(f.R.A_s(0, f.clk_col), 0.8);          // M_r on the shared border
     EXPECT_DOUBLE_EQ(f.R.w(0), 1.0 / 0.04);
     EXPECT_TRUE(f.R.carry_cols.empty());                  // scalar coupling bypasses addStationPrior
-}
-
-// appendCouplingRows (joint) whitens the buffered CplRowRaw group and retains the
-// pre-whitening ingredients (cpl_raw / cpl_white_pw) for the refloat re-whiten.
-TEST(NetworkCouplingTest, AppendJointWhitensAndRetainsIngredients) {
-    BuilderFixture f;
-    LocalCarry lc;
-    lc.value_abs = 1.0;
-    lc.last_seen_s = 0.0;
-    lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C', /*sh_layer=*/0,
-                                  -0.6, 0.4, 0.1} };
-    auto cb = f.make(/*joint=*/true, false, false);
-    cb.buildCplRow(/*col=*/2, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.02, /*gap=*/30.0);
-    cb.appendCouplingRows();
-
-    ASSERT_EQ(f.R.A_s.rows(), 1);
-    EXPECT_EQ(f.R.cpl_row_start, 0);
-    EXPECT_FALSE(f.R.cpl_joint_fallback);
-    ASSERT_EQ(f.R.cpl_raw.size(), 1u);                    // ingredients retained for refloat
-    EXPECT_DOUBLE_EQ(f.R.w(0), 1.0);                      // unit-information whitened row
-    EXPECT_DOUBLE_EQ(f.R.A_r(0, 2), 1.0 / std::sqrt(0.02)); // L^{-1} of a 1x1 R=var_eff
 }
 
 // --- phaseBiasShiftOf: the eq34 D4 §14 re-base, through the traversal ---------
@@ -627,7 +411,6 @@ TEST(NetworkCouplingTest, Eq34RebaseSkipsZeroAndNonFiniteShifts) {
 // column whose realization is still settling after its cold re-registration.
 // Outside the window (expired, another satellite, null map) the row is the legacy
 // present-term row bit-for-bit, and an SH column (no satellite) is never diverted.
-// The joint path (card 1b) routes the same term to an M_w departed column.
 TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     LocalCarry lc;
     lc.value_abs = 2.0;
@@ -637,7 +420,7 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     const double var = 0.01;
 
     BuilderFixture off_f;
-    auto off = off_f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false);
+    auto off = off_f.builder(/*tu=*/false);
     off.buildCplRow(/*col=*/0, /*x_lin_val=*/0.5, lc, var, 30.0);
     ASSERT_EQ(off.crows.size(), 1u);
     ASSERT_EQ(off.crows[0].shared.size(), 1u);
@@ -647,7 +430,7 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     // Inside the window: loop epoch 10 < expiry 12.
     std::map<std::string, long long> marg{{"G01", 12}};
     BuilderFixture in_f;
-    auto in = in_f.make(false, false, false);
+    auto in = in_f.builder(/*tu=*/false);
     in.readmit_marg = &marg;
     in.loop_ep      = 10;
     in.buildCplRow(0, 0.5, lc, var, 30.0);
@@ -661,7 +444,7 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
 
     // Expired (loop epoch == expiry): the legacy row again.
     BuilderFixture ex_f;
-    auto ex = ex_f.make(false, false, false);
+    auto ex = ex_f.builder(/*tu=*/false);
     ex.readmit_marg = &marg;
     ex.loop_ep      = 12;
     ex.buildCplRow(0, 0.5, lc, var, 30.0);
@@ -674,7 +457,7 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     // Another satellite's window: untouched.
     std::map<std::string, long long> other{{"G02", 100}};
     BuilderFixture ot_f;
-    auto ot = ot_f.make(false, false, false);
+    auto ot = ot_f.builder(/*tu=*/false);
     ot.readmit_marg = &other;
     ot.loop_ep      = 10;
     ot.buildCplRow(0, 0.5, lc, var, 30.0);
@@ -690,22 +473,11 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
                                    /*coeff=*/0.3, /*s_prev=*/2.0, /*p_prev=*/0.05} };
     std::map<std::string, long long> empty_sat{{"", 100}};
     BuilderFixture sh_f;
-    auto sh = sh_f.make(false, false, false);
+    auto sh = sh_f.builder(/*tu=*/false);
     sh.readmit_marg = &empty_sat;
     sh.loop_ep      = 1;
     sh.buildCplRow(0, 0.0, lsh, var, 30.0);
     ASSERT_EQ(sh.crows.size(), 1u);
     EXPECT_EQ(sh.crows[0].shared.size(), 1u);
     EXPECT_EQ(sh_f.R.cpl_readmit_diverted, 0);
-
-    // Joint path (card 1b): the diverted term becomes an M_w departed column.
-    BuilderFixture jf;
-    auto jb = jf.make(/*joint=*/true, false, false);
-    jb.readmit_marg = &marg;
-    jb.loop_ep      = 10;
-    jb.buildCplRow(0, 0.5, lc, var, 30.0);
-    ASSERT_EQ(jb.craw.size(), 1u);
-    EXPECT_TRUE(jb.craw[0].shared.empty());
-    ASSERT_EQ(jb.craw[0].departed.size(), 1u);
-    EXPECT_EQ(jf.R.cpl_readmit_diverted, 1);
 }

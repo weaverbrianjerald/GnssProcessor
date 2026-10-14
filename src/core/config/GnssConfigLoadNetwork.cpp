@@ -4354,46 +4354,6 @@ namespace GnssProcessor {
                       "border) instead of independent per-key diagonals.  Departed/pinned/"
                       "retired keys are marginalized; a non-PD carried block degrades to the "
                       "diagonal fold for that epoch (warned).");
-        // Gauge-free carry fold, armed as a property of the carry (card C-GF).  The
-        // downdate Λ ← Λ − ΛU(UᵀΛU)⁻¹UᵀΛ removes the declared datum directions from the
-        // carried information, so the carry constrains only estimable combinations and
-        // leaves the gauge to the S-basis.  The downdate is also reachable through
-        // network.clock_anchor_gauge_free, a Q3 temporal-anchor knob unrelated to it;
-        // this knob makes it available to a config that runs the dense carry without
-        // that anchor, since the carry is what deposits gauge information.  It also
-        // generalizes U: declared directions with a support-closure test, rather than
-        // the carried clocks with a bare ">= 2 members" floor.
-        network_shared_carry_gauge_free_ =
-            jval<bool>(json, "network.shared_carry_gauge_free", "shared_carry_gauge_free", false);
-        if (network_shared_carry_gauge_free_ && !network_shared_carry_full_cov_)
-            throw std::runtime_error(
-                "network.shared_carry_gauge_free requires network.shared_carry_full_cov = true "
-                "(it marginalizes the datum directions out of THAT card's dense carried "
-                "information block).");
-        if (network_shared_carry_gauge_free_)
-            log->info("Network producer (Card C-GF): GAUGE-FREE shared carry enabled — the "
-                      "declared datum directions are marginalized out of the carried "
-                      "information (exact information-side downdate), with a support-closure "
-                      "test so a direction whose support is only PARTLY carried is SKIPPED "
-                      "rather than having its carried-vs-uncarried contrast (an ESTIMABLE "
-                      "quantity) deleted.  Fold, withdraw and the within-epoch RAIM replay "
-                      "all read one resolved predicate, so they cannot disagree.");
-        // NOTE: `network_clock_anchor_gauge_free_` is parsed in a later helper
-        // (loadNetworkEmissionFilters_), so it does not appear in this predicate: reading
-        // it here would read its default, not the user's value.  The advisory is
-        // therefore phrased to cover the case where the Q3 path supplies the downdate.
-        if (network_shared_carry_full_cov_ && network_shared_carry_gauge_free_)
-            log->info("Network producer (Card C-GF): shared_carry_gauge_free is armed, but the "
-                      "first-variation A/B (SPEC_card1_coupling_carry §13.10, 2026-08-17) "
-                      "measured it INERT-BY-CLOSURE on every roster tested: the support-closure "
-                      "test correctly declines the declared direction essentially every epoch "
-                      "(a carried clock set almost never spans the full registered "
-                      "constellation), all four arms were byte-identical to their parents, and "
-                      "arming it splits the warm-resume fingerprint (cta:gf) for nothing.  "
-                      "Ledger verdict KEEP_OFF.  The carry-fills-gauge defect it targeted is "
-                      "handled by network.carry_coupling_gauge_project (Card 1f, RECOMMEND_ON); "
-                      "the gauge-free successor is a derivation card over the CARRIED subset, "
-                      "not this knob.");
         // Rigorous conditional local carry (card 1).  Each persistent per-station local
         // (phase-leveling ambiguities and ZWD) is carried as one pseudo-observation row
         // coupling it to the free shared border (regression M_r, pure conditional
@@ -4416,24 +4376,6 @@ namespace GnssProcessor {
                       "independent diagonal prior.  Departed shared columns are marginalized into "
                       "the row variance.  Removes the shared-info double count → the recursion "
                       "equals the batch solve.");
-        // Joint whitening of a station's coupling rows, instead of marginalizing each
-        // departed shared column per row into a scalar variance (card 1b).  Restores the
-        // between-row (DD) correlation that the diagonal marginalization discards (the
-        // T7 flat-σ defect).
-        network_carry_coupling_joint_whiten_ =
-            jval<bool>(json, "network.carry_coupling_joint_whiten",
-                       "carry_coupling_joint_whiten", false);
-        if (network_carry_coupling_joint_whiten_ && !network_carry_conditional_coupling_)
-            throw std::runtime_error(
-                "network.carry_coupling_joint_whiten requires network.carry_conditional_coupling = true "
-                "(it only changes how that card's coupling-row noise is applied).");
-        if (network_carry_coupling_joint_whiten_)
-            log->info("Network producer (Card 1b): JOINT coupling-row whitening enabled — a "
-                      "station's conditional coupling rows are built as a group with the full "
-                      "joint covariance R = diag(var_eff) + M_w·diag(P_w)·M_wᵀ over the distinct "
-                      "DEPARTED shared columns and LLᵀ-whitened, so their shared common-mode "
-                      "(which cancels in any DD) is common-mode-free and the between-row DD "
-                      "information is preserved instead of individually deweighted to nothing.");
         // Border time update of the coupling rows at injection (card 1d).  A harvested
         // row is exact at the harvest epoch only; the border then moves s⁺ = s + w,
         // w ~ N(0, Q), so making the row independent of s⁺ again needs the per-column
@@ -4448,10 +4390,8 @@ namespace GnssProcessor {
                 "network.carry_coupling_time_update requires network.carry_conditional_coupling = true "
                 "(it only corrects how that card's coupling rows re-map to the moved border).");
         // The exact conditional time update (card CTU).  It conditions every row on the
-        // stashed dense border block, so the dense carry must exist; it replaces card 1d's
-        // kappa on the rows it can take, so card 1d must be armed for the rest; and card
-        // 1b's joint departed-column whitening is a different treatment of the same terms,
-        // not built for the exact rule.
+        // stashed dense border block, so the dense carry must exist; and it replaces card
+        // 1d's kappa on the rows it can take, so card 1d must be armed for the rest.
         network_carry_coupling_exact_update_ =
             jval<bool>(json, "network.carry_coupling_exact_update",
                        "carry_coupling_exact_update", false);
@@ -4465,11 +4405,6 @@ namespace GnssProcessor {
                 throw std::runtime_error(
                     "network.carry_coupling_exact_update requires network.shared_carry_full_cov "
                     "= true (the rule conditions each row on the stashed dense border block).");
-            if (network_carry_coupling_joint_whiten_)
-                throw std::runtime_error(
-                    "network.carry_coupling_exact_update refuses "
-                    "network.carry_coupling_joint_whiten (card 1b's joint marginalization of the "
-                    "departed terms is not built for the exact rule, which re-attributes them).");
             log->info("Network producer (card CTU): coupling-row time update EXACT — each row "
                       "harvested at the stashed border is re-expressed on the moved border by "
                       "M_new = (P_SS + Q_S)^-1 P_S,K M_K with the fold's own inflation Q, the "
@@ -4558,11 +4493,6 @@ namespace GnssProcessor {
                     "network.carry_coupling_clock_clone refuses network.clock_anchor_gauge_free "
                     "(card SCL: the gauge-free fold's clock direction would have to include the "
                     "clone columns).");
-            if (network_shared_carry_gauge_free_)
-                throw std::runtime_error(
-                    "network.carry_coupling_clock_clone refuses network.shared_carry_gauge_free "
-                    "(card SCL: the same gauge-free downdate, armed by the dense carry; its clock "
-                    "direction would have to include the clone columns).");
             log->info("Network producer (card SCL): network.carry_coupling_clock_clone = true: "
                       "each satellite clock with a row in the stashed dense block gets a one-epoch "
                       "clone column c(t-1) in the shared border; the coupling rows keep their "
@@ -4631,25 +4561,6 @@ namespace GnssProcessor {
                       "re-referenced, skipped) keeps the rows' terms on a one-epoch clone with "
                       "the stashed prior and no walk, instead of card CTU's per-row "
                       "re-attribution.  UNVALIDATED; run-end line in the card CTU block.");
-        // Full marginalization of the coupling rows' SH-VTEC terms (card 1d-SH).  The SH
-        // border is a mean-reverting GM (climatology-anchored), not the pure random walk
-        // the κ update models, so shrink-carrying its terms compounds row weight against
-        // the anchor (the ~4 h a₀₀ runaway in the 12 h low-floor runs).  The
-        // q=∞ / departed treatment removes that feedback; it is conservative and always
-        // consistent.
-        network_carry_coupling_sh_marginalize_ =
-            jval<bool>(json, "network.carry_coupling_sh_marginalize",
-                       "carry_coupling_sh_marginalize", false);
-        if (network_carry_coupling_sh_marginalize_ && !network_carry_conditional_coupling_)
-            throw std::runtime_error(
-                "network.carry_coupling_sh_marginalize requires network.carry_conditional_coupling "
-                "= true (it only changes how that card's SH coupling terms are treated).");
-        if (network_carry_coupling_sh_marginalize_)
-            log->info("Network producer (Card 1d-SH): SH-VTEC coupling terms fully MARGINALIZED "
-                      "(q=∞ / departed treatment: coefficient dropped, M²·P_prev into the row "
-                      "variance) — severs the ambiguity↔SH carry feedback (the GM-carried border "
-                      "violates the κ update's random-walk model; shrink-carrying its terms "
-                      "compounds row weight against the climatology anchor).");
         if (network_carry_coupling_time_update_)
             log->info("Network producer (Card 1d): coupling-row border TIME UPDATE enabled — "
                       "each PRESENT coupled column of every injected coupling row is shrunk by "
@@ -10856,23 +10767,18 @@ namespace GnssProcessor {
         // which exists only when that carry is the live vehicle (phase_leveling on and
         // carry_invariant off; card 4's DD carry supersedes it and `do_amb_carry` skips the
         // inject outright), and its rows live in A_s/A_r as card-1 coupling rows, so it
-        // needs carry_conditional_coupling; the card-1b joint departed-column whitening owns
-        // that station's row block in this build (mutually exclusive: the block path is
-        // predicated on !carry_cpl_joint at the inject).  All four members are populated by
-        // here.
+        // needs carry_conditional_coupling.  All three members are populated by here.
         if (network_phase_leveling_local_block_
             && (!network_phase_leveling_ || network_carry_invariant_
-                || !network_carry_conditional_coupling_ || network_carry_coupling_joint_whiten_))
+                || !network_carry_conditional_coupling_))
             log->warn("Network: network.phase_leveling_local_block is on but the station-wide "
                       "whitened block cannot be built on this lineage (phase_leveling={}, "
-                      "carry_invariant={}, carry_conditional_coupling={}, "
-                      "carry_coupling_joint_whiten={}) — it needs the phase-leveling carry "
-                      "folded as Card-1 coupling rows (phase_leveling on, carry_invariant "
-                      "off, carry_conditional_coupling on) and is mutually exclusive with "
-                      "the Card-1b joint departed-column whitening: this knob is INERT on "
-                      "this posture (standing invariant #4).",
+                      "carry_invariant={}, carry_conditional_coupling={}) — it needs the "
+                      "phase-leveling carry folded as Card-1 coupling rows (phase_leveling "
+                      "on, carry_invariant off, carry_conditional_coupling on): this knob is "
+                      "INERT on this posture (standing invariant #4).",
                       network_phase_leveling_, network_carry_invariant_,
-                      network_carry_conditional_coupling_, network_carry_coupling_joint_whiten_);
+                      network_carry_conditional_coupling_);
         // ---- Ambiguity-vehicle interlocks (RF-1;
         //      docs/refound/RF-1_float_ambiguities_design.md §7.1).  Placed here because
         //      network_carry_invariant_ is populated only by loadNetworkDatumSignalling_,
@@ -10918,9 +10824,9 @@ namespace GnssProcessor {
             //      joint fold, so a posture where that fold cannot be built is not a
             //      degraded arm but a silent one: the inject would take the per-column
             //      route on every station-epoch, and the run would read as a clean
-            //      float_kf arm while carrying the over-count (invariant #4).  The two
-            //      conditions are the live predicate the inject applies:
-            //      `pl_local_block && carry_cpl_cond && !carry_cpl_joint`.
+            //      float_kf arm while carrying the over-count (invariant #4).  The
+            //      condition is the live predicate the inject applies:
+            //      `pl_local_block && carry_cpl_cond`.
             if (!network_carry_conditional_coupling_) {
                 log->error("Network (RF-1 step 3): network.ambiguity_vehicle = \"float_kf\" "
                            "requires network.carry_conditional_coupling = true.  The vehicle's "
@@ -10931,16 +10837,6 @@ namespace GnssProcessor {
                            "silently take the per-column route — an arm that reads clean and "
                            "carries today's over-count.  (carry_conditional_coupling itself "
                            "requires network.shared_carry_full_cov.)");
-                return false;
-            }
-            if (network_carry_coupling_joint_whiten_) {
-                log->error("Network (RF-1 step 3): network.ambiguity_vehicle = \"float_kf\" is "
-                           "MUTUALLY EXCLUSIVE with network.carry_coupling_joint_whiten "
-                           "(Card 1b).  Both own the station's coupling row block — 1b whitens "
-                           "the DEPARTED-column marginalization, the vehicle whitens the joint "
-                           "LOCAL prior — and the inject's own predicate already excludes the "
-                           "block path under 1b, so arming both would disarm the vehicle "
-                           "silently.  Turn one off.");
                 return false;
             }
         }
@@ -11085,10 +10981,9 @@ namespace GnssProcessor {
                            "network.carry_rx_code_bias (armed, with code_datum_time_linked).");
                 return false;
             }
-            if (!network_carry_conditional_coupling_ || network_carry_coupling_joint_whiten_) {
+            if (!network_carry_conditional_coupling_) {
                 log->error("Network: network.carry_rx_code_bias_in_block requires "
-                           "network.carry_conditional_coupling and refuses "
-                           "network.carry_coupling_joint_whiten (the block rows are the "
+                           "network.carry_conditional_coupling (the block rows are the "
                            "card 1 coupling rows, whitened per station).");
                 return false;
             }
@@ -11112,13 +11007,12 @@ namespace GnssProcessor {
             const bool float_kf =
                 network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf;
             if (!float_kf || !network_phase_leveling_ || network_carry_invariant_
-                || !network_carry_conditional_coupling_ || network_carry_coupling_joint_whiten_) {
+                || !network_carry_conditional_coupling_) {
                 log->error("Network (card LGM): network.phase_colour_state requires "
                            "network.ambiguity_vehicle float_kf, network.phase_leveling and "
                            "network.carry_conditional_coupling, and refuses "
-                           "network.carry_invariant and network.carry_coupling_joint_whiten "
-                           "(the state's carry is a column of the float vehicle's whitened "
-                           "local block).");
+                           "network.carry_invariant (the state's carry is a column of the "
+                           "float vehicle's whitened local block).");
                 return false;
             }
             log->info("Network (card LGM): per-line-of-sight phase nuisance state ON: one "
@@ -11365,8 +11259,7 @@ namespace GnssProcessor {
                           "carry_zwd_in_block; arm network.phase_leveling_local_block too.");
                 network_carry_zwd_in_block_ = false;
             } else if (!network_phase_leveling_ || network_carry_invariant_
-                       || !network_carry_conditional_coupling_
-                       || network_carry_coupling_joint_whiten_) {
+                       || !network_carry_conditional_coupling_) {
                 // The F3 block is armed but cannot be built on this posture (the guard above
                 // already warned about F3 itself).  Riding an inert vehicle is the same
                 // armed-and-inert failure, so this knob is disabled with it rather than
@@ -11374,13 +11267,11 @@ namespace GnssProcessor {
                 log->warn("Network: network.carry_zwd_in_block is on and "
                           "network.phase_leveling_local_block is armed, but F3 cannot build a "
                           "block on this lineage (phase_leveling={}, carry_invariant={}, "
-                          "carry_conditional_coupling={}, carry_coupling_joint_whiten={}) — the "
-                          "ZWD column would have no block to join.  DISABLING "
-                          "carry_zwd_in_block (see the phase_leveling_local_block INERT warning "
-                          "above for the fix).",
+                          "carry_conditional_coupling={}) — the ZWD column would have no "
+                          "block to join.  DISABLING carry_zwd_in_block (see the "
+                          "phase_leveling_local_block INERT warning above for the fix).",
                           network_phase_leveling_, network_carry_invariant_,
-                          network_carry_conditional_coupling_,
-                          network_carry_coupling_joint_whiten_);
+                          network_carry_conditional_coupling_);
                 network_carry_zwd_in_block_ = false;
             } else {
                 log->info("Network producer (ZWD carry IN BLOCK): the carried ZWD column joins the "
@@ -11439,19 +11330,17 @@ namespace GnssProcessor {
                           "prior IS the falsified network.carry_iono vehicle).  DISABLING "
                           "carry_iono_in_block; arm network.phase_leveling_local_block too.");
                 network_carry_iono_in_block_ = false;
-            } else if (!network_carry_conditional_coupling_
-                       || network_carry_coupling_joint_whiten_) {
+            } else if (!network_carry_conditional_coupling_) {
                 // The F3 block is armed but cannot be built on this posture.  Riding an
                 // inert vehicle is the same armed-and-inert failure the ZWD interlock
                 // refuses (invariant #4), so this knob is disabled with it.
                 log->warn("Network: network.carry_iono_in_block is on and "
                           "network.phase_leveling_local_block is armed, but F3 cannot "
-                          "build a block on this lineage (carry_conditional_coupling={}, "
-                          "carry_coupling_joint_whiten={}) — the iono columns would have "
-                          "no block to join.  DISABLING carry_iono_in_block (see the "
-                          "phase_leveling_local_block INERT warning above for the fix).",
-                          network_carry_conditional_coupling_,
-                          network_carry_coupling_joint_whiten_);
+                          "build a block on this lineage (carry_conditional_coupling={}) — "
+                          "the iono columns would have no block to join.  DISABLING "
+                          "carry_iono_in_block (see the phase_leveling_local_block INERT "
+                          "warning above for the fix).",
+                          network_carry_conditional_coupling_);
                 network_carry_iono_in_block_ = false;
             } else {
                 log->info("Network producer (slant-iono carry IN BLOCK): each station's "
@@ -11520,20 +11409,17 @@ namespace GnssProcessor {
                           "DISABLING carry_rx_clock_in_block; arm "
                           "network.phase_leveling_local_block too.");
                 network_carry_rx_clock_in_block_ = false;
-            } else if (!network_carry_conditional_coupling_
-                       || network_carry_coupling_joint_whiten_) {
+            } else if (!network_carry_conditional_coupling_) {
                 // The F3 block is armed but cannot be built on this posture.  Riding an
                 // inert vehicle is the same armed-and-inert failure the ZWD and iono
                 // interlocks refuse (invariant #4), so this knob is disabled with them.
                 log->warn("Network: network.carry_rx_clock_in_block is on and "
                           "network.phase_leveling_local_block is armed, but F3 cannot "
-                          "build a block on this lineage (carry_conditional_coupling={}, "
-                          "carry_coupling_joint_whiten={}) — the receiver-clock column "
-                          "would have no block to join.  DISABLING "
+                          "build a block on this lineage (carry_conditional_coupling={}) — "
+                          "the receiver-clock column would have no block to join.  DISABLING "
                           "carry_rx_clock_in_block (see the phase_leveling_local_block "
                           "INERT warning above for the fix).",
-                          network_carry_conditional_coupling_,
-                          network_carry_coupling_joint_whiten_);
+                          network_carry_conditional_coupling_);
                 network_carry_rx_clock_in_block_ = false;
             } else {
                 log->info("Network producer (receiver CLOCK carry IN BLOCK): each station's "

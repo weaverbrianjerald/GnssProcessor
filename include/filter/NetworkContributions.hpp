@@ -47,9 +47,7 @@
  *     agreement with the builders' own counters).
  *  3. The solve glue: every shared fold names its kind before the call; a within-epoch
  *     RAIM replay re-folds on a fresh arrowhead under the estimator's replay flag, and
- *     its re-folds are counted apart, so the table describes the primary build.  A
- *     replay that re-whitens a station's coupling rows stores the rebuilt block's tags
- *     (@c NetworkContributionLedger::replay_row_tags).
+ *     its re-folds are counted apart, so the table describes the primary build.
  *  4. The epoch tail (@ref networkContributionsEpochTail, the driver's one call): adds
  *     the epoch's shared folds, the clock pivots of the last solve and the gauges,
  *     merges the epoch into the run and writes the table once after the first emitted
@@ -89,7 +87,6 @@ namespace GnssProcessor {
     enum class NetworkParamKind : int;
 
     class NetworkEstimator;
-    struct CplRowRaw;
     struct NetworkConfig;
     struct NetworkRunContext;
     struct NetworkRunTraces;
@@ -244,7 +241,7 @@ namespace GnssProcessor {
      *        its rows sit in a station block's coupling region (rows @c cpl_row_start to
      *        @c cpl_row_start + @c cpl_row_local_cols.size())?
      * @param k The kind.
-     * @return True for @c CouplingScalar, @c CouplingJoint and the six @c Block*Carry kinds.
+     * @return True for @c CouplingScalar and the six @c Block*Carry kinds.
      */
     bool contributionInCouplingRegion(ContributionKind k);
 
@@ -350,28 +347,6 @@ namespace GnssProcessor {
                      const std::vector<std::string>& sigs);
 
     /**
-     * @brief The tags of a station block after a within-epoch refloat re-whitens its
-     *        jointly whitened coupling rows (card 1b): the rows before the coupling block,
-     *        then the kept coupling rows' tags.
-     *
-     * The kept rows are the ones @c whitenCouplingRows reports, so the keep rule exists
-     * once.  On a failed re-whiten the caller appends no coupling row, and @p nk is 0.
-     *
-     * @param tags The station's tags (aligned with its primary block).
-     * @param nd   Rows before the coupling block (@c cpl_row_start).
-     * @param raw  The coupling rows' pre-whitening ingredients (@c cpl_raw), with their tags.
-     * @param kept Indices into @p raw of the rows the re-whiten kept, in output order.
-     * @param nk   Coupling rows the re-whiten produced (0 when it failed).
-     * @return The tags of the rebuilt block (size @p nd + @p nk when @p kept covers the
-     *         produced rows; the caller compares the size with its rows).
-     */
-    std::vector<RowTag> rowTagsAfterJointRewhiten(const std::vector<RowTag>& tags,
-                                                  Eigen::Index nd,
-                                                  const std::vector<CplRowRaw>& raw,
-                                                  const std::vector<Eigen::Index>& kept,
-                                                  Eigen::Index nk);
-
-    /**
      * @brief Rows of a station block without a tag: the gap between the block's rows and
      *        its row tags, and between each diagonal prior channel and its tags.
      * @param R The station's assembly.
@@ -466,8 +441,6 @@ namespace GnssProcessor {
         long long replay_builds{0};           ///< Within-epoch replay builds.
         long long replay_folds{0};            ///< Their shared re-folds (not in @ref kinds).
         long long replay_dim{0};              ///< Their summed dimension.
-        long long replay_realigned{0};        ///< Station blocks whose tags a replay re-aligned (joint re-whiten).
-        long long replay_misaligned{0};       ///< Of the replay's station blocks, those whose tags did not match the rows.
         long long gim_calls{0};               ///< Station-epochs the GIM row builder ran on.
         long long gim_no_gim{0};              ///< Of those, with no GIM loaded.
         long long gim_weighting_off{0};       ///< Of those, with the ionosphere weighting off.
@@ -498,18 +471,6 @@ namespace GnssProcessor {
         long long mismatches_all{0};      ///< @c StationTagCheck::mismatches.
         long long unclassified_all{0};    ///< @c StationTagCheck::unclassified (card NOM N2b).
         long long checked_all{0};         ///< Station blocks checked.
-        long long replay_realigned{0};    ///< This epoch's replay re-alignments (reset at the station drain).
-        long long replay_misaligned{0};   ///< This epoch's replay misalignments (reset at the station drain).
-        /// The row tags of the station blocks the last within-epoch replay build rebuilt
-        /// with a different row layout (a joint re-whiten of the coupling rows), by station
-        /// index, aligned with the rows that build handed to the estimator.  A station absent
-        /// from the map kept its primary layout, whose tags are @c StationAssembly::row_tags
-        /// (the scalar and local-block refloats zero or rewrite rows in place, on a copy).
-        /// Cleared at the start of every replay build and at the station drain.  The record
-        /// of the replay's layout: every reader of a station's rows reads the primary block
-        /// (@c StationAssembly, which a replay never edits) with its own tags, so no reader
-        /// takes a tag from here (card NOM step N2b).
-        std::map<int, std::vector<RowTag>> replay_row_tags;
         bool      first_table_written{false};  ///< The first-emitted-epoch table is out.
     };
 

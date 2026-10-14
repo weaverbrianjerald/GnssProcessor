@@ -131,8 +131,8 @@ namespace GnssProcessor {
         /// Given the border, the block is exact in every local-local direction: the
         /// per-LOS iono direction and the station-common rx clock, ZWD and rx-DCB
         /// directions alike.  Live only with
-        /// phase_leveling on, carry_invariant off, carry_cpl_cond on and carry_cpl_joint
-        /// off; the loader warns that the knob is inert otherwise.  The knob is off by
+        /// phase_leveling on, carry_invariant off and carry_cpl_cond on; the loader
+        /// warns that the knob is inert otherwise.  The knob is off by
         /// default (byte-identical).
         /// This member is the resolved live predicate, not the knob:
         /// @c network.phase_leveling_local_block OR the @c float_kf vehicle, under which
@@ -167,7 +167,7 @@ namespace GnssProcessor {
         bool   amb_drop_decouple_always{};   ///< network.amb_float_drop_decouple_always (card CTU section 14): a drop clears the arc's regression and block row even at birth strength
         // The per-line-of-sight phase nuisance state (card LGM section 4.1).  pc_on is the
         // knob as the loader validated it (float vehicle, phase_leveling, conditional
-        // coupling; no joint whitening, no carry_invariant), so every site reads it alone.
+        // coupling; no carry_invariant), so every site reads it alone.
         bool   pc_on{};              ///< network.phase_colour_state
         double pc_sigma_zen{};       ///< network.phase_colour_sigma_zen_m (m)
         double pc_tau_s{};           ///< network.phase_colour_tau_s (s)
@@ -214,7 +214,6 @@ namespace GnssProcessor {
         double cb_var_floor{};
         bool fullcov_on{};       ///< network.shared_carry_full_cov: the dense (P_prev+Q)⁻¹ shared carry (C1).
         bool carry_cpl_cond{};   ///< network.carry_conditional_coupling: the conditional local carry on the coupling rows (card 1); requires fullcov_on, enforced at load.
-        bool carry_cpl_joint{};
         bool carry_cpl_tu{};
         /// network.carry_coupling_exact_update (card CTU): the exact conditional time update
         /// of the coupling rows in place of card 1d's scalar kappa, on every row harvested
@@ -249,7 +248,6 @@ namespace GnssProcessor {
         bool pv_on{};                   ///< network.phase_visible_monitor (card PVN): the phase-visible consistency instrument, measure-only
         bool nbp_on{};                  ///< network.apriori_source sp3_brdc_clock (card NBP): the native broadcast clock a priori; the wire refers to the stamped ephemeris
         int  pv_window_ep{60};          ///< network.phase_visible_window_ep (card PVN): its window, epochs
-        bool carry_cpl_shmarg{};
         /// network.carry_coupling_gauge_project (card 1f): hold each (constellation, kind)
         /// coefficient sum of a truncated coupling row at its harvest value, so a departed
         /// column does not turn the row into a high-weight observation of the current datum
@@ -659,8 +657,7 @@ namespace GnssProcessor {
         int    cta_recouple_ep{};    ///< network.clock_anchor_recouple_epochs: consecutive in-band epochs a loose satellite must serve before the anchor re-engages (the re-validation of invariant #7)
         bool   cta_mark{};           ///< network.clock_anchor_mark: wire-mark the decoupling edge (per-sat disc through the B1 retro-bump chain)
         /// The one resolved gauge-free predicate that every fold, withdraw and replay site
-        /// reads: @c (cta_on && cta_gauge_free) || (shared_carry_full_cov &&
-        /// shared_carry_gauge_free) (card C-GF).  Never re-derive it at a call site.  Fold
+        /// reads: @c cta_on && cta_gauge_free.  Never re-derive it at a call site.  Fold
         /// and withdraw must agree exactly: a fold that downdated, paired with a withdraw
         /// that did not, leaves the negative-semidefinite residue −ΛU(UᵀΛU)⁻¹UᵀΛ in the
         /// shared normals, which are then not PSD along the gauge.  The constrained solve
@@ -668,11 +665,6 @@ namespace GnssProcessor {
         /// never refreshes) or factorizes into a saddle and returns a wrong x_s with no
         /// error.
         bool   carry_gauge_free{};
-        /// Require support closure on each datum direction before downdating it (card
-        /// C-GF).  True only on the carry-side arming (shared_carry_full_cov and
-        /// shared_carry_gauge_free); the legacy Q3 path keeps its carried-clocks rule with
-        /// a two-member floor, so it stays byte-identical.
-        bool   carry_gauge_free_closure{};
         /// network.clock_anchor_gauge_free (card Q3 §2.1): marginalize the
         /// per-constellation satellite-clock gauge direction out of the folded clock prior,
         /// so the anchor constrains only the estimable between-satellite differences and
@@ -2817,10 +2809,6 @@ namespace GnssProcessor {
         long long cta_marks = 0;             ///< per-sat wire discontinuities queued at a decoupling edge
         long long cta_gf_keys = 0;           ///< (sat,epoch) clock priors whose information was gauge-downdated.  0 on an armed gauge-free run means the downdate never reached a group of >= 2 carried clocks: the step is inert and the anchor still constrains the gauge.
         long long cta_gf_inert = 0;          ///< epochs where the gauge-free step was armed but downdated nothing (every constellation contributed < 2 carried clocks, or UᵀΛU was singular)
-        // The partial-support skip tally of card C-GF is not here: it lives run-scoped on
-        // the estimator (NetworkEstimator::gaugeFreePartialSkipped) and is read once at
-        // teardown, because the withdraw and within-epoch-replay folds run after any
-        // per-epoch read point the driver could offer.
         double    cta_max_w = 0.0;           ///< largest |w| seen (any disposition)
         double    cta_max_w_tow = 0.0;       ///< …its epoch
         std::string cta_max_w_sat;           ///< …its satellite
@@ -3105,7 +3093,7 @@ namespace GnssProcessor {
         //     #4).  Counted per station in the parallel produce phase (StationAssembly) and
         //     folded here serially; the two refloat counters are written directly by the
         //     serial within-epoch RAIM re-solve.  Armed with blocks = 0 means the inject never
-        //     built a block: a miswire (carry_cpl_cond off, carry_cpl_joint on, or no station
+        //     built a block: a miswire (carry_cpl_cond off, or no station
         //     with an injectable carried column), not a quiet run.  pair_missing ≈
         //     Σ n(n−1)/2 over the stations on the first post-resume epoch is the expected
         //     one-epoch degradation (the harvest block is not snapshotted); a steady non-zero
@@ -3581,10 +3569,6 @@ namespace GnssProcessor {
         // station-epoch per constellation (card RXCB-DATUM).  0 with the toggle armed is
         // the standing invariant #4 reading: no receiver DCB column ever existed.
         size_t n_rxcb_gauges = 0;
-        // Station-epochs whose joint coupling-row covariance was non-SPD after the ridge
-        // retry and fell back to the card-1 per-row scalar marginalization.  Warned once at
-        // run end.
-        size_t n_cpl_joint_fallback = 0;
         // Observability of cards 1/1d: run-total coupling-carry volume, as harvest-side
         // stash counts (non-empty regression, empty regression degraded to a plain
         // diagonal row, outright harvest failure) and inject-side term counts (present,

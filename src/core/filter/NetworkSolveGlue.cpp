@@ -152,7 +152,6 @@ NetworkSolveGlueResult networkSolveGlue(
     const bool   pl_on         = ctx.knobs.pl_on;
     const int    pl_warmup     = ctx.knobs.pl_warmup;
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry on the coupling rows; requires fullcov_on, enforced at load (card 1)
-    const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // whiten the coupling rows jointly (departed columns into M_w); requires carry_cpl_cond, enforced at load (card 1b)
     const bool   ura_retro     = ctx.knobs.ura_retro;             // retro-bump the flagged satellites on the next emit (B1)
     const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate; // URA multiplier after a refloat (B1)
     const double raim_k        = ctx.knobs.raim_k;      // standardized post-fit residual flag threshold
@@ -1733,10 +1732,8 @@ if (within_epoch_armed && carry_warm) {
         replay_fail_idx = -1;
         we_free_replay = 0;
         // Card NOM N2a: the replay's re-folds are counted apart from the primary build's
-        // contributions (switched off at the end, and by the callers' catch blocks), and the
-        // tags of the blocks this build re-lays are its own.
+        // contributions (switched off at the end, and by the callers' catch blocks).
         est.contributionReplay(true);
-        ctx.contributions.replay_row_tags.clear();
         est.beginEpoch();
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!orig_added[i] || drop_stations.count(static_cast<int>(i))
@@ -1793,14 +1790,12 @@ if (within_epoch_armed && carry_warm) {
             // Card PRM phase 3a: a refloated column counts when it is a carried arc (a
             // local_carry entry under its (station, satellite, signal) key) whose prior
             // the branches below withhold: a diagonal carry_cols prior, or a coupling row
-            // (the joint branch's raw rows, or the scalar branch's per-row columns, which
-            // include the local block's rows).  The local_carry test keeps a column whose
+            // (the per-row columns of the coupling block, which include the local block's
+            // rows).  The local_carry test keeps a column whose
             // only diagonal prior is an oracle pin out of the count.  Read-only (find and
             // count only).
             if (!refloat_cols.empty()) {
-                const bool joint_br = carry_cpl_cond && carry_cpl_joint
-                                      && !R.cpl_raw.empty() && R.cpl_row_start >= 0;
-                const bool rows_br  = !joint_br && carry_cpl_cond && R.cpl_row_start >= 0;
+                const bool rows_br = carry_cpl_cond && R.cpl_row_start >= 0;
                 for (const auto& pa : R.pl_amb) {
                     const Eigen::Index rc = pa.col;
                     if (refloat_cols.count(rc) == 0) continue;
@@ -1809,9 +1804,6 @@ if (within_epoch_armed && carry_warm) {
                         continue;
                     bool carried = std::find(R.carry_cols.begin(), R.carry_cols.end(), rc)
                                    != R.carry_cols.end();
-                    if (!carried && joint_br)
-                        carried = std::any_of(R.cpl_raw.begin(), R.cpl_raw.end(),
-                                              [rc](const CplRowRaw& cr) { return cr.local_col == rc; });
                     if (!carried && rows_br)
                         carried = std::find(R.cpl_row_local_cols.begin(),
                                             R.cpl_row_local_cols.end(), rc)
@@ -1826,58 +1818,15 @@ if (within_epoch_armed && carry_warm) {
             // ambiguity keeps its full-weight data rows, so its local block stays PD.
             // The edit is made on a copy, so the primary R (and any later replay) is
             // unchanged (card 1).
-            if (carry_cpl_cond && carry_cpl_joint && !R.cpl_raw.empty()
-                && !refloat_cols.empty() && R.cpl_row_start >= 0) {
-                // The joint whitening mixes a station's coupling rows, so a refloat
-                // cannot zero individual output rows: re-whiten the surviving rows
-                // (dropping the refloated locals) and append them after the unchanged
-                // data rows.  A re-whiten failure drops all coupling rows for the epoch,
-                // a safe degradation since the refloated arcs float from data anyway
-                // (card 1b).
-                Eigen::MatrixXd Hr, Hs;
-                Eigen::VectorXd z;
-                std::vector<Eigen::Index> kept;   // the re-whiten's kept rows (indices into cpl_raw)
-                const bool ok = whitenCouplingRows(R.cpl_raw, R.cpl_white_pw, refloat_cols,
-                                                   R.A_r.cols(), R.A_s.cols(), Hr, Hs, z, kept);
-                const Eigen::Index nd = R.cpl_row_start;             // data + SH rows (unchanged)
-                const Eigen::Index nk = ok ? Hr.rows() : 0;          // surviving coupling rows
-                // Card NOM N2a: the rebuilt block's row tags, the rows before the coupling
-                // block then the kept coupling rows' (the rows the re-whiten reports),
-                // checked against the rebuilt rows and stored for this replay build: the
-                // record of the layout the estimator solved.  Every reader of a station's rows
-                // reads the primary block R, which this copy leaves unchanged, with its own
-                // tags (card NOM step N2b).
-                {
-                    std::vector<RowTag> replay_tags =
-                        rowTagsAfterJointRewhiten(R.row_tags, nd, R.cpl_raw, kept, nk);
-                    ++ctx.contributions.replay_realigned;
-                    if (static_cast<Eigen::Index>(replay_tags.size()) != nd + nk)
-                        ++ctx.contributions.replay_misaligned;
-                    ctx.contributions.replay_row_tags[static_cast<int>(i)] = std::move(replay_tags);
-                }
-                Eigen::MatrixXd As(nd + nk, R.A_s.cols()), Ar(nd + nk, R.A_r.cols());
-                Eigen::VectorXd rw(nd + nk), ry(nd + nk);
-                As.topRows(nd) = R.A_s.topRows(nd);
-                Ar.topRows(nd) = R.A_r.topRows(nd);
-                rw.head(nd)    = wr->head(nd);
-                ry.head(nd)    = R.y.head(nd);
-                if (nk > 0) {
-                    As.bottomRows(nk) = Hs;
-                    Ar.bottomRows(nk) = Hr;
-                    rw.tail(nk).setOnes();
-                    ry.tail(nk) = z;
-                }
-                est_index_of[i] = static_cast<int>(est.addStation(As, Ar, rw, ry, station_prior));
-            } else if (carry_cpl_cond && !refloat_cols.empty() && R.cpl_row_start >= 0) {
+            if (carry_cpl_cond && !refloat_cols.empty() && R.cpl_row_start >= 0) {
                 Eigen::MatrixXd As = R.A_s, Ar = R.A_r;
                 Eigen::VectorXd rw = *wr, ry = R.y;
                 // Local leveling block (F3, network.phase_leveling_local_block): the
                 // whitening mixes the block's rows (each output row is a row of L⁻¹ over
                 // all block columns), so a refloated column cannot be withheld by zeroing
                 // its own row.  The refloated columns are marginalized (dropped from Σ)
-                // and the survivors re-whitened, as in the card-1b re-whiten above but on
-                // the local block.  Survivors land in their own row slots; the dropped
-                // columns' slots stay zero (the scalar loop below zeroes them again,
+                // and the survivors re-whitened.  Survivors land in their own row slots;
+                // the dropped columns' slots stay zero (the scalar loop below zeroes them again,
                 // which is consistent because cpl_row_local_cols carries each block row's
                 // primary column).  A non-SPD re-whiten drops the whole block for this
                 // re-solve, a safe degradation since the refloated arcs float from data
@@ -2010,12 +1959,11 @@ if (within_epoch_armed && carry_warm) {
         // along the datum gauge that the primary solve removed, and the within-epoch
         // RAIM trip decision would be taken against a different system from the one
         // under test.  The within-epoch tier is in the standard armed set, so this
-        // applies whenever the downdate is armed with the carry (card C-GF).
+        // applies whenever the downdate is armed with the carry.
         if (!cap_priors.empty()) {
             est.contributionPriorKinds(&ws.cap_prior_kinds);
             if (ctx.knobs.carry_gauge_free)
-                est.addSharedPriorClockGaugeFree(cap_priors,
-                                                 ctx.knobs.carry_gauge_free_closure);
+                est.addSharedPriorClockGaugeFree(cap_priors);
             else
                 est.addSharedPrior(cap_priors);
         }
@@ -2030,8 +1978,7 @@ if (within_epoch_armed && carry_warm) {
         if (!networkClockCloneReplayFold(ctx, ws, est) && !cap_dense_keys.empty()) {
             est.contributionKind(ContributionKind::BorderCarryDense);
             est.addSharedPriorDense(cap_dense_keys, cap_dense_cov, nullptr,
-                                    ctx.knobs.carry_gauge_free,
-                                    ctx.knobs.carry_gauge_free_closure);   // same fold as the primary solve (card C-GF)
+                                    ctx.knobs.carry_gauge_free);   // same fold as the primary solve
         }
         // Card SCL2 X2: the shared-history columns' N(0, 1) priors, as the primary fold
         // folded them after the clones'.  No-op off.

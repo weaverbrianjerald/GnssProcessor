@@ -91,8 +91,8 @@ int networkLevelingRetirementRunEnd(const NetworkRunEndView& v) {
     // (F3, network.phase_leveling_local_block, SPEC_amb_iono_split_overcount;
     // invariant #4).  Printed only when armed, so a log with the knob off is
     // byte-identical.  Armed with 0 blocks means the inject never built one: a
-    // miswire (carry_conditional_coupling off, carry_coupling_joint_whiten on, or the
-    // carry never warmed), not a quiet run.  A histogram below the station's
+    // miswire (carry_conditional_coupling off, or the carry never warmed), not a quiet
+    // run.  A histogram below the station's
     // carried-column count says the sibling columns were marginalized out (freed,
     // stale, reseed) rather than carried; fallbacks are the station-epochs that got
     // per-column rows instead of the block.
@@ -114,12 +114,10 @@ int networkLevelingRetirementRunEnd(const NetworkRunEndView& v) {
                   "(innovation: a clock JUMP at >{:.1f} sigma, carry erased), {} dropped "
                   "at gaps; bias q {:.3e} m² per epoch, drift q {:.3e} m²/s² per epoch "
                   "from {:.3e}, gap bound {:.0f} s{}",
-                  (cliff_live && config_.networkCarryConditionalCoupling()
-                   && !config_.networkCarryCouplingJointWhiten())
+                  (cliff_live && config_.networkCarryConditionalCoupling())
                       ? "" : " ⚠ CHANNEL NOT ARMED on this posture (phase_leveling "
-                             "off, carry_invariant on, carry_conditional_coupling "
-                             "off, or carry_coupling_joint_whiten on) — a 0 here "
-                             "means UNWIRED, not clean",
+                             "off, carry_invariant on, or carry_conditional_coupling "
+                             "off) — a 0 here means UNWIRED, not clean",
                   C.n_pl_blk_blocks, C.n_pl_blk_rows, C.n_pl_blk_marg_cols,
                   C.n_pl_blk_pair_missing, C.n_pl_blk_col_refused, C.n_pl_blk_fallback,
                   C.n_pl_blk_hist[0], C.n_pl_blk_hist[1], C.n_pl_blk_hist[2],

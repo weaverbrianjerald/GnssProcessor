@@ -92,9 +92,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cb_var_floor = config_.networkSharedCarryVarFloorCbM2();
     k.fullcov_on = config_.networkSharedCarryFullCov();
     k.carry_cpl_cond = config_.networkCarryConditionalCoupling();
-    k.carry_cpl_joint = config_.networkCarryCouplingJointWhiten();
     k.carry_cpl_tu = config_.networkCarryCouplingTimeUpdate();
-    k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov + !joint
+    k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov
     k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // card WSX; loader guarantees exact
     k.pfq_on = config_.networkClockPivotFrameQ();   // card PFQ; loader guarantees fullcov + the pin datum
     k.carry_cpl_clone = config_.networkCarryCouplingClockClone();   // card SCL; loader guarantees exact + fullcov
@@ -110,7 +109,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pv_window_ep = config_.networkPhaseVisibleWindowEp();
     k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();   // card CTU G5
     k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // card CTU G5; loader guarantees clm_on
-    k.carry_cpl_shmarg = config_.networkCarryCouplingShMarginalize();
     k.carry_cpl_gauge  = config_.networkCarryCouplingGaugeProject();
     k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
     k.zwd_on = config_.networkCarryZwd();
@@ -250,13 +248,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // Card HLT: broadcast satellite health on the network path.
     k.sat_health         = config_.networkSatHealth();
     // Gauge-free carry downdate: one resolved predicate that every fold, withdraw and
-    // replay site reads (card C-GF).
-    //
-    // The downdate belongs to the carry fold, not to the Q3 clock anchor: it removes the
-    // datum's own direction from the carried information, which is a property of carrying
-    // information across a re-realizable datum, not of anchoring a clock in time.  It is
-    // armed either through `clock_anchor_gauge_free` with the Q3 anchor on, or through the
-    // dense carry (network.shared_carry_full_cov) with network.shared_carry_gauge_free.
+    // replay site reads.  It removes the datum's own direction from the carried
+    // information, and is armed through `clock_anchor_gauge_free` with the Q3 anchor on.
     //
     // It is a single resolved field, not a predicate re-derived per site, because fold and
     // withdraw have to agree: the withdraw subtracts what the fold added, and a fold that
@@ -264,14 +257,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // is negative semidefinite.  The reduced normals then lose PSD along the gauge, and the
     // constrained solve either throws on its pivot guard (the epoch is skipped, every
     // epoch) or factorizes a saddle and returns a wrong x_s without an error.
-    k.carry_gauge_free   = (k.cta_on && k.cta_gauge_free)
-                        || (config_.networkSharedCarryFullCov()
-                            && config_.networkSharedCarryGaugeFree());
-    // The closure test belongs to the dense-carry arming only: the Q3 path keeps its
-    // original rule, so Q3 configurations stay byte-identical and an A/B against them
-    // isolates the closure test as the one changed variable.
-    k.carry_gauge_free_closure = config_.networkSharedCarryFullCov()
-                              && config_.networkSharedCarryGaugeFree();
+    k.carry_gauge_free   = k.cta_on && k.cta_gauge_free;
     // The denominator of the anchor guard and its census is resolved here, once (card Q3
     // §2.1), for the same reason `cta_on` resolves its interlock here: the guard and the
     // census have to standardize identically, or the census stops being a cross-check on
@@ -282,14 +268,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         const auto stat = config_.networkClockAnchorGaugeFreeStat();
         k.cta_stat_proj_post  = (stat == NetworkClockAnchorStat::Post)
                              || (stat == NetworkClockAnchorStat::Proj)
-                             // `auto` follows the fold, and the fold is `carry_gauge_free`
-                             // (card C-GF).  The term is OR-ed with the original one rather
-                             // than replacing it, so a config with cta_gauge_free set and
-                             // cta_on false keeps its denominator bit for bit (the census
-                             // reads the same predicates) while the carry-side arming is
-                             // still followed.
-                             || (stat == NetworkClockAnchorStat::Auto
-                                 && (k.cta_gauge_free || k.carry_gauge_free));
+                             // `auto` follows the gauge-free knob (with cta_on false the
+                             // census still reads the same predicate, bit for bit).
+                             || (stat == NetworkClockAnchorStat::Auto && k.cta_gauge_free);
         k.cta_stat_proj_prior = (stat == NetworkClockAnchorStat::Proj);
     }
     k.clk_model_q1 = config_.networkClockModelQ1();

@@ -476,8 +476,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                                 : ContributionKind::BorderCarryDiagonal;
         est.contributionKind(carry_kind);   // card NOM N2a
         if (ctx.knobs.carry_gauge_free) {
-            const std::size_t gf = est.addSharedPriorClockGaugeFree(
-                priors, ctx.knobs.carry_gauge_free_closure);
+            const std::size_t gf = est.addSharedPriorClockGaugeFree(priors);
             ctx.counters.cta_gf_keys += static_cast<long long>(gf);
             if (gf == 0) ++ctx.counters.cta_gf_inert;
         } else {
@@ -628,8 +627,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                     est.contributionKind(ContributionKind::BorderCarryDense);   // card NOM N2a
                     est.addSharedPriorDense(dkeys, cov_eff,
                                             anchor_info_trace.is_open() ? &lam : nullptr,
-                                            ctx.knobs.carry_gauge_free,
-                                            ctx.knobs.carry_gauge_free_closure);
+                                            ctx.knobs.carry_gauge_free);
                     if (anchor_info_trace.is_open())
                         for (std::size_t a = 0; a < kd; ++a)
                             if (dkeys[a].kind == SharedParamKind::Clock)
@@ -690,8 +688,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         est.contributionKind(leftover_kind);
         if (ctx.knobs.carry_gauge_free)
             ctx.counters.cta_gf_keys +=
-                static_cast<long long>(est.addSharedPriorClockGaugeFree(
-                    leftovers, ctx.knobs.carry_gauge_free_closure));
+                static_cast<long long>(est.addSharedPriorClockGaugeFree(leftovers));
         else
             est.addSharedPrior(leftovers);  // no-op when empty; skips absent keys
         if (within_epoch_armed)
@@ -716,9 +713,6 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // Card SCL2 X2: the registered shared-history columns' N(0, 1) priors, independent of
     // the border (filter/NetworkSharedHistory).  No-op off.
     networkSharedHistoryFold(ctx, ws, est, within_epoch_armed);
-    // The partial-support skip tally (card C-GF) is run-scoped on the estimator and is
-    // read once at teardown; reading it here would miss the withdraw and
-    // within-epoch-replay folds, which run after this point in the epoch.
 }
 
 void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator& est,

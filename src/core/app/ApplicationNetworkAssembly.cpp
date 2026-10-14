@@ -36,7 +36,7 @@
 #include "filter/NetworkCarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "filter/NetworkSdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "filter/NetworkCoupling.hpp"       // conditional coupling-row builder (Card 1/1b/1d, INC-7b)
+#include "filter/NetworkCoupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
 #include "filter/NetworkParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
 #include "filter/NetworkContributions.hpp" // row tags and the contribution tallies (card NOM N2a)
 #include "filter/NetworkPrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
@@ -2929,14 +2929,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const bool   opin_on = (opin_table != nullptr) && !opin_table->empty();
     const auto&  vce_apply     = ctx.carry.vce_apply;     // carry variance factor α², unity when off (M2 v2)
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows (Card 1); requires fullcov_on (enforced at load)
-    const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // jointly whiten the coupling rows, departed cols → M_w (Card 1b); requires carry_cpl_cond (enforced at load)
-    // Live predicate for F3: the block's rows are Card-1 coupling rows (A_s/A_r), and
-    // the Card-1b joint path owns that row block when armed, so the two are mutually
-    // exclusive here (the loader warns that the knob is inert on either miss).  A
-    // single const bool, so the off path never reaches a block branch.
-    const bool   pl_blk_on = pl_local_block && carry_cpl_cond && !carry_cpl_joint;
+    // Live predicate for F3: the block's rows are Card-1 coupling rows (A_s/A_r) (the
+    // loader warns that the knob is inert without them).  A single const bool, so the
+    // off path never reaches a block branch.
+    const bool   pl_blk_on = pl_local_block && carry_cpl_cond;
     const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // border time update of the coupling rows at injection, κ shrink + M²κq inflation (Card 1d); requires carry_cpl_cond (enforced at load)
-    const bool   carry_cpl_shmarg = ctx.knobs.carry_cpl_shmarg; // fully marginalize VtecSh coupling terms: the GM border ≠ the RW κ model, and this severs the amb↔SH carry feedback (Card 1d-SH); requires carry_cpl_cond (enforced at load)
     const bool   carry_cpl_reinit = ctx.knobs.carry_cpl_reinit; // widen the reinit feed to the realization-step sources and honour it with κ off (Card 1g); requires carry_cpl_cond (enforced at load)
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // carry per-station ZWD across epochs (B9)
     // ZWD carry random-walk process noise (B9, m²/s): both fold sites read
@@ -2964,7 +2961,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // Live predicate for B9-in-block (network.carry_zwd_in_block): the carried ZWD
     // column joins the F3 whitened block instead of folding as a diagonal coupling row
     // outside it.  Conjoined with pl_blk_on, so a station-epoch that takes the
-    // per-column route (F3 off, joint whitening on, coupling rows off) is never
+    // per-column route (F3 off, coupling rows off) is never
     // touched; there the ZWD keeps its B9 row.  The loader already refuses the arm
     // without carry_zwd + phase_leveling_local_block; this is the live half of the
     // same gate.
@@ -3040,7 +3037,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     auto& rpb_carry = ctx.carry.rpb_carry;
     auto& sh_dev_carry = ctx.carry.sh_dev_carry;
     auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // rx-CB carry: produce phase reads only
-    auto& n_cpl_joint_fallback = ctx.counters.n_cpl_joint_fallback;
     auto& n_cpl_terms_present = ctx.counters.n_cpl_terms_present;
     auto& n_cpl_terms_departed = ctx.counters.n_cpl_terms_departed;
     auto& n_cpl_terms_shrunk = ctx.counters.n_cpl_terms_shrunk;
@@ -3731,7 +3727,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 // station (no shared write, safe in the parallel produce phase); the rows
                 // are appended after the carry loops.
                 CouplingRowBuilder cb{est, shc, q_clock, q_cb, q_pb,
-                                      carry_cpl_joint, carry_cpl_tu, carry_cpl_shmarg,
+                                      carry_cpl_tu,
                                       ctx.knobs.carry_cpl_gauge, ctx.knobs.carry_cpl_reinit,
                                       tu_reinit_hist, R};
                 // Re-admission re-coupling edge (network.readmit_coupling_marg_ep): the
@@ -4736,8 +4732,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 }
                 if (carry_cpl_cond) {
                     // Batch-append this station's conditional coupling rows into
-                    // R.A_s/R.A_r (jointly whitened when carry_cpl_joint, else scalar per
-                    // row; Card 1/1b).
+                    // R.A_s/R.A_r (scalar per row, and the F3 block's whitened rows;
+                    // Card 1).
                     cb.appendCouplingRows();
                 }
                 {
@@ -5235,7 +5231,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         }
 
         total_pins += R.np;
-        if (R.cpl_joint_fallback) ++n_cpl_joint_fallback;   // joint LLT degraded to scalar (Card 1b)
 
         try {
             // Hand addStation this station's own datum rows (card RF-PD-fix), so the

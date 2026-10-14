@@ -304,8 +304,7 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::IonoGrossErase:       return k.gl_on && !k.gl_bound && k.iono_blk;
         case R::IonoGrossHold:        return k.gl_bound && k.iono_blk;
         case R::IonoGapSkip:
-            return k.pl_on && k.iono_blk && k.pl_local_block && k.carry_cpl_cond
-                && !k.carry_cpl_joint;
+            return k.pl_on && k.iono_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::IonoGapPrune:
             return k.pl_on && k.iono_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::PcRaimErase:          return k.raim_on && k.pl_on && t4 && k.pc_on;
@@ -316,17 +315,17 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
             return k.pl_on && k.rx_cb_on && k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::RxcbJumpSkip:
             return k.rx_cb_on
-                && !(k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint);
+                && !(k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond);
         case R::RxcbGapSkip:   // the in-block route, or the diagonal route when the block is not armed
             return k.rx_cb_on
                 && ((k.pl_on && !k.carry_invariant)
-                    || !(k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint));
+                    || !(k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond));
         case R::RxcbGapPrune:         return k.rx_cb_on;
         case R::RxclkJumpErase:
         case R::RxclkGapPrune:
             return k.pl_on && k.rxclk_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::RxclkGapSkip:
-            return k.pl_on && k.rxclk_blk && k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint;
+            return k.pl_on && k.rxclk_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::RpbEq34Erase:
             return k.phase_datum_eq34 && k.pl_on && k.eq34_rpb_q > 0.0;
         case R::RpbGapSkip:           return k.pl_on && k.eq34_rpb_q > 0.0;

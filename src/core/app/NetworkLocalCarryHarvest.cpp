@@ -114,8 +114,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // ZWD in the local block (B9-in-block, network.carry_zwd_in_block): the ZWD column
     // joins the F3 harvest block.  It is gated on the same live predicate as the block
     // itself (pl_local_block && carry_cpl_cond), so the harvest and the inject agree on
-    // which station-epochs have a block; carry_cpl_joint is the injector's mutex and
-    // does not reach the block path there either.  Off ⇒ `cols` is untouched and
+    // which station-epochs have a block.  Off ⇒ `cols` is untouched and
     // PlHarvestBlock::C keeps its dimension without the ZWD column (byte-identical).
     const bool   zwd_blk_on  = ctx.knobs.zwd_in_block && pl_local_block && carry_cpl_cond;
     // Iono in the local block (network.carry_iono_in_block): the per-LOS iono columns

@@ -182,7 +182,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.gap_horizon_s = k.pl_max_gap_s;
         if (!s.carried)
             s.route = ParamRoute::NotCarried;
-        else if (k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint)
+        else if (k.pl_local_block && k.carry_cpl_cond)
             s.route = ParamRoute::LocalBlock;
         else
             s.route = localRowRoute(k);

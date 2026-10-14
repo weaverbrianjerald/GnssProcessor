@@ -10,8 +10,7 @@
  *    keeps a row without identities aligned; the receiver-key helpers read the key's
  *    signal; a whitened block row's kind follows its column's family flags;
  *  - @c appendCouplingRows keeps the tags aligned with the rows on the scalar path (a
- *    whitened block row included), the joint path and the joint path's scalar fallback;
- *    the within-epoch re-whiten's tags follow the rows the whitening kernel reports;
+ *    whitened block row included);
  *  - the tag check sees a missing tag, an unset tag, a row out of place and a builder
  *    counter that disagrees, and is silent on a well-formed block;
  *  - the station drain counts by its rules (taken stations only, pre-PD entries always,
@@ -30,7 +29,7 @@
 #include "filter/NetworkCoupling.hpp"     // CouplingRowBuilder, localBlockColKind
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkParamRegistry.hpp"
-#include "filter/NetworkRunTypes.hpp"     // StationAssembly, CplRowRaw, whitenCouplingRows
+#include "filter/NetworkRunTypes.hpp"     // StationAssembly, CplRowRaw
 #include "filter/StateKeySchema.hpp"
 
 #include <Eigen/Dense>
@@ -98,10 +97,10 @@ struct BuilderFixture {
         R.n_data_rows = data_rows;
     }
 
-    CouplingRowBuilder make(bool joint) {
+    CouplingRowBuilder builder() {
         return CouplingRowBuilder{est, shc, /*q_clock=*/1e-4, /*q_cb=*/1e-4, /*q_pb=*/1e-4,
-                                  joint, /*tu=*/false, /*shmarg=*/false, /*gauge=*/false,
-                                  /*reinit=*/false, tu_reinit_hist, R};
+                                  /*tu=*/false, /*gauge=*/false, /*reinit=*/false,
+                                  tu_reinit_hist, R};
     }
 
     LocalCarry carryOnClock() const {
@@ -231,7 +230,7 @@ TEST(NetworkContributionsTest, CouplingRegionKindsAreTheAppendedOnes) {
     std::set<CK> in;
     for (const ContributionSpec& s : contributionSpecs())
         if (contributionInCouplingRegion(s.kind)) in.insert(s.kind);
-    EXPECT_EQ(in, (std::set<CK>{CK::CouplingScalar, CK::CouplingJoint, CK::BlockAmbiguityCarry,
+    EXPECT_EQ(in, (std::set<CK>{CK::CouplingScalar, CK::BlockAmbiguityCarry,
                                 CK::BlockZwdCarry, CK::BlockIonoCarry, CK::BlockRxClockCarry,
                                 CK::BlockRxCbCarry, CK::BlockPhaseColourCarry}));
     EXPECT_FALSE(contributionInCouplingRegion(CK::Unset));
@@ -304,7 +303,7 @@ TEST(NetworkContributionsTest, BlockRowKindFollowsTheColumnFamilyFlags) {
 TEST(NetworkContributionsTest, AppendCouplingRowsTagsTheScalarPath) {
     BuilderFixture f(/*data_rows=*/2);
     const LocalCarry lc = f.carryOnClock();
-    auto cb = f.make(/*joint=*/false);
+    auto cb = f.builder();
     cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.5, lc, /*var_eff=*/0.04, /*gap=*/30.0,
                    sat("G07"), sigOf(System::GPS, "L1C"));
     PendCplRow blk;   // a whitened block row (non-empty local), as buildLocalBlock buffers it
@@ -325,77 +324,6 @@ TEST(NetworkContributionsTest, AppendCouplingRowsTagsTheScalarPath) {
     EXPECT_EQ(f.R.row_tags[3].kind, CK::BlockZwdCarry);
     // The scalar row's own kind is set by the builder, whatever the caller passed.
     EXPECT_EQ(cb.crows[0].tag.kind, CK::CouplingScalar);
-}
-
-// The joint path tags its rows CouplingJoint, and the retained ingredients keep the tags
-// for the refloat re-whiten.
-TEST(NetworkContributionsTest, AppendCouplingRowsTagsTheJointPath) {
-    BuilderFixture f(/*data_rows=*/1);
-    const LocalCarry lc = f.carryOnClock();
-    auto cb = f.make(/*joint=*/true);
-    cb.buildCplRow(/*col=*/1, 0.0, lc, /*var_eff=*/0.02, 30.0, sat("G03"),
-                   sigOf(System::GPS, "L2W"));
-    cb.buildCplRow(/*col=*/2, 0.0, lc, /*var_eff=*/0.03, 30.0, sat("G04"),
-                   sigOf(System::GPS, "L2W"));
-    cb.appendCouplingRows();
-
-    ASSERT_FALSE(f.R.cpl_joint_fallback);
-    ASSERT_EQ(f.R.A_r.rows(), 3);
-    ASSERT_EQ(f.R.row_tags.size(), 3u);
-    EXPECT_EQ(f.R.row_tags[1].kind, CK::CouplingJoint);
-    EXPECT_EQ(f.R.row_tags[1].sat.str(), "G03");
-    EXPECT_EQ(f.R.row_tags[2].kind, CK::CouplingJoint);
-    EXPECT_EQ(f.R.row_tags[2].sat.str(), "G04");
-    ASSERT_EQ(f.R.cpl_raw.size(), 2u);
-    EXPECT_EQ(f.R.cpl_raw[1].tag.sat.str(), "G04");
-}
-
-// A joint covariance that is not SPD falls back to the scalar rows: the same rows, tagged
-// CouplingScalar, with their identities.
-TEST(NetworkContributionsTest, AppendCouplingRowsTagsTheJointFallbackAsScalar) {
-    BuilderFixture f(/*data_rows=*/2);
-    auto cb = f.make(/*joint=*/true);
-    CplRowRaw r;
-    r.local_col = 1;
-    r.var_eff = -1.0;                   // indefinite: the joint factor fails
-    r.tag = RowTag{CK::CouplingJoint, sat("G09"), sigOf(System::GPS, "L1C")};
-    cb.craw.push_back(r);
-    cb.appendCouplingRows();
-
-    ASSERT_TRUE(f.R.cpl_joint_fallback);
-    ASSERT_EQ(f.R.A_r.rows(), 3);
-    ASSERT_EQ(f.R.row_tags.size(), 3u);
-    EXPECT_EQ(f.R.row_tags[2].kind, CK::CouplingScalar);
-    EXPECT_EQ(f.R.row_tags[2].sat.str(), "G09");
-    EXPECT_EQ(f.R.cpl_row_start, 2);
-}
-
-// The re-whiten's tags are the head rows, then the coupling rows the whitening kernel
-// reports as kept, in its output order.
-TEST(NetworkContributionsTest, JointRewhitenTagsFollowTheKernelsKeptRows) {
-    // Three data rows, then three jointly whitened coupling rows on local columns 5, 6, 7.
-    const std::vector<RowTag> tags = {
-        tagOf(CK::DataCode), tagOf(CK::DataPhase), tagOf(CK::AmbiguityPin),
-        RowTag{CK::CouplingJoint, sat("G01"), {}}, RowTag{CK::CouplingJoint, sat("G02"), {}},
-        RowTag{CK::CouplingJoint, sat("G03"), {}}};
-    std::vector<CplRowRaw> raw(3);
-    for (int k = 0; k < 3; ++k) {
-        raw[static_cast<std::size_t>(k)].local_col = 5 + k;
-        raw[static_cast<std::size_t>(k)].var_eff = 0.05;
-        raw[static_cast<std::size_t>(k)].tag = tags[static_cast<std::size_t>(3 + k)];
-    }
-    // The refloat drops column 6: the kernel keeps rows 0 and 2.
-    Eigen::MatrixXd Hr, Hs;
-    Eigen::VectorXd z;
-    std::vector<Eigen::Index> kept;
-    ASSERT_TRUE(whitenCouplingRows(raw, {}, std::set<Eigen::Index>{6}, 8, 0, Hr, Hs, z, kept));
-    const std::vector<RowTag> out = rowTagsAfterJointRewhiten(tags, 3, raw, kept, Hr.rows());
-    ASSERT_EQ(out.size(), 5u);
-    EXPECT_EQ(out[2].kind, CK::AmbiguityPin);
-    EXPECT_EQ(out[3].sat.str(), "G01");
-    EXPECT_EQ(out[4].sat.str(), "G03");
-    // A failed re-whiten appends no coupling row.
-    EXPECT_EQ(rowTagsAfterJointRewhiten(tags, 3, raw, kept, 0).size(), 3u);
 }
 
 // ---------------------------------------------------------------------------
@@ -464,7 +392,7 @@ TEST(NetworkContributionsTest, TagCheckSeesEachDefect) {
     }
     {   // a coupling kind outside the region, a non-coupling kind inside it
         StationAssembly R = wellFormedBlock();
-        R.row_tags[5] = tagOf(CK::CouplingJoint);
+        R.row_tags[5] = tagOf(CK::CouplingScalar);
         R.row_tags[4] = tagOf(CK::GimIono);
         EXPECT_EQ(checkStationTags(R).misplaced, 2);
     }
@@ -547,8 +475,6 @@ TEST(NetworkContributionsTest, StationDrainCountsByItsRules) {
     const std::vector<int> est_index_of = {0, -1, 1, -1};
 
     NetworkContributionLedger led;
-    led.replay_realigned = 3;
-    led.replay_row_tags[1] = {tagOf(CK::DataCode)};
     networkContributionsStationDrain(led, asm_res, est_index_of, 2313, 266370.0);
     const ContributionTally& t = led.pending;
     const auto at = [&](CK k) { return t.kinds[static_cast<std::size_t>(k)]; };
@@ -574,9 +500,6 @@ TEST(NetworkContributionsTest, StationDrainCountsByItsRules) {
     EXPECT_EQ(t.misplaced_rows, 0);
     EXPECT_EQ(t.counter_mismatches, 0);
     EXPECT_EQ(led.checked_all, 3);
-    // The epoch's replay state is cleared.
-    EXPECT_EQ(led.replay_realigned, 0);
-    EXPECT_TRUE(led.replay_row_tags.empty());
 }
 
 // ---------------------------------------------------------------------------

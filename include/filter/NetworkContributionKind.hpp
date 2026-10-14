@@ -57,8 +57,7 @@ namespace GnssProcessor {
         GimIono,                  ///< External GIM slant-ionosphere rows (whitened per constellation).
         SdEwl,                    ///< Between-satellite single-differenced EWL rows (whitened per constellation).
         // --- Station coupling and block rows: the coupling region (appendCouplingRows) ---
-        CouplingScalar,           ///< A carried local column's conditional coupling row, +1 on the column (card 1; also card 1b's per-row fallback).
-        CouplingJoint,            ///< The station's coupling rows whitened jointly (card 1b).
+        CouplingScalar,           ///< A carried local column's conditional coupling row, +1 on the column (card 1).
         BlockAmbiguityCarry,      ///< Whitened local carry block row whose primary column is an ambiguity (F3).
         BlockZwdCarry,            ///< Whitened local carry block row whose primary column is the wet delay (B9-in-block).
         BlockIonoCarry,           ///< Whitened local carry block row whose primary column is a slant ionosphere (I-in-block).

@@ -1970,9 +1970,8 @@ namespace GnssProcessor {
          * re-stashes the whole
          * block each epoch from the posterior, so Σ does not drift.
          *
-         * Requires @c network.carry_conditional_coupling (the rows live in A_s/A_r)
-         * and is mutually exclusive with @c carry_coupling_joint_whiten in this
-         * build; otherwise it is inert with a loader warning.  It is also inert
+         * Requires @c network.carry_conditional_coupling (the rows live in A_s/A_r);
+         * otherwise it is inert with a loader warning.  It is also inert
          * under carry_invariant.  Costs one n×n LLT per station-epoch (n ≈ 75).
          * The run-end 'Network (leveling local-block F3)' line is the on-path
          * telemetry.  Off = byte-identical.
@@ -2040,39 +2039,6 @@ namespace GnssProcessor {
         bool networkSharedCarryFullCov() const { return network_shared_carry_full_cov_; }
 
         /**
-         * @brief Marginalize the declared datum directions out of the carried shared
-         *        information (`network.shared_carry_gauge_free`; card C-GF).
-         *
-         * The exact information-side marginalization
-         * @f$\Lambda\leftarrow\Lambda-\Lambda U(U^{\mathsf T}\Lambda U)^{-1}U^{\mathsf T}\Lambda@f$
-         * over the datum directions @f$U@f$, so the carry constrains only the estimable
-         * combinations and leaves the gauge to the S-basis datum.  Applied on @f$\Lambda@f$
-         * rather than on the covariance because "infinite prior variance along @f$u@f$" has
-         * no finite covariance representation.
-         *
-         * The same operator is also reachable through @ref networkClockAnchorGaugeFree,
-         * an unrelated Q3 temporal-anchor knob.  This knob arms it as a property of the
-         * carry, which is what deposits gauge information in the first place, so a config
-         * running the dense carry without that anchor can use it.  It requires
-         * @ref networkSharedCarryFullCov.
-         *
-         * It also generalizes the basis: @f$U@f$ is built from the epoch's declared datum
-         * directions with a support-closure test, where the Q3 path uses the carried
-         * clocks alone with a bare "at least two members" floor.  Closure matters because
-         * @f$U=v|_C@f$ restricted to the carried set @f$C@f$ is not the same functional as
-         * @f$v@f$ when @f$\text{supp}(v)\not\subseteq C@f$: the difference is an estimable
-         * contrast between the carried and uncarried members (the normal case: any
-         * satellite that just rose), and downdating it would delete real information
-         * rather than gauge.  Directions that are not closed are skipped and counted.
-         *
-         * Default false (byte-identical).  Both edges of the arming are events: see the
-         * run-end gauge-free readout and the `cgf_*` counters.
-         *
-         * @see networkSharedCarryFullCov, networkClockAnchorGaugeFree
-         */
-        bool networkSharedCarryGaugeFree() const { return network_shared_carry_gauge_free_; }
-
-        /**
          * @brief Carry each persistent local parameter (phase-leveling ambiguity,
          *        ZWD) across epochs as a conditional pseudo-observation row coupling
          *        it to the shared border, instead of an independent diagonal prior
@@ -2108,41 +2074,6 @@ namespace GnssProcessor {
          *      NetworkEstimator::stationRegression
          */
         bool networkCarryConditionalCoupling() const { return network_carry_conditional_coupling_; }
-
-        /**
-         * @brief Jointly whiten a station's conditional coupling rows instead of
-         *        marginalizing each departed shared column per row into a scalar
-         *        variance (@c network.carry_coupling_joint_whiten, card 1b).
-         *
-         * @ref networkCarryConditionalCoupling marginalizes a departed shared column
-         * into the coupling row's scalar noise, which is only the diagonal of the
-         * true joint marginalization covariance @f$M_w\,\mathrm{diag}(P_w)\,M_w^\top@f$.
-         * That drops the correlation between rows sharing a departed column (terms
-         * that cancel in any between-station double difference), so every row is
-         * deweighted individually to nothing and the carried ambiguities' formal σ
-         * goes flat while the σ-calibration stays ≈ 1.
-         *
-         * When on, a station's coupling rows are built as a group with the full joint
-         * row covariance
-         * @f$R = \mathrm{diag}(\text{var\_eff}_r) + M_w\,\mathrm{diag}(P_w)\,M_w^\top@f$
-         * and LLᵀ-whitened by the same factor, so the common departed directions act
-         * common-mode-free and the orthogonal between-row DD information survives.
-         * Costs one per-station LLT; a non-SPD factor retries with a small ridge,
-         * then falls back to the scalar path for that station (counted and warned).
-         * Only departed-column marginalization changes; present shared columns stay
-         * ordinary @f$A_s@f$ coefficients.
-         *
-         * Measured to be a no-op: pre-verification falsified the premise
-         * (@f$M_w@f$ was empty in 723/735 station-epochs, 98.4 %, never held a
-         * satellite clock, and the marginalized term came out 10–1000× smaller than
-         * @c var_eff against a required ≥ 10×).
-         *
-         * Requires @ref networkCarryConditionalCoupling (hard error otherwise).
-         * Default false = per-row scalar marginalization, byte-identical.
-         *
-         * @see networkCarryConditionalCoupling, networkSharedCarryFullCov
-         */
-        bool networkCarryCouplingJointWhiten() const { return network_carry_coupling_joint_whiten_; }
 
         /**
          * @brief Apply the shared-border time update to each conditional coupling
@@ -2207,8 +2138,7 @@ namespace GnssProcessor {
          * SH terms keep the card 1d treatment (counted).
          *
          * Requires @ref networkCarryCouplingTimeUpdate and
-         * @ref networkSharedCarryFullCov, and refuses
-         * @ref networkCarryCouplingJointWhiten (hard errors at load).  Fingerprinted.
+         * @ref networkSharedCarryFullCov (hard errors at load).  Fingerprinted.
          * Default false = the card 1d rows (byte-identical).
          */
         bool networkCarryCouplingExactUpdate() const { return network_carry_coupling_exact_update_; }
@@ -2283,9 +2213,9 @@ namespace GnssProcessor {
          *
          * Requires @ref networkCarryCouplingExactUpdate and
          * @ref networkSharedCarryFullCov; refuses @c network.clock_model (no clock in the
-         * carried border), @c network.clock_anchor_gauge_free and
-         * @c network.shared_carry_gauge_free (the gauge-free downdate's clock direction
-         * would have to include the clones); hard errors at load.  Fingerprinted (armed-only
+         * carried border) and @c network.clock_anchor_gauge_free (the gauge-free
+         * downdate's clock direction would have to include the clones); hard errors at
+         * load.  Fingerprinted (armed-only
          * token).  Default false = card CTU's per-row form (byte-identical).
          * UNVALIDATED: built for the broadcast-grade clock walk; not recommended.
          */
@@ -2373,30 +2303,6 @@ namespace GnssProcessor {
          * UNVALIDATED.
          */
         bool networkCarryCouplingDepartedClone() const { return network_carry_coupling_departed_clone_; }
-
-        /**
-         * @brief Fully marginalize the SH-VTEC coefficient terms of every coupling
-         *        row instead of shrink-carrying them
-         *        (@c network.carry_coupling_sh_marginalize, card 1d-SH).
-         *
-         * The SH border coefficients are carried as a mean-reverting Gauss-Markov
-         * prior (random walk toward the previous estimate plus an always-on Kaula
-         * climatology anchor), but the card-1d κ time update models a pure random
-         * walk.  A coupling row's VtecSh term therefore re-asserts the harvest
-         * epoch's field against the climatology pull at compounding weight: a
-         * positive feedback that lets the field run away once the accumulated row
-         * weight exceeds the data and climatology anchoring (seen as an
-         * exponential a₀₀ collapse about 4 h into 12 h low-floor runs).  When on,
-         * VtecSh coupling terms take the q=∞ limit (departed treatment: the
-         * coefficient is dropped and @f$M^2 P_{\text{prev}}@f$ marginalized into
-         * the row variance).  That is consistent in all cases, conservative, and
-         * breaks the amb↔SH carry feedback while keeping the clock/bias coupling
-         * carry live.  Requires @ref networkCarryConditionalCoupling.  Default
-         * false (byte-identical).
-         *
-         * @see networkCarryCouplingTimeUpdate, networkCarryConditionalCoupling
-         */
-        bool networkCarryCouplingShMarginalize() const { return network_carry_coupling_sh_marginalize_; }
 
         /**
          * @brief Hold a truncated coupling row's per-(constellation,kind) coefficient
@@ -2640,8 +2546,7 @@ namespace GnssProcessor {
          *
          * Interlocks (loader-enforced): requires @ref networkPhaseLeveling,
          * @ref networkPhaseLevelingLocalBlock and a structurally buildable F3 block
-         * (@ref networkCarryConditionalCoupling on, @ref networkCarryCouplingJointWhiten
-         * off), otherwise warn + disable, since an armed but inert knob is not allowed
+         * (@ref networkCarryConditionalCoupling on), otherwise warn + disable, since an armed but inert knob is not allowed
          * (invariant #4); disabled with a warning under @ref networkCarryInvariant (F3
          * is structurally inert there); a hard error on a negative q / gap / rate
          * variance.  Default false = byte-identical (the harvest @c cols set, and
@@ -3364,8 +3269,7 @@ namespace GnssProcessor {
          *
          * Requires @ref networkCarryRxCodeBias, @ref networkCarryConditionalCoupling
          * and a local block (the float_kf vehicle, or
-         * @ref networkPhaseLevelingLocalBlock), refuses
-         * @ref networkCarryCouplingJointWhiten.  Fingerprinted.  Default false =
+         * @ref networkPhaseLevelingLocalBlock).  Fingerprinted.  Default false =
          * byte-identical.
          */
         bool networkCarryRxCodeBiasInBlock() const { return network_carry_rx_code_bias_in_block_; }
@@ -8471,11 +8375,8 @@ namespace GnssProcessor {
         bool   network_phase_leveling_local_block_{false}; ///< Carry each station's injectable ambiguity set as one jointly whitened local block (F3; harvested conditional cross covariances on Σ's off-diagonals, departed columns marginalized): exact for every local-local direction, including the station-common ones (SPEC_amb_iono_split_overcount).  Off = byte-identical.
         double network_shared_carry_var_floor_pb_m2_{0.0}; ///< Floor (m²) on the D2 sat-phase-bias carried prior variance (B4; caps Λ, which bounds the zero-q lock-in while preserving Ge-2008 FCB averaging); 0 = off.
         double network_shared_carry_var_floor_cb_m2_{0.0}; ///< Floor (m²) on the D2 sat-code-bias carried prior variance (B4; caps Λ); 0 = off.
-        bool   network_shared_carry_gauge_free_{false};    ///< Marginalize the declared datum directions out of the carried shared information (Λ ← Λ − ΛU(UᵀΛU)⁻¹UᵀΛ) as a property of the carry rather than of the unrelated Q3 clock anchor (card C-GF), with a support-closure test on U so a partially carried direction is skipped instead of having a real estimable contrast deleted; requires shared_carry_full_cov.  Off = byte-identical.
         bool   network_shared_carry_full_cov_{false};      ///< Carry the full dense cross-covariance of the shared border across epochs (C1; information-form KF on the border that recovers the clock↔phase-bias off-diagonals the diagonal D2 stash discards): fold Λ=(P_prev+Q)⁻¹ as one dense block, marginalize departed/pinned/retired keys, degrade to the diagonal fold on a non-PD block.  Off = legacy per-key diagonal carry (byte-identical).
         bool   network_carry_conditional_coupling_{false}; ///< Carry each persistent local parameter (phase-leveling ambiguity, ZWD) as a conditional pseudo-observation row coupling it to the free shared border (card 1; coeff +1 on the local, regression M_r on the border, variance = pure conditional (N_rr⁻¹)_{rr}), not as an independent diagonal prior; this removes the shared-information double count so the sequential recursion equals the batch solve.  Requires shared_carry_full_cov (hard error otherwise).  Off = legacy diagonal addStationPrior carry (byte-identical).
-        bool   network_carry_coupling_joint_whiten_{false}; ///< Jointly whiten a station's coupling rows (card 1b; R = diag(var_eff) + M_w·diag(P_w)·M_wᵀ over the distinct departed shared columns, LLᵀ-whitened) instead of marginalizing each departed column per row into a scalar variance; this restores the between-row (DD) correlation the diagonal marginalization removes (the T7 flat-σ defect).  Requires carry_conditional_coupling (hard error otherwise).  Off = card-1 per-row scalar marginalization (byte-identical).
-        bool   network_carry_coupling_sh_marginalize_{false};  ///< Fully marginalize (q=∞ / departed treatment) the VtecSh terms of every coupling row (card 1d-SH), which breaks the amb↔SH carry feedback (GM-carried border vs RW-modeled κ mismatch); requires carry_conditional_coupling.  Off = shrink-carry SH terms (byte-identical).
         bool   network_carry_coupling_gauge_project_{false};   ///< Hold each (constellation,kind) coefficient sum of a truncated coupling row at its harvest value (card 1f), so a departed/re-realized column stops pinning the current datum gauge at the old realization (without it the null eigenvalue rose from 1e-11 to 9.43e-3 in one epoch, causing spurious over-specified withholds); requires carry_conditional_coupling.  Off = byte-identical.
         bool   network_carry_coupling_reinit_sources_{false};  ///< Key the coupling reinit history (kind,sat,signal) with an empty-signal sat-wide wildcard, feed it from the phase-anchor / eq34 / datum-slip re-reference sets, and honour it independently of carry_coupling_time_update (card 1g), so a re-realized column takes the departed route instead of folding a retired-frame ŝ_prev at full weight; requires carry_conditional_coupling.  Off = byte-identical.
         bool   network_carry_coupling_time_update_{false};  ///< Apply the border time update to each coupling row at injection (card 1d): shrink every present coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder equal to the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, card 1c).  Requires carry_conditional_coupling (hard error otherwise).  Off = raw harvested rows (byte-identical).
@@ -8483,10 +8384,10 @@ namespace GnssProcessor {
         int    network_carry_coupling_shared_history_rank_{1};   ///< Card SCL2 X2: history columns per cloned clock, [1, 8].
         bool   network_carry_coupling_bias_clone_{false};        ///< Card BCL-a: the satellite phase and code biases on one-epoch clones with walk factors.  Requires carry_coupling_clock_clone.  Off = card CTU's per-row update for the biases (byte-identical).
         bool   network_carry_coupling_departed_clone_{false};    ///< Card BCL-d: every key card CTU re-attributes on a one-epoch clone with the stashed prior and no walk.  Requires carry_coupling_clock_clone.  Off = card CTU's re-attribution (byte-identical).
-        bool   network_carry_coupling_clock_clone_{false};   ///< Card SCL: carry the previous epoch's satellite clocks as one-epoch clone columns in the shared border (the rows keep their clock coefficients on the clone, the walk enters once in the border prior, the harvest marginalizes the clones).  Requires carry_coupling_exact_update and shared_carry_full_cov; refuses clock_model, clock_anchor_gauge_free and shared_carry_gauge_free.  Off = card CTU's per-row form (byte-identical).
+        bool   network_carry_coupling_clock_clone_{false};   ///< Card SCL: carry the previous epoch's satellite clocks as one-epoch clone columns in the shared border (the rows keep their clock coefficients on the clone, the walk enters once in the border prior, the harvest marginalizes the clones).  Requires carry_coupling_exact_update and shared_carry_full_cov; refuses clock_model and clock_anchor_gauge_free.  Off = card CTU's per-row form (byte-identical).
         bool   network_carry_coupling_exact_cross_{false};   ///< Add the exact time update's within-station row covariance M_i'BM_k to the whitened local block (card WSX).  Requires carry_coupling_exact_update.  Off = the per-row form (byte-identical).
         bool   network_clock_pivot_frame_q_{false};          ///< Card PFQ: the carried satellite clocks' process noise in the pivot frame (each folding non-pivot clock takes the pivot's walk r_p dt_j; pairs share r_p min(dt_j, dt_k) in the dense fold and the exact update's Q_S).  Requires shared_carry_full_cov; refuses the anchor-free clock datums and clock_model.  Off = byte-identical.
-        bool   network_carry_coupling_exact_update_{false};  ///< Replace the card 1d scalar kappa by the exact conditional time update of the coupling rows (card CTU): M_new = (P_SS+Q_S)^-1 P_S,K M_K over the stashed dense border block with the fold's own inflation, the bracket variance added per row (the per-row form: no time-update covariance between rows), departed/decoupled columns re-attributed through P, the clock-family deficit onto the pinned pivot.  Requires carry_coupling_time_update and shared_carry_full_cov, refuses carry_coupling_joint_whiten.  Off = card 1d rows (byte-identical).
+        bool   network_carry_coupling_exact_update_{false};  ///< Replace the card 1d scalar kappa by the exact conditional time update of the coupling rows (card CTU): M_new = (P_SS+Q_S)^-1 P_S,K M_K over the stashed dense border block with the fold's own inflation, the bracket variance added per row (the per-row form: no time-update covariance between rows), departed/decoupled columns re-attributed through P, the clock-family deficit onto the pinned pivot.  Requires carry_coupling_time_update and shared_carry_full_cov.  Off = card 1d rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< Carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (B9; via addStationPrior, alongside the ambiguity carry); off = per-epoch white-noise ZWD (byte-identical).  FALSIFIED for continuous runs of the standard posture (consumer 0.204 → 0.723 m rms: an information double count against the station filter's own persistence); its seam value is delivered by network.zwd_seam_reseed instead.
         bool   network_carry_zwd_in_block_{false};         ///< Carry the station ZWD column inside the F3 jointly whitened local block (B9-in-block; harvested (N_rr⁻¹) cross terms against every carried ambiguity column) instead of as a separate diagonal coupling row, which makes the ZWD carry exact along the station-common directions the diagonal row over-counts (SPEC_amb_iono_split_overcount §7 item 17).  Requires network.carry_zwd and network.phase_leveling_local_block (the loader warns and disables otherwise).  Off = byte-identical.
         bool   network_carry_iono_in_block_{false};        ///< Carry the per-LOS slant-iono columns inside the F3 jointly whitened local block (I-in-block; harvested (N_rr⁻¹) cross terms against every other carried column of the station): the I half of the ZWD-in-block card (SPEC_amb_iono_split_overcount §7 item 17, §6.16.7d).  It replaces the retired diagonal network.carry_iono (QUEUE 8b, FALSIFIED in four arms): a diagonal row re-asserts the per-LOS iono direction the B band priors already assert.  Requires network.phase_leveling + network.phase_leveling_local_block; disabled under carry_invariant.  Off = byte-identical.
@@ -8524,7 +8425,7 @@ namespace GnssProcessor {
         int    network_resume_d5_warmup_ep_{0};            ///< Epochs after a warm resume during which the card-4 D5 innovation gate is diagnostic-only (RS-2b, SPEC_event_harness §21.6): a tripping chord is counted (d5_warmup_suppressed and the epoch's n_d5_flags) but not re-tapped, not marked slipped, and its block is not refolded, so "branch correct / cold station layer wrong" can be told from "branch inconsistent".  The σ̂₀ feed, the v3 corroboration gate and the MW/LLI/IF-TD drains are untouched.  Counted in processed epochs at the install seam.  0 = off (byte-identical).  Not fingerprinted.
         int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires on many arcs at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = off.  Not fingerprinted.
         bool   network_carry_rx_code_bias_{false};        ///< Carry per-station receiver code biases across epochs as diagonal RW priors, harvested outside the phase-leveling gate (rx-CB carry, SPEC_rx_cb_carry). Forced off without code_datum_time_linked. Off = byte-identical.
-        bool   network_carry_rx_code_bias_in_block_{false};  ///< Carry the receiver code-bias columns inside the station's jointly whitened local block as conditional coupling rows (RXCB-IN-BLOCK), instead of the diagonal fold at the conditional variance, which re-asserts the shared border every epoch.  Requires carry_rx_code_bias, carry_conditional_coupling and a local block; refuses joint whitening.  Off = byte-identical.
+        bool   network_carry_rx_code_bias_in_block_{false};  ///< Carry the receiver code-bias columns inside the station's jointly whitened local block as conditional coupling rows (RXCB-IN-BLOCK), instead of the diagonal fold at the conditional variance, which re-asserts the shared border every epoch.  Requires carry_rx_code_bias, carry_conditional_coupling and a local block.  Off = byte-identical.
         bool   network_amb_float_drop_decouple_always_{false};  ///< A float-vehicle drop clears the regression and block row even at birth strength (card CTU section 14).
         double network_dense_fold_kappa_{1e-12};          ///< Relative-pivot bound of the dense border fold (card CTU section 14); default 1e-12 since card SMH section 9, 1e-6 = the historical constant.
         double network_rx_cb_carry_q_{1e-9};              ///< rx-CB carry RW process noise (m²/s); var_eff = var + q·Δt. Only used when network.carry_rx_code_bias.

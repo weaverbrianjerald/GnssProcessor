@@ -287,8 +287,7 @@ namespace GnssProcessor {
             //     ledger row.  Regime: the float vehicle on the leveling carry with the card 1
             //     coupling trio, which the loader requires.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && network_phase_leveling_
-                  && network_carry_coupling_time_update_ && network_shared_carry_full_cov_
-                  && !network_carry_coupling_joint_whiten_,
+                  && network_carry_coupling_time_update_ && network_shared_carry_full_cov_,
               network_carry_coupling_exact_update_ && network_clock_anchor_guard_space_ == 2
                   && network_rank_gate_tol_ <= 1e-11,
               Tier::SCOPED, true , "network.carry_coupling_exact_update",
@@ -301,8 +300,7 @@ namespace GnssProcessor {
               "only with guard space phase and rank_gate_tol 1e-11; fresh convergence only "
               "(network.ctu_switch_on_resume off)" },
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && network_phase_leveling_
-                  && network_carry_rx_code_bias_ && network_carry_conditional_coupling_
-                  && !network_carry_coupling_joint_whiten_,
+                  && network_carry_rx_code_bias_ && network_carry_conditional_coupling_,
               network_carry_rx_code_bias_in_block_,
               Tier::SCOPED, true , "network.carry_rx_code_bias_in_block",
               "fold the receiver code-bias carry inside the station's whitened block as card 1 "

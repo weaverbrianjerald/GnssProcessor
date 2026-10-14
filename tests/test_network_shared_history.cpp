@@ -553,8 +553,8 @@ struct RowFixture {
 
     /// One row through buildCplRow, with or without the shared history.
     PendCplRow row(const LocalCarry& lc, bool with_shx) {
-        CouplingRowBuilder cb{est, shc, 1e-4, 1e-4, 1e-4, false, true, false, false, false,
-                              tu_reinit_hist, R};
+        CouplingRowBuilder cb{est, shc, 1e-4, 1e-4, 1e-4, /*tu=*/true, /*gauge=*/false,
+                              /*reinit=*/false, tu_reinit_hist, R};
         cb.cxu = &ep;
         if (with_shx) cb.shx = &shx;
         cb.buildCplRow(4, 0.1, lc, 0.02, 30.0);

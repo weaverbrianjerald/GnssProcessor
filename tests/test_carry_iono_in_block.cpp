@@ -80,8 +80,8 @@ struct IonoBlockFixture {
 
     CouplingRowBuilder make() {
         return CouplingRowBuilder{est, shc, /*q_clock=*/1e-4, /*q_cb=*/1e-4, /*q_pb=*/1e-4,
-                                  /*joint=*/false, /*tu=*/false, /*shmarg=*/false,
-                                  /*gauge=*/false, /*reinit=*/false, tu_reinit_hist, R};
+                                  /*tu=*/false, /*gauge=*/false, /*reinit=*/false,
+                                  tu_reinit_hist, R};
     }
 };
 

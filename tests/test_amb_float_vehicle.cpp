@@ -527,8 +527,7 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
             // joint prior rather than two marginals.
             GnssProcessor::CouplingRowBuilder cb{
                 est, shc, /*q_clock=*/0.0, /*q_cb=*/0.0, /*q_pb=*/0.0,
-                /*joint=*/false, /*tu=*/false, /*shmarg=*/false,
-                /*gauge=*/false, /*reinit=*/false, tu_hist, R};
+                /*tu=*/false, /*gauge=*/false, /*reinit=*/false, tu_hist, R};
             const bool ok = cb.buildLocalBlock({
                 GnssProcessor::LocalBlockCol{kColN1, 0.0, &c1, c1.var, 0.0, 1.0},
                 GnssProcessor::LocalBlockCol{kColN2, 0.0, &c2, c2.var, 0.0, 1.0}});

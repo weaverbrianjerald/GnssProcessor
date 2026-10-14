@@ -2383,7 +2383,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
 // Numerical trace of the between-epoch conditional-coupling carry (Card 1,
 // network.carry_conditional_coupling) over an 8-epoch surviving arc.  In the field
 // (project note project_network_ddfrac_rootcause_shvtec) arcs survive many epochs
-// with dep_var≈0 (clock_model off ⇒ M_w empty, Card-1b joint whitening a no-op),
+// with dep_var≈0 (clock_model off ⇒ no departed shared column),
 // yet the DD formal σ stays flat instead of contracting ~1/√k.  This test drives the
 // production harvest→inject path each epoch (solve → stationRegression (cond_var +
 // M_r) + conditionalLocalVarianceDiag → inject a coupling row next epoch, plus the
@@ -2980,77 +2980,6 @@ TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateLimits) {
         EXPECT_LT((fixed.x_loc - dep.x_loc).cwiseAbs().maxCoeff(), 1e-9);
         EXPECT_LT((fixed.P_loc - dep.P_loc).cwiseAbs().maxCoeff(), 1e-9);
     }
-}
-
-// Joint whitening (Card 1b, network.carry_coupling_joint_whiten): when >=2 of a station's carried
-// ambiguities regress on one shared column that has departed the layout, that
-// column has to be marginalized jointly, through the coupling rows' noise covariance
-// R = diag(var_eff) + M_w·diag(P_w)·M_wᵀ, not per row into a scalar.  This test
-// isolates the mathematical claim on a minimal system (two locals r0,r1 + one
-// departed shared W): the joint covariance equals the exact batch marginal of W, so
-// the recursive posterior matches the batch; the Card-1 per-row scalar variance is
-// the diagonal of that joint covariance (it drops the between-row correlation the
-// shared departed column induces) and does not match.  Self-contained linear
-// algebra that validates the mechanism the driver's whitenCouplingRows() implements.
-TEST(NetworkEstimatorTest, JointWhitenCouplingMarginalizationEqualsBatch) {
-    using Eigen::MatrixXd;
-    using Eigen::Vector2d;
-
-    // Epoch-1 information over θ = [r0, r1, W] accumulated from a small obs set: a
-    // "phase" obs couples each local r_i to the shared W; a direct obs on each local
-    // and a prior on W keep the 3×3 information SPD.
-    const double M0 = 0.7, M1 = -1.3;
-    MatrixXd Lam1 = MatrixXd::Zero(3, 3);
-    auto addObs = [&](double a_r0, double a_r1, double a_W, double var) {
-        Eigen::Vector3d a(a_r0, a_r1, a_W);
-        Lam1 += (a * a.transpose()) / var;
-    };
-    addObs(1.0, 0.0, M0, 0.01);   // phase: r0 + M0·W
-    addObs(0.0, 1.0, M1, 0.01);   // phase: r1 + M1·W
-    addObs(1.0, 0.0, 0.0, 1.0);   // direct r0
-    addObs(0.0, 1.0, 0.0, 1.0);   // direct r1
-    addObs(0.0, 0.0, 1.0, 100.0); // W prior (a-priori var 100)
-
-    const MatrixXd Sig1 = Lam1.inverse();            // epoch-1 covariance
-    const MatrixXd Srr  = Sig1.topLeftCorner(2, 2);  // marginal (r0,r1) cov (the batch's epoch-1 marginal)
-    const Vector2d SrW  = Sig1.block<2, 1>(0, 2);
-    const double   SWW  = Sig1(2, 2);                 // W marginal variance = P_w
-    const Vector2d Mr   = SrW / SWW;                  // regression of (r0,r1) on W
-    const MatrixXd Scond = Srr - SWW * (Mr * Mr.transpose());  // conditional cov (var_eff diagonal)
-
-    // Joint whitening covariance R = diag(var_eff) + M_w·P_w·M_wᵀ, with M_w=[Mr0;Mr1],
-    // var_eff_i = Scond(i,i).  By the marginalization identity it equals the marginal Srr.
-    MatrixXd Rjoint = SWW * (Mr * Mr.transpose());
-    for (int i = 0; i < 2; ++i) Rjoint(i, i) += Scond(i, i);
-    EXPECT_LT((Rjoint - Srr).cwiseAbs().maxCoeff(), 1e-12)
-        << "joint departed-column marginalization must equal the exact batch marginal cov";
-
-    // Card-1 scalar path: σ²_i = var_eff_i + M_i²·P_w = Srr(i,i), a diagonal R that
-    // discards the off-diagonal M0·M1·P_w the two rows share through W.
-    MatrixXd Rscalar = MatrixXd::Zero(2, 2);
-    for (int i = 0; i < 2; ++i) Rscalar(i, i) = Scond(i, i) + SWW * Mr(i) * Mr(i);
-
-    // Epoch-2 information on the locals only (W has departed and is not touched).  The
-    // recursive posterior = epoch-1 marginal r-info (R⁻¹) + epoch-2 info; the batch =
-    // full (r0,r1,W) info + epoch-2 r-info, marginalized over W.  They agree iff the
-    // marginalization is exact (joint), and epoch-2's r-only update commutes with it.
-    MatrixXd I2 = MatrixXd::Zero(2, 2);
-    I2(0, 0) = 1.0 / 0.02;
-    I2(1, 1) = 1.0 / 0.03;
-
-    MatrixXd Lam_full = Lam1;
-    Lam_full.topLeftCorner(2, 2) += I2;
-    const MatrixXd batch_rr = Lam_full.inverse().topLeftCorner(2, 2);
-
-    const MatrixXd cov_joint  = (Rjoint.inverse()  + I2).inverse();
-    const MatrixXd cov_scalar = (Rscalar.inverse() + I2).inverse();
-
-    EXPECT_LT((cov_joint - batch_rr).cwiseAbs().maxCoeff(), 1e-9)
-        << "joint whitening of the shared departed column reproduces the batch (r0,r1) "
-           "posterior covariance — the σ the scalar path flattens";
-    EXPECT_GT((cov_scalar - batch_rr).cwiseAbs().maxCoeff(), 1e-6)
-        << "the per-row scalar (diagonal) marginalization must NOT match batch — dropping "
-           "the between-row correlation is exactly the Card-1 inert-carry flaw Card 1b fixes";
 }
 
 // Input validation and numerical rejection: bad dims throw invalid_argument, an
