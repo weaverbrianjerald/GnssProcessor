@@ -1099,4 +1099,24 @@ namespace GnssProcessor {
      */
     inline constexpr FrequencyBand kIonoReferenceBand = FrequencyBand::GpsL1;
 
+    /**
+     * @brief The constellation field of a DD ambiguity key ("DD|GPS|G05|L1C|G01") and the
+     *        constellation group of the baseline DD statistics, from a satellite id's first
+     *        character.
+     *
+     * The rule of three copies that agree (MeasurementModel's @c ddConstellationOf, the
+     * KalmanFilter's baseline phase-outlier key, the baseline driver's
+     * @c constellationOfSatPairId).  It is its own letter policy and differs from
+     * @c systemName(systemOfSat(sat)) on three inputs, each kept as the copies have it:
+     * IRNSS 'I' gives "IRNSS" (there is no @c System value for it), any other letter
+     * outside the traits table gives that letter as a one-character string ("X"), and an
+     * empty id gives "" (@ref systemName gives "Unknown" for all three).  The six
+     * constellations of the table give @ref systemName.
+     *
+     * @param sat The satellite id, e.g. "G05"; only its first character is read.
+     * @return "GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS", "IRNSS", the first
+     *         character itself, or "" for an empty id.
+     */
+    std::string ddConstellationName(std::string_view sat);
+
 } // namespace GnssProcessor

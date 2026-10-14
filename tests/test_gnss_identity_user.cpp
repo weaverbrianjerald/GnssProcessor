@@ -122,6 +122,23 @@ namespace {
     /// RealTimeEngineSsrDiag.cpp).
     bool idiomHasDash(const std::string& sat) { return sat.find('-') != std::string::npos; }
 
+    /// MeasurementModelDd.cpp's ddConstellationOf (ApplicationBaseline.cpp's
+    /// constellationOfSatPairId is the same body; KalmanOutlierResponse.cpp's consPrefix is the
+    /// same switch on the first character of a non-empty id).
+    std::string idiomDdConstellationOf(const std::string& sat) {
+        if (sat.empty()) return {};
+        switch (sat[0]) {
+            case 'G': return "GPS";
+            case 'E': return "Galileo";
+            case 'R': return "GLONASS";
+            case 'C': return "BeiDou";
+            case 'J': return "QZSS";
+            case 'S': return "SBAS";
+            case 'I': return "IRNSS";
+            default:  return std::string(1, sat[0]);
+        }
+    }
+
 } // namespace
 
 // ===========================================================================
@@ -321,4 +338,38 @@ TEST(GnssIdentityUserTest, IonoReferenceBandCoefficientsEqualTheL1Expressions) {
     const double tecu_band = ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(kIonoReferenceBand));
     const double tecu_l1   = ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
     EXPECT_EQ(std::memcmp(&tecu_band, &tecu_l1, sizeof(double)), 0);
+}
+
+// ===========================================================================
+// The constellation field of a DD ambiguity key
+// ===========================================================================
+
+TEST(GnssIdentityUserTest, DdConstellationNameEqualsTheSwitchIdiom) {
+    EXPECT_EQ(ddConstellationName(""), idiomDdConstellationOf(""));
+    for (int c = 1; c < 256; ++c) {   // every first character (the NUL byte as a 1-char id below)
+        const std::string letter(1, static_cast<char>(c));
+        for (const std::string& id : {letter, letter + "05", letter + " 5", letter + "05-G01"})
+            EXPECT_EQ(ddConstellationName(id), idiomDdConstellationOf(id)) << "first char " << c;
+    }
+    const std::string nul(1, '\0');
+    EXPECT_EQ(ddConstellationName(nul), idiomDdConstellationOf(nul));
+}
+
+TEST(GnssIdentityUserTest, DdConstellationNameValues) {
+    EXPECT_EQ(ddConstellationName("G05"), "GPS");
+    EXPECT_EQ(ddConstellationName("E11"), "Galileo");
+    EXPECT_EQ(ddConstellationName("R01"), "GLONASS");
+    EXPECT_EQ(ddConstellationName("C01"), "BeiDou");
+    EXPECT_EQ(ddConstellationName("J01"), "QZSS");
+    EXPECT_EQ(ddConstellationName("S20"), "SBAS");
+    EXPECT_EQ(ddConstellationName("I05"), "IRNSS");   // no System value: its own name
+    EXPECT_EQ(ddConstellationName("X01"), "X");       // outside the table: the letter itself
+    EXPECT_EQ(ddConstellationName("g05"), "g");
+    EXPECT_EQ(ddConstellationName(""), "");
+    // The six constellations of the traits table read as systemName does ...
+    for (const char* sat : {"G05", "E11", "R01", "C01", "J01", "S20"})
+        EXPECT_EQ(ddConstellationName(sat), systemName(systemOfSat(sat))) << sat;
+    // ... and the three inputs where the policies part are pinned.
+    for (const char* sat : {"I05", "X01", ""})
+        EXPECT_NE(ddConstellationName(sat), systemName(systemOfSat(sat))) << '"' << sat << '"';
 }

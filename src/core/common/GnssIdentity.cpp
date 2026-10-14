@@ -203,4 +203,13 @@ namespace GnssProcessor {
 
     std::string SatPairId::str() const { return primary + "-" + reference; }
 
+    std::string ddConstellationName(std::string_view sat) {
+        if (sat.empty()) return std::string();
+        const char letter = sat.front();
+        if (letter == 'I') return "IRNSS";                        // no System value
+        const System sys = systemFromLetter(letter);
+        if (sys == System::Unknown) return std::string(1, letter); // the letter itself
+        return systemName(sys);
+    }
+
 } // namespace GnssProcessor
