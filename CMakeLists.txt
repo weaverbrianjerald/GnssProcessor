@@ -136,6 +136,13 @@ add_library(gnss_core STATIC
     src/core/app/SignalRoster.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
+	src/core/slip/MwSlipDetectorPairs.cpp
+	src/core/slip/MwSlipDetectorStats.cpp
+	src/core/slip/MwSlipDetectorQuery.cpp
+	src/core/slip/MwSlipDetectorReset.cpp
+	src/core/slip/MwSlipDetectorTrace.cpp
+	src/core/slip/MwSlipDetectorZd.cpp
+	src/core/slip/MwPhaseBridge.cpp
 	# STAGED (not abandoned) — see header banners in include/slip/.
 	#   IfPhaseSlipDetector: DD IF-phase pre-fit residuals; only valid for
 	#     static sites with a precise a priori position — the NETWORK producer regime.

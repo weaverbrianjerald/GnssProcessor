@@ -16,6 +16,13 @@
  *     @c mw), internal to the detector.
  *   - This header: the class.  Its user-side API, then its private members; the
  *     network-only surface is grouped at the end of the class behind one banner.
+ *   - The bodies, by concern, in src/core/slip/: MwSlipDetector.cpp (construction and
+ *     the per-epoch and per-sample drivers), MwSlipDetectorPairs.cpp (signal pairs and
+ *     the MW combination), MwSlipDetectorStats.cpp (statistics, the adaptive threshold,
+ *     the cross-satellite pool, the in-house bias), MwSlipDetectorQuery.cpp (resolved WL,
+ *     active arcs, across-gap evidence, the worst score), MwSlipDetectorReset.cpp
+ *     (external resets and the pivot hint), MwSlipDetectorTrace.cpp (the CSV trace), and
+ *     the network-only MwSlipDetectorZd.cpp and MwPhaseBridge.cpp.
  */
 
 #include "common/PppTypes.hpp"
@@ -762,6 +769,20 @@ namespace GnssProcessor {
          * @return Group key, or empty string on malformed input.
          */
         static std::string makeGroupKey(const std::string& stats_key);
+
+        /**
+         * @brief Zenith-referenced elevation weight of the MW noise, w(el) = 1/sin(el),
+         *        with the elevation clamped at 10 degrees.
+         *
+         * A deviation enters the cross-satellite pool divided by it (zenith-normalized), and
+         * the pooled zenith σ leaves @c crossSatSigmaFloor multiplied by it (re-expanded to
+         * the arc's elevation).  The rationale is at the definition
+         * (MwSlipDetectorStats.cpp).
+         *
+         * @param elev_deg  Arc elevation (deg); a non-finite value counts as 10.
+         * @return The weight (≥ 1, at most 1/sin 10° ≈ 5.76).
+         */
+        static double mwElevationWeight(double elev_deg);
 
         /**
          * @brief Finalize cross-sat σ from this epoch's staging pool.
