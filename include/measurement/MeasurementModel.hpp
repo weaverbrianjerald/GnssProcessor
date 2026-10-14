@@ -85,6 +85,14 @@ namespace GnssProcessor {
             const Eigen::VectorXd& current_state,
             const std::set<std::string>& excluded_measurements = {});
 
+        // -------------------------------------------------------------------
+        // Network-only surface (the PPP-RTK network producer), owned with
+        // card NOM: from ensureNetworkSharedStates to carrierFrequency below,
+        // and the private members marked "network only".  The out-of-line
+        // definitions are in MeasurementModelNetwork.cpp, except
+        // setGlonassSlots (MeasurementModel.cpp).
+        // -------------------------------------------------------------------
+
         /**
          * @brief Pre-allocate the shared satellite states owned by the PPP-RTK
          *        network producer's joint estimator (per-satellite clock,
@@ -154,9 +162,7 @@ namespace GnssProcessor {
          * @param reason    The gate.
          */
         void noteAbsorbedSharedState(StateContainer container, std::string_view key,
-                                     AbsorbedReason reason) {
-            noteAbsorbed(absorbed_shared_, container, key, reason);
-        }
+                                     AbsorbedReason reason);
 
         /**
          * @brief Install a network coverage allowlist for satellite phase-bias states.
@@ -222,9 +228,15 @@ namespace GnssProcessor {
          * part lives in the estimable clock.  GLONASS uses the seeded FCN slots
          * (@ref setGlonassSlots); GPS/Galileo are per-signal constants.  Returns 0
          * for an unknown code/satellite.
+         *
+         * @param obs_code  RINEX observation code (e.g. "C1C").
+         * @param satellite Satellite id (e.g. "G05"); its first letter gives the system.
+         * @return The carrier frequency in Hz, or 0 when unknown.
          */
         double carrierFrequency(const std::string& obs_code,
                                 const std::string& satellite) const;
+
+        // ------------------- end of the network-only surface -------------------
 
         /**
          * @brief Compute a DD measurement update from two per-receiver
@@ -430,6 +442,8 @@ namespace GnssProcessor {
         const GnssConfig& config_;
         LogManager& log_manager_;
 
+        // --- Network only (card NOM; MeasurementModelNetwork.cpp) ---------
+
         /// Network phase-bias coverage allowlist (see @ref setPhaseBiasSignalAllowlist).
         /// system → admitted phase signals.  Empty (default) = allow every signal.
         std::map<std::string, std::set<std::string>> phase_bias_signal_allowlist_;
@@ -443,15 +457,18 @@ namespace GnssProcessor {
         /// @ref absorbedSharedStates).  Network producer only.
         StationAbsorbed absorbed_shared_;
 
-        /// Whether @p signal (a raw phase code, e.g. "L1C") for @p system may get a
-        /// satellite phase-bias state under the coverage allowlist.  True when the
-        /// feature is off (empty) or the system is not gated; else set membership.
-        bool phaseBiasAdmitted(const std::string& system, const std::string& signal) const {
-            if (phase_bias_signal_allowlist_.empty()) return true;
-            auto it = phase_bias_signal_allowlist_.find(system);
-            if (it == phase_bias_signal_allowlist_.end()) return true;
-            return it->second.count(signal) > 0;
-        }
+        /**
+         * @brief Whether @p signal may get a satellite phase-bias state under the
+         *        network coverage allowlist (@ref setPhaseBiasSignalAllowlist).
+         *
+         * @param system System display name (e.g. "GPS").
+         * @param signal Raw phase code (e.g. "L1C").
+         * @return True when the feature is off (empty allowlist) or the system is
+         *         not gated; else whether the allowlist admits the signal.
+         */
+        bool phaseBiasAdmitted(const std::string& system, const std::string& signal) const;
+
+        // --- End of the network-only members --------------------------------
 
         /// Non-owning SSR store override; nullptr -> process-wide singleton.
         /// Set via setSsrStore() for the closed-loop consumer (see header).
@@ -556,12 +573,15 @@ namespace GnssProcessor {
         Eigen::Vector3d tc_f_b_ = Eigen::Vector3d::Zero();
 
         // -------------------------------------------------------------------
-        // Product coverage checks
+        // Product coverage checks (MeasurementModelRow.cpp)
         // -------------------------------------------------------------------
 
         /**
          * @brief Check whether both component signals of an IF combination
          *        have BIA product coverage.
+         * @param satellite Satellite id.
+         * @param if_key    Iono-free pair "a_b"; any other key counts as covered.
+         * @return True when both signals have a .BIA entry (or the key is not a pair).
          */
         bool ifCombHasFullBia(const std::string& satellite,
                               const std::string& if_key) const;
@@ -670,11 +690,15 @@ namespace GnssProcessor {
         /**
          * @brief Check whether both component signals of an IF combination
          *        have receiver antenna ATX coverage (PCO/PCV).
+         * @param if_key Iono-free pair "a_b"; any other key counts as covered.
+         * @param system The satellite's system.
+         * @return True when both signals have a receiver ATX entry (or the key is
+         *         not a pair).
          */
         bool ifCombHasFullRxAtx(const std::string& if_key, System system) const;
 
         // -------------------------------------------------------------------
-        // State pre-pass
+        // State pre-pass (MeasurementModelStates.cpp)
         // -------------------------------------------------------------------
 
         /**
@@ -686,28 +710,248 @@ namespace GnssProcessor {
          * the receiver code biases and the satellite code biases; also runs
          * the network cold receiver-clock pre-seed, marks the ambiguities AR
          * may not fix, and warns on a band count above the frequency mode.
+         * A driver: one member per state category below, called in this
+         * order, over one working value (@ref RequiredStates).
+         *
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix (empty: the log pattern carries the time).
          */
         void ensureRequiredStates(const std::vector<PppObservation>& observations,
             const std::string& epoch_prefix);
 
+        /// The pre-pass's working value: its configuration flags, and the keep
+        /// sets and pivot seeds its members collect for the members that follow.
+        /// Defined in MeasurementModelStates.cpp, the only file that uses it.
+        struct RequiredStates;
+
+        /**
+         * @brief Collect what the epoch requires (no state written): the slant
+         *        ionosphere satellites, the per-band ambiguity keys, the NL/WL
+         *        phase signals and the phase-colour satellites, from the code and
+         *        phase signals the BSSD pivot tracks (GLONASS skipped under BSSD
+         *        unless enable_glonass_bssd).
+         * @param observations This epoch's modeled observations.
+         * @param need         The working value (filled).
+         */
+        void collectRequiredStates(const std::vector<PppObservation>& observations,
+                                   RequiredStates& need) const;
+
+        /**
+         * @brief Hold-protected ambiguities (soft-LLI / gap bridge): the held keys
+         *        join the ambiguity keep set and, uncombined, their satellites the
+         *        ionosphere keep set, so the prune keeps the pre-gap states.
+         * @param need The working value (keep sets extended).
+         */
+        void addHoldProtectedKeys(RequiredStates& need) const;
+
+        /**
+         * @brief NL/WL ambiguity keys (NL/WL basis): per satellite the reference
+         *        band (the lowest band observed, kept in @c nlwl_ref_band_), one
+         *        NL key, and one WL key per other band.
+         * @param need The working value (ambiguity keep set extended).
+         */
+        void collectNlWlKeys(RequiredStates& need);
+
+        /**
+         * @brief Slant ionosphere (uncombined): born for each satellite with a
+         *        code or phase row; seeded from the geometry-free code pair
+         *        (@c StateInitializer::computeIonosphereSeed, reframed by the
+         *        network's LV-1 seed frame when installed), else 0 with ten times
+         *        the initial std; pruned to the keep set.
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         * @param need         The working value.
+         */
+        void ensureIonosphereStates(const std::vector<PppObservation>& observations,
+                                    const std::string& epoch_prefix,
+                                    const RequiredStates& need);
+
+        /**
+         * @brief Phase colour (network only: network.phase_colour_state, card
+         *        LGM): born for each satellite with an uncombined phase row;
+         *        seeded 0 with variance phase_colour_sigma_zen_m squared; pruned
+         *        to the keep set.
+         * @param need The working value.
+         */
+        void ensurePhaseColourStates(const RequiredStates& need);
+
+        /**
+         * @brief Cold receiver-clock pre-seed (network only:
+         *        network.cold_clock_seed, once per station): no birth; seeds the
+         *        receiver clock from the median GPS code residual
+         *        (@c StateInitializer::seedColdReceiverClock) before any
+         *        ambiguity is seeded.
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         */
+        void preseedColdReceiverClock(const std::vector<PppObservation>& observations,
+                                      const std::string& epoch_prefix);
+
+        /**
+         * @brief BSSD pivot seeds (no state written): each pivot's absolute
+         *        ambiguity seed per signal (@c StateManager::computeAmbiguitySeed),
+         *        in cycles as NL and WL on the NL/WL basis; the non-pivot
+         *        ambiguities are seeded relative to them.
+         * @param observations This epoch's modeled observations.
+         * @param need         The working value (pivot seeds filled).
+         */
+        void computePivotSeeds(const std::vector<PppObservation>& observations,
+                               RequiredStates& need) const;
+
+        /**
+         * @brief Per-band ambiguities: born for each phase key of the keep set,
+         *        or re-seeded when pending reseed; seeded from
+         *        @c StateManager::computeAmbiguitySeed (minus the pivot's seed
+         *        under BSSD, 0 for the pivot); initial std from the substituted-ATX
+         *        override, else the StateManager default.
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         * @param need         The working value.
+         */
+        void ensurePerBandAmbiguities(const std::vector<PppObservation>& observations,
+                                      const std::string& epoch_prefix,
+                                      const RequiredStates& need);
+
+        /**
+         * @brief NL/WL ambiguities (NL/WL basis): one NL (cycles on the reference
+         *        band) and one WL per other band, born or re-seeded as the
+         *        per-band ambiguities; seeded from
+         *        @c StateManager::computeAmbiguitySeed over the wavelengths
+         *        (pivot-relative under BSSD).
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         * @param need         The working value.
+         */
+        void ensureNlWlAmbiguities(const std::vector<PppObservation>& observations,
+                                   const std::string& epoch_prefix,
+                                   const RequiredStates& need);
+
+        /**
+         * @brief Band-count check (no state written; per-band basis): warns for a
+         *        satellite whose ambiguity keep set has more bands than the
+         *        frequency mode admits (Dual 2, Triple 3).
+         * @param epoch_prefix Log prefix.
+         * @param need         The working value.
+         */
+        void warnAmbiguityBandCount(const std::string& epoch_prefix,
+                                    const RequiredStates& need) const;
+
+        /**
+         * @brief AR eligibility (per-band basis): clears the unresolvable marks,
+         *        then marks the ambiguities AR may not fix (GLONASS under BSSD; a
+         *        signal without applied phase-bias coverage; an iono-free pair
+         *        also without receiver ATX on both signals).
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         * @param need         The working value.
+         */
+        void markUnresolvableAmbiguities(const std::vector<PppObservation>& observations,
+                                         const std::string& epoch_prefix,
+                                         const RequiredStates& need);
+
+        /**
+         * @brief Receiver code biases (estimate_ifb, uncombined): born for each
+         *        code signal whose receiver-bias rule
+         *        (@c StateInitializer::resolveReceiverBias) gives a key (the
+         *        GLONASS network keeps per-slot IFB keys only); seeded 0, then
+         *        once at the first epoch by @c initializeCodeBiases; pruned to the
+         *        keep set.
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         */
+        void ensureReceiverCodeBiasStates(const std::vector<PppObservation>& observations,
+                                          const std::string& epoch_prefix);
+
+        /**
+         * @brief Satellite code biases (estimate_sat_biases; user path, the
+         *        network producer allocates its own in
+         *        @ref ensureNetworkSharedStates): born for each code signal (raw,
+         *        or iono-free pair) without .BIA or SSR coverage that the BSSD
+         *        pivot tracks; restored from the sat-bias cache, else seeded from
+         *        the row's innovation (re-referenced to the pivot under BSSD);
+         *        pruned to the keep set, into the cache.
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         * @param need         The working value.
+         */
+        void ensureSatCodeBiasStates(const std::vector<PppObservation>& observations,
+                                     const std::string& epoch_prefix,
+                                     const RequiredStates& need);
+
         // -------------------------------------------------------------------
-        // Measurement filtering
+        // One row: usability, geometry and the observation equation
+        // (MeasurementModelRow.cpp; hasValidGeometry in MeasurementModel.cpp)
         // -------------------------------------------------------------------
 
         /**
-         * @brief Determine whether a given observation/ref_type pair is usable.
+         * @brief Whether an observation's signal enters this epoch's update.
+         *
+         * False for: GLONASS under BSSD unless enable_glonass_bssd; a code,
+         * phase or Doppler signal the BSSD pivot does not track; a signal that
+         * is neither code nor phase (nor Doppler with velocity estimation); an
+         * iono-free pair in uncombined mode, a raw signal in iono-free mode, a
+         * Doppler pair; a signal without an observed, variance and modeled
+         * value; a row the Kalman filter's rebuild loop excluded
+         * (@c "<sat>_<signal>", logged at debug).
+         *
+         * @param obs          The satellite's modeled observation.
+         * @param ref_type     The signal (a RINEX code, or an iono-free pair "a_b").
+         * @param excluded     The rebuild loop's excluded row signatures.
+         * @param epoch_prefix Log prefix.
+         * @return True when the signal is usable.
          */
         bool isUsableMeasurement(const PppObservation& obs,
             const std::string& ref_type,
             const std::set<std::string>& excluded,
             const std::string& epoch_prefix) const;
 
-        // -------------------------------------------------------------------
-        // Jacobian + innovation assembly
-        // -------------------------------------------------------------------
+        /**
+         * @brief The row loop's per-satellite geometry gate: a finite satellite
+         *        position at least 1.9e7 m from the geocentre, a finite range of
+         *        at least 1.5e7 m, an elevation at or above the mask, a finite
+         *        line of sight of norm at least 0.5, and a finite positive wet
+         *        mapping function.
+         *
+         * Logs the failing check (warn; debug for the elevation mask).  The
+         * network pre-pass @ref ensureNetworkSharedStates repeats the five
+         * checks without the logs, so the shared columns it allocates are the
+         * ones the rows write.
+         *
+         * @param obs          The satellite's modeled observation.
+         * @param epoch_prefix Log prefix.
+         * @return True when the satellite's rows may be built.
+         */
+        bool hasValidGeometry(const PppObservation& obs,
+                              const std::string& epoch_prefix) const;
 
         /**
-         * @brief Build one Jacobian row and compute the predicted observable.
+         * @brief Build one row of H and the predicted observable: the
+         *        single-receiver observation equation.
+         *
+         * Code and phase rows: the a-priori model value plus the range
+         * correction for the position's offset from the linearization point,
+         * and one term per estimated or applied quantity: zenith wet delay,
+         * receiver clock (no column under BSSD), phase clock (phase rows),
+         * troposphere gradients, inter-system bias, slant ionosphere
+         * (uncombined; +alpha on code, -alpha on phase), receiver code bias
+         * (code, estimate_ifb), satellite code bias (estimate_sat_biases), the
+         * network producer's satellite phase bias, receiver phase bias and
+         * satellite clock, the SSR satellite bias (no state; not on the network
+         * producer), the ambiguity (phase; per band, or lambda_b (NL - s WL) on
+         * the NL/WL basis) and the network's phase colour.  Doppler rows:
+         * velocity, clock rate, inter-system rate and the tightly coupled IMU
+         * partials.  Prints the PHASE-DECOMP and CODE-DECOMP traces at trace
+         * level.
+         *
+         * @param obs        The satellite's modeled observation.
+         * @param ref_type   The signal (a RINEX code, or an iono-free pair "a_b").
+         * @param x          The state vector the row is evaluated at.
+         * @param state_size The number of state columns (the row's length).
+         * @param jacobian   Out: the row of H.
+         * @param predicted  Out: the predicted observable (m).
+         * @return False when the row cannot be built: a Doppler row without a
+         *         velocity state, or a phase row whose ambiguity state (or, on
+         *         the NL/WL basis, reference band or wavelength) is missing.
          */
         bool buildJacobianRow(const PppObservation& obs,
             const std::string& ref_type,
@@ -717,19 +961,57 @@ namespace GnssProcessor {
             double& predicted) const;
 
         // -------------------------------------------------------------------
-        // BSSD delegation
+        // One row's variance (MeasurementModelVariance.cpp)
         // -------------------------------------------------------------------
 
+        /**
+         * @brief The measurement variance of one row (m^2): the stochastic-model
+         *        variance plus the consumer's network-correction terms, times the
+         *        no-BIA code downweight.
+         *
+         * In order: obs.variances[ref_type]; with consume_combined_sigma and a
+         * fresh network correction carrying a combined sigma, that sigma
+         * (age-inflated) in place of the next two terms; otherwise the network
+         * URA with the ZOH clock-staleness term and the held-clock fallback,
+         * and on phase rows the network phase-bias sigma; then, without
+         * estimate_sat_biases, the no-BIA downweight factor on a code row
+         * without .BIA or SSR coverage.  The network producer's own rows get
+         * none of the network terms.
+         *
+         * @param obs      The satellite's modeled observation.
+         * @param ref_type The signal (one with a variance: the row loop admits
+         *                 only usable signals).
+         * @return The row's variance, before the row loop's non-finite guard.
+         */
+        double rowVariance(const PppObservation& obs,
+                           const std::string& ref_type) const;
+
+        // -------------------------------------------------------------------
+        // BSSD delegation (forwarders to PivotManager)
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Run the BSSD pivot handover for this epoch
+         *        (@c PivotManager::handlePivotHandover).
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         * @param forced_only  True on a rebuild pass of the same epoch: only a
+         *                     pending forced handover may run.
+         */
         void handleBssdPivotHandover(const std::vector<PppObservation>& observations,
                                       const std::string& epoch_prefix,
                                       bool forced_only = false);
 
+        /// Freeze the pivots' ambiguity covariance
+        /// (@c PivotManager::freezePivotAmbiguityCovariance).
         void freezePivotAmbiguityCovariance();
 
+        /// Freeze the pivots' ionosphere and bias covariance
+        /// (@c PivotManager::freezePivotIonoAndBiasCovariance).
         void freezePivotIonoAndBiasCovariance();
 
         // -------------------------------------------------------------------
-        // Double-difference (baseline) assembly
+        // Double-difference (baseline) assembly (MeasurementModelDd.cpp)
         // -------------------------------------------------------------------
 
         /**
@@ -741,7 +1023,9 @@ namespace GnssProcessor {
          * @c DdMeasurementBuilder::buildDoubleDifference; the public two-vector
          * @c computeMeasurementUpdate delegates here through the differencing
          * strategy.  See that overload's documentation for parameter/return
-         * semantics.
+         * semantics.  Owns the process-wide first-call diagnostic flag (a
+         * function-local static shared by every instance, reset on every normal
+         * exit) and runs the stages through @ref ddRunStages.
          */
         EpochMeasurement buildDdMeasurement(
             const std::vector<PppObservation>& rov_modeled,
@@ -753,6 +1037,144 @@ namespace GnssProcessor {
         // @c DdPivotManager (member @c dd_pivot_manager_); see its header for
         // the API.  This class orchestrates only: it owns neither the sticky
         // map nor the handover logic.
+
+        /// One satellite tracked by both receivers (its between-receiver
+        /// signals and pivot-ranking inputs).  Defined in MeasurementModelDd.cpp.
+        struct DdSharedSat;
+        /// One double-differenced row.  Defined in MeasurementModelDd.cpp.
+        struct DdRow;
+        /// The DD build's working value (logger, diagnostic flag, shared
+        /// satellites, pivots, rows).  Defined in MeasurementModelDd.cpp.
+        struct DdBuild;
+
+        /**
+         * @brief The DD stages in order; returns at the first that finds nothing
+         *        to build (no input, no shared satellite, no pivot, no row, no
+         *        kept row), leaving @p em as built so far.
+         * @param rov_modeled           Rover output, one PppObservation per satellite.
+         * @param ref_modeled           Reference output.
+         * @param current_state         The caller's state snapshot (see @ref ddInnovations).
+         * @param excluded_measurements The rebuild loop's excluded row signatures.
+         * @param dd                    The working value.
+         * @param em                    The update being built.
+         */
+        void ddRunStages(const std::vector<PppObservation>& rov_modeled,
+                         const std::vector<PppObservation>& ref_modeled,
+                         const Eigen::VectorXd& current_state,
+                         const std::set<std::string>& excluded_measurements,
+                         DdBuild& dd, EpochMeasurement& em);
+
+        /**
+         * @brief First-call diagnostic (only when dd.diag): the two receivers'
+         *        satellite counts and the first satellite's observation codes.
+         * @param rov_modeled Rover output.
+         * @param ref_modeled Reference output.
+         * @param dd          The working value.
+         */
+        void ddLogInputDiagnostic(const std::vector<PppObservation>& rov_modeled,
+                                  const std::vector<PppObservation>& ref_modeled,
+                                  const DdBuild& dd) const;
+
+        /**
+         * @brief The satellites both receivers track (active systems, not
+         *        excluded), each with its between-receiver signals
+         *        (@c BrsdTransform::apply on the canonical code per band, paired
+         *        across tracking attributes when signal_aliasing); keeps the
+         *        satellites with at least two.
+         * @param rov_modeled Rover output.
+         * @param ref_modeled Reference output.
+         * @param dd          The working value (satellite maps and by_cons filled).
+         * @return False when no satellite is shared.
+         */
+        bool ddSharedSignals(const std::vector<PppObservation>& rov_modeled,
+                             const std::vector<PppObservation>& ref_modeled,
+                             DdBuild& dd) const;
+
+        /**
+         * @brief State write 1 of 3: the sticky pivot per constellation
+         *        (@c DdPivotManager::selectPivots), whose handover S-transforms
+         *        and renames the DD ambiguity states on a pivot change.
+         * @param dd The working value (pivots filled).
+         * @return False when no constellation has a pivot.
+         */
+        bool ddSelectPivots(DdBuild& dd);
+
+        /**
+         * @brief The DD rows: @c BssdTransform::differenceBrsd over the pivots,
+         *        without the rebuild loop's excluded rows, each with its
+         *        rover-position partial, wet mapping values and R group key.
+         * @param excluded_measurements The rebuild loop's excluded row signatures.
+         * @param dd                    The working value (rows filled).
+         */
+        void ddRowsFromBrsd(const std::set<std::string>& excluded_measurements,
+                            DdBuild& dd) const;
+
+        /**
+         * @brief Iono-free collapse (baseline.use_iono_free): each satellite
+         *        pair's per-band rows become one row on the band pair of least
+         *        noise amplification K (at most 10), never integer-capable.
+         * @param dd The working value (rows replaced).
+         */
+        void ddCollapseIonoFree(DdBuild& dd) const;
+
+        /**
+         * @brief Whether any row remains (with the diagnostic when none does).
+         * @param dd The working value.
+         * @return False when the build has no row.
+         */
+        bool ddHasRows(const DdBuild& dd) const;
+
+        /**
+         * @brief State write 2 of 3: removes every DD ambiguity state that no row
+         *        of this epoch, and no row the rebuild loop excluded under this
+         *        epoch's pivot, references.
+         * @param excluded_measurements The rebuild loop's excluded row signatures.
+         * @param dd                    The working value.
+         */
+        void ddPruneStaleAmbiguities(const std::set<std::string>& excluded_measurements,
+                                     const DdBuild& dd);
+
+        /**
+         * @brief The AR exclusion snapshot: the DD ambiguity keys of the phase
+         *        rows that are not integer-capable, rebuilt every call
+         *        (@ref getNonIntegerCapableDdAmbiguityKeys).
+         * @param dd The working value.
+         */
+        void ddNonIntegerKeys(const DdBuild& dd);
+
+        /**
+         * @brief State write 3 of 3 (not code_only): a DD ambiguity state for each
+         *        phase row without one, seeded with the row's pre-ambiguity
+         *        innovation, its variance filter.initial_std.ambiguity squared
+         *        (1e8 when not positive); records each row's state column.
+         * @param dd The working value (row columns filled).
+         */
+        void ddEnsureAmbiguities(DdBuild& dd);
+
+        /**
+         * @brief Each row's innovation (a phase row minus its ambiguity) and the
+         *        rows kept for the update.
+         *
+         * The ambiguity is read from @p current_state when its size equals the
+         * state size after the three state writes, else from the state: equal
+         * size does not imply equal layout or values (card UOM, defect DD-D1,
+         * kept unchanged here).
+         *
+         * @param current_state The caller's state snapshot.
+         * @param dd            The working value (innovations and kept filled).
+         * @return False when no row is kept or the state cannot be read.
+         */
+        bool ddInnovations(const Eigen::VectorXd& current_state, DdBuild& dd) const;
+
+        /**
+         * @brief H (rover position, the ambiguity column, the differential wet
+         *        delay on phase rows), the innovations, the variances and R with
+         *        the pivot variance shared by the rows of one group, and the row
+         *        identities (@c "sat_i-pivot", the rover code or "rov/ref").
+         * @param dd The working value.
+         * @param em The update (filled).
+         */
+        void ddAssemble(const DdBuild& dd, EpochMeasurement& em) const;
     };
 
 } // namespace GnssProcessor
