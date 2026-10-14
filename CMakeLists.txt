@@ -635,6 +635,7 @@ add_executable(gnss_tests
     tests/test_disc_mark_scope.cpp
     tests/test_consumer_sat_trace.cpp
     tests/test_transforms.cpp
+    tests/test_pivot_column_resolver.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp
     tests/test_rtcm_ssr_phase_bias.cpp
