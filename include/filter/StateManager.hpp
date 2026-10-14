@@ -430,16 +430,10 @@ namespace GnssProcessor {
                                                double new_variance);
 
         /// The seven variance re-inflations, in the order of the run-end line (card OWD, O2).
-        enum class Reinflation : int {
-            CodeBias = 0,       ///< @ref reinflateCodeBiasVariance
-            SystemTimeOffset,   ///< @ref reinflateSystemTimeOffsetVariance (the ISB)
-            Ionosphere,         ///< @ref reinflateIonosphereVariance
-            IonosphereRate,     ///< @ref reinflateIonosphereRateVariance
-            SatBias,            ///< @ref reinflateSatBiasVariancesForSat (per state)
-            SatPhaseBias,       ///< @ref reinflateSatPhaseBiasVariancesForSat (per state)
-            SatClock,           ///< @ref reinflateSatClockVarianceForSat
-            Count
-        };
+        /// Declared with the family table (`filter/StateFamily.hpp`), where each dynamic
+        /// family names its slot (@ref StateFamilySpec::reinflation) and the run-end names
+        /// are @ref kReinflationNames.
+        using Reinflation = GnssProcessor::Reinflation;
 
         /// One re-inflation's counts: states whose diagonal became the request (the request
         /// was at least the current variance) and states that kept a larger current variance
@@ -1575,12 +1569,6 @@ namespace GnssProcessor {
         double reinflateDiag_(Eigen::Index idx, double current_diag, double requested,
                               Reinflation kind);
 
-        /// The stable short name of a re-inflation in the run-end lines ("code_bias", "isb",
-        /// "iono", "iono_rate", "sat_bias", "sat_phase_bias", "sat_clock"; card OWD, O2).
-        /// @param r The re-inflation.
-        /// @return Its name.
-        static const char* reinflationName(Reinflation r);
-
         // -------------------------------------------------------------------
         // Internal add and cache helpers (called only by this class)
         // -------------------------------------------------------------------
@@ -1756,31 +1744,20 @@ namespace GnssProcessor {
         void addReceiverCodeBiasQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
 
         /**
-         * @brief Q block of the satellite code biases: a random walk, none for a
-         *        frozen pivot's satellite.
-         * @param Q  The process noise matrix being built.
-         * @param pn The configured process noise.
-         * @param dt Time step in seconds.
+         * @brief Q block of one satellite signal family (satellite code bias, phase
+         *        bias, clock): the random walk of the family's table row,
+         *        @c pn.*q_psd * dt, none for a state whose satellite is a frozen pivot.
+         *
+         * One function for the three blocks that were written three times (card UOM
+         * step U6e); the field and the satellite rule come from @ref kStateFamilies.
+         *
+         * @param Q      The process noise matrix being built.
+         * @param family The family (its row has @c QRule::RandomWalk).
+         * @param pn     The configured process noise.
+         * @param dt     Time step in seconds.
          */
-        void addSatBiasQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
-
-        /**
-         * @brief Q block of the satellite phase biases: a random walk, none for a
-         *        frozen pivot's satellite (the S-basis datum).
-         * @param Q  The process noise matrix being built.
-         * @param pn The configured process noise.
-         * @param dt Time step in seconds.
-         */
-        void addSatPhaseBiasQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
-
-        /**
-         * @brief Q block of the satellite clocks: a random walk, none for a frozen
-         *        pivot's satellite.
-         * @param Q  The process noise matrix being built.
-         * @param pn The configured process noise.
-         * @param dt Time step in seconds.
-         */
-        void addSatClockQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+        void addSatelliteRandomWalkQ_(Eigen::MatrixXd& Q, StateFamily family,
+                                      const ProcessNoise& pn, double dt) const;
 
         /**
          * @brief Q block of the inter-system time offsets: the CWNA ISB/ISBR pairs
@@ -1801,6 +1778,19 @@ namespace GnssProcessor {
          */
         void addAmbiguityQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt,
                             size_t state_size) const;
+
+        /**
+         * @brief Whether a key's satellite is a frozen BSSD pivot
+         *        (@ref setFrozenPivotSatellites), read by the family's satellite rule
+         *        (@ref StateFamilySpec::sat_of_key).
+         *
+         * The process-noise and transition builders skip such states.
+         *
+         * @param family The family of @p key.
+         * @param key    A key of that family.
+         * @return True when the key names a satellite and it is a frozen pivot.
+         */
+        bool isFrozenPivotKey_(StateFamily family, const std::string& key) const;
 
         // -------------------------------------------------------------------
         // Internal state vector / covariance manipulation helpers

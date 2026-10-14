@@ -624,6 +624,7 @@ add_executable(gnss_tests
     tests/test_rt_state_snapshot.cpp
     tests/test_state_family.cpp
     tests/test_state_manager_process_noise.cpp
+    tests/test_state_manager_families.cpp
     tests/test_kalman_pivot_detectors.cpp
     tests/test_kalman_qc_counters.cpp
     tests/test_band_scoped_response.cpp

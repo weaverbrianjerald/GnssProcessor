@@ -8,7 +8,9 @@
  * receiver clock, phase clock, troposphere, slant ionosphere, receiver code bias,
  * satellite code bias, satellite phase bias, satellite clock, inter-system offsets and
  * ambiguities.  Every entry of Q is written by exactly one block, so the order of the
- * calls does not change Q.
+ * calls does not change Q.  The three satellite signal families share one function
+ * over the family table (step U6e), and the frozen-pivot skip of every block reads the
+ * family's satellite-of-key rule (isFrozenPivotKey_).
  */
 
 #include "filter/StateManager.hpp"
@@ -16,6 +18,7 @@
 #include "logging/LogManager.hpp"
 #include "common/Constants.hpp"
 #include <cmath>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <spdlog/spdlog.h>
@@ -59,9 +62,22 @@ namespace GnssProcessor {
         addTroposphereQ_(Q, pn, dt);
         addIonosphereQ_(Q, pn, dt);
         addReceiverCodeBiasQ_(Q, pn, dt);
-        addSatBiasQ_(Q, pn, dt);
-        addSatPhaseBiasQ_(Q, pn, dt);
-        addSatClockQ_(Q, pn, dt);
+        // The satellite signal families, one random walk each from its table row,
+        // none for a frozen pivot's satellite:
+        //  - the satellite code bias absorbs uncorrected hardware delays on signals
+        //    without BIA coverage; nearly constant, so the random walk is very small
+        //    (on a network station the same map holds the OSB columns);
+        //  - the satellite phase bias (network) is more stable than the code bias;
+        //    a small random walk lets the column follow slow drift, where a strictly
+        //    constant state would over-converge;
+        //  - the satellite clock (network) is the correction to the a-priori product
+        //    clock; a small random walk follows drift between epochs while the
+        //    carried prior provides continuity.
+        // A frozen-pivot satellite is the BSSD pivot or the S-basis datum, held at
+        // (value 0, variance 0); Q there would let it drift off the datum.
+        addSatelliteRandomWalkQ_(Q, StateFamily::SatBias, pn, dt);
+        addSatelliteRandomWalkQ_(Q, StateFamily::SatPhaseBias, pn, dt);
+        addSatelliteRandomWalkQ_(Q, StateFamily::SatClock, pn, dt);
         addSystemTimeOffsetQ_(Q, pn, dt);
         addAmbiguityQ_(Q, pn, dt, state_size);
 
@@ -200,7 +216,7 @@ namespace GnssProcessor {
                 // The whole satellite is skipped, so the companion rate state
                 // also receives no Q and its frozen (0,0) value accrues no
                 // variance, matching the treatment of the level state.
-                if (frozen_pivot_sats_.count(sat)) continue;
+                if (isFrozenPivotKey_(StateFamily::Ionosphere, sat)) continue;
 
                 // Per-satellite override from the adaptive iono process-noise
                 // scheme (IonoVariabilityMonitor) when present; otherwise the
@@ -264,55 +280,14 @@ namespace GnssProcessor {
         }
     }
 
-    void StateManager::addSatBiasQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const {
-        // Per-satellite signal bias noise (estimate_sat_biases; on a network
-        // station the same map holds the satellite OSB columns).
-        // These absorb uncorrected satellite hardware delays on signals
-        // without BIA coverage.  They are nearly constant, so the random walk
-        // is very small.  Suppressed for BSSD pivot satellites (absorbed into the
-        // eliminated clock).
-        if (!sat_bias_indices_.empty()) {
-            const double sb_var = pn.sat_bias * dt;
-            for (const auto& [key, idx] : sat_bias_indices_) {
-                // Key format: StateKeySchema.hpp.  A key without a pipe is
-                // taken whole as the satellite.
-                const std::string sat = StateKeys::satelliteFromSatBiasKey(key);
-                if (frozen_pivot_sats_.count(sat)) continue;
-                Q(idx, idx) = sb_var;
-            }
-        }
-    }
-
-    void StateManager::addSatPhaseBiasQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const {
-        // Per-satellite signal phase-bias noise (PPP_RTK_Network producer).
-        // The phase bias is more stable than the code bias; a small random walk
-        // lets the satellite column follow slow drift, where a strictly
-        // constant (q=0) state would over-converge.  Suppressed for the S-basis
-        // datum (frozen-pivot) satellite, whose phase bias is held at (value=0,
-        // variance=0); Q there would let it drift off the datum.
-        if (!sat_phase_bias_indices_.empty()) {
-            const double spb_var = pn.sat_phase_bias * dt;
-            for (const auto& [key, idx] : sat_phase_bias_indices_) {
-                const std::string sat = StateKeys::satelliteFromSatPhaseBiasKey(key);
-                if (frozen_pivot_sats_.count(sat)) continue;
-                Q(idx, idx) = spb_var;
-            }
-        }
-    }
-
-    void StateManager::addSatClockQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const {
-        // Per-satellite clock noise (PPP_RTK_Network producer).  The state is
-        // Δδtˢ relative to the a-priori product clock; a small random walk lets
-        // the estimated clock follow drift between epochs while the
-        // carried-forward prior provides continuity.  Suppressed for the S-basis datum
-        // (frozen-pivot) satellite, whose clock is held at (value=0, variance=0).
-        if (!sat_clock_indices_.empty()) {
-            const double sc_var = pn.sat_clock * dt;
-            for (const auto& [key, idx] : sat_clock_indices_) {
-                const std::string sat = StateKeys::satelliteFromSatClockKey(key);
-                if (frozen_pivot_sats_.count(sat)) continue;
-                Q(idx, idx) = sc_var;
-            }
+    void StateManager::addSatelliteRandomWalkQ_(Eigen::MatrixXd& Q, StateFamily family,
+                                                const ProcessNoise& pn, double dt) const {
+        const auto& indices = indicesOf(family);
+        if (indices.empty()) return;
+        const double var = pn.*specOf(family).q_psd * dt;
+        for (const auto& [key, idx] : indices) {
+            if (isFrozenPivotKey_(family, key)) continue;
+            Q(idx, idx) = var;
         }
     }
 
@@ -365,16 +340,21 @@ namespace GnssProcessor {
         // 1e-12 threshold every epoch and trigger spurious handovers.
         if (state_size > core_state_size_) {
             for (const auto& [key, idx] : ambiguity_indices_) {
-                const auto us = key.find('_');
-                if (us != std::string::npos) {
-                    const std::string sat = key.substr(0, us);
-                    if (frozen_pivot_sats_.count(sat)) continue;
-                }
+                if (isFrozenPivotKey_(StateFamily::Ambiguity, key)) continue;
                 auto ov = amb_q_overrides_.find(key);
                 const double q = (ov != amb_q_overrides_.end()) ? ov->second : pn.ambiguity;
                 Q(idx, idx) = q * dt;
             }
         }
+    }
+
+    // ===================================================================
+    // The frozen-pivot rule both builders read
+    // ===================================================================
+
+    bool StateManager::isFrozenPivotKey_(StateFamily family, const std::string& key) const {
+        const std::optional<std::string> sat = satelliteOfKey(specOf(family).sat_of_key, key);
+        return sat.has_value() && frozen_pivot_sats_.count(*sat) > 0;
     }
 
     // ===================================================================
@@ -413,7 +393,7 @@ namespace GnssProcessor {
         // it would move the pivot level off the SD datum.
         if (config_.enableIonoRate()) {
             for (const auto& [sat, iono_idx] : ionosphere_indices_) {
-                if (frozen_pivot_sats_.count(sat)) continue;
+                if (isFrozenPivotKey_(StateFamily::Ionosphere, sat)) continue;
                 auto rit = iono_rate_indices_.find(sat);
                 if (rit != iono_rate_indices_.end()) {
                     F(iono_idx, rit->second) = dt;

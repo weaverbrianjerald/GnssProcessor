@@ -1135,25 +1135,11 @@ namespace GnssProcessor {
         return applied;
     }
 
-    const char* StateManager::reinflationName(Reinflation r) {
-        switch (r) {
-        case Reinflation::CodeBias:         return "code_bias";
-        case Reinflation::SystemTimeOffset: return "isb";
-        case Reinflation::Ionosphere:       return "iono";
-        case Reinflation::IonosphereRate:   return "iono_rate";
-        case Reinflation::SatBias:          return "sat_bias";
-        case Reinflation::SatPhaseBias:     return "sat_phase_bias";
-        case Reinflation::SatClock:         return "sat_clock";
-        case Reinflation::Count:            break;
-        }
-        return "?";
-    }
-
     std::string StateManager::reinflateSummary(const ReinflateCounters& counters) {
         std::string s;
         for (std::size_t k = 0; k < counters.size(); ++k) {
             s += fmt::format("{}{} raised={} kept={}", s.empty() ? "" : " | ",
-                             reinflationName(static_cast<Reinflation>(k)),
+                             kReinflationNames[k],
                              counters[k].raised, counters[k].kept);
         }
         return s;
@@ -1927,28 +1913,25 @@ namespace GnssProcessor {
     // ===================================================================
 
     namespace {
-        // Collect the indices of the per-satellite states: iono, iono
-        // rate, ambiguity and sat bias.  A gap invalidates their
-        // cross-covariance with position and clock (different geometry,
-        // different multipath, possibly a different satellite set).  The
-        // receiver code bias is excluded: it is receiver hardware, nearly
-        // constant, and its cross-covariance to position stays physically
-        // meaningful.
+        // Collect the indices of the families a gap decouples
+        // (StateFamilySpec::gap_decouple: iono, iono rate, ambiguity and sat
+        // bias), in table order.  A gap invalidates their cross-covariance with
+        // position and clock (different geometry, different multipath, possibly
+        // a different satellite set).  The receiver code bias is excluded: it is
+        // receiver hardware, nearly constant, and its cross-covariance to
+        // position stays physically meaningful.
         std::vector<Eigen::Index>
         collectSatSpecificIndices(const StateManager& sm) {
             std::vector<Eigen::Index> out;
-            out.reserve(sm.getIonosphereStates().size()
-                      + sm.getIonosphereRateStates().size()
-                      + sm.getAmbiguities().size()
-                      + sm.getSatBiasStates().size());
-            for (const auto& [_, idx] : sm.getIonosphereStates())
-                out.push_back(static_cast<Eigen::Index>(idx));
-            for (const auto& [_, idx] : sm.getIonosphereRateStates())
-                out.push_back(static_cast<Eigen::Index>(idx));
-            for (const auto& [_, idx] : sm.getAmbiguities())
-                out.push_back(static_cast<Eigen::Index>(idx));
-            for (const auto& [_, idx] : sm.getSatBiasStates())
-                out.push_back(static_cast<Eigen::Index>(idx));
+            std::size_t n = 0;
+            for (const auto& spec : kStateFamilies)
+                if (spec.gap_decouple) n += sm.indicesOf(spec.family).size();
+            out.reserve(n);
+            for (const auto& spec : kStateFamilies) {
+                if (!spec.gap_decouple) continue;
+                for (const auto& [_, idx] : sm.indicesOf(spec.family))
+                    out.push_back(static_cast<Eigen::Index>(idx));
+            }
             return out;
         }
     }

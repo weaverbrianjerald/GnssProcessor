@@ -76,19 +76,33 @@ U6B_ZERO = "U6b: sat_bias_term was the constant 0.0; x - 0.0 == x for every doub
 U6B_PRIV = "U6b: called only inside the class, declared again in the private section"
 
 # Frozen StateManager.cpp line -> [(from, to)] (plain text replace), applied before the shift.
+FROZEN_SKIP = "if (frozen_pivot_sats_.count(sat)) continue;"
 SUBS = {
     1355: [(" - iono_term - sat_bias_term;", " - iono_term;")],     # U6b
+    # U6e: the frozen-pivot skip reads the family's satellite-of-key rule
+    648: [(FROZEN_SKIP, "if (isFrozenPivotKey_(StateFamily::Ionosphere, sat)) continue;")],
+    801: [(FROZEN_SKIP, "if (isFrozenPivotKey_(StateFamily::Ambiguity, key)) continue;")],
+    846: [(FROZEN_SKIP, "if (isFrozenPivotKey_(StateFamily::Ionosphere, sat)) continue;")],
+    # U6e: the run-end names come from the table next to the Reinflation enum
+    1758: [("reinflationName(static_cast<Reinflation>(k)),", "kReinflationNames[k],")],
 }
 
 # Frozen StateManager.cpp lines dropped, with the reason.
+U6E_AMB = "U6e: the ambiguity key's satellite is read by the family rule (isFrozenPivotKey_)"
 DROPS = {
     1353: U6B_ZERO,
+    798: U6E_AMB, 799: U6E_AMB, 800: U6E_AMB, 802: U6E_AMB,
 }
 
 # Frozen StateManager.cpp line ranges dropped whole (their code lines join DROPS).
 DROP_RANGES = [
     (2118, 2168, U6B_DEAD + " (resetSatPhaseBiasState)"),
     (2413, 2462, U6B_DEAD + " (resetSatClockState)"),
+    (714, 723, "U6e: the satellite code-bias block is addSatelliteRandomWalkQ_ over the table"),
+    (731, 738, "U6e: the satellite phase-bias block is addSatelliteRandomWalkQ_ over the table"),
+    (745, 752, "U6e: the satellite clock block is addSatelliteRandomWalkQ_ over the table"),
+    (1740, 1752, "U6e: reinflationName replaced by kReinflationNames (filter/StateFamily.hpp)"),
+    (2645, 2656, "U6e: the four gap-decoupled maps are a loop over the table's gap_decouple column"),
 ]
 
 SIG = "const ProcessNoise& pn, double dt"
@@ -104,7 +118,18 @@ UNITS = [
     # --- StateManager.cpp: everything but construction and the process-noise section ---
     dict(name="StateManager.cpp head .. indicesOf", file=SM, pieces=[F(11, 182)]),
     dict(name="StateManager.cpp accessors .. getStateVariance", file=SM, pieces=[F(441, 512)]),
-    dict(name="StateManager.cpp index getters .. end", file=SM, pieces=[F(862, 2745)]),
+    dict(name="StateManager.cpp index getters .. end", file=SM, pieces=[
+        F(862, 2644),
+        N("std::size_t n = 0;"),
+        N("for (const auto& spec : kStateFamilies)"),
+        N("if (spec.gap_decouple) n += sm.indicesOf(spec.family).size();"),
+        N("out.reserve(n);"),
+        N("for (const auto& spec : kStateFamilies) {"),
+        N("if (!spec.gap_decouple) continue;"),
+        N("for (const auto& [_, idx] : sm.indicesOf(spec.family))"),
+        N("out.push_back(static_cast<Eigen::Index>(idx));"),
+        N("}"),
+        F(2645, 2745)]),
     # --- StateManagerLayout.cpp (U6d) ---
     dict(name="StateManager constructor (driver)", file=LY, pieces=[
         F(183, 203),
@@ -134,9 +159,9 @@ UNITS = [
         N("addTroposphereQ_(Q, pn, dt);"),
         N("addIonosphereQ_(Q, pn, dt);"),
         N("addReceiverCodeBiasQ_(Q, pn, dt);"),
-        N("addSatBiasQ_(Q, pn, dt);"),
-        N("addSatPhaseBiasQ_(Q, pn, dt);"),
-        N("addSatClockQ_(Q, pn, dt);"),
+        N("addSatelliteRandomWalkQ_(Q, StateFamily::SatBias, pn, dt);"),
+        N("addSatelliteRandomWalkQ_(Q, StateFamily::SatPhaseBias, pn, dt);"),
+        N("addSatelliteRandomWalkQ_(Q, StateFamily::SatClock, pn, dt);"),
         N("addSystemTimeOffsetQ_(Q, pn, dt);"),
         N("addAmbiguityQ_(Q, pn, dt, state_size);"),
         F(809, 812)]),
@@ -151,14 +176,27 @@ UNITS = [
     dict(name="addIonosphereQ_ (Q6)", file=PN, pieces=[N(QF("addIonosphereQ_")), F(636, 693), N("}")]),
     dict(name="addReceiverCodeBiasQ_ (Q7)", file=PN,
          pieces=[N(QF("addReceiverCodeBiasQ_")), F(695, 707), N("}")]),
-    dict(name="addSatBiasQ_ (Q8)", file=PN, pieces=[N(QF("addSatBiasQ_")), F(709, 723), N("}")]),
-    dict(name="addSatPhaseBiasQ_ (Q9)", file=PN,
-         pieces=[N(QF("addSatPhaseBiasQ_")), F(725, 738), N("}")]),
-    dict(name="addSatClockQ_ (Q10)", file=PN, pieces=[N(QF("addSatClockQ_")), F(740, 752), N("}")]),
+    dict(name="addSatelliteRandomWalkQ_ (Q8-Q10, U6e)", file=PN, pieces=[
+        N("void StateManager::addSatelliteRandomWalkQ_(Eigen::MatrixXd& Q, StateFamily family,"),
+        N("const ProcessNoise& pn, double dt) const {"),
+        N("const auto& indices = indicesOf(family);"),
+        N("if (indices.empty()) return;"),
+        N("const double var = pn.*specOf(family).q_psd * dt;"),
+        N("for (const auto& [key, idx] : indices) {"),
+        N("if (isFrozenPivotKey_(family, key)) continue;"),
+        N("Q(idx, idx) = var;"),
+        N("}"),
+        N("}")]),
+    dict(name="isFrozenPivotKey_ (U6e)", file=PN, pieces=[
+        N("bool StateManager::isFrozenPivotKey_(StateFamily family, const std::string& key) const {"),
+        N("const std::optional<std::string> sat = satelliteOfKey(specOf(family).sat_of_key, key);"),
+        N("return sat.has_value() && frozen_pivot_sats_.count(*sat) > 0;"),
+        N("}")]),
     dict(name="addSystemTimeOffsetQ_ (Q11)", file=PN,
          pieces=[N(QF("addSystemTimeOffsetQ_")), F(754, 786), N("}")]),
     dict(name="addAmbiguityQ_ (Q12)", file=PN,
-         pieces=[N(QF("addAmbiguityQ_", ", size_t state_size")), F(788, 807), N("}")]),
+         pieces=[N(QF("addAmbiguityQ_", ", size_t state_size")), F(788, 800), F(801, 801, 4),
+                 F(802, 807), N("}")]),
     dict(name="getTransitionMatrix", file=PN, pieces=[F(814, 860)]),
 ]
 
@@ -174,8 +212,17 @@ HDROPS = {
         **{n: U6B_PRIV + " (addSatClockStateWithVariance)" for n in (1276, 1277, 1278)},
         **{n: U6B_DEAD + " (resetSatClockState)" for n in (1283, 1284, 1285)},
         1593: U6B_DEAD + " (meas_var_scale_: no member function reads or writes it)",
+        **{n: "U6e: the Reinflation enum is declared with the family table "
+              "(filter/StateFamily.hpp); StateManager::Reinflation is an alias"
+           for n in range(419, 429)},
     },
-    FAM: {},
+    FAM: {
+        **{n: "U6e: the row gains its behaviour columns (written over three to four lines)"
+           for n in range(76, 85)},
+        109: "U6e: the static_assert loop also checks the Q columns (braced body)",
+        110: "U6e: the static_assert loop also checks the Q columns (braced body)",
+        112: "U6e: the static_assert message names the Q columns",
+    },
     SCH: {},
 }
 
