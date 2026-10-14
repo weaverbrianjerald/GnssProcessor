@@ -402,35 +402,6 @@ void networkEmitStore(
     // the position the file replay gives it (card SID phase 5a, E2).
     if (ctx.ledger_emit.armed && ctx.ledger_emit.decl.present)
         network_store.setDeclaredRoster(ctx.ledger_emit.decl);
-    // --- Drain the de-commoned jump test's classified cells (card JT) ----------
-    // Invariant #7, both edges with identities: the decoupling edge is the
-    // declaration this test raises (decl_decommon_only / decl_both), and the
-    // re-coupling edge is the declaration it withholds (raw_only_suppressed: the
-    // frame moved, this satellite did not, and the consumer's receiver phase clock
-    // absorbs the move by construction).  Both are events and both are counted; a
-    // fallback_raw row names each unforced cell whose signal had too few satellites
-    // for a frame estimate.  The vector is empty on an off run, so this loop does not
-    // execute and the off path stays byte-identical.
-    for (const auto& e : emitter.pbJumpDecommonEvents()) {
-        const char* kind = "decl_both";
-        switch (e.cls) {
-            case NetworkProductEmitter::PbJumpDecommonClass::DecommonOnly:
-                kind = "decl_decommon_only"; ++ctx.counters.n_jt_decommon_only; break;
-            case NetworkProductEmitter::PbJumpDecommonClass::Both:
-                kind = "decl_both";          ++ctx.counters.n_jt_both;          break;
-            case NetworkProductEmitter::PbJumpDecommonClass::RawOnlySuppressed:
-                kind = "raw_only_suppressed"; ++ctx.counters.n_jt_raw_only;     break;
-            case NetworkProductEmitter::PbJumpDecommonClass::FallbackRaw:
-                kind = "fallback_raw";       ++ctx.counters.n_jt_fallback_raw;  break;
-        }
-        traces.emitEvent(se.time, "PB_JUMP", kind, e.sat, "",
-                         e.decommon_m, e.threshold_m,
-                         e.declared ? "declare" : "hold",
-                         fmt::format("sig={} raw_dpb={:.6f} c_s={:.6f} decommon_dpb={:.6f} "
-                                     "bar={:.6f} n_med={}",
-                                     e.signal, e.raw_delta_m, e.common_m, e.decommon_m,
-                                     e.threshold_m, e.population));
-    }
     // --- Drain the mark-scope census of this emit (card MS) --------------------
     // Invariant #7, both edges with identities.  The decoupling edge is what a
     // per-satellite mark stepped (n_mark_clk / n_mark_cb / n_mark_pb) and what it was

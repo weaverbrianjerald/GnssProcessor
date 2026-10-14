@@ -1704,12 +1704,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // unarmed run's manifest bytes are unchanged.
                << (nc.trace_consumer_sat
                        ? std::string("\"trace_consumer_sat\":true,") : std::string())
-               // The de-commoned phase jump test (card JT) changes the R records on the
-               // wire, so an archived logs/ folder must be able to say which declaration
-               // test produced the product's discontinuity counters.  Emitted only when
-               // armed, so an unarmed run's manifest bytes are unchanged.
-               << (nc.disc_jump_test_decommon
-                       ? std::string("\"disc_jump_test_decommon\":true,") : std::string())
                // station_prior_before_pd (card RF-PD-fix) affects the solve: it decides
                // which stations are in the network, so an archived logs/ folder has to be
                // able to say which side of it produced the products.  Emitted only when

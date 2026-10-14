@@ -2524,33 +2524,10 @@ namespace GnssProcessor {
                       "EV6 §9 item 1's owed instrument; measure-only, consumer solve "
                       "byte-identical.");
         }
-        // Screens the phase-bias discontinuity test on the de-commoned step (card JT).
-        // Emit-side only (the solve never sees a discontinuity counter), but not a
-        // trace knob: it changes the R records on the wire, so it is fingerprinted (the
-        // resume fingerprint appends discdecom only when armed) and it travels in the S
-        // contract as discdecom=, so a file replay reproduces the counters.
-        network_config_.disc_jump_test_decommon =
-            jval<bool>(json, "network.disc_jump_test_decommon", "disc_jump_test_decommon", false);
-        if (network_config_.disc_jump_test_decommon) {
-            log->info("Network (card JT): network.disc_jump_test_decommon ON — the emitter's "
-                      "phase-bias jump test now screens the DE-COMMONED step (raw dPB minus the "
-                      "MEDIAN dPB over the satellites emitted on that SIGNAL at both epochs) "
-                      "against the same 0.25*lambda bar, instead of the frame-blind raw step.  "
-                      "Standing invariant #5: a satellite-common phase-bias move is absorbed by "
-                      "a consumer's receiver phase clock, so the de-commoned step is what lands "
-                      "in a consumer ambiguity (CST S4: a -1.451 m L1W frame move hid G32 L1W's "
-                      "+1.409 m step under a 0.0476 m bar).  A signal with fewer than {} "
-                      "fresh-baseline satellites falls back to the RAW test and is counted.  "
-                      "Per-cell PB_JUMP events + four run-end class counters (invariant #7).  "
-                      "WARNING (CST S7.3 ordering): this ADDS declarations, and a reset-only "
-                      "consumer turns each one into an added mass ambiguity reset — arm it only "
-                      "with network.closed_loop.pb_disc_carry.",
-                      NetworkProductEmitter::kDiscDecommonMinSats);
-        }
         // Scopes a per-satellite discontinuity mark to the channel that moved
-        // (card MS).  Emit-side only (no estimate, no datum), but like card JT it changes
-        // the declared population on the wire, so it is fingerprinted and travels in the
-        // S contract as discscope=.
+        // (card MS).  Emit-side only (no estimate, no datum), but it changes the declared
+        // population on the wire, so it is fingerprinted and travels in the S contract as
+        // discscope=.
         network_config_.disc_mark_scope =
             jval<std::string>(json, "network.disc_mark_scope", "disc_mark_scope",
                               std::string("sat"));

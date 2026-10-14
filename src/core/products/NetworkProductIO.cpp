@@ -340,8 +340,6 @@ struct LineAssembler {
                             c.age_scale_k = std::stod(f[k].substr(5));      // age-scaling coeff (M4)
                         } else if (f[k].rfind("discfrac=", 0) == 0) {
                             c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // per-λ jump gate (H3)
-                        } else if (f[k].rfind("discdecom=", 0) == 0) {
-                            c.disc_jump_test_decommon = (std::stoi(f[k].substr(10)) != 0);  // de-commoned jump test (Card JT)
                         } else if (f[k].rfind("discscope=", 0) == 0) {
                             c.disc_mark_scope_channel = (f[k].substr(10) == "channel");  // disc mark scope (Card MS)
                         } else if (f[k].rfind("pbhold=", 0) == 0) {
@@ -459,9 +457,9 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     //     disc_thresh_m,emit_clock_disc,apriori_product_id[,<const>:<pivot_sat>...]
     //     [,gid=<generation_id>][,stale=<staleness_horizon_s>]
     //     [,frame=<frame_id>][,cepoch=<coord_epoch>][,atx=<atx_id>][,oref=<orbit_ref>]
-    // The replay emitter's eight construction parameters all come from this line:
+    // The replay emitter's seven construction parameters all come from this line:
     // disc_thresh_m, emit_clock_disc, the optional stale= horizon (RTA-11), cbjump=,
-    // clkset=, discfrac=, discdecom= and discscope=.  A consumer therefore replays
+    // clkset=, discfrac= and discscope=.  A consumer therefore replays
     // the counters with no out-of-band producer config
     // (NetworkProductReader::makeReplayEmitter).  Trailing fields 12+ are
     // distinguished by shape: a field with ':' is a realized pivot entry, and
@@ -556,18 +554,9 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // it, so the addition is forward-compatible.
     if (!contract.sat_gf_datum.empty())
         out_ << ",sat_gf_datum=" << contract.sat_gf_datum;
-    // The phase jump test screened the de-commoned step, not the raw one
-    // (network.disc_jump_test_decommon, Card JT).  A replay-emitter parameter like
-    // discfrac=, not an interpretation hint: a consumer replaying with the other
-    // setting reproduces different discontinuity counters on the cells where a frame
-    // move hid or created a jump.  Written only when armed, so a producer without it
-    // writes the S line byte-for-byte and a reader that skips unknown fields stays
-    // forward-compatible.
-    if (contract.disc_jump_test_decommon)
-        out_ << ",discdecom=1";
     // A per-satellite discontinuity mark bumped only the channels the marking site
     // reported (network.disc_mark_scope, Card MS).  A replay-emitter parameter in the
-    // same sense as discdecom=, with one limit: the R record carries no channel set,
+    // same sense as discfrac=, with one limit: the R record carries no channel set,
     // so a replay re-marks with the full satellite scope regardless.  The token lets
     // checkContract report that divergence.  Written only when armed, so a producer
     // without it writes the S line byte-for-byte.
@@ -648,7 +637,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "emit_clock_disc,apriori_id[,<const>:<pivot_sat>...][,gid=<n>][,stale=<s>][,cbjump=1]"
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
             "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
-            "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>][,discdecom=1]"
+            "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>]"
             "[,discscope=channel][,pbhold=1]"
             "   (B6 S-basis contract)\n"
             "# N,constellation,band_digit[,ph=<sig>[+<sig>...]][,co=<sig>[+<sig>...]]"
@@ -1017,12 +1006,6 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.disc_threshold_frac_cycles != expected.disc_threshold_frac_cycles)
         note(fmt::format("disc_threshold_frac_cycles: file {} vs expected {}",
                          file.disc_threshold_frac_cycles, expected.disc_threshold_frac_cycles));
-    // The de-commoned phase jump test (Card JT): a mismatch makes the consumer's
-    // replay emitter declare a different cell population (the frame-hidden steps the
-    // de-commoned test flags, and the common-mode steps it suppresses).
-    if (file.disc_jump_test_decommon != expected.disc_jump_test_decommon)
-        note(fmt::format("disc_jump_test_decommon: file {} vs expected {}",
-                         file.disc_jump_test_decommon, expected.disc_jump_test_decommon));
     // The per-channel mark scope (Card MS).  A mismatch means the producer declared
     // a different channel population from the one the replay reconstructs.  Even a
     // match does not make the replay exact, because the R record carries no channel
@@ -1095,7 +1078,6 @@ NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContra
                                  contract.code_bias_jump_test,
                                  contract.clock_disc_on_set_change,
                                  contract.disc_threshold_frac_cycles,
-                                 contract.disc_jump_test_decommon,    // de-commoned jump test (Card JT)
                                  contract.disc_mark_scope_channel);   // disc mark scope (Card MS)
 }
 

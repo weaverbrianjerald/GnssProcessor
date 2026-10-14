@@ -386,18 +386,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (config_.networkCodeBiasDiscJumpTest() || config_.networkClockDiscOnSetChange())
             add(fmt::format("emitchan:cbj={},cks={}", config_.networkCodeBiasDiscJumpTest(),
                             config_.networkClockDiscOnSetChange()));
-        // The de-commoned phase jump test (card JT) decides which (sat,signal) counters
-        // step, and those counters are snapshotted emitter state, so a resume across a
-        // change of this knob would continue a counter series produced under the other
-        // test.  It adds no serialized state of its own (the de-commoned step is a pure
-        // function of the epoch and last_phase_bias_), so it is fingerprinted here rather
-        // than in the emitter header.  Appended only when armed, so a snapshot written
-        // with it off keeps its fingerprint.
-        if (config_.getNetworkConfig().disc_jump_test_decommon)
-            add("discdecom=1");
-        // The same argument applies to the per-channel mark scope (card MS): it decides
-        // which channel's counters a landed mark steps, those counters are snapshotted
-        // emitter state, and the pending-mark section carries a channel mask.  Appended
+        // The per-channel mark scope (card MS) decides which channel's counters a
+        // landed mark steps, those counters are snapshotted emitter state, and the
+        // pending-mark section carries a channel mask.  Appended
         // only when armed, so a snapshot written with it off keeps its fingerprint.
         if (config_.getNetworkConfig().disc_mark_scope == "channel")
             add("discscope=channel");

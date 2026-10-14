@@ -19,7 +19,6 @@
 #include "filter/NetworkRunGroups.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "math/Coordinates.hpp"
-#include "products/NetworkProductEmitter.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -125,22 +124,6 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
         log->info("  per-sat consumer trace    : {} rows over {} consumer epoch(s) -> {}",
                   ctx.counters.n_cst_rows, ctx.counters.n_cst_epochs,
                   (log_dir_ / "closed_loop_sat_trace.csv").string());
-    }
-    // The four declaration classes of the de-commoned phase jump test (card JT), the
-    // ON-path telemetry (invariant #4).  Printed only when armed, so a run with it off
-    // keeps a byte-identical summary.  `decommon_only` is the population the raw test
-    // missed and `raw_only` the population only the raw test declared (suppressed
-    // here): 0 in both means the knob is inert on this lineage however clean the run
-    // reads.
-    if (config_.getNetworkConfig().disc_jump_test_decommon) {
-        const auto& k = ctx.counters;
-        log->info("  pb jump de-common (JT)    : decl_decommon_only {} (the raw test MISSED "
-                  "these) / decl_both {} / raw_only_suppressed {} (the raw test MINTED "
-                  "these) / fallback_raw {} (signal population < {}); declared by this test "
-                  "{}",
-                  k.n_jt_decommon_only, k.n_jt_both, k.n_jt_raw_only, k.n_jt_fallback_raw,
-                  NetworkProductEmitter::kDiscDecommonMinSats,
-                  k.n_jt_decommon_only + k.n_jt_both);
     }
     // Emit-side phase-bias hold (card PBH): the ON-path telemetry (invariant #4) and
     // both edges (invariant #7), printed only when armed so a run with it off keeps a

@@ -2859,48 +2859,6 @@ namespace GnssProcessor {
          */
         bool trace_consumer_sat{ false };
         /**
-         * @brief Screen the phase-bias discontinuity test on the de-commoned step
-         *        (@c network.disc_jump_test_decommon) (card JT).
-         *
-         * The emitter's phase-bias jump test (@c NetworkProductEmitter::emitToStore)
-         * compares the raw epoch-to-epoch @f$\Delta PB@f$ of each (sat, signal) against
-         * @c 0.25\,\lambda and declares a discontinuity (one @c R-record counter bump)
-         * when it is exceeded.  The raw test ignores the frame, and standing
-         * invariant #5 explains why that matters: a satellite-common phase-bias move
-         * is absorbed by a consumer's own receiver phase clock, so the quantity that
-         * lands in a consumer ambiguity is the step minus the network's median step on
-         * that signal.  CST §4 measured the failure: in one epoch the L1W phase-bias frame
-         * moved @f$-1.451@f$ m, so one satellite's real @f$+1.409@f$ m de-commoned step
-         * read as a raw @f$-0.042@f$ m and went undeclared into a live consumer
-         * ambiguity, 29.6× its own bar; over the run, 451 of 545 de-commoned wire steps
-         * above 0.10 m were undeclared (EV6).
-         *
-         * On, the test forms @f$\Delta PB(sat,s) - c_s@f$, where @f$c_s@f$ is the
-         * median @f$\Delta PB@f$ over the satellites emitted on signal @f$s@f$ at both
-         * epochs (the jump test's own fresh-baseline population), and screens that
-         * against the same bar.  The median is taken within each signal: L1W and L2W
-         * biases do not share a common mode.  A signal whose population is below
-         * @c NetworkProductEmitter::kDiscDecommonMinSats falls back to the raw test and
-         * is counted (@c fallback_raw).
-         *
-         * Invariant #7, both edges with identities: every cell the test decides
-         * differently from the raw one writes a @c network_events.csv row
-         * (@c PB_JUMP @c decl_decommon_only / @c decl_both / @c raw_only_suppressed
-         * / @c fallback_raw) carrying sat, signal, raw ΔPB, @f$c_s@f$ and the
-         * de-commoned step, and the four classes are run-end counters.
-         *
-         * Ordering (CST §7.3): this adds declarations, and a reset-only consumer turns
-         * every added declaration into an added mass ambiguity reset, so on its own it
-         * is predicted to make the consumer worse.  Arm it only on a lineage that
-         * already carries @c network.closed_loop.pb_disc_carry, where an added
-         * declaration costs a translation and not an arc.
-         *
-         * Solve-inert on the producer: only the emitted discontinuity counters change,
-         * never an estimate.  Travels in the S contract (@c discdecom=), so a file
-         * replay reproduces the counters.  Default off: byte-identical.
-         */
-        bool disc_jump_test_decommon{ false };
-        /**
          * @brief Bump only the generation of the channel that moved
          *        (@c network.disc_mark_scope, @c "sat" (default) | @c "channel")
          *        (card MS).

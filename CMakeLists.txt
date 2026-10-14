@@ -480,7 +480,6 @@ add_executable(gnss_tests
     tests/test_datum_graph_census.cpp
     tests/test_station_block_audit.cpp
     tests/test_card4_emit_rebase.cpp
-    tests/test_pb_jump_decommon.cpp
     tests/test_clock_emit_rebase.cpp
     tests/test_clock_anchor.cpp
     tests/test_network_solprep_disc.cpp

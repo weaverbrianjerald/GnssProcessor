@@ -246,20 +246,6 @@ public:
     ///        6.37 cm.  Default 0.0 = the legacy flat @p disc_threshold_m
     ///        (byte-identical).  Travels in the S contract (@c discfrac=) for
     ///        @c makeReplayEmitter.
-    /// @param disc_jump_test_decommon When true (card JT,
-    ///        @c network.disc_jump_test_decommon), the phase-bias jump test screens
-    ///        the de-commoned step, the raw epoch-to-epoch @f$\Delta PB@f$ minus the
-    ///        median @f$\Delta PB@f$ over the satellites on that signal with a fresh
-    ///        baseline, instead of the raw one.  A satellite-common phase-bias move is
-    ///        absorbed by a consumer's own receiver phase clock, so the quantity that
-    ///        reaches a consumer ambiguity is the de-commoned step (standing
-    ///        invariant #5).  The raw test cannot separate a frame move from a
-    ///        satellite step: in CST §4 a −1.451 m L1W frame move hid a +1.409 m
-    ///        per-satellite step under a 0.0476 m bar.  The threshold is unchanged
-    ///        (@ref discThresholdM).  A signal whose fresh-baseline population is
-    ///        below @ref kDiscDecommonMinSats falls back to the raw test (counted).
-    ///        Default false: byte-identical.  Travels in the S contract
-    ///        (@c discdecom=) for @c makeReplayEmitter.
     /// @param disc_mark_scope_channel When true (card MS, @c network.disc_mark_scope),
     ///        a per-satellite discontinuity mark bumps the generations of only the
     ///        channels that the marking site says moved (@ref markSatDiscontinuity's
@@ -278,7 +264,6 @@ public:
                                    bool code_bias_jump_test = false,
                                    bool clock_disc_on_set_change = false,
                                    double disc_threshold_frac_cycles = 0.0,
-                                   bool disc_jump_test_decommon = false,
                                    bool disc_mark_scope_channel = false);
 
     /// Product channels that a per-satellite discontinuity mark applies to (card MS).
@@ -353,38 +338,6 @@ public:
     /// and tests (card MS).
     static const char* discChannelName(DiscChannel c);
 
-    /// Minimum number of fresh-baseline satellites that a signal must carry before its
-    /// de-commoned median is trusted as a frame estimate (card JT).  Below it the
-    /// (sat, signal) cells of that signal fall back to the raw jump test and are
-    /// counted as @c fallback_raw, because the median of a thin signal does not
-    /// estimate a frame.
-    static constexpr int kDiscDecommonMinSats = 3;
-
-    /// How the de-commoned and the raw phase jump tests disagreed on one
-    /// (sat, signal) cell: invariant #7's identity for both edges (card JT).
-    enum class PbJumpDecommonClass {
-        DecommonOnly,       ///< De-commoned fires, raw would not: a frame move hid the step, which the raw test misses.
-        Both,               ///< Both fire: a step large enough to clear the bar in either frame.
-        RawOnlySuppressed,  ///< Raw fires, de-commoned does not: the common-mode class (the frame moved, this satellite did not).
-        FallbackRaw         ///< The signal's population was below @ref kDiscDecommonMinSats; the raw result stands.
-    };
-
-    /// One classified cell of the epoch's phase jump test (card JT).  Emitted only for
-    /// cells that the jump test decided: a cell already forced by
-    /// @ref markDatumChange / @ref markSatDiscontinuity is declared regardless and is
-    /// not classified, so the census counts only the declarations this knob decides.
-    struct PbJumpDecommonEvent {
-        std::string         sat;               ///< RINEX satellite id.
-        std::string         signal;            ///< RINEX obs code of the phase signal.
-        double              raw_delta_m{0.0};  ///< Raw ΔPB against this key's baseline (m, signed).
-        double              common_m{0.0};     ///< The signal's median ΔPB (m); 0 on a @c FallbackRaw cell.
-        double              decommon_m{0.0};   ///< raw_delta_m − common_m (m); equals raw on a @c FallbackRaw cell.
-        double              threshold_m{0.0};  ///< The bar this cell was screened against (@ref discThresholdM).
-        int                 population{0};     ///< Satellites in the signal's median population.
-        bool                declared{false};   ///< Whether the armed test declared (stepped the counter).
-        PbJumpDecommonClass cls{PbJumpDecommonClass::Both};  ///< Which class this cell fell in.
-    };
-
     /// @brief Number of phase-bias value-jump tests whose raw step exceeded the bar
     ///        only because of the satellite's declared level step
     ///        (@ref NetworkSatSolution::level_step_m, the C-record lvl= token), and
@@ -398,16 +351,6 @@ public:
     ///        which the step's removal therefore did not declare.
     /// @return the run count (0 unless the wire declares a follow step).
     long long clvCbJumpExcluded() const { return clv_cb_jump_excluded_; }
-
-    /// Classified cells of the last @ref emitToStore call, cleared at the top of every
-    /// emit (card JT).  Always empty when the knob is off, so a run with the knob off
-    /// allocates nothing and the driver's drain is a no-op.
-    const std::vector<PbJumpDecommonEvent>& pbJumpDecommonEvents() const {
-        return pb_jump_decommon_events_;
-    }
-
-    /// Whether the de-commoned phase jump test is armed on this emitter (card JT).
-    bool discJumpTestDecommon() const { return disc_jump_test_decommon_; }
 
     /// Serialize @p sol into @p store (Sink A: in-process, no wire bytes).
     void emitToStore(const NetworkSolutionEpoch& sol, SsrCorrectionStore& store);
@@ -604,21 +547,11 @@ private:
     /// When > 0, the per-(sat,signal) jump threshold is disc_threshold_frac_cycles_ ×
     /// λ(sat,signal) (fixed contract, uniform in cycles).  0 = legacy flat metres (H3).
     double disc_threshold_frac_cycles_{0.0};
-    /// Screen the de-commoned phase step (raw minus the signal's median) rather than
-    /// the raw one (card JT).  Default false = the legacy raw test, which does not
-    /// separate frame moves from satellite steps (byte-identical).  Travels in the
-    /// S contract (@c discdecom=).
-    bool   disc_jump_test_decommon_{false};
     /// Bump only the channels that a mark named (card MS).  Default false = the
     /// legacy satellite-wide scope (byte-identical).  Travels in the S contract
     /// (@c discscope=).  Declared here so that the ctor's init list stays in
     /// declaration order.
     bool   disc_mark_scope_channel_{false};
-    /// Classified cells of the last emit, empty unless armed (card JT).  Per-emit
-    /// scratch, not serialized: the de-commoned step is a pure function of this
-    /// epoch's emitted biases and @ref last_phase_bias_, so a replay reproduces it
-    /// with no extra stream state.
-    std::vector<PbJumpDecommonEvent> pb_jump_decommon_events_;
     long long clv_jump_excluded_{0};   ///< See clvJumpExcluded() (card CLV).
     long long clv_cb_jump_excluded_{0};   ///< card CLV R-A: see clvCbJumpExcluded()
     bool   emit_clock_disc_{false};       ///< Maintain and stamp the clock disc counter (A2).

@@ -1453,7 +1453,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                           config_.networkCodeBiasDiscJumpTest(),
                           config_.networkClockDiscOnSetChange(),
                           config_.networkDiscThresholdFracCycles(),
-                          nc.disc_jump_test_decommon,    // de-commoned phase jump test (Card JT)
                           nc.disc_mark_scope == "channel");  // per-channel mark scope (Card MS)
     NetworkProductEmitter& emitter = *setup.emitter;
 
@@ -1601,7 +1600,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             pending_contract.code_bias_jump_test = config_.networkCodeBiasDiscJumpTest();
             pending_contract.clock_disc_on_set_change = config_.networkClockDiscOnSetChange();
             pending_contract.disc_threshold_frac_cycles = config_.networkDiscThresholdFracCycles();  // per-λ jump gate, discfrac= (H3)
-            pending_contract.disc_jump_test_decommon = nc.disc_jump_test_decommon;  // de-commoned phase jump test, discdecom= (Card JT)
             pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // per-channel mark scope, discscope= (Card MS)
             pending_contract.emit_pb_hold = nc.emit_pb_hold;  // the phase-bias hold reading rule, pbhold= (Card PBH)
             pending_contract.emit_pb_hold_phase_clock =       // pbhold=2: the phase-visible clock is held (Card LAH)

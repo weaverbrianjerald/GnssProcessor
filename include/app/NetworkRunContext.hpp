@@ -3371,17 +3371,6 @@ namespace GnssProcessor {
         long long n_amb_level_trips_wl = 0;  ///< wide-lane test trips
         long long n_amb_level_trips_if = 0;  ///< iono-free test trips
         long long n_amb_level_refloats = 0;  ///< satellites refloated (two ambiguities each)
-        // The four declaration classes of the de-commoned phase jump test (card JT,
-        // network.disc_jump_test_decommon): the identities of invariant #7, counted (the
-        // per-cell PB_JUMP rows carry sat / signal / raw dPB / c_s / de-commoned dPB).  All
-        // four stay 0 on an off run.  `decommon_only` is the class the raw test missed (a
-        // frame move hid a real per-satellite step); `raw_only` is the class it
-        // fabricated (the frame moved, this satellite did not).  A run with 0 in both is a
-        // knob that changed nothing, however clean the log reads.
-        long long n_jt_decommon_only = 0;  ///< de-commoned declared, raw would not
-        long long n_jt_both          = 0;  ///< both tests declared
-        long long n_jt_raw_only      = 0;  ///< raw would have declared, de-commoned did not
-        long long n_jt_fallback_raw  = 0;  ///< signal population below kDiscDecommonMinSats, so the raw result stands
         // --- Per-channel discontinuity marks (card MS, network.disc_mark_scope) ---
         // The decoupling identity of invariant #7 for a per-satellite mark: which channel
         // generations it stepped, and which it was withheld from.  All zero under the

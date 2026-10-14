@@ -138,19 +138,10 @@ struct SbasisContract {
     /// Serialized as an optional trailing @c discfrac= S-line field only when > 0,
     /// so a flat-metre producer writes the S line byte-for-byte as before.
     double            disc_threshold_frac_cycles{0.0};
-    /// Whether the producer's phase jump test screened the de-commoned step (raw ΔPB
-    /// minus the median ΔPB over the satellites emitted on that signal at both
-    /// epochs) rather than the raw one (@c network.disc_jump_test_decommon, card JT).
-    /// Seventh replay-emitter construction parameter.  A consumer replaying with the
-    /// other setting miscounts discontinuities on the cells where a frame move hid or
-    /// created a step, so @c makeReplayEmitter applies it and @c checkContract
-    /// compares it.  Serialized as an optional trailing @c discdecom=1 S-line field
-    /// only when armed, so a producer without it writes the S line byte-for-byte.
-    bool              disc_jump_test_decommon{false};
     /// Whether a per-satellite discontinuity mark bumped only the generations of the
     /// channels the marking site reported, rather than the satellite's clock,
     /// code-bias and phase-bias generations together (@c network.disc_mark_scope,
-    /// card MS).  Eighth replay-emitter construction parameter.  Serialized as an
+    /// card MS).  Seventh replay-emitter construction parameter.  Serialized as an
     /// optional trailing @c discscope=channel S-line field only when armed, so a
     /// producer without it writes the S line byte-for-byte.
     /// The @c R record carries satellite ids and no channel set, so a replay
@@ -530,11 +521,10 @@ public:
     static std::string csvSanitize(const std::string& s);
 
     /// Construct an emitter configured as the producer that wrote @p contract, from
-    /// the eight replay-emitter construction parameters the contract carries
+    /// the seven replay-emitter construction parameters the contract carries
     /// (@c disc_threshold_m, @c emit_clock_disc, @c staleness_horizon_s,
     /// @c code_bias_jump_test, @c clock_disc_on_set_change,
-    /// @c disc_threshold_frac_cycles, @c disc_jump_test_decommon,
-    /// @c disc_mark_scope_channel), so a replay reproduces every discontinuity
+    /// @c disc_threshold_frac_cycles, @c disc_mark_scope_channel), so a replay reproduces every discontinuity
     /// counter, the clock channel included, byte-for-byte with no out-of-band
     /// knowledge of the producer's config.  A v1 file (@c contract.present false)
     /// yields the default emitter, reproducing the pre-B6 replay behavior.  Feed the

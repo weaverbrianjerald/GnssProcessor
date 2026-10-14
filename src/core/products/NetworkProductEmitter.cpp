@@ -48,17 +48,6 @@ bool parseStateD(const std::string& s, double& v) {
     return end == s.c_str() + s.size() && errno != ERANGE;
 }
 
-/// Median of a scratch vector, which is sorted in place (the caller owns it and
-/// does not read the order afterwards).  An even population takes the mean of the
-/// two central values; the caller guarantees a non-empty vector.  Deterministic on
-/// any build (std::sort on doubles, no ties broken by address), which the replay
-/// emitter's byte-identity depends on (card JT).
-double medianInPlace(std::vector<double>& v) {
-    const std::size_t n = v.size();
-    std::sort(v.begin(), v.end());
-    return (n % 2 == 1) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
-}
-
 /// Strict full-consumption int parse.
 bool parseStateI(const std::string& s, int& v) {
     if (s.empty()) return false;
@@ -76,11 +65,9 @@ NetworkProductEmitter::NetworkProductEmitter(double disc_threshold_m, bool emit_
                                              bool code_bias_jump_test,
                                              bool clock_disc_on_set_change,
                                              double disc_threshold_frac_cycles,
-                                             bool disc_jump_test_decommon,
                                              bool disc_mark_scope_channel)
     : disc_threshold_m_(disc_threshold_m),
       disc_threshold_frac_cycles_(disc_threshold_frac_cycles),
-      disc_jump_test_decommon_(disc_jump_test_decommon),
       disc_mark_scope_channel_(disc_mark_scope_channel),
       emit_clock_disc_(emit_clock_disc),
       staleness_horizon_s_(staleness_horizon_s),
@@ -155,8 +142,8 @@ NetworkProductEmitter::pbSeamCensus(const NetworkSolutionEpoch& sol) const {
     // so that it cannot change any emitted byte: it reproduces the test's population,
     // threshold and key spelling and nothing else.  The OFF run does not call it; the
     // ON run calls it before emitToStore.  The tallied step is the raw ΔPB: the card
-    // CLV level-step removal and the card JT de-commoning are not applied here.  A
-    // change to the jump test's population or threshold belongs here too.
+    // CLV level-step removal is not applied here.  A change to the jump test's
+    // population or threshold belongs here too.
     std::map<char, PbSeamConstTally> out;
     const double epoch_s = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
     for (const auto& s : sol.sats) {
@@ -319,46 +306,10 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
         }
     }
 
-    // --- Per-signal phase-bias common mode for the de-commoned jump test (card JT) --
-    // A phase-bias move common to all satellites on a signal is absorbed by a
-    // consumer's receiver phase clock (invariant #5), so the quantity that reaches a
-    // consumer ambiguity is the step minus the network's median step on that signal.
-    // The raw test cannot see a frame move: a common move can hide a per-satellite
-    // step of similar size and opposite sign (CST §4).
-    //
-    // The population is the jump test's own population: keys with a baseline that is
-    // not stale under the staleness horizon (a first sighting or a beyond-horizon
-    // return contributes nothing, as in staleKey).  The median is taken within each
-    // signal: L1W and L2W phase biases do not share a common mode (the
-    // band-differential part is a different receiver state), and one median over a
-    // mixed population would leak a band-differential move into every cell.  This
-    // runs before the emit loop, against the baselines the loop is about to
-    // overwrite.  With the knob off nothing here runs or allocates, so the OFF path
-    // is byte-identical.
-    std::map<std::string, double> pb_common_by_signal;   // signal -> median ΔPB (m)
-    std::map<std::string, int>    pb_common_pop;         // signal -> population size
-    pb_jump_decommon_events_.clear();
     // Per-emit scratch for the mark-scope census (card MS).  Both stay empty or zero
     // under the legacy satellite scope, so that path allocates nothing.
     mark_scope_events_.clear();
     mark_channel_tally_ = MarkChannelTally{};
-    if (disc_jump_test_decommon_) {
-        std::map<std::string, std::vector<double>> pool;   // signal -> ΔPB samples
-        for (const auto& s : sol.sats) {
-            if (s.sat.empty() || s.phase_bias.empty()) continue;
-            for (const auto& [signal, npb] : s.phase_bias) {
-                const std::string key = s.sat + "|" + signal;
-                const auto last_it = last_phase_bias_.find(key);
-                if (last_it == last_phase_bias_.end()) continue;          // first sighting
-                if (staleKey(phase_last_seen_s_, key)) continue;          // stale baseline
-                pool[signal].push_back(npb.bias_m - last_it->second);
-            }
-        }
-        for (auto& [signal, samples] : pool) {
-            pb_common_pop[signal] = static_cast<int>(samples.size());
-            pb_common_by_signal[signal] = medianInPlace(samples);
-        }
-    }
 
     // Whether a constellation's datum was force-bumped this emit (A2 per-
     // constellation scoping).  markDatumChange with an empty set sets
@@ -575,11 +526,6 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // needs the reset (RTA-11).  The jump test is suppressed on a stale
                 // baseline: a comparison against an hours-old value would produce a
                 // spurious bump when the satellite reappears.
-                //
-                // With card JT armed, the test screens the de-commoned step; the
-                // threshold, the population and the forced/fresh structure above are
-                // unchanged.  A forced cell is declared regardless and is not
-                // classified: the census counts only declarations this knob decides.
                 bool value_jump = false;
                 if (fresh) {
                     // The satellite's declared level step (the C-record lvl= token) is
@@ -592,34 +538,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                     if (s.level_step_m != 0.0 && !raw_over
                         && std::abs(npb.bias_m - last_it->second) > bar)
                         ++clv_jump_excluded_;
-                    if (!disc_jump_test_decommon_) {
-                        value_jump = raw_over;
-                    } else {
-                        const auto pop_it = pb_common_pop.find(signal);
-                        const int  pop    = (pop_it != pb_common_pop.end()) ? pop_it->second : 0;
-                        if (pop < kDiscDecommonMinSats) {
-                            // Too few samples on this signal to estimate a common
-                            // mode: fall back to the raw test and record the fallback.
-                            value_jump = raw_over;
-                            if (!forced) {
-                                pb_jump_decommon_events_.push_back(
-                                    {s.sat, signal, raw_d, 0.0, raw_d, bar, pop, value_jump,
-                                     PbJumpDecommonClass::FallbackRaw});
-                            }
-                        } else {
-                            const double c  = pb_common_by_signal[signal];
-                            const double dd = raw_d - c;
-                            value_jump = std::abs(dd) > bar;
-                            if (!forced && (value_jump || raw_over)) {
-                                const PbJumpDecommonClass cls =
-                                    value_jump ? (raw_over ? PbJumpDecommonClass::Both
-                                                           : PbJumpDecommonClass::DecommonOnly)
-                                               : PbJumpDecommonClass::RawOnlySuppressed;
-                                pb_jump_decommon_events_.push_back(
-                                    {s.sat, signal, raw_d, c, dd, bar, pop, value_jump, cls});
-                            }
-                        }
-                    }
+                    value_jump = raw_over;
                 }
                 if (have_baseline && (forced || value_jump)) {
                     ++ctr;
