@@ -302,9 +302,7 @@ namespace GnssProcessor {
               "(network.ctu_switch_on_resume off)" },
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && network_phase_leveling_
                   && network_carry_rx_code_bias_ && network_carry_conditional_coupling_
-                  && !network_carry_coupling_joint_whiten_ && !network_rx_cb_carry_demean_
-                  && !network_rx_cb_carry_demean_within_ && !network_rx_cb_carry_step_gate_
-                  && !network_rx_cb_harvest_demean_,
+                  && !network_carry_coupling_joint_whiten_,
               network_carry_rx_code_bias_in_block_,
               Tier::SCOPED, true , "network.carry_rx_code_bias_in_block",
               "fold the receiver code-bias carry inside the station's whitened block as card 1 "

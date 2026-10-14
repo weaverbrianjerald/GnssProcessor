@@ -337,23 +337,6 @@ namespace GnssProcessor {
         double rx_cb_datum_sigma{};  ///< Loose physical-bound sigma (m) of that datum (network.rx_code_bias_datum_sigma_m).
         bool sta_prior_pre_pd{};  ///< Fold the station's datum rows before the addStation PD test (network.station_prior_before_pd; card RF-PD-fix).
         double rx_cb_q{};   ///< rx-CB carry RW process noise (m²/s).
-        bool rx_cb_demean{};  ///< Inject η = λ·(innov − μ_c) and gate on |innov − μ_c| (card LV-2, SPEC_level_information_budget); loader guarantees rx_cb_on.
-        int rx_cb_demean_min_sta{};  ///< Contributing-station floor below which μ_c is frozen, a thin-mean guard (card LV-2).
-        /// Reduce μ between PASS A and PASS B and fold against this epoch's value, with no
-        /// lag (card LV-5, SPEC_level_information_budget §12).  Loader guarantees rx_cb_demean.
-        bool rx_cb_demean_within{};
-        /// Disable the frame-dependent inject screen and erase instead on a frame-invariant
-        /// step at the harvest (card LV-4, SPEC_level_information_budget §11).  Loader
-        /// guarantees rx_cb_on.
-        bool rx_cb_step_gate{};
-        double rx_cb_step_k{};       ///< k·σ of the invariant step screen (card LV-4).
-        /// Post-solve Λ-weighted de-mean of the harvested absolute rx-CB realization, per
-        /// family: the "S-consistent harvest" (card S2H, SPEC_level_information_budget §17
-        /// item 3).  Loader guarantees rx_cb_on and forces LV-2/LV-5 off.
-        bool rx_cb_harvest_demean{};
-        double rx_cb_harvest_screen_z{};  ///< Robust peer-screen threshold for the μ vote; the loader validates > 0 (card S2H).
-        bool lv1_seed_frame{};       ///< Reframe per-LOS iono seeds into the field's frame at allocation (card LV-1, SPEC_level_information_budget); loader guarantees estimate_iono_sh.
-        int lv1_min_sats{};          ///< Minimum raw seeds for the per-station median offset (card LV-1).
         double zwd_q{};
         /// network.carry_zwd_in_block (B9-in-block): the carried ZWD column joins its
         /// station's F3 whitened local block instead of folding as a diagonal coupling row
@@ -2126,73 +2109,6 @@ namespace GnssProcessor {
         /// race-free inside the OpenMP parallel produce phase (distinct objects, no
         /// atomics).  {applied, uncovered}; summed at the run-end readout.
         std::vector<std::pair<long long, long long>> rxcb_lin_sta_counts;
-        /// The information-weighted mean carry innovation μ = Σλ·innov / Σλ (card LV-2),
-        /// keyed by receiver code-bias state key ("GPS_DCB", "GPS_IFB5", …): the
-        /// constellation is in the key, and the DCB and IFB families are kept apart
-        /// because their innovations are different physical quantities.  Computed at the
-        /// serial post-solve harvest from the sums the parallel produce phase accumulated,
-        /// and consumed with a one-epoch lag by the next epoch's inject (the same race-free
-        /// split the carry itself uses: produce reads, serial writes).  Empty until the
-        /// first harvest, so epoch 1 injects without de-meaning (μ = 0), one epoch of
-        /// legacy behaviour.
-        std::map<std::string, double> rx_cb_demean_mu;
-        /// This epoch's reduction per family, kept only so the caller can trace it (one
-        /// `lv2_mu` row per family in network_events.csv, following the spec's "do not
-        /// create a new stream for one scalar").  Rebuilt every armed epoch.
-        struct RxCbDemeanEpoch {
-            double mu{0.0};       ///< the applied μ: this epoch's under LV-5, the next epoch's under lag-1 LV-2.
-            double sum_lam{0.0};  ///< Σλ over the rows of this family.
-            int    n_sta{0};      ///< contributing stations.
-            bool   fresh{false};  ///< false = frozen (below the thin-mean floor).
-            double folded_mu{0.0};  ///< diagnostic for LV-5: the folded set's raw common mode, measured after the fact.
-        };
-        std::map<std::string, RxCbDemeanEpoch> rx_cb_demean_last;
-        // Run counters of LV-2 (armed-only run-end line).  `mu_frozen` is the invariant-#7
-        // thin-mean event: a mass re-seed or RAIM re-reduce epoch whose folded set is too
-        // thin to define the common mode holds μ instead of trusting it.
-        long long lv2_mu_epochs = 0, lv2_mu_frozen = 0, lv2_folds_demeaned = 0;
-        // Run counters of LV-4 (armed-only run-end line).  `frame_gate_would_skip` is the
-        // same-run A/B: what the retired frame-dependent screen would have withheld on
-        // exactly these rows, so the comparison needs no second run.
-        long long lv4_step_resets = 0, lv4_step_checks = 0,
-                  lv4_frame_gate_would_skip = 0, lv4_scale_standdown = 0;
-        double    lv4_max_step_z = 0.0;    ///< largest peer-relative z seen (jump-scale readout).
-        double    lv4_max_scale_m = 0.0;   ///< largest robust step σ̂ (m): how big "normal" got.
-        // Counters of LV-5 (within-epoch μ).  `resid` is the folded set's raw common mode
-        // minus the μ that was applied to it: the direct measure of what the correction
-        // left behind, and the way to tell a de-mean that works from one that only ran.
-        long long lv5_within_epochs = 0, lv5_resid_n = 0;
-        double    lv5_resid_sum = 0.0, lv5_max_abs_resid_m = 0.0;
-        double    lv2_last_mu_m = 0.0;   ///< most recent μ (any constellation) for the run-end line.
-        double    lv2_max_abs_mu_m = 0.0;
-        /// This epoch's S-consistent-harvest reduction per family, kept so the caller can
-        /// trace it (one `s2h_mu` row per family in network_events.csv, as for LV-2).
-        /// Rebuilt every armed epoch.
-        struct RxCbHarvestEpoch {
-            double mu{0.0};        ///< the subtracted Λ-weighted mean (m).
-            double sum_lam{0.0};   ///< Σλ over the voting members.
-            int    n{0};           ///< usable family entries.
-            int    n_used{0};      ///< votes after the peer screen.
-            int    n_screened{0};  ///< screened from the vote (still transformed).
-            bool   applied{false}; ///< false = identity transform (thin or degenerate).
-        };
-        std::map<std::string, RxCbHarvestEpoch> rx_cb_harvest_last;
-        // S2H run counters (armed-only run-end line).  `thin_skips` is the invariant-#7
-        // decoupling edge: an epoch too thin to define the frame applies nothing (the
-        // identity; the set keeps the last applied frame) and is counted, never frozen
-        // silently.
-        long long s2h_epochs_applied = 0, s2h_thin_skips = 0,
-                  s2h_screened_total = 0, s2h_mu_n = 0;
-        double    s2h_last_mu_m = 0.0, s2h_max_abs_mu_m = 0.0, s2h_mu_abs_sum = 0.0;
-        /// Lag-1 snapshot of the solved SH-VTEC coefficient vector, per active shell in
-        /// @c shLayers order (TECU, in @c SphericalHarmonicIonosphere::coeffs() order;
-        /// card LV-1).  Written serially post-solve and read by the next epoch's parallel
-        /// produce phase to sample the field at each LOS's pierce point, so the seed frame
-        /// is one epoch old by construction (the field is quasi-static; the LV-2 de-mean
-        /// takes the same lag).  Invalid before the first solve: the reframe then falls
-        /// back to the a₀₀ climatology prior mean, which is the designed level authority.
-        std::vector<std::vector<double>> sh_field_lag1;
-        long long lv1_field_snapshots = 0;   ///< epochs the lag-1 field was refreshed.
         // URA quality channel carried state, B1 (inert unless network.emit_ura).
         double                       ura_sigma0_ewma = 1.0;   ///< network-wide σ̂0 EWMA scaling the emitted URA (one-epoch lag).
         std::map<std::string, int>   ura_refloat_horizon;     ///< sat -> epochs remaining of post-refloat URA inflation.
@@ -4595,8 +4511,7 @@ namespace GnssProcessor {
     //   NetworkStateSnapshotWrite.cpp   the snapshot write
     //   NetworkBorderPrior.cpp          the priors folded on the shared (border) columns,
     //                                   and the exact coupling update's inputs
-    //   NetworkLocalCarryHarvest.cpp    the station-local carries: harvest, stash, prune,
-    //                                   and the LV-5 receiver code-bias de-mean
+    //   NetworkLocalCarryHarvest.cpp    the station-local carries: harvest, stash, prune
     //   NetworkBorderStash.cpp          the epoch-tail border stash and the retro-URA flags
     // ------------------------------------------------------------------
 
@@ -4780,37 +4695,6 @@ namespace GnssProcessor {
                                     bool clk_model_warm, bool datum_changed,
                                     const std::set<char>& changed_consts,
                                     double pl_now_s, double dt, bool within_epoch_armed);
-
-    /**
-     * @brief Reduce the rx-CB de-mean μ within the epoch (card LV-5).
-     *
-     * Runs serially between PASS A and PASS B.  Both terms of every carry innovation are
-     * known at that point (the carried absolute posterior, i.e. last epoch's stash, and
-     * @c x_lin(cb), the frozen linearization point), so the LV-2 mean can be formed over
-     * the stations present this epoch and applied to this epoch's folds, instead of
-     * arriving one epoch late.
-     *
-     * The lag matters because its loop gain scales with how much carry information folds:
-     * while the frame screen withholds most of the priors the lag is harmless, but once
-     * card LV-4 admits them all a lagged μ makes the level limit-cycle.
-     *
-     * The same race contract as the rest of the carry cycle applies: one serial writer,
-     * and the parallel produce phase only reads @c ctx.carry.rx_cb_demean_mu.  The
-     * candidate set is every present station with a carried entry inside the gap horizon;
-     * the folded set can be marginally smaller (a column that drops out of the local
-     * block), which the harvest's diagnostic mean measures directly.
-     *
-     * No-op unless @c network.rx_cb_carry_demean_within.
-     *
-     * Defined in src/core/app/NetworkLocalCarryHarvest.cpp.
-     *
-     * @param present  PASS-A presence flags (a station with no data this epoch must
-     *                 not vote on the frame it will not be folded into).
-     */
-    void networkRxCbDemeanPrepass(NetworkRunContext& ctx,
-                                  const std::vector<NetStation>& stations,
-                                  const std::vector<bool>& present,
-                                  double pl_now_s);
 
     /// @brief Harvest, stash and prune the station-local carries from this epoch's solve.
     /// Defined in src/core/app/NetworkLocalCarryHarvest.cpp.

@@ -551,19 +551,13 @@ TEST(NetworkRxExtraBandDelayTest, LoaderWarnsWithoutTheReceiverCodeBiasDatumOrTh
                             "the only closure")) << d.text;
 }
 
-TEST(NetworkRxExtraBandDelayTest, LoaderWarnsOnThePerKeyToolsOfTheDiagonalCarry) {
+TEST(NetworkRxExtraBandDelayTest, LoaderReportsTheDiagonalCarry) {
     const std::string carry = "    \"carry_rx_code_bias\": true,\n"
                               "    \"code_datum_time_linked\": true,\n";
     const CapturedLoad plain = loadCapturing("diag", "triple", kW6 + kArm + kRxDatum + kPrePd + carry);
     ASSERT_TRUE(plain.ok);
     EXPECT_TRUE(has(plain.text, "carried as a diagonal prior (network.carry_rx_code_bias)"))
         << plain.text;
-    EXPECT_FALSE(has(plain.text, "the mean and the step scale mix two frames")) << plain.text;
-
-    const CapturedLoad gated = loadCapturing("diag_lv4", "triple",
-        kW6 + kArm + kRxDatum + kPrePd + carry + "    \"rx_cb_carry_step_gate\": true,\n");
-    ASSERT_TRUE(gated.ok);
-    EXPECT_TRUE(has(gated.text, "the mean and the step scale mix two frames")) << gated.text;
 }
 
 // ---------------------------------------------------------------------------

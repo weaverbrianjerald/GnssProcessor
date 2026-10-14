@@ -83,7 +83,6 @@ enum class ResponseSite : int {
     PcGapPrune,            ///< a phase colour unseen past its horizon erased
     // --- Receiver code bias (rx_cb_carry) ----------------------------------------------
     RxcbStepErase,         ///< the harvest's step test erased a carried receiver code bias
-    RxcbPeerStepErase,     ///< the peer-relative step gate erased a carried receiver code bias
     RxcbJumpSkip,          ///< the diagonal route's innovation test did not fold a receiver code bias
     RxcbGapSkip,           ///< a receiver code bias past the gap horizon not folded (either route)
     RxcbGapPrune,          ///< a receiver code bias unseen past the horizon erased
@@ -133,7 +132,7 @@ enum class ResponseSite : int {
 };
 
 /// Number of @ref ResponseSite values (array sizing).
-inline constexpr int kResponseSites = 66;
+inline constexpr int kResponseSites = 65;
 
 static_assert(static_cast<int>(ResponseSite::ShRetire) + 1 == kResponseSites,
               "kResponseSites must follow the ResponseSite enum");

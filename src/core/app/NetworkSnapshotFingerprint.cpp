@@ -323,28 +323,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // written with it off keeps its fingerprint.
         if (rx_cb_on) {
             add("rxcb:1"); add(fmt::format("{}", rx_cb_q));
-            // The de-mean (card LV-2) changes what a carried rx-CB level means: the carry
-            // stops transporting the common mode, so a chain that folded demeaned priors
-            // and one that did not have realized different receiver-DCB frames.  Appended
-            // only when armed, nested inside rxcb:1 (itself conditional).
-            if (ctx.knobs.rx_cb_demean) {
-                add(fmt::format("rxcbdemean:{}", ctx.knobs.rx_cb_demean_min_sta));
-                // Within-epoch de-mean (card LV-5): a chain that folded against this
-                // epoch's μ and one that folded against last epoch's have realized
-                // different receiver-DCB frames.
-                if (ctx.knobs.rx_cb_demean_within) add("rxcbdemeanwin:1");
-            }
-            // Step gate (card LV-4): it changes which priors fold and which carried entries
-            // survive an event, so a resume cannot cross the flip.  Nested and appended
-            // only when armed, like the others.
-            if (ctx.knobs.rx_cb_step_gate)
-                add(fmt::format("rxcbstep:{}", ctx.knobs.rx_cb_step_k));
-            // The S-consistent harvest re-zeros the carried set's common mode every epoch,
-            // so a stored snapshot's absolute rx-CB levels are in a different frame than
-            // those of an untransformed chain, and a resume cannot cross the flip.  Nested
-            // and appended only when armed, like the others.
-            if (ctx.knobs.rx_cb_harvest_demean)
-                add(fmt::format("rxcbharv:{}", ctx.knobs.rx_cb_harvest_screen_z));
         }
         // The clock anchor changes the temporal model of the carried satellite clock: a
         // snapshot written by an anchored run carries variances produced by a different
@@ -391,14 +369,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // state.  Conditional append, so every earlier fingerprint is unchanged.
         if (ctx.knobs.sat_health != 0)
             add(fmt::format("hlt:{}", ctx.knobs.sat_health));
-        // The seed reframe (card LV-1) changes the per-station linearization point of the
-        // per-LOS iono and, through initializeCodeBiases (which subtracts the seeded iono),
-        // of the receiver DCB.  The absolute solve is invariant to that frame, but the
-        // snapshot stores absolute carried levels whose prefit innovations are read against
-        // x_lin (the rx-CB inject gate is such a consumer), so a resume cannot cross the
-        // flip.  Appended only when armed.
-        if (ctx.knobs.lv1_seed_frame)
-            add(fmt::format("lv1seed:{}", ctx.knobs.lv1_min_sats));
         // Carry VCE apply (M2 v2): the variance factor multiplies every carry fold
         // variance, so a carried (value, var) pair means a different prior with it armed
         // than without.  That makes it a fingerprinted knob, unlike the carry_vce monitor,

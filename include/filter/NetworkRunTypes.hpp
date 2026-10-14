@@ -27,7 +27,7 @@
 
 #include <Eigen/Dense>
 
-#include <algorithm>      // rxCbStepScale's median / MAD (nth_element, remove_if)
+#include <algorithm>
 #include <array>
 #include <cmath>          // the invariant step z (std::abs / std::isfinite)
 #include <cstdint>        // the freeing-cause bitmask (RelevelEpochState::free_cause)
@@ -1494,23 +1494,6 @@ struct StationAssembly {
     int pl_cb_datum_rows{0};   ///< Zero-mean DCB prior rows folded this station-epoch (RXCB-DATUM; summed serially).
         int pl_cb_injected{0};     ///< rx-CB priors folded this epoch (produce-phase local; summed serially).
     int pl_cb_innov_skips{0};  ///< rx-CB priors withheld by the innovation gate (receiver-reset response).
-    /// This station-epoch's contribution to the information-weighted mean carry
-    /// innovation, keyed by the receiver code-bias state key ("GPS_DCB", "GPS_IFB5", …)
-    /// (card LV-2, docs/SPEC_level_information_budget.md).  Accumulated over the rows
-    /// this station folded (a gate-withheld row exerts no force, so it must not vote on
-    /// the force being removed) and reduced serially at the harvest into
-    /// μ = Σλ·innov / Σλ.
-    ///
-    /// The key is the state key rather than the bare constellation by design: it
-    /// already carries the constellation (every key is "<system>_<family>"), and it also
-    /// separates the DCB from each per-band IFB, which are physically distinct
-    /// quantities whose innovations must never be averaged together.  In the GPS
-    /// dual-frequency posture the two keyings coincide (one family, "GPS_DCB").  Empty
-    /// unless network.rx_cb_carry_demean is on.
-    std::map<std::string, double> pl_cb_sum_lam_innov;
-    std::map<std::string, double> pl_cb_sum_lam;
-    int pl_cb_demeaned{0};     ///< Folds that applied a non-zero μ (LV-2); 0 through the lag-1 warm-up and any frozen-from-cold era (invariant #4).
-    int pl_cb_frame_gate_would_skip{0};  ///< Folds that the retired frame-dependent screen would have withheld (LV-4 same-run A/B).  Counted only when the invariant step gate is armed.
     /// Per-row position partial @f$\partial y_i/\partial\delta p@f$ for the station
     /// congruence screen (docs/SPEC_redundancy_census.md CG-INC-0), expressed in the
     /// station's local ENU frame: @c m_data × 3, row-aligned with the first @c m_data
@@ -1866,9 +1849,8 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
 
 /// @brief The gap horizon of the receiver code-bias carry (s; docs/SPEC_rx_cb_carry.md
 ///        section 3): a carried receiver code bias unseen longer than this is not folded
-///        (@ref rxCbInjectGate's @c max_gap_s on both routes), does not vote in the de-mean
-///        pre-pass, is not judged by the block harvest's step test, and is pruned at the
-///        harvest.
+///        (@ref rxCbInjectGate's @c max_gap_s on both routes), is not judged by the block
+///        harvest's step test, and is pruned at the harvest.
 ///
 /// A constant, not a knob.  The one definition read by every one of those sites and by
 /// the parameter registry (@c ParamSpec::gap_horizon_s of the receiver code bias, card PRM
@@ -1889,8 +1871,8 @@ inline constexpr double kRxCbMaxGapS = 900.0;
 /// @c StateInitializer::initializeCodeBiases, never written back from the solve), so
 /// the statistic measures how far the carried value sits from an arbitrary frame, not
 /// whether anything happened.  @p innov_test = false disables it and leaves the
-/// frame-free gap and variance sanity checks; the harvest-side step screen
-/// (@ref rxCbStepScale, @ref rxCbStepVerdict) then owns the event response.
+/// frame-free gap and variance sanity checks; the in-block route passes false, and its
+/// block harvest's step test owns the event response there.
 enum class RxCbInjectAction { Fold, SkipGap, SkipInnov };
 inline RxCbInjectAction rxCbInjectGate(double gap_s, double max_gap_s,
                                        double var, double q_m2s, double innov_m,
@@ -1906,300 +1888,6 @@ inline RxCbInjectAction rxCbInjectGate(double gap_s, double max_gap_s,
         && innov_m * innov_m > k_sigma * k_sigma * (var_eff + guard_var_m2))
         return RxCbInjectAction::SkipInnov;
     return RxCbInjectAction::Fold;
-}
-
-/// Frame-invariant receiver-code-bias carry screen: the epoch-over-epoch step of the
-/// station's own absolute estimate (card LV-4, docs/SPEC_level_information_budget.md
-/// §11).
-///
-/// @ref rxCbInjectGate tests |value_abs − x_lin(cb)|.  Both the carried value and x_lin
-/// are absolute, but x_lin is frozen at its first-epoch seed, so that difference is
-/// the standing correction x_r: a property of where the seed landed, not of anything
-/// the receiver did.  Two consequences follow:
-///   * a station whose true bias sits far from its seed trips the test every epoch
-///     for the whole run, with no receiver event anywhere;
-///   * a real receiver jump between epochs t−1 and t is invisible to it: at t's inject
-///     the carried value is still the pre-jump one and x_lin has not moved, so the
-///     statistic contains no information about the jump.
-///
-/// The invariant statistic.  Both the freshly harvested posterior and the carried
-/// value are absolute (x_lin + x_r), so their difference is invariant under any shift
-/// of the linearization point:
-///
-///     e   = value_abs_new − value_abs_prev
-///     var = var_new + var_prev + q·Δt          (both posteriors + the RW drift)
-///     z   = |e| / √(var + guard)
-///
-/// z > k means that the receiver's own estimate stepped at hardware-jump scale between
-/// two solves: the invariant #1 event that the carry needs a response to, and a
-/// quantity that no reseeding, reframing or datum change can move.
-///
-/// The scale must be robust and peer-relative, not formal.  At ignition the
-/// confounded (level ↔ rx-DCB) direction re-realizes by metres per epoch, so the
-/// formal variance (var_new + var_prev + q·Δt plus a 0.5 m guard, σ ≈ 0.52 m)
-/// understates the true step scatter by two to three orders of magnitude, and a
-/// formal-σ test triggers on most stations at once.  Two corrections, both idioms the
-/// network already uses elsewhere:
-///   * take the scale from this epoch's own steps (a Baarda-style robust
-///     σ̂ = 1.4826·MAD, floored at the formal σ so that an unusually quiet epoch cannot
-///     make the screen hypersensitive), as the RAIM σ̂₀ does;
-///   * remove the median step first.  A step common to the whole network is a frame
-///     move, not simultaneous receiver resets at every station (the same distinction
-///     LV-2 draws for the fold).  What remains is the per-station outlier, which is the
-///     event the carry needs a response to.
-struct RxCbStepScale {
-    double median{0.0};   ///< median step this epoch (the common frame move, not an event).
-    double sigma{0.0};    ///< robust scale, 1.4826·MAD, floored at the formal σ.
-    int    n{0};          ///< contributing entries.
-    bool   valid{false};  ///< false ⇒ too few entries to define a scale; screen stands down.
-};
-
-/// Build the robust per-epoch step scale.  @p steps is modified in place: non-finite
-/// entries are removed and the rest are reordered.
-/// @param formal_sigma_floor √(var_new + var_prev + q·Δt) class floor (m).
-/// @param min_n Minimum entries for a defensible scale; below it the screen stands
-///        down entirely (invariant #7: a thin epoch must not define what "normal" is,
-///        and a false erase costs a real prior).
-inline RxCbStepScale rxCbStepScale(std::vector<double>& steps,
-                                   double formal_sigma_floor, int min_n) {
-    RxCbStepScale out;
-    steps.erase(std::remove_if(steps.begin(), steps.end(),
-                               [](double v) { return !std::isfinite(v); }),
-                steps.end());
-    out.n = static_cast<int>(steps.size());
-    if (out.n < min_n || out.n < 1) return out;
-    const std::size_t mid = steps.size() / 2;
-    std::nth_element(steps.begin(), steps.begin() + mid, steps.end());
-    double med = steps[mid];
-    if (steps.size() % 2 == 0) {
-        std::nth_element(steps.begin(), steps.begin() + (mid - 1), steps.end());
-        med = 0.5 * (steps[mid - 1] + med);
-    }
-    std::vector<double> dev(steps.size());
-    for (std::size_t i = 0; i < steps.size(); ++i) dev[i] = std::abs(steps[i] - med);
-    std::nth_element(dev.begin(), dev.begin() + mid, dev.end());
-    double mad = dev[mid];
-    if (dev.size() % 2 == 0) {
-        std::nth_element(dev.begin(), dev.begin() + (mid - 1), dev.end());
-        mad = 0.5 * (dev[mid - 1] + mad);
-    }
-    out.median = med;
-    out.sigma  = std::max(1.4826 * mad,
-                          std::max(formal_sigma_floor, 0.0));
-    out.valid  = std::isfinite(out.median) && std::isfinite(out.sigma) && out.sigma > 0.0;
-    return out;
-}
-
-/// @return z (0 on degenerate input) and whether it exceeded k·σ̂.  Degenerate or
-///        non-finite input, or an invalid scale, reports no jump: a false erase
-///        costs a real prior, and the harvest's own finite checks already reject
-///        unusable values.
-struct RxCbStepVerdict { double z{0.0}; bool jumped{false}; };
-inline RxCbStepVerdict rxCbStepVerdict(double step_m, const RxCbStepScale& scale,
-                                       double k_sigma) {
-    RxCbStepVerdict out;
-    if (!scale.valid || !std::isfinite(step_m)) return out;
-    const double z = std::abs(step_m - scale.median) / scale.sigma;
-    if (!std::isfinite(z)) return out;
-    out.z = z;
-    out.jumped = (z > k_sigma);
-    return out;
-}
-
-/// Outcome of reducing one receiver-code-bias family's accumulated
-/// (Σλ·innov, Σλ, n_stations) into the information-weighted mean innovation that the
-/// next epoch's folds subtract (card LV-2, docs/SPEC_level_information_budget.md).
-struct RxCbDemeanReduce {
-    double mu{0.0};       ///< the μ to apply (fresh, or @p prev_mu held).
-    bool   fresh{false};  ///< false: frozen; the epoch could not define a frame (too thin, or degenerate weights).
-};
-
-/// μ = Σλ·innov / Σλ over the rows that folded this epoch (card LV-2).
-///
-/// Subtracting it makes Σλ(innov − μ) ≡ 0 in the fold's delta coordinates, so the
-/// carry transports every between-station difference at full stiffness and stops
-/// re-asserting the previous epoch's common-mode realization, which is the feedback
-/// loop that LV-2 removes.
-///
-/// It does not leave the common mode free.  The de-mean leaves the fold's information
-/// unchanged and moves only its RHS, so the carry still puts Σλ (~100 units) on the
-/// common-mode direction.  In absolute terms each row now targets `value_abs_i − μ`,
-/// whose information-weighted mean is
-///
-///     mean_λ(value_abs) − μ  =  mean_λ(x_lin)
-///
-/// i.e. the de-meaned carry pins the receiver-DCB common mode to the mean of the
-/// frozen first-epoch linearization points.  It replaces a rolling memory with a
-/// frozen one; the designed authority (the rx-DCB datum at 0.01, the a₀₀ anchor at
-/// 0.25) is still outvoted about 400:1.  As a consequence, changing what
-/// `initializeCodeBiases` seeds (which card LV-1 does) moves the ionosphere level
-/// through this channel alone, by about 10 TECU in the measured case.  Freeing the
-/// direction needs the common mode removed from the carry's information, which the
-/// per-station diagonal channel cannot express; see SPEC §13.
-///
-/// Invariant #7, decoupling edge: an epoch whose folded set is thin (mass re-seed,
-/// RAIM re-reduce, a station-poor era) must not define the frame, so below @p min_sta
-/// contributing stations the previous μ is held and the caller counts the freeze.  A
-/// non-finite or non-positive Σλ freezes the same way: a mean with no weight behind it
-/// is not a measurement.
-///
-/// Pure function (NaN detected via self-compare), so the arithmetic is unit-testable
-/// away from the run loop.
-inline RxCbDemeanReduce rxCbDemeanMu(double sum_lam_innov, double sum_lam,
-                                     int n_sta, int min_sta, double prev_mu) {
-    RxCbDemeanReduce out;
-    out.mu = prev_mu;
-    if (n_sta < min_sta) return out;
-    if (!(sum_lam > 0.0) || sum_lam != sum_lam) return out;
-    if (sum_lam_innov != sum_lam_innov) return out;
-    const double mu = sum_lam_innov / sum_lam;
-    if (mu != mu || !(mu < 1e30) || !(mu > -1e30)) return out;
-    out.mu = mu;
-    out.fresh = true;
-    return out;
-}
-
-/// Outcome of reducing one receiver-code-bias family's freshly harvested absolute
-/// realizations into the Λ-weighted common-mode mean μ that the caller subtracts from
-/// every carried entry of that family: the "S-consistent harvest" (card S2H,
-/// docs/SPEC_level_information_budget.md §17 item 3, §27 item 1).
-struct RxCbHarvestReduce {
-    double mu{0.0};        ///< Λ-weighted mean over the screened member set (m).
-    double sum_lam{0.0};   ///< Σλ over the voting members (drives the exact diagonal covariance co-transform, 1/Σλ).
-    int    n{0};           ///< usable family entries offered (finite value, var > 0).
-    int    n_used{0};      ///< entries that voted after the robust peer screen.
-    int    n_screened{0};  ///< entries excluded from the vote by the peer screen (still transformed).
-    bool   applied{false}; ///< false: identity transform this epoch (thin or degenerate set; counted, never a frozen μ).
-};
-
-/// μ = Σλ·value / Σλ over the family's harvested absolute realizations, λ = 1/var,
-/// after a robust peer screen (card S2H).  The caller subtracts μ from every carried
-/// entry of the family (voters and screened entries alike, since the frame moves for
-/// everyone), which makes the carried set zero-mean by construction and coherent with
-/// the per-station rx-CB datum row, whose target is the absolute zero.
-///
-/// This is LASER's `applySTransformationForBigSystemOfEquations`
-/// (C:\LASER Net3DLsa.cpp:5573: a subset mean subtracted from all points, O(n))
-/// generalized to information weights: S = I − 1·λᵀ/(λᵀ1) per family, still a
-/// projector (S² = S).  Two deviations from the LASER original are required:
-///
-///  1. Target.  LASER de-means the correction about the a-priori ξ₀ (its minimum-norm
-///     objective).  Here the de-mean is about the datum row's target, absolute zero,
-///     because the objective is coherence with `rx_code_bias_datum`
-///     (η = λ(0 − x_lin)), not minimum shift from x_lin.  De-meaning about x_lin is
-///     the measured failure of card LV-2: it pins the common mode to mean(x_lin), the
-///     frozen first-epoch seed frame (SPEC §13.2).  Zero-mean absolutes leave the
-///     carry with zero net force on the common mode in the fold's own metric: the next
-///     epoch's folds pull the common mode toward mean_λ(value_abs) = 0, where the
-///     datum row already points.  The frame is re-derived from this epoch's solution,
-///     with no frozen pin, no lag-1 feedback, and nothing fed back into any solve.
-///
-///  2. Weights.  LASER's mean is unweighted because its datum members carry equal
-///     (unit) D0 entries.  The folds here carry per-station λ = 1/var, and the
-///     common-mode force each fold exerts is proportional to λ, so only the Λ-weighted
-///     mean zeroes the net force.  λ_i ≡ const reduces exactly to the LASER/oracle
-///     case (GPS3710_test_PMINOLESS).
-///
-/// Robust peer screen (SPEC §16/12.1 rider: a mean vote is a contamination window,
-/// and one cold-start realization ~200 km off must not move the frame): entries with
-/// |value − median| > screen_z · max(1.4826·MAD, median formal σ) are excluded from
-/// the vote (and counted) but still receive the transform.  screen_z ≤ 0 disables the
-/// screen (every usable entry votes).
-///
-/// Thin or degenerate epochs (n_used < min_n, or Σλ non-positive or non-finite) apply
-/// nothing: the transform is the identity, and the caller counts it.  Unlike LV-2's
-/// frozen μ there is no held frame to re-assert: the carried set keeps the zero-mean
-/// frame of the last applied epoch (invariant #7's decoupling edge, visible in the
-/// counters rather than silently defining a new frame).
-///
-/// @param values     harvested absolute realizations (screen scratch: copied).
-/// @param vars       matching posterior variances; entries with non-finite value
-///                   or var ≤ 0 are unusable (excluded from n and the vote; the
-///                   caller still transforms their value, never their var).
-/// @param min_n      vote floor (reuses network.rx_cb_carry_demean_min_stations,
-///                   the LV-4 precedent).
-/// @param screen_z   robust peer-screen threshold (≤ 0 disables).
-/// @param used_out   optional per-entry vote mask (1 = voted), sized to values.
-inline RxCbHarvestReduce rxCbHarvestMu(const std::vector<double>& values,
-                                       const std::vector<double>& vars,
-                                       int min_n, double screen_z,
-                                       std::vector<unsigned char>* used_out = nullptr) {
-    RxCbHarvestReduce out;
-    const std::size_t m = values.size() < vars.size() ? values.size() : vars.size();
-    if (used_out) used_out->assign(m, 0);
-    std::vector<double> usable;
-    usable.reserve(m);
-    for (std::size_t i = 0; i < m; ++i) {
-        const double v = values[i], w = vars[i];
-        if (v != v || !(v < 1e30) || !(v > -1e30)) continue;
-        if (!(w > 0.0) || w != w) continue;
-        usable.push_back(v);
-    }
-    out.n = static_cast<int>(usable.size());
-    if (out.n < 1) return out;
-    // Robust centre + scale of the usable values (LV-4 idiom: median / MAD,
-    // floored at the median formal σ so a family of near-identical values does
-    // not produce a zero scale that screens everything).
-    double med = 0.0, sig = 0.0;
-    bool screen_on = screen_z > 0.0 && out.n >= 2;
-    if (screen_on) {
-        std::vector<double> scratch = usable;
-        const std::size_t mid = scratch.size() / 2;
-        std::nth_element(scratch.begin(), scratch.begin() + mid, scratch.end());
-        med = scratch[mid];
-        if (scratch.size() % 2 == 0) {
-            std::nth_element(scratch.begin(), scratch.begin() + (mid - 1), scratch.end());
-            med = 0.5 * (scratch[mid - 1] + med);
-        }
-        std::vector<double> dev(scratch.size());
-        for (std::size_t i = 0; i < scratch.size(); ++i)
-            dev[i] = scratch[i] > med ? scratch[i] - med : med - scratch[i];
-        std::nth_element(dev.begin(), dev.begin() + mid, dev.end());
-        double mad = dev[mid];
-        if (dev.size() % 2 == 0) {
-            std::nth_element(dev.begin(), dev.begin() + (mid - 1), dev.end());
-            mad = 0.5 * (dev[mid - 1] + mad);
-        }
-        std::vector<double> fsig;
-        fsig.reserve(m);
-        for (std::size_t i = 0; i < m; ++i)
-            if (vars[i] > 0.0 && vars[i] == vars[i]) fsig.push_back(vars[i]);
-        double fs = 0.0;   // median formal σ = sqrt(median var) (monotonic map)
-        if (!fsig.empty()) {
-            const std::size_t fm = fsig.size() / 2;
-            std::nth_element(fsig.begin(), fsig.begin() + fm, fsig.end());
-            fs = std::sqrt(fsig[fm]);
-        }
-        sig = 1.4826 * mad;
-        if (fs > sig) sig = fs;
-        if (!std::isfinite(sig) || !(sig > 0.0)) screen_on = false;
-    }
-    double sum_lam = 0.0, sum_lam_v = 0.0;
-    int used = 0, screened = 0;
-    for (std::size_t i = 0; i < m; ++i) {
-        const double v = values[i], w = vars[i];
-        if (v != v || !(v < 1e30) || !(v > -1e30)) continue;
-        if (!(w > 0.0) || w != w) continue;
-        if (screen_on) {
-            const double d = v > med ? v - med : med - v;
-            if (d > screen_z * sig) { ++screened; continue; }
-        }
-        const double lam = 1.0 / w;
-        sum_lam += lam;
-        sum_lam_v += lam * v;
-        if (used_out && i < used_out->size()) (*used_out)[i] = 1;
-        ++used;
-    }
-    out.n_used = used;
-    out.n_screened = screened;
-    if (used < min_n || used < 1) return out;
-    if (!(sum_lam > 0.0) || sum_lam != sum_lam || sum_lam_v != sum_lam_v) return out;
-    const double mu = sum_lam_v / sum_lam;
-    if (mu != mu || !(mu < 1e30) || !(mu > -1e30)) return out;
-    out.mu = mu;
-    out.sum_lam = sum_lam;
-    out.applied = true;
-    return out;
 }
 
 /// The D5-only slip response (Iono-2 v3k, erase-policy split): keep the accumulated

@@ -404,18 +404,6 @@ namespace GnssProcessor {
 
         // --- Ionosphere states (created and seeded before the ambiguities) ---
         if (is_uncombined) {
-            // Iono seed frame (card LV-1): the network producer installs this
-            // epoch's per-station seed frame (the lag-1 SH field sampled at each
-            // LOS's IPP) before this call.  The reframe removes the station's
-            // median raw seed (its receiver GF bias ⊕ median slant iono).  That
-            // median is computed at most once per call, and only when a state is
-            // actually being allocated, so a settled epoch does not pay for it.
-            // The frame is disarmed at the end of the block, so a stale field
-            // cannot seed a later epoch.
-            const bool lv1_on = state_initializer_.ionoSeedFrameArmed();
-            std::optional<double> lv1_offset;
-            bool lv1_offset_done = false;
-
             for (const auto& obs : observations) {
                 if (!required_iono_sats.count(obs.satellite)) continue;
                 if (state_manager_.getIonosphereIndex(obs.satellite) < 0) {
@@ -432,20 +420,8 @@ namespace GnssProcessor {
                     // filter freely converges to the true iono via subsequent
                     // measurements rather than trusting the zero too tightly.
                     constexpr double kUnseededIonoStdScale = 10.0;
-                    double iono_seed = iono_seed_opt.value_or(0.0);
+                    const double iono_seed = iono_seed_opt.value_or(0.0);
                     const double std_scale = iono_seed_opt.has_value() ? 1.0 : kUnseededIonoStdScale;
-                    // The reframe (LV-1) applies to a real seed only: an unseeded state
-                    // (no BIA-covered pair) has no receiver-bias content to remove
-                    // and keeps the fallback of seed 0 with std×10.
-                    if (lv1_on && iono_seed_opt.has_value()) {
-                        if (!lv1_offset_done) {
-                            lv1_offset = state_initializer_.computeStationSeedOffset(
-                                observations, state_initializer_.ionoSeedFrame().min_sats);
-                            lv1_offset_done = true;
-                        }
-                        iono_seed = state_initializer_.applyIonoSeedFrame(
-                            obs.satellite, iono_seed, lv1_offset);
-                    }
                     state_manager_.addIonosphereState(obs.satellite, iono_seed, std_scale);
                     log_manager_.getLogger("measurement_model")->debug(
                         "{}Added ionosphere state for satellite {} with seed={:.3f} m{}",
@@ -453,11 +429,6 @@ namespace GnssProcessor {
                         iono_seed_opt.has_value() ? "" : " (no BIA-covered pair, std×10)");
                 }
             }
-            // The frame is used for one epoch, whether or not a state was
-            // allocated.  A producer that stops installing it (station absent,
-            // knob turned off) therefore falls back to raw seeds, which the
-            // fallback counter records, and never seeds from a stale field.
-            if (lv1_on) state_initializer_.clearIonoSeedFrame();
             state_manager_.pruneIonosphereStatesExcept(required_iono_sats);
 
             for (const auto& obs : observations) {

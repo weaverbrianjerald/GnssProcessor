@@ -1906,18 +1906,6 @@ int Application::runNetwork() {
         // returns ⇒ byte-identical.
         networkSdEwlAr(ctx, config_, log, traces, setup, se, pl_now_s, modeled, present);
 
-        // --- rx-CB de-mean pre-pass (card LV-5) ----------------
-        // The rx-CB de-mean μ is reduced here, after PASS A has settled which stations
-        // are present and before PASS B's parallel produce folds anything.  Both terms of
-        // every carry innovation (the stashed absolute posterior and the frozen x_lin) are
-        // already known at this point, so the LV-2 mean applies to the epoch it describes
-        // instead of arriving one epoch late.  That lag is a feedback delay whose loop gain
-        // scales with how much carry information folds; with all priors admitted (LV-4)
-        // it produces a ~3-epoch limit cycle in the level.  Serial with one writer, and
-        // PASS B only reads the map, which is the race contract of the rest of the carry
-        // cycle.  No-op unless armed.
-        networkRxCbDemeanPrepass(ctx, stations, present, pl_now_s);
-
         // --- Oracle ambiguity pin, simulation only (filter/NetworkOraclePin) --------
         // Its position is fixed by three constraints: after networkElectPhaseAnchors
         // (the fit reads this epoch's anchors and their enforced pin targets; a handover

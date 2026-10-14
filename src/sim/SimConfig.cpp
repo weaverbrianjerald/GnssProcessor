@@ -733,7 +733,7 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
         // Paste-accident guard only.  The cap spans the field's 63- and 305-station
         // lineages; larger networks (e.g. the 50-station global variant) reach QC tiers
         // that are inert on a 3- or 5-station network (raim_min_stations needs a real
-        // consensus, cb_admission_min_stations = 4, rx_cb_carry_demean_min_stations = 8).
+        // consensus, cb_admission_min_stations = 4).
         // Each station is a separate child process, so the practical limit is
         // wall-clock time, not memory.
         if (arr->size() > 400)

@@ -170,15 +170,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rx_cb_datum_sigma = config_.networkRxCodeBiasDatumSigmaM();
     k.sta_prior_pre_pd = config_.getNetworkConfig().station_prior_before_pd;
     k.rx_cb_q = config_.networkRxCbCarryQ();
-    k.rx_cb_demean = config_.networkRxCbCarryDemean();   // loader guarantees rx_cb_on
-    k.rx_cb_demean_min_sta = config_.networkRxCbCarryDemeanMinStations();
-    k.rx_cb_demean_within = config_.networkRxCbCarryDemeanWithin();  // loader guarantees rx_cb_demean
-    k.rx_cb_step_gate = config_.networkRxCbCarryStepGate();   // loader guarantees rx_cb_on
-    k.rx_cb_step_k = config_.networkRxCbCarryStepKSigma();
-    k.rx_cb_harvest_demean = config_.networkRxCbHarvestDemean();   // loader guarantees rx_cb_on, forces LV-2/LV-5 off
-    k.rx_cb_harvest_screen_z = config_.networkRxCbHarvestScreenZ();
-    k.lv1_seed_frame = config_.networkIonoSeedFieldFrame();  // loader guarantees estimate_iono_sh
-    k.lv1_min_sats = config_.networkIonoSeedFieldFrameMinSats();
     k.carry_vce = config_.networkCarryVce();
     k.vce_apply_on = config_.networkCarryVceApply();   // VCE apply (M2 v2); loader guarantees carry_vce
     k.ura_on = config_.networkEmitUra();

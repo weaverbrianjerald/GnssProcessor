@@ -1202,63 +1202,6 @@ GimRowsOutcome Application::networkAppendGimIonoRows_(NetStation& st,
     return GimRowsOutcome::Appended;
 }
 
-// Sample the SH-VTEC field at one line of sight's pierce point(s) and return the
-// slant value in metres of L1 delay (card LV-1, docs/SPEC_level_information_budget.md).
-// That is the quantity a per-LOS iono state holds, so it can stand in for the
-// station-common content of that state's birth seed.
-//
-//     field_slant = Σ_l  M_l(el) · tecu_to_L1m · Σ_k Ȳ_k(IPP_l) · c_{l,k}
-//
-// Two sources for c, in order:
-//   1. @p coeff_lag1: the previous epoch's solved coefficients (the serial
-//      post-solve snapshot in ctx.carry.sh_field_lag1).  The field is quasi-static
-//      and sun-fixed, so one epoch of lag is negligible; this epoch's field cannot
-//      be read, because the seed is needed to build the rows the solve consumes.
-//   2. Before the first solve, the a₀₀ climatology prior mean of each shell: a
-//      uniform field, since the basis is orthonormal under (1/4π)∫dΩ so Ȳ₀₀ ≡ 1.
-//      At cold start the level then comes from the designed level authority (the
-//      EXT-CB ladder's GIM anchor, or the self-contained posture's own
-//      climatology), not from the receiver's hardware bias.
-//
-// Returns false on a degenerate LOS (below the horizon on the dominant shell), on a
-// coefficient-count mismatch, or on a non-finite sum; the caller then leaves that
-// satellite out of the frame map, and its seed stays raw and is counted.  Pure read
-// of const inputs: safe in the parallel produce phase.
-static bool networkShSlantAtLos_(const Eigen::Vector3d& rx_ecef,
-                                 const Eigen::Vector3d& sat_pos,
-                                 const std::vector<ShLayer>& layers,
-                                 const std::vector<std::vector<double>>& coeff_lag1,
-                                 double Re, double lon_sun, double tecu_to_L1m,
-                                 std::vector<double>& bvals, double& slant_m) {
-    if (layers.empty()) return false;
-    const IppGeometry g0 = computeIppGeometry(rx_ecef, sat_pos, Re,
-                                              layers[0].shell_height_m);
-    if (!g0.valid) return false;
-    const bool have_field = (coeff_lag1.size() == layers.size());
-    double acc = 0.0;
-    for (std::size_t l = 0; l < layers.size(); ++l) {
-        const IppGeometry gl = (l == 0)
-            ? g0
-            : computeIppGeometry(rx_ecef, sat_pos, Re, layers[l].shell_height_m);
-        if (!gl.valid) continue;             // this shell contributes nothing here
-        const double m_tecu = gl.mapping * tecu_to_L1m;
-        if (!have_field) {                   // cold start: uniform a₀₀ climatology
-            acc += m_tecu * layers[l].mean_prior_tecu;
-            continue;
-        }
-        const auto& c = coeff_lag1[l];
-        if (static_cast<int>(c.size()) != layers[l].model->numCoeffs()) return false;
-        layers[l].model->basis(gl.ipp_lat_rad, gl.ipp_lon_rad - lon_sun, bvals);
-        if (bvals.size() != c.size()) return false;
-        double vtec = 0.0;
-        for (std::size_t k = 0; k < c.size(); ++k) vtec += bvals[k] * c[k];
-        acc += m_tecu * vtec;
-    }
-    if (!std::isfinite(acc)) return false;
-    slant_m = acc;
-    return true;
-}
-
 // Co-estimated SH-VTEC ionosphere pseudo-observation: the network's own
 // spherical-harmonic field replaces the external-GIM target of appendGimIonoRows.
 // For each non-GLONASS satellite with a usable slant-iono column it folds one row
@@ -3074,18 +3017,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double rx_cb_datum_sigma = ctx.knobs.rx_cb_datum_sigma; // loose physical-bound sigma of RXCB-DATUM (m)
     const bool   sta_prior_pre_pd = ctx.knobs.sta_prior_pre_pd;   // route the RXCB-DATUM rows to the pre-PD fold (RF-PD-fix)
     const double rx_cb_q       = ctx.knobs.rx_cb_q;              // rx-CB carry RW process noise (m²/s)
-    const bool   rx_cb_demean  = ctx.knobs.rx_cb_demean;         // fold η = λ(innov − μ), gate on |innov − μ| (card LV-2)
-    const bool   rx_cb_step_gate = ctx.knobs.rx_cb_step_gate;    // retire the frame-dependent inject screen; the harvest owns the event (card LV-4)
     // RXCB-IN-BLOCK (card CTU section 14): the rx-CB columns ride the station's local
     // block with their border regression; the diagonal fold below is then skipped for
     // every station-epoch (no diagonal fallback, as for the receiver clock).  The
     // loader guarantees the carry, the coupling rows and a local block; pl_blk_on is the
     // live half of that gate.
     const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk && pl_blk_on && rx_cb_on;
-    const auto&  rx_cb_demean_mu = ctx.carry.rx_cb_demean_mu;    // lag-1 μ per code-bias family (LV-2); read-only here, the serial harvest writes it
-    const bool   lv1_seed_frame = ctx.knobs.lv1_seed_frame;      // seed per-LOS iono in the field's frame (card LV-1)
-    const int    lv1_min_sats   = ctx.knobs.lv1_min_sats;        // per-station median sample floor (LV-1)
-    const auto&  sh_field_lag1  = ctx.carry.sh_field_lag1;       // lag-1 solved SH coefficients (LV-1); read-only here
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
     const bool carry_invariant         = ctx.knobs.carry_invariant;
     // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md): build the carry-neutral
@@ -3303,52 +3240,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         StationAssembly& R = asm_res[i];
         try {
             NetStation& st = stations[i];
-
-            // --- Seed frame (card LV-1, docs/SPEC_level_information_budget.md) ---
-            // Install this station's seed frame before the state pre-pass inside
-            // computeMeasurementUpdate allocates (and seeds) any new per-LOS iono
-            // state.  The map is the lag-1 field sampled at each of this station's
-            // lines of sight; the pre-pass removes the station's median raw seed
-            // (its receiver GF hardware bias ⊕ median slant iono) and puts the
-            // field's own value there instead, so a state born now (at cold start,
-            // or at a slip refloat / gap re-birth mid-run) inherits the current
-            // frame rather than the receiver's bias.  That placement inside the
-            // seed path is the invariant-#1 event response.
-            //
-            // Read-only on ctx (knobs + the lag-1 coefficient snapshot) and pure
-            // per-station compute: safe in this parallel produce phase.  The frame
-            // is consumed once by the pre-pass; a station that never reaches this
-            // point seeds raw and is counted.
-            if (lv1_seed_frame && sh_model) {
-                const std::vector<ShLayer> lv1_lay =
-                    shLayers(shc, sh_model.get(), setup.sh_model2.get());
-                const double lv1_Re = shc.earth_radius_km * 1000.0;
-                const double lv1_tecu_to_L1m =
-                    ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
-                const double lv1_lon_sun =
-                    shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
-                StateInitializer::IonoSeedFrame frame;
-                frame.min_sats = lv1_min_sats;
-                frame.station  = st.name;
-                std::vector<double> lv1_bvals;
-                for (const auto& o : modeled[i]) {
-                    // Every system but GLONASS: the same scope as the SH↔slant tie
-                    // rows (networkAppendShIonoRows_ excludes GLONASS so its FDMA
-                    // per-slot IFB cannot leak into the global field).  A GLONASS
-                    // LOS therefore has no tie to the field, and seeding it in the
-                    // field's frame would put it in a frame nothing else in its
-                    // block shares; those births stay raw and are counted as
-                    // lv1_field_missing.
-                    if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS)
-                        continue;
-                    double slant = 0.0;
-                    if (networkShSlantAtLos_(st.ecef, o.sat_pos, lv1_lay, sh_field_lag1,
-                                             lv1_Re, lv1_lon_sun, lv1_tecu_to_L1m,
-                                             lv1_bvals, slant))
-                        frame.field_slant_m[o.satellite] = slant;
-                }
-                st.mm->getStateInitializer().setIonoSeedFrame(std::move(frame));
-            }
 
             EpochMeasurement em = st.mm->computeMeasurementUpdate(
                 modeled[i], st.sm->getStateVector());
@@ -4990,59 +4881,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             cb_is_ifb = id && RxIfbRule::governs(id->cls);
                         }
                         double cb_var_eff = 0.0;
-                        const double cb_innov_raw = cbit->second.value_abs - x_lin(cb_idx);
-                        // --- Family-mean demean (card LV-2) --------------------------
-                        // (docs/SPEC_level_information_budget.md.)  Subtract the
-                        // information-weighted mean innovation of this code-bias family,
-                        // computed at the previous epoch's serial harvest (lag-1; the map
-                        // is read-only in this parallel phase, like the carry itself).  A
-                        // missing key means the first epoch, or a frozen thin-mean era
-                        // that never had one; then μ = 0 and the legacy behaviour
-                        // applies, which is the intended one-epoch warm-up.
-                        //
-                        // Σλ(innov−μ) = 0 by construction: the carry keeps every
-                        // between-station difference at full stiffness (arm 14 showed
-                        // that rigidity is load-bearing) while exerting no net force on
-                        // the DCB common mode, which is a frame direction and belongs to
-                        // the designed authority (rx_code_bias_datum / the a₀₀ anchor /
-                        // the satellite sum-to-zero), re-realized each epoch.
-                        //
-                        // The gate judges the demeaned innovation too, by design: a
-                        // coherent frame move is not a per-receiver hardware jump, and
-                        // letting it mass-trigger the receiver-reset response would
-                        // withhold exactly the rows whose differences are still good.
-                        double cb_mu = 0.0;
-                        if (rx_cb_demean) {
-                            const auto mit = rx_cb_demean_mu.find(cb_key);
-                            if (mit != rx_cb_demean_mu.end() && std::isfinite(mit->second)
-                                && mit->second != 0.0)
-                                cb_mu = mit->second;
-                        }
-                        const double cb_innov = cb_innov_raw - cb_mu;
-                        // --- Invariant step gate (card LV-4) -------------------------
-                        // (docs/SPEC_level_information_budget.md §11.)  With the step gate
-                        // armed, the fold-time innovation test is off: |value_abs −
-                        // x_lin(cb)| is a prefit quantity in a frozen frame, so it
-                        // withholds according to where the first-epoch seed landed rather
-                        // than anything the receiver did, and it cannot see a jump between
-                        // two epochs at all.  What remains here is frame-free (gap and
-                        // variance sanity); the event response is in the serial harvest,
-                        // which compares two absolute values.  The retired test is still
-                        // evaluated, only to count what it would have withheld, so the
-                        // A/B happens inside one run instead of across two.
+                        const double cb_innov = cbit->second.value_abs - x_lin(cb_idx);
                         const RxCbInjectAction act = rxCbInjectGate(
                             pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/kRxCbMaxGapS,
                             cbit->second.var, rx_cb_q, cb_innov,
-                            /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
-                            /*innov_test=*/!rx_cb_step_gate);
-                        if (rx_cb_step_gate && act == RxCbInjectAction::Fold) {
-                            double shadow_var = 0.0;
-                            if (rxCbInjectGate(pl_now_s - cbit->second.last_seen_s, kRxCbMaxGapS,
-                                               cbit->second.var, rx_cb_q, cb_innov,
-                                               10.0, 0.25, shadow_var, true)
-                                == RxCbInjectAction::SkipInnov)
-                                ++R.pl_cb_frame_gate_would_skip;
-                        }
+                            /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff);
                         if (act == RxCbInjectAction::SkipInnov) {
                             ++R.pl_cb_innov_skips;   // receiver-reset response: withhold, harvest re-seeds
                             ++R.prm_rxcb_jump_skip;  // card PRM phase 3a
@@ -5063,16 +4906,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                          rxCodeBiasTag(ContributionKind::PriorRxCbCarry, cb_key));
                         ++R.pl_cb_injected;
                         if (cb_is_ifb) ++st.l5b.diag_folds;
-                        // Accumulation for the next epoch's μ (LV-2).  Only folded rows
-                        // vote (a withheld row exerts no force), and the mean is taken
-                        // over the raw innovation: μ must estimate the common content of
-                        // the carry's actual pull, not of an already demeaned residual,
-                        // or the correction would decay geometrically.
-                        if (rx_cb_demean) {
-                            R.pl_cb_sum_lam[cb_key]       += cb_lambda;
-                            R.pl_cb_sum_lam_innov[cb_key] += cb_lambda * cb_innov_raw;
-                            if (cb_mu != 0.0) ++R.pl_cb_demeaned;
-                        }
                     }
                 }
                 if (carry_cpl_cond) {

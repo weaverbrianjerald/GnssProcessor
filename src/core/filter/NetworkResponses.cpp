@@ -93,8 +93,6 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
     // --- Receiver code bias ------------------------------------------------------------
     {R::RxcbStepErase, "rxcb_step_erase", K::RxCodeBias, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkLocalCarryHarvest.cpp in-block harvest step test", "receiver code biases erased"},
-    {R::RxcbPeerStepErase, "rxcb_peer_step_erase", K::RxCodeBias, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp peer-relative step gate (LV-4)", "receiver code biases erased"},
     {R::RxcbJumpSkip, "rxcb_jump_skip", K::RxCodeBias, E::Slip, P::FreeEpoch, Src::Increment, kNoDisp,
      "ApplicationNetworkAssembly.cpp diagonal route innovation test", "receiver code biases not folded"},
     {R::RxcbGapSkip, "rxcb_gap_skip", K::RxCodeBias, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
@@ -316,9 +314,8 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         // --- The receiver-side carries.
         case R::RxcbStepErase:
             return k.pl_on && k.rx_cb_on && k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond;
-        case R::RxcbPeerStepErase:    return k.rx_cb_on && k.rx_cb_step_gate && !k.rxcb_blk;
         case R::RxcbJumpSkip:
-            return k.rx_cb_on && !k.rx_cb_step_gate
+            return k.rx_cb_on
                 && !(k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint);
         case R::RxcbGapSkip:   // the in-block route, or the diagonal route when the block is not armed
             return k.rx_cb_on

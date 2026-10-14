@@ -4161,16 +4161,6 @@ namespace GnssProcessor {
                       global_vtec_sh_.mean_vtec_prior_sigma_tecu);
         }
 
-        // Seeds the per-LOS slant iono states in the field's frame rather than the
-        // receiver-bias-in frame (card LV-1; docs/SPEC_level_information_budget.md).
-        // Parsed here, next to the SH field it seeds against; the banner and the
-        // inert-without-a-field guard run in the post-parse block (with the LV-2 one).
-        network_iono_seed_field_frame_ = jval<bool>(
-            json, "network.iono_seed_field_frame", "iono_seed_field_frame", false);
-        network_iono_seed_field_frame_min_sats_ = jval<int>(
-            json, "network.iono_seed_field_frame_min_sats",
-            "iono_seed_field_frame_min_sats", 5);
-
         return true;
     }
 
@@ -5624,39 +5614,6 @@ namespace GnssProcessor {
         network_carry_rx_code_bias_in_block_ =
             jval<bool>(json, "network.carry_rx_code_bias_in_block",
                        "carry_rx_code_bias_in_block", false);
-        // De-means the rx-CB carry's common mode (card LV-2;
-        // docs/SPEC_level_information_budget.md).  Parsed next to the carry it modifies;
-        // its guard and banner live in the post-parse block with the carry's own
-        // (carry_rx_code_bias can still be forced off there by the
-        // code_datum_time_linked guard, and a de-mean of a disarmed carry must read as
-        // inert, not as armed).
-        network_rx_cb_carry_demean_ =
-            jval<bool>(json, "network.rx_cb_carry_demean", "rx_cb_carry_demean", false);
-        network_rx_cb_carry_demean_min_stations_ =
-            jval<int>(json, "network.rx_cb_carry_demean_min_stations",
-                      "rx_cb_carry_demean_min_stations", 8);
-        // Reduces μ between PASS A and PASS B instead of at the harvest, which removes
-        // the lag-1 delay (card LV-5; docs/SPEC_level_information_budget.md §12).
-        network_rx_cb_carry_demean_within_ =
-            jval<bool>(json, "network.rx_cb_carry_demean_within",
-                       "rx_cb_carry_demean_within", false);
-        // Replaces the carry's frame-dependent inject screen with the frame-invariant
-        // harvest-side step (card LV-4; docs/SPEC_level_information_budget.md §11).
-        network_rx_cb_carry_step_gate_ =
-            jval<bool>(json, "network.rx_cb_carry_step_gate", "rx_cb_carry_step_gate", false);
-        network_rx_cb_carry_step_k_sigma_ =
-            jval<double>(json, "network.rx_cb_carry_step_k_sigma",
-                         "rx_cb_carry_step_k_sigma", 10.0);
-        // The S-consistent harvest: a post-solve Λ-weighted de-mean of the harvested
-        // absolute rx-CB realization, per family (card S2H;
-        // docs/SPEC_level_information_budget.md §17 item 3).  Guard and banner are in
-        // the post-parse block with the other LV cards (the carry can still be forced
-        // off there).
-        network_rx_cb_harvest_demean_ =
-            jval<bool>(json, "network.rx_cb_harvest_demean", "rx_cb_harvest_demean", false);
-        network_rx_cb_harvest_screen_z_ =
-            jval<double>(json, "network.rx_cb_harvest_screen_z",
-                         "rx_cb_harvest_screen_z", 8.0);
         // NOTE: validation (datum guard and banner) lives in the post-parse block next
         // to the carry_zwd validation, because code_datum_time_linked is parsed after
         // this site.
@@ -11608,14 +11565,6 @@ namespace GnssProcessor {
                            "network.phase_leveling_local_block.");
                 return false;
             }
-            if (network_rx_cb_carry_demean_ || network_rx_cb_carry_demean_within_
-                || network_rx_cb_carry_step_gate_ || network_rx_cb_harvest_demean_) {
-                log->error("Network: network.carry_rx_code_bias_in_block refuses the LV-2 / "
-                           "LV-5 de-mean, the LV-4 step gate and the S2H harvest de-mean: "
-                           "all four act on the diagonal fold or its standalone harvest, "
-                           "which this knob replaces.");
-                return false;
-            }
             log->info("Network (RXCB-IN-BLOCK): receiver code-bias carry folded INSIDE each "
                       "station's whitened local block as conditional coupling rows (border "
                       "regression + cross covariances to the carried ambiguities), not as the "
@@ -11845,239 +11794,6 @@ namespace GnssProcessor {
                               "that carry, determining themselves from one epoch of code "
                               "(standing invariant #1).  Card SCC refuses its own knob on "
                               "this ground.");
-            }
-        }
-        // The S-consistent harvest (card S2H; docs/SPEC_level_information_budget.md §17
-        // item 3 / §27 item 1).  Validated before the LV-2/LV-5 guards because it
-        // supersedes them: both mechanisms act on the same channel (the carried rx-CB
-        // common mode), and composing them would de-mean a set that is already zero-mean
-        // by construction; the LV-2 μ would measure numerical noise, and its fold-side
-        // subtraction would reintroduce the lag this harvest removes.  Same placement
-        // after the carry guard as the LV cards.
-        if (network_rx_cb_harvest_demean_) {
-            if (!(network_rx_cb_harvest_screen_z_ > 0.0)
-                || !std::isfinite(network_rx_cb_harvest_screen_z_)) {
-                log->error("Network: network.rx_cb_harvest_screen_z must be a finite "
-                           "value > 0 (got {}); the peer screen is a contamination "
-                           "guard on the μ vote — set it large to effectively disable "
-                           "it, never non-positive.",
-                           network_rx_cb_harvest_screen_z_);
-                return false;
-            }
-            // The vote floor is the shared LV knob; LV-2's own >= 1 validation runs only
-            // when LV-2 is armed, so it is repeated here for the S2H-only posture.
-            if (network_rx_cb_carry_demean_min_stations_ < 1) {
-                log->error("Network: network.rx_cb_carry_demean_min_stations must be "
-                           ">= 1 (got {}); it is the S2H vote floor below which the "
-                           "harvest transform stands down (identity).",
-                           network_rx_cb_carry_demean_min_stations_);
-                return false;
-            }
-            if (!network_carry_rx_code_bias_) {
-                log->warn("Network (S2H): network.rx_cb_harvest_demean is ARMED but the "
-                          "rx-CB carry is OFF — there is no harvested set to transform, "
-                          "so this knob is INERT (standing invariant #4; the run-end s2h "
-                          "line will read 0 epochs).  Arm network.carry_rx_code_bias, or "
-                          "drop the harvest de-mean.");
-                network_rx_cb_harvest_demean_ = false;
-            } else {
-                if (network_rx_cb_carry_demean_ || network_rx_cb_carry_demean_within_) {
-                    log->warn("Network (S2H): network.rx_cb_carry_demean{} is armed "
-                              "alongside network.rx_cb_harvest_demean — SUPERSEDED "
-                              "mechanism on the same channel, forced OFF.  The harvest "
-                              "transform makes the carried set zero-mean-by-construction "
-                              "each epoch (frame re-derived from THIS epoch's solution); "
-                              "the fold-side de-mean would then measure noise and re-pin "
-                              "the mode to the frozen seed frame (SPEC §13.2).",
-                              network_rx_cb_carry_demean_within_ ? " (+_within)" : "");
-                    network_rx_cb_carry_demean_ = false;
-                    network_rx_cb_carry_demean_within_ = false;
-                }
-                log->info("Network (S2H, SPEC_level_information_budget §17 item 3): "
-                          "S-CONSISTENT HARVEST on — at the serial post-solve harvest "
-                          "(after the LV-4 erase pass and the gap prune, so the member "
-                          "set is exactly the fold-eligible set), the Λ-weighted mean "
-                          "of each family's harvested ABSOLUTE realizations is "
-                          "subtracted from every carried entry, and the variance leg is "
-                          "the exact diagonal of S·Q·Sᵀ (voters var − 1/Σλ, screened "
-                          "var + 1/Σλ).  The carried set is zero-mean-by-construction "
-                          "in the SAME absolute frame the rx-CB datum row targets, so "
-                          "the carry exerts zero net common-mode force and transports "
-                          "only between-station differences; the frame is re-derived "
-                          "per epoch (no frozen pin, no lag-1 feedback, nothing fed "
-                          "back).  LASER Net3DLsa big-system S-transform, Λ-generalized "
-                          "(λ ≡ const reduces to the GPS3710_test_PMINOLESS oracle "
-                          "case).  Peer screen z = {} (μ-vote contamination guard); "
-                          "vote floor {} stations (below it: IDENTITY transform, "
-                          "counted — never a frozen μ).  This changes what carried "
-                          "state MEANS, so it is appended to the snapshot fingerprint — "
-                          "never flip it mid-chain.",
-                          network_rx_cb_harvest_screen_z_,
-                          network_rx_cb_carry_demean_min_stations_);
-            }
-        }
-        // rx-CB carry common-mode de-mean (card LV-2; docs/SPEC_level_information_budget.md).
-        // Validated after the carry's own guard above, which may have forced the carry
-        // off: a de-mean of a disarmed carry is inert, not armed.
-        if (network_rx_cb_carry_demean_) {
-            if (network_rx_cb_carry_demean_min_stations_ < 1) {
-                log->error("Network: network.rx_cb_carry_demean_min_stations must be >= 1 "
-                           "(got {}); it is the floor below which μ FREEZES rather than "
-                           "trusting a thin mean.",
-                           network_rx_cb_carry_demean_min_stations_);
-                return false;
-            }
-            if (!network_carry_rx_code_bias_) {
-                log->warn("Network (LV-2): network.rx_cb_carry_demean is ARMED but the rx-CB "
-                          "carry is OFF — there are no carry folds to de-mean, so this knob is "
-                          "INERT (standing invariant #4; the run-end lv2 line will read 0 "
-                          "folds).  Arm network.carry_rx_code_bias, or drop the de-mean.");
-                network_rx_cb_carry_demean_ = false;
-            } else {
-                log->info("Network (LV-2, SPEC_level_information_budget): rx-CB carry "
-                          "COMMON-MODE DE-MEAN on — every fold injects η = λ·(innov − μ_c) "
-                          "with μ_c = Σλ·innov / Σλ over ALL stations of the constellation, "
-                          "computed at the serial post-solve harvest and applied LAG-1, and "
-                          "the 10σ innovation gate judges |innov − μ_c|.  Σλ(innov−μ) = 0 in "
-                          "the fold's DELTA coordinates: the carry transports between-station "
-                          "DIFFERENCES at full stiffness (arm 14 proved that rigidity "
-                          "load-bearing) and stops re-asserting LAST epoch's common-mode "
-                          "realization.  NOTE what it does NOT do (measured 2026-08-05): it "
-                          "does not leave the common mode free.  The de-mean moves the RHS, "
-                          "never the information, so the carry still puts ~100 units on that "
-                          "direction — in ABSOLUTE terms it now pins the receiver-DCB common "
-                          "mode to mean(x_lin), the FROZEN first-epoch code-bias seed frame. "
-                          "A rolling memory is swapped for a frozen one, and the designed "
-                          "authority (datum 0.01, a₀₀ anchor 0.25) is still outvoted ~400:1. "
-                          "Fewer than {} contributing "
-                          "stations in an epoch FREEZES μ (thin-mean guard, invariant #7).  "
-                          "This changes what carried state MEANS, so it is appended to the "
-                          "snapshot fingerprint — never flip it mid-chain.",
-                          network_rx_cb_carry_demean_min_stations_);
-            }
-        }
-        // Within-epoch μ (card LV-5; docs/SPEC_level_information_budget.md §12).
-        // Validated after LV-2's own guard, which may have forced the de-mean off.
-        if (network_rx_cb_carry_demean_within_) {
-            if (!network_rx_cb_carry_demean_) {
-                log->warn("Network (LV-5): network.rx_cb_carry_demean_within is ARMED but "
-                          "the de-mean itself is OFF — there is no μ to compute early, so "
-                          "this knob is INERT (standing invariant #4).  Arm "
-                          "network.rx_cb_carry_demean, or drop the within-epoch knob.");
-                network_rx_cb_carry_demean_within_ = false;
-            } else {
-                log->info("Network (LV-5, SPEC_level_information_budget §12): the rx-CB "
-                          "de-mean μ is reduced WITHIN the epoch — serially between PASS A "
-                          "and PASS B, over the stations present THIS epoch, so PASS B folds "
-                          "against the current μ instead of last epoch's.  Both terms of the "
-                          "carry innovation (the stashed absolute posterior and the frozen "
-                          "x_lin) are already known before PASS B, so the lag was never "
-                          "necessary — and it is not harmless: its loop gain scales with how "
-                          "much carry information folds, which limit-cycled the level (a₀₀ "
-                          "settled sd 4.98 → 15.53 TECU, ~3-epoch period) as soon as the "
-                          "LV-4 screen admitted the full carry.  The post-solve harvest still "
-                          "reduces the FOLDED set's mean, now as a diagnostic: it is the "
-                          "residual common-mode force that survived the correction.");
-            }
-        }
-        // Invariant carry screen (card LV-4; docs/SPEC_level_information_budget.md §11).
-        // Same placement after the carry guard as LV-2: a screen on a disarmed carry is
-        // inert, not armed.
-        if (network_rx_cb_carry_step_gate_) {
-            if (!(network_rx_cb_carry_step_k_sigma_ > 0.0)) {
-                log->error("Network: network.rx_cb_carry_step_k_sigma must be > 0 (got {}); "
-                           "a non-positive threshold erases every carried receiver code bias "
-                           "on every epoch.", network_rx_cb_carry_step_k_sigma_);
-                return false;
-            }
-            if (!network_carry_rx_code_bias_) {
-                log->warn("Network (LV-4): network.rx_cb_carry_step_gate is ARMED but the "
-                          "rx-CB carry is OFF — there is nothing to screen, so this knob is "
-                          "INERT (standing invariant #4).  Arm network.carry_rx_code_bias, "
-                          "or drop the step gate.");
-                network_rx_cb_carry_step_gate_ = false;
-            } else {
-                log->info("Network (LV-4, SPEC_level_information_budget §11): rx-CB carry "
-                          "screened on the FRAME-INVARIANT step.  The legacy inject test "
-                          "|value_abs − x_lin(cb)| is DISABLED (gap + variance sanity remain) "
-                          "because x_lin is a frozen linearization point: that statistic "
-                          "measures where the first-epoch seed landed, not what the receiver "
-                          "did — it withheld 48-67 % of all folds for whole runs on DOY-129 "
-                          "with no receiver event, and it is structurally blind to a jump "
-                          "between two epochs (at inject the carried value is still pre-jump "
-                          "and x_lin has not moved).  The event response now lives at the "
-                          "SERIAL harvest, where both the fresh posterior and the carried "
-                          "value are ABSOLUTE and their difference is invariant under any "
-                          "reframing: z = |Δ| / sqrt(var_new + var_prev + q·Δt + 0.25) > {} "
-                          "ERASES the entry (reset-not-repair: the post-jump posterior was "
-                          "solved in the epoch that folded a stale prior, so it is suspect "
-                          "too), and the next harvest re-seeds it cold.  The run-end line "
-                          "also reports what the OLD gate WOULD have withheld, so the A/B is "
-                          "visible inside this one run.  NOTE k and the 0.5 m guard are "
-                          "inherited from the legacy gate and are NOT recalibrated for the "
-                          "step statistic (detection floor ~5 m) — read the reset count.",
-                          network_rx_cb_carry_step_k_sigma_);
-                // Measured pairing guards (docs/SPEC_level_information_budget.md §11.3,
-                // §12.3).  This screen roughly triples how much carry information folds
-                // (43 % → 97 % on the DOY-129 EXT-CB arm).  That is its purpose, but it
-                // also triples the loop gain of whatever handles the carry's common mode,
-                // and both failure modes below were measured.
-                if (!network_rx_cb_carry_demean_)
-                    log->warn("Network (LV-4): the invariant screen is armed WITHOUT "
-                              "network.rx_cb_carry_demean.  It admits ~3x more carry "
-                              "information (measured 43 % → 97 % folded), and with no "
-                              "de-mean ALL of that arrives with its common mode intact — "
-                              "the carry then owns the receiver-DCB frame outright "
-                              "(~100 information units against the datum's 0.01).  Arm "
-                              "network.rx_cb_carry_demean with it.");
-                else if (!network_rx_cb_carry_demean_within_)
-                    log->warn("Network (LV-4): the invariant screen is armed with a LAG-1 "
-                              "de-mean (network.rx_cb_carry_demean_within is off).  "
-                              "MEASURED on this lineage: at full admission the lag-1 loop "
-                              "LIMIT-CYCLES the ionosphere level — a₀₀ settled sd 4.98 → "
-                              "15.53 TECU on a ~3-epoch period, range 54 TECU — because the "
-                              "loop gain scales with the folded fraction.  Arm "
-                              "network.rx_cb_carry_demean_within (sd back to 4.69, level on "
-                              "the GIM reference) or expect the oscillation.");
-            }
-        }
-        // Bias-free per-LOS iono seeding (card LV-1; docs/SPEC_level_information_budget.md).
-        // Validated here because estimate_iono_sh and the SH block are populated by this
-        // point.
-        if (network_iono_seed_field_frame_) {
-            if (network_iono_seed_field_frame_min_sats_ < 2) {
-                log->error("Network: network.iono_seed_field_frame_min_sats must be >= 2 "
-                           "(got {}); a median over fewer than two seeds is the seed itself, "
-                           "which would reframe every station to its own single channel.",
-                           network_iono_seed_field_frame_min_sats_);
-                return false;
-            }
-            if (!estimate_network_iono_sh_) {
-                log->warn("Network (LV-1): network.iono_seed_field_frame is ARMED but "
-                          "network.estimate_iono_sh is OFF — there is no field to seed INTO, "
-                          "so the reframe is INERT (standing invariant #4; the run-end lv1 "
-                          "line will read 0 reframed).  Arm the SH-VTEC field, or drop the "
-                          "knob.");
-                network_iono_seed_field_frame_ = false;
-            } else {
-                log->info("Network (LV-1, SPEC_level_information_budget): per-LOS iono seeds "
-                          "reframed into the FIELD's frame at allocation — seed' = seed_raw − "
-                          "median_r(seed_raw) + m(el)·VTEC_SH(IPP), median over >= {} of this "
-                          "station's satellites this epoch.  The raw seed carries the "
-                          "receiver's own GF hardware bias (the modeled term removes the "
-                          "satellite side and the geometry, not the receiver DCB), so every "
-                          "seed of a station is born in a bias-in frame and the per-LOS "
-                          "ensemble's stiffness toward it (~0.04 info x N_LOS) dwarfs the a₀₀ "
-                          "anchor (0.25) and the rx-DCB datum common mode (0.01).  The field "
-                          "is the LAG-1 solved SH field (serial post-solve snapshot; the "
-                          "parallel produce phase only reads it); at cold start the a₀₀ "
-                          "climatology prior mean ({:.2f} TECU) stands in — the designed level "
-                          "authority.  Inside the seed path deliberately (invariant #1): slip "
-                          "refloats and gap re-births inherit the CURRENT frame.  The removed "
-                          "per-station offset is logged once per station — it is a direct "
-                          "estimate of that receiver's GF bias.",
-                          network_iono_seed_field_frame_min_sats_,
-                          global_vtec_sh_.mean_vtec_prior_tecu);
             }
         }
         if (network_carry_zwd_) {
@@ -12696,21 +12412,6 @@ namespace GnssProcessor {
                       "direction on this posture, and without the fix its rows fold after the "
                       "station's positive-definite test, which then sees that direction as a "
                       "near-null first.  Arm network.station_prior_before_pd.");
-        // The diagonal route's per-key tools act on the state key, and one key
-        // ("GPS_IFB5") spans every extra-band code family of the constellation (C5Q and C5X
-        // stations), whose levels two independent satellite-side datums realize: a
-        // per-key mean or step population mixes the two frames.  The in-block route refuses
-        // these tools already (validateNetworkCarryPosture_).
-        if (network_carry_rx_code_bias_ && !network_carry_rx_code_bias_in_block_
-            && (network_rx_cb_carry_demean_ || network_rx_cb_carry_demean_within_
-                || network_rx_cb_carry_step_gate_ || network_rx_cb_harvest_demean_))
-            log->warn("Network (card L5B): the LV-2 / LV-5 de-mean, the LV-4 step gate or the "
-                      "S2H harvest de-mean is armed on the diagonal receiver code-bias carry.  "
-                      "Each acts on one population per state key, and a receiver IFB key "
-                      "(GPS_IFB5) spans the stations of every extra-band code family (C5Q, "
-                      "C5X), whose levels independent satellite-side datum rows realize: the "
-                      "mean and the step scale mix two frames.  Use "
-                      "network.carry_rx_code_bias_in_block, or disarm those tools.");
     }
 
     // =================================================================

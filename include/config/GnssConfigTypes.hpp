@@ -1980,10 +1980,8 @@ namespace GnssProcessor {
         /// predicate @c rxExtraBandDelayEffective (filter/NetworkParamInventory.hpp);
         /// armed where it is not effective, the rule, the fingerprint and the outputs are
         /// the unarmed ones and the loader warns.  It also warns when
-        /// @c network.rx_code_bias_datum or @c network.station_prior_before_pd is off,
-        /// and when a per-key tool of the diagonal receiver code-bias carry (LV-2, LV-5,
-        /// LV-4, S2H) is armed.  Fingerprinted when effective (the carried receiver
-        /// code-bias set changes).
+        /// @c network.rx_code_bias_datum or @c network.station_prior_before_pd is off.
+        /// Fingerprinted when effective (the carried receiver code-bias set changes).
         bool estimate_rx_extra_band_code_delay{ false };
         /// A network station contributes, as code-only rows, every allow-listed band-1
         /// code it reports for a satellite besides the code its canonical latch selected
@@ -3377,7 +3375,7 @@ namespace GnssProcessor {
         /// every @c RC row, also serialize an @c RL row holding the station
         /// @c StateManager's current @c x_lin for that code-bias state.  The @c RC row
         /// carries the rx-CB carry's numerator; this is the reference its inject gate
-        /// differences against (@c cb_innov_raw = @c value_abs − @c x_lin(cb), against a
+        /// differences against (@c cb_innov = @c value_abs − @c x_lin(cb), against a
         /// fixed 5.13 m bar), seeded once from one epoch of code behind
         /// @c StateInitializer::isCodeBiasInitialized and never written back.  With only
         /// the numerator restored (RS-6), a warm-resume leg re-derives the reference

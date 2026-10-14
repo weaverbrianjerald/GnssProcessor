@@ -7,7 +7,7 @@
  * at decomposition INC-11b.  void and self-contained (it produces no locals that
  * cross the call); every carry / trace object is an explicit reference into the
  * caller's state.  The caller keeps the subBegin/subEnd(SB_LEVELING) brackets.  The block
- * also emits this epoch's eq34_reref, lv2 and s2h rows on the events stream.
+ * also emits this epoch's eq34_reref rows on the events stream.
  */
 
 #include "app/NetworkSetupResult.hpp"

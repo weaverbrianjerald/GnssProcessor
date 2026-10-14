@@ -1,12 +1,7 @@
 /**
  * @file NetworkLocalCarryHarvest.cpp
- * @brief @internal The station-local carries: their post-solve harvest, stash and prune,
- *        and the LV-5 receiver code-bias de-mean formed before PASS B.
+ * @brief @internal The station-local carries: their post-solve harvest, stash and prune.
  *
- *   networkRxCbDemeanPrepass      card LV-5: the within-epoch mean of the receiver
- *                                 code-bias carry innovations, called by the driver
- *                                 (app/ApplicationNetwork.cpp) between PASS A and PASS B;
- *                                 it reads the receiver code-bias carry the harvest writes;
  *   networkHarvestLocalCarries    the harvest, stash and prune of the station-local
  *                                 carries from the solved station blocks, called by
  *                                 networkLeveling (filter/NetworkLeveling.cpp) after the
@@ -46,77 +41,6 @@
 #include <set>
 
 namespace GnssProcessor {
-
-void networkRxCbDemeanPrepass(NetworkRunContext& ctx,
-                              const std::vector<NetStation>& stations,
-                              const std::vector<bool>& present,
-                              double pl_now_s) {
-    if (!ctx.knobs.rx_cb_on || !ctx.knobs.rx_cb_demean
-        || !ctx.knobs.rx_cb_demean_within) return;
-    const auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // read-only here
-    // Clear the per-epoch trace record first: an epoch that computes no μ (cold start,
-    // or a full carry wipe) must not leave the previous epoch's row for the trace
-    // emitter to publish under this epoch's timestamp.
-    ctx.carry.rx_cb_demean_last.clear();
-    if (rx_cb_carry.empty()) return;                   // cold start: nothing to average
-    // The horizon is the inject's own, kRxCbMaxGapS (filter/NetworkRunTypes.hpp).
-
-    std::map<std::string, double> sum_lam, sum_lam_innov;
-    std::map<std::string, int> n_sta;
-    for (std::size_t i = 0; i < stations.size(); ++i) {
-        if (i >= present.size() || !present[i]) continue;   // no data ⇒ no vote
-        const NetStation& st = stations[i];
-        if (!st.sm) continue;
-        const Eigen::VectorXd x_lin = st.sm->getStateVector();
-        for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
-            if (StateKeys::isGlonassPerSlotIfbKey(cb_key)) continue;   // anchored family
-            const Eigen::Index cb_idx = static_cast<Eigen::Index>(cb_sidx);
-            if (cb_idx < 0 || cb_idx >= x_lin.size()) continue;
-            if (!std::isfinite(x_lin(cb_idx))) continue;
-            const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
-            if (cbit == rx_cb_carry.end()) continue;           // cold: nothing to fold
-            const double gap = pl_now_s - cbit->second.last_seen_s;
-            if (gap > kRxCbMaxGapS) continue;                  // the fold would be skipped
-            const double var_eff = cbit->second.var
-                                 + ctx.knobs.rx_cb_q * std::max(0.0, gap);
-            if (!(var_eff > 0.0) || !std::isfinite(var_eff)) continue;
-            const double innov = cbit->second.value_abs - x_lin(cb_idx);
-            if (!std::isfinite(innov)) continue;
-            const double lam = 1.0 / var_eff;
-            sum_lam[cb_key]       += lam;
-            sum_lam_innov[cb_key] += lam * innov;
-            ++n_sta[cb_key];
-        }
-    }
-
-    // Same reduction, thin-mean floor and freeze semantics as the LV-2 harvest path;
-    // only the epoch the result is applied to differs.  Writing
-    // ctx.carry.rx_cb_demean_mu here (serially, before PASS B) removes the one-epoch
-    // lag, and the parallel produce phase reads it as before.
-    bool any = false;
-    for (const auto& [fam, s] : sum_lam) {
-        const auto held = ctx.carry.rx_cb_demean_mu.find(fam);
-        const double prev_mu =
-            (held != ctx.carry.rx_cb_demean_mu.end()) ? held->second : 0.0;
-        const RxCbDemeanReduce red = rxCbDemeanMu(
-            sum_lam_innov[fam], s, n_sta[fam], ctx.knobs.rx_cb_demean_min_sta, prev_mu);
-        auto& rec = ctx.carry.rx_cb_demean_last[fam];
-        rec.sum_lam = s;
-        rec.n_sta   = n_sta[fam];
-        rec.fresh   = red.fresh;
-        rec.mu      = red.mu;
-        if (!red.fresh) { ++ctx.carry.lv2_mu_frozen; continue; }
-        ctx.carry.rx_cb_demean_mu[fam] = red.mu;
-        ctx.carry.lv2_last_mu_m = red.mu;
-        ctx.carry.lv2_max_abs_mu_m = std::max(ctx.carry.lv2_max_abs_mu_m,
-                                              std::abs(red.mu));
-        any = true;
-    }
-    if (any) {
-        ++ctx.carry.lv2_mu_epochs;
-        ++ctx.carry.lv5_within_epochs;
-    }
-}
 
 void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config_,
                                 NetworkEstimator& est, const Eigen::VectorXd& x_s,
@@ -1873,11 +1797,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         auto& rx_cb_carry = ctx.carry.rx_cb_carry;
         // The horizon is kRxCbMaxGapS (filter/NetworkRunTypes.hpp; spec §3: housekeeping
         // horizon), the one definition the inject, this harvest and the registry read.
-        // This epoch's invariant steps (card LV-4), collected during the station walk
-        // and judged after it: the screen needs the whole population to build a robust,
-        // peer-relative scale (rxCbStepScale).  Empty unless armed.
-        struct Lv4Pending { int station; std::string key; double step; double formal_sigma; };
-        std::vector<Lv4Pending> lv4_pending;
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
             const StationAssembly& R = asm_res[i];
@@ -1902,11 +1821,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 ++tally.first;
                 if (R.pl_cb_injected == 0) ++tally.second;
             }
-            ctx.carry.lv2_folds_demeaned += R.pl_cb_demeaned;   // de-meaned folds (card LV-2)
-            // Same-run A/B for card LV-4, summed with the other produce-phase tallies
-            // before any early continue, so a station whose back-substitution throws
-            // still reports what the retired screen would have done to its folds.
-            ctx.carry.lv4_frame_gate_would_skip += R.pl_cb_frame_gate_would_skip;
             // RXCB-IN-BLOCK: the stash happened in the block harvest above (with the
             // border regression), and only while the leveling carry is warm; a cold
             // entry must not be written here without one.
@@ -1956,11 +1870,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         double cvar_eff = 0.0;
                         const RxCbInjectAction cact = rxCbInjectGate(
                             cgap, kRxCbMaxGapS, pit->second.var, ctx.knobs.rx_cb_q,
-                            cinnov, /*k_sigma=*/10.0, /*guard_var=*/0.25, cvar_eff,
-                            // Mirror the injector's configuration, or the census
-                            // would label rows "responded" for a test the run does
-                            // not apply.
-                            /*innov_test=*/!ctx.knobs.rx_cb_step_gate);
+                            cinnov, /*k_sigma=*/10.0, /*guard_var=*/0.25, cvar_eff);
                         // SkipGap leaves cvar_eff at 0 (the gate returns before setting
                         // it), so there is no fold variance to standardize against: fall
                         // back to the nominal recompute and mark the row as raw formal
@@ -1987,78 +1897,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         prires_est.addRow(in);
                     }
                 }
-                // --- Frame-invariant event screen (card LV-4) ---------------------
-                // docs/SPEC_level_information_budget.md.  This is the only place in the
-                // cycle where two absolute realizations of the same receiver bias exist
-                // side by side, the freshly back-substituted posterior (cx_lin + xr) and
-                // the carried one, so their difference is the one discrepancy that no
-                // reframing, reseeding or datum change can move.  The retired inject
-                // test compared the carried value against a frozen x_lin instead, so it
-                // withheld folds of stations that had no event and missed the jumps it
-                // was meant to detect (at inject time the carried value is still the
-                // pre-jump one).
-                //
-                // The decision cannot be taken here: it needs this epoch's whole
-                // population (see rxCbStepScale: a formal-σ test triggers en masse, and a
-                // step common to every station is a frame move, not a set of receiver
-                // resets).  So the step is recorded here and the screen runs after this
-                // station loop, over all stations at once.
-                if (ctx.knobs.rx_cb_step_gate) {
-                    const auto sit = rx_cb_carry.find({static_cast<int>(i), cb_key});
-                    if (sit != rx_cb_carry.end()) {
-                        lv4_pending.push_back(
-                            {static_cast<int>(i), cb_key,
-                             value_abs - sit->second.value_abs,
-                             std::sqrt(std::max(0.0,
-                                 var + sit->second.var + ctx.knobs.rx_cb_q
-                                     * std::max(0.0, pl_now_s - sit->second.last_seen_s)))});
-                    }
-                }
                 rx_cb_carry[{static_cast<int>(i), cb_key}] =
                     LocalCarry{value_abs, var, pl_now_s};
                 ++ctx.carry.rx_cb_harvested_total;
-            }
-        }
-        // --- Decision pass of card LV-4 (serial, all stations) -----------------
-        // Robust and peer-relative, per code-bias family: σ̂ = 1.4826·MAD of this epoch's
-        // steps (floored at the median formal σ), and the median step is removed first,
-        // because a step common to the network is a frame move, not an event.  What is
-        // left is the per-station outlier.  The response is an erase, not an overwrite
-        // (reset, not repair): a real jump means this epoch's solve folded a stale
-        // pre-jump prior, so the posterior it produced is suspect too.  The entry goes
-        // cold for one epoch and the next harvest re-seeds it from data, the same
-        // lifecycle as a first sighting.
-        if (ctx.knobs.rx_cb_step_gate && !lv4_pending.empty()) {
-            std::map<std::string, std::vector<double>> by_fam, formal_by_fam;
-            for (const auto& p : lv4_pending) {
-                by_fam[p.key].push_back(p.step);
-                formal_by_fam[p.key].push_back(p.formal_sigma);
-            }
-            std::map<std::string, RxCbStepScale> scale;
-            for (auto& [fam, steps] : by_fam) {
-                auto& f = formal_by_fam[fam];
-                std::nth_element(f.begin(), f.begin() + f.size() / 2, f.end());
-                // min_n mirrors the LV-2 thin-mean floor: below it there is no
-                // defensible "normal", so the screen stands down (counted).
-                scale[fam] = rxCbStepScale(steps, f[f.size() / 2],
-                                           ctx.knobs.rx_cb_demean_min_sta);
-            }
-            for (const auto& p : lv4_pending) {
-                const auto sc = scale.find(p.key);
-                if (sc == scale.end()) continue;
-                ++ctx.carry.lv4_step_checks;
-                if (!sc->second.valid) { ++ctx.carry.lv4_scale_standdown; continue; }
-                const RxCbStepVerdict sv =
-                    rxCbStepVerdict(p.step, sc->second, ctx.knobs.rx_cb_step_k);
-                ctx.carry.lv4_max_step_z = std::max(ctx.carry.lv4_max_step_z, sv.z);
-                ctx.carry.lv4_max_scale_m =
-                    std::max(ctx.carry.lv4_max_scale_m, sc->second.sigma);
-                if (!sv.jumped) continue;
-                const std::size_t prm_n_cb = rx_cb_carry.erase({p.station, p.key});
-                ++ctx.carry.lv4_step_resets;
-                // Card PRM phase 3a: the carried receiver code bias the step gate erased.
-                prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbPeerStepErase,
-                           static_cast<long long>(prm_n_cb));
             }
         }
         // The horizon is the registry's (kRxCbMaxGapS, the same constant; card PRM phase 3b).
@@ -2067,200 +1908,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                       [&](const auto&) {
                           prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapPrune);   // card PRM phase 3a
                       });
-        // --- S-consistent harvest (card S2H; serial, all stations) --------------
-        // docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1.  Runs after the
-        // LV-4 erase pass and the gap prune, so the member set is exactly the set that
-        // can fold next epoch, and the S-transform re-realizes the carried
-        // representation that will exert force.  Per family (the CB state key, with
-        // constellation and DCB/IFB kept apart, the LV-2 rule), subtract the Λ-weighted
-        // mean of the harvested absolute realizations from every entry, fresh and
-        // stale-but-alive alike: the whole carried set moves to the zero-mean frame
-        // together, so next epoch's folds exert zero net force on the common mode in the
-        // fold's own metric.  The datum row (whose target is the same absolute zero) owns
-        // the level, and the frame is re-derived from this epoch's solution.  There is no
-        // frozen pin (the LV-2 failure: it pinned mean(x_lin)), no lag-1 feedback
-        // (nothing is fed back) and no cross-station prior row (the carry stays
-        // diagonal).  This is LASER
-        // Net3DLsa::applySTransformationForBigSystemOfEquations, Λ-weighted; see
-        // rxCbHarvestMu for the two documented deviations.
-        //
-        // The covariance is co-transformed exactly (diag of S·Q·Sᵀ for diagonal Q):
-        // voters get var − 1/Σλ (their uncertainty about the new frame is smaller, since
-        // the common-mode variance left with μ), and screened non-voters get var + 1/Σλ
-        // (μ's own variance adds, by independence).  The floor guards the w→1 degenerate
-        // corner where one member is the frame; with min_n ≥ 2 and comparable weights it
-        // does not bind (1/Σλ ≈ var/n).
-        if (ctx.knobs.rx_cb_harvest_demean && !rx_cb_carry.empty()) {
-            std::map<std::string, std::vector<LocalCarry*>> fam_entries;
-            for (auto& [key, lc] : rx_cb_carry)
-                fam_entries[key.second].push_back(&lc);
-            bool any_applied = false;
-            ctx.carry.rx_cb_harvest_last.clear();
-            for (auto& [fam, entries] : fam_entries) {
-                std::vector<double> vals, vars;
-                vals.reserve(entries.size());
-                vars.reserve(entries.size());
-                for (const LocalCarry* e : entries) {
-                    vals.push_back(e->value_abs);
-                    vars.push_back(e->var);
-                }
-                std::vector<unsigned char> used;
-                const RxCbHarvestReduce red = rxCbHarvestMu(
-                    vals, vars, ctx.knobs.rx_cb_demean_min_sta,
-                    ctx.knobs.rx_cb_harvest_screen_z, &used);
-                auto& rec = ctx.carry.rx_cb_harvest_last[fam];
-                rec.mu = red.mu; rec.sum_lam = red.sum_lam; rec.n = red.n;
-                rec.n_used = red.n_used; rec.n_screened = red.n_screened;
-                rec.applied = red.applied;
-                if (!red.applied) { ++ctx.carry.s2h_thin_skips; continue; }
-                const double dvar = 1.0 / red.sum_lam;
-                for (std::size_t e = 0; e < entries.size(); ++e) {
-                    LocalCarry* lc = entries[e];
-                    if (std::isfinite(lc->value_abs)) lc->value_abs -= red.mu;
-                    if (std::isfinite(lc->var) && lc->var > 0.0) {
-                        if (e < used.size() && used[e])
-                            lc->var = std::max(lc->var - dvar, 0.1 * lc->var);
-                        else
-                            lc->var += dvar;
-                    }
-                }
-                ctx.carry.s2h_screened_total += red.n_screened;
-                ctx.carry.s2h_last_mu_m = red.mu;
-                ctx.carry.s2h_max_abs_mu_m =
-                    std::max(ctx.carry.s2h_max_abs_mu_m, std::abs(red.mu));
-                ctx.carry.s2h_mu_abs_sum += std::abs(red.mu);
-                ++ctx.carry.s2h_mu_n;
-                any_applied = true;
-            }
-            if (any_applied) ++ctx.carry.s2h_epochs_applied;
-        }
-        // --- Common-mode mean of card LV-2, computed here (serial) --------------
-        // docs/SPEC_level_information_budget.md.  The parallel produce phase
-        // accumulated, per station and per constellation, Σλ·innov and Σλ over the rows
-        // it folded (the gate's skips contribute nothing: a withheld row exerts no force,
-        // so it does not vote on the force being removed).  Reducing them here and
-        // applying the result with a one-epoch lag keeps the cycle race-free by
-        // construction, like the carry itself; but the lag is a feedback delay, so under
-        // card LV-5 μ is reduced before PASS B instead (networkRxCbDemeanPrepass) and
-        // this pass becomes a diagnostic (see the branch below).
-        //
-        // μ_c = Σλ·innov / Σλ  ⇒  Σλ·(innov − μ_c) = 0 in delta coordinates: the carry
-        // keeps every between-station difference at full stiffness and stops
-        // re-asserting the previous epoch's common-mode realization (the flywheel).
-        //
-        // It does not free that direction (SPEC §13).  The de-mean moves the RHS, not the
-        // fold's information, so Σλ ≈ 100 units still land on the common mode, and in
-        // absolute terms each row targets value_abs−μ, whose weighted mean is
-        // mean(x_lin).  The de-meaned carry therefore pins the receiver-DCB common mode
-        // to the frozen first-epoch code-bias seed frame, replacing a rolling memory with
-        // a frozen one.  That makes it close to the rejected "demeaned target" variant;
-        // the difference is that the pinned value is epoch 1's data-derived mean rather
-        // than the physical zero, which is why card LV-1 (which sets that seed through
-        // initializeCodeBiases) moves the level by about 10 TECU with no change to the
-        // row set.
-        if (ctx.knobs.rx_cb_demean) {
-            std::map<std::string, double> sum_lam_innov, sum_lam;
-            std::map<std::string, int> n_sta;
-            for (std::size_t i = 0; i < stations.size(); ++i) {
-                if (est_index_of[i] < 0) continue;
-                const StationAssembly& R = asm_res[i];
-                for (const auto& [fam, s] : R.pl_cb_sum_lam) {
-                    if (!(s > 0.0)) continue;
-                    const auto nit = R.pl_cb_sum_lam_innov.find(fam);
-                    if (nit == R.pl_cb_sum_lam_innov.end()) continue;
-                    sum_lam[fam] += s;
-                    sum_lam_innov[fam] += nit->second;
-                    ++n_sta[fam];
-                }
-            }
-            // Invariant #7 (both edges): a decoupling epoch (mass re-seed, RAIM
-            // re-reduce, a thin station set) does not define the frame.  Below the floor
-            // μ freezes at its previous value (a held frame is conservative: it asserts
-            // nothing new), and the event is counted, so a run that stays frozen through
-            // an era reports it.
-            // With the within-epoch reduction of card LV-5 armed, this pass is a
-            // diagnostic only.  μ was already formed between PASS A and PASS B and folded
-            // against; the folded set's raw mean now measures the residual common-mode
-            // force that survived the correction, the direct check that the de-mean
-            // worked (it is not identically zero, because the folded set is not exactly
-            // the candidate set the prepass averaged).  Overwriting μ here would
-            // reinstate the lag without any sign in the output.
-            const bool lv5_within = ctx.knobs.rx_cb_demean_within;
-            bool any = false;
-            if (!lv5_within) ctx.carry.rx_cb_demean_last.clear();
-            for (const auto& [fam, s] : sum_lam) {
-                const auto held = ctx.carry.rx_cb_demean_mu.find(fam);
-                const double prev_mu =
-                    (held != ctx.carry.rx_cb_demean_mu.end()) ? held->second : 0.0;
-                const RxCbDemeanReduce red = rxCbDemeanMu(
-                    sum_lam_innov[fam], s, n_sta[fam],
-                    ctx.knobs.rx_cb_demean_min_sta, prev_mu);
-                if (lv5_within) {
-                    if (!red.fresh) continue;
-                    // Residual = the folded set's raw common mode minus the μ that was
-                    // actually applied to it.
-                    const double applied = prev_mu;
-                    const double resid = red.mu - applied;
-                    ctx.carry.lv5_resid_sum += std::abs(resid);
-                    ctx.carry.lv5_max_abs_resid_m =
-                        std::max(ctx.carry.lv5_max_abs_resid_m, std::abs(resid));
-                    ++ctx.carry.lv5_resid_n;
-                    auto it_rec = ctx.carry.rx_cb_demean_last.find(fam);
-                    if (it_rec != ctx.carry.rx_cb_demean_last.end())
-                        it_rec->second.folded_mu = red.mu;
-                    continue;
-                }
-                auto& rec = ctx.carry.rx_cb_demean_last[fam];
-                rec.sum_lam = s;
-                rec.n_sta   = n_sta[fam];
-                rec.fresh   = red.fresh;
-                rec.mu      = red.mu;
-                if (!red.fresh) { ++ctx.carry.lv2_mu_frozen; continue; }
-                ctx.carry.rx_cb_demean_mu[fam] = red.mu;
-                ctx.carry.lv2_last_mu_m = red.mu;
-                ctx.carry.lv2_max_abs_mu_m =
-                    std::max(ctx.carry.lv2_max_abs_mu_m, std::abs(red.mu));
-                any = true;
-            }
-            if (any) ++ctx.carry.lv2_mu_epochs;
-        }
-    }
-
-    // --- One-epoch-lag snapshot of the solved SH-VTEC field (card LV-1) ---------
-    // docs/SPEC_level_information_budget.md.  Copied serially here (post-solve, x_s
-    // final) and read next epoch by the parallel produce phase, which samples it at
-    // each new LOS's pierce point, so a per-LOS iono state is born in the field's frame
-    // instead of the frame with the receiver bias included that the raw geometry-free
-    // code seed carries.  Coefficients only: the pierce geometry and the sun-fixed
-    // rotation belong to the epoch that evaluates them, not to the epoch that solved
-    // them.  Cheap ((N+1)² doubles per shell, 81 at degree 8) and untouched when the
-    // card is disarmed.
-    if (ctx.knobs.lv1_seed_frame && sh_model) {
-        const std::vector<ShLayer> lv1_lay =
-            shLayers(config_.getGlobalVtecShConfig(), sh_model, sh_model2);
-        std::vector<std::vector<double>> snap(lv1_lay.size());
-        bool ok = !lv1_lay.empty();
-        for (std::size_t l = 0; l < lv1_lay.size() && ok; ++l) {
-            const auto& cf = lv1_lay[l].model->coeffs();
-            snap[l].resize(cf.size(), 0.0);
-            for (std::size_t k = 0; k < cf.size() && ok; ++k) {
-                try {
-                    const Eigen::Index col = est.vtecCoeffColumn(
-                        cf[k].n, cf[k].m, cf[k].trig, lv1_lay[l].layer);
-                    if (col < 0 || col >= x_s.size()) { ok = false; break; }
-                    const double v = x_s(col);
-                    if (!std::isfinite(v)) { ok = false; break; }
-                    snap[l][k] = v;
-                } catch (...) { ok = false; }
-            }
-        }
-        // A partial or failed read leaves the previous snapshot in place (or none on
-        // epoch 1, which falls back to the a₀₀ climatology prior mean, the designed
-        // level authority).  A half-built field is never installed.
-        if (ok) {
-            ctx.carry.sh_field_lag1 = std::move(snap);
-            ++ctx.carry.lv1_field_snapshots;
-        }
     }
 
     // Retire the first-warm-epoch latch at the end of this epoch's serial harvest

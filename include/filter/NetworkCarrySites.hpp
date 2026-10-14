@@ -46,9 +46,9 @@
  * epoch (@c clm_prev_clk, cleared at a datum change), the anchor's one-epoch record
  * (@c clk_anchor), the phase-datum elections' own targets and ledgers (@c phase_basis,
  * @c eq34_prev_target, the handover ledger, rebuilt by their elections), the one- to
- * two-epoch local copies (@c relevel_pend), the receiver-side
- * rate and de-mean memories (@c rx_clk_rate, @c rx_cb_demean_mu), and the SH field's
- * lag and deviation carries (no mechanism moves an SH coefficient's frame).
+ * two-epoch local copies (@c relevel_pend), the receiver-side rate memory
+ * (@c rx_clk_rate), and the SH field's deviation carry (no mechanism moves an SH
+ * coefficient's frame).
  */
 
 #include "filter/NetworkRunTypes.hpp"   // SharedParamKind, CarryPrior, CoupledShared, LocalCarry, ClockOsc

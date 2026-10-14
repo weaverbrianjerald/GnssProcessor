@@ -542,7 +542,7 @@ struct NetworkStateSnapshot {
     /// SPEC_event_harness §21.18).
     ///
     /// The RC row carries the rx-CB carry's numerator; this is the reference that its
-    /// inject gate differences against (@c cb_innov_raw = @c value_abs − @c x_lin(cb),
+    /// inject gate differences against (@c cb_innov = @c value_abs − @c x_lin(cb),
     /// in @c networkPassB_, ApplicationNetworkAssembly.cpp).  It is seeded once per
     /// station by @c StateInitializer::initializeCodeBiases behind a one-shot latch and
     /// never written back.  A resume that restores the carry without it judges the
