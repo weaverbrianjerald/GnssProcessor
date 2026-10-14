@@ -204,22 +204,6 @@ public:
          */
         bool   carry_lin{false};
         /**
-         * @brief Re-base a restored branch onto this run's linearization
-         *        (@c network.resume_carry_rebase), the read half.
-         *
-         * When armed, the first @ref buildDdPriors after a @ref restoreCarry that read
-         * @c ZL rows adds @f$W z_{\ell,\rm writer}-z_{\ell,\rm now}@f$ to the projected prior
-         * means of the carried chords, with @f$W@f$ the cycle-basis projection the build
-         * already forms.  @f$P^z@f$ is untouched.  The correction goes into the emitted
-         * block, never into @ref carried_, so a within-epoch rebuild (the RAIM re-solve) is
-         * idempotent.  A component that cannot be re-based exactly (an unbased contributor
-         * without a usable @c ZL row, or unbased and based contributors in one component)
-         * has its would-be carried chords born fresh instead of folded in the writer's frame
-         * (@ref Counters::resume_dropped_unbased).  A block restored without a @c ZL row is
-         * not marked unbased and is carried unchanged.
-         */
-        bool   carry_rebase{false};
-        /**
          * @brief Run the D5 gate diagnostic-only (@c network.resume_d5_warmup_ep, RS-2b).
          *
          * Set per epoch by the install seam from the post-resume countdown, not fixed at
@@ -249,7 +233,7 @@ public:
         int  est_station{-1};    ///< estimator station index of this arc's ambiguity (−1 = unresolvable this epoch).
         int  local_col{-1};      ///< A_r local ambiguity column of this arc (−1 = unresolvable).
         bool slipped{false};     ///< a cycle slip or refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD would be a stiff wrong prior).  The caller sets it from the network's slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit).  The arc is treated as absent from A_old, so any new cycle whose support includes it is re-tapped fresh (data-only), the birth path; a carried chord lost this way is counted in @ref Counters::slip_kills. (card 4, C3c).
-        double x_lin{0.0};       ///< this arc's ambiguity linearization value (m), the value the kernel takes its corrections about.  Read only under @ref Config::carry_lin or @ref Config::carry_rebase; otherwise left 0 and unused, so the off path costs nothing (RS-2, docs/SPEC_event_harness.md §21.4).
+        double x_lin{0.0};       ///< this arc's ambiguity linearization value (m), the value the kernel takes its corrections about.  Read only under @ref Config::carry_lin; otherwise left 0 and unused, so the off path costs nothing (RS-2, docs/SPEC_event_harness.md §21.4).
     };
 
     /// One (const,signal) group's arcs this epoch.  Groups are independent z-store
@@ -285,16 +269,8 @@ public:
         long long chords_marg_perchord{0};///< old chords dropped from a surviving component (their projection-W column is all zero: no new fundamental cycle references them).  This is the per-chord marginalization that @ref chords_marginalized (whole blocks only) does not count; the two together are the kill rate.  Near zero while @ref max_z_dim grows means dead arcs are retained (§0 case (b)); large means the kill path is exact and has churn to kill (§0 case (a)) (INC-C0).
         long long max_cycle_len{0};       ///< longest fundamental cycle (tree-path length + 1) folded this run; a G-side screen only for D-c viability.  Short cycles (adjacent chords share few tree edges) keep the cycle matrix G sparse, which is necessary but not sufficient for the exact info-form carry (SPEC_carry_factored_pz_C2 D-c) to be bounded: the border term is Gᵀ Σ_ss G, so the binding probe is the sparsity and rank of Σ_ss, which this counter does not measure.  §6.1 of that doc corrects the earlier claim that J = Pᶻ⁻¹ is sparse iff cycles are short (the probe read short and sparse at both tiers, yet D-c remains unconfirmed because global co-visibility makes a dense Σ_ss the likely case).  Long cycles still imply a dense J, so a dense-G reading is decisive against D-c while a sparse-G reading is not decisive for it (INC-C0).
         long long sum_cycle_len{0};       ///< Σ fundamental-cycle lengths over all folded chords this run (mean = sum / (chords_carried + chords_born)) (INC-C0).
-        // --- Resume re-base (docs/SPEC_event_harness.md §21.4; RS-2).  resume_rebased,
-        //     resume_dropped_unbased and resume_rebase_max_dz hold the figures of the last
-        //     build that re-based or dropped a chord, not run totals: the re-base runs on
-        //     the first DD-prior build after a restore, a within-epoch rebuild (RAIM
-        //     re-solve) recomputes the same numbers, and later builds leave them unchanged.
-        //     d5_warmup_suppressed (RS-2b) is a run total. ---
+        // --- Post-resume D5 warm-up (RS-2b): a run total. ---
         long long d5_warmup_suppressed{0};      ///< gate trips counted but not acted on because the post-resume warm-up window (@c network.resume_d5_warmup_ep) was open: the chord's posterior was installed as usual (no re-tap), and the caller keeps its arc out of the slip funnel.  0 with the knob armed means the window closed before any chord tripped, or nothing was restored to trip (invariant #4) (RS-2b).
-        long long resume_rebased{0};            ///< carried chord rows re-based onto this run's linearization at the first post-resume build.  0 with @c carry_rebase armed means the wiring never fired (invariant #4), usually because there was no restored blob or nothing was carried at that epoch (RS-2).
-        long long resume_dropped_unbased{0};    ///< chord rows that would have been carried but were born fresh on the diffuse prior because their component had no exact re-base (an unbased contributor without a usable @c ZL row, or unbased and based contributors mixed).  Folding them would assert the writer's frame (RS-2).
-        double    resume_rebase_max_dz{0.0};    ///< largest |Δẑ| (m) applied by the re-base: the size of the frame error the restored branch would otherwise have folded (RS-2).
         // --- Fold-dimension distribution of the emitted components (SPEC §7.4; LF-1
         //     INC-0).  It answers the INC-4 Amdahl question: one giant G component that sets
         //     the parallel ceiling, or a spread the component-parallel fold can balance.
@@ -468,27 +444,6 @@ public:
     bool restoreCarry(std::istream& is, std::string* err = nullptr);
 
     /**
-     * @brief One-shot resume shock: add @p var_m2 to the diagonal of every carried
-     *        block's @f$P^z@f$ (RTB-7(d) RE-2).
-     *
-     * The restored means are the branch and are kept.  A resume cannot restore the
-     * per-station filter layer, which re-converges over the following epochs and pushes
-     * real, transient tension through the phase rows that the restored DD priors make
-     * redundant.  Opening the carried variance for that window lets the fold absorb the
-     * tension instead of the D5 gate discarding the branch, with no special case in the
-     * gate: Cov(v) inflates with the prior, so standardized innovations shrink and the
-     * gate stays armed against real slips (standing invariant #1: a stiff carry crossing
-     * an event gets a wired response, not a bypass).
-     *
-     * Touches the diagonal only; the cross-covariances, and with them the branch
-     * geometry, are unchanged.  A no-op for @p var_m2 <= 0.
-     *
-     * @param var_m2 shock variance (m²); the caller squares its σ knob.
-     * @return number of carried blocks shocked (blocks with a non-empty @f$P^z@f$).
-     */
-    std::size_t applyResumeShock(double var_m2);
-
-    /**
      * @brief Check that every restored chord and arc binds to a live vertex and group
      *        before the carry is trusted (RTB-7(d) RE-4).
      *
@@ -516,7 +471,6 @@ public:
     long long resumeCarryChords() const { return resume_chords_; }         ///< carried DD count at restore (0 if none).
     bool   resumeSigma0Seeded()  const { return resume_sigma0_seeded_; }   ///< the σ̂₀² accumulator was seeded from the blob's `S,` line (v2 or later).
     double resumeSigma0Value()   const { return resume_sigma0_value_; }    ///< the seeded σ̂₀ (1.0 when not seeded).
-    double resumeShockSigmaM()   const { return resume_shock_sigma_m_; }   ///< applied shock σ (m); 0 = none.
     /// Blocks restored from a diagonal-only @f$P^z@f$ (@c PD row, v3): their chord
     /// cross-covariances were not in the blob and start at zero.  0 on a v1/v2
     /// (full-@f$P^z@f$) blob.  Without this count a diagonal resume would not be visible:
@@ -532,12 +486,9 @@ public:
     /// resume from one is expected; a non-zero count on a resume from a pd_safe-armed
     /// writer indicates a new defect (PD-safe INC-2c).
     long long resumeCarryRebirthBlocks() const { return resume_carry_rebirth_blocks_; }
-    /// Blocks restored with a @c ZL row: the writer captured its linearization DD, so an
-    /// exact re-base onto this run's own @c x_lin is available.  0 on a blob whose writer
-    /// computed no linearization DDs (neither @c network.state_snapshot_carry_lin nor
-    /// @c network.resume_carry_rebase armed, or written before they existed); on such a
-    /// blob @c network.resume_carry_rebase warns and changes nothing, which distinguishes
-    /// "re-based" from "nothing to re-base from" (RS-2).
+    /// Blocks restored with a @c ZL row: the writer captured its linearization DD.  0 on a
+    /// blob whose writer computed no linearization DDs (@c network.state_snapshot_carry_lin
+    /// off, or written before the row existed) (RS-2).
     long long resumeCarryLinBlocks() const { return resume_carry_lin_blocks_; }
 
     /**
@@ -822,10 +773,10 @@ public:
                             const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz,
                             const std::set<int>& vertices, const std::set<ArcKey>& arcs);
     /// Test hook: attach a linearization DD @p zl (the value @ref serializeCarry writes as
-    /// the block's @c ZL row) to the most recently seeded block of @p group, and optionally
-    /// mark it unbased as @ref restoreCarry does.  Production never calls this; the harvest
-    /// (@ref buildDdPriors → @ref installPosterior) owns @c zl end to end (RS-2).
-    void seedCarriedLinForTest(int group, const Eigen::VectorXd& zl, bool unbased);
+    /// the block's @c ZL row) to the most recently seeded block of @p group.  Production
+    /// never calls this; the harvest (@ref buildDdPriors → @ref installPosterior) owns @c zl
+    /// end to end (RS-2).
+    void seedCarriedLinForTest(int group, const Eigen::VectorXd& zl);
     /// The chord order of DD-prior block @p b returned by the last @ref buildDdPriors
     /// (== the fold-row order, so a gate can map block rows to chord arcs).
     const std::vector<ArcKey>& blockChordsForTest(std::size_t b) const {
@@ -856,15 +807,10 @@ private:
         std::set<ArcKey> arcs;        ///< every arc present (tree ∪ chords): A_old for the carried test.
         /// The linearization DD @f$z_\ell=\sum c\,x_{\rm lin}@f$ that the means in @ref z are
         /// relative to: same length and row order as @ref z, over the same fundamental cycle.
-        /// Empty unless @ref Config::carry_lin or @ref Config::carry_rebase was armed at the
-        /// install that built the block, or the block was restored from a blob's @c ZL row;
-        /// @ref serializeCarry writes the row when it is sized like @ref z (RS-2).
+        /// Empty unless @ref Config::carry_lin was armed at the install that built the block,
+        /// or the block was restored from a blob's @c ZL row; @ref serializeCarry writes the
+        /// row when it is sized like @ref z (RS-2).
         Eigen::VectorXd zl;
-        /// The block came out of @ref restoreCarry with a @c ZL row and has not yet been
-        /// re-based onto the resumed run's own linearization.  Set only at restore (or by
-        /// @ref seedCarriedLinForTest); cleared structurally at the next
-        /// @ref installPosterior, which rebuilds every block from this epoch's @c x_lin (RS-2).
-        bool unbased{false};
     };
     /// Per-emitted-block metadata (parallel to the returned blocks) for the install.
     struct BlockMeta {
@@ -882,8 +828,7 @@ private:
         /// This epoch's linearization DD @f$z_\ell=\sum c\,x_{\rm lin}@f$ per emitted fold row
         /// (same length and row order as @ref zhat), computed over the same fundamental cycle
         /// that built the rows.  @ref installPosterior copies it into @ref CarriedBlock::zl so
-        /// the stored means stay self-describing.  Empty unless @ref Config::carry_lin or
-        /// @ref Config::carry_rebase (RS-2).
+        /// the stored means stay self-describing.  Empty unless @ref Config::carry_lin (RS-2).
         Eigen::VectorXd  zl;
     };
 
@@ -897,7 +842,7 @@ private:
     std::vector<FoldRebirth> last_fold_rebirths_;  ///< blocks rebirthed at the last install; see @ref lastFoldRebirths (PD-safe INC-2a).
     std::set<std::pair<int, ArcKey>> innov_flat_;   ///< (group, chord) whose arc the raw observables measured as continuous this epoch; see @ref setInnovFlatChords.  Consumed and cleared in @ref installPosterior (D5 v3).
     std::optional<NetworkCarryVce> inflation_;  ///< the σ̂₀² accumulator, present only when Config::innov_calibrate (D5 v2).
-    // --- Resume telemetry, set by restoreCarry / applyResumeShock (RTB-7(d) RE-4) ---
+    // --- Resume telemetry, set by restoreCarry (RTB-7(d) RE-4) ---
     bool      resume_restored_{false};
     long long resume_chords_{0};
     bool      resume_sigma0_seeded_{false};
@@ -908,10 +853,9 @@ private:
     bool      resume_seed_line_{false};
     double    resume_seed_sq_{0.0};    ///< that line's σ̂₀² (0 when there was no line) (RE-1).
     double    resume_seed_rows_{0.0};  ///< that line's n_eff (0 when there was no line) (RE-1).
-    double    resume_shock_sigma_m_{0.0};
     long long resume_carry_diag_blocks_{0};   ///< blocks restored from a PD (diagonal) row (RTB-7(e)).
     long long resume_carry_rebirth_blocks_{0}; ///< blocks rebirthed at restore because the blob's Pᶻ was not PD (PD-safe INC-2c).
-    long long resume_carry_lin_blocks_{0};    ///< blocks restored with a ZL (linearization-DD) row, i.e. exactly re-basable (RS-2).
+    long long resume_carry_lin_blocks_{0};    ///< blocks restored with a ZL (linearization-DD) row (RS-2).
     Counters counters_;
     /// The carry-state half of @ref reset (containers and epoch index), without the counter
     /// policy.  @ref reset keeps the run tallies; @ref restoreCarry drops them (RE-4).

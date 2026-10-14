@@ -2722,26 +2722,6 @@ namespace GnssProcessor {
          * "borrow @c network.zwd_carry_q".
          */
         double networkZwdSeamReseedQ() const { return network_zwd_seam_reseed_q_; }
-
-        /**
-         * @brief Seam-scoped ambiguity-carry variance re-inflation at a warm resume
-         *        (@c network.amb_seam_reinflate_var_m2, m², STABILITY target 2 leg C,
-         *        SPEC_synthetic_minimum_network §18).
-         *
-         * On a warm resume, this variance is added to every restored phase-leveling
-         * local ambiguity carry: a one-shot soft refloat at the seam.  The restored
-         * zero-q ambiguity carries were leveled under the old run's ZWD realization;
-         * against the resume's fresh station filters they act as a stiff prior
-         * (invariant #1) that drags the ZWD toward the pre-seam plateau (§17
-         * warm-start arms).  The carried value stays as the prior mean, so this is not
-         * a refloat from code (no fresh station-common-iono seeding, which is the
-         * relevel-walk failure mode); the data re-earns the stiffness through the
-         * ordinary fold.  Applies at the restore site only; continuous epochs never
-         * execute it.  Deliberately not in the warm-resume fingerprint (forward-only
-         * resume response policy, the exemption class of @ref networkZwdSeamReseed).
-         * Default 0.0 = off, byte-identical.
-         */
-        double networkAmbSeamReinflateVarM2() const { return network_amb_seam_reinflate_var_m2_; }
         /**
          * @brief Resume frame restore (@c network.resume_frame_restore,
          *        SPEC_synthetic_minimum_network §18.10).
@@ -2786,11 +2766,10 @@ namespace GnssProcessor {
          * which wires the decoupling edge.  A row with no QL/QZ record keeps its
          * empty coupling and degrades to the diagonal.
          *
-         * @warning Changes the row's direction only, never @c var.
-         *          @ref networkAmbSeamReinflateVarM2 changes the row's weight instead,
-         *          which lets the level re-float on the cold station layer (the
-         *          consumer walked 5.13 m in hour 12).  The loader makes the two
-         *          mutually exclusive and requires @ref networkResumeFrameRestore,
+         * @warning Changes the row's direction only, never @c var.  A weight change
+         *          (the retired seam variance re-inflation) lets the level re-float on
+         *          the cold station layer (the consumer walked 5.13 m in hour 12).  The
+         *          loader requires @ref networkResumeFrameRestore,
          *          @ref networkCarryConditionalCoupling and
          *          @ref networkCarryCouplingGaugeProject.
          *
@@ -2800,36 +2779,6 @@ namespace GnssProcessor {
          * resume response policy).  Default false = byte-identical.
          */
         bool networkResumeCouplingRestore() const { return network_resume_coupling_restore_; }
-        /**
-         * @brief Resume carry re-base (@c network.resume_carry_rebase,
-         *        docs/SPEC_event_harness.md §21.4): the reader half of
-         *        @c network.state_snapshot_carry_lin.
-         *
-         * The invariant DD carry blob stores each chord's mean in the writer's
-         * linearization frame: @f$\hat z=\sum c\,x_r=\lambda N-\sum c\,x_{\rm lin}@f$.  A
-         * resumed run re-seeds every station ambiguity @c x_lin from code at its first
-         * epoch (the station layer is not snapshotted), and the DD prior fold forms
-         * @f$v=z_{\rm free}-G^\top x_s-\hat z@f$ against that linearization, so every
-         * restored chord enters the first solve wrong by
-         * @f$\sum c\,(x_{\rm lin,writer}-x_{\rm lin,now})@f$, metres per chord, folded at
-         * @c carry_invariant_qz stiffness on the whole branch at once.  The D5 innovation
-         * gate runs after the solve and can only flag the damage.
-         *
-         * Armed, the first DD prior build after a resume re-bases every restored chord it
-         * projects: with @f$W@f$ the cycle-basis projection the build already forms,
-         * @f$\hat z_{\rm new}\mathrel{+}=W z_{\ell,\rm writer}-z_{\ell,\rm now}@f$, where
-         * @f$z_{\ell,\rm now}@f$ is this epoch's linearization DD over the same incidence
-         * that forms @f$z_{\rm free}@f$.  @f$P^z@f$ is untouched: this is an exact frame
-         * translation, not a re-weighting.  A component whose restored contributors carry
-         * no @c ZL row cannot be re-based; its chords are marginalized (born fresh on the
-         * diffuse prior) rather than folded in the wrong frame, and counted.
-         *
-         * Armed against a blob with no @c ZL rows at all, it logs one warning and
-         * behaves as if off.  Inert on a run that never resumes.  Deliberately not in
-         * the warm-resume fingerprint (the forward-only resume-response exemption class
-         * of @ref networkResumeFrameRestore).  Default false = byte-identical.
-         */
-        bool networkResumeCarryRebase() const { return network_resume_carry_rebase_; }
         /**
          * @brief Resume datum restore (@c network.resume_datum_restore,
          *        docs/SPEC_event_harness.md §21.7): the reader half of
@@ -2871,9 +2820,8 @@ namespace GnssProcessor {
          * are the other half of the same tree, and without them the first election runs
          * without incumbents and re-references every family before these maps can
          * matter.  Deliberately not in the warm-resume fingerprint (the forward-only
-         * resume-response exemption class of @ref networkResumeFrameRestore,
-         * @ref networkResumeCouplingRestore and @ref networkResumeCarryRebase).
-         * Default false = byte-identical.
+         * resume-response exemption class of @ref networkResumeFrameRestore and
+         * @ref networkResumeCouplingRestore).  Default false = byte-identical.
          */
         bool networkResumeDatumRestore() const { return network_resume_datum_restore_; }
         /**
@@ -2893,8 +2841,8 @@ namespace GnssProcessor {
          * the writer never emitted.  Outputs-only: no estimate moves.  Deliberately
          * not in the warm-resume fingerprint (the forward-only resume-response
          * exemption class of @ref networkResumeFrameRestore,
-         * @ref networkResumeDatumRestore, @ref networkResumeCouplingRestore and
-         * @ref networkResumeCarryRebase).  Default false = byte-identical.
+         * @ref networkResumeDatumRestore and @ref networkResumeCouplingRestore).
+         * Default false = byte-identical.
          */
         bool networkResumeEmitRestore() const { return network_resume_emit_restore_; }
         /**
@@ -2917,8 +2865,8 @@ namespace GnssProcessor {
          * would re-assert a level the writer never held.  Deliberately not in the
          * warm-resume fingerprint (the forward-only resume-response exemption class of
          * @ref networkResumeFrameRestore, @ref networkResumeDatumRestore,
-         * @ref networkResumeEmitRestore, @ref networkResumeCouplingRestore and
-         * @ref networkResumeCarryRebase).  Default false = byte-identical.
+         * @ref networkResumeEmitRestore and @ref networkResumeCouplingRestore).
+         * Default false = byte-identical.
          */
         bool networkResumeStationRestore() const { return network_resume_station_restore_; }
         /**
@@ -2926,19 +2874,11 @@ namespace GnssProcessor {
          *        (@c network.resume_station_restore_rxcb, default true; RS-6).
          *
          * Meaningful only with @ref networkResumeStationRestore armed, and there only
-         * so one leg of the attribution matrix can restore a single half (§21.13 gate
-         * P8c: the half that moves a channel owns it).  Not a posture knob: the default
-         * is true, so an ordinary armed resume restores both halves.
+         * so one leg of the attribution matrix can restore the T5 deviation half alone
+         * (§21.13 gate P8c: the half that moves a channel owns it).  Not a posture knob:
+         * the default is true, so an ordinary armed resume restores both halves.
          */
         bool networkResumeStationRestoreRxCb() const { return network_resume_station_restore_rxcb_; }
-        /**
-         * @brief Diagnostic sub-switch: restore the T5 deviation half
-         *        (@c network.resume_station_restore_shdev, default true; RS-6).
-         *
-         * The twin of @ref networkResumeStationRestoreRxCb: same scope, same default,
-         * the other half of the §21.13 attribution matrix.
-         */
-        bool networkResumeStationRestoreShDev() const { return network_resume_station_restore_shdev_; }
         /**
          * @brief Resume canonical-signal restore
          *        (@c network.resume_signal_canon_restore, SPEC_event_harness §21.16;
@@ -2960,8 +2900,8 @@ namespace GnssProcessor {
          * signals.  Deliberately not in the warm-resume fingerprint (the forward-only
          * resume-response exemption class of @ref networkResumeFrameRestore,
          * @ref networkResumeDatumRestore, @ref networkResumeEmitRestore,
-         * @ref networkResumeStationRestore, @ref networkResumeCouplingRestore and
-         * @ref networkResumeCarryRebase).  Default false = byte-identical.
+         * @ref networkResumeStationRestore and @ref networkResumeCouplingRestore).
+         * Default false = byte-identical.
          */
         bool networkResumeSignalCanonRestore() const { return network_resume_signal_canon_restore_; }
         /**
@@ -3195,13 +3135,13 @@ namespace GnssProcessor {
          * @brief Post-resume D5 innovation-gate warm-up (@c network.resume_d5_warmup_ep,
          *        epochs; RS-2b, docs/SPEC_event_harness.md §21.6).
          *
-         * A measurement knob, not a repair.  With @c network.resume_carry_rebase the
-         * restored branch is folded in the resumed run's own linearization and the first
-         * post-resume solve is healthy, yet about half of the re-based chords still trip
-         * the D5 gate at +1 and the branch is erased at +2.  Two readings fit that: the
-         * branch is correct and the cold station layer disagrees with it, or the branch
-         * is inconsistent.  The gate cannot tell them apart while it re-taps, because the
-         * re-tap destroys the hypothesis it would test.
+         * A measurement knob, not a repair.  With the retired resume carry re-base (RS-2)
+         * the restored branch was folded in the resumed run's own linearization and the
+         * first post-resume solve was healthy, yet about half of the re-based chords still
+         * tripped the D5 gate at +1 and the branch was erased at +2.  Two readings fit
+         * that: the branch is correct and the cold station layer disagrees with it, or the
+         * branch is inconsistent.  The gate cannot tell them apart while it re-taps,
+         * because the re-tap destroys the hypothesis it would test.
          *
          * For this many processed epochs after a warm resume the D5 gate is therefore
          * diagnostic-only: a chord that trips k·σ̂₀ is counted (@c d5_warmup_suppressed
@@ -3216,7 +3156,7 @@ namespace GnssProcessor {
          * at), so a run that never installs a posterior never uses up the window.  Armed
          * only at a warm resume; a cold start never sets it.  0 = off = byte-identical.
          * Not fingerprinted (forward-only resume response policy, the same exemption
-         * class as @ref networkResumeSlipWarmupEp and @ref networkResumeCarryRebase).
+         * class as @ref networkResumeSlipWarmupEp).
          */
         int networkResumeD5WarmupEp() const { return network_resume_d5_warmup_ep_; }
 
@@ -8401,15 +8341,12 @@ namespace GnssProcessor {
         bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, the B9 inject+stash runs for zwd_seam_reseed_epochs emitted epochs and then retires (the station filter has re-established its own memory).  Never runs on continuous epochs.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         double network_zwd_seam_reseed_q_{-1.0};          ///< The seam window's own RW process noise (m²/s; RS-10b, §21.21).  Negative (default -1) = the "unset" sentinel: the seam fold borrows network.zwd_carry_q (byte-identical).  Positive = used instead of zwd_carry_q, and only while the seam window is live (a continuous carry_zwd row always uses zwd_carry_q).  Not fingerprinted (forward-only resume response policy); that is the reason for the knob, because zwd_carry_q is fingerprinted and the response's stiffness could otherwise not be varied on a resume leg.
         int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, below the ≥6–8 h onset of the double-memory failure, within the 720-epoch validated bound.  Only used when network.zwd_seam_reseed.
-        double network_amb_seam_reinflate_var_m2_{0.0};   ///< Seam-scoped one-shot variance added (m²) to every restored phase-leveling local ambiguity carry at a warm resume: a soft refloat that keeps the carried value as prior mean (STABILITY target 2 leg C).  Not fingerprinted (forward-only resume response policy).  0 = off, byte-identical.
         bool   network_resume_frame_restore_{false};       ///< Resume frame restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the snapshot's phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-satellite state and the CLK-R held frame, so the first post-resume election / clock fold / emit continue the pre-seam realization.  Capture has its own write knob, network.state_snapshot_frame_capture (format v2); this knob only decides whether a resume uses the rows.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
-        bool   network_resume_coupling_restore_{false};    ///< Resume coupling-regressor restore (§18.12): at a warm resume, rebuild every restored leveling / ZWD carry's card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, harvest order; never re-sparsified, ŝ_prev / P_prev never re-derived) and seed tu_reinit_hist from the columns the write epoch was re-drawing (loose CA anchors, pending eph cutovers, the QR refloat set), so the first PASS-B inject builds a conditional row (A_s = M_r, y = (value_abs − x_lin) + Σ M_j·ŝ_prev,j at the pure conditional variance) instead of the plain diagonal prior asserted at that conditional variance, which outvotes most Q3 anchored clock priors at the first fold (§18.11).  The loader requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project (card 1f), and refuses amb_seam_reinflate_var_m2 > 0 (that knob changes the row's weight; this one changes its direction only, and var is never modified).  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
-        bool   network_resume_carry_rebase_{false};        ///< Resume carry re-base (RS-2, SPEC_event_harness §21.4), the reader half of network.state_snapshot_carry_lin: at the first DD prior build after a warm resume, re-base every restored chord the build projects (ẑ += W·zl_writer − zl_now, with W the cycle-basis projection the build already forms and zl_now this epoch's Σc·x_lin over the same incidence that forms z_free), so the restored branch is folded in this run's linearization frame instead of the writer's.  Pᶻ untouched (an exact frame translation).  A component whose restored contributors carry no ZL row is marginalized (born fresh) rather than folded in the wrong frame, and counted.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
+        bool   network_resume_coupling_restore_{false};    ///< Resume coupling-regressor restore (§18.12): at a warm resume, rebuild every restored leveling / ZWD carry's card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, harvest order; never re-sparsified, ŝ_prev / P_prev never re-derived) and seed tu_reinit_hist from the columns the write epoch was re-drawing (loose CA anchors, pending eph cutovers, the QR refloat set), so the first PASS-B inject builds a conditional row (A_s = M_r, y = (value_abs − x_lin) + Σ M_j·ŝ_prev,j at the pure conditional variance) instead of the plain diagonal prior asserted at that conditional variance, which outvotes most Q3 anchored clock priors at the first fold (§18.11).  The loader requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project (card 1f).  The restore changes the row's direction only; var is never modified.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_datum_restore_{false};       ///< Resume datum restore (RS-3, SPEC_event_harness §21.7), the reader half of network.state_snapshot_datum_capture: at a warm resume, restore the eq34 chain datum's last-epoch spanning tree (eq34_datum_rx / eq34_rx_parent / eq34_sat_root / eq34_prev_target / eq34_prev_el / eq34_retained_edges) before the first election, so the sticky-tree seed continues the writer's tree instead of re-electing it from the cold arc registry, and restore the time-linked code-bias memory (code_bias_prev_ / code_bias_sat_seen_) with code_bias_datum_resumed_ left false, so a re-seed disc-bumps only where it actually re-seeds.  The loader requires resume_frame_restore (the sat-side half of the same tree).  If a half's rows are absent, that half behaves as if off and a warning is logged.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_emit_restore_{false};        ///< Resume emit-layer restore (RS-5, SPEC_event_harness §21.10), the reader half of network.state_snapshot_emit_capture: at a warm resume, restore the eq34 emit re-base engine's emission frame (NetworkEmitRebase::last_emit_, the ER rows) before the first emit, so the emitted phase biases continue the writer's emission level instead of stepping to the raw solve frame (metres per (sat,signal) at a field seam).  Each half is inert and logged when its rows are absent.  The loader requires resume_frame_restore.  Outputs-only.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_station_restore_{false};     ///< Resume station-layer restore (RS-6, SPEC_event_harness §21.13), the reader half of network.state_snapshot_station_capture: at a warm resume, restore the rx-CB carry (the RC rows, through makeRestoredLocalCarry so each entry carries the §15.4.1 restored-arc sentinel) and the T5 / Iono-2 per-LOS deviation carry (the SD rows, as written; ShDevCarry's cold test is t_s <= 0, so the restored harvest stamp is what makes the entry read warm) before the first epoch, instead of cold-starting both (without it the rx-CB inject gate withholds about twice as many priors on a leg as on the seed, and hundreds of deviation entries cold-seed at +1).  Each half is inert and logged when its rows are absent.  The loader requires resume_frame_restore.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_station_restore_rxcb_{true}; ///< Diagnostic sub-switch: restore the rx-CB half (RS-6).  Meaningful only under network_resume_station_restore_, and only so one leg of the §21.13 attribution matrix can restore one half.  Default true ⇒ an ordinary armed resume restores both.
-        bool   network_resume_station_restore_shdev_{true};///< Diagnostic sub-switch: restore the T5 deviation half (RS-6); the rxcb twin, same scope and default.
         bool   network_resume_signal_canon_restore_{false};///< Resume canonical-signal restore (RS-8, SPEC_event_harness §21.16), the reader half of network.state_snapshot_signal_capture: at a warm resume, restore each station's per-(constellation, band, obs-type) canonical-signal latch (the CN rows) into its PppModel before the first epoch, so the first-epoch guard of decideConstellationCanonicals leaves it alone instead of re-deciding it from the resume epoch's satellite counts (a re-decided latch can flip a station's L2 signal, change the L2X tracker set, cost the eq34 L2X component its datum receiver, and step the L2X phase-bias families by tens of metres at +1).  A file without CN rows is inert and logged.  The loader requires resume_frame_restore.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_rxcb_lin_restore_{false};    ///< Resume rx-CB linearization-point restore (RS-9, SPEC_event_harness §21.18), the reader half of network.state_snapshot_rxcb_lin_capture: at a warm resume, seed each station's code-bias state from the snapshot's RL rows instead of from the resume epoch's one-shot code median, so the rx-CB inject gate judges the RS-6-restored carry against the frame the writer judged it against (without it, stations whose seed differs are refused every epoch of a leg and lose their receiver-DCB memory).  Solve-invariant under this posture (an x_lin shift is an exact solve no-op; the only consumer is the gate); the loader refuses the pair with network.rx_code_bias_datum, whose RHS reads x_lin.  The loader requires resume_station_restore + its rxcb half.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_border_restore_{false};      ///< Resume dense-border restore (RS-7, SPEC_event_harness §21.14): at a warm resume, rebuild the C1 dense shared-carry covariance (SharedCarryCov) from the snapshot's QK/QP records for the keys that also have a restored D row, so the first warm fold runs the dense (P_prev+Q)^-1 path instead of the per-key diagonal the resume otherwise degrades to (the "warm resume restored N diagonal carries" line).  Deliberately separate from network_resume_coupling_restore_: that knob also restores the coupling rows (QL/QZ regressors), which need card 1f for the family identity M^T g_s = -g_r(c); a covariance block carries no regression and no gauge identity, so it is legal on a carry_invariant lineage where 1f is out of regime.  The loader requires resume_frame_restore and warn-disarms without shared_carry_full_cov.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.

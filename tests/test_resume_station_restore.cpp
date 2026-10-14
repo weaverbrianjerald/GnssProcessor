@@ -7,8 +7,8 @@
  *        T5 / Iono-2 per-LOS SH representation-error deviation carry, one
  *        @c ShDevCarry per "STATION|SAT"), and the loader's side of the write
  *        knob (@c network.state_snapshot_station_capture), the read knob
- *        (@c network.resume_station_restore) and its two diagnostic
- *        sub-switches (@c ..._rxcb / @c ..._shdev).
+ *        (@c network.resume_station_restore) and its diagnostic rx-CB
+ *        sub-switch (@c ..._rxcb).
  *
  * Covered here:
  *   (a) both maps round-trip through the snapshot text exactly, with a
@@ -24,7 +24,7 @@
  *       keeps the cold-start behaviour, and the containers stay empty);
  *   (d) with the write knob off none of the rows is emitted, and the file is
  *       byte-identical to the pre-RS-6 format for the same snapshot;
- *   (e) each of the two sub-switches restores only its half.
+ *   (e) the rx-CB sub-switch withholds only its half.
  *
  * The seam mechanics (the estimator's own level continuing across a warm resume:
  * the raw phase bias, the receiver clocks, the SH a₀₀) are graded on the harness
@@ -339,41 +339,39 @@ TEST(ResumeStationRestore, WriteKnobOffEmitsNoneOfTheRows) {
 }
 
 // ---------------------------------------------------------------------------
-// (e) the diagnostic sub-switches partition the restore
+// (e) the diagnostic rx-CB sub-switch withholds its half
 // ---------------------------------------------------------------------------
 
-/// Each sub-switch restores only its half.  The attribution matrix of §21.13 of
+/// The rx-CB sub-switch restores only its half; the T5 deviation half restores
+/// whenever its rows are present.  The attribution matrix of §21.13 of
 /// SPEC_event_harness rests on this: the half whose restore moves a channel owns
 /// it.  A withheld half leaves its map exactly as a cold start does.
-TEST(ResumeStationRestore, SubSwitchesRestoreOnlyTheirHalf) {
+TEST(ResumeStationRestore, RxCbSubSwitchRestoresOnlyItsHalf) {
     NetworkStateSnapshot r;
     std::string err;
     std::istringstream is(serialized(stationSnapshot()));
     ASSERT_TRUE(NetworkStateSnapshotIO::parse(is, r, &err)) << err;
 
-    // The driver's gate is `have_<half> && knob`; mirror both terms.
-    const auto restore = [&](bool rxcb, bool shdev) {
+    // The driver's gates are `have_rc && rxcb` and `have_sd`; mirror them.
+    const auto restore = [&](bool rxcb) {
         std::map<std::pair<int, std::string>, LocalCarry> cb;
         std::map<std::string, ShDevCarry> dev;
-        if (!r.rx_cb_carry.empty() && rxcb)  cb  = restoreRxCb(r);
-        if (!r.sh_dev_carry.empty() && shdev) dev = restoreShDev(r);
+        if (!r.rx_cb_carry.empty() && rxcb) cb  = restoreRxCb(r);
+        if (!r.sh_dev_carry.empty())        dev = restoreShDev(r);
         return std::pair<std::size_t, std::size_t>{cb.size(), dev.size()};
     };
-    EXPECT_EQ(restore(true, true),   (std::pair<std::size_t, std::size_t>{2u, 2u}));
-    EXPECT_EQ(restore(true, false),  (std::pair<std::size_t, std::size_t>{2u, 0u}));
-    EXPECT_EQ(restore(false, true),  (std::pair<std::size_t, std::size_t>{0u, 2u}));
-    EXPECT_EQ(restore(false, false), (std::pair<std::size_t, std::size_t>{0u, 0u}));
+    EXPECT_EQ(restore(true),  (std::pair<std::size_t, std::size_t>{2u, 2u}));
+    EXPECT_EQ(restore(false), (std::pair<std::size_t, std::size_t>{0u, 2u}));
 }
 
-TEST(ResumeStationRestoreConfig, DefaultsAreOffAndBothSubSwitchesOn) {
+TEST(ResumeStationRestoreConfig, DefaultsAreOffAndTheRxCbSubSwitchOn) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("defaults", networkConfig(), cfg));
     EXPECT_FALSE(cfg.getNetworkConfig().state_snapshot_station_capture);
     EXPECT_FALSE(cfg.networkResumeStationRestore());
-    // The sub-switches default to true: an ordinary armed resume restores both
-    // halves, and only an attribution leg sets them.
+    // The sub-switch defaults to true: an ordinary armed resume restores both
+    // halves, and only an attribution leg sets it.
     EXPECT_TRUE(cfg.networkResumeStationRestoreRxCb());
-    EXPECT_TRUE(cfg.networkResumeStationRestoreShDev());
 }
 
 TEST(ResumeStationRestoreConfig, CaptureKnobParsesAndDoesNotArmTheReadSide) {
@@ -397,7 +395,7 @@ TEST(ResumeStationRestoreConfig, RestoreWithoutFrameRestoreIsRejected) {
                       "    \"resume_station_restore\": true,\n"), cfg));
 }
 
-TEST(ResumeStationRestoreConfig, ArmedPostureLoadsAndSubSwitchesParse) {
+TEST(ResumeStationRestoreConfig, ArmedPostureLoadsAndTheSubSwitchParses) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("armed",
         networkConfig("    \"state_snapshot_path\": \"state_snapshot.snap\",\n"
@@ -405,11 +403,10 @@ TEST(ResumeStationRestoreConfig, ArmedPostureLoadsAndSubSwitchesParse) {
                       "    \"state_snapshot_station_capture\": true,\n"
                       "    \"resume_frame_restore\": true,\n"
                       "    \"resume_station_restore\": true,\n"
-                      "    \"resume_station_restore_shdev\": false,\n"), cfg));
+                      "    \"resume_station_restore_rxcb\": false,\n"), cfg));
     EXPECT_TRUE(cfg.getNetworkConfig().state_snapshot_station_capture);
     EXPECT_TRUE(cfg.networkResumeStationRestore());
-    EXPECT_TRUE(cfg.networkResumeStationRestoreRxCb());
-    EXPECT_FALSE(cfg.networkResumeStationRestoreShDev());
+    EXPECT_FALSE(cfg.networkResumeStationRestoreRxCb());
     EXPECT_TRUE(cfg.networkResumeFrameRestore());
 }
 

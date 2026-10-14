@@ -220,7 +220,7 @@ int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
     const bool carry_invariant = v.ctx.knobs.carry_invariant;
 
     // Resume event readout (RTB-7(d), RE-4): its wiring is visible only through counters,
-    // so "0 restored / no shock" is stated rather than inferred from absence (invariant #4).
+    // so "0 restored" is stated rather than inferred from absence (invariant #4).
     if (carry_invariant && !config_.getNetworkConfig().state_snapshot_path.empty()) {
         // Provenance of the σ̂₀ seed (RE-1).  Four distinct conditions suppress the seed (no
         // carry restored, calibration off, no 'S,' line, a rejected 'S,' line); the driver
@@ -262,17 +262,14 @@ int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                     seed_st.blob_sigma0_sq, seed_st.blob_rows);
                 break;
         }
-        log->info("Network (RTB-7d resume event): carry restored {}{}; sigma0 [{}] {}; resume "
-                  "shock {}; restored Pᶻ {}.",
+        log->info("Network (RTB-7d resume event): carry restored {}{}; sigma0 [{}] {}; "
+                  "restored Pᶻ {}.",
                   carry_driver.resumeCarryRestored() ? "YES" : "NO",
                   carry_driver.resumeCarryRestored()
                       ? fmt::format(" ({} carried DD at restore)",
                                     carry_driver.resumeCarryChords())
                       : std::string{},
                   NetworkInvariantCarryDriver::resumeSeedStateName(seed_st.state), sigma0_txt,
-                  carry_driver.resumeShockSigmaM() > 0.0
-                      ? fmt::format("APPLIED sigma={:.3f} m", carry_driver.resumeShockSigmaM())
-                      : std::string("NONE"),
                   // The shape that was restored (RTB-7(e)).  Without it the diagonal arm
                   // of the A/B looks the same as the dense one in every log line and
                   // counter (invariant #4).
@@ -291,24 +288,12 @@ int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                       ctx.carry.snap_carry_diagonal
                           ? "DIAGONAL-ONLY (v3 — Sum K_c numbers)"
                           : "dense (v2 — Sum K_c^2 numbers)");
-        // Linearization-frame halves (SPEC_event_harness §21.4, RS-2).  Both are reported
-        // whenever either is armed: an armed reader that re-based nothing and an armed
-        // writer that wrote no rows are the two invariant-#4 cases this line exposes, and
-        // the bare "off" on the other half says which one it is.
-        if (config_.getNetworkConfig().state_snapshot_carry_lin
-            || config_.networkResumeCarryRebase()) {
-            const auto& cc = carry_driver.counters();
-            log->info("Network (RS-2 linearization carry): write {} / read {}; blob carried "
-                      "ZL rows on {} restored block(s); re-based {} carried chord row(s) at "
-                      "the first post-resume build, max |dz| {:.6f} m; {} row(s) marginalized "
-                      "as UN-BASABLE (restored contributors with no ZL row — folding them "
-                      "would assert the writer's x_lin frame).",
-                      config_.getNetworkConfig().state_snapshot_carry_lin ? "ARMED" : "off",
-                      config_.networkResumeCarryRebase() ? "ARMED" : "off",
-                      carry_driver.resumeCarryLinBlocks(),
-                      cc.resume_rebased, cc.resume_rebase_max_dz,
-                      cc.resume_dropped_unbased);
-        }
+        // Linearization-frame carry (SPEC_event_harness §21.4, RS-2), the write half.  The
+        // restored ZL-row count shows whether a resumed blob carried the rows (invariant #4).
+        if (config_.getNetworkConfig().state_snapshot_carry_lin)
+            log->info("Network (RS-2 linearization carry): write ARMED; blob carried ZL rows "
+                      "on {} restored block(s).",
+                      carry_driver.resumeCarryLinBlocks());
     }
     // Datum-continuity halves (SPEC_event_harness §21.7, RS-3).  At function scope, like
     // the coupling-capture readout, and outside the carry_invariant-gated RTB-7(d/e) block
@@ -379,27 +364,26 @@ int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
     // carries run on lineages that do and do not arm each other.  Printed whenever either
     // half is armed: an armed writer that wrote no rows and an armed reader that restored
     // none are the two invariant-#4 cases this line exposes, and the bare "off" on the
-    // other half says which one it is.  The sub-switch states are always named, so an
+    // other half says which one it is.  The rx-CB sub-switch state is always named, so an
     // attribution leg that restored one half can be read from the run-end tail alone.
     if (config_.getNetworkConfig().state_snapshot_station_capture
         || config_.networkResumeStationRestore()) {
         const auto& C = ctx.counters;
-        log->info("Network (RS-6 station restore): write {} / read {} (rxcb {}, shdev {}); "
+        log->info("Network (RS-6 station restore): write {} / read {} (rxcb {}); "
                   "last snapshot carried {} station-layer row(s); restored rx-CB entries "
                   "{}, deviation entries {}.{}",
                   config_.getNetworkConfig().state_snapshot_station_capture ? "ARMED" : "off",
                   config_.networkResumeStationRestore() ? "ARMED" : "off",
                   config_.networkResumeStationRestoreRxCb() ? "on" : "off",
-                  config_.networkResumeStationRestoreShDev() ? "on" : "off",
                   ctx.carry.snap_station_rows_last,
                   C.n_resume_station_rxcb, C.n_resume_station_shdev,
                   (config_.networkResumeStationRestore()
                    && C.n_resume_station_rxcb == 0 && C.n_resume_station_shdev == 0)
                       ? "  ⚠ 0 restored under an ARMED read — the snapshot carried no "
                         "RC / SD rows (a writer without "
-                        "network.state_snapshot_station_capture?), both sub-switches are "
-                        "off, neither carry is armed this run, or no warm resume "
-                        "happened; check the resume log for the RS-6 line."
+                        "network.state_snapshot_station_capture?), neither carry is armed "
+                        "this run, or no warm resume happened; check the resume log for "
+                        "the RS-6 line."
                       : "");
     }
     // Canonical-signal latch (SPEC_event_harness §21.16, RS-8), beside the RS-6 line and

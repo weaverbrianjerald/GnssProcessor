@@ -342,10 +342,6 @@ namespace GnssProcessor {
         /// per-station ZWD posterior every processed epoch, so every snapshot carries Z
         /// rows.  Capture only: no inject, no effect on the solve.
         bool zwd_capture{};
-        /// network.amb_seam_reinflate_var_m2: one-shot variance (m²) added to every
-        /// restored leveling carry at a warm resume (STABILITY target 2, leg C).  Not
-        /// fingerprinted (forward-only resume response policy).  0 = off.
-        double amb_seam_reinflate_var{};
         /// network.resume_frame_restore (SPEC_synthetic_minimum_network §18.10): at a warm
         /// resume, restore the serialized frame state (phase-anchor incumbents and sticky
         /// pin targets, the Q3 clock-anchor per-sat state, the CLK-R held frame), so the
@@ -384,8 +380,7 @@ namespace GnssProcessor {
         /// resume_frame_restore.  Not fingerprinted (forward-only resume response policy).
         /// Off = byte-identical resume (rows parsed into containers nothing reads).
         bool   resume_station_restore{};
-        bool   resume_station_rxcb{};     ///< network.resume_station_restore_rxcb (default true): diagnostic sub-switch of @c resume_station_restore, so one §21.13 attribution leg can restore the rx-CB half alone.
-        bool   resume_station_shdev{};    ///< network.resume_station_restore_shdev (default true): the SH-deviation twin of @c resume_station_rxcb.
+        bool   resume_station_rxcb{};     ///< network.resume_station_restore_rxcb (default true): diagnostic sub-switch of @c resume_station_restore, so one §21.13 attribution leg can restore the T5 deviation half alone.
         /// network.resume_signal_canon_restore (RS-8, SPEC_event_harness §21.16): at a warm
         /// resume, restore each station's per-(constellation, band, C|L) canonical-signal
         /// latch (the snapshot's @c CN rows) into its @c PppModel before the first epoch, so
@@ -441,10 +436,8 @@ namespace GnssProcessor {
         /// (A_s = M_r, shared-neutral) instead of the plain diagonal prior asserted at the
         /// pure conditional variance, which out-votes the Q3 anchored clock priors at the
         /// first fold (§18.11).  The loader requires resume_frame_restore,
-        /// carry_conditional_coupling and carry_coupling_gauge_project, and refuses
-        /// amb_seam_reinflate_var_m2 > 0 (that response changes the row's weight; this one
-        /// changes only its direction).  Not fingerprinted (forward-only resume response
-        /// policy).  Off = byte-identical resume (LocalCarry::coupling stays empty, as the
+        /// carry_conditional_coupling and carry_coupling_gauge_project.  Not fingerprinted
+        /// (forward-only resume response policy).  Off = byte-identical resume (LocalCarry::coupling stays empty, as the
         /// aggregate init leaves it).
         bool   resume_coupling_restore{};
         /// network.readmit_seed_horizon_s: seed-first re-admission (E2), for continuity

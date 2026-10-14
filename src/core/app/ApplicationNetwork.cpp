@@ -646,15 +646,12 @@ int Application::runNetwork() {
     // disarms it without carry_invariant; the && here keeps the driver Cfg
     // self-consistent on any load path.
     carry_cfg.pd_safe = carry_invariant && config_.networkCarryInvariantPdSafe();
-    // Linearization-frame halves of the carry (RS-2, SPEC_event_harness §21.4).
-    // carry_lin captures Σ c·x_lin per chord at every harvest (write side, snapshot only);
-    // carry_rebase re-bases a restored branch onto this run's x_lin at the first post-resume
-    // DD build (read side).  The loader disarms carry_lin without state_snapshot_carry; both
-    // are ANDed with carry_invariant here so the driver Cfg is self-consistent on any load
-    // path.
+    // Linearization-frame carry (RS-2, SPEC_event_harness §21.4): carry_lin captures
+    // Σ c·x_lin per chord at every harvest (write side, snapshot only).  The loader disarms
+    // it without state_snapshot_carry; it is ANDed with carry_invariant here so the driver
+    // Cfg is self-consistent on any load path.
     carry_cfg.carry_lin    = carry_invariant
                              && config_.getNetworkConfig().state_snapshot_carry_lin;
-    carry_cfg.carry_rebase = carry_invariant && config_.networkResumeCarryRebase();
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
     // The emit-layer engines (filter/NetworkRunGroups.hpp), run by networkEmitStore on every
     // emitted epoch:

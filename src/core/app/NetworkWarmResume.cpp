@@ -293,24 +293,6 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         local_carry[key] = makeRestoredLocalCarry(
                             l.value_abs, l.var, l.last_seen_s, l.var_first);
                     }
-                    // Seam-scoped soft refloat of the restored leveling carries (stability
-                    // target 2, leg C).  The h-vintage zero-q levels were levelled under
-                    // the previous run's ZWD realization; against the resume's fresh
-                    // station filters they are a stiff prior of the invariant #1 kind (the
-                    // post-retire ZWD drag, §18).  A one-shot variance add keeps the
-                    // carried value as the prior mean (no refloat from code, no fresh
-                    // station-common iono seeding) and lets the fold re-earn the
-                    // stiffness.  Only the resume path reaches this code; continuous
-                    // epochs do not.
-                    if (ctx.knobs.amb_seam_reinflate_var > 0.0 && !local_carry.empty()) {
-                        for (auto& [key, l] : local_carry)
-                            l.var += ctx.knobs.amb_seam_reinflate_var;
-                        log->info("Network (amb seam re-inflate): +{:.3e} m² added to {} restored "
-                                  "leveling carr{} at the resume seam (one-shot soft refloat; "
-                                  "values kept as prior means).",
-                                  ctx.knobs.amb_seam_reinflate_var, local_carry.size(),
-                                  local_carry.size() == 1 ? "y" : "ies");
-                    }
                     zwd_carry.clear();
                     for (const auto& [idx, l] : snap.zwd_carry)
                         // Same restored-entry convention as the L rows above.  The ZWD
@@ -678,7 +660,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                             "without network.state_snapshot_station_"
                                             "capture, or one without the rx-CB carry)");
                         }
-                        if (have_sd && ctx.knobs.resume_station_shdev) {
+                        if (have_sd) {
                             // Restored as written, without a sentinel: ShDevCarry's own cold
                             // test is `t_s <= 0`, so keeping the writer's harvest stamp makes
                             // the entry read warm, and the epoch's aging pre-pass then ages it
@@ -695,13 +677,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "cold-seeds at the steady state (dev 0, var "
                                       "representation_sigma²) at the seam, which is the "
                                       "SH a₀₀ transient.",
-                                      have_sd
-                                          ? "network.resume_station_restore_shdev is false "
-                                            "(a §21.13 attribution leg)"
-                                          : "the snapshot carries NO SD rows (a writer "
-                                            "without network.state_snapshot_station_"
-                                            "capture, or one without the T5 deviation "
-                                            "carry)");
+                                      "the snapshot carries NO SD rows (a writer "
+                                      "without network.state_snapshot_station_"
+                                      "capture, or one without the T5 deviation "
+                                      "carry)");
                         }
                         if (ctx.counters.n_resume_station_rxcb > 0
                             || ctx.counters.n_resume_station_shdev > 0)
@@ -1243,15 +1222,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             hb1(WarmResumeRefusal::Other,
                                 "the invariant-carry blob could not be restored/bound: " + cerr);
                         } else {
-                            // Event response for the stiff restored carry (RE-2).
-                            std::size_t shocked = 0;
-                            if (nc.state_snapshot_resume_shock_m > 0.0)
-                                shocked = carry_driver.applyResumeShock(
-                                    nc.state_snapshot_resume_shock_m
-                                    * nc.state_snapshot_resume_shock_m);
                             log->info("Network (RTB-7c): BRANCH-FAITHFUL — restored invariant "
                                       "DD carry ({} carried DD), {} sat-vertex + {} group-id map "
-                                      "entries; sigma0 {}; resume shock {}.  Pᶻ shape: {}.  "
+                                      "entries; sigma0 {}.  Pᶻ shape: {}.  "
                                       "Linearization frame: {}.",
                                       carry_driver.resumeCarryChords(),
                                       snap.carry_sat_vertex.size(), snap.carry_group_id.size(),
@@ -1259,10 +1232,6 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                           ? fmt::format("SEEDED {:.4f}",
                                                         carry_driver.resumeSigma0Value())
                                           : std::string("not seeded (v1 blob / calib off)"),
-                                      shocked ? fmt::format("sigma={:.3f} m on {} block(s)",
-                                                            nc.state_snapshot_resume_shock_m,
-                                                            shocked)
-                                              : std::string("none"),
                                       // A diagonal restore looks identical to a dense one
                                       // everywhere else (RTB-7(e), invariant #4).
                                       carry_driver.resumeCarryDiagonal()
@@ -1272,35 +1241,15 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                                         carry_driver.resumeCarryDiagonalBlocks())
                                           : std::string("dense (v1/v2 blob) — the branch "
                                                         "geometry resumes exactly"),
-                                      // Whether the blob carries ZL rows decides whether
-                                      // resume_carry_rebase has anything to act on, and
-                                      // nothing else in this line shows it (RS-2,
-                                      // invariant #4).
+                                      // Whether the blob carries ZL rows; nothing else in
+                                      // this line shows it (RS-2, invariant #4).  Either way
+                                      // the branch folds in the WRITER's frame.
                                       carry_driver.resumeCarryLinBlocks() > 0
                                           ? fmt::format("ZL rows present on {} block(s) — the "
-                                                        "means can be re-based onto this run's "
-                                                        "x_lin ({})",
-                                                        carry_driver.resumeCarryLinBlocks(),
-                                                        config_.networkResumeCarryRebase()
-                                                            ? "resume_carry_rebase ARMED"
-                                                            : "resume_carry_rebase off — the "
-                                                              "branch folds in the WRITER's "
-                                                              "frame")
+                                                        "branch folds in the WRITER's frame",
+                                                        carry_driver.resumeCarryLinBlocks())
                                           : std::string("NO ZL rows — the means are in the "
-                                                        "WRITER's linearization frame and "
-                                                        "cannot be re-based (writer needs "
-                                                        "network.state_snapshot_carry_lin)"));
-                            // Armed with nothing to act on (RS-2, invariant #4): the run reads
-                            // "warm + branch-faithful" and the re-base counters stay 0, and
-                            // this warning states why.
-                            if (config_.networkResumeCarryRebase()
-                                && carry_driver.resumeCarryLinBlocks() == 0)
-                                log->warn("Network (RS-2): network.resume_carry_rebase is armed "
-                                          "but the carry blob carries NO ZL rows — the branch "
-                                          "is NOT re-based and this resume keeps today's "
-                                          "behaviour (every restored chord folds against the "
-                                          "WRITER's x_lin).  Re-write the seed with "
-                                          "network.state_snapshot_carry_lin.");
+                                                        "WRITER's linearization frame"));
                             // Reporting half of the PD-safe restore guard (INC-2c).  A blob
                             // written without pd_safe can carry a corrupt joint lane block
                             // (indefinite Pᶻ, negative diagonals); importing it verbatim would

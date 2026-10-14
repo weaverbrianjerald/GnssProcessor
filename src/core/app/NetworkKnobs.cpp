@@ -117,14 +117,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.zwd_seam_on = config_.networkZwdSeamReseed();
     k.zwd_seam_epochs = config_.networkZwdSeamReseedEpochs();
     k.zwd_seam_q = config_.networkZwdSeamReseedQ();
-    k.amb_seam_reinflate_var = config_.networkAmbSeamReinflateVarM2();
     k.resume_frame_restore   = config_.networkResumeFrameRestore();      // frame state (§18.10)
     k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // coupling rows (§18.12)
     k.resume_datum_restore   = config_.networkResumeDatumRestore();      // datum tree (RS-3, §21.7)
     k.resume_emit_restore    = config_.networkResumeEmitRestore();       // emit engines (RS-5, §21.10)
     k.resume_station_restore = config_.networkResumeStationRestore();    // station layer (RS-6, §21.13)
     k.resume_station_rxcb    = config_.networkResumeStationRestoreRxCb();
-    k.resume_station_shdev   = config_.networkResumeStationRestoreShDev();
     k.resume_signal_canon_restore = config_.networkResumeSignalCanonRestore();  // signal latch (RS-8, §21.16)
     k.resume_border_restore  = config_.networkResumeBorderRestore();     // border covariance (RS-7, §21.14)
     k.resume_rxcb_lin_restore = config_.networkResumeRxCbLinRestore();   // rx-CB x_lin (RS-9, §21.18)

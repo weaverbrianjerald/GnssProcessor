@@ -3187,26 +3187,14 @@ namespace GnssProcessor {
         /// stiff (measured on the field golden: the whole first post-resume solve
         /// discharges through one prior class, @c dd_fold norm 7.8e7 against 616 for
         /// every code observation of 61 stations).  This row is the writer half of the
-        /// repair; @c network.resume_carry_rebase is the reader half.
+        /// repair; its reader half (the RS-2 re-base) was retired, so the row is written
+        /// and parsed only.
         ///
         /// Write side only and format-forward: a reader that finds no @c ZL row behaves
         /// as before, so the knob is not in the warm-resume fingerprint.  Products and
         /// every trace stay byte-identical when armed; only the snapshot gains the rows.
         /// Inert unless @ref state_snapshot_carry.
         bool state_snapshot_carry_lin{ false };
-        /// One-shot resume-event response for the restored stiff carry: σ (m) of the
-        /// variance added to every carried DD's Pᶻ diagonal right after a successful
-        /// carry restore (RTB-7(d) RE-2).  0.0 (default) = off, byte-identical.
-        /// Rationale: the restored means are the branch and are kept; the per-station
-        /// filter layer (deliberately excluded from the snapshot) re-converges over the
-        /// following epochs and pushes real transient tension through the phase rows
-        /// that the restored DD priors make redundant.  Widening the carried variance
-        /// lets the fold absorb that instead of the D5 gate discarding the branch, with
-        /// the gate still armed (Cov(v) inflates too), so invariant #1 is satisfied, not
-        /// bypassed.  Scale: the restored prior already carries q_z·Δt (1e-4·30 s =
-        /// 3e-3 m², σ ≈ 55 mm ≈ 0.29 L1 cycles), so a shock below that has no effect.
-        /// Inert unless @ref state_snapshot_carry.
-        double state_snapshot_resume_shock_m{ 0.0 };
         /// Make any failure to complete a warm resume (missing file, parse failure,
         /// fingerprint mismatch, age gate, emitter-section failure) a hard run error
         /// instead of a warning and a cold start (RTB-7(d) HB-1).  Off by default

@@ -81,13 +81,11 @@ void networkBuildCarryDdPriors(
     std::map<int, NetworkInvariantCarryDriver::GroupInput> groups;
     if (carry_innov_gate) carry_arc_amb_key.clear();   // rebuilt with this call's arcs (D5)
 
-    // The carry driver needs this arc's ambiguity linearization value when either half
-    // of the linearization-frame carry is armed: the write half stores Σ c·x_lin per
-    // chord, and the read half re-bases a restored branch onto it (RS-2,
-    // SPEC_event_harness §21.4).  Nothing else reads it, so with both off the
-    // per-station state copy is not taken.
-    const bool carry_lin_needed = config_.getNetworkConfig().state_snapshot_carry_lin
-                                  || config_.networkResumeCarryRebase();
+    // The carry driver needs this arc's ambiguity linearization value when the
+    // linearization-frame carry is armed: it stores Σ c·x_lin per chord (RS-2,
+    // SPEC_event_harness §21.4).  Nothing else reads it, so with it off the per-station
+    // state copy is not taken.
+    const bool carry_lin_needed = config_.getNetworkConfig().state_snapshot_carry_lin;
     for (size_t i = 0; i < stations.size(); ++i) {
         if (est_index_of[i] < 0) continue;
         const auto& h2l = asm_res[i].h2local;

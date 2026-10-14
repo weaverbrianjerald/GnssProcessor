@@ -2826,15 +2826,7 @@ namespace GnssProcessor {
         network_config_.state_snapshot_carry_lin =
             jval<bool>(json, "network.state_snapshot_carry_lin",
                        "state_snapshot_carry_lin", false);
-        // Resume-event response (RE-2), A/B safety (HB-1) and blob history (BR-1); RTB-7(d).
-        network_config_.state_snapshot_resume_shock_m =
-            jval<double>(json, "network.state_snapshot_resume_shock_m",
-                         "state_snapshot_resume_shock_m", 0.0);
-        if (network_config_.state_snapshot_resume_shock_m < 0.0) {
-            log->warn("Network (RTB-7d): network.state_snapshot_resume_shock_m {} < 0 — "
-                      "clamped to 0 (OFF).", network_config_.state_snapshot_resume_shock_m);
-            network_config_.state_snapshot_resume_shock_m = 0.0;
-        }
+        // A/B safety (HB-1) and blob history (BR-1); RTB-7(d).
         network_config_.state_snapshot_require =
             jval<bool>(json, "network.state_snapshot_require", "state_snapshot_require", false);
         network_config_.state_snapshot_keep_history =
@@ -4708,9 +4700,6 @@ namespace GnssProcessor {
                                      "window whose variance never inflates while reading as "
                                      "armed); use a negative value (the -1 default) to borrow "
                                      "network.zwd_carry_q");
-        network_amb_seam_reinflate_var_m2_ =
-            jval<double>(json, "network.amb_seam_reinflate_var_m2",
-                         "amb_seam_reinflate_var_m2", 0.0);
         // Resume frame restore and post-resume slip warm-up (SPEC_synthetic_minimum_
         // network §18.10).  Both are forward-only resume response policies (not
         // fingerprinted), and both are inert on a run that never resumes.
@@ -4779,18 +4768,6 @@ namespace GnssProcessor {
                     "the shipped repair for the family-sum defect a truncated row leaves "
                     "(Mᵀg_s = −g_r(c)).  Without it the W5 null-space gate can withhold "
                     "every rows-carrying epoch.");
-            if (network_amb_seam_reinflate_var_m2_ > 0.0)
-                throw std::runtime_error(
-                    "network.resume_coupling_restore and "
-                    "network.amb_seam_reinflate_var_m2 > 0 are mutually exclusive.  Under "
-                    "conditional coupling `var` IS the row's pure conditional variance, so "
-                    "inflating it loosens the very row the regressors make border-neutral "
-                    "while the row still asserts Σ M_j·ŝ_prev,j — a combination no "
-                    "continuous epoch produces, and the in-tree precedent runs the other "
-                    "way (NetworkRaim.cpp:771-772 CLEARS the regression whenever it "
-                    "loosens the variance).  SPEC §18.11 rung 3 measured the inflation "
-                    "alone at a 5.13 m consumer walk in h12.  Set "
-                    "amb_seam_reinflate_var_m2 to 0.");
         }
         // Datum restore, the read side of network.state_snapshot_datum_capture (RS-3,
         // SPEC_event_harness §21.7).  Same exemption class as the three restores above:
@@ -4822,18 +4799,15 @@ namespace GnssProcessor {
         // Station-layer restore, the read side of network.state_snapshot_station_capture
         // (RS-6, SPEC_event_harness §21.13).  Same exemption class as the restores
         // above: forward-only resume response policy, inert on a run that never
-        // resumes.  The two sub-switches are diagnostic (default true): they let one
-        // leg of the attribution matrix restore a single half, and they mean nothing
-        // without the read knob itself.
+        // resumes.  The rx-CB sub-switch is diagnostic (default true): it lets one leg
+        // of the attribution matrix restore the T5 deviation half alone, and it means
+        // nothing without the read knob itself.
         network_resume_station_restore_ =
             jval<bool>(json, "network.resume_station_restore", "resume_station_restore",
                        false);
         network_resume_station_restore_rxcb_ =
             jval<bool>(json, "network.resume_station_restore_rxcb",
                        "resume_station_restore_rxcb", true);
-        network_resume_station_restore_shdev_ =
-            jval<bool>(json, "network.resume_station_restore_shdev",
-                       "resume_station_restore_shdev", true);
         // Dense-border restore, the read side of the snapshot's QK/QP records (RS-7,
         // SPEC_event_harness §21.14).  Same exemption class as every restore above:
         // forward-only resume response policy, inert on a run that never resumes.
@@ -4922,22 +4896,6 @@ namespace GnssProcessor {
                 "x_lin(cb)) (ApplicationNetworkAssembly.cpp), so moving x_lin MOVES the "
                 "target and therefore the solve.  Run the RS-9 restore without the datum, "
                 "or the datum without the restore.");
-        // Resume carry re-base (RS-2, SPEC_event_harness §21.4), the read side of
-        // network.state_snapshot_carry_lin, and the same exemption class as the
-        // restores above: forward-only resume response policy, inert without a resume.
-        network_resume_carry_rebase_ =
-            jval<bool>(json, "network.resume_carry_rebase", "resume_carry_rebase", false);
-        if (network_resume_carry_rebase_)
-            log->info("Network (RS-2): resume CARRY RE-BASE armed — at the first DD prior "
-                      "build after a warm resume, every restored chord the build projects is "
-                      "re-based onto THIS run's linearization (ẑ += W·zl_writer − zl_now, "
-                      "with W the cycle-basis projection the build already forms and zl_now "
-                      "this epoch's Σ c·x_lin over the same incidence that forms z_free).  "
-                      "Pᶻ is untouched — an exact frame translation, not a re-weighting.  A "
-                      "component whose restored contributors carry no ZL row is marginalized "
-                      "(born fresh on the diffuse prior) rather than folded frame-wrong, and "
-                      "counted.  A blob with no ZL rows at all leaves today's behaviour and "
-                      "warns.  NOT in the warm-resume fingerprint.");
         // Re-admission continuity: E2 seed-first re-admission and the block re-coupling
         // edge (SPEC_synthetic_minimum_network §18.4, SPEC_amb_iono_split_overcount §7
         // FIRST).  Both default off = byte-identical; neither is fingerprinted (parking
@@ -5037,7 +4995,7 @@ namespace GnssProcessor {
         }
         // Armed/inert status line of the station-layer restore (RS-6, §21.13).  Its
         // prerequisite is checked above, so here it can only be inert for lack of a
-        // snapshot to resume from.  The sub-switches are named only when one is off: an
+        // snapshot to resume from.  The rx-CB sub-switch is named only when it is off: an
         // attribution leg has to describe itself in the log, and the ordinary
         // both-halves arm does not need a clause that says nothing.
         if (network_resume_station_restore_) {
@@ -5057,18 +5015,11 @@ namespace GnssProcessor {
                           "network.state_snapshot_station_capture; a file without them "
                           "leaves each half exactly as today and says so.  Not in the "
                           "warm-resume fingerprint (forward-only resume response policy).",
-                          (network_resume_station_restore_rxcb_
-                           && network_resume_station_restore_shdev_)
+                          network_resume_station_restore_rxcb_
                               ? ""
-                              : (network_resume_station_restore_rxcb_
-                                     ? " (rx-CB half ONLY — resume_station_restore_shdev "
-                                       "false, a §21.13 attribution leg)"
-                                     : network_resume_station_restore_shdev_
-                                           ? " (T5 deviation half ONLY — "
-                                             "resume_station_restore_rxcb false, a §21.13 "
-                                             "attribution leg)"
-                                           : " (⚠ BOTH sub-switches false — the knob is "
-                                             "armed and restores NOTHING)"));
+                              : " (T5 deviation half ONLY — "
+                                "resume_station_restore_rxcb false, a §21.13 "
+                                "attribution leg)");
         }
         // Armed/inert status line of the canonical-signal restore (RS-8, §21.16), beside
         // the RS-6 one.  Its prerequisite is checked above, so here it can only be inert
@@ -8374,26 +8325,12 @@ namespace GnssProcessor {
                               "against a different linearization; a resumed run re-seeds "
                               "every station ambiguity x_lin from code, so without this row "
                               "the restored branch folds wrong by Σ c·Δx_lin on every chord "
-                              "at once.  Reader half: network.resume_carry_rebase.  "
-                              "Format-forward — a reader that finds no ZL row behaves exactly "
+                              "at once.  No reader re-bases against it (the row is "
+                              "written and parsed only).  Format-forward — a reader that finds no ZL row behaves exactly "
                               "as before, so this is NOT in the warm-resume fingerprint; only "
                               "the snapshot bytes change.");
-                if (network_config_.state_snapshot_resume_shock_m > 0.0)
-                    log->info("Network (RTB-7d/RE-2): resume EVENT RESPONSE armed — σ = "
-                              "{:.3f} m added to every restored DD's Pᶻ diagonal at resume "
-                              "(variance {:.4g} m²).  The branch (means + cross-covariance) "
-                              "is kept; the widened own-variance lets the fold absorb the "
-                              "un-restored station layer's re-convergence instead of the D5 "
-                              "gate discarding the branch — gate stays armed (invariant #1).",
-                              network_config_.state_snapshot_resume_shock_m,
-                              network_config_.state_snapshot_resume_shock_m
-                                  * network_config_.state_snapshot_resume_shock_m);
             }
         } else {
-            if (network_config_.state_snapshot_resume_shock_m > 0.0)
-                log->warn("Network (RTB-7d/RE-2): state_snapshot_resume_shock_m {:.3f} is "
-                          "INERT without state_snapshot_carry (nothing is restored to "
-                          "shock).", network_config_.state_snapshot_resume_shock_m);
             if (network_config_.state_snapshot_carry_diagonal) {
                 log->warn("Network (RTB-7e): state_snapshot_carry_diagonal is INERT without "
                           "state_snapshot_carry (no carry blob is written to shape).");
@@ -11494,30 +11431,6 @@ namespace GnssProcessor {
                             "carry row"
                           : "inherited from network.zwd_carry_q — network.zwd_seam_reseed_q "
                             "unset");
-        }
-        if (network_amb_seam_reinflate_var_m2_ != 0.0) {
-            if (network_amb_seam_reinflate_var_m2_ < 0.0) {
-                log->error("Network: network.amb_seam_reinflate_var_m2 must be >= 0 (got {}); a "
-                           "negative variance ADD would deflate the restored carries.",
-                           network_amb_seam_reinflate_var_m2_);
-                return false;
-            }
-            if (network_config_.state_snapshot_path.empty())
-                log->warn("Network (amb seam re-inflate): network.amb_seam_reinflate_var_m2 is set "
-                          "but network.state_snapshot_path is EMPTY — no warm resume can ever "
-                          "happen, so the re-inflation is structurally INERT on this run.");
-            if (!network_phase_leveling_)
-                log->warn("Network (amb seam re-inflate): network.amb_seam_reinflate_var_m2 is set "
-                          "but network.phase_leveling is off — there are no local ambiguity "
-                          "carries to re-inflate; INERT.");
-            log->info("Network (amb seam re-inflate): armed — at a warm resume, every restored "
-                      "phase-leveling local ambiguity carry gets +{:.3e} m² variance (one-shot "
-                      "soft refloat at the seam; the carried value stays as prior mean, the data "
-                      "re-earns the stiffness).  Treats the invariant-#1 drag of h-vintage "
-                      "zero-q carries against fresh station filters (SPEC_synthetic_minimum_"
-                      "network §18).  Deliberately NOT in the warm-resume fingerprint "
-                      "(forward-only resume response policy).",
-                      network_amb_seam_reinflate_var_m2_);
         }
         if (network_cycle_slip_if_phase_td_) {
             if (network_phase_leveling_)

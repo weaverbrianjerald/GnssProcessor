@@ -548,10 +548,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           IF-TD gradient chains are never serialized)
         //   resume response         zwd_seam_reseed, resume_frame_restore,
         //                           resume_slip_warmup_ep, resume_coupling_restore,
-        //                           resume_carry_rebase, resume_d5_warmup_ep,
+        //                           resume_d5_warmup_ep,
         //                           resume_datum_restore (RS-3, §21.7),
         //                           resume_emit_restore (RS-5, §21.10),
-        //                           resume_station_restore{,_rxcb,_shdev} (RS-6, §21.13),
+        //                           resume_station_restore{,_rxcb} (RS-6, §21.13),
         //                           resume_signal_canon_restore (RS-8, §21.16),
         //                           resume_border_restore (RS-7, §21.14),
         //                           resume_rxcb_lin_restore (RS-9, §21.18),

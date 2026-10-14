@@ -1947,20 +1947,15 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"state_snapshot_carry\":" << (nc.state_snapshot_carry ? "true" : "false") << ','
                << "\"state_snapshot_carry_diagonal\":"
                    << (nc.state_snapshot_carry_diagonal ? "true" : "false") << ','
-               // The linearization-frame halves (RS-2), recorded for the same reason as the
-               // diagonal knob: the write half changes only snapshot bytes and the read
-               // half only a resume, so the manifest is the one place an arm describes
-               // itself.  Emitted only when armed, so an unarmed run's manifest bytes are
-               // unchanged (as for inject and adm_screen; the decomposition golden hashes
-               // this file).
-               << ((nc.state_snapshot_carry_lin || config_.networkResumeCarryRebase())
-                       ? fmt::format("\"state_snapshot_carry_lin\":{},"
-                                     "\"resume_carry_rebase\":{},",
-                                     nc.state_snapshot_carry_lin ? "true" : "false",
-                                     config_.networkResumeCarryRebase() ? "true" : "false")
-                       : std::string())
+               // The linearization-frame carry (RS-2), recorded for the same reason as the
+               // diagonal knob: it changes only snapshot bytes, so the manifest is the one
+               // place an arm describes itself.  Emitted only when armed, so an unarmed
+               // run's manifest bytes are unchanged (as for inject and adm_screen; the
+               // decomposition golden hashes this file).
+               << (nc.state_snapshot_carry_lin ? std::string("\"state_snapshot_carry_lin\":true,")
+                                               : std::string())
                // The datum-continuity halves (RS-3, SPEC_event_harness §21.7), armed-only
-               // like the RS-2 pair directly above: the write half changes only snapshot
+               // like the RS-2 field directly above: the write half changes only snapshot
                // bytes and the read half only a resume, so an unarmed run's manifest bytes
                // are unchanged (the decomposition golden hashes this file) while an armed
                // arm describes itself.
@@ -1979,18 +1974,16 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      config_.networkResumeEmitRestore() ? "true" : "false")
                        : std::string())
                // The station-layer continuity halves (RS-6, SPEC_event_harness §21.13)
-               // plus the two diagnostic sub-switches, so that an attribution leg
+               // plus the diagnostic rx-CB sub-switch, so that an attribution leg
                // describes itself; armed-only like the pairs above.
                << ((nc.state_snapshot_station_capture
                     || config_.networkResumeStationRestore())
                        ? fmt::format("\"state_snapshot_station_capture\":{},"
                                      "\"resume_station_restore\":{},"
-                                     "\"resume_station_restore_rxcb\":{},"
-                                     "\"resume_station_restore_shdev\":{},",
+                                     "\"resume_station_restore_rxcb\":{},",
                                      nc.state_snapshot_station_capture ? "true" : "false",
                                      config_.networkResumeStationRestore() ? "true" : "false",
-                                     config_.networkResumeStationRestoreRxCb() ? "true" : "false",
-                                     config_.networkResumeStationRestoreShDev() ? "true" : "false")
+                                     config_.networkResumeStationRestoreRxCb() ? "true" : "false")
                        : std::string())
                // The canonical-signal latch halves (RS-8, SPEC_event_harness §21.16),
                // armed-only like the pairs above.
@@ -2012,8 +2005,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      config_.networkResumeRxCbLinRestore() ? "true" : "false")
                        : std::string())
                << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
-               << fmt::format("\"state_snapshot_resume_shock_m\":{},",
-                              nc.state_snapshot_resume_shock_m)
                << "\"estimate_sat_code_bias\":" << (config_.estimateNetworkSatCodeBias() ? "true" : "false") << ','
                << "\"estimate_iono_sh\":" << (config_.estimateNetworkIonoSh() ? "true" : "false") << ','
                << "\"phase_leveling\":" << (pl_on ? "true" : "false") << ','

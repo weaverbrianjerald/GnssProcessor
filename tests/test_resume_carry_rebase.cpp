@@ -2,8 +2,7 @@
  * @file test_resume_carry_rebase.cpp
  * @brief The linearization frame of the carry blob (RS-2,
  *        docs/SPEC_event_harness.md §21.4): @c network.state_snapshot_carry_lin
- *        (the @c ZL row) and @c network.resume_carry_rebase (the re-base at the
- *        first post-resume build).
+ *        (the @c ZL row), and the post-resume D5 warm-up window (RS-2b).
  *
  * ## The case this file pins
  *
@@ -17,36 +16,24 @@
  * the first post-resume solve discharges through the `dd_fold` prior class and the
  * SH health gate then withholds every epoch.
  *
- * The repair is a frame translation in two halves, both off by default: the writer
- * stores @f$z_\ell=\sum c\,x_{\rm lin}@f$ per chord (one @c ZL row per block, beside
- * @c Z), and the first DD prior build after a restore adds
- * @f$W z_{\ell,\rm writer}-z_{\ell,\rm now}@f$ to the projected prior means, with
- * @f$W@f$ the cycle-basis projection the build already forms.  @f$P^z@f$ is untouched.
+ * The repair was a frame translation in two halves.  The writer half stays (off by
+ * default): it stores @f$z_\ell=\sum c\,x_{\rm lin}@f$ per chord, one @c ZL row per
+ * block beside @c Z.  The reader half (the re-base at the first post-resume build,
+ * @c network.resume_carry_rebase) was retired; a restored @c ZL row is parsed and
+ * counted, and the branch folds in the writer's frame.
  *
  * ## The cases
  *
- * 1. **RoundTripRebasesToTheSameAbsoluteDd**: the main case.  Two blocks are
- *    harvested against a known @c x_lin, serialized with the @c ZL rows, restored,
- *    and re-based against a shifted @c x_lin.  The shift is placed on one arc, so the
- *    predicted correction is exact and per chord (a chord whose fundamental cycle
- *    misses that arc does not move).  A uniform shift would cancel through
- *    @f$\sum c=0@f$ and would pass even if the re-base did nothing.  @f$P^z@f$ is
- *    asserted byte-equal, and an unshifted control asserts that the re-base is the
- *    identity when the two frames agree.
- * 2. **UnbasableContributorIsMarginalizedNotFolded**: the invariant-#7 edge.  A
- *    restored block that is marked unbased but carries no @c ZL row cannot be
- *    re-based; its chords take the ordinary birth path (diffuse prior, zero prior
- *    mean) instead of folding the writer's frame, and the drop is counted.  Without
- *    the count the behaviour cannot be told apart from a chord that had no
- *    predecessor.
- * 3. **LegacyBlobRestoresUntouchedAndRebasesNothing**: the format-forward contract.
+ * 1. **ZlRowsRoundTripThroughTheBlob**: two blocks harvested with the write knob armed
+ *    serialize their @c ZL rows, and a restore counts both blocks and keeps the means
+ *    and @f$P^z@f$ (off-diagonal included) verbatim.
+ * 2. **LegacyBlobRestoresUntouchedAndRebasesNothing**: the format-forward contract.
  *    A blob with no @c ZL rows (any snapshot written without the write knob)
- *    restores the stored means unchanged, reports zero re-basable blocks, and
- *    re-bases nothing even with the read knob armed.  The run-end line exists to
- *    make this armed-but-inert case visible (standing invariant #4).
- * 4. **WriteKnobOffEmitsNoZlRow**: the byte-identity half.  With the write knob off
+ *    restores the stored means unchanged, reports zero @c ZL blocks, and a build
+ *    against a different linearization carries the means unchanged.
+ * 3. **WriteKnobOffEmitsNoZlRow**: the byte-identity half.  With the write knob off
  *    the blob carries no @c ZL row, so a snapshot does not change.
- * 5. **DiagnosticOnlyWindowCountsTheTripButKeepsTheCarry**: the
+ * 4. **DiagnosticOnlyWindowCountsTheTripButKeepsTheCarry**: the
  *    @c network.resume_d5_warmup_ep window (RS-2b, §21.6 of the spec).  Three arms on one noise
  *    stream (gate off, gate on, gate on and diagnostic-only) are warmed together and
  *    then given the same unsignalled 12-cycle jump.  The main assertion is that the
@@ -106,7 +93,7 @@ std::vector<ArcKey> chordsOf(int R, int S) {
 
 /// One group's arcs for @ref NetworkInvariantCarryDriver::buildDdPriors.  Every arc
 /// resolves to a live (station, column) so every chord is foldable; @p lin gives the
-/// per-arc linearization value the RS-2 machinery reads.
+/// per-arc linearization value the RS-2 write half reads.
 NetworkInvariantCarryDriver::GroupInput makeGroup(
     int key, int R, int S, const std::map<ArcKey, double>& lin) {
     NetworkInvariantCarryDriver::GroupInput g;
@@ -135,11 +122,10 @@ std::map<ArcKey, double> linMap(int R, int S, double base) {
     return m;
 }
 
-NetworkInvariantCarryDriver::Config rs2Cfg(bool write, bool read) {
+NetworkInvariantCarryDriver::Config rs2Cfg(bool write) {
     NetworkInvariantCarryDriver::Config c;
     c.qz = 0.0;                 // constant DDs: no time update to confound the frame test
     c.carry_lin = write;
-    c.carry_rebase = read;
     return c;
 }
 
@@ -154,39 +140,31 @@ void seedBlock(NetworkInvariantCarryDriver& d, int group, int R, int S,
     const std::vector<ArcKey> arcs_v = allArcs(R, S);
     d.seedCarriedForTest(group, chordsOf(R, S), z, Pz,
                          verts, std::set<ArcKey>(arcs_v.begin(), arcs_v.end()));
-    if (zl) d.seedCarriedLinForTest(group, *zl, /*unbased=*/false);
+    if (zl) d.seedCarriedLinForTest(group, *zl);
 }
 
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// 1.  The round trip: harvested at x_lin = A, restored, re-based at A + δ, and the
-//     absolute DD (ẑ + zl) is unchanged.  δ is per arc, so the correction is
-//     chord-specific and a do-nothing implementation cannot pass.
+// 1.  The write half round trip: harvested with the write knob armed, the blob
+//     carries one ZL row per block, and the restore counts them and keeps the
+//     means and Pᶻ verbatim.
 // ---------------------------------------------------------------------------
-TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
+TEST(ResumeCarryRebaseTest, ZlRowsRoundTripThroughTheBlob) {
     constexpr int R = 2, S = 3;                 // 2 chords: (1,1) and (1,2)
     const std::vector<ArcKey> ch = chordsOf(R, S);
     ASSERT_EQ(ch.size(), 2u);
     const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
 
-    const double kBase = 4.0;                   // the writer's x_lin on every arc
-    const double kDelta = 1.75;                 // the shift, on one arc only
-
-    // --- writer: two blocks (two groups), means and Pᶻ known, ZL captured ------
     Eigen::VectorXd z0(K);  z0 << 0.25, -0.75;
     Eigen::VectorXd z1(K);  z1 << 1.50,  2.25;
     Eigen::MatrixXd Pz0 = Eigen::MatrixXd::Zero(K, K);
     Pz0.diagonal() << 0.04, 0.09;
     Pz0(0, 1) = Pz0(1, 0) = 0.01;               // a real off-diagonal: Pᶻ must survive verbatim
     const Eigen::MatrixXd Pz1 = 2.0 * Pz0;
-
-    // zl over the writer's frame: every arc at kBase ⇒ Σ c·x_lin = 0 (Σ c = 0 on a DD
-    // cycle).  That is the correct writer value here, and it is why the reader's shift
-    // has to be non-uniform for this test to discriminate.
     const Eigen::VectorXd zl_w = Eigen::VectorXd::Zero(K);
 
-    NetworkInvariantCarryDriver src(rs2Cfg(/*write=*/true, /*read=*/false));
+    NetworkInvariantCarryDriver src(rs2Cfg(/*write=*/true));
     seedBlock(src, 0, R, S, z0, Pz0, &zl_w);
     seedBlock(src, 7, R, S, z1, Pz1, &zl_w);
 
@@ -196,111 +174,29 @@ TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
     EXPECT_NE(blob.find("\nZL,"), std::string::npos)
         << "the write knob is armed but no ZL row was emitted";
 
-    // --- reader: restore, then build against a shifted linearization -----------
-    NetworkInvariantCarryDriver dst(rs2Cfg(/*write=*/false, /*read=*/true));
+    NetworkInvariantCarryDriver dst(rs2Cfg(/*write=*/false));
     std::istringstream is(blob);
     std::string err;
     ASSERT_TRUE(dst.restoreCarry(is, &err)) << err;
     EXPECT_EQ(dst.resumeCarryLinBlocks(), 2);
-
-    // δ on the chord arc (1,1) only.  Its own fundamental cycle carries it at +1
-    // (ZComponent::fundamentalCycle seeds the chord in reference orientation), and the
-    // cycle of (1,2) does not contain it at all, so the prediction is
-    //     chord (1,1): ẑ -= δ        chord (1,2): unchanged.
-    std::map<ArcKey, double> lin_now = linMap(R, S, kBase);
-    lin_now[ArcKey(rxV(1), satV(1))] = kBase + kDelta;
-
-    std::vector<NetworkInvariantCarryDriver::GroupInput> groups{
-        makeGroup(0, R, S, lin_now), makeGroup(7, R, S, lin_now)};
-    const auto blocks = dst.buildDdPriors(groups);
-    ASSERT_EQ(blocks.size(), 2u);
-
-    const auto& cc = dst.counters();
-    EXPECT_EQ(cc.resume_rebased, 4);            // 2 chords × 2 blocks
-    EXPECT_EQ(cc.resume_dropped_unbased, 0);
-    EXPECT_NEAR(cc.resume_rebase_max_dz, kDelta, 1e-12);
-
-    for (std::size_t b = 0; b < blocks.size(); ++b) {
-        const Eigen::VectorXd& want = (b == 0) ? z0 : z1;
-        const Eigen::MatrixXd& wantP = (b == 0) ? Pz0 : Pz1;
-        ASSERT_EQ(blocks[b].zhat.size(), K);
-        EXPECT_NEAR(blocks[b].zhat(0), want(0) - kDelta, 1e-12)
-            << "block " << b << ": the shifted arc's chord was not re-based";
-        EXPECT_NEAR(blocks[b].zhat(1), want(1), 1e-12)
-            << "block " << b << ": a chord whose cycle misses the shifted arc moved";
-        // Pᶻ is invariant under a frame translation, and the projection here is the
-        // identity (the tree and chord set are unchanged), so Pᶻ comes through
-        // verbatim, off-diagonal included.
-        for (Eigen::Index i = 0; i < K; ++i)
-            for (Eigen::Index j = 0; j < K; ++j)
-                EXPECT_DOUBLE_EQ(blocks[b].Pz(i, j), wantP(i, j))
-                    << "block " << b << " Pz(" << i << "," << j << ") moved";
-    }
-
-    // Control: the same restore built against the writer's own linearization is the
-    // identity.  A re-base that shifts an already-correct frame is as wrong as one that
-    // does not shift a stale one.
-    NetworkInvariantCarryDriver ctl(rs2Cfg(false, true));
-    std::istringstream is2(blob);
-    ASSERT_TRUE(ctl.restoreCarry(is2, &err)) << err;
-    std::vector<NetworkInvariantCarryDriver::GroupInput> g_same{
-        makeGroup(0, R, S, linMap(R, S, kBase)), makeGroup(7, R, S, linMap(R, S, kBase))};
-    const auto ctl_blocks = ctl.buildDdPriors(g_same);
-    ASSERT_EQ(ctl_blocks.size(), 2u);
-    for (Eigen::Index i = 0; i < K; ++i) {
-        EXPECT_DOUBLE_EQ(ctl_blocks[0].zhat(i), z0(i));
-        EXPECT_DOUBLE_EQ(ctl_blocks[1].zhat(i), z1(i));
+    for (int grp : {0, 7}) {
+        const Eigen::VectorXd& want = (grp == 0) ? z0 : z1;
+        const Eigen::MatrixXd& wantP = (grp == 0) ? Pz0 : Pz1;
+        for (Eigen::Index i = 0; i < K; ++i) {
+            double zd = 0, vd = 0;
+            ASSERT_TRUE(dst.carriedDdForTest(grp, ch[static_cast<std::size_t>(i)], zd, vd));
+            EXPECT_DOUBLE_EQ(zd, want(i)) << "group " << grp << " chord " << i;
+            EXPECT_DOUBLE_EQ(vd, wantP(i, i)) << "group " << grp << " chord " << i;
+        }
+        double cd = 0;
+        ASSERT_TRUE(dst.carriedCrossForTest(grp, ch[0], ch[1], cd));
+        EXPECT_DOUBLE_EQ(cd, wantP(0, 1)) << "group " << grp;
     }
 }
 
 // ---------------------------------------------------------------------------
-// 2.  A restored block that is marked unbased but carries no ZL row cannot be
-//     re-based.  Its chords take the birth path (prior mean 0, diffuse Pᶻ) rather
-//     than fold the writer's frame, and the drop is counted.
-// ---------------------------------------------------------------------------
-TEST(ResumeCarryRebaseTest, UnbasableContributorIsMarginalizedNotFolded) {
-    constexpr int R = 2, S = 3;
-    const std::vector<ArcKey> ch = chordsOf(R, S);
-    const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
-
-    Eigen::VectorXd z(K);  z << 0.25, -0.75;
-    Eigen::MatrixXd Pz = Eigen::MatrixXd::Zero(K, K);
-    Pz.diagonal() << 0.04, 0.09;
-
-    NetworkInvariantCarryDriver d(rs2Cfg(/*write=*/false, /*read=*/true));
-    // Unbased with no zl: the state a reader would be in if the blob's frame were
-    // asserted but its rows were missing.  seedCarriedLinForTest with an empty vector is
-    // the only way to reach it from a test.  restoreCarry does not produce it (it sets
-    // unbased only when it parsed a full ZL row); the guard covers any other path.
-    std::set<int> verts;
-    for (int r = 0; r < R; ++r) verts.insert(rxV(r));
-    for (int s = 0; s < S; ++s) verts.insert(satV(s));
-    const std::vector<ArcKey> arcs_v = allArcs(R, S);
-    d.seedCarriedForTest(0, ch, z, Pz, verts,
-                         std::set<ArcKey>(arcs_v.begin(), arcs_v.end()));
-    d.seedCarriedLinForTest(0, Eigen::VectorXd(), /*unbased=*/true);
-
-    std::vector<NetworkInvariantCarryDriver::GroupInput> groups{
-        makeGroup(0, R, S, linMap(R, S, 4.0))};
-    const auto blocks = d.buildDdPriors(groups);
-    ASSERT_EQ(blocks.size(), 1u);
-
-    const auto& cc = d.counters();
-    EXPECT_EQ(cc.resume_rebased, 0);
-    EXPECT_EQ(cc.resume_dropped_unbased, K)
-        << "the un-re-basable chords were not counted as marginalized";
-    EXPECT_EQ(cc.chords_born, K) << "they must take the ordinary birth path";
-    EXPECT_EQ(cc.chords_carried, 0);
-    for (Eigen::Index i = 0; i < K; ++i) {
-        EXPECT_DOUBLE_EQ(blocks[0].zhat(i), 0.0)
-            << "chord " << i << " folded a prior mean it had no frame for";
-        EXPECT_GT(blocks[0].Pz(i, i), 1.0e3) << "chord " << i << " is not diffuse";
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 3.  Format-forward: a blob with no ZL rows restores the stored means untouched,
-//     reports nothing re-basable, and re-bases nothing even with the read knob armed.
+// 2.  Format-forward: a blob with no ZL rows restores the stored means untouched,
+//     reports no ZL block, and the build carries the means unchanged.
 // ---------------------------------------------------------------------------
 TEST(ResumeCarryRebaseTest, LegacyBlobRestoresUntouchedAndRebasesNothing) {
     constexpr int R = 2, S = 3;
@@ -311,14 +207,14 @@ TEST(ResumeCarryRebaseTest, LegacyBlobRestoresUntouchedAndRebasesNothing) {
     Eigen::MatrixXd Pz = Eigen::MatrixXd::Zero(K, K);
     Pz.diagonal() << 0.04, 0.09;
 
-    NetworkInvariantCarryDriver src(rs2Cfg(/*write=*/false, /*read=*/false));   // legacy writer
+    NetworkInvariantCarryDriver src(rs2Cfg(/*write=*/false));   // legacy writer
     seedBlock(src, 0, R, S, z, Pz, /*zl=*/nullptr);
     std::ostringstream os;
     src.serializeCarry(os);
     const std::string blob = os.str();
     EXPECT_EQ(blob.find("\nZL,"), std::string::npos) << "a legacy blob must carry no ZL row";
 
-    NetworkInvariantCarryDriver dst(rs2Cfg(/*write=*/false, /*read=*/true));
+    NetworkInvariantCarryDriver dst(rs2Cfg(/*write=*/false));
     std::istringstream is(blob);
     std::string err;
     ASSERT_TRUE(dst.restoreCarry(is, &err)) << err;
@@ -329,23 +225,19 @@ TEST(ResumeCarryRebaseTest, LegacyBlobRestoresUntouchedAndRebasesNothing) {
         EXPECT_DOUBLE_EQ(zd, z(i)) << "a legacy restore must not touch the means";
     }
 
-    // The build against a different linearization still carries the means unchanged:
-    // armed, but with nothing to re-base from, the unarmed behaviour.
+    // The build against a different linearization still carries the means unchanged.
     std::map<ArcKey, double> lin_now = linMap(R, S, 4.0);
     lin_now[ArcKey(rxV(1), satV(1))] = 9.0;
     std::vector<NetworkInvariantCarryDriver::GroupInput> groups{makeGroup(0, R, S, lin_now)};
     const auto blocks = dst.buildDdPriors(groups);
     ASSERT_EQ(blocks.size(), 1u);
-    const auto& cc = dst.counters();
-    EXPECT_EQ(cc.resume_rebased, 0);
-    EXPECT_EQ(cc.resume_dropped_unbased, 0);
-    EXPECT_EQ(cc.chords_carried, K);
+    EXPECT_EQ(dst.counters().chords_carried, K);
     for (Eigen::Index i = 0; i < K; ++i)
         EXPECT_DOUBLE_EQ(blocks[0].zhat(i), z(i));
 }
 
 // ---------------------------------------------------------------------------
-// 4.  Byte-identity half: with the write knob off the harvest captures no zl, so the
+// 3.  Byte-identity half: with the write knob off the harvest captures no zl, so the
 //     blob a run writes does not change.
 // ---------------------------------------------------------------------------
 TEST(ResumeCarryRebaseTest, WriteKnobOffEmitsNoZlRow) {
@@ -354,7 +246,7 @@ TEST(ResumeCarryRebaseTest, WriteKnobOffEmitsNoZlRow) {
     lin[ArcKey(rxV(1), satV(1))] = 11.0;
 
     for (const bool write : {false, true}) {
-        NetworkInvariantCarryDriver d(rs2Cfg(write, /*read=*/false));
+        NetworkInvariantCarryDriver d(rs2Cfg(write));
         std::vector<NetworkInvariantCarryDriver::GroupInput> groups{makeGroup(0, R, S, lin)};
         const auto blocks = d.buildDdPriors(groups);
         ASSERT_EQ(blocks.size(), 1u);
@@ -362,12 +254,11 @@ TEST(ResumeCarryRebaseTest, WriteKnobOffEmitsNoZlRow) {
         // both arms; the write knob only captures and does not touch the fold.
         for (Eigen::Index i = 0; i < blocks[0].zhat.size(); ++i)
             EXPECT_DOUBLE_EQ(blocks[0].zhat(i), 0.0) << "write=" << write;
-        EXPECT_EQ(d.counters().resume_rebased, 0) << "write=" << write;
     }
 }
 
 // ---------------------------------------------------------------------------
-// 5.  The diagnostic-only D5 window (RS-2b, §21.6 of SPEC_event_harness).  A chord
+// 4.  The diagnostic-only D5 window (RS-2b, §21.6 of SPEC_event_harness).  A chord
 //     that trips the gate while Config::innov_diagnostic_only is set is counted and
 //     reported (so it reaches the epoch's n_d5_flags) and
 //     otherwise left alone: prior mean kept, Pᶻ row/col kept, re-tap counter not

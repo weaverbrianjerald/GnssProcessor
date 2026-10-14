@@ -337,8 +337,8 @@ TEST(NetworkInvariantCarryDriverTest, SerializeRestoreRoundTripIsExact) {
 }
 
 // ---------------------------------------------------------------------------
-// Resume event: v2/v1 blob, reset before restore, binding validation, and the
-// one-shot Pz resume shock.  (RTB-7(d) G1)
+// Resume event: v2/v1 blob, reset before restore and binding validation.
+// (RTB-7(d) G1)
 // ---------------------------------------------------------------------------
 namespace {
 /// Minimal seeded driver: one component, K chords, known z/Pz.  Returns the chords.
@@ -560,28 +560,6 @@ TEST(NetworkInvariantCarryDriverTest, ValidateCarryBindingRejectsUnboundVertices
     EXPECT_FALSE(d.validateCarryBinding(3, sats, /*group_ids=*/{}, &err))
         << "unknown group id must be rejected";
     EXPECT_FALSE(err.empty());
-}
-
-TEST(NetworkInvariantCarryDriverTest, ApplyResumeShockAddsVarianceToDiagonalOnly) {
-    Eigen::VectorXd z; Eigen::MatrixXd Pz;
-    NetworkInvariantCarryDriver d;
-    const std::vector<ArcKey> ch = seedSimple(d, 0, z, Pz);
-    ASSERT_GE(ch.size(), 2u);
-    double z0 = 0, v0 = 0, c0 = 0;
-    ASSERT_TRUE(d.carriedDdForTest(0, ch[0], z0, v0));
-    ASSERT_TRUE(d.carriedCrossForTest(0, ch[0], ch[1], c0));
-
-    const double sigma = 0.2, var = sigma * sigma;
-    EXPECT_EQ(d.applyResumeShock(var), 1u);
-    double z1 = 0, v1 = 0, c1 = 0;
-    ASSERT_TRUE(d.carriedDdForTest(0, ch[0], z1, v1));
-    ASSERT_TRUE(d.carriedCrossForTest(0, ch[0], ch[1], c1));
-    EXPECT_DOUBLE_EQ(z1, z0)        << "the MEAN is the branch — the shock must not move it";
-    EXPECT_NEAR(v1, v0 + var, 1e-12) << "diagonal must gain exactly shock^2";
-    EXPECT_DOUBLE_EQ(c1, c0)        << "cross-covariance (branch geometry) must be untouched";
-    EXPECT_NEAR(d.resumeShockSigmaM(), sigma, 1e-12);
-
-    EXPECT_EQ(d.applyResumeShock(0.0), 0u) << "OFF must be a no-op";
 }
 
 // ---------------------------------------------------------------------------

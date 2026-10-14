@@ -239,7 +239,7 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
     bool   saw_seed_line = false;                   // an S line was present (RE-1)
     long long n_diag_blocks = 0;                    // blocks read from a PD row (RTB-7(e))
     long long n_rebirth_blocks = 0;                 // blocks rebirthed at restore (PD-safe INC-2c)
-    long long n_lin_blocks = 0;                     // blocks read with a ZL row, re-basable (RS-2)
+    long long n_lin_blocks = 0;                     // blocks read with a ZL row (RS-2)
     std::vector<CarriedBlock> restored;
     while (std::getline(is, line)) {
         line = chomp(line);
@@ -309,9 +309,8 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
                 return fail("carry: bad Z value");
         // Optional ZL row: the writer's linearization DD, Σ c·x_lin.  One line of lookahead:
         // read the next line once and hand it to the Pᶻ parse below if it is not a ZL row.
-        // A ZL row marks the block unbased (to be re-based against the live x_lin); without
-        // one the block stays based and is carried unchanged, as there is nothing to re-base
-        // from. (RS-2)
+        // The row is restored and counted; the block is carried unchanged either way (no
+        // reader re-bases against it). (RS-2)
         bool have_lookahead = false;
         if (zdim > 0) {
             if (!std::getline(is, line)) return fail("carry: truncated after Z");
@@ -323,7 +322,6 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
                 for (long long i = 0; i < zdim; ++i)
                     if (!parseDbl(lf[static_cast<std::size_t>(i + 1)], b.zl(i)))
                         return fail("carry: bad ZL value");
-                b.unbased = true;
                 ++n_lin_blocks;
             } else {
                 have_lookahead = true;   // `line` already holds the P / PD row
@@ -438,21 +436,6 @@ bool NetworkInvariantCarryDriver::validateCarryBinding(int n_stations,
     return true;
 }
 
-std::size_t NetworkInvariantCarryDriver::applyResumeShock(double var_m2) {
-    if (!(var_m2 > 0.0)) return 0;              // off: byte-identical
-    std::size_t n = 0;
-    for (CarriedBlock& b : carried_) {
-        if (b.Pz.rows() <= 0) continue;
-        // Diagonal only: the restored means and the cross-covariance geometry (the
-        // branch) are untouched; each carried DD's own variance is widened for the
-        // station-layer re-convergence window.
-        b.Pz.diagonal().array() += var_m2;
-        ++n;
-    }
-    resume_shock_sigma_m_ = std::sqrt(var_m2);
-    return n;
-}
-
 void NetworkInvariantCarryDriver::beginEpoch(double dt_s, double content_s, bool clean) {
     // Advance the σ̂₀² accumulator's exponential forgetting once per epoch, before this
     // epoch's rows are folded in installPosterior.  Independent of q_z. (D5 v2)
@@ -555,18 +538,10 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
     // Per previous block, the number of new components it contributes to (> 1 on a split).
     std::vector<int> prev_hit(prev.size(), 0);
 
-    // Whether this build needs the per-arc linearization.  The write knob (carry_lin) needs
-    // it at every harvest, since serializeCarry stores it; the read knob (carry_rebase) needs
-    // it while a restored block is still unbased.  With both off, zl stays empty and none of
-    // the linearization code below runs. (RS-2)
-    const bool lin_on = cfg_.carry_lin || cfg_.carry_rebase;
-    // Build-local re-base tallies, published to counters_ at the end of this call and only
-    // when the re-base fired.  The re-base runs on the first build after a restore; a
-    // within-epoch rebuild (the RAIM re-solve) recomputes the same numbers from the same
-    // `carried_`, and later epochs have nothing unbased left.  Accumulating would therefore
-    // double-count, and clearing unconditionally would erase the value the run-end line reports.
-    long long rb_n = 0, rb_drop = 0;
-    double    rb_max_dz = 0.0;
+    // Whether this build needs the per-arc linearization: the write knob (carry_lin) needs it
+    // at every harvest, since serializeCarry stores it.  Off, zl stays empty and none of the
+    // linearization code below runs. (RS-2)
+    const bool lin_on = cfg_.carry_lin;
 
     for (const GroupInput& g : groups) {
         // --- (1) Assemble this epoch's graph for the group. -------------------
@@ -655,41 +630,6 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                     off += k;
                 }
             }
-            // --- The contributors' writer-frame linearization DDs, concatenated in the
-            // z_old order above (RS-2).  `rebase_here` is true only when the component draws
-            // on a restored, unbased block and every contributor carries a usable ZL row.
-            // `rebase_blocked` covers the remaining unbased case, where no exact re-base
-            // exists; folding such a block would assert the writer's x_lin frame, so its
-            // chords are marginalized (born fresh) instead.  A based contributor's ẑ is
-            // already in this run's frame, so a component that mixes based and unbased
-            // predecessors has no single correction (one new chord's cycle can draw on
-            // both).  The condition is therefore all-or-nothing: every contributor unbased
-            // and carrying a usable ZL row.  At the first post-resume build every
-            // contributor comes from the same restoreCarry, so the mixed case is not expected
-            // in practice; it is refused rather than approximated.
-            bool any_unbased = false, rebasable = true;
-            Eigen::VectorXd zl_old;
-            if (cfg_.carry_rebase && n_old > 0) {
-                for (const CarriedBlock* ob : contributors) {
-                    const Eigen::Index k = static_cast<Eigen::Index>(ob->chords.size());
-                    if (k == 0) continue;   // contributes no column to z_old / zl_old
-                    if (ob->unbased) any_unbased = true; else rebasable = false;
-                    if (ob->zl.size() != k) rebasable = false;
-                }
-                if (any_unbased && rebasable) {
-                    zl_old = Eigen::VectorXd::Zero(n_old);
-                    Eigen::Index off = 0;
-                    for (const CarriedBlock* ob : contributors) {
-                        const Eigen::Index k = static_cast<Eigen::Index>(ob->chords.size());
-                        if (k == 0) continue;
-                        zl_old.segment(off, k) = ob->zl;
-                        off += k;
-                    }
-                }
-            }
-            const bool rebase_here    = cfg_.carry_rebase && any_unbased && rebasable
-                                        && zl_old.size() == n_old;
-            const bool rebase_blocked = cfg_.carry_rebase && any_unbased && !rebase_here;
 
             // Map an old chord arc → its column index in the old basis.
             std::map<ArcKey, Eigen::Index> old_col;
@@ -743,15 +683,6 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 if (would_carry)
                     for (const auto& [arc, coeff] : cyc)
                         if (!A_old.count(arc)) { would_carry = false; break; }
-                // An unbased contributor that cannot be re-based (no usable ZL row, or mixed
-                // with based contributors) is not folded: folding would assert the writer's
-                // linearization frame on a run that re-seeded every x_lin from code.  The
-                // chord is marginalized instead: it takes the ordinary birth path (diffuse
-                // prior, data-only tap-off) and is counted. (RS-2)
-                if (rebase_blocked && would_carry) {
-                    would_carry = false;
-                    ++rb_drop;
-                }
                 bool slip_in_cycle = false;
                 if (!slipped_arcs.empty())
                     for (const auto& [arc, coeff] : cyc)
@@ -811,34 +742,6 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                     if (W.col(j).isZero(0.0)) ++counters_.chords_marg_perchord;
             }
 
-            // --- Re-base a restored branch onto this run's linearization (RS-2). --------
-            // The stored mean is the correction-frame DD ẑ = Z − zl, with Z the arc-space
-            // absolute DD.  The projection W is a cycle-basis change and does not depend on
-            // the frame: Z_new = W·Z_old exactly.  Hence
-            //     ẑ_new_correct = Z_new − zl_now = (W·ẑ_old) + (W·zl_writer) − zl_now,
-            // which is the correction below.  The writer's spanning tree is not serialized,
-            // and this form does not need it: the re-base uses the projection instead of
-            // recomputing the writer's cycles.  It is applied to the emitted block, never to
-            // carried_, so a within-epoch rebuild is idempotent.  Fresh rows are skipped: their
-            // prior is the diffuse zero-mean birth, already in this run's frame.  Pᶻ is not
-            // changed, since an exact translation does not change the weights.
-            auto applyRebase = [&](Eigen::VectorXd& zh, const Eigen::MatrixXd& Wb,
-                                   const Eigen::VectorXd& zl_old_half,
-                                   const std::vector<double>& zl_now,
-                                   const std::vector<char>& mask) {
-                if (!rebase_here || zh.size() == 0) return;
-                const Eigen::VectorXd proj = Wb * zl_old_half;
-                for (Eigen::Index i = 0; i < zh.size(); ++i) {
-                    if (static_cast<std::size_t>(i) >= mask.size() || !mask[static_cast<std::size_t>(i)])
-                        continue;
-                    if (static_cast<std::size_t>(i) >= zl_now.size()) continue;
-                    const double d = proj(i) - zl_now[static_cast<std::size_t>(i)];
-                    zh(i) += d;
-                    ++rb_n;
-                    if (std::abs(d) > rb_max_dz) rb_max_dz = std::abs(d);
-                }
-            };
-
             // ---- Emission: one DD-prior block per component. ----
             NetworkNormalEquations::DdPriorBlock blk;
             {
@@ -854,7 +757,6 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                         blk.Pz(i, i) += cfg_.fresh_prior_var;
                 blk.Pz = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
             }
-            applyRebase(blk.zhat, W, zl_old, zl_rows, fold_carried);   // re-base carried rows (RS-2)
 
             Eigen::VectorXd blk_zhat = blk.zhat;   // prior means for the install-time innovation gate (D5)
             out.push_back(std::move(blk));
@@ -876,14 +778,6 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
         if (prev_hit[p] == 0)
             counters_.chords_marginalized += static_cast<long long>(prev[p].chords.size());
     }
-    // Publish the re-base figures only from a build that re-based, so the run-end line keeps
-    // the resume epoch's values instead of the zeros every later epoch would write over them
-    // (invariant #4, as in reset() above). (RS-2)
-    if (rb_n > 0 || rb_drop > 0) {
-        counters_.resume_rebased          = rb_n;
-        counters_.resume_dropped_unbased  = rb_drop;
-        counters_.resume_rebase_max_dz    = rb_max_dz;
-    }
     return out;
 }
 
@@ -902,12 +796,10 @@ void NetworkInvariantCarryDriver::seedCarriedForTest(
 }
 
 void NetworkInvariantCarryDriver::seedCarriedLinForTest(int group,
-                                                        const Eigen::VectorXd& zl,
-                                                        bool unbased) {
+                                                        const Eigen::VectorXd& zl) {
     for (auto it = carried_.rbegin(); it != carried_.rend(); ++it) {
         if (it->group != group) continue;
         it->zl = zl;
-        it->unbased = unbased;
         return;
     }
 }
