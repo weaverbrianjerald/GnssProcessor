@@ -253,7 +253,6 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkWithinEpochCulprits.cpp
     src/core/filter/NetworkLevelAuthority.cpp
     src/core/filter/NetworkRelevel.cpp
-    src/core/filter/NetworkFastClock.cpp
     src/core/filter/NetworkTeardown.cpp
     src/core/app/NetworkRunTimingRunEnd.cpp
     src/core/app/NetworkRunArtifactsRunEnd.cpp
@@ -485,7 +484,6 @@ add_executable(gnss_tests
     tests/test_network_rank_gate.cpp
     tests/test_network_sbasis_complete.cpp
     tests/test_datum_graph_census.cpp
-    tests/test_network_fast_clock.cpp
     tests/test_station_block_audit.cpp
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp

@@ -48,7 +48,6 @@
 #include "filter/NetworkEmitStore.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkExtraBandScope.hpp"
-#include "filter/NetworkFastClock.hpp"
 #include "filter/NetworkFixedCycles.hpp"
 #include "filter/NetworkFrameDiag.hpp"
 #include "filter/NetworkGrossLos.hpp"
@@ -210,8 +209,6 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkChainDatum.cpp", networkChainDatumRunEnd},
     {"the card 4/M1 invariant carry",
      "filter/NetworkInvariantCarryDriver.cpp", networkInvariantCarryRunEnd},
-    {"the FC-1 split-cadence fast clock",
-     "filter/NetworkFastClock.cpp", networkFastClockRunEnd},
     {"resume and snapshot: RTB-7, RS-2 to RS-9, the coupling capture",
      "app/NetworkResumeRunEnd.cpp", networkResumeSnapshotRunEnd},
     {"the Iono-2 SH deviation carry",

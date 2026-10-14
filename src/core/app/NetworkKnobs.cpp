@@ -702,8 +702,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // driver's own configuration in a run.
     {
         const bool sh_field = config_.estimateNetworkIonoSh();
-        k.fc_on     = nc.fast_clock.enable;
-        k.fc_shadow = nc.fast_clock.enable && nc.fast_clock.shadow;
         k.sec_timers_on = nc.trace_section_timers;
         k.clk_anchor_sigma = config_.resolveNetworkAprioriClockAnchorSigmaM();
         const std::vector<std::string> vce_families =

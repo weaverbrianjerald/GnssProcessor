@@ -23,8 +23,8 @@
  *
  * **The call order in @c loadNetworkSection_ is load-bearing.**  The cross-knob
  * forcings are expressed as sequence: the @c parallel_carry / @c parallel_reduce
- * mutex, the FC-1 and RTF-3 refusals of inert arming (which read state parsed
- * before them), the D5 corroboration gate that auto-arms the slip-QC
+ * mutex, the RTF-3 refusal of inert arming (which reads state parsed
+ * before it), the D5 corroboration gate that auto-arms the slip-QC
  * instrumentation feeding it, the RAIM tier auto-couplings, the RTB-8 service
  * arming and its P3 re-validation, and the @c network.process_noise table
  * (resolved first, settled last).  Several helpers therefore read state that a
@@ -259,7 +259,6 @@ namespace GnssProcessor {
         loadNetworkProducerAr_(json, log);
         loadNetworkLaneLayers_(json, log);
         loadNetworkOutputAndParallel_(json, log);
-        loadNetworkFastClock_(json, log);
         if (!loadNetworkStreaming_(json, log)) return false;
         loadNetworkObservabilityAndSnapshot_(json, log);
         if (!loadNetworkSharedStateForcings_(json, log)) return false;
@@ -1793,8 +1792,7 @@ namespace GnssProcessor {
      *
      * Holds the @c parallel_reduce / @c parallel_carry mutex (both OpenMP-fan the per-station
      * passes against Eigen-threaded dense algebra, so armed together they oversubscribe) and
-     * @c network.epoch_decimation_n, which the FC-1 inert-arming refusal reads immediately
-     * below.
+     * @c network.epoch_decimation_n.
      *
      * @param json  Parsed root config object.
      * @param log   The "gnss_config" logger.
@@ -1954,151 +1952,6 @@ namespace GnssProcessor {
             jval<int>(json, "network.epoch_decimation_n", "epoch_decimation_n", 1);
         if (network_config_.epoch_decimation_n < 1)
             network_config_.epoch_decimation_n = 1;
-    }
-
-    // =================================================================
-    //  network subsection helper: loadNetworkFastClock_
-    // =================================================================
-    /**
-     * @brief Split-cadence clocks-only fast pass (@c network.fast_clock.*; FC-1).
-     *
-     * Ordered after @c network.epoch_decimation_n and @c network.product_output_path: both
-     * inert-arming refusals here read them (an armed non-shadow tier with no decimated-out
-     * epochs would drive zero ticks and still log cleanly).
-     *
-     * @param json  Parsed root config object.
-     * @param log   The "gnss_config" logger.
-     */
-    void GnssConfig::loadNetworkFastClock_(const nlohmann::json& json,
-                                           const std::shared_ptr<spdlog::logger>& log) {
-        // --- Split-cadence clocks-only fast pass (docs/SPEC_fast_clock_split_cadence.md; FC-1) ---
-        // Parsed here, after epoch_decimation_n, because the inert-arming refusal below
-        // reads it: without decimation there are no decimated-out epochs for a tick to
-        // run in, so an armed non-shadow tier would run zero ticks and still log
-        // cleanly (the least visible case of invariant #4).  Default off => the T2e hook
-        // keeps its bare `continue` => byte-identical.
-        {
-            auto& fc = network_config_.fast_clock;
-            fc.enable = jval<bool>(json, "network.fast_clock.enable",
-                                   "network_fast_clock_enable", false);
-            fc.shadow = jval<bool>(json, "network.fast_clock.shadow",
-                                   "network_fast_clock_shadow", false);
-            fc.emit = jval<bool>(json, "network.fast_clock.emit",
-                                 "network_fast_clock_emit", false);
-            fc.min_stations_per_sat =
-                jval<int>(json, "network.fast_clock.min_stations_per_sat",
-                          "network_fast_clock_min_stations_per_sat", 3);
-            fc.min_sats_per_station =
-                jval<int>(json, "network.fast_clock.min_sats_per_station",
-                          "network_fast_clock_min_sats_per_station", 2);
-            fc.screen_k_sigma = jval<double>(json, "network.fast_clock.screen_k_sigma",
-                                             "network_fast_clock_screen_k_sigma", 5.0);
-            fc.allow_single_band =
-                jval<bool>(json, "network.fast_clock.allow_single_band",
-                           "network_fast_clock_allow_single_band", false);
-            fc.emit_max_gap_s = jval<double>(json, "network.fast_clock.emit_max_gap_s",
-                                             "network_fast_clock_emit_max_gap_s", 60.0);
-            fc.trace = jval<bool>(json, "network.fast_clock.trace",
-                                  "network_fast_clock_trace", false);
-            fc.trace_sat_stride = jval<int>(json, "network.fast_clock.trace_sat_stride",
-                                            "network_fast_clock_trace_sat_stride", 0);
-
-            // Inert-arming disarms (invariant #4): refuse to run an armed-and-dead tier.
-            if (fc.shadow && !fc.enable) {
-                log->warn("Network (FC-1): network.fast_clock.shadow is INERT without "
-                          "network.fast_clock.enable — the shadow pass runs the SAME tick "
-                          "body, which is not built when the tier is off.  Disarming shadow.");
-                fc.shadow = false;
-            }
-            if (fc.emit && !fc.enable) {
-                log->warn("Network (FC-1): network.fast_clock.emit is INERT without "
-                          "network.fast_clock.enable — there are no fast clocks to emit.  "
-                          "Disarming emit.");
-                fc.emit = false;
-            }
-            if (fc.enable && !fc.shadow && network_config_.epoch_decimation_n <= 1) {
-                log->warn("Network (FC-1): network.fast_clock.enable is armed but "
-                          "network.epoch_decimation_n = {} leaves NO decimated-out epochs "
-                          "for a fast tick to ride, so this run would drive exactly zero "
-                          "ticks while logging cleanly (standing invariant #4).  Set "
-                          "epoch_decimation_n > 1 for a split cadence, or "
-                          "network.fast_clock.shadow = true to grade the tick against the "
-                          "full solve on every epoch.  Disarming fast_clock for this run.",
-                          network_config_.epoch_decimation_n);
-                fc.enable = false;
-                fc.emit   = false;
-            }
-            if (fc.emit && network_config_.product_output_path.empty()) {
-                log->warn("Network (FC-1): network.fast_clock.emit is set but "
-                          "network.product_output_path is empty — no product file is "
-                          "written, so the fast rows have nowhere to land.  Disarming emit "
-                          "(the tick still runs and traces).");
-                fc.emit = false;
-            }
-
-            // Clamps, gated on the master.
-            if (fc.enable) {
-                if (fc.min_stations_per_sat < 2) {
-                    log->warn("Network (FC-1): network.fast_clock.min_stations_per_sat = {} "
-                              "is below 2 — a single station cannot separate its own clock "
-                              "from the satellite's (the bipartite fit is rank-deficient). "
-                              "Clamped to 2.", fc.min_stations_per_sat);
-                    fc.min_stations_per_sat = 2;
-                }
-                if (fc.min_sats_per_station < 1) {
-                    log->warn("Network (FC-1): network.fast_clock.min_sats_per_station = {} "
-                              "is below 1 — clamped to 1.", fc.min_sats_per_station);
-                    fc.min_sats_per_station = 1;
-                }
-                if (!(fc.screen_k_sigma > 0.0)) {
-                    log->warn("Network (FC-1): network.fast_clock.screen_k_sigma = {} is "
-                              "non-positive, which would screen every LOS and leave the "
-                              "tick with nothing to fit — clamped to the 5.0 default.",
-                              fc.screen_k_sigma);
-                    fc.screen_k_sigma = 5.0;
-                }
-                if (fc.emit_max_gap_s < 0.0) {
-                    log->warn("Network (FC-1): network.fast_clock.emit_max_gap_s = {} < 0 "
-                              "clamped to 0 (0 = emit only when the anchor is this epoch's "
-                              "own emitted solve).", fc.emit_max_gap_s);
-                    fc.emit_max_gap_s = 0.0;
-                }
-                if (fc.trace_sat_stride < 0) fc.trace_sat_stride = 0;
-
-                // gnss_rate_s = 0 means "use the native RINEX rate", which is unknown
-                // until data is read (the same caveat the emit_clock_rate inert-arming
-                // guard carries).  In that case the cadence is reported as a ratio
-                // rather than as a fabricated "0 s".
-                const std::string fc_cadence =
-                    gnss_rate_s_ > 0.0
-                        ? fmt::format("full solve every {:.0f} s (gnss_rate_s {:.0f} x "
-                                      "epoch_decimation_n {}), clocks-only ticks every {:.0f} s",
-                                      gnss_rate_s_ * network_config_.epoch_decimation_n,
-                                      gnss_rate_s_, network_config_.epoch_decimation_n,
-                                      gnss_rate_s_)
-                        : fmt::format("full solve every {} native epochs "
-                                      "(epoch_decimation_n; gnss_rate_s = 0 => native RINEX "
-                                      "rate, unknown until data is read), clocks-only ticks "
-                                      "on each of the other {}",
-                                      network_config_.epoch_decimation_n,
-                                      network_config_.epoch_decimation_n - 1);
-                log->info("Network (FC-1): split-cadence fast clock ENABLED — {}.  Floors: "
-                          "{} station(s)/sat, {} sat(s)/station; screen k={:.1f} sigma; {}; "
-                          "R11 emission bound {:.0f} s.  shadow={}, emit={}, trace={}.",
-                          fc_cadence, fc.min_stations_per_sat, fc.min_sats_per_station,
-                          fc.screen_k_sigma,
-                          fc.allow_single_band ? "single-band arcs ADMITTED (iono change "
-                                                 "survives in the residual)"
-                                               : "dual-band arcs only (IF kills the iono change)",
-                          fc.emit_max_gap_s, fc.shadow, fc.emit, fc.trace);
-                if (fc.emit)
-                    log->info("Network (FC-1): fast rows will be EMITTED to the product "
-                              "wire — they refresh the satellite CLOCK value and its age "
-                              "only; bias / phase-bias / iono entries and their ages belong "
-                              "to the slow era and are untouched, and no discontinuity "
-                              "counter advances on a fast row.");
-            }
-        }
     }
 
     // =================================================================
@@ -2885,12 +2738,6 @@ namespace GnssProcessor {
                                          "network.clock_level_carry: both move the held phase bias "
                                          "with the clock level, and the phase-clock hold already "
                                          "passes every clock move to the code side (card LAH)");
-            if (jval<bool>(json, "network.fast_clock.enable", "network_fast_clock_enable", false))
-                throw std::runtime_error("network.emit_pb_hold_phase_clock refuses "
-                                         "network.fast_clock.enable: the FC-1 K records move the "
-                                         "clock between full epochs while the held phase bias "
-                                         "stays, so the phase-visible clock would saw-tooth "
-                                         "(card LAH)");
             log->info("Network (card LAH): network.emit_pb_hold_phase_clock = true: a held "
                       "(satellite, signal) keeps its phase-visible clock over the generation. "
                       "The held emission is p(t0) + [c~(t) - c~(t0)], c~ the emitted clock less "
@@ -2936,11 +2783,6 @@ namespace GnssProcessor {
                 throw std::runtime_error("network.emit_pb_hold_smoothed refuses "
                                          "network.clock_level_carry: CLV's discrete re-base is a "
                                          "revision the clone would not see (card SMH)");
-            if (jval<bool>(json, "network.fast_clock.enable", "network_fast_clock_enable", false))
-                throw std::runtime_error("network.emit_pb_hold_smoothed refuses "
-                                         "network.fast_clock.enable: the FC-1 K records move the "
-                                         "clock between full epochs while the held phase bias "
-                                         "stays (card SMH)");
             log->info("Network (card SMH): network.emit_pb_hold_smoothed = true: a held "
                       "(satellite, signal) emits the phase-clock transfer minus the passed motion "
                       "Phi = c(t|t) - c(t0|t), with c(t0|t) a clock clone time-updated by the "

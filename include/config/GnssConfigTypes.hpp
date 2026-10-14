@@ -1533,87 +1533,6 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Split-cadence clocks-only fast pass (FC-1).
-     *
-     * The full pipeline (solve, carry, QC, emit) keeps running at its own cadence.
-     * Epochs that @c network.epoch_decimation_n decimates out, which otherwise reach
-     * a bare @c continue at the T2e hook, instead run a clocks-only tick that
-     * measures each satellite's clock change since the last emitted full solve and
-     * optionally emits it.  Everything else is frozen and held by ZOH, as a consumer
-     * already does within one full-solve era; the fast tick refreshes the one state
-     * whose ZOH error dominates.
-     *
-     * Rationale (measured): the 305-station all-on baseline spends 27.7 s per epoch,
-     * of which the border solve takes 41 ms, so a 1 s product cadence cannot be
-     * reached by optimizing the per-epoch pipeline, while the estimation itself is
-     * cheap once the expensive structure (ambiguities, iono, biases, datum, QC) is
-     * known.  Card C1 gives the theoretical basis: the emitted c0 is a random walk
-     * (0.157 m per 30 s), so ZOH is already the MMSE predictor given a 30 s solve,
-     * and better fast clocks require measuring them at the served rate.  C1's own
-     * rate product measured net-harmful and stays off (@c network.emit_clock_rate).
-     *
-     * The observable is a per-band delta-from-fit against the anchor epoch t0,
-     * IF-combined (which removes the iono change) and phase-only; frozen
-     * ambiguities, biases and wind-up cancel exactly in the delta on a live arc.
-     * Station clocks are re-estimated per tick and Schur-eliminated, leaving a dense
-     * n_sat x n_sat solve.
-     *
-     * Default off: the T2e hook keeps its bare @c continue, and nothing is
-     * allocated, traced or emitted (byte-identical).  Isolation contract: full
-     * epochs are byte-identical whether or not fast ticks ran, because a tick
-     * mutates nothing outside @ref FastClockCarry.
-     */
-    struct FastClockConfig {
-        /// Master switch.  Off: the decimation hook keeps its bare @c continue (byte-identical).
-        bool   enable{ false };
-        /// Run the tick computation on full epochs too, immediately before the full
-        /// pipeline, logging fast-versus-full deltas and discarding the result.  No
-        /// downstream effect (gate: everything but the trace CSV is byte-identical).
-        /// This is the standing grading instrument: it gives a per-epoch reference
-        /// (the full solve) on any run at no cost, in the same instrument-only shape
-        /// (no feedback) as the M2 LS-VCE carry-variance monitor.  Requires @ref enable.
-        bool   shadow{ false };
-        /// Emit the fast clocks as product records.  Off: the tick runs and traces
-        /// but writes nothing to the product wire (the INC-2 posture).
-        /// Requires @ref enable.
-        bool   emit{ false };
-        /// A satellite needs this many unscreened dual-band LOS with live t0 arcs to be
-        /// fast-estimated on a tick.  Below the floor the satellite is not refreshed:
-        /// the consumer keeps the last emitted value and its age grows.  Never
-        /// extrapolated (no fabricated corrections).
-        int    min_stations_per_sat{ 3 };
-        /// A station needs this many usable satellites to contribute its clock nuisance.
-        int    min_sats_per_station{ 2 };
-        /// Per-LOS post-fit screen in sigmas: |res| > k*sigma_pred excludes the LOS from
-        /// this tick only (re-tested on the next).  This screen is the fast tier's only
-        /// slip response: a slipped arc's delta jumps by lambda*dN, far outside
-        /// k*sigma.  Repair stays with the full pipeline (reset rather than repair; no
-        /// GF/TurboEdit here, per the 30/60 s data-rate directive).  A coherent
-        /// whole-row (satellite) move is not screened: that is the signal being
-        /// measured.
-        double screen_k_sigma{ 5.0 };
-        /// Admit single-band arcs (no IF combination, so the iono change survives in the
-        /// residual).  Useless at a 300 s dev cadence; potentially worth it at a 1 s RT
-        /// tick with iono-rate-inflated R.  Off by default.
-        bool   allow_single_band{ false };
-        /// Emission-continuity bound (s) (R11).  If the time since the last emitted full
-        /// solve exceeds this, fast emission stops (ticks may still run for telemetry).
-        /// Keyed on emission, not on solve continuity: a withheld era advances the
-        /// solve clock while the consumer receives nothing, so a solve-keyed gate would
-        /// publish a delta measured inside an era the consumer never received.  Degrades
-        /// by silence, never by fabrication.
-        double emit_max_gap_s{ 60.0 };
-        /// Log-only per-tick CSV (logs/network_fast_clock.csv).  Does not change the
-        /// solve or the emission.
-        bool   trace{ false };
-        /// Per-satellite detail rows in the trace: 0 = per-tick summary rows only,
-        /// N > 0 = also write per-satellite dc/sigma rows every Nth tick.  A per-tick
-        /// per-satellite row at 305 stations x 1 s would grow without bound, so the
-        /// detail is strided and off by default.
-        int    trace_sat_stride{ 0 };
-    };
-
-    /**
      * @brief Multi-station streaming front-end (@c network.streaming) (RTF-3).
      *
      * When @c enable is set, @c runNetwork replaces its batch epoch source (the
@@ -1763,7 +1682,6 @@ namespace GnssProcessor {
         SdEwlConfig      sd_ewl;              ///< SD pre-reduce EWL constraint (default off, byte-identical; docs/SPEC_sd_ewl_prereduce.md).
         SlipQcConfig     slip_qc;             ///< Slip-QC hardening, cards R/L/G and their follow-ups (network.cycle_slip.*; every master default off, byte-identical; docs/SPEC_slip_qc_hardening.md).
         SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier, degraded-phase demotion and re-vet (network.signal_integrity.*; default off, byte-identical; docs/SPEC_flicker_gap_integrity.md).
-        FastClockConfig  fast_clock;          ///< Split-cadence clocks-only fast pass (FC-1; network.fast_clock.*; default off: the T2e decimation hook is untouched, byte-identical; docs/SPEC_fast_clock_split_cadence.md).
         NetworkStreamingConfig streaming;     ///< Multi-station streaming front-end (RTF-3; network.streaming.*; default off: batch epoch source, byte-identical).
         NetworkProcessNoise process_noise;    ///< Scoped per-parameter-class process-noise table (network.process_noise). Always live; every class defaults to its legacy key's default => byte-identical unless a value is edited.
         std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
@@ -3195,8 +3113,6 @@ namespace GnssProcessor {
          * emissions: the phase-visible clock is constant over a generation up to a
          * per-constellation common mode the consumer's receiver clock and inter-system
          * bias absorb, and every clock move (the level included) reaches the code only.
-         * Refuses @c network.fast_clock.enable (card FC-1): its K records move the clock
-         * between full epochs without the held phase bias.
          *
          * Posture limit: within a generation the consumer's phase-visible clock motion
          * is the a priori clock product's.  Valid with a precise a priori clock (the
@@ -3230,9 +3146,9 @@ namespace GnssProcessor {
          * solve folded) and @c network.clock_temporal_anchor without
          * @c network.clock_model, all refused at load time on their resolved values; excludes
          * @ref emit_pb_hold_phase_clock (its fallback); refuses
-         * @c network.clock_level_carry and @c network.fast_clock.enable for the phase-clock
-         * mode's reasons.  Emit-side only: the solve, the C and B records are
-         * byte-identical.  Declared on the S line as @c pbhold=3.
+         * @c network.clock_level_carry for the phase-clock mode's reasons.  Emit-side only:
+         * the solve, the C and B records are byte-identical.  Declared on the S line as
+         * @c pbhold=3.
          */
         bool emit_pb_hold_smoothed{ false };
         /**

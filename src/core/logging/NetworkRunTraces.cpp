@@ -51,7 +51,6 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       slip_raw_trace_path(log_dir_ / "network_slip_raw.csv"),
       epoch_status_trace_path(log_dir_ / "network_epoch_status.csv"),
       health_trace_path(log_dir_ / "network_service_health.csv"),
-      fast_clock_trace_path(log_dir_ / "network_fast_clock.csv"),
       events_trace_path(log_dir_ / "network_events.csv"),
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
       sat_bias_states_trace_path(log_dir_ / "network_sat_bias_states.csv"),
@@ -838,18 +837,6 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       config_.networkEmitUra(), config_.networkRaim(),
                       config_.networkPhaseLeveling());
     }
-    if (nc.fast_clock.enable && nc.fast_clock.trace) {
-        // Per-tick fast-clock trace (FC-1), gated on the tier master as well as its own
-        // knob: the tick tier runs on epochs the full pipeline skips, so a trace armed
-        // without the tier would produce an empty file that reads as a quiet run
-        // rather than an unarmed one (standing invariant #4).
-        fast_clock_trace.open(fast_clock_trace_path);
-        if (fast_clock_trace)
-            fast_clock_trace << kFastClockHeader;
-        else
-            log->warn("Network (FC-1): failed to open fast-clock trace {}",
-                      fast_clock_trace_path.string());
-    }
     if (config_.networkCarryVce()) {
         carry_vce_trace.open(carry_vce_trace_path);
         if (carry_vce_trace)
@@ -1450,11 +1437,6 @@ void NetworkRunTraces::rotateServiceCsvs(const NetworkConfig& nc,
             {&trace,        &trace_path,        kTraceHeader},
             {&soln,         &soln_path,         kSolnHeader},
             {&health_trace, &health_trace_path, kHealthHeader},
-            // A fast tick writes a row per decimated-out epoch (FC-1), so at an RT 1 s
-            // cadence this stream grows faster than any other here and belongs in the
-            // rotation set.  maybeRotateCsv is a strict no-op while the stream is
-            // closed (unarmed tier).
-            {&fast_clock_trace, &fast_clock_trace_path, kFastClockHeader},
         };
         for (const auto& r : rotating)
             if (maybeRotateCsv(*r.os, *r.path, r.header,
@@ -1978,17 +1960,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
                << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)
                << "\"trace_rotate_keep\":" << nc.trace_rotate_keep << ','
-               // Split-cadence fast clock (FC-1).  The manifest is how a grader tells a
-               // split arm from a full-rate reference arm without re-reading the config.
-               << "\"fast_clock_enable\":" << (nc.fast_clock.enable ? "true" : "false") << ','
-               << "\"fast_clock_shadow\":" << (nc.fast_clock.shadow ? "true" : "false") << ','
-               << "\"fast_clock_emit\":" << (nc.fast_clock.emit ? "true" : "false") << ','
-               << "\"fast_clock_min_stations_per_sat\":" << nc.fast_clock.min_stations_per_sat << ','
-               << "\"fast_clock_min_sats_per_station\":" << nc.fast_clock.min_sats_per_station << ','
-               << fmt::format("\"fast_clock_screen_k_sigma\":{},", nc.fast_clock.screen_k_sigma)
-               << "\"fast_clock_allow_single_band\":" << (nc.fast_clock.allow_single_band ? "true" : "false") << ','
-               << fmt::format("\"fast_clock_emit_max_gap_s\":{},", nc.fast_clock.emit_max_gap_s)
-               << "\"fast_clock_trace\":" << (nc.fast_clock.trace ? "true" : "false") << ','
                // Startup quality ramp and state snapshot / warm resume (RTB-7).
                << fmt::format("\"warmup_ura_floor_m\":{},", nc.warmup_ura_floor_m)
                << "\"warmup_epochs\":" << nc.warmup_epochs << ','
@@ -2637,10 +2608,6 @@ void NetworkRunTraces::closeAll() {
     if (fixed_cycle_events_trace.is_open()) fixed_cycle_events_trace.close(); // card FCF, FCF-3
     if (epoch_status_trace.is_open()) epoch_status_trace.close();
     if (health_trace.is_open()) health_trace.close();
-    // Closed explicitly, not left to the destructor, because the stream rotates (FC-1):
-    // rotation reads tellp() on a live handle, so the stream's lifetime is already tied to
-    // the rotation set, and an unflushed tail here is the only record of the tick tier.
-    if (fast_clock_trace.is_open()) fast_clock_trace.close();
     if (events_trace.is_open()) events_trace.close();
     if (zwd_trace.is_open()) zwd_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();

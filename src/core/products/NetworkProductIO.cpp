@@ -179,10 +179,7 @@ struct LineAssembler {
                 }
                 if (!signalDeclarationParseRecord(f, decl_block)) ok = false;
             } else if (tag == "C") {
-                // A fast record carries K lines and nothing else (FC-1).  A C/B/P/U
-                // line inside one means the writer mixed a full epoch into a fast
-                // marker, which would put slow-cadence values on the fast path.
-                if (!have_cur || cur.is_fast || f.size() < 3) { ok = false; return completed; }
+                if (!have_cur || f.size() < 3) { ok = false; return completed; }
                 NetworkSatSolution& s = satSolution(f[1]);
                 s.has_clock  = true;
                 s.clock_c0_m = std::stod(f[2]);
@@ -302,33 +299,6 @@ struct LineAssembler {
                 pending_h       = st;
                 pending_h_valid = true;
                 if (track_statuses) statuses.push_back(st);
-            } else if (tag == "F") {   // split-cadence fast epoch marker (FC-1)
-                if (f.size() < 5) { ok = false; return completed; }
-                // Like H, an F line always begins a new unit: a fast epoch is its own
-                // record, never a continuation of the full epoch under assembly.  Flush
-                // first so the previous epoch reaches the consumer intact.
-                if (have_cur) {
-                    completed = std::move(cur);
-                    cur       = NetworkProductRecord{};
-                    sat_index.clear();
-                    have_cur = false;
-                }
-                cur = NetworkProductRecord{};
-                sat_index.clear();
-                cur.is_fast               = true;
-                cur.epoch.epoch_time.week = std::stoi(f[1]);
-                cur.epoch.epoch_time.tow  = std::stod(f[2]);
-                cur.fast_anchor.week      = std::stoi(f[3]);
-                cur.fast_anchor.tow       = std::stod(f[4]);
-                // A pending S or H does not attach to a fast record: both describe a
-                // full solve's contract and status, and a fast epoch re-declares neither.
-                have_cur = true;
-            } else if (tag == "K") {   // fast satellite clock, value and age only (FC-1)
-                if (!have_cur || !cur.is_fast || f.size() < 3) { ok = false; return completed; }
-                double sig = 0.0;
-                for (std::size_t i = 3; i < f.size(); ++i)
-                    if (f[i].rfind("sigk=", 0) == 0) sig = std::stod(f[i].substr(5));
-                cur.fast_clocks[f[1]] = {std::stod(f[2]), sig};
             } else if (tag == "S") {   // S-basis contract: v2 header (B6) or re-broadcast (RTA-5)
                 if (f.size() >= 11) {
                     SbasisContract c;
@@ -626,27 +596,6 @@ void NetworkProductWriter::writeContract(const SbasisContract& contract) {
     writeSLine_(contract);   // mid-file re-broadcast in the header grammar (RTA-5)
 }
 
-void NetworkProductWriter::writeFastClock(
-    const GnssTime& epoch, const GnssTime& anchor,
-    const std::vector<std::tuple<std::string, double, double>>& sats) {
-    if (!out_ || sats.empty()) return;
-    // F marker plus one K line per satellite.  Both tags exist only for the fast
-    // clock (FC-1), so a reader that predates them drops the whole record (see
-    // writeFastClock's header doc) rather than attaching a C line to the previous
-    // full epoch.  The tow uses the same shortest-round-trip formatting as E/H so a
-    // consumer can compare epochs exactly.  sigk= is written only when the σ is
-    // finite and positive.
-    out_ << "F," << epoch.week << ',' << fmt::format("{}", epoch.tow)
-         << ',' << anchor.week << ',' << fmt::format("{}", anchor.tow)
-         << ',' << sats.size() << '\n';
-    for (const auto& s : sats) {
-        out_ << "K," << std::get<0>(s) << ',' << fmt::format("{}", std::get<1>(s));
-        const double sig = std::get<2>(s);
-        if (sig > 0.0 && std::isfinite(sig)) out_ << ",sigk=" << fmt::format("{}", sig);
-        out_ << '\n';
-    }
-}
-
 void NetworkProductWriter::writeEpochStatus(const NetworkProducerStatus& status) {
     if (!out_) return;
     // Heartbeat (RTA-10): H,week,tow,status,sigma0,n_sats_published,withheld.  The
@@ -694,9 +643,6 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "# R,retro_sat[,retro_sat...]    (B1 per-satellite discontinuity bump)\n"
             "# U,sat,clock_ura_m             (B1 per-satellite URA quality, 1-sigma m)\n"
             "# H,week,tow,status,sigma0,n_sats_published,withheld   (RTA-10 epoch-status heartbeat)\n"
-            "# F,week,tow,anchor_week,anchor_tow,n_sats   (FC-1 split-cadence FAST epoch marker)\n"
-            "# K,sat,clock_c0_m[,sigk=<m>]   (FC-1 fast satellite clock; refreshes clock VALUE and AGE"
-            " only — never a bias, never a discontinuity)\n"
             "# S,ref_rx,bias_sign,windup_id,amb_datum,isb_datum,emit_cb,cb_datum,disc_thresh_m,"
             "emit_clock_disc,apriori_id[,<const>:<pivot_sat>...][,gid=<n>][,stale=<s>][,cbjump=1]"
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
@@ -906,28 +852,6 @@ std::vector<NetworkProductRecord> NetworkProductReader::read(const std::string& 
 void NetworkProductReader::replay(const NetworkProductRecord& rec,
                                   SsrCorrectionStore& store,
                                   NetworkProductEmitter& emitter) {
-    // A split-cadence fast record refreshes the satellite clock value and age and
-    // nothing else, so it does not go through emitToStore (FC-1).  Per the emitter's
-    // documented behaviour, that path would replace the code-satset / band-tuple
-    // trackers with empty maps (suppressing the next full epoch's structural
-    // code-datum triggers), register a satellite subset as a clock-set change and
-    // step every remaining satellite's discontinuity counter, consume a pending
-    // markDatumChange onto the fast record, and re-stamp the shared per-satellite
-    // header, which would age the bias, URA and slant-iono channels on a clock
-    // refresh.  Each of those belongs to the full-epoch cadence, not to a fast tick.
-    if (rec.is_fast) {
-        for (const auto& kv : rec.fast_clocks) {
-            SsrClockCorrection c;
-            c.sat           = kv.first;
-            c.c0            = kv.second.first;
-            c.received_time = rec.epoch.epoch_time;
-            c.epoch_time    = rec.epoch.epoch_time;
-            // pushFastClock does not create a record, so a fast row for a satellite that
-            // no full epoch has established is ignored rather than half-supplied.
-            store.pushFastClock(c);
-        }
-        return;
-    }
     // Discontinuity counters (phase and code) are serialized only under
     // network.serialize_disc_counters (RTA-4, handled below).  The emitter
     // recomputes them deterministically from inputs reproduced here: (1) the

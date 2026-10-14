@@ -72,11 +72,6 @@ enum SubBlock {
                      //       (card SID phase 1).  Both brackets accumulate into one
                      //       entry: they are the same observatory, and the cost of
                      //       interest is what the card adds to an epoch.
-    SB_FASTCLOCK,    // fast-clock anchor harvest + the shadow-mode grading tick (FC-1).
-                     //       The tick on decimated-out epochs is outside the loop and
-                     //       untimed here; it has its own ctx.counters.fc_wall_ms
-                     //       accumulator, because a tick is not a loop epoch and must
-                     //       not enter the D0 wall.
     SB_COUNT
 };
 
@@ -86,6 +81,6 @@ inline constexpr const char* kSubBlockNames[SB_COUNT] = {
     "slip-scans", "pre-asm", "gauge-build", "dd-build", "solve-glue", "install-post",
     "netar", "sol-prep", "emit-store", "iono-diag", "dd-frac", "shdev-vtec",
     "t1a-health", "leveling", "raim", "clock-upd", "frame-diag", "stash-status",
-    "roster", "fast-clock"
+    "roster"
 };
 } // namespace GnssProcessor

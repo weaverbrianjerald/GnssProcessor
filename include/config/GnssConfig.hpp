@@ -9052,8 +9052,8 @@ namespace GnssProcessor {
         //  The call order is load-bearing and is fixed in loadNetworkSection_.
         //  Every cross-knob forcing in the section is expressed as "a later
         //  helper reads what an earlier one resolved": the
-        //  parallel_carry/parallel_reduce mutex, the FC-1 and RTF-3
-        //  inert-arming refusals, the D5 corroboration gate auto-arming the
+        //  parallel_carry/parallel_reduce mutex, the RTF-3 inert-arming
+        //  refusal, the D5 corroboration gate auto-arming the
         //  slip-QC instrumentation that feeds it, the RAIM tier
         //  auto-couplings, the RTB-8 service arming and its P3
         //  re-validation, and the network.process_noise table (resolved
@@ -9078,8 +9078,6 @@ namespace GnssProcessor {
                                     const std::shared_ptr<spdlog::logger>& log);
         void loadNetworkOutputAndParallel_(const nlohmann::json& json,
                                            const std::shared_ptr<spdlog::logger>& log);
-        void loadNetworkFastClock_(const nlohmann::json& json,
-                                   const std::shared_ptr<spdlog::logger>& log);
         bool loadNetworkStreaming_(const nlohmann::json& json,
                                    const std::shared_ptr<spdlog::logger>& log);
         void loadNetworkObservabilityAndSnapshot_(const nlohmann::json& json,

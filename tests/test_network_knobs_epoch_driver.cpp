@@ -4,8 +4,7 @@
  *        EP0) equal the expressions runNetwork computed before they moved.
  *
  * Card NOM3 step EP0 moved the values runNetwork derived from the configuration, once in
- * its setup or again on every epoch (the fast tier's switches, the section timers, the
- * resolved clock anchor sigma, the SH-deviation switches, the VCE monitor's families, the
+ * its setup or again on every epoch (the section timers, the resolved clock anchor sigma, the SH-deviation switches, the VCE monitor's families, the
  * Galileo top band, the streaming source, the within-epoch tier, the phase-datum switches,
  * the max-duration and decimation limits, the constant half of the RHS attribution window,
  * the trace switches, the configuration half of the leveling warm-up and the float
@@ -91,7 +90,7 @@ bool loadGolden(const char* name, GnssConfig& cfg) {
 
 /// The values as the driver computed them before card NOM3 step EP0.
 struct DriverValues {
-    bool fc_on, fc_shadow, sec_timers_on;
+    bool sec_timers_on;
     double clk_anchor_sigma;
     double sh_dev_tau;
     bool sh_dev_on, sh_dev_demean, sh_dev_d5_keep;
@@ -116,8 +115,6 @@ DriverValues driverValues(const GnssConfig& config_, const NetworkConfig& nc) {
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     const bool roster_active = true;   // networkSignalRosterArm, every network run
     DriverValues d{};
-    d.fc_on     = nc.fast_clock.enable;
-    d.fc_shadow = nc.fast_clock.enable && nc.fast_clock.shadow;
     d.sec_timers_on = nc.trace_section_timers;
     d.clk_anchor_sigma = config_.resolveNetworkAprioriClockAnchorSigmaM();
     d.sh_dev_tau = sh_model ? shc.rep_error_tau_s : 0.0;
@@ -158,8 +155,6 @@ DriverValues driverValues(const GnssConfig& config_, const NetworkConfig& nc) {
 NetworkKnobs expectDriverValues(const GnssConfig& cfg, const NetworkConfig& nc) {
     const NetworkKnobs k = NetworkKnobs::snapshot(cfg, nc);
     const DriverValues d = driverValues(cfg, nc);
-    EXPECT_EQ(k.fc_on, d.fc_on);
-    EXPECT_EQ(k.fc_shadow, d.fc_shadow);
     EXPECT_EQ(k.sec_timers_on, d.sec_timers_on);
     EXPECT_EQ(k.clk_anchor_sigma, d.clk_anchor_sigma);
     EXPECT_EQ(k.sh_dev_tau, d.sh_dev_tau);
@@ -203,7 +198,6 @@ TEST(NetworkKnobsEpochDriver, DefaultsMatchTheDriver) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("default", networkConfig(""), cfg));
     const NetworkKnobs k = expectDriverValues(cfg);
-    EXPECT_FALSE(k.fc_on);
     EXPECT_FALSE(k.sec_timers_on);
     EXPECT_FALSE(k.sh_dev_on);
     EXPECT_EQ(k.sh_dev_tau, 0.0);
@@ -223,8 +217,6 @@ TEST(NetworkKnobsEpochDriver, NetworkBlockValuesBothWays) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("block", networkConfig(""), cfg));
     NetworkConfig nc = cfg.getNetworkConfig();
-    nc.fast_clock.enable = true;
-    nc.fast_clock.shadow = true;
     nc.trace_section_timers = true;
     nc.streaming.enable = true;
     nc.epoch_decimation_n = 3;
@@ -235,8 +227,6 @@ TEST(NetworkKnobsEpochDriver, NetworkBlockValuesBothWays) {
     nc.trace_sh_spectrum = true;
     nc.trace_station_block = true;
     NetworkKnobs k = expectDriverValues(cfg, nc);
-    EXPECT_TRUE(k.fc_on);
-    EXPECT_TRUE(k.fc_shadow);
     EXPECT_TRUE(k.sec_timers_on);
     EXPECT_TRUE(k.streaming_on);
     EXPECT_EQ(k.epoch_decimation_n, 3u);
@@ -247,25 +237,18 @@ TEST(NetworkKnobsEpochDriver, NetworkBlockValuesBothWays) {
     EXPECT_TRUE(k.trace_sh_spectrum);
     EXPECT_TRUE(k.trace_station_block);
 
-    // The other half of each disjunction and conjunction, and the clamps.
-    nc.fast_clock.shadow = false;
+    // The other half of each disjunction, and the clamps.
     nc.epoch_decimation_n = 0;
     nc.rhs_attrib_n_ep = 0;
     nc.trace_postfit_rows = false;
     nc.trace_postfit_keyed = true;
     k = expectDriverValues(cfg, nc);
-    EXPECT_TRUE(k.fc_on);
-    EXPECT_FALSE(k.fc_shadow);
     EXPECT_EQ(k.epoch_decimation_n, 1u);
     EXPECT_EQ(k.rhs_attrib_n_ep, 1);
     EXPECT_TRUE(k.trace_postfit_on);
-    nc.fast_clock.enable = false;
-    nc.fast_clock.shadow = true;
     nc.trace_postfit_keyed = false;
     nc.trace_postfit_sigma0 = true;
     k = expectDriverValues(cfg, nc);
-    EXPECT_FALSE(k.fc_on);
-    EXPECT_FALSE(k.fc_shadow);   // shadow alone is not the tier
     EXPECT_TRUE(k.trace_postfit_on);
 }
 

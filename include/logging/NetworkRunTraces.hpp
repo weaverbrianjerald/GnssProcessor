@@ -14,11 +14,10 @@
  * (NetworkKnobs, NetworkServiceCounters) or as explicit values.  The rotation
  * primitive is in logging/CsvRotator.hpp; the epoch loop calls rotateServiceCsvs().
  *
- * P1 rotation policy: the four service CSVs that grow without bound rotate by size
+ * P1 rotation policy: the three service CSVs that grow without bound rotate by size
  * when network.trace_rotate_mb > 0.  They are the always-on network_trace.csv and
- * network_solution.csv, the RTB-6 health heartbeat (network_service_health.csv)
- * and the FC-1 fast-clock trace (network_fast_clock.csv).  Their header lines are
- * the named constants below, so a rotation reopen writes the same header as the
+ * network_solution.csv and the RTB-6 health heartbeat (network_service_health.csv).
+ * Their header lines are the named constants below, so a rotation reopen writes the same header as the
  * startup open and every rolled generation parses on its own.  The pyviz viewers
  * read only the live file name and do not discover the rolled generations
  * (file.csv.1 … file.csv.N, N = network.trace_rotate_keep); reading those means
@@ -71,13 +70,6 @@ namespace GnssProcessor {
         "week,tow,n_emitted,n_skipped,n_gate_withheld,n_sigma0_withheld,"
         "n_runaway_epochs,sigma0_ewma,n_present,n_clock_sats,"
         "ms_per_epoch_window,last_emit_age_s,pivot,cold_start_grade_s\n";
-    /// network_fast_clock.csv header (re-written verbatim on every P1 rotation reopen).
-    /// Two row kinds share the stream, discriminated by @c kind: "T" = one per fast tick
-    /// (the summary), "S" = per-satellite detail, written only every
-    /// @c network.fast_clock.trace_sat_stride ticks.  Per-satellite rows on every tick
-    /// at a 1 s RT cadence would grow without bound, hence the stride and the rotation.
-    inline constexpr const char* kFastClockHeader =
-        "week,tow,kind,dt_s,shadow,n_los,n_screened,n_sat_est,emitted,sat,dc_m,sigma_m\n";
     /// network_carry_vce.csv header (M2/LS-VCE hourly rows).
     inline constexpr const char* kCarryVceHeader =
         "week,tow,hour,family,const,n_rows,n_eff,robust_floor_m2,mean_floor_m2,"
@@ -635,16 +627,6 @@ namespace GnssProcessor {
         /// no rows written).  Column semantics: docs/rt_service_operations.md.
         std::ofstream health_trace;
         const std::filesystem::path health_trace_path;
-        /// Per-tick split-cadence fast-clock trace (FC-1; network.fast_clock.trace,
-        /// opened only when network.fast_clock.enable is also set): one summary row per
-        /// fast tick plus strided per-satellite detail rows.  The tick tier runs on
-        /// epochs the full pipeline skips, so this stream and the run-end counters are
-        /// the only evidence that the tier ran; in shadow mode it is also the grading
-        /// instrument, carrying fast-vs-full deltas on full epochs.  Rotates (P1)
-        /// because a 1 s real-time tick makes it grow without bound.  Off by default
-        /// (byte-identical when off: no file opened, no rows written).
-        std::ofstream fast_clock_trace;
-        const std::filesystem::path fast_clock_trace_path;
         /// Structured per-event QC log (L2; network.trace_events): one long-format row
         /// per discrete QC action across all tiers, the machine-readable alternative to
         /// scraping the spdlog text.  Off by default (byte-identical when off).
@@ -1106,11 +1088,10 @@ namespace GnssProcessor {
                                       std::size_t n_synced, double loop_ms,
                                       const std::string& extra_member = std::string());
 
-        /// Size-based rotation (P1) of the four unbounded service CSVs (network_trace,
-        /// network_solution, network_service_health, network_fast_clock; a closed
-        /// stream is skipped).  Call once per processed epoch, before the epoch's rows
-        /// are written.  With network.trace_rotate_mb at 0 (the default) nothing is
-        /// touched.
+        /// Size-based rotation (P1) of the three unbounded service CSVs (network_trace,
+        /// network_solution, network_service_health; a closed stream is skipped).  Call
+        /// once per processed epoch, before the epoch's rows are written.  With
+        /// network.trace_rotate_mb at 0 (the default) nothing is touched.
         void rotateServiceCsvs(const NetworkConfig& nc,
                                const std::shared_ptr<spdlog::logger>& log);
 

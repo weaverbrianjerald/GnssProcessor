@@ -183,19 +183,6 @@ TEST(PbHoldPhaseClockTest, LoaderRequiresTheHoldAndRefusesClockLevelCarry) {
         << "the refusal is the mode's: the plain hold with CLV still loads";
 }
 
-TEST(PbHoldPhaseClockTest, LoaderRefusesTheFastClockTier) {
-    LogManager log_mgr;
-    GnssConfig cfg;
-    const fs::path p = fs::temp_directory_path() / "lah_load_fc1.json";
-    std::string body = lahConfig(true, true, false, 300.0);
-    const std::string anchor = "\"network\": {\n";
-    body.insert(body.find(anchor) + anchor.size(), "    \"fast_clock\": { \"enable\": true },\n");
-    { std::ofstream f(p); f << body; }
-    EXPECT_FALSE(cfg.loadFromJson(p, log_mgr))
-        << "FC-1's K records move the clock between full epochs without the held phase bias";
-    std::error_code ec; fs::remove(p, ec);
-}
-
 // --- 2. The level move --------------------------------------------------------------
 
 TEST(PbHoldPhaseClockTest, ALevelMoveLeavesThePhaseVisibleClockHeld) {

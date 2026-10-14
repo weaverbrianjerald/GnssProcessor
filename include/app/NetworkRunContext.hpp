@@ -1063,8 +1063,6 @@ namespace GnssProcessor {
         // builds the SH model exactly when network.estimate_iono_sh is set (the sh_dev_* and
         // pl_warmup_on_sh_conv rows read that flag where the driver tested the model).  The
         // snapshot fingerprint reads none of them.
-        bool   fc_on{};            ///< network.fast_clock.enable: the split-cadence clocks-only fast tier (FC-1).  Read by the driver: it builds the tier's wavelength provider, runs the fast tick on a decimated-out epoch and harvests the fast anchor on an emitted one.
-        bool   fc_shadow{};        ///< network.fast_clock.enable and network.fast_clock.shadow: the fast tick also runs on every full epoch, traced and discarded (a permanent grading instrument that never feeds back).  Read by the driver.
         bool   sec_timers_on{};    ///< network.trace_section_timers: the D0 / D0b per-epoch section timers.  Read by the driver (the estimator and carry-driver timers, the subBegin / subEnd brackets, the per-epoch readout) and by networkPassB_ (the D0 assembly wall).
         /// The a-priori satellite-clock anchor sigma (m), resolved once by
         /// GnssConfig::resolveNetworkAprioriClockAnchorSigmaM from
@@ -1725,14 +1723,6 @@ namespace GnssProcessor {
         // is byte-identical and only clock_c1_m_s changes.  Empty and inert unless
         // emit_clock_rate_on (which is off whenever clk_model_on supplies C1 from clock_osc).
         std::map<std::string, ClockOsc> clock_rate_est;
-        // Split-cadence fast-clock anchor (FC-1, network.fast_clock): per-LOS cached lumps
-        // and rates and the emitted c0 at the last emitted full solve, rebuilt from scratch
-        // at every emit.  Empty and inert unless fast_clock.enable.  Not snapshotted
-        // (RTB-7a exemption record): a warm resume re-arms after two fresh emitted full
-        // epochs, so a restored anchor never refers to a frame the resumed leg did not
-        // emit itself.  The fast tick mutates nothing outside this member; that isolation
-        // contract keeps full epochs byte-identical whether or not ticks ran.
-        FastClockCarry fast_clock;
         // The broadcast-ephemeris IODE to which each satellite's carried clock state
         // (clock_osc.x0, the D2 clock carry, the clock-monitor jump baseline) is currently
         // referenced.  Advanced at the eph-cutover re-level (before the solve), not
@@ -4551,27 +4541,6 @@ namespace GnssProcessor {
         /// carry_invariant.  Reported by networkWithinEpochCulpritWithholdRunEnd
         /// (filter/NetworkWithinEpochCulprits).
         WithinEpochCulpritTally we_culprit_withhold;
-
-        // Split-cadence fast-clock telemetry (FC-1, network.fast_clock).  Standing
-        // invariant #4 matters most here: the fast tier runs on epochs the full pipeline
-        // skips, so a miswired hook produces a clean log and no evidence of itself.
-        // "0 ticks_driven" on an armed run means the T2e hook never fired; "0 ticks_emitted"
-        // with emit on means the product wire never saw the tier.  Both are miswires, not
-        // quiet runs.
-        std::size_t fc_ticks_driven   = 0;  ///< fast ticks the decimation hook ran (including shadow ticks)
-        std::size_t fc_ticks_estimated = 0; ///< ticks that produced at least one satellite clock delta
-        std::size_t fc_ticks_emitted  = 0;  ///< ticks whose deltas reached the product wire (INC-3)
-        std::size_t fc_los_used       = 0;  ///< LOS admitted into a tick's fit, summed over ticks
-        std::size_t fc_los_screened   = 0;  ///< LOS excluded by the k·σ post-fit screen
-        std::size_t fc_screen_slips   = 0;  ///< screened LOS whose residual is slip-scale (|res| >= half a wide-lane)
-        std::size_t fc_sat_below_floor = 0; ///< (tick, satellite) pairs that missed min_stations_per_sat
-        std::size_t fc_datum_withheld_ticks = 0; ///< ticks withheld entirely because the datum station was absent/screened
-        std::size_t fc_gap_withheld_ticks   = 0; ///< ticks whose emission was suppressed by the R11 emit_max_gap_s bound
-        std::size_t fc_anchor_los  = 0;     ///< LOS cached by the most recent anchor harvest (a level, not a run total)
-        std::size_t fc_anchor_sats = 0;     ///< satellites in the most recent anchor (likewise a level)
-        std::size_t fc_anchor_rho_fail = 0; ///< run-total LOS dropped at harvest for want of a usable range / orbit sample
-        double fc_wall_ms = 0.0;            ///< run-total wall time inside the tick body (perf budget: §7.3 ≤ 50 ms/tick @305)
-        double fc_wall_ms_max = 0.0;        ///< slowest single tick (the budget is a max bound, not a mean)
 
         // --- redundancy / testability census ---
         // Standing invariant #4 in its statistical form.  The failure mode this census

@@ -18,8 +18,7 @@
  * Eight kinds exist.  Four are corruptions of the producer's input (@c slip,
  * @c outage, @c sat_clock_step, @c rx_clock_step) and are applied to a per-epoch
  * mutable copy of the @c SyncedEpoch at the top of the epoch body: before
- * @c networkFastClockTick, @c computeModels, every T0 detector, the
- * raw-observable pass and assembly.  One site suffices because everything
+ * @c computeModels, every T0 detector, the raw-observable pass and assembly.  One site suffices because everything
  * downstream derives from it: @c PppModel::computeModels builds both
  * @c PppObservation::observed (phase in metres, via the wavelength) and
  * @c PppObservation::raw_observed (phase in cycles, read by MW, GF and IF-TD)

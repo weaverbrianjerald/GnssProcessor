@@ -122,7 +122,6 @@
 #include "filter/NetworkDatumGraph.hpp"        // structural S-basis dimension census (SPEC_datum_graph_census)
 #include "filter/NetworkSolPrep.hpp"    // emit-side solution prep and discontinuity signalling (INC-11pre)
 #include "filter/NetworkEmitStore.hpp"    // emit, store, product write and closed loop (INC-11)
-#include "filter/NetworkFastClock.hpp"    // split-cadence clocks-only fast pass (FC-1)
 #include "filter/NetworkTeardown.hpp"
 #include "filter/NetworkPhaseVisibleDiag.hpp"  // phase-visible consistency instrument (card PVN)
 #include "filter/NetworkPbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
@@ -158,7 +157,7 @@
 #include "slip/NetworkSlipOracle.hpp"   // simulation-only oracle slip response (level-preserving ceiling)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
-#include "common/PppUtils.hpp"        // the slip-QC and fast-clock wavelength providers (GLONASS slots)
+#include "common/PppUtils.hpp"        // the slip-QC wavelength provider (GLONASS slots)
 #include "realtime/RealTimeEngine.hpp"
 #include "realtime/NetworkStreamFrontEnd.hpp"  // multi-station streaming epoch source (RTF-3)
 #include "math/TimeUtils.hpp"
@@ -391,20 +390,6 @@ int Application::runNetwork() {
     // skipped.
     if (slip_qc.params.anyConsumer(static_cast<bool>(slip_raw_trace)))
         slip_qc.utils = std::make_unique<PppUtils>(log_manager_);
-    // Split-cadence clocks-only fast pass (ctx.knobs.fc_on).  Two hooks, both no-ops
-    // when off: a clocks-only tick on every decimated-out epoch (the T2e hook), and the
-    // anchor harvest on every epoch that emitted.  ctx.knobs.fc_shadow also runs the
-    // tick on full epochs for grading and discards the result; it is a permanent
-    // instrument and never feeds back.
-    // The fast tier's own wavelength provider, built here for the same reason
-    // (log_manager_ is not reachable from the seam).  It converts raw RINEX cycles
-    // to metres at both the anchor harvest and the tick, and the wavelength it
-    // returns is cached per band in the anchor, so the tick reuses the identical
-    // value.  A wavelength that differed by 1e-9 m between the two ends would turn
-    // a phase count of about 1e8 cycles into a 0.1 m error, so the tick must use
-    // the same number, not merely the same formula.
-    std::unique_ptr<PppUtils> fc_ppp_utils;
-    if (ctx.knobs.fc_on) fc_ppp_utils = std::make_unique<PppUtils>(log_manager_);
 
 
 
@@ -1112,8 +1097,8 @@ int Application::runNetwork() {
         // position of this call affects log text only.
         LogManager::setCurrentEpochTime(se_raw.time);
         // Event-harness seam (filter/NetworkInject.cpp), the single observation
-        // injection site.  It is upstream of networkFastClockTick, computeModels, every
-        // T0 detector, networkComputeRawObservables and assembly, so a one-scalar write
+        // injection site.  It is upstream of computeModels, every T0 detector,
+        // networkComputeRawObservables and assembly, so a one-scalar write
         // on the RinexObservation (phase in cycles) moves the metre-valued design row
         // and the cycle-valued MW/GF/IF-TD feed together.  It sits after the
         // start-offset gate so a fast-forwarded epoch cannot consume an event.
@@ -1218,12 +1203,6 @@ int Application::runNetwork() {
         // brdc_rts nav catch-up is idempotent across skips.
         if ((decim_counter++ % ctx.knobs.epoch_decimation_n) != 0) {
             // A decimated-out epoch has fully synced observations but is not processed.
-            // With the fast tier armed it runs a clocks-only fast tick against the last
-            // emitted full solve instead.  Off ⇒ the bare Next return below is reached
-            // unchanged (structurally byte-identical).  A tick is not a loop epoch:
-            // n_loop_epochs is untouched, the D0/D0b brackets never open, and nothing
-            // outside ctx.carry.fast_clock is mutated (the isolation contract).
-            if (ctx.knobs.fc_on) networkFastClockTick(ctx, config_, log, traces, setup, se, false);
             return LoopSignal::Next;
         }
         ++n_loop_epochs;  // [TIMING]
@@ -1255,17 +1234,6 @@ int Application::runNetwork() {
         traces.writeHealthRow(se.time, nc, ctx.counters, timing.loop_begin,
                               ura_on, raim_on, pl_on, ura_sigma0_ewma,
                               last_pivot, grade_metric_s);
-
-        // Fast-clock shadow mode (FC-1): the same tick body runs on this full epoch,
-        // immediately before the full pipeline, so the trace carries a fast-vs-full delta
-        // for every epoch of any run.  It is bracketed so its cost is attributed in the
-        // D0b table instead of inflating `other`; the result is traced and discarded, so
-        // the full pipeline stays byte-identical (gated at every increment).
-        if (ctx.knobs.fc_shadow) {
-            subBegin(SB_FASTCLOCK);
-            networkFastClockTick(ctx, config_, log, traces, setup, se, true);
-            subEnd(SB_FASTCLOCK);
-        }
 
         // The event-row writer's body lives in NetworkRunTraces (L1/L2); this thin
         // forwarder adds the epoch time, so the call sites below pass only the row.
@@ -2386,14 +2354,13 @@ int Application::runNetwork() {
         auto& serialized_consts = sp_.serialized_consts;
         auto& retro_emit_sats = sp_.retro_emit_sats;
         subEnd(SB_SOLPREP);     // close sol-prep and discontinuity signalling (D0b)
-        // The fast anchor may advance only on an epoch whose solution reached the wire.
-        // Every whole-epoch withhold (observability gate, A4 sigma0 ceiling, SH health
-        // gate) `continue`s or returns before networkEmitStore's emit site, and n_emitted
-        // is incremented exactly there, so comparing that counter across the call tests
-        // emission continuity.  Keying on solve continuity instead is the R11 defect
-        // documented by the C1 card: a delta measured inside a withheld era could be
-        // published across a consumer-visible gap.
-        const std::size_t fc_n_emitted_before = ctx.counters.n_emitted;
+        // Whether this epoch's solution reached the wire.  Every whole-epoch withhold
+        // (observability gate, A4 sigma0 ceiling, SH health gate) `continue`s or returns
+        // before networkEmitStore's emit site, and n_emitted is incremented exactly
+        // there, so comparing that counter across the call tests emission.  The tables
+        // written once after the first emitted epoch (signals as planned, parameters as
+        // armed, contributions as armed) key on it below.
+        const std::size_t n_emitted_before = ctx.counters.n_emitted;
         // The smoothed hold's clock clones (card SMH): advanced over this epoch before the
         // hold reads them at emit.  No-op off.
         networkPbHoldCloneUpdate(ctx, log, est, x_s, ws, plan.shared_datum);
@@ -2404,16 +2371,6 @@ int Application::runNetwork() {
                          est_index_of, modeled, shared_phase_keys, carry_slipped_ambs,
                          we_t2_opp, we_t2_flag, cl_tally);
         subEnd(SB_EMITSTORE);   // close block 7: emit/store, order-sensitive, serial (D0b)
-        // Harvests the fast anchor from this epoch's emitted solution.  `sol` is read after
-        // networkEmitStore, so the cached c0 values are the re-based, PB-filtered ones the
-        // consumer received; that makes the fast product a delta in the emitted frame, in
-        // which every per-era frame constant cancels.
-        if (ctx.knobs.fc_on && ctx.counters.n_emitted != fc_n_emitted_before) {
-            subBegin(SB_FASTCLOCK);
-            networkFastClockHarvest(ctx, config_, log, setup, se, present, modeled, sol,
-                                    fc_ppp_utils);
-            subEnd(SB_FASTCLOCK);
-        }
         subBegin(SB_IONODIAG);  // block 4a: iono / ZWD / anchor-info viz traces (D0b)
         networkIonoDiag(ctx, config_, log, traces, setup, ws, se, est, x_s, plan, asm_res,
                         est_index_of, modeled, registered_clock_sats);
@@ -2502,7 +2459,7 @@ int Application::runNetwork() {
         networkSignalRosterAudit(ctx, config_, log, traces, se, stations, modeled, present,
                                  slip_qc.epoch.computed ? &slip_qc.epoch : nullptr,
                                  carry_slipped_ambs, sol,
-                                 ctx.counters.n_emitted != fc_n_emitted_before);
+                                 ctx.counters.n_emitted != n_emitted_before);
         // Fold half of the ledger emit (card SID phase 5a, E1).  It runs here and not at
         // the emit site because the ledger's admitted machine is advanced by the audit
         // pass immediately above: an admitted arc birth at this epoch does not exist
@@ -2531,12 +2488,12 @@ int Application::runNetwork() {
         // from the inventory PASS B drained, written once after the first emitted epoch.
         // Trace class; it returns on its first line once the table is out.
         networkParamInventoryEpochTail(ctx, log, traces, nc,
-                                       ctx.counters.n_emitted != fc_n_emitted_before);
+                                       ctx.counters.n_emitted != n_emitted_before);
         // Contributions as armed (card NOM N2a): every contribution to the normal equations
         // by its declared kind (the station side drained after PASS B, this epoch's shared
         // folds from the estimator), written once after the first emitted epoch.  Trace class.
         networkContributionsEpochTail(ctx, est, log, traces, nc,
-                                      ctx.counters.n_emitted != fc_n_emitted_before);
+                                      ctx.counters.n_emitted != n_emitted_before);
         subEnd(SB_ROSTER);
         // Trigger instrumentation (SPEC_day129_frame_guards P1-3/P1-4).  It runs before
         // the stash/status block, because the epoch-status row written there reads the
