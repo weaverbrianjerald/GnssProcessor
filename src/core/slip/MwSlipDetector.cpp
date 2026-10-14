@@ -27,6 +27,8 @@
 
 namespace GnssProcessor {
 
+    using namespace mw;  // the constants table and the per-arc state (slip/MwArcState.hpp)
+
     namespace {
         // Zenith-referenced elevation weight for MW noise: w(el) = 1/sin(el).
         // MW deviation noise is code-multipath-dominated and inflates toward
