@@ -23,6 +23,7 @@
 #include "filter/KalmanFilter.hpp"
 #include "filter/KalmanPostFitQc.hpp"     // PostFitQcWork
 #include "filter/KalmanRowIdentity.hpp"   // splitBssdSatId, bandWavelengthForSat
+#include "common/GnssIdentity.hpp"     // systemOfSat, systemName
 #include "common/PppUtils.hpp"
 #include "slip/CycleSlipManager.hpp"      // MW tiebreak
 #include <spdlog/spdlog.h>
@@ -474,13 +475,7 @@ namespace GnssProcessor {
         // runs covering bands like GPS L5 flip-flop forever: every new pivot
         // reads as slipped.
         if (sat.empty() || pivot_sat.empty() || signal.empty()) return false;
-        const System sys =
-            sat[0] == 'G' ? System::GPS :
-            sat[0] == 'E' ? System::Galileo :
-            sat[0] == 'R' ? System::GLONASS :
-            sat[0] == 'C' ? System::BeiDou :
-            sat[0] == 'J' ? System::QZSS :
-            sat[0] == 'S' ? System::SBAS : System::Unknown;
+        const System sys = systemOfSat(sat);
         if (sys == System::Unknown) return false;
         if (ppp_model_.wasAtxSubstituted(sat, signal, sys)) return true;
         if (ppp_model_.wasAtxSubstituted(pivot_sat, signal, sys)) return true;
@@ -493,7 +488,7 @@ namespace GnssProcessor {
         // Identify the constellation from the pivot's PRN prefix.  All
         // non-pivot rows in this group share the constellation by
         // construction (BSSD groups SD pairs within a constellation).
-        const std::string cons      = PppUtils::getSystemString(pivot_sat);
+        const std::string cons      = systemName(systemOfSat(pivot_sat));
         // A pooled (cross-band) row skips a constellation whose handover is already
         // requested: its rows include those of the group that fired, and a second
         // warning would report the same physical event again.
@@ -800,19 +795,6 @@ namespace GnssProcessor {
         // tolerance in the integer check below).
         PppUtils ppp_utils_local(log_manager_);
 
-        auto satToSystem = [](const std::string& sat) -> System {
-            if (sat.empty()) return System::Unknown;
-            switch (sat[0]) {
-            case 'G': return System::GPS;
-            case 'E': return System::Galileo;
-            case 'R': return System::GLONASS;
-            case 'C': return System::BeiDou;
-            case 'J': return System::QZSS;
-            case 'S': return System::SBAS;
-            default:  return System::Unknown;
-            }
-        };
-
         const double amb_init_std = config_.getInitialStd().ambiguity;
 
         for (auto& [sat, e] : nonpivot_pools) {
@@ -830,7 +812,7 @@ namespace GnssProcessor {
             // must round to the same non-zero integer with tolerance
             // INT_CYCLE_TOL.  This is what distinguishes a real cycle
             // slip from atmospheric / multipath events.
-            const System sys = satToSystem(sat);
+            const System sys = systemOfSat(sat);
             int   common_cycles    = 0;
             bool  first            = true;
             bool  integer_consistent = true;
@@ -854,7 +836,7 @@ namespace GnssProcessor {
             if (!integer_consistent) continue;
 
             const std::string bands_str = joinBands(e.bands);
-            const std::string cons = PppUtils::getSystemString(sat);
+            const std::string cons = systemName(systemOfSat(sat));
 
             klogger->warn(
                 "{}NON-PIVOT SLIP on {} {} ({} bands [{}], sign={:+d}, "
@@ -1196,7 +1178,7 @@ namespace GnssProcessor {
 
             const auto [max_prim, max_ref] = splitBssdSatId(
                 measurement.satellite_ids[max_idx]);
-            const std::string max_cons = PppUtils::getSystemString(max_prim);
+            const std::string max_cons = systemName(systemOfSat(max_prim));
 
             // Collect all phase-outlier indices for the same constellation
             // whose |sres| is close to the maximum.
@@ -1217,7 +1199,7 @@ namespace GnssProcessor {
 
                 const auto [prim, ref] = splitBssdSatId(
                     measurement.satellite_ids[i]);
-                if (PppUtils::getSystemString(prim) != max_cons) continue;
+                if (systemName(systemOfSat(prim)) != max_cons) continue;
 
                 // Deduplicate by satellite: one entry per satellite, the
                 // first qualifying row in row order.

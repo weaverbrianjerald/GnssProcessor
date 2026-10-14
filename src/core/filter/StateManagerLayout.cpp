@@ -10,6 +10,7 @@
 
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
+#include "common/GnssIdentity.hpp"
 #include <limits>
 #include <string>
 #include <spdlog/spdlog.h>
@@ -176,7 +177,7 @@ namespace GnssProcessor {
         size_t time_offset_idx = base_core_size_;
         if (!config_.enableBetweenSatelliteSd()) {
             for (const auto& sys : active_systems) {
-                if (sys != "GPS") {
+                if (sys != systemName(System::GPS)) {
                     systems_with_time_offsets_.push_back(sys);
                     system_time_offset_indices_[sys] = time_offset_idx;
                     ++time_offset_idx;

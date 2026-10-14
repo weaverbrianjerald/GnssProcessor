@@ -31,33 +31,36 @@ namespace kalman {
      * Pivot-slip detection, the Huber pass, the persistent-bias inflation and the
      * per-row phase outlier dispatch use it for the wavelength-fraction floor below
      * which a residual cannot be an integer cycle slip.  The constellation is read
-     * from the satellite's first character and the frequency from the band's digit;
-     * GLONASS uses the FDMA centre frequency, which suffices for a fractional floor.
+     * with @c systemOfSat (common/GnssIdentity.hpp) and the frequency from the band's
+     * digit; GLONASS uses the FDMA centre frequency, which suffices for a fractional
+     * floor.  The digit table stays here: it differs from
+     * @c carrierFrequencyHz(bandOfDigit(...)) on QZSS L6 (0.0 here) and SBAS digit 2
+     * (GPS L2 here), so moving it changes what those two bands compute and is a separate
+     * change from this reading of the constellation.
      *
-     * @param sat       Satellite ID (e.g. "G11"); constellation from char 0.
+     * @param sat       Satellite ID (e.g. "G11"); constellation from its letter.
      * @param band_str  Band prefix (e.g. "L1"); only the frequency digit is used.
      * @return          Wavelength in meters, or 0.0 if the pair is unknown.
      */
     inline double bandWavelengthForSat(const std::string& sat,
                                         const std::string& band_str) {
         if (sat.empty() || band_str.size() < 2) return 0.0;
-        const char prefix = sat[0];
         const char d      = band_str[1];
         double freq = 0.0;
-        switch (prefix) {
-        case 'G': case 'J': case 'S':  // GPS / QZSS / SBAS share band-digit mapping
+        switch (systemOfSat(sat)) {
+        case System::GPS: case System::QZSS: case System::SBAS:  // share band-digit mapping
             if      (d == '1') freq = Constants::GPS_L1_FREQ;
             else if (d == '2') freq = Constants::GPS_L2_FREQ;
             else if (d == '5') freq = Constants::GPS_L5_FREQ;
             break;
-        case 'E':  // Galileo
+        case System::Galileo:
             if      (d == '1') freq = Constants::GAL_E1_FREQ;
             else if (d == '5') freq = Constants::GAL_E5A_FREQ;
             else if (d == '7') freq = Constants::GAL_E5B_FREQ;
             else if (d == '6') freq = Constants::GAL_E6_FREQ;
             else if (d == '8') freq = Constants::GAL_E5_FREQ;
             break;
-        case 'C':  // BeiDou
+        case System::BeiDou:
             if      (d == '1') freq = Constants::BDS_B1C_FREQ;
             else if (d == '2') freq = Constants::BDS_B1_FREQ;   // B1I (legacy band-2 RINEX code)
             else if (d == '5') freq = Constants::BDS_B2A_FREQ;
@@ -65,14 +68,14 @@ namespace kalman {
             else if (d == '6') freq = Constants::BDS_B3_FREQ;
             else if (d == '8') freq = Constants::BDS_B2AB_FREQ;
             break;
-        case 'R':  // GLONASS: the FDMA center frequency suffices for the λ/4 floor
+        case System::GLONASS:  // the FDMA center frequency suffices for the λ/4 floor
             if      (d == '1') freq = Constants::GLONASS_G1_BASE_FREQ;
             else if (d == '2') freq = Constants::GLONASS_G2_BASE_FREQ;
             else if (d == '3') freq = Constants::GLONASS_G3_BASE_FREQ;
             else if (d == '4') freq = Constants::GLONASS_G1A_FREQ;
             else if (d == '6') freq = Constants::GLONASS_G2A_FREQ;
             break;
-        default: break;
+        case System::Unknown: break;  // IRNSS 'I' and any other letter: no wavelength
         }
         if (!(freq > 0.0)) return 0.0;
         return Constants::SPEED_OF_LIGHT / freq;
