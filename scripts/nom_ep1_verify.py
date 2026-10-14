@@ -32,7 +32,9 @@ run's; the manifests of other stages are listed in V8 and not paired) is read fo
 only: its base, its converted seams and the epoch function's lines must be what the verifier
 found, and each entry {"seam", "kind", "file", "frozen_line", "new_line"} under "seams" must
 name the declaration or definition the verifier found itself, else V8 fails; no binding is
-read from it.
+read from it.  The rows and the declared entries are those that apply at --base
+(nom_ep1.bind_base, decided by the rows' and the entries' own locators): an entry marked
+retired_by the REMOVE-key deletion applies only where the base still has its object.
 
 The candidate is one of two shapes, found from the tree itself:
   empty   Application::runNetwork still holds the lambda processSyncedEpoch and no
@@ -225,7 +227,7 @@ from nom_cpp import (APPLICATION_HPP, DRIVER_PATH, KEYWORDS, LAMBDA_NAME, SEAM_C
                      CallNode, Cond, Copy, Driver, Expr, FileIndex, GitTree, Lit, Opaque, Ref, Resolver,
                      Scopes, Tokens, _lambda_at, calls_in, match_angle, parse_declaration,
                      parse_params, statements)
-from nom_ep1 import DEFAULT_BASE, ROW_MODULES, load_rows, declared  # noqa: E402
+from nom_ep1 import DEFAULT_BASE, ROW_MODULES, bind_base, load_rows, declared  # noqa: E402
 from nom_ep1.model import ADAPTER, MEMBER, RUN, Explicit  # noqa: E402  (the row type only)
 import nom_epoch_lint as lint  # noqa: E402
 from nom_epoch_lint import (DiskTree, Sub, cond_include_lines, pp_directive, render,  # noqa: E402
@@ -518,6 +520,7 @@ class Frozen:
         self.base = base
         self.tree = GitTree(base)
         self.drv = Driver(self.tree)
+        self.fit = bind_base(self)      # the rows and declared entries that apply at this base
         self.rn = RunNetwork(self.tree)
         self.res = self.rn.resolver()
         self.lam_stmts = self.rn.lambda_statements()
@@ -4683,10 +4686,12 @@ def ctl_n16(v):
     if c.mode != "epoch":
         return None, "no epoch function (ep.emitted does not exist)"
     st = next(((s, e) for s, e in c.stmts if T.join(s, min(e, s + 4)).startswith("ep.emitted=")), None)
-    before = next(((s, e) for s, e in c.stmts if "fc_n_emitted_before" in T.join(s, e)
+    # The counter snapshot the VALUE_EQUAL expression reads, as the base spells it.
+    snap = (SUBST.value_equal or "fc_n_emitted_before").split("!=")[-1].strip()
+    before = next(((s, e) for s, e in c.stmts if re.search(r"\b" + snap + r"\b", T.join(s, e))
                    and T.t(s) == "const"), None)
     if st is None or before is None:
-        return None, "the ep.emitted store or fc_n_emitted_before is missing"
+        return None, f"the ep.emitted store or {snap} is missing"
     text = T.source[T[st[0]].pos:T[st[1] - 1].end]
     src = T.source[:T[st[0]].pos] + T.source[T[st[1] - 1].end:]
     pos = T[before[1] - 1].end
@@ -5582,6 +5587,9 @@ def main(argv=None):
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
     t0 = time.time()
+    global SUBST
+    fz = Frozen(args.base)          # binds the tables to the base (nom_ep1.bind_base)
+    SUBST = Substitutions()         # the declared substitutions that apply at the base
     rows = load_rows(ROW_MODULES)
     converted = [r.name for r in load_rows(pick_rows(args.rows))]
     names = {r.name for r in rows}
@@ -5590,7 +5598,6 @@ def main(argv=None):
             ap.error(f"--seams: {x} is not a row of the canonical table")
         if x not in converted:
             converted.append(x)
-    fz = Frozen(args.base)
     tree = DiskTree(args.tree)
     only = set(args.only.split(",")) if args.only else None
     v = Verifier(fz, tree, rows, converted, args.presolve_writer, args.manifest, args.verbose)
@@ -5599,6 +5606,8 @@ def main(argv=None):
           + (f" ({v.cand.fn.path})" if v.epoch else " (the lambda still in runNetwork: an empty conversion)")
           + f"; converted rows: {', '.join(pick_rows(args.rows)) or 'none'}"
           + (f" + seams {args.seams}" if args.seams else "") + f" ({len(converted)} seams)")
+    for x in fz.fit.summary():
+        print(f"  {x}")
     res = v.run(only)
     mpaths = [args.manifest] if args.manifest else this_stage_manifests(v, args)
     for mp in mpaths:

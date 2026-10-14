@@ -33,7 +33,21 @@ EPOCH_INCLUDES = ('#include "app/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 
 GROUP_WORDS = {"pass_a": "the layout", "funnel": "the slip funnel", "columns": "the shared columns",
                "assembly": "the station blocks", "dd_build": "the DD build's reverse maps",
                "handoff": "the post-fit hand-off"}
-BUILDERS = tuple(name for name, _ in model.SOLVE_BUILDERS)   # T-F, from the table
+
+
+def group_words(o):
+    """GROUP_WORDS[@p o] at the bound base: the DD build has one reverse map once the
+    REMOVE-key deletion has taken the lane pair groups' second one."""
+    w = GROUP_WORDS[o]
+    if o == "dd_build" and "L:carry_arc_amb_key2" in model.ABSENT:
+        w = "the DD build's reverse map"
+    return w
+
+
+def builders():
+    """The solve's replay builders at the bound base (T-F): the closure names of
+    model.SOLVE_BUILDERS."""
+    return tuple(name for name, _ in model.SOLVE_BUILDERS)
 
 
 def namespace_close(T):
@@ -150,7 +164,7 @@ def decl_doc(g, pl, old_lines, inner, adapter=False):
     for o in pl.outs:
         if o in tpl.GROUP_TYPES:
             members = ", ".join(f"{gt} ({n})" for n, gt in outs.get(o, []))
-            words = GROUP_WORDS[o][0].upper() + GROUP_WORDS[o][1:]
+            words = group_words(o)[0].upper() + group_words(o)[1:]
             t = fixed.get(o) or f"[in/out] {words} ({model.OUTPUTS[o]}), written: {members}."
             lines += wrap_text(t, width, f"@param {o} ", "    ")
         else:
@@ -260,12 +274,12 @@ def seams(g):
             rec.append({"seam": pl.row.name, "file": path, "frozen_line": f.line, "kind": "declaration",
                         "form": pl.row.form, "params": params})
         if any(pl.row.name == SOLVE for pl in pls):
-            k = text.find(tpl.SOLVE_BANNER_OLD)
+            old, new = tpl.SOLVE_BANNERS.get(builders(), (None, None))
+            k = text.find(old) if old else -1
             if k < 0:
                 g.problems.append(f"{SOLVE_HPP}: the banner's callback sentence was not found (not rewritten)")
             else:
-                g.edits[path].append(Edit(k, k + len(tpl.SOLVE_BANNER_OLD), tpl.SOLVE_BANNER_NEW,
-                                          "T-F banner"))
+                g.edits[path].append(Edit(k, k + len(old), new, "T-F banner"))
     # Sources.
     for path, pls in by_cpp.items():
         T = g.tree.tokens(path)
@@ -326,7 +340,7 @@ def seams(g):
             # T-F: the replay calls its builders directly, so the solve's source includes their
             # header (the frozen solve reached them only through the callbacks).
             for h in sorted({g.plans[model.REMOVED_BY_PARAM[(SOLVE, n)].builder].rr.decl.path
-                             for n in BUILDERS}):
+                             for n in builders()}):
                 want.append(f'#include "{h[len("include/"):]}"   // the replay\'s builders (T-F)')
         have = set(re.findall(r'#include\s+"([^"]+)"', text))
         add = [ln for ln in want if re.search(r'"([^"]+)"', ln).group(1) not in have]
@@ -339,7 +353,7 @@ def seams(g):
 def replay(g, pl, T, path):
     """T-F in the solve: the replay's two callback invocations become the builders' calls."""
     f = pl.rr.defn
-    for name in BUILDERS:
+    for name in builders():
         rem = model.REMOVED_BY_PARAM.get((SOLVE, name))
         bpl = g.plans[rem.builder]
         args = [pl.run_name, pl.ep_name]

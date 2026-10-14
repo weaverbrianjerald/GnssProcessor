@@ -40,17 +40,30 @@ LAMBDA_NOTE = ("    // === One synced epoch through the full producer ==========
 TEARDOWN_GROUPS = {"engines": "run.engines"}
 
 
+def has_callable():
+    """Whether the bound base has the third-band closure (CALLABLE; the REMOVE-key deletion
+    takes it with the EWL lane)."""
+    return any(r.cls == "CALLABLE" and r.param == CALLABLE_LOCAL for r in model.REMOVED_PARAMS)
+
+
 def setup(g):
     rec = {}
     rec["run_network"] = run_network(g)
     rec["groups"] = groups_hpp(g)
-    g.new[RUN_HPP] = tpl.NETWORK_RUN_HPP.replace("emit@@EMIT_INIT@@", g.member_init["emit"]) \
-                                        .replace("lanes@@LANES_INIT@@", g.member_init["lanes"])
-    g.new[EPOCH_HPP] = tpl.NETWORK_EPOCH_HPP
+    # The groups NetworkRun constructs itself (emit, and lanes while the base has the lane run).
+    run_hpp = tpl.at_base("NETWORK_RUN_HPP", model.ABSENT)
+    for ec in model.ENGINE_CTORS:
+        if ec.owner == "run":
+            run_hpp = run_hpp.replace(f"{ec.member}@@{ec.member.upper()}_INIT@@", g.member_init[ec.member])
+    if "@@" in run_hpp:
+        raise GenError(f"{RUN_HPP}: a member initializer of the template has no engine at the base")
+    g.new[RUN_HPP] = run_hpp
+    g.new[EPOCH_HPP] = tpl.at_base("NETWORK_EPOCH_HPP", model.ABSENT)
     check_epoch_template(g)
     rec["solve_handoff"] = solve_handoff(g)
-    rec["predicate"] = predicate(g)
-    rec["runctx_comment"] = runctx_comment(g)
+    if has_callable():
+        rec["predicate"] = predicate(g)
+        rec["runctx_comment"] = runctx_comment(g)
     rec["application_hpp"] = application_hpp(g)
     rec["cmake"] = cmake(g)
     return rec
@@ -205,8 +218,9 @@ def run_network(g):
     for s, e, n in cut:   # provisional: the reads below decide where each comment goes
         E.append(Edit(T.toks[s].pos, T.toks[e - 1].end, "", "provisional"))
 
-    # The third-band closure (CALLABLE), the bracket closures and their timer vectors.
-    for name in [CALLABLE_LOCAL, *BRACKETS, *TIMER_FIELDS]:
+    # The third-band closure (CALLABLE, while the base has it), the bracket closures and their
+    # timer vectors.
+    for name in [*([CALLABLE_LOCAL] if has_callable() else []), *BRACKETS, *TIMER_FIELDS]:
         d = g.root_decl(name)
         s, e = d.stmt
         a, b = g.stmt_line_span(s, e, with_comment=True)
@@ -498,16 +512,26 @@ def run_cpp(g):
 # ---------------------------------------------------------------------------------------------
 # NetworkRunGroups.hpp, NetworkEpoch.hpp
 # ---------------------------------------------------------------------------------------------
+# The headers NetworkRunGroups.hpp needs once it owns the engines and holds their
+# specification, each with the object that needs it: None, every base; a model.py root key,
+# only while the base has that object (the REMOVE-key deletion takes the deweight gate, its
+# configuration and the fast tier's wavelength provider, and so their headers).
 GROUPS_INCLUDES = [
-    '#include "config/GnssConfigTypes.hpp"             // IonoConstraintDeweightConfig (card NOM3 step EP1)',
-    '#include "common/PppUtils.hpp"                    // PppUtils, the fast tier\'s wavelength provider',
-    '#include "filter/NetworkCarryVce.hpp"             // NetworkCarryVce',
-    '#include "filter/NetworkEstimator.hpp"            // NetworkEstimator',
-    '#include "filter/NetworkInvariantCarryDriver.hpp" // NetworkInvariantCarryDriver (+ ::Config)',
-    '#include "filter/NetworkIonoDeweightGate.hpp"     // NetworkIonoDeweightGate',
-    '#include "filter/NetworkPriorResidual.hpp"        // NetworkPriorResidual',
-    '#include "slip/NetworkRawObservables.hpp"         // SlipQcChannel',
+    ('#include "config/GnssConfigTypes.hpp"             // IonoConstraintDeweightConfig (card NOM3 step EP1)',
+     "D:idw"),
+    ('#include "common/PppUtils.hpp"                    // PppUtils, the fast tier\'s wavelength provider',
+     "D:fc_ppp_utils"),
+    ('#include "filter/NetworkCarryVce.hpp"             // NetworkCarryVce', None),
+    ('#include "filter/NetworkEstimator.hpp"            // NetworkEstimator', None),
+    ('#include "filter/NetworkInvariantCarryDriver.hpp" // NetworkInvariantCarryDriver (+ ::Config)', None),
+    ('#include "filter/NetworkIonoDeweightGate.hpp"     // NetworkIonoDeweightGate', "D:iono_deweight"),
+    ('#include "filter/NetworkPriorResidual.hpp"        // NetworkPriorResidual', None),
+    ('#include "slip/NetworkRawObservables.hpp"         // SlipQcChannel', None),
 ]
+# The standard headers, likewise: std::unique_ptr (the fast tier's provider), std::set (the
+# deweight gate's station list), std::string (the families), the static_asserts.
+GROUPS_SYS_INCLUDES = [("memory", "D:fc_ppp_utils"), ("set", "D:iono_deweight"), ("string", None),
+                       ("type_traits", None)]
 BANNER_OLD = " *   - @ref NetworkRunEngines: a const view of the run's estimation engines (the run end);\n"
 BANNER_NEW = (" *   - @ref NetworkRunEngines: the run's estimation engines, owned since card NOM3 step EP1\n"
               " *     (built in place inside NetworkRun from a @ref NetworkEngineSpec);\n")
@@ -552,11 +576,12 @@ def groups_hpp(g):
     incs = [j for j in range(T.n) if T.k(j) == "pp" and T.t(j).startswith('#include "')]
     pos = L.end(T.toks[incs[-1]].end)
     have = set(re.findall(r'#include\s+"([^"]+)"', text))
-    add = [x for x in GROUPS_INCLUDES if re.search(r'"([^"]+)"', x).group(1) not in have]
+    add = [x for x, key in GROUPS_INCLUDES if key not in model.ABSENT
+           and re.search(r'"([^"]+)"', x).group(1) not in have]
     sys_incs = [j for j in range(T.n) if T.k(j) == "pp" and T.t(j).startswith("#include <")]
     have_sys = {T.t(j) for j in sys_incs}
-    extra_sys = [f"#include <{h}>" for h in ("memory", "set", "string", "type_traits")
-                 if f"#include <{h}>" not in have_sys]
+    extra_sys = [f"#include <{h}>" for h, key in GROUPS_SYS_INCLUDES
+                 if key not in model.ABSENT and f"#include <{h}>" not in have_sys]
     g.edits[GROUPS_HPP].append(Edit(pos, pos, "\n".join(add) + "\n", "includes"))
     if extra_sys:
         p2 = L.end(T.toks[sys_incs[-1]].end)
@@ -640,8 +665,9 @@ def engines_struct(g):
 
 def check_epoch_template(g):
     """Every epoch member of model.EPOCH_MEMBERS appears in NetworkEpoch.hpp with its type and
-    default initializer (the realization the verifier's V3c checks)."""
-    text = tpl.NETWORK_EPOCH_HPP
+    default initializer (the realization the verifier's V3c checks), in the text written at
+    this base."""
+    text = g.new[EPOCH_HPP]
     flat = re.sub(r"\s+", " ", text)
     for m in model.EPOCH_MEMBERS:
         if m.transform in ("CTOR", "ACCESSOR", "RESULT", "WS"):
@@ -784,7 +810,8 @@ def application_hpp(g):
     while T.t(j) != ";":
         j += 1
     pos = L.end(T.toks[j].end)
-    g.edits[APPLICATION_HPP].append(Edit(pos, pos, tpl.APP_PROCESS_EPOCH, "networkProcessEpoch_"))
+    g.edits[APPLICATION_HPP].append(Edit(pos, pos, tpl.at_base("APP_PROCESS_EPOCH", model.ABSENT),
+                                         "networkProcessEpoch_"))
     return {"after_line": T.line(j)}
 
 

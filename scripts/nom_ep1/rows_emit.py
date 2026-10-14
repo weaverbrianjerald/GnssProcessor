@@ -7,6 +7,7 @@ One row per converted seam; no row carries a binding or a line (scripts/nom_ep1_
 --survey derives both from the frozen source).  After the solve the only outputs are the
 post-fit hand-off (RAIM, clock QC) and the prepared solution (the emitter).
 """
+from nom_ep1 import REMOVE_KEY
 from nom_ep1.model import Seam, DIRECT, ADAPTER, RUN
 
 
@@ -31,7 +32,7 @@ ROWS = (
     Seam("networkClockQc", *_f("NetworkClockQc"), mech=DIRECT, outs=("handoff",), worker="W3"),
     Seam("networkStashStatus", *_f("NetworkStashStatus"), mech=DIRECT, worker="W3"),
     Seam("networkClockLevelRestoreRaise", *CLOCKLEVEL, mech=RUN, worker="W3"),
-    Seam("networkClockLevelRebase", *CLOCKLEVEL, mech=DIRECT, worker="W3"),
+    Seam("networkClockLevelRebase", *CLOCKLEVEL, mech=DIRECT, worker="W3", retired_by=REMOVE_KEY),
     Seam("networkClockLevelMonitor", *CLOCKLEVEL, mech=DIRECT, worker="W3"),
     Seam("networkRhsAttribution", *RHS, mech=DIRECT, observer=True, worker="W3"),
     Seam("networkRhsAttribTrip", *RHS, mech=ADAPTER, observer=True, worker="W3"),

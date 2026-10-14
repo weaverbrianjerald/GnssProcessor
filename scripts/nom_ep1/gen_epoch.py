@@ -15,8 +15,6 @@ from nom_ep1.gen import (GenError, SOLVE, SHIFT, WIDTH, BRACKETS, CALLABLE_LOCAL
                          LAMBDA_ENUM, comment_block)
 from nom_ep1.textops import Edit, lit, src, apply_edits, leading_comment, wrap_args, dedent
 
-BUILDER_CLOSURES = tuple(name for name, _ in model.SOLVE_BUILDERS)   # T-F, from the table
-VALUE_EQUAL_EXPR = "ctx.counters.n_emitted != fc_n_emitted_before"
 EMIT_SEAM = "networkEmitStore"
 INPUT_STAGE_LAST = "networkCanonicalPairAdmission"
 
@@ -45,10 +43,12 @@ def epoch_function(g):
         E.append(edit)
         rec["transforms"].append({"tag": edit.tag, "frozen_line": frozen_line, "note": note})
 
-    # --- T-F: the two builder closures, when the solve is converted ---------------------------
+    # --- T-F: the builder closures, when the solve is converted -------------------------------
+    # (model.SOLVE_BUILDERS, the ones the base has: two at EP0, the DD build's alone once the
+    # REMOVE-key deletion has taken the ensemble gauges)
     closures = {}
     if SOLVE in g.conv:
-        for name in BUILDER_CLOSURES:
+        for name, _ in model.SOLVE_BUILDERS:
             d = g.lam_decl(name)
             if d.kind != "closure" or d.lambda_scope is None:
                 raise GenError(f"{name} is not a closure in the frozen lambda")
@@ -130,8 +130,10 @@ def epoch_function(g):
             if a < stmt_line:
                 E.append(Edit(il, il, [src(a, stmt_line)], f"T-F comment {name}"))
 
-    # --- VALUE_EQUAL (T-B9): the four counter comparisons -------------------------------------
-    seq = [t.text for t in lex(VALUE_EQUAL_EXPR)]
+    # --- VALUE_EQUAL (T-B9): the counter comparisons (four at EP0; three once the REMOVE-key
+    # deletion has taken the fast clock's harvest gate) ---------------------------------------
+    # (model.VALUE_EQUAL_EXPR, spelled with the base's name of the counter snapshot)
+    seq = [t.text for t in lex(model.VALUE_EQUAL_EXPR)]
     sites = _tok_seq(T, lo_tok, hi_tok, seq)
     for j in sites:
         a, b = T.toks[j].pos, T.toks[j + len(seq) - 1].end
@@ -150,8 +152,8 @@ def epoch_function(g):
         raise GenError(f"T-B9: the statement after {EMIT_SEAM} is not subEnd(SB_EMITSTORE)")
     pos = L.end(T.toks[nxt[1] - 1].end)
     ind = L.indent(T.toks[nxt[0]].pos)
-    add(Edit(pos, pos, [lit(f"{ind}ep.emitted = {VALUE_EQUAL_EXPR};\n",
-                            reads=("D:ctx", "L:fc_n_emitted_before"))], "T-B9 EMITTED store"),
+    add(Edit(pos, pos, [lit(f"{ind}ep.emitted = {model.VALUE_EQUAL_EXPR};\n",
+                            reads=("D:ctx", "L:" + model.VALUE_EQUAL_LOCAL))], "T-B9 EMITTED store"),
         T.line(nxt[0]))
 
     # --- T-B: the epoch's locals (pass 1: provisional removals, to count the reads) ------------

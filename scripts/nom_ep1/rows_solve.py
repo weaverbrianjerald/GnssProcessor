@@ -8,6 +8,7 @@ One row per converted seam; no row carries a binding or a line (scripts/nom_ep1_
 replay rewrites: ws, est_index_of, and, through the DD build it now calls directly, dd_build
 and funnel.
 """
+from nom_ep1 import REMOVE_KEY
 from nom_ep1.model import Seam, DIRECT, ADAPTER
 
 
@@ -20,8 +21,8 @@ DDBUILD = _f("NetworkDdPriorBuild")
 
 ROWS = (
     Seam("networkFastClockTick", *FASTCLOCK, mech=DIRECT, kept=("shadow_pass",), worker="W2",
-         sites=2),
-    Seam("networkFastClockHarvest", *FASTCLOCK, mech=DIRECT, worker="W2"),
+         sites=2, retired_by=REMOVE_KEY),
+    Seam("networkFastClockHarvest", *FASTCLOCK, mech=DIRECT, worker="W2", retired_by=REMOVE_KEY),
     Seam("networkSignalIntegrity", *_f("NetworkSignalIntegrity"), mech=ADAPTER,
          outs=("pass_a", "funnel"), worker="W2"),
     Seam("networkMeasurementAdmission", *_f("NetworkMeasurementAdmission"), mech=ADAPTER,
@@ -33,7 +34,7 @@ ROWS = (
     Seam("networkHandoverStransformBeforeRows", *_f("NetworkHandoverStransform"), mech=ADAPTER,
          worker="W2"),
     Seam("networkCarryDecide", *_f("NetworkCarryDisposition"), mech=ADAPTER, worker="W2"),
-    Seam("networkBuildEnsembleGauges", *DDBUILD, mech=DIRECT, worker="W2"),
+    Seam("networkBuildEnsembleGauges", *DDBUILD, mech=DIRECT, worker="W2", retired_by=REMOVE_KEY),
     Seam("networkBuildCarryDdPriors", *DDBUILD, mech=DIRECT, outs=("dd_build", "funnel"),
          worker="W2"),
     Seam("networkSolveGlue", *_f("NetworkSolveGlue"), mech=DIRECT,

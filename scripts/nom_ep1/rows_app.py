@@ -8,6 +8,7 @@ declarations), ApplicationNetworkAssembly.cpp, SignalRoster.{hpp,cpp}, NetworkRu
 (three declarations), NetworkBorderPrior.cpp, NetworkStateSnapshotWrite.cpp and
 NetworkLocalCarryHarvest.cpp.
 """
+from nom_ep1 import REMOVE_KEY
 from nom_ep1.model import Seam, DIRECT, MEMBER
 
 APP_HPP = "include/app/Application.hpp"
@@ -32,7 +33,8 @@ ROWS = (
     Seam("networkCouplingExactPrepare", hpp=RUNCTX_HPP,
          cpp="src/core/app/NetworkBorderPrior.cpp", mech=DIRECT, worker="W1"),
     Seam("networkRxCbDemeanPrepass", hpp=RUNCTX_HPP,
-         cpp="src/core/app/NetworkLocalCarryHarvest.cpp", mech=DIRECT, worker="W1"),
+         cpp="src/core/app/NetworkLocalCarryHarvest.cpp", mech=DIRECT, worker="W1",
+         retired_by=REMOVE_KEY),
     Seam("networkWriteStateSnapshot", hpp=RUNCTX_HPP,
          cpp="src/core/app/NetworkStateSnapshotWrite.cpp", mech=DIRECT, worker="W1"),
 )

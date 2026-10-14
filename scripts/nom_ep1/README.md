@@ -21,16 +21,18 @@ Every tool reads the frozen source `<B>` from git (`git show`, `git cat-file --b
 `--base` is not given. At the time of writing it is `c483a11` (`nom/ep0`: main `366385b` plus
 step EP0); before step EP1a-1 starts it is re-pointed to the commit that merges EP0 into main.
 No row, table or check carries a line number: the survey re-derives every line from whichever
-base it is given. A row whose seam, header or anchor is gone at a later base (the REMOVE-key
-deletion takes the lane layer, FC-1, the PB emit filter and some `iono_dw` / `sh_health_gate`
-code) is reported by the survey and refuses the generation, never a crash.
+base it is given. The base also decides which table entries apply: an entry naming an object
+the REMOVE-key deletion takes is marked `retired_by=REMOVE_KEY` and applies only at a base
+that still has the object (section "The REMOVE-key deletion" below). Any other row whose
+seam, header or anchor is gone at a later base is reported by the survey and refuses the
+generation, never a crash.
 
 ## Files
 
 | file | role |
 | --- | --- |
 | `scripts/nom_cpp.py` | The C++ reading layer: lexer, statement splitter, declaration and parameter parsers, per-file function index, scope walker, call extraction, the resolver that follows reference declarations to their initializers, `GitTree` (the frozen revision) and `Driver` (the shape of `runNetwork` and its lambda). `--selftest` reproduces the EP1 inventory's counts on the frozen driver. |
-| `scripts/nom_ep1/__init__.py` | `DEFAULT_BASE`, the row-file list and the row loader. |
+| `scripts/nom_ep1/__init__.py` | `DEFAULT_BASE`, the row-file list and the row loader; `REMOVE_KEY`, `RENAMED` and `bind_base()`, which binds every table to the entries that apply at a base. |
 | `scripts/nom_ep1/model.py` | The row type `Seam`, the realization tables (lambda local to epoch member, driver name to run member, the engine constructors and the spec fields) and the fold grammar. Generator input only: the verifier does not import it beyond the row type. |
 | `scripts/nom_ep1/declared.py` | The closed list of declared substitutions of spec 5.6 (eleven classes), each with its reason and a locator that finds its frozen object at any base; the write proofs of COPY_SOURCE and VALUE_EQUAL (`Writers`), which the survey and the verifier evaluate; the declared member order of `NetworkEpoch` (`EPOCH_LAYOUT`, check V3c); and the declared non-conversions (the input stage, the calls inside the EP2 blocks, the method calls). |
 | `scripts/nom_ep1/rows_app.py` | Canonical-table rows of worker W1 (10 seams). |
@@ -260,37 +262,53 @@ reads text; it does not compile or run anything. Not covered, and covered elsewh
   (V11 n/a: the pre-solve writers' spine lines name no group);
 - `tests/test_network_engine_spec.cpp`, which is hand-written and checked by the suite.
 
-## When the REMOVE-key base lands
+## The REMOVE-key deletion: one set of tables for both bases
 
-The REMOVE-key deletion (another session) takes the lane layer, FC-1, the PB emit filter and
-some `iono_dw` / `sh_health_gate` code out before step EP1a-1. The tables below name those
-objects; no tool carries a line number, and the verifier derives the run's owned members and
-the run end from the declared entries and the frozen statement, so it names none of them
-itself. In order:
+The REMOVE-key deletion (another session, branch `rmk/delete`) takes objects the tables name:
+six seams of the per-epoch lambda (`networkRxCbDemeanPrepass`, `networkFastClockTick`,
+`networkFastClockHarvest`, `networkBuildEnsembleGauges`, `networkClockLevelRebase`,
+`networkIonoDwRelease`), the lane layer, FC-1, the PB emit filter, the iono-deweight gate, the
+ensemble gauges and the third-band predicate; it also renames the counter snapshot
+`fc_n_emitted_before` to `n_emitted_before`. The tables are not edited per base. They are
+base-aware:
 
-1. Point every command at the new base (`DEFAULT_BASE`, or `--base <B>`).
-2. `python scripts/nom_cpp.py --selftest --base <B> --expect KEY=N,...` with the counts the
-   new driver has, then `python scripts/nom_ep1_cut.py --survey --base <B>`. Every table entry
-   whose object is gone is a survey problem (a row's seam, a declared locator, an engine's
-   arity, a specification field's local); the write proofs are re-evaluated there.
-3. Edit the tables until the survey exits 0, removing each entry with the object it named:
-   - `rows_solve.py`: the two fast-clock rows (`networkFastClockTick`, `networkFastClockHarvest`);
-   - `declared.py`: OWNER_MOVE `fc_ppp_utils`, `lane_run`, `iono_deweight`; SPEC_CUT
-     `carry_cfg` (its `lane_cfg`, `lane_on`, `lane_joint` names), `mw_wl_cfg`, `ewl_cfg`,
-     `pb_filter_cfg`, `idw, iono_deweight`; CALLABLE `isUncarriedThirdBand` if the third-band
-     closure goes with the EWL lane (the controls R4 to R6 then become pending);
-   - `model.py`: `RUN_MEMBERS` (`D:fc_ppp_utils`, `D:lane_run`, `D:iono_deweight`),
-     `SPEC_FIELDS` (`mw_wl_cfg`, `ewl_cfg`, `pb_filter_cfg`, `idw`), `ENGINE_CTORS`
-     (`fc_ppp_utils`; `iono_deweight`, 9 arguments; `emit_engines`, 3; `lane_run`, 2) and
-     `ENGINE_MEMBER_DOCS`;
-   - `templates.py`: `NetworkRun`'s `lanes` member and its `lanes@@LANES_INIT@@` initializer,
-     and the member lists in the run's documentation.
-4. Re-run, on scratch exports of the new base: the generator (`--stage ep1a1`, then `--stage
-   ep1b --rows all`), the verifier with `--controls` on the frozen tree and on both generated
-   trees (no control MISSING; N11 falls back to its synthetic warning once `debug_r_scale` is
-   gone), the lint, and `--check` on both trees.
-5. The specification's texts that name these objects (sections 2.2, 4.1) stay as written; the
-   tables are their executable form at the new base.
+- Every entry naming a retired object is marked `retired_by=REMOVE_KEY`
+  (`nom_ep1/__init__.py`): the six rows; in `declared.py` EPOCH_MEMBER `carry_arc_amb_key2`,
+  OWNER_MOVE `iono_deweight`, `fc_ppp_utils`, `lane_run`, SPEC_CUT `mw_wl_cfg`, `ewl_cfg`,
+  `pb_filter_cfg`, `idw, iono_deweight`, CALLABLE `isUncarriedThirdBand` and CALLBACK_DIRECT
+  `buildEnsembleGauges`; in `model.py` the same objects' realization entries (the epoch
+  member, the three run members and engines, the four specification fields, the two removed
+  parameters) and the PB filter's argument of the emit engines (`RetiredArg`).
+- `nom_ep1.bind_base(fz)` decides each marked entry from its object at the base. Every tool
+  calls it once, in its `Frozen`, before reading a table. Object present: the entry applies as
+  written. Object gone: the entry does not apply and is listed (the survey's section "Retired
+  at this base", the generator's summary and its manifest's `retired_at_base`, the verifier's
+  header). Object partly gone (a half-applied deletion): the survey fails and the generator
+  refuses. An unmarked entry must find its object at every base, as before.
+- `RENAMED` re-spells `fc_n_emitted_before` wherever the base declares `n_emitted_before`
+  (the VALUE_EQUAL entry, `model.VALUE_EQUAL_EXPR`, the epoch's store, control N16).
+- The designed text follows the base: `templates.RETIRED_TEXT` holds, per retired object, the
+  edit that takes its mention out of `NetworkRun.hpp`, `NetworkEpoch.hpp` and the epoch
+  function's documentation; `templates.SOLVE_BANNERS` holds the solve banner's rewrite for two
+  replay builders and for one; the headers `NetworkRunGroups.hpp` gains are tied to the engines
+  that need them (`gen_setup.GROUPS_INCLUDES`).
+
+At the EP0 base `0e14eb9` every object is present: the survey prints what it printed before,
+plus an empty retired section, and the generated tree is byte-identical to the dry run's
+(`nom/ep1-dry` `42729f0`). After the deletion the controls R4 to R6 (the third-band
+forwarder) are pending and N11 uses its synthetic warning. On a later base:
+
+1. `python scripts/nom_cpp.py --selftest --base <B> --expect KEY=N,...` with the new driver's
+   counts, then `python scripts/nom_ep1_cut.py --survey --base <B>`; both must exit 0.
+2. An object the survey reports missing that the deletion took is marked
+   `retired_by=REMOVE_KEY` at its entry (and in `templates.RETIRED_TEXT` where the designed
+   text names it), never deleted, so the tables keep serving the EP0 base; a renamed one goes
+   into `RENAMED`.
+3. On scratch exports of `<B>`: the generator (`--stage ep1a1`, then `--stage ep1b --rows
+   all`), the verifier with `--controls` on the frozen tree and on both generated trees (no
+   control MISSING), the lint, and `--check` on both trees.
+4. The specification's texts that name these objects (sections 2.2, 4.1) stay as written; the
+   tables are their executable form at each base.
 
 ## Run times
 

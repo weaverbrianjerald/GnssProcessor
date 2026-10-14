@@ -6,6 +6,7 @@ One row per converted seam; no row carries a binding or a line (scripts/nom_ep1_
 --survey derives both from the frozen source).  observer=True marks a measure-only seam whose
 epoch form must be NetworkEpochObserver, void(NetworkRun&, const NetworkEpoch&).
 """
+from nom_ep1 import REMOVE_KEY
 from nom_ep1.model import Seam, DIRECT, ADAPTER
 
 
@@ -21,7 +22,8 @@ ROWS = (
     Seam("networkDdFrac", *_f("NetworkDdFrac"), mech=DIRECT, worker="W4"),
     Seam("networkShDevVtec", *_f("NetworkShDevVtec"), mech=DIRECT, worker="W4"),
     Seam("networkShHealth", *_f("NetworkShHealth"), mech=DIRECT, worker="W4"),
-    Seam("networkIonoDwRelease", *_f("NetworkIonoDwRelease"), mech=DIRECT, worker="W4"),
+    Seam("networkIonoDwRelease", *_f("NetworkIonoDwRelease"), mech=DIRECT, worker="W4",
+         retired_by=REMOVE_KEY),
     Seam("networkLeveling", *_f("NetworkLeveling"), mech=DIRECT, worker="W4"),
     Seam("networkPhaseVisibleMonitor", *_f("NetworkPhaseVisibleDiag"), mech=ADAPTER,
          observer=True, worker="W4"),

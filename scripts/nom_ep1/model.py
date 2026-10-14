@@ -34,14 +34,19 @@ argument under the new signature:
                        anything else is refused unless the parameter is kept.
   render()             a resolved binding (nom_cpp.Ref, Copy, Cond, CallNode, Lit) as its new
                        text through the tables above, with the problems found on the way.
+  bind_base()          the tables at a base (nom_ep1.bind_base): an entry marked
+                       retired_by=REMOVE_KEY applies only where the base declares its object;
+                       ABSENT names the retired objects the base lacks.
 
 These tables are the generator's realization; the verifier does not read them.  It accepts a
 binding change only through scripts/nom_ep1/declared.py, and the survey checks that every
 realization used here is backed by a declared entry there.
 """
+import re
 from dataclasses import dataclass
 
 from nom_cpp import Ref, Copy, Cond, CallNode, Lit, Expr, Opaque
+from nom_ep1 import REMOVE_KEY
 
 # ---------------------------------------------------------------------------------------------
 # Row type
@@ -79,7 +84,9 @@ class Seam:
               call sites.
     observer: measure-only; its epoch form must be NetworkEpochObserver.
     worker:   W1 app, W2 pre-solve and solve, W3 emit and post-fit, W4 diagnostics.
-    sites:    how many times the frozen lambda calls it (occurrences in source order)."""
+    sites:    how many times the frozen lambda calls it (occurrences in source order).
+    retired_by: REMOVE_KEY when the REMOVE-key deletion takes the seam: the row applies only at
+              a base that still has it (nom_ep1.bind_base)."""
     name: str
     hpp: str
     cpp: str
@@ -89,6 +96,7 @@ class Seam:
     observer: bool = False
     worker: str = ""
     sites: int = 1
+    retired_by: str = ""
 
     @property
     def form(self):
@@ -150,12 +158,15 @@ def default_output(path):
 class EpochMember:
     """local: the frozen lambda name; path: its realization under `ep`; transform: CTOR (the
     reference ep is built on), WS, ALIAS, SIZED, SCALAR, CLOCK, RESULT, ACCESSOR (spec 5.3);
-    type, default: the member's type text and default initializer (spec 2.3; '' for none)."""
+    type, default: the member's type text and default initializer (spec 2.3; '' for none);
+    retired_by: REMOVE_KEY when the deletion takes the local (the member then exists only at a
+    base that declares it)."""
     local: str
     path: str
     transform: str
     type: str
     default: str = ""
+    retired_by: str = ""
 
     @property
     def key(self):
@@ -196,7 +207,7 @@ EPOCH_MEMBERS = (
     EpochMember("carry_arc_amb_key", "ep.dd_build.carry_arc_amb_key", "ALIAS",
                 "std::map<int, std::map<ArcKey, std::string>>"),
     EpochMember("carry_arc_amb_key2", "ep.dd_build.carry_arc_amb_key2", "ALIAS",
-                "std::map<int, std::map<ArcKey, std::string>>"),
+                "std::map<int, std::map<ArcKey, std::string>>", retired_by=REMOVE_KEY),
     EpochMember("sg_", "ep.solve", "RESULT", "NetworkSolveGlueResult"),
     EpochMember("ar_fixes", "ep.ar_fixes", "RESULT", "ArEpochFixes"),
     EpochMember("fce", "ep.fixed_cycles", "RESULT", "FixedCycleEmission"),
@@ -212,9 +223,14 @@ EPOCH_FIELD_MOVES = (
     ("ep.solve.n_arc_refloat_epoch", "ep.solve.handoff.n_arc_refloat_epoch"),
 )
 
-# The one expression a seam argument becomes an epoch value (VALUE_EQUAL), keyed by the frozen
-# argument's text with every space removed (Tokens.norm keeps one after `!=`).
-VALUE_EQUAL_EXPRS = {"ctx.counters.n_emitted!=fc_n_emitted_before": "ep.emitted"}
+# The one expression that becomes an epoch value (VALUE_EQUAL), as the frozen lambda spells it,
+# and the lambda local it reads (the counter snapshot before networkEmitStore).  Spelled as at
+# the EP0 base; bind_base re-spells both where the base names the local the RENAMED way.
+VALUE_EQUAL_EXPR = "ctx.counters.n_emitted != fc_n_emitted_before"
+VALUE_EQUAL_LOCAL = "fc_n_emitted_before"
+# The same, keyed by the frozen argument's text with every space removed (Tokens.norm keeps one
+# after `!=`).
+VALUE_EQUAL_EXPRS = {VALUE_EQUAL_EXPR.replace(" ", ""): "ep.emitted"}
 
 
 def value_equal(text):
@@ -230,11 +246,13 @@ class RunMember:
     """frozen: the root key (D: a runNetwork outermost declaration, A: an Application member);
     path: its realization under `run`; cls: REF (the run holds a reference to the same object)
     or OWNER_MOVE (the run owns it; the driver's name becomes a reference to it); type: the
-    NetworkRun member's type text (spec 2.1, 2.2)."""
+    NetworkRun member's type text (spec 2.1, 2.2); retired_by: REMOVE_KEY when the deletion
+    takes the driver's object (the member exists only at a base that declares it)."""
     frozen: str
     path: str
     cls: str
     type: str
+    retired_by: str = ""
 
     @property
     def name(self):
@@ -256,11 +274,11 @@ RUN_MEMBERS = (
     RunMember("D:prires_est", "run.engines.prires", "OWNER_MOVE", "NetworkPriorResidual"),
     RunMember("D:slip_qc", "run.engines.slip_qc", "OWNER_MOVE", "SlipQcChannel"),
     RunMember("D:iono_deweight", "run.engines.iono_deweight", "OWNER_MOVE",
-              "NetworkIonoDeweightGate"),
+              "NetworkIonoDeweightGate", retired_by=REMOVE_KEY),
     RunMember("D:fc_ppp_utils", "run.engines.fc_ppp_utils", "OWNER_MOVE",
-              "std::unique_ptr<PppUtils>"),
+              "std::unique_ptr<PppUtils>", retired_by=REMOVE_KEY),
     RunMember("D:emit_engines", "run.emit", "OWNER_MOVE", "NetworkEmitEngines"),
-    RunMember("D:lane_run", "run.lanes", "OWNER_MOVE", "NetworkLaneRun"),
+    RunMember("D:lane_run", "run.lanes", "OWNER_MOVE", "NetworkLaneRun", retired_by=REMOVE_KEY),
     RunMember("D:timing", "run.timing", "OWNER_MOVE", "NetworkRunTiming"),
     RunMember("D:cl_tally", "run.closed_loop", "OWNER_MOVE", "ClosedLoopTally"),
 )
@@ -286,12 +304,15 @@ def copy_source_paths():
 class SpecField:
     """One field of NetworkEngineSpec.  local: the runNetwork local the cut moves into the
     field under its own name ('' for a field that holds one engine constructor argument);
-    type: the field's type text; init: its default member initializer ('' for none)."""
+    type: the field's type text; init: its default member initializer ('' for none);
+    retired_by: REMOVE_KEY when the deletion takes the local (the field exists only at a base
+    that declares it)."""
     name: str
     type: str
     doc: str
     local: str = ""
     init: str = ""
+    retired_by: str = ""
 
 
 SPEC_FIELDS = (
@@ -309,15 +330,18 @@ SPEC_FIELDS = (
     SpecField("prires_s0g", "bool", "The constraint-aware global variance component.", init="false"),
     SpecField("carry_cfg", "NetworkInvariantCarryDriver::Config",
               "The DD-carry driver's configuration.", local="carry_cfg"),
-    SpecField("mw_wl_cfg", "NetworkMwWlLayer::Config", "The WL-1 layer's configuration.", local="mw_wl_cfg"),
-    SpecField("ewl_cfg", "NetworkMwWlLayer::Config", "The EWL lane's configuration.", local="ewl_cfg"),
+    SpecField("mw_wl_cfg", "NetworkMwWlLayer::Config", "The WL-1 layer's configuration.", local="mw_wl_cfg",
+              retired_by=REMOVE_KEY),
+    SpecField("ewl_cfg", "NetworkMwWlLayer::Config", "The EWL lane's configuration.", local="ewl_cfg",
+              retired_by=REMOVE_KEY),
     SpecField("pb_filter_cfg", "NetworkPbEmitFilter::Config",
-              "The phase-bias emission filter's configuration.", local="pb_filter_cfg"),
+              "The phase-bias emission filter's configuration.", local="pb_filter_cfg",
+              retired_by=REMOVE_KEY),
     SpecField("clk_rebase_cfg", "NetworkClockEmitRebase::Config",
               "The clock emission re-base's configuration.", local="clk_rebase_cfg"),
     SpecField("idw", "IonoConstraintDeweightConfig",
               "A copy of config_.getIonoConstraintDeweightConfig() (the deweight gate's arguments).",
-              local="idw"),
+              local="idw", retired_by=REMOVE_KEY),
 )
 SPEC_FIELD_BY_LOCAL = {f.local: f for f in SPEC_FIELDS if f.local}
 SPEC_FIELD_BY_NAME = {f.name: f for f in SPEC_FIELDS}
@@ -329,27 +353,39 @@ class EngineCtor:
     declaration; owner: 'engines' (a NetworkRunEngines member) or 'run' (a NetworkRun
     member); member: its member name there; arg_fields: per frozen constructor argument, the
     spec field an argument over other locals becomes (None: the argument is a literal, or
-    reads only field locals, and stays in the member's initializer)."""
+    reads only field locals, and stays in the member's initializer; RetiredArg: an argument the
+    REMOVE-key deletion takes); retired_by: REMOVE_KEY when the deletion takes the engine."""
     local: str
     owner: str
     member: str
     arg_fields: tuple = ()
+    retired_by: str = ""
+
+
+@dataclass(frozen=True)
+class RetiredArg:
+    """A constructor argument the REMOVE-key deletion takes with the setup local @p local: it
+    is an argument only at a base that declares @p local (bind_base drops it elsewhere).
+    @p field is its arg_fields entry where it applies."""
+    local: str
+    field: object = None
 
 
 # In NetworkRunEngines member order (today's construction order).
 ENGINE_CTORS = (
     EngineCtor("slip_qc", "engines", "slip_qc"),
-    EngineCtor("fc_ppp_utils", "engines", "fc_ppp_utils"),
+    EngineCtor("fc_ppp_utils", "engines", "fc_ppp_utils", retired_by=REMOVE_KEY),
     EngineCtor("carry_vce_est", "engines", "carry_vce",
                ("vce_families", "vce_window_epochs", None, "vce_seed_floor", "vce_seed_rate")),
     EngineCtor("prires_est", "engines", "prires",
                ("prires_families", "prires_window_epochs", "prires_min_rows", "prires_report_sigma",
                 "prires_corrob", "prires_s0g")),
     EngineCtor("carry_driver", "engines", "carry_driver", ("carry_cfg",)),
-    EngineCtor("iono_deweight", "engines", "iono_deweight", (None,) * 9),
+    EngineCtor("iono_deweight", "engines", "iono_deweight", (None,) * 9, retired_by=REMOVE_KEY),
     EngineCtor("est", "engines", "est"),
-    EngineCtor("emit_engines", "run", "emit", (None, None, None)),
-    EngineCtor("lane_run", "run", "lanes", ("mw_wl_cfg", "ewl_cfg")),
+    # NetworkEmitRebase{}, NetworkPbEmitFilter(pb_filter_cfg), NetworkClockEmitRebase(clk_rebase_cfg).
+    EngineCtor("emit_engines", "run", "emit", (None, RetiredArg("pb_filter_cfg"), None)),
+    EngineCtor("lane_run", "run", "lanes", ("mw_wl_cfg", "ewl_cfg"), retired_by=REMOVE_KEY),
 )
 ENGINE_BY_LOCAL = {e.local: e for e in ENGINE_CTORS}
 
@@ -380,22 +416,31 @@ class Removed:
     cls: str
     note: str
     builder: str = ""   # CALLBACK_DIRECT: the seam the replay now calls directly
+    retired_by: str = ""   # REMOVE_KEY when the deletion takes the closure (root) and the parameter
 
 
 REMOVED_PARAMS = (
     Removed("networkBuildCarryDdPriors", "isUncarriedThirdBand", "D:isUncarriedThirdBand",
-            "CALLABLE", "preamble lambda over networkIsUncarriedThirdBand"),
+            "CALLABLE", "preamble lambda over networkIsUncarriedThirdBand", retired_by=REMOVE_KEY),
     Removed("networkSolveGlue", "buildEnsembleGauges", "L:buildEnsembleGauges",
-            "CALLBACK_DIRECT", "direct call in the T2 replay", "networkBuildEnsembleGauges"),
+            "CALLBACK_DIRECT", "direct call in the T2 replay", "networkBuildEnsembleGauges",
+            retired_by=REMOVE_KEY),
     Removed("networkSolveGlue", "buildCarryDdPriors", "L:buildCarryDdPriors",
             "CALLBACK_DIRECT", "direct call in the T2 replay", "networkBuildCarryDdPriors"),
 )
 REMOVED_BY_PARAM = {(r.seam, r.param): r for r in REMOVED_PARAMS}
+
+
+def _solve_builders(removed):
+    return tuple((r.param, r.builder) for r in removed
+                 if r.cls == "CALLBACK_DIRECT" and r.seam == "networkSolveGlue")
+
+
 # The solve's callbacks that become direct calls in its T2 replay (T-F), in table order:
 # (closure name, builder seam).  The generator reads this one list, so a builder the base no
-# longer has drops with its Removed entry, its row and its declared CALLBACK_DIRECT entry.
-SOLVE_BUILDERS = tuple((r.param, r.builder) for r in REMOVED_PARAMS
-                       if r.cls == "CALLBACK_DIRECT" and r.seam == "networkSolveGlue")
+# longer has drops with its Removed entry, its row and its declared CALLBACK_DIRECT entry
+# (bind_base).
+SOLVE_BUILDERS = _solve_builders(REMOVED_PARAMS)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -521,3 +566,74 @@ def is_epoch_path(text):
 def stop_keys():
     """The root keys at which the resolver ends its walk: every realized name."""
     return set(EPOCH_BY_KEY) | set(RUN_BY_KEY)
+
+
+# ---------------------------------------------------------------------------------------------
+# The tables at a base (nom_ep1.bind_base)
+# ---------------------------------------------------------------------------------------------
+# The tables as written, every entry included; bind_base() rebinds the module's tables to the
+# entries that apply at a base, always from these.
+_AS_WRITTEN = dict(EPOCH_MEMBERS=EPOCH_MEMBERS, RUN_MEMBERS=RUN_MEMBERS, SPEC_FIELDS=SPEC_FIELDS,
+                   ENGINE_CTORS=ENGINE_CTORS, REMOVED_PARAMS=REMOVED_PARAMS,
+                   VALUE_EQUAL_EXPR=VALUE_EQUAL_EXPR, VALUE_EQUAL_LOCAL=VALUE_EQUAL_LOCAL)
+
+# The root keys of the retired objects the bound base does not declare (`D:lane_run`,
+# `L:carry_arc_amb_key2`, ...); the templates' retirement edits key on them
+# (templates.at_base).  Empty before bind_base() and at a base that has every object.
+ABSENT = frozenset()
+
+
+def bind_base(fz, fit):
+    """Binds the realization tables to the frozen base @p fz (nom_ep1.bind_base calls it).  An
+    entry marked retired_by applies only where the base declares its object: an EpochMember's
+    lambda local, a RunMember's, EngineCtor's or SpecField's runNetwork local, a Removed
+    parameter's closure (its root); a RetiredArg is a constructor argument only where the base
+    declares its local.  Unmarked entries always apply.  The VALUE_EQUAL expression is
+    re-spelled per @p fit.respelled.  Every entry that does not apply is recorded in @p fit."""
+    global EPOCH_MEMBERS, EPOCH_BY_KEY, RUN_MEMBERS, RUN_BY_KEY, SPEC_FIELDS, SPEC_FIELD_BY_LOCAL, \
+        SPEC_FIELD_BY_NAME, ENGINE_CTORS, ENGINE_BY_LOCAL, REMOVED_PARAMS, REMOVED_BY_PARAM, \
+        SOLVE_BUILDERS, VALUE_EQUAL_EXPR, VALUE_EQUAL_LOCAL, VALUE_EQUAL_EXPRS, ABSENT
+    from nom_ep1 import declares
+    absent = set()
+
+    def applies(table, name, key, retired_by):
+        if not retired_by or declares(fz, key):
+            return True
+        absent.add(key)
+        fit.retired.append((table, name, f"`{key[2:]}` is not declared at this base"))
+        return False
+
+    t = _AS_WRITTEN
+    EPOCH_MEMBERS = tuple(m for m in t["EPOCH_MEMBERS"]
+                          if applies("epoch member", m.path, m.key, m.retired_by))
+    RUN_MEMBERS = tuple(m for m in t["RUN_MEMBERS"]
+                        if applies("run member", m.path, m.frozen, m.retired_by))
+    SPEC_FIELDS = tuple(f for f in t["SPEC_FIELDS"]
+                        if applies("specification field", f.name, "D:" + f.local, f.retired_by))
+    engines = []
+    for e in t["ENGINE_CTORS"]:
+        if not applies("engine", e.local, "D:" + e.local, e.retired_by):
+            continue
+        args = []
+        for k, a in enumerate(e.arg_fields):
+            if not isinstance(a, RetiredArg):
+                args.append(a)
+            elif applies("constructor argument", f"{e.local} #{k + 1}", "D:" + a.local, REMOVE_KEY):
+                args.append(a.field)
+        engines.append(EngineCtor(e.local, e.owner, e.member, tuple(args), e.retired_by))
+    ENGINE_CTORS = tuple(engines)
+    REMOVED_PARAMS = tuple(r for r in t["REMOVED_PARAMS"]
+                           if applies("removed parameter", f"{r.seam}({r.param})", r.root, r.retired_by))
+    VALUE_EQUAL_EXPR, VALUE_EQUAL_LOCAL = t["VALUE_EQUAL_EXPR"], t["VALUE_EQUAL_LOCAL"]
+    for old, new in fit.respelled.items():
+        VALUE_EQUAL_EXPR = re.sub(r"\b" + re.escape(old) + r"\b", new, VALUE_EQUAL_EXPR)
+        VALUE_EQUAL_LOCAL = re.sub(r"\b" + re.escape(old) + r"\b", new, VALUE_EQUAL_LOCAL)
+    EPOCH_BY_KEY = {m.key: m for m in EPOCH_MEMBERS}
+    RUN_BY_KEY = {m.frozen: m for m in RUN_MEMBERS}
+    SPEC_FIELD_BY_LOCAL = {f.local: f for f in SPEC_FIELDS if f.local}
+    SPEC_FIELD_BY_NAME = {f.name: f for f in SPEC_FIELDS}
+    ENGINE_BY_LOCAL = {e.local: e for e in ENGINE_CTORS}
+    REMOVED_BY_PARAM = {(r.seam, r.param): r for r in REMOVED_PARAMS}
+    SOLVE_BUILDERS = _solve_builders(REMOVED_PARAMS)
+    VALUE_EQUAL_EXPRS = {VALUE_EQUAL_EXPR.replace(" ", ""): "ep.emitted"}
+    ABSENT = frozenset(absent)

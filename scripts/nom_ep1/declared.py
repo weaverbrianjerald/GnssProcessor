@@ -36,15 +36,23 @@ input stage, every call inside an EP2 block (found by an anchor callee, so the b
 are derived rather than listed), and the method calls on run objects.  With the Seam rows they
 cover every call of the call table exactly once (check V8).
 
+An entry marked retired_by=REMOVE_KEY names an object the REMOVE-key deletion takes (the
+package banner, scripts/nom_ep1/__init__.py).  bind_base() binds declared() and find() to a
+base: such an entry applies there only when its locators find its object; a name the deletion
+re-spelled (nom_ep1.RENAMED) is spelled in each locator as the base declares it.  DECLARED
+stays the closed list as written.
+
 This module does not import model.py: the verifier reads these entries, the generator realizes
 through model.py, and the survey checks that the two agree.
 """
 import collections
+import dataclasses
 import re
 from dataclasses import dataclass
 
 from nom_cpp import (DRIVER_PATH, Ref, Resolver, Scopes, Tokens, calls_in, parse_declaration,
                      statements, stmt_end)
+from nom_ep1 import REMOVE_KEY
 
 Hit = collections.namedtuple("Hit", "path line end note")
 _ASSIGN_OPS = ("=", "+=", "-=", "*=", "/=", "|=", "&=")
@@ -532,12 +540,13 @@ class Declared:
     name: str
     reason: str
     where: tuple
+    retired_by: str = ""    # REMOVE_KEY: applies only at a base that has the object (bind_base)
 
     def locate(self, fz):
         return [(loc, loc.locate(fz)) for loc in self.where]
 
 
-def _epoch(name, transform, path):
+def _epoch(name, transform, path, retired_by=""):
     reasons = {
         "WS": "the lambda's first statement `EpochWorkspace ws;` is dropped; ep.ws is built with "
               "ep (T-B2)",
@@ -552,7 +561,8 @@ def _epoch(name, transform, path):
         "RESULT": "a seam's result; the driver stores it into the member, the frozen member "
                   "aliases stay while read (T-B7)",
     }
-    return Declared("EPOCH_MEMBER", name, f"{path}: {reasons[transform]}", (LambdaDecl(name),))
+    return Declared("EPOCH_MEMBER", name, f"{path}: {reasons[transform]}", (LambdaDecl(name),),
+                    retired_by)
 
 
 DECLARED = (
@@ -579,7 +589,7 @@ DECLARED = (
     _epoch("total_pins", "SCALAR", "ep.assembly.total_pins"),
     _epoch("sec_asm_ms_epoch", "SCALAR", "ep.assembly.sec_asm_ms_epoch"),
     _epoch("carry_arc_amb_key", "ALIAS", "ep.dd_build.carry_arc_amb_key"),
-    _epoch("carry_arc_amb_key2", "ALIAS", "ep.dd_build.carry_arc_amb_key2"),
+    _epoch("carry_arc_amb_key2", "ALIAS", "ep.dd_build.carry_arc_amb_key2", REMOVE_KEY),
     _epoch("sg_", "RESULT", "ep.solve"),
     _epoch("ar_fixes", "RESULT", "ep.ar_fixes"),
     _epoch("fce", "RESULT", "ep.fixed_cycles"),
@@ -587,7 +597,8 @@ DECLARED = (
 
     # OWNER_MOVE: the driver's engines and groups, owned by the run.
     *(Declared("OWNER_MOVE", n, f"run.{p}: the driver name becomes `{n}` = a reference to it",
-               (DriverDecl(n),))
+               (DriverDecl(n),),
+               REMOVE_KEY if n in ("iono_deweight", "fc_ppp_utils", "lane_run") else "")
       for n, p in (("est", "engines.est"), ("carry_driver", "engines.carry_driver"),
                    ("carry_vce_est", "engines.carry_vce"), ("prires_est", "engines.prires"),
                    ("slip_qc", "engines.slip_qc"), ("iono_deweight", "engines.iono_deweight"),
@@ -610,19 +621,19 @@ DECLARED = (
              "only reader", (DriverStmts(("carry_cfg", "lane_cfg", "lane_on", "lane_joint")),)),
     Declared("SPEC_CUT", "mw_wl_cfg",
              "the WL-1 layer's configuration; the debug_r_scale warning that follows stays and "
-             "reads the spec field", (DriverStmts(("mw_wl_cfg",)),)),
+             "reads the spec field", (DriverStmts(("mw_wl_cfg",)),), REMOVE_KEY),
     Declared("SPEC_CUT", "ewl_cfg", "the EWL lane's configuration; the EWL fill reads the spec field",
-             (DriverStmts(("ewl_cfg",)),)),
+             (DriverStmts(("ewl_cfg",)),), REMOVE_KEY),
     Declared("SPEC_CUT", "pb_filter_cfg",
              "the phase-bias emission filter's configuration (a spec field)",
-             (DriverStmts(("pb_filter_cfg",)),)),
+             (DriverStmts(("pb_filter_cfg",)),), REMOVE_KEY),
     Declared("SPEC_CUT", "clk_rebase_cfg",
              "the clock emission re-base's configuration (a spec field)",
              (DriverStmts(("clk_rebase_cfg",)),)),
     Declared("SPEC_CUT", "idw, iono_deweight",
              "the deweight gate's configuration copy and constructor arguments; the name "
              "becomes a reference (OWNER_MOVE); release tracking and the two warnings stay",
-             (DriverStmts(("idw", "iono_deweight")),)),
+             (DriverStmts(("idw", "iono_deweight")),), REMOVE_KEY),
 
     # FIELD_MOVE
     *(Declared("FIELD_MOVE", n, f"NetworkSolveGlueResult::{n} -> NetworkSolveGlueResult::handoff.{n} "
@@ -658,14 +669,14 @@ DECLARED = (
              "the closure's body moves character-exact into networkIsUncarriedThirdBand beside "
              "the DD build; its three init-captures are knobs",
              (DriverDecl("isUncarriedThirdBand"),
-              ParamOf("networkBuildCarryDdPriors", DDBUILD_HPP, "isUncarriedThirdBand"))),
+              ParamOf("networkBuildCarryDdPriors", DDBUILD_HPP, "isUncarriedThirdBand")), REMOVE_KEY),
 
     # CALLBACK_DIRECT (the WCF writer-end counter stays between the two calls)
     Declared("CALLBACK_DIRECT", "buildEnsembleGauges",
              "the replay calls networkBuildEnsembleGauges(run, ep) directly; the closure goes",
              (LambdaDecl("buildEnsembleGauges"),
               ParamOf("networkSolveGlue", SOLVE_HPP, "buildEnsembleGauges"),
-              FuncCalls(SOLVE_CPP, "networkSolveGlue", "buildEnsembleGauges"))),
+              FuncCalls(SOLVE_CPP, "networkSolveGlue", "buildEnsembleGauges")), REMOVE_KEY),
     Declared("CALLBACK_DIRECT", "buildCarryDdPriors",
              "the replay calls networkBuildCarryDdPriors(run, ep, dd_build, funnel) directly, "
              "card WCF's writer-end counter kept before it; the closure goes",
@@ -694,15 +705,62 @@ EPOCH_LAYOUT = ("se", "clock", "funnel", "pass_a", "columns", "assembly", "dd_bu
                 "ar_fixes", "fixed_cycles", "prep", "emitted")
 
 
+# The entries that apply at the base the tables are bound to (bind_base), each spelled as that
+# base declares its names; None before binding, when every entry of DECLARED applies.
+_AT_BASE = None
+
+
 def declared(cls=None):
-    return [d for d in DECLARED if cls is None or d.cls == cls]
+    """The entries of class @p cls (every class when None) that apply at the bound base."""
+    return [d for d in (DECLARED if _AT_BASE is None else _AT_BASE) if cls is None or d.cls == cls]
 
 
 def find(cls, name):
-    for d in DECLARED:
-        if d.cls == cls and d.name == name:
+    for d in declared(cls):
+        if d.name == name:
             return d
     return None
+
+
+def _respell(d, respelled):
+    """@p d with each RENAMED name in its locators' text fields spelled as the base spells it."""
+    if not respelled:
+        return d
+
+    def sub(v):
+        if isinstance(v, str):
+            for old, new in respelled.items():
+                v = re.sub(r"\b" + re.escape(old) + r"\b", new, v)
+            return v
+        if isinstance(v, tuple) and all(isinstance(x, str) for x in v):
+            return tuple(sub(x) for x in v)
+        return v
+    where = tuple(dataclasses.replace(w, **{f.name: sub(getattr(w, f.name)) for f in dataclasses.fields(w)})
+                  for w in d.where)
+    return dataclasses.replace(d, where=where) if where != d.where else d
+
+
+def bind_base(fz, fit):
+    """Binds declared() and find() to the frozen base @p fz (nom_ep1.bind_base calls it, with
+    its BaseFit @p fit).  Each entry is re-spelled per fit.respelled; an entry marked
+    retired_by applies only when its locators find its object: none finding it retires the
+    entry (recorded in fit.retired), some but not all is a half-applied deletion (recorded in
+    fit.problems; the entry is kept, so its locators' report shows what is left)."""
+    global _AT_BASE
+    out = []
+    for d in DECLARED:
+        d = _respell(d, fit.respelled)
+        if d.retired_by:
+            found = [(type(loc).__name__, bool(loc.locate(fz))) for loc in d.where]
+            if not any(f for _, f in found):
+                fit.retired.append((f"declared {d.cls}", d.name, "its frozen object is gone at this base"))
+                continue
+            if not all(f for _, f in found):
+                fit.problems.append(f"declared {d.cls} {d.name} ({d.retired_by}): half applied at this "
+                                    "base: " + ", ".join(f"{n} {'finds' if f else 'finds nothing'}"
+                                                         for n, f in found))
+        out.append(d)
+    _AT_BASE = tuple(out)
 
 
 # ---------------------------------------------------------------------------------------------

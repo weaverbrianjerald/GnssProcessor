@@ -81,8 +81,13 @@ What a clean survey proves at a base (exit 0 only when every point holds):
      ENGINE_CTORS entry's frozen declaration exists, default-constructed exactly when the
      table lists no arguments and otherwise with as many constructor arguments as it lists;
      each SPEC_FIELDS local is declared in runNetwork and moved by a SPEC_CUT entry.  These
-     are the shapes the generator refuses, reported here first, so a REMOVE-key base that
-     takes the PB emit filter or the lane layer fails the survey, not only the generation.
+     are the shapes the generator refuses, reported here first.
+  8. The entries marked retired_by=REMOVE_KEY (rows, declared entries, realization tables)
+     fit the base: each one's object is either present (the entry applies as written) or gone
+     (the entry does not apply; listed under "Retired at this base"), never partly gone (a
+     half-applied deletion fails the survey).  The tables are bound to the base first
+     (nom_ep1.bind_base), so points 1 to 7 read only the entries that apply there, and the
+     same tables pass at the EP0 base and at the base after the REMOVE-key deletion.
 
 Also printed: the seams whose definitions declare or use `run`, `ep` or one of their group
 outputs' names (they take the fallback names nrun / nep / <output>_out, spec 3.2), the epoch
@@ -100,7 +105,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from nom_cpp import (DRIVER_PATH, Driver, GitTree, Ref, Tokens, calls_in, split_args)  # noqa: E402
-from nom_ep1 import DEFAULT_BASE, ROW_MODULES, load_rows  # noqa: E402
+from nom_ep1 import DEFAULT_BASE, REMOVE_KEY, ROW_MODULES, bind_base, load_rows  # noqa: E402
 from nom_ep1 import model, declared  # noqa: E402
 from nom_ep1.model import MEMBER, RUN, ADAPTER, DIRECT, Explicit  # noqa: E402
 
@@ -108,12 +113,15 @@ FREE_NAMES = ("run", "ep")
 
 
 class Frozen:
-    """The frozen base: the git tree, the driver, a resolver stopping at the realized names."""
+    """The frozen base: the git tree, the driver, the tables bound to the base
+    (nom_ep1.bind_base; fit records what that decided) and a resolver stopping at the realized
+    names."""
 
     def __init__(self, base):
         self.base = base
         self.tree = GitTree(base)
         self.drv = Driver(self.tree)
+        self.fit = bind_base(self)
         self.res = self.drv.resolver(stop=model.stop_keys())
 
 
@@ -420,7 +428,7 @@ def coverage(fz, rows):
 
 def locate_declared(fz):
     rows = []
-    for d in declared.DECLARED:
+    for d in declared.declared():
         hits = d.locate(fz)
         rows.append((d, hits))
     return rows
@@ -564,7 +572,7 @@ def realization_report(results):
         if m.frozen not in used:
             unused.append(f"{m.frozen} -> {m.path}")
     # The reverse direction: a declared binding-class entry with no realization in model.py.
-    for d in declared.DECLARED:
+    for d in declared.declared():
         if d.cls in ("EPOCH_MEMBER", "ACCESSOR") and "L:" + d.name not in model.EPOCH_BY_KEY:
             problems.append(f"declared {d.cls} {d.name} has no realization in model.py")
         if d.cls == "OWNER_MOVE" and "D:" + d.name not in model.RUN_BY_KEY:
@@ -680,10 +688,10 @@ def row_names(arg):
 # ---------------------------------------------------------------------------------------------
 def survey(args):
     names = row_names(args.rows)
+    fz = Frozen(args.base)          # binds the tables to the base first (point 8)
     rows = load_rows(names)
-    fz = Frozen(args.base)
     drv, T = fz.drv, fz.drv.T
-    problems = []
+    problems = list(fz.fit.problems)
 
     print(f"NOM3 step EP1 survey at {args.base} ({fz.tree.sha[:10]})")
     print(f"  frozen driver {DRIVER_PATH}: runNetwork lines {T.line(drv.rn.body[0])}-"
@@ -726,6 +734,14 @@ def survey(args):
           + f"; {sum(1 for r in rows if r.observer)} observers")
     print(f"  converted call sites: {conv_sites}, carrying {conv_args} arguments today and "
           f"{new_args} after the conversion")
+
+    # What the base decided about the entries the REMOVE-key deletion retires (point 8).
+    print(f"\n## Retired at this base ({REMOVE_KEY})\n")
+    fit_lines = fz.fit.lines()
+    print("  none: every object the deletion retires is present" if not fit_lines
+          else "\n".join("  " + x for x in fit_lines))
+    for x in fz.fit.problems:
+        print(f"  HALF APPLIED: {x}")
 
     # Per-row table.
     print("\n## Rows against the base\n")
@@ -982,12 +998,20 @@ def generate(args):
     root = pathlib.Path(args.root).resolve()
     stage = "ep1b" if args.shared_only else args.stage
     names = row_names(args.rows)
+    fz = Frozen(args.base)          # binds the tables to the base (nom_ep1.bind_base)
     rows = [] if stage == "ep1a1" else load_rows(names)
-    fz = Frozen(args.base)
     print(f"NOM3 step EP1 generator at {args.base} ({fz.tree.sha[:10]}): stage {stage}"
           + (" (shared files only)" if args.shared_only else "")
           + f", rows {', '.join(names) if rows else '(none)'}, pre-solve writers "
           f"{args.presolve_writer}; target {root}")
+    for x in fz.fit.summary():      # in full: the survey, and the manifest's retired_at_base
+        print(f"  {x}")
+    if fz.fit.problems:
+        print("generator: the REMOVE-key deletion is half applied at this base; nothing written")
+        for x in fz.fit.problems:
+            print("  " + x)
+        fz.tree.close()
+        return 1
     blocks = declared.ep2_blocks(fz)
     block_spans = [sp for spans in blocks.values() for sp in spans]
     results = [survey_row(fz, r, block_spans) for r in rows]
@@ -1064,6 +1088,10 @@ def generate(args):
         "spec_cut": [[fz.drv.T.line(s), fz.drv.T.line(e - 1), n] for s, e, n in getattr(g, "cut", [])],
         "problems": g.problems,
     }
+    if fz.fit.lines():
+        # The entries the REMOVE-key deletion retired at this base (absent at the EP0 base,
+        # where every object exists).
+        manifest["retired_at_base"] = fz.fit.lines()
     mpath = pathlib.Path(args.manifest) if args.manifest else \
         root / "scripts" / "nom_ep1" / manifest_name(args, names)
     mtext = json.dumps(manifest, indent=1, ensure_ascii=False) + "\n"
