@@ -1194,31 +1194,6 @@ int Application::runNetwork() {
         // from D5-only re-taps.  97 % of D5-only re-taps have no raw observable step: they
         // are iono-tension events the deviation should absorb rather than be erased by.
         std::set<std::pair<int, std::string>> carry_slipped_raw;
-        // RAIM pool re-host: the previous epoch's post-fit RAIM flags are drained here.
-        // The deferral is the same as for the innovation-gate drain above, for the same
-        // reason: RAIM detects after the solve, at SB_RAIM, when this funnel's
-        // load-bearing consumer (buildCarryDdPriors, SB_DDBUILD) has already run.
-        //
-        // The flags go into `carry_slipped_ambs` and not into `carry_slipped_raw`.  The
-        // raw subset means a raw-observable step, which the Iono-2 v3k d5_keep erase
-        // classifier and the WL-3 MW-row slip-skip both read.  A post-fit residual
-        // consensus is estimation-side evidence, the same class as the D5 innovation
-        // gate, which also drains into the funnel only.  Draining RAIM into raw would
-        // change the Iono-2 deviation-erase policy with no visible sign.
-        //
-        // The pending-reseed mark is not re-issued here: the seam already set it at
-        // detection time, and on this lineage it is bookkeeping either way.
-        //
-        // The clear is unconditional: the one-epoch lifetime bound (standing invariant #1)
-        // keeps a stale (station index, key) pair from outliving its arc across a datum
-        // change or a station drop.
-        if (!ctx.carry.raim_refloat_pending.empty()) {
-            for (const auto& sk : ctx.carry.raim_refloat_pending)
-                carry_slipped_ambs.insert(sk);
-            ctx.counters.raim_ci.refloats_drained +=
-                static_cast<long long>(ctx.carry.raim_refloat_pending.size());
-            ctx.carry.raim_refloat_pending.clear();
-        }
 
         // --- PASS A: per-station geometry + shared-state layout -------------
         std::vector<std::vector<PppObservation>> modeled(stations.size());

@@ -514,10 +514,6 @@ namespace GnssProcessor {
         /// and the seam all read one bool and cannot disagree about whether the census
         /// exists.
         bool raim_ci_on{};
-        /// The actuator half: a re-hosted flag is queued into `raim_refloat_pending` and
-        /// drained into the C3c funnel at the next epoch's head.  ANDed with `raim_ci_on`;
-        /// false = the screen measures and counts but queues nothing.
-        bool raim_ci_refloat{};
         /// The carried-phase RAIM pools admit observation phase rows only, each to the
         /// pool of the ambiguity column its tag names (@c network.raim_pool_data_rows_only,
         /// card RPA).  Read by both pool walks (the post-fit pass in filter/NetworkRaim.cpp
@@ -2344,37 +2340,6 @@ namespace GnssProcessor {
         // Iono-2 v3k: D5-only re-taps that kept the level (variance re-tap) instead of
         // erasing it.  shdev_slip_resets_total then counts actual erases only.
         long long shdev_d5_keeps_total = 0;
-
-        // --- RAIM pool re-host ---
-        // (station index, ambiguity key) flagged by the re-hosted post-fit RAIM screen at
-        // SB_RAIM, queued for the next epoch's slip funnel: the same deferral as
-        // `carry_innov_pending`, for the same reason (`carry_slipped_ambs` is a per-epoch
-        // driver local whose consumer, buildCarryDdPriors at SB_DDBUILD, has already run
-        // by the time RAIM detects post-solve).
-        //
-        // A queue rather than the seam's own actions, because neither mutation that
-        // networkPostFitRaim performs can move the solve:
-        //   - `local_carry.erase` drops a phase-leveling carry entry whose only solve-side
-        //     consumer is the PASS-B inject, itself under `!carry_invariant`, and on this
-        //     lineage that map is empty anyway.
-        //   - `markAmbiguityPendingReseed` does reach a live reader (the PASS-B state
-        //     seed), but rewriting x_lin is bookkeeping here: the kernel solves
-        //     corrections about the linearization point with no write-back, so
-        //     b_red = u_s − N_sr N_rr⁻¹ u_r is algebraically unchanged.
-        // Only the funnel actuates: it excludes the arc from A_old by membership, so its
-        // chord re-taps from a diffuse prior.
-        //
-        // Drained into `carry_slipped_ambs`, not `carry_slipped_raw`, on purpose: raw
-        // means a raw-observable step, which the deviation-erase classifier and the MW-row
-        // slip-skip both read.  A post-fit residual consensus is estimation-side evidence,
-        // like the D5 innovation gate, which also drains into the funnel only.
-        //
-        // The lifetime is bounded to exactly one epoch by an unconditional drain-and-clear
-        // at the driver head (standing invariant #1); the drain must stay unconditional even
-        // on a datum-change or station-drop epoch, or a stale (station index, key) pair
-        // could outlive its arc.  Not serialized, so a warm resume starts with an empty
-        // queue.
-        std::set<std::pair<int, std::string>> raim_refloat_pending;
 
         // --- SH-field warning edge state (T1a) ---
         // Persistent state for the a₀₀ physical-band divergence warning (T1a).  It starts

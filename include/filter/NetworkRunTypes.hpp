@@ -1008,8 +1008,7 @@ struct PlAmb {
 /// shift on a local column is an exact solve no-op, so pinning to it would carry no
 /// information about where the arc sits.  The absolute estimate is
 /// `x_lin + back-substituted Δx`, which exists only after the solve; hence the
-/// one-epoch deferral, the same shape as `carry_innov_pending` and
-/// `raim_refloat_pending`.
+/// one-epoch deferral, the same shape as `carry_innov_pending`.
 struct AnchorHandoverLedger {
     /// (station index, ambiguity key "sat_signal") -> that station's absolute
     /// ambiguity estimate from the previous epoch's solve, in that epoch's realized

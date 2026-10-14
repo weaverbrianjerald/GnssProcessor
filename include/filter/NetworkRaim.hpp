@@ -75,8 +75,8 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  *  - @c pool_cells > 0, @c sats_flagged == 0
  *                                        → it screened real residuals and nothing was bad
  *                                          (zero opportunity, not zero capability).
- *  - @c sats_flagged > 0, @c refloats_queued == 0
- *                                        → it flagged but the actuator is disarmed.
+ *  - @c sats_flagged > 0                 → it flagged; the re-host is measure-only, so
+ *                                          no carry consumer acted on the flag.
  *
  * Every member stays at zero unless @c ctx.knobs.raim_ci_on, and the run-end readout
  * is written only then, so an off run reports nothing.
@@ -87,8 +87,6 @@ struct NetworkRaimCiTallies {
     long long pool_cells = 0;        ///< Total carried-ambiguity cells screened (the census size).
     long long sats_flagged = 0;      ///< Consensus-flagged satellite-epochs.
     long long arcs_flagged = 0;      ///< Attribution-flagged isolated (station,sat) arc-epochs.
-    long long refloats_queued = 0;   ///< Arcs queued into raim_refloat_pending (actuator armed only).
-    long long refloats_drained = 0;  ///< Queued arcs delivered into the C3c funnel at the next epoch's head.
     double    sigma0_max = 0.0;      ///< Largest σ̂0 seen over epochs with a non-empty pool.
     double    sigma0_sum = 0.0;      ///< Σ σ̂0 over epochs with a non-empty pool (mean = sigma0_sum / sigma0_n).
     long long sigma0_n = 0;          ///< Epochs contributing to sigma0_sum.

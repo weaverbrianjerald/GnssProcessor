@@ -17,14 +17,12 @@
  *      built.
  *
  * The re-host moves the QC substrate onto StationAssembly::qc_amb, a census that
- * does not depend on the carry vehicle, and defers the refloat one epoch through
- * NetworkCarryState::raim_refloat_pending (the funnel is consumed at SB_DDBUILD,
- * before RAIM detects at SB_RAIM).
+ * does not depend on the carry vehicle.  It is measure-only: the refloat actuator
+ * that once queued its flags into the C3c funnel was retired.
  *
- * This file is the config-contract half: the knobs default off, the inert guards
- * fire on every posture where an arm could not change the output, and the two
- * knobs are strictly ordered (actuator requires screen requires lineage).  The
- * numerical half (census contents, funnel provenance, the A_old membership edge)
+ * This file is the config-contract half: the knob defaults off, and the inert
+ * guards fire on every posture where an arm could not change the output (the
+ * screen requires the lineage and RAIM).  The numerical half (census contents)
  * needs the full assembly harness and is owed as field gates 1-3 in the SPEC.
  *
  * Suite ownership: `RaimCarryInvariantPool` lives only in this file.
@@ -85,15 +83,14 @@ constexpr const char* kCard4 =
 // Default off / structural byte-identity (standing invariant #6).
 // ---------------------------------------------------------------------------
 
-// Neither knob defaults on: many shipped configs (about 200) arm carry_invariant,
+// The knob does not default on: many shipped configs (about 200) arm carry_invariant,
 // and a default flip would change all of them at once.
-TEST(RaimCarryInvariantPool, BothKnobsDefaultOff) {
+TEST(RaimCarryInvariantPool, ScreenDefaultsOff) {
     LogManager log;
     const fs::path p = writeTempConfig("default", networkConfig(""));
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_FALSE(cfg.networkRaimCarryInvariant());
-    EXPECT_FALSE(cfg.networkRaimCarryInvariantRefloat());
     std::error_code ec; fs::remove(p, ec);
 }
 
@@ -108,7 +105,6 @@ TEST(RaimCarryInvariantPool, LegacyCard4PostureUnchanged) {
     EXPECT_TRUE(cfg.networkRaim());                       // still nominally armed
     EXPECT_TRUE(cfg.networkCarryInvariant());
     EXPECT_FALSE(cfg.networkRaimCarryInvariant());        // …and still inert, by default
-    EXPECT_FALSE(cfg.networkRaimCarryInvariantRefloat());
     std::error_code ec; fs::remove(p, ec);
 }
 
@@ -123,20 +119,6 @@ TEST(RaimCarryInvariantPool, ArmsOnCard4Lineage) {
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_TRUE(cfg.networkRaimCarryInvariant());
-    EXPECT_FALSE(cfg.networkRaimCarryInvariantRefloat());  // screen without actuator
-    std::error_code ec; fs::remove(p, ec);
-}
-
-TEST(RaimCarryInvariantPool, ActuatorArmsOnTopOfScreen) {
-    LogManager log;
-    const fs::path p = writeTempConfig("actuator",
-        networkConfig(std::string(kCard4) +
-                      "    \"raim_carry_invariant\": true,\n"
-                      "    \"raim_carry_invariant_refloat\": true,\n"));
-    GnssConfig cfg;
-    ASSERT_TRUE(cfg.loadFromJson(p, log));
-    EXPECT_TRUE(cfg.networkRaimCarryInvariant());
-    EXPECT_TRUE(cfg.networkRaimCarryInvariantRefloat());
     std::error_code ec; fs::remove(p, ec);
 }
 
@@ -171,40 +153,6 @@ TEST(RaimCarryInvariantPool, ScreenDisabledWithoutRaim) {
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_FALSE(cfg.networkRaim());
     EXPECT_FALSE(cfg.networkRaimCarryInvariant());   // auto-disabled
-    std::error_code ec; fs::remove(p, ec);
-}
-
-// The knobs are strictly ordered.  Arming the actuator alone is the most harmful
-// misconfiguration to carry silently, because the seam's two legacy actions look
-// like a refloat in the log while changing nothing: the local_carry erase drops an
-// entry no Card-4 consumer reads, and the pending-reseed mark leaves the reduced
-// shared RHS algebraically unchanged (SPEC_deweight_release_hygiene §7.2).
-TEST(RaimCarryInvariantPool, ActuatorDisabledWithoutScreen) {
-    LogManager log;
-    const fs::path p = writeTempConfig("bareactuator",
-        networkConfig(std::string(kCard4) +
-                      "    \"raim_carry_invariant_refloat\": true,\n"));
-    GnssConfig cfg;
-    ASSERT_TRUE(cfg.loadFromJson(p, log));
-    EXPECT_FALSE(cfg.networkRaimCarryInvariant());
-    EXPECT_FALSE(cfg.networkRaimCarryInvariantRefloat());   // auto-disabled
-    std::error_code ec; fs::remove(p, ec);
-}
-
-// Cascade: withdrawing the lineage withdraws both knobs, not only the screen;
-// otherwise the actuator would survive the loss of its own precondition.
-TEST(RaimCarryInvariantPool, ActuatorCascadesOffWithLineage) {
-    LogManager log;
-    const fs::path p = writeTempConfig("cascade",
-        networkConfig("    \"raim\": true,\n"
-                      "    \"phase_leveling\": true,\n"
-                      "    \"raim_carry_invariant\": true,\n"
-                      "    \"raim_carry_invariant_refloat\": true,\n"));
-    GnssConfig cfg;
-    ASSERT_TRUE(cfg.loadFromJson(p, log));
-    EXPECT_FALSE(cfg.networkCarryInvariant());
-    EXPECT_FALSE(cfg.networkRaimCarryInvariant());
-    EXPECT_FALSE(cfg.networkRaimCarryInvariantRefloat());
     std::error_code ec; fs::remove(p, ec);
 }
 

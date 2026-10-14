@@ -159,6 +159,9 @@ namespace GnssProcessor {
      *   | @c erase_no_funnel| erased           | co-erased      | marked         | not queued| no               |
      *   | @c free_epoch     | kept             | kept           | marked         | (detector)| yes              |
      *
+     * The C3c queue column was the queue of the RAIM carry-invariant refloat actuator,
+     * which was retired; nothing is queued now, so @c erase_no_funnel acts as @c erase.
+     *
      * Harness only: the mode changes what the injected erase does.  A real
      * attribution is unchanged on every path, and an unarmed run cannot reach
      * any of it.

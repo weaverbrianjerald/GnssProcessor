@@ -319,7 +319,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // keep the faulted level the cold response erases).  Not fingerprinted, like the
     // screen's other knobs.
     k.gl_cold_bound_m  = (k.gl_on && !k.gl_bound) ? config_.networkGrossLosColdBoundM() : 0.0;
-    k.raim_ci_refloat = k.raim_ci_on && config_.networkRaimCarryInvariantRefloat();
     // Card RPA: the RAIM pools restricted to observation phase rows.  ANDed with raim_on
     // (the loader already guarantees it), so both pool walks and the run-end lines read
     // one bool.  Not appended to the snapshot fingerprint (NetworkSnapshotFingerprint.cpp): a QC knob, like raim_*.

@@ -101,7 +101,6 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     // both off, R.qc_amb is empty and ambPool() returns R.pl_amb, so those runs are
     // unchanged.  Design: docs/SPEC_raim_pool_rehost.md.
     const bool raim_ci_on      = ctx.knobs.raim_ci_on;
-    const bool raim_ci_refloat = ctx.knobs.raim_ci_refloat;
     auto ambPool = [&](const StationAssembly& R) -> const std::vector<PlAmb>& {
         return R.qc_amb.empty() ? R.pl_amb : R.qc_amb;
     };
@@ -120,7 +119,6 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         ctx.knobs.amb_drop_floor_after_ep);
     const bool   amb_drop_pre_gate_ =
         (ctx.knobs.amb_drop_var_floor > 0.0) && !(amb_drop_floor_now_ > 0.0);
-    auto& raim_refloat_pending = ctx.carry.raim_refloat_pending;
     // Riders R2 and R4 (staf_on, rate_hygiene) are measure-only; the loader requires
     // network.raim for both (SPEC_t3_null_derivation §6, queue item 4).  R2 also
     // needs per-row r_i, taken from the same solve-neutral rowRedundancy read the
@@ -818,14 +816,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 // staged by the injector with a diagnostic mode.  Every flag
                 // below is `true` on the production path, so an unarmed run
                 // executes the same path as without the sub-knob.
-                bool inj_iono = true, inj_reseed = true, inj_funnel = true;
+                bool inj_iono = true, inj_reseed = true;
                 const std::set<std::string>* inj_sigs = nullptr;
                 if (!inject_arc_mode.empty()) {
                     const auto mit = inject_arc_mode.find({ i, sat });
                     if (mit != inject_arc_mode.end()) {
                         inj_iono   = (mit->second != "erase_keep_iono");
                         inj_reseed = (mit->second != "erase_no_reseed");
-                        inj_funnel = (mit->second != "erase_no_funnel");
                         const auto sit = inject_arc_sigs.find({ i, sat });
                         if (sit != inject_arc_sigs.end() && !sit->second.empty())
                             inj_sigs = &sit->second;
@@ -960,14 +957,6 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         // is kept because it is the actuator on phase-leveling runs.
                         if (inj_reseed)
                             stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
-                        // The actuator under carry_invariant: queue for the next epoch's
-                        // C3c funnel, which membership-excludes the arc from A_old so its
-                        // chord is re-tapped from a diffuse prior.  Deferred because this
-                        // epoch's funnel was consumed at SB_DDBUILD, before SB_RAIM.
-                        if (inj_funnel && raim_ci_refloat) {
-                            raim_refloat_pending.insert({i, pa.amb_key});
-                            ++raim_ci_tallies.refloats_queued;
-                        }
                         ++n;
                     }
                 return n;
@@ -1133,13 +1122,8 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                             ++ctx.counters.n_cr_raim_consensus;   // census (C): T3 consensus refloat
                         }
                     }
-                    // Bookkeeping under carry_invariant (see refloat_sat_at above); the
-                    // actuator there is the deferred funnel queue.
+                    // Bookkeeping under carry_invariant (see refloat_sat_at above).
                     stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
-                    if (raim_ci_refloat) {
-                        raim_refloat_pending.insert({static_cast<int>(i), pa.amb_key});
-                        ++raim_ci_tallies.refloats_queued;
-                    }
                     ++n_refloat;
                 }
         }
@@ -1349,27 +1333,13 @@ int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
                       "lives in the DD chord's prior, so a slipped arc's tension may be "
                       "absorbed locally and never reach this residual).  Grade against a "
                       "known-slip population before crediting it.");
-        if (ctx.knobs.raim_ci_refloat)
-            log->info("Network (RAIM pool re-host): {} arc(s) queued into the deferred funnel "
-                      "and {} delivered at the following epoch's head.  NOTE the seam's two "
-                      "legacy actions are BOOKKEEPING here, not actuators: the local_carry "
-                      "erase drops an entry no Card-4 consumer reads, and the pending-reseed "
-                      "mark leaves the reduced shared RHS algebraically unchanged.  The "
-                      "funnel drain is the only thing that re-taps a chord.",
-                      rc.refloats_queued, rc.refloats_drained);
-        else if (rc.sats_flagged > 0 || rc.arcs_flagged > 0)
+        if (rc.sats_flagged > 0 || rc.arcs_flagged > 0)
             log->warn("Network (RAIM pool re-host): the screen flagged {} sat-epoch(s) / {} "
-                      "arc-epoch(s) but network.raim_carry_invariant_refloat is OFF — those "
-                      "flags reached NO carry consumer.  Measure-only is the intended first "
-                      "stage; this line exists so the run is never mistaken for a protected "
-                      "one.",
+                      "arc-epoch(s), and the re-host is measure-only — those flags reached NO "
+                      "carry consumer (the seam's local_carry erase and pending-reseed mark "
+                      "cannot move the Card-4 solve).  This line exists so the run is never "
+                      "mistaken for a protected one.",
                       rc.sats_flagged, rc.arcs_flagged);
-        if (rc.refloats_queued != rc.refloats_drained)
-            log->warn("Network (RAIM pool re-host): {} queued vs {} drained — a mismatch means "
-                      "the run ended with a queue still pending (expected: at most the final "
-                      "epoch's flags) or that a drain was skipped, which would break the "
-                      "one-epoch lifetime bound.",
-                      rc.refloats_queued, rc.refloats_drained);
     }
     return 0;
 }

@@ -6148,9 +6148,6 @@ namespace GnssProcessor {
         network_raim_carry_invariant_ =
             jval<bool>(json, "network.raim_carry_invariant",
                        "network_raim_carry_invariant", false);
-        network_raim_carry_invariant_refloat_ =
-            jval<bool>(json, "network.raim_carry_invariant_refloat",
-                       "network_raim_carry_invariant_refloat", false);
         // The carried-phase RAIM pools restricted to observation phase rows (card RPA).
         // Parsed with the RAIM family; its interlock (network.raim) is checked after the
         // RAIM auto-couplings and the service profile, in validateNetworkCarryPosture_.
@@ -11391,14 +11388,6 @@ namespace GnssProcessor {
                       "network.raim is OFF — there is no screen to re-host.  DISABLED.");
             network_raim_carry_invariant_ = false;
         }
-        if (network_raim_carry_invariant_refloat_ && !network_raim_carry_invariant_) {
-            log->warn("Network (RAIM pool re-host): network.raim_carry_invariant_refloat is on "
-                      "but network.raim_carry_invariant is OFF — the actuator has no screen to "
-                      "act on (the seam's legacy actions cannot move the Card-4 solve: the "
-                      "local_carry erase is a no-op on an empty map and the pending-reseed mark "
-                      "leaves the reduced RHS algebraically unchanged).  DISABLED.");
-            network_raim_carry_invariant_refloat_ = false;
-        }
         // Card RPA: the pool restriction acts inside the RAIM pools, so without
         // network.raim (after its auto-couplings and the service profile, both above) it
         // has nothing to act on.  Disabled rather than left to read as armed (invariant #4).
@@ -11419,9 +11408,8 @@ namespace GnssProcessor {
                       "for the first time (with the pool empty it never left its 1.0 "
                       "initializer), and network.raim_withhold_sigma0 = {:.1f} is armed — so "
                       "this run can begin WITHHOLDING epochs, and the emitted URA moves with "
-                      "the σ̂0 EWMA.  Neither is behind the refloat knob: a measure-only arm is "
-                      "NOT emission-neutral.  Grade it as emission-affecting, or disarm the "
-                      "withhold for the first validation leg.",
+                      "the σ̂0 EWMA: a measure-only arm is NOT emission-neutral.  Grade it as "
+                      "emission-affecting, or disarm the withhold for the first validation leg.",
                       network_raim_withhold_sigma0_);
         if (network_raim_) {
             // `!network_carry_invariant_` is load-bearing.  ApplicationNetworkAssembly's
@@ -11449,13 +11437,9 @@ namespace GnssProcessor {
                           "carry-neutral `qc_amb` census — it now RUNS on the Card-4 "
                           "invariant-carry lineage (phase_leveling={}), where it was previously "
                           "inert twice over (seam not called; `pl_amb` pool never filled).  "
-                          "Refloat actuator is {} — {}.",
-                          network_phase_leveling_,
-                          network_raim_carry_invariant_refloat_ ? "ARMED" : "OFF (measure-only)",
-                          network_raim_carry_invariant_refloat_
-                              ? "flags queue into raim_refloat_pending and drain into the C3c "
-                                "funnel at the next epoch's head"
-                              : "flags are counted and traced but reach no carry consumer");
+                          "Refloat actuator is OFF (measure-only) — flags are counted and "
+                          "traced but reach no carry consumer.",
+                          network_phase_leveling_);
             else if (network_carry_invariant_)
                 log->warn("Network: network.raim is on with network.carry_invariant (phase_leveling"
                           "={}) but WITHOUT network.raim_carry_invariant — post-fit RAIM is INERT: "
