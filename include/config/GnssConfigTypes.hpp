@@ -376,14 +376,12 @@ namespace GnssProcessor {
         bool   uwl_mid_enable{ false };       ///< E6 mid-ladder bridge hop: chain the WL determination through the Galileo (E6,E5a) rung, λ 2.931 m.  The high hop bridges the fixed top integer to a rounded mid integer and the low hop bridges that to the WL, which cuts each hop's wavelength-ratio amplification of phase and iono error by about 3.3× against the direct 9.768 → 0.751 m hop.  Target: the measured ~70 % Galileo WL FFR-unfixed rate.  Decision side only; the direct hop remains the per-cycle fallback and cross-check.  Requires @c uwl_enable.  Off is byte-identical (a single bridge triple per constellation).
         bool   uwl_dual_top{ false };         ///< Per-cycle preferred and fallback Galileo top rung: band '8' (E5 AltBOC, λ 19.537 m) decides where it is tracked across the whole cycle, and the (5,7) rung (λ 9.768 m) decides what '8' could not.  Both bands {7,8} are uncarried, and the untaken sibling serves as a closure statistic (2·N(8,5) = N(7,5), since f_E5 = (f_E5a+f_E5b)/2 exactly), measured and hard-gated only under @c uwl_sib_gate (increment 5, §1b/§7.5).  Supersedes @c uwl_gal_top_band (ignored, noted at load).  Requires @c uwl_enable.  The EWL rows are never folded, so a row decided by both rungs never folds twice (the F-A refold class).  Off: the single-top tier unchanged (byte-identical).
         bool   uwl_sib_gate{ false };         ///< Sibling-closure hard gate: block a top-tier decision whose untaken-sibling MW statistic disagrees with fx_integer·λ_top/λ_sib by more than 0.5 + 3σ_sib; the blocked cycle falls to the fallback rung in the same epoch (increment 5).  Default off = measure only: receiver half-cycle conventions on AltBOC may offset the identity, and a population of half-integer residuals means the convention differs, so the gate would first have to learn a constant (SPEC reconciliation note 2).  Requires @c uwl_dual_top.
-        bool   uwl_family_pairs{ false };     ///< Census recovery (v2): admit minority receiver-family primary pairs (e.g. Galileo (L1C,L5Q) beside the majority (L1X,L5X)) into lane pair groups of their own instead of leaving them per band.  A pair is admitted when its joint-census count is ≥ @c uwl_family_min_arcs and stays admitted for the run (latched: membership flicker would refloat carried chords, the WL-3 micro pair-group hazard).  Measured stake: about 40 of 104 decided Galileo integers (101 of 154 with the mid hop) are lost at skip_basis on minority-family cycles.  Requires @c uwl_enable and @c lane_carry.enable (the pair groups are lane machinery); otherwise inert, with a warning.
-        int    uwl_family_min_arcs{ 8 };      ///< First-admission threshold for @c uwl_family_pairs: a census pair joins the admissible set when at least this many (rx,sat) arcs carry it in one epoch's census (clamped ≥ 1).  The fixture families measure about 115–132 arcs, so 8 is far from the decision boundary; it keeps one-off channel anomalies from latching a permanent group.
         bool   uwl_cold_fix{ false };         ///< Single-epoch cold fix (§3.3): a top-tier arc with one unlagged sample (n = 1) is eligible for an FFR decision using the a-priori σ below, on tiers with λ ≥ @c uwl_cold_min_lambda_m only.  Decision side only (which integers the bridge may use); folds nothing; removes the measured ~3-epoch re-warm latency after a slip.
         double uwl_cold_sigma_m{ 0.7 };       ///< A-priori per-sample MW statistic σ (m), substituted while the Welford variance is immature (n < 2).  Applied per arc: a re-warming arc inside an otherwise mature cycle contributes about this/λ_top cycles to the row σ (0.7 m gives 0.072 cycles at λ 9.768 m).  A cycle whose arcs are all cold aggregates to a σ larger by √Σc² and fails the default FFR σ gate, as intended.
         double uwl_cold_min_lambda_m{ 8.0 };  ///< Wavelength floor for cold-fix eligibility (m).  Excludes the 5.861 m GPS EWL by design: the cold fix is reserved for UWL wavelengths and is not extended to GPS.
         bool   bridge_sample_debias{ false }; ///< Fold each bridge sample as GF_k − C_iono·ı̃(t_k) (per-sample de-bias by the estimable ionosphere, pushed with a one-epoch lag) instead of subtracting C_iono·ı̃(now) from the lifetime mean at read time.  The statistic becomes stationary, which removes both the mean bias and the drift-inflated Welford σ that blocked re-decisions as the whole-arc Welford aged (without it, constrained-lane circR fell from 0.89 to 0.24 over 60 epochs).  S-conformant: Σc·ı̃ over a closed cycle = ∇ΔI exactly (Odijk 2016, Table 8: the S-basis lumps cancel by sign balance).  Requires @c ewl_enable (the bridge).  Off: raw accumulation with read-time de-bias, byte-identical.
         bool   d5_dump{ false };              ///< Diagnostic (log-only, F-A): per-epoch CSV of every D5 innovation flag of the invariant carry (group id, chord (u,v), station, ambiguity key, formally standardized innovation, and adjacency tags {EWL-fixed (station,sat) member, hold-cycle chord, chord injected in the previous epoch}) to logs/network_d5_flags.csv.  Does not change the solve.
-        bool   lane_trace{ false };           ///< Instrument (log-only, F-B): per-epoch CSV of every primary cycle's carried WL lane value and fractional part after install, for both the held or injected population and the untouched control population in one run, to logs/network_wl_lane_trace.csv.  Graded by scripts/grade_lane_trace.py, which resolves the injected-cycle circR that the star dd-frac trace cannot.  Requires @c wl_inject_enable or @c lane_carry.enable (WL-3 acceptance instrument).  Does not change the solve.
+        bool   lane_trace{ false };           ///< Instrument (log-only, F-B): per-epoch CSV of every primary cycle's carried WL lane value and fractional part after install, for both the held or injected population and the untouched control population in one run, to logs/network_wl_lane_trace.csv.  Graded by scripts/grade_lane_trace.py, which resolves the injected-cycle circR that the star dd-frac trace cannot.  Requires @c wl_inject_enable.  Does not change the solve.
     };
 
     /// SD pre-reduce EWL constraint.  The between-satellite single-differenced
@@ -455,31 +453,6 @@ namespace GnssProcessor {
         ///    detector change.  1.0 m is the point the increment-1 ladder measured as
         ///    consistent with the residuals.
         double fix_sigma_floor_m{ 1.0 };
-    };
-
-    /// Lane-coordinate carry (M5 card WL-3).  Carries each primary-pair chord's two
-    /// band DDs as one jointly-covarianced block: stiff along the phase-determined NL
-    /// direction, loose along the WL lane as its uncertainty warrants, with per-epoch
-    /// MW and bridge lane increments as measurements.  The estimator then owns the
-    /// code-coherence accumulator, which removes the F-A/F6 refold class by
-    /// construction.  Built in docs/SPEC_lane_carry_card.md §7, increments 2-4:
-    /// pair-group regroup and equivalence shape, lane prior/q and per-epoch MW lane
-    /// rows, bridge rows and fold-on-change FFR fixing.  Supersedes
-    /// mw_wl.wl_inject_enable at runtime (with a warning); the inject primitive
-    /// remains as the pair-block fallback.
-    struct LaneCarryConfig {
-        bool   enable{ false };               ///< Master switch.  Requires carry_invariant and mw_wl.ewl_enable (the statistics source).  Off is byte-identical.
-        double q_wl_scale{ 0.01 };            ///< q along the WL lane = this × carry_invariant_qz.  The default 0.01 gives about (0.04 cyc)² per epoch at qz = 1e-4 per 30 s, which keeps the √N lane accumulation and the FFR fixes working (measured circR 0.471 against 0.251).  The SPEC §3.1 factor of 10³ assumed qz ≈ 0 and would swamp every lane measurement (about 12 WL cycles of lane q per epoch).  1.0 = isotropic (part of the §6.1 equivalence shape).
-        double sigma_wl_fresh_cyc{ 0.0 };     ///< Fresh-chord lane prior σ (cycles).  Default 0 = diffuse birth.  Measurement falsifies the SPEC §3.1 mean-zero code-seed prior: seed-time clock diversity mis-centers the correction-frame lane origin by O(10²) cycles (D5 flags 691 against 125).  The code-seed information enters through the first MW lane increment instead.  > 0 = study shape (logged with a warning).
-        bool   lane_meas{ true };             ///< Per-epoch MW(1,2) lane increments folded into the carried block (SPEC §3.2).
-        bool   bridge_meas{ true };           ///< Per-epoch iono-de-biased bridge increments on EWL-fixed cycles (phase-precision lane source).
-        // --- Performance knobs, not lane-shape knobs (LF-1 perf card,
-        //     docs/SPEC_lane_carry_card.md Appendix LF-1).  They must stay out of the
-        //     equivalence_shape discriminator because they do not change what folds. ---
-        bool   fold_blocked{ false };         ///< Optimized blocked/sparse lane fold: O(K) sparse applyLaneFix, with the per-row re-symmetrize hoisted to one pass per block per epoch (LF-1 INC-1).  Changes the operation order, so it belongs to the parallel_carry equivalence class and is not bit-identical (§3.2).  Off: the sequential per-row fold (byte-identical).
-        bool   skip_pinned_increments{ false };///< Skip the per-epoch MW/bridge lane increments for a chord with a committed decision: its lane is pinned at σ = 0.01, so an increment with σ ≈ 0.06–0.2 carries no information (LF-1 INC-2, §3.3).  Any slip, D5 flag or re-tap resumes increments in the same epoch.  Equivalence class (nearly inert, not exactly null).  Off is byte-identical.
-        long long skip_pinned_within_n{ 3 };  ///< Skip grace window (epochs) after a chord's last re-decision; past it, increments resume so that a drifting lane re-converges (LF-1 INC-2).  Inert unless skip_pinned_increments.
-        bool   parallel_components{ false };   ///< Spread the per-epoch MW lane-increment folds across cores, one component (joint block) per thread (LF-1 INC-4, §3.5).  Components are independent (no shared Pᶻ) and each block's folds stay in order, so the result is byte-identical to serial (unlike fold_blocked).  Takes effect only with parallel_stations (n_threads > 1); inert unless lane_joint.  Eigen is re-pinned to one thread inside the region; the pcarry un-pin stays outside it (the dev300s nesting trap).
     };
 
     /**
@@ -1557,9 +1530,6 @@ namespace GnssProcessor {
      *  - @c estimation.global_vtec_sh.rep_error_tau_s: a Gauss-Markov time constant
      *    in seconds, not a rate; its covariance growth is set jointly with
      *    @c representation_sigma_tecu, which a q-keyed table cannot express.
-     *  - @c network.lane_carry.q_wl_scale: a dimensionless anisotropy multiplier
-     *    shaping @ref NetworkQClass::DdCarry into the (NL, WL) lane basis.  It
-     *    selects a direction, not a magnitude.
      *
      * Per-station classes are absent for the scope reason given on
      * @ref NetworkQClass: @c StateManager propagates them, they are shared with the
@@ -1845,8 +1815,7 @@ namespace GnssProcessor {
         double epoch_sync_tolerance_s{ 0.01 };///< Max time-tag difference when matching epochs across stations.
         ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
         NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default off: float product).
-        MwWlConfig       mw_wl;               ///< MW-seeded wide-lane pseudo-obs layer (M5 card WL-1; default off, byte-identical).
-        LaneCarryConfig  lane_carry;          ///< Lane-coordinate carry (M5 card WL-3; default off, byte-identical).  Increments 2-4 are implemented: @c applyLaneMeasurement, @c applyLaneFix, @c carriedPairValue and @c injectCarriedChordPair live in @c NetworkInvariantCarryDriver (docs/SPEC_lane_carry_card.md).
+        MwWlConfig       mw_wl;               ///< MW wide-lane lane layers (M5 cards WL-2, UWL-1; default off, byte-identical).
         SdEwlConfig      sd_ewl;              ///< SD pre-reduce EWL constraint (default off, byte-identical; docs/SPEC_sd_ewl_prereduce.md).
         SlipQcConfig     slip_qc;             ///< Slip-QC hardening, cards R/L/G and their follow-ups (network.cycle_slip.*; every master default off, byte-identical; docs/SPEC_slip_qc_hardening.md).
         SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier, degraded-phase demotion and re-vet (network.signal_integrity.*; default off, byte-identical; docs/SPEC_flicker_gap_integrity.md).

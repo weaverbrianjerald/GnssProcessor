@@ -1664,10 +1664,10 @@ namespace GnssProcessor {
     //  network subsection helper: loadNetworkLaneLayers_
     // =================================================================
     /**
-     * @brief MW/WL lane layers: @c network.mw_wl.*, @c network.sd_ewl.*, @c network.lane_carry.*.
+     * @brief MW/WL lane layers: @c network.mw_wl.* and @c network.sd_ewl.*.
      *
      * Parse + range clamps only.  Every cross-knob mutex these layers participate in
-     * (the carry_invariant requirement, the EWL/UWL/lane-carry contracts) is enforced later
+     * (the carry_invariant requirement, the EWL/UWL contracts) is enforced later
      * by @c validateNetworkLaneLayers_, which runs after @c network.carry_invariant is
      * parsed.
      *
@@ -1811,75 +1811,6 @@ namespace GnssProcessor {
                                   : std::string("unlimited"));
                 }
             }
-
-            // --- Lane-coordinate carry (docs/SPEC_lane_carry_card.md; M5 card WL-3).
-            // Parsed and clamped here; the carry_invariant / ewl_enable mutex and the
-            // armed-state summary are in validateNetworkLaneLayers_ (after
-            // network.carry_invariant is parsed), like the mw_wl mutexes.
-            {
-                auto& lc = network_config_.lane_carry;
-                lc.enable = jval<bool>(json, "network.lane_carry.enable",
-                                       "network_lane_carry_enable", false);
-                // Default 0.01, set by a 15-epoch A/B.  The "10³ × q_nl" scale of SPEC
-                // §3.1 assumed q_nl ≈ 0; at the lineage qz = 1e-4 m²/s it adds
-                // (√3 m ≈ 11.8 WL cyc)² of lane variance per 30 s epoch, which swamps every
-                // accumulated lane measurement and destroys each FFR fix within one epoch.
-                // 0.01×qz ≈ (0.04 cyc)²/epoch keeps the √N accumulation effective
-                // (constrained circR 0.471 / med|f| 0.061, against 0.251 / 0.247 at scale
-                // 1) while still relaxing a stale lane in tens of epochs.  The lane starts
-                // diffuse and gains tightness only from measurements, so a large q_wl is
-                // not needed to prevent unearned stiffness.
-                lc.q_wl_scale = std::max(0.0,
-                    jval<double>(json, "network.lane_carry.q_wl_scale",
-                                 "network_lane_carry_q_wl_scale", 0.01));
-                // Default 0.0 keeps the isotropic diffuse prior at birth.  The mean-zero
-                // "code-seed scale" fresh lane prior of SPEC §3.1 is falsified on real
-                // data (D5 691 with it, 125 without): the correction-frame origin is not
-                // the code-seed lane.  A cycle's ambiguities seed at different epochs, so
-                // per-station clock error at seed time does not cancel in the lane
-                // (× (f1−f2) ⇒ hundreds of cycles of mis-centering at σ=3 cyc).  The
-                // code-seed-scale information enters instead through the first per-epoch
-                // MW lane increment, which is centered on the detector value.  Positive
-                // values (a study shape) clamp to ≥0.1 cyc.
-                lc.sigma_wl_fresh_cyc =
-                    jval<double>(json, "network.lane_carry.sigma_wl_fresh_cyc",
-                                 "network_lane_carry_sigma_wl_fresh_cyc", 0.0);
-                lc.sigma_wl_fresh_cyc = (lc.sigma_wl_fresh_cyc <= 0.0)
-                    ? 0.0 : std::max(0.1, lc.sigma_wl_fresh_cyc);
-                if (lc.sigma_wl_fresh_cyc > 0.0)
-                    log->warn("Network: network.lane_carry.sigma_wl_fresh_cyc={} — the mean-zero "
-                              "fresh lane prior is a FALSIFIED mechanism on real data (seed-time "
-                              "clock diversity mis-centers it by O(10²) cycles; measured D5 "
-                              "691-vs-125, Jul-16).  Study shape only; the default (0 = diffuse "
-                              "birth + first MW increment) is the honest form.",
-                              lc.sigma_wl_fresh_cyc);
-                lc.lane_meas = jval<bool>(json, "network.lane_carry.lane_meas",
-                                          "network_lane_carry_lane_meas", true);
-                lc.bridge_meas = jval<bool>(json, "network.lane_carry.bridge_meas",
-                                            "network_lane_carry_bridge_meas", true);
-                // Optimized blocked/sparse lane fold (LF-1 INC-1; docs/SPEC_lane_carry_card.md
-                // Appendix LF-1 §3.2).  A performance knob: it changes only how the linear
-                // algebra is applied (O(K) sparse set and a hoisted symmetrize), never what
-                // folds, so it stays out of the equivalence_shape discriminator in
-                // validateNetworkLaneLayers_.  Equivalence class, not bit-identical.
-                lc.fold_blocked = jval<bool>(json, "network.lane_carry.fold_blocked",
-                                             "network_lane_carry_fold_blocked", false);
-                // Pinned-cycle increment skip (LF-1 INC-2, §3.3).  Also a performance knob,
-                // outside the equivalence_shape discriminator.  within_n clamps to ≥1: a 0
-                // window would resume increments the epoch after every decision, so the
-                // skip would never fire.
-                lc.skip_pinned_increments =
-                    jval<bool>(json, "network.lane_carry.skip_pinned_increments",
-                               "network_lane_carry_skip_pinned_increments", false);
-                lc.skip_pinned_within_n = std::max<long long>(1,
-                    jval<long long>(json, "network.lane_carry.skip_pinned_within_n",
-                                    "network_lane_carry_skip_pinned_within_n", 3));
-                // Component-parallel MW fold (LF-1 INC-4, §3.5).  A performance knob,
-                // outside the equivalence_shape discriminator; byte-identical to serial.
-                lc.parallel_components =
-                    jval<bool>(json, "network.lane_carry.parallel_components",
-                               "network_lane_carry_parallel_components", false);
-            }
             // --- EWL-first tri-frequency cascade (SPEC_ewl_wl_cascade_card.md §4; M5 card WL-2). ---
             mw.ewl_enable = jval<bool>(json, "network.mw_wl.ewl_enable",
                                        "network_mw_wl_ewl_enable", false);
@@ -1923,17 +1854,6 @@ namespace GnssProcessor {
                                          "network_mw_wl_uwl_dual_top", false);
             mw.uwl_sib_gate = jval<bool>(json, "network.mw_wl.uwl_sib_gate",
                                          "network_mw_wl_uwl_sib_gate", false);
-            // v2 census recovery: per-family lane pair groups.
-            mw.uwl_family_pairs = jval<bool>(json, "network.mw_wl.uwl_family_pairs",
-                                             "network_mw_wl_uwl_family_pairs", false);
-            mw.uwl_family_min_arcs = jval<int>(json, "network.mw_wl.uwl_family_min_arcs",
-                                               "network_mw_wl_uwl_family_min_arcs", 8);
-            if (mw.uwl_family_min_arcs < 1) {
-                log->warn("Network: network.mw_wl.uwl_family_min_arcs = {} is below 1 — "
-                          "clamping to 1 (a pair group needs at least one arc).",
-                          mw.uwl_family_min_arcs);
-                mw.uwl_family_min_arcs = 1;
-            }
             // 60-ep age-bias fix: per-sample estimable-iono de-bias of the bridge.
             mw.bridge_sample_debias = jval<bool>(json, "network.mw_wl.bridge_sample_debias",
                                                  "network_mw_wl_bridge_sample_debias", false);
@@ -9135,8 +9055,8 @@ namespace GnssProcessor {
                           "refloat, and so does any arc a raw detector flags in the current epoch "
                           "— the refloat is what COMPLETES a real slip's reset (measured 0.48 cyc, "
                           "GATE 10b), so invariant #1 is narrowed, never removed.  The funnel "
-                          "INSERT is unchanged: the Iono-2 v3k erase classifier, the WL-3 MW-row "
-                          "slip-skip and every other consumer still see the entry.  Watch the "
+                          "INSERT is unchanged: the Iono-2 v3k erase classifier and every other "
+                          "consumer still see the entry.  Watch the "
                           "run-end suppressed-kill counter: 0 means nothing reached it.");
                 if (network_carry_invariant_innov_corroborate_)
                     log->warn("Network (Card 4 D5 v4): .carry_invariant_innov_corroborate is ALSO "
@@ -11388,7 +11308,7 @@ namespace GnssProcessor {
     //  network subsection helper: validateNetworkLaneLayers_
     // =================================================================
     /**
-     * @brief Lane contracts of WL-2 / UWL-1 / WL-3 and their armed-state reports.
+     * @brief Lane contracts of WL-2 / UWL-1 and their armed-state reports.
      *
      * Split from @c loadNetworkLaneLayers_ because every rule here needs
      * @c network_carry_invariant_ and the slip-detector flags, which are parsed after the
@@ -11486,13 +11406,6 @@ namespace GnssProcessor {
                 log->warn("Network: network.mw_wl.uwl_sib_gate is INERT without uwl_dual_top — "
                           "the sibling closure gate compares the untaken {7,8} rung against "
                           "the decided one, which only exists under the dual tier.");
-            // ---- v2: per-family lane pair groups contract. ----
-            if (mw.uwl_family_pairs
-                && !(mw.uwl_enable && network_config_.lane_carry.enable))
-                log->warn("Network: network.mw_wl.uwl_family_pairs is INERT without uwl_enable "
-                          "AND network.lane_carry.enable — the admissible-pair census extends "
-                          "the JOINT pair census (uwl) and the family groups are lane-carry "
-                          "pair groups.");
             // ---- Per-sample bridge de-bias (60-ep age-bias fix) contract. ----
             if (mw.bridge_sample_debias && !mw.ewl_enable)
                 log->warn("Network: network.mw_wl.bridge_sample_debias is INERT without "
@@ -11531,59 +11444,6 @@ namespace GnssProcessor {
                           "{{7,8}} uncarried; the untaken sibling is a closure statistic "
                           "(2·N(8,5) = N(7,5)) — hard gate {}.",
                           mw.uwl_sib_gate ? "ON (0.5+3σ_sib)" : "OFF (measure-only)");
-            if (mw.uwl_family_pairs && mw.uwl_enable && network_config_.lane_carry.enable)
-                log->info("Network UWL-1 FAMILY PAIR GROUPS ON (v2 census recovery) — minority "
-                          "receiver-family primary pairs with joint-census count ≥ {} join "
-                          "their OWN lane pair groups (latched for the run); majority-pair "
-                          "steering unchanged.  Recovers the skip_basis population the single-"
-                          "pair census left per-band.",
-                          mw.uwl_family_min_arcs);
-            // ---- Lane-coordinate carry (SPEC_lane_carry_card.md; M5 card WL-3). ----
-            auto& lc = network_config_.lane_carry;
-            if (lc.enable && (!network_carry_invariant_ || !mw.ewl_enable)) {
-                log->error("Network: network.lane_carry.enable requires network.carry_invariant "
-                           "AND network.mw_wl.ewl_enable — the lane-coordinate carry restructures "
-                           "the invariant carry's pair groups and consumes the WL-2 MW/bridge "
-                           "statistics as its lane measurements.  Enable both or disable "
-                           "lane_carry.");
-                return false;
-            }
-            if (lc.enable && mw.wl_inject_enable)
-                log->warn("Network: network.lane_carry SUPERSEDES network.mw_wl.wl_inject_enable "
-                          "at runtime (SPEC_lane_carry_card.md §3.3) — the WL-2 hold/inject walk "
-                          "is replaced by continuous lane increments + fold-on-change fixing; "
-                          "injectCarriedChord remains only as the pair-block fallback.  Disable "
-                          "wl_inject_enable for a clean lane-carry shape.");
-            if (lc.enable) {
-                const bool equivalence_shape = lc.q_wl_scale == 1.0
-                                            && lc.sigma_wl_fresh_cyc <= 0.0
-                                            && !lc.lane_meas && !lc.bridge_meas;
-                log->info("Network WL-3 lane-coordinate carry ON (M5 card WL-3) — primary-pair "
-                          "chords carried as jointly-covarianced (band-1, band-2) blocks; shape = "
-                          "{}.  q_wl_scale={}, sigma_wl_fresh={} cyc, lane_meas={}, bridge_meas={}, "
-                          "fold_blocked={}.",
-                          equivalence_shape
-                              ? "EQUIVALENCE (SPEC §6.1: split per-band emission, no lane "
-                                "features — the structural-parity gate; ≤1e-9 equivalence holds "
-                                "in the unit harness, field runs diverge benignly via cycle-path-"
-                                "dependent membership, see SPEC_lane_carry_card.md §10 deviation 5)"
-                              : "LANE (joint 2K blocks, diffuse lane birth, per-epoch MW/bridge "
-                                "increments, per-decided-epoch idempotent FFR lane re-pin)",
-                          lc.q_wl_scale, lc.sigma_wl_fresh_cyc,
-                          lc.lane_meas ? "true" : "false",
-                          lc.bridge_meas ? "true" : "false",
-                          lc.fold_blocked ? "true (LF-1 INC-1: O(K) sparse SET + hoisted symmetrize; "
-                                            "EQUIVALENCE class, not bit-identical)" : "false");
-                if (lc.skip_pinned_increments)
-                    log->info("Network WL-3 lane-fold LF-1 INC-2: pinned-cycle increment skip ON "
-                              "(within_n={} epochs) — committed-decided chords skip MW/bridge "
-                              "increments; any slip/D5/re-tap resumes them.  EQUIVALENCE class.",
-                              lc.skip_pinned_within_n);
-                if (lc.parallel_components)
-                    log->info("Network WL-3 lane-fold LF-1 INC-4: component-parallel MW fold ON "
-                              "(one joint block per thread; needs parallel_stations).  "
-                              "BYTE-IDENTICAL to serial.");
-            }
         }
 
         return true;

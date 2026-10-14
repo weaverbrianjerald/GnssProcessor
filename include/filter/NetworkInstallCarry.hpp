@@ -19,7 +19,7 @@
  * NetworkRunContext, and every cross-epoch WL run-state instance (ewl_lanes /
  * wl_inject_epoch / wl_run / ...) is a member of the driver's
  * @ref NetworkLaneRun, passed by reference.  The lane switches (carry_innov_gate,
- * ewl_on, lane_on, ...) are read from NetworkKnobs (card NOM step TD1a).
+ * ewl_on, wl_inject_on, ...) are read from NetworkKnobs (card NOM step TD1a).
  */
 
 #include "filter/NetworkEstimator.hpp"          // NetworkEstimator
@@ -67,7 +67,6 @@ void networkInstallCarry(
     const std::vector<NetStation>& stations,
     SlipQcChannel& slip_qc,
     const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
-    const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
     bool carry_par,
     int n_threads,
     int seam_threads,

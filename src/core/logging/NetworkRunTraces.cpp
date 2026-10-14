@@ -1102,7 +1102,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
 
 // The openAll tail for the two MW/WL dumps.  It is a separate function because their
 // arming expressions are derived in the run TU from the WL zone-2 booleans
-// (carry_invariant, ewl_on, wl_inject_on, lane_fix_on, carry_innov_gate), which are
+// (carry_invariant, ewl_on, wl_inject_on, carry_innov_gate), which are
 // established well after openAll runs; re-deriving that chain here would drift out of
 // step with the driver.  The lifecycle matches every other stream: one truncating
 // open with the header, once per run, before the epoch loop, closed in closeAll.

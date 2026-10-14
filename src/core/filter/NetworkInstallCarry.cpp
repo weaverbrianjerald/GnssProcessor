@@ -45,7 +45,6 @@ void networkInstallCarry(
     const std::vector<NetStation>& stations,
     SlipQcChannel& slip_qc,
     const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
-    const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
     bool carry_par,
     int n_threads,
     int seam_threads,
@@ -59,11 +58,9 @@ void networkInstallCarry(
     // The lane switches (NetworkKnobs) and the lane machinery (NetworkLaneRun), under their
     // former parameter names (card NOM step TD1a).
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
-    const bool lane_on = ctx.knobs.lane_on;
     const bool ewl_on = ctx.knobs.ewl_on;
     const bool uwl_on = ctx.knobs.uwl_on;
     const bool wl_inject_on = ctx.knobs.wl_inject_on;
-    const bool lane_fix_on = ctx.knobs.lane_fix_on;
     const bool mw_d5_dump = ctx.knobs.mw_d5_dump;
     const bool mw_lane_trace = ctx.knobs.mw_lane_trace;
     const bool mw_tagsets = ctx.knobs.mw_tagsets;
@@ -110,12 +107,6 @@ void networkInstallCarry(
         a.skip_quarantine     += b.skip_quarantine;
         a.skip_basis          += b.skip_basis;
         a.sum_bridge_R        += b.sum_bridge_R;
-        a.lane_mw_rows        += b.lane_mw_rows;
-        a.lane_bridge_rows    += b.lane_bridge_rows;
-        a.lane_fix_folded     += b.lane_fix_folded;
-        a.lane_fix_unchanged  += b.lane_fix_unchanged;
-        a.lane_skip_meas      += b.lane_skip_meas;
-        a.lane_pinned_skips   += b.lane_pinned_skips;
         a.cold_bridge_cycles  += b.cold_bridge_cycles;
         a.mid_decided         += b.mid_decided;
         a.mid_fallback        += b.mid_fallback;
@@ -394,13 +385,11 @@ void networkInstallCarry(
     // more than inject_disagree_min_cyc (self-limiting), the lane difference is set to
     // the integer while the phase-determined sum is preserved.  injectCarriedChord marks
     // each moved chord D5-exempt for the next install (the §3.3 storm guard) internally.
-    if (wl_inject_on || lane_fix_on) {
+    if (wl_inject_on) {
         for (const auto& pl : wl_inject_epoch) {
             double z1 = 0.0, v1 = 0.0, z2 = 0.0, v2 = 0.0;
-            if (pl.pair
-                    ? !carry_driver.carriedPairValue(pl.group_l1, pl.chord, z1, v1, z2, v2)
-                    : (!carry_driver.carriedChordValue(pl.group_l1, pl.chord, z1, v1) ||
-                       !carry_driver.carriedChordValue(pl.group_l2, pl.chord, z2, v2))) {
+            if (!carry_driver.carriedChordValue(pl.group_l1, pl.chord, z1, v1) ||
+                !carry_driver.carriedChordValue(pl.group_l2, pl.chord, z2, v2)) {
                 ++wl_run.skip_basis;   // not 1:1 across both bands' carry bases: skip (§3.3)
                 if (uwl_on) ++wl_cons_run[pl.cons ? pl.cons : '?'].skip_basis;
                 continue;
@@ -413,22 +402,11 @@ void networkInstallCarry(
             const double A1p = 0.5 * (pl.w + s), A2p = 0.5 * (s - pl.w);
             const double sg1 = nmw.wl_fix_sigma_cyc * pl.lambda1;
             const double sg2 = nmw.wl_fix_sigma_cyc * pl.lambda2;
-            bool moved = false;
-            if (pl.pair) {
-                // Joint pair block (WL-3): one joint edit, both bands, one D5 exemption.
-                // Per §3.3 this should almost never fire in steady state; the inject
-                // counters show whether it does.
-                moved = carry_driver.injectCarriedChordPair(
-                    pl.group_l1, pl.chord,
-                    A1p * pl.lambda1 - pl.z_lin1, sg1 * sg1,
-                    A2p * pl.lambda2 - pl.z_lin2, sg2 * sg2);
-            } else {
-                const bool i1 = carry_driver.injectCarriedChord(
-                    pl.group_l1, pl.chord, A1p * pl.lambda1 - pl.z_lin1, sg1 * sg1);
-                const bool i2 = carry_driver.injectCarriedChord(
-                    pl.group_l2, pl.chord, A2p * pl.lambda2 - pl.z_lin2, sg2 * sg2);
-                moved = i1 && i2;
-            }
+            const bool i1 = carry_driver.injectCarriedChord(
+                pl.group_l1, pl.chord, A1p * pl.lambda1 - pl.z_lin1, sg1 * sg1);
+            const bool i2 = carry_driver.injectCarriedChord(
+                pl.group_l2, pl.chord, A2p * pl.lambda2 - pl.z_lin2, sg2 * sg2);
+            const bool moved = i1 && i2;
             if (moved) { ++wl_run.injects; wl_run.inject_abs_sum += std::abs(pl.w - lane);
                          if (uwl_on) {
                              auto& wcr = wl_cons_run[pl.cons ? pl.cons : '?'];
@@ -457,10 +435,8 @@ void networkInstallCarry(
             if (ltf) {
                 for (const auto& e : lane_trace_epoch) {
                     double z1 = 0.0, v1 = 0.0, z2 = 0.0, v2 = 0.0;
-                    if (lane_on
-                            ? !carry_driver.carriedPairValue(e.g1, e.chord, z1, v1, z2, v2)
-                            : (!carry_driver.carriedChordValue(e.g1, e.chord, z1, v1) ||
-                               !carry_driver.carriedChordValue(e.g2, e.chord, z2, v2)))
+                    if (!carry_driver.carriedChordValue(e.g1, e.chord, z1, v1) ||
+                        !carry_driver.carriedChordValue(e.g2, e.chord, z2, v2))
                         continue;   // not 1:1 carried in both bands this epoch
                     const double lane = (z1 + e.z_lin1) / e.lam1
                                       - (z2 + e.z_lin2) / e.lam2;
@@ -540,9 +516,7 @@ void networkInstallCarry(
             // The insert result is the de-duplication signal the attribution
             // needs: carry_innov_pending was cleared at this epoch's head
             // (the C3c drain), so `.second` is true exactly once per
-            // (station, ambiguity) per epoch.  Under the WL-3 joint pair
-            // block the gate flags per band row, so the same (group, chord)
-            // arrives twice and only the first insert is a real re-tap.
+            // (station, ambiguity) per epoch.
             const bool first_this_epoch =
                 carry_innov_pending.insert({chord.u, ait->second}).second;
             // Tag the flag with the same tri-state raw verdict the v3 corroboration gate
@@ -551,8 +525,8 @@ void networkInstallCarry(
             // evidence" (Card 4 D5 v4, network.carry_invariant_innov_retap_only).
             //
             // The funnel entry above is unconditional: every side consumer (the Iono-2 v3k
-            // erase classifier, the WL-3 MW-row slip-skip, anchor hygiene, the PB emit
-            // filter, Card G's bridge classifier) reads the full union.  This set only
+            // erase classifier, anchor hygiene, the PB emit filter, Card G's bridge
+            // classifier) reads the full union.  This set only
             // decides whether the arc is also excluded from next epoch's A_old membership,
             // i.e. whether the DD the gate just re-tapped in-epoch is also discarded and
             // refloated from nothing.
@@ -575,17 +549,6 @@ void networkInstallCarry(
                     if (vit != vmap.end() && vit->second.measured
                         && !slip_qc.epoch.stepped.count({chord.u, pk->satellite})) {
                         ctx.carry.carry_innov_pending_flat.insert({chord.u, ait->second});
-                        // The pair partner shares the graph edge and the raw verdict, so
-                        // it is tagged too; otherwise the pair would refloat on band 2 and
-                        // the suppression would apply to one band only (§3.4, WL-3).
-                        if (lane_on) {
-                            const auto g2 = carry_arc_amb_key2.find(gk);
-                            if (g2 != carry_arc_amb_key2.end()) {
-                                const auto a2 = g2->second.find(chord);
-                                if (a2 != g2->second.end())
-                                    ctx.carry.carry_innov_pending_flat.insert({chord.u, a2->second});
-                            }
-                        }
                     }
                 }
             }
@@ -603,16 +566,6 @@ void networkInstallCarry(
                         ++slip_qc.counters.d5_retaps_stepped;
                         if (first_this_epoch) ++slip_qc.counters.d5_retap_ambs_stepped;
                     }
-            }
-            // A pair chord's flag refloats both bands next epoch (they share the graph
-            // edge), so the band-2 ambiguity is fed into the funnel too (§3.4, WL-3).
-            if (lane_on) {
-                const auto g2it = carry_arc_amb_key2.find(gk);
-                if (g2it != carry_arc_amb_key2.end()) {
-                    const auto a2it = g2it->second.find(chord);
-                    if (a2it != g2it->second.end())
-                        carry_innov_pending.insert({chord.u, a2it->second});
-                }
             }
         }
     }

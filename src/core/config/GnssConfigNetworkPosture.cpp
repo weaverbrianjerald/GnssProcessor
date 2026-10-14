@@ -54,7 +54,7 @@ namespace GnssProcessor {
         const bool tri   = frequency_mode_ == FrequencyMode::Triple
                         || frequency_mode_ == FrequencyMode::All;
         const bool warm  = !nc.state_snapshot_path.empty();
-        const bool lane  = nc.mw_wl.ewl_enable || nc.lane_carry.enable;
+        const bool lane  = nc.mw_wl.ewl_enable;
         // The real-time / service posture.  service_mode is the RT service producer, so a
         // knob scoped to post-processing (carry_invariant: ~57% of epoch wall time at
         // 305 sta) stays silent there, and the RT-only knobs stay silent everywhere else.
@@ -1135,7 +1135,7 @@ namespace GnssProcessor {
               "the lane rows are built in the CORRECTION frame, so an unseeded cold receiver "
               "clock lands in the ambiguity seeds and lane_max_abs_xlin_m quarantines the "
               "cycles (x_lin 269 km measured at 305 sta); the lane also rides the Card-4 "
-              "chord basis, and lane_carry additionally REQUIRES ewl_enable",
+              "chord basis",
               { { "network.cold_clock_seed", network_cold_clock_seed_ },
                 { "network.carry_invariant", network_carry_invariant_ },
                 { "network.phase_datum_eq34", network_phase_datum_eq34_ },

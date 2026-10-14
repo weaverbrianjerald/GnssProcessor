@@ -3,7 +3,7 @@
  * @file NetworkDdPriorBuild.hpp
  * @brief The two per-epoch DD-prior build steps of the PPP-RTK network producer: the
  *        ensemble sum-zero phase-bias gauges, and the invariant DD-carry prior blocks
- *        (card 4) with the WL/UWL lane machinery (mw_wl / ewl / uwl / lane_carry).
+ *        (card 4) with the WL/UWL lane machinery (mw_wl / ewl / uwl).
  *        Relocated verbatim from Application::runNetwork (decomposition INC-9b).
  *
  * The run TU keeps both lambdas as thin `[&]` wrappers that forward to these free
@@ -11,10 +11,10 @@
  * (`resolve_dropping`) keep byte-identical capture semantics.  These functions own no
  * state.  Every WL run-state instance (ewl_lanes / wl_inject_epoch / wl_epoch /
  * lane_trace_epoch / ...) is a member of the driver's @ref NetworkLaneRun, and the lane switches
- * are read from NetworkKnobs (card NOM step TD1a).  Two inputs carry state across
- * epochs or passes and need care: carry_slipped_ambs, the driver's per-epoch slip
- * funnel, passed by reference, and lane_admit_pairs, read and written through
- * ctx.carry.  Every other argument keeps the name of the former runNetwork() capture.
+ * are read from NetworkKnobs (card NOM step TD1a).  One input carries state across
+ * epochs or passes and needs care: carry_slipped_ambs, the driver's per-epoch slip
+ * funnel, passed by reference.  Every other argument keeps the name of the former
+ * runNetwork() capture.
  */
 
 #include "filter/NetworkEstimator.hpp"          // NetworkEstimator
@@ -83,7 +83,6 @@ void networkBuildCarryDdPriors(
     const std::set<std::string>& shared_phase_keys,
     const SyncedEpoch& se,
     std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
-    std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
     /// The raw-detector subset of this epoch's slip funnel (card 4, M1, D5 v4).  Every
     /// raw-observable inserter writes both sets (NetworkSlipQc via the PASS-A binding,
@@ -94,8 +93,8 @@ void networkBuildCarryDdPriors(
     /// idiom.  Read only under network.carry_invariant_innov_retap_only.
     const std::set<std::pair<int, std::string>>& carry_slipped_raw,
     /// The within-epoch RAIM tier's culprit sets (card C3c §3; card WCF): every carried
-    /// ambiguity of a culprit satellite or arc is treated as slipped (here and in the MW
-    /// wide-lane rows).  The epoch workspace's member (@ref EpochWorkspace::we_culprits),
+    /// ambiguity of a culprit satellite or arc is treated as slipped.  The epoch
+    /// workspace's member (@ref EpochWorkspace::we_culprits),
     /// naming something only on a T2 re-solve's rebuild; each rebuild that reads a culprit
     /// is counted, with what it withheld, in @c NetworkServiceCounters::we_culprit_withhold.
     const WithinEpochCulprits& we_culprits,

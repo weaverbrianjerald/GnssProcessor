@@ -168,16 +168,6 @@ public:
          * Off: byte-identical.  Inert unless @c innov_gate.
          */
         bool   innov_carried_only{false};
-        // --- Lane-coordinate carry (docs/SPEC_lane_carry_card.md §3.1; M5 card WL-3). ---
-        // All three are inert unless the caller feeds pair groups (@ref GroupInput::pair).
-        double q_wl_scale{1.0};         ///< process noise along the WL lane = this × @c qz (lane basis, per pair chord); 1 = isotropic, the per-band q (the §6.1 equivalence shape).  Inert unless @c lane_joint (WL-3 §3.1).
-        double sigma_wl_fresh_cyc{0.0}; ///< lane prior σ along the WL direction for a pair chord fresh in both bands, in WL cycles (converted to lane-coordinate state units with the group's (λ₁,λ₂)); the NL direction keeps @c fresh_prior_var.  0 = isotropic diffuse @c fresh_prior_var (the §6.1 equivalence shape).  Inert unless @c lane_joint (WL-3 §3.1).
-        bool   lane_joint{false};       ///< shape switch for pair groups.  True: the lane shape (one joint 2K-row DdPriorBlock per component, cross-band posterior coupling retained, lane prior and q armed, a D5 exemption spans both band rows).  False: the §6.1 equivalence shape (two K-row per-band blocks per pair component, whose fold is information-identical to the two per-band groups; cross-band coupling zeroed at install), the structural fallback for the regroup (WL-3).
-        // --- Blocked/sparse lane fold (docs/SPEC_lane_carry_card.md Appendix LF-1 §3.2; LF-1 INC-1). ---
-        bool   fold_blocked{false};     ///< apply the per-epoch lane fold in the optimized shape: @ref applyLaneFix uses the O(K) sparse lane-coordinate set (the rank-2 change touches only rows/cols {k, K+k}) instead of the dense O(K²) form, and the per-row @f$0.5(P+P^\top)@f$ re-symmetrization moves out of every primitive into one @ref finalizeLaneBatch pass per block per epoch.  The operation order changes (Woodbury, reassociation), so the result is in the @c parallel_carry equivalence class, not bit-identical to the sequential fold (@c fold_blocked = false); runs with it on follow the pcarry usage rule until the §5.3 physically-null gate passes.  Inert unless @c lane_joint, since lane rows exist only on the joint shape (LF-1 INC-1).
-        // --- Pinned-cycle increment skip (docs/SPEC_lane_carry_card.md Appendix LF-1 §3.3; LF-1 INC-2). ---
-        bool   skip_pinned_increments{false}; ///< skip the per-epoch MW/bridge lane increments for a chord whose FFR fix is committed (in @c lane_fix_w_) and was re-decided within @c skip_pinned_within_n epochs: an increment with σ ≈ 0.06-0.2 cyc folded into a lane pinned at σ = 0.01 cyc moves almost nothing.  A D5 flag, or the chord being born fresh (a slip or a new cycle), erases the fix memory, so increments resume in the same epoch (invariant #1).  Reads committed state only (never the per-build staged decision), so the RAIM re-solve is deterministic.  Equivalence class (the skipped increment is near-inert but not exactly null).  Inert unless @c lane_joint.  Query: @ref laneIncrementSkippable (LF-1 INC-2).
-        long long skip_pinned_within_n{3};    ///< grace window (epochs): a chord with a committed decision keeps skipping increments for this many epochs after its last re-decision; if it stays undecided longer (a drifting lane that the FFR gate stopped trusting), increments resume to re-converge it.  Inert unless @c skip_pinned_increments (LF-1 INC-2).
         // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §5). ---
         /**
          * @brief PD-safe carry policy (@c network.carry_invariant_pd_safe), driver half.
@@ -195,8 +185,8 @@ public:
          *    corrupt (non-PD) block, which a warm resume would otherwise re-import into a
          *    build that has the fix.
          *
-         * A rebirth is a prior reset, not a slip: the slip funnel, the D5 flag list and the
-         * lane-fix memory are not touched.  Off: byte-identical.
+         * A rebirth is a prior reset, not a slip: the slip funnel and the D5 flag list are
+         * not touched.  Off: byte-identical.
          */
         bool   pd_safe{false};
         // --- Linearization-frame carry (docs/SPEC_event_harness.md §21.4; RS-2). ---
@@ -237,7 +227,7 @@ public:
          * run.  While true, a chord that trips k·σ̂₀ (and passes the v3 corroboration gate)
          * is recorded as a flag and counted in @ref Counters::innov_flags and
          * @ref Counters::d5_warmup_suppressed, but it is not re-tapped: its posterior mean
-         * and its @f$P^z@f$ row and column stay as installed, its lane-fix memory is kept,
+         * and its @f$P^z@f$ row and column stay as installed,
          * and @ref lastInnovWarmupSuppressed marks it so the caller keeps it out of the next
          * epoch's slip funnel.  The σ̂₀ accumulator feed comes before the decision and is
          * unaffected (the D5 v2 contract: rows above the threshold keep feeding calibration
@@ -258,30 +248,15 @@ public:
         bool tree_edge{false};   ///< election spanning-tree edge (gauge pin) vs chord (a carried DD).
         int  est_station{-1};    ///< estimator station index of this arc's ambiguity (−1 = unresolvable this epoch).
         int  local_col{-1};      ///< A_r local ambiguity column of this arc (−1 = unresolvable).
-        bool slipped{false};     ///< a cycle slip or refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD would be a stiff wrong prior).  The caller sets it from the network's slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit).  The arc is treated as absent from A_old, so any new cycle whose support includes it is re-tapped fresh (data-only), the birth path; a carried chord lost this way is counted in @ref Counters::slip_kills.  For a pair arc this is band 1's own slip state and @ref slipped2 is band 2's; the driver unions them under the lane shape (card 4, C3c; WL-3 §3.4).
-        int  local_col2{-1};     ///< the band-2 ambiguity's A_r local column at the same (rx, sat) (pair groups only).  −1 in a pair group marks the arc unresolvable (defensive; the caller routes band-1-only arcs to the residual per-band group instead).  Ignored for per-band groups (WL-3).
-        bool slipped2{false};    ///< the band-2 ambiguity's own slip state (pair groups only; @c slipped holds band 1's).  Under the lane shape (@ref Config::lane_joint) the driver unions the two, so a slip on either band refloats both bands of the chord (§3.4); under the §6.1 equivalence shape each band refloats on its own slips only, as the two per-band groups it reproduces would.  Ignored for per-band groups (WL-3).
+        bool slipped{false};     ///< a cycle slip or refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD would be a stiff wrong prior).  The caller sets it from the network's slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit).  The arc is treated as absent from A_old, so any new cycle whose support includes it is re-tapped fresh (data-only), the birth path; a carried chord lost this way is counted in @ref Counters::slip_kills. (card 4, C3c).
         double x_lin{0.0};       ///< this arc's ambiguity linearization value (m), the value the kernel takes its corrections about.  Read only under @ref Config::carry_lin or @ref Config::carry_rebase; otherwise left 0 and unused, so the off path costs nothing (RS-2, docs/SPEC_event_harness.md §21.4).
-        double x_lin2{0.0};      ///< the band-2 ambiguity's linearization value (m) at the same (rx, sat) (pair groups only; @ref x_lin holds band 1's).  Ignored for per-band groups (RS-2).
     };
 
     /// One (const,signal) group's arcs this epoch.  Groups are independent z-store
     /// partitions; a DD never crosses a group.  @c key is a caller-stable id for the
     /// group (e.g. a hash of constellation+signal) used only to bucket the carry.
-    ///
-    /// A pair group replaces the two per-band groups of a constellation's primary signal
-    /// pair (WL-3, SPEC_lane_carry_card.md §2).  Its arcs are the (rx, sat) simple graph
-    /// that both bands share (band-1 column in @ref ArcInput::local_col, band-2 in
-    /// @ref ArcInput::local_col2); each graph chord then carries the 2-vector (z₁, z₂) of
-    /// the two bands' cycle DDs with a joint per-component covariance.  Storage stays per
-    /// band (the reconcile projection W applies to each band unchanged); only the process
-    /// model, the fresh prior and the lane measurement rows use the (NL, WL) lane basis,
-    /// and only under @ref Config::lane_joint.
     struct GroupInput {
         int key{0};
-        bool pair{false};        ///< this is a primary-pair group; its arcs carry @c local_col2 (WL-3).
-        double lambda1{0.0};     ///< band-1 wavelength (m) of a pair group, constant per group (CDMA; GLONASS never enters) (WL-3).
-        double lambda2{0.0};     ///< band-2 wavelength (m) of a pair group (WL-3).
         std::vector<ArcInput> arcs;
     };
 
@@ -305,17 +280,11 @@ public:
         long long tree_swaps{0};          ///< components whose carry was re-expressed in a different fundamental-cycle basis: some carried chord's projection row mixes two or more old chords, so W is not a signed permutation (the analogue of the phase-B unimodular pivot).
         long long z_dim{0};               ///< total carried DD dimension at the end of the last epoch.
         // --- INC-C0 census (perf-restructure reconciliation, log-only) --------------
-        long long max_component_kc{0};    ///< largest single-component carried DD dimension K_c emitted (2K for a pair component), the dense-Pᶻ cost driver: the K in the O(K³) fold and read-back (INC-C0).
+        long long max_component_kc{0};    ///< largest single-component carried DD dimension K_c emitted, the dense-Pᶻ cost driver: the K in the O(K³) fold and read-back (INC-C0).
         long long max_z_dim{0};           ///< peak total carried DD dimension over the run.  Growth bound: unbounded monotone growth means the kill path is not firing (§0 case (b)) (INC-C0).
         long long chords_marg_perchord{0};///< old chords dropped from a surviving component (their projection-W column is all zero: no new fundamental cycle references them).  This is the per-chord marginalization that @ref chords_marginalized (whole blocks only) does not count; the two together are the kill rate.  Near zero while @ref max_z_dim grows means dead arcs are retained (§0 case (b)); large means the kill path is exact and has churn to kill (§0 case (a)) (INC-C0).
         long long max_cycle_len{0};       ///< longest fundamental cycle (tree-path length + 1) folded this run; a G-side screen only for D-c viability.  Short cycles (adjacent chords share few tree edges) keep the cycle matrix G sparse, which is necessary but not sufficient for the exact info-form carry (SPEC_carry_factored_pz_C2 D-c) to be bounded: the border term is Gᵀ Σ_ss G, so the binding probe is the sparsity and rank of Σ_ss, which this counter does not measure.  §6.1 of that doc corrects the earlier claim that J = Pᶻ⁻¹ is sparse iff cycles are short (the probe read short and sparse at both tiers, yet D-c remains unconfirmed because global co-visibility makes a dense Σ_ss the likely case).  Long cycles still imply a dense J, so a dense-G reading is decisive against D-c while a sparse-G reading is not decisive for it (INC-C0).
         long long sum_cycle_len{0};       ///< Σ fundamental-cycle lengths over all folded chords this run (mean = sum / (chords_carried + chords_born)) (INC-C0).
-        // --- Lane-coordinate carry (WL-3).  Counting stays per band DD so the §6.1 gate is
-        //     strict: a pair chord or component tallies 2 in the chords_*, cycle-length,
-        //     merge, split and tree-swap counters, as the two per-band groups would;
-        //     `components` counts emitted blocks, so it halves under the joint lane shape
-        //     by construction. ---
-        long long pair_components{0};     ///< pair components reconciled, summed over builds; each is one joint or two split emitted blocks (WL-3).
         // --- Resume re-base (docs/SPEC_event_harness.md §21.4; RS-2).  resume_rebased,
         //     resume_dropped_unbased and resume_rebase_max_dz hold the figures of the last
         //     build that re-based or dropped a chord, not run totals: the re-base runs on
@@ -326,12 +295,11 @@ public:
         long long resume_rebased{0};            ///< carried chord rows re-based onto this run's linearization at the first post-resume build.  0 with @c carry_rebase armed means the wiring never fired (invariant #4), usually because there was no restored blob or nothing was carried at that epoch (RS-2).
         long long resume_dropped_unbased{0};    ///< chord rows that would have been carried but were born fresh on the diffuse prior because their component had no exact re-base (an unbased contributor without a usable @c ZL row, or unbased and based contributors mixed).  Folding them would assert the writer's frame (RS-2).
         double    resume_rebase_max_dz{0.0};    ///< largest |Δẑ| (m) applied by the re-base: the size of the frame error the restored branch would otherwise have folded (RS-2).
-        long long pair_tree_promotions{0};///< chords promoted to tree edges to complete a pair component's spanning forest where the caller's band-1 election tags do not span the pair intersection subgraph (fragmented primary regions); 0 means the eq34 basis was kept exactly everywhere (WL-3).
         // --- Fold-dimension distribution of the emitted components (SPEC §7.4; LF-1
         //     INC-0).  It answers the INC-4 Amdahl question: one giant G component that sets
         //     the parallel ceiling, or a spread the component-parallel fold can balance.
-        //     Bucketed once per component that emits blocks, by fold dimension d = tally·K
-        //     (2K for a pair component, matching @ref max_component_kc).  Always on, like the
+        //     Bucketed once per component that emits blocks, by fold dimension d = K
+        //     (matching @ref max_component_kc).  Always on, like the
         //     census counters (the solve never reads it, so output is byte-identical); the
         //     run-end line reads it only when the timers are armed. ---
         long long comp_kc_hist[10]{};     ///< #emitted components with fold-dim d in log2 buckets: [0]=0, [1]=1, [2]=2..3, [3]=4..7, [4]=8..15, [5]=16..31, [6]=32..63, [7]=64..127, [8]=128..255, [9]=≥256.
@@ -392,19 +360,11 @@ public:
     /// many threads, and @c parallel_carry already routes the install through the serial
     /// path.
     struct PerfTimers {
-        double time_update_ms{0.0};   ///< @ref beginEpoch: the q_z·Δt inflate of the carried Pᶻ (diagonal; a lane-rotated 2×2 per chord on joint pair blocks when @c q_wl_scale ≠ 1).
+        double time_update_ms{0.0};   ///< @ref beginEpoch: the q_z·Δt inflate of the carried Pᶻ (diagonal).
         double basis_project_ms{0.0}; ///< @ref buildDdPriors: construction of the change-of-basis projection W plus W·Pᶻ_old·Wᵀ and W·z_old per emitted component (the dense K² materialization that INC-C2 targets).
         double post_mean_ms{0.0};     ///< @ref installPosterior: the @c ddPriorPosteriorMean read-back (K-vector shrink).
         double post_cov_ms{0.0};      ///< @ref installPosterior: the @c ddPriorPosteriorCovariance read-back (the dense K×K posterior install, the other dense K² materialization).
         double d5_gate_ms{0.0};       ///< @ref installPosterior: the D5 @c ddPriorInnovation plus the per-chord standardized gate (0 unless @c Config::innov_gate).
-        // --- The WL-3 lane-fold split that the SB_DDBUILD wall lumps (LF-1 INC-0).  These
-        //     are the ~10³ per-epoch rank-1/rank-2 covariance updates the perf card aims to
-        //     shrink; timing them apart from basis_project_ms shows which later increment
-        //     pays off. ---
-        double lane_meas_ms{0.0};     ///< @ref applyLaneMeasurement: cumulative wall of the per-epoch MW/bridge lane increment folds (dense rank-1 downdate, O(K²) per row, the irreducible measurement work).
-        double lane_fix_ms{0.0};      ///< @ref applyLaneFix: cumulative wall of the idempotent lane-coordinate set on decided cycles (the ~65%-decided re-pins; INC-1 makes this O(K²)→O(K)).
-        long long lane_meas_calls{0}; ///< #@ref applyLaneMeasurement rows that reached the fold (matches wl_run.lane_mw_rows + lane_bridge_rows on the accepted build).
-        long long lane_fix_calls{0};  ///< #@ref applyLaneFix calls that passed the entry checks and reached the set (normally the rc ∈ {0,1} calls, matching lane_fix_folded + lane_fix_unchanged; a call rejected afterwards by the uᵀPu check also counts).
         long long build_epochs{0};    ///< #@ref buildDdPriors calls, counted at entry, so a chordless epoch that never reaches the timed projection still counts (for per-epoch averages).
         long long install_epochs{0};  ///< #serial @ref installPosterior calls timed.
     };
@@ -491,10 +451,11 @@ public:
      * is a serialization representation, not a datum-relevant rule.
      *
      * @ref restoreCarry begins with @ref reset (RE-4) and then zeroes the counters: it is a
-     * general "install this carry" API, so it must not leave stale lane-fix,
-     * gate-exemption or innovation side-state from earlier driver work.
+     * general "install this carry" API, so it must not leave stale gate-exemption or
+     * innovation side-state from earlier driver work.  A block whose header carries a
+     * non-zero pair flag (a lane pair block of the retired WL-3 lane carry) is refused.
      *
-     * Not serialized (they re-warm): the WL-3 lane-fix memory and the run-end counters.
+     * Not serialized (they re-warm): the run-end counters.
      * The per-station filter layer is excluded by the RTB-7 design (restoring it would be
      * full process checkpointing).
      *
@@ -567,7 +528,7 @@ public:
     /// Blocks rebirthed at @ref restoreCarry because the blob's @f$P^z@f$ failed the
     /// equilibrated PD screen: the means were kept and the covariance reset to the fresh
     /// diffuse diagonal.  0 unless @c Config::pd_safe.  Snapshots written before the
-    /// PD-safe card can hold the corrupt joint lane block, so a non-zero count on the first
+    /// PD-safe card can hold a corrupt block, so a non-zero count on the first
     /// resume from one is expected; a non-zero count on a resume from a pd_safe-armed
     /// writer indicates a new defect (PD-safe INC-2c).
     long long resumeCarryRebirthBlocks() const { return resume_carry_rebirth_blocks_; }
@@ -619,11 +580,8 @@ public:
      *        diagonal (default @f$q_z=0@f$: a no-op, DDs are constant between slips).
      *        Call once at the top of the epoch, before @ref buildDdPriors.
      *
-     * On a pair block under @ref Config::lane_joint with @c q_wl_scale ≠ 1 the added noise
-     * is the lane-rotated @f$R^\top\mathrm{diag}(q_z,\,s\,q_z)\,R\,\Delta t@f$ per chord
-     * (@f$s@f$ = @c q_wl_scale, @f$R@f$ the (NL, WL) lane rotation), which also fills the
-     * band-1/band-2 cross terms.  Independently of @f$q_z@f$, the call advances the
-     * forgetting of the σ̂₀² accumulator once per epoch when calibration is armed.
+     * Independently of @f$q_z@f$, the call advances the forgetting of the σ̂₀²
+     * accumulator once per epoch when calibration is armed.
      * @param dt_s Elapsed time since the previous epoch (s); no inflation when ≤ 0.
      * @param content_s Epoch content time (continuous GPS s), the D5 v2 σ̂₀² reporting
      *        bucket (ignored unless @c Config::innov_calibrate).
@@ -643,8 +601,7 @@ public:
      *
      * @param groups The GLONASS-excluded (const,signal) groups, each a set of
      *        resolvable tree/chord arcs.
-     * @return One DD-prior block per emitted component (two for a pair component in the
-     *         §6.1 equivalence shape); empty when nothing carries.
+     * @return One DD-prior block per emitted component; empty when nothing carries.
      */
     std::vector<NetworkNormalEquations::DdPriorBlock>
         buildDdPriors(const std::vector<GroupInput>& groups);
@@ -738,7 +695,7 @@ public:
     struct FoldRebirth {
         std::size_t block{0};        ///< emitted DD-prior block index (== the fold's slot index).
         int         group{0};        ///< the (const,signal) group id.
-        long long   k{0};            ///< carried state dimension re-seeded (2K on a joint pair block).
+        long long   k{0};            ///< carried state dimension re-seeded.
         double      min_pivot_rel{0.0}; ///< the fold's relative pivot for the block (≤ 0 ⇒ indefinite).
         ArcKey      chord0{};        ///< the block's first chord, a stable-enough identity for the ledger.
     };
@@ -866,125 +823,10 @@ public:
 
     /// The carried DD mean and variance of @p chord in @p group (false if not carried): the
     /// read half of the WL inject (it gives the current lane value before the decision to
-    /// inject).  Same as @ref carriedDdForTest, named for production use.  On a WL-3 pair
-    /// block this returns the band-1 half (@ref carriedPairValue returns both bands).
+    /// inject).  Same as @ref carriedDdForTest, named for production use.
     bool carriedChordValue(int group, const ArcKey& chord, double& z, double& var) const {
         return carriedDdForTest(group, chord, z, var);
     }
-
-    // ---- Lane-coordinate carry (docs/SPEC_lane_carry_card.md; M5 card WL-3) -----------
-
-    /**
-     * @brief Fold one per-epoch WL-lane measurement into an emitted pair block's prior
-     *        (WL-3 §3.2): the closed-form KF update that makes the carry itself the
-     *        code-coherence accumulator (each epoch's MW or bridge increment enters once).
-     *
-     * The measurement is the WL lane functional of chord @p k in correction-frame WL
-     * cycles, @f$y = z_1/\lambda_1 - z_2/\lambda_2 + e,\ e\sim N(0,R)@f$.  The caller forms
-     * @f$y@f$ from this epoch's (lagged) MW(1,2) or iono-de-biased bridge cycle DD minus the
-     * linearization lane @f$\sum(c/\lambda_1)x_{lin,1}-(c/\lambda_2)x_{lin,2}@f$.  Updates
-     * both the caller's block (what @c setDdPriors folds) and the stashed @c BlockMeta
-     * prior means (what the D5 gate standardizes against), so the innovation frame stays
-     * consistent.  Valid only on a joint pair block (@ref Config::lane_joint).  Call
-     * serially in (block, chord) order, the deterministic seam (§8.2).  Without
-     * @ref Config::fold_blocked the covariance is re-symmetrized after each row.
-     *
-     * @param blocks The vector returned by the last @ref buildDdPriors (before @c setDdPriors).
-     * @param b      Emitted block index (must be a joint pair block).
-     * @param k      Chord index within the block (row @c k = band-1, row @c K+k = band-2).
-     * @param y_cyc  Correction-frame lane measurement (WL cycles).
-     * @param r_cyc2 Measurement variance (WL cycles²), > 0 (caller floors it).
-     * @return true if folded; false if (b, k) is not a joint pair chord or inputs are degenerate.
-     */
-    bool applyLaneMeasurement(std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
-                              std::size_t b, std::size_t k, double y_cyc, double r_cyc2);
-
-    /**
-     * @brief The FFR integer fix (WL-3 §3.3): an idempotent lane-coordinate set on the
-     *        emitted pair block, applied every decided epoch.
-     *
-     * Re-centers chord @p k's WL lane coordinate on the correction-frame integer target
-     * @p y_cyc and re-collapses its variance to @p sigma_cyc², zeroing the coordinate's
-     * cross-covariances (a fresh independent assertion, PSD-safe: the WL-2 inject semantics
-     * applied to the lane coordinate, with the NL direction preserved by construction).  A
-     * measurement fold here would accumulate per-epoch decisions that are not independent
-     * information (the F-A once-only rule); the set is information-idempotent, and
-     * re-applying it while the decision is unchanged keeps the lane pinned against the q_wl
-     * re-loosening and the noisy MW increments (measured: fold-on-change alone let decided
-     * lanes drift back to MW quality).  The decided integer @p w is staged per build and
-     * committed at @ref installPosterior (a within-epoch RAIM re-solve re-derives identical
-     * sets).  The memory is erased when the chord re-taps (a D5 flag, or the chord born
-     * fresh, e.g. after a slip), and the re-entered loose lane re-earns its fix (§3.4).
-     *
-     * @return +1 = the integer moved or first assertion, 0 = re-pinned (decision unchanged
-     *         relative to the committed memory), −1 = not applicable (not a joint pair
-     *         chord, or degenerate inputs).
-     */
-    int applyLaneFix(std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
-                     std::size_t b, std::size_t k, long long w, double y_cyc, double sigma_cyc);
-
-    /**
-     * @brief Re-symmetrize every joint pair block once, after all of this epoch's lane rows
-     *        have been applied (LF-1 INC-1, SPEC_lane_carry_card.md Appendix LF-1 §3.2).
-     *
-     * A no-op unless @ref Config::fold_blocked.  Under @c fold_blocked the per-row
-     * @f$0.5(P+P^\top)@f$ re-symmetrization is skipped inside @ref applyLaneMeasurement /
-     * @ref applyLaneFix (each is a full O(K²) pass plus a 2K×2K temporary, on each of about
-     * 10³ rows per epoch, and the per-row updates hold symmetry only to ULP).  This single
-     * pass restores the exact symmetry that the sequential path keeps per row, replacing
-     * about 10³ symmetrizations with one per component.  Because the intra-epoch folds then
-     * run on a Pᶻ with up to about row-count ULPs of asymmetry, the result is in the pcarry
-     * equivalence class (≤1e-12 against the sequential path, not bit-identical).  Call after
-     * the MW, bridge and fix walks and before @c NetworkEstimator::setDdPriors.  Idempotent
-     * across a RAIM re-solve (the blocks are rebuilt each build).
-     *
-     * @param blocks The vector returned by the last @ref buildDdPriors (before @c setDdPriors).
-     */
-    void finalizeLaneBatch(std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) const;
-
-    /**
-     * @brief Whether the caller may skip this epoch's MW/bridge lane increment for chord
-     *        @p k of emitted block @p b (LF-1 INC-2, SPEC_lane_carry_card.md Appendix LF-1
-     *        §3.3).
-     *
-     * True iff @ref Config::skip_pinned_increments is on, @p b is a joint pair block, and
-     * the chord's FFR fix is committed (present in @c lane_fix_w_ as of the last
-     * @ref installPosterior) and was re-decided within @c Config::skip_pinned_within_n
-     * epochs.  A pinned lane sits at σ = 0.01 cyc; an increment at σ ≈ 0.06-0.2 cyc folded
-     * into it carries almost no information, so skipping it saves the O(K²) downdate
-     * without moving the decision.  Reads committed state only (never the per-build
-     * @c lane_fix_staged_), so every RAIM re-solve of the epoch skips the same rows.  A D5
-     * flag, or the chord being born fresh (a slip or a new cycle), erases the fix memory, so
-     * a disturbed chord returns false and resumes increments in the same epoch
-     * (invariant #1).  Always false when @c skip_pinned_increments is off (byte-identical).
-     *
-     * @param b Emitted block index (from the last @ref buildDdPriors).
-     * @param k Chord (graph-chord) index within the block.
-     */
-    bool laneIncrementSkippable(std::size_t b, std::size_t k) const;
-
-    /// The carried pair chord's two band values and variances (false if @p group is not a
-    /// pair group carrying @p chord): the read half of the pair inject fallback (WL-3).
-    bool carriedPairValue(int group, const ArcKey& chord, double& z1, double& var1,
-                          double& z2, double& var2) const;
-
-    /**
-     * @brief Pair-block analogue of @ref injectCarriedChord: edit both band values of a
-     *        carried pair chord (WL-3).  A fallback path, expected to fire almost never in
-     *        steady state (the telemetry shows it).  The cross-terms of both rows are
-     *        zeroed (PSD-safe, a fresh independent assertion), a non-positive variance
-     *        keeps the current one, and the chord is exempt from the D5 gate for one
-     *        install.
-     * @return true if @p chord is a carried pair chord of @p group and was edited.
-     */
-    bool injectCarriedChordPair(int group, const ArcKey& chord,
-                                double new_z1, double new_var1,
-                                double new_z2, double new_var2);
-
-    /// The pair-emission shape of emitted block @p b: 0 = plain per-band group block,
-    /// 1/2 = band-1/band-2 half of a split (equivalence-shape) pair emission, 3 = joint 2K
-    /// lane-shape pair block.  Lane measurements apply only to shape 3 (WL-3).
-    int blockPairBand(std::size_t b) const { return block_meta_.at(b).pair_band; }
 
     /// The (const,signal) group id of DD-prior block @p b from the last @ref buildDdPriors.
     int blockGroup(std::size_t b) const { return block_meta_.at(b).group; }
@@ -1009,15 +851,6 @@ public:
     /// mark it unbased as @ref restoreCarry does.  Production never calls this; the harvest
     /// (@ref buildDdPriors → @ref installPosterior) owns @c zl end to end (RS-2).
     void seedCarriedLinForTest(int group, const Eigen::VectorXd& zl, bool unbased);
-    /// Seed one pair component's carry (@p z is 2K = [band-1; band-2], @p Pz 2K×2K) (WL-3).
-    void seedCarriedPairForTest(int group, const std::vector<ArcKey>& chords,
-                                const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz,
-                                double lambda1, double lambda2,
-                                const std::set<int>& vertices, const std::set<ArcKey>& arcs);
-    /// Dump the carried pair block of @p group (false if none): chords and the full joint
-    /// [band-1; band-2] mean and covariance, for the lane-battery unit gates (WL-3).
-    bool carriedPairBlockForTest(int group, std::vector<ArcKey>& chords,
-                                 Eigen::VectorXd& z, Eigen::MatrixXd& Pz) const;
     /// The chord order of DD-prior block @p b returned by the last @ref buildDdPriors
     /// (== the fold-row order, so a gate can map block rows to chord arcs).
     const std::vector<ArcKey>& blockChordsForTest(std::size_t b) const {
@@ -1039,19 +872,13 @@ public:
 
 private:
     /// One connected component's carried DD estimate (keyed by chord arc identity).
-    /// A pair component stores both bands jointly: @c z is 2K ([band-1; band-2]) and
-    /// @c Pz 2K×2K, with the cross-band blocks zero unless @c Config::lane_joint retained
-    /// them (WL-3).
     struct CarriedBlock {
         int group{0};
         std::vector<ArcKey> chords;   ///< z index → chord arc (the DD basis; K graph chords).
-        Eigen::VectorXd z;            ///< carried DD means (K, or 2K for a pair block).
+        Eigen::VectorXd z;            ///< carried DD means (K).
         Eigen::MatrixXd Pz;           ///< carried DD covariance (dense, per component).
         std::set<int> vertices;       ///< the component's vertices.
         std::set<ArcKey> arcs;        ///< every arc present (tree ∪ chords): A_old for the carried test.
-        bool pair{false};             ///< joint two-band pair component (WL-3).
-        double lambda1{0.0};          ///< band-1 wavelength (m) of a pair block, for the lane basis (WL-3).
-        double lambda2{0.0};          ///< band-2 wavelength (m) of a pair block (WL-3).
         /// The linearization DD @f$z_\ell=\sum c\,x_{\rm lin}@f$ that the means in @ref z are
         /// relative to: same length and row order as @ref z, over the same fundamental cycle.
         /// Empty unless @ref Config::carry_lin or @ref Config::carry_rebase was armed at the
@@ -1071,20 +898,12 @@ private:
         std::set<int> vertices;       ///< the component's vertices this epoch.
         std::set<ArcKey> arcs;        ///< A_new for this component (becomes next epoch's A_old).
         Eigen::VectorXd  zhat;        ///< the block's prior means (== fold zhat), so the innovation
-                                      ///< gate can install a flagged chord's data-only mean d = v + ẑ.
-                                      ///< 2K for a joint pair block, K otherwise (D5; WL-3).
+                                      ///< gate can install a flagged chord's data-only mean d = v + ẑ (D5).
         std::vector<char> chord_carried; ///< 1 = the chord's prior was projected from the carry this
                                       ///< epoch (topological: cycle ⊆ A_old, no slip), 0 = born fresh
                                       ///< (diffuse).  Only carried chords feed the σ̂₀² accumulator (a
                                       ///< born chord's diffuse Cov(v) would pull σ̂₀² down).  One entry
-                                      ///< per graph chord (K) in every shape: a joint block holds the
-                                      ///< band-uniform mask, each half of a split pair its own band's
-                                      ///< mask (D5 v2; WL-3).
-        int pair_band{0};             ///< emission shape: 0 = per-band group block; 1/2 = band-1/band-2
-                                      ///< half of a split pair emission (§6.1 equivalence shape; siblings
-                                      ///< are adjacent, band-2 at b+1); 3 = joint 2K lane-shape block (WL-3).
-        double lambda1{0.0};          ///< band wavelengths of a pair block (lane functional coefficients) (WL-3).
-        double lambda2{0.0};
+                                      ///< per graph chord (K) (D5 v2).
         /// This epoch's linearization DD @f$z_\ell=\sum c\,x_{\rm lin}@f$ per emitted fold row
         /// (same length and row order as @ref zhat), computed over the same fundamental cycle
         /// that built the rows.  @ref installPosterior copies it into @ref CarriedBlock::zl so
@@ -1101,12 +920,8 @@ private:
     std::vector<InnovTerms> last_innov_terms_;  ///< the (ẑ, v, Cov(v)_ii, σ̂₀, z_post) behind each flag, aligned with last_innov_flags_; see @ref lastInnovFlagTerms (D5 diagnostic).
     std::vector<char> last_innov_warmup_;       ///< 1 where the flag at the same index was suppressed by the post-resume D5 warm-up (counted, not re-tapped); see @ref lastInnovWarmupSuppressed (RS-2b).
     std::vector<FoldRebirth> last_fold_rebirths_;  ///< blocks rebirthed at the last install; see @ref lastFoldRebirths (PD-safe INC-2a).
-    std::set<std::pair<int, ArcKey>> gate_exempt_;  ///< (group, chord) injected this epoch, exempt from the D5 gate at the next @ref installPosterior (consumed and cleared there).  A pair chord's exemption spans both band rows (WL-2 §3.3; WL-3).
+    std::set<std::pair<int, ArcKey>> gate_exempt_;  ///< (group, chord) injected this epoch, exempt from the D5 gate at the next @ref installPosterior (consumed and cleared there). (WL-2 §3.3).
     std::set<std::pair<int, ArcKey>> innov_flat_;   ///< (group, chord) whose arc the raw observables measured as continuous this epoch; see @ref setInnovFlatChords.  Consumed and cleared in @ref installPosterior (D5 v3).
-    std::map<std::pair<int, ArcKey>, long long> lane_fix_w_;      ///< the last committed FFR integer per (pair group, chord): the fold-on-change memory.  Committed at @ref installPosterior; erased when the chord re-taps (a D5 flag, or the chord born fresh) and pruned once it is not carried as a pair chord (WL-3 §3.3).
-    std::map<std::pair<int, ArcKey>, long long> lane_fix_staged_; ///< this build's @ref applyLaneFix decisions, staged so a within-epoch RAIM re-solve re-derives identical folds; merged into @ref lane_fix_w_ at install, cleared at each @ref buildDdPriors (WL-3).
-    std::map<std::pair<int, ArcKey>, long long> lane_fix_epoch_;  ///< the @c install_epoch_index_ at which each @c lane_fix_w_ key was last re-decided.  Committed, pruned and erased in lockstep with @c lane_fix_w_; drives the @ref laneIncrementSkippable grace window.  Empty unless @c Config::skip_pinned_increments (LF-1 INC-2).
-    long long install_epoch_index_{0};  ///< monotone count of @ref installPosterior calls since the last @ref reset, the epoch clock for the skip grace window.  The epoch loop installs once per accepted epoch, after any RAIM re-solve, so a re-solve does not advance it (LF-1 INC-2).
     std::optional<NetworkCarryVce> inflation_;  ///< the σ̂₀² accumulator, present only when Config::innov_calibrate (D5 v2).
     // --- Resume telemetry, set by restoreCarry / applyResumeShock (RTB-7(d) RE-4) ---
     bool      resume_restored_{false};

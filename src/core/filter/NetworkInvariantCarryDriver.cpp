@@ -6,7 +6,7 @@
 
 #include "filter/NetworkInvariantCarryDriver.hpp"
 
-#include "filter/NetworkArcGraph.hpp"   // Dsu, singleTreeOf, fundamentalCycle, promoteBridgingArcs, chordRestriction (card AGT)
+#include "filter/NetworkArcGraph.hpp"   // Dsu, singleTreeOf, fundamentalCycle, chordRestriction (card AGT)
 
 #include <fmt/format.h>
 
@@ -50,27 +50,6 @@ struct ScopedAccum {
                         std::chrono::steady_clock::now() - t0).count();
     }
 };
-
-/// Unit-normalized (NL, WL) lane rotation for a band pair.  The rows are orthonormal lane
-/// directions in (z₁, z₂) meter space: row 0 is the phase-determined (NL) direction, row 1
-/// the WL lane, i.e. the unit-normalized WL functional (1/λ₁, −1/λ₂).  RᵀR = I up to
-/// floating point, so Rᵀ·diag(q_nl, q_wl)·R with q_nl == q_wl reduces to the isotropic
-/// diagonal and the §6.1 equivalence case needs no special handling. (WL-3 §3.1)
-inline Eigen::Matrix2d laneRotation(double lambda1, double lambda2) {
-    const double a = 1.0 / lambda1, b = 1.0 / lambda2;
-    const double n = std::sqrt(a * a + b * b);
-    Eigen::Matrix2d R;
-    R << b / n,  a / n,    // NL (⊥ the WL functional)
-         a / n, -b / n;    // WL lane
-    return R;
-}
-
-/// One WL cycle in the unit-normalized lane coordinate, 1/‖(1/λ₁,−1/λ₂)‖ state-meters.
-/// Converts @c Config::sigma_wl_fresh_cyc to a σ in state units. (WL-3)
-inline double laneMetersPerCycle(double lambda1, double lambda2) {
-    const double a = 1.0 / lambda1, b = 1.0 / lambda2;
-    return 1.0 / std::sqrt(a * a + b * b);
-}
 
 /// The W row of one new chord as the fold reads it: the coefficient of each old chord in the
 /// chord's fundamental cycle (arcgraph::chordRestriction), in old-chord order, as doubles.
@@ -159,10 +138,6 @@ void NetworkInvariantCarryDriver::resetCarryState_() {
     last_innov_terms_.clear();
     gate_exempt_.clear();
     innov_flat_.clear();       // corroboration set is cleared with the carry (D5 v3)
-    lane_fix_w_.clear();       // fold-on-change memory is cleared with the carry (WL-3)
-    lane_fix_staged_.clear();
-    lane_fix_epoch_.clear();   // skip grace clock is cleared with the carry (LF-1 INC-2)
-    install_epoch_index_ = 0;
 }
 
 void NetworkInvariantCarryDriver::reset() {
@@ -195,8 +170,11 @@ void NetworkInvariantCarryDriver::serializeCarry(std::ostream& os, bool diagonal
     }
     for (const CarriedBlock& b : carried_) {
         const Eigen::Index zdim = b.z.size();
-        os << fmt::format("B,{},{},{},{},{},{},{},{}\n", b.group, b.pair ? 1 : 0,
-                          b.lambda1, b.lambda2, static_cast<long long>(zdim),
+        // Fields 2-4 (the pair flag, λ₁ and λ₂) belonged to the retired WL-3 lane pair
+        // blocks.  They are written as zeros so the 9-field header keeps its format: a blob
+        // written without the lane carry is byte-identical, and restoreCarry refuses a
+        // non-zero pair flag.
+        os << fmt::format("B,{},0,0,0,{},{},{},{}\n", b.group, static_cast<long long>(zdim),
                           static_cast<long long>(b.chords.size()),
                           static_cast<long long>(b.vertices.size()),
                           static_cast<long long>(b.arcs.size()));
@@ -251,7 +229,7 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
     line = chomp(line);
     if (line.rfind("CARRY,", 0) != 0) return fail("bad carry header: '" + line + "'");
     // This is a general "install this carry" API, so it starts from a clean driver: no
-    // lane-fix, gate-exemption or innovation side-state survives the install.  The
+    // gate-exemption or innovation side-state survives the install.  The
     // counters are also cleared here, and only here.  reset() alone keeps the run tallies
     // (it is a mid-run carry cold start), whereas an installed carry starts a new count,
     // and tallies from earlier driver work would otherwise be attributed to it. (RE-4)
@@ -312,11 +290,15 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
             || !parseDbl(f[4], l2) || !parseLL(f[5], zdim) || !parseLL(f[6], nch)
             || !parseLL(f[7], nvert) || !parseLL(f[8], narc) || zdim < 0)
             return fail("malformed B header: '" + line + "'");
+        // A non-zero pair flag marks a WL-3 lane pair block (joint 2K storage), which only
+        // the retired lane carry wrote.  It cannot be read as a per-band block (nothing here
+        // checks zdim against the chord count), so it is refused and the resume counts a
+        // cold start.
+        if (pr != 0)
+            return fail("carry: lane pair block (retired WL-3 lane carry) cannot be "
+                        "restored: '" + line + "'");
         CarriedBlock b;
         b.group   = static_cast<int>(grp);
-        b.pair    = (pr != 0);
-        b.lambda1 = l1;
-        b.lambda2 = l2;
         // Z mean row.
         if (!std::getline(is, line)) return fail("carry: truncated at Z");
         const std::vector<std::string> zf = splitCsv(chomp(line));
@@ -381,7 +363,7 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
                 }
             }
             // --- Restore guard (PD-safe INC-2c, SPEC §5c) ------------------------
-            // A carry blob written before the PD-safe fix can hold a corrupt joint lane
+            // A carry blob written before the PD-safe fix can hold a corrupt
             // block: an indefinite Pᶻ with negative diagonals and entries larger than the
             // diffuse prior.  Restoring it verbatim would carry that state into the resumed
             // run.  Such a block is rebirthed instead: the means are kept (the branch,
@@ -479,28 +461,9 @@ void NetworkInvariantCarryDriver::beginEpoch(double dt_s, double content_s, bool
     if (cfg_.qz <= 0.0 || dt_s <= 0.0) return;   // constant DDs (default): no q_z step
     ScopedAccum _tu(perf_timing_, &perf_timers_.time_update_ms);   // INC-C0
     const double add = cfg_.qz * dt_s;
-    // Lane-aware process noise on pair blocks: Q = Rᵀ·diag(q_nl, q_wl)·R per chord
-    // (q_nl = qz, q_wl = q_wl_scale·qz).  At q_wl_scale == 1 this equals the isotropic
-    // diagonal, so the plain add is used (byte-identical to the per-band shape). (WL-3 §3.1)
-    const bool lane_q = cfg_.lane_joint && cfg_.q_wl_scale != 1.0;
     for (auto& cb : carried_) {
         if (cb.Pz.rows() == 0) continue;
-        if (!lane_q || !cb.pair || !(cb.lambda1 > 0.0 && cb.lambda2 > 0.0)) {
-            cb.Pz.diagonal().array() += add;
-            continue;
-        }
-        const Eigen::Index K = static_cast<Eigen::Index>(cb.chords.size());
-        if (cb.Pz.rows() != 2 * K) { cb.Pz.diagonal().array() += add; continue; }  // defensive
-        const Eigen::Matrix2d R = laneRotation(cb.lambda1, cb.lambda2);
-        const Eigen::Matrix2d Q = R.transpose()
-            * Eigen::Vector2d(cfg_.qz, cfg_.qz * cfg_.q_wl_scale).asDiagonal()
-            * R * dt_s;
-        for (Eigen::Index k = 0; k < K; ++k) {
-            cb.Pz(k, k)         += Q(0, 0);
-            cb.Pz(K + k, K + k) += Q(1, 1);
-            cb.Pz(k, K + k)     += Q(0, 1);
-            cb.Pz(K + k, k)     += Q(1, 0);
-        }
+        cb.Pz.diagonal().array() += add;
     }
 }
 
@@ -585,7 +548,6 @@ std::vector<NetworkNormalEquations::DdPriorBlock>
 NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups) {
     std::vector<NetworkNormalEquations::DdPriorBlock> out;
     block_meta_.clear();
-    lane_fix_staged_.clear();   // per-build staging; a RAIM re-solve re-derives it (WL-3)
     ++counters_.epochs;
     if (perf_timing_) ++perf_timers_.build_epochs;   // INC-C0
 
@@ -610,29 +572,23 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
     for (const GroupInput& g : groups) {
         // --- (1) Assemble this epoch's graph for the group. -------------------
         struct ArcInfo {
-            int est_station; int local_col; int local_col2; bool tree_edge;
-            double x_lin; double x_lin2;   // this arc's linearization value(s), metres (RS-2)
+            int est_station; int local_col; bool tree_edge;
+            double x_lin;   // this arc's linearization value, metres (RS-2)
         };
         std::map<ArcKey, ArcInfo> arcinfo;
         std::set<ArcKey>          slipped_arcs;   // arcs whose carried ambiguity slipped this epoch (C3c)
         // The shared link rule (card AGT): root(rx) under root(sat), in g.arcs order, never sorted.
         arcgraph::Dsu uf;
         std::vector<ArcKey> group_tree_edges;   // for per-component tree extraction
-        std::set<ArcKey> slipped2_arcs;   // pair groups: band 2's own slips, see ArcInput::slipped2 (WL-3)
         for (const ArcInput& a : g.arcs) {
             if (a.rx_vertex == a.sat_vertex) continue;         // degenerate (defensive)
             const ArcKey k(a.rx_vertex, a.sat_vertex);
-            arcinfo[k] = {a.est_station, a.local_col, a.local_col2, a.tree_edge,
-                          a.x_lin, a.x_lin2};
+            arcinfo[k] = {a.est_station, a.local_col, a.tree_edge, a.x_lin};
             arcgraph::dsuUnite(uf, a.rx_vertex, a.sat_vertex);
             if (a.tree_edge) group_tree_edges.push_back(k);
             if (a.slipped) slipped_arcs.insert(k);
-            if (g.pair && a.slipped2) slipped2_arcs.insert(k);
         }
         if (arcinfo.empty()) continue;
-        // A pair chord counts as the two per-band DDs it co-locates, which keeps the
-        // lifecycle counters comparable across the regroup (§6.1, WL-3).
-        const long long tally = g.pair ? 2 : 1;
 
         // --- (2) Partition arcs into connected components (root → arcs). ------
         std::map<int, std::vector<ArcKey>> comp_arcs;
@@ -657,16 +613,6 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
             std::vector<ArcKey> tree_edges, chords;
             for (const ArcKey& k : arcs)
                 (arcinfo.at(k).tree_edge ? tree_edges : chords).push_back(k);
-            // A pair group has no upstream election of its own: its arc set is the
-            // intersection of two per-band graphs, and the caller's band-1 tree tags need
-            // not span this subgraph (per-(rx,sat) channel heterogeneity fragments the
-            // primary pairs across groups).  The tags are used first, then the spanning
-            // forest is completed deterministically (ArcKey order) by promoting chords that
-            // connect disjoint tree fragments.  Homogeneous regions keep the eq34 basis
-            // unchanged (the §6.1 equivalence); fragmented regions stay carried instead of
-            // being dropped whole by the tree guards below. (WL-3)
-            if (g.pair && !chords.empty())
-                counters_.pair_tree_promotions += arcgraph::promoteBridgingArcs(tree_edges, chords);
             if (chords.empty()) continue;   // spanning tree only → no DD to carry
 
             // The cycle algebra (arcgraph, card AGT): the tree of the component's tree edges.
@@ -687,7 +633,6 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
             std::vector<const CarriedBlock*> contributors;
             for (std::size_t p : group_prev) {
                 const CarriedBlock& ob = prev[p];
-                if (ob.pair != g.pair) continue;   // defensive: a shape mismatch cannot project (WL-3)
                 bool overlap = false;
                 for (int v : ob.vertices) if (verts.count(v)) { overlap = true; break; }
                 if (!overlap) continue;
@@ -696,32 +641,18 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 old_chords.insert(old_chords.end(), ob.chords.begin(), ob.chords.end());
                 A_old.insert(ob.arcs.begin(), ob.arcs.end());
             }
-            if (contributors.size() > 1) counters_.merges += tally;
+            if (contributors.size() > 1) ++counters_.merges;
             const Eigen::Index n_old = static_cast<Eigen::Index>(old_chords.size());
-            // Block-diagonal old covariance / mean over the contributors.  Pair blocks are
-            // stored [band-1; band-2], so the concatenation keeps the two band halves
-            // contiguous: contributor j's band 1 lands at [off, off+k) and its band 2 at
-            // [n_old+off, n_old+off+k), with the four Pᶻ sub-blocks placed accordingly.  The
-            // cross-band sub-block is zero unless the lane shape retained it. (WL-3)
-            const Eigen::Index zdim_old = g.pair ? 2 * n_old : n_old;
-            Eigen::VectorXd z_old(zdim_old);
-            Eigen::MatrixXd Pz_old = Eigen::MatrixXd::Zero(zdim_old, zdim_old);
+            // Block-diagonal old covariance / mean over the contributors.
+            Eigen::VectorXd z_old(n_old);
+            Eigen::MatrixXd Pz_old = Eigen::MatrixXd::Zero(n_old, n_old);
             {
                 Eigen::Index off = 0;
                 for (const CarriedBlock* ob : contributors) {
                     const Eigen::Index k = static_cast<Eigen::Index>(ob->chords.size());
                     if (k == 0) continue;
-                    if (!g.pair) {
-                        z_old.segment(off, k) = ob->z;
-                        Pz_old.block(off, off, k, k) = ob->Pz;
-                    } else {
-                        z_old.segment(off, k)         = ob->z.head(k);
-                        z_old.segment(n_old + off, k) = ob->z.tail(k);
-                        Pz_old.block(off, off, k, k)                 = ob->Pz.topLeftCorner(k, k);
-                        Pz_old.block(n_old + off, n_old + off, k, k) = ob->Pz.bottomRightCorner(k, k);
-                        Pz_old.block(off, n_old + off, k, k)         = ob->Pz.topRightCorner(k, k);
-                        Pz_old.block(n_old + off, off, k, k)         = ob->Pz.bottomLeftCorner(k, k);
-                    }
+                    z_old.segment(off, k) = ob->z;
+                    Pz_old.block(off, off, k, k) = ob->Pz;
                     off += k;
                 }
             }
@@ -744,26 +675,21 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                     const Eigen::Index k = static_cast<Eigen::Index>(ob->chords.size());
                     if (k == 0) continue;   // contributes no column to z_old / zl_old
                     if (ob->unbased) any_unbased = true; else rebasable = false;
-                    if (ob->zl.size() != (ob->pair ? 2 * k : k)) rebasable = false;
+                    if (ob->zl.size() != k) rebasable = false;
                 }
                 if (any_unbased && rebasable) {
-                    zl_old = Eigen::VectorXd::Zero(zdim_old);
+                    zl_old = Eigen::VectorXd::Zero(n_old);
                     Eigen::Index off = 0;
                     for (const CarriedBlock* ob : contributors) {
                         const Eigen::Index k = static_cast<Eigen::Index>(ob->chords.size());
                         if (k == 0) continue;
-                        if (!ob->pair) {
-                            zl_old.segment(off, k) = ob->zl;
-                        } else {
-                            zl_old.segment(off, k)         = ob->zl.head(k);
-                            zl_old.segment(n_old + off, k) = ob->zl.tail(k);
-                        }
+                        zl_old.segment(off, k) = ob->zl;
                         off += k;
                     }
                 }
             }
             const bool rebase_here    = cfg_.carry_rebase && any_unbased && rebasable
-                                        && zl_old.size() == zdim_old;
+                                        && zl_old.size() == n_old;
             const bool rebase_blocked = cfg_.carry_rebase && any_unbased && !rebase_here;
 
             // Map an old chord arc → its column index in the old basis.
@@ -772,40 +698,29 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
 
             // --- Per new chord: fundamental cycle, foldability, carried vs fresh.
             std::vector<ArcKey>                              fold_chords;
-            std::vector<char>                                fold_carried;  // 1 = carried prior, 0 = born (D5 v2); for pair groups, the band-1 mask
-            std::vector<char>                                fold_carried2; // pair groups: band-2 carried mask (equal to band 1 under the lane shape's §3.4 union; per band under the §6.1 equivalence shape) (WL-3)
+            std::vector<char>                                fold_carried;  // 1 = carried prior, 0 = born (D5 v2)
             std::vector<std::vector<NetworkNormalEquations::DdPriorBlock::Term>> rows;
-            std::vector<std::vector<NetworkNormalEquations::DdPriorBlock::Term>> rows2;  // pair groups: band-2 rows (same cycle, band-2 columns) (WL-3)
             std::vector<Eigen::VectorXd>                     Wrows;   // over the old basis (empty: fresh)
             // This epoch's linearization DD per emitted chord, Σ c·x_lin over the same
             // fundamental cycle that builds `terms`, i.e. the incidence the fold uses to form
             // z_free, so ẑ + zl is the arc-space absolute DD.  Empty unless lin_on. (RS-2)
-            std::vector<double> zl_rows, zl_rows2;
+            std::vector<double> zl_rows;
             for (const ArcKey& c : chords) {
                 const std::map<ArcKey, int> cyc = arcgraph::fundamentalCycle(*tree, c);
 
-                // Foldable when every cycle arc resolves to a live (station, local col); for a
-                // pair group, in both bands (membership requires band 2, §2, WL-3).
+                // Foldable when every cycle arc resolves to a live (station, local col).
                 bool foldable = true;
-                std::vector<NetworkNormalEquations::DdPriorBlock::Term> terms, terms2;
+                std::vector<NetworkNormalEquations::DdPriorBlock::Term> terms;
                 terms.reserve(cyc.size());
-                if (g.pair) terms2.reserve(cyc.size());
-                double zl_c = 0.0, zl_c2 = 0.0;   // Σ c·x_lin over this cycle (RS-2)
+                double zl_c = 0.0;   // Σ c·x_lin over this cycle (RS-2)
                 for (const auto& [arc, coeff] : cyc) {
                     const ArcInfo& ai = arcinfo.at(arc);   // every cycle arc is in this component's graph
-                    if (ai.est_station < 0 || ai.local_col < 0
-                        || (g.pair && ai.local_col2 < 0)) { foldable = false; break; }
+                    if (ai.est_station < 0 || ai.local_col < 0) { foldable = false; break; }
                     terms.push_back({static_cast<std::size_t>(ai.est_station), ai.local_col,
                                      static_cast<double>(coeff)});
-                    if (g.pair)
-                        terms2.push_back({static_cast<std::size_t>(ai.est_station), ai.local_col2,
-                                          static_cast<double>(coeff)});
-                    if (lin_on) {
-                        zl_c += static_cast<double>(coeff) * ai.x_lin;
-                        if (g.pair) zl_c2 += static_cast<double>(coeff) * ai.x_lin2;
-                    }
+                    if (lin_on) zl_c += static_cast<double>(coeff) * ai.x_lin;
                 }
-                if (!foldable) { counters_.chords_dropped += tally; continue; }
+                if (!foldable) { ++counters_.chords_dropped; continue; }
 
                 // Cycle-length census.  The fundamental-cycle length is the tree-path span of
                 // this DD: short cycles give a sparse DD information matrix J = Pᶻ⁻¹, so the
@@ -814,7 +729,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 {
                     const long long clen = static_cast<long long>(cyc.size());
                     if (clen > counters_.max_cycle_len) counters_.max_cycle_len = clen;
-                    counters_.sum_cycle_len += tally * clen;
+                    counters_.sum_cycle_len += clen;
                 }
 
                 // A chord is carried when its whole cycle existed last epoch (⊆ A_old) and no
@@ -836,72 +751,35 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 // prior, data-only tap-off) and is counted. (RS-2)
                 if (rebase_blocked && would_carry) {
                     would_carry = false;
-                    rb_drop += tally;
+                    ++rb_drop;
                 }
                 bool slip_in_cycle = false;
                 if (!slipped_arcs.empty())
                     for (const auto& [arc, coeff] : cyc)
                         if (slipped_arcs.count(arc)) { slip_in_cycle = true; break; }
 
-                if (!g.pair) {
-                    const bool carried = would_carry && !slip_in_cycle;
-                    Eigen::VectorXd w;
-                    if (carried) {
-                        w = wRowOf(cyc, old_chords);
-                        ++counters_.chords_carried;
-                    } else {
-                        ++counters_.chords_born;
-                        if (would_carry && slip_in_cycle) ++counters_.slip_kills;  // carried DD lost to a slip
-                    }
-                    fold_chords.push_back(c);
-                    fold_carried.push_back(carried ? 1 : 0);
-                    rows.push_back(std::move(terms));
-                    if (lin_on) zl_rows.push_back(zl_c);
-                    Wrows.push_back(std::move(w));   // empty vector marks a fresh chord
-                    continue;
-                }
-
-                // ---- Pair chord: per-band slip handling (WL-3).  Under the lane shape
-                // (lane_joint) a slip on either band refloats both bands (§3.4): they share
-                // the graph edge, and through the joint 2×2 coupling a prior that is stale in
-                // one band corrupts the other.  Under the §6.1 equivalence shape each band
-                // refloats on its own slips, like the two per-band groups it must reproduce
-                // to ≤1e-9.
-                bool slip2_in_cycle = false;
-                if (!slipped2_arcs.empty())
-                    for (const auto& [arc, coeff] : cyc)
-                        if (slipped2_arcs.count(arc)) { slip2_in_cycle = true; break; }
-                const bool union_slip = slip_in_cycle || slip2_in_cycle;
-                const bool c1 = would_carry && !(cfg_.lane_joint ? union_slip : slip_in_cycle);
-                const bool c2 = would_carry && !(cfg_.lane_joint ? union_slip : slip2_in_cycle);
+                const bool carried = would_carry && !slip_in_cycle;
                 Eigen::VectorXd w;
-                if (would_carry) w = wRowOf(cyc, old_chords);
-                counters_.chords_carried += (c1 ? 1 : 0) + (c2 ? 1 : 0);
-                counters_.chords_born    += (c1 ? 0 : 1) + (c2 ? 0 : 1);
-                if (would_carry && !c1) ++counters_.slip_kills;
-                if (would_carry && !c2) ++counters_.slip_kills;
-                // A reborn pair chord has to earn its FFR fix again, so its fold-on-change
-                // memory is erased here (WL-3 §3.4).  The erase is idempotent, so the RAIM
-                // re-solve rebuild stays deterministic (carried_ does not change between
-                // within-epoch builds).  Erasing lane_fix_epoch_ as well resumes increments
-                // for the reborn chord in the same epoch; the slip response (invariant #1)
-                // is unaffected. (LF-1 INC-2)
-                if (!(c1 && c2)) { lane_fix_w_.erase({g.key, c}); lane_fix_epoch_.erase({g.key, c}); }
+                if (carried) {
+                    w = wRowOf(cyc, old_chords);
+                    ++counters_.chords_carried;
+                } else {
+                    ++counters_.chords_born;
+                    if (would_carry && slip_in_cycle) ++counters_.slip_kills;  // carried DD lost to a slip
+                }
                 fold_chords.push_back(c);
-                fold_carried.push_back(c1 ? 1 : 0);
-                fold_carried2.push_back(c2 ? 1 : 0);
+                fold_carried.push_back(carried ? 1 : 0);
                 rows.push_back(std::move(terms));
-                rows2.push_back(std::move(terms2));
-                if (lin_on) { zl_rows.push_back(zl_c); zl_rows2.push_back(zl_c2); }
-                Wrows.push_back(std::move(w));   // sized when the graph projection exists (per-band masks above)
+                if (lin_on) zl_rows.push_back(zl_c);
+                Wrows.push_back(std::move(w));   // empty vector marks a fresh chord
             }
             if (fold_chords.empty()) continue;   // nothing foldable → carry nothing here
 
             // --- Assemble the DD-prior block(s) (carried joint + fresh diffuse). --
             const Eigen::Index K = static_cast<Eigen::Index>(fold_chords.size());
-            const long long fold_dim = static_cast<long long>(tally) * static_cast<long long>(K);
+            const long long fold_dim = static_cast<long long>(K);
             if (fold_dim > counters_.max_component_kc)
-                counters_.max_component_kc = fold_dim;   // census; a pair joint fold costs 2K (INC-C0)
+                counters_.max_component_kc = fold_dim;   // census (INC-C0)
             {   // Bucket this emitted component's fold-dim (SPEC §7.4 Amdahl census, LF-1 INC-0).
                 int bkt = 0;
                 while (bkt < 9 && (1LL << bkt) <= fold_dim) ++bkt;  // floor(log2(fold_dim))+1, capped at 9 (≥256)
@@ -910,8 +788,6 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
             Eigen::MatrixXd W;
             {   // Times the dense-K² change-of-basis projection (W · Pᶻ_old · Wᵀ, W·z_old), the
                 // materialization that the factored (A+U S Uᵀ) store of INC-C2 removes (INC-C0).
-                // W is graph-level: for a pair component it applies unchanged to each band's
-                // half, i.e. blkdiag(W, W) on the joint [b1; b2] storage (WL-3).
                 ScopedAccum _bp(perf_timing_, &perf_timers_.basis_project_ms);
                 W = Eigen::MatrixXd::Zero(K, n_old);
                 for (Eigen::Index i = 0; i < K; ++i)
@@ -923,7 +799,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 // permutation).  This is the projection analogue of a phase-B unimodular pivot.
                 for (const Eigen::VectorXd& wr : Wrows) {
                     if (wr.size() != n_old || n_old == 0) continue;   // fresh chord
-                    if ((wr.array() != 0.0).count() >= 2) { counters_.tree_swaps += tally; break; }
+                    if ((wr.array() != 0.0).count() >= 2) { ++counters_.tree_swaps; break; }
                 }
 
                 // Census: an old chord that no surviving fundamental cycle references (its W
@@ -933,7 +809,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 // churn); ~0 while max_z_dim grows means dead chords are retained in large
                 // live components. (INC-C0)
                 for (Eigen::Index j = 0; j < n_old; ++j)
-                    if (W.col(j).isZero(0.0)) counters_.chords_marg_perchord += tally;
+                    if (W.col(j).isZero(0.0)) ++counters_.chords_marg_perchord;
             }
 
             // --- Re-base a restored branch onto this run's linearization (RS-2). --------
@@ -964,184 +840,42 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 }
             };
 
-            if (!g.pair) {
-                // ---- Per-band group: single-block emission (byte-identical to pre-WL-3). ----
-                NetworkNormalEquations::DdPriorBlock blk;
-                {
-                    ScopedAccum _bp(perf_timing_, &perf_timers_.basis_project_ms);
-                    blk.rows = std::move(rows);
-                    blk.zhat = (n_old > 0) ? (W * z_old).eval() : Eigen::VectorXd::Zero(K);
-                    // Carried–carried joint = W Pᶻ_old Wᵀ (fresh rows/cols are zero from W=0);
-                    // fresh chords get an independent diffuse prior on the diagonal.
-                    blk.Pz = (n_old > 0) ? (W * Pz_old * W.transpose()).eval()
-                                         : Eigen::MatrixXd::Zero(K, K);
-                    for (Eigen::Index i = 0; i < K; ++i)
-                        if (Wrows[static_cast<std::size_t>(i)].size() != n_old || n_old == 0)
-                            blk.Pz(i, i) += cfg_.fresh_prior_var;
-                    blk.Pz = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
-                }
-                applyRebase(blk.zhat, W, zl_old, zl_rows, fold_carried);   // re-base carried rows (RS-2)
-
-                Eigen::VectorXd blk_zhat = blk.zhat;   // prior means for the install-time innovation gate (D5)
-                out.push_back(std::move(blk));
-                BlockMeta bm0{g.key, std::move(fold_chords), verts,
-                              std::set<ArcKey>(arcs.begin(), arcs.end()),
-                              std::move(blk_zhat), std::move(fold_carried)};
-                if (lin_on)   // the linearization the installed means are relative to (RS-2)
-                    bm0.zl = Eigen::Map<const Eigen::VectorXd>(zl_rows.data(),
-                                                               static_cast<Eigen::Index>(zl_rows.size()));
-                block_meta_.push_back(std::move(bm0));
-                ++counters_.components;
-            } else {
-                // ---- Pair component (WL-3, SPEC_lane_carry_card.md §2).  The projection
-                // applies per band on the joint [band-1; band-2] storage.  Fresh chords get
-                // the lane-basis prior (§3.1) under the lane shape and the isotropic diffuse
-                // prior otherwise.  Emission is one joint 2K-row block (lane shape) or two
-                // per-band K-row blocks (the §6.1 equivalence shape, carrying the same
-                // information as two separate per-band groups).
-                ++counters_.pair_components;
-                Eigen::VectorXd zhat1, zhat2;
-                Eigen::MatrixXd P11, P22, P12;
-                // Declared outside the timing scope so the re-base below reuses the per-band
-                // projections the means were formed with. (RS-2)
-                Eigen::MatrixXd W1, W2;
-                {
-                    ScopedAccum _bp(perf_timing_, &perf_timers_.basis_project_ms);
-                    if (n_old > 0) {
-                        // The projection applies per band with that band's carried mask; a
-                        // band whose chord refloated projects nothing (fresh row/col).
-                        W1 = W; W2 = W;
-                        for (Eigen::Index i = 0; i < K; ++i) {
-                            if (!fold_carried[static_cast<std::size_t>(i)])  W1.row(i).setZero();
-                            if (!fold_carried2[static_cast<std::size_t>(i)]) W2.row(i).setZero();
-                        }
-                        zhat1 = W1 * z_old.head(n_old);
-                        zhat2 = W2 * z_old.tail(n_old);
-                        P11 = W1 * Pz_old.topLeftCorner(n_old, n_old) * W1.transpose();
-                        P22 = W2 * Pz_old.bottomRightCorner(n_old, n_old) * W2.transpose();
-                        P12 = W1 * Pz_old.topRightCorner(n_old, n_old) * W2.transpose();
-                    } else {
-                        zhat1 = Eigen::VectorXd::Zero(K);
-                        zhat2 = Eigen::VectorXd::Zero(K);
-                        P11 = Eigen::MatrixXd::Zero(K, K);
-                        P22 = Eigen::MatrixXd::Zero(K, K);
-                        P12 = Eigen::MatrixXd::Zero(K, K);
-                    }
-                    // Fresh rows get the lane-basis prior Rᵀ·diag(σ_nl², σ_wl²)·R (σ_nl is the
-                    // diffuse √fresh_prior_var, σ_wl the code-seeded lane scale), or the
-                    // isotropic diffuse prior when the lane prior is not armed (§6.1 shape).
-                    // The 2×2 lane prior applies only when both bands are fresh, which the lane
-                    // shape's union refloat ensures; a per-band fresh row under the equivalence
-                    // shape gets the plain diffuse diagonal.
-                    const bool lane_prior = cfg_.lane_joint && cfg_.sigma_wl_fresh_cyc > 0.0
-                                            && g.lambda1 > 0.0 && g.lambda2 > 0.0;
-                    Eigen::Matrix2d Pf = Eigen::Matrix2d::Zero();
-                    if (lane_prior) {
-                        const double sig_wl_m =
-                            cfg_.sigma_wl_fresh_cyc * laneMetersPerCycle(g.lambda1, g.lambda2);
-                        const Eigen::Matrix2d R = laneRotation(g.lambda1, g.lambda2);
-                        Pf = R.transpose()
-                           * Eigen::Vector2d(cfg_.fresh_prior_var, sig_wl_m * sig_wl_m).asDiagonal()
-                           * R;
-                    }
-                    for (Eigen::Index i = 0; i < K; ++i) {
-                        const bool f1 = !fold_carried[static_cast<std::size_t>(i)];
-                        const bool f2 = !fold_carried2[static_cast<std::size_t>(i)];
-                        if (!f1 && !f2) continue;   // carried in both bands
-                        if (lane_prior && f1 && f2) {
-                            P11(i, i) += Pf(0, 0);
-                            P22(i, i) += Pf(1, 1);
-                            P12(i, i) += Pf(0, 1);
-                        } else {
-                            if (f1) P11(i, i) += cfg_.fresh_prior_var;
-                            if (f2) P22(i, i) += cfg_.fresh_prior_var;
-                        }
-                    }
-                }
-                // Re-base per band, with that band's projection and carried mask. (RS-2)
-                if (rebase_here && n_old > 0) {
-                    applyRebase(zhat1, W1, zl_old.head(n_old), zl_rows,  fold_carried);
-                    applyRebase(zhat2, W2, zl_old.tail(n_old), zl_rows2, fold_carried2);
-                }
-                const std::set<ArcKey> arcs_set(arcs.begin(), arcs.end());
-                if (cfg_.lane_joint) {
-                    // One joint 2K-row block: rows are K band-1 cycles then K band-2 cycles,
-                    // and Pᶻ is the joint 2K×2K.  Its fold keeps the cross-band Woodbury term
-                    // B₁₂ exactly, which the per-band shape drops; this is part of the lane
-                    // design.
-                    NetworkNormalEquations::DdPriorBlock blk;
-                    blk.rows = std::move(rows);
-                    blk.rows.insert(blk.rows.end(), std::make_move_iterator(rows2.begin()),
-                                    std::make_move_iterator(rows2.end()));
-                    blk.zhat.resize(2 * K);
-                    blk.zhat << zhat1, zhat2;
-                    blk.Pz.resize(2 * K, 2 * K);
-                    blk.Pz.topLeftCorner(K, K)     = P11;
-                    blk.Pz.bottomRightCorner(K, K) = P22;
-                    blk.Pz.topRightCorner(K, K)    = P12;
-                    blk.Pz.bottomLeftCorner(K, K)  = P12.transpose();
-                    blk.Pz = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
-                    Eigen::VectorXd blk_zhat = blk.zhat;
-                    out.push_back(std::move(blk));
-                    BlockMeta bm{g.key, std::move(fold_chords), verts, arcs_set,
-                                 std::move(blk_zhat), std::move(fold_carried)};
-                    bm.pair_band = 3;
-                    bm.lambda1 = g.lambda1;
-                    bm.lambda2 = g.lambda2;
-                    if (lin_on) {   // [band-1; band-2], matching the joint zhat layout (RS-2)
-                        bm.zl.resize(2 * K);
-                        for (Eigen::Index i = 0; i < K; ++i) {
-                            bm.zl(i)     = zl_rows[static_cast<std::size_t>(i)];
-                            bm.zl(K + i) = zl_rows2[static_cast<std::size_t>(i)];
-                        }
-                    }
-                    block_meta_.push_back(std::move(bm));
-                    ++counters_.components;
-                } else {
-                    // Two per-band K-row blocks, band 2 adjacent at b+1.  The fold sees the
-                    // same information as two per-band groups (block-diagonal, no B₁₂), so
-                    // the §6.1 equivalence gate can hold to summation order.
-                    NetworkNormalEquations::DdPriorBlock b1, b2;
-                    b1.rows = std::move(rows);
-                    b1.zhat = zhat1;
-                    b1.Pz   = (0.5 * (P11 + P11.transpose())).eval();
-                    b2.rows = std::move(rows2);
-                    b2.zhat = zhat2;
-                    b2.Pz   = (0.5 * (P22 + P22.transpose())).eval();
-                    out.push_back(std::move(b1));
-                    out.push_back(std::move(b2));
-                    BlockMeta m1{g.key, fold_chords, verts, arcs_set,
-                                 std::move(zhat1), std::move(fold_carried)};
-                    m1.pair_band = 1;
-                    m1.lambda1 = g.lambda1;
-                    m1.lambda2 = g.lambda2;
-                    BlockMeta m2{g.key, std::move(fold_chords), verts, arcs_set,
-                                 std::move(zhat2), std::move(fold_carried2)};
-                    m2.pair_band = 2;
-                    m2.lambda1 = g.lambda1;
-                    m2.lambda2 = g.lambda2;
-                    if (lin_on) {   // one K-vector per emitted half (RS-2)
-                        m1.zl = Eigen::Map<const Eigen::VectorXd>(
-                            zl_rows.data(), static_cast<Eigen::Index>(zl_rows.size()));
-                        m2.zl = Eigen::Map<const Eigen::VectorXd>(
-                            zl_rows2.data(), static_cast<Eigen::Index>(zl_rows2.size()));
-                    }
-                    block_meta_.push_back(std::move(m1));
-                    block_meta_.push_back(std::move(m2));
-                    counters_.components += 2;
-                }
+            // ---- Emission: one DD-prior block per component. ----
+            NetworkNormalEquations::DdPriorBlock blk;
+            {
+                ScopedAccum _bp(perf_timing_, &perf_timers_.basis_project_ms);
+                blk.rows = std::move(rows);
+                blk.zhat = (n_old > 0) ? (W * z_old).eval() : Eigen::VectorXd::Zero(K);
+                // Carried–carried joint = W Pᶻ_old Wᵀ (fresh rows/cols are zero from W=0);
+                // fresh chords get an independent diffuse prior on the diagonal.
+                blk.Pz = (n_old > 0) ? (W * Pz_old * W.transpose()).eval()
+                                     : Eigen::MatrixXd::Zero(K, K);
+                for (Eigen::Index i = 0; i < K; ++i)
+                    if (Wrows[static_cast<std::size_t>(i)].size() != n_old || n_old == 0)
+                        blk.Pz(i, i) += cfg_.fresh_prior_var;
+                blk.Pz = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
             }
+            applyRebase(blk.zhat, W, zl_old, zl_rows, fold_carried);   // re-base carried rows (RS-2)
+
+            Eigen::VectorXd blk_zhat = blk.zhat;   // prior means for the install-time innovation gate (D5)
+            out.push_back(std::move(blk));
+            BlockMeta bm0{g.key, std::move(fold_chords), verts,
+                          std::set<ArcKey>(arcs.begin(), arcs.end()),
+                          std::move(blk_zhat), std::move(fold_carried)};
+            if (lin_on)   // the linearization the installed means are relative to (RS-2)
+                bm0.zl = Eigen::Map<const Eigen::VectorXd>(zl_rows.data(),
+                                                           static_cast<Eigen::Index>(zl_rows.size()));
+            block_meta_.push_back(std::move(bm0));
+            ++counters_.components;
         }
     }
 
     // Splits: a previous block spread across ≥2 new components.  Marginalized: a
     // previous block that fed nothing this epoch (its arcs all died or re-referenced).
-    // A pair block counts twice, as it holds two per-band DDs per chord (WL-3).
     for (std::size_t p = 0; p < prev.size(); ++p) {
-        const long long ptally = prev[p].pair ? 2 : 1;
-        if (prev_hit[p] >= 2) counters_.splits += ptally;
+        if (prev_hit[p] >= 2) ++counters_.splits;
         if (prev_hit[p] == 0)
-            counters_.chords_marginalized += ptally * static_cast<long long>(prev[p].chords.size());
+            counters_.chords_marginalized += static_cast<long long>(prev[p].chords.size());
     }
     // Publish the re-base figures only from a build that re-based, so the run-end line keeps
     // the resume epoch's values instead of the zeros every later epoch would write over them
@@ -1209,222 +943,6 @@ bool NetworkInvariantCarryDriver::injectCarriedChord(
         return true;
     }
     return false;   // not a carried chord of `group` (cycle not 1:1); the caller skips and counts
-}
-
-void NetworkInvariantCarryDriver::seedCarriedPairForTest(
-    int group, const std::vector<ArcKey>& chords, const Eigen::VectorXd& z,
-    const Eigen::MatrixXd& Pz, double lambda1, double lambda2,
-    const std::set<int>& vertices, const std::set<ArcKey>& arcs) {
-    CarriedBlock cb;
-    cb.group = group;
-    cb.chords = chords;
-    cb.z = z;
-    cb.Pz = Pz;
-    cb.vertices = vertices;
-    cb.arcs = arcs;
-    cb.pair = true;
-    cb.lambda1 = lambda1;
-    cb.lambda2 = lambda2;
-    carried_.push_back(std::move(cb));
-}
-
-bool NetworkInvariantCarryDriver::carriedPairBlockForTest(
-    int group, std::vector<ArcKey>& chords, Eigen::VectorXd& z, Eigen::MatrixXd& Pz) const {
-    for (const CarriedBlock& cb : carried_) {
-        if (cb.group != group || !cb.pair) continue;
-        chords = cb.chords;
-        z = cb.z;
-        Pz = cb.Pz;
-        return true;
-    }
-    return false;
-}
-
-bool NetworkInvariantCarryDriver::carriedPairValue(
-    int group, const ArcKey& chord, double& z1, double& var1,
-    double& z2, double& var2) const {
-    for (const CarriedBlock& cb : carried_) {
-        if (cb.group != group || !cb.pair) continue;
-        auto it = std::find(cb.chords.begin(), cb.chords.end(), chord);
-        if (it == cb.chords.end()) continue;
-        const Eigen::Index K = static_cast<Eigen::Index>(cb.chords.size());
-        const Eigen::Index i = it - cb.chords.begin();
-        if (cb.z.size() != 2 * K) return false;   // defensive
-        z1   = cb.z(i);
-        var1 = cb.Pz(i, i);
-        z2   = cb.z(K + i);
-        var2 = cb.Pz(K + i, K + i);
-        return true;
-    }
-    return false;
-}
-
-bool NetworkInvariantCarryDriver::injectCarriedChordPair(
-    int group, const ArcKey& chord, double new_z1, double new_var1,
-    double new_z2, double new_var2) {
-    for (CarriedBlock& cb : carried_) {
-        if (cb.group != group || !cb.pair) continue;
-        auto it = std::find(cb.chords.begin(), cb.chords.end(), chord);
-        if (it == cb.chords.end()) continue;
-        const Eigen::Index K = static_cast<Eigen::Index>(cb.chords.size());
-        const Eigen::Index i = it - cb.chords.begin();
-        if (cb.z.size() != 2 * K) return false;   // defensive
-        const double keep1 = cb.Pz(i, i), keep2 = cb.Pz(K + i, K + i);
-        cb.z(i)     = new_z1;
-        cb.z(K + i) = new_z2;
-        cb.Pz.row(i).setZero();
-        cb.Pz.col(i).setZero();
-        cb.Pz.row(K + i).setZero();
-        cb.Pz.col(K + i).setZero();
-        cb.Pz(i, i)         = (new_var1 > 0.0) ? new_var1 : keep1;
-        cb.Pz(K + i, K + i) = (new_var2 > 0.0) ? new_var2 : keep2;
-        gate_exempt_.insert({ group, chord });   // D5-exempt (both band rows) at the next install (§3.3)
-        return true;
-    }
-    return false;
-}
-
-bool NetworkInvariantCarryDriver::applyLaneMeasurement(
-    std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
-    std::size_t b, std::size_t k, double y_cyc, double r_cyc2) {
-    if (b >= block_meta_.size() || b >= blocks.size()) return false;
-    BlockMeta& bm = block_meta_[b];
-    if (bm.pair_band != 3) return false;   // lane rows exist only on the joint lane shape
-    const Eigen::Index K = static_cast<Eigen::Index>(bm.chords.size());
-    if (static_cast<Eigen::Index>(k) >= K) return false;
-    if (!(r_cyc2 > 0.0) || !std::isfinite(y_cyc)) return false;
-    if (!(bm.lambda1 > 0.0 && bm.lambda2 > 0.0)) return false;
-    NetworkNormalEquations::DdPriorBlock& blk = blocks[b];
-    if (blk.zhat.size() != 2 * K || blk.Pz.rows() != 2 * K || blk.Pz.cols() != 2 * K)
-        return false;
-    // Times the dense rank-1 downdate (the irreducible O(K²)-per-row measurement work)
-    // separately from the basis projection that the SB_DDBUILD wall includes. (LF-1 INC-0)
-    ScopedAccum _lm(perf_timing_, &perf_timers_.lane_meas_ms);
-    // Scalar KF update on the block prior with the sparse WL functional
-    // h = +1/λ₁ at row k, −1/λ₂ at row K+k (correction frame, cycles).
-    const double a1 = 1.0 / bm.lambda1, a2 = 1.0 / bm.lambda2;
-    const Eigen::Index i1 = static_cast<Eigen::Index>(k), i2 = K + i1;
-    const Eigen::VectorXd Ph = a1 * blk.Pz.col(i1) - a2 * blk.Pz.col(i2);
-    const double S = a1 * Ph(i1) - a2 * Ph(i2) + r_cyc2;
-    if (!(S > 0.0) || !std::isfinite(S)) return false;
-    const double innov = y_cyc - (a1 * blk.zhat(i1) - a2 * blk.zhat(i2));
-    if (!std::isfinite(innov)) return false;
-    blk.zhat += (innov / S) * Ph;
-    blk.Pz   -= (Ph * Ph.transpose()) / S;
-    // The per-row re-symmetrize is required.  The rank-1 downdate keeps symmetry only to
-    // ULP, and the stiff q_z = 0 DD carry amplifies that asymmetry across epochs (dropping it
-    // moves the lane-on solution by ~1e-4 within four epochs).  With fold_blocked off it runs
-    // per row (byte-identical to the build before LF-1); with fold_blocked on it moves to one
-    // @ref finalizeLaneBatch pass per block (equivalence class, ≤1e-12 against sequential).
-    // (LF-1 INC-1)
-    if (!cfg_.fold_blocked)
-        blk.Pz = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
-    bm.zhat   = blk.zhat;   // the D5 innovation gate standardizes against the folded prior
-    if (perf_timing_) ++perf_timers_.lane_meas_calls;
-    return true;
-}
-
-int NetworkInvariantCarryDriver::applyLaneFix(
-    std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
-    std::size_t b, std::size_t k, long long w, double y_cyc, double sigma_cyc) {
-    if (b >= block_meta_.size() || b >= blocks.size()) return -1;
-    BlockMeta& bm = block_meta_[b];
-    if (bm.pair_band != 3 || k >= bm.chords.size()) return -1;
-    if (!(sigma_cyc > 0.0) || !std::isfinite(y_cyc)) return -1;
-    if (!(bm.lambda1 > 0.0 && bm.lambda2 > 0.0)) return -1;
-    const Eigen::Index K = static_cast<Eigen::Index>(bm.chords.size());
-    NetworkNormalEquations::DdPriorBlock& blk = blocks[b];
-    if (blk.zhat.size() != 2 * K || blk.Pz.rows() != 2 * K) return -1;
-
-    // Times the idempotent lane set (the re-pins of decided lanes, the rows that INC-1's
-    // O(K²)→O(K) sparse rewrite targets) apart from the measurement folds. (LF-1 INC-0)
-    ScopedAccum _lf(perf_timing_, &perf_timers_.lane_fix_ms);
-    if (perf_timing_) ++perf_timers_.lane_fix_calls;
-
-    // The fix is an idempotent lane-coordinate set, not a measurement fold.  On every
-    // decided epoch it re-centers the chord's WL lane coordinate on the integer, resets its
-    // variance to σ² and zeroes the coordinate's cross-covariances: a fresh independent
-    // assertion, PSD-safe, i.e. WL-2's inject semantics applied to the lane coordinate, with
-    // NL preserved by construction.  A measurement fold would accumulate per-epoch decisions
-    // that are not independent information (the F-A once-only rule); the set is idempotent
-    // in information.  Re-applying it while the decision is unchanged keeps the lane pinned
-    // against the q_wl re-loosening and the noisy MW increments; with fold-on-change alone,
-    // decided lanes drift back to MW quality.
-    const double a1 = 1.0 / bm.lambda1, a2 = 1.0 / bm.lambda2;
-    const double hn = std::sqrt(a1 * a1 + a2 * a2);   // ‖h‖: cycles per lane-coordinate meter
-    const Eigen::Index p = static_cast<Eigen::Index>(k), qq = K + static_cast<Eigen::Index>(k);
-    const double up = a1 / hn, uq = -a2 / hn;          // the unit lane direction's two nonzeros
-    const double target_coord = y_cyc / hn;            // correction-frame lane target (m)
-    const double sig_coord    = sigma_cyc / hn;
-    // z' = z + (t − uᵀz)·u;  P' = (I−uuᵀ)P(I−uuᵀ) + σ²·uuᵀ = P − Pu·uᵀ − u·Puᵀ + (uᵀPu+σ²)·uuᵀ.
-    if (!cfg_.fold_blocked) {
-        // Dense O(K²) form, byte-identical to the build before LF-1.
-        Eigen::VectorXd u = Eigen::VectorXd::Zero(2 * K);
-        u(p)  =  up;
-        u(qq) =  uq;
-        const Eigen::VectorXd Pu = blk.Pz * u;
-        const double uPu = u.dot(Pu);
-        if (!std::isfinite(uPu) || uPu < 0.0) return -1;
-        blk.zhat += (target_coord - u.dot(blk.zhat)) * u;
-        blk.Pz   += -Pu * u.transpose() - u * Pu.transpose()
-                  + (uPu + sig_coord * sig_coord) * (u * u.transpose());
-        blk.Pz    = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
-    } else {
-        // O(K) sparse set (LF-1 INC-1).  u has two nonzeros (rows p, qq), so Pu = P·u is a
-        // two-column combination rather than a dense GEMV, and ΔP = −Pu·uᵀ − u·Puᵀ + c·uuᵀ is
-        // nonzero only in rows/columns {p, qq}.  The two changed columns Mp = ΔP(:,p) and
-        // Mq = ΔP(:,qq) are written symmetrically (column plus mirrored row).  Pz stays exactly
-        // symmetric (ΔP is symmetric, so newp(qq) == newq(p)), and the per-row re-symmetrize
-        // moves to finalizeLaneBatch.  Same math as the dense branch up to fp reassociation.
-        const Eigen::VectorXd Pu = up * blk.Pz.col(p) + uq * blk.Pz.col(qq);
-        const double uPu = up * Pu(p) + uq * Pu(qq);
-        if (!std::isfinite(uPu) || uPu < 0.0) return -1;
-        const double c = uPu + sig_coord * sig_coord;
-        const double coef = target_coord - (up * blk.zhat(p) + uq * blk.zhat(qq));
-        blk.zhat(p)  += coef * up;
-        blk.zhat(qq) += coef * uq;
-        Eigen::VectorXd Mp = (-up) * Pu;   // ΔP(i,p)  = −Pu(i)·up  (+ the i∈{p,qq} terms below)
-        Eigen::VectorXd Mq = (-uq) * Pu;   // ΔP(i,qq) = −Pu(i)·uq  (+ the i∈{p,qq} terms below)
-        Mp(p)  += -up * Pu(p)  + c * up * up;   Mp(qq) += -uq * Pu(p)  + c * uq * up;
-        Mq(p)  += -up * Pu(qq) + c * up * uq;   Mq(qq) += -uq * Pu(qq) + c * uq * uq;
-        const Eigen::VectorXd newp = blk.Pz.col(p)  + Mp;
-        const Eigen::VectorXd newq = blk.Pz.col(qq) + Mq;
-        blk.Pz.col(p)  = newp;   blk.Pz.col(qq) = newq;
-        blk.Pz.row(p)  = newp.transpose();
-        blk.Pz.row(qq) = newq.transpose();
-    }
-    bm.zhat   = blk.zhat;   // the D5 gate standardizes against the prior after the set
-
-    const std::pair<int, ArcKey> key{ bm.group, bm.chords[k] };
-    const auto it = lane_fix_w_.find(key);
-    const bool changed = (it == lane_fix_w_.end() || it->second != w);
-    lane_fix_staged_[key] = w;   // committed at installPosterior (RAIM re-solve safe)
-    return changed ? 1 : 0;      // 1 = integer moved/new, 0 = re-pinned (unchanged)
-}
-
-bool NetworkInvariantCarryDriver::laneIncrementSkippable(std::size_t b, std::size_t k) const {
-    if (!cfg_.skip_pinned_increments) return false;   // off: never skip (byte-identical)
-    if (b >= block_meta_.size()) return false;
-    const BlockMeta& bm = block_meta_[b];
-    if (bm.pair_band != 3 || k >= bm.chords.size()) return false;   // lane rows only on joint blocks
-    const auto it = lane_fix_epoch_.find({ bm.group, bm.chords[k] });
-    if (it == lane_fix_epoch_.end()) return false;    // not committed-decided (or disturbed since)
-    return (install_epoch_index_ - it->second) <= cfg_.skip_pinned_within_n;   // within the grace window
-}
-
-void NetworkInvariantCarryDriver::finalizeLaneBatch(
-    std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) const {
-    if (!cfg_.fold_blocked) return;   // OFF: primitives symmetrized per-row (byte-identical)
-    // Restore exact symmetry once per joint block, after the epoch's MW / bridge / fix rows.
-    // This replaces the per-row 0.5·(P+Pᵀ) that the primitives skip under fold_blocked (they
-    // keep symmetry only to ULP).  Only joint pair blocks (pair_band == 3) receive lane rows.
-    const std::size_t n = std::min(blocks.size(), block_meta_.size());
-    for (std::size_t b = 0; b < n; ++b) {
-        if (block_meta_[b].pair_band != 3) continue;
-        Eigen::MatrixXd& P = blocks[b].Pz;
-        if (P.rows() != P.cols() || P.rows() == 0) continue;
-        P = (0.5 * (P + P.transpose())).eval();
-    }
 }
 
 bool NetworkInvariantCarryDriver::carriedCrossForTest(
@@ -1502,8 +1020,6 @@ void NetworkInvariantCarryDriver::installPosterior(
     // next epoch, the counters and carried_ are bit-identical to the serial install for any
     // thread count.  The serial path (n_threads == 1, the default) has its own install body
     // below; keep the two install bodies in lockstep.
-    // A D5-flagged pair chord loses its fold-on-change memory (it re-taps and has to earn
-    // its FFR fix again, §3.4); laneFixErase below does this for every install shape. (WL-3)
     // D5 v3 corroboration gate (Cfg::innov_corroborate).  Called only after a chord has
     // tripped the k·σ̂₀ test; returns true when the re-tap is to be suppressed.
     //
@@ -1574,16 +1090,9 @@ void NetworkInvariantCarryDriver::installPosterior(
         ++counters_.innov_born_skipped;
         return true;
     };
-    auto laneFixErase = [this](int group, const ArcKey& chord) {
-        if (!lane_fix_w_.empty())      lane_fix_w_.erase({group, chord});
-        if (!lane_fix_staged_.empty()) lane_fix_staged_.erase({group, chord});
-        if (!lane_fix_epoch_.empty())  lane_fix_epoch_.erase({group, chord});  // a D5 flag resumes increments (LF-1 INC-2)
-    };
-    // Per-chord D5 gate over one emitted per-band block, writing into @p cb at rows
-    // [off, off+K).  A per-band group calls it with off = 0; a split pair component (WL-3)
-    // calls it once per band half of the stitched pair block, with off = 0 and off = K.
-    auto d5GateHalf = [&](const BlockMeta& bm, const Eigen::VectorXd& v,
-                          const Eigen::MatrixXd& cov_v, CarriedBlock& cb, Eigen::Index off) {
+    // Per-chord D5 gate over one emitted block, writing into @p cb row by row.
+    auto d5Gate = [&](const BlockMeta& bm, const Eigen::VectorXd& v,
+                      const Eigen::MatrixXd& cov_v, CarriedBlock& cb) {
         const Eigen::Index K = static_cast<Eigen::Index>(bm.chords.size());
         const bool have_carried = static_cast<Eigen::Index>(bm.chord_carried.size()) == K;
         if (!(v.size() == K && cov_v.rows() == K && cov_v.cols() == K && bm.zhat.size() == K))
@@ -1607,68 +1116,12 @@ void NetworkInvariantCarryDriver::installPosterior(
                              v(i) * v(i), var))
                 continue;
             // Inside the post-resume warm-up a trip is only recorded.  The flag is recorded
-            // (so it reaches the CSV and the epoch's n_d5_flags) and counted, ẑ, Pᶻ and the
-            // lane fix are left alone, and the warm-up mark tells the caller to keep the arc
-            // out of the slip funnel.  innov_retaps is not incremented: N flags with 0 re-taps
+            // (so it reaches the CSV and the epoch's n_d5_flags) and counted, ẑ and Pᶻ are
+            // left alone, and the warm-up mark tells the caller to keep the arc out of the
+            // slip funnel.  innov_retaps is not incremented: N flags with 0 re-taps
             // shows that the window was open. (RS-2b)
             if (cfg_.innov_diagnostic_only) {
                 last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
-                last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
-                last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(off + i)});
-                last_innov_warmup_.push_back(1);
-                ++counters_.innov_flags;
-                ++counters_.d5_warmup_suppressed;
-                continue;
-            }
-            cb.z(off + i) = bm.zhat(i) + v(i);
-            cb.Pz.row(off + i).setZero();
-            cb.Pz.col(off + i).setZero();
-            cb.Pz(off + i, off + i) = sigma0 * sigma0 * var;
-            last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
-            last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
-            last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(off + i)});
-            last_innov_warmup_.push_back(0);
-            ++counters_.innov_flags;
-            ++counters_.innov_retaps;
-            laneFixErase(bm.group, bm.chords[static_cast<std::size_t>(i)]);
-        }
-    };
-    // Per-chord D5 gate over a joint 2K pair block, applied per band row as in d5GateHalf
-    // (row i < K is band 1 of chord i, row K+i band 2 of chord i).  The exemption and the
-    // σ̂₀ carried flag are keyed by the graph chord, the same for both bands. (WL-3)
-    auto d5GateJoint = [&](const BlockMeta& bm, const Eigen::VectorXd& v,
-                           const Eigen::MatrixXd& cov_v, CarriedBlock& cb) {
-        const Eigen::Index K  = static_cast<Eigen::Index>(bm.chords.size());
-        const Eigen::Index K2 = 2 * K;
-        const bool have_carried = static_cast<Eigen::Index>(bm.chord_carried.size()) == K;
-        if (!(v.size() == K2 && cov_v.rows() == K2 && cov_v.cols() == K2 && bm.zhat.size() == K2))
-            return;
-        for (Eigen::Index i = 0; i < K2; ++i) {
-            const Eigen::Index c = (i < K) ? i : i - K;
-            const double var = cov_v(i, i);
-            // Counted as in d5GateHalf: an inert (degenerate) fold's Cov(v) has non-positive
-            // diagonals, and every affected row is skipped. (PD-safe INC-0)
-            if (!(var > 0.0)) { ++counters_.d5_nonpos_var_rows; continue; }
-            if (gate_exempt_.count({ bm.group, bm.chords[static_cast<std::size_t>(c)] }))
-                continue;   // a pair inject's exemption spans both band rows
-            if (inflation_ && (!have_carried || bm.chord_carried[static_cast<std::size_t>(c)]))
-                inflation_->addRow(kInflationFamily, kInflationSat,
-                                   v(i) / std::sqrt(var), /*gap_s=*/0.0,
-                                   /*post_var=*/0.0, /*fold_var=*/1.0);
-            if (bornSkipped(have_carried, bm.chord_carried,
-                            static_cast<std::size_t>(c), var)) continue;
-            if (v(i) * v(i) <= k2f * var) continue;
-            // A pair chord's corroboration is keyed by the graph chord, so both band rows are
-            // suppressed together, as with gate_exempt_ above.  Splitting them would re-tap
-            // one band of a continuous pair and leave the other carried. (WL-3)
-            if (d5Suppressed(bm.group, bm.chords[static_cast<std::size_t>(c)],
-                             v(i) * v(i), var))
-                continue;
-            // Diagnostic-only window, as in d5GateHalf (RS-2b).  Decided per band row, like
-            // every other decision in this body; the funnel mask is keyed by the graph
-            // chord either way, so a pair whose two rows differ still leaves the arc unmarked.
-            if (cfg_.innov_diagnostic_only) {
-                last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(c)]);
                 last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
                 last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(i)});
                 last_innov_warmup_.push_back(1);
@@ -1680,13 +1133,12 @@ void NetworkInvariantCarryDriver::installPosterior(
             cb.Pz.row(i).setZero();
             cb.Pz.col(i).setZero();
             cb.Pz(i, i) = sigma0 * sigma0 * var;
-            last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(c)]);
+            last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
             last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
             last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(i)});
             last_innov_warmup_.push_back(0);
             ++counters_.innov_flags;
             ++counters_.innov_retaps;
-            laneFixErase(bm.group, bm.chords[static_cast<std::size_t>(c)]);
         }
     };
     // --- Degenerate-block rebirth (PD-safe INC-2a, SPEC §5a) -------------------------
@@ -1705,16 +1157,15 @@ void NetworkInvariantCarryDriver::installPosterior(
     // diagonals, so the gate skipped those rows (counted), and any row it could test keeps
     // its data-only mean while the covariance is re-seeded uniformly.
     //
-    // The fresh diagonal is isotropic even on a pair block: the lane-shaped fresh prior
-    // (@c sigma_wl_fresh_cyc) belongs to buildDdPriors, and an isotropic diffuse reset is the
-    // conservative choice for a block just declared unusable.  A rebirth is a prior reset,
-    // not a slip; the slip funnel is not touched.
-    auto rebirthBand = [this](CarriedBlock& cb, Eigen::Index off, Eigen::Index n,
-                              std::size_t b, const BlockMeta& bm, double min_pivot_rel) {
-        if (n <= 0 || cb.Pz.rows() < off + n || cb.Pz.cols() < off + n) return;
-        cb.Pz.middleRows(off, n).setZero();
-        cb.Pz.middleCols(off, n).setZero();
-        cb.Pz.block(off, off, n, n).diagonal().setConstant(cfg_.fresh_prior_var);
+    // The fresh diagonal is the isotropic diffuse prior, the conservative choice for a block
+    // just declared unusable.  A rebirth is a prior reset, not a slip; the slip funnel is
+    // not touched.
+    auto rebirthBlock = [this](CarriedBlock& cb, std::size_t b, const BlockMeta& bm,
+                               double min_pivot_rel) {
+        const Eigen::Index n = cb.Pz.rows();
+        if (n <= 0 || cb.Pz.cols() < n) return;
+        cb.Pz.setZero();
+        cb.Pz.diagonal().setConstant(cfg_.fresh_prior_var);
         FoldRebirth fr;
         fr.block         = b;
         fr.group         = bm.group;
@@ -1735,34 +1186,6 @@ void NetworkInvariantCarryDriver::installPosterior(
         return b < est.numDdPriorBlocks() ? est.ddPriorBlockMinPivotRel(b) : 0.0;
     };
 
-    // Commit this epoch's staged fold-on-change decisions and purge the memory of chords no
-    // longer carried as pair chords.  A D5 flag above has already erased its chord from both
-    // maps, so a flag takes precedence over a fix.  No-op (no allocation, no fp) on the
-    // per-band path. (WL-3)
-    auto laneFixCommit = [this]() {
-        if (lane_fix_staged_.empty() && lane_fix_w_.empty()) return;
-        // Stamp each re-decided chord with this epoch's index (the skip grace clock).  Only
-        // staged (re-decided) chords advance; a held chord that was not re-decided keeps its
-        // old stamp, so the grace window can expire and increments resume.  Gated on the
-        // toggle, so lane_fix_epoch_ stays empty (no map cost) when INC-2 is off. (LF-1 INC-2)
-        if (cfg_.skip_pinned_increments)
-            for (const auto& [key, w] : lane_fix_staged_)
-                lane_fix_epoch_[key] = install_epoch_index_;
-        for (const auto& [key, w] : lane_fix_staged_) lane_fix_w_[key] = w;
-        lane_fix_staged_.clear();
-        std::set<std::pair<int, ArcKey>> live;
-        for (const auto& bm : block_meta_)
-            if (bm.pair_band == 1 || bm.pair_band == 3)
-                for (const auto& c : bm.chords) live.insert({bm.group, c});
-        for (auto it = lane_fix_w_.begin(); it != lane_fix_w_.end(); ) {
-            if (live.count(it->first)) ++it;
-            else it = lane_fix_w_.erase(it);
-        }
-        // Prune the epoch clock in lockstep (a chord no longer carried resumes increments if reborn).
-        for (auto it = lane_fix_epoch_.begin(); it != lane_fix_epoch_.end(); )
-            it = live.count(it->first) ? std::next(it) : lane_fix_epoch_.erase(it);
-    };
-
     if (n_threads > 1) {
         const std::size_t NB = block_meta_.size();
         struct InstallSlot {
@@ -1774,9 +1197,7 @@ void NetworkInvariantCarryDriver::installPosterior(
         std::vector<InstallSlot> slots(NB);
 
         // (1, parallel over block index) Const readouts into per-block slots only.  The
-        // driver pins Eigen to one thread, so there is no nested threading.  A pair
-        // component's split halves or joint block read like any other block; the stitching
-        // stays in the serial phase.
+        // driver pins Eigen to one thread, so there is no nested threading.
         #pragma omp parallel for schedule(dynamic) num_threads(n_threads)
         for (long long bi = 0; bi < static_cast<long long>(NB); ++bi) {
             const std::size_t b = static_cast<std::size_t>(bi);
@@ -1801,63 +1222,17 @@ void NetworkInvariantCarryDriver::installPosterior(
         next.reserve(NB);
         for (std::size_t b = 0; b < NB; ++b) {
             const BlockMeta& bm = block_meta_[b];
-            if (bm.pair_band == 2) continue;   // stitched with its band-1 sibling at b-1 (WL-3)
             InstallSlot& S = slots[b];
             const Eigen::Index K = static_cast<Eigen::Index>(bm.chords.size());
-            if (bm.pair_band == 0) {
-                if (cfg_.innov_gate && K > 0 && S.has_innov)
-                    d5GateHalf(bm, S.v, S.cov_v, S.cb, 0);
-                if (cfg_.pd_safe && K > 0 && foldDegenerate(b))   // rebirth (INC-2a)
-                    rebirthBand(S.cb, 0, S.cb.Pz.rows(), b, bm, foldMinPivot(b));
-                next.push_back(std::move(S.cb));
-                continue;
-            }
-            // Pair component: stitch the joint carried block. (WL-3)
-            CarriedBlock cb;
-            cb.group    = bm.group;
-            cb.chords   = bm.chords;
-            cb.vertices = bm.vertices;
-            cb.arcs     = bm.arcs;
-            cb.pair     = true;
-            cb.lambda1  = bm.lambda1;
-            cb.lambda2  = bm.lambda2;
-            if (bm.pair_band == 1 && b + 1 < NB && block_meta_[b + 1].pair_band == 2) {
-                InstallSlot& S2 = slots[b + 1];
-                cb.z.resize(2 * K);
-                cb.z << S.cb.z, S2.cb.z;
-                if (S.cb.zl.size() == K && S2.cb.zl.size() == K) {   // same [b1; b2] layout (RS-2)
-                    cb.zl.resize(2 * K);
-                    cb.zl << S.cb.zl, S2.cb.zl;
-                }
-                cb.Pz = Eigen::MatrixXd::Zero(2 * K, 2 * K);   // cross-band coupling zeroed (§6.1)
-                cb.Pz.topLeftCorner(K, K)     = S.cb.Pz;
-                cb.Pz.bottomRightCorner(K, K) = S2.cb.Pz;
-                if (cfg_.innov_gate && K > 0) {
-                    if (S.has_innov)  d5GateHalf(bm, S.v, S.cov_v, cb, 0);
-                    if (S2.has_innov) d5GateHalf(block_meta_[b + 1], S2.v, S2.cov_v, cb, K);
-                }
-                if (cfg_.pd_safe && K > 0) {   // each emitted half is screened separately (INC-2a)
-                    if (foldDegenerate(b))     rebirthBand(cb, 0, K, b, bm, foldMinPivot(b));
-                    if (foldDegenerate(b + 1)) rebirthBand(cb, K, K, b + 1,
-                                                           block_meta_[b + 1],
-                                                           foldMinPivot(b + 1));
-                }
-            } else {   // pair_band == 3: the joint lane-shape block (coupling retained)
-                cb.z  = std::move(S.cb.z);
-                cb.zl = std::move(S.cb.zl);   // already the joint 2K layout (RS-2)
-                cb.Pz = std::move(S.cb.Pz);
-                if (cfg_.innov_gate && K > 0 && S.has_innov)
-                    d5GateJoint(bm, S.v, S.cov_v, cb);
-                if (cfg_.pd_safe && K > 0 && foldDegenerate(b))   // whole joint 2K block (INC-2a)
-                    rebirthBand(cb, 0, cb.Pz.rows(), b, bm, foldMinPivot(b));
-            }
-            next.push_back(std::move(cb));
+            if (cfg_.innov_gate && K > 0 && S.has_innov)
+                d5Gate(bm, S.v, S.cov_v, S.cb);
+            if (cfg_.pd_safe && K > 0 && foldDegenerate(b))   // rebirth (INC-2a)
+                rebirthBlock(S.cb, b, bm, foldMinPivot(b));
+            next.push_back(std::move(S.cb));
         }
         carried_.swap(next);
         gate_exempt_.clear();   // the one-epoch inject exemption is consumed here (WL-2 §3.3)
         innov_flat_.clear();    // the one-epoch corroboration set is consumed here (D5 v3)
-        laneFixCommit();        // fold-on-change memory commits on the accepted epoch (WL-3 §3.3)
-        ++install_epoch_index_; // advance the skip grace clock, accepted installs only (LF-1 INC-2)
         counters_.z_dim = static_cast<long long>(totalZDim());
         if (counters_.z_dim > counters_.max_z_dim) counters_.max_z_dim = counters_.z_dim;  // INC-C0
         return;
@@ -1869,7 +1244,6 @@ void NetworkInvariantCarryDriver::installPosterior(
     if (perf_timing_) ++perf_timers_.install_epochs;   // INC-C0
     for (std::size_t b = 0; b < block_meta_.size(); ++b) {
         const BlockMeta& bm = block_meta_[b];
-        if (bm.pair_band == 2) continue;   // stitched with its band-1 sibling at b-1 (WL-3)
         CarriedBlock cb;
         cb.group    = bm.group;
         cb.chords   = bm.chords;
@@ -1877,75 +1251,6 @@ void NetworkInvariantCarryDriver::installPosterior(
         cb.arcs     = bm.arcs;
         cb.zl       = bm.zl;   // the frame the installed means are relative to (RS-2)
         const Eigen::Index K = static_cast<Eigen::Index>(bm.chords.size());
-
-        if (bm.pair_band == 1 && b + 1 < block_meta_.size()
-            && block_meta_[b + 1].pair_band == 2) {
-            // --- Split pair (WL-3 §6.1): stitch two per-band posteriors into the joint
-            // [band-1; band-2] carried block with the cross-band coupling zeroed, the
-            // equivalence shape that carries the same information as two per-band groups.
-            // D5 gates each emitted half in (b, b+1) row order, the per-band call sequence.
-            const BlockMeta& bm2 = block_meta_[b + 1];
-            cb.pair    = true;
-            cb.lambda1 = bm.lambda1;
-            cb.lambda2 = bm.lambda2;
-            Eigen::VectorXd z1, z2;
-            Eigen::MatrixXd P1, P2;
-            { ScopedAccum _pm(perf_timing_, &perf_timers_.post_mean_ms);
-              z1 = est.ddPriorPosteriorMean(b, x_s);
-              z2 = est.ddPriorPosteriorMean(b + 1, x_s); }
-            { ScopedAccum _pc(perf_timing_, &perf_timers_.post_cov_ms);
-              P1 = est.ddPriorPosteriorCovariance(b, cov_free);
-              P2 = est.ddPriorPosteriorCovariance(b + 1, cov_free); }
-            cb.z.resize(2 * K);
-            cb.z << z1, z2;
-            if (bm.zl.size() == K && bm2.zl.size() == K) {   // same [b1; b2] layout (RS-2)
-                cb.zl.resize(2 * K);
-                cb.zl << bm.zl, bm2.zl;
-            } else {
-                cb.zl.resize(0);
-            }
-            cb.Pz = Eigen::MatrixXd::Zero(2 * K, 2 * K);
-            cb.Pz.topLeftCorner(K, K)     = P1;
-            cb.Pz.bottomRightCorner(K, K) = P2;
-            if (cfg_.innov_gate && K > 0) {
-                ScopedAccum _d5(perf_timing_, &perf_timers_.d5_gate_ms);
-                Eigen::VectorXd v;
-                Eigen::MatrixXd cov_v;
-                est.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
-                d5GateHalf(bm, v, cov_v, cb, 0);
-                est.ddPriorInnovation(b + 1, x_s, cov_free, v, cov_v);
-                d5GateHalf(bm2, v, cov_v, cb, K);
-            }
-            if (cfg_.pd_safe && K > 0) {   // each emitted half is screened separately (INC-2a)
-                if (foldDegenerate(b))     rebirthBand(cb, 0, K, b, bm, foldMinPivot(b));
-                if (foldDegenerate(b + 1)) rebirthBand(cb, K, K, b + 1, bm2,
-                                                       foldMinPivot(b + 1));
-            }
-            next.push_back(std::move(cb));
-            continue;
-        }
-        if (bm.pair_band == 3) {
-            // --- Lane shape (WL-3): the joint 2K posterior with the cross-band coupling
-            // retained (the jointly covarianced pair, §2); D5 runs per band row.
-            cb.pair    = true;
-            cb.lambda1 = bm.lambda1;
-            cb.lambda2 = bm.lambda2;
-            { ScopedAccum _pm(perf_timing_, &perf_timers_.post_mean_ms);
-              cb.z  = est.ddPriorPosteriorMean(b, x_s); }
-            { ScopedAccum _pc(perf_timing_, &perf_timers_.post_cov_ms);
-              cb.Pz = est.ddPriorPosteriorCovariance(b, cov_free); }
-            if (cfg_.innov_gate && K > 0) {
-                ScopedAccum _d5(perf_timing_, &perf_timers_.d5_gate_ms);
-                Eigen::VectorXd v;
-                Eigen::MatrixXd cov_v;
-                est.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
-                d5GateJoint(bm, v, cov_v, cb);
-            }
-            if (cfg_.pd_safe && K > 0 && foldDegenerate(b))   // whole joint 2K block (INC-2a)
-                rebirthBand(cb, 0, cb.Pz.rows(), b, bm, foldMinPivot(b));
-            next.push_back(std::move(cb));
-            continue;
-        }
 
         { ScopedAccum _pm(perf_timing_, &perf_timers_.post_mean_ms);   // INC-C0
           cb.z  = est.ddPriorPosteriorMean(b, x_s); }
@@ -1962,23 +1267,21 @@ void NetworkInvariantCarryDriver::installPosterior(
         // (group, chord) is recorded so the caller marks its arc into the next epoch's slip
         // funnel (the C3c re-tap).  With the gate off the posterior is installed
         // unconditionally (byte-identical to the C3c path).  The per-chord body is
-        // d5GateHalf at offset 0, shared with the parallel path and the pair shapes above.
+        // d5Gate, shared with the parallel path.
         if (cfg_.innov_gate && K > 0) {
             ScopedAccum _d5(perf_timing_, &perf_timers_.d5_gate_ms);   // INC-C0
             Eigen::VectorXd v;
             Eigen::MatrixXd cov_v;
             est.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
-            d5GateHalf(bm, v, cov_v, cb, 0);
+            d5Gate(bm, v, cov_v, cb);
         }
         if (cfg_.pd_safe && K > 0 && foldDegenerate(b))   // rebirth (INC-2a)
-            rebirthBand(cb, 0, cb.Pz.rows(), b, bm, foldMinPivot(b));
+            rebirthBlock(cb, b, bm, foldMinPivot(b));
         next.push_back(std::move(cb));
     }
     carried_.swap(next);
     gate_exempt_.clear();   // the one-epoch inject exemption is consumed here (WL-2 §3.3)
     innov_flat_.clear();    // the one-epoch corroboration set is consumed here (D5 v3)
-    laneFixCommit();        // fold-on-change memory commits on the accepted epoch (WL-3 §3.3)
-    ++install_epoch_index_; // advance the skip grace clock, accepted installs only (LF-1 INC-2)
     counters_.z_dim = static_cast<long long>(totalZDim());
     if (counters_.z_dim > counters_.max_z_dim) counters_.max_z_dim = counters_.z_dim;  // INC-C0
 }

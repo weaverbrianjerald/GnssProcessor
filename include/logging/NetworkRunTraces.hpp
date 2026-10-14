@@ -977,19 +977,19 @@ namespace GnssProcessor {
         /// through this handle.
         ///
         /// Opened by @ref openMwWlDumps, not openAll(): its arming expression
-        /// (@c (ewl_on||wl_inject_on||lane_on) && nmw.d5_dump && carry_innov_gate) is
+        /// (@c (ewl_on||wl_inject_on) && nmw.d5_dump && carry_innov_gate) is
         /// derived in the run TU after openAll() runs, and re-deriving it here would
         /// drift out of step with the driver.  The lifecycle matches every other
         /// stream: one truncating open with the header per run, before the epoch loop.
         std::ofstream d5_flags_trace;
         const std::filesystem::path d5_flags_trace_path;
-        /// WL lane trace (@c network.mw_wl.lane_trace; cards WL-2/WL-3, F-B): per epoch,
+        /// WL lane trace (@c network.mw_wl.lane_trace; card WL-2, F-B): per epoch,
         /// the post-install carried WL lane value of every primary cycle carried in both
         /// bands, with the decided/held/injected tags.  The constrained and
         /// unconstrained populations share one file, so an injected cycle's circular R
         /// can be graded (@c scripts/grade_lane_trace.py).  Log-only.  Opened by
         /// @ref openMwWlDumps for the same reason as @ref d5_flags_trace (arming
-        /// expression @c (wl_inject_on||lane_fix_on) && nmw.lane_trace).
+        /// expression @c wl_inject_on && nmw.lane_trace).
         std::ofstream wl_lane_trace;
         const std::filesystem::path wl_lane_trace_path;
         /// Arc lifecycle trace (card SID phase 1; @c network.signal_roster): one row per

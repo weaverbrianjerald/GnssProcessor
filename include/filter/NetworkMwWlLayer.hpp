@@ -213,13 +213,12 @@ private:
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the MW/WL lanes: EWL, the WL inject, UWL, WL-3.
+ * @brief Run-end report: the MW/WL lanes: EWL, the WL inject, UWL.
  *
- * The MW/WL lanes: the EWL lanes, the WL inject, the UWL walk and the WL-3
- * lane-coordinate carry.
+ * The MW/WL lanes: the EWL lanes, the WL inject and the UWL walk.
  *
  * Gate: each section under its own condition, as in the teardown: `ewl_on`;
- * `wl_inject_on`; `uwl_on && (wl_inject_on || lane_on)`; `lane_on`.
+ * `wl_inject_on`; `uwl_on && wl_inject_on`.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).

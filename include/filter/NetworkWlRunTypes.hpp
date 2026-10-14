@@ -49,13 +49,6 @@ struct WlCounters {
     long long skip_quarantine{0};    ///< an arc's |x_lin| exceeded lane_max_abs_xlin_m.
     long long skip_basis{0};         ///< inject skipped: the chord is not 1:1 across both bands' carry groups, or the carry refused the edit.
     double    sum_bridge_R{0.0};     ///< Σ decided rows' bridge R (cyc²) for the mean-R report.
-    // --- Lane-carry telemetry (WL-3; SPEC_lane_carry_card.md §3.2/§3.3). ---
-    long long lane_mw_rows{0};       ///< per-epoch MW(1,2) lane increments folded into pair blocks.
-    long long lane_bridge_rows{0};   ///< per-epoch bridge lane increments folded (EWL-fixed cycles).
-    long long lane_fix_folded{0};    ///< fold-on-change FFR fixes folded (decision new or changed).
-    long long lane_fix_unchanged{0}; ///< FFR decisions seen with an unchanged integer; not folded, since each decision folds once (F-A).
-    long long lane_skip_meas{0};     ///< lane-increment cycles skipped (immature/stale/mixed-frame/slipped arc/quarantine).
-    long long lane_pinned_skips{0};  ///< MW/bridge increments skipped because the chord's lane is committed-pinned (laneIncrementSkippable); 0 means the skip never fired (invariant #4).  (LF-1 INC-2)
     // --- Cold-fix telemetry (UWL-1; SPEC_uwl_card.md §3.3). ---
     long long cold_bridge_cycles{0}; ///< decided cycles whose bridge read was the unlagged cold serve (early re-pin after a slip).
     // --- Mid-ladder hop telemetry (E6; uwl_mid_enable). ---
@@ -79,7 +72,6 @@ struct WlInjectPlan {
     double w{0.0};                 ///< integer WL DD target ∇ΔN_WL (cyc).
     double z_lin1{0.0}, z_lin2{0.0};///< Σ coeff·x_lin per band over the cycle (m).
     double lambda1{0.0}, lambda2{0.0};
-    bool   pair{false};            ///< group_l1 (== group_l2) is a pair group, read and edited through the pair accessors (the fallback path; about 0 in steady state).  (WL-3)
     char   cons{'\0'};             ///< the chord's constellation, for per-cons inject telemetry (UWL-1).
 };
 

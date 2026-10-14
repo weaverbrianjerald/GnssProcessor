@@ -695,22 +695,6 @@ int Application::runNetwork() {
     carry_cfg.carry_lin    = carry_invariant
                              && config_.getNetworkConfig().state_snapshot_carry_lin;
     carry_cfg.carry_rebase = carry_invariant && config_.networkResumeCarryRebase();
-    // Lane-coordinate carry (card M5 WL-3).  lane_on and lane_joint (the lane shape as
-    // against the §6.1 equivalence shape) are resolved in NetworkKnobs::snapshot.
-    const auto& lane_cfg = config_.getNetworkConfig().lane_carry;
-    const bool lane_on = ctx.knobs.lane_on;
-    const bool lane_joint = ctx.knobs.lane_joint;
-    if (lane_on) {
-        carry_cfg.q_wl_scale         = lane_cfg.q_wl_scale;
-        carry_cfg.sigma_wl_fresh_cyc = lane_cfg.sigma_wl_fresh_cyc;
-        carry_cfg.lane_joint         = lane_joint;
-        // The optimized fold shape.  Inert unless lane_joint (the only shape with
-        // lane rows); the driver primitives + finalizeLaneBatch key off carry_cfg.fold_blocked.
-        carry_cfg.fold_blocked       = lane_joint && lane_cfg.fold_blocked;
-        // Pinned-cycle increment skip (also inert unless lane_joint).
-        carry_cfg.skip_pinned_increments = lane_joint && lane_cfg.skip_pinned_increments;
-        carry_cfg.skip_pinned_within_n   = lane_cfg.skip_pinned_within_n;
-    }
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
     // With the EWL lane armed (card M5 WL-2, ctx.knobs.ewl_on), the constellation's third
     // band (the EWL pair's uncarried leg: GPS L5, Galileo E5b) is excluded from the
@@ -2282,10 +2266,6 @@ int Application::runNetwork() {
         // the next epoch's slip funnel.  Rebuilt with the blocks each buildCarryDdPriors call
         // (the last call before the solve is authoritative).  Empty unless carry_innov_gate.
         std::map<int, std::map<ArcKey, std::string>> carry_arc_amb_key;
-        // The pair groups' band-2 ambiguity keys, parallel to carry_arc_amb_key
-        // (band 1).  A D5 flag on a pair chord feeds both bands into the slip funnel
-        // (§3.4 union refloat).  Empty unless lane_carry and carry_innov_gate are both on.
-        std::map<int, std::map<ArcKey, std::string>> carry_arc_amb_key2;
 
         // --- Arc-resumption bridge classification.  Instrumentation only: nothing
         //     below changes a decision.  Of the arcs that came back after a tracking
@@ -2310,23 +2290,6 @@ int Application::runNetwork() {
         //     effect as a structural zero.  It reads the arm that collects its
         //     population (SlipQcParams::collectsResumptions).
         if (slip_qc.params.collectsResumptions() && !slip_qc.epoch.resumptions.empty()) {
-            // Whether this carry_group_id key's signal component covers `sig`.  Under
-            // the WL-3 lane shape a paired arc lives in a group keyed "<sigA>+<sigB>",
-            // not in its per-band group, so a per-band-only lookup would report every
-            // paired arc as un-bridged (a false negative on the question this
-            // classification answers).
-            auto groupCoversSignal = [](const std::string& gsig, const std::string& sig) {
-                if (gsig == sig) return true;
-                std::size_t p = 0;
-                while (p <= gsig.size()) {
-                    const std::size_t q = gsig.find('+', p);
-                    const std::size_t e = (q == std::string::npos) ? gsig.size() : q;
-                    if (gsig.compare(p, e - p, sig) == 0) return true;
-                    if (q == std::string::npos) break;
-                    p = q + 1;
-                }
-                return false;
-            };
             for (const auto& g : slip_qc.epoch.resumptions) {
                 const int i = g.station;
                 if (i < 0 || i >= static_cast<int>(stations.size())) continue;
@@ -2368,7 +2331,7 @@ int Application::runNetwork() {
                     if (carry_invariant && svit != carry_sat_vertex.end() && cons != '\0') {
                         for (const auto& [gkey, gid] : carry_group_id) {
                             if (gkey.first != cons || gid == 0) continue;
-                            if (!groupCoversSignal(gkey.second, sig)) continue;
+                            if (gkey.second != sig) continue;   // the per-band group of `sig`
                             double zg = 0.0, vg = 0.0;
                             if (carry_driver.carriedChordValue(gid, ArcKey(i, svit->second),
                                                                zg, vg)) {
@@ -2436,7 +2399,7 @@ int Application::runNetwork() {
         auto buildCarryDdPriors = [&]() {
             networkBuildCarryDdPriors(ctx, config_, log, traces, carry_driver, est, stations, asm_res,
                                       est_index_of, present, shared_phase_keys, se, carry_arc_amb_key,
-                                      carry_arc_amb_key2, carry_slipped_ambs, carry_slipped_raw,
+                                      carry_slipped_ambs, carry_slipped_raw,
                                       ws.we_culprits, n_threads, lane_run, isUncarriedThirdBand);
         };
         subEnd(SB_GAUGEBUILD);   // close gauge build and carry-driver setup (D0b)
@@ -2489,7 +2452,7 @@ int Application::runNetwork() {
         // start).  No-op when off.
         if (carry_invariant) {
             networkInstallCarry(ctx, config_, log, traces, carry_driver, est, x_s, plan, se, stations,
-                                slip_qc, carry_arc_amb_key, carry_arc_amb_key2, carry_par,
+                                slip_qc, carry_arc_amb_key, carry_par,
                                 n_threads, seam_threads, lane_run);
         }
         subEnd(SB_INSTALL);     // close installPosterior, the card-4 posterior readback (D0b)

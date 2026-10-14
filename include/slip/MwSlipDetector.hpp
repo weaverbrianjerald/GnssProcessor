@@ -670,43 +670,6 @@ namespace GnssProcessor {
                               const std::string& sig2) const;
 
         /**
-         * @brief A per-arc lagged per-epoch MW sample in the ZD-consistent frame: the
-         *        per-epoch increment source of the lane-coordinate carry (WL-3).
-         *
-         * This is not the Welford mean (@ref arcZdMean): under the lane-coordinate
-         * carry the estimator owns the accumulation, so each epoch's raw sample must
-         * enter exactly once.  The served value is the raw MW of the arc's previous
-         * processed epoch, with the same one-epoch lag as @c mean_lag (F1), so a
-         * same-epoch consumer never re-ingests the observations the estimator is
-         * folding this epoch.  @c var_m2 is the per-sample Welford variance
-         * M2_lag/(n_lag−1) (m²): the per-epoch noise, not the variance of the mean.
-         * For a reconstructed SD arc the value adds the group pivot's own lagged raw
-         * sample, and the variance adds both arcs' per-sample variances (conservative,
-         * because the common pivot term cancels in a closed DD cycle).  The
-         * reconstruction requires the arc and its pivot to have sampled the same
-         * epoch (checked via @c epoch_s, else @c valid=false).
-         */
-        struct MwArcZdLast {
-            double      value_m{ std::numeric_limits<double>::quiet_NaN() };  ///< ZD-consistent lagged raw MW sample (m).
-            double      var_m2{ std::numeric_limits<double>::quiet_NaN() };   ///< Per-sample Welford variance (m²); conservative for SD-reconstructed arcs.
-            double      epoch_s{ 0.0 };                                       ///< Continuous GPS seconds at which the sample was taken; the caller's cycle-consistency guard (all arcs of a DD cycle must share it).
-            std::size_t count{ 0 };                                           ///< Lagged Welford sample count backing @c var_m2.
-            double      lambda_wl{ 0.0 };                                     ///< Cached wide-lane wavelength (m).
-            bool        bia_corrected{ false };                               ///< Frame flag; mixed-frame cycles must be skipped (as in @ref MwArcZdMean).
-            bool        valid{ false };                                       ///< A finite lagged sample + variance was recovered (needs ≥2 lagged samples).
-        };
-
-        /**
-         * @brief Read a (satellite, signal-pair) arc's lagged per-epoch MW sample
-         *        (@ref MwArcZdLast), the lane measurement source (WL-3).  Same ZD
-         *        reconstruction as @ref arcZdMean (an SD arc re-adds the group pivot's
-         *        own lagged raw sample, epoch-aligned).  Maturity is not gated here.
-         */
-        MwArcZdLast arcZdLast(const std::string& sat,
-                              const std::string& sig1,
-                              const std::string& sig2) const;
-
-        /**
          * @brief Arm the tri-frequency phase bridge accumulator
          *        (docs/SPEC_ewl_wl_cascade_card.md §3.4, M5 card WL-2).
          *
@@ -720,23 +683,6 @@ namespace GnssProcessor {
 
         /// @return Whether the phase bridge accumulator is armed (@ref setBridgeEnabled).
         bool bridgeEnabled() const { return bridge_enabled_; }
-
-        /**
-         * @brief Preferred phase channel per (constellation, band digit) for the
-         *        bridge arc's per-band signal selection, from the network's
-         *        channel census (WL-3).
-         *
-         * When set, @ref updateBridgeArc keys its arcs on the preferred channel where
-         * tracked (legacy min-name otherwise), so the bridge arcs align with the
-         * caller's census-selected primary pair.  Keyed on the min-name channel, an
-         * (rx,sat) whose census channel differs would find no bridge arc.  Pushed
-         * once per epoch by ApplicationNetwork under @c network.lane_carry (a stable
-         * census keeps the keys stable; a flip re-warms the affected arcs).  Empty
-         * (default) = legacy min-name everywhere (byte-identical).
-         */
-        void setBridgePreferredChannels(std::map<std::pair<char, char>, std::string> pref) {
-            bridge_pref_ = std::move(pref);
-        }
 
         /**
          * @brief Per-constellation lane-tier band digits for the bridge arc's band
@@ -773,8 +719,8 @@ namespace GnssProcessor {
          * constants that cancel in the closed DD cycle, so the cycle sum of the
          * subtraction equals the true @f$\nabla\Delta I@f$ exactly).
          *
-         * Frame contract: with the flag armed, @ref arcBridge / @ref arcBridgeLast /
-         * @ref arcBridgeCold serve iono-de-biased means and samples, and the consumer
+         * Frame contract: with the flag armed, @ref arcBridge and @ref arcBridgeCold
+         * serve iono-de-biased means, and the consumer
          * must not subtract @f$C_{iono}\,\Sigma c\,\tilde\imath@f$ again at read time.
          * The estimates arrive via @ref setBridgeIonoEstimates one epoch lagged (F1).
          * A sample whose satellite has no pushed estimate is skipped (counted via
@@ -849,31 +795,6 @@ namespace GnssProcessor {
                                const std::string& sig2,
                                const std::string& sig5) const;
 
-        /**
-         * @brief A bridge arc's lagged per-epoch raw @f$GF_b@f$ sample: the
-         *        phase-precision increment source of the lane-coordinate carry
-         *        (WL-3, SPEC_lane_carry_card.md §3.2).  Mirrors @ref MwArcZdLast:
-         *        raw sample and per-sample variance, not the Welford mean, with the
-         *        same one-epoch lag (F1) and once-only use.
-         */
-        struct MwBridgeLast {
-            double      gf_m{ std::numeric_limits<double>::quiet_NaN() };   ///< Lagged raw ZD @f$GF_b@f$ sample (m).
-            double      var_m2{ std::numeric_limits<double>::quiet_NaN() }; ///< Per-sample Welford variance M2_lag/(n_lag−1) (m²).
-            double      epoch_s{ 0.0 };                                     ///< Continuous GPS seconds the sample was taken (cycle-consistency guard).
-            std::size_t count{ 0 };                                         ///< Lagged Welford sample count.
-            double      lambda_wl{ 0.0 };                                   ///< WL wavelength (m).
-            double      lambda_ewl{ 0.0 };                                  ///< EWL wavelength (m).
-            double      iono_coeff{ 0.0 };                                  ///< @f$GF_b@f$ iono sensitivity (see @ref MwBridgeMean::iono_coeff).
-            bool        valid{ false };                                     ///< A finite lagged sample + variance was recovered.
-        };
-
-        /// Read a bridge arc's lagged per-epoch raw @f$GF_b@f$ sample
-        /// (@ref MwBridgeLast).  Maturity is not gated here.
-        MwBridgeLast arcBridgeLast(const std::string& sat,
-                                   const std::string& sig1,
-                                   const std::string& sig2,
-                                   const std::string& sig5) const;
-
         // --- Cold-fix (n=1) decision-only accessors (M5 card UWL-1) --------
 
         /**
@@ -890,8 +811,8 @@ namespace GnssProcessor {
          * positive λ", deliberately weaker than @ref arcZdMean's contract.
          *
          * This accessor exists for integer decisions only (which top-tier integer the
-         * bridge may use).  It must never feed a folded row or a lane increment; those
-         * keep the lagged once-only sources (@ref arcZdLast / @ref arcBridgeLast).  The
+         * bridge may use).  It must never feed a folded row, which keeps the lagged
+         * sources (@ref arcZdMean / @ref arcBridge).  The
          * wiring also restricts cold decisions to tiers with
          * λ ≥ @c uwl_cold_min_lambda_m, which excludes GPS's 5.861 m EWL on purpose.
          */
@@ -908,8 +829,7 @@ namespace GnssProcessor {
          * needs count_lag ≥ 2, i.e. three samples).  After a slip the cascade
          * re-decides the top tier at the first re-formed epoch (via
          * @ref arcZdMeanCold) and the WL lane re-pins the epoch after.
-         * Decision-only, like @ref arcZdMeanCold; the lane bridge increment (WL-3)
-         * stays on the lagged @ref arcBridgeLast.
+         * Decision-only, like @ref arcZdMeanCold.
          */
         MwBridgeMean arcBridgeCold(const std::string& sat,
                                    const std::string& sig1,
@@ -975,16 +895,6 @@ namespace GnssProcessor {
             double M2_lag{ 0.0 };          /**< Lagged Welford accumulator (m^2). */
             size_t count_lag{ 0 };         /**< Lagged sample count. */
             double prev_mw{ 0.0 };         /**< Previous epoch MW value for differencing (meters). */
-            /** The lagged raw sample: @c prev_mw as of the top of the current
-             *  epoch's statistics update, i.e. the raw MW of the previous
-             *  processed epoch, served by @ref arcZdLast with the same one-epoch
-             *  lag (F1) as @c mean_lag.  Frame rule: every constant-shift
-             *  re-reference of @c prev_mw (BSSD pivot S-transform, in-house
-             *  bias-commit re-anchor) shifts this alongside.  NaN until two
-             *  epochs have been processed. */
-            double prev_mw_lag{ std::numeric_limits<double>::quiet_NaN() };
-            double prev_epoch_s{ 0.0 };     /**< Continuous GPS seconds @c prev_mw was sampled (WL-3 alignment stamp). */
-            double prev_epoch_lag_s{ 0.0 }; /**< Continuous GPS seconds @c prev_mw_lag was sampled (WL-3: the SD pivot re-add + the caller's cycle-consistency guard both align on this). */
             double last_epoch_s{ 0.0 };    /**< Continuous GPS seconds of the last update (for gap detection). */
             std::deque<double> diff_window; /**< Rolling window of epoch-to-epoch MW differences (meters). */
             bool   bia_corrected{ false };  /**< True if both satellite BIA bias and BSSD receiver bias are removed (integer-ready). */
@@ -1129,10 +1039,6 @@ namespace GnssProcessor {
             double mean_lag{ 0.0 };        ///< Lagged mean as of the previous epoch's end (m).
             double M2_lag{ 0.0 };          ///< Lagged Welford accumulator (m²).
             std::size_t count_lag{ 0 };    ///< Lagged sample count.
-            double prev_gf{ std::numeric_limits<double>::quiet_NaN() };     ///< Previous epoch's raw @f$GF_b@f$ sample (m); staging for the lane increment (WL-3).
-            double prev_gf_lag{ std::numeric_limits<double>::quiet_NaN() }; ///< Lagged raw sample (the previous processed epoch's @c prev_gf), served by @ref arcBridgeLast (WL-3 §3.2 once-only use).
-            double prev_epoch_s{ 0.0 };     ///< Continuous GPS seconds @c prev_gf was sampled.
-            double prev_epoch_lag_s{ 0.0 }; ///< Continuous GPS seconds @c prev_gf_lag was sampled (the caller's cycle-consistency stamp).
             double last_epoch_s{ 0.0 };    ///< Continuous GPS seconds of the last update (gap detection).
             double lambda_wl{ 0.0 };       ///< WL wavelength c/(f1−f2) (m).
             double lambda_ewl{ 0.0 };      ///< EWL wavelength c/(f2−f5) (m).
@@ -1142,11 +1048,6 @@ namespace GnssProcessor {
         /** Per-(sat, WL-pair, EWL-third-band) bridge arcs, keyed @c "sat_sig1_sig2_sig5".
          *  Empty (never touched) unless @c bridge_enabled_. */
         std::map<std::string, BridgeArcStats> bridge_stats_;
-
-        /** (Constellation, band digit) → preferred phase channel for the bridge arc
-         *  keys (@ref setBridgePreferredChannels, WL-3).  Empty = legacy min-name
-         *  selection. */
-        std::map<std::pair<char, char>, std::string> bridge_pref_;
 
         /** Constellation → lane-tier band digits for the bridge band pick
          *  (@ref setLaneTiers, UWL-1).  Empty = the legacy hardcoded {1,2,5} scan for

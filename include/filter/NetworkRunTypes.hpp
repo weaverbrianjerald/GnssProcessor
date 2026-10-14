@@ -62,7 +62,7 @@ struct NetStation {
     // pivot under network.phase_datum_prioritized or
     // network.cycle_slip.datum_station_detect.  Built on every station when an MW/WL
     // lane feature needs it (network.mw_wl.ewl_enable,
-    // network.mw_wl.wl_inject_enable, network.lane_carry.enable).  Null otherwise, and
+    // network.mw_wl.wl_inject_enable).  Null otherwise, and
     // no MW detection runs.  The turbo_edit resolver (MW+GF integer repair, for 1 s
     // data) is built only for turbo_edit; under mw_detect the same detector drives a
     // detect-then-refloat with no resolver (a null turbo_edit selects the refloat

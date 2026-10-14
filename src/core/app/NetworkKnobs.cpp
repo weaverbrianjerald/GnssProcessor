@@ -684,21 +684,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // are read from config_.getNetworkConfig(), as the driver read them, and not from `nc`,
     // which a test may build by hand.
     {
-        const auto& lane_cfg = config_.getNetworkConfig().lane_carry;
         const auto& nmw = config_.getNetworkConfig().mw_wl;
         // Estimation-side fine-slip innovation gate: the invariant-carry-native replacement
         // for the RAIM fine-slip layer that the invariant bypass empties.  Requires
         // carry_invariant (rejected at config load otherwise).
         k.carry_innov_gate = k.carry_invariant && config_.networkCarryInvariantInnovGate();
-        // Lane-coordinate carry (card M5 WL-3).  The loader enforces carry_invariant and
-        // mw_wl.ewl_enable.  lane_joint separates the lane shape (joint 2K pair blocks, lane
-        // prior/q, lane measurement rows, fold-on-change fixing) from the §6.1 equivalence
-        // shape (every lane feature at its isotropic/off sentinel ⇒ split per-band emission,
-        // information-identical to the per-band carry).
-        k.lane_on = k.carry_invariant && lane_cfg.enable;
-        k.lane_joint = k.lane_on
-            && (lane_cfg.q_wl_scale != 1.0 || lane_cfg.sigma_wl_fresh_cyc > 0.0
-                || lane_cfg.lane_meas || lane_cfg.bridge_meas);
         // EWL lane (card M5 WL-2): the MW wide-lane layer, run on the (band2, band5) pair with FFR
         // statistic-gated fixing.  The same conjunction also excludes the constellation's
         // third band (the EWL pair's uncarried leg: GPS L5, Galileo E5b) from the carry, so
@@ -724,25 +714,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         // reconciliation note 2).
         k.uwl_dual_on = k.uwl_on && nmw.uwl_dual_top;
         k.uwl_sib_gate_on = k.uwl_dual_on && nmw.uwl_sib_gate;
-        // Census recovery (v2): minority receiver-family primary pairs get their own lane
-        // pair groups (an admissible set of census pairs instead of the single majority pair).
-        k.uwl_family_on = k.uwl_on && k.lane_on && nmw.uwl_family_pairs;
         // WL lane (card M5 WL-2, SPEC §3.3/§3.4): the phase-bridge WL decision plus the
         // NL-preserving inject.  The bridge path needs the EWL integers, so it runs only when
         // both masters are on.  wl_inject alone would run the MW(1,2) fallback path (§3.5),
         // which is deferred: v1 requires the bridge, and without it no WL decision is
-        // produced and the lane is armed but inert.  WL-3 supersedes the WL-2 hold/inject
-        // walk at runtime (the loader warns): under lane_carry the decided integers become fold-on-change lane
-        // fixes on the pair blocks, and the inject primitive remains only as the pair-block
-        // fallback.
-        k.wl_inject_on = k.ewl_on && nmw.wl_inject_enable && !k.lane_on;
-        // Per-epoch lane measurement sources (WL-3).  The FFR fix walk runs whenever the
-        // joint lane shape is armed (fold-on-change is the §3.3 core and has no separate
-        // knob).  The parallel fan of the MW lane-increment folds is byte-identical to serial.
-        k.lane_meas_on   = k.lane_on && k.lane_joint && lane_cfg.lane_meas;
-        k.lane_bridge_on = k.lane_on && k.lane_joint && lane_cfg.bridge_meas;
-        k.lane_fix_on    = k.lane_on && k.lane_joint;
-        k.lane_parallel_components = k.lane_on && k.lane_joint && lane_cfg.parallel_components;
+        // produced and the lane is armed but inert.
+        k.wl_inject_on = k.ewl_on && nmw.wl_inject_enable;
         // F-A attribution dump (network.mw_wl.d5_dump, log-only): adjacency tags for each D5
         // flag.  They are the (station, sat) pairs an EWL-fixed cycle touched this build, the
         // chords of hold-folded cycles this build, and the chords injected in the previous
@@ -754,8 +731,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         // constrained (held or injected) and unconstrained populations come from one run, so
         // the injected-cycle circR can be graded (scripts/grade_lane_trace.py).  The hold
         // and inject tag sets feed both dumps.
-        k.mw_d5_dump    = (k.ewl_on || k.wl_inject_on || k.lane_on) && nmw.d5_dump;
-        k.mw_lane_trace = (k.wl_inject_on || k.lane_fix_on) && nmw.lane_trace;
+        k.mw_d5_dump    = (k.ewl_on || k.wl_inject_on) && nmw.d5_dump;
+        k.mw_lane_trace = k.wl_inject_on && nmw.lane_trace;
         k.mw_tagsets    = k.mw_d5_dump || k.mw_lane_trace;
         // Emit-layer frame re-base (card 4 phase D), on by default when carry_invariant is
         // armed (spec D7); the PB emission-continuity filter runs inside the re-base block,

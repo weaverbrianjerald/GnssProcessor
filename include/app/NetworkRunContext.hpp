@@ -1054,8 +1054,6 @@ namespace GnssProcessor {
         // emit_pb_filter_on).  Read from the configuration, never written; the snapshot
         // fingerprint does not read them (it reads the configuration getters it needs).
         bool carry_innov_gate{};         ///< D5 estimation-side fine-slip innovation gate: carry_invariant and network.carry_invariant_innov_gate.
-        bool lane_on{};                  ///< Lane-coordinate carry (WL-3): carry_invariant and network.lane_carry.enable.
-        bool lane_joint{};               ///< The lane shape of WL-3 (joint pair blocks, lane prior and rows, fold-on-change fixing): lane_on with any lane feature off its isotropic or off sentinel.
         bool ewl_on{};                   ///< EWL lane (WL-2): carry_invariant and network.mw_wl.ewl_enable.  Also the third-band carry exclusion: the EWL pair's uncarried leg is left out of the carry exactly when the lane is armed.
         bool uwl_on{};                   ///< Per-constellation top tier (UWL-1): ewl_on and network.mw_wl.uwl_enable.  Also selects the lane-tier table for the uncarried band.
         bool uwl_cold_on{};              ///< UWL-1 cold fix (n = 1 unlagged statistics on long-λ tiers): uwl_on and network.mw_wl.uwl_cold_fix.
@@ -1063,14 +1061,9 @@ namespace GnssProcessor {
         bool uwl_mid_on{};               ///< Mid-ladder bridge hop through E6: uwl_on and network.mw_wl.uwl_mid_enable.
         bool uwl_dual_on{};              ///< Per-cycle preferred and fallback Galileo top rung (increment 5): uwl_on and network.mw_wl.uwl_dual_top.
         bool uwl_sib_gate_on{};          ///< Hard untaken-sibling closure gate: uwl_dual_on and network.mw_wl.uwl_sib_gate.
-        bool uwl_family_on{};            ///< Census recovery: minority receiver-family pair groups: uwl_on, lane_on and network.mw_wl.uwl_family_pairs.
-        bool wl_inject_on{};             ///< WL-2 phase-bridge decision and NL-preserving inject: ewl_on, network.mw_wl.wl_inject_enable and not lane_on (WL-3 supersedes it).
-        bool lane_meas_on{};             ///< WL-3 per-epoch MW(1,2) lane increments: lane_on, lane_joint and network.lane_carry.lane_meas.
-        bool lane_bridge_on{};           ///< WL-3 per-epoch bridge lane increments: lane_on, lane_joint and network.lane_carry.bridge_meas.
-        bool lane_fix_on{};              ///< WL-3 fold-on-change FFR fix walk: lane_on and lane_joint (no separate knob).
-        bool lane_parallel_components{}; ///< Fan the MW lane-increment folds across components: lane_on, lane_joint and network.lane_carry.parallel_components.
-        bool mw_d5_dump{};               ///< F-A D5 attribution dump (log-only): any of ewl_on, wl_inject_on, lane_on, and network.mw_wl.d5_dump.
-        bool mw_lane_trace{};            ///< F-B lane trace (log-only): wl_inject_on or lane_fix_on, and network.mw_wl.lane_trace.
+        bool wl_inject_on{};             ///< WL-2 phase-bridge decision and NL-preserving inject: ewl_on and network.mw_wl.wl_inject_enable.
+        bool mw_d5_dump{};               ///< F-A D5 attribution dump (log-only): ewl_on or wl_inject_on, and network.mw_wl.d5_dump.
+        bool mw_lane_trace{};            ///< F-B lane trace (log-only): wl_inject_on and network.mw_wl.lane_trace.
         bool mw_tagsets{};               ///< The hold and inject tag sets, which feed both dumps: mw_d5_dump or mw_lane_trace.
         bool emit_rebase_on{};           ///< Emit-layer frame re-base of the emitted phase biases (card 4 phase D): carry_invariant and network.carry_invariant_emit_rebase.
         bool emit_pb_filter_on{};        ///< Phase-bias emission-continuity filter: emit_rebase_on and network.emit_pb_filter.
@@ -2472,10 +2465,6 @@ namespace GnssProcessor {
         std::set<std::pair<int, std::string>> d5_ewl_stasat;
         std::set<ArcKey> d5_hold_chords;
         std::set<ArcKey> d5_inject_chords_prev, d5_inject_chords_now;
-        // Regroup census of WL-3 (run totals; the equivalence leg reads these).
-        long long lane_pair_arcs = 0;           ///< arcs routed into pair groups.
-        long long lane_resid_arcs = 0;          ///< primary-band arcs left in residual per-band groups (partner missing/unshared).
-        long long lane_pair_tree_mismatch = 0;  ///< pair arcs whose two bands' eq34 tree tags disagreed (band-1's tag governs).
         std::map<std::string, int>                    carry_sat_vertex;  // stable satellite -> vertex id (disjoint high range)
         std::map<std::pair<char, std::string>, int>   carry_group_id;    // (constellation,signal) -> stable group key
         bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
@@ -2484,15 +2473,6 @@ namespace GnssProcessor {
         // armed card, or any non-GPS constellation under the legacy digits) must fail
         // loudly, not as a silent pile of skip_missing_mw (SPEC §1 fact 3).
         std::set<char> uwl_warned_cons;
-        // Census visibility for WL-3 (once per run per cons; log-only).
-        std::set<char> lane_census_logged;
-        // v2 (uwl_family_pairs): the run-persistent admissible pair set per constellation.
-        // A pair joins when its joint-census count first reaches uwl_family_min_arcs and
-        // stays admitted for the run (latched: membership flicker would refloat the family
-        // group's carried chords at every flip, the WL-3 micro-pair-group hazard; a latched
-        // pair whose channels vanish routes no arcs, which is harmless).
-        std::map<char, std::set<std::pair<std::string, std::string>>> lane_admit_pairs;
-        std::set<std::pair<char, std::string>> lane_family_logged;   // once-per-pair INFO
         double carry_prev_tow = std::numeric_limits<double>::quiet_NaN();
         long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
                   carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,

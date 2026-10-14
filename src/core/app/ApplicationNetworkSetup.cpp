@@ -1167,9 +1167,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // Welford means feed the EWL/MW(1,2) statistics).  With all lanes disabled the
         // path is unchanged.  (M5 card WL-2, SPEC_ewl_wl_cascade_card.md §4)
         const auto& mwc = config_.getNetworkConfig().mw_wl;
-        const auto& lcc = config_.getNetworkConfig().lane_carry;   // lane carry (M5 WL-3)
-        if (build_slip_for_pl
-            || mwc.ewl_enable || mwc.wl_inject_enable || lcc.enable) {
+        if (build_slip_for_pl || mwc.ewl_enable || mwc.wl_inject_enable) {
             st.mw_slip = std::make_unique<MwSlipDetector>(config_, log_manager_);
             // Every station's detector shares one logger, whose records are keyed
             // only by <sat>_<sig1>_<sig2>; the label is what lets the MWDEC / MWSKIP
@@ -1178,19 +1176,17 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             st.mw_slip->setStationLabel(st.name);
             st.mw_slip->setCorrections(&st.model->getCorrections());
             // Arm the tri-frequency GF_b phase bridge accumulator only when a consumer of
-            // the bridge exists (the WL-2 inject path or the WL-3 lane bridge increments)
-            // together with the EWL integers it bridges from.  Off: the detector never
-            // touches a bridge arc (byte-identical).  (M5 card WL-2, SPEC §3.4)
-            st.mw_slip->setBridgeEnabled(
-                (mwc.wl_inject_enable || (lcc.enable && lcc.bridge_meas)) && mwc.ewl_enable);
+            // the bridge exists (the WL-2 inject path) together with the EWL integers it
+            // bridges from.  Off: the detector never touches a bridge arc (byte-identical).
+            // (M5 card WL-2, SPEC §3.4)
+            st.mw_slip->setBridgeEnabled(mwc.wl_inject_enable && mwc.ewl_enable);
             // Per-sample estimable-iono de-bias of the bridge accumulator
             // (network.mw_wl.bridge_sample_debias), which removes the bridge's age bias
             // (the 60-epoch fix); the frame contract is in the setter's Doxygen.  Armed
             // only with the bridge itself; the per-epoch ı̃ push rides the iono_of build
             // in NetworkDdPriorBuild.cpp.
             st.mw_slip->setBridgePerSampleDebias(
-                (mwc.wl_inject_enable || (lcc.enable && lcc.bridge_meas)) && mwc.ewl_enable
-                && mwc.bridge_sample_debias);
+                mwc.wl_inject_enable && mwc.ewl_enable && mwc.bridge_sample_debias);
             // Push the per-constellation lane-tier band digits for the bridge band pick
             // (network.mw_wl.uwl_enable).  Unarmed, nothing is pushed and every
             // constellation keeps the legacy {1,2,5} scan, byte-identical, including under

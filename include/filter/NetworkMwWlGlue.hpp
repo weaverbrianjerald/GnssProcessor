@@ -1,16 +1,16 @@
 #pragma once
 /**
  * @file NetworkMwWlGlue.hpp
- * @brief The MW-WL / EWL / UWL / lane-carry inject step of the PPP-RTK network producer,
+ * @brief The MW-WL / EWL / UWL inject step of the PPP-RTK network producer,
  *        relocated unchanged out of networkBuildCarryDdPriors (the second
  *        `if (mw_mach_on)` block) at decomposition INC-13.
  *
  * This is the back half of the WL machinery.  After the census and signal-selection
  * block has populated the shared per-(rx,sat) maps (revmap, lin_of, iono_of, primary,
  * band_top*_of, band_mid_of) and the invariant DD-carry blocks (Card-4) are built, this
- * step runs the WL-2 EWL FFR-fixed lane, the WL-3 per-epoch MW lane increments, the
- * bridge->WL-integer hold/inject walk and the lane-trace diagnostic, and appends its
- * hold rows to @p blocks.  The `if (mw_mach_on)` guard stays at
+ * step runs the WL-2 EWL FFR-fixed lane, the bridge->WL-integer hold/inject walk and
+ * the lane-trace diagnostic, and appends its hold rows to @p blocks.  The
+ * `if (mw_mach_on)` guard stays at
  * the call site, so with it off the run is byte-identical.  The step owns no state:
  * every WL run-state instance and the three cross-epoch channels are references into
  * objects owned by the run TU (through ctx or explicit arguments), and the shared maps
@@ -41,9 +41,9 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 
 /**
- * @brief Build this epoch's EWL / UWL / lane-carry pseudo-observation rows and append
- *        them to @p blocks (WL-2 EWL FFR-fixed lane, WL-3 MW lane increments, the
- *        bridge->WL-integer hold/inject walk, and the lane-trace diagnostic).
+ * @brief Build this epoch's EWL / UWL pseudo-observation rows and append them to
+ *        @p blocks (WL-2 EWL FFR-fixed lane, the bridge->WL-integer hold/inject walk,
+ *        and the lane-trace diagnostic).
  *
  * Called under `if (mw_mach_on)` from networkBuildCarryDdPriors, after
  * carry_driver.buildDdPriors.  The shared per-(rx,sat) maps are read-only inputs
@@ -51,10 +51,9 @@ struct NetworkRunTraces;
  * decides and exposes its integers without folding a row.  See the .cpp for the
  * relocated body.
  *
- * @p we_culprits is the caller's culprit set (card WCF, filter/NetworkWithinEpochCulprits):
- * a chord term whose (station, satellite) a culprit names is treated as slipped, so its
- * lagged MW sample, which predates the re-tap, is not used this epoch.  Read only; the
- * caller counts the withhold.
+ * @p carry_slipped_ambs, @p we_culprits and @p n_threads are no longer read: their only
+ * readers were the retired WL-3 lane increments.  They stay in the signature until the
+ * lane step itself is retired.
  */
 void networkMwWlInject(
     NetworkRunContext& ctx,
@@ -90,11 +89,6 @@ void networkMwWlInject(
     bool uwl_sib_gate_on,
     bool wl_inject_on,
     bool bridge_debias_on,
-    bool lane_on,
-    bool lane_meas_on,
-    bool lane_bridge_on,
-    bool lane_fix_on,
-    bool lane_parallel_components,
     bool mw_d5_dump,
     bool mw_lane_trace,
     bool mw_tagsets);

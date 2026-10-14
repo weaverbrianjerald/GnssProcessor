@@ -239,65 +239,6 @@ namespace GnssProcessor {
         return out;
     }
 
-    MwSlipDetector::MwArcZdLast
-    MwSlipDetector::arcZdLast(const std::string& sat,
-                              const std::string& sig1,
-                              const std::string& sig2) const {
-        MwArcZdLast out;
-        // Serve the lagged raw sample (the previous processed epoch's MW) with the
-        // per-sample Welford variance: the lane-carry per-epoch increment (WL-3 §3.2).
-        // Every read below is from the lag snapshot, like arcZdMean's one-epoch lag (F1).
-        auto varOfSample = [](std::size_t n_lag, double M2_lag) -> double {
-            if (n_lag < 2) return std::numeric_limits<double>::quiet_NaN();
-            return M2_lag / (static_cast<double>(n_lag) - 1.0);
-        };
-
-        const std::string key = sat + "_" + sig1 + "_" + sig2;
-        const auto it = mw_stats_.find(key);
-        if (it == mw_stats_.end()) return out;
-        const MwArcStats& s = it->second;
-        out.bia_corrected = s.bia_corrected;
-        out.count         = s.count_lag;
-        if (s.count_lag < 2 || !(s.lambda_wl > 0.0) || !std::isfinite(s.prev_mw_lag))
-            return out;
-
-        if (!s.bia_corrected) {
-            // Undifferenced already (no-BIA fallback or the group's MW pivot arc):
-            // a ZD-consistent per-(station,sat) value, returned directly.
-            out.value_m   = s.prev_mw_lag;
-            out.var_m2    = varOfSample(s.count_lag, s.M2_lag);
-            out.epoch_s   = s.prev_epoch_lag_s;
-            out.lambda_wl = s.lambda_wl;
-            out.valid     = std::isfinite(out.value_m) && std::isfinite(out.var_m2);
-            return out;
-        }
-
-        // Non-pivot BIA arc: stored sample = MW_bia(sat) − MW_bia(pivot), formed against
-        // the pivot's same-epoch raw sample (pass-2 sd_mw).  Re-add the pivot's own
-        // lagged raw sample to recover MW_bia(sat).  The reconstruction is exact only
-        // when both lag stamps name the same epoch; otherwise the arc missed an epoch
-        // relative to its pivot and the value would mix epochs, so return invalid.
-        const std::string group_key =
-            std::string(1, sat.empty() ? '?' : sat.front()) + "_" + sig1 + "_" + sig2;
-        const auto pit = sd_pivot_sat_.find(group_key);
-        if (pit == sd_pivot_sat_.end()) return out;
-        const auto pvt = mw_stats_.find(pit->second + "_" + sig1 + "_" + sig2);
-        if (pvt == mw_stats_.end() || pvt->second.count_lag < 2) return out;
-        const MwArcStats& p = pvt->second;
-        if (!std::isfinite(p.prev_mw_lag)) return out;
-        if (std::abs(s.prev_epoch_lag_s - p.prev_epoch_lag_s) > 0.1) return out;  // epoch mismatch
-
-        out.value_m   = s.prev_mw_lag + p.prev_mw_lag;
-        // Conservative: SD per-sample variance + pivot per-sample variance (the common
-        // pivot term cancels in a closed DD cycle, so this over-counts: a loose R).
-        out.var_m2    = varOfSample(s.count_lag, s.M2_lag) + varOfSample(p.count_lag, p.M2_lag);
-        out.epoch_s   = s.prev_epoch_lag_s;
-        out.count     = std::min(s.count_lag, p.count_lag);
-        out.lambda_wl = s.lambda_wl;
-        out.valid     = std::isfinite(out.value_m) && std::isfinite(out.var_m2);
-        return out;
-    }
-
     // =================================================================
     // Tri-frequency phase bridge (M5 card WL-2, SPEC §3.4)
     // =================================================================
@@ -327,32 +268,6 @@ namespace GnssProcessor {
         out.lambda_ewl      = s.lambda_ewl;
         out.iono_coeff      = s.iono_coeff;
         out.valid           = std::isfinite(out.gf_mean_m) && std::isfinite(out.var_of_mean_m2);
-        return out;
-    }
-
-    MwSlipDetector::MwBridgeLast
-    MwSlipDetector::arcBridgeLast(const std::string& sat,
-                                  const std::string& sig1,
-                                  const std::string& sig2,
-                                  const std::string& sig5) const {
-        MwBridgeLast out;
-        const std::string key = sat + "_" + sig1 + "_" + sig2 + "_" + sig5;
-        const auto it = bridge_stats_.find(key);
-        if (it == bridge_stats_.end()) return out;
-        const BridgeArcStats& s = it->second;
-        out.count = s.count_lag;
-        // The lagged raw GF_b sample and per-sample Welford variance: the bridge lane's
-        // per-epoch increment (WL-3 §3.2; used once; the mean stays decision-side).
-        if (s.count_lag < 2 || !(s.lambda_wl > 0.0) || !(s.lambda_ewl > 0.0)
-            || !std::isfinite(s.prev_gf_lag))
-            return out;
-        out.gf_m       = s.prev_gf_lag;
-        out.var_m2     = s.M2_lag / (static_cast<double>(s.count_lag) - 1.0);
-        out.epoch_s    = s.prev_epoch_lag_s;
-        out.lambda_wl  = s.lambda_wl;
-        out.lambda_ewl = s.lambda_ewl;
-        out.iono_coeff = s.iono_coeff;
-        out.valid      = std::isfinite(out.gf_m) && std::isfinite(out.var_m2);
         return out;
     }
 
@@ -425,7 +340,7 @@ namespace GnssProcessor {
         out.count = s.count;
         // Unlagged serve from n ≥ 2 (the variance of the mean needs two samples), one
         // epoch earlier than the lagged arcBridge (count_lag ≥ 2 ⇔ three samples).
-        // Decision-only (header contract); the lane increment stays on arcBridgeLast.
+        // Decision-only (header contract).
         if (s.count < 2 || !(s.lambda_wl > 0.0) || !(s.lambda_ewl > 0.0)) return out;
         const double n = static_cast<double>(s.count);
         out.gf_mean_m      = s.mean;
@@ -458,10 +373,6 @@ namespace GnssProcessor {
         // KF-aligned single phase signal per lane-tier band: min-name over obs.observed,
         // matching the ApplicationNetwork primary(sig1<sig2 by band then name) + band-top
         // (first b_top) selection so this arc's key aligns with the caller's arcBridge query.
-        // When the network pushed its channel census (@ref setBridgePreferredChannels,
-        // WL-3), the preferred channel takes precedence where tracked.  Otherwise the
-        // caller's census-selected primary pair would miss the min-name-keyed arc at every
-        // (rx,sat) whose channels differ, and the WL decision path would lose those cycles.
         std::string s1, s2, s5, sm, st2;  // WL-pair bands (b1, b2) + top band (b_top) + optional mid (b_mid) / fallback top (b_top2)
         for (const auto& [k, v] : obs.observed) {
             if (k.size() < 2 || k[0] != 'L') continue;
@@ -471,15 +382,6 @@ namespace GnssProcessor {
                              : (bm  != '\0' && k[1] == bm)  ? &sm
                              : (bt2 != '\0' && k[1] == bt2) ? &st2 : nullptr;
             if (!dst) continue;
-            if (!bridge_pref_.empty()) {
-                const auto pit = bridge_pref_.find({cons, k[1]});
-                if (pit != bridge_pref_.end()) {
-                    if (k == pit->second) *dst = k;              // preferred channel wins
-                    else if (dst->empty()) *dst = k;             // fallback until seen
-                    else if (*dst != pit->second && k < *dst) *dst = k;  // min-name among fallbacks
-                    continue;
-                }
-            }
             if (dst->empty() || k < *dst) *dst = k;
         }
         // Under a dual-top tier the fallback triple must form even when the preferred
@@ -550,7 +452,7 @@ namespace GnssProcessor {
             // Per-sample iono de-bias (setBridgePerSampleDebias, the age-bias fix):
             // fold GF_k − C_iono·ı̃(t_k) so the accumulated statistic is a stationary
             // estimable-function realization; every downstream consumer (Welford mean,
-            // prev_gf staging, gross-jump guard) then compares like frames.  A sample
+            // gross-jump guard) then compares like frames.  A sample
             // without an estimate is skipped, never folded in a mixed frame.
             if (bridge_debias_) {
                 const auto iit = bridge_iono_.find(obs.satellite);
@@ -578,8 +480,6 @@ namespace GnssProcessor {
                 st.mean       = gf;
                 st.M2         = 0.0;
                 st.count      = 1;
-                st.prev_gf    = gf;        // raw-sample staging for arcBridgeLast (WL-3)
-                st.prev_epoch_s = epoch_s;
                 st.last_epoch_s = epoch_s;
                 st.lambda_wl  = lam_wl;
                 st.lambda_ewl = lam_ewl;
@@ -591,17 +491,12 @@ namespace GnssProcessor {
             st.mean_lag  = st.mean;
             st.M2_lag    = st.M2;
             st.count_lag = st.count;
-            // Raw-sample lag for arcBridgeLast (WL-3), with the same once-only use.
-            st.prev_gf_lag      = st.prev_gf;
-            st.prev_epoch_lag_s = st.prev_epoch_s;
             st.count++;
             const double eff_n = static_cast<double>(std::min<std::size_t>(st.count, kMaxHatchCount));
             const double delta = gf - st.mean;
             st.mean += delta / eff_n;
             const double delta2 = gf - st.mean;
             st.M2 += delta * delta2;
-            st.prev_gf      = gf;        // raw-sample staging (WL-3)
-            st.prev_epoch_s = epoch_s;
             st.last_epoch_s = epoch_s;
             st.lambda_wl  = lam_wl;
             st.lambda_ewl = lam_ewl;
@@ -1541,7 +1436,6 @@ namespace GnssProcessor {
             stats.M2           = 0.0;
             stats.count        = 1;
             stats.prev_mw      = mw_m;
-            stats.prev_epoch_s = epoch_s;   // prev_mw's sample stamp (arcZdLast alignment, WL-3)
             stats.last_epoch_s = epoch_s;
             stats.diff_window.clear();
             stats.bia_corrected = bia_corrected;
@@ -2336,10 +2230,6 @@ namespace GnssProcessor {
         stats.mean_lag  = stats.mean;
         stats.M2_lag    = stats.M2;
         stats.count_lag = stats.count;
-        // Raw-sample lag for arcZdLast (WL-3), taken the same way: prev_mw still
-        // holds the previous processed epoch's raw value here.
-        stats.prev_mw_lag     = stats.prev_mw;
-        stats.prev_epoch_lag_s = stats.prev_epoch_s;
         stats.count++;
         {
             const double eff_n  = static_cast<double>(std::min(stats.count, kMaxHatchCount));
@@ -2391,7 +2281,6 @@ namespace GnssProcessor {
         // neither case arises.
         stats.prev_diff    = mw_diff;
         stats.prev_mw      = mw_m;
-        stats.prev_epoch_s = epoch_s;   // prev_mw's sample stamp (arcZdLast alignment, WL-3)
         stats.last_epoch_s = epoch_s;
 
         // Drift-based lock demotion.  When the running mean has
@@ -3052,7 +2941,7 @@ namespace GnssProcessor {
             // change to first order, because the new and old pivot have
             // similar BIA-corrected MW noise levels.  The transform below
             // shifts the level quantities (mean, mean_lag, prev_mw,
-            // prev_mw_lag, the local ring, a demoted-level stash),
+            // the local ring, a demoted-level stash),
             // re-references prev_diff, shifts the locked integer
             // (rounded_wl) and drops a pending TD confirmation.
             auto prev_pivot_it = sd_pivot_sat_.find(group_key);
@@ -3070,8 +2959,6 @@ namespace GnssProcessor {
                 bool   can_s_transform = false;
                 double piv_old_mean    = 0.0;
                 double piv_old_prev_mw = 0.0;
-                double piv_old_prev_mw_lag =
-                    std::numeric_limits<double>::quiet_NaN();   // shifts prev_mw_lag alongside (WL-3)
                 double piv_old_prev_diff =
                     std::numeric_limits<double>::quiet_NaN();
                 int    piv_old_int     = 0;
@@ -3081,7 +2968,6 @@ namespace GnssProcessor {
                     can_s_transform = true;
                     piv_old_mean    = new_piv_arc_it->second.mean;
                     piv_old_prev_mw = new_piv_arc_it->second.prev_mw;
-                    piv_old_prev_mw_lag = new_piv_arc_it->second.prev_mw_lag;
                     piv_old_prev_diff = new_piv_arc_it->second.prev_diff;
                     piv_old_int     = new_piv_arc_it->second.rounded_wl;
                 }
@@ -3143,14 +3029,6 @@ namespace GnssProcessor {
                             arc.mean     -= piv_old_mean;
                             arc.mean_lag -= piv_old_mean;   // lagged snapshot rides the same frame (MwArcStats doc)
                             arc.prev_mw  -= piv_old_prev_mw;
-                            // The lagged raw sample (WL-3) re-references by the new pivot's
-                            // own old-frame lagged sample (exact through the shared terms);
-                            // when that is not yet formed, it is invalid for one epoch.
-                            arc.prev_mw_lag =
-                                (std::isfinite(arc.prev_mw_lag)
-                                 && std::isfinite(piv_old_prev_mw_lag))
-                                    ? arc.prev_mw_lag - piv_old_prev_mw_lag
-                                    : std::numeric_limits<double>::quiet_NaN();
                             // A demoted-level stash for this arc lives in
                             // the same SD frame; shift it by the same
                             // constant so the across-gap difference
@@ -3924,8 +3802,6 @@ namespace GnssProcessor {
         stats.mean         -= stored.bias_m;
         stats.mean_lag     -= stored.bias_m;   // lagged snapshot rides the same frame (MwArcStats doc)
         stats.prev_mw      -= stored.bias_m;
-        if (std::isfinite(stats.prev_mw_lag))
-            stats.prev_mw_lag -= stored.bias_m;   // the lagged raw sample shifts too (WL-3)
         // The local raw-MW ring holds pre-commit (uncorrected) samples;
         // re-anchor it with the mean, or the commit epoch's local deviation
         // jumps by the full bias (decimeters), the same false-fire that the
