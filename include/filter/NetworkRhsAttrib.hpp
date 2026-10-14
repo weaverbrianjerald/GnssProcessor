@@ -5,8 +5,8 @@
  *        shared columns at a chosen epoch (the era-2 injector probe).
  *
  * Diagnostics-only, off by default, and not fingerprinted: it is a forward-only
- * readout and leaves the meaning of stored state unchanged (as for
- * adaptive_iono_q).  A shared-snapshot replay leg with only this armed is
+ * readout and leaves the meaning of stored state unchanged.  A shared-snapshot
+ * replay leg with only this armed is
  * therefore A/B-comparable against an unarmed control.
  *
  * ## What it computes

@@ -825,8 +825,7 @@ namespace GnssProcessor {
      * weight changes, no observable is touched, and the producer is byte-identical.
      * Deliberately not part of the warm-resume fingerprint: it is a forward-only
      * weight and refloat policy that changes no serialized state's meaning (as with
-     * `adaptive_iono_q` and the eq34 hygiene), which keeps a shared-snapshot A/B
-     * valid.
+     * the eq34 hygiene), which keeps a shared-snapshot A/B valid.
      */
     struct SignalIntegrityConfig {
         /// Master arm (@c network.signal_integrity.census).  On: the classifier
@@ -1715,7 +1714,6 @@ namespace GnssProcessor {
         // budget (@ref parallel_max_threads) and acts only when @ref parallel_stations
         // is active.
         bool parallel_reduce{ false };    ///< Parallelize the Schur reduce loop (opt-in; trades serial≡parallel byte-identity for speed).
-        bool adaptive_iono_q{ false };    ///< Network storm response: per-station GF-TD2 variability monitors (IonoVariabilityMonitor) scale the T5v2 GM deviation innovation per (station,satellite); tuning from estimation.adaptive_iono_process_noise (whose .enable stays user-path-only). Requires the deviation channel (estimate_iono_sh + rep_error_tau_s > 0); validated at load. Deliberately not in the warm-resume fingerprint (a forward-only Q modifier).
 
         // --- eq34 reattach hygiene ---------
         // The phase datum may be re-hosted only onto an arc whose ambiguity has
@@ -1727,8 +1725,7 @@ namespace GnssProcessor {
         // default-off and, off, add no state and no rows: the election is structurally
         // unchanged.  Deliberately not in the warm-resume fingerprint: they are a
         // forward-only election and row policy and do not change the meaning of any
-        // serialized state (as with adaptive_iono_q), which keeps a shared-snapshot
-        // A/B valid.
+        // serialized state, which keeps a shared-snapshot A/B valid.
         int  eq34_anchor_min_arc_ep{ 0 };        ///< Minimum consecutive-present arc age (epochs) for a (station, ambiguity) arc to be an eligible anchor host on a reattach (INC-1).  0 = legacy (any host, byte-identical).  First-sighting keys (no incumbent) are never gated: this bounds re-hosting, not cold start.
         double eq34_prior_realization_max_gap_s{ 1800.0 };  ///< Warm conditioning of INC-1 (spec addendum): a cold host is dangerous only in proportion to the warm memory that contradicts it, so the block applies only while the key's last emitted datum realization is younger than this (s).  A network restart or cold start has no fresh realization, hence no blocking and the legacy convergence behaviour; an outage longer than this leaves nothing to disturb (the carried state has expired through its own staleness handling).  <= 0 disables the conditioning (always block on cold hosts).
         bool phase_datum_time_linked{ false };   ///< On a handover with no eligible host (or, with eq34_anchor_min_arc_ep = 0, on every handover), hold the key's shared phase bias at its last solved level with a soft pseudo-obs row instead of dropping or cold-pinning it (INC-2).  The phase-datum analogue of `code_datum_time_linked`.
@@ -2336,7 +2333,7 @@ namespace GnssProcessor {
         // --- Prefit census / structural fuse / topology ledger / flight recorder ---
         // docs/SPEC_prefit_census_observability.md.  All default-off, structurally
         // byte-identical when off, and none fingerprinted (forward-only observability,
-        // as with adaptive_iono_q and the eq34 hygiene), so a shared-snapshot replay
+        // as with the eq34 hygiene), so a shared-snapshot replay
         // leg with any of them armed stays a valid A/B against an unarmed control.  The
         // fuse is the one solve-affecting member of the family and has its own arm.
         bool   trace_prefit_census{ false };  ///< Per-data-class common-mode-removed prefit statistics into @c network_epoch_status.csv, plus PREFIT-tier `prefit_exceedance` events (INC-1).  Measure-only.  The metric is per station and row type, robust-centred (s = |y − median_t(y)|·√w), in effect a between-satellite single difference, so a whole-station receiver-clock step (ms-scale, |y| ≈ 3e5 m on every row) cancels while a single parked cell does not.  It is the one pre-solve screen that sees such a cell: post-fit σ̂0 absorbs it through the free ambiguities, and `raim_within_epoch` is gated on carry_warm.

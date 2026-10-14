@@ -6,7 +6,7 @@
  *
  * Measure-only and off by default; with it off, the output is byte-identical.
  * Fingerprint-safe: a forward-only readout that changes the meaning of no stored
- * state (as adaptive_iono_q, rhs_attrib and the redundancy census are), so a
+ * state (as rhs_attrib and the redundancy census are), so a
  * shared-snapshot replay leg with only this armed remains a legal A/B against an
  * unarmed control.  Nothing here writes a weight, a state or a decision; §9 of the
  * spec assigns any gate, deweight or admission driven by MDB to a separate card.

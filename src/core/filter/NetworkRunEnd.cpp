@@ -114,8 +114,6 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkWithinEpochCulprits.cpp", networkWithinEpochCulpritWithholdRunEnd},
     {"the KP prior and the CB-ADM code-pair admission",
      "filter/NetworkBiasAdmission.cpp", networkBiasAdmissionRunEnd},
-    {"the adaptive ionosphere process noise",
-     "app/NetworkStationIonoRunEnd.cpp", networkAdaptiveIonoQRunEnd},
     {"phase-anchor hygiene: handover, cold fallback, PHASE_ANCHOR re-reference, eq34",
      "filter/NetworkAnchorHygiene.cpp", networkAnchorHygieneRunEnd},
     {"the carried-phase RAIM pools: admissions and the re-host",

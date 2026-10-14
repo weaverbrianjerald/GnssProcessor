@@ -6732,7 +6732,7 @@ namespace GnssProcessor {
     //  network subsection helper: loadNetworkQcTiers_
     // =================================================================
     /**
-     * @brief Post-fit / within-epoch QC tiers: RAIM, clock monitor, adaptive iono q.
+     * @brief Post-fit / within-epoch QC tiers: RAIM and the clock monitor.
      *
      * Holds the tier auto-couplings (a withhold ceiling pulls in the within-epoch tier, which
      * pulls in post-fit RAIM + attribution; WE-CI pulls in the tier it extends) and the
@@ -7832,43 +7832,6 @@ namespace GnssProcessor {
                           network_clock_monitor_reinit_sigma_m_);
             }
         }
-
-        // Adaptive iono process noise on the network path (network.adaptive_iono_q).
-        // The user-path flag estimation.adaptive_iono_process_noise.enable is a
-        // phantom here: no per-station KalmanFilter::predict consumes iono q
-        // overrides on the network path (slant iono is re-estimated white each
-        // epoch).  This flag instead scales the T5v2 GM deviation innovation per
-        // (station, satellite) by the same IonoVariabilityMonitor GF-TD2 clamped
-        // ratio²: the deviation channel is the only time-linked slant-iono element on
-        // this path, and its fixed σ_ss(1−λ²) is what lags storm TEC acceleration
-        // into the pin deweight.  Tuning (windows, max multiplier, min epochs) is read
-        // from estimation.adaptive_iono_process_noise; its .enable stays
-        // user-path-only.  Not in the warm-resume fingerprint, on purpose: a
-        // forward-only Q modifier does not change the meaning of serialized state
-        // (same class as filter.process_noise.*), so off/on legs may share one
-        // snapshot for event A/Bs.
-        network_config_.adaptive_iono_q =
-            jval<bool>(json, "network.adaptive_iono_q", "network_adaptive_iono_q", false);
-        if (network_config_.adaptive_iono_q) {
-            const bool dev_channel_on = estimate_network_iono_sh_
-                                        && global_vtec_sh_.rep_error_tau_s > 0.0;
-            if (!dev_channel_on) {
-                log->warn("Network: network.adaptive_iono_q is on but the T5v2 GM "
-                          "deviation channel is not (needs estimate_iono_sh and "
-                          "global_vtec_sh.rep_error_tau_s > 0) — no actuation site, so "
-                          "the flag is INERT (disabled).");
-                network_config_.adaptive_iono_q = false;
-            } else {
-                log->info("Network: ADAPTIVE IONO Q ON — per-station GF-TD2 variability "
-                          "monitors (IonoVariabilityMonitor) scale the T5v2 GM deviation "
-                          "innovation per (station,satellite), clamped [1, {:.0f}x] "
-                          "(recent {} / baseline {} epochs, min {}).  Storm response for "
-                          "the iono representation: the per-LOS deviation can FOLLOW TEC "
-                          "acceleration instead of lagging into the pin deweight.",
-                          adaptive_iono_q_.max_multiplier, adaptive_iono_q_.recent_window,
-                          adaptive_iono_q_.baseline_window, adaptive_iono_q_.min_epochs);
-            }
-        }
     }
 
     // =================================================================
@@ -8722,7 +8685,7 @@ namespace GnssProcessor {
         // the cycle-slip block (parsed far above) to be resolved already.  Default off;
         // off allocates no map, changes no row weight and touches no observable.  Not
         // appended to the warm-resume fingerprint, on purpose (forward-only
-        // weight/refloat policy, as for adaptive_iono_q and the eq34 hygiene), which
+        // weight/refloat policy, as for the eq34 hygiene), which
         // keeps a shared-snapshot A/B legal.
         {
             auto& si = network_config_.signal_integrity;

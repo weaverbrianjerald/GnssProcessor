@@ -6,7 +6,7 @@
  *
  * Measure-only and off by default.  It is not fingerprinted: it is a forward-only
  * readout and does not change the meaning of stored state (the same treatment as
- * adaptive_iono_q and rhs_attrib), so a shared-snapshot replay leg with only this
+ * rhs_attrib), so a shared-snapshot replay leg with only this
  * armed stays A/B-comparable against an unarmed control.  It changes no weight,
  * state or decision (standing invariant #6), and §7 of the spec assigns any
  * automatic response to the cross-flag to a separate card.

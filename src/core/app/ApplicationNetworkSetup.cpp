@@ -1150,14 +1150,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
              || config_.networkCycleSlipDatumStationDetect())
             && config_.networkPhaseLeveling()
             && (config_.networkCycleSlipTurboEdit() || config_.networkCycleSlipMwDetect());
-        // Adaptive iono q (network.adaptive_iono_q): per-station GF-TD2 variability
-        // monitor.  Station-local: fed in the parallel PASS A produce (the same
-        // contract as st.mw_slip below) and consumed serially by the T5v2 GM deviation
-        // aging.  On the network path the per-(station, satellite) deviation channel is
-        // the only time-linked slant-iono element, so the storm response scales its
-        // innovation term, not a slant q.  Off: null pointer, byte-identical.
-        if (config_.getNetworkConfig().adaptive_iono_q)
-            st.iono_var = std::make_unique<IonoVariabilityMonitor>(config_, log_manager_);
 
         if (build_slip_for_pl) {
             st.mw_slip = std::make_unique<MwSlipDetector>(config_, log_manager_);

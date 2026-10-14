@@ -265,7 +265,7 @@ int networkRxCodeBiasCarryRunEnd(const NetworkRunEndView& v) {
     // Iono seed frame (card LV-1, docs/SPEC_level_information_budget.md): run-end line,
     // printed only when armed.  The per-station counters live on each station's
     // StateInitializer (the reframe happens inside the parallel produce phase) and are
-    // summed here serially, as the SD-EWL and iono_var feed counters are.
+    // summed here serially, as the SD-EWL feed counters are.
     if (config_.networkIonoSeedFieldFrame()) {
         long long reframed = 0, fb_raw = 0, fb_field = 0, offsets = 0;
         for (const auto& st : stations) {

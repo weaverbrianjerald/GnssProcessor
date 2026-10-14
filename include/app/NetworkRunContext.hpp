@@ -3077,12 +3077,6 @@ namespace GnssProcessor {
         long long sdewl_sd_ref_reelected = 0;   ///< the sticky component reference station r0 changed (re-datums the whole component's SD frame).
         long long sdewl_dd_skip_channel = 0;    ///< (station, satellite) excluded: its MW arc is on a different tracking-channel pair than the network-common election, so B^s would not cancel in the DD.
 
-        // --- Run tallies of the adaptive iono q (network.adaptive_iono_q).  The feed
-        // counter lives per station (NetStation::iono_var_epochs_fed, since PASS A is
-        // parallel); these two are bumped in the serial T5v2 aging only.
-        long long aiq_boosts_total = 0;         ///< GM deviation innovation boosts applied (multiplier > 1 LOS-epochs).
-        double    aiq_max_mult = 1.0;           ///< Largest GF-TD2 multiplier applied over the run.
-
         // Slip-aware eq34 election of cards 3/4 (network.phase_datum_eq34_slip_aware_election).
         // All three are needed to read the mechanism, because two of them are the policy
         // working and the third is the graph refusing it:

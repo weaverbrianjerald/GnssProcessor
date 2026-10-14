@@ -1603,19 +1603,6 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                 st.mm->ensureNetworkSharedStates(modeled[i], shared_phase_keys, cbadm_admit);
             a_ok[i] = 1;
 
-            // Adaptive iono q (network.adaptive_iono_q): roll this station's GF-TD2
-            // variability monitor forward.  Station-local state, no shared write
-            // (same parallel contract as the T0 slip scan below); the per-satellite
-            // multipliers are consumed serially by the T5v2 GM deviation aging later
-            // this epoch.  Best-effort like the slip scan: a monitor failure costs
-            // this station's boosts for this epoch, not the station.
-            if (st.iono_var) {
-                try {
-                    st.iono_var->update(modeled[i]);
-                    ++st.iono_var_epochs_fed;
-                } catch (...) { /* best-effort: no boosts from this station this epoch */ }
-            }
-
             // Slip detection (T0): roll this station's MW + GF arcs forward and
             // collect per-(sat,signal) integer repairs.  Station-local detector
             // state, no shared write, safe in the parallel region.  Runs every
@@ -3237,21 +3224,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                + "|" + parts->satellite);
             }
         }
-        // Adaptive iono q (network.adaptive_iono_q): per-LOS GM boost factors from
-        // the PASS-A station monitors (already rolled forward this epoch; PASS A
-        // precedes this serial block).  The multiplier inflates only the innovation
-        // term σ_ss²(1−λ²) below; the GM shape (τ) and the carried level are
-        // untouched, so a quiet LOS (m=1) ages byte-identically and the disarmed
-        // path never builds the map.
-        std::map<std::string, double> aiq_mult;
-        const bool aiq_on = nc.adaptive_iono_q;
-        if (aiq_on) {
-            for (const auto& sta : stations) {
-                if (!sta.iono_var) continue;
-                for (const auto& [aiq_sat, aiq_m] : sta.iono_var->multipliers())
-                    if (aiq_m > 1.0) aiq_mult.emplace(sta.name + "|" + aiq_sat, aiq_m);
-            }
-        }
         const double now_s = se.time.week * 604800.0 + se.time.tow;
         for (auto it = sh_dev_carry.begin(); it != sh_dev_carry.end();) {
             ShDevCarry& dc = it->second;
@@ -3284,20 +3256,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             if (dt > 0.0) {
                 const double lam = std::exp(-dt / sh_dev_tau);
                 dc.dev *= lam;
-                // Adaptive iono q: storm-scaled innovation for this LOS (1.0 when
-                // disarmed / quiet / unmonitored, which gives the legacy expression
-                // exactly).
-                double aiq_scale = 1.0;
-                if (aiq_on && !aiq_mult.empty()) {
-                    const auto mit = aiq_mult.find(it->first);
-                    if (mit != aiq_mult.end()) {
-                        aiq_scale = mit->second;
-                        ++ctx.counters.aiq_boosts_total;
-                        if (aiq_scale > ctx.counters.aiq_max_mult)
-                            ctx.counters.aiq_max_mult = aiq_scale;
-                    }
-                }
-                dc.var  = lam * lam * dc.var + aiq_scale * dc.var_ss * (1.0 - lam * lam);
+                dc.var  = lam * lam * dc.var + dc.var_ss * (1.0 - lam * lam);
             }
             ++it;
         }

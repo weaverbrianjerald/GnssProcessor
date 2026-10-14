@@ -24,7 +24,6 @@
 #include "slip/MwSlipDetector.hpp"
 #include "slip/TurboEditResolver.hpp"
 #include "slip/IfPhaseSlipDetector.hpp"
-#include "slip/IonoVariabilityMonitor.hpp"
 
 #include <Eigen/Dense>
 
@@ -66,19 +65,6 @@ struct NetStation {
     // detect-then-refloat with no resolver (a null turbo_edit selects the refloat
     // branch in PASS A).
     std::unique_ptr<MwSlipDetector>   mw_slip;
-
-    /// Adaptive iono q (network.adaptive_iono_q): per-station GF-TD2 variability
-    /// monitor.  Fed in the parallel PASS A produce (station-local state, no shared
-    /// write, the same contract as mw_slip above).  Its per-satellite multipliers are
-    /// consumed serially by the T5v2 GM deviation aging, the only
-    /// per-(station, satellite) time-linked slant-iono element on the network path
-    /// (the slant states themselves are white per epoch).  Null when disarmed: no
-    /// calls, and the output is byte-identical.
-    std::unique_ptr<IonoVariabilityMonitor> iono_var;
-    /// Epochs in which this station's iono_var was updated (the standing invariant #4
-    /// feed counter).  The run-end readout sums it over stations serially, like
-    /// SdEwlCounters below.
-    long long iono_var_epochs_fed{ 0 };
 
     /// SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md): per-station
     /// eligibility tallies for `Application::networkAppendSdEwlRows_`.  They are held
@@ -228,7 +214,7 @@ struct NetStation {
     /// Phase rows this station folded at a demoted weight over the run (the row
     /// telemetry of signal integrity INC-2).  Accumulated inside the parallel produce
     /// phase, so it lives per station; summed into the run-end report at teardown, like
-    /// @c iono_var_epochs_fed and @c sd_ewl_ctr.
+    /// @c sd_ewl_ctr.
     long long si_rows_demoted{ 0 };
     /// Code rows of an extra-band signal (one whose band is neither band of the
     /// constellation's ionosphere-free pin pair) that this station folded at the scaled
