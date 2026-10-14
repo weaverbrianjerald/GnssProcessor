@@ -69,6 +69,31 @@ Targets: `gnss_core` (static lib), `gnss_processor` (exe), `gnss_tests` (exe),
 Build tree: `build/x64-Debug` and `build/x64-Release` — both are **git-ignored
 and disposable**; regenerating from scratch is one wrapper call (~180 s Debug).
 
+**Disk placement (owner request, 2026-10-13: keep C: free, target D: for builds
+and runs).** C: is a 1 TB internal NVMe that runs short; D: is a 4 TB NVMe SSD
+in a USB enclosure on a 5 Gbps port (about 0.4 GB/s; Release builds on D:
+timed within the range of C: worktree builds, being CPU-bound; anything on D:
+is unavailable while it is disconnected).
+- **Worktrees and their builds go on D:**, as
+  `git worktree add D:\GnssProcessorSupport\worktrees\<name>`, built with
+  `scripts\wt_build.ps1` from inside that worktree (it roots the build tree at
+  its own checkout). `scripts\vs2026_build.ps1` hard-codes `C:\GnssProcessor`
+  and rebuilds the MAIN tree from anywhere. A worktree of this repo still loads
+  the `C--GnssProcessor` auto-memory (memory keys on the git root).
+- **Rapid-arm runs go on D:** with `RAPID_RUNS_ROOT` set, e.g.
+  `D:/GnssProcessorSupport/runs_nom` (`scripts/rapid_arm.py`, and
+  `scripts/nom_td_gate.py` resolves bare run names there too). Inputs still
+  come from C: (`data/`, the sim fixture `runs/simnet60_quiet_col_24h`).
+- **Finished runs move to `D:\GnssProcessorSupport\runs\<same name>`**
+  (MANIFEST addenda). Folders that configs read stay on C:, or move with a
+  junction left at the old path. Never `robocopy /MOVE` without `/XJ`, and
+  never `scripts/run_decomp_arm.py --force` on a junctioned run dir (its
+  `resolve()` + `rmtree` deletes the D: target).
+- Claude session scratchpads (`%TEMP%\claude\...`, where session worktrees
+  used to accumulate 11 GB builds) move to D: only if the owner sets the
+  documented `CLAUDE_CODE_TMPDIR` variable (user environment or user
+  settings `env`; new sessions only).
+
 **NEVER run `gnss_processor` on data from the Debug tree** (standing user
 directive). Debug's unoptimized Eigen is 50–100× slower — a Release run of
 minutes becomes hours. Debug is for compile checks and `gnss_tests` only;
