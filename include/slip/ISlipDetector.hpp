@@ -13,14 +13,15 @@
  *   - a single per-epoch entry point @c detect(SlipEpochContext) returning a
  *     vector of unified @c SlipEvent records, and
  *   - the lifecycle hooks the detectors share (@c resetSatellite,
- *     @c enableTracing, @c setCorrections, ...).
+ *     @c resetSatelliteSignal, @c setCorrections, @c kind, @c name).
  *
  * @c SlipDetectorRegistry constructs a config-selected set of detectors as
  * @c std::unique_ptr<ISlipDetector>, and @c CycleSlipManager drives them in
- * one loop.  The MW detector's detector-specific API (WL-lock queries,
- * pivot-handover hints, per-satellite quality scoring, consumed by
- * @c AmbiguityResolver and the BSSD @c PivotManager) is reached through the
- * typed down-cast @c asMelbourneWubbena and stays off the base class.
+ * one loop.  The MW detector's detector-specific API (the WL-lock queries
+ * @c AmbiguityResolver reads, the pivot-handover hints, the per-satellite
+ * worst-deviation score the KalmanFilter's outlier tiebreak reads) is reached
+ * through the typed down-cast @c asMelbourneWubbena and stays off the base
+ * class.
  *
  * Implemented by @c MwSlipDetector, @c GraphicSlipDetector and
  * @c EwlSlipDetector.  @c GfSlipDetector and @c IfPhaseSlipDetector do not
@@ -31,18 +32,19 @@
  * is skipped by @c kind and driven through its concrete
  * @c detectLargeMwResets), @c resetSatellite, @c resetSatelliteSignal,
  * @c setCorrections, @c kind and @c asMelbourneWubbena; the registry calls
- * @c name.  @c resetAll, @c enableTracing and @c isTracingEnabled are never
- * called through the base: the MW detector's are reached on the concrete type
- * (@c CycleSlipManager::enableMwTracing and the real-time and baseline
- * drivers), and the GRAPHIC and EWL traces are never opened.  The real-time, baseline
- * and network pipelines hold concrete detector types and use none of this
- * interface.  Whether the interface stays or becomes a declared detector table
- * is a decision owed by the author (card UOM section 7 item 1).
+ * @c name.  Every method of the interface is dispatched by one of them.  The
+ * hard-gap restart and the CSV trace are not part of the contract: no caller
+ * dispatched them through the base, so card UOM step U5m-a removed the three
+ * virtuals (@c resetAll, @c enableTracing, @c isTracingEnabled), and the MW
+ * detector keeps @c resetAll and @c enableTracing as plain methods of its own,
+ * called on the concrete type.  The real-time, baseline and network pipelines
+ * hold concrete detector types and use none of this interface.  Whether the
+ * interface stays or becomes a declared detector table is a decision owed by
+ * the author (card UOM section 7 item 1).
  */
 
 #include "common/PppTypes.hpp"
 #include <Eigen/Core>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -167,37 +169,6 @@ public:
         (void)signal;
         resetSatellite(satellite);
     }
-
-    /**
-     * @brief Drop all per-arc state (hard-gap restart).
-     *
-     * Default no-op; detectors with cross-arc or pivot bookkeeping override
-     * it (the MW detector does).  Never called through this interface: the
-     * baseline driver calls the MW detector's override on the concrete type.
-     */
-    virtual void resetAll() {}
-
-    /**
-     * @brief Enable CSV trace output for this detector.
-     *
-     * Never called through this interface: the MW detector's override is
-     * called on the concrete type (@c CycleSlipManager::enableMwTracing, the
-     * real-time and baseline drivers), and no caller opens the GRAPHIC or EWL
-     * trace.
-     *
-     * @param log_dir Directory in which to create the trace file.
-     * @return true if the trace file was opened.
-     */
-    virtual bool enableTracing(const std::filesystem::path& log_dir) = 0;
-
-    /**
-     * @brief Whether tracing is currently active.
-     *
-     * Never called through this interface (no caller on any detector type).
-     *
-     * @return true if the detector's trace file is open.
-     */
-    virtual bool isTracingEnabled() const = 0;
 
     /**
      * @brief Provide satellite bias corrections (BIA) for bias-aware detection.

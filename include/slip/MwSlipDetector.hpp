@@ -1,7 +1,5 @@
 #pragma once
 
-#pragma once
-
 /**
  * @file MwSlipDetector.hpp
  * @brief Detects large wide-lane (MW) resets/slips using ionosphere-free combinations.
@@ -121,19 +119,6 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Per-satellite MW arc quality summary for external consumers.
-     *
-     * Aggregates statistics across all MW pairs for one satellite into a
-     * single quality snapshot suitable for pivot selection scoring.
-     */
-    struct SatelliteMwQuality {
-        size_t min_arc_length{ 0 };   ///< Shortest arc (epoch count) across all pairs.
-        double worst_sigma{ 1e9 };    ///< Largest MAD-sigma (meters) across pairs with a mature MAD (1e9 if none).
-        bool   all_wl_locked{ false };///< True only if every BIA-corrected pair has a locked WL integer.
-        size_t num_pairs{ 0 };        ///< Number of active MW pairs for this satellite.
-    };
-
-    /**
      * @class MwSlipDetector
      * @brief Detector for large MW (wide-lane / MW-like) discontinuities.
      *
@@ -164,11 +149,13 @@ namespace GnssProcessor {
          * carries @c SlipGranularity::BandDifference with both signals
          * populated.
          *
-         * @note @c CycleSlipManager does not call this: its BSSD-aware pipeline
-         *       consumes @c detectLargeMwResets directly, because it needs the
-         *       full @c MwSlipResult WL-pair semantics that the projection does
-         *       not preserve.  This override exists for the polymorphic
-         *       @c ISlipDetector contract.
+         * @note No code calls this.  @c CycleSlipManager skips the MW detector
+         *       in its @c detect loop and consumes @c detectLargeMwResets
+         *       directly, because it needs the full @c MwSlipResult WL-pair
+         *       semantics that the projection does not preserve; every other
+         *       driver holds the concrete type.  The override is kept because
+         *       @c ISlipDetector declares @c detect pure virtual (card UOM
+         *       section 7 item 1 decides whether that interface stays).
          *
          * @param context Epoch inputs (only @c observations is consulted).
          * @return Unified slip events for this epoch.
@@ -241,22 +228,6 @@ namespace GnssProcessor {
          * @return Set of affirmatively-clean arc keys for the current epoch.
          */
         const std::set<std::string>& getEpochCleanPairs() const { return epoch_clean_pairs_; }
-
-        /**
-         * @brief Arc sample count of each key in @c getEpochCleanPairs.
-         *
-         * Same keys and lifetime (cleared and rebuilt by every
-         * @c detectLargeMwResets call).  @c getEpochCleanPairs already enforces
-         * an internal maturity floor for TurboEdit's equal-slip split; this map
-         * lets a consumer apply its own, stricter bar to the same evidence and
-         * count what that bar refused.  The network producer's common-band scope
-         * (SPEC_event_harness.md §14), which applies
-         * @c network.cycle_slip.common_band_min_arc_epochs, reads its arc counts
-         * from @ref getEpochPairStatus instead of from this map.
-         *
-         * @return Map from affirmatively-clean arc key to that arc's sample count.
-         */
-        const std::map<std::string, int>& getEpochCleanArcN() const { return epoch_clean_arc_n_; }
 
         /**
          * @brief Name this detector instance for its debug-level decision lines
@@ -524,27 +495,24 @@ namespace GnssProcessor {
          * SD pivot choices are reliable indicators for the post-gap arcs,
          * so the safest restart is a full clear rather than per-sat resets.
          * The next call to @c detectLargeMwResets() then begins fresh
-         * arcs with no slip flags fired against pre-gap history.
+         * arcs with no slip flags fired against pre-gap history.  Called on
+         * the concrete type by the baseline driver.
          */
-        void resetAll() override;
+        void resetAll();
 
         /**
          * @brief Enable CSV tracing for MWWL diagnostics.
          *
          * Opens or creates the file "mwwl_trace.csv" in the specified directory.
          * Subsequent calls to detectLargeMwResets() will write per-satellite MW
-         * observations to this file for offline visualization.
+         * observations to this file for offline visualization.  Called on the
+         * concrete type (@c CycleSlipManager::enableMwTracing, the real-time
+         * and baseline drivers).
          *
          * @param log_dir Directory where the trace file will be created.
          * @return true if the file was successfully opened, false otherwise.
          */
-        bool enableTracing(const std::filesystem::path& log_dir) override;
-
-        /**
-         * @brief Check if tracing is currently enabled.
-         * @return true if the trace file is open and writable.
-         */
-        bool isTracingEnabled() const override { return mwwl_trace_.is_open(); }
+        bool enableTracing(const std::filesystem::path& log_dir);
 
         /**
          * @brief Provide satellite bias access for WL bias correction.
@@ -574,19 +542,6 @@ namespace GnssProcessor {
          *                 (default is preserved).
          */
         void setMaxGapSeconds(double seconds);
-
-        /**
-         * @brief Query aggregated MW arc quality for a satellite.
-         *
-         * Scans all MW arc stats keyed by the given satellite prefix and
-         * returns the worst-case sigma, shortest arc length, and WL lock
-         * status across all pairs.  Used by the BSSD pivot manager for
-         * quality-aware pivot selection.
-         *
-         * @param satellite Satellite identifier (e.g. "G01").
-         * @return SatelliteMwQuality summary (num_pairs == 0 if no arcs exist).
-         */
-        SatelliteMwQuality getSatelliteMwQuality(const std::string& satellite) const;
 
         /**
          * @brief Query the worst MW deviation score for a satellite.
@@ -1262,10 +1217,6 @@ namespace GnssProcessor {
          *  sample deviation stayed within a small fraction of λ_WL. */
         std::set<std::string> epoch_clean_pairs_;
 
-        /** Arc sample count of each @ref epoch_clean_pairs_ key (see
-         *  @c getEpochCleanArcN).  Same keys, cleared and rebuilt together. */
-        std::map<std::string, int> epoch_clean_arc_n_;
-
         /** Per-epoch detection record of every arc processed this epoch (see
          *  @c getEpochPairStatus).  Written twice per sample in
          *  @c processMwSample: once right after the gap check, so an arc that
@@ -1882,21 +1833,6 @@ namespace GnssProcessor {
 
         /** Current epoch time for tracing (set at start of detectLargeMwResets). */
         mutable GnssTime current_epoch_;
-
-        /**
-         * @brief Find ionosphere-free phase/code label pair for an observation.
-         *
-         * Scans the observation's observable labels and sets @p phase_if_key and
-         * @p code_if_key when an ionosphere-free pair is found (for example
-         * phase: "L1C_L2W", code: "C1C_C2W"). Returns true on success.
-         *
-         * @param obs Observation to inspect.
-         * @param[out] phase_if_key Output ionosphere-free phase label (if found).
-         * @param[out] code_if_key Output ionosphere-free code label (if found).
-         * @return true when a matching ionosphere-free pair was found.
-         * @return false otherwise.
-         */
-        bool findIonoFreeLabels(const PppObservation& obs, std::string& phase_if_key, std::string& code_if_key) const;
 
         /**
          * @brief Matched IF phase/code label pair.

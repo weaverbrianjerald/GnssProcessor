@@ -118,15 +118,14 @@ namespace GnssProcessor {
 
         /**
          * @brief Enable CSV tracing for GRAPHIC diagnostics.
+         *
+         * No driver calls this, so the GRAPHIC trace is never opened.  A plain
+         * method since the virtual left @c ISlipDetector (card UOM step U5m-a).
+         *
          * @param log_dir Directory where the trace file will be created.
          * @return true if the file was successfully opened.
          */
-        bool enableTracing(const std::filesystem::path& log_dir) override;
-
-        /**
-         * @brief Check if tracing is currently enabled.
-         */
-        bool isTracingEnabled() const override { return trace_file_.is_open(); }
+        bool enableTracing(const std::filesystem::path& log_dir);
 
     private:
         const GnssConfig& config_;

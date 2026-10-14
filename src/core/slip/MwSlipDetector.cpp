@@ -128,39 +128,6 @@ namespace GnssProcessor {
     // Per-satellite MW quality query
     // =================================================================
 
-    SatelliteMwQuality MwSlipDetector::getSatelliteMwQuality(const std::string& satellite) const {
-        SatelliteMwQuality q;
-        const std::string prefix = satellite + "_";
-        bool any_bia = false;
-        bool all_bia_locked = true;
-        bool sigma_initialized = false;
-
-        for (const auto& [key, stats] : mw_stats_) {
-            if (key.compare(0, prefix.size(), prefix) != 0) continue;
-
-            ++q.num_pairs;
-            if (stats.count < q.min_arc_length || q.num_pairs == 1)
-                q.min_arc_length = stats.count;
-
-            const double sigma = computeMadSigma(stats);
-            if (std::isfinite(sigma)) {
-                if (!sigma_initialized || sigma > q.worst_sigma) {
-                    q.worst_sigma = sigma;
-                    sigma_initialized = true;
-                }
-            }
-
-            if (stats.bia_corrected) {
-                any_bia = true;
-                if (!stats.wl_locked) all_bia_locked = false;
-            }
-        }
-
-        q.all_wl_locked = any_bia && all_bia_locked && q.num_pairs > 0;
-        if (!sigma_initialized) q.worst_sigma = 1e9;
-        return q;
-    }
-
     double MwSlipDetector::getWorstMwScore(const std::string& satellite) const {
         const std::string prefix = satellite + "_";
         double worst = 0.0;
@@ -730,20 +697,6 @@ namespace GnssProcessor {
     // =================================================================
     // Signal / frequency helpers
     // =================================================================
-
-    bool MwSlipDetector::findIonoFreeLabels(const PppObservation& obs,
-        std::string& phase_if_key, std::string& code_if_key) const {
-        phase_if_key.clear();
-        code_if_key.clear();
-
-        for (const auto& [k, v] : obs.observed) {
-            if (k.find('_') == std::string::npos || k.empty()) continue;
-            if (k[0] == 'L' && phase_if_key.empty()) phase_if_key = k;
-            if (k[0] == 'C' && code_if_key.empty()) code_if_key = k;
-            if (!phase_if_key.empty() && !code_if_key.empty()) return true;
-        }
-        return (!phase_if_key.empty() && !code_if_key.empty());
-    }
 
     std::vector<MwSlipDetector::IfPair>
     MwSlipDetector::collectIonoFreePairs(const PppObservation& obs) const {
@@ -2081,13 +2034,6 @@ namespace GnssProcessor {
             && 3.0 * sigma <= (1.0 - kEpochCleanMaxDevWlCyc) * lambda_wl
             && std::abs(dev_hatch) <= kEpochCleanMaxDevWlCyc * lambda_wl) {
             epoch_clean_pairs_.insert(stats_key);
-            // The arc's sample count travels alongside the key so a consumer can
-            // apply its own maturity bar and count what that bar refused.
-            // kEpochCleanMinArcN above is this detector's internal floor for
-            // TurboEdit's equal-slip split.  (The network's common-band scope,
-            // SPEC_event_harness §14, runs its configurable maturity gate on the
-            // getEpochPairStatus record instead.)
-            epoch_clean_arc_n_[stats_key] = static_cast<int>(stats.count);
         }
 
         // Contribute this dev to the cross-satellite pool for this
@@ -2539,7 +2485,6 @@ namespace GnssProcessor {
         // rebuilt from scratch each pass so stale affirmations can never
         // leak into a later epoch's TurboEdit GF-only gating.
         epoch_clean_pairs_.clear();
-        epoch_clean_arc_n_.clear();
         // The detection-grade per-epoch record (SPEC_event_harness §14): same
         // lifetime as the cleanliness set above, different question.
         epoch_pair_status_.clear();
@@ -2616,44 +2561,6 @@ namespace GnssProcessor {
             // Try combined (PPP) path first
             const auto if_pairs = collectIonoFreePairs(obs);
             const bool has_if = !if_pairs.empty();
-
-            // [DIAG] Per-sat coverage trace.  Lists the keys MwSlipDetector
-            // saw in each source map at this epoch, which shows whether a
-            // missing arc later in the loop is due to (i) missing keys
-            // upstream, (ii) the IF/uncombined path branching, or (iii) a
-            // silent skip inside computeMwMeters / computeSatMwBias.
-            /*
-            if (logger->should_log(spdlog::level::debug)) {
-                std::string raw_keys, obs_keys, if_keys;
-                for (const auto& [k, v] : obs.raw_observed) {
-                    if (!raw_keys.empty()) raw_keys += ",";
-                    raw_keys += k;
-                }
-                for (const auto& [k, v] : obs.observed) {
-                    if (k.find('_') == std::string::npos) {
-                        if (!obs_keys.empty()) obs_keys += ",";
-                        obs_keys += k;
-                    } else {
-                        if (!if_keys.empty()) if_keys += ",";
-                        if_keys += k;
-                    }
-                }
-                logger->debug("[DIAG MW src] sat={} elev={:.1f} has_if={} "
-                              "obs.observed_raw=[{}] obs.observed_if=[{}] "
-                              "raw_observed=[{}]",
-                              obs.satellite, obs.elevation, has_if ? 1 : 0,
-                              obs_keys, if_keys, raw_keys);
-                for (const auto& ifp : if_pairs) {
-                    logger->debug("[DIAG MW if_pair] sat={} phase_if={} code_if={}",
-                                  obs.satellite, ifp.phase_key, ifp.code_key);
-                }
-                const auto uc_pairs_diag = collectUncombinedPairs(obs);
-                for (const auto& p : uc_pairs_diag) {
-                    logger->debug("[DIAG MW uc_pair] sat={} {}/{} ({}/{})",
-                                  obs.satellite, p.phase1, p.phase2, p.code1, p.code2);
-                }
-            }
-            */
 
             if (has_if) {
                 // ---- Combined (PPP) path ----
@@ -2983,27 +2890,6 @@ namespace GnssProcessor {
         // The MW observable is always formed from raw RINEX signals and is
         // independent of the filter's measurement model parameterization.
         // -----------------------------------------------------------------
-        // [DIAG] Pass 2 entry summary: which (cons, band-pair) groups made
-        // it from Pass 1, and how many sats per group.  A group with 1
-        // satellite still gets processed (the lone sat is treated as
-        // pivot with bia_corrected=false).  A missing group means Pass 1
-        // dropped every candidate, usually because computeMwMeters returned
-        // NaN or computeSatMwBias lacked coverage.
-        if (logger->should_log(spdlog::level::debug)) {
-            std::string groups_summary;
-            for (const auto& [gk, ents] : sd_groups) {
-                std::string sat_list;
-                for (const auto& [s, e] : ents) {
-                    if (!sat_list.empty()) sat_list += ",";
-                    sat_list += s;
-                    sat_list += e.is_combined ? "(IF)" : "(uc)";
-                }
-                if (!groups_summary.empty()) groups_summary += " | ";
-                groups_summary += gk + "={" + sat_list + "}";
-            }
-            //logger->debug("[DIAG MW pass2 groups] {}", groups_summary); // debug check
-        }
-
         for (auto& [group_key, sat_entries] : sd_groups) {
             if (sat_entries.empty()) continue;
 
