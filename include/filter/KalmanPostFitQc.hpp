@@ -43,6 +43,7 @@
  */
 
 #include "filter/KalmanFilter.hpp"
+#include "filter/KalmanQcCounters.hpp"
 #include <spdlog/spdlog.h>
 #include <Eigen/Dense>
 #include <cstddef>
@@ -98,6 +99,8 @@ namespace kalman {
                                          ///< disturbance at any size).
         bool reinflate_iono;             ///< Record the firing group for the post-handover
                                          ///< ionosphere re-inflation.
+        std::size_t KalmanQcCounters::* counter;  ///< The run-end counter a firing group
+                                                  ///< increments.
     };
 
     /**
@@ -123,10 +126,15 @@ namespace kalman {
      */
     inline constexpr PivotDetectorSpec kPivotDetectors[] = {
         // label               type  pooled rows bands frac  median_m mad   lambda tight reinflate
-        { "phase per signal",  'L',  false, 4,   0,    0.5,  0.005,   0.4,  true,  0.2,  false },
-        { "phase cross-band",  'L',  true,  3,   2,    0.5,  0.005,   0.4,  false, 0.0,  false },
-        { "code per signal",   'C',  false, 4,   0,    0.5,  0.30,    0.4,  false, 0.0,  true  },
-        { "code cross-band",   'C',  true,  3,   2,    0.5,  0.30,    0.4,  false, 0.0,  true  },
+        //   counter
+        { "phase per signal",  'L',  false, 4,   0,    0.5,  0.005,   0.4,  true,  0.2,  false,
+          &KalmanQcCounters::pivot_group_slips },
+        { "phase cross-band",  'L',  true,  3,   2,    0.5,  0.005,   0.4,  false, 0.0,  false,
+          &KalmanQcCounters::pivot_group_slips },
+        { "code per signal",   'C',  false, 4,   0,    0.5,  0.30,    0.4,  false, 0.0,  true,
+          &KalmanQcCounters::pivot_code_disturbances },
+        { "code cross-band",   'C',  true,  3,   2,    0.5,  0.30,    0.4,  false, 0.0,  true,
+          &KalmanQcCounters::pivot_code_disturbances },
     };
 
     /**
@@ -248,6 +256,8 @@ namespace kalman {
         double gate_stat = 0.0;          ///< The gated statistic: max_sres, or max |w|.
         size_t gate_idx = 0;             ///< Its row.
         double gate_crit = 0.0;          ///< Its critical value.
+        bool gate_is_wtest = false;      ///< The gate is the Baarda w-test (data snooping
+                                         ///< armed and a checkable row); for the counters.
 
         // --- S6 and S7: the pass's verdict ---
         bool is_outlier_found = false;   ///< A row was reset or excluded, or the filter reset.

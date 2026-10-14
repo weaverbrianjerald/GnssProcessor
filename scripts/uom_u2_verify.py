@@ -11,8 +11,9 @@ other character of a carried line is compared, indentation included.
 The manifest below records the whole step against that one frozen file: U2a's deletions
 (DROPS), U2b's relocation (one unit per moved item), U2c's stages (alias blocks, published
 results, and the braces and guards the driver replaces, as DROPS), U2d's detector table (the
-loops it rewrites, REWRITTEN, and the statements it carries, with their SUBS).  U2c's
-generator (KalmanPostFitQc.cpp was written from this manifest) and this check read one list.
+loops it rewrites, REWRITTEN, and the statements it carries, with their SUBS), and U2e's
+counter increments (declared new lines inside the carried bodies).  U2c's generator
+(KalmanPostFitQc.cpp was written from this manifest) and this check read one list.
 
 A unit is one item of a new file (a function, a struct, a constant) written as an ordered
 list of pieces:
@@ -52,7 +53,8 @@ A carried line is compared as text: the check proves where each line now lives a
 is unchanged.  The includes of each new file are new, and the compiler proves them
 sufficient; the gate (scripts/uom_gate.py) proves the output unchanged, and for U2d, where
 the four detector loops are rewritten as one function over a table, it is the proof that the
-arithmetic is the same.
+arithmetic is the same.  include/filter/KalmanQcCounters.hpp (U2e) carries no frozen code
+and is not in the set.
 """
 import argparse
 import collections
@@ -182,14 +184,28 @@ UNITS = [
     ("~KalmanFilter()", F + "KalmanFilter.cpp", [fz(387)]),
     ("predict", F + "KalmanFilter.cpp", [fz(393, 486)]),
     ("predictAided", F + "KalmanFilter.cpp", [fz(636, 664)]),
-    ("update", F + "KalmanFilter.cpp", [fz(670, 1060)]),
+    ("update", F + "KalmanFilter.cpp", [
+        fz(670, 1018),
+        ("new", "                ++qc_counters_.stuck_bias_resets;"),
+        fz(1019, 1060)]),
     ("updateFromPrior", F + "KalmanFilter.cpp", [fz(1066, 1172)]),
     ("takeRequestedPivotHandovers", F + "KalmanFilter.cpp", [fz(3113, 3117)]),
     ("takeRequestedPivotHandoverExcludeSats", F + "KalmanFilter.cpp", [fz(3119, 3124)]),
     ("takeRequestedPivotHandoverIonoReinflateSats", F + "KalmanFilter.cpp", [fz(3126, 3131)]),
     ("beginEpoch", F + "KalmanFilter.cpp", [fz(3133, 3154)]),
     ("endEpoch", F + "KalmanFilter.cpp", [fz(3156, 3171)]),
-    ("logKalmanFilterTimings", F + "KalmanFilter.cpp", [fz(3173, 3205)]),
+    ("logKalmanFilterTimings", F + "KalmanFilter.cpp", [
+        fz(3173, 3180),
+        ("new", "            logQcCounters();"),
+        fz(3181, 3204),
+        ("new", "        logQcCounters();"),
+        fz(3205)]),
+    # U2e: the QC event counters' run-end block.
+    ("logQcCounters", F + "KalmanFilter.cpp", [
+        ("new", "    void KalmanFilter::logQcCounters() {"),
+        ("new", "        log_manager_.getLogger(\"main_log\")->info(\"{}\", formatKalmanQcCounters(qc_counters_));"),
+        ("new", "        qc_counters_ = KalmanQcCounters{};"),
+        ("new", "    }")]),
     ("applyPseudoObservation", F + "KalmanFilter.cpp", [fz(3230, 3238)]),
     ("computeResidualQc_", F + "KalmanResidualQc.cpp", [fz(1609, 1641)]),
     ("residualQcKernel", F + "KalmanResidualQc.cpp", [fz(1643, 1736)]),
@@ -273,7 +289,9 @@ UNITS = [
         ("new", "        bool any_nonpivot_slip = false;"),
         fz(2497, 2593, 8),
         ("new", "            const std::string bands_str = joinBands(e.bands);"),
-        fz(2599, 2639, 8),
+        fz(2599, 2606, 8),
+        ("new", "            ++qc_counters_.nonpivot_multiband_slips;"),
+        fz(2607, 2639, 8),
         ("comment", ""),
         ("new", "        return any_nonpivot_slip;"),
         ("new", "    }")]),
@@ -287,7 +305,9 @@ UNITS = [
         ("alias", ["measurement", "P", "klogger", "epoch_prefix", "res", "sres", "num_obs"]),
         ("comment", ""),
         fz(2651, 2656),
-        fz(2658, 2739, 4),
+        fz(2658, 2722, 4),
+        ("new", "                    ++qc_counters_.huber_rows_queued;"),
+        fz(2723, 2739, 4),
         ("comment", ""),
         ("new", "        return huber_triggered;"),
         ("new", "    }")]),
@@ -300,7 +320,9 @@ UNITS = [
         ("new", "    void KalmanFilter::selectGateRow_(PostFitQcWork& w) {"),
         ("alias", ["measurement", "sres", "threshold", "max_idx", "max_sres"]),
         ("comment", ""),
-        fz(2752, 2786),
+        fz(2752, 2784),
+        ("new", "                w.gate_is_wtest = true;"),
+        fz(2785, 2786),
         ("comment", ""),
         ("publish", ["gate_stat", "gate_idx", "gate_crit"]),
         ("new", "    }")]),
@@ -313,20 +335,25 @@ UNITS = [
         fz(2788, 2788),
         fz(2792, 2800),
         ("comment", "            // MW tiebreaker for competing phase outliers (chooseOutlierRow_)."),
+        ("new", "            if (w.gate_is_wtest) ++qc_counters_.snooping_rejections;"),
         ("new", "            const size_t chosen_idx = chooseOutlierRow_(w);"),
         ("comment", ""),
         fz(2884, 2902),
         ("comment", "                // The sub-cycle floor, the reset and the correlated rows on the"),
         ("comment", "                // satellite's other phase signals (respondToPhaseOutlier_)."),
         ("new", "                respondToPhaseOutlier_(w, chosen_idx, outlier_sat, outlier_sig, outlier_res);"),
-        fz(2991, 3005),
+        fz(2991, 2992),
+        ("new", "                ++qc_counters_.code_rows_excluded;"),
+        fz(2993, 3005),
         ("new", "    }")]),
     ("chooseOutlierRow_", F + "KalmanPostFitQc.cpp", [
         ("new", "    size_t KalmanFilter::chooseOutlierRow_(PostFitQcWork& w) {"),
         ("alias", ["measurement", "klogger", "epoch_prefix", "threshold", "sres", "meta_n",
                    "max_idx", "max_sres", "gate_idx"]),
         ("comment", ""),
-        fz(2801, 2883, 4),
+        fz(2801, 2880, 4),
+        ("new", "                    ++qc_counters_.mw_tiebreak_overrides;"),
+        fz(2881, 2883, 4),
         ("comment", ""),
         ("new", "        return chosen_idx;"),
         ("new", "    }")]),
@@ -336,7 +363,15 @@ UNITS = [
         ("alias", ["measurement", "x", "P", "klogger", "epoch_prefix", "threshold", "res", "sres",
                    "meta_n"]),
         ("comment", ""),
-        fz(2903, 2990, 8),
+        fz(2903, 2933, 8),
+        ("new", "                ++qc_counters_.phase_rows_floored;"),
+        fz(2934, 2939, 8),
+        ("new", "            ++qc_counters_.phase_rows_reset;"),
+        fz(2940, 2975, 8),
+        ("new", "                    ++qc_counters_.phase_rows_floored;"),
+        fz(2976, 2987, 8),
+        ("new", "                ++qc_counters_.phase_rows_reset;"),
+        fz(2988, 2990, 8),
         ("new", "    }")]),
     ("completeResetBackstop_", F + "KalmanPostFitQc.cpp", [
         ("new", "    void KalmanFilter::completeResetBackstop_(PostFitQcWork& w) {"),
@@ -344,7 +379,9 @@ UNITS = [
                    "total_obs_count"]),
         ("alias_rw", ["is_outlier_found", "is_complete_reset"]),
         ("comment", ""),
-        fz(3007, 3021),
+        fz(3007, 3016),
+        ("new", "            ++qc_counters_.complete_resets;"),
+        fz(3017, 3021),
         ("new", "    }")]),
     ("logPostFitResult_", F + "KalmanPostFitQc.cpp", [
         ("new", "    void KalmanFilter::logPostFitResult_(PostFitQcWork& w) {"),
@@ -450,6 +487,7 @@ UNITS = [
         fz(2215, 2216, 8),
         ("new", "        if (spec.reinflate_iono) recordIonoReinflate_(w, g, cons);"),
         ("new", "        excludeGroupRows(w.measurement, g);"),
+        ("new", "        ++(qc_counters_.*spec.counter);"),
         ("new", "        return true;"),
         ("new", "    }")]),
     ("belowPivotWavelengthFloor_", F + "KalmanPostFitQc.cpp", [

@@ -6,6 +6,7 @@
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "filter/ResidualHistoryTracker.hpp"
+#include "filter/KalmanQcCounters.hpp"
 #include "aiding/AidingTypes.hpp"
 #include "common/Constants.hpp"
 #include "logging/KalmanFilterLogger.hpp"
@@ -341,13 +342,28 @@ namespace GnssProcessor {
         void setCycleSlipManager(CycleSlipManager* csm) { cycle_slip_manager_ = csm; }
 
         /**
-         * @brief Log cumulative per-phase timing totals, then reset them.
+         * @brief Log cumulative per-phase timing totals, then reset them; then
+         *        log and reset the QC event counters (@ref logQcCounters).
          *
          * Each update() accumulates microseconds in the four hottest phases
          * (innovation covariance, gain, Joseph covariance, post-fit residuals).
-         * Counters reset only on this call.
+         * Counters reset only on this call.  Called at the run end by
+         * Application and the baseline driver.
          */
         void logKalmanFilterTimings();
+
+        /**
+         * @brief Log the post-fit QC event counters to main_log as one block (the
+         *        rows of kKalmanQcCounterRows), then reset them.
+         *
+         * Called at the end of @ref logKalmanFilterTimings.  RealTimeEngine (and
+         * with it the network's closed-loop consumer) calls neither, so its
+         * counters are not printed yet.
+         */
+        void logQcCounters();
+
+        /** @brief The post-fit QC event counters since the last print. */
+        const KalmanQcCounters& getQcCounters() const { return qc_counters_; }
 
         /**
          * @brief Drain the constellations whose pivot needs a forced handover.
@@ -355,9 +371,8 @@ namespace GnssProcessor {
          * Populated when validatePostFitResiduals sees a coherent residual
          * pattern across every SD pair against one pivot.  The Application
          * driver drains this after NeedsMeasurementRebuild and forwards it to
-         * MeasurementModel::requestPivotHandover, which routes it to
-         * PivotManager for the next rebuild pass.  Returning by value clears
-         * the set.
+         * PivotManager::requestForcedHandover (EpochUpdateSupport.cpp) for the
+         * next rebuild pass.  Returning by value clears the set.
          *
          * @return Constellation names, e.g. {"GPS", "Galileo"}.
          */
@@ -481,7 +496,9 @@ namespace GnssProcessor {
         /// value the target R(i,i) in m², applied at the start of the next
         /// update().  Persists across rebuild passes but is cleared in
         /// beginEpoch so each epoch decides afresh; long-term biases are covered
-        /// by the separate EWMA-based inflation.
+        /// by the separate EWMA-based inflation.  Only Application::run calls
+        /// beginEpoch: under RealTimeEngine (and the network consumer) and the
+        /// baseline driver the queue is never cleared (card UOM, defect K-D1).
         std::map<std::string, double> pending_r_inflations_;
 
         /// Sat-bias resets queued by the stuck-code-bias detector.  Key
@@ -502,6 +519,10 @@ namespace GnssProcessor {
         long long timing_us_P_  = 0;   //!< Joseph covariance update
         long long timing_us_Sr_ = 0;   //!< Diagonal-only post-fit covariance
         size_t    timing_n_calls_ = 0; //!< Number of update() calls accumulated.
+
+        /// Post-fit QC event counters (include/filter/KalmanQcCounters.hpp), each
+        /// incremented where its event happens; printed and reset by logQcCounters.
+        KalmanQcCounters qc_counters_;
 
         // --- Construction helpers ---
 

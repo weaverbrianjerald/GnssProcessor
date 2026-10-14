@@ -15,6 +15,10 @@
  * kalman::kPivotDetectors (card UOM step U2d): detectPivotOffsets_ groups the rows once
  * per observable and runs each row of the table over its groups; testPivotGroup_ tests one
  * group (kalman::testCoherentOffset, then the row's options), reports it and responds.
+ *
+ * Every QC event of the screen and its responses increments one member of the
+ * KalmanFilter's run-end counters (include/filter/KalmanQcCounters.hpp, card UOM step U2e)
+ * where it happens; the counter lines are the only additions to the carried bodies.
  */
 
 #include "filter/KalmanFilter.hpp"
@@ -515,6 +519,7 @@ namespace GnssProcessor {
         recordHandoverExcludes_(w, g, t.med, t.mad, pivot_sat, cons);
         if (spec.reinflate_iono) recordIonoReinflate_(w, g, cons);
         excludeGroupRows(w.measurement, g);
+        ++(qc_counters_.*spec.counter);
         return true;
     }
 
@@ -858,6 +863,7 @@ namespace GnssProcessor {
                 "Resetting ambiguities for this satellite.",
                 epoch_prefix, cons, sat, e.bands.size(), bands_str,
                 e.sign, common_cycles, med_abs, e.above, e.indices.size());
+            ++qc_counters_.nonpivot_multiband_slips;
 
             // Single-sat reset: mark each ambiguity for re-seed and
             // wipe its row/col cross-covariance with diagonal inflated
@@ -994,6 +1000,7 @@ namespace GnssProcessor {
                 if (r_target > r_existing * (1.0 + kHuberRConvergenceTol)) {
                     pending_r_inflations_[key] = r_target;
                     huber_triggered = true;
+                    ++qc_counters_.huber_rows_queued;
                     if (use_innov) {
                         klogger->info(
                             "{}Huber R-inflation (innovation one-shot) for {} {}: "
@@ -1075,6 +1082,7 @@ namespace GnssProcessor {
                 gate_stat = max_w;
                 gate_idx  = max_w_idx;
                 gate_crit = config_.dataSnoopingCritical();
+                w.gate_is_wtest = true;
             }
         }
 
@@ -1110,6 +1118,8 @@ namespace GnssProcessor {
             // level to debug shows the per-row context of an
             // outlier event.)
 
+            if (w.gate_is_wtest) ++qc_counters_.snooping_rejections;
+
             // MW tiebreaker for competing phase outliers (chooseOutlierRow_).
             const size_t chosen_idx = chooseOutlierRow_(w);
 
@@ -1137,6 +1147,7 @@ namespace GnssProcessor {
                 respondToPhaseOutlier_(w, chosen_idx, outlier_sat, outlier_sig, outlier_res);
             } else {
                 handleCodeOutlier(measurement, outlier_sat, outlier_sig, chosen_idx, epoch_prefix);
+                ++qc_counters_.code_rows_excluded;
             }
 
             is_outlier_found = true;
@@ -1247,6 +1258,7 @@ namespace GnssProcessor {
                         candidates[0].sat == best->sat
                             ? candidates[1].mw_score : candidates[0].mw_score);
                     chosen_idx = best->idx;
+                    ++qc_counters_.mw_tiebreak_overrides;
                 }
             }
         }
@@ -1301,12 +1313,14 @@ namespace GnssProcessor {
                     std::abs(outlier_res),
                     cyc_floor_fraction * lambda, lambda);
                 suppressed_by_floor = true;
+                ++qc_counters_.phase_rows_floored;
             }
         }
 
         const auto [prim, ref] = splitBssdSatId(outlier_sat);
         if (!suppressed_by_floor) {
             handlePhaseOutlier(measurement, outlier_sat, outlier_sig, x, P, epoch_prefix);
+            ++qc_counters_.phase_rows_reset;
         }
         measurement.excluded_measurements.insert(prim + "_" + outlier_sig);
 
@@ -1343,6 +1357,7 @@ namespace GnssProcessor {
                         outlier_sat, co_sig, std::abs(co_res),
                         cyc_floor_fraction * co_lambda);
                     co_suppressed = true;
+                    ++qc_counters_.phase_rows_floored;
                 }
             }
 
@@ -1355,6 +1370,7 @@ namespace GnssProcessor {
 
             if (!co_suppressed) {
                 handlePhaseOutlier(measurement, outlier_sat, co_sig, x, P, epoch_prefix);
+                ++qc_counters_.phase_rows_reset;
             }
             measurement.excluded_measurements.insert(prim + "_" + co_sig);
         }
@@ -1384,6 +1400,7 @@ namespace GnssProcessor {
                 bad_meas_percent, static_cast<size_t>(bad_meas_percent * total_obs_count));
 
             resetFilterCovariance(P, epoch_prefix);
+            ++qc_counters_.complete_resets;
 
             is_outlier_found = true;
             is_complete_reset = true;

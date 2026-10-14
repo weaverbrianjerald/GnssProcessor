@@ -6,7 +6,7 @@
  * The class's member functions live in five files by concern (card UOM step U2b):
  *   KalmanFilter.cpp           this driver: KalmanFilter(), predict, predictAided, update,
  *                              updateFromPrior, applyPseudoObservation, the take* drains,
- *                              beginEpoch, endEpoch, logKalmanFilterTimings;
+ *                              beginEpoch, endEpoch, logKalmanFilterTimings, logQcCounters;
  *   KalmanKernels.cpp          the algebra: the sparse-H products, spliceAndPropagate,
  *                              josephPseudoUpdate;
  *   KalmanResidualQc.cpp       the Baarda kernel and the statistical QC fill;
@@ -510,7 +510,7 @@ namespace GnssProcessor {
         }
         const auto t_after_Sr = clk::now();
 
-        // Phase totals in microseconds (wall clock).  Static accumulators
+        // Phase totals in microseconds (wall clock).  Member accumulators
         // survive across calls; logKalmanFilterTimings() prints the running
         // totals on demand (called from Application end-of-run).
         const auto us = [](clk::time_point a, clk::time_point b) -> long long {
@@ -627,6 +627,7 @@ namespace GnssProcessor {
                 if (idx < 0) continue;  // pruned between detect and apply
                 const double cur = state_manager_.getStateVector()(idx);
                 state_manager_.resetSatBiasState(key, cur + delta_value, cold_var);
+                ++qc_counters_.stuck_bias_resets;
                 // Clear the row's EWMA + streak history; the new
                 // bias state's converged value is unrelated to the
                 // pre-reset history.
@@ -854,6 +855,7 @@ namespace GnssProcessor {
         auto logger = log_manager_.getLogger("main_log");
         if (timing_n_calls_ == 0) {
             logger->info("KF timing summary: no update() calls recorded.");
+            logQcCounters();
             return;
         }
         const double n = static_cast<double>(timing_n_calls_);
@@ -878,6 +880,15 @@ namespace GnssProcessor {
         timing_us_P_  = 0;
         timing_us_Sr_ = 0;
         timing_n_calls_ = 0;
+        logQcCounters();
+    }
+
+    void KalmanFilter::logQcCounters() {
+        // Run-end telemetry (standing invariant 4: a run-end counter is the on-path
+        // evidence that a QC branch acted), printed beside the timing summary and reset
+        // with it.
+        log_manager_.getLogger("main_log")->info("{}", formatKalmanQcCounters(qc_counters_));
+        qc_counters_ = KalmanQcCounters{};
     }
 
     // ===================================================================
