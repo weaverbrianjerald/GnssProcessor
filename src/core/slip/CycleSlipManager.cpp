@@ -99,11 +99,6 @@ void CycleSlipManager::resetSatelliteSignal(const std::string& satellite,
     if (turbo_) turbo_->resetSatelliteSignal(satellite, signal);
 }
 
-void CycleSlipManager::notifyPivotForcedHandover(const std::string& satellite,
-                                                  const std::string& reason) {
-    if (mw_) mw_->notifyPivotForcedHandover(satellite, reason);
-}
-
 void CycleSlipManager::setCorrections(const GnssCorrections* corrections) {
     // MW and EWL consume biases; the others ignore it via the default no-op.
     for (const auto& d : detectors_) d->setCorrections(corrections);
@@ -1145,6 +1140,12 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
                 }
 
                 // --- Sat-wide state re-inflation ---
+                // Runs after the full-reset fall-through above, which resets
+                // every MANDATED key of the satellite: all its phase
+                // ambiguities when the mandate covers them, a subset when it
+                // does not (e.g. a triple-frequency satellite whose only
+                // mature MW pair slipped).  The re-inflation is
+                // satellite-wide either way.
                 // When every phase ambiguity of a satellite has been
                 // reset, the new ambiguities reseed against the current
                 // (iono, sat-bias) state and inherit whatever partition

@@ -29,8 +29,10 @@
 *     available, overlapping MW pairs are compared.  If L1W_L2W slips
 *     but L1W_L5Q does not, then L2W slipped and only that ambiguity
 *     is reset (rather than resetting all ambiguities for the satellite).
-*   - For bias-corrected locked arcs, the MW arc is shifted by the
-*     integer slip offset to maintain continuity.
+*   - A culprit signal with a cross-consistent integer is repaired in the
+*     filter state (x += dN·λ, covariance preserved).  The manager does not
+*     shift the MW arc: its statistics are observation-space and are not
+*     affected by the state-level integer step.
 *   - Falls back to full ambiguity reset when targeted identification
 *     is not possible.
 */
@@ -59,8 +61,18 @@ namespace GnssProcessor {
  * @brief Epoch-level result of cycle slip processing.
  */
 struct CycleSlipEpochResult {
-    int n_repaired{ 0 };       ///< Slips handled per signal: additive integer repair, targeted single-signal reset when the repair is refused, or a pivot-deferred repair/reset; also TurboEdit and soft-LLI bridge repairs.
-    int n_reset{ 0 };          ///< Slips handled by ambiguity reset rather than a per-signal repair (full reset, auxiliary-detector resets, TurboEdit reset fallback).
+    /// Slips handled per signal: additive integer repair, targeted
+    /// single-signal reset when the repair is refused, or a pivot-deferred
+    /// repair/reset; also TurboEdit GF-only repairs.  Exception in units: the
+    /// soft-LLI bridge adds one per repaired SATELLITE, not per signal
+    /// (@c SoftLliBridge::resolveHolds).  Clean-peer shifts of the in-place
+    /// pivot-frame repair are not counted.
+    int n_repaired{ 0 };
+    /// Slips handled by ambiguity reset rather than a per-signal repair (full
+    /// reset, residual mandated resets, auxiliary-detector resets, TurboEdit
+    /// reset fallback), one per ambiguity key; the soft-LLI bridge adds one
+    /// per key it resets on a restore failure or a timeout.
+    int n_reset{ 0 };
     /// Satellites whose MW mandates were suppressed by the dedicated
     /// code-event veto branch (GF affirmatively stable; no state touched
     /// for the adjudicated signals).  Counted per satellite, not per pair,
@@ -138,7 +150,10 @@ public:
      * @param epoch_prefix     Log prefix.
      * @param modeled_obs      Modeled observations for this epoch.
      * @param state_manager    Filter state manager (modified on reset).
-     * @param meas_model       Measurement model (for BSSD pivot info).
+     * @param meas_model       Measurement model: read for the BSSD pivot map;
+     *                         its @c PivotManager is also WRITTEN, through a
+     *                         @c const_cast, when a slipped pivot forces a
+     *                         handover (the caller owns it as non-const).
      * @return Epoch result summary.
      */
     CycleSlipEpochResult detectAndRepair(
@@ -169,14 +184,6 @@ public:
     void resetSatelliteSignal(const std::string& satellite,
                               const std::string& signal);
 
-    /// Forward a one-shot MW-pivot deprioritization hint to the MW detector.
-    /// Call this when an upstream component (typically @c PivotManager via
-    /// @c requestForcedHandover) flags that the current KF pivot has slipped,
-    /// so the MW pivot picker also avoids the same satellite next epoch.
-    /// See @c MwSlipDetector::notifyPivotForcedHandover for semantics.
-    void notifyPivotForcedHandover(const std::string& satellite,
-                                   const std::string& reason);
-
     /// Provide bias corrections to every detector (MW and EWL use them; the
     /// others ignore them) and to the TurboEdit resolver, if enabled.
     void setCorrections(const GnssCorrections* corrections);
@@ -194,10 +201,6 @@ public:
     /// soft-LLI bridge and sets the TurboEdit GF-arc gap tolerance to 1.5 times
     /// the cadence.
     void setSampleInterval(double interval_s);
-
-    /// Whether the MW+GF TurboEdit joint repair mode is active (config toggle
-    /// set and the MW detector, its source of WL integers, enabled).
-    bool turboEditEnabled() const { return turbo_ != nullptr; }
 
     /// Access the MW detector for its wider API (WL-lock queries, per-sat
     /// quality scoring, pivot hints), or nullptr if the MW detector is

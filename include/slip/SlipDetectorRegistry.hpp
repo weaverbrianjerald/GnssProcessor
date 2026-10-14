@@ -32,24 +32,19 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
 namespace GnssProcessor {
 
 /**
- * @brief Canonical lower-case selection token for a detector kind
- *        (e.g. @c "mw", @c "graphic", @c "ewl", @c "gf", @c "if").
+ * @brief Canonical lower-case token for a detector kind, as printed by the
+ *        registry's selection log and the auxiliary-reset log lines.
+ * @param kind Detector kind.
+ * @return @c "mw", @c "graphic", @c "ewl", @c "gf" or @c "if" (@c "unknown"
+ *         for a value outside the enumeration).
  */
 std::string toString(SlipDetectorKind kind);
-
-/**
- * @brief Parse a (case-insensitive) selection token into a detector kind.
- * @param token Token such as "mw", "graphic", "ewl", "gf", "if" (synonyms accepted).
- * @return The kind, or @c std::nullopt if unrecognized.
- */
-std::optional<SlipDetectorKind> slipDetectorKindFromString(const std::string& token);
 
 /**
  * @class SlipDetectorRegistry
@@ -80,25 +75,15 @@ public:
                                                  LogManager& log_manager);
 
     /**
-     * @brief Whether a kind can be constructed in this build.
-     * @param kind Detector kind.
-     * @return true if a creator is registered for @p kind.
-     */
-    static bool isAvailable(SlipDetectorKind kind);
-
-    /**
-     * @brief All detector kinds with a registered creator (build-available).
-     */
-    static std::vector<SlipDetectorKind> availableKinds();
-
-    /**
      * @brief Build the config-selected detector set.
      *
      * Order is deterministic: the MW detector first when enabled (it is the
      * primary and the source of WL integers for AR and pivots), then the
      * auxiliary detectors in a fixed order.  A kind that is enabled in the config
      * but has no registered creator is skipped with a warning, so a config that
-     * selects a staged detector still runs instead of failing.
+     * selects a staged detector still runs instead of failing.  The warning
+     * reads "staged/uncompiled" for both kinds without a creator; that is true
+     * of GF only, since IF is compiled and built by the network path alone.
      *
      * @param config      Processing configuration (queried via getCycleSlipConfig()).
      * @param log_manager Logging facility.

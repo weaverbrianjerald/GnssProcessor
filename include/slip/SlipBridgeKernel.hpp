@@ -2,6 +2,12 @@
  * @file SlipBridgeKernel.hpp
  * @brief Non-causal cycle-slip integer recovery from two-sided GF + MW windows.
  *
+ * STAGED: no production caller.  Compiled into gnss_core and exercised only by
+ * tests/test_slip_bridge_kernel.cpp.  Its four knobs
+ * (processing.enable_noncausal_slip_bridge, slip_bridge_half_window_epochs,
+ * pre_bridge_float_tol_cycles, pre_bridge_conv_var_m2) are parsed and no code
+ * reads their getters, so setting them changes nothing.
+ *
  * Given a flagged reset boundary, this kernel re-derives geometry-free (GF) and
  * Melbourne-Wübbena (MW) series on both sides of the boundary from the resident
  * raw RINEX record, fits each with the @ref JumpGapFitter, and attributes the
