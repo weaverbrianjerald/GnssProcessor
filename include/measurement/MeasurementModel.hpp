@@ -38,6 +38,18 @@ namespace GnssProcessor {
      *  - StateInitializer:  first-epoch ISB, phase clock, and code bias seeding.
      *  - PivotManager:  pivot selection, handover, and state re-referencing.
      *  - BssdTransform:     between-satellite single-difference S-transformation.
+     *
+     * The implementation is split by concern (card UOM step U4):
+     *  - MeasurementModel.cpp: construction and setters; computeMeasurementUpdate,
+     *    the order of an epoch's steps and the row loop; hasValidGeometry;
+     *    validateMeasurementUpdate; the BSSD forwarders.
+     *  - MeasurementModelStates.cpp: the state pre-pass ensureRequiredStates and
+     *    its members, one per state category (the table at ensureRequiredStates).
+     *  - MeasurementModelRow.cpp: isUsableMeasurement, buildJacobianRow (the
+     *    observation equation) and the product coverage checks.
+     *  - MeasurementModelVariance.cpp: rowVariance, the variance of one row.
+     *  - MeasurementModelDd.cpp: the baseline double-difference build, as stages.
+     *  - MeasurementModelNetwork.cpp: the network-only surface (card NOM).
      */
     class MeasurementModel {
     public:
@@ -712,6 +724,55 @@ namespace GnssProcessor {
          * may not fix, and warns on a band count above the frequency mode.
          * A driver: one member per state category below, called in this
          * order, over one working value (@ref RequiredStates).
+         *
+         * @par The state pre-pass, in call order
+         *
+         * Each row is one call of the driver.  "Gate" is what makes the state
+         * required this epoch (a required state that does not exist is born; one
+         * that is no longer required is pruned by its category's prune); "seed"
+         * the value it is born with; "initial variance" the diagonal it is born
+         * with.  Rows marked "no state" collect or check and write no state.
+         *
+         * | # | member                        | category                        | gate                                                        | seed                                                   | initial variance                                   |
+         * |---|-------------------------------|---------------------------------|-------------------------------------------------------------|--------------------------------------------------------|----------------------------------------------------|
+         * | 1 | collectRequiredStates         | keep sets (no state)            | a code or phase signal the BSSD pivot tracks (a)            |                                                        |                                                    |
+         * | 2 | addHoldProtectedKeys          | keep sets (no state)            | a key the soft-LLI / gap bridge holds                       |                                                        |                                                    |
+         * | 3 | collectNlWlKeys               | NL/WL keys (no state)           | NL/WL basis                                                 |                                                        |                                                    |
+         * | 4 | ensureIonosphereStates        | slant ionosphere                | uncombined; a code or phase row of the satellite            | StateInitializer::computeIonosphereSeed, else 0 (b)    | (initial_std.ionosphere x s)^2 / sin^2(el) (c)     |
+         * | 5 | ensurePhaseColourStates       | phase colour (network)          | network.phase_colour_state; an uncombined phase row         | 0                                                      | network.phase_colour_sigma_zen_m^2                 |
+         * | 6 | preseedColdReceiverClock      | receiver clock (network)        | network.cold_clock_seed, until a seed succeeds (no birth)   | median GPS code residual (seedColdReceiverClock)       | unchanged                                          |
+         * | 7 | computePivotSeeds             | BSSD pivot seeds (no state)     | BSSD                                                        | StateManager::computeAmbiguitySeed per pivot signal    |                                                    |
+         * | 8 | ensurePerBandAmbiguities      | ambiguity, per band             | per-band basis; a phase key, new or pending reseed          | computeAmbiguitySeed, pivot-relative under BSSD (d)    | substituted-ATX override, else 1000 m (e)          |
+         * | 9 | ensureNlWlAmbiguities         | ambiguity, NL and WL            | NL/WL basis; as row 8                                       | computeAmbiguitySeed / wavelength, in cycles (d)       | as row 8 (the same number, on a state in cycles)   |
+         * | - | pruneAmbiguitiesExcept        | ambiguity prune (in the driver) | a key not in the keep set (rows 1 to 3)                     |                                                        |                                                    |
+         * |10 | warnAmbiguityBandCount        | band count (no state)           | per-band basis; Dual or Triple                              |                                                        |                                                    |
+         * |11 | markUnresolvableAmbiguities   | AR eligibility flags            | per-band basis (f)                                          |                                                        |                                                    |
+         * |12 | ensureReceiverCodeBiasStates  | receiver code bias              | estimate_ifb, uncombined; a code row with a bias key (g)    | 0, then StateInitializer::initializeCodeBiases once    | initial_std.code_bias^2                            |
+         * |13 | ensureSatCodeBiasStates       | satellite code bias (user path) | estimate_sat_biases, not the network; uncovered code (h)    | the sat-bias cache, else the row's innovation (i)      | the cached variance, else initial_std.sat_bias^2   |
+         *
+         * Notes.  (a) GLONASS is skipped under BSSD unless enable_glonass_bssd.
+         * (b) The geometry-free code pair with .BIA coverage; on the network the
+         * LV-1 seed frame reframes it when installed.  (c) s = 1, or 10 when the
+         * seed is 0 for want of a covered pair; sin^2(el) when the elevation is
+         * known.  (d) The pivot's own state is 0; the others subtract the pivot's
+         * seed of the same signal (row 7).  On a reseed the value is replaced and
+         * the variance is the one the reset set.  (e)
+         * model_corrections.ambiguity_std_substituted_atx when
+         * loosen_amb_q_for_substituted_atx is on and the signal's ATX was
+         * substituted, else GnssConfig::getAmbiguityStd(), 1000 m with no JSON key
+         * (card UOM defect S3).  (f) GLONASS under BSSD; a signal without applied
+         * phase-bias coverage; an iono-free pair also without receiver ATX.
+         * (g) The key from StateInitializer::resolveReceiverBias (DCB, IFB, ISC,
+         * or GLONASS per-slot IFB; the GLONASS network keeps per-slot keys only).
+         * (h) A raw code (uncombined) or iono-free code pair without .BIA or SSR
+         * coverage that the BSSD pivot tracks; an uncombined GLONASS signal with a
+         * per-slot IFB key is excluded.  The network producer allocates its
+         * satellite code biases in @ref ensureNetworkSharedStates.  (i) From
+         * buildJacobianRow, re-referenced to the pivot's innovation under BSSD.
+         *
+         * The network producer's own shared states (satellite clock, phase bias
+         * and code bias) are not in this table: @ref ensureNetworkSharedStates
+         * allocates them in PASS A, before this pre-pass runs.
          *
          * @param observations This epoch's modeled observations.
          * @param epoch_prefix Log prefix (empty: the log pattern carries the time).
