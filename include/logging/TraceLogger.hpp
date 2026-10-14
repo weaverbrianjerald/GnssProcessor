@@ -104,7 +104,12 @@ public:
      * @brief Write the current filter state to the state trace file.
      *
      * The method extracts relevant state vector entries and covariance from the
-     * supplied StateManager and writes a single epoch line.
+     * supplied StateManager and writes a single epoch line.  Columns of a state
+     * the StateManager does not allocate are omitted (clock, phase clock,
+     * gradients, the differential ZWD @c dzwd_m / @c dzwd_std_m, time offsets),
+     * except the base @c tropo_m / @c tropo_std_m pair, which is NaN when no
+     * absolute zenith wet delay is estimated (the baseline modes).  A row is
+     * skipped, with a warning, only when the state has no position.
      *
      * @param time Epoch time of the state.
      * @param state_manager StateManager providing access to current states and metadata.

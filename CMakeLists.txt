@@ -645,6 +645,7 @@ add_executable(gnss_tests
     tests/network/test_network_streaming.cpp
     tests/test_rtcm_logger_lifetime.cpp
     tests/test_safe_logger.cpp
+    tests/test_trace_logger_state.cpp
     tests/test_sbf.cpp
     tests/test_estimation_core.cpp
     tests/test_ils_core.cpp
