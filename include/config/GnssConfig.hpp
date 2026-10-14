@@ -1254,10 +1254,19 @@ namespace GnssProcessor {
         double getBadMeasPercent() const { return bad_meas_percent_; }
 
         /**
-         * @brief Gets the ambiguity standard deviation.
-         * @return Ambiguity standard deviation.
+         * @brief Gets the initial ambiguity standard deviation (m).
+         *
+         * The one source of the float-ambiguity initial uncertainty: the configured
+         * @c filter.initial_std.ambiguity (loader default 1000 m), the same value
+         * @c getInitialStd().ambiguity returns.  Births (@c StateManager::addAmbiguity
+         * without an override) and the slip, outlier and real-time resets read it here;
+         * the pivot reseeds, the DD births and the KalmanFilter's non-pivot reset read
+         * @c getInitialStd().ambiguity directly.  A second, hard-coded value here would run
+         * two ambiguity scales in one run for a config that sets another value.
+         *
+         * @return Initial ambiguity standard deviation (m).
          */
-        double getAmbiguityStd() const { return ambiguity_std_; }
+        double getAmbiguityStd() const { return initial_std_.ambiguity; }
 
         /**
          * @brief Gets the code noise amplification factor.
@@ -8592,7 +8601,6 @@ namespace GnssProcessor {
         double data_snooping_critical_{ 3.29 };    ///< Baarda w-test critical value (|w| reject bound; α₀=0.001 → 3.29).
         bool   enable_full_r_kernel_{ false };     ///< Honour off-diagonal R in the post-fit residual-covariance kernel (Sr = R − H·P⁺·Hᵀ).
         double bad_meas_percent_;        ///< Percentage of bad measurements allowed.
-        double ambiguity_std_;           ///< Ambiguity standard deviation.
         double code_noise_amplify_;      ///< Code noise amplification factor.
 
         std::filesystem::path otl_blq_path_;    ///< Path to BLQ ocean loading file (optional).
