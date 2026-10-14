@@ -1313,7 +1313,7 @@ struct StationAssembly {
     long long                 prm_amb_gap_skip{0};            ///< AmbGapSkip: carried arcs past @c phase_leveling_max_gap_s not folded (leveling vehicle only); the subset of @c inject_stale_skips that skipped.
     long long                 prm_rxcb_gap_skip{0};           ///< RxcbGapSkip: carried receiver code biases past the 900 s horizon not folded, on either route (RXCB-IN-BLOCK, or the diagonal fold); the gate's variance guard is not counted.
     long long                 prm_rxcb_jump_skip{0};          ///< RxcbJumpSkip: diagonal-route carried receiver code biases withheld by the inject's innovation test (the instances of @c pl_cb_innov_skips).
-    long long                 prm_iono_gap_skip{0};           ///< IonoGapSkip: carried slant ionospheres past their horizon not folded: the I-in-block refusal past @c iono_blk_max_gap_s (the instances of @c pl_blk_iono_gap_drop) and the diagonal carry's stale skip past @c iono_max_gap_s (a scope=relevel LOS reaches it only when re-leveling).
+    long long                 prm_iono_gap_skip{0};           ///< IonoGapSkip: carried slant ionospheres past their horizon not folded: the I-in-block refusal past @c iono_blk_max_gap_s (the instances of @c pl_blk_iono_gap_drop).
     long long                 prm_rxclk_gap_skip{0};          ///< RxclkGapSkip: carried receiver clocks (and ISBs) past @c rxclk_max_gap_s refused by the RX-CLK-in-block walk (the instances of @c pl_blk_rxclk_gap_drop).
     long long                 prm_zwd_gap_skip{0};            ///< ZwdGapSkip: a carried wet delay past @c phase_leveling_max_gap_s not folded, counted once at the diagonal B9 gate, which an in-block (B9-in-block) gap refusal always reaches with the same entry and the same test.
     long long                 prm_rpb_gap_skip{0};            ///< RpbGapSkip: carried eq34 receiver phase biases past @c phase_leveling_max_gap_s whose local time-linking prior was not built (a negative gap is not counted).
@@ -1473,14 +1473,10 @@ struct StationAssembly {
     /// network.phase_datum_eq34 is on with phase_datum_eq34_rpb_q_m2s > 0.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_rpb;
     /// Present per-LOS iono columns recorded for the post-solve harvest, as (sat, A_r
-    /// column, linearization point) (slant-iono carry, QUEUE 8b).  Recorded
-    /// unconditionally when armed (the harvest stashes every epoch; the inject is
-    /// scope-gated separately).  Same tuple shape as pl_rpb.  Empty unless
-    /// network.carry_iono is on.
+    /// column, linearization point) (I-in-block).  The harvest appends them to the
+    /// block's columns.  Same tuple shape as pl_rpb.  Empty unless
+    /// network.carry_iono_in_block is on.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_iono;
-    long long iono_carry_injected{0};   ///< Iono carry priors folded this station-epoch (QUEUE 8b; produce-phase local, summed serially).
-    long long iono_carry_floor_hits{0}; ///< Injects clamped up to iono_carry_var_floor (QUEUE 8b).  Expected near 100 % mid-arc: the floor is the effective weight, and the q term governs long gaps.
-    std::set<std::string> iono_injected_sats;  ///< Satellites whose iono prior folded this epoch (the prires ground-truth `folded`, as pl_zwd_injected; QUEUE 8b).
     /// rx-CB carry (docs/SPEC_rx_cb_carry.md): present receiver code-bias columns
     /// (state key, A_r col, x_lin) recorded for the post-solve harvest.  Filled only
     /// under network.carry_rx_code_bias; same tuple shape as pl_rpb.

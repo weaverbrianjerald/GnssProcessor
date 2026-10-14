@@ -23,7 +23,7 @@
  *    both channels the kernel folds: the pre-PD prior folded with the block (for
  *    example @c prior_rx_cb_datum_pre_pd) and the post-PD diagonal prior when the
  *    consume folded it (@c prior_ambiguity_carry, @c prior_zwd_carry,
- *    @c prior_iono_carry, @c prior_rx_cb_carry, @c prior_rx_cb_datum,
+ *    @c prior_rx_cb_carry, @c prior_rx_cb_datum,
  *    @c prior_ambiguity_oracle_pin);
  *  - each shared fold the estimator captured, by its kind: @c "shared:" and the kind's
  *    name (@ref rhsAttribSharedClass; for example @c shared:border_carry_dense,

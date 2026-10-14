@@ -1017,26 +1017,14 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                 ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 attribution refloat
                             }
                         }
-                        // A T4 or consensus erase means the arc's level is not trusted,
-                        // and the attribution cannot separate level error from
-                        // carried-iono error (the T4 statistic reads their sum), so the
-                        // LOS's iono carry is erased with it and the re-level re-draws
-                        // both (queue 8b).  Idempotent across the per-signal loop.
-                        if (inj_iono && ctx.knobs.iono_on &&
-                            ctx.carry.iono_carry.erase({i, pa.sat})) {
-                            ++ctx.counters.n_iono_carry_erased_t4;
-                            prmRespond(ctx.counters.prm_resp,
-                                       ResponseSite::IonoRaimErase);   // card PRM phase 3a
-                        }
                         // Iono in the carried block (network.carry_iono_in_block,
-                        // I-in-block): the same edge for the in-block vehicle, and its
-                        // wired response under invariant #1.  The T4 statistic reads level
+                        // I-in-block): a T4 or consensus erase means the arc's level is
+                        // not trusted, and its wired response under invariant #1 erases
+                        // the LOS's carried iono with it.  The T4 statistic reads level
                         // error and carried-iono error as a sum, so an arc whose level is
                         // no longer trusted cannot vouch for the iono estimated jointly
                         // with it.  Erasing here makes the LOS re-draw both from data (its
                         // next harvest re-creates the entry with a fresh birth_s).
-                        // Separate map and counter: the two carries are mutually exclusive
-                        // vehicles, so a run's erase count is never split across them.
                         if (ctx.knobs.iono_blk &&
                             ctx.carry.iono_blk_carry.erase({i, pa.sat})) {
                             ++ctx.counters.n_iono_blk_erased_t4;

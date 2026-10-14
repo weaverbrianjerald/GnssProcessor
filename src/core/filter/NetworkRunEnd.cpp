@@ -20,7 +20,6 @@
 #include "app/NetworkRunTimingRunEnd.hpp"
 #include "app/NetworkSetupResult.hpp"
 #include "app/NetworkSolveStationsRunEnd.hpp"
-#include "app/NetworkStationIonoRunEnd.hpp"
 #include "app/SignalRoster.hpp"
 #include "filter/NetworkAmbFloat.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
@@ -182,8 +181,6 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "slip/NetworkSlipQcRunEnd.cpp", networkIfTdReseedRunEnd},
     {"slip QC: the arc-scoped GF jump trigger (card ARL)",
      "slip/NetworkGfArcJump.cpp", networkGfArcJumpRunEnd},
-    {"the slant-ionosphere carry",
-     "app/NetworkStationIonoRunEnd.cpp", networkIonoCarryRunEnd},
     {"the withhold era, the R2 station factor, the R4 rate hygiene",
      "filter/NetworkRaim.cpp", networkRaimWithholdRunEnd},
     {"the LV-6 level-authority census",

@@ -713,55 +713,6 @@ namespace GnssProcessor {
                           "'false-alarm kept'.");
         }
 
-        // Slant-iono carry interlocks (QUEUE 8b), placed here for the same
-        // parse-order reason as above.  All of them warn and disarm (invariant #4):
-        // an armed but inert knob misleads more than a refused one.
-        if (network_carry_iono_ && network_carry_invariant_) {
-            log->warn("Network: network.carry_iono scope=relevel keys on the relevel "
-                      "response, which network.carry_invariant disarms (leveling local "
-                      "carry superseded); the scope=always/carry_invariant pairing is "
-                      "the future O2 accumulation card and is unvalidated — disabled.");
-            network_carry_iono_ = false;
-        }
-        if (network_carry_iono_ && !network_phase_leveling_) {
-            log->warn("Network: network.carry_iono requires network.phase_leveling "
-                      "(the carry seam's harvest/inject/warmup infrastructure) — "
-                      "disabled.");
-            network_carry_iono_ = false;
-        }
-        if (network_carry_iono_ && estimate_network_iono_sh_) {
-            log->warn("Network: network.carry_iono under network.estimate_iono_sh is "
-                      "unvalidated — the carried station-common mode and the a00 column "
-                      "form the F4-class quasi-null with no demean derivation yet "
-                      "(docs/SPEC_iono2_mechB_v3.md) — disabled.");
-            network_carry_iono_ = false;
-        }
-        if (network_carry_iono_ && global_vtec_sh_.rep_error_tau_s > 0.0) {
-            log->warn("Network: network.carry_iono is mutually exclusive with the mech-B "
-                      "deviation carry (estimation.global_vtec_sh.rep_error_tau_s > 0): "
-                      "two temporal channels on the same physical column double-count — "
-                      "disabled.");
-            network_carry_iono_ = false;
-        }
-        if (network_carry_iono_ && network_iono_carry_scope_ == "relevel" &&
-            !network_cycle_slip_relevel_free_epoch_) {
-            log->warn("Network: network.carry_iono scope=relevel keys its slip-KEEP edge "
-                      "on network.cycle_slip.relevel_free_epoch, which is off — the "
-                      "detector-freed population would never inject — disabled.");
-            network_carry_iono_ = false;
-        }
-        if (network_carry_iono_)
-            log->info("Network producer (slant-iono carry, QUEUE 8b): carrying per-LOS "
-                      "slant iono across epochs, scope={} — RW q {:.3e} m²/s, inject var "
-                      "floor {:.3f} m², eviction gap {:.0f} s.  KEEP through freed slips, "
-                      "ERASE on un-freed funnel entries and T4/consensus refloats.  The "
-                      "expected win is the re-draw-event churn kill (the freed level "
-                      "re-levels against the transported pre-event iono instead of one "
-                      "epoch of GF code), NOT dm-class iono and NOT the O2/NL "
-                      "accumulation channel on a leveled posture.",
-                      network_iono_carry_scope_, network_iono_carry_q_,
-                      network_iono_carry_var_floor_, network_iono_carry_max_gap_s_);
-
         // Evidence interlock for the D5 v3/v4 consumers (card 4, M1), placed here for
         // the load-order reason above.  The D5 consumers read per-(station, satellite)
         // raw MW/GF step verdicts, which are filled by the slip-QC qualify pass.  That
@@ -782,12 +733,8 @@ namespace GnssProcessor {
         // changes the solve through a knob that was not touched.  See
         // SPEC_level_authority_internal §5.3.
         //
-        // The check cannot sit at the parse site in loadNetworkDatumSignalling_:
-        // `network_carry_iono_`, one of the two inputs behind `iono_cs`, still holds
-        // its raw parsed value there, and the carry_iono interlocks above can clear it.
-        // The first of them (carry_iono under carry_invariant) fires on the
-        // carry_invariant lineages these D5 knobs are used on.  Here every input is
-        // final.
+        // The check sits here, at the end of loadNetworkSection_, where every input it
+        // reads is final.
         //
         // The two derived arms mirror the SlipQcParams construction in
         // ApplicationNetwork.cpp (sp.bridge_gf, sp.iono_cs); keep them in step.
@@ -803,9 +750,7 @@ namespace GnssProcessor {
         // not fire on them; it covers future configs.
         if (network_carry_invariant_innov_corroborate_
             || network_carry_invariant_innov_retap_only_) {
-            const bool iono_cs_armed =
-                (network_carry_iono_ && network_iono_carry_source_ == "smoothed_gf")
-                || network_level_authority_csgf_;
+            const bool iono_cs_armed = network_level_authority_csgf_;
             const bool cards_armed = network_config_.slip_qc.lli_corroborate
                                      || network_config_.slip_qc.gap_instrument
                                      || network_cycle_slip_relevel_bridge_gf_
@@ -959,7 +904,7 @@ namespace GnssProcessor {
                                               const std::shared_ptr<spdlog::logger>& log) {
         // --- Scoped per-parameter-class process noise (network.process_noise) ---
         // One authoring surface for the time-linked, network-owned q's (the
-        // kNetworkQClassCount = 12 classes of kNetworkQClassTable), whose legacy keys
+        // kNetworkQClassCount = 11 classes of kNetworkQClassTable), whose legacy keys
         // are spread over the filter, estimation and network sections.  It is
         // resolved here, first in the section, because the resolution feeds two
         // mechanisms depending on where the legacy key is parsed:
@@ -5149,9 +5094,8 @@ namespace GnssProcessor {
         network_carry_zwd_in_block_ =
             jval<bool>(json, "network.carry_zwd_in_block", "carry_zwd_in_block", false);
         // The same rule applied to the per-LOS slant-iono columns (I-in-block; SPEC_amb_
-        // iono_split_overcount §7 item 17).  Not a sub-knob of the legacy
-        // network.carry_iono, which is the diagonal vehicle this replaces; the two are
-        // mutually exclusive (validated below).  q is per epoch, m² at L1.
+        // iono_split_overcount §7 item 17).  It replaces the retired diagonal vehicle
+        // network.carry_iono.  q is per epoch, m² at L1.
         network_carry_iono_in_block_ =
             jval<bool>(json, "network.carry_iono_in_block", "carry_iono_in_block", false);
         network_carry_iono_in_block_q_m2_ =
@@ -5667,39 +5611,6 @@ namespace GnssProcessor {
                           "response policy).",
                           GnssConfig::kResumePbSeamMarkFraction * 100.0);
         }
-        // Slant-iono carry (QUEUE 8b; docs/SPEC_slip_relevel_walk.md s8 residual):
-        // carries per-LOS slant iono across epochs as a diagonal RW prior through the
-        // same addStationPrior path.  A new carry seam: it is not the phantom
-        // filter.process_noise.ionosphere_q (which has no network reader) and not the
-        // falsified adaptive q.
-        network_carry_iono_ =
-            jval<bool>(json, "network.carry_iono", "carry_iono", false);
-        network_iono_carry_q_ =
-            jval<double>(json, "network.iono_carry_q", "iono_carry_q",
-                         network_config_.process_noise.get(NetworkQClass::IonoCarry));
-        network_iono_carry_scope_ =
-            jval<std::string>(json, "network.iono_carry_scope", "iono_carry_scope",
-                              std::string("relevel"));
-        network_iono_carry_var_floor_ =
-            jval<double>(json, "network.iono_carry_var_floor", "iono_carry_var_floor", 0.04);
-        network_iono_carry_max_gap_s_ =
-            jval<double>(json, "network.iono_carry_max_gap_s", "iono_carry_max_gap_s", 300.0);
-        // What feeds the carried value (the CS-GF authority, successor to the falsified
-        // i1; SPEC_iono_carry_8b §6.2).  "solve" = the est-reconstructed per-LOS iono
-        // (measured to accumulate the level-locked displacement); "smoothed_gf" = the
-        // carrier-smoothed GF-code authority (level-independent; drains toward the
-        // code realization).
-        network_iono_carry_source_ =
-            jval<std::string>(json, "network.iono_carry_source", "iono_carry_source",
-                              std::string("solve"));
-        if (network_iono_carry_q_ < 0.0)
-            throw std::runtime_error("network.iono_carry_q must be >= 0");
-        if (network_iono_carry_var_floor_ < 0.0)
-            throw std::runtime_error("network.iono_carry_var_floor must be >= 0");
-        if (network_iono_carry_scope_ != "relevel" && network_iono_carry_scope_ != "always")
-            throw std::runtime_error("network.iono_carry_scope must be \"relevel\" or \"always\"");
-        if (network_iono_carry_source_ != "solve" && network_iono_carry_source_ != "smoothed_gf")
-            throw std::runtime_error("network.iono_carry_source must be \"solve\" or \"smoothed_gf\"");
         // rx-CB carry (docs/SPEC_rx_cb_carry.md): carry receiver code biases across
         // epochs.  Independent of the phase-leveling gate by construction.
         network_carry_rx_code_bias_ =
@@ -5916,7 +5827,7 @@ namespace GnssProcessor {
                 // census would report it as "armed, zero rows" at run end, which is
                 // indistinguishable from a real negative result, so it is named here,
                 // at load, where the typo can be fixed.
-                static const char* kKnownFamilies[] = {"pl", "pb", "cb", "zwd", "iono", "rxcb", "clk"};
+                static const char* kKnownFamilies[] = {"pl", "pb", "cb", "zwd", "rxcb", "clk"};
                 for (const std::string& f :
                      NetworkCarryVce::parseComponents(pnc.prior_residual_families)) {
                     bool known = false;
@@ -5924,7 +5835,7 @@ namespace GnssProcessor {
                     if (!known)
                         log->warn("Network (prior-residual census): family '{}' in "
                                   "network.prior_residual_families has NO feed hook in this build "
-                                  "(known: pl, pb, cb, zwd, iono, rxcb, clk) — it will report zero rows, which "
+                                  "(known: pl, pb, cb, zwd, rxcb, clk) — it will report zero rows, which "
                                   "is indistinguishable from a genuine negative result.  Fix the "
                                   "spelling or drop it.", f);
                 }
@@ -8386,11 +8297,8 @@ namespace GnssProcessor {
             } else {
                 // The suppression evidence is the slip-QC qualify pass, and the card that
                 // makes that pass run is auto-armed from the settled-state interlock at the
-                // end of loadNetworkSection_, not here.  One of cardsArmed()'s four inputs
-                // (network_carry_iono_) still holds its raw parsed value at this point and
-                // is cleared by an interlock that runs later, so a test here would read a
-                // value that never reaches the estimator.  @see the "Evidence interlock
-                // for the D5 v3/v4 consumers" block in loadNetworkSection_.
+                // end of loadNetworkSection_, not here.  @see the "Evidence interlock for
+                // the D5 v3/v4 consumers" block in loadNetworkSection_.
                 log->info("Network (Card 4 D5 v3): D5 re-tap corroboration ON — a flagged chord "
                           "is re-tapped UNLESS the raw observables positively measured its arc "
                           "as continuous.  No-evidence still re-taps (invariant #1).  Magnitude "
@@ -12250,27 +12158,12 @@ namespace GnssProcessor {
                       "0.0877 m in-block, field T3c consensus 7619 flags vs 849 (SPEC_amb_iono_"
                       "split_overcount §6.16.7d, arms Q/Z/F/F2).");
         }
-        // Interlocks for I-in-block (network.carry_iono_in_block): the ZWD rules plus one
-        // addition that is a hard error rather than a warning.  The legacy diagonal
-        // network.carry_iono is not a different setting of the same mechanism; it is the
-        // over-count this knob removes (QUEUE 8b, falsified ×4).  Running both would
-        // assert each LOS's iono direction three times per epoch (B band priors + the
-        // diagonal row + the block row), and no run-end counter could tell the two
-        // vehicles apart, so the combination is refused at load.
+        // Interlocks for I-in-block (network.carry_iono_in_block): the ZWD rules.
         if (network_carry_iono_in_block_q_m2_ < 0.0)
             throw std::runtime_error("network.carry_iono_in_block_q_m2 must be >= 0");
         if (network_carry_iono_in_block_max_gap_s_ < 0.0)
             throw std::runtime_error("network.carry_iono_in_block_max_gap_s must be >= 0 "
                                      "(0 = use network.phase_leveling_max_gap_s)");
-        if (network_carry_iono_in_block_ && network_carry_iono_)
-            throw std::runtime_error(
-                "network.carry_iono_in_block and network.carry_iono are MUTUALLY "
-                "EXCLUSIVE vehicles for the same carried quantity: carry_iono folds each "
-                "LOS as an independent DIAGONAL prior row (the B-fold over-count of "
-                "SPEC_amb_iono_split_overcount §7 item 17, FALSIFIED ×4 in QUEUE 8(b)), "
-                "while carry_iono_in_block folds the same columns inside the F3 "
-                "jointly-whitened block where the harvested cross terms subtract that "
-                "overlap exactly.  Arm exactly one.");
         // The max-gap sentinel is resolved before the disable branches, so the getter
         // always reports effective seconds, even on a disabled arm.
         if (network_carry_iono_in_block_max_gap_s_ <= 0.0)
@@ -13054,7 +12947,6 @@ namespace GnssProcessor {
                 { QC::DdCarry,           network_carry_invariant_qz_ },
                 { QC::SatClockWfm,       network_clock_model_q1_ },
                 { QC::SatClockRwfm,      network_clock_model_q2_ },
-                { QC::IonoCarry,         network_iono_carry_q_ },
             };
             // One row per class.  A class without a row keeps its table default and
             // source in the manifest while the estimator reads the member.

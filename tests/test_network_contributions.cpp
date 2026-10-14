@@ -420,7 +420,7 @@ StationAssembly wellFormedBlock() {
     R.pl_blk_rows = 1;
     R.pc_birth_rows = 1;
     R.carry_cols = {2, 3};
-    R.carry_tags = {tagOf(CK::PriorIonoCarry), tagOf(CK::PriorAmbiguityOraclePin)};
+    R.carry_tags = {tagOf(CK::PriorAmbiguityCarry), tagOf(CK::PriorAmbiguityOraclePin)};
     R.opin_rows = 1;
     R.prior_cols = {1};
     R.prior_tags = {tagOf(CK::PriorRxCbDatumPrePd)};
@@ -531,7 +531,7 @@ TEST(NetworkContributionsTest, StationDrainCountsByItsRules) {
         setRows(R, {tagOf(CK::DataPhase)});
         R.n_data_rows = 1;
         R.carry_cols = {0};
-        R.carry_tags = {tagOf(CK::PriorIonoCarry)};
+        R.carry_tags = {tagOf(CK::PriorAmbiguityCarry)};
         R.prior_cols = {2};
         R.prior_tags = {tagOf(CK::PriorRxCbDatumPrePd)};
         R.prior_merged = {tagOf(CK::PriorRxCbDatumPrePd)};
@@ -561,7 +561,7 @@ TEST(NetworkContributionsTest, StationDrainCountsByItsRules) {
     EXPECT_EQ(at(CK::DataPhase).folds, 2);
     EXPECT_EQ(at(CK::PriorZwdCarry).count, 1);    // station 0, folded
     EXPECT_EQ(at(CK::PriorRxCbCarry).count, 1);   // station 0's merged entry, its own kind
-    EXPECT_EQ(at(CK::PriorIonoCarry).count, 0);   // station 2's carry did not fold
+    EXPECT_EQ(at(CK::PriorAmbiguityCarry).count, 0);   // station 2's carry did not fold
     EXPECT_EQ(at(CK::PriorRxCbDatumPrePd).count, 3);   // pre-PD entries count always
     EXPECT_EQ(at(CK::PriorRxCbDatumPrePd).folds, 2);
     EXPECT_EQ(t.coalesced_entries, 2);

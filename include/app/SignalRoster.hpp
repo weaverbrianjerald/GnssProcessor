@@ -571,7 +571,6 @@ namespace GnssProcessor {
         /// Resolved horizon inputs, reported at run end so the number is auditable.
         double horizon_s{ 0.0 };
         double horizon_pl_s{ 0.0 };
-        double horizon_iono_s{ 0.0 };
         double horizon_pbhold_s{ 0.0 };
         double horizon_readmit_s{ 0.0 };
     };
@@ -853,8 +852,8 @@ namespace GnssProcessor {
      *        every network run calls it).
      *
      * Resolves the ledger's horizon as the maximum of the readers' gap windows
-     * (@c network.phase_leveling_max_gap_s, @c network.iono_carry_max_gap_s,
-     * @c network.emit_pb_hold_max_gap_s, @c network.readmit_seed_horizon_s), sizes
+     * (@c network.phase_leveling_max_gap_s, @c network.emit_pb_hold_max_gap_s,
+     * @c network.readmit_seed_horizon_s), sizes
      * the per-station caches, records the station names, and reads
      * @c network.signal_roster as the trace switch.
      *

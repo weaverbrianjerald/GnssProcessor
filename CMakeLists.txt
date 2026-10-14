@@ -255,7 +255,6 @@ add_library(gnss_core STATIC
     src/core/app/NetworkRunTimingRunEnd.cpp
     src/core/app/NetworkRunArtifactsRunEnd.cpp
     src/core/app/NetworkSolveStationsRunEnd.cpp
-    src/core/app/NetworkStationIonoRunEnd.cpp
     src/core/app/NetworkResumeRunEnd.cpp
     src/core/app/NetworkReadmitRunEnd.cpp
     src/core/app/NetworkClosedLoopRunEnd.cpp

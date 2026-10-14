@@ -328,15 +328,11 @@ int Application::runNetwork() {
             config_.networkLedgerReentryNoVerdict() == LedgerReentryNoVerdict::Refloat;
         // The GF-row capture needs the qualified raw verdicts (bridge v3 E4).
         sp.bridge_gf           = config_.networkCycleSlipRelevelBridgeGf();
-        // The CS-GF authority (iono_carry_source = smoothed_gf) has the same need.
-        // The LV-6 census arms the advance independently: the kernel is
-        // instrumentation sanctioned under 8(b), and the carry's inject path,
-        // which is falsified, stays gated on carry_iono and untouched
-        // (SPEC_level_authority_internal §3).  Arming iono_cs flips cardsArmed(),
-        // so census A/B pairs must pin cycle_slip.gap_instrument in both arms.
-        sp.iono_cs             = (config_.networkCarryIono()
-                                  && config_.networkIonoCarrySource() == "smoothed_gf")
-                                 || config_.networkLevelAuthorityCsgf();
+        // The CS-GF authority has the same need.  The LV-6 census arms its advance:
+        // the kernel is instrumentation (SPEC_level_authority_internal §3).  Arming
+        // iono_cs flips cardsArmed(), so census A/B pairs must pin
+        // cycle_slip.gap_instrument in both arms.
+        sp.iono_cs             = config_.networkLevelAuthorityCsgf();
         // The arc-scoped GF jump trigger (card ARL) reads the raw rows and keeps its own
         // per-arc steps, so it arms the compute pass (anyConsumer) and not the qualify
         // pass.

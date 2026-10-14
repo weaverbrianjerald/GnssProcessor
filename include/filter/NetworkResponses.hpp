@@ -72,7 +72,6 @@ enum class ResponseSite : int {
     AmbAnchorRerefErase,   ///< a phase-anchor re-reference (handover, coverage drop) erased the family's arcs
     AmbEq34Erase,          ///< the eq34 chain's re-reference erased a carried arc
     // --- Slant ionosphere (iono_carry, iono_blk_carry) ---------------------------------
-    IonoSlipErase,         ///< a slip on the line of sight erased its carried ionosphere
     IonoRaimErase,         ///< RAIM's attribution erased the line of sight's carried ionosphere
     IonoGrossErase,        ///< the gross line-of-sight screen erased the carried ionosphere
     IonoGrossHold,         ///< the gross line-of-sight screen held the carried ionosphere
@@ -134,7 +133,7 @@ enum class ResponseSite : int {
 };
 
 /// Number of @ref ResponseSite values (array sizing).
-inline constexpr int kResponseSites = 67;
+inline constexpr int kResponseSites = 66;
 
 static_assert(static_cast<int>(ResponseSite::ShRetire) + 1 == kResponseSites,
               "kResponseSites must follow the ResponseSite enum");

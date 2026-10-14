@@ -879,10 +879,9 @@ namespace GnssProcessor {
 
         const auto& nc = config_.getNetworkConfig();
         rs.horizon_pl_s      = config_.networkPhaseLevelingMaxGapS();
-        rs.horizon_iono_s    = config_.networkIonoCarryMaxGapS();
         rs.horizon_pbhold_s  = nc.emit_pb_hold_max_gap_s;
         rs.horizon_readmit_s = config_.networkReadmitSeedHorizonS();
-        rs.horizon_s = std::max(std::max(rs.horizon_pl_s, rs.horizon_iono_s),
+        rs.horizon_s = std::max(rs.horizon_pl_s,
                                 std::max(rs.horizon_pbhold_s, rs.horizon_readmit_s));
 
         const std::size_t n = stations.size();
@@ -915,12 +914,12 @@ namespace GnssProcessor {
                   "disagreement census, the 'signals as planned' table and the SID "
                   "readers armed by their own knobs, and by nothing in the solve "
                   "otherwise.  {} producer station(s).  Ledger horizon {:.0f} s = max("
-                  "phase_leveling_max_gap_s {:.0f}, iono_carry_max_gap_s {:.0f}, "
+                  "phase_leveling_max_gap_s {:.0f}, "
                   "emit_pb_hold_max_gap_s {:.0f}, readmit_seed_horizon_s {:.0f}); "
                   "forget window {} processed epoch(s); ARC event holdoff {} epoch(s) "
                   "per (station, transition), births suppressed on the first epoch.  "
                   "Ledger trace (network.signal_roster): {}.",
-                  n, rs.horizon_s, rs.horizon_pl_s, rs.horizon_iono_s,
+                  n, rs.horizon_s, rs.horizon_pl_s,
                   rs.horizon_pbhold_s, rs.horizon_readmit_s,
                   kArcLedgerForgetEp, kArcLedgerEventHoldoffEp,
                   rs.trace ? "ON (logs/network_arc_ledger.csv, one row per arc "
@@ -2071,7 +2070,7 @@ namespace GnssProcessor {
 
         log->info(
             "Network (card SID phase 1 / ARC LEDGER): horizon {:.0f} s [= max(pl {:.0f}, "
-            "iono {:.0f}, pb_hold {:.0f}, readmit {:.0f})], forget {} epoch(s).  "
+            "pb_hold {:.0f}, readmit {:.0f})], forget {} epoch(s).  "
             "TRANSITIONS: {} birth, {} gap, {} reentry, {} death; {} re-entry(ies) "
             "after any gap, {} after 2 to 30 missed epochs at an arc with a live "
             "carry, of which {} were ANSWERED by the gap re-entry tier at the return "
@@ -2086,7 +2085,7 @@ namespace GnssProcessor {
             "30 missed epochs, {} ANSWERED and {} NOT.  Peak {} live arc(s), {} "
             "retained record(s).  {}.  COST: build {:.1f} ms total "
             "({:.2f} ms/epoch), audit {:.1f} ms total ({:.2f} ms/epoch).{}",
-            rs.horizon_s, rs.horizon_pl_s, rs.horizon_iono_s, rs.horizon_pbhold_s,
+            rs.horizon_s, rs.horizon_pl_s, rs.horizon_pbhold_s,
             rs.horizon_readmit_s, kArcLedgerForgetEp,
             c.arc_birth, c.arc_gap, c.arc_reentry, c.arc_death,
             c.gap_any, c.gap_2_30, c.gap_2_30_answered,

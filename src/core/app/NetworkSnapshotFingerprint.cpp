@@ -313,22 +313,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (ctx.param_inventory.rx_ifb.estimated_by_knob) add("rxifbest:1");
         add(fmt::format("{}", q_clock)); add(fmt::format("{}", q_pb)); add(fmt::format("{}", q_cb));
         add(fmt::format("{}", nc.warmup_ura_floor_m)); add(fmt::format("{}", nc.warmup_epochs));
-        // Slant-iono carry (queue 8b) affects the solve: the leveling levels a chain
-        // harvests under iono-carried solves mean something different than under white
-        // iono, so a warm resume cannot cross the flip even though the carry map itself is
-        // not snapshotted (it cold-starts).  Appended only when armed (the rxcb/shl2/iono2
-        // pattern), so a snapshot written with it off keeps its fingerprint.
         // Card LGM: the phase nuisance state changes what every carried ambiguity level
         // means (the colour is no longer in it), and its own carry is not snapshotted, so a
         // warm resume cannot cross the flip.  Appended only when armed.
         if (nc.phase_colour_state)
             add(fmt::format("pcol:{}:{}:{}:{}", nc.phase_colour_sigma_zen_m, nc.phase_colour_tau_s,
                             nc.phase_colour_elev_floor_deg, nc.phase_colour_max_gap_s));
-        if (config_.networkCarryIono())
-            add(fmt::format("ionocarry:{}:{}:{}:{}:{}", config_.networkIonoCarryScope(),
-                            config_.networkIonoCarrySource(),
-                            config_.networkIonoCarryQ(), config_.networkIonoCarryVarFloor(),
-                            config_.networkIonoCarryMaxGapS()));
         // rx-CB carry: appended only when armed (the shl2/iono2 pattern), so a snapshot
         // written with it off keeps its fingerprint.
         if (rx_cb_on) {

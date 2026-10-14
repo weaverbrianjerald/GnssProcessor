@@ -136,7 +136,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // their original names.
     auto& local_carry = ctx.carry.local_carry;
     auto& zwd_carry = ctx.carry.zwd_carry;
-    auto& iono_carry = ctx.carry.iono_carry;   // slant-iono carry (queue 8b)
     auto& rpb_carry = ctx.carry.rpb_carry;
     auto& eq34_reref = ctx.carry.eq34_reref;
     auto& n_cpl_harvest_fail = ctx.counters.n_cpl_harvest_fail;
@@ -176,10 +175,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         return (std::isfinite(dt) && dt > 0.0 && dt <= pl_max_gap_s) ? dt : 0.0;
     }();
     const bool   zwd_on = ctx.knobs.zwd_on;
-    const bool   iono_on = ctx.knobs.iono_on;             // slant-iono carry (queue 8b)
-    const double iono_q = ctx.knobs.iono_q;
-    const double iono_var_floor = ctx.knobs.iono_var_floor;
-    const double iono_max_gap_s = ctx.knobs.iono_max_gap_s;
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
     const bool   phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
     // Prior-residual census: the pl / zwd / rxcb feed arms.  Resolved once at run start
@@ -187,7 +182,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // nothing else.
     const bool   prires_pl   = ctx.knobs.prires_pl;
     const bool   prires_zwd  = ctx.knobs.prires_zwd;
-    const bool   prires_iono = ctx.knobs.prires_iono;   // slant-iono carry (queue 8b)
     const bool   prires_rxcb = ctx.knobs.prires_rxcb;
     // There is no `zwd_q` alias here, on purpose (RS-10b, §21.21): this body's one
     // consumer (the prior-residual census's fold_var) reads the effective q through
@@ -1843,96 +1837,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                           [&](const auto&) {
                               ++ctx.counters.n_cr_rpb_gap_prune;   // same predicate, same census
                               prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);   // card PRM phase 3a
-                          });
-        }
-        // --- Slant-iono carry (queue 8b): harvest the posterior per-LOS iono, stash
-        //     and prune.  Mirrors the RPB harvest (several columns, diagonal conditional
-        //     variance, and no card-1 coupling harvest on purpose, for the rx-CB
-        //     reason).  Stashes every epoch regardless of the inject scope, so the
-        //     carried value tracks the solution continuously and the re-draw-event
-        //     inject always has a fresh pre-event value.
-        if (iono_on) {
-            for (size_t i = 0; i < stations.size(); ++i) {
-                if (est_index_of[i] < 0) continue;
-                const StationAssembly& R = asm_res[i];
-                if (R.pl_iono.empty()) continue;
-                const std::size_t est_idx =
-                    static_cast<std::size_t>(est_index_of[i]);
-                Eigen::VectorXd xr, vard;
-                std::vector<Eigen::Index> cols;
-                cols.reserve(R.pl_iono.size());
-                for (const auto& t : R.pl_iono) cols.push_back(std::get<1>(t));
-                try {
-                    xr = est.reconstructStation(est_idx, x_s);
-                    vard = est.conditionalLocalVarianceDiag(
-                        est_idx, cols, plan.shared_datum);
-                } catch (...) { continue; }
-                for (std::size_t a = 0; a < R.pl_iono.size(); ++a) {
-                    const auto& [isat, icol, ix_lin] = R.pl_iono[a];
-                    if (icol < 0 || icol >= xr.size()) continue;
-                    double value_abs, var;
-                    if (ctx.knobs.iono_source_smoothed) {
-                        // CS-GF authority (§6.2 successor): stash the level-independent
-                        // carrier-smoothed GF-code estimate instead of the solve's
-                        // (level-locked) iono.  A LOS whose authority is uninitialized
-                        // this epoch keeps its old carry aging toward eviction, and no
-                        // stale value is stashed.
-                        const auto csit = ctx.carry.iono_cs.find(
-                            {static_cast<int>(i), isat});
-                        if (csit == ctx.carry.iono_cs.end()
-                            || csit->second.n <= 0) continue;
-                        value_abs = csit->second.val;
-                        var = std::max(csit->second.var, 1e-6);
-                    } else {
-                        value_abs = ix_lin + xr(icol);
-                        var = (a < static_cast<std::size_t>(vard.size()))
-                                  ? vard(a) : -1.0;
-                    }
-                    if (!std::isfinite(value_abs) || !(var > 0.0)
-                        || !std::isfinite(var)) continue;
-                    // Prior-residual census, family "iono": the one instrument that can
-                    // see a wrong carried iono value (T4 pools phase rows only; the
-                    // prefit census is in the x_lin frame; phase is self-consistent with
-                    // a level re-levelled against the wrong carry).  `folded` comes from
-                    // the injector's record (iono_injected_sats).  The prior is read
-                    // before the stash below overwrites it.
-                    if (prires_iono && prires_est.enabled()) {
-                        const auto pit = iono_carry.find(
-                            {static_cast<int>(i), isat});
-                        if (pit != iono_carry.end()) {
-                            const double igap =
-                                pl_now_s - pit->second.last_seen_s;
-                            if (igap >= 0.0 && igap <= iono_max_gap_s) {
-                                NetworkPriorResidual::Input in;
-                                in.family   = "iono";
-                                in.sat      = isat;
-                                in.station  = static_cast<int>(i);
-                                in.e        = pit->second.value_abs - value_abs;
-                                in.fold_var = std::max(
-                                    pit->second.var + iono_q * std::max(0.0, igap),
-                                    iono_var_floor);
-                                in.post_var = var;
-                                in.gap_s    = igap;
-                                in.folded   = R.iono_injected_sats.count(isat) > 0;
-                                in.label = PriorResidualLabel::Clean;
-                                in.mech  = in.folded ? "" : "not_injected";
-                                prires_est.addRow(in);
-                            }
-                        }
-                    }
-                    iono_carry[{static_cast<int>(i), isat}] =
-                        LocalCarry{value_abs, var, pl_now_s};
-                }
-            }
-            // The horizon is the registry's: under the diagonal carry it is
-            // network.iono_carry_max_gap_s, the same double as iono_max_gap_s (the loader
-            // refuses network.carry_iono with network.carry_iono_in_block; card PRM
-            // phase 3b).
-            carryGapPrune(iono_carry, pl_now_s,
-                          ctx.params.spec(NetworkParamKind::SlantIono).gap_horizon_s,
-                          [&](const auto&) {
-                              ++ctx.counters.n_iono_carry_evicted;
-                              prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);   // card PRM phase 3a
                           });
         }
     }

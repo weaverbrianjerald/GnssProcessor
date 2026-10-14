@@ -71,7 +71,6 @@ namespace GnssProcessor {
         // --- Station priors (the diagonal channels) ------------------------------------
         PriorAmbiguityCarry,      ///< Diagonal carried prior on an ambiguity (leveling carry, diagonal route).
         PriorZwdCarry,            ///< Diagonal carried prior on the wet delay (B9).
-        PriorIonoCarry,           ///< Diagonal carried prior on a slant ionosphere (QUEUE 8b).
         PriorRxCbCarry,           ///< Diagonal carried prior on a receiver code bias (rx-CB carry).
         PriorAmbiguityOraclePin,  ///< Simulation-only oracle ambiguity pin (diagonal).
         PriorRxCbDatum,           ///< Zero-mean receiver DCB datum on the post-PD channel (RXCB-DATUM, pre-PD routing off).

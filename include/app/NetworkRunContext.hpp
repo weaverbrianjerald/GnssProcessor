@@ -300,26 +300,17 @@ namespace GnssProcessor {
         /// conditional-variance (mm) confidence.
         bool carry_cpl_reinit{};
         bool zwd_on{};
-        /// Slant-iono carry (network.carry_iono; QUEUE 8b).  The loader guarantees
-        /// phase_leveling and relevel_free_epoch (scope=relevel) and enforces the
-        /// SH / mech-B / carry_invariant mutexes.
-        bool iono_on{};
-        bool iono_scope_always{};  ///< iono_carry_scope == "always" (else "relevel").
-        bool iono_source_smoothed{};  ///< iono_carry_source == "smoothed_gf" (the CS-GF authority) vs "solve".
-        double iono_q{};       ///< Slant-iono carry RW process noise (m²/s).
-        double iono_var_floor{};   ///< Inject-side variance floor (m²), so the data can correct a wrong carry.
-        double iono_max_gap_s{};   ///< Carry eviction gap (s); deliberately longer than pl_max_gap_s.
         /// network.carry_iono_in_block (I-in-block): the station's present per-LOS iono
-        /// columns join its F3 whitened local block instead of the diagonal
-        /// network.carry_iono row (FALSIFIED).  The harvest appends them to `cols` between
+        /// columns join its F3 whitened local block instead of a diagonal row (the
+        /// retired network.carry_iono, FALSIFIED).  The harvest appends them to `cols` between
         /// the ambiguities and the ZWD, so `PlHarvestBlock::C` is (n_amb+n_iono+[1])²; each
         /// entry stashes with the same `blk`/`blk_idx` as an ambiguity; PASS B pushes one
         /// more `LocalBlockCol` per LOS.  A diagonal per-LOS row asserts the iono direction
         /// that the station's B carried band priors already assert (the B-fold over-count
         /// of SPEC_amb_iono_split_overcount §7 item 17); inside the block the harvested
         /// cross terms subtract it exactly.  The loader guarantees phase_leveling,
-        /// pl_local_block and carry_cpl_cond with carry_invariant off, and refuses a
-        /// co-arm with carry_iono.  Off by default (byte-identical).
+        /// pl_local_block and carry_cpl_cond with carry_invariant off.  Off by default
+        /// (byte-identical).
         bool iono_blk{};
         double iono_blk_q_m2{};      ///< I-in-block RW process noise, m² of L1 slant delay per epoch, not per second (see GnssConfig::networkCarryIonoInBlockQM2).
         double iono_blk_max_gap_s{}; ///< I-in-block staleness bound (s); the loader has already resolved the "= phase_leveling_max_gap_s" sentinel.
@@ -916,7 +907,6 @@ namespace GnssProcessor {
         bool   prires_pb{};           ///< Satellite phase-bias carry family armed.
         bool   prires_cb{};           ///< Satellite code-bias carry family armed.
         bool   prires_zwd{};          ///< ZWD (B9) carry family armed (INC-2).
-        bool   prires_iono{};         ///< Slant-iono carry family armed (QUEUE 8b): the one instrument that can see a wrong carried iono value (T4 pools phase rows only; the prefit census is x_lin-framed).
         bool   prires_rxcb{};         ///< Receiver code-bias carry family armed (INC-2).
         /// Satellite-clock carry family armed (card Q3, INC-0).  Unlike every other family,
         /// its ê is common-mode removed per constellation before standardizing: the clock is
@@ -1937,18 +1927,14 @@ namespace GnssProcessor {
         std::map<std::string, PbHoldClone> smh_block;
         /// Card SMD: hold keys whose block clone waits for a birth (as @c smh_pending).
         std::map<std::string, PbHoldClone> smh_block_pending;
-        /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed (station
-        /// index, sat).  Diagonal only (the rx-CB rationale: no shared-border footprint;
-        /// the coupling variant is deferred).  Not snapshotted: a warm resume cold-starts
-        /// it, which degrades to one epoch of white-iono behaviour (the conservative
-        /// direction, as for relevel_pend).  The knob is conditionally fingerprinted (it
-        /// affects the solve; never flip it mid-chain).  Inert unless network.carry_iono.
+        /// Per-LOS slant-iono carry of the retired diagonal vehicle (QUEUE 8b,
+        /// network.carry_iono), keyed (station index, sat).  Nothing writes it since that
+        /// vehicle was deleted, so it stays empty; the gross line-of-sight response and the
+        /// carry-site table still read it (its removal is a follow-on).
         std::map<std::pair<int, std::string>, LocalCarry> iono_carry;
         /// I-in-block per-LOS slant-iono carry (@c network.carry_iono_in_block), with the
-        /// same (station index, sat) key as @c iono_carry.  A separate map on purpose: the
-        /// two vehicles are mutually exclusive (the loader refuses a co-arm), and a shared
-        /// map would let the QUEUE-8(b) prune, prires and CS-GF paths, all gated on
-        /// @c knobs.iono_on, act on in-block entries.  Unlike @c iono_carry, these entries
+        /// same (station index, sat) key as @c iono_carry, the empty map of the retired
+        /// diagonal vehicle.  Unlike @c iono_carry, these entries
         /// carry the F3 bookkeeping (@c blk / @c blk_idx / @c coupling / @c birth_s),
         /// because they are folded as columns of the station's whitened block like a
         /// carried ambiguity.  The value is the absolute slant delay in metres at L1
@@ -2070,11 +2056,11 @@ namespace GnssProcessor {
             long long n_incr{0};       ///< Increments folded.  0 = no rate yet, so the jump gate cannot fire (there is no prediction to test).
         };
         std::map<std::pair<int, std::string>, RxClkRate> rx_clk_rate;
-        /// CS-GF authority states (successor to QUEUE 8b; iono_carry_source =
-        /// smoothed_gf): per (station index, sat) carrier-smoothed GF-code slant-iono,
+        /// CS-GF authority states (network.level_authority_csgf, the LV-6 census): per
+        /// (station index, sat) carrier-smoothed GF-code slant-iono,
         /// advanced serially in the PASS-A slip scan from the qualified raw verdicts.
-        /// Level-independent evidence: the T4 erase edge does not touch it, on purpose (it
-        /// erases the carry, and the next harvest re-stashes from here).  Scratch that
+        /// Level-independent evidence: the T4 erase edge does not touch it, on purpose.
+        /// Scratch that
         /// rebuilds itself; not snapshotted (the RawSlipHistory rationale).  Bounded at
         /// (n_stations × visible sats), so no pruning is needed.
         std::map<std::pair<int, std::string>, IonoCsState> iono_cs;
@@ -3925,22 +3911,6 @@ namespace GnssProcessor {
         /// miswire (invariant #4): the drains latched but the inject never consulted, or no
         /// marked arc ever had a live carry.
         long long n_relevel_free_skips = 0;
-        /// Run totals of the slant-iono carry (QUEUE 8b), for both coupling edges
-        /// (invariant #7).  injected: priors folded (scope-gated).  kept_through_slip:
-        /// slip-funnel entries whose bands were freed (kept).  erased_slip: funnel entries
-        /// not freed (erased).  erased_t4: the T4/RAIM arc-erase hook.  evicted: gap
-        /// eviction.  floor_hits: injects clamped by iono_carry_var_floor.  refused_datum:
-        /// declared zero; the code-datum re-realization edge (GF-pin re-election /
-        /// cb_excursion_reinit) ships bare, so a nonzero value means that edge got wired.
-        /// Armed with injected = 0 on a slip-bearing run is a miswire (invariant #4).
-        long long n_iono_carry_injected = 0, n_iono_carry_kept_through_slip = 0,
-                  n_iono_carry_erased_slip = 0, n_iono_carry_erased_t4 = 0,
-                  n_iono_carry_evicted = 0, n_iono_carry_floor_hits = 0,
-                  n_iono_carry_refused_datum = 0;
-        /// CS-GF authority (iono_carry_source = smoothed_gf): recursion resets (gap /
-        /// slip-gate / first sighting) and blend steps.  Armed with blends = 0 is a miswire
-        /// (invariant #4).
-        long long n_iono_cs_resets = 0, n_iono_cs_blends = 0;
         /// Band-scoped T4 erase (network.raim_erase_band_scope = min_keep_one;
         /// docs/SPEC_event_harness.md §Z).  cells: isolated-arc erase cells the scope
         /// adjudicated.  erased / kept: bands freed and bands left pinned (kept is one per

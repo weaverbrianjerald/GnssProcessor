@@ -76,13 +76,11 @@ TEST(LevelAuthorityConfig, DefaultsAreOff) {
 }
 
 TEST(LevelAuthorityConfig, ArmsWithoutTheIonoCarry) {
-    // The census arms the CS advance independently of the falsified carry
-    // inject path: carry_iono stays off and is not required (SPEC §3).
+    // The census arms the CS advance on its own (SPEC §3): no carry is required.
     GnssConfig cfg;
     const std::string extra = "    \"level_authority_csgf\": true,\n";
     ASSERT_TRUE(loadInto("independent", networkConfig(extra), cfg));
     EXPECT_TRUE(cfg.networkLevelAuthorityCsgf());
-    EXPECT_FALSE(cfg.networkCarryIono());
 }
 
 TEST(LevelAuthorityConfig, RejectBandsResetToDefaults) {

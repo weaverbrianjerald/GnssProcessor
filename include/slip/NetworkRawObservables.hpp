@@ -530,7 +530,7 @@ struct SlipQcParams {
     /// gf_step_scale), so it arms both the compute and the qualify pass.
     bool   bridge_gf{false};
 
-    // --- CS-GF authority (network.iono_carry_source = smoothed_gf) ---
+    // --- CS-GF authority (network.level_authority_csgf) ---
     /// The carrier-smoothed GF-code slant-iono authority consumes the verdicts
     /// (d_gf carrier deltas + the empirical step gates as its slip reset), so
     /// it arms both passes too.

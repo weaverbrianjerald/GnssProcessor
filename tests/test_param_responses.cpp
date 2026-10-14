@@ -449,21 +449,10 @@ TEST(ParamResponses, GoldensDeclareTheAmbiguityGapHorizon) {
             EXPECT_TRUE(std::isnan(r.spec(kind).gap_horizon_s)) << bed << " " << paramKindName(kind);
         // Neither slant-ionosphere carry is armed on the goldens: no carry in force, no horizon.
         EXPECT_TRUE(std::isnan(r.spec(K::SlantIono).gap_horizon_s)) << bed;
-        // Each slant-ionosphere route declares its own horizon (the two prunes read it), and
-        // the two knobs differ on the goldens, so the routes are told apart.
-        ASSERT_NE(k.iono_max_gap_s, k.iono_blk_max_gap_s) << bed;
-        NetworkKnobs kd = k;
-        kd.iono_on = true;
-        kd.iono_blk = false;
-        EXPECT_EQ(NetworkParamRegistry::build(kd, cfg).spec(K::SlantIono).gap_horizon_s,
-                  k.iono_max_gap_s) << bed;
+        // The in-block route declares its own horizon (its prune reads it).
         NetworkKnobs kb = k;
-        kb.iono_on = false;
         kb.iono_blk = true;
         EXPECT_EQ(NetworkParamRegistry::build(kb, cfg).spec(K::SlantIono).gap_horizon_s,
                   k.iono_blk_max_gap_s) << bed;
-        NetworkKnobs kx = k;
-        kx.iono_on = kx.iono_blk = true;
-        EXPECT_THROW(NetworkParamRegistry::build(kx, cfg), std::logic_error) << bed;
     }
 }

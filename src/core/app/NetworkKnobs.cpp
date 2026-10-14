@@ -150,9 +150,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // snapshot carries Z rows.  The capture is read-only with respect to the solve (no
     // inject).
     k.zwd_capture = !nc.state_snapshot_path.empty();
-    k.iono_on = config_.networkCarryIono();  // loader guarantees phase_leveling + relevel_free_epoch (scope=relevel) + the SH/mech-B/carry_invariant mutexes
-    // I-in-block; loader guarantees phase_leveling + pl_local_block + carry_cpl_cond,
-    // !carry_invariant, and hard-errors on a network.carry_iono co-arm.
+    // I-in-block; loader guarantees phase_leveling + pl_local_block + carry_cpl_cond and
+    // !carry_invariant.
     k.iono_blk = config_.networkCarryIonoInBlock();
     k.iono_blk_q_m2 = config_.networkCarryIonoInBlockQM2();
     k.iono_blk_max_gap_s = config_.networkCarryIonoInBlockMaxGapS();
@@ -165,11 +164,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rxclk_rate_q     = config_.networkCarryRxClockRateQ();
     k.rxclk_jump_k     = config_.networkCarryRxClockJumpK();
     k.rxclk_isb        = config_.networkCarryRxClockIsb();
-    k.iono_scope_always = (config_.networkIonoCarryScope() == "always");
-    k.iono_source_smoothed = (config_.networkIonoCarrySource() == "smoothed_gf");
-    k.iono_q = config_.networkIonoCarryQ();
-    k.iono_var_floor = config_.networkIonoCarryVarFloor();
-    k.iono_max_gap_s = config_.networkIonoCarryMaxGapS();
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
     k.rxcb_blk = config_.networkCarryRxCodeBiasInBlock();   // RXCB-IN-BLOCK; loader guarantees rx_cb_on + coupling + a local block
     k.rx_cb_datum = config_.networkRxCodeBiasDatum();
@@ -513,12 +507,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                 else if (f == "pb")   k.prires_pb   = true;
                 else if (f == "cb")   k.prires_cb   = true;
                 else if (f == "zwd")  k.prires_zwd  = true;
-                else if (f == "iono") k.prires_iono = true;   // slant-iono carry (queue 8b)
                 else if (f == "rxcb") k.prires_rxcb = true;
                 else if (f == "clk")  k.prires_clk  = true;   // clock anchor (card Q3, INC-0)
             }
             k.prires_on = k.prires_pl || k.prires_pb || k.prires_cb
-                       || k.prires_zwd || k.prires_iono || k.prires_rxcb || k.prires_clk;
+                       || k.prires_zwd || k.prires_rxcb || k.prires_clk;
         }
         // The corroboration join is gated on the master again here rather than relying on
         // the loader's error, so a hand-built NetworkConfig (tests) cannot arm a join

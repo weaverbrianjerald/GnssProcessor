@@ -560,7 +560,6 @@ TEST(CarryIonoInBlockTest, DefaultIsOffOnAnArmedF3Posture) {
     ASSERT_TRUE(loadInto("default", networkConfig(kF3Posture), cfg));
     EXPECT_FALSE(cfg.networkCarryIonoInBlock());
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());   // the vehicle is armed
-    EXPECT_FALSE(cfg.networkCarryIono());                // and the legacy carry is off
 }
 
 TEST(CarryIonoInBlockTest, DisabledWhenTheF3BlockIsOff) {
@@ -619,19 +618,6 @@ TEST(CarryIonoInBlockTest, DisabledWhenF3CannotBuildABlockOnThisPosture) {
     EXPECT_FALSE(cfg.networkCarryIonoInBlock());
 }
 
-// The mutex is a hard error rather than a warning plus disable: carry_iono is not
-// another setting of this mechanism but the diagonal vehicle the in-block carry replaces
-// (QUEUE 8(b), FALSIFIED four times).  Running both would assert each LOS's iono
-// direction a third time, and no run-end counter could tell the vehicles apart.
-TEST(CarryIonoInBlockTest, CoArmingTheLegacyDiagonalCarryIonoIsARefusedConfig) {
-    GnssConfig cfg;
-    EXPECT_FALSE(loadInto("coarm",
-                          networkConfig(std::string(kF3Posture)
-                                        + "    \"carry_iono\": true,\n"
-                                          "    \"carry_iono_in_block\": true,\n"),
-                          cfg));
-}
-
 TEST(CarryIonoInBlockTest, ArmedHappyPathResolvesQAndTheGapSentinel) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("armed",
@@ -640,7 +626,6 @@ TEST(CarryIonoInBlockTest, ArmedHappyPathResolvesQAndTheGapSentinel) {
                          cfg));
     EXPECT_TRUE(cfg.networkCarryIonoInBlock());
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
-    EXPECT_FALSE(cfg.networkCarryIono());                    // the legacy vehicle stays off
     // Default q: m² at L1 per epoch (σ ≈ 5 cm/epoch), not m²/s as for zwd_carry_q.
     EXPECT_DOUBLE_EQ(cfg.networkCarryIonoInBlockQM2(), 2.5e-3);
     // The gap sentinel resolves to the leveling gap, so the iono carry never outlives

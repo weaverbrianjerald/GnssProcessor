@@ -208,14 +208,10 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         set(NetworkParamKind::Zwd, std::move(s));
     }
     {
-        // The two slant-ionosphere carries are exclusive (the loader refuses both); the
-        // horizon declared here is the one carry in force, and both prunes read it.
-        if (k.iono_blk && k.iono_on)
-            throw std::logic_error("NetworkParamRegistry: carry_iono and carry_iono_in_block "
-                                   "are both armed; the loader refuses this configuration");
+        // The horizon declared here is the in-block carry's; its prune reads it.
         ParamSpec s;
         s.estimated = true;
-        s.carried = k.iono_blk || k.iono_on;
+        s.carried = k.iono_blk;
         if (k.iono_blk) {
             s.q = k.iono_blk_q_m2;
             s.q_units = "m^2/epoch";
@@ -225,21 +221,13 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
             s.route = ParamRoute::LocalBlock;
             s.source = "network.carry_iono_in_block_q_m2 (L1 slant delay); "
                        "gap network.carry_iono_in_block_max_gap_s";
-        } else if (k.iono_on) {
-            s.q = k.iono_q;
-            s.q_rule = ParamQRule::RandomWalk;
-            s.var_floor_m2 = k.iono_var_floor;
-            s.gap_horizon_s = k.iono_max_gap_s;
-            s.route = ParamRoute::DiagonalStationPrior;
-            s.source = "network.iono_carry_q; floor network.iono_carry_var_floor; "
-                       "gap network.iono_carry_max_gap_s";
         } else {
             s.q = 0.0;
             s.q_rule = ParamQRule::None;
             s.var_floor_m2 = 0.0;
             s.gap_horizon_s = kNaN;
             s.route = ParamRoute::NotCarried;
-            s.source = "network.carry_iono, network.carry_iono_in_block (both off)";
+            s.source = "network.carry_iono_in_block (off)";
         }
         s.birth_var_m2 = kNaN;
         set(NetworkParamKind::SlantIono, std::move(s));

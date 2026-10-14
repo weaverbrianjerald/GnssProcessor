@@ -2166,7 +2166,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"signal_roster\":{{\"built\":true,\"trace\":{},{}"
                               "\"horizon_s\":{},"
                               "\"phase_leveling_max_gap_s\":{},"
-                              "\"iono_carry_max_gap_s\":{},"
                               "\"emit_pb_hold_max_gap_s\":{},"
                               "\"readmit_seed_horizon_s\":{},"
                               "\"forget_ep\":{},\"event_holdoff_ep\":{},"
@@ -2181,12 +2180,10 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                               config_.networkSignalRoster() ? "true" : "false",
                               config_.networkSignalRoster()
                                   ? "\"trace_file\":\"network_arc_ledger.csv\"," : "",
-                              std::max(std::max(config_.networkPhaseLevelingMaxGapS(),
-                                                config_.networkIonoCarryMaxGapS()),
+                              std::max(config_.networkPhaseLevelingMaxGapS(),
                                        std::max(nc.emit_pb_hold_max_gap_s,
                                                 config_.networkReadmitSeedHorizonS())),
                               config_.networkPhaseLevelingMaxGapS(),
-                              config_.networkIonoCarryMaxGapS(),
                               nc.emit_pb_hold_max_gap_s,
                               config_.networkReadmitSeedHorizonS(),
                               kArcLedgerForgetEp, kArcLedgerEventHoldoffEp,

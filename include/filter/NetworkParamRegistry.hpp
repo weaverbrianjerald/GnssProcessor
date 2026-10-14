@@ -177,10 +177,9 @@ struct ParamSpec {
     /// the same knob whether or not the kind is carried on this run (as @ref q is), so a
     /// site reads it in place of the knob: network.phase_leveling_max_gap_s for the
     /// ambiguity, the wet delay and the receiver phase bias;
-    /// network.phase_colour_max_gap_s for the phase colour; for the slant ionosphere the
-    /// horizon of the carry in force (network.carry_iono_in_block_max_gap_s under the
-    /// block carry, network.iono_carry_max_gap_s under the diagonal carry; the loader
-    /// refuses both at once); network.carry_rx_clock_max_gap_s for the receiver clock;
+    /// network.phase_colour_max_gap_s for the phase colour;
+    /// network.carry_iono_in_block_max_gap_s for the slant ionosphere under the block
+    /// carry; network.carry_rx_clock_max_gap_s for the receiver clock;
     /// the constant @c kRxCbMaxGapS for the receiver code bias.  NaN for a kind with no
     /// gap horizon declared here: the slant ionosphere with neither carry armed, and the
     /// border kinds, whose gap response is READMIT's park (its expiry, a GapPrune of the

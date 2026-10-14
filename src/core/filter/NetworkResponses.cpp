@@ -73,8 +73,6 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
     {R::AmbEq34Erase, "amb_eq34_erase", K::Ambiguity, E::Handover, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkChainDatum.cpp eq34 re-reference", "arcs erased"},
     // --- Slant ionosphere --------------------------------------------------------------
-    {R::IonoSlipErase, "iono_slip_erase", K::SlantIono, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp the iono carry's slip scope", "carried ionospheres erased"},
     {R::IonoRaimErase, "iono_raim_erase", K::SlantIono, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkRaim.cpp attribution (T4)", "carried ionospheres erased"},
     {R::IonoGrossErase, "iono_gross_erase", K::SlantIono, E::Decouple, P::EraseAndRebirth, Src::Increment, kNoDisp,
@@ -82,9 +80,9 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
     {R::IonoGrossHold, "iono_gross_hold", K::SlantIono, E::Decouple, P::Hold, Src::Increment, kNoDisp,
      "NetworkGrossLos.cpp the declaration's response (bounded)", "hold declarations (a diagonal carry's hold acts only while a carried level is held)"},
     {R::IonoGapSkip, "iono_gap_skip", K::SlantIono, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp PASS B inject (block and diagonal)", "carried ionospheres not folded"},
+     "ApplicationNetworkAssembly.cpp PASS B in-block inject", "carried ionospheres not folded"},
     {R::IonoGapPrune, "iono_gap_prune", K::SlantIono, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp harvest prune (diagonal and block carries)", "carried ionospheres erased"},
+     "NetworkLocalCarryHarvest.cpp harvest prune (block carry)", "carried ionospheres erased"},
     // --- Phase colour ------------------------------------------------------------------
     {R::PcRaimErase, "pc_raim_erase", K::PhaseColour, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkRaim.cpp attribution (T4)", "phase colours erased"},
@@ -304,15 +302,14 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
             return k.pl_on && k.pa_carry_reref && (!k.pd_held_basis || k.pd_held_cold_release);
         case R::AmbEq34Erase:         return k.phase_datum_eq34 && ambCarried;
         // --- The slant ionosphere and the phase colour (erased with their line of sight).
-        case R::IonoSlipErase:        return k.iono_on;
-        case R::IonoRaimErase:        return k.raim_on && k.pl_on && t4 && (k.iono_on || k.iono_blk);
-        case R::IonoGrossErase:       return k.gl_on && !k.gl_bound && (k.iono_on || k.iono_blk);
-        case R::IonoGrossHold:        return k.gl_bound && (k.iono_on || k.iono_blk);
+        case R::IonoRaimErase:        return k.raim_on && k.pl_on && t4 && k.iono_blk;
+        case R::IonoGrossErase:       return k.gl_on && !k.gl_bound && k.iono_blk;
+        case R::IonoGrossHold:        return k.gl_bound && k.iono_blk;
         case R::IonoGapSkip:
-            return k.pl_on && (k.iono_on || (k.iono_blk && k.pl_local_block && k.carry_cpl_cond
-                                             && !k.carry_cpl_joint));
+            return k.pl_on && k.iono_blk && k.pl_local_block && k.carry_cpl_cond
+                && !k.carry_cpl_joint;
         case R::IonoGapPrune:
-            return k.pl_on && (k.iono_on || (k.iono_blk && k.pl_local_block && k.carry_cpl_cond));
+            return k.pl_on && k.iono_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::PcRaimErase:          return k.raim_on && k.pl_on && t4 && k.pc_on;
         case R::PcGrossErase:         return k.gl_on && !k.gl_bound && k.pc_on;
         case R::PcGapPrune:           return k.pl_on && k.pc_on;

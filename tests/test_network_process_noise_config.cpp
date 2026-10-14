@@ -2,7 +2,7 @@
  * @file test_network_process_noise_config.cpp
  * @brief Config-contract tests for the scoped @c network.process_noise table.
  *
- * The table is one authoring surface over the twelve time-linked network-owned
+ * The table is one authoring surface over the eleven time-linked network-owned
  * process-noise rates whose legacy keys are spread across five config sections.
  * It is always live (there is no master enable), so its safety rests on an
  * equality rather than a default-off toggle: every class's fallback equals the
@@ -112,7 +112,6 @@ TEST(NetworkProcessNoiseConfig, StockConfigResolvesToLegacyDefaults) {
     EXPECT_DOUBLE_EQ(cfg.networkCarryInvariantQz(),   0.0);
     EXPECT_DOUBLE_EQ(cfg.networkClockModelQ1(),       0.0);
     EXPECT_DOUBLE_EQ(cfg.networkClockModelQ2(),       1.5e-7);
-    EXPECT_DOUBLE_EQ(cfg.networkIonoCarryQ(),         1e-4);
 }
 
 // A table entry reaches the canonical member the estimator reads.  Covers both
@@ -177,32 +176,6 @@ TEST(NetworkProcessNoiseConfig, LegacyOnlyConfigStillHonoured) {
     EXPECT_EQ(pn.source(NetworkQClass::StationZwd),        Src::Legacy);
     EXPECT_EQ(pn.source(NetworkQClass::DdCarry),           Src::Legacy);
     EXPECT_EQ(pn.source(NetworkQClass::LevelingAmbiguity), Src::Legacy);
-}
-
-// The slant-iono carry class (the twelfth) reports the rate the estimator reads,
-// through every precedence rung.  finalizeNetworkProcessNoise_ re-reads all twelve
-// classes; if it skipped this one, an explicit network.iono_carry_q would reach
-// networkIonoCarryQ() while the table, the run manifest and the process-noise log
-// line kept the fallback labelled Default (or, with both keys set, the shadowed
-// table value labelled Table).
-TEST(NetworkProcessNoiseConfig, IonoCarryReportsResolvedRate) {
-    struct Case { const char* tag; const char* extra; double q; Src src; };
-    const Case cases[] = {
-        { "iono_default", "", 1e-4, Src::Default },
-        { "iono_legacy",  "    \"iono_carry_q\": 3e-4,\n", 3e-4, Src::Legacy },
-        { "iono_table",   "    \"process_noise\": { \"iono_carry\": 5e-4 },\n", 5e-4, Src::Table },
-        { "iono_both",    "    \"process_noise\": { \"iono_carry\": 5e-4 },\n"
-                          "    \"iono_carry_q\": 2e-4,\n", 2e-4, Src::Legacy },
-    };
-    for (const Case& k : cases) {
-        LogManager log; GnssConfig cfg;
-        ASSERT_TRUE(loadOk(k.tag, networkConfig(k.extra), cfg, log));
-        const NetworkProcessNoise& pn = cfg.getNetworkConfig().process_noise;
-
-        EXPECT_DOUBLE_EQ(cfg.networkIonoCarryQ(), k.q)          << k.tag;  // what the solve reads
-        EXPECT_DOUBLE_EQ(pn.get(NetworkQClass::IonoCarry), k.q) << k.tag;  // what the manifest reports
-        EXPECT_EQ(pn.source(NetworkQClass::IonoCarry), k.src)   << k.tag;
-    }
 }
 
 // Ordering constraint: network.ura_staleness_q2 defaults to clock_model_q2 and is

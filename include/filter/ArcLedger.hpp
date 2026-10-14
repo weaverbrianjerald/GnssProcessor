@@ -34,8 +34,8 @@
  *
  * The horizon is a time, not an epoch count, because the reader windows it covers
  * are all configured in seconds (@c network.phase_leveling_max_gap_s,
- * @c network.iono_carry_max_gap_s, @c network.emit_pb_hold_max_gap_s,
- * @c network.readmit_seed_horizon_s); a horizon counted in epochs would change
+ * @c network.emit_pb_hold_max_gap_s, @c network.readmit_seed_horizon_s); a horizon
+ * counted in epochs would change
  * meaning with an epoch interval other than 30 s.  The gap length is reported in
  * epochs, the unit of the existing re-entry instruments.
  *

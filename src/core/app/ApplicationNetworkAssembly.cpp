@@ -2127,8 +2127,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         if (qc.cardsArmed())
             networkQualifyRawObservables(modeled, present, n_sta_total, qc.epoch_idx,
                                          qc.params, qc.hist, qc.epoch, qc.counters);
-        // CS-GF authority advance (successor of QUEUE 8b, iono_carry_source =
-        // smoothed_gf): one recursion step per dual-band LOS from this epoch's
+        // CS-GF authority advance (network.level_authority_csgf, the LV-6 census):
+        // one recursion step per dual-band LOS from this epoch's
         // qualified verdicts.  Serial and station-ordered, so deterministic.  The
         // qualify pass's empirical gates (mw_step/gf_step) are the slip reset; lost
         // adjacency (gap / first sighting / pair change through the gate) also
@@ -2154,10 +2154,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                     const double sigma =
                         kIonoCsCodeSigmaZenith / std::max(srad, 0.15);
                     auto& cs = ctx.carry.iono_cs[{i, row.satellite}];
-                    if (networkIonoCsUpdate(cs, i_code, di, adjacent, stepped, sigma))
-                        ++ctx.counters.n_iono_cs_resets;
-                    else
-                        ++ctx.counters.n_iono_cs_blends;
+                    networkIonoCsUpdate(cs, i_code, di, adjacent, stepped, sigma);
                     cs.lam1_m = row.lam1_m;   // exact per-pair TECU conversion (LV-6)
                 }
             }
@@ -3035,8 +3032,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // pl_blk_on as for the ZWD, and here the conjunction is load-bearing: the card has
     // no diagonal fallback row (a diagonal per-LOS iono prior is the FALSIFIED
     // QUEUE-8(b) vehicle), so off the block path there is nothing to do.  The loader
-    // already refuses the arm without phase_leveling + phase_leveling_local_block (and
-    // hard-errors on a network.carry_iono co-arm); this is the live half of that gate.
+    // already refuses the arm without phase_leveling + phase_leveling_local_block;
+    // this is the live half of that gate.
     const bool   iono_blk_on   = ctx.knobs.iono_blk && pl_blk_on;
     // Age-aware young-arc inflate (network.phase_leveling_young_inflate_var_m2,
     // SPEC_amb_iono_split_overcount 6.17-6.18).  Not conjoined with pl_blk_on: the card
@@ -3072,11 +3069,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double rxclk_gap_s   = ctx.knobs.rxclk_max_gap_s;
     const double rxclk_rate_var0 = ctx.knobs.rxclk_rate_var0; // m²/s², the unknown-drift prior
     const bool   rxclk_isb     = ctx.knobs.rxclk_isb;
-    const bool   iono_on       = ctx.knobs.iono_on;              // slant-iono carry (QUEUE 8b)
-    const bool   iono_scope_always = ctx.knobs.iono_scope_always; // inject every epoch, not only on re-leveling LOS (QUEUE 8b)
-    const double iono_q        = ctx.knobs.iono_q;               // iono carry RW process noise, m²/s (QUEUE 8b)
-    const double iono_var_floor = ctx.knobs.iono_var_floor;      // inject-side variance floor, m² (QUEUE 8b)
-    const double iono_max_gap_s = ctx.knobs.iono_max_gap_s;      // carry eviction gap, s (QUEUE 8b)
     const bool   rx_cb_on      = ctx.knobs.rx_cb_on;             // rx-CB carry (SPEC_rx_cb_carry)
     const bool   rx_cb_datum  = ctx.knobs.rx_cb_datum;           // zero-mean-over-receivers DCB datum (RXCB-DATUM; shares the pl_cb walk with the carry)
     const double rx_cb_datum_sigma = ctx.knobs.rx_cb_datum_sigma; // loose physical-bound sigma of RXCB-DATUM (m)
@@ -3125,7 +3117,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     auto& tu_reinit_hist = ctx.carry.tu_reinit_hist;
     auto& local_carry = ctx.carry.local_carry;
     auto& zwd_carry = ctx.carry.zwd_carry;
-    auto& iono_carry = ctx.carry.iono_carry;     // produce phase reads only (QUEUE 8b)
     auto& iono_blk_carry = ctx.carry.iono_blk_carry;  // I-in-block: produce phase reads only
     auto& rx_clk_carry = ctx.carry.rx_clk_carry;      // RX-CLK-in-block: produce phase reads only
     auto& rx_clk_rate  = ctx.carry.rx_clk_rate;       // its drift half (read-only here; std::map::find is concurrency-safe, operator[] would not be)
@@ -3173,38 +3164,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // per-sat state).  They are recorded at the PASS-A detection site, so the erase
     // lands in the epoch the slip was seen and a corrupted pre-slip deviation never
     // constrains a post-slip row.
-    // Slip edges of the slant-iono carry (QUEUE 8b, invariants #1/#7): serial
-    // adjudication before the parallel produce reads the map.  An entry is kept
-    // through any slip whose bands were freed this epoch (the physical ionosphere is
-    // continuous through a receiver cycle slip, and the free epoch disarms the
-    // stale-level aliasing channel; the carried value predates the slip and is
-    // unaffected by it).  Slip-funnel entries that were not freed are erased (a
-    // still-leveled band can alias n·λ into the GF slant estimate, the same
-    // reset-not-repair rationale as the mech-B funnel below).  On the relevel
-    // posture the detector drains feed only the free set (funnel inserts are
-    // carry_invariant-gated), so the erase branch is expected at ~0 there, and a
-    // nonzero count on that posture indicates a posture change, not noise.  The
-    // T4/RAIM erase edge is in NetworkRaim::refloat_sat_at.
-    if (iono_on) {
-        std::set<std::pair<int, std::string>> freed_los;   // (station idx, sat)
-        for (const auto& fa : ctx.carry.relevel.free_ambs) {
-            const auto fparts = StateKeys::parseAmbiguityKey(fa.second);
-            if (fparts) freed_los.insert({fa.first, fparts->satellite});
-        }
-        for (const auto& fl : freed_los)
-            if (iono_carry.count(fl))
-                ++ctx.counters.n_iono_carry_kept_through_slip;
-        for (const auto& sk : carry_slipped_ambs) {
-            const auto sparts = StateKeys::parseAmbiguityKey(sk.second);
-            if (!sparts) continue;
-            const std::pair<int, std::string> los{sk.first, sparts->satellite};
-            if (freed_los.count(los)) continue;   // kept; counted above
-            if (iono_carry.erase(los)) {
-                ++ctx.counters.n_iono_carry_erased_slip;
-                prmRespond(ctx.counters.prm_resp, ResponseSite::IonoSlipErase);   // card PRM phase 3a
-            }
-        }
-    }
     if (sh_dev_on) {
         std::set<std::string> slipped_los;   // "STATION|SAT" projection of the funnel
         std::set<std::string> raw_los;       // the raw-detector-confirmed subset (v3k)
@@ -3839,7 +3798,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // the seam window is the same fold on the same column.
             const bool legacy_local_inject =
                 carry_warm && (phase_datum_prioritized || !st.is_pivot || zwd_on
-                               || zwd_seam_live || iono_on);
+                               || zwd_seam_live);
             // --- RAIM pool re-host (docs/SPEC_raim_pool_rehost.md) ----------------
             // The checkable-column census.  Its own block, above and outside
             // `legacy_local_inject` (carry_warm, which needs phase_leveling) and
@@ -3885,7 +3844,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // the pl_cb walk's contract (pl_cb is filled whenever either knob is
             // armed).  opin_on is false when no oracle pin is armed (null table
             // pointer), so the gate is byte-identical there.
-            if (legacy_local_inject || rx_cb_on || rx_cb_datum || iono_on || opin_on) {
+            if (legacy_local_inject || rx_cb_on || rx_cb_datum || opin_on) {
                 const Eigen::VectorXd x_lin = st.sm->getStateVector();
                 std::vector<std::tuple<Eigen::Index, double, double, RowTag>> inj;  // (col, Λ, η, tag): legacy diagonal path (the tag: card NOM N2a)
                 // The pre-PD half of the same channel (card RF-PD-fix).  Rows land here
@@ -3893,14 +3852,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 // the two are folded by different calls that do not sum.  Empty when
                 // off, so the finalize below is a no-op and R.prior_* stays empty.
                 std::vector<std::tuple<Eigen::Index, double, double, RowTag>> inj_prior;  // (col, Λ, η, tag): RF-PD-fix pre-PD datum rows
-                // Per-sat re-level census (QUEUE 8b, scope=relevel), filled by the
-                // pl_amb walk below and consumed by the iono-carry block after it.
-                // freed = any band in the latched free set; seen/carried partition the
-                // sats by whether any present band still has a live leveling carry.
-                // Carry absence is the only readable T4-erase/gap-re-birth signature at
-                // this site (the T4 mark is consumed by the PASS-B pre-pass, the same
-                // dead-check trap the free-epoch card documents below).
-                std::set<std::string> iono_freed_sats, iono_sats_seen, iono_sats_carried;
                 // Conditional coupling (Card 1, network.carry_conditional_coupling): each
                 // carried local column becomes one pseudo-observation row coupling it to
                 // the free shared border (Odijk S-conditional carry) instead of an
@@ -4056,7 +4007,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (ev != amb_elev_of.end())
                             R.pl_amb.back().elev_deg = ev->second;
                     }
-                    if (iono_on) iono_sats_seen.insert(parts->satellite);
 
                     // A pending re-seed marks the prior arc value as invalid (the
                     // network's analogue of a slip): re-float from data this
@@ -4084,7 +4034,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         && ctx.carry.relevel.free_ambs.count(
                                {static_cast<int>(i), key})) {
                         ++R.relevel_free_skips;
-                        if (iono_on) iono_freed_sats.insert(parts->satellite);
                         // Under the float_kf vehicle (RF-1 step 4, §3.4) this arc's prior
                         // was already dropped to its birth variance by the serial
                         // pre-assembly pass, so it is not skipped: it folds at birth
@@ -4147,7 +4096,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             continue;
                         }
                     }
-                    if (iono_on) iono_sats_carried.insert(parts->satellite);
                     // var_eff = var + q·gap, floored by the optional lock-in guard
                     // (var_floor>0 caps Λ so a slowly biasing ambiguity cannot become
                     // a rigid prior the data cannot override).  Only present
@@ -4955,71 +4903,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     }
                 }
                 }   // legacy_local_inject
-                // --- Slant-iono carry (QUEUE 8b, docs/SPEC_slip_relevel_walk.md §8
-                //     residual): per-LOS iono columns as carried RW priors.  Outside
-                //     the legacy bracket (the rx-CB pattern), so a no-leveling lineage
-                //     can host it without re-plumbing; the loader currently requires
-                //     phase_leveling, so the census sets above are always live when
-                //     this runs warm.  The carry map is read-only here (parallel
-                //     produce phase); the serial harvest stashes, the serial pre-pass
-                //     adjudicates the slip edges, and NetworkRaim owns the T4 erase.
-                //     Diagonal fold even under carry_cpl_cond, for the rx-CB reason: a
-                //     coupling row would hand a strictly local state a shared-border
-                //     footprint (and pin the old gauge across datum re-realizations).
-                if (iono_on) {
-                    for (const auto& [isat, iidx_sz] : st.sm->getIonosphereStates()) {
-                        const int iidx = static_cast<int>(iidx_sz);
-                        if (iidx < 0 || iidx >= x_lin.size()) continue;
-                        if (!std::isfinite(x_lin(iidx))) continue;
-                        const auto ihit = h2local.find(iidx);
-                        if (ihit == h2local.end()) continue;  // iono column not in A_r this epoch
-                        const Eigen::Index icol = static_cast<Eigen::Index>(ihit->second);
-                        // Recorded unconditionally: the harvest stashes every epoch, so
-                        // the carry tracks the solution even when the scope gate skips
-                        // the inject (the pl_zwd_present pattern).
-                        R.pl_iono.emplace_back(isat, icol, x_lin(iidx));
-                        if (!iono_scope_always) {
-                            // scope=relevel: inject only for a LOS re-leveling this epoch
-                            // (a detector-freed band, or a present-but-carryless LOS:
-                            // post-T4-erase / gap re-birth / datum-station mass reseed).
-                            // One epoch of exposure per re-draw event.
-                            const bool releveling =
-                                iono_freed_sats.count(isat) > 0 ||
-                                (iono_sats_seen.count(isat) > 0 &&
-                                 iono_sats_carried.count(isat) == 0);
-                            if (!releveling) continue;
-                        }
-                        const auto iit = iono_carry.find({static_cast<int>(i), isat});
-                        if (iit == iono_carry.end()) continue;  // first sighting: no carry yet
-                        const double igap = pl_now_s - iit->second.last_seen_s;
-                        if (carryPastHorizon(pl_now_s, iit->second.last_seen_s, iono_max_gap_s)) {   // stale: harvest housekeeping drops it
-                            ++R.prm_iono_gap_skip;              // card PRM phase 3a
-                            continue;
-                        }
-                        // var_eff = max(var + q·gap, floor).  The floor is load-bearing
-                        // (invariant #1): the harvested marginal is tiny mid-arc (locked
-                        // to the phase), and an unfloored prior outweighs the fresh GF
-                        // code ~80:1, so a wrong carried value would be invisible to
-                        // every armed instrument (T4 pools phase rows only).  At the
-                        // floor the per-event code adoption is ~10%, so a wrong carry is
-                        // corrected over ~10 events while the churn suppression
-                        // (adoption² in variance) is kept.
-                        double ivar_eff = iit->second.var + iono_q * std::max(0.0, igap);
-                        if (ivar_eff < iono_var_floor) {
-                            ivar_eff = iono_var_floor;
-                            ++R.iono_carry_floor_hits;
-                        }
-                        if (!(ivar_eff > 0.0)) continue;
-                        const double ilambda = 1.0 / ivar_eff;
-                        const double ieta =
-                            ilambda * (iit->second.value_abs - x_lin(iidx));
-                        if (!std::isfinite(ieta)) continue;
-                        inj.emplace_back(icol, ilambda, ieta,
-                                         makeRowTag(ContributionKind::PriorIonoCarry, isat));
-                        ++R.iono_carry_injected;
-                        R.iono_injected_sats.insert(isat);
-                    }
-                }
                 // --- rx-CB carry (docs/SPEC_rx_cb_carry.md): receiver code-bias
                 //     columns as carried RW priors.  Outside the legacy gate above, so
                 //     it is live on the carry_invariant / no-leveling lineage.  The
@@ -5201,7 +5084,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 {
                     // Diagonal fold.  Under carry_cpl_cond the ambiguity and ZWD carries
                     // route through buildCplRow, so inj then holds only the diagonal-only
-                    // families (rx-CB carry, RXCB-DATUM, slant-iono carry, oracle pin);
+                    // families (rx-CB carry, RXCB-DATUM, oracle pin);
                     // with all of them off it is empty, and resize(0) leaves R.carry_*
                     // as before (byte-identical).  Ascending column order gives a
                     // deterministic rank-1 update sequence.
@@ -5418,12 +5301,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             }
         }
     }
-    // Fold the per-station iono-carry inject counts (QUEUE 8b, same discipline).
-    if (iono_on)
-        for (const StationAssembly& Rc : asm_res) {
-            ctx.counters.n_iono_carry_injected += Rc.iono_carry_injected;
-            ctx.counters.n_iono_carry_floor_hits += Rc.iono_carry_floor_hits;
-        }
     // Fold the per-station LOS-scale telemetry (F1, network.phase_leveling_los_scale;
     // counted in the parallel produce, reduced serially here).
     if (pl_los_scale)
