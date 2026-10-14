@@ -920,6 +920,9 @@ HDR_ADD_D = r'''
         static void emitLaneSlip_(std::vector<MwSlipResult>& results, const MwLane& lane,
                                   const MwVerdict& verdict, double lambda_wl,
                                   bool bia_corrected);
+
+        /// Unit-test seam (tests/test_mw_detector_steps.cpp): reaches the steps above.
+        friend struct MwDetectorStepsTestAccess;
 '''.split('\n')[1:]
 
 # slip/MwDetectorWork.hpp; "@@SATMWENTRY@@" is where the carried SD group entry goes.
@@ -1573,16 +1576,16 @@ def run_checks(tree, verbose):
     return total == 0
 
 
-def mutate(verbose):
+def mutate(verbose, src=ROOT):
     """Change one character of a carried code line in a scratch copy; the checks must fail."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = pathlib.Path(tmp)
-        st = stage(ROOT)
+        st = stage(src)
         units, _ = units_for(st)
         files = sorted({u["file"] for u in units}) + HDRS + ([WORK_HDR] if st == "d" else [])
         for f in files:
             (tmp / f).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(ROOT / f, tmp / f)
+            shutil.copy(src / f, tmp / f)
         target = tmp / (STATS if st in ("c", "d") else MW)
         text = target.read_text(encoding="utf-8")
         old = "return sigma_xsat * mwElevationWeight(elev_deg);"
@@ -1601,9 +1604,9 @@ def main():
     ap.add_argument("--tree", help="read the new files from this directory")
     ap.add_argument("--mutate", action="store_true")
     a = ap.parse_args()
-    if a.mutate:
-        return 0 if mutate(a.verbose) else 1
     tree = pathlib.Path(a.tree).resolve() if a.tree else ROOT
+    if a.mutate:
+        return 0 if mutate(a.verbose, tree) else 1
     return 0 if run_checks(tree, a.verbose) else 1
 
 

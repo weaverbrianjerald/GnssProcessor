@@ -23,6 +23,9 @@
  *     active arcs, across-gap evidence, the worst score), MwSlipDetectorReset.cpp
  *     (external resets and the pivot hint), MwSlipDetectorTrace.cpp (the CSV trace), and
  *     the network-only MwSlipDetectorZd.cpp and MwPhaseBridge.cpp.
+ *   - The two drivers' steps: MwSlipDetectorEpoch.cpp (detectLargeMwResets) and
+ *     MwSlipDetectorSample.cpp (processMwSample), over the working values of
+ *     slip/MwDetectorWork.hpp, which lists the steps in order.
  */
 
 #include "common/PppTypes.hpp"
@@ -41,6 +44,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -823,90 +827,6 @@ namespace GnssProcessor {
         double crossSatSigmaFloor(const std::string& stats_key,
                                   double elev_deg) const;
 
-        /**
-         * @brief Process a single MW sample: update statistics or flag a slip.
-         *
-         * Handles the first-epoch initialization, adaptive threshold evaluation,
-         * trace writing, and Welford/Hatch statistics update for one MW value.
-         *
-         * For BIA+BSSD-corrected arcs the WL integer locks once the statistical
-         * lock criterion passes (n ≥ kWlLockMinN = 10; see the note above
-         * @c kWlMaxFrac).  A known integer slip ΔN_WL (@p out_wl_known true) is
-         * reported only by the unlocked-arc path, when the jump deviation is
-         * near-integer and, in the TimeDifference modes, resolvable from a single
-         * sample.  Every locked-arc detection (drift demotion, TD confirmation)
-         * reports an unknown integer, so the caller resets.
-         *
-         * @param obs            Observation (for tracing metadata).
-         * @param stats_key      Key into mw_stats_ for this arc.
-         * @param mw_m           Current MW value (meters), already bias-corrected by caller.
-         * @param lambda_wl      Wide-lane wavelength (meters).
-         * @param sig1           First signal identifier (for tracing).
-         * @param sig2           Second signal identifier (for tracing).
-         * @param bia_corrected  True if the MW value has had both satellite (BIA)
-         *                       and receiver (BSSD) biases removed, making it
-         *                       near-integer in WL cycles and eligible for rounding.
-         * @param sat_mw_bias    Satellite MW bias that was applied (meters, for tracing).
-         * @param[out] out_slip_cycles  If non-null, set to the integer WL slip magnitude.
-         * @param[out] out_wl_known     If non-null, set to true when out_slip_cycles is reliable.
-         * @param[out] out_slip_frac    If non-null, set to |x - round(x)| of the float value
-         *                              before rounding (0 = exact, up to 0.5 = worst).
-         * @param[out] out_slip_wl_float If non-null, the float WL-step estimate in
-         *                              cycles where the emission path has one
-         *                              (unlocked-arc jump deviation, TD-confirmation
-         *                              level gap, drift-demotion drift,
-         *                              level-disagreement gap); NaN otherwise.  Same
-         *                              frame as the integer outputs (SD for
-         *                              bias-corrected arcs), so the caller's SD→ZD
-         *                              re-referencing must be applied identically.
-         *                              Downstream solvers use it only to select
-         *                              candidates, never as an integer to apply.
-         * @param pivot_sat      SD pivot satellite for this arc's (constellation,
-         *                       signal-pair) group, recorded in the trace's
-         *                       @c mw_pivot column.  Empty for undifferenced
-         *                       (no-BIA) arcs that are not single-differenced
-         *                       against any pivot.
-         * @param pivot_zd_slip_in  The pivot's own ZD slip detected this pass
-         *                       (cycles; 0 when the pivot is clean or the arc is not
-         *                       single-differenced).  Consumed only by the locked-arc
-         *                       TD confirmation, where a non-zero value marks the SD
-         *                       frame as moved this epoch.  That forbids deferring a
-         *                       new pending flag (the downstream handling must see
-         *                       the slip this epoch) and classifying an existing one
-         *                       (its hypotheses are in the old frame).
-         * @param pivot_zd_known_in Whether the pivot's ZD slip integer is
-         *                       known; false likewise marks the frame moved.
-         * @param code1          RINEX code observable the MW combination consumed on
-         *                       @p sig1, recorded so a consumer can name the satellite
-         *                       code-bias column it carries (@ref MwArcZdMean::code1).
-         *                       Bookkeeping only: the MW value arrives pre-computed
-         *                       in @p mw_m, so this changes no detection.
-         * @param code2          RINEX code observable on @p sig2 (see @p code1).
-         * @param[out] out_evidence If non-null, the detection strength of the flag
-         *                       (@ref MwSampleEvidence): |dev|/threshold at the
-         *                       firing gate, the arc's sample count before the
-         *                       erase, and the lane's bias class.  Meaningful only
-         *                       when the call returns true; paths with no
-         *                       meaningful ratio leave NaN.  It changes no
-         *                       detection.
-         * @return True if a slip was detected (caller should generate reset keys).
-         */
-        bool processMwSample(const PppObservation& obs,
-            const std::string& stats_key,
-            double mw_m, double lambda_wl,
-            const std::string& sig1, const std::string& sig2,
-            bool bia_corrected, double sat_mw_bias,
-            int* out_slip_cycles = nullptr,
-            bool* out_wl_known = nullptr,
-            double* out_slip_frac = nullptr,
-            double* out_slip_wl_float = nullptr,
-            const std::string& pivot_sat = {},
-            int pivot_zd_slip_in = 0,
-            bool pivot_zd_known_in = true,
-            const std::string& code1 = {},
-            const std::string& code2 = {},
-            MwSampleEvidence* out_evidence = nullptr);
-
         /** Output stream for MWWL trace CSV file (mutable for const access). */
         mutable std::ofstream mwwl_trace_;
 
@@ -1123,6 +1043,353 @@ namespace GnssProcessor {
                             int detect_mode = 0,
                             double active_dev_m =
                                 std::numeric_limits<double>::quiet_NaN()) const;
+
+        // ======================================================================
+        // The two drivers' steps (card UOM step U5m-d)
+        //
+        // detectLargeMwResets and processMwSample are ordered drivers over the
+        // private steps below; the working values the steps share are declared
+        // here and defined in slip/MwDetectorWork.hpp, which lists the steps.
+        // ======================================================================
+
+        /**
+         * @brief The lane a sample belongs to: one satellite and one signal pair.
+         *
+         * The arc key is "<sat>_<sig1>_<sig2>"; on the combined path it is written
+         * "<sat>_<IF label>", the same string, since the IF label is "<sig1>_<sig2>".
+         */
+        struct MwLane {
+            std::string satellite;   ///< Satellite identifier (e.g. "G01").
+            std::string sig1;        ///< First phase signal (higher frequency, e.g. "L1C").
+            std::string sig2;        ///< Second phase signal (lower frequency, e.g. "L2W").
+            std::string code1;       ///< RINEX code observable the MW combination consumed on
+                                     ///< @c sig1, recorded so a consumer can name the satellite
+                                     ///< code-bias column it carries (@ref MwArcZdMean::code1).
+                                     ///< Bookkeeping only: the MW value arrives pre-computed.
+            std::string code2;       ///< RINEX code observable on @c sig2 (see @c code1).
+            std::string if_label;    ///< Combined (ionosphere-free) path: the IF phase label
+                                     ///< ("L1C_L2W"), whose one ambiguity a flag resets.  Empty
+                                     ///< on the uncombined path, where a flag resets both
+                                     ///< signals' ambiguities.
+            std::string stats_key;   ///< The arc key into @c mw_stats_ (see above).
+        };
+
+        /**
+         * @brief One MW value of a lane, as the caller formed it.
+         */
+        struct MwSample {
+            double mw_m{ 0.0 };            ///< MW value (meters), already bias-corrected by the
+                                           ///< caller (satellite BIA; single-differenced
+                                           ///< against the group pivot on a BIA arc).
+            double lambda_wl{ 0.0 };       ///< Wide-lane wavelength (meters).
+            bool   bia_corrected{ false }; ///< True if both the satellite (BIA) and the receiver
+                                           ///< (BSSD) biases are removed: the value is near-integer
+                                           ///< in WL cycles and eligible for rounding.
+            double sat_mw_bias{ 0.0 };     ///< Satellite MW bias that was applied (meters, for
+                                           ///< the trace).
+        };
+
+        /**
+         * @brief The single-difference frame of a sample: the MW pivot of its
+         *        (constellation, signal-pair) group and the pivot's own slip this pass.
+         *
+         * The default is the undifferenced frame: no pivot, nothing moved.
+         */
+        struct MwSdFrame {
+            std::string pivot_sat;          ///< SD pivot satellite, recorded in the trace's
+                                            ///< @c mw_pivot column; empty for an undifferenced
+                                            ///< (no-BIA) arc.
+            int  pivot_zd_slip{ 0 };        ///< The pivot's own ZD slip this pass (cycles; 0
+                                            ///< when it is clean or the arc is undifferenced).
+                                            ///< Consumed only by the locked-arc TD confirmation,
+                                            ///< where non-zero marks the SD frame as moved: a new
+                                            ///< pending flag is not deferred, an existing one is
+                                            ///< not classified.
+            bool pivot_zd_known{ true };    ///< Whether the pivot's ZD slip integer is known;
+                                            ///< false likewise marks the frame moved.
+        };
+
+        /**
+         * @brief What @c processMwSample reports for a flagged sample.
+         *
+         * The member initializers are the values a path that does not set a field reports.
+         * A path with no meaningful strength leaves @c evidence_ratio NaN instead of
+         * inventing one, so @c std::isfinite on it tells whether the path published one.
+         * The integer and the float are in the sample's frame (single-differenced on a BIA
+         * arc): the caller re-references them to the satellite's own ZD slip.
+         */
+        struct MwVerdict {
+            int    slip_cycles{ 0 };       ///< Integer WL slip magnitude (valid when @c wl_known).
+            bool   wl_known{ false };      ///< True when @c slip_cycles is reliable (only the
+                                           ///< unlocked-arc path publishes one).
+            double slip_frac{ 0.5 };       ///< |x - round(x)| of the float value before rounding
+                                           ///< (0 = exact, up to 0.5 = worst).
+            double slip_wl_float{ std::numeric_limits<double>::quiet_NaN() };
+                                           ///< Float WL-step estimate (cycles) where the path has
+                                           ///< one (the unlocked-arc jump, the TD-confirmation
+                                           ///< level gap, the drift, the level-disagreement gap);
+                                           ///< used to select candidates, never as an integer.
+            double evidence_ratio{ std::numeric_limits<double>::quiet_NaN() };
+                                           ///< |dev|/threshold at the firing gate.
+            int    arc_epochs{ 0 };        ///< The arc's sample count before the erase (0 on the
+                                           ///< init-suspicious path).
+        };
+
+        struct SatMwEntry;    ///< One satellite's BIA-corrected sample of an SD group (slip/MwDetectorWork.hpp).
+        struct MwSampleWork;  ///< The working value of processMwSample's steps (slip/MwDetectorWork.hpp).
+        struct MwEpochWork;   ///< The working value of detectLargeMwResets' steps (slip/MwDetectorWork.hpp).
+
+        /**
+         * @brief Process one MW sample of a lane: update the arc's statistics or flag a slip.
+         *
+         * The per-sample driver: twelve steps over one @c MwSampleWork, ending at the first
+         * step that flags a slip.  For BIA+BSSD-corrected arcs the WL integer locks once the
+         * statistical lock criterion passes (n ≥ 10).  A known integer slip ΔN_WL is reported
+         * only by the unlocked-arc path, when the jump deviation is near-integer and, in the
+         * TimeDifference modes, resolvable from a single sample.  Every locked-arc detection
+         * (drift demotion, TD confirmation) reports an unknown integer, so the caller resets.
+         *
+         * @param obs     Observation (the epoch time, the elevation, tracing metadata).
+         * @param lane    The satellite and signal pair (@ref MwLane).
+         * @param sample  The MW value and its frame flags (@ref MwSample).
+         * @param frame   The single-difference frame (@ref MwSdFrame); default undifferenced.
+         * @return The verdict when a slip was flagged (the caller generates reset keys);
+         *         empty otherwise.
+         */
+        std::optional<MwVerdict> processMwSample(const PppObservation& obs, const MwLane& lane,
+                                                 const MwSample& sample, const MwSdFrame& frame);
+
+        // --- processMwSample's steps (MwSlipDetectorSample.cpp) --------------------------
+
+        /**
+         * @brief S1: apply a stored in-house bias, reset the arc on a data gap, stamp its code
+         *        channels, snapshot it for rollback, and stamp the per-epoch pair status.
+         * @param w  The sample's working value; sets @c stats, @c epoch_s, @c lli_shadowed.
+         */
+        void stampArc_(MwSampleWork& w);
+
+        /**
+         * @brief S2: open a fresh arc with its first sample, and flag a BIA-corrected first
+         *        sample whose fractional offset says a slip happened during the gap.
+         * @param w  The sample's working value (an arc with no samples).
+         * @return True if the first sample is flagged (the verdict is set).
+         */
+        bool initArc_(MwSampleWork& w);
+
+        /**
+         * @brief S3: form this sample's TD1 and resolve a pending locked-arc TD confirmation:
+         *        a held level is a step (emit an unknown-integer slip and erase the arc), a
+         *        returned level an outlier (keep the lock, excise it from the TD chain).
+         * @param w  The sample's working value; sets @c mw_diff.
+         * @return True if a confirmed step was emitted.
+         */
+        bool resolveTdConfirm_(MwSampleWork& w);
+
+        /**
+         * @brief S4: lock the WL integer of a BIA-corrected arc once the statistical lock
+         *        criterion passes.
+         * @param w  The sample's working value.
+         */
+        void tryLock_(MwSampleWork& w) const;
+
+        /**
+         * @brief S5: commit (or update) the in-house bias of an unbiased arc and move the
+         *        sample into the corrected frame (processing.inhouse_bias_estimation only).
+         * @param w  The sample's working value.
+         */
+        void tryInhouseCommit_(MwSampleWork& w);
+
+        /**
+         * @brief S6: the deviation and the mature spread the gate tests, per the detection
+         *        reference (Hatch mean, local median, first or second time-difference).
+         * @param w  The sample's working value; sets the statistic's members.
+         */
+        void selectStatistic_(MwSampleWork& w) const;
+
+        /**
+         * @brief S7: the adaptive threshold and the flag verdict in the active and the Hatch
+         *        frame, the pair-status record and the MWDEC decision line.
+         * @param w  The sample's working value; sets @c thresh, @c sigma, @c is_slip,
+         *           @c is_slip_level.
+         */
+        void gate_(MwSampleWork& w);
+
+        /**
+         * @brief S8: the score cache, the affirmative-clean set, the cross-satellite pool
+         *        and the trace row.
+         * @param w  The sample's working value.
+         */
+        void recordEpochEvidence_(MwSampleWork& w);
+
+        /**
+         * @brief S9: a flagged sample.  A locked arc absorbs it, defers it to a TD
+         *        confirmation, or (under a pivot slip) emits at once; an unlocked arc emits
+         *        it, with a known integer when the jump rounds cleanly, and is erased.
+         * @param w  The sample's working value.
+         * @return True if a slip was emitted.
+         */
+        bool onFlag_(MwSampleWork& w);
+
+        /**
+         * @brief S10: fold the sample into the Welford/Hatch statistics and the windows.
+         * @param w  The sample's working value.
+         */
+        void foldSample_(MwSampleWork& w) const;
+
+        /**
+         * @brief S11: demote a locked arc whose live mean drifted from its integer, and emit
+         *        an unknown-integer slip.
+         * @param w  The sample's working value.
+         * @return True if the lock was demoted (a slip emitted).
+         */
+        bool checkDriftDemotion_(MwSampleWork& w);
+
+        /**
+         * @brief S12: restart an unlocked arc whose Hatch mean and local median disagree by
+         *        more than the drift bound (an absorbed step), emitting an unknown-integer slip.
+         * @param w  The sample's working value.
+         * @return True if a slip was emitted.
+         */
+        bool checkLevelBackstop_(MwSampleWork& w);
+
+        // --- detectLargeMwResets' steps (MwSlipDetectorEpoch.cpp) -------------------------
+
+        /**
+         * @brief E0: the per-epoch resets (snapshots, clean set, pair status), the LLI
+         *        rotation, the epoch time, and the aging of demoted-level stashes.
+         * @param w             The epoch's working value.
+         * @param observations  The epoch's observations.
+         */
+        void beginEpoch_(MwEpochWork& w, const std::vector<PppObservation>& observations);
+
+        /**
+         * @brief E1: one satellite of pass 1.  Fold the phase bridge, then take the path:
+         *        the combined path (IF labels present) or the uncombined path, each with its
+         *        own LLI policy.
+         * @param w    The epoch's working value.
+         * @param obs  The satellite's observation (above the elevation mask).
+         */
+        void collectLaneSamples_(MwEpochWork& w, const PppObservation& obs);
+
+        /**
+         * @brief The combined path's LLI policy: schedule each IF ambiguity's reset, write the
+         *        LLI trace rows, record the flagged bands, and erase the satellite's arcs.
+         * @param w         The epoch's working value.
+         * @param obs       The satellite's observation.
+         * @param if_pairs  Its ionosphere-free phase/code label pairs.
+         */
+        void eraseArcsOnLli_(MwEpochWork& w, const PppObservation& obs,
+                             const std::vector<IfPair>& if_pairs);
+
+        /**
+         * @brief The uncombined path's LLI policy: schedule every phase ambiguity's reset and
+         *        record the flagged bands for the next epoch's LLI shadow, keeping the arcs.
+         * @param w    The epoch's working value.
+         * @param obs  The satellite's observation.
+         */
+        void preserveArcsOnLli_(MwEpochWork& w, const PppObservation& obs);
+
+        /**
+         * @brief The combined path's IF lanes: form each lane's MW; a BIA-corrected lane joins
+         *        its SD group, another is processed undifferenced at once.
+         * @param w         The epoch's working value.
+         * @param obs       The satellite's observation.
+         * @param if_pairs  Its ionosphere-free phase/code label pairs.
+         * @return The band pairs ("1_2") the IF lanes cover.
+         */
+        std::set<std::string> collectCombinedLanes_(MwEpochWork& w, const PppObservation& obs,
+                                                    const std::vector<IfPair>& if_pairs);
+
+        /**
+         * @brief The combined path's supplementary lanes: uncombined band pairs the IF labels
+         *        do not cover, routed as in @c collectCombinedLanes_.
+         * @param w              The epoch's working value.
+         * @param obs            The satellite's observation.
+         * @param if_band_pairs  The band pairs the IF lanes cover.
+         */
+        void collectSupplementaryLanes_(MwEpochWork& w, const PppObservation& obs,
+                                        const std::set<std::string>& if_band_pairs);
+
+        /**
+         * @brief The uncombined path's lanes: one per band pair, routed as in
+         *        @c collectCombinedLanes_.
+         * @param w         The epoch's working value.
+         * @param obs       The satellite's observation.
+         * @param uc_pairs  Its viable MW pairs.
+         */
+        void collectUncombinedLanes_(MwEpochWork& w, const PppObservation& obs,
+                                     const std::vector<UncombinedPair>& uc_pairs);
+
+        /**
+         * @brief E2a: elect an SD group's MW pivot: the highest elevation, skipping the
+         *        deprioritized satellites unless every member is one.
+         * @param sat_entries  The group's members, by satellite.
+         * @return The pivot satellite, or empty if none can be elected.
+         */
+        std::string electPivot_(const std::map<std::string, SatMwEntry>& sat_entries) const;
+
+        /**
+         * @brief E2b: when the group's pivot changes, S-transform its locked SD arcs onto the
+         *        new pivot (or erase them), drop the old pivot's ZD arc, and re-reference the
+         *        stored in-house biases.
+         * @param w            The epoch's working value.
+         * @param group_key    The group ("<cons>_<sig1>_<sig2>").
+         * @param sat_entries  The group's members.
+         * @param best_pivot   The elected pivot.
+         */
+        void reReferenceGroup_(MwEpochWork& w, const std::string& group_key,
+                               const std::map<std::string, SatMwEntry>& sat_entries,
+                               const std::string& best_pivot);
+
+        /**
+         * @brief E2c: the pivot's own undifferenced sample; its ZD slip anchors the group's
+         *        frame.
+         * @param w            The epoch's working value.
+         * @param sat_entries  The group's members.
+         * @param best_pivot   The pivot.
+         * @return The group's SD frame: the pivot and its ZD slip this pass.
+         */
+        MwSdFrame processPivot_(MwEpochWork& w,
+                                const std::map<std::string, SatMwEntry>& sat_entries,
+                                const std::string& best_pivot);
+
+        /**
+         * @brief E2d: the non-pivot members, single-differenced against the pivot; a flag's
+         *        SD jump is re-referenced to the satellite's own ZD slip.
+         * @param w            The epoch's working value.
+         * @param sat_entries  The group's members.
+         * @param best_pivot   The pivot.
+         * @param frame        The group's SD frame (@c processPivot_).
+         */
+        void processNonPivots_(MwEpochWork& w,
+                               const std::map<std::string, SatMwEntry>& sat_entries,
+                               const std::string& best_pivot, const MwSdFrame& frame);
+
+        /**
+         * @brief E3: consume the pivot hints, finalize the cross-satellite σ tiers, flush the
+         *        trace.
+         * @param w  The epoch's working value.
+         * @return The epoch's results.
+         */
+        std::vector<MwSlipResult> endEpoch_(MwEpochWork& w);
+
+        /**
+         * @brief Append the results of one flagged lane: one per ambiguity it resets (the IF
+         *        ambiguity of a combined lane; the two signals' of an uncombined lane).
+         * @param results        The epoch's results.
+         * @param lane           The flagged lane.
+         * @param verdict        Its verdict (re-referenced to ZD by the caller where needed).
+         * @param lambda_wl      Its wide-lane wavelength (meters).
+         * @param bia_corrected  The lane class the results report (see
+         *                       @ref MwSlipResult::bia_corrected).
+         */
+        static void emitLaneSlip_(std::vector<MwSlipResult>& results, const MwLane& lane,
+                                  const MwVerdict& verdict, double lambda_wl,
+                                  bool bia_corrected);
+
+        /// Unit-test seam (tests/test_mw_detector_steps.cpp): reaches the steps above.
+        friend struct MwDetectorStepsTestAccess;
+
 
         // ======================================================================
         // Network-only surface, owned with card NOM

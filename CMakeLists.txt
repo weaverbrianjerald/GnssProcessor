@@ -136,6 +136,8 @@ add_library(gnss_core STATIC
     src/core/app/SignalRoster.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
+	src/core/slip/MwSlipDetectorEpoch.cpp
+	src/core/slip/MwSlipDetectorSample.cpp
 	src/core/slip/MwSlipDetectorPairs.cpp
 	src/core/slip/MwSlipDetectorStats.cpp
 	src/core/slip/MwSlipDetectorQuery.cpp
@@ -659,6 +661,7 @@ add_executable(gnss_tests
     tests/test_canonical_signal_station_scope.cpp
     tests/test_canonical_signal_code_follow.cpp
     tests/test_mw_detect_pair_scope.cpp
+    tests/test_mw_detector_steps.cpp
     tests/test_extra_band_code_sigma.cpp
     tests/test_network_second_code_scope.cpp
     tests/test_second_phase_channel.cpp

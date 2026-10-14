@@ -94,23 +94,6 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Detection-strength outputs of one @c processMwSample call.
-     *
-     * An out-struct instead of three more out-params (@c processMwSample
-     * already carries four).  Each field mirrors the identically named member
-     * of @ref MwSlipResult.  Every call resets the fields and records
-     * @c bia_corrected; the ratio and the arc count are set only on paths
-     * where the call returns true.  A path with no meaningful value leaves the
-     * default (NaN / 0) instead of inventing one, so @c std::isfinite on
-     * @c evidence_ratio tells a consumer whether the path published a strength.
-     */
-    struct MwSampleEvidence {
-        double evidence_ratio{ std::numeric_limits<double>::quiet_NaN() };
-        int    arc_epochs{ 0 };
-        bool   bia_corrected{ false };
-    };
-
-    /**
      * @brief Standard error of one locked wide-lane arc mean, the value
      *        type of @ref MwSlipDetector::getResolvedWlQuality (named
      *        @c MwSlipDetector::WlLockQuality there).
