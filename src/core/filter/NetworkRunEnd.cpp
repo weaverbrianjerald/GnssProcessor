@@ -85,7 +85,6 @@
 #include "filter/NetworkWithinEpochCulprits.hpp"
 #include "products/NetworkClockEmitRebase.hpp"
 #include "products/NetworkEmitRebase.hpp"
-#include "products/NetworkPbEmitFilter.hpp"
 #include "slip/NetworkCommonBandScope.hpp"
 #include "slip/NetworkGfArcJump.hpp"
 #include "slip/NetworkSlipOracle.hpp"
@@ -247,8 +246,6 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkInvariantCarryDriver.cpp", networkD5MapMissRunEnd},
     {"the emit-layer frame re-base",
      "products/NetworkEmitRebase.cpp", networkEmitRebaseRunEnd},
-    {"the phase-bias emission-continuity filter",
-     "products/NetworkPbEmitFilter.cpp", networkPbEmitFilterRunEnd},
     {"the clock emission re-base and frame hold",
      "products/NetworkClockEmitRebase.cpp", networkClockEmitRebaseRunEnd},
     {"broadcast satellite health (HLT)",

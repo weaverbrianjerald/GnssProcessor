@@ -246,7 +246,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.emit_epoch_status = config_.networkEmitEpochStatusRecord();
     // Clock emission re-base knobs (card CLK-R).  The engine lives in NetworkCarryState,
     // because its per-satellite baselines and frame accumulators outlive the epoch, and
-    // the driver configures it next to the PB-filter setup.
+    // the driver configures it next to the emit re-base setup.
     k.clk_frame_hold = config_.networkEmitClockFrameHold();
     k.clk_jump_test  = config_.networkClockDiscJumpTest();
     // Emit-side phase-bias hold (card PBH).  The held values and generations live in
@@ -669,11 +669,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         // carry_invariant (rejected at config load otherwise).
         k.carry_innov_gate = k.carry_invariant && config_.networkCarryInvariantInnovGate();
         // Emit-layer frame re-base (card 4 phase D), on by default when carry_invariant is
-        // armed (spec D7); the PB emission-continuity filter runs inside the re-base block,
-        // so it requires emit_rebase_on.
+        // armed (spec D7).
         k.emit_rebase_on = k.carry_invariant && config_.networkCarryInvariantEmitRebase();
-        k.emit_pb_filter_on = k.emit_rebase_on && config_.networkEmitPbFilter();
-        k.pb_filter_emit_sigma = config_.networkEmitPbFilterEmitSigma();
     }
     // --- The epoch driver's configuration-derived values (card NOM3 step EP0) ---
     // Moved from runNetwork with each expression unchanged (the SH-deviation switches are

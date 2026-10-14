@@ -4,10 +4,11 @@
  *        TD1a) equal the conjunctions runNetwork computed before they moved.
  *
  * Card NOM step TD1a moved 24 derived switches (carry_innov_gate, the WL/EWL/UWL lane
- * flags, the dump flags, emit_rebase_on, emit_pb_filter_on, pb_filter_emit_sigma) out of
+ * flags, the dump flags, emit_rebase_on, and the two PB emission-filter switches) out of
  * the driver and into NetworkKnobs::snapshot, so the driver, the DD-prior build, the
  * install, the emit store and the run end read one bool each.  The lane and dump flags
- * went with the retired MW/WL lane keys (cards WL-1, WL-2, WL-3, UWL-1).  The
+ * went with the retired MW/WL lane keys (cards WL-1, WL-2, WL-3, UWL-1), the two filter
+ * switches with the PB emission-continuity filter.  The
  * conjunctions here are the driver's, copied from ApplicationNetwork.cpp as it stood at
  * main 3c44046; every posture checks each knob against them, and each armed posture also
  * checks that the switches it targets are on, so a posture the loader quietly disarms
@@ -72,9 +73,10 @@ const char* kCarryInvariant =
     "    \"cycle_slip\": { \"mw_detect\": true },\n";
 
 /// The switches still in the snapshot, as the driver computed them before card NOM step
-/// TD1a (the MW/WL lane and dump switches went with their keys).
+/// TD1a (the MW/WL lane and dump switches and the two PB emission-filter switches went
+/// with their keys).
 struct DriverSwitches {
-    bool carry_innov_gate, emit_rebase_on, emit_pb_filter_on, pb_filter_emit_sigma;
+    bool carry_innov_gate, emit_rebase_on;
 };
 
 DriverSwitches driverSwitches(const GnssConfig& config_) {
@@ -83,8 +85,6 @@ DriverSwitches driverSwitches(const GnssConfig& config_) {
     DriverSwitches d{};
     d.carry_innov_gate = carry_invariant && config_.networkCarryInvariantInnovGate();
     d.emit_rebase_on = carry_invariant && config_.networkCarryInvariantEmitRebase();
-    d.emit_pb_filter_on = d.emit_rebase_on && config_.networkEmitPbFilter();
-    d.pb_filter_emit_sigma = config_.networkEmitPbFilterEmitSigma();
     return d;
 }
 
@@ -94,8 +94,6 @@ NetworkKnobs expectDriverSwitches(const GnssConfig& cfg) {
     const DriverSwitches d = driverSwitches(cfg);
     EXPECT_EQ(k.carry_innov_gate, d.carry_innov_gate);
     EXPECT_EQ(k.emit_rebase_on, d.emit_rebase_on);
-    EXPECT_EQ(k.emit_pb_filter_on, d.emit_pb_filter_on);
-    EXPECT_EQ(k.pb_filter_emit_sigma, d.pb_filter_emit_sigma);
     return k;
 }
 
@@ -107,7 +105,6 @@ TEST(NetworkKnobsLaneEmit, DefaultsAreAllOff) {
     const NetworkKnobs k = expectDriverSwitches(cfg);
     EXPECT_FALSE(k.carry_innov_gate);
     EXPECT_FALSE(k.emit_rebase_on);
-    EXPECT_FALSE(k.emit_pb_filter_on);
 }
 
 TEST(NetworkKnobsLaneEmit, CarryInvariantArmsTheEmitReBaseByDefault) {
@@ -116,18 +113,4 @@ TEST(NetworkKnobsLaneEmit, CarryInvariantArmsTheEmitReBaseByDefault) {
     ASSERT_TRUE(cfg.networkCarryInvariant());
     const NetworkKnobs k = expectDriverSwitches(cfg);
     EXPECT_TRUE(k.emit_rebase_on);   // on by default under carry_invariant (spec D7)
-}
-
-TEST(NetworkKnobsLaneEmit, EwlUwlInjectAndEmitFilterPosture) {
-    GnssConfig cfg;
-    const std::string extra = std::string(kCarryInvariant) +
-        "    \"carry_invariant_innov_gate\": true,\n"
-        "    \"emit_pb_filter\": true,\n"
-        "    \"emit_pb_filter_emit_sigma\": true,\n";
-    ASSERT_TRUE(loadInto("inject", networkConfig(extra), cfg));
-    ASSERT_TRUE(cfg.networkCarryInvariant());
-    const NetworkKnobs k = expectDriverSwitches(cfg);
-    EXPECT_TRUE(k.carry_innov_gate);
-    EXPECT_TRUE(k.emit_pb_filter_on);
-    EXPECT_TRUE(k.pb_filter_emit_sigma);
 }

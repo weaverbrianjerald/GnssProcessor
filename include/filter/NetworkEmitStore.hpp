@@ -9,10 +9,9 @@
  * retro state @ref networkSolPrep returned) and finalizes the epoch:
  *   - with the SH health gate engaged, writes only the withheld H heartbeat and
  *     returns (no store push, no product write, no closed-loop consume);
- *   - the Card-4 phase-D emit-layer frame re-base (+ M5 PB emission-continuity filter)
- *     on the emitted phase biases, the CLK-R clock emission re-base, the RS-4
- *     warm-resume phase-bias seam mark and the PBH
- *     phase-bias hold, all baked into @c sol before the store push so a
+ *   - the Card-4 phase-D emit-layer frame re-base on the emitted phase biases, the
+ *     CLK-R clock emission re-base, the RS-4 warm-resume phase-bias seam mark and the
+ *     PBH phase-bias hold, all baked into @c sol before the store push so a
  *     NetworkProductIO replay reproduces the emitter disc counters;
  *   - @c emitToStore, the card SID signal-roster declaration, the JT and MS event
  *     drains, and the RTA-5 periodic S-contract re-broadcast;
@@ -41,7 +40,6 @@
 #include "filter/NetworkRunGroups.hpp"       // NetworkEmitEngines, ClosedLoopTally (card NOM step TD1a)
 #include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (Card CLK-R)
 #include "products/NetworkEmitRebase.hpp"    // NetworkEmitRebase
-#include "products/NetworkPbEmitFilter.hpp"  // NetworkPbEmitFilter
 #include "products/NetworkProductEmitter.hpp"// NetworkSolutionEpoch
 #include "rinex/MultiRinexSync.hpp"          // SyncedEpoch
 
@@ -69,7 +67,7 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp (included in the .cp
  *        beyond ctx/config_/log/traces/setup carry the epoch-local assembly state,
  *        the five @ref NetworkSolPrepResult locals (@c sol is re-based in place), the
  *        emit-layer engines (@ref NetworkEmitEngines; their switches are
- *        NetworkKnobs::emit_rebase_on, emit_pb_filter_on and pb_filter_emit_sigma), and the
+ *        NetworkKnobs::emit_rebase_on), and the
  *        run-level closed-loop tally (@ref ClosedLoopTally), which this function
  *        accumulates.
  */

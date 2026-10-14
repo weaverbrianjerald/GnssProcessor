@@ -57,7 +57,7 @@ enum SubBlock {
     SB_INSTALL,      //          carry_driver.installPosterior (DD posterior mean/cov readback) (card 4)
     SB_NETAR,        //          producer-side network AR, phase 2 (log-only; off in the tier)
     SB_SOLPREP,      //          toSolutionEpoch + per-sat discontinuity signalling
-    SB_EMITSTORE,    // block 7: emit re-base + PB-emit filter + store push + solution CSV
+    SB_EMITSTORE,    // block 7: emit re-base + store push + solution CSV
     SB_IONODIAG,     // block 4: iono / ZWD / anchor-info viz traces (per-station recon sweeps)
     SB_DDFRAC,       // block 6: cross-station DD fractional-residual (B5) trace
     SB_SHDEV_VTEC,   // block 4: T5 SH-deviation carry KF + co-estimated VTEC coeff trace

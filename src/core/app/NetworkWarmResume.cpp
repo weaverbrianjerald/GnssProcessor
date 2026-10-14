@@ -34,7 +34,6 @@
 #include "filter/NetworkInvariantCarryDriver.hpp"   // branch-faithful carry (de)serialization (RTB-7(c))
 #include "products/NetworkClockEmitRebase.hpp"       // CLK-R held frame, restored on warm resume (§18.10)
 #include "products/NetworkEmitRebase.hpp"            // eq34 emit re-base frame, restored on warm resume (RS-5, §21.10)
-#include "products/NetworkPbEmitFilter.hpp"          // PB emit filter state, restored on warm resume (RS-5, §21.10)
 #include "filter/StateKeySchema.hpp"         // StateKeys::makeAmbiguityKey
 #include "math/TimeUtils.hpp"                // TimeUtils::continuousGpsSeconds
 #include "products/NetworkProductEmitter.hpp"
@@ -58,8 +57,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                           NetworkInvariantCarryDriver& carry_driver,
                           const std::shared_ptr<spdlog::logger>& log,
                           NetworkClockEmitRebase* clk_rebase,
-                          NetworkEmitRebase* emit_rebase,
-                          NetworkPbEmitFilter* pb_filter) {
+                          NetworkEmitRebase* emit_rebase) {
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
     const auto& nc = config_.getNetworkConfig();
@@ -579,15 +577,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // writer's carries its accumulated re-base, so the emitted phase biases
                     // step by the difference of the two emit layers at the seam, not by
                     // anything the estimator did (§21.10 has the measurement).
-                    //
-                    // The two halves are gated and reported separately, as hasFrameState /
-                    // hasDatumState are: a file may carry the ER rows and no PF/PS (a
-                    // writer with carry_invariant but without emit_pb_filter), and an
-                    // absent half reads as inert for that half alone.
                     if (ctx.knobs.resume_emit_restore) {
                         const bool have_er = !snap.emit_rebase_last.empty();
-                        const bool have_pf = !snap.pb_filter_state.empty()
-                                             || !snap.pb_filter_step.empty();
                         if (have_er && emit_rebase) {
                             emit_rebase->restoreState(snap.emit_rebase_last);
                             ctx.counters.n_resume_emit_rebase_keys =
@@ -607,46 +598,15 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                             "without network.state_snapshot_emit_capture, "
                                             "or one with the re-base off)");
                         }
-                        if (have_pf && pb_filter) {
-                            NetworkPbEmitFilter::FilterState fs;
-                            for (const auto& [key, ks] : snap.pb_filter_state)
-                                fs.state[key] = NetworkPbEmitFilter::KeyState{
-                                    ks.mean, ks.var, ks.last_seen_s};
-                            for (const auto& [cst, ac] : snap.pb_filter_step)
-                                fs.step[cst] = NetworkPbEmitFilter::StepAccum{
-                                    ac.sum_log_e2, ac.n_eff};
-                            pb_filter->restoreState(fs);
-                            ctx.counters.n_resume_emit_filter_keys =
-                                static_cast<long long>(snap.pb_filter_state.size());
-                            ctx.counters.n_resume_emit_step_accums =
-                                static_cast<long long>(snap.pb_filter_step.size());
-                        } else {
-                            log->warn("Network (RS-5 emit restore): ARMED but {} — the PB "
-                                      "emission FILTER half is INERT; every key "
-                                      "first-sights at the seam (seeded at the raw value, "
-                                      "P = R) and σ̂_step restarts at the weak seed prior, "
-                                      "so the first post-resume epochs run the widest gate "
-                                      "of the run.",
-                                      have_pf
-                                          ? "this run never constructs the filter engine "
-                                            "(network.emit_pb_filter off)"
-                                          : "the snapshot carries NO PF/PS rows (a writer "
-                                            "without network.state_snapshot_emit_capture, "
-                                            "or one with the filter off)");
-                        }
-                        if ((have_er && emit_rebase) || (have_pf && pb_filter))
+                        if (have_er && emit_rebase)
                             log->info("Network (RS-5 emit restore): ARMED at the resume "
                                       "seam — {} emission-frame key(s) restored into the "
-                                      "eq34 emit re-base, {} per-key posterior(s) and {} "
-                                      "step-noise accumulator(s) into the PB emission "
-                                      "filter.  Restored BEFORE the first emit, so the "
-                                      "first post-resume epoch re-bases onto the writer's "
-                                      "last EMITTED values instead of passing the raw "
-                                      "solve-frame value through; outputs-only, no "
+                                      "eq34 emit re-base.  Restored BEFORE the first emit, "
+                                      "so the first post-resume epoch re-bases onto the "
+                                      "writer's last EMITTED values instead of passing the "
+                                      "raw solve-frame value through; outputs-only, no "
                                       "estimate moves.",
-                                      ctx.counters.n_resume_emit_rebase_keys,
-                                      ctx.counters.n_resume_emit_filter_keys,
-                                      ctx.counters.n_resume_emit_step_accums);
+                                      ctx.counters.n_resume_emit_rebase_keys);
                     }
                     // Station-layer restore (RS-6; network.resume_station_restore,
                     // SPEC_event_harness §21.13).  It runs after the emit restore and

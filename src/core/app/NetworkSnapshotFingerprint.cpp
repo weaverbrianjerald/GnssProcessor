@@ -677,7 +677,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   (state_snapshot_station_capture) captures: both add rows under the existing
         //   header and leave the writer's products and traces byte-identical, and the
         //   quantities themselves are fingerprinted by the knobs that create them
-        //   (carry_invariant_emit_rebase / emit_pb_filter for the emit layer;
+        //   (carry_invariant_emit_rebase for the emit layer;
         //   carry_rx_code_bias and global_vtec_sh.rep_error_tau_s for the two station
         //   carries), so a writer/reader mismatch on their meaning cannot occur.
         //

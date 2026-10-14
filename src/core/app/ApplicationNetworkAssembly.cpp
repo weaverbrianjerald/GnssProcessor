@@ -21,7 +21,6 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkEmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
-#include "products/NetworkPbEmitFilter.hpp" // PB emission-continuity filter (M5 prerequisite)
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic (M4)
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot + warm resume (RTB-7)

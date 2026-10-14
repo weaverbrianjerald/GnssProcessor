@@ -163,7 +163,6 @@ add_library(gnss_core STATIC
     src/core/products/SignalDeclaration.cpp
     src/core/products/NetworkProductEmitter.cpp
     src/core/products/NetworkEmitRebase.cpp
-    src/core/products/NetworkPbEmitFilter.cpp
     src/core/products/NetworkClockEmitRebase.cpp
     src/core/products/NetworkProductIO.cpp
     src/core/products/NetworkStateSnapshot.cpp
@@ -486,7 +485,6 @@ add_executable(gnss_tests
     tests/test_datum_graph_census.cpp
     tests/test_station_block_audit.cpp
     tests/test_card4_emit_rebase.cpp
-    tests/test_pb_emit_filter.cpp
     tests/test_pb_jump_decommon.cpp
     tests/test_clock_emit_rebase.cpp
     tests/test_clock_anchor.cpp

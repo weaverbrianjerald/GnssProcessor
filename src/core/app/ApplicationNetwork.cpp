@@ -80,7 +80,6 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkEmitRebase.hpp"   // emit-layer frame re-base
-#include "products/NetworkPbEmitFilter.hpp" // phase-bias emission-continuity filter
 #include "products/NetworkClockEmitRebase.hpp" // clock emission re-base + per-sat step marks
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic
@@ -672,30 +671,17 @@ int Application::runNetwork() {
     //    reference-path slip is left intact, so the emitter jump test still fires.  On by
     //    default when carry_invariant is armed (spec D7); the off path is
     //    carry_invariant=false, which never touches the engine (byte-identical).
-    //  - the PB emission-continuity filter (an M5 prerequisite, ctx.knobs.emit_pb_filter_on):
-    //    a slip-gated per-key scalar KF on the re-based emitted biases, plus a self-tuning
-    //    k·σ̂_step jump gate that clears the threshold-in-noise discontinuity floor.  It
-    //    runs inside the re-base block (it filters the re-based emission frame), so it
-    //    requires emit_rebase_on.  Off by default ⇒ filterEpoch is never called; the engine
-    //    is constructed like the re-base engine but stays inert (byte-identical).
     //  - the clock emission re-base (card CLK-R): the common-mode frame hold (stage 1) and
     //    the per-satellite step marks (stage 2).  Both knobs are off by default ⇒
     //    rebaseEpoch is never called (byte-identical).  It affects outputs only: the solve
     //    is byte-identical even when armed.
-    NetworkPbEmitFilter::Config pb_filter_cfg;
-    pb_filter_cfg.q_m2_s         = config_.networkEmitPbFilterQ();
-    pb_filter_cfg.jump_k         = config_.networkEmitPbFilterJumpK();
-    pb_filter_cfg.meas_sigma_m   = config_.networkEmitPbFilterMeasSigmaM();
-    pb_filter_cfg.max_gap_s      = config_.networkEmitPbFilterMaxGapS();
-    pb_filter_cfg.window_epochs  = config_.networkEmitPbFilterWindowEpochs();
-    pb_filter_cfg.gate_v2        = config_.networkEmitPbFilterGateV2();  // PB-gate-v2 merge point (leaf wiring)
     NetworkClockEmitRebase::Config clk_rebase_cfg;
     clk_rebase_cfg.frame_hold = ctx.knobs.clk_frame_hold;
     clk_rebase_cfg.leash_m    = config_.networkClockFrameLeashM();
     clk_rebase_cfg.jump_test  = ctx.knobs.clk_jump_test;
     clk_rebase_cfg.jump_m     = config_.networkClockDiscJumpM();
     clk_rebase_cfg.gap_jump_m = config_.networkClockDiscGapJumpM();
-    NetworkEmitEngines emit_engines{ NetworkEmitRebase{}, NetworkPbEmitFilter(pb_filter_cfg),
+    NetworkEmitEngines emit_engines{ NetworkEmitRebase{},
                                      NetworkClockEmitRebase(clk_rebase_cfg) };
     auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
     auto& carry_group_id = ctx.carry.carry_group_id;
@@ -920,8 +906,7 @@ int Application::runNetwork() {
     networkSnapshotFingerprint(ctx, config_, stations);
     networkTryWarmResume(ctx, config_, sync, emitter, carry_driver, log,
                          &emit_engines.clk_rebase,  // the CLK-R held frame is restored too (§18.10),
-                         &emit_engines.rebase,      // as are the two phase-bias emit layers,
-                         &emit_engines.pb_filter);  //   for the same reason (RS-5 §21.10)
+                         &emit_engines.rebase);     // as is the phase-bias emit re-base (RS-5 §21.10)
     // Applies the canonical-signal latch the resume just staged (RS-8, §21.16).  This
     // happens here rather than inside networkTryWarmResume because the latch lives in
     // each station's PppModel and the roster is in scope only in the driver.  It must
@@ -2327,7 +2312,7 @@ int Application::runNetwork() {
         // The smoothed hold's clock clones (card SMH): advanced over this epoch before the
         // hold reads them at emit.  No-op off.
         networkPbHoldCloneUpdate(ctx, log, est, x_s, ws, plan.shared_datum);
-        subBegin(SB_EMITSTORE); // block 7: re-base + PB-emit filter + store push + solution CSV (D0b)
+        subBegin(SB_EMITSTORE); // block 7: re-base + store push + solution CSV (D0b)
         networkEmitStore(ctx, config_, log, traces, setup, se, est, x_emit, pl_now_s,
                          datum_changed, sigma0_adapt, sol, epoch_withheld_consts, global_bump,
                          serialized_consts, retro_emit_sats, emit_engines, present,
@@ -2651,8 +2636,7 @@ int Application::runNetwork() {
                                                          //   and RL x_lin rows (RS-9 §21.18)
                                   log,
                                   &emit_engines.clk_rebase,  // frame rows, v2 (§18.10)
-                                  &emit_engines.rebase,      // emit-layer rows (RS-5 §21.10):
-                                  &emit_engines.pb_filter,   //   ER / PF / PS
+                                  &emit_engines.rebase,      // emit-layer ER rows (RS-5 §21.10)
                                   setup.consumer.get()); // consumer snapshot beside each history copy (card CC (B))
         return LoopSignal::Next;
     };

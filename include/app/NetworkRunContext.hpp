@@ -19,9 +19,9 @@
  * per-field "not snapshotted" notes below are the exemption record.
  * Kept out of this header on purpose (they stay locals of the run TU): the
  * engine objects (NetworkEstimator, NetworkInvariantCarryDriver, NetworkCarryVce,
- * NetworkIonoDeweightGate, NetworkEmitRebase, NetworkPbEmitFilter), the D0/D0b
- * section-timer instrumentation, and the closed-loop consumer metrics.  The driver
- * holds them in the groups of filter/NetworkRunGroups.hpp (engines, emit engines, run
+ * NetworkIonoDeweightGate, NetworkEmitRebase), the D0/D0b section-timer
+ * instrumentation, and the closed-loop consumer metrics.  The driver holds them in
+ * the groups of filter/NetworkRunGroups.hpp (engines, emit engines, run
  * timing, closed-loop tally), which the seams receive by reference.
  */
 
@@ -422,12 +422,10 @@ namespace GnssProcessor {
         /// nothing reads).
         bool   resume_frame_restore{};
         /// network.resume_emit_restore (RS-5, SPEC_event_harness §21.10): at a warm resume,
-        /// restore the two outputs-only emit engines before the first emit:
-        /// @c NetworkEmitRebase's emission frame (the snapshot's ER rows) and
-        /// @c NetworkPbEmitFilter's per-key posterior and per-constellation σ̂_step
-        /// accumulators (PF / PS).  The emitted phase biases then continue the writer's
-        /// emission level instead of stepping to the raw solve frame.  Each half is inert,
-        /// and says so in the log, when its rows are absent.  The loader requires
+        /// restore the outputs-only emit engine's emission frame (@c NetworkEmitRebase, the
+        /// snapshot's ER rows) before the first emit.  The emitted phase biases then
+        /// continue the writer's emission level instead of stepping to the raw solve
+        /// frame.  Inert, and says so in the log, when its rows are absent.  The loader requires
         /// resume_frame_restore.  Not fingerprinted (forward-only resume response policy).
         /// Off = byte-identical resume (rows parsed into containers nothing reads).
         bool   resume_emit_restore{};
@@ -706,7 +704,7 @@ namespace GnssProcessor {
         bool emit_epoch_status{};
         /// Emit satellite clocks in the per-constellation held frame
         /// (network.emit_clock_frame_hold; card CLK-R stage 1).  The engine is a run-TU
-        /// local (see the file header), like NetworkPbEmitFilter.
+        /// local (see the file header), like NetworkEmitRebase.
         bool clk_frame_hold{};
         bool clk_jump_test{};   ///< Mark per-sat common-removed clock steps through the R-record retro-bump (network.clock_disc_jump_test; card CLK-R stage 2).
         bool   emit_pb_hold{};             ///< Hold each (sat, signal) emitted phase bias at the first value of its generation (network.emit_pb_hold; card PBH); state in NetworkCarryState::pb_hold.
@@ -1026,13 +1024,10 @@ namespace GnssProcessor {
         // Resolved here, with the driver's former conjunctions unchanged, so the driver, the
         // DD-prior build, the install, the emit store and the run end read one bool each
         // instead of each receiving it as a parameter.  Every one is false unless
-        // carry_invariant (pb_filter_emit_sigma excepted, which is read only under
-        // emit_pb_filter_on).  Read from the configuration, never written; the snapshot
+        // carry_invariant.  Read from the configuration, never written; the snapshot
         // fingerprint does not read them (it reads the configuration getters it needs).
         bool carry_innov_gate{};         ///< D5 estimation-side fine-slip innovation gate: carry_invariant and network.carry_invariant_innov_gate.
         bool emit_rebase_on{};           ///< Emit-layer frame re-base of the emitted phase biases (card 4 phase D): carry_invariant and network.carry_invariant_emit_rebase.
-        bool emit_pb_filter_on{};        ///< Phase-bias emission-continuity filter: emit_rebase_on and network.emit_pb_filter.
-        bool pb_filter_emit_sigma{};     ///< Emit the filter's posterior sigma with each filtered bias: network.emit_pb_filter_emit_sigma.
         // --- the epoch driver's configuration-derived values (card NOM3 step EP0) ---
         // Each is a value runNetwork computed from the configuration, once in its setup or
         // again on every epoch, and read in its epoch body or passed to a seam.  Resolved here
@@ -2762,7 +2757,7 @@ namespace GnssProcessor {
         long long snap_cpl_terms_last    = 0;   // regressor entries in the last snapshot (§18.12)
         long long snap_cpl_rows_dropped  = 0;   // rows omitted whole for a non-finite/negative field, run total (§18.12)
         long long snap_datum_rows_last   = 0;   // EQ*/CB* datum rows in the last snapshot; 0 under an armed capture on an eq34/time-linked-CB run means the capture is inert (RS-3 §21.7)
-        long long snap_emit_rows_last    = 0;   // ER/PF/PS emit-layer rows in the last snapshot; 0 under an armed capture with the re-base or the filter running means the capture is inert (RS-5 §21.10)
+        long long snap_emit_rows_last    = 0;   // ER emit-layer rows in the last snapshot; 0 under an armed capture with the re-base running means the capture is inert (RS-5 §21.10)
         long long snap_station_rows_last = 0;   // RC/SD station-layer rows in the last snapshot; 0 under an armed capture on a run that arms carry_rx_code_bias or the T5 deviation carry means the capture is inert (RS-6 §21.13)
         long long snap_canon_rows_last   = 0;   // CN canonical-signal rows in the last snapshot; 0 under an armed capture means no station had decided a latch yet, which on a network run past epoch 1 means the capture is inert (RS-8 §21.16)
         // Snapshot: exempt (RS-8 §21.16); a resume-response staging buffer, filled by
@@ -3601,13 +3596,11 @@ namespace GnssProcessor {
         long long n_pb_seam_keys_over   = 0; ///< of those, keys beyond discThresholdM (RS-4)
         long long n_pb_seam_marks       = 0; ///< constellations markDatumChange'd by the seam rule; 0 with the knob off, and 0 on a cold start (RS-4)
         // Resume emit-layer restore (RS-5, network.resume_emit_restore, SPEC_event_harness
-        // §21.10): the re-coupling edge's identities for the two emit engines.  0 under an
-        // armed knob means inert (standing invariant #4): the snapshot carried no ER / PF /
-        // PS rows (a writer without network.state_snapshot_emit_capture) or no warm resume
-        // happened, and the run-end line says which.
+        // §21.10): the re-coupling edge's identities for the emit re-base.  0 under an
+        // armed knob means inert (standing invariant #4): the snapshot carried no ER rows (a
+        // writer without network.state_snapshot_emit_capture) or no warm resume happened,
+        // and the run-end line says which.
         long long n_resume_emit_rebase_keys = 0; ///< emission-frame keys restored into NetworkEmitRebase (ER)
-        long long n_resume_emit_filter_keys = 0; ///< per-key posteriors restored into NetworkPbEmitFilter (PF)
-        long long n_resume_emit_step_accums = 0; ///< per-constellation step-noise accumulators restored (PS)
         // Resume station-layer restore (RS-6, network.resume_station_restore,
         // SPEC_event_harness §21.13): the re-coupling edge's identities for the two station
         // memories.  0 under an armed knob means inert (standing invariant #4): the
@@ -4780,14 +4773,13 @@ namespace GnssProcessor {
 
     class NetworkClockEmitRebase;   // fwd: include/products/NetworkClockEmitRebase.hpp
     class NetworkEmitRebase;        // fwd: include/products/NetworkEmitRebase.hpp
-    class NetworkPbEmitFilter;      // fwd: include/products/NetworkPbEmitFilter.hpp
     // Resume frame restore: both seams take the CLK-R held-frame engine (a runNetwork
     // local), so its A_c and per-sat baselines travel with the snapshot.  nullptr: the
     // engine's frame is neither captured nor restored.
     //
-    // RS-5 (§21.10) adds the two phase-bias emit engines on the same footing (also
-    // runNetwork locals, also outputs-only, also neither captured nor restored when
-    // nullptr), so all three cross-epoch emit layers travel with the snapshot instead of
+    // RS-5 (§21.10) adds the phase-bias emit re-base on the same footing (also a
+    // runNetwork local, also outputs-only, also neither captured nor restored when
+    // nullptr), so both cross-epoch emit layers travel with the snapshot instead of
     // cold-starting at every seam.
     /// @brief Read the state snapshot, validate it against the run, restore the carried
     ///        layers, and stage the two that need the station roster (RTB-7).
@@ -4797,8 +4789,7 @@ namespace GnssProcessor {
                               NetworkInvariantCarryDriver& carry_driver,
                               const std::shared_ptr<spdlog::logger>& log,
                               NetworkClockEmitRebase* clk_rebase = nullptr,
-                              NetworkEmitRebase* emit_rebase = nullptr,
-                              NetworkPbEmitFilter* pb_filter = nullptr);
+                              NetworkEmitRebase* emit_rebase = nullptr);
 
     /**
      * @brief Apply the staged canonical-signal latch to the station models (RS-8, §21.16).
@@ -4834,7 +4825,7 @@ namespace GnssProcessor {
     ///        lives in each station's @c PppModel.  RS-9 (§21.18) @c RL: the code-bias
     ///        linearization point is a property of each station's own state vector
     ///        (@c stations[i].sm->getStateVector()), which no other snapshot record needs;
-    ///        the RC/SD/ER/PF rows are all plain copies out of @c ctx.carry.  Read-only in
+    ///        the RC/SD/ER rows are all plain copies out of @c ctx.carry.  Read-only in
     ///        both cases, and each group is written only under its own knob
     ///        (@c network.state_snapshot_signal_capture /
     ///        @c network.state_snapshot_rxcb_lin_capture).
@@ -4854,7 +4845,6 @@ namespace GnssProcessor {
                                    const std::shared_ptr<spdlog::logger>& log,
                                    const NetworkClockEmitRebase* clk_rebase = nullptr,
                                    const NetworkEmitRebase* emit_rebase = nullptr,
-                                   const NetworkPbEmitFilter* pb_filter = nullptr,
                                    RealTimeEngine* consumer = nullptr);
 
     /// Install the warm resume's stashed @c RL map on each station's @c StateInitializer,

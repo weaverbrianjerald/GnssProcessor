@@ -7,7 +7,7 @@
  * Application::runNetwork holds one of each group for the whole run and hands a seam the
  * group it reads instead of one parameter per member:
  *   - @ref NetworkRunEngines: a const view of the run's estimation engines (the run end);
- *   - @ref NetworkEmitEngines: the three emit-layer engines (networkEmitStore, the run end);
+ *   - @ref NetworkEmitEngines: the two emit-layer engines (networkEmitStore, the run end);
  *   - @ref NetworkRunTiming: the epoch-loop wall clock and the D0/D0b section-timer totals
  *     (the driver writes them, the run end reports them);
  *   - @ref ClosedLoopTally: the held-out consumer's integer-recovery tallies
@@ -22,7 +22,6 @@
 #include "filter/NetworkWlRunTypes.hpp"        // SubBlockTimer / SB_COUNT
 #include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (card CLK-R)
 #include "products/NetworkEmitRebase.hpp"      // NetworkEmitRebase (card 4 phase D)
-#include "products/NetworkPbEmitFilter.hpp"    // NetworkPbEmitFilter (M5 prerequisite)
 
 #include <chrono>
 #include <cstddef>
@@ -51,12 +50,11 @@ struct NetworkRunEngines {
     const NetworkIonoDeweightGate&     iono_deweight; ///< The station-adaptive SH-VTEC-constraint deweight gate.
 };
 
-/// The three emit-layer engines.  The driver builds them before the epoch loop,
+/// The two emit-layer engines.  The driver builds them before the epoch loop,
 /// networkEmitStore runs them on every emitted epoch, the warm-resume restore and the
 /// state snapshot read and write their held frames, and the run end reports their tallies.
 struct NetworkEmitEngines {
     NetworkEmitRebase      rebase;     ///< Emit-layer frame re-base of the emitted phase biases (card 4 phase D); run under NetworkKnobs::emit_rebase_on.
-    NetworkPbEmitFilter    pb_filter;  ///< Phase-bias emission-continuity filter on the re-based biases; run under NetworkKnobs::emit_pb_filter_on.
     NetworkClockEmitRebase clk_rebase; ///< Clock emission re-base: the common-mode frame hold and the per-satellite step marks (card CLK-R).
 };
 

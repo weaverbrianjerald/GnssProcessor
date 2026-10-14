@@ -25,7 +25,6 @@
 #include "filter/NetworkInvariantCarryDriver.hpp"   // branch-faithful carry (de)serialization (RTB-7(c))
 #include "products/NetworkClockEmitRebase.hpp"       // CLK-R held frame, written with the snapshot (§18.10)
 #include "products/NetworkEmitRebase.hpp"            // eq34 emit re-base frame, written with the snapshot (RS-5, §21.10)
-#include "products/NetworkPbEmitFilter.hpp"          // PB emit filter state, written with the snapshot (RS-5, §21.10)
 #include "math/TimeUtils.hpp"                // GnssTime
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkStateSnapshot.hpp"
@@ -47,7 +46,6 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                                const std::shared_ptr<spdlog::logger>& log,
                                const NetworkClockEmitRebase* clk_rebase,
                                const NetworkEmitRebase* emit_rebase,
-                               const NetworkPbEmitFilter* pb_filter,
                                RealTimeEngine* consumer) {
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
@@ -387,34 +385,23 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
         }   // state_snapshot_datum_capture
         // Emit-layer capture (RS-5; network.state_snapshot_emit_capture,
         // SPEC_event_harness §21.10): the write half of the emit-side cross-epoch state.
-        // The frame and datum blocks above carry the estimator's realization; these two
-        // engines sit downstream of it on the outputs only (the re-base and the filter in
-        // NetworkEmitStore.cpp) and are runNetwork locals, so without the capture a warm
-        // resume cold-starts both, and the first post-resume epoch emits the raw
+        // The frame and datum blocks above carry the estimator's realization; the emit
+        // re-base sits downstream of it on the outputs only (NetworkEmitStore.cpp) and is a
+        // runNetwork local, so without the capture a warm resume cold-starts it, and the
+        // first post-resume epoch emits the raw
         // solve-frame phase bias while the continuous wire carries the accumulated re-base
         // (§21.10 has the closure table).
         //
         // These are plain exports after the emit, into `snap` only, with the same
         // write-side discipline as the datum block, so the knob can be added to an
-        // existing recipe.  A run that arms neither engine (carry_invariant off /
-        // emit_pb_filter off) exports empty maps and writes no rows, so arming the capture
-        // there costs nothing.  Nothing here enters the warm-resume fingerprint: the rows
+        // existing recipe.  A run that does not arm the re-base (carry_invariant off)
+        // exports an empty map and writes no rows, so arming the capture there costs
+        // nothing.  Nothing here enters the warm-resume fingerprint: the rows
         // change no estimate, only the level in which the emitted biases are expressed.
         if (nc.state_snapshot_emit_capture) {
             if (emit_rebase) snap.emit_rebase_last = emit_rebase->exportState();
-            if (pb_filter) {
-                const auto fs = pb_filter->exportState();
-                for (const auto& [key, ks] : fs.state)
-                    snap.pb_filter_state[key] =
-                        NetworkStateSnapshot::PbFilterKey{ks.mean, ks.var, ks.last_seen_s};
-                for (const auto& [cst, ac] : fs.step)
-                    snap.pb_filter_step[cst] =
-                        NetworkStateSnapshot::PbFilterStep{ac.sum_log_e2, ac.n_eff};
-            }
             ctx.carry.snap_emit_rows_last =
-                static_cast<long long>(snap.emit_rebase_last.size()
-                                       + snap.pb_filter_state.size()
-                                       + snap.pb_filter_step.size());
+                static_cast<long long>(snap.emit_rebase_last.size());
         }   // state_snapshot_emit_capture
         // Station-layer capture (RS-6; network.state_snapshot_station_capture,
         // SPEC_event_harness §21.13): the write half of the two per-station memories that

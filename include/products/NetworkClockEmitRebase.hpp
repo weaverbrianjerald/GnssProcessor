@@ -16,10 +16,10 @@
  * outliers > 0.5 m) under a single wire mark.  The FC-1 shadow measurement is the
  * design input: about 98 % of the emitted clock's epoch-to-epoch motion is producer frame
  * churn (the physical change is about 2 cm per 30 s, correlation ≈ 0), so nearly all of
- * that wire motion carries no information.  The phase-bias channel has both an
- * emission-frame re-base (@ref NetworkEmitRebase) and a continuity filter
- * (@ref NetworkPbEmitFilter), which keep the P channel quasi-static on the same wire;
- * this class supplies the equivalent for the clock channel.
+ * that wire motion carries no information.  The phase-bias channel has an
+ * emission-frame re-base (@ref NetworkEmitRebase), which keeps the P channel
+ * quasi-static on the same wire; this class supplies the equivalent for the clock
+ * channel.
  *
  * ## What it does (independent stages, each behind its own knob, off by default)
  *
@@ -72,7 +72,7 @@
  *
  * ## Scope and conventions
  *
- * Pure numeric leaf (like @ref NetworkEmitRebase and @ref NetworkPbEmitFilter), with no
+ * Pure numeric leaf (like @ref NetworkEmitRebase), with no
  * dependency on the estimator or the emitter.  The caller (networkEmitStore) builds one
  * Entry per emitted clock satellite, calls @ref rebaseEpoch before @c emitToStore and
  * the on-disk write (the transform is baked into the product; replay never re-runs it),

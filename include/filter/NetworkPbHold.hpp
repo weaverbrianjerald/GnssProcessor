@@ -26,9 +26,8 @@
  * Only read-only steps (the ledger-emit capture and the signal-roster declaration
  * build) run between it and @c NetworkProductEmitter::emitToStore.  It runs:
  *
- *  - after the carry-invariant emission re-base and the PB emission filter, both of
- *    which rewrite @c bias_m in @c sol, so the hold freezes their output instead of
- *    being overwritten by them;
+ *  - after the carry-invariant emission re-base, which rewrites @c bias_m in @c sol,
+ *    so the hold freezes its output instead of being overwritten by it;
  *  - ahead of the emitter's phase-bias value-jump test, so that test screens the held
  *    value and the declared population agrees with the payload;
  *  - after every marking site of the epoch, so @ref NetworkProductEmitter::pendingMarkChannels

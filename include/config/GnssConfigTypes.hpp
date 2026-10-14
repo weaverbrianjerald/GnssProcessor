@@ -1467,11 +1467,8 @@ namespace GnssProcessor {
      * @c NetworkKnobs field and no fingerprint input changes: this is an authoring
      * and provenance surface, not a second source of truth.
      *
-     * Deliberately not in the table: three mechanisms are genuine covariance-growth
+     * Deliberately not in the table: two mechanisms are genuine covariance-growth
      * rates but not process noise on a network state.
-     *  - @c network.emit_pb_filter_q: the emitted phase-bias smoother, which lives in
-     *    the emission frame, never in the estimator.  A low-q PB in the estimator
-     *    and one on the wire are different things.
      *  - @c estimation.global_vtec_sh.rep_error_tau_s: a Gauss-Markov time constant
      *    in seconds, not a rate; its covariance growth is set jointly with
      *    @c representation_sigma_tecu, which a q-keyed table cannot express.
@@ -3394,12 +3391,11 @@ namespace GnssProcessor {
         /// byte-identical.  Inert unless state_snapshot_path.
         bool state_snapshot_datum_capture{ false };
         /// Resume emit-layer capture (RS-5; the write side of network.resume_emit_restore,
-        /// docs/SPEC_event_harness.md §21.10): also serialize the two output-only emit
-        /// engines the snapshot otherwise lacks: @c NetworkEmitRebase's emission frame
-        /// (@c ER, one previous emitted bias per "sat|signal") and @c NetworkPbEmitFilter's
-        /// per-key scalar-KF posterior (@c PF) plus its per-constellation σ̂_step
-        /// accumulators (@c PS).  Both are plain run-locals, so without these rows every
-        /// warm resume cold-starts them, and the first post-resume epoch emits the raw
+        /// docs/SPEC_event_harness.md §21.10): also serialize the output-only emit
+        /// engine the snapshot otherwise lacks: @c NetworkEmitRebase's emission frame
+        /// (@c ER, one previous emitted bias per "sat|signal").  It is a plain run-local,
+        /// so without these rows every warm resume cold-starts it, and the first
+        /// post-resume epoch emits the raw
         /// solve-frame phase bias while the continuous wire carries the whole
         /// accumulated re-base (measured at the field seam: 17.666 m p50 per (sat,signal)
         /// emitted against 1.695 m in the estimator's own state, the difference

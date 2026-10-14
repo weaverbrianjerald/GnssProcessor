@@ -85,8 +85,6 @@
  *   CBS,<sat>                                            # RS-3: code-bias ever-seen
  *   CBI,<sat>,<sig1>,<sig2>                              # RS-3: code-bias IF-pin pair
  *   ER,<sat|signal>,<last_emit_m>                        # RS-5: eq34 emit re-base frame
- *   PF,<sat|signal>,<mean>,<var>,<last_seen_s>           # RS-5: PB emit filter posterior
- *   PS,<const>,<sum_log_e2>,<n_eff>                      # RS-5: PB filter step accumulator
  *   RC,<station_idx>,<cb_key>,<value_abs>,<var>,<last_seen_s>  # RS-6: rx-CB carry
  *   SD,<station|sat>,<dev>,<var>,<var_ss>,<t_s>          # RS-6: T5 per-LOS deviation carry
  *   CN,<station_idx>,<cons>,<band>,<C|L>,<signal>        # RS-8: canonical-signal latch
@@ -132,11 +130,12 @@
  * Written only under @c network.state_snapshot_datum_capture, so a run that does not
  * arm it writes the v1/v2/v3 bytes unchanged.
  *
- * The RS-5 emit-layer records (@c ER / @c PF / @c PS, docs/SPEC_event_harness.md §21.10)
- * follow the RS-3 precedent: rows under the existing header, written only under
- * @c network.state_snapshot_emit_capture.  They hold the state of the two output-only
- * engines, @c NetworkEmitRebase's emission frame and @c NetworkPbEmitFilter's per-key
- * posterior and per-constellation step accumulators.  Nothing in this group enters the
+ * The RS-5 emit-layer records (@c ER, docs/SPEC_event_harness.md §21.10) follow the
+ * RS-3 precedent: rows under the existing header, written only under
+ * @c network.state_snapshot_emit_capture.  They hold the state of the output-only
+ * engine @c NetworkEmitRebase, its emission frame.  The @c PF / @c PS rows of the removed
+ * PB emission filter are no longer parsed: a file that holds them fails to parse and the
+ * resume cold-starts.  Nothing in this group enters the
  * warm-resume fingerprint: it changes no estimate, only the level in which the emitted
  * phase biases are expressed.
  *
@@ -495,10 +494,10 @@ struct NetworkStateSnapshot {
     }
     // --- Emit-layer state (RS-5; SPEC_event_harness §21.10) -----------------
     //
-    // The two output-only engines between the estimator's raw phase-bias state and the
-    // wire (rebaseEpoch and filterEpoch, called from NetworkEmitStore.cpp) are locals of
-    // runNetwork (ApplicationNetwork.cpp), so without these records a warm resume
-    // cold-starts both: the leg's first emitted epoch passes the raw solve-frame value
+    // The output-only engine between the estimator's raw phase-bias state and the wire
+    // (rebaseEpoch, called from NetworkEmitStore.cpp) is a local of runNetwork
+    // (ApplicationNetwork.cpp), so without these records a warm resume cold-starts it:
+    // the leg's first emitted epoch passes the raw solve-frame value
     // through, while the continuous run's wire at the same epoch carries the accumulated
     // re-base.  At the field seam the emitted leg-minus-seed difference equals the raw
     // one plus the difference of the two emit layers, `emitted = raw + (leg layer − seed
@@ -507,36 +506,13 @@ struct NetworkStateSnapshot {
     /// Mirror of @c NetworkEmitRebase::last_emit_: "sat|signal" -> previous re-based
     /// emitted bias (m), the emission frame the next epoch re-bases onto (@c ER rows).
     std::map<std::string, double> emit_rebase_last;
-    /// One @c NetworkPbEmitFilter key's scalar-KF posterior (@c PF rows).  A POD mirror
-    /// of @c NetworkPbEmitFilter::KeyState, as @ref Osc mirrors the driver's
-    /// @c ClockOsc; the snapshot module names no engine type.
-    struct PbFilterKey {
-        double mean{0.0};         ///< posterior mean of the emitted bias (m).
-        double var{0.0};          ///< posterior variance (m²).
-        double last_seen_s{0.0};  ///< continuous product time of the last filtered epoch (the per-key gap clock).
-    };
-    std::map<std::string, PbFilterKey> pb_filter_state;  ///< "sat|signal" -> posterior.
-    /// One @c NetworkPbEmitFilter step-noise accumulator (@c PS rows): the running sums
-    /// of the χ²₁ geometric-mean σ̂_step estimator for one constellation bucket.
-    ///
-    /// @note The bucket key is the constellation letter, or the empty string when the
-    ///       filter runs pooled (@c Config::split_by_const false).  The @c PS record's
-    ///       key field can therefore be empty, the only record in this format whose key
-    ///       field may be blank, and the parser accepts it.
-    struct PbFilterStep {
-        double sum_log_e2{0.0};  ///< Σ log ê² over the (exponentially forgotten) fed rows.
-        double n_eff{0.0};       ///< effective fed-row count carrying the same forgetting.
-    };
-    std::map<std::string, PbFilterStep> pb_filter_step;  ///< constellation ("" pooled) -> accumulator.
     /// True when any RS-5 emit-layer record is present.  A predicate of its own, like
-    /// @ref hasDatumState and @ref hasCouplingState: the restore site reports and warns
-    /// about the two halves (re-base frame, filter state) separately, and each half is
-    /// judged inert from its own records only.  Not folded into @ref hasFrameState:
-    /// that predicate gates the resume-side frame restore, and widening it would let an
+    /// @ref hasDatumState and @ref hasCouplingState: the restore site judges the re-base
+    /// frame inert from its own records only.  Not folded into @ref hasFrameState: that
+    /// predicate gates the resume-side frame restore, and widening it would let an
     /// emit-only snapshot claim frame state it does not have.
     bool hasEmitState() const {
-        return !emit_rebase_last.empty() || !pb_filter_state.empty()
-            || !pb_filter_step.empty();
+        return !emit_rebase_last.empty();
     }
     // --- Station-layer memories (RS-6; SPEC_event_harness §21.13) -----------
     //

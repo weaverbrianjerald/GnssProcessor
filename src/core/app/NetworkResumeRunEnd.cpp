@@ -351,8 +351,8 @@ int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                       : "");
     }
     // Emit-layer continuity halves (SPEC_event_harness §21.10, RS-5), beside the RS-3 line
-    // and at the same function scope for the same invariant-#4 reason: the two engines run
-    // on lineages with and without the invariant branch.  Printed whenever either half is
+    // and at the same function scope for the same invariant-#4 reason: the re-base runs on
+    // lineages with and without the invariant branch.  Printed whenever either half is
     // armed: an armed writer that wrote no rows and an armed reader that restored none are
     // the two invariant-#4 cases this line exposes, and the bare "off" on the other half
     // says which one it is.
@@ -360,19 +360,16 @@ int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
         || config_.networkResumeEmitRestore()) {
         const auto& C = ctx.counters;
         log->info("Network (RS-5 emit restore): write {} / read {}; last snapshot carried "
-                  "{} emit-layer row(s); restored re-base keys {}, filter keys {}, step "
-                  "accumulators {}.{}",
+                  "{} emit-layer row(s); restored re-base keys {}.{}",
                   config_.getNetworkConfig().state_snapshot_emit_capture ? "ARMED" : "off",
                   config_.networkResumeEmitRestore() ? "ARMED" : "off",
                   ctx.carry.snap_emit_rows_last,
-                  C.n_resume_emit_rebase_keys, C.n_resume_emit_filter_keys,
-                  C.n_resume_emit_step_accums,
+                  C.n_resume_emit_rebase_keys,
                   (config_.networkResumeEmitRestore()
-                   && C.n_resume_emit_rebase_keys == 0
-                   && C.n_resume_emit_filter_keys == 0)
+                   && C.n_resume_emit_rebase_keys == 0)
                       ? "  ⚠ 0 restored under an ARMED read — the snapshot carried no "
-                        "ER / PF / PS rows (a writer without "
-                        "network.state_snapshot_emit_capture?), neither emit engine is "
+                        "ER rows (a writer without "
+                        "network.state_snapshot_emit_capture?), the emit re-base is not "
                         "running this run, or no warm resume happened; check the resume "
                         "log for the RS-5 line."
                       : "");

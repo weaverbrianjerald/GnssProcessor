@@ -332,14 +332,13 @@ namespace GnssProcessor {
               "warm resume can continue both datums (RS-3): first-epoch eq34 re-references 110 -> 8, "
               "code-bias re-seed discontinuities 30 -> 0, R record 30 -> 0 satellites" },
             // --- Write half of emit-layer continuity (RS-5, SPEC_event_harness s21.10/s21.11):
-            //     the eq34 emit re-base frame and the PB emission filter state are stored in the
-            //     snapshot.  Write side only, products byte-identical.
-            { !nc.state_snapshot_path.empty()
-                  && (network_carry_invariant_emit_rebase_ || network_emit_pb_filter_),
+            //     the eq34 emit re-base frame is stored in the snapshot.  Write side only,
+            //     products byte-identical.
+            { !nc.state_snapshot_path.empty() && network_carry_invariant_emit_rebase_,
               nc.state_snapshot_emit_capture,
               Tier::SCOPED, false, "network.state_snapshot_emit_capture",
-              "carry the emit layer's memory (ER/PF/PS rows) so a warm resume does not cold-start the "
-              "eq34 emit re-base and the PB filter: the seam's 17.7 m per-key phase-bias step becomes "
+              "carry the emit layer's memory (ER rows) so a warm resume does not cold-start the "
+              "eq34 emit re-base: the seam's 17.7 m per-key phase-bias step becomes "
               "0.000 m p50 (RS-5)" },
             // --- Write half of station-layer continuity (RS-6a, SPEC_event_harness
             //     s21.13/s21.14): the rx-CB carry and the T5 per-LOS deviation carry are stored

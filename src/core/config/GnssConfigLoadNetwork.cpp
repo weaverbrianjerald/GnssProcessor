@@ -2999,11 +2999,9 @@ namespace GnssProcessor {
             else
                 log->info("Network (resume emit capture): every snapshot also carries the "
                           "EMIT LAYER (ER — the Card-4 eq34 emit re-base's emission frame, "
-                          "one previous emitted bias per sat|signal — and PF/PS — the PB "
-                          "emission filter's per-key scalar-KF posterior and its "
-                          "per-constellation step-noise accumulators) as format-forward "
-                          "rows under the existing header.  Both engines are bare run "
-                          "locals today, so without these rows a warm resume emits the RAW "
+                          "one previous emitted bias per sat|signal) as format-forward "
+                          "rows under the existing header.  The engine is a bare run "
+                          "local today, so without these rows a warm resume emits the RAW "
                           "solve-frame phase bias at its first epoch while the continuous "
                           "wire carries the accumulated re-base; a resume armed with "
                           "network.resume_emit_restore continues the writer's emission "
@@ -5564,12 +5562,10 @@ namespace GnssProcessor {
                           "snapshot's emit-layer rows are restored BEFORE the first emit: "
                           "the eq34 emit re-base's emission frame (ER) so the first "
                           "post-resume epoch re-bases onto the writer's last emitted "
-                          "values instead of first-sighting every key, and the PB emission "
-                          "filter's per-key posterior + step-noise accumulators (PF/PS) so "
-                          "it continues smoothing at the gate the writer had measured.  "
+                          "values instead of first-sighting every key.  "
                           "The rows are captured under "
                           "network.state_snapshot_emit_capture; a file without them "
-                          "leaves each half exactly as today and says so.  Outputs-only "
+                          "leaves the re-base exactly as today and says so.  Outputs-only "
                           "(no estimate moves) and not in the warm-resume fingerprint "
                           "(forward-only resume response policy).");
         }
@@ -9213,10 +9209,10 @@ namespace GnssProcessor {
     //  network subsection helper: loadNetworkEmissionFilters_
     // =================================================================
     /**
-     * @brief Snapshot-carry validation, the PB emission-continuity filter, and the estimability knobs.
+     * @brief Snapshot-carry validation, the emission re-base knobs, and the estimability knobs.
      *
      * RTB-7(c/d/e) carry-blob requirements (now that @c network.carry_invariant is known),
-     * @c network.emit_pb_filter*, the phase-datum sub-knobs, the OSB prior of card KP, the
+     * the phase-datum sub-knobs, the OSB prior of card KP, the
      * rank-gate tolerance of card DG and the pin-aware station PD guard.
      *
      * @param json  Parsed root config object.
@@ -9341,29 +9337,6 @@ namespace GnssProcessor {
                 network_config_.state_snapshot_carry_lin = false;
             }
         }
-        // PB emission-continuity filter (M5 prerequisite): an outputs-only smoother on
-        // the re-based emitted phase biases plus a self-tuning k·σ̂_step jump gate.
-        network_emit_pb_filter_ =
-            jval<bool>(json, "network.emit_pb_filter", "network_emit_pb_filter", false);
-        network_emit_pb_filter_q_ =
-            jval<double>(json, "network.emit_pb_filter_q", "network_emit_pb_filter_q", 3E-07);
-        network_emit_pb_filter_jump_k_ =
-            jval<double>(json, "network.emit_pb_filter_jump_k", "network_emit_pb_filter_jump_k", 4.0);
-        network_emit_pb_filter_meas_sigma_m_ =
-            jval<double>(json, "network.emit_pb_filter_meas_sigma_m",
-                         "network_emit_pb_filter_meas_sigma_m", 0.05);
-        network_emit_pb_filter_max_gap_s_ =
-            jval<double>(json, "network.emit_pb_filter_max_gap_s",
-                         "network_emit_pb_filter_max_gap_s", 600.0);
-        network_emit_pb_filter_window_epochs_ =
-            jval<double>(json, "network.emit_pb_filter_window_epochs",
-                         "network_emit_pb_filter_window_epochs", 60.0);
-        network_emit_pb_filter_emit_sigma_ =
-            jval<bool>(json, "network.emit_pb_filter_emit_sigma",
-                       "network_emit_pb_filter_emit_sigma", false);
-        network_emit_pb_filter_gate_v2_ =
-            jval<bool>(json, "network.emit_pb_filter_gate_v2",
-                       "network_emit_pb_filter_gate_v2", false);
         // Clock emission re-base (card CLK-R; docs/SPEC_clock_emit_rebase.md): stage 1
         // holds the per-constellation common mode at emission (the re-realization class
         // seen in 613 of 1440 census epochs), stage 2 marks the surviving per-sat step
@@ -10844,7 +10817,7 @@ namespace GnssProcessor {
      * @brief Phase-bias gauge selection report (eq34 / prioritized) and its mutexes.
      *
      * One if / else-if chain over the two realizations, so exactly one is reported; also
-     * carries the eq34-under-carry_invariant inert warnings and the PB-filter inert note.
+     * carries the eq34-under-carry_invariant inert warnings.
      *
      * @param log   The "gnss_config" logger.
      * @return @c false on a fatal misconfiguration (aborts @c loadFromJson).
@@ -10939,41 +10912,6 @@ namespace GnssProcessor {
                               "threshold storms the carry with false-alarm refloats (each shreds the "
                               "accumulated DD information).  Recommend k >= 4.",
                               network_carry_invariant_innov_k_);
-            }
-            if (network_emit_pb_filter_) {
-                if (network_carry_invariant_emit_rebase_)
-                    log->info("Network producer: PB EMISSION-CONTINUITY FILTER ON (M5 prerequisite) — "
-                              "a slip-gated per-key scalar KF on the POST-REBASE emitted phase biases "
-                              "(q={} m²/s) smooths the per-epoch estimation noise the re-base leaves, and "
-                              "a self-tuning k·σ̂_step jump gate (k={}, seed σ̂_step {:.3f} m, window {} ep) "
-                              "resets ONLY on a reference-path slip, a genuine event, or a >{:.0f} s gap — "
-                              "clearing the ~200/epoch threshold-in-noise discontinuity floor.  "
-                              "Outputs-only + S-transparent (the solve, user DDs and dd-frac grading are "
-                              "byte-unchanged); the emitter jump test stays the SOLE disc authority.  "
-                              "emit_posterior_sigma={}.",
-                              network_emit_pb_filter_q_, network_emit_pb_filter_jump_k_,
-                              network_emit_pb_filter_meas_sigma_m_,
-                              network_emit_pb_filter_window_epochs_,
-                              network_emit_pb_filter_max_gap_s_,
-                              network_emit_pb_filter_emit_sigma_ ? "true" : "false");
-                else
-                    log->warn("Network: network.emit_pb_filter is INERT without "
-                              "network.carry_invariant_emit_rebase — it filters the RE-BASED emission "
-                              "frame, so the re-base must run for the filter to fire.");
-                if (network_emit_pb_filter_jump_k_ < 2.0)
-                    log->warn("Network: network.emit_pb_filter_jump_k = {} is BELOW 2 — the gate sits "
-                              "inside the step noise and leaves the discontinuity floor uncleared.",
-                              network_emit_pb_filter_jump_k_);
-                if (network_emit_pb_filter_gate_v2_ && network_carry_invariant_emit_rebase_)
-                    log->info("Network producer: PB filter GATE v2 ON — data/model-driven reset "
-                              "replacing the v1 per-cadence hand k/seed: (a) CENSORING-FREE σ̂_step feed "
-                              "(innovation-gated rows feed too, killing the v1 low-σ̂ death-spiral), "
-                              "(b) MODEL-SCALED gate |innov| > k·√(Ppred+R) so dt enters via the prior's "
-                              "q·gap term and ONE k={:.1f} transfers 30 s ↔ 300 s, (c) seed σ̂_step "
-                              "demoted to a numerical guard (floor ~1 mm).  OFF = v1 (k·σ̂_step, "
-                              "smoothed-rows-only feed).  Retire any per-rate emit_pb_filter_jump_k / "
-                              "_meas_sigma_m override once the 30 s+300 s A/B transfer (G5) passes.",
-                              network_emit_pb_filter_jump_k_);
             }
             // Inert warnings (spec D7): the invariant carry subsumes the eq34
             // frame-continuity hygiene (the datum targets are plain 0 and continuity lives
@@ -11402,13 +11340,6 @@ namespace GnssProcessor {
                       "network.ledger_reentry_no_verdict = refloat is INERT without "
                       "network.ledger_reentry — the no-verdict population only exists when the "
                       "ledger drives the response.");
-        // The PB emission-continuity filter is inert unless the invariant carry is armed
-        // (its re-based emission frame is the filter's input); the carry-on case is
-        // reported inside the carry_invariant block above.
-        if (network_emit_pb_filter_ && !network_carry_invariant_)
-            log->warn("Network: network.emit_pb_filter is INERT without network.carry_invariant "
-                      "(+ network.carry_invariant_emit_rebase) — it filters the re-based emission "
-                      "frame, which only exists under the invariant carry.");
 
         return true;
     }

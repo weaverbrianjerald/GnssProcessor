@@ -114,10 +114,7 @@ void networkEmitStore(
     // The emit-layer switches (NetworkKnobs) and engines, and the closed-loop tally, under
     // their former parameter names (card NOM step TD1a).
     const bool emit_rebase_on = ctx.knobs.emit_rebase_on;
-    const bool emit_pb_filter_on = ctx.knobs.emit_pb_filter_on;
-    const bool pb_filter_emit_sigma = ctx.knobs.pb_filter_emit_sigma;
     NetworkEmitRebase& emit_rebase_engine = emit_engines.rebase;
-    NetworkPbEmitFilter& pb_filter_engine = emit_engines.pb_filter;
     NetworkClockEmitRebase& clk_rebase_engine = emit_engines.clk_rebase;
     std::size_t& cl_epochs = cl_tally.epochs;
     std::size_t& cl_ar_ran = cl_tally.ar_ran;
@@ -255,48 +252,6 @@ void networkEmitStore(
                 const auto it = rb_out.find(s.sat + "|" + signal);
                 if (it != rb_out.end()) npb.bias_m = it->second;
             }
-
-        // PB emission-continuity filter on the re-based values (M5 prerequisite;
-        // network.emit_pb_filter, armed only together with the re-base).  A per-key
-        // scalar KF with a self-tuning k·σ̂_step jump gate smooths the per-epoch
-        // estimation noise the re-base leaves, so the emitter's unchanged jump test
-        // fires at genuine events rather than at noise crossing the threshold.  It
-        // filters exactly the keys the re-base put into the emission frame (rb_out);
-        // legacy, gated and GLONASS keys keep their raw value and the emitter's normal
-        // jump test.  A reference-path slip (rb_slipped_ref, the set the re-base used)
-        // forces a reset that passes the raw value through, so the genuine step reaches
-        // the emitter (invariant #1).  The result is written into sol before
-        // emitToStore and the on-disk write, so a NetworkProductIO replay reproduces the
-        // emitter's disc counters without re-running the filter (the transform is in the
-        // product, like the re-base).
-        if (emit_pb_filter_on) {
-            const double pbf_epoch_s =
-                sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
-            std::vector<NetworkPbEmitFilter::Entry> pf_entries;
-            pf_entries.reserve(rb_out.size());
-            for (auto& s : sol.sats) {
-                if (s.sat.empty() || systemOfSat(s.sat) == System::GLONASS) continue;   // GLONASS excluded (FDMA)
-                for (auto& [signal, npb] : s.phase_bias) {
-                    if (!rb_out.count(s.sat + "|" + signal)) continue;  // only re-based keys
-                    NetworkPbEmitFilter::Entry e;
-                    e.sat = s.sat; e.signal = signal;
-                    e.value_m = npb.bias_m;
-                    e.slipped = rb_slipped_ref.count({s.sat, signal}) != 0;
-                    pf_entries.push_back(std::move(e));
-                }
-            }
-            pb_filter_engine.filterEpoch(pf_entries, pbf_epoch_s);
-            std::map<std::string, std::pair<double, double>> pf_out;  // key -> (filtered value, posterior σ)
-            for (const auto& e : pf_entries)
-                pf_out[e.sat + "|" + e.signal] = {e.value_m, e.post_sigma_m};
-            for (auto& s : sol.sats)
-                for (auto& [signal, npb] : s.phase_bias) {
-                    const auto it = pf_out.find(s.sat + "|" + signal);
-                    if (it == pf_out.end()) continue;
-                    npb.bias_m = it->second.first;
-                    if (pb_filter_emit_sigma) npb.sigma_m = it->second.second;
-                }
-        }
     }
     // Clock emission re-base (docs/SPEC_clock_emit_rebase.md, card CLK-R): the
     // per-constellation common-mode frame hold (stage 1) and the census-aligned
@@ -439,7 +394,7 @@ void networkEmitStore(
     // card PBH).  It is the last writer of the emitted phase bias; only read-only
     // steps (the SID capture and declaration build) follow it before emitToStore.
     // That position has three consequences: it holds what the card-4 emission re-base
-    // and the PB emission filter produced instead of being overwritten by them; it
+    // produced instead of being overwritten by it; it
     // runs before the emitter's phase-bias value-jump test, so the declared population
     // screens the value the consumer receives; and every marking site of the epoch has
     // already run, so the seam's pendingMarkChannels read sees the complete set of
