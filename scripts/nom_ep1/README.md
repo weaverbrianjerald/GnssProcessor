@@ -47,7 +47,7 @@ generation, never a crash.
 | `scripts/nom_ep1/textops.py` | Non-overlapping edits, line ends, comments, Doxygen blocks, the target tree. |
 | `scripts/nom_ep1/manifest_<rows>.json` | Written by each generator run under `--root`: the base, the rows, every written file with its digest, the frozen ranges each transform resolved, each converted call and preamble. The verifier reads it for pairing only. |
 | `scripts/nom_ep1_cut.py` | The generator: `--survey`, `--stage ep1a1`, `--stage ep1b`, `--shared-only`, `--presolve-writer`, `--check`. |
-| `scripts/nom_ep1_verify.py` | The relocation verifier: checks V1 to V13, the two write proofs, and 50 negative controls (the sixteen of spec 5.7, seventeen added at the review round and seventeen at hardening round 1). It reads the rows and `declared.py` and nothing the generator computes. |
+| `scripts/nom_ep1_verify.py` | The relocation verifier: checks V1 to V13, the two write proofs, and 61 negative controls (the sixteen of spec 5.7, seventeen added at the review round, seventeen at hardening round 1 and eleven at hardening round 2). It reads the rows and `declared.py` and nothing the generator computes. |
 | `scripts/nom_epoch_lint.py` | The permanent lint: checks V0 (the reading), V4, V10 and V11 on any tree, with no git revision. |
 
 ## Step EP1a-1, the base
@@ -73,11 +73,11 @@ One worker, serial. The commands run from the repository root, in this order.
    nothing and names the shape it did not recognize.
 5. Build Debug and Release with `scripts/vs2026_build.ps1`, then run the unit suite.
 6. Verify: `python scripts/nom_ep1_verify.py --tree . --base <B> --controls`. This is the
-   positive control of spec 5.7: every applicable check passes with no row converted. 38
-   controls fire (N5 to N8, N10 to N12, N16, R1, R2, R5 to R11, R13 to R20 and R22 to R34; N7,
-   N16 and R24 to R26 also fail the lint); the other twelve are pending (their target is a
-   converted seam). A control whose target this stage must have but the tree lacks is MISSING
-   and fails the run.
+   positive control of spec 5.7: every applicable check passes with no row converted. 45
+   controls fire (N5 to N8, N10 to N12, N16, R1, R2, R5 to R11, R13 to R20, R22 to R34, R38 and
+   R40 to R45; N7, N16 and R24 to R26 also fail the lint); the other sixteen are pending (their
+   target is a converted seam). A control whose target this stage must have but the tree lacks
+   is MISSING and fails the run.
 7. Lint: `python scripts/nom_epoch_lint.py --partial` (no seam has an epoch form yet, so the
    writer banner is checked only for writers that exist).
 8. Idempotence: `python scripts/nom_ep1_cut.py --stage ep1a1 --base <B> --check` exits 0
@@ -92,16 +92,17 @@ workers). The two shared generated files, `src/core/app/ApplicationNetworkEpoch.
 at each merge, never hand-merged.
 
 The controls column follows from each control's target (N5 to N8, N10 to N12, N16, R1,
-R2, R6 to R11, R13 to R20 and R22 to R34 run on every tree with an epoch function; R5, the
+R2, R6 to R11, R13 to R20, R22 to R34, R38 and R40 to R45 run on every tree with an epoch
+function; R5, the
 epoch preamble's third-band forwarder, runs until W2 converts the DD build, which takes the
 forwarder with it; R21 runs once a worker's rows convert an adapter); the W2 row was
 confirmed by a run at `c483a11`.
 
 | worker | `--rows` | seams | negative controls its own rows make runnable |
 | --- | --- | --- | --- |
-| W1 app | `app` | 10 | N2, N9 |
-| W2 pre-solve and solve | `solve` | 13 | N1, N9, N14, N15, R4, R21 (R5 becomes pending) |
-| W3 emit and post-fit | `emit` | 15 | N3, N9, N13, R3, R12, R21 (N4 also needs W2's solve) |
+| W1 app | `app` | 10 | N2, N9, R39 |
+| W2 pre-solve and solve | `solve` | 13 | N1, N9, N14, N15, R4, R21, R35 (R5 becomes pending) |
+| W3 emit and post-fit | `emit` | 15 | N3, N9, N13, R3, R12, R21, R36, R37 (N4 also needs W2's solve) |
 | W4 diagnostics | `diag` | 24 | N9, R21 |
 
 On a worker branch, from the repository root:
@@ -132,7 +133,7 @@ Integration, in the order W2, W1, W3, W4. After each merge:
    <merged>`, `python scripts/nom_epoch_lint.py --partial`.
 
 After the last merge: `python scripts/nom_ep1_verify.py --tree . --base <B> --rows all
---controls` (49 controls fire and none is MISSING; R5 is pending by design, its forwarder having
+--controls` (60 controls fire and none is MISSING; R5 is pending by design, its forwarder having
 gone with the DD build's conversion), `python scripts/nom_epoch_lint.py` without `--partial`,
 the full G-EP and the cost pair.
 
@@ -150,27 +151,27 @@ are ignored throughout.
 
 | check | what it proves |
 | --- | --- |
-| V1a | Every top-level statement of the frozen lambda is carried, character-exact and shifted four columns, by the epoch function, or is the old side of a declared transform of spec 5.3 whose new side is checked by rule (the epoch's construction, the dropped workspace, an alias, a sized or a result store at the local's frozen position, the clock store, `ep.emitted`, the brackets, the converted calls, the two replay closures). Each carried statement and store is paired with its frozen text token by token: an `ep.<path>` that stands for a local must pair with a frozen token that is that lambda local (the DD-carry predict's own `dt` is not `ep.clock.dt`), `ep.emitted` with the frozen comparison. The VALUE_EQUAL proof. |
+| V1a | Every top-level statement of the frozen lambda is carried, character-exact and shifted four columns, by the epoch function, or is the old side of a declared transform of spec 5.3 whose new side is checked by rule (the epoch's construction, the dropped workspace, an alias, a sized or a result store at the local's frozen position, the clock store, `ep.emitted`, the brackets, the converted calls, the two replay closures). Each carried statement and store is paired with its frozen text token by token: an `ep.<path>` that stands for a local must pair with a frozen token that is that lambda local (the DD-carry predict's own `dt` is not `ep.clock.dt`), `ep.emitted` with the frozen comparison. The epoch function's definition has the frozen lambda's head: `NetworkRun& run`, then the lambda's parameter list, its trailing return type (`Application::LoopSignal`), and after the list the lambda's specifiers but `mutable` (none, so no `noexcept`: an exception that escapes an epoch reaches `Application::run`'s handler, which logs it and returns 1, instead of calling `std::terminate`). The VALUE_EQUAL proof. |
 | V1b | Each converted seam's body below its bindings equals the frozen body, the solve's two replay lines and three hand-off lines excepted; the bindings open the body (no code before the opening marker) and hold declarations only. |
 | V1c | Every unconverted seam and every adapter's explicit form is byte-identical to frozen. |
-| V1d | `runNetwork` equals frozen apart from the spec 4.1 edits, and what those edits took out is where the specification puts it: the predicate and the two brackets as functions with the closures' parameters, return and body under a preamble that binds exactly the closures' captures (by reference where the capture was, each to the captured object); the timer scratch; the hand-off fields with their frozen declarations; `NetworkRunEngines` with the engines in frozen construction order and frozen types, one constructor with an empty body; `LoopSignal`. |
+| V1d | `runNetwork` equals frozen apart from the spec 4.1 edits, and what those edits took out is where the specification puts it: the epoch function's one declaration in `Application`, with the lambda's head as in V1a; the predicate and the two brackets as functions with the closures' parameters, return type, specifiers after the list (none) and body, each declaration with its definition's head, under a preamble that binds exactly the closures' captures (by reference where the capture was, each to the captured object); the timer scratch; the hand-off fields with their frozen declarations; `NetworkRunEngines` with the engines in frozen construction order and frozen types, one constructor with an empty body and nothing after its parameter list; `LoopSignal`. |
 | V1e | Every changed code line of `src/`, `include/`, `tests/` and `CMakeLists.txt` (a new file of the step diffed against nothing) is an include or forward-declaration line, or every token of it lies in a token range another check verified, so code appended on a verified line (after a definition's `}`, beside a namespace brace) is not accounted with it. No changed line is a preprocessor directive but `#include`, a new header's `#pragma once` or a conditional group of `#include` lines: a `#define` of a seam's name or an `#if 0` around the read copy changes what the compiler builds without changing a token any check reads. The new source files hold only what the specification puts there: `NetworkRun.cpp` the three definitions, `ApplicationNetworkEpoch.cpp` the one epoch function, the contract test its probe, static_asserts and one TEST case (the hand-written engine specification test is the suite's). Of `NetworkRunTiming` and `NetworkSolveGlueResult` only the moved and new members are claimed, so any other edit there (a default, a stray field) fails. No stray edit enters the tree. |
-| V2 | Each converted seam has one epoch-form declaration and one definition with the parameter list its row states; kept parameters keep their frozen declaration; after the solve only the hand-off and the prepared solution are outputs. |
+| V2 | Each converted seam has one epoch-form declaration and one definition with the parameter list its row states; kept parameters keep their frozen declaration; after the solve only the hand-off and the prepared solution are outputs. The head around the list is the frozen form's (an adapter's, that of the explicit form it forwards to): the return type and every specifier before the name, every specifier after the list, and no default argument but a kept parameter's frozen one. So no epoch form returns a reference to its local or to the explicit form's temporary (the spine's store would copy a destroyed object), and none is `noexcept`. |
 | V3a | At every frozen call site paired with its new site (and at the solve's two replay calls), every frozen parameter binds the same storage object, derived independently from the frozen and the new source and equal modulo the declared substitutions; the binding line is `<the frozen declarator> = <expression>;`, so a reference stays a reference, a copy stays a copy and no type changes; `// written` marks exactly the epoch writes; the DD build's third-band binding is the one declared forwarder to `networkIsUncarriedThirdBand` over the knobs; adapters' other callers keep their text. |
 | V3b | Every read of a captured driver name in the epoch function resolves to the frozen object (a reference, or a copy only where the frozen name was one), over every token V1a paired; each preamble line keeps the frozen declarator (a run reference under its spec type, an owned engine as a reference of its frozen type, `const` alone addable on a reference); the epoch preamble's third-band forwarder is the declared form. The COPY_SOURCE proof. |
-| V3c | Each epoch member is realized at its local's frozen position, with the local's type and initializer, and is bound nowhere before it; `NetworkEpoch` holds only the declared members, in the declared layout (`declared.EPOCH_LAYOUT`), and each group exactly its declared locals in their declared order, so construction and destruction order are declared; `NetworkEpoch`, `EpochClock` and the groups are plain structs (no base clause, no friend, nested type, alias or static member; no member function in a group), so no base takes an aggregate initializer's values, no nested alias re-types a member and no hidden friend captures a seam call; the epoch's constructor binds `se` and does nothing else, and `x_emit()` returns the frozen `x_emit` initializer under the epoch-member mapping. |
-| V3d | The `NetworkRun` construction binds each reference member to the frozen object of its role; `NetworkRun` is a plain struct whose members are the references, `engines` and the run's groups in the spec's order; each reference member is declared with its spec type and bound to a constructor parameter of that type; the owned members have the frozen types and no defaults; the constructor builds only what the spec declares and has an empty body. |
+| V3c | Each epoch member is realized at its local's frozen position, with the local's type and initializer, and is bound nowhere before it; `NetworkEpoch` holds only the declared members, in the declared layout (`declared.EPOCH_LAYOUT`), and each group exactly its declared locals in their declared order, so construction and destruction order are declared; `NetworkEpoch`, `EpochClock` and the groups are plain structs (no base clause, no friend, nested type, alias or static member; no member function in a group), so no base takes an aggregate initializer's values, no nested alias re-types a member and no hidden friend captures a seam call; the epoch's constructor binds `se`, does nothing else and has nothing after its parameter list, and `x_emit()`, with exactly `const` after its list, returns the frozen `x_emit` initializer under the epoch-member mapping. |
+| V3d | The `NetworkRun` construction binds each reference member to the frozen object of its role; `NetworkRun` is a plain struct whose members are the references, `engines` and the run's groups in the spec's order; each reference member is declared with its spec type and bound to a constructor parameter of that type; the owned members have the frozen types and no defaults; the constructor builds only what the spec declares, has an empty body and has nothing after its parameter list. |
 | V3e | No body reads a free `run`, `ep`, `nrun` or `nep` other than its parameters. |
 | V3f | Every folded argument parses in the fold grammar (member reads, `&` or `*`, `.get()`, `ep.x_emit()`, literals, side-effect-free conditionals), so folding moves no side effect. |
 | V4 | After the solve, the epoch function writes `ep` only through its four stores and the three post-solve output arguments; `ep.clock` is stored once, before its first read. |
 | V5 | Const is deep: no member of `NetworkEpoch`, or of a project type held by value inside it, is a non-const reference, a pointer to non-const, a smart pointer, a `std::function` or a `std::reference_wrapper`. |
 | V6 | The ordered events (calls, log calls with level and format literal, brackets with their `SB_*`, `LoopSignal` returns, the inserted stores) of the epoch function and of `runNetwork` equal the frozen ones. |
 | V7 | Each converted declaration's Doxygen carries the frozen `@param` texts and names every epoch member its bindings read. |
-| V8 | Every call of the frozen call table is covered exactly once, by a row or a declared non-conversion; the contract test lists the converted seams; the manifest of this stage pairs with what the verifier found. |
-| V9 | No translation unit that newly reaches `app/NetworkRun.hpp` or `app/NetworkEpoch.hpp` calls, in its frozen code, a function name that only the new headers declare, so no new overload can capture a frozen call; the two headers hold only their plain structs (no base clause), forward declarations, static_asserts, the declarations of `networkEngineSpec` and the two brackets (each its definition's signature) and the observer alias, and define no member function but the two constructors and `x_emit()`; every struct they define is scanned, with a base clause or without. |
+| V8 | Every call of the frozen call table is covered exactly once, by a row or a declared non-conversion; the contract test lists the converted seams, each cast to one alias of the file whose type is the seam's epoch form (the frozen return type and the row's parameters), and every alias is one seam's, so the compiled contract keeps on later trees what V2 checked here; the manifest of this stage pairs with what the verifier found. |
+| V9 | No translation unit that newly reaches `app/NetworkRun.hpp` or `app/NetworkEpoch.hpp` calls, in its frozen code, a function name that only the new headers declare, so no new overload can capture a frozen call; the two headers hold only their plain structs (no base clause), forward declarations, static_asserts, the declarations of `networkEngineSpec` and the two brackets (each its definition's signature: return type, parameter types, default arguments, specifiers after the list) and the observer alias, and define no member function but the two constructors and `x_emit()`; every struct they define is scanned, with a base clause or without. |
 | V10 | Every epoch group a seam's bindings read is already written when its spine line runs; a converted seam that a seam calls with its own run and epoch (the solve's replay builders) reads only groups written before the caller's spine line. |
 | V11 | The spine lines that pass an epoch group as an output equal the group's "written by" list in the banner of `NetworkEpoch.hpp`. |
-| V12 | `networkEngineSpec` holds the frozen setup statements of the declared ranges, character-exact and in order, reading only the configuration, the network block, the knobs and their own locals, calling only an allowlist; a replaced local is re-pointed at its own field (`T& name = spec.name;`, spec 2.2), so two locals cannot trade fields; the function opens with `NetworkEngineSpec spec;`, ends with `return spec;`, assigns a field whole at most once, never a field a reference binding fills, and an argument field only with its frozen argument; each engine constructor argument is the frozen argument or the spec field holding it, and each `NetworkEngineSpec` field has the type of what it holds (no argument is narrowed on its way to its engine). |
+| V12 | `networkEngineSpec` holds the frozen setup statements of the declared ranges, character-exact and in order, reading only the configuration, the network block, the knobs and their own locals, calling only an allowlist; a replaced local is re-pointed at its own field (`T& name = spec.name;`, spec 2.2), so two locals cannot trade fields; the function has the head of spec 2.5 (it returns the spec by value, nothing follows its parameter list), opens with `NetworkEngineSpec spec;`, ends with `return spec;`, assigns a field whole at most once, never a field a reference binding fills, and an argument field only with its frozen argument; each engine constructor argument is the frozen argument or the spec field holding it, and each `NetworkEngineSpec` field has the type of what it holds (no argument is narrowed on its way to its engine). |
 | V13 | The six seams whose frozen bodies use `run` or `ep` take the fallback names `nrun` / `nep`; no other seam needs them. |
 
 The two write proofs (spec 5.6), on the frozen base and on the candidate: COPY_SOURCE, no
@@ -185,8 +186,11 @@ named check before a pass is believed. N1 to N16 are spec 5.7's (N4 must fail bo
 its mutation keeps the trip's adapter and gives the solve's internal call the epoch form, which
 binds `ep.solve.plan` there exactly as the spec's direct conversion would; N11 cuts the
 `debug_r_scale` warning while the base has it, else a synthetic warning). R1 to R17 were added
-at the review round and R18 to R34 at hardening round 1, one per mutation an earlier verifier
-accepted:
+at the review round, R18 to R34 at hardening round 1 and R35 to R39 at hardening round 2, one
+per mutation an earlier verifier accepted; R40 to R45 (hardening round 2) put the edit of R35
+to R39 on the other function heads the step writes. R35 to R37 must fail both V2 and V8 (the
+mutation edits the seam's head and its contract-test alias together), R38 both V1a and V1d
+(the epoch function's definition and its declaration):
 
 | id | mutation | check |
 | --- | --- | --- |
@@ -224,6 +228,17 @@ accepted:
 | R32 | two `NetworkEpoch` members declared in swapped order (`ws`, `solve`) | V3c |
 | R33 | two members of `EpochPassA` declared in swapped order | V3c |
 | R34 | two members of `EpochAssembly` declared in swapped order | V3c |
+| R35 | the solve's epoch form returns `const NetworkSolveGlueResult&`, a reference to its local result (declaration, definition and contract alias) | V2, V8 |
+| R36 | `networkFixedCycles` returns `const FixedCycleEmission&`, a reference to its local | V2, V8 |
+| R37 | the `networkSolPrep` adapter's epoch form returns `const NetworkSolPrepResult&`, a reference to the explicit form's temporary | V2, V8 |
+| R38 | `Application::networkProcessEpoch_` declared and defined `noexcept` | V1a, V1d |
+| R39 | the epoch form of `networkWriteStateSnapshot` declared and defined `noexcept` | V2 |
+| R40 | `networkSubBegin` (a moved bracket) declared and defined `noexcept` | V1d |
+| R41 | `networkEngineSpec` returns `const NetworkEngineSpec&` (declaration and definition) | V12 |
+| R42 | `NetworkEpoch`'s constructor `noexcept` | V3c |
+| R43 | `NetworkRun`'s constructor `noexcept` | V3d |
+| R44 | `NetworkRunEngines`' constructor `noexcept` | V1d |
+| R45 | `x_emit() const noexcept` | V3c |
 
 A control whose target the stage cannot have yet is pending; one whose target the stage must
 have but the tree lacks is MISSING and fails the run, so no control falls silent at a later
@@ -318,4 +333,7 @@ minutes loaded; with `--controls` 4 to 7 minutes quiet (33 controls, 6 to 13 sec
 all rows) and 9 to 25 minutes loaded; the lint under a minute quiet, 2 to 3.5 minutes loaded;
 the survey 1 to 2 minutes. With the 50 controls of hardening round 1, measured at `0e14eb9` on
 a lightly shared machine: `--controls` 12 minutes for all rows (11 to 18 seconds each) and 6.5
-minutes for EP1a-1 (38 controls run), under a minute on the frozen tree (10 run).
+minutes for EP1a-1 (38 controls run), under a minute on the frozen tree (10 run). With the 61
+controls of hardening round 2, measured at `0e14eb9` with the three acceptance runs side by
+side: `--controls` 30 minutes for all rows (60 run, 15 to 38 seconds each), 15.5 minutes for
+EP1a-1 (45 run) and 2 minutes on the frozen tree (10 run).
