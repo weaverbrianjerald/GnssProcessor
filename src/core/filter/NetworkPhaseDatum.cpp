@@ -382,9 +382,8 @@ void networkElectPhaseAnchors(
     // gate.  An unknown age (no carry entry, an unstamped entry, or a
     // warm-resume-restored entry carrying LocalCarry::kBirthEpRestored,
     // SPEC_event_harness §15.4) counts as mature, the restored-entry convention.
-    // That leaves
-    // the decision to the variance ceiling instead of refusing a candidate the
-    // ledger reports as converged.
+    // That leaves the decision to the variance ceiling instead of refusing a
+    // candidate the ledger reports as converged.
     auto candMature = [&](size_t i, const std::string& amb) {
         if (!cand_usable || cand_usable->min_age_ep <= 0 || !cand_usable->local_carry)
             return true;

@@ -400,6 +400,38 @@ TEST(W6IonoConstraintTest, ExtraChannelsDoNotCloseMoreDirections) {
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 11);
 }
 
+// The n_sat-1 count holds only while every channel spans the same satellite set.  A
+// channel that one satellite does not carry gives a sum-to-zero row over a different
+// support, which tests a second, independent sum of the beta^s and closes one more
+// direction: n_sat-2 survive.  An acceptance test that hard-codes n_sat-1 would report
+// such a valid roster as a failure.  The equal-support roster is the control.
+TEST(W6IonoConstraintTest, UnequalChannelSupportClosesASecondDirection) {
+    const auto sats = gpsSats(3);
+    const std::vector<std::string> sigs{"C1C", "C2W", "C5Q"};
+
+    NetworkEstimator equal_est;
+    const auto equal_keys = registerRoster(equal_est, sats, sigs);
+    DatumRowsHarness equal_h;
+    const auto equal_rows = equal_h.build(equal_est, equal_keys);
+    EXPECT_EQ(equal_rows.n_s2z_channels, 3);
+    EXPECT_EQ(survivingRd3bDims(equal_est, equal_rows.H, sats, sigs), 2)
+        << "equal channel support leaves n_sat - 1";
+
+    NetworkEstimator est;
+    std::vector<DatumRowsHarness::Pair> keys;
+    for (const auto& sat : sats)
+        for (const auto& s : sigs) {
+            if (sat == "G03" && s == "C5Q") continue;   // G03 does not carry L5
+            est.registerCodeBias(sat, s);
+            keys.emplace_back(sat, s);
+        }
+    DatumRowsHarness h;
+    const auto rows = h.build(est, keys);
+    EXPECT_EQ(rows.n_s2z_channels, 3);
+    EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 1)
+        << "unequal channel support closes a second direction; n_sat - 1 is not general";
+}
+
 // ===========================================================================
 // The hard per-satellite geometry-free datum, network.sat_gf_datum (card RF-0c).
 // ===========================================================================

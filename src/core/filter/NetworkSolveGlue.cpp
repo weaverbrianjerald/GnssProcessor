@@ -258,10 +258,10 @@ NetworkSolveGlueResult networkSolveGlue(
 
 // The W6 satellite code-bias datum rows are built by
 // NetworkSbasis::buildCodeBiasDatumRows (INC-8), whose Doxygen holds the design
-// (IF pin and per-(constellation, signal) sum-to-zero, card-2 time-linking, basis
-// hold / latch / re-latch).  The fold, the RAIM-replay cap_* capture and the first-N
-// summary stay here (writer-site contract, NetworkRunTypes.hpp).
-// Clear the hold-off IF-pin selection scratch for this epoch (the counterpart of the
+// (IF pin and per-(constellation, signal) sum-to-zero, card-2 time-linking).  The
+// fold, the RAIM-replay cap_* capture and the first-N summary stay here (writer-site
+// contract, NetworkRunTypes.hpp).
+// Clear the IF-pin selection scratch for this epoch (the counterpart of the
 // per-epoch this_epoch_anchor.clear()).  The clear is unconditional, done even when
 // the code-bias block below is skipped (no registered keys), so a prior epoch's
 // selection cannot reach the emit-site comparison.  In the default config
@@ -348,10 +348,9 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     // ("sat|signal|b1b2"), because the builder's realized pair is not always (L1, L2)
     // (the selection follows the registered signal set, and card GFC's pair hold can hold
     // it), and a roster that answered for the wrong pair would free a column that nothing
-    // determines.  Built here rather than
-    // in the row builder because only the driver sees the stations.  Empty unless
-    // network.sat_gf_extra_band_free is armed, so an unarmed run never reaches the
-    // builder's lookups.
+    // determines.  Built here rather than in the row builder because only the driver sees
+    // the stations.  Empty unless network.sat_gf_extra_band_free is armed, so an unarmed
+    // run never reaches the builder's lookups.
     std::set<std::string> extra_band_determined;
     if (config_.getNetworkConfig().sat_gf_extra_band_free) {
         for (size_t i = 0; i < stations.size(); ++i) {

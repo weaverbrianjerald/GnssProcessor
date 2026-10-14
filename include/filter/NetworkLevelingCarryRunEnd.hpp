@@ -18,13 +18,11 @@ struct NetworkRunEndView;
  *
  * The leveling-carry retirement census, families [B] (the cliff) and [A] (departures),
  * on every run; then the F3 local block and the receiver-clock jump gate, each under
- * its own knob. The first
- * part of the census; networkLevelingResponseRunEnd prints families [C] and [D] after
- * the resume, re-admission, DD-reference and ZWD lines.
+ * its own knob. The first part of the census; networkLevelingResponseRunEnd prints
+ * families [C] and [D] after the resume, re-admission, DD-reference and ZWD lines.
  *
  * Gate: each section under its own condition, as in the teardown: always;
- * `ctx.knobs.pl_local_block`;
- * `config_.networkCarryRxClockInBlock()`.
+ * `ctx.knobs.pl_local_block`; `config_.networkCarryRxClockInBlock()`.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).

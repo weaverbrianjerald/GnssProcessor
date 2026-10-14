@@ -130,10 +130,9 @@ namespace GnssProcessor {
         /// non-admitted columns marginalized) instead of independent per-column rows.
         /// Given the border, the block is exact in every local-local direction: the
         /// per-LOS iono direction and the station-common rx clock, ZWD and rx-DCB
-        /// directions alike.  Live only with
-        /// phase_leveling on, carry_invariant off and carry_cpl_cond on; the loader
-        /// warns that the knob is inert otherwise.  The knob is off by
-        /// default (byte-identical).
+        /// directions alike.  Live only with phase_leveling on, carry_invariant off
+        /// and carry_cpl_cond on; the loader warns that the knob is inert otherwise.
+        /// The knob is off by default (byte-identical).
         /// This member is the resolved live predicate, not the knob:
         /// @c network.phase_leveling_local_block OR the @c float_kf vehicle, under which
         /// the joint block is structural (design §3.2: the carried covariance folded as a
@@ -310,8 +309,8 @@ namespace GnssProcessor {
         /// more `LocalBlockCol`.  A diagonal ZWD row asserts a station-common direction that
         /// every carried ambiguity row already asserts: the ~n_LOS over-count named in
         /// SPEC_amb_iono_split_overcount §7 item 17, and the reason B9 was falsified on the
-        /// quiet bed.  The loader requires zwd_on and pl_local_block and disables the knob otherwise.  Off
-        /// by default (byte-identical).
+        /// quiet bed.  The loader requires zwd_on and pl_local_block and disables the knob
+        /// otherwise.  Off by default (byte-identical).
         bool zwd_in_block{};
         bool zwd_seam_on{};    ///< network.zwd_seam_reseed: post-resume ZWD re-seed window (SPEC_synthetic_minimum_network §17 finding 3).  Not fingerprinted (forward-only resume response policy).
         int  zwd_seam_epochs{};   ///< network.zwd_seam_reseed_epochs: seam-window horizon in emitted epochs.
@@ -1089,21 +1088,21 @@ namespace GnssProcessor {
         // network.pivot_vanish_return_signal is on (otherwise inert).
         std::map<std::string, std::string> last_pivot;
         // Deterministic IF-pin selection discontinuity.  The pin is re-derived from every
-        // epoch's coverage; the deterministic NetworkSbasis::selectIfPinPair makes it a pure function of the
-        // registered signal set, so a change between emitted products means a channel
-        // entered or left the ≥2-station set.  That steps the emitted (δtˢ, dˢ) split by
-        // the satellite's inter-channel code bias, a per-sat datum move the consumer must
-        // reset for.  Two maps mirror the phase-anchor discipline (this_epoch_anchor /
-        // emitted_anchor), so a transient pin move on a withheld epoch cannot fabricate a
-        // bump:
+        // epoch's coverage; the deterministic NetworkSbasis::selectIfPinPair makes it a
+        // pure function of the registered signal set, so a change between emitted products
+        // means a channel entered or left the ≥2-station set.  That steps the emitted
+        // (δtˢ, dˢ) split by the satellite's inter-channel code bias, a per-sat datum move
+        // the consumer must reset for.  Two maps mirror the phase-anchor discipline
+        // (this_epoch_anchor / emitted_anchor), so a transient pin move on a withheld
+        // epoch cannot fabricate a bump:
         //  - this_epoch_if_pin_sel: the (sig1, sig2) selected this epoch in the main pass
         //    (scratch, cleared each epoch, decoupled from the emit decision);
         //  - last_if_pin_sel: the pair of the last emitted product per satellite, compared
         //    and advanced only at the emit site (like emitted_anchor / prev_pivot), so a
         //    withheld epoch leaves it untouched and its transient pair is dropped.
         // Both are populated only under emit_clock_disc, so the output is byte-identical
-        // otherwise.  Not snapshotted: a warm resume has no prior for its
-        // first emit, so it must not fabricate a disc it cannot verify.
+        // otherwise.  Not snapshotted: a warm resume has no prior for its first emit, so
+        // it must not fabricate a disc it cannot verify.
         std::map<std::string, std::pair<std::string, std::string>> this_epoch_if_pin_sel;
         std::map<std::string, std::pair<std::string, std::string>> last_if_pin_sel;
         /// This epoch's ionosphere-free pin pair changes per satellite, with their outcome

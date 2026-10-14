@@ -153,7 +153,7 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkSdEwlAr.cpp", networkSdEwlRunEnd},
     {"slip QC: MW and LLI detections, the re-level response, the statistical retap",
      "slip/NetworkSlipQcRunEnd.cpp", networkSlipMwRelevelRunEnd},
-    {"leveling-carry retirement census [B] and [A]; F1, F3, the clock gate, young arcs",
+    {"leveling-carry retirement census [B] and [A]; F3, the clock gate",
      "filter/NetworkLevelingCarryRunEnd.cpp", networkLevelingRetirementRunEnd},
     {"warm-resume restores: frame, coupling regressors, dense border",
      "app/NetworkResumeRunEnd.cpp", networkResumeRestoreRunEnd},

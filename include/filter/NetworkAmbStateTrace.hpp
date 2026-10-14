@@ -19,10 +19,9 @@
  * Measure-only.  Every value written is read off state the inject and the harvest
  * already computed: the fold variance and route are recorded at the inject into the
  * station's own @c StationAssembly::amb_state_fold, the carried quantities are read at
- * the stash, and the `erase:` rows
- * are captured at the erase sites immediately before the entry is deleted.  Nothing is
- * written back.  Off by default: no stream, no file, no rows, and the solve is
- * byte-identical.
+ * the stash, and the `erase:` rows are captured at the erase sites immediately before
+ * the entry is deleted.  Nothing is written back.  Off by default: no stream, no file,
+ * no rows, and the solve is byte-identical.
  *
  * The four pre-registered reads (design §7.4; scripts/amb_state_read.py implements them
  * verbatim).  The columns are fixed once the baseline is taken:

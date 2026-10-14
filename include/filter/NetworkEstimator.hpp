@@ -251,8 +251,7 @@ public:
      * For the layout and the per-epoch state the effect equals default-constructing
      * a new @c NetworkEstimator.  Everything else is kept: the settings made
      * through the setters and passthroughs (thread budgets, rank-gate tolerance,
-     * kernel options), the attribution recorder, and the run-cumulative
-     * @ref gaugeFreePartialSkipped tally.
+     * kernel options) and the attribution recorder.
      */
     void reset();
 

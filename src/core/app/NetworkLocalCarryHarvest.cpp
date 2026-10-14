@@ -90,9 +90,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 % ctx.knobs.trace_amb_state_every) == 0);
     // Age in epochs for the trace's relevel clock uses the run's own observed
     // inter-epoch spacing, so the column means the same thing at 1 s and 30 s cadence
-    // without a nominal rate.  It is read here, not
-    // later: ctx.carry.pl_prev_now_s is advanced to this epoch at the end of this
-    // function, so inside the stash loop it still holds the previous stamp.
+    // without a nominal rate.  It is read here, not later: ctx.carry.pl_prev_now_s is
+    // advanced to this epoch at the end of this function, so inside the stash loop it
+    // still holds the previous stamp.
     const double amb_state_dt_ep_s = [&] {
         const double dt = pl_now_s - ctx.carry.pl_prev_now_s;
         return (std::isfinite(dt) && dt > 0.0 && dt <= pl_max_gap_s) ? dt : 0.0;

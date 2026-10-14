@@ -163,14 +163,13 @@ struct TuEnt {
     SharedParamKind kind{SharedParamKind::Clock};  ///< coupling kind
 };
 
-/// Per-station conditional coupling-row builder (cards 1, 1d).  Constructed fresh
-/// for each present carry-eligible station inside the PASS-B OpenMP produce loop and
-/// never hoisted: fresh construction is the per-station scratch reset.  It holds the
-/// per-station scratch (@c crows), the shared
-/// slot @ref StationAssembly @c R, and the const inputs that the member functions
-/// read.  The driver calls @ref buildCplRow once per carried column (ambiguity and
-/// ZWD); @ref appendCouplingRows then batch-appends the accumulated rows into
-/// @c R.A_s / @c R.A_r / @c R.w / @c R.y.
+/// Per-station conditional coupling-row builder (cards 1, 1d).  Constructed fresh for
+/// each present carry-eligible station inside the PASS-B OpenMP produce loop and never
+/// hoisted: fresh construction is the per-station scratch reset.  It holds the
+/// per-station scratch (@c crows), the shared slot @ref StationAssembly @c R, and the
+/// const inputs that the member functions read.  The driver calls @ref buildCplRow once
+/// per carried column (ambiguity and ZWD); @ref appendCouplingRows then batch-appends
+/// the accumulated rows into @c R.A_s / @c R.A_r / @c R.w / @c R.y.
 ///
 /// An aggregate (no user-declared constructor): the 10 leading const, value and
 /// reference members (@c est through @c R) are set by brace-init at the construction
@@ -317,9 +316,9 @@ struct CouplingRowBuilder {
     /// border: the per-LOS iono direction, and also the station-common rx clock, ZWD
     /// and rx-DCB directions.
     /// Returns false when the factor is non-SPD after the ridge retry; nothing is then
-    /// buffered, and the caller falls back to per-column rows and counts the fallback.  Returns true with nothing buffered when
-    /// no column survives.  Columns refused by the scalar screen are dropped from the
-    /// block and counted.
+    /// buffered, and the caller falls back to per-column rows and counts the fallback.
+    /// Returns true with nothing buffered when no column survives.  Columns refused by
+    /// the scalar screen are dropped from the block and counted.
     bool buildLocalBlock(const std::vector<LocalBlockCol>& cols);
     /// Batch-append the buffered rows into @c R (scalar per-row rows and whitened block rows).
     void appendCouplingRows();

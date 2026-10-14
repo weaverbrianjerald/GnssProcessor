@@ -553,11 +553,11 @@ struct CplRowRaw {
 /// σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt, which the card 1 scalar row
 /// would have carried.  Here @c var_eff is that σ², i.e. the diagonal of Σ; the
 /// departed-column marginalization stays per row and diagonal, as on the scalar path.
-/// @c Sigma is the n×n joint prior covariance over those
-/// columns: that diagonal, and off the diagonal the harvested conditional cross
-/// covariances (N_rr⁻¹)_{c_i c_j} (scaled by the VCE factor), or 0 where the pair was
-/// harvested at different epochs.  Σ is then block-diagonal by harvest stamp, each
-/// block a principal sub-matrix of one posterior, so it is PD by construction.
+/// @c Sigma is the n×n joint prior covariance over those columns: that diagonal, and off
+/// the diagonal the harvested conditional cross covariances (N_rr⁻¹)_{c_i c_j} (scaled
+/// by the VCE factor), or 0 where the pair was harvested at different epochs.  Σ is then
+/// block-diagonal by harvest stamp, each block a principal sub-matrix of one posterior,
+/// so it is PD by construction.
 /// @c row0 is the block's first row index within the station's coupling block (block
 /// row k sits at A_s/A_r row @c cpl_row_start + row0 + k).  Empty unless the knob
 /// built a block for this station this epoch.
@@ -1522,17 +1522,17 @@ struct StationAssembly {
 /// columns are marginalized (their rows and columns are deleted from Σ before the
 /// factor, never conditioned on), which is exact: the kept columns' joint prior is the
 /// corresponding principal sub-block of Σ.  Factor Σ_kept = LLᵀ (one ridge retry at
-/// 1e-12·max|diag|), then emit the unit-information
-/// rows L⁻¹·[I | M | y]: @p Hr (m×ncol_r, the dense lower-triangular L⁻¹ placed on the
-/// block's local columns), @p Hs (m×nshared, L⁻¹ times the per-column present-shared
-/// regressor rows) and @p z (L⁻¹y).  @p kept receives the indices into @c blk.rows of
-/// the surviving rows, in order (output row k belongs to @c blk.rows[kept[k]]).
+/// 1e-12·max|diag|), then emit the unit-information rows L⁻¹·[I | M | y]: @p Hr
+/// (m×ncol_r, the dense lower-triangular L⁻¹ placed on the block's local columns), @p Hs
+/// (m×nshared, L⁻¹ times the per-column present-shared regressor rows) and @p z (L⁻¹y).
+/// @p kept receives the indices into @c blk.rows of the surviving rows, in order (output
+/// row k belongs to @c blk.rows[kept[k]]).
 /// Returns false when @c blk.Sigma is not n×n or the factor is non-SPD after the retry
 /// (the caller falls back to per-column rows, or drops the block for a refloat
 /// re-solve); m = 0 returns true with empty outputs.  Header-inline because its two
 /// callers (the builder's primary build and the run-TU refloat re-whiten) must share
-/// one codegen, so that the re-whitened
-/// survivors are the rows the primary build would have emitted for that column set.
+/// one codegen, so that the re-whitened survivors are the rows the primary build would
+/// have emitted for that column set.
 inline bool whitenLocalBlock(const PlBlockRaw& blk,
                              const std::set<Eigen::Index>& skip,
                              Eigen::Index ncol_r, Eigen::Index nshared,

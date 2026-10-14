@@ -2904,10 +2904,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
     const bool   pl_local_block = ctx.knobs.pl_local_block; // station-wide jointly whitened local block at inject (F3, SPEC_amb_iono_split_overcount); off = byte-identical
-    // Record, per folded ambiguity column, the variance the fold actually used and
-    // the route it took, into this station's own StationAssembly (network.trace_amb_state,
-    // RF-1 §7.4).  Measure-only; when off the
-    // map is never touched, so the produce loop pays one bool test per folded column.
+    // Record, per folded ambiguity column, the variance the fold actually used and the
+    // route it took, into this station's own StationAssembly (network.trace_amb_state,
+    // RF-1 §7.4).  Measure-only; when off the map is never touched, so the produce loop
+    // pays one bool test per folded column.
     const bool   amb_state_tr  = ctx.knobs.trace_amb_state;
     // The ambiguity vehicle owns the slip response (RF-1 step 4).  Under float_kf the
     // free-epoch latch and the gap cliff do not skip the inject: the serial
@@ -2961,10 +2961,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // Live predicate for B9-in-block (network.carry_zwd_in_block): the carried ZWD
     // column joins the F3 whitened block instead of folding as a diagonal coupling row
     // outside it.  Conjoined with pl_blk_on, so a station-epoch that takes the
-    // per-column route (F3 off, coupling rows off) is never
-    // touched; there the ZWD keeps its B9 row.  The loader already refuses the arm
-    // without carry_zwd + phase_leveling_local_block; this is the live half of the
-    // same gate.
+    // per-column route (F3 off, coupling rows off) is never touched; there the ZWD
+    // keeps its B9 row.  The loader already refuses the arm without carry_zwd +
+    // phase_leveling_local_block; this is the live half of the same gate.
     const bool   zwd_blk_on    = ctx.knobs.zwd_in_block && pl_blk_on;
     // Live predicate for I-in-block (network.carry_iono_in_block): the station's
     // carried per-LOS slant-iono columns join the F3 whitened block.  Conjoined with

@@ -1947,10 +1947,10 @@ namespace GnssProcessor {
          *
          * F1 (the retired per-LOS variance scale, @c network.phase_leveling_los_scale)
          * was exact along each LOS's iono direction but left the station-common
-         * directions (receiver clock, ZWD,
-         * receiver DCB) over-counted ~n_LOS×, because every carried ambiguity row
-         * of a station asserts the same station-common datum again (on the quiet
-         * sim bed, a ZWD formal σ of 0.005 m against 0.35 m actual at hour 2).
+         * directions (receiver clock, ZWD, receiver DCB) over-counted ~n_LOS×, because
+         * every carried ambiguity row of a station asserts the same station-common
+         * datum again (on the quiet sim bed, a ZWD formal σ of 0.005 m against 0.35 m
+         * actual at hour 2).
          *
          * Armed, each station's injectable carried ambiguity columns c_1..c_n are
          * carried as one block.  The harvest stashes, beside each column's pure
@@ -1959,16 +1959,14 @@ namespace GnssProcessor {
          * inject assembles Σ over the columns admitted this epoch under the
          * unchanged predicates (departed / stale / freed / reseed / pinned columns
          * are marginalized out of Σ, never conditioned on), adds q·gap and the var
-         * floor on the diagonal only, factors Σ = LLᵀ (LLT with a ridge retry;
-         * on failure it falls back to the per-column rows and counts it), and emits n
-         * unit-weight rows
-         * L⁻¹·[(value_abs − x_lin) + Σ_j M_j ŝ_prev,j], with A_r = L⁻¹ over the
-         * block's local columns and A_s = L⁻¹·(per-column regressor rows).
+         * floor on the diagonal only, factors Σ = LLᵀ (LLT with a ridge retry; on
+         * failure it falls back to the per-column rows and counts it), and emits n
+         * unit-weight rows L⁻¹·[(value_abs − x_lin) + Σ_j M_j ŝ_prev,j], with A_r = L⁻¹
+         * over the block's local columns and A_s = L⁻¹·(per-column regressor rows).
          *
-         * That is exact for every local-local direction given the border (the
-         * per-LOS iono direction and the station-common ones alike).  The harvest
-         * re-stashes the whole
-         * block each epoch from the posterior, so Σ does not drift.
+         * That is exact for every local-local direction given the border (the per-LOS
+         * iono direction and the station-common ones alike).  The harvest re-stashes
+         * the whole block each epoch from the posterior, so Σ does not drift.
          *
          * Requires @c network.carry_conditional_coupling (the rows live in A_s/A_r);
          * otherwise it is inert with a loader warning.  It is also inert
@@ -2177,8 +2175,9 @@ namespace GnssProcessor {
          * @f$M_i^\top B M_k@f$ with @f$B=P-P_{K,S}(P_{SS}+Q_S)^{-1}P_{S,K}@f$.  With this
          * knob, every pair of rows of a station's local block that both took the exact
          * route gets that term in @f$\Sigma_{ik}@f$ (@ref couplingExactCross), after the
-         * harvested conditional covariances; a row on card 1d's route adds none.  The cross-station half of the same covariance stays
-         * out.  Inert without the whitened local block (counted at the run end).
+         * harvested conditional covariances; a row on card 1d's route adds none.  The
+         * cross-station half of the same covariance stays out.  Inert without the
+         * whitened local block (counted at the run end).
          *
          * Requires @ref networkCarryCouplingExactUpdate (hard error at load).
          * Fingerprinted.  Default false = the per-row form (byte-identical).
@@ -2215,8 +2214,8 @@ namespace GnssProcessor {
          * @ref networkSharedCarryFullCov; refuses @c network.clock_model (no clock in the
          * carried border) and @c network.clock_anchor_gauge_free (the gauge-free
          * downdate's clock direction would have to include the clones); hard errors at
-         * load.  Fingerprinted (armed-only
-         * token).  Default false = card CTU's per-row form (byte-identical).
+         * load.  Fingerprinted (armed-only token).  Default false = card CTU's per-row
+         * form (byte-identical).
          * UNVALIDATED: built for the broadcast-grade clock walk; not recommended.
          */
         bool networkCarryCouplingClockClone() const { return network_carry_coupling_clock_clone_; }
@@ -2399,10 +2398,9 @@ namespace GnssProcessor {
          *
          * Interlocks (loader-enforced, warn + disable): requires @ref networkCarryZwd
          * and @ref networkPhaseLevelingLocalBlock, so the knob is never armed and inert.
-         * When the block does not factorize the
-         * ZWD degrades to the existing B9 diagonal row (counted,
-         * @c pl_blk_zwd_fallback_diag).  Default false = byte-identical (the harvest
-         * @c cols set, and therefore @c C's dimension, is unchanged).
+         * When the block does not factorize the ZWD degrades to the existing B9 diagonal
+         * row (counted, @c pl_blk_zwd_fallback_diag).  Default false = byte-identical
+         * (the harvest @c cols set, and therefore @c C's dimension, is unchanged).
          */
         bool networkCarryZwdInBlock() const { return network_carry_zwd_in_block_; }
 
@@ -2546,11 +2544,11 @@ namespace GnssProcessor {
          *
          * Interlocks (loader-enforced): requires @ref networkPhaseLeveling,
          * @ref networkPhaseLevelingLocalBlock and a structurally buildable F3 block
-         * (@ref networkCarryConditionalCoupling on), otherwise warn + disable, since an armed but inert knob is not allowed
-         * (invariant #4); disabled with a warning under @ref networkCarryInvariant (F3
-         * is structurally inert there); a hard error on a negative q / gap / rate
-         * variance.  Default false = byte-identical (the harvest @c cols set, and
-         * therefore @c C's dimension, is unchanged).
+         * (@ref networkCarryConditionalCoupling on), otherwise warn + disable, since an
+         * armed but inert knob is not allowed (invariant #4); disabled with a warning
+         * under @ref networkCarryInvariant (F3 is structurally inert there); a hard error
+         * on a negative q / gap / rate variance.  Default false = byte-identical (the
+         * harvest @c cols set, and therefore @c C's dimension, is unchanged).
          */
         bool networkCarryRxClockInBlock() const { return network_carry_rx_clock_in_block_; }
 
@@ -5245,9 +5243,8 @@ namespace GnssProcessor {
          * warm-resume-restored entry whose @c birth_ep reads the restored sentinel
          * @ref LocalCarry::kBirthEpRestored, SPEC_event_harness §15.4) counts as mature,
          * the restored-entry convention (@ref localCarryYoung): the conservative
-         * direction is to let the
-         * variance ceiling decide rather than refuse a candidate the ledger says is
-         * converged.
+         * direction is to let the variance ceiling decide rather than refuse a candidate
+         * the ledger says is converged.
          *
          * The census behind the default: the 68 cold handovers of the §15 storm arm
          * sat at successor-arc age p50 39 epochs against the 237 continuous ones'

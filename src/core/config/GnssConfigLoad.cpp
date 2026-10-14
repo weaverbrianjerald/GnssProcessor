@@ -3416,8 +3416,9 @@ namespace GnssProcessor {
         // loadEstimationSection_ so every field reports its final, post-resolution
         // value.  loadFromJson calls this last, after every section helper and
         // every cross-section forcing (the W6 / GLONASS estimate_ifb_ promotions, the
-        // IMU parse, the real-time overrides), so what this prints is what the run uses.  Keep it last: a toggle on this line that a later
-        // section could still change would print a stale value.
+        // IMU parse, the real-time overrides), so what this prints is what the run uses.
+        // Keep it last: a toggle on this line that a later section could still change
+        // would print a stale value.
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 

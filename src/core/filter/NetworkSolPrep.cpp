@@ -857,19 +857,19 @@ NetworkSolPrepResult networkSolPrep(
         }
     }
     // The deterministic IF-pin re-selection discontinuity (T3c).  It is resolved only
-    // here at the emit site, so it compares against the
-    // last emitted product's pair, the same discipline as prev_pivot and
-    // emitted_anchor.  For every emitted satellite, this product's selected pair
-    // (this_epoch_if_pin_sel, from the main pass) is compared with the last emitted
-    // pair (last_if_pin_sel).  A change re-references the emitted δtˢ↔dˢ split by the
-    // satellite's inter-channel bias, so its per-satellite disc bump is forced (phase,
-    // code and clock counters).  Because the baseline advances only here, a transient
-    // pin move on a withheld epoch (which never reaches this point) is dropped, and a
-    // pair that leaves and returns to the same emitted reference across withheld
-    // epochs raises no bump.  Only emitted satellites are compared and advanced; a
-    // satellite withheld this epoch keeps its last emitted baseline and is compared
-    // when it next emits.  The scratch map is empty when emit_clock_disc is off, so the
-    // block does nothing and the output is byte-identical.
+    // here at the emit site, so it compares against the last emitted product's pair,
+    // the same discipline as prev_pivot and emitted_anchor.  For every emitted
+    // satellite, this product's selected pair (this_epoch_if_pin_sel, from the main
+    // pass) is compared with the last emitted pair (last_if_pin_sel).  A change
+    // re-references the emitted δtˢ↔dˢ split by the satellite's inter-channel bias,
+    // so its per-satellite disc bump is forced (phase, code and clock counters).
+    // Because the baseline advances only here, a transient pin move on a withheld
+    // epoch (which never reaches this point) is dropped, and a pair that leaves and
+    // returns to the same emitted reference across withheld epochs raises no bump.
+    // Only emitted satellites are compared and advanced; a satellite withheld this
+    // epoch keeps its last emitted baseline and is compared when it next emits.  The
+    // scratch map is empty when emit_clock_disc is off, so the block does nothing and
+    // the output is byte-identical.
     if (!this_epoch_if_pin_sel.empty()) {
         std::set<std::string> present;
         for (const auto& s : sol.sats) present.insert(s.sat);
@@ -927,8 +927,8 @@ NetworkSolPrepResult networkSolPrep(
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
             // Full scope (Card MS): the IF-pin re-selection re-references the emitted
-            // dt^s <-> d^s split by the satellite's inter-channel bias, the same
-            // three-channel re-split as the re-latch above.
+            // dt^s <-> d^s split by the satellite's inter-channel bias, so all three
+            // channels step.
             if (!fresh.empty())
                 emitter.markSatDiscontinuity(fresh, NetworkProductEmitter::kDiscChanAll);
             retro_emit_sats.insert(mark.begin(), mark.end());
@@ -942,13 +942,13 @@ NetworkSolPrepResult networkSolPrep(
     // pending set here, at the emit site, which every whole-epoch withhold path skips
     // with `continue`.  A transient re-seed on an epoch that was then withheld never
     // enters the pending set (no bump without an emitted step), while a re-seed the
-    // driver did realize is kept and deferred like the eph-cutover and basis-relatch
-    // bumps: a re-seeded satellite absent from this emission (pruned by the quarantine
-    // or the per-constellation withhold) waits for its next actual emit, so the bump
-    // lands with the satellite present, and the landed mark folds into retro_emit_sats
-    // (Q3 trap-1) so the R record carries it to a replay.  Both sets are filled only
-    // under code_datum_time_linked, so otherwise the block does nothing and the output
-    // is byte-identical.
+    // driver did realize is kept and deferred like the eph-cutover bumps: a re-seeded
+    // satellite absent from this emission (pruned by the quarantine or the
+    // per-constellation withhold) waits for its next actual emit, so the bump lands
+    // with the satellite present, and the landed mark folds into retro_emit_sats (Q3
+    // trap-1) so the R record carries it to a replay.  Both sets are filled only under
+    // code_datum_time_linked, so otherwise the block does nothing and the output is
+    // byte-identical.
     for (const auto& sat : this_epoch_cb_reseed) cb_reseed_disc_pending.insert(sat);
     if (!cb_reseed_disc_pending.empty()) {
         std::set<std::string> present, mark, still_pending;
@@ -1072,12 +1072,12 @@ NetworkSolPrepResult networkSolPrep(
     // Code-bias datum declaration (§1.5): refresh the realized code-bias datum (cbpin=)
     // on every emit, not once at the first, the same discipline the realized clock
     // pivots follow (NetworkEmitStore refreshes clock_pivot_sat / pdr= in place before
-    // each RTA-5 re-broadcast).  A declaration
-    // stamped once would go stale on the wire after a channel-set shift moved the pin,
-    // which is the silent mis-framing the token exists to prevent.  The maps are built
-    // fresh and assigned whole, so a constellation that stops being unanimous drops its
-    // declaration at the next broadcast instead of keeping the last good one: a missing
-    // declaration is safe for a consumer, a stale pair is not.
+    // each RTA-5 re-broadcast).  A declaration stamped once would go stale on the wire
+    // after a channel-set shift moved the pin, which is the silent mis-framing the token
+    // exists to prevent.  The maps are built fresh and assigned whole, so a
+    // constellation that stops being unanimous drops its declaration at the next
+    // broadcast instead of keeping the last good one: a missing declaration is safe for
+    // a consumer, a stale pair is not.
     {
         // Declare the realized code-bias IF pin pair per constellation (the §1.5 fill).
         // The S-line `cbpin=` field, its parser and its contract comparison come from
@@ -1101,10 +1101,10 @@ NetworkSolPrepResult networkSolPrep(
         // emit_clock_disc defaults to false, and a run without it would declare no
         // cbpin.  Declaration only: the solve and every emitted value are unchanged.
         //
-        // This producer declares no gfpin= (the wire field NetworkProductContract::
-        // gf_pin_pair stays in the contract, the S-line writer and the parser for
-        // products written with the retired network.code_bias_gf_datum, and is left
-        // empty here).
+        // This producer declares no gfpin=.  The wire field
+        // NetworkProductContract::gf_pin_pair stays in the contract, the S-line writer and
+        // the parser for products written with the retired network.code_bias_gf_datum,
+        // and is left empty here.
         std::map<char, std::set<std::pair<std::string, std::string>>> by_const;
         std::set<std::string> emitted_sats;
         for (const auto& s : sol.sats) emitted_sats.insert(s.sat);

@@ -2354,8 +2354,7 @@ int networkSbasisDatumRunEnd(const NetworkRunEndView& v) {
                       "the absolute target ({:.1f} % anchored — first sightings).  The "
                       "anchored rows are the ONLY place the broadcast frame is re-asserted; "
                       "a run with very few of them has carried its frame from ignition and "
-                      "never re-checked it, which is the cost of this arm and the thing to "
-                      "weigh against the level row e1 folds instead.",
+                      "never re-checked it, which is the cost of this arm.",
                       ctx.counters.n_sat_gf_carried, ctx.counters.n_sat_gf_anchored,
                       100.0 * static_cast<double>(ctx.counters.n_sat_gf_anchored)
                           / static_cast<double>(tot));

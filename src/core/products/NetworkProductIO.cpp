@@ -537,13 +537,13 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
         out_ << ",cbpin=" << cst << ':' << pair;
     // The geometry-free datum pair (the retired network.code_bias_gf_datum, Odijk rd
     // 3b; the producer no longer fills it, so it is written only for a contract read
-    // from such a product).  Its presence is the payload: it states that the emitted code biases are the
-    // slant-posture estimable function (pinned pair ≡ datum, content only from
-    // j >= 3, each satellite's GF bias absorbed by the ionosphere per Table 8) rather
-    // than the single-layer one, on an otherwise identical record layout.  Written
-    // only when non-empty, so a single-layer producer writes the S line
-    // byte-for-byte.  It is an interpretation hint, not a replay-emitter parameter:
-    // makeReplayEmitter ignores it, and checkContract compares it only for
+    // from such a product).  Its presence is the payload: it states that the emitted
+    // code biases are the slant-posture estimable function (pinned pair ≡ datum,
+    // content only from j >= 3, each satellite's GF bias absorbed by the ionosphere per
+    // Table 8) rather than the single-layer one, on an otherwise identical record
+    // layout.  Written only when non-empty, so a single-layer producer writes the S
+    // line byte-for-byte.  It is an interpretation hint, not a replay-emitter
+    // parameter: makeReplayEmitter ignores it, and checkContract compares it only for
     // constellations the consumer declares.
     for (const auto& [cst, pair] : contract.gf_pin_pair)
         out_ << ",gfpin=" << cst << ':' << pair;

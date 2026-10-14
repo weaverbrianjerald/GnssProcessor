@@ -277,9 +277,8 @@ TEST(CarryZwdInBlockTest, IsZwdFlagChangesTelemetryOnlyNotTheAlgebra) {
 // =============================================================================
 //
 // Byte-identical ingredients are asserted bitwise (EXPECT_EQ on doubles): the off-path
-// ZWD row's weight, RHS, primary column and
-// border coefficient equal what buildCplRow emits standalone, and the row is a
-// scalar row (empty `local`), not a block row.
+// ZWD row's weight, RHS, primary column and border coefficient equal what buildCplRow
+// emits standalone, and the row is a scalar row (empty `local`), not a block row.
 TEST(CarryZwdInBlockTest, KnobOffLeavesKBlockRowsAndTheZwdAsTheDiagonalB9Row) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};   // 3 ambiguities; ZWD not in C
     auto blk = makeHarvestBlock(cdiag, 0.0060);

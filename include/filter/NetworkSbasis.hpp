@@ -714,8 +714,8 @@ public:
         Eigen::MatrixXd H;      ///< k × numShared gauge Jacobian (0 rows ⇒ fold nothing).
         Eigen::VectorXd z;      ///< Length-k RHS: 0 except on time-linked rows (card 2, RF-0e e2: carried previous-epoch values) and on RF-0c geometry-free rows under `broadcast_tgd` (the latched group delay).
         /// One contribution kind per row of @c H, in row order (card NOM N2a): the row type
-        /// (IF pin, sat-GF pair, extra-band held, extra GF, sum-to-zero).  The fold site hands it to
-        /// @c NetworkEstimator::contributionRowKinds.
+        /// (IF pin, sat-GF pair, extra-band held, extra GF, sum-to-zero).  The fold site
+        /// hands it to @c NetworkEstimator::contributionRowKinds.
         std::vector<ContributionKind> row_kinds;
         int n_if_pin_sats{0};   ///< Satellites attempted for the IF pin (census order size).
         int n_s2z_channels{0};  ///< (constellation, signal) sum-to-zero channels registered, suppressed ones included.

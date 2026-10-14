@@ -18,12 +18,11 @@
  *   - B1 per-sat URA (+ RTB-7 cold-start quality ramp) and B1b per-(sat,signal)
  *     phase-bias σ;
  *   - datum-bump + PIVOT events, the retro-bump / eph-cutover / CB-excursion /
- *     clock-anchor / basis-relatch / IF-pin-reselect / CB-reseed per-sat
- *     discontinuity landings (all emit-only,
- *     replay-faithful present/pending splits), the prev_pivot/last_pivot +
- *     emitted_anchor emit-baseline advance, the deferred v2 contract-writer open,
- *     the M4 combined-correction σ (sigc/sigcc/rho), and the L14 satellite
- *     bias-state trace.
+ *     clock-anchor / IF-pin-reselect / CB-reseed per-sat discontinuity landings
+ *     (all emit-only, replay-faithful present/pending splits), the
+ *     prev_pivot/last_pivot + emitted_anchor emit-baseline advance, the deferred v2
+ *     contract-writer open, the M4 combined-correction σ (sigc/sigcc/rho), and the
+ *     L14 satellite bias-state trace.
  *
  * Created at decomposition INC-11pre, which moved the SB_SOLPREP block unchanged out
  * of Application::runNetwork (dedent only, no substitution).  Owns no state: every
@@ -79,8 +78,8 @@ struct NetworkSolPrepResult {
     std::set<char>           serialized_consts;     ///< The per-constellation datum-bump set (product write).
     std::set<std::string>    retro_emit_sats;       ///< Per-sat disc bumps that landed this emit: B1 retro plus the
                                                     ///< folded queue marks (eph-cutover / CB-excursion / clock-anchor /
-                                                    ///< basis-relatch / IF-pin reselect / CB-reseed), serialized as the
-                                                    ///< R record (replay) + heartbeat.
+                                                    ///< IF-pin reselect / CB-reseed), serialized as the R record
+                                                    ///< (replay) + heartbeat.
 };
 
 /**
