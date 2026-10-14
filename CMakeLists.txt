@@ -691,6 +691,7 @@ add_executable(gnss_tests
     tests/test_observation_equation.cpp
     tests/test_row_trace.cpp
     tests/test_seeds.cpp
+    tests/test_gnss_identity_user.cpp
     tests/network/test_network_param_inventory.cpp
     tests/network/test_station_params.cpp
     tests/network/test_station_births.cpp

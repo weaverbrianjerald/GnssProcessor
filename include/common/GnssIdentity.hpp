@@ -940,4 +940,61 @@ namespace GnssProcessor {
         return a.signal < b.signal;
     }
 
+    // =======================================================================
+    // User-side helpers
+    // =======================================================================
+    //
+    // The reads the user-side call sites need that the types above do not give in one line.
+    // Each one equals, for every input, the idiom it replaces at those sites.  Where two
+    // sites wrote one idea two ways, the variants carry two names and the inputs on which
+    // they differ are documented; nothing here unifies them.
+
+    /**
+     * @brief True when a signal label is an ionosphere-free pair label ("L1C_L2W") rather
+     *        than a single signal ("L1C"): the label holds a '_' anywhere.
+     *
+     * The test the user side writes as @c label.find('_') @c != @c npos (and negates for
+     * "raw signal only"), equal to it for every input: an empty label is false, a label with
+     * two separators ("L1C_L2W_L5Q") is true, and the double-difference row label of an
+     * ionosphere-free combination ("L1C+L2W") holds no '_' and is false, as it is at those
+     * sites.  Nothing else is checked: @ref IonoFreePairLabel::parse is the stricter reading
+     * (a '_' with text on both sides) and @ref SignalPair::parse the validating parser.
+     *
+     * @param label The signal label, e.g. "L1C" or "L1C_L2W".
+     * @return True when @p label contains '_'.
+     */
+    constexpr bool isIonoFreePairLabel(std::string_view label) {
+        return label.find('_') != std::string_view::npos;
+    }
+
+    /**
+     * @brief The two member labels of an ionosphere-free pair label, as text: "L1C_L2W"
+     *        holds "L1C" and "L2W".
+     *
+     * The split that MeasurementModel's ionosphere-free coverage checks and the MW and IF
+     * phase detectors' @c splitIfLabel write by hand.  The members stay the text of the
+     * label: no constellation is needed and no code is validated (@ref SignalPair::parse is
+     * the typed, validating parse of the same text).
+     */
+    struct IonoFreePairLabel {
+        std::string first;   ///< The text before the first '_', e.g. "L1C".
+        std::string second;  ///< The text after the first '_', e.g. "L2W".
+
+        /**
+         * @brief Split a label at its first '_' when that '_' has text on both sides.
+         *
+         * Equal for every input to the sites' idiom: @c us = @c label.find('_') is a pair
+         * when @c us @c != @c npos, @c us @c > @c 0 and @c us @c + @c 1 @c < @c size, with the
+         * members @c substr(0, us) and @c substr(us + 1).  Stricter than
+         * @ref isIonoFreePairLabel, which is true for "_L2W", "L1C_" and "_", all three
+         * refused here.  A second '_' stays in @ref second ("L1C_L2W_L5Q" holds "L1C" and
+         * "L2W_L5Q"), and the members' length is not checked.
+         *
+         * @param label The signal label.
+         * @return The two members, or @c std::nullopt when @p label holds no '_' or holds
+         *         its first '_' as its first or last character.
+         */
+        static std::optional<IonoFreePairLabel> parse(std::string_view label);
+    };
+
 } // namespace GnssProcessor

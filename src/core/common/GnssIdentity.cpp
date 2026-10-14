@@ -178,4 +178,14 @@ namespace GnssProcessor {
         return a.obsCode(type) + "_" + b.obsCode(type);
     }
 
+    // -----------------------------------------------------------------------
+    // User-side helpers
+    // -----------------------------------------------------------------------
+
+    std::optional<IonoFreePairLabel> IonoFreePairLabel::parse(std::string_view label) {
+        const std::size_t us = label.find('_');
+        if (us == std::string_view::npos || us == 0 || us + 1 >= label.size()) return std::nullopt;
+        return IonoFreePairLabel{std::string(label.substr(0, us)), std::string(label.substr(us + 1))};
+    }
+
 } // namespace GnssProcessor
