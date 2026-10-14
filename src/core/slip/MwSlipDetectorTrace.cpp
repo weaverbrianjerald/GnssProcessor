@@ -8,6 +8,7 @@
  */
 
 #include "slip/MwSlipDetector.hpp"
+#include "common/GnssIdentity.hpp"
 #include <cmath>
 #include <filesystem>
 #include <iomanip>
@@ -95,7 +96,7 @@ namespace GnssProcessor {
         mwwl_trace_ << std::fixed << std::setprecision(3)
                     << current_epoch_.week << "," << current_epoch_.tow << ","
                     << obs.satellite << ","
-                    << PppUtils::getSystemString(obs.system) << ","
+                    << systemName(obs.system) << ","
                     << std::setprecision(2) << elev_deg << ","
                     << sig1 << "," << sig2 << ","
                     << std::setprecision(6) << mw_m << "," << to_cyc(mw_m) << ",";

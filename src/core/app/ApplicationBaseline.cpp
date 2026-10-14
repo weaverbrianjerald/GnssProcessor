@@ -26,6 +26,7 @@
 #include "app/EpochUpdateSupport.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "math/TimeUtils.hpp"
+#include "common/GnssIdentity.hpp"
 #include "model/ModelGeometry.hpp"
 #include "products/ProductCache.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -182,7 +183,7 @@ std::vector<PppObservation> toMinimalPppObs(const std::vector<RinexObservation>&
         // active" to preserve legacy behavior when the field is
         // unset.
         if (!active_systems.empty()) {
-            const std::string cons = PppUtils::getSystemString(r.system);
+            const std::string cons = systemName(r.system);
             if (!active_systems.count(cons)) continue;
         }
         PppObservation p{};
@@ -209,21 +210,6 @@ std::vector<PppObservation> toMinimalPppObs(const std::vector<RinexObservation>&
         out.push_back(std::move(p));
     }
     return out;
-}
-
-// Constellation lookup used by the post-Applied stats loop.
-std::string constellationOfSatPairId(const std::string& sid) {
-    if (sid.empty()) return {};
-    switch (sid[0]) {
-    case 'G': return "GPS";
-    case 'E': return "Galileo";
-    case 'R': return "GLONASS";
-    case 'C': return "BeiDou";
-    case 'J': return "QZSS";
-    case 'S': return "SBAS";
-    case 'I': return "IRNSS";
-    default:  return std::string(1, sid[0]);
-    }
 }
 
 } // namespace
@@ -1240,7 +1226,7 @@ void Application::recordCommittedBaselineEpoch_(const BaselineRunWork& run, Base
             const auto dash = sid.find('-');
             if (dash != std::string::npos && dash + 1 < sid.size()) {
                 const std::string pivot = sid.substr(dash + 1);
-                const std::string cons = constellationOfSatPairId(pivot);
+                const std::string cons = ddConstellationName(pivot);
                 pivot_counts[cons + ":" + pivot]++;
                 constellation_dd[cons]++;
             }

@@ -11,6 +11,7 @@
 
 #include "slip/MwSlipDetector.hpp"
 #include "slip/MwDetectorWork.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include <cmath>
 #include <iterator>
@@ -287,7 +288,7 @@ namespace GnssProcessor {
 
             if (has_bia) {
                 // Collect for two-pass BSSD integer processing
-                const char cons = obs.satellite.empty() ? '?' : obs.satellite[0];
+                const char cons = letterOfSat(obs.satellite);
                 const std::string group_key = std::string(1, cons) + "_" + s1 + "_" + s2;
                 sd_groups[group_key][obs.satellite] = {
                     &obs, { s1, s2, c1, c2 }, mw_raw, mw_bia,
@@ -362,7 +363,7 @@ namespace GnssProcessor {
             const double mw_bia = has_bia ? (mw_raw - sat_bias) : mw_raw;
 
             if (has_bia) {
-                const char cons = obs.satellite.empty() ? '?' : obs.satellite[0];
+                const char cons = letterOfSat(obs.satellite);
                 const std::string group_key = std::string(1, cons) + "_" + pair.phase1 + "_" + pair.phase2;
                 sd_groups[group_key][obs.satellite] = {
                     &obs, pair, mw_raw, mw_bia,
@@ -424,11 +425,11 @@ namespace GnssProcessor {
                           obs.satellite, pair.phase1, pair.phase2, lambda_wl, mw_raw,
                           has_bia ? 1 : 0,
                           has_bia ? "BSSD-pass2" : "direct-no-BIA",
-                          has_bia ? (std::string{ obs.satellite[0] } + "_" + pair.phase1 + "_" + pair.phase2) : std::string{ "<none>" });
+                          has_bia ? (std::string{ letterOfSat(obs.satellite) } + "_" + pair.phase1 + "_" + pair.phase2) : std::string{ "<none>" });
 
             if (has_bia) {
                 // Collect for two-pass BSSD integer processing
-                const char cons = obs.satellite.empty() ? '?' : obs.satellite[0];
+                const char cons = letterOfSat(obs.satellite);
                 const std::string group_key = std::string(1, cons) + "_" + pair.phase1 + "_" + pair.phase2;
                 sd_groups[group_key][obs.satellite] = {
                     &obs, pair, mw_raw, mw_bia,

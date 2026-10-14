@@ -25,6 +25,7 @@
 
 #include "slip/TurboEditResolver.hpp"
 #include "slip/TurboEditEpochWork.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "math/RobustStats.hpp"
 #include <algorithm>
@@ -262,7 +263,7 @@ double TurboEditResolver::xsatSigmaFloor(const std::string& arc_key,
         if (it != xsat_sigma_cons_.end() && std::isfinite(it->second))
             sigma = it->second;
     }
-    if (!std::isfinite(sigma) && arc_key.front() != 'R'   // Tier 3: global
+    if (!std::isfinite(sigma) && systemFromLetter(arc_key.front()) != System::GLONASS  // Tier 3: global
         && std::isfinite(xsat_sigma_global_)) {           // (non-GLONASS, as in MW)
         sigma = xsat_sigma_global_;
     }
@@ -302,7 +303,7 @@ void TurboEditResolver::finalizeXsatSigmas() {
         if (!isNarrowPair(gkey)) {
             auto& cd = cons_devs[std::string(1, gkey.front())];
             cd.insert(cd.end(), devs.begin(), devs.end());
-            if (gkey.front() != 'R')
+            if (systemFromLetter(gkey.front()) != System::GLONASS)
                 global_devs.insert(global_devs.end(), devs.begin(), devs.end());
         }
 

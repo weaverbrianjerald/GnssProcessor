@@ -11,6 +11,7 @@
 
 #include "slip/MwSlipDetector.hpp"
 #include "slip/MwDetectorWork.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/PppUtils.hpp"
 #include <algorithm>
@@ -929,7 +930,7 @@ namespace GnssProcessor {
                     "MW TD flag on locked {} ({}) coincides with a "
                     "bias-frame flip (sample bia={}, arc bia={}); "
                     "absorbing as a frame artifact, no confirmation.",
-                    obs.satellite, PppUtils::getSystemString(obs.system),
+                    obs.satellite, systemName(obs.system),
                     bia_corrected, stats.bia_corrected);
             } else if (use_td && (pivot_zd_slip_in != 0 || !pivot_zd_known_in)) {
                 // The pivot's own ZD slipped this epoch: every locked
@@ -946,7 +947,7 @@ namespace GnssProcessor {
                     "slip (pivot dN={}, known={}): emitting immediate "
                     "unknown-integer slip and restarting arc (no "
                     "deferral across a moved SD frame).",
-                    obs.satellite, PppUtils::getSystemString(obs.system),
+                    obs.satellite, systemName(obs.system),
                     pivot_zd_slip_in, pivot_zd_known_in);
                 verdict.slip_cycles = 0;
                 verdict.wl_known    = false;
@@ -975,7 +976,7 @@ namespace GnssProcessor {
                     "({:.1f} WL) > thresh={:.3f} m, N_WL={}; pending "
                     "one-epoch step/outlier confirmation (integer "
                     "withheld from AR).",
-                    obs.satellite, PppUtils::getSystemString(obs.system),
+                    obs.satellite, systemName(obs.system),
                     std::abs(dev), std::abs(dev) / lambda_wl, thresh,
                     stats.rounded_wl);
             } else {
@@ -984,7 +985,7 @@ namespace GnssProcessor {
                     "> thresh={:.3f} m, N_WL={}, mean_cyc={:.3f}; "
                     "absorbing into Welford (drift-demotion will fire if "
                     "persistent).",
-                    obs.satellite, PppUtils::getSystemString(obs.system),
+                    obs.satellite, systemName(obs.system),
                     std::abs(dev), std::abs(dev) / lambda_wl, thresh,
                     stats.rounded_wl, stats.mean / lambda_wl);
             }
@@ -1044,7 +1045,7 @@ namespace GnssProcessor {
                 "> thresh={:.3f} m ({:.1f} WL), ref={:.3f} m ({}), "
                 "sigma={:.4f} m, arc_n={}, lambda_wl={:.3f} m, bia={}, "
                 "locked=no, delta_wl={}",
-                obs.satellite, PppUtils::getSystemString(obs.system),
+                obs.satellite, systemName(obs.system),
                 std::abs(dev), std::abs(dev) / lambda_wl,
                 thresh, thresh / lambda_wl,
                 use_local ? local_ref

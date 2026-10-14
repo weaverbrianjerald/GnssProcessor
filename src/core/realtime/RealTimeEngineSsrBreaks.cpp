@@ -19,6 +19,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/PppUtils.hpp"
 #include "measurement/StateInitializer.hpp"
@@ -334,7 +335,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                     // network.closed_loop.roster_latch and a declaration, so every
                     // earlier wire keeps the existing reaction unchanged.
                     const bool suppress = noteFreshnessFlip_(
-                        key, obs.satellite, code, PppUtils::getSystemString(obs.system),
+                        key, obs.satellite, code, systemName(obs.system),
                         "phase", it->second, applied_now,
                         static_cast<bool>(ssr.getPhaseBias(obs.satellite, code)),
                         obs.time);
@@ -770,7 +771,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                 if (auto c = ssr.getCodeBiasDiscontinuity(obs.satellite, code)) {
                     if (state_manager_->noteSsrDiscontinuity(
                             "CB|" + obs.satellite + "|" + code, *c)) {
-                        reref_systems.insert(PppUtils::getSystemString(obs.system));
+                        reref_systems.insert(systemName(obs.system));
                         // The rx code-bias re-inflation is constellation-scoped, but
                         // the declaration that triggered it belongs to this (sat,
                         // signal), so the event is recorded there (no-op
@@ -801,7 +802,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                         // stale, so its disappearance is not a datum re-reference.
                         const bool suppress = noteFreshnessFlip_(
                             fkey, obs.satellite, code,
-                            PppUtils::getSystemString(obs.system), "code",
+                            systemName(obs.system), "code",
                             it->second, applied_now,
                             ssr.hasCodeBias(obs.satellite, code), obs.time);
                         if (suppress) {
@@ -813,7 +814,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                                       epoch_prefix, it->second ? "applied" : "absent",
                                       applied_now ? "applied" : "absent", obs.satellite, code);
                         } else {
-                            reref_systems.insert(PppUtils::getSystemString(obs.system));
+                            reref_systems.insert(systemName(obs.system));
                             noteConsumerSatEvent_(obs.satellite + "|" + code,
                                                   "reinflate_flip");   // consumer satellite trace (no-op unarmed)
                             log->info("{}SSR code-bias freshness flip ({} -> {}): {} {} "
@@ -1109,7 +1110,7 @@ void RealTimeEngine::reactToEphemerisJumps_(RtEpochContext& ctx) {
         state_sats.insert(kv.first.substr(0, kv.first.find('_')));
 
     for (const auto& ev : jumps) {
-        const std::string cons = PppUtils::getSystemString(ev.satellite);
+        const std::string cons = systemName(systemOfSat(ev.satellite));
         const auto pit = pivots.find(cons);
         const bool is_pivot = pit != pivots.end() && pit->second == ev.satellite;
         if (is_pivot) ++eph_jump_pivot_;
@@ -1155,10 +1156,10 @@ int RealTimeEngine::reseedAfterEphemerisJump_(const std::string& sat, double jum
 std::set<std::string> RealTimeEngine::ephemerisJumpTargets(
         const std::string& sat, bool is_pivot, const std::set<std::string>& state_sats) {
     if (!is_pivot) return { sat };
-    const std::string cons = PppUtils::getSystemString(sat);
+    const std::string cons = systemName(systemOfSat(sat));
     std::set<std::string> out;
     for (const std::string& s : state_sats)
-        if (s != sat && PppUtils::getSystemString(s) == cons) out.insert(s);
+        if (s != sat && systemName(systemOfSat(s)) == cons) out.insert(s);
     return out;
 }
 

@@ -25,6 +25,7 @@
 
 #include "slip/IfPhaseSlipDetector.hpp"
 #include "slip/IfPhaseChainWork.hpp"
+#include "common/GnssIdentity.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -72,7 +73,7 @@ namespace GnssProcessor {
         const double lambda_if = computeIfWavelengthMeters(obs, sig1, sig2);
         if (lambda_if <= 0.0) return;
 
-        result[PppUtils::getSystemString(obs.system)].push_back(
+        result[systemName(obs.system)].push_back(
             { obs.satellite, phase_if_key, sig1, sig2,
               phi_if_omc, obs.elevation, lambda_if, obs.system, obs.los });
     }

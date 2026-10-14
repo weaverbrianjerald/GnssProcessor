@@ -9,6 +9,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/PppUtils.hpp"
 #include <map>
@@ -40,7 +41,7 @@ void RealTimeEngine::detectAndRepairSlips(RtEpochContext& ctx) {
     auto isBssdPivot = [&](const std::string& sat) -> bool {
         if (!config_.enableBetweenSatelliteSd()) return false;
         const auto& pivots = meas_model_->getBssdPivotSatellites();
-        auto it = pivots.find(PppUtils::getSystemString(sat));
+        auto it = pivots.find(systemName(systemOfSat(sat)));
         return it != pivots.end() && it->second == sat;
     };
 

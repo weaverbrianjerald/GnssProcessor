@@ -10,6 +10,7 @@
  */
 
 #include "slip/CycleSlipManager.hpp"
+#include "common/GnssIdentity.hpp"
 #include <cmath>
 
 namespace GnssProcessor {
@@ -42,7 +43,7 @@ void CycleSlipManager::resetAmbiguityBssdAware(
     }
 
     const auto& pivots = meas_model.getBssdPivotSatellites();
-    const std::string cons = PppUtils::getSystemString(sat_id);
+    const std::string cons = systemName(systemOfSat(sat_id));
     auto piv_it = pivots.find(cons);
 
     if (piv_it == pivots.end()) {
@@ -167,7 +168,7 @@ bool CycleSlipManager::repairAmbiguityBssdAware(
     // handover, which losslessly re-references the entire SD frame.
     if (config_.enableBetweenSatelliteSd()) {
         const auto& pivots = meas_model.getBssdPivotSatellites();
-        const std::string cons = PppUtils::getSystemString(sat_id);
+        const std::string cons = systemName(systemOfSat(sat_id));
         auto piv_it = pivots.find(cons);
         if (piv_it != pivots.end() && piv_it->second == sat_id) {
             log->info("{}MW slip repair refused: {} {} is the BSSD pivot; "

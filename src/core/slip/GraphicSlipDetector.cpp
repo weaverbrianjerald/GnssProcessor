@@ -13,6 +13,7 @@
 
 #include "slip/GraphicSlipDetector.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/RobustStats.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
@@ -189,7 +190,7 @@ namespace GnssProcessor {
         trace_file_ << std::fixed << std::setprecision(3)
                     << current_epoch_.week << "," << current_epoch_.tow << ","
                     << obs.satellite << ","
-                    << PppUtils::getSystemString(obs.system) << ","
+                    << systemName(obs.system) << ","
                     << std::setprecision(2) << obs.elevation << ","
                     << phase_sig << ","
                     << std::setprecision(6) << graphic << ","

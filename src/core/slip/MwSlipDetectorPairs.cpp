@@ -13,6 +13,7 @@
 
 #include "slip/MwSlipDetector.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/SignalBand.hpp"
 #include "model/PppModel.hpp"  // getAllowedBandDigits
 #include <algorithm>
@@ -75,7 +76,7 @@ namespace GnssProcessor {
         if (!(std::isfinite(f1) && std::isfinite(f2) && f1 > 0.0 && f2 > 0.0)) {
             log_manager_.getLogger("mw_slip_detector")->debug(
                 "Invalid frequencies for {} {}: sig1={} f1={:.3f} MHz, sig2={} f2={:.3f} MHz",
-                obs.satellite, PppUtils::getSystemString(obs.system),
+                obs.satellite, systemName(obs.system),
                 sig1, f1 / 1e6, sig2, f2 / 1e6);
             return 0.0;
         }
@@ -129,19 +130,9 @@ namespace GnssProcessor {
         // unfiltered by definition.  Map the constellation prefix once.
         std::set<char> allowed_digits;  // empty means "no filter"
         if (mw_freq_raw == MwFrequencyMode::Dual || mw_freq_raw == MwFrequencyMode::Triple) {
-            auto consName = [](char c) -> std::string {
-                switch (c) {
-                case 'G': return "GPS";
-                case 'E': return "Galileo";
-                case 'R': return "GLONASS";
-                case 'C': return "BeiDou";
-                case 'J': return "QZSS";
-                case 'S': return "SBAS";
-                case 'I': return "IRNSS";
-                default:  return {};
-                }
-            };
-            const std::string cons = obs.satellite.empty() ? "" : consName(obs.satellite[0]);
+            // A satellite outside the six constellations reads "Unknown", which the band
+            // map does not list, so it gets no filter (as "IRNSS" and "" did before).
+            const std::string cons = systemName(systemOfSat(obs.satellite));
             const FrequencyMode fm =
                 (mw_freq_raw == MwFrequencyMode::Dual) ? FrequencyMode::Dual
                                                        : FrequencyMode::Triple;

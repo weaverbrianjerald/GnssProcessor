@@ -22,6 +22,7 @@
 #include "slip/IfPhaseSlipDetector.hpp"
 #include "slip/IfPhaseChainWork.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/RobustStats.hpp"
 #include <algorithm>
 #include <cmath>
@@ -173,7 +174,7 @@ namespace GnssProcessor {
         // byte-identical, also when (0, 1) passes the frequency guard and then
         // fails a later check, because the flag is set at the frequency guard,
         // where an index test would also have committed.
-        const std::string sys_key = PppUtils::getSystemString(obs.system);
+        const std::string sys_key = systemName(obs.system);
         const std::size_t n_use =
             all_pairs_ ? phase_signals.size() : std::size_t{ 2 };
         bool if_pair_taken = false;

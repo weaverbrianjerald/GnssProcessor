@@ -15,6 +15,7 @@
 
 #include "app/Application.hpp"
 #include "app/PppPipelineWork.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
 #include <cmath>
@@ -39,16 +40,7 @@ bool Application::collectEpochObservations(const std::vector<RinexObservation>& 
     const auto& active_systems = config_.getActiveSystems();
 
     while (epoch_idx < observations.size() && observations[epoch_idx].time.tow == current_time.tow) {
-        std::string obs_system;
-        switch (observations[epoch_idx].system) {
-        case System::GPS:     obs_system = "GPS";     break;
-        case System::Galileo: obs_system = "Galileo"; break;
-        case System::GLONASS: obs_system = "GLONASS"; break;
-        case System::BeiDou:  obs_system = "BeiDou";  break;
-        case System::QZSS:    obs_system = "QZSS";    break;
-        case System::SBAS:    obs_system = "SBAS";    break;
-        default:              obs_system = "Unknown";  break;
-        }
+        const std::string obs_system = systemName(observations[epoch_idx].system);
         if (std::find(active_systems.begin(), active_systems.end(), obs_system) != active_systems.end()) {
             epoch_obs.push_back(observations[epoch_idx]);
         }
@@ -411,13 +403,7 @@ void Application::refreshSubstitutedAtxQ_(const PppEpochWork& w) {
             if (u1 == std::string::npos) continue;
             const std::string sat = amb_key.substr(0, u1);
             if (sat.empty()) continue;
-            const System sys =
-                sat[0] == 'G' ? System::GPS :
-                sat[0] == 'E' ? System::Galileo :
-                sat[0] == 'R' ? System::GLONASS :
-                sat[0] == 'C' ? System::BeiDou :
-                sat[0] == 'J' ? System::QZSS :
-                sat[0] == 'S' ? System::SBAS : System::Unknown;
+            const System sys = systemOfSat(sat);
             if (sys == System::Unknown) continue;
             const std::string rest = amb_key.substr(u1 + 1);
             const auto u2 = rest.find('_');

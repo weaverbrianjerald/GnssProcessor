@@ -14,6 +14,7 @@
 #include "slip/MwSlipDetector.hpp"
 #include "math/RobustStats.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -184,7 +185,7 @@ namespace GnssProcessor {
             // MAD move-consumes the vector.
             auto& cd = cons_devs[std::string(1, cons_c)];
             cd.insert(cd.end(), devs.begin(), devs.end());
-            if (cons_c != 'R')
+            if (systemFromLetter(cons_c) != System::GLONASS)
                 global_devs.insert(global_devs.end(), devs.begin(), devs.end());
 
             if (devs.size() < kMinCrossSatSamples) continue;
@@ -244,7 +245,7 @@ namespace GnssProcessor {
             if (it != cross_sat_sigma_cons_.end() && std::isfinite(it->second))
                 sigma_xsat = it->second;
         }
-        if (!std::isfinite(sigma_xsat) && cons_c != 'R'           // Tier 3 (non-GLONASS)
+        if (!std::isfinite(sigma_xsat) && systemFromLetter(cons_c) != System::GLONASS  // Tier 3
             && std::isfinite(cross_sat_sigma_global_)) {
             sigma_xsat = cross_sat_sigma_global_;
         }

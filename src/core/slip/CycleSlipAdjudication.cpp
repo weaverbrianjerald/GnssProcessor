@@ -14,6 +14,7 @@
 #include "slip/CycleSlipManager.hpp"
 #include "slip/CycleSlipEpochWork.hpp"
 #include "slip/CycleSlipVerdict.hpp"
+#include "common/GnssIdentity.hpp"
 #include <algorithm>
 
 namespace GnssProcessor {
@@ -377,7 +378,7 @@ void CycleSlipManager::applyCulpritVerdict(SlipEpochWork& w,
 
     for (const auto& culprit : culprit_signals) {
         const std::string targeted_key = sat_id + "_" + culprit;
-        const std::string cons = PppUtils::getSystemString(sat_id);
+        const std::string cons = systemName(systemOfSat(sat_id));
         const bool pivot_affected =
             pivot_affected_cons_sig.count({cons, culprit}) > 0;
 
@@ -558,7 +559,7 @@ void CycleSlipManager::holdOrResetLliArcs(SlipEpochWork& w,
     bool is_bssd_pivot = false;
     if (config_.enableBetweenSatelliteSd()) {
         const auto& pivots = meas_model.getBssdPivotSatellites();
-        auto pit = pivots.find(PppUtils::getSystemString(sat_id));
+        auto pit = pivots.find(systemName(systemOfSat(sat_id)));
         is_bssd_pivot = (pit != pivots.end() && pit->second == sat_id);
     }
     if (!is_bssd_pivot && soft_lli_.qualifies(sat_id, epoch_now_s)) {
@@ -604,7 +605,7 @@ void CycleSlipManager::reinflateSatelliteStates(SlipEpochWork& w, const std::str
     bool is_pivot = false;
     if (config_.enableBetweenSatelliteSd()) {
         const auto& pivots_now = meas_model.getBssdPivotSatellites();
-        const std::string cons = PppUtils::getSystemString(sat_id);
+        const std::string cons = systemName(systemOfSat(sat_id));
         auto pit = pivots_now.find(cons);
         is_pivot = (pit != pivots_now.end() && pit->second == sat_id);
     }

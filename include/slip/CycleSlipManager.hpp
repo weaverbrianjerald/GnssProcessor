@@ -542,7 +542,7 @@ private:
      *        ambiguity by dN_peer - dN_pivot, each confidently clean peer by
      *        -dN_pivot, reset the unverifiable peers, and keep the pivot.
      * @param w          Epoch work; writes the state and the result.
-     * @param cons       Constellation name (as @c PppUtils::getSystemString).
+     * @param cons       Constellation name (@c systemName, common/GnssIdentity.hpp).
      * @param pivots_now The BSSD pivot per constellation.
      * @return true if the constellation was handled in place (it then needs
      *         no handover); false if its pivot integer is not known on every

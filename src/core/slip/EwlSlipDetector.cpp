@@ -15,6 +15,7 @@
 
 #include "slip/EwlSlipDetector.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/RobustStats.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
@@ -332,7 +333,7 @@ namespace GnssProcessor {
                         trace_file_ << std::fixed << std::setprecision(3)
                                     << current_epoch_.week << "," << current_epoch_.tow << ","
                                     << obs.satellite << ","
-                                    << PppUtils::getSystemString(obs.system) << ","
+                                    << systemName(obs.system) << ","
                                     << std::setprecision(2) << obs.elevation << ","
                                     << pair.phase1 << "," << pair.phase2 << ","
                                     << std::setprecision(6) << ewl_corrected << "," << ewl_cyc << ","
@@ -377,7 +378,7 @@ namespace GnssProcessor {
                     trace_file_ << std::fixed << std::setprecision(3)
                                 << current_epoch_.week << "," << current_epoch_.tow << ","
                                 << obs.satellite << ","
-                                << PppUtils::getSystemString(obs.system) << ","
+                                << systemName(obs.system) << ","
                                 << std::setprecision(2) << obs.elevation << ","
                                 << pair.phase1 << "," << pair.phase2 << ","
                                 << std::setprecision(6) << ewl_corrected << "," << ewl_cyc << ","

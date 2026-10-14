@@ -4,6 +4,7 @@
  */
 
 #include "slip/SoftLliBridge.hpp"
+#include "common/GnssIdentity.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
@@ -59,7 +60,7 @@ bool SoftLliBridge::qualifies(const std::string& sat_id, double epoch_now_s) con
     const double dt = (sample_interval_s_ > 0.0) ? sample_interval_s_ : measured_dt;
     if (!(dt > 0.0 && dt <= 1.0 + 1e-3)) return false;
     // AR-capable constellation (exclude GLONASS FDMA).
-    if (sat_id.empty() || sat_id[0] == 'R') return false;
+    if (sat_id.empty() || systemOfSat(sat_id) == System::GLONASS) return false;
     return true;
 }
 
