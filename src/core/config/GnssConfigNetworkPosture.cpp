@@ -186,12 +186,9 @@ namespace GnssProcessor {
               Tier::ON, true , "network.phase_leveling",
               "armed in 107 of 108 shipped configs; zero-q sharpens clock 2.44 -> 2.00 m (-18%); "
               "the carry_warm gate for RAIM" },
-            // B6 S-basis contract line (ledger §A2 F16, applied into the goldens):
-            // header-only, solve byte-identical; replay consumer -12.7 % RMS, 45 spurious
-            // resets removed.
             // RTA-10 H heartbeat record (ledger §A2 F16, applied with h_sigma0_prefit_census):
             // record stream 0-diff, solve-neutral; a tail consumer can tell "withheld" from
-            // "producer died".  Both rows give the ledger entries their loader coverage.
+            // "producer died".  The row gives the ledger entry its loader coverage.
             { true,
               network_emit_epoch_status_record_,
               Tier::ON, false, "network.emit_epoch_status_record",

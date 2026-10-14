@@ -167,10 +167,8 @@ TEST(AmbFloatVehicleTest, DefaultsToTheLevelVehicle) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("default", networkConfig(kRf0Posture), cfg));
     EXPECT_EQ(cfg.getNetworkConfig().ambiguity_vehicle, NetworkAmbiguityVehicle::Level);
-    // The supporting knobs are all inert by default.  Design §3.5 makes the q default
-    // explicit rather than implied, so it is pinned here.
+    // The supporting knobs are all inert by default.
     EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_birth_var_m2, 0.0);
-    EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_q_m2s, 0.0);
     EXPECT_FALSE(cfg.getNetworkConfig().amb_float_declared_handover);
     EXPECT_FALSE(cfg.getNetworkConfig().trace_amb_state);
     EXPECT_EQ(cfg.getNetworkConfig().trace_amb_state_every, 1);
@@ -211,13 +209,11 @@ TEST(AmbFloatVehicleTest, SupportingKnobsParse) {
                          networkConfig(std::string(kRf0Posture)
                                        + "    \"ambiguity_vehicle\": \"float_kf\",\n"
                                          "    \"amb_float_birth_var_m2\": 0.25,\n"
-                                         "    \"amb_float_q_m2s\": 1e-9,\n"
                                          "    \"amb_float_declared_handover\": true,\n"
                                          "    \"trace_amb_state\": true,\n"
                                          "    \"trace_amb_state_every\": 5,\n"),
                          cfg));
     EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_birth_var_m2, 0.25);
-    EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_q_m2s, 1e-9);
     EXPECT_TRUE(cfg.getNetworkConfig().amb_float_declared_handover);
     EXPECT_TRUE(cfg.getNetworkConfig().trace_amb_state);
     EXPECT_EQ(cfg.getNetworkConfig().trace_amb_state_every, 5);
@@ -313,13 +309,10 @@ TEST(AmbFloatVehicleTest, FloatKfWarnsButKeepsTheYoungArcInflate) {
 }
 
 TEST(AmbFloatVehicleTest, NegativeSupportingKnobsAreRejected) {
-    GnssConfig a, b;
+    GnssConfig a;
     EXPECT_FALSE(loadInto("negbirth",
                           networkConfig(std::string(kRf0Posture)
                                         + "    \"amb_float_birth_var_m2\": -1.0,\n"), a));
-    EXPECT_FALSE(loadInto("negq",
-                          networkConfig(std::string(kRf0Posture)
-                                        + "    \"amb_float_q_m2s\": -1e-9,\n"), b));
 }
 
 // =============================================================================

@@ -1865,22 +1865,19 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        : std::string())
                // The ambiguity vehicle is part of the product's provenance, so the
                // manifest records it (RF-1; docs/refound/RF-1_float_ambiguities_design.md
-               // §3.5 / §7.1).  Per §3.5, the q knob exists so that its 0.0 default is
-               // stated here explicitly rather than implied.  Emitted only when the
-               // posture is non-default (as for trace_postfit_rows and
-               // trace_station_block above), so an unarmed run's manifest bytes are
-               // unchanged.
+               // §7.1).  Emitted only when the posture is non-default (as for
+               // trace_postfit_rows and trace_station_block above), so an unarmed run's
+               // manifest bytes are unchanged.
                << ((nc.ambiguity_vehicle != NetworkAmbiguityVehicle::Level
                     || nc.trace_amb_state || nc.amb_float_birth_var_m2 > 0.0
-                    || nc.amb_float_q_m2s > 0.0 || nc.amb_float_declared_handover)
+                    || nc.amb_float_declared_handover)
                        ? fmt::format("\"ambiguity_vehicle\":\"{}\","
                                      "\"amb_float_birth_var_m2\":{},"
-                                     "\"amb_float_q_m2s\":{},"
                                      "\"amb_float_declared_handover\":{},"
                                      "\"trace_amb_state\":{},",
                                      nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                                          ? "float_kf" : "level",
-                                     nc.amb_float_birth_var_m2, nc.amb_float_q_m2s,
+                                     nc.amb_float_birth_var_m2,
                                      nc.amb_float_declared_handover ? "true" : "false",
                                      nc.trace_amb_state ? "true" : "false")
                        : std::string())
@@ -2121,7 +2118,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
                << fmt::format("\"state_snapshot_resume_shock_m\":{},",
                               nc.state_snapshot_resume_shock_m)
-               << "\"serialize_sbasis_contract\":" << (nc.serialize_sbasis_contract ? "true" : "false") << ','
                << "\"estimate_sat_code_bias\":" << (config_.estimateNetworkSatCodeBias() ? "true" : "false") << ','
                << "\"estimate_iono_sh\":" << (config_.estimateNetworkIonoSh() ? "true" : "false") << ','
                << fmt::format("\"iono_constraint_deweight_factor\":{},",
@@ -2390,8 +2386,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"carry_invariant_qz\":{},", config_.networkCarryInvariantQz())
                << "\"carry_invariant_emit_rebase\":"
                << (config_.networkCarryInvariantEmitRebase() ? "true" : "false") << ','
-               << "\"carry_invariant_honesty\":"
-               << (config_.networkCarryInvariantHonesty() ? "true" : "false") << ','
                << "\"carry_invariant_innov_gate\":"
                << (config_.networkCarryInvariantInnovGate() ? "true" : "false") << ','
                << fmt::format("\"carry_invariant_innov_k\":{},", config_.networkCarryInvariantInnovK())

@@ -1560,10 +1560,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // The S-basis contract is part of the wire and is always stamped.  A replay of a
         // wire without it rebuilds the default emitter (no clock-discontinuity channel,
         // the flat default phase-bias threshold) and misses every declared clock
-        // re-reference, so the declaration cannot depend on an output option.
-        // network.serialize_sbasis_contract is accepted and inert.  The records are the
-        // same byte for byte as a contract-less writer's; only the header gains the
-        // S line.  (Card OWD, O1)
+        // re-reference, so the declaration cannot depend on an output option.  The
+        // records are the same byte for byte as a contract-less writer's; only the
+        // header gains the S line.  (Card OWD, O1)
         {
             // Stamp the S-basis contract into a v2 header (B6).  The declaration semantics
             // are the A3-corrected per-constellation satellite-clock-pin basis.

@@ -77,7 +77,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.amb_drop_floor_after_ep =
         (k.amb_drop_var_floor > 0.0)
             ? config_.getNetworkConfig().amb_float_drop_floor_after_ep : 0;
-    k.amb_float_q_m2s = config_.getNetworkConfig().amb_float_q_m2s;
     k.amb_float_declared_handover = config_.getNetworkConfig().amb_float_declared_handover;
     // Held S-basis (RF-2 item 1).  The loader already interlocks it with float_kf and
     // phase_datum_prioritized; the vehicle test is repeated here so that a later loader

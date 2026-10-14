@@ -213,10 +213,6 @@ namespace GnssProcessor {
         /// the floor itself is unarmed, so every site reads one pair of numbers and a
         /// miswired arm cannot half-act (RF-3c).
         int amb_drop_floor_after_ep{};
-        /// network.amb_float_q_m2s: process noise on the ambiguity block under float_kf
-        /// (RF-1 §3.5).  The card's posture is 0.0.  Not applied to the solve; carried so
-        /// the run manifest and the run-end telemetry can state it.
-        double amb_float_q_m2s{};
         /// network.amb_float_declared_handover: the anchor handover as a declared, exact
         /// carry S-transformation instead of a network-wide erase (RF-1 §3.6, step 5).
         /// Acts only under float_kf (@c networkAmbFloatDeclaredHandover).

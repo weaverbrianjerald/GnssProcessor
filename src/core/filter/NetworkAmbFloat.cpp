@@ -414,14 +414,14 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
     // miswire, not a quiet run (design §7.4 D3; invariant #4).
     if (ctx.knobs.amb_float_kf || config_.getNetworkConfig().trace_amb_state)
         log->info("Network (RF-1 ambiguity vehicle): vehicle=\"{}\"{}, birth_var_floor={} "
-                  "m^2, q={} m^2/s, declared_handover={}.  Mechanism counters: {} drop(s) "
+                  "m^2, declared_handover={}.  Mechanism counters: {} drop(s) "
                   "over {} epoch(s), {} declared S-transform(s) moving {} column(s), {} "
                   "joint-block fallback(s).",
                   ctx.knobs.amb_float_kf ? "float_kf" : "level",
                   ctx.knobs.pl_blk_from_vehicle
                       ? " — the joint block was STRUCTURAL (step 3)"
                       : " — the zero-q scalar carry",
-                  ctx.knobs.amb_birth_var_floor, ctx.knobs.amb_float_q_m2s,
+                  ctx.knobs.amb_birth_var_floor,
                   ctx.knobs.amb_float_declared_handover,
                   ctx.counters.n_amb_drop, ctx.counters.n_amb_drop_epochs,
                   ctx.counters.n_amb_stransform, ctx.counters.n_amb_stransform_cols,

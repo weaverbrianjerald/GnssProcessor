@@ -733,7 +733,6 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_DOUBLE_EQ(c1.networkRaimWithholdSigma0(), 6.0);       // 2x the default trigger 3.0
     EXPECT_TRUE(c1.networkEmitGenerationId());
     EXPECT_TRUE(c1.networkSerializeDiscCounters());
-    EXPECT_TRUE(c1.getNetworkConfig().serialize_sbasis_contract);
     EXPECT_TRUE(c1.getNetworkConfig().product_flush_per_epoch);
     EXPECT_DOUBLE_EQ(c1.networkContractRebroadcastS(), 30.0);
     EXPECT_DOUBLE_EQ(c1.getNetworkConfig().health_interval_s, 30.0);
@@ -755,7 +754,6 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     const fs::path p2 = writeTempConfig("svc_override",
         networkConfig(kGpsGal, kPriosGps,
                       "    \"service_mode\": true,\n"
-                      "    \"serialize_sbasis_contract\": true,\n"
                       "    \"contract_rebroadcast_s\": 10.0,\n"));
     GnssConfig c2;
     ASSERT_TRUE(c2.loadFromJson(p2, log));
@@ -896,7 +894,6 @@ TEST(NetworkServiceProfile, EmptyProductPathParsesWithArmedSetUnchanged) {
     EXPECT_TRUE(c1.getNetworkConfig().product_output_path.empty());
     EXPECT_TRUE(c1.getNetworkConfig().product_flush_per_epoch);   // still armed
     EXPECT_TRUE(c1.networkEmitEpochStatusRecord());               // still armed
-    EXPECT_TRUE(c1.getNetworkConfig().serialize_sbasis_contract); // still armed
     EXPECT_DOUBLE_EQ(c1.networkContractRebroadcastS(), 30.0);     // still armed
 
     std::error_code ec; fs::remove(p1, ec);
@@ -1645,7 +1642,6 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateParses) {
         ASSERT_TRUE(cfg.loadFromJson(p, log));
         EXPECT_FALSE(cfg.networkCarryInvariantInnovGate());
         EXPECT_DOUBLE_EQ(cfg.networkCarryInvariantInnovK(), 4.0);
-        EXPECT_FALSE(cfg.networkCarryInvariantInnovRefold());
         std::error_code ec; fs::remove(p, ec);
     }
     // On atop carry_invariant + eq34, with a custom k.

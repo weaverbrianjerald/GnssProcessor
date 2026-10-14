@@ -71,7 +71,7 @@ def build_network_products(ctx) -> ViewerResult:
 
     summary = _summary(df, sys_present)
     # L14 hook: append the machine-readable S-contract check (network_contract_check.csv,
-    # written by the producer under network.serialize_sbasis_contract) when present. It is
+    # written by the producer whenever it writes a product file) when present. It is
     # not a required_csv, so the block does not appear on a run that never checked.
     if ctx.has_data("network_contract_check.csv"):
         cc = load_trace(ctx.path("network_contract_check.csv"))

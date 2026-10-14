@@ -1026,7 +1026,6 @@ namespace GnssProcessor {
         double ratio_upper_bound{ 1e4 };      ///< Reject ratios above this (degenerate covariance).
         double nl_max_per_pair_frac{ 0.10 };  ///< Max per-DD |float − fixed| (cycles).
         bool   enable_partial_ar{ true };     ///< Fix the decisively-fixable subset; leave the rest float.
-        bool   wl_cascade{ false };           ///< WL->NL cascade (needs per-station MW aggregation; off in V1).
         /// Card ARL: fix in the decorrelated space (ils::ilsFixDecorrelatedPartial) instead of
         /// the entry-by-entry partial fix: the trailing decorrelated components whose bootstrap
         /// success rate clears min_success_rate are searched, and a single-signal DD is reported
@@ -2349,17 +2348,6 @@ namespace GnssProcessor {
         /// warm-up read, so 120 is one hour at 30 s.  Solve-affecting when it changes an
         /// armed floor's reach; inert when @ref amb_float_drop_var_m2 is 0.
         int amb_float_drop_floor_after_ep{ 0 };
-        /// Process noise (m²/s) on the ambiguity block under @c FloatKf (RF-1 §3.5).
-        /// The card's posture is 0.0; any nonzero value is a separate arm that needs its
-        /// own evidence.  An ambiguity is a random constant punctuated by discrete
-        /// slips, and q = 0 is exact recursive least squares for it.  A q-ladder is
-        /// falsified as a fix for the sibling lock-in (settled bias unchanged or worse,
-        /// the first-injection jump identical on every rung, integers strictly worse),
-        /// and the level-channel corollary of CLAUDE.md amendment 6 says the same: the
-        /// level is not fixed by tuning a carry's memory model in either direction.  The
-        /// knob exists so the default is explicit and the run manifest records it.
-        /// Parsed, validated (>= 0) and reported at run end; no code applies it.
-        double amb_float_q_m2s{ 0.0 };
         /// Express a (satellite, signal) phase-anchor handover as the exact, declared
         /// carry S-transformation (RF-1 §3.6, step 5, its own arm): shift every
         /// station's carried @c value_abs of that family by the incoming anchor's own
@@ -2616,7 +2604,6 @@ namespace GnssProcessor {
          * @ref prefit_fuse_sigma > 0.
          */
         std::string prefit_fuse_classes{ "code,sh" };
-        bool   prefit_fuse_require_uncheckable{ false }; ///< Composition with the redundancy census (docs/SPEC_redundancy_census.md) (INC-2): fuse only rows that the census marks r < ε, i.e. act only where the misfit is invisible to every residual test.  The census runs post-solve while the fuse acts pre-solve, and no persistent set of uncheckable cells connects them, so the loader warns and forces this off.  The field exists so that a config written against the companion card fails loudly instead of fusing every large row.
         double seed_birth_check_sigma{ 0.0 };///< Seed-birth tripwire (INC-3; 0 = off).  Measure-only: applies the INC-1 statistic at this tighter threshold to the rows of a (station, satellite) whose per-LOS states were born this epoch.  A correctly self-seeded birth has s ≈ 0 by construction, so any fire localizes a seed-path defect to an exact epoch and site (recommended 100).  Makes the census walk run even with @ref trace_prefit_census off.
         bool   trace_topology{ false };      ///< Topology ledger (INC-4): TOPOLOGY-tier events for estimation-topology changes: per-station SH-tie row-count deltas (the deweight valve, whose weight change from 0 to 0.25 on one added tie row is otherwise unlogged), per-(station, satellite) row-kind changes while the satellite stays present, and shared-column registry deltas.  Measure-only; makes the census walk run.
         bool   rhs_attrib_on_trip{ false };  ///< Flight recorder (INC-5): arm the estimator's shared-info capture recorder every epoch and fire @ref networkRhsAttribution automatically at the first trip of a QC era (SH-gate engage, A4 σ̂0 withhold, clock runaway, a₀₀-band exit), instead of at a hand-picked @ref rhs_attrib_tow.  With this armed, the next discharge of any class is attributed to its source in the run where it first happens, without a separate investigation.
@@ -3696,14 +3683,6 @@ namespace GnssProcessor {
         /// O(stations x (1 + codes) x epochs); off by default, byte-identical when off.
         bool trace_rx_states{ false };
         bool trace_events{ false };       ///< Emit @c network_events.csv (L2): one structured long-format row per discrete QC action (tiers T1 IF-slip … T6 clock-monitor, plus GATE / SIGMA0 / PIVOT / RETRO), in place of scraping spdlog with regular expressions for which satellite, station or arc was acted on and when.  Pivot handover and retro-bump arming are logged nowhere else.  Rows are written even on epochs that are later withheld (they are part of the disposition record).  O(QC events); off by default, byte-identical when off (no new file).
-        /// Stamp the S-basis contract (declaration, a-priori orbit/clock product
-        /// identity, phase-bias discontinuity threshold) into the product-file header
-        /// (v2 "S" line) (B6).  Inert (card OWD): the S line is part of every wire,
-        /// because the replay emitter is built from it, and a declaration must not depend
-        /// on an output option.  The key is still accepted so that older configs load;
-        /// the loader forces this field true (the realized posture that the manifest and
-        /// the posture readout report) and logs the key as inert.
-        bool serialize_sbasis_contract{ true };
         /// Replay a product file that has no S contract line (card OWD, O1).  Such a
         /// wire (from before card OWD) replays with the default emitter (no
         /// clock-discontinuity channel, the flat default phase-bias threshold), so it

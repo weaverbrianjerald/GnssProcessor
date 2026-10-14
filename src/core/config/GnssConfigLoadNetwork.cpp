@@ -1111,7 +1111,6 @@ namespace GnssProcessor {
             StationConfig sc;
             sc.name       = sj.value("name", std::string{});
             sc.rinex_path = sj.value("rinex_path", std::string{});
-            sc.fixed      = sj.value("fixed", true);  // network holds station coordinates fixed
             if (sj.contains("position_ecef") && sj["position_ecef"].is_array()
                 && sj["position_ecef"].size() == 3) {
                 sc.position_ecef = {
@@ -1326,8 +1325,6 @@ namespace GnssProcessor {
                                                    "network_ar_nl_max_per_pair_frac", 0.10);
             ar.enable_partial_ar = jval<bool>(json, "network.ambiguity_resolution.enable_partial_ar",
                                               "network_ar_enable_partial_ar", true);
-            ar.wl_cascade = jval<bool>(json, "network.ambiguity_resolution.wl_cascade",
-                                       "network_ar_wl_cascade", false);
             // Card ARL: partial fix in the decorrelated space (default off).
             ar.decorrelated_partial = jval<bool>(json, "network.ambiguity_resolution.decorrelated_partial",
                                                  "network_ar_decorrelated_partial", false);
@@ -1443,11 +1440,10 @@ namespace GnssProcessor {
                 log->warn("{}", fixedCycleEmitWarning(ar));
             } else if (ar.enable) {
                 // networkProducerAr() (src/core/filter/NetworkProducerAr.cpp, INC-9b), the
-                // Phase-2 DD-fixability diagnostic, consumes eight of these nine gates:
-                // min_epochs and ils_max_dim directly, and min_success_rate /
-                // ratio_threshold / ratio_upper_bound / nl_max_per_pair_frac /
-                // enable_partial_ar through ils::IlsGateConfig.  Only wl_cascade has no
-                // consumer.
+                // Phase-2 DD-fixability diagnostic, consumes these gates: min_epochs and
+                // ils_max_dim directly, and min_success_rate / ratio_threshold /
+                // ratio_upper_bound / nl_max_per_pair_frac / enable_partial_ar through
+                // ils::IlsGateConfig.
                 //
                 // The message stays a warning (RT0-2) because Phase 2 is read-only: it
                 // writes nothing back into the run context and re-pins nothing (that is
@@ -1461,15 +1457,13 @@ namespace GnssProcessor {
                           "network COULD fix, and re-pin / re-solve is Phase 3 and unbuilt.  "
                           "Live gates: FFR>={:.4f}, ratio>={:.1f} (<{:.0e}), per-pair "
                           "frac<={:.2f} cyc, partial_ar {}, ils_max_dim {}, trace {}.  "
-                          "INERT: wl_cascade{}.  GPS+Galileo only; GLONASS stays float.{}",
+                          "GPS+Galileo only; GLONASS stays float.{}",
                           ar.min_epochs, ar.min_success_rate, ar.ratio_threshold,
                           ar.ratio_upper_bound, ar.nl_max_per_pair_frac,
                           ar.enable_partial_ar ? "on" : "off",
                           ar.ils_max_dim > 0 ? std::to_string(ar.ils_max_dim)
                                              : std::string("uncapped"),
                           ar.trace ? "ON (logs/network_producer_ar.csv)" : "off",
-                          ar.wl_cascade ? " (set true, but no consumer reads it)"
-                                        : "",
                           // Card AGT: named only when armed, so an unarmed line is unchanged.
                           std::string(ar.cycle_basis ? (ar.cycle_basis_sticky
                                                             ? "  Basis: cycle_basis, sticky."
@@ -2638,9 +2632,6 @@ namespace GnssProcessor {
         network_config_.prefit_fuse_classes =
             jval<std::string>(json, "network.prefit_fuse_classes",
                               "prefit_fuse_classes", std::string("code,sh"));
-        network_config_.prefit_fuse_require_uncheckable =
-            jval<bool>(json, "network.prefit_fuse_require_uncheckable",
-                       "prefit_fuse_require_uncheckable", false);
         network_config_.seed_birth_check_sigma =
             jval<double>(json, "network.seed_birth_check_sigma",
                          "seed_birth_check_sigma", 0.0);
@@ -2659,21 +2650,6 @@ namespace GnssProcessor {
                       "non-positive — EVERY data row would raise an exceedance event.  "
                       "Clamped to the 1000 default.", network_config_.prefit_event_sigma);
             network_config_.prefit_event_sigma = 1000.0;
-        }
-        if (network_config_.prefit_fuse_require_uncheckable) {
-            // Composition with docs/SPEC_redundancy_census.md (§4).  The redundancy
-            // census is post-solve and the fuse acts before addStation, so the
-            // cross-flag could reach the fuse only through a persistent set of
-            // uncheckable cells, which no card has built yet.  The knob is forced
-            // off with a warning, so a config written against the companion card
-            // does not silently fuse every large row.
-            log->warn("Network (prefit fuse): network.prefit_fuse_require_uncheckable is "
-                      "set, but the redundancy cross-flag has no channel into the "
-                      "PRE-solve fuse site (the census is post-solve; no persistent "
-                      "uncheckable-cell set exists).  Forcing it OFF — the fuse acts on "
-                      "magnitude alone this run.  Re-arm it once the redundancy card "
-                      "publishes a carried uncheckable set.");
-            network_config_.prefit_fuse_require_uncheckable = false;
         }
         {
             const bool walk = network_config_.trace_prefit_census
@@ -3664,16 +3640,6 @@ namespace GnssProcessor {
         if (network_config_.trace_ssr_consumer)
             log->info("Network: consumer-side SSR trace ENABLED — the SSR consumer writes "
                       "ssr_consumer_trace.csv (age, clk-applied, URA R-inflation, disc counters).");
-        // The S contract line is part of every wire, so the key is accepted (older
-        // configs load) and inert; the field reads the realized posture (card OWD, O1).
-        if (jhas(json, "network.serialize_sbasis_contract", "serialize_sbasis_contract"))
-            log->info("Network (card OWD): network.serialize_sbasis_contract = {} is INERT — the "
-                      "S-basis contract line (declaration, a-priori orbit/clock product identity, "
-                      "the replay emitter's discontinuity parameters) is written on every product "
-                      "header, because a consumer replay rebuilds its emitter from it.",
-                      jval<bool>(json, "network.serialize_sbasis_contract",
-                                 "serialize_sbasis_contract", false) ? "true" : "false");
-        network_config_.serialize_sbasis_contract = true;
         network_config_.replay_allow_undeclared_wire =
             jval<bool>(json, "network.replay_allow_undeclared_wire",
                        "replay_allow_undeclared_wire", false);
@@ -5195,12 +5161,6 @@ namespace GnssProcessor {
                       network_config_.amb_float_drop_var_m2,
                       network_config_.amb_float_drop_floor_after_ep,
                       network_config_.amb_float_birth_var_m2);
-        network_config_.amb_float_q_m2s =
-            jval<double>(json, "network.amb_float_q_m2s", "amb_float_q_m2s", 0.0);
-        if (network_config_.amb_float_q_m2s < 0.0)
-            throw std::runtime_error("network.amb_float_q_m2s must be >= 0 (the card's posture "
-                                     "is 0.0 — an ambiguity is a random constant; any nonzero "
-                                     "value is a separate, evidence-bearing arm)");
         network_config_.amb_float_declared_handover =
             jval<bool>(json, "network.amb_float_declared_handover",
                        "amb_float_declared_handover", false);
@@ -9080,9 +9040,6 @@ namespace GnssProcessor {
         network_carry_invariant_emit_rebase_ =
             jval<bool>(json, "network.carry_invariant_emit_rebase",
                        "network_carry_invariant_emit_rebase", true);
-        network_carry_invariant_honesty_ =
-            jval<bool>(json, "network.carry_invariant_honesty",
-                       "network_carry_invariant_honesty", false);
         network_carry_invariant_innov_gate_ =
             jval<bool>(json, "network.carry_invariant_innov_gate",
                        "network_carry_invariant_innov_gate", false);
@@ -9108,9 +9065,6 @@ namespace GnssProcessor {
         network_carry_invariant_innov_k_ =
             jval<double>(json, "network.carry_invariant_innov_k",
                          "network_carry_invariant_innov_k", 4.0);
-        network_carry_invariant_innov_refold_ =
-            jval<bool>(json, "network.carry_invariant_innov_refold",
-                       "network_carry_invariant_innov_refold", false);
         network_carry_invariant_innov_calibrate_ =
             jval<bool>(json, "network.carry_invariant_innov_calibrate",
                        "network_carry_invariant_innov_calibrate", false);
@@ -11821,10 +11775,9 @@ namespace GnssProcessor {
                           "SUPERSEDING the PhaseBias shared carry + phase-leveling local carry + RPB "
                           "carry + eq34 pin-round/shift/reref hygiene for phase keys (GLONASS "
                           "excluded, FDMA).  The per-epoch datum is re-realized freely; basis churn "
-                          "is a non-event by construction.  emit_rebase={}, honesty={}.",
+                          "is a non-event by construction.  emit_rebase={}.",
                           network_carry_invariant_qz_,
-                          network_carry_invariant_emit_rebase_ ? "true" : "false",
-                          network_carry_invariant_honesty_ ? "true" : "false");
+                          network_carry_invariant_emit_rebase_ ? "true" : "false");
             if (network_carry_invariant_innov_gate_) {
                 log->info("Network producer: Card 4 (M1) D5 FINE-SLIP INNOVATION GATE ON — after each "
                           "accepted solve, every carried DD's standardized innovation "
@@ -11847,14 +11800,6 @@ namespace GnssProcessor {
                               "threshold storms the carry with false-alarm refloats (each shreds the "
                               "accumulated DD information).  Recommend k >= 4.",
                               network_carry_invariant_innov_k_);
-                if (network_carry_invariant_innov_refold_)
-                    log->warn("Network: network.carry_invariant_innov_refold (D5 v2 within-epoch refold) "
-                              "is parsed for the config contract but NOT YET IMPLEMENTED — the v1 "
-                              "reset-only path is active (the one already-solved epoch retains bounded "
-                              "contamination; q_z is the backstop).");
-            } else if (network_carry_invariant_innov_refold_) {
-                log->warn("Network: network.carry_invariant_innov_refold is INERT without "
-                          "network.carry_invariant_innov_gate (it routes the gate's flagged set).");
             }
             if (network_emit_pb_filter_) {
                 if (network_carry_invariant_emit_rebase_)
@@ -12405,7 +12350,7 @@ namespace GnssProcessor {
                       "late-joining/tail reader reconstructs counters without a full replay "
                       "(reader adopts present values, replay recompute kept as a self-check).");
         // The S contract is part of every wire, so a re-broadcast always has a contract to
-        // repeat and needs no "inert without serialize_sbasis_contract" check (card OWD, O1).
+        // repeat (card OWD, O1).
         if (network_contract_rebroadcast_s_ > 0.0)
             log->info("Network producer (RTA-5): S-contract re-broadcast ON — a CURRENT S line "
                       "(refreshed realized pivots) every {:.0f} s of product time and on any "
@@ -12525,8 +12470,6 @@ namespace GnssProcessor {
                     "network.emit_generation_id", "network_emit_generation_id");
             armBool(network_serialize_disc_counters_,       // late-joiner counter recovery (RTA-4)
                     "network.serialize_disc_counters", "network_serialize_disc_counters");
-            armBool(network_config_.serialize_sbasis_contract,    // v2 S contract header
-                    "network.serialize_sbasis_contract", "serialize_sbasis_contract");
             armDouble(network_contract_rebroadcast_s_, 30.0,      // periodic re-broadcast (RTA-5)
                       "network.contract_rebroadcast_s", "network_contract_rebroadcast_s");
             armBool(network_config_.product_flush_per_epoch,      // live-tail visibility (RTA-6)
@@ -12991,13 +12934,11 @@ namespace GnssProcessor {
                           ? "is ARMED" : "is OFF (the anchor re-reference still ERASES)");
         if (network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::Level
             && (network_config_.amb_float_birth_var_m2 > 0.0
-                || network_config_.amb_float_q_m2s > 0.0
                 || network_config_.amb_float_declared_handover))
             log->warn("Network (RF-1 §7.1): amb_float_* knobs are set (birth_var_m2={}, "
-                      "q_m2s={}, declared_handover={}) but network.ambiguity_vehicle is "
+                      "declared_handover={}) but network.ambiguity_vehicle is "
                       "\"level\" — they are INERT on this posture (standing invariant #4).",
                       network_config_.amb_float_birth_var_m2,
-                      network_config_.amb_float_q_m2s,
                       network_config_.amb_float_declared_handover);
         // Post-parse inert guard for the `pl` apply family (M2 v2;
         // docs/SPEC_carry_vce_apply.md); network_carry_invariant_ is populated by this
@@ -14375,7 +14316,7 @@ namespace GnssProcessor {
         // what the vehicle does, so a reader does not infer the mechanism from the knob
         // name alone.
         log->info("Network (RF-1): ambiguity vehicle = \"{}\"{}.  amb_float_birth_var_m2={} "
-                  "m^2, amb_float_q_m2s={} m^2/s, amb_float_declared_handover={}, "
+                  "m^2, amb_float_declared_handover={}, "
                   "trace_amb_state={}{}.",
                   network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                       ? "float_kf" : "level",
@@ -14383,7 +14324,6 @@ namespace GnssProcessor {
                       ? " — the joint block is STRUCTURAL (RF-1 step 3); solve-affecting"
                       : " — the zero-q scalar carry (today's vehicle)",
                   network_config_.amb_float_birth_var_m2,
-                  network_config_.amb_float_q_m2s,
                   network_config_.amb_float_declared_handover,
                   network_config_.trace_amb_state,
                   (network_config_.trace_amb_state
