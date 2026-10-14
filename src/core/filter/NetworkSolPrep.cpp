@@ -124,7 +124,6 @@ NetworkSolPrepResult networkSolPrep(
     auto& n_runaway_epochs = ctx.counters.n_runaway_epochs;
     auto& n_perconst_partial_epochs = ctx.counters.n_perconst_partial_epochs;
     auto& n_perconst_diffuse_published = ctx.counters.n_perconst_diffuse_published;
-    const bool phase_datum_ensemble    = ctx.knobs.phase_datum_ensemble;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     const bool anchor_hygiene_on       = ctx.knobs.anchor_hygiene_on;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
@@ -160,8 +159,7 @@ NetworkSolPrepResult networkSolPrep(
 
     // --- Emit -----------------------------------------------------------
     NetworkSolutionEpoch sol = est.toSolutionEpoch(x_s, se.time, iod++,
-                                                   /*provider_id=*/0, /*solution_id=*/0,
-                                                   /*ambiguity_datum_ensemble=*/phase_datum_ensemble);
+                                                   /*provider_id=*/0, /*solution_id=*/0);
     // Stamp, per emitted satellite, the broadcast-ephemeris version (IODE) that the
     // producer's clock-C0 baseline used, so the consumer applies C0 against the same
     // broadcast clock (getSatelliteClockCorrection pinned to clock_iode, Card 7) and
@@ -568,7 +566,7 @@ NetworkSolPrepResult networkSolPrep(
     // the consumer applies phase-bias corrections as if exact; with their formal 1σ, a
     // wandering bias (the 6–69 cm differential defect-2 driver) is down-weighted
     // instead.  Gauges are treated as exact: a copy of the shared covariance with the
-    // folded ensemble phase-bias gauges nulled (zeroPhaseGaugeColumns), and
+    // folded phase-bias gauges nulled (zeroPhaseGaugeColumns), and
     // datum-pinned columns skipped (their 1/pin_scale variance is a gauge, not a
     // physical σ), the same pin treatment as the URA loop.  σ is scaled by the same
     // σ̂0 EWMA as the URA.  Off: σ stays 0, and the product and store are
@@ -599,56 +597,6 @@ NetworkSolPrepResult networkSolPrep(
                 npb.sigma_m = s0 * std::sqrt(var);
                 pb_sigmas.push_back(npb.sigma_m);
                 by_signal[signal].push_back(col);
-            }
-        }
-        // Under the anchor-free ensemble datum, the absolute σ above references the
-        // zeroed receiver-ensemble gauge column, which is degenerate because the level is
-        // not observable (T3d).  Each emitted phase-bias σ is overwritten with the
-        // between-satellite SD σ per signal (the quantity the consumer's receiver clock
-        // and float ambiguity leave observable), referenced to the group's first eligible
-        // column.  The reference satellite takes the group-median SD σ, since its SD with
-        // itself is 0 and says nothing about its uncertainty.  Runs only under
-        // phase_datum_ensemble, so the pivot and prioritized datums are byte-identical.
-        if (phase_datum_ensemble) {
-            // Under the ensemble gauge every satellite phase-bias column is a folded gauge
-            // direction, so the zeroed pcov above gives σ = 0 for all of them and
-            // by_signal is empty.  The between-satellite SD σ is therefore computed from
-            // the raw covariance: the fold's common gauge-direction variance cancels in the
-            // between-satellite difference, leaving the relative uncertainty.
-            const Eigen::MatrixXd rawcov = est.sharedCovariance();
-            std::map<std::string, std::vector<std::pair<std::string, Eigen::Index>>> grp;
-            for (auto& s : sol.sats)
-                for (auto& [signal, npb] : s.phase_bias) {
-                    (void)npb;
-                    Eigen::Index col;
-                    try { col = est.phaseBiasColumn(s.sat, signal); } catch (...) { continue; }
-                    if (col >= 0 && col < rawcov.rows() && col < rawcov.cols())
-                        grp[signal].push_back({ s.sat, col });
-                }
-            for (auto& [signal, sc] : grp) {
-                if (sc.size() < 2) continue;                 // no between-sat difference
-                const Eigen::Index ref = sc.front().second;
-                std::map<std::string, double> sd_of;         // sat -> SD σ
-                std::vector<double> sds;
-                for (std::size_t i = 1; i < sc.size(); ++i) {
-                    const Eigen::Index c = sc[i].second;
-                    const double v = rawcov(c, c) + rawcov(ref, ref) - 2.0 * rawcov(c, ref);
-                    if (v > 0.0 && std::isfinite(v)) {
-                        const double sd = s0 * std::sqrt(v);
-                        sd_of[sc[i].first] = sd;
-                        sds.push_back(sd);
-                    }
-                }
-                if (sds.empty()) continue;
-                std::sort(sds.begin(), sds.end());
-                sd_of[sc.front().first] = sds[sds.size() / 2];   // ref sat: group median
-                for (auto& s : sol.sats) {
-                    auto it = s.phase_bias.find(signal);
-                    if (it == s.phase_bias.end()) continue;
-                    auto sit = sd_of.find(s.sat);
-                    if (sit != sd_of.end() && sit->second > 0.0)
-                        it->second.sigma_m = sit->second;
-                }
             }
         }
         // Lever-B premise check and the deciding ratio: absolute σ against
@@ -1379,7 +1327,7 @@ NetworkSolPrepResult networkSolPrep(
     // field, not a co-resident column, and is supplied separately via SsrSlantIono
     // with its own σ, so including it here would count it twice.  The covariance
     // handling matches B1b (gauge-nulled copy, datum-pin skip, positive-variance
-    // guard); a folded or zeroed phase gauge (ensemble datum) leaves no usable phase
+    // guard); a folded or zeroed phase gauge leaves no usable phase
     // column and so no token.  Scaled by the same σ̂0 EWMA, which cancels in rho.  Off:
     // every value is 0, no wire token is written, and the product and store are
     // byte-identical.
@@ -1391,7 +1339,7 @@ NetworkSolPrepResult networkSolPrep(
         const double s0 = std::max(1.0, ura_sigma0_ewma);
         // A column is usable only when present, in range, not a datum pin (its
         // 1/pin_scale variance is a gauge artefact), and carrying a finite positive
-        // variance (which rejects a zeroed phase gauge under the ensemble datum).
+        // variance (which rejects a zeroed phase gauge).
         auto colOrNeg = [&](auto fn) -> Eigen::Index {
             try {
                 const Eigen::Index c = fn();

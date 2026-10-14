@@ -3164,14 +3164,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // fixed.  Off: the block below never runs and StationAssembly::row_pos_enu stays
     // empty (byte-identical, no allocation).
     const bool congruence_rows         = ctx.knobs.cg_on;
-    const bool phase_datum_ensemble    = ctx.knobs.phase_datum_ensemble;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     const double eq34_rpb_prior_sigma = ctx.knobs.eq34_rpb_prior_sigma;
     const double eq34_rpb_prior_w = ctx.knobs.eq34_rpb_prior_w;
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
-    const double phase_hold_sigma = ctx.knobs.phase_hold_sigma;
-    const bool   phase_hold_on    = ctx.knobs.phase_hold_on;
-    const double phase_hold_var   = ctx.knobs.phase_hold_var;
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
     auto& tu_reinit_hist = ctx.carry.tu_reinit_hist;
@@ -3559,25 +3555,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         Coordinates::enuToEcefMatrix(llh.lat_rad, llh.lon_rad);
                     R.row_pos_enu.noalias() =
                         em.H.middleCols(pos_i, 3) * R_enu2ecef;
-                }
-            }
-
-            // Fix A (network.phase_datum_ensemble): record every present
-            // ambiguity's (sat, signal, A_r column) so the driver can build the
-            // per-(sat,signal) sum-to-zero gauge over all tracking stations after
-            // the reduce.  h2local is keyed by state index (== the pl_amb carry's
-            // key), so a present phase row ⟹ an entry here.  Filtered to the sats
-            // with a shared phase-bias column at gauge-build time.  Pure
-            // per-station read, safe in the parallel produce phase.
-            if (phase_datum_ensemble) {
-                for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
-                    const auto parts = StateKeys::parseAmbiguityKey(key);
-                    if (!parts) continue;
-                    const auto hit = h2local.find(static_cast<int>(sidx));
-                    if (hit == h2local.end()) continue;  // no phase row this epoch
-                    R.ens_amb_cols.emplace_back(
-                        parts->satellite, parts->signal,
-                        static_cast<Eigen::Index>(hit->second));
                 }
             }
 

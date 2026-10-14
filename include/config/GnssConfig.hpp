@@ -5186,57 +5186,6 @@ namespace GnssProcessor {
         bool networkPhaseDatumPrioritized() const { return network_phase_datum_prioritized_; }
 
         /**
-         * @brief Whether the satellite phase-bias↔ambiguity gauge is realized by an
-         *        anchor-free sum-to-zero over the tracking receivers
-         *        (@c network.phase_datum_ensemble; Fix A).
-         *
-         * The estimable satellite phase bias @f$\tilde\delta^s_\sigma@f$ is
-         * co-linear with the tracking receivers' ambiguities @f$\{z^s_{r,\sigma}\}_r@f$
-         * (one gauge dof per (satellite, signal)).  The prioritized-anchor datum
-         * (@ref networkPhaseDatumPrioritized) fixes it by pinning one elected
-         * receiver's ambiguity, which (a) re-references (a consumer-visible step)
-         * whenever the anchor hands over (Odijk's moving-S-basis violation, so phase
-         * never accumulates), and (b) references different satellites to different
-         * receivers, so the user's between-satellite fractional-bias term does not
-         * cancel and its double-differenced ambiguity is non-integer (0 fixes).
-         * The ensemble datum instead fixes the gauge by @f$\sum_r z^s_{r,\sigma}=0@f$
-         * over the receivers: no pivot, no handover, no single-anchor SPOF, and
-         * every satellite referenced to the same receiver ensemble (the
-         * between-satellite fractional term cancels consistently, keeping the user
-         * DD integer).  Realized by the kernel's Schur-projected rank-1 fold
-         * (@ref NetworkEstimator::setPhaseSumZeroGauges); reuses the prioritized
-         * machinery that removes the single point of failure (no pivot-first, every
-         * station carries its arcs) but elects no anchor.  Supersedes
-         * @ref networkPhaseDatumPrioritized when both are set.  Default false = the
-         * prioritized-anchor / legacy pin datum (byte-identical).
-         *
-         * @see networkPhaseDatumPrioritized, networkPhaseDatumMinStations
-         */
-        bool networkPhaseDatumEnsemble() const { return network_phase_datum_ensemble_; }
-
-        /**
-         * @brief Seed-once + time-lock hold sigma (m) for the ensemble phase-bias
-         *        datum (@c network.phase_datum_hold_sigma_m).  0 = re-realize every
-         *        epoch (churny; the un-held ensemble).
-         *
-         * The anchor-free @f$\sum_r z^s_{r,\sigma}=0@f$ datum references the emitted
-         * bias to @f$\mathrm{mean}_r(\hat z^s_{r,\sigma})@f$, a per-epoch re-realized
-         * functional of the float ambiguities whose absolute level is limited to
-         * code/iono precision, so the emitted bias churns ~metre/epoch (a dynamic
-         * datum on a static product; the between-satellite structure is stable but
-         * the level is not).  With this sigma set, the @f$\sum z=0@f$ gauge is seeded
-         * once when a (sat,signal) first appears, and the shared bias is then held
-         * with a stiff temporal prior of this sigma (a clean fixed variance, not the
-         * fold-contaminated covariance column), so the level stops re-realizing.  A re-seed occurs when a
-         * (sat,signal) reappears with no carried bias (arc break / vanish-return).
-         * Requires @ref networkPhaseDatumEnsemble; inert (byte-identical) otherwise or
-         * when 0.  Typical: 0.01 m.
-         *
-         * @see networkPhaseDatumEnsemble
-         */
-        double networkPhaseDatumHoldSigmaM() const { return network_phase_datum_hold_sigma_m_; }
-
-        /**
          * @brief Whether the satellite phase-bias↔ambiguity gauge is realized by
          *        the Eq-34 / de Jonge single-receiver-chain datum
          *        (@c network.phase_datum_eq34; card 3).
@@ -5256,14 +5205,12 @@ namespace GnssProcessor {
          * estimable state, not part of the pin).  Reuses the prioritized machinery
          * that removes the single point of failure (no pivot-first, every station
          * carries its arcs) but replaces the anchor election with a chain election;
-         * supersedes @ref networkPhaseDatumPrioritized and is mutually exclusive
-         * with @ref networkPhaseDatumEnsemble (two different realizations of the
-         * same gauge; a load-time throw).  Default false = the prioritized-anchor / legacy pin
-         * datum (byte-identical: no RPB state is ever allocated, the chain election
-         * never runs).
+         * supersedes @ref networkPhaseDatumPrioritized.  Default false = the
+         * prioritized-anchor / legacy pin datum (byte-identical: no RPB state is ever
+         * allocated, the chain election never runs).
          *
          * @see networkPhaseDatumEq34Receiver, networkPhaseDatumEq34PinRound,
-         *      networkPhaseDatumPrioritized, networkPhaseDatumEnsemble
+         *      networkPhaseDatumPrioritized
          */
         bool networkPhaseDatumEq34() const { return network_phase_datum_eq34_; }
 
@@ -5853,9 +5800,8 @@ namespace GnssProcessor {
          *          told about the unavoidable re-realization instead of receiving
          *          a silent one.
          *
-         * Requires @ref networkPhaseDatumPrioritized and neither the ensemble
-         * datum (which elects no anchor at all) nor the eq34 chain datum (which
-         * owns its own pin-target policy); the loader forces it off otherwise.
+         * Requires @ref networkPhaseDatumPrioritized and not the eq34 chain datum
+         * (which owns its own pin-target policy); the loader forces it off otherwise.
          * Off = byte-identical: no ledger is allocated, no census is widened, and
          * the election writes the 0.0 target.
          *
@@ -6098,8 +6044,7 @@ namespace GnssProcessor {
          * transform beats a delete is inferred, not measured; SPEC §5.07.6).
          *
          * Inert unless @ref networkPhaseDatumPrioritized, and disabled under the
-         * ensemble datum (no anchors) and the eq34 chain (owns its own
-         * re-reference).  Off = byte-identical: the set is never populated and
+         * eq34 chain (owns its own re-reference).  Off = byte-identical: the set is never populated and
          * every consumer tests an empty set.
          *
          * @see networkPhaseDatumHandoverContinuous, networkPhaseDatumPrioritized,
@@ -7749,7 +7694,7 @@ namespace GnssProcessor {
         /// @brief Producer: emit a per-(sat,signal) 1σ for the satellite phase-bias
         ///        corrections (@c network.emit_phase_bias_sigma, B1b).  σ = EWMA(σ̂0) ×
         ///        formal phase-bias σ from the shared covariance, gauge-exact (datum-
-        ///        pinned + folded ensemble-gauge columns treated as exact, σ=0).  Carried
+        ///        pinned columns treated as exact, σ=0).  Carried
         ///        in @c SsrPhaseBiasEntry.sigma_m in the in-process store and serialized
         ///        as the optional @c sigma= token of the P record.  Default off ⇒ σ stays
         ///        0 ⇒ the product/store is byte-identical.  Tienstra-§6.6 phase-bias
@@ -9414,9 +9359,7 @@ namespace GnssProcessor {
         bool   network_clock_anchor_datum_keep_{false};    ///< Card SCL B2: card Q3's guard does not decouple (reason datum) an anchored clock whose constellation the dense S-transform re-expressed this epoch with its self-check passed, when the clock has a block row and folded anchored.  Inert without handover_stransform_dense or clock_temporal_anchor.  Fingerprinted when armed.  Off = the decouple (byte-identical).
         bool   network_carry_rebase_complete_{false};      ///< Each carry re-base mechanism (the ephemeris re-level, the eq34 D4 shift, the declared anchor handover) also moves the carried references its exemption table marks as owed, the phase hold's held value excepted (card PRM phase 3b step 2).  Inert and disarmed without such a mechanism.  Fingerprinted when armed.  Off = the phase 2 site sets (byte-identical).
         bool   network_phase_datum_prioritized_{false};    ///< Realize the phase-bias gauge by a per-(sat,signal) prioritized anchor receiver (highest-coverage tracker) instead of pinning only the single clock-pivot station; removes the low-elevation gauge jump and the pivot-absent SPOF, with anchor handovers disc-signalled. Off = legacy single-pivot pins (byte-identical).
-        bool   network_phase_datum_ensemble_{false};       ///< Realize the phase-bias gauge by an anchor-free sum-to-zero over the tracking receivers' ambiguities (Fix A; Σ_r zˢ_{r,σ}=0, kernel Schur-projected fold) instead of a single-anchor pin: no pivot, no handover (so no moving-datum churn), no SPOF, and every satellite referenced to the same receiver ensemble (the user DD stays integer, so AR is not contaminated). Reuses the prioritized machinery that removes the SPOF but elects no anchor; supersedes phase_datum_prioritized. Off = anchor-pin datum (byte-identical).
-        double network_phase_datum_hold_sigma_m_{0.0};     ///< Seed-once + time-lock (Fix A): hold the ensemble satellite phase bias with a stiff prior of this sigma (m) after seeding Σ_r zˢ=0 once per (sat,signal); removes the ~metre/epoch churn of the un-held ensemble (the emitted absolute bias references a per-epoch re-realized float-ambiguity mean → dynamic datum on a static product). 0 = re-realize every epoch. Inert unless network_phase_datum_ensemble_.
-        bool   network_phase_datum_eq34_{false};           ///< Realize the phase-bias gauge by the Eq-34 / de Jonge single-receiver-chain datum (card 3): per-(receiver,system,signal) RPB split state + one RPB pin + a spanning tree of ambiguity pins per (const,signal) component, so the emitted between-satellite reference stays integer-consistent across all satellites while staying full-rank at global scale. Reuses the prioritized machinery that removes the SPOF but replaces the anchor election with a chain election; supersedes phase_datum_prioritized, mutually exclusive with phase_datum_ensemble (load-time throw). Off = anchor-pin datum (byte-identical: no RPB state allocated, chain election never runs).
+        bool   network_phase_datum_eq34_{false};           ///< Realize the phase-bias gauge by the Eq-34 / de Jonge single-receiver-chain datum (card 3): per-(receiver,system,signal) RPB split state + one RPB pin + a spanning tree of ambiguity pins per (const,signal) component, so the emitted between-satellite reference stays integer-consistent across all satellites while staying full-rank at global scale. Reuses the prioritized machinery that removes the SPOF but replaces the anchor election with a chain election; supersedes phase_datum_prioritized. Off = anchor-pin datum (byte-identical: no RPB state allocated, chain election never runs).
         std::string network_phase_datum_eq34_receiver_{};  ///< Preferred datum receiver (component 0) for the eq34 chain datum (card 3); empty = coverage auto-pick. The sticky incumbent still wins while present. Inert unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_pin_round_{true};  ///< On an eq34 re-attach/re-pin of an already-lit (sat,signal) edge, target the rounded carried float (λ·round(x̂_prev/λ)) so the frame step is ≈0 cycles (card 3); false = always pin to 0 (A/B lever). Inert unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_seed_round_{false}; ///< Seed-round (card 3, docs/SPEC_eq34_seed_round.md): round otherwise-zero pin targets to λ·round(x_state/λ) (first sighting, dead-carry incumbents, and every carry_invariant epoch).  |pin innovation| ≤ λ/2 by construction.  Default off; refused without network_phase_datum_eq34_.
@@ -9480,7 +9423,7 @@ namespace GnssProcessor {
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. Inert unless network_phase_datum_prioritized_.
         double network_phase_datum_handover_max_var_ratio_{0.0}; ///< Handover ceiling relative to the arc's own first-stash variance: a ledger value is usable only if var <= ratio × the arc's first-stash conditional variance (unknown ⇒ refused); the absolute ceiling stays a rail.  Ledger KEEP_OFF.  0 = off.  Inert unless network_phase_datum_handover_continuous_.
         double network_phase_datum_handover_max_var_m2_{1.0}; ///< Conditional-variance ceiling (m^2) a handover ledger value must beat to be pinned; above it the handover falls through to the cold path. Inert unless network_phase_datum_handover_continuous_.
-        bool   network_phase_datum_handover_continuous_{false}; ///< Hand an anchor handover over at the successor's own outgoing-frame ambiguity value instead of re-pinning at 0, so the gauge change is an S-transform and the emitted family does not step. Both edges counted + traced. Inert unless network_phase_datum_prioritized_ and not ensemble/eq34. Off = byte-identical (no ledger allocated).
+        bool   network_phase_datum_handover_continuous_{false}; ///< Hand an anchor handover over at the successor's own outgoing-frame ambiguity value instead of re-pinning at 0, so the gauge change is an S-transform and the emitted family does not step. Both edges counted + traced. Inert unless network_phase_datum_prioritized_ and not eq34. Off = byte-identical (no ledger allocated).
         /// The phase datum as a held S-basis (RF-2 item 1,
         /// docs/refound/RF-1_steps345_mechanism_2026-09-15.md).  The anchor station's
         /// ambiguity for each pinned (satellite, signal) is the S-basis, frozen at its
@@ -9514,7 +9457,7 @@ namespace GnssProcessor {
         bool   network_phase_datum_candidacy_usable_{false}; ///< Cold anchor fallback (SPEC_event_harness §15; ledger KEEP_OFF): when a handover is about to happen, sweep the coverage-ranked candidates for one whose carried value is usable by the continuous branch's own predicate (finite, 0 < var <= ceiling, ratio gate, not freed this epoch, arc age >= network_phase_datum_candidacy_min_age_ep_) before falling through to the take-the-first-tracker sweeps.  A family with no usable candidate keeps the cold path.  Inert unless network_phase_datum_handover_continuous_ (no ledger to screen against).  Off = byte-identical (the pass is never entered).
         bool   network_phase_datum_candidacy_satellite_{true}; ///< Cold anchor fallback, iteration 2 (SPEC_event_harness §15.8): resolve a satellite's handover jointly; every family of the satellite moving this epoch takes one successor (the first coverage-ranked candidate usable for the most of them; a family it is not usable for is pinned there through the cold path, which is a frame step, not a split), and a partial handover prefers the station already anchoring the satellite's other families.  Iteration 1's per-family screen gained producer quality at the cost of split references (0.0 → 0.9/3) and a 49 % worse consumer.  Default true; inert unless network_phase_datum_candidacy_usable_; off = exactly iteration 1 (the single-knob A/B).
         int    network_phase_datum_candidacy_min_age_ep_{60}; ///< Cold anchor fallback maturity bar in loop epochs (n_loop_epochs − LocalCarry::birth_ep); 0 = no age test, unknown age = mature (the restored-entry convention: a warm-resume-restored entry carries LocalCarry::kBirthEpRestored, SPEC_event_harness §15.4).  Sized on the §15 census: cold successors p50 39 ep vs continuous p50 236 ep.  Inert unless network_phase_datum_candidacy_usable_.
-        bool   network_phase_anchor_carry_reref_{false};   ///< At a PHASE_ANCHOR handover, marginalize the (sat,signal) family's shared PB carry for one epoch (the eq34_reref treatment) and erase its phase-leveling local carries at every station (QUEUE item 1(d), SPEC_pivot_visibility_gauge_defect §5.07.5 R1): the retired-frame prior is not folded against the re-realized design matrix, so the frame step lands on the free phase bias instead of being absorbed by the satellite clock (measured: 41-sigma clock innovations). Inert unless network_phase_datum_prioritized_ and not ensemble/eq34. Off = byte-identical (the set is never populated).
+        bool   network_phase_anchor_carry_reref_{false};   ///< At a PHASE_ANCHOR handover, marginalize the (sat,signal) family's shared PB carry for one epoch (the eq34_reref treatment) and erase its phase-leveling local carries at every station (QUEUE item 1(d), SPEC_pivot_visibility_gauge_defect §5.07.5 R1): the retired-frame prior is not folded against the re-realized design matrix, so the frame step lands on the free phase bias instead of being absorbed by the satellite clock (measured: 41-sigma clock innovations). Inert unless network_phase_datum_prioritized_ and not eq34. Off = byte-identical (the set is never populated).
         bool   network_phase_datum_gate_drop_erase_{false};///< At the coverage gate's drop edge (a key excluded this epoch that had an anchor incumbent last epoch), add the family to the epoch's re-reference set, so every station's carried ambiguity of it is erased before assembly, as at the family's return edge (card EV7 §6). Without it, on the float vehicle the surviving station's carried float absorbs the whole removed bias in one epoch against a centimetre prior (+15.829 m measured) and steps the satellite clocks. Inert without network_phase_anchor_carry_reref_ and without the gate (min_stations > 1). Off = byte-identical (edges detected + counted only).
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak; gated keys' phase rows still serve the clock via their local ambiguities). Inert unless network_phase_datum_prioritized_.
         bool   network_cb_kaula_prior_{false};             ///< Fold a loose physical-bound prior (value 0, info 1/sigma^2) onto every admitted satellite code-bias column (card KP, network.cb_kaula_prior), lifting a code-dominated near-null direction the phase drop-and-heal structurally cannot reach (it anchors PB columns only). Real prior information (satellite OSBs are bounded at tens of ns), not an ad hoc regularizer. Folded through the diagonal SharedPrior channel, not into the tight kCodeBiasGaugeWeight datum rows, so declared_dimension is unchanged by construction. Off = byte-identical; inert unless estimate_sat_code_bias.
@@ -9549,7 +9492,7 @@ namespace GnssProcessor {
         bool   network_consume_phase_bias_sigma_{false}; ///< Consumer inflates R on a phase row by the network phase-bias σ² (B1b); off = R byte-identical.
         bool   network_emit_combined_sigma_{false};      ///< Producer emits per-key combined-correction σ (sigc phase, sigcc code) + code/phase corr (rho) from the shared-cov cross-terms → sigc=/sigcc=/rho= wire tokens (M4, contract v2); off = every value 0, no token, byte-identical.
         double network_combined_sigma_agek_{0.0};        ///< Age-scaling coefficient advertised on the S-line (M4, contract v2; agek=); the consumer inflates combined variance as σc²·(1+agek·Δt_age²). 0 = no token, no age inflation (byte-identical).
-        bool   network_require_signal_integer_for_ar_{false}; ///< Consumer marks an ambiguity unresolvable (AR-ineligible) when its covering network phase bias declares signal_integer=false (T3a; e.g. the anchor-free ensemble datum, whose bias references the receiver-ensemble mean and is not integer-preserving). Off = the coverage-only gate (byte-identical), under which no consumer reads signal_integer.
+        bool   network_require_signal_integer_for_ar_{false}; ///< Consumer marks an ambiguity unresolvable (AR-ineligible) when its covering network phase bias declares signal_integer=false (T3a; e.g. a GLONASS phase bias, whose FDMA bias is not integer-preserving). Off = the coverage-only gate (byte-identical), under which no consumer reads signal_integer.
         double network_start_offset_hours_{0.0};        ///< Testing fast-forward: skip epochs until this many hours of data have elapsed from the first synced epoch, then cold-start (0 = process from the start).
         bool enable_cio_frame_{false};                    ///< Use the CIO IAU 2000A/2006 ECI↔ECEF transform (SOFA) for Sun/Moon; legacy equinox chain when off.
         bool enable_sun_frame_correction_{false};         ///< De-precess the of-date Sun/Moon ECI vectors to J2000 before the ECI→ECEF rotation, cancelling the inherited RTKLIB precession double-count (20.41' in 2024, the precession accumulated since J2000). Default off: fixing it moves solid tides, satellite attitude/PCO, wind-up and the eclipse gate on every existing lineage.

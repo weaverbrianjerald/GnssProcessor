@@ -1523,28 +1523,20 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // are the A3-corrected per-constellation satellite-clock-pin basis.
             pending_contract.decl.reference_receiver_id = nc.clock_datum_station;
             pending_contract.decl.emit_code_bias        = config_.estimateNetworkSatCodeBias();
-            // Self-describe the phase-bias gauge in the on-disk contract (T3b).  Under the
-            // anchor-free ensemble datum the emitted bias references the receiver ensemble,
-            // not a pivot receiver; under phase_datum_eq34 it references a single-receiver
-            // chain (Card 3).  The per-solve decl in NetworkSolveGlue.cpp makes the same
-            // choice, but that object feeds only buildSharedDatum: the serialized
-            // declaration is this one.  Without these branches the product would declare
+            // Self-describe the phase-bias gauge in the on-disk contract (T3b).  Under
+            // phase_datum_eq34 the emitted bias references a single-receiver chain
+            // (Card 3), not a pivot receiver.  The per-solve decl in NetworkSolveGlue.cpp
+            // makes the same choice, but that object feeds only buildSharedDatum: the
+            // serialized declaration is this one.  Without this branch the product would declare
             // amb_datum = 0 (PivotReceiverZeroAmbiguity), the legacy single-pivot datum it
             // does not use, and an eq34 wire would contradict itself by also carrying pdr=
             // (stamped only under eq34) two fields later.  A consumer trusting field 5 would
             // build its between-satellite reference on the wrong frame; the enumerator
             // exists so that such a consumer can refuse on "amb_datum differs".  Older eq34
             // wires, written before the eq34 branch, carry that contradiction.  The branch
-            // mirrors the isb_datum self-description that follows; with both knobs off the
+            // mirrors the isb_datum self-description that follows; with the knob off the
             // default stays (byte-identical).
-            //
-            // The precedence must mirror NetworkSolveGlue.cpp (ensemble first, then eq34),
-            // or the declaration and the realized datum disagree when both are armed.  It is
-            // an `else if` there and an `else if` here.
-            if (config_.networkPhaseDatumEnsemble())
-                pending_contract.decl.amb_datum =
-                    SbasisDeclaration::AmbDatum::SumToZeroPerReceiver;
-            else if (config_.networkPhaseDatumEq34())
+            if (config_.networkPhaseDatumEq34())
                 pending_contract.decl.amb_datum =
                     SbasisDeclaration::AmbDatum::SingleReceiverChain;
             if (config_.networkClockDatumBroadcastAnchored()) {

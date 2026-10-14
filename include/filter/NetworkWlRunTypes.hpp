@@ -49,7 +49,7 @@ struct SubBlockTimer {
 enum SubBlock {
     SB_SLIP = 0,     // block 1: PASS-A slip scans (MW refloat + IF-TD jumps), pre-assembly
     SB_PREASM,       //          pre-assembly measurement build (post-slip → assembly wall)
-    SB_GAUGEBUILD,   //          buildEnsembleGauges (Σz=0 gauges); the ensemble datum is off in the tier
+    SB_GAUGEBUILD,   //          the carry-driver lambda set-up ahead of the DD build
     SB_DDBUILD,      //          buildCarryDdPriors: eq34 arc graph + carry_driver.buildDdPriors
                      //          (W·Pᶻ·Wᵀ dense DD-cov projection over K carried chords) (card 4)
     SB_SOLVEGLUE,    //          pre-solve prep + clock predict + solve + within-epoch re-solve

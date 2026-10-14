@@ -50,10 +50,6 @@ CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEst
         d.disposition = CarryDisposition::Held;
         return d;
     }
-    if (k.phase_hold_on && cp.kind == SharedParamKind::PhaseBias) {   // Fix A hold
-        d.disposition = CarryDisposition::Held;
-        return d;
-    }
     if (cp.kind == SharedParamKind::PhaseBias
         && (ctx.carry.eq34_reref.count({cp.sat, cp.signal})
             || ctx.carry.phase_anchor_reref.count({cp.sat, cp.signal}))) {

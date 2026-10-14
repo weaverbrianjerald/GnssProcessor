@@ -1264,7 +1264,8 @@ public:
 
     /**
      * @brief Set the anchor-free sum-to-zero phase-bias gauges for this epoch
-     *        (Fix A, @c network.phase_datum_ensemble).
+     *        (Fix A; kept as a tested kernel after the removal of
+     *        @c network.phase_datum_ensemble, its only production caller).
      *
      * The ensemble realization of the phase-bias↔ambiguity datum: instead of
      * pinning one anchor receiver's ambiguity per (satellite, signal), the gauge
@@ -1527,14 +1528,6 @@ public:
      * @param x_s        The shared estimate from @ref solve.
      * @param epoch_time SSR content reference epoch stamped on the solution.
      * @param iod_ssr / provider_id / solution_id IGS-SSR stamps (pass-through).
-     * @param ambiguity_datum_ensemble True when the phase-bias gauge is the
-     *        anchor-free receiver ensemble (@c network.phase_datum_ensemble,
-     *        @c SbasisDeclaration::AmbDatum::SumToZeroPerReceiver; T3a).  The
-     *        ensemble references the satellite phase bias to the mean of the
-     *        tracking receivers' float ambiguities, so the emitted bias is not
-     *        integer, and the @c signal_integer flag is forced false so no consumer
-     *        treats it as an AR candidate.  Default false = the pivot-receiver
-     *        datum (byte-identical).
      * @return One epoch of satellite-side solutions (clock C0 + per-signal code /
      *         phase bias) keyed by RINEX sat id, ready for `NetworkProductEmitter`.
      *         SH-VTEC columns are not mapped, nor are clock clone columns (card SCL:
@@ -1543,8 +1536,7 @@ public:
      */
     NetworkSolutionEpoch toSolutionEpoch(const Eigen::VectorXd& x_s,
                                          const GnssTime& epoch_time, int iod_ssr = 0,
-                                         int provider_id = 0, int solution_id = 0,
-                                         bool ambiguity_datum_ensemble = false) const;
+                                         int provider_id = 0, int solution_id = 0) const;
 
     // --- Per-constellation σ̂0 carve-out decision (RTA-10) -------------------
 

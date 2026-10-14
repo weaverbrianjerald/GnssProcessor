@@ -701,16 +701,6 @@ TEST(PhaseDatumHandoverLoader, DisabledWithoutThePrioritizedElection) {
     EXPECT_FALSE(cfg.networkPhaseDatumHandoverContinuous());
 }
 
-/// The ensemble datum holds no pin at all (its gauge is the kernel sum-to-zero
-/// fold), so there is nothing to hand over.
-TEST(PhaseDatumHandoverLoader, DisabledUnderTheEnsembleDatum) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadNet("ensemble",
-                        "    \"phase_datum_ensemble\": true,\n"
-                        "    \"phase_datum_handover_continuous\": true,\n", cfg));
-    EXPECT_FALSE(cfg.networkPhaseDatumHandoverContinuous());
-}
-
 /// Off by default: the byte-identity contract (invariant #6; QUEUE item 1(d)).
 TEST(PhaseDatumHandoverLoader, CarryRerefDefaultsOff) {
     GnssConfig cfg;
@@ -755,15 +745,6 @@ TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderEq34Alone) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("reref_eq34only",
                         "    \"phase_datum_eq34\": true,\n"
-                        "    \"phase_anchor_carry_reref\": true,\n", cfg));
-    EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
-}
-
-/// The ensemble datum elects no anchor: the same disarm as for the handover knob.
-TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderTheEnsembleDatum) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadNet("reref_ensemble",
-                        "    \"phase_datum_ensemble\": true,\n"
                         "    \"phase_anchor_carry_reref\": true,\n", cfg));
     EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
 }

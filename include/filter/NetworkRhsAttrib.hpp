@@ -543,9 +543,10 @@ Eigen::Index rhsAttribResolveLocalKey(const std::vector<std::string>& names,
  * acts through the folds' own right-hand sides (@f$z_{\text{free}}@f$ of a DD block,
  * @f$\gamma@f$ of a gauge) and through the two reconstruction corrections; that part of
  * its effect is attributed whole, to the @c dd_fold fold, @c SUMZERO and @c DDPRIOR, and
- * not to the row.  The ensemble gauges' @f$\gamma g/\beta@f$ in the reduced right-hand
- * side is in no channel of the class decomposition (@c network.phase_datum_ensemble) and
- * shows in @c FBCLOSURE, as it shows in the class closure.
+ * not to the row.  A sum-to-zero gauge's @f$\gamma g/\beta@f$ in the reduced right-hand
+ * side (the estimator's gauge kernel; no production datum folds one since the ensemble
+ * datum was removed) is in no channel of the class decomposition and shows in
+ * @c FBCLOSURE, as it shows in the class closure.
  *
  * ## Checks of the single parts
  *

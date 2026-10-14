@@ -170,7 +170,6 @@ TEST(NetworkContributionsTest, ChannelsStagesUnitsAndParametersAreDeclared) {
     EXPECT_EQ(contributionSpec(CK::CbSumToZero).channel, ContributionChannel::SharedRows);
     EXPECT_EQ(contributionSpec(CK::BorderCarryDense).channel, ContributionChannel::SharedDensePrior);
     EXPECT_EQ(contributionSpec(CK::ClockPivotPin).channel, ContributionChannel::Pins);
-    EXPECT_EQ(contributionSpec(CK::EnsemblePhaseGauge).channel, ContributionChannel::Gauges);
     EXPECT_EQ(contributionSpec(CK::DdPriorBlock).channel, ContributionChannel::DdBlocks);
     EXPECT_EQ(contributionSpec(CK::PbHeal).stage, ContributionStage::AtGate);
     EXPECT_EQ(contributionSpec(CK::BorderCarryDiagonal).stage, ContributionStage::AfterGate);

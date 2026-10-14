@@ -61,8 +61,7 @@ void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
                 if (!want && ctx.knobs.carry_cpl_dclone) {
                     const bool pb = cp.kind == SharedParamKind::PhaseBias;
                     want = !carryColumnPresent(est, cp) || cp.t_park_s > 0.0
-                        || (pb && (ctx.knobs.phase_hold_on
-                                   || ctx.carry.eq34_reref.count({cp.sat, cp.signal})
+                        || (pb && (ctx.carry.eq34_reref.count({cp.sat, cp.signal})
                                    || ctx.carry.phase_anchor_reref.count({cp.sat, cp.signal})));
                 }
             }

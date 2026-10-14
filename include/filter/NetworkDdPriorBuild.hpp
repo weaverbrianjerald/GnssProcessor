@@ -1,16 +1,15 @@
 #pragma once
 /**
  * @file NetworkDdPriorBuild.hpp
- * @brief The two per-epoch DD-prior build steps of the PPP-RTK network producer: the
- *        ensemble sum-zero phase-bias gauges, and the invariant DD-carry prior blocks
- *        (card 4).
- *        Relocated verbatim from Application::runNetwork (decomposition INC-9b).
+ * @brief The per-epoch DD-prior build step of the PPP-RTK network producer: the
+ *        invariant DD-carry prior blocks (card 4).  Relocated verbatim from
+ *        Application::runNetwork (decomposition INC-9b).
  *
- * The run TU keeps both lambdas as thin `[&]` wrappers that forward to these free
- * functions, so the initial gauge/DD build and the within-epoch RAIM re-solve
- * (`resolve_dropping`) keep byte-identical capture semantics.  These functions own no
- * state; the carry switches are read from NetworkKnobs (card NOM step TD1a).  One
- * input carries state across epochs or passes and needs care: carry_slipped_ambs, the
+ * The run TU keeps the lambda as a thin `[&]` wrapper that forwards to this free
+ * function, so the initial DD build and the within-epoch RAIM re-solve
+ * (`resolve_dropping`) keep byte-identical capture semantics.  The function owns no
+ * state; the carry switches are read from NetworkKnobs (card NOM step TD1a).  One input
+ * carries state across epochs or passes and needs care: carry_slipped_ambs, the
  * driver's per-epoch slip funnel, passed by reference.  Every other argument keeps the
  * name of the former runNetwork() capture.
  */
@@ -34,20 +33,6 @@ namespace GnssProcessor {
 
 class GnssConfig;
 struct NetworkRunContext;
-
-/**
- * @brief Fold the ensemble Sum-Zero phase-bias gauges for this epoch into @p est.
- *        No-op unless @p phase_datum_ensemble.  The body is documented in the .cpp.
- */
-void networkBuildEnsembleGauges(NetworkEstimator& est,
-                                const std::vector<NetStation>& stations,
-                                const std::vector<int>& est_index_of,
-                                const std::vector<StationAssembly>& asm_res,
-                                const std::set<std::string>& shared_phase_keys,
-                                const std::vector<CarryPrior>& prev_carry,
-                                bool phase_datum_ensemble,
-                                bool phase_hold_on);
-
 
 /**
  * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and install them

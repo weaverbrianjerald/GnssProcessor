@@ -779,7 +779,6 @@ namespace GnssProcessor {
         /// Never fed back into a decision; every increment is guarded, so with the knob off
         /// the output is byte-identical.
         bool trace_flag_rates{};
-        bool phase_datum_ensemble{};
         bool phase_datum_eq34{};
         bool carry_invariant{};
         /// @c network.carry_invariant_pd_safe, resolved against its @c carry_invariant
@@ -821,15 +820,12 @@ namespace GnssProcessor {
         /// re-references the (sat, σ).  Resolved to false unless eq34_seed_round.
         bool eq34_seed_round_rehost{};
         bool phase_datum_prioritized{};
-        double phase_hold_sigma{};
-        bool phase_hold_on{};
-        double phase_hold_var{};
         // --- eq34 reattach hygiene ---
         // All four are resolved against the datum mode: the loader already disarms them
         // outside an anchored election, and `anchor_hygiene_on` is the one predicate every
         // site reads for "does this run allocate the arc-age map at all", so an off run
         // never touches the new state.
-        bool   anchor_hygiene_on{};   ///< Any increment armed on an anchored (non-ensemble) phase datum: the master gate for the arc-age map and the hygiene seam.
+        bool   anchor_hygiene_on{};   ///< Any increment armed on an anchored phase datum: the master gate for the arc-age map and the hygiene seam.
         /// Two-edge continuous handover, resolved for the run: an anchor handover pins the
         /// incoming anchor at its own absolute ambiguity estimate in the outgoing frame
         /// instead of at 0, which makes the gauge change an S-transform.  Already ANDed with
@@ -852,8 +848,8 @@ namespace GnssProcessor {
         /// phase-leveling local carries are erased at every station: the eq34_reref
         /// treatment applied to the anchored election, which closes the carry-side edge
         /// whose tension the satellite clock otherwise absorbs.  Already ANDed with
-        /// `anchored && !phase_datum_eq34` (the eq34 chain owns its own re-reference; the
-        /// ensemble has no anchors), resolved the same way as pd_handover_continuous.
+        /// `anchored && !phase_datum_eq34` (the eq34 chain owns its own re-reference),
+        /// resolved the same way as pd_handover_continuous.
         bool   pa_carry_reref{};
         /// Cold anchor fallback, resolved for the run (network.phase_datum_candidacy_usable,
         /// docs/SPEC_event_harness.md §15): at a handover the successor is chosen from the
@@ -4886,18 +4882,12 @@ namespace GnssProcessor {
                                   const SphericalHarmonicIonosphere* sh_model2,
                                   bool datum_changed, double dt, bool within_epoch_armed);
 
-    /// @brief Fold the Fix-A held satellite phase-bias datum, before the null-space rank
-    ///        gate.
-    /// Defined in src/core/app/NetworkBorderPrior.cpp.
-    void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
-                                     NetworkEstimator& est, bool within_epoch_armed);
-
     /**
      * @brief Fold the open pin-bridge rows (eq34 reattach hygiene, INC-2).
      *
      * One soft shared-border prior per open bridge (@c ctx.carry.pin_bridge), at the
      * key's held level with information 1/σ².  Folded before the null-space rank gate,
-     * like the broadcast-anchored clock anchors and the Fix-A phase hold, because for a
+     * like the broadcast-anchored clock anchors, because for a
      * bridged key this row is the datum: the election left it without a pin on purpose
      * (it is a spanning-forest root), so the gate would otherwise count its column as an
      * unpinned gauge and withhold the epoch.

@@ -41,7 +41,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
     auto& snap_path = ctx.carry.snap_path;
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     const bool   phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
-    const bool   phase_datum_ensemble = ctx.knobs.phase_datum_ensemble;
     const bool   phase_datum_eq34 = ctx.knobs.phase_datum_eq34;
     const bool   carry_invariant = ctx.knobs.carry_invariant;
     const bool   carry_invariant_pd_safe = ctx.knobs.carry_invariant_pd_safe;
@@ -118,14 +117,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // defines which station's ambiguities carry the datum; a resume across a
         // toggle change would interpret the carried anchors in the wrong frame.
         add(fmt::format("{}", phase_datum_prioritized));
-        // The anchor-free ensemble datum (fix A) references the receiver ensemble
-        // (Σ_r z=0), a different carried-ambiguity frame than the single-anchor pivot or
-        // prioritized datum (both of which set phase_datum_prioritized).  Appended only
-        // when armed, so a non-ensemble snapshot's fingerprint is unchanged.
-        if (phase_datum_ensemble) add("phdatum:ens");
         // The eq34 chain datum references a different carried-ambiguity frame
-        // (per-receiver RPB split plus spanning-tree pins) than the anchor, pivot or
-        // ensemble datums, so a resume across the flip has to cold-start.  Appended only
+        // (per-receiver RPB split plus spanning-tree pins) than the anchor or pivot
+        // datums, so a resume across the flip has to cold-start.  Appended only
         // when armed, so a non-eq34 snapshot's fingerprint is unchanged.
         if (phase_datum_eq34) add("phdatum:eq34");
         // The invariant carry snapshots a DD z-store that the legacy carries do not have,
@@ -279,7 +273,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Handover S-transform (queue 1(b)): it changes which carried priors fold at a
         // pivot switch, so a resume across a toggle change would read a carry that was
         // (or was not) re-expressed in the wrong datum.  Appended only when armed, as for
-        // phase_datum_ensemble and phase_leveling_los_scale, so the off path keeps its
+        // phase_datum_eq34 and phase_leveling_los_scale, so the off path keeps its
         // fingerprint.  When armed, the lineage needs a fresh convergence.
         if (ctx.knobs.handover_stransform) add("sts:1");
         // Card PRM phase 2: the transform before the coupling rows changes the handover

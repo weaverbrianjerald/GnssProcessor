@@ -365,7 +365,7 @@ enum class CarryDisposition : int {
     Reinit,         ///< folded at the clock monitor's reinit variance, decorrelated (inflate_q)
     Seeded,         ///< a parked pre-gap realization seeding its re-registered column (READMIT)
     Reref,          ///< marginalized this epoch: its phase-bias frame was re-referenced
-    Held,           ///< folded by another prior: the phase hold (a phase bias), the SH inject (VtecSh)
+    Held,           ///< folded by another prior: the SH inject (VtecSh)
     OnOscillator,   ///< a satellite clock carried by the clock oscillator model instead
     Parked,         ///< a departed satellite's realization, not folded (column absent or past the seed horizon)
     Screened,       ///< not folded: the effective variance came out non-positive
@@ -517,7 +517,7 @@ struct SharedCarryCov {
 /// solved value @f$\hat s_{\text{prev},j}=x_s(j)@f$ (the coupling-row RHS term); and
 /// last epoch's datum-frame marginal variance @f$P_{\text{prev},jj}@f$, used to
 /// marginalize the term into the row variance when the shared column has departed
-/// this epoch.  Datum-pinned and ensemble-gauge columns are carried with their
+/// this epoch.  Datum-pinned and folded-gauge columns are carried with their
 /// coefficient but with @c p_prev = 0, because they are exactly known (the datum
 /// re-applies them each epoch).  Keeping them preserves the row's exact gauge
 /// invariance (card 1e); without them every coupling row observes the clock gauge,
@@ -1479,11 +1479,6 @@ struct StationAssembly {
     /// sticky tree, the within-epoch tier) is untouched, and a run with both off is
     /// byte-identical.
     std::vector<PlAmb>        qc_amb;
-    /// Every present ambiguity with a phase row this epoch whose (sat, signal) has a
-    /// shared phase-bias column, as (sat, signal, A_r column), aggregated across
-    /// stations into the per-(sat, signal) sum-to-zero gauge (fix A,
-    /// network.phase_datum_ensemble).  Empty unless the ensemble datum is armed.
-    std::vector<std::tuple<std::string, std::string, Eigen::Index>> ens_amb_cols;
     bool                      pl_zwd_present{false};  ///< This station had a carry-eligible ZWD column this epoch (B9).
     bool                      pl_zwd_injected{false}; ///< A ZWD carry prior was injected this epoch (the "carried" flag of network_zwd.csv, distinct from carry-eligible; L7).
     PlZwd                     pl_zwd{};               ///< The ZWD present-record for the post-solve stash (B9).
@@ -2465,8 +2460,7 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 ///     NetworkSbasis::kSbasisCompleteWeight, a compile-time constant, so no weight
 ///     field travels).  rows() == 0 means nothing to re-apply.
 ///   - cap_priors / cap_prior_kinds: the SH-VTEC pre-gate prior
-///     (networkInjectShVtecPrior_), the Fix-A held phase-bias datum prior
-///     (networkInjectPhaseHoldPrior_), the eq34 reattach-hygiene pin-bridge priors
+///     (networkInjectShVtecPrior_), the eq34 reattach-hygiene pin-bridge priors
 ///     (network.phase_datum_time_linked), the drop-and-heal soft anchors
 ///     (NetworkPhaseDatum healNearNullPhaseBias, gate-failure path), the card KP
 ///     code-bias bound prior (NetworkSolveGlue, network.cb_kaula_prior), the D2 diagonal
@@ -2553,7 +2547,7 @@ inline void networkCapturePriors(std::vector<NetworkEstimator::SharedPrior>& cap
 }
 
 /// Epoch-scratch candidate census consumed by every prioritized phase-bias datum
-/// realization (ensemble, eq34 chain, anchor election).  Built once per epoch by
+/// realization (eq34 chain, anchor election).  Built once per epoch by
 /// @ref networkBuildPhaseDatumCandidates (filter/NetworkPhaseDatum.hpp) and passed
 /// by const reference to whichever election the mode dispatch picks; nothing
 /// downstream of the election reads it.

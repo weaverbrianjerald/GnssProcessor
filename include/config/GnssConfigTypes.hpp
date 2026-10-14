@@ -998,7 +998,7 @@ namespace GnssProcessor {
         /// solution prep and the emitter only.  The loader refuses a fold that is not off
         /// unless .enable and @ref cycle_basis are on, @c network.ambiguity_vehicle is
         /// float_kf and @c network.phase_datum_held_basis is on, and refuses it with
-        /// @c network.carry_invariant, @c phase_datum_ensemble, @c phase_datum_eq34,
+        /// @c network.carry_invariant, @c phase_datum_eq34,
         /// @c cycle_slip.turbo_edit, @c cycle_slip.relevel_delta_bridge or
         /// @c sd_ewl.fix_enable.  Emit also refuses @c emit_pb_hold_smoothed and a
         /// @c network.state_snapshot_path, and requires the slip fixes of card ARL section

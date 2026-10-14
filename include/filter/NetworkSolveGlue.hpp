@@ -23,8 +23,8 @@
  *     the caller re-aliases each with `auto& x = sg_.x;`, so downstream code is
  *     unchanged.
  *
- * The two build lambdas (buildEnsembleGauges, buildCarryDdPriors) are passed as
- * std::function so the within-epoch re-solve re-invokes them with byte-identical
+ * The build lambda buildCarryDdPriors is passed as std::function so the
+ * within-epoch re-solve re-invokes it with byte-identical
  * capture semantics.  The seam owns no state; every carry object is a reference into
  * ctx.
  *
@@ -111,8 +111,8 @@ SbasisDeclaration networkClockDatumDeclaration(const NetworkRunContext& ctx,
 
 /**
  * @brief Run the datum build, solve and within-epoch RAIM adaptation for this epoch.
- * @see the file banner for the EpochAction and result-struct contract.  @p buildEnsembleGauges
- *      and @p buildCarryDdPriors are the run-TU wrapper lambdas (re-invoked on re-solve).
+ * @see the file banner for the EpochAction and result-struct contract.
+ *      @p buildCarryDdPriors is the run-TU wrapper lambda (re-invoked on re-solve).
  *      The within-epoch tier's arming and the resolved clock anchor sigma are read from
  *      @c ctx.knobs (within_epoch_armed, clk_anchor_sigma; card NOM3 step EP0).
  */
@@ -140,7 +140,6 @@ NetworkSolveGlueResult networkSolveGlue(
     bool carry_warm,
     double dt,
     double pl_now_s,
-    const std::function<void()>& buildEnsembleGauges,
     const std::function<void()>& buildCarryDdPriors);
 
 } // namespace GnssProcessor

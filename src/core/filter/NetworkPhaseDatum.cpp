@@ -1,7 +1,7 @@
 /**
  * @file NetworkPhaseDatum.cpp
  * @brief Prioritized phase-bias datum: the near-null phase-bias heal, the candidate
- *        census, the ensemble datum, the anchor election, anchor-slip handover
+ *        census, the anchor election, anchor-slip handover
  *        staging and the re-reference carry erase (see the header).
  *
  * The bodies were moved unchanged out of ApplicationNetwork.cpp (INC-8, INC-8b);
@@ -235,30 +235,6 @@ void networkBuildPhaseDatumCandidates(
     // The gate's exclusions, read by the drop-edge predicate.  Moved like the
     // other members so the census stays fresh on every call (card EV7 §6, F1).
     cnd.gated_keys  = std::move(gated_amb);
-}
-
-void networkElectEnsembleDatum(
-        std::vector<NetStation>& stations,
-        const PhaseDatumCandidates& cnd,
-        std::map<std::string, std::string>& this_epoch_anchor,
-        std::set<std::string>& shared_phase_keys) {
-    const auto& union_keys = cnd.union_keys;
-
-    // Anchor-free ensemble datum (Fix A): the shared phase-bias set is the
-    // coverage-gated union, with no anchor election and no pins.  The gauge is
-    // realized by the kernel sum-to-zero fold, built from every tracking
-    // station's ambiguity column after the reduce, so no station gets a
-    // pinned_amb_targets entry (do_fold stays false, isGaugePinned is false,
-    // every station carries all its arcs) and there is no anchor to hand over.
-    // The candidate ranking and the anchor election do not run on this path.
-    for (auto& st : stations) {
-        st.pinned_amb_targets.clear();
-        st.pinned_rpb_keys.clear();
-        st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (never set here)
-    }
-    this_epoch_anchor.clear();
-    shared_phase_keys.clear();
-    for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
 }
 
 void networkElectPhaseAnchors(

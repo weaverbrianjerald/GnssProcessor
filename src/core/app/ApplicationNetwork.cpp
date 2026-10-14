@@ -102,7 +102,7 @@
 #include "filter/NetworkWlRunTypes.hpp" // RAII and section-timer types hoisted out of runNetwork() (INC-9b)
 #include "filter/NetworkRunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally (card NOM TD1a)
 #include "filter/NetworkRobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
-#include "filter/NetworkPhaseDatum.hpp"    // census, ensemble datum, anchor election, drop-and-heal (INC-8b)
+#include "filter/NetworkPhaseDatum.hpp"    // census, anchor election, drop-and-heal (INC-8b)
 #include "filter/NetworkAmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
 #include "filter/NetworkAmbFloat.hpp"      // floored birth prior and bounded drop (RF-1 step 4)
 #include "filter/NetworkHandoverStransform.hpp" // kStsExactTolM (RF-2b: the declaration step test)
@@ -135,7 +135,7 @@
 #include "filter/NetworkChannelAll.hpp"      // all-channel census (card SID phase 6b)
 #include "filter/NetworkLedgerEmit.hpp"  // emitter read against the ledger, declared roster (card SID phase 5a)
 #include "filter/NetworkInstallCarry.hpp" // installPosterior and the WL zone-4 fold / inject (INC-9b)
-#include "filter/NetworkDdPriorBuild.hpp" // buildEnsembleGauges / buildCarryDdPriors free functions (INC-9b)
+#include "filter/NetworkDdPriorBuild.hpp" // buildCarryDdPriors free function (INC-9b)
 #include "filter/NetworkSolveGlue.hpp" // datum, solve and within-epoch RAIM (INC-9b)
 #include "filter/NetworkIonoDiag.hpp"    // iono / ZWD / anchor-info viz traces (INC-11b)
 #include "filter/NetworkDdFrac.hpp"    // cross-station DD fractional-residual trace (INC-11b)
@@ -613,19 +613,11 @@ int Application::runNetwork() {
     //     elected pinned_amb_targets, the anchor for that gauge freedom, whose pin
     //     is folded into the station's own local block.  The key form matches the
     //     pin fold and the ambiguity-state key.
-    // The anchor-free sum-to-zero phase-bias datum reuses all of the prioritized
+    // The Eq-34 / de Jonge single-receiver-chain datum drives all the prioritized
     // machinery (no pivot-first, every station carries its arcs, per-(sat,signal)
-    // shared set) and differs only in how the gauge is realized: a kernel
-    // sum-to-zero fold instead of a per-(sat,signal) anchor pin.  The prioritized
-    // code paths therefore run under either mode, and the two diverge only at the
-    // anchor election (skipped) and the pin fold (inert, because no station gets a
-    // pinned_amb_targets entry).
-    const bool phase_datum_ensemble    = ctx.knobs.phase_datum_ensemble;
-    // The Eq-34 / de Jonge single-receiver-chain datum.  Like the ensemble it
-    // drives all the prioritized machinery, diverging only at the election (a
-    // spanning-tree chain election) and the pin fold (per-tree-edge ambiguity pins
-    // with a target, plus a datum-receiver RPB pin).  Mutually exclusive with the
-    // ensemble, enforced at config load.
+    // shared set), diverging only at the election (a spanning-tree chain election) and
+    // the pin fold (per-tree-edge ambiguity pins with a target, plus a datum-receiver
+    // RPB pin).
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     // DD cycle-basis invariant carry gate, declared early so the superseded eq34
     // hygiene knobs below can gate on it.  Requires phase_datum_eq34.
@@ -710,17 +702,6 @@ int Application::runNetwork() {
     auto& carry_prev_tow = ctx.carry.carry_prev_tow;
     auto& carry_innov_pending = ctx.carry.carry_innov_pending;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
-    // Seed-once and time-lock for the ensemble datum (fix A,
-    // network.phase_datum_hold_sigma_m).  Without the hold, the ensemble references the
-    // emitted bias to mean_r(ẑ_r), a float-ambiguity mean re-realized every epoch whose
-    // absolute level is limited to code/iono precision, so the product moves by about a
-    // metre per epoch (a dynamic datum on a static product).  With the sigma > 0, the
-    // gauge is seeded once per (sat,signal), and from then on the shared bias is held by
-    // a stiff temporal prior of that sigma: the Σz=0 fold is skipped for a (sat,signal)
-    // that already has a carried bias, and the D2 stash carries that bias with a fixed
-    // hold variance instead of dropping it.  0 = re-realize every epoch (the churning
-    // baseline); inert unless phase_datum_ensemble.
-    const bool   phase_hold_on    = ctx.knobs.phase_hold_on;
     // The assembly helpers are Application member functions in
     // ApplicationNetworkAssembly.cpp: networkIsGaugePinned_, networkSplitStation_,
     // networkAppendGimIonoRows_ and networkAppendShIonoRows_ (formerly the lambdas
@@ -1474,10 +1455,7 @@ int Application::runNetwork() {
             networkAnchorHygiene(ctx, config_, log, traces, se.time, stations, present,
                                  carry_slipped_ambs, cnd, hyg);
 
-            if (phase_datum_ensemble) {
-                networkElectEnsembleDatum(stations, cnd, this_epoch_anchor,
-                                          shared_phase_keys);
-            } else if (phase_datum_eq34) {
+            if (phase_datum_eq34) {
                 // Chain datum (card 3).  It mutates the carries before the solve and
                 // fills ctx.carry.eq34_reref, so it must stay ahead of the D3c RPB
                 // allocation below (it is the sole writer of shared_phase_keys on this
@@ -1951,7 +1929,7 @@ int Application::runNetwork() {
                                pa_reref.size(), pa_reref.size() - pa_before,
                                n_erased);
                 }
-            }  // end anchor election (!ensemble && !eq34)
+            }  // end anchor election (!eq34)
         }
 
         // RPB allocation (card 3 eq34, rule D3c): a present station gets the
@@ -2106,21 +2084,7 @@ int Application::runNetwork() {
                           asm_res, est_index_of, total_pins,
                           sec_asm_ms_epoch, timing.asm_wall_ms) == EpochAction::SkipEpoch)
             return LoopSignal::Next;
-        subBegin(SB_GAUGEBUILD); // buildEnsembleGauges + carry-driver lambdas, pre-DD-build (D0b)
-
-        // Ensemble datum (fix A, network.phase_datum_ensemble): builds the anchor-free
-        // sum-to-zero phase-bias gauges from every tracking station's ambiguity column and
-        // hands them to the estimator, which folds Σ_r zˢ_{r,σ}=0 through the kernel
-        // (Schur-projected) at the gate/solve reduce.  One gauge per (sat,signal) that has
-        // a registered shared phase-bias column (thin or gated keys have no column, so
-        // their ambiguity floats).  Re-invoked on the within-epoch RAIM re-solve (the
-        // station set and indices may change).  Empty and a no-op when off.
-        auto buildEnsembleGauges = [&]() {
-            networkBuildEnsembleGauges(est, stations, est_index_of, asm_res,
-                                       shared_phase_keys, prev_carry,
-                                       phase_datum_ensemble, phase_hold_on);
-        };
-        buildEnsembleGauges();
+        subBegin(SB_GAUGEBUILD); // carry-driver lambda, pre-DD-build (D0b)
 
         // Reverse map (group key → chord ArcKey → ambiguity state key) so a
         // post-solve innovation flag (group, chord) maps back to its (station, ambiguity) for
@@ -2249,8 +2213,8 @@ int Application::runNetwork() {
         // and the rest are chords (the carried DDs).  GLONASS (FDMA) is excluded.  Vertex
         // and group ids are stable across epochs (anchored on the satellite label;
         // receiver = app index).  Re-invoked on the RAIM re-solve (est.beginEpoch there
-        // clears the priors and rebuilds est_index_of), like buildEnsembleGauges.  A
-        // no-op, byte-identical, unless carry_invariant.
+        // clears the priors and rebuilds est_index_of).  A no-op, byte-identical, unless
+        // carry_invariant.
         //
         // The slip feed is the PASS-A funnel (carry_slipped_ambs, above) and, on a
         // within-epoch RAIM re-solve, the tier's culprit sets (spec §3 culprit withhold),
@@ -2281,7 +2245,7 @@ int Application::runNetwork() {
                                                       present, shared_phase_keys, registered_clock_sats, registered_code_keys,
                                                       col_desc, n_clock, n_pb, n_cb, n_present, total_pins,
                                                       carry_warm, dt, pl_now_s,
-                                                      buildEnsembleGauges, buildCarryDdPriors);
+                                                      buildCarryDdPriors);
         if (sg_.action == EpochAction::SkipEpoch) return LoopSignal::Next;
         auto& x_s = sg_.x_s;
         auto& plan = sg_.plan;

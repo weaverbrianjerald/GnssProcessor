@@ -328,7 +328,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.clk_model_max_gap = config_.networkClockModelMaxGapS();
     k.start_offset_s = config_.networkStartOffsetHours() * 3600.0;
     k.trace_flag_rates = nc.trace_flag_rates;
-    k.phase_datum_ensemble = config_.networkPhaseDatumEnsemble();
     k.phase_datum_eq34 = config_.networkPhaseDatumEq34();
     k.carry_invariant = k.phase_datum_eq34 && config_.networkCarryInvariant();
     k.carry_invariant_pd_safe = k.carry_invariant && config_.networkCarryInvariantPdSafe();
@@ -386,20 +385,17 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.eq34_seed_round = k.phase_datum_eq34 && config_.networkPhaseDatumEq34SeedRound();
     k.eq34_seed_round_rehost = k.eq34_seed_round
                             && config_.networkPhaseDatumEq34SeedRoundRehostFrame();
-    k.phase_datum_prioritized = config_.networkPhaseDatumPrioritized() || k.phase_datum_ensemble || k.phase_datum_eq34;
+    k.phase_datum_prioritized = config_.networkPhaseDatumPrioritized() || k.phase_datum_eq34;
     // Resolved once for the run (§9.7.10): the datum-station slip path exists only under
     // the legacy pivot datum.  Every no-pivot datum already runs the slip loops from
     // i_lo = 0, so station 0 has ordinary coverage there.
     k.datum_station_detect = config_.networkCycleSlipDatumStationDetect()
                              && !k.phase_datum_prioritized;
-    k.phase_hold_sigma = k.phase_datum_ensemble ? config_.networkPhaseDatumHoldSigmaM() : 0.0;
-    k.phase_hold_on = k.phase_hold_sigma > 0.0;
-    k.phase_hold_var = k.phase_hold_sigma * k.phase_hold_sigma;
     // eq34 reattach hygiene.  The loader already disarms every increment outside an
-    // anchored election; the `&& !ensemble` here is a second guard, so a hand-built
+    // anchored election; `anchored` here is a second guard, so a hand-built
     // NetworkConfig (tests) cannot arm the seam on a datum that elects no anchor.
     {
-        const bool anchored = k.phase_datum_prioritized && !k.phase_datum_ensemble;
+        const bool anchored = k.phase_datum_prioritized;
         k.eq34_min_arc_ep    = anchored ? std::max(0, nc.eq34_anchor_min_arc_ep) : 0;
         k.prior_realization_max_gap_s = nc.eq34_prior_realization_max_gap_s;
         k.pin_bridge_on      = anchored && nc.phase_datum_time_linked

@@ -2,7 +2,7 @@
 /**
  * @file NetworkPhaseDatum.hpp
  * @brief Phase-bias datum seam of the PPP-RTK network producer: the prioritized
- *        candidate census and coverage gate, the ensemble datum, the anchor election
+ *        candidate census and coverage gate, the anchor election
  *        with its handover, held S-basis, candidacy, gate-drop and re-entry options,
  *        the anchor-slip handover staging, the re-reference carry erase, and the
  *        near-null phase-bias soft-anchor.
@@ -22,18 +22,17 @@
  * increments when the proper ambiguity anchor returns.
  *
  * The functions were relocated unchanged out of ApplicationNetwork.cpp at
- * decomposition INC-8 (the soft-anchor) and INC-8b (the census, the ensemble datum
- * and the anchor election; the eq34 chain election went to the sibling
+ * decomposition INC-8 (the soft-anchor) and INC-8b (the census and the anchor
+ * election; the eq34 chain election went to the sibling
  * @ref NetworkChainDatum).  See docs/SPEC_inc8b_election_split.md.  They own no
  * state: every carry and workspace object is an explicit reference into the
  * caller's NetworkRunContext / EpochWorkspace.
  *
- * The three elections realize the phase-bias gauge in three different ways.  The run
- * TU's `if/else-if/else` mode dispatch is the contract: one election runs per epoch,
- * over a census built once:
+ * The two elections realize the phase-bias gauge in two different ways.  The run
+ * TU's `if/else` mode dispatch is the contract: one election runs per epoch, over a
+ * census built once:
  *
  *   networkBuildPhaseDatumCandidates   (always, under phase_datum_prioritized)
- *     ├── networkElectEnsembleDatum    network.phase_datum_ensemble
  *     ├── networkElectChainDatum       network.phase_datum_eq34  [NetworkChainDatum]
  *     └── networkElectPhaseAnchors     otherwise (the anchor election)
  */
@@ -129,7 +128,7 @@ int healNearNullPhaseBias(NetworkEstimator& est,
  *        the network.phase_datum_min_stations coverage gate.
  *
  * Relocated unchanged from Application::runNetwork (INC-8b).  Runs for every
- * prioritized realization (ensemble, eq34 chain, anchor election), once per epoch,
+ * prioritized realization (eq34 chain, anchor election), once per epoch,
  * before the mode dispatch picks an election.
  *
  * Timing: the ambiguity states are allocated later, in PASS B's
@@ -140,7 +139,7 @@ int healNearNullPhaseBias(NetworkEstimator& est,
  * Side effect: when the coverage gate excludes keys, it prunes those keys'
  * phase-bias states at every present station
  * (StateManager::pruneSatPhaseBiasStatesExcept), so the per-station column sets stay
- * consistent with the gated union.  All three elections depend on that prune having
+ * consistent with the gated union.  Both elections depend on that prune having
  * happened.  This function is also the sole writer of the two run-end gate
  * counters, so computing the census twice would double-count them (standing
  * invariant #4 telemetry).
@@ -163,27 +162,6 @@ void networkBuildPhaseDatumCandidates(
         PhaseDatumCandidates& cnd,
         std::size_t& n_gated_epochs,
         std::size_t& n_gated_key_epochs);
-
-/**
- * @brief Anchor-free ensemble datum (Fix A): the shared phase-bias set is the
- *        coverage-gated union, every station's pins are cleared and no anchor
- *        is elected.  Relocated unchanged at INC-8b.
- *
- * The gauge is realized instead by the kernel sum-to-zero fold, built from every
- * tracking station's ambiguity column after the reduce (buildEnsembleGauges, which
- * stays in the run TU because it runs after beginEpoch and PASS B).  With no station
- * holding a pinned_amb_targets entry, do_fold stays false and isGaugePinned false,
- * so every station carries all its arcs and there is no anchor to hand over.
- *
- * @param this_epoch_anchor  [out] cleared; the ensemble elects no anchor.  Must
- *                           be the run's ctx.carry instance (the emit-site
- *                           handover loop is its sole consumer).
- */
-void networkElectEnsembleDatum(
-        std::vector<NetStation>& stations,
-        const PhaseDatumCandidates& cnd,
-        std::map<std::string, std::string>& this_epoch_anchor,
-        std::set<std::string>& shared_phase_keys);
 
 /// Held S-basis bundle for the anchor election, and the counters the election writes
 /// back (RF-2).

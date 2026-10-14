@@ -1568,21 +1568,9 @@ TEST(CodeBiasNetworkConfig, Eq34PhaseDatumParses) {
     }
 }
 
-// Mutual exclusion: eq34 + ensemble are two realizations of the same gauge, so
-// the load fails.  eq34 + prioritized is allowed (eq34 supersedes).  (Card 3)
-TEST(CodeBiasNetworkConfig, Eq34EnsembleMutexFailsPrioritizedSupersedes) {
+// eq34 + prioritized is allowed: eq34 supersedes.  (Card 3)
+TEST(CodeBiasNetworkConfig, Eq34SupersedesPrioritized) {
     LogManager log;
-    // eq34 && ensemble -> load fails.
-    {
-        const fs::path p = writeTempConfig("eq34_ens",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"phase_datum_ensemble\": true,\n"));
-        GnssConfig cfg;
-        EXPECT_FALSE(cfg.loadFromJson(p, log))
-            << "phase_datum_eq34 + phase_datum_ensemble must be rejected at load.";
-        std::error_code ec; fs::remove(p, ec);
-    }
     // eq34 && prioritized -> loads (eq34 supersedes; both getters reflect config).
     {
         const fs::path p = writeTempConfig("eq34_prio",

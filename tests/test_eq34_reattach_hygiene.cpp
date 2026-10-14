@@ -679,7 +679,8 @@ TEST(Eq34ReattachHygiene, LoaderRefusesAnInvertedRampAndDisarmsOutsideAnAnchored
         auto cfg = loadCfg(log, "neg_min", "    \"eq34_anchor_min_arc_ep\": -3,\n");
         EXPECT_EQ(cfg->getNetworkConfig().eq34_anchor_min_arc_ep, 0);
     }
-    {   // the ensemble datum elects no anchor, so there is nothing to guard: disarm with a warning
+    {   // the legacy pivot datum elects no per-(sat,signal) anchor, so there is nothing to
+        // guard: disarm with a warning
         auto cfg = std::make_unique<GnssConfig>();
         const std::string body =
             std::string("{\n")
@@ -688,14 +689,13 @@ TEST(Eq34ReattachHygiene, LoaderRefusesAnInvertedRampAndDisarmsOutsideAnAnchored
               "    \"signal_priorities\": { \"GPS\": \"WC\" } },\n"
               "  \"network\": {\n"
               "    \"clock_datum_station\": \"AAAA\",\n"
-              "    \"phase_datum_ensemble\": true,\n"
               "    \"eq34_anchor_min_arc_ep\": 5,\n"
               "    \"phase_datum_time_linked\": true,\n"
               "    \"stations\": [\n"
               "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
               "      { \"name\": \"BBBB\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n"
               "    ]\n  }\n}\n";
-        const fs::path p = writeTempConfig("ensemble", body);
+        const fs::path p = writeTempConfig("legacy_datum", body);
         ASSERT_TRUE(cfg->loadFromJson(p, log));
         std::error_code ec; fs::remove(p, ec);
         EXPECT_EQ(cfg->getNetworkConfig().eq34_anchor_min_arc_ep, 0);

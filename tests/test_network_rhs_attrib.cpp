@@ -279,7 +279,7 @@ TEST(NetworkRhsAttribClosureTest, ReplayPriorRefoldIsNamedPerKindAndFoldsTheSame
     std::vector<CK> cap_kinds;
     networkCapturePriors(cap, cap_kinds, {priors[0]}, CK::BorderCarryDiagonal);
     networkCapturePriors(cap, cap_kinds, {priors[1]}, CK::ClockOscillator);
-    networkCapturePriors(cap, cap_kinds, {priors[2]}, CK::PhaseHold);
+    networkCapturePriors(cap, cap_kinds, {priors[2]}, CK::PinBridge);
     networkCapturePriors(cap, cap_kinds, {priors[3], priors[4]}, CK::ColdClockAnchor);
     ASSERT_EQ(cap.size(), 5u);
     ASSERT_EQ(cap_kinds.size(), cap.size()) << "the capture's kinds stay in step";
@@ -308,7 +308,7 @@ TEST(NetworkRhsAttribClosureTest, ReplayPriorRefoldIsNamedPerKindAndFoldsTheSame
         ASSERT_EQ(caps.size(), 4u);
         EXPECT_EQ(caps[0].kind, CK::BorderCarryDiagonal);
         EXPECT_EQ(caps[1].kind, CK::ClockOscillator);
-        EXPECT_EQ(caps[2].kind, CK::PhaseHold);
+        EXPECT_EQ(caps[2].kind, CK::PinBridge);
         EXPECT_EQ(caps[3].kind, CK::ColdClockAnchor);
         Eigen::VectorXd sum = Eigen::VectorXd::Zero(named.numShared());
         for (const auto& c : caps) sum += c.delta_rhs;
@@ -335,7 +335,7 @@ TEST(NetworkRhsAttribClosureTest, ReplayPriorRefoldIsNamedPerKindAndFoldsTheSame
         // The kinds are consumed by the call; a size mismatch is ignored (the call's kind).
         named.addSharedPrior({priors[0]});
         EXPECT_EQ(named.attribCaptures().back().kind, CK::Unset);
-        const std::vector<CK> short_kinds{CK::PhaseHold};
+        const std::vector<CK> short_kinds{CK::PinBridge};
         named.contributionPriorKinds(&short_kinds);
         named.contributionKind(CK::ShPrior);
         fold(named);

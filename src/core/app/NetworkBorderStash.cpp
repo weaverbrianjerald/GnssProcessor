@@ -120,8 +120,6 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     const bool   carry_cpl_tu = ctx.knobs.carry_cpl_tu;
     const bool   clk_model_on = ctx.knobs.clk_model_on;
     const bool   carry_invariant = ctx.knobs.carry_invariant;
-    const bool   phase_hold_on = ctx.knobs.phase_hold_on;
-    const double phase_hold_var = ctx.knobs.phase_hold_var;
     const bool   cb_time_linked = ctx.knobs.cb_time_linked;
     const bool   fullcov_on = ctx.knobs.fullcov_on;
 
@@ -134,44 +132,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     prev_carry.clear();
     prev_carry_cov.clear();   // rebuilt below when the dense carry (C1) is on
     std::vector<Eigen::Index> fc_cols;  // shared-border column per dense row (C1)
-    // Fix A: covariance-carry consistency, the companion to the point-solve fold that
-    // the solve depends on.  Under the anchor-free ensemble phase-bias datum the gauge
-    // is realized after the reduction by the rank-1 correction Ñ_ss += g gᵀ/β
-    // (@ref NetworkNormalEquations::foldReducedSumZeroGauges), not by a local pin before
-    // the reduction as in the anchor mode.  A satellite phase-bias column is the gauge
-    // (null) direction of the unfolded reduced normals: the fold makes the system
-    // invertible but leaves that column's slot of the reduced covariance carrying the
-    // fold's artificial gauge-direction variance (an over-tight value that reinforces
-    // itself epoch by epoch, set by the sum-to-zero reference rather than by a physical
-    // uncertainty, since the ensemble reference is re-realized exactly every epoch),
-    // plus its phase↔clock / phase↔code cross terms.  Feeding that column into the D2
-    // carry would propagate the fold into next epoch's prior: the stiff,
-    // gauge-referenced phase-bias prior biases the coupled satellite clock through
-    // N_ss[clk,pb], clock_model amplifies it, and the pair diverges exponentially from
-    // epoch 2 (about 7× per epoch).  Therefore every ensemble phase-bias gauge column
-    // is treated as an exact datum (variance 0) in the covariance the carry harvests,
-    // the analogue of how conditionalLocalCovariance / conditionalLocalVarianceDiag
-    // zero the datum-pinned shared columns before reconstructing a conditional
-    // covariance ("datum-pinned rows/cols zeroed → treat as exact").  Zeroing the row
-    // and column drops both the over-tight diagonal (the diagonal stash's var>0 guard
-    // then skips the key) and the phase↔clock/code cross-covariance (the key is then
-    // excluded from the C1 dense block too), while the gauge-invariant clock and
-    // code-bias variances (which the S-transform leaves identical to the anchor datum)
-    // pass through untouched.  Continuity of the emitted phase bias comes from the
-    // local ambiguity carry (phase_leveling) and the stable ensemble constraint, not
-    // from this shared carry, which under the fold would double-count that information
-    // and add the contamination.  Anchor mode or off: cov aliases
-    // est.sharedCovariance() unchanged → byte-identical.  Zeroing the g direction
-    // instead (g = λ·N_ss·e_pb, which has clock components) would corrupt the correct
-    // clock covariance: the contaminated direction is the phase-bias column e_pb, not g.
-    const Eigen::MatrixXd& cov_src = est.sharedCovariance();
-    Eigen::MatrixXd cov_ens;   // ensemble-only: the gauge-exact copy
-    const bool ens_phase_gauge = config_.networkPhaseDatumEnsemble();
-    if (ens_phase_gauge) {
-        cov_ens = cov_src;
-        est.zeroPhaseGaugeColumns(cov_ens);   // treat each folded gauge column as exact
-    }
-    const Eigen::MatrixXd& cov = ens_phase_gauge ? cov_ens : cov_src;
+    const Eigen::MatrixXd& cov = est.sharedCovariance();
     std::set<Eigen::Index> pinned_cols;
     for (const auto& p : plan.shared_datum) pinned_cols.insert(p.column);
     auto stash = [&](SharedParamKind kind, const std::string& sat,
@@ -242,8 +203,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // network.cycle_slip.datum_station_detect): a slip at the gauge-pinned datum
         // receiver moved the level that every phase bias of this satellite references.
         // Skip the stash entirely for one kept epoch, before the pb_level_prev harvest (a
-        // bridge must not re-open on the stale level) and before both stash branches
-        // (plain and phase_hold), so the next solve re-seeds the bias at the new pivot
+        // bridge must not re-open on the stale level) and before the phase-bias stash,
+        // so the next solve re-seeds the bias at the new pivot
         // level, in lock-step with the network-wide ambiguity reseed that the slip drain
         // defers until this skip has been consumed.  The set is empty unless the toggle
         // is armed ⇒ byte-identical.
@@ -263,39 +224,13 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         }
         // The DD invariant carry is the phase time-link, so the S-dependent shared
         // PhaseBias carry is not stashed as well (it would double-count in next epoch's
-        // D2 / hold / dense fold).  Clock / code / SH / ZWD carries are unaffected.
+        // D2 / dense fold).  Clock / code / SH / ZWD carries are unaffected.
         if (carry_invariant) continue;
         const bool flagged = clock_refloat_sats.count(parts->satellite) > 0;
         if (flagged && full_refloat) continue;
         const Eigen::Index col =
             est.phaseBiasColumn(parts->satellite, parts->signal);
-        if (phase_hold_on) {
-            // Seed once, then time-lock: carry b_s toward its realized value with the
-            // fixed hold variance, the temporal datum that stops the metre-per-epoch
-            // re-realization.  Not cov(col,col), on purpose: the ensemble fold leaves that
-            // column carrying an artificial gauge variance (carrying it causes the epoch-2
-            // runaway that the Fix A family guards against).  A stiff, hand-set variance
-            // makes the carried value the datum reference next epoch (buildEnsembleGauges
-            // then skips the Σz=0 fold for it).  Datum-pinned columns (none for PB) and
-            // non-finite values are still excluded.
-            if (pinned_cols.count(col)) continue;
-            const double v = x_s(col);
-            if (!std::isfinite(v)) continue;
-            CarryPrior cp;
-            cp.kind = SharedParamKind::PhaseBias;
-            cp.sat = parts->satellite; cp.signal = parts->signal;
-            // inflate_q is always false: a clock-monitor soft refloat of this satellite
-            // (the loose-reinit path the legacy stash applies) does not loosen the
-            // phase-bias hold, on purpose, because the phase-ensemble datum is orthogonal
-            // to a clock fault, so the bias stays time-locked.  (A hard refloat is still
-            // handled: `flagged && full_refloat` skip-stashes above, so the satellite
-            // re-seeds next epoch.)
-            cp.value = v; cp.var = phase_hold_var; cp.inflate_q = false;
-            prev_carry.push_back(cp);
-        } else {
-            stash(SharedParamKind::PhaseBias, parts->satellite, parts->signal,
-                  col, flagged);
-        }
+        stash(SharedParamKind::PhaseBias, parts->satellite, parts->signal, col, flagged);
     }
     // The datum re-reference skip-stash queue (§9.7.10) is consumed exactly once per
     // kept epoch (a withheld epoch never reaches this stash, so the queue, and the

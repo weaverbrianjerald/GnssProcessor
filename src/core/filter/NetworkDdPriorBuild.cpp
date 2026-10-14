@@ -3,10 +3,9 @@
  * @brief Implementation of the network DD-prior build steps (see the header banner).
  *        Bodies relocated verbatim (8-column dedent, no substitutions) from
  *        Application::runNetwork at decomposition INC-9b.
- *        networkBuildEnsembleGauges needs no alias preamble (its parameters are the
- *        former captures); networkBuildCarryDdPriors opens with a copy of the run TU's
- *        ctx.carry aliases so its body reads the original names.  The retired MW/WL
- *        lane step that followed the carry blocks is deleted (card WL-2).
+ *        networkBuildCarryDdPriors opens with a copy of the run TU's ctx.carry aliases so
+ *        its body reads the original names.  The retired MW/WL lane step that followed
+ *        the carry blocks is deleted (card WL-2).
  */
 
 #include "filter/NetworkDdPriorBuild.hpp"
@@ -14,7 +13,7 @@
 #include "app/NetworkRunContext.hpp"          // ctx.carry / ctx.counters / ctx.knobs
 #include "config/GnssConfig.hpp"              // config_.getNetworkConfig()
 #include "common/GnssIdentity.hpp"            // systemOfSat, rinexLetter
-#include "filter/NetworkNormalEquations.hpp"  // SumZeroGauge / DdPriorBlock / GroupInput
+#include "filter/NetworkNormalEquations.hpp"  // DdPriorBlock / GroupInput
 #include "filter/StateKeySchema.hpp"          // StateKeys::parse*
 
 #include <Eigen/Dense>
@@ -34,72 +33,6 @@
 #include <vector>
 
 namespace GnssProcessor {
-
-void networkBuildEnsembleGauges(NetworkEstimator& est,
-                                const std::vector<NetStation>& stations,
-                                const std::vector<int>& est_index_of,
-                                const std::vector<StationAssembly>& asm_res,
-                                const std::set<std::string>& shared_phase_keys,
-                                const std::vector<CarryPrior>& prev_carry,
-                                bool phase_datum_ensemble,
-                                bool phase_hold_on) {
-    if (!phase_datum_ensemble) return;
-    // The (sat,signal) that actually have a shared phase-bias column this
-    // epoch (a gauge is needed only for those; thin/gated signals float).
-    std::set<std::string> shared_ss;
-    for (const auto& pk : shared_phase_keys) {
-        const auto p = StateKeys::parseSatPhaseBiasKey(pk);
-        if (p) shared_ss.insert(p->satellite + "\x1f" + p->signal);
-    }
-    // Seed-once and time-lock: a (sat,signal) that already carries a held bias
-    // (from the previous epoch's D2 stash) takes its datum from that stiff carried
-    // prior, so no Σz=0 gauge is folded for it; a hard (w→∞) fold would override
-    // the finite hold prior and re-realize the level, which then changes from
-    // epoch to epoch.  Only fresh or re-seeded (sat,signal) get a gauge this
-    // epoch.  Empty when the hold is off.
-    std::set<std::string> held;
-    if (phase_hold_on)
-        for (const CarryPrior& cp : prev_carry)
-            // var>0 is the same guard the hold-prior injector applies, so a
-            // (sat,signal) skips the fold iff it will get a hold prior.  A
-            // var<=0 carry (for example from a corrupt warm-resume snapshot) is
-            // not treated as held here; it re-seeds via the fold instead of
-            // being left without a datum.
-            if (cp.kind == SharedParamKind::PhaseBias && cp.var > 0.0)
-                held.insert(cp.sat + "\x1f" + cp.signal);
-    std::map<std::string, NetworkNormalEquations::SumZeroGauge> by_key;
-    for (size_t i = 0; i < stations.size(); ++i) {
-        if (est_index_of[i] < 0) continue;
-        for (const auto& [sat, sig, col] : asm_res[i].ens_amb_cols) {
-            const std::string ss = sat + "\x1f" + sig;
-            if (!shared_ss.count(ss)) continue;   // no shared phase bias → floats
-            if (held.count(ss)) continue;         // held by the carried prior → skip the fold
-            by_key[ss].terms.emplace_back(
-                static_cast<std::size_t>(est_index_of[i]), col);
-        }
-    }
-    std::vector<NetworkNormalEquations::SumZeroGauge> gauges;
-    gauges.reserve(by_key.size());
-    for (auto& [k, gz] : by_key) {
-        if (gz.terms.empty()) continue;
-        // Record the shared phase-bias column this gauge fixes, so the
-        // estimator can treat it as an exact datum column in the datum-frame
-        // conditional covariance (the fold leaves it with an artificial
-        // gauge-direction variance; see SumZeroGauge::shared_col).  k is
-        // "sat\x1fsignal"; every key in by_key came from shared_ss, so it has
-        // a registered phase-bias column.
-        const auto us = k.find('\x1f');
-        if (us != std::string::npos) {
-            const std::string sat = k.substr(0, us);
-            const std::string sig = k.substr(us + 1);
-            try { gz.shared_col = est.phaseBiasColumn(sat, sig); }
-            catch (...) { gz.shared_col = -1; }
-        }
-        gauges.push_back(std::move(gz));
-    }
-    est.contributionKind(ContributionKind::EnsemblePhaseGauge);   // card NOM N2a
-    est.setPhaseSumZeroGauges(std::move(gauges));
-}
 
 void networkBuildCarryDdPriors(
     NetworkRunContext& ctx,

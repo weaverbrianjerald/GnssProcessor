@@ -92,7 +92,6 @@ namespace GnssProcessor {
         CbKaula,                  ///< Loose physical-bound prior on the satellite code biases (card KP).
         PbHeal,                   ///< Drop-and-heal prior on a near-null phase-bias direction (the rank gate's response).
         ShPrior,                  ///< Carried SH-VTEC prior.
-        PhaseHold,                ///< Phase-bias hold prior (ensemble datum).
         PinBridge,                ///< eq34 pin bridge on an unpinned key (reattach hygiene).
         BorderCarryDiagonal,      ///< The border carry, diagonal form (D2, and the dense fold's leftovers).
         BorderCarryGaugeFree,     ///< The border carry, diagonal with the clock common mode downdated (card Q3 gauge-free fold).
@@ -106,7 +105,6 @@ namespace GnssProcessor {
         ColdClockAnchor,          ///< A-priori satellite-clock anchor (cold-start conditioning).
         // --- Pins, gauges, DD blocks ---------------------------------------------------
         ClockPivotPin,            ///< Per-constellation clock pivot pins (Dirichlet, in the solve).
-        EnsemblePhaseGauge,       ///< Ensemble sum-to-zero phase-bias gauges (fix A).
         DdPriorBlock,             ///< Card-4 DD prior blocks (carry_invariant).
         // --- Not a family ----------------------------------------------------------------
         Unset,                    ///< No site named a kind: the default of every tag and fold record.

@@ -153,7 +153,7 @@ namespace GnssProcessor {
         Keys,      ///< Border keys handed to a shared prior fold (a key absent from this epoch's layout is skipped by the fold, not by the count).
         Walks,     ///< Clone walk factors handed to a fold (one per border key and its clone).
         Pins,      ///< Clock pivot pins of the last primary solve.
-        Gauges,    ///< Ensemble phase-bias gauges set for the solve.
+        Gauges,    ///< Sum-to-zero phase-bias gauges set for the solve (the estimator's gauge kernel).
         Blocks,    ///< DD prior blocks set for the solve.
     };
 

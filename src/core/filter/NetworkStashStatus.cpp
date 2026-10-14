@@ -90,7 +90,6 @@ void networkStashStatus(
     auto& prev_tow = ctx.counters.prev_tow;
     auto& prev_week = ctx.counters.prev_week;
     auto& n_emitted = ctx.counters.n_emitted;
-    const bool   phase_hold_on    = ctx.knobs.phase_hold_on;
     const bool scoped_handover = ctx.knobs.scoped_handover;
     const auto handover_affects = [&](const std::string& sat) {
         return datum_changed
@@ -122,7 +121,7 @@ void networkStashStatus(
             if (cp.inflate_q) continue;                       // clock-monitor reinit, not an ordinary carry
             if (cp.t_park_s > 0.0) continue;                  // parked: not an ordinary carry (a readmit seed included)
             if (cp.kind == SharedParamKind::PhaseBias) {
-                if (!vce_wants_pb || phase_hold_on) continue;                 // hold path ≠ a q-carry
+                if (!vce_wants_pb) continue;
                 if (eq34_reref.count({cp.sat, cp.signal})) continue;         // marginalized (card 3 D4)
                 if (pa_reref.count({cp.sat, cp.signal})) continue;           // marginalized (queue 1(d))
             } else if (cp.kind == SharedParamKind::CodeBias) {
@@ -144,17 +143,16 @@ void networkStashStatus(
     // The fold decision and its variance are reproduced here from
     // networkInjectD2CarryPrior's predicate, clause for clause, not approximated:
     // every input (prev_carry, datum_changed, changed_consts, eq34_reref,
-    // phase_hold_on, dt, the q ladder, the B4 floors, clk_mon_reinit_var) is still
+    // dt, the q ladder, the B4 floors, clk_mon_reinit_var) is still
     // in scope and unchanged at this point.  The `folded` bit decides the dispersion
     // branch, and using the folded form on an unfolded row inflates |t| by about
     // 3000x through the ε clamp, which would put every Frame row in the top ladder
     // bin.
     //
     // Two kinds of row carry no calibration weight (spec §INC-2):
-    //  * a `phase_hold` PB: the hold pins the posterior, so ê measures carry-vs-hold
-    //    disagreement and neither branch's null applies.  Its null dispersion is
-    //    undefined, which is the one admissible reason to censor a row from σ̂₀
-    //    (never because its value is large).
+    //  * a clock key the anchor guard withdrew this epoch (`cta_refloat`): neither
+    //    branch's null applies.  Its null dispersion is undefined, which is the one
+    //    admissible reason to censor a row from σ̂₀ (never because its value is large).
     //  * anything whose fold variance could not be reconstructed: reported as raw
     //    formal and flagged, rather than standardized under a nominal q the
     //    mechanism never used.
@@ -226,10 +224,6 @@ void networkStashStatus(
             if (!outer_gate) {
                 p.label = PriorResidualLabel::Frame;
                 p.mech  = datum_changed ? "datum_changed" : "no_carry";
-            } else if (is_pb && phase_hold_on) {
-                p.label = PriorResidualLabel::Frame;
-                p.mech  = "phase_hold";
-                p.hold  = true;                  // null dispersion undefined ⇒ no σ̂₀ weight
             } else if (handover_affects(cp.sat) && !sts_released(cp.sat)) {
                 p.label = PriorResidualLabel::Frame;
                 p.mech  = "handover";
@@ -262,7 +256,7 @@ void networkStashStatus(
                 // A clock key the anchor guard withdrew this epoch folded and was
                 // then un-folded before the emitted solve, so its residual is neither
                 // the folded nor the unfolded statistic.  Labelled Frame with the
-                // mechanism named, the same treatment as a held phase bias (card Q3).
+                // mechanism named (card Q3).
                 if (is_clk && ctx.knobs.cta_on) {
                     const auto ait = ctx.carry.clk_anchor.sat.find(cp.sat);
                     if (ait != ctx.carry.clk_anchor.sat.end() && !ait->second.folded) {

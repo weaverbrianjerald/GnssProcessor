@@ -61,22 +61,16 @@ SbasisDeclaration networkClockDatumDeclaration(const NetworkRunContext& ctx,
                                                const GnssConfig& config_,
                                                double clk_anchor_sigma) {
     const auto& nc = config_.getNetworkConfig();
-    const bool phase_datum_ensemble = ctx.knobs.phase_datum_ensemble;
     const bool phase_datum_eq34     = ctx.knobs.phase_datum_eq34;
     const bool clock_brdc_anchored  = ctx.knobs.clock_brdc_anchored;
     const bool clock_sum_to_zero    = ctx.knobs.clock_sum_to_zero;
     SbasisDeclaration decl;
     decl.reference_receiver_id = nc.clock_datum_station;
     decl.emit_code_bias = config_.estimateNetworkSatCodeBias();  // self-describe the OSB datum (W6)
-    // Self-describe the anchor-free ensemble phase-bias frame, so a consumer knows the
-    // emitted bias references the receiver ensemble (Σ_r z = 0), not a single pivot
-    // receiver's ambiguity (fix A).
-    if (phase_datum_ensemble)
-        decl.amb_datum = SbasisDeclaration::AmbDatum::SumToZeroPerReceiver;
     // Self-describe the Eq-34 single-receiver-chain phase-bias frame, so a consumer knows
     // the emitted between-satellite reference is integer-consistent (each chain hop is an
     // integer).  The wire value is 2, on the existing v2 S line (card 3).
-    else if (phase_datum_eq34)
+    if (phase_datum_eq34)
         decl.amb_datum = SbasisDeclaration::AmbDatum::SingleReceiverChain;
     if (clock_brdc_anchored) {
         // Broadcast-anchored clock gauge: buildSharedDatum branches on this to emit
@@ -121,7 +115,6 @@ NetworkSolveGlueResult networkSolveGlue(
     bool carry_warm,
     double dt,
     double pl_now_s,
-    const std::function<void()>& buildEnsembleGauges,
     const std::function<void()>& buildCarryDdPriors) {
     // --- Alias preamble (byte-copies of the run-TU alias block). ---
     // The two run constants below were parameters, computed by the driver with the
@@ -197,7 +190,6 @@ NetworkSolveGlueResult networkSolveGlue(
     auto& n_perconst_diffuse_published = ctx.counters.n_perconst_diffuse_published;
     const bool trace_flag_rates = ctx.knobs.trace_flag_rates;
     auto& spectrum_diag_budget = ctx.counters.spectrum_diag_budget;
-    const bool phase_datum_ensemble    = ctx.knobs.phase_datum_ensemble;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
     const auto& t = est.sectionTimers();
@@ -799,10 +791,8 @@ networkInjectShVtecPrior(ctx, ws, config_, est, sh_model.get(),
                          sh_model2.get(), datum_changed,
                          dt, within_epoch_armed);
 
-networkInjectPhaseHoldPrior(ctx, ws, est, within_epoch_armed);
-
-// The open pin bridges (eq34 reattach hygiene, INC-2).  Injected before the gate for
-// the same reason as the phase hold above: for a bridged key this soft row is the
+// The open pin bridges (eq34 reattach hygiene, INC-2).  Injected before the gate:
+// for a bridged key this soft row is the
 // datum (the election left the key unpinned on purpose), so it must be in the reduced
 // normals that the gate inspects.  No-op when no bridge is open.
 networkInjectPinBridgePrior(ctx, ws, est, within_epoch_armed, log);
@@ -2120,11 +2110,6 @@ if (within_epoch_armed && carry_warm) {
         // Card SCL2 X2: the shared-history columns' N(0, 1) priors, as the primary fold
         // folded them after the clones'.  No-op off.
         networkSharedHistoryReplayFold(ctx, ws, est);
-        // Rebuild the ensemble phase-bias gauges on the fresh arrowhead (fix A):
-        // beginEpoch reopened the layout, est_index_of was rebuilt above and
-        // excluded stations may have dropped out, so the stored gauges' station
-        // indices are stale.  No-op when off.
-        buildEnsembleGauges();
         // Rebuild the DD-prior blocks on the fresh arrowhead (beginEpoch cleared
         // them, and est_index_of was rebuilt above).  The predict is not re-run;
         // only the fold is rebuilt.  No-op when off (card 4 (M1), C3b).  The rebuild

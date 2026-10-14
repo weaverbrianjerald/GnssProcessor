@@ -1600,8 +1600,7 @@ void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
 NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_s,
                                                        const GnssTime& epoch_time,
                                                        int iod_ssr, int provider_id,
-                                                       int solution_id,
-                                                       bool ambiguity_datum_ensemble) const {
+                                                       int solution_id) const {
     if (x_s.size() != numShared()) {
         throw std::invalid_argument(
             "NetworkEstimator::toSolutionEpoch: x_s size != numShared()");
@@ -1657,17 +1656,12 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
                 // bias and are not integer-recoverable, so they stay false; a
                 // consumer must not treat an 'R' bias as an integer candidate.  A
                 // consumer reads the flag only with
-                // network.require_signal_integer_for_ar (default off).
-                // Under the anchor-free ensemble datum the bias references the
-                // receivers' float-ambiguity mean (Odijk Eq. 34, non-integer), so it
-                // is not an AR candidate for any constellation (T3a).  Otherwise (the
-                // pivot-receiver anchor datum, or the Card-3 Eq-34
-                // single-receiver-chain datum network.phase_datum_eq34, which is
-                // mutually exclusive with the ensemble and so passes false here) the
+                // network.require_signal_integer_for_ar (default off).  Under the
+                // pivot-receiver anchor datum, the prioritized anchor or the Card-3
+                // Eq-34 single-receiver-chain datum (network.phase_datum_eq34) the
                 // emitted bias carries only integer lumps and keeps the integer
                 // property for CDMA satellites.
-                npb.signal_integer = !ambiguity_datum_ensemble
-                                     && !d.sat.empty() && systemOfSat(d.sat) != System::GLONASS;
+                npb.signal_integer = !d.sat.empty() && systemOfSat(d.sat) != System::GLONASS;
                 break;
             }
             case SharedParamKind::VtecSh:

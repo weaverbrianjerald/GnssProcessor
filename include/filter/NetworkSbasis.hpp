@@ -127,7 +127,8 @@ struct SbasisDeclaration {
     ///    is pinned to zero per (satellite, signal), so the estimable phase bias
     ///    carries that receiver's integer lump (legacy single pivot and prioritized
     ///    anchor).
-    ///  - @c SumToZeroPerReceiver (@c network.phase_datum_ensemble, Fix A):
+    ///  - @c SumToZeroPerReceiver (the removed @c network.phase_datum_ensemble, Fix A;
+    ///    kept so a reader parses a wire that declares it):
     ///    anchor-free; the gauge is fixed by @f$\sum_r z^s_{r,\sigma}=0@f$ over the
     ///    tracking receivers, so the phase bias references the receiver ensemble
     ///    (no pivot, no handover, and a consistent between-satellite reference).

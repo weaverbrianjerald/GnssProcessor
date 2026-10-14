@@ -236,7 +236,7 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
     const bool reinitFlags = k.clk_mon_on || k.clk_model_on;
     const bool cbEst = config.estimateNetworkSatCodeBias();
     const bool clkCarried = !k.clk_model_on;
-    const bool pbCarried = !k.carry_invariant && !k.phase_hold_on;   // not stashed / Held first
+    const bool pbCarried = !k.carry_invariant;   // not stashed under the DD carry
     // A clock-pivot datum change is possible only with a pivot clock datum.
     const bool pivotDatum = !k.clock_sum_to_zero && !k.clock_brdc_anchored;
     const bool relevelFree = config.networkCycleSlipRelevelFreeEpoch();
@@ -281,7 +281,7 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::PbReref:
             return pbCarried
                 && ((k.pa_carry_reref && (!k.pd_held_basis || k.pd_held_cold_release))
-                    || (k.phase_datum_eq34 && !k.phase_datum_ensemble));
+                    || k.phase_datum_eq34);
 
         // --- The ambiguity: the float vehicle's drop, the leveling vehicle's skips.  The
         // latch exists only under relevel_free_epoch (the loader disarms it without
@@ -304,7 +304,7 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::AmbWithholdErase:     return k.wh_free_erase && k.raim_withhold > 0.0 && k.pl_on;
         case R::AmbAnchorRerefErase:
             return k.pl_on && k.pa_carry_reref && (!k.pd_held_basis || k.pd_held_cold_release);
-        case R::AmbEq34Erase:         return k.phase_datum_eq34 && !k.phase_datum_ensemble && ambCarried;
+        case R::AmbEq34Erase:         return k.phase_datum_eq34 && ambCarried;
         case R::AmbFleetFlush:
             return ambCarried && k.pl_refloat_on_conv && config.estimateNetworkIonoSh();
         // --- The slant ionosphere and the phase colour (erased with their line of sight).
@@ -338,7 +338,7 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::RxclkGapSkip:
             return k.pl_on && k.rxclk_blk && k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint;
         case R::RpbEq34Erase:
-            return k.phase_datum_eq34 && !k.phase_datum_ensemble && k.pl_on && k.eq34_rpb_q > 0.0;
+            return k.phase_datum_eq34 && k.pl_on && k.eq34_rpb_q > 0.0;
         case R::RpbGapSkip:           return k.pl_on && k.eq34_rpb_q > 0.0;
         case R::RpbGapPrune:          return k.pl_on && k.eq34_rpb_q > 0.0;
         case R::ZwdGapSkip:           return k.pl_on && (k.zwd_on || k.zwd_seam_on);

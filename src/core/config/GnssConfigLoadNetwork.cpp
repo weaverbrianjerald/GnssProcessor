@@ -354,16 +354,14 @@ namespace GnssProcessor {
         // the reason given above: the phase-datum mode flags are parsed in
         // loadNetworkDatumSignalling_, after the cycle_slip block, so a check at the
         // parse site would read their code defaults.  The handover acts inside
-        // networkElectPhaseAnchors, the `else` arm of the three-way mode dispatch.
-        // Under the ensemble or eq34 datum, or with the prioritized election off,
-        // there is no anchor to hand over and the knob is a structural zero
-        // (invariant #4).
+        // networkElectPhaseAnchors, the `else` arm of the two-way mode dispatch.
+        // Under the eq34 datum, or with the prioritized election off, there is no
+        // anchor to hand over and the knob is a structural zero (invariant #4).
         if (network_config_.cycle_slip_anchor_slip_handover
-            && (!network_phase_datum_prioritized_ || network_phase_datum_ensemble_
-                || network_phase_datum_eq34_)) {
+            && (!network_phase_datum_prioritized_ || network_phase_datum_eq34_)) {
             log->warn("Network: network.cycle_slip.anchor_slip_handover needs the "
                       "PRIORITIZED anchor election (network.phase_datum_prioritized "
-                      "without phase_datum_ensemble / phase_datum_eq34) — that is the "
+                      "without phase_datum_eq34) — that is the "
                       "only realization with a per-family anchor to hand over "
                       "— disabled.");
             network_config_.cycle_slip_anchor_slip_handover = false;
@@ -910,8 +908,7 @@ namespace GnssProcessor {
                 && ((network_phase_datum_eq34_carry_shift_ && !network_carry_invariant_)
                     || (network_phase_datum_eq34_seed_round_
                         && network_phase_datum_eq34_seed_round_rehost_frame_));
-            const bool anchored = network_phase_datum_prioritized_ && !network_phase_datum_ensemble_
-                && !network_phase_datum_eq34_;
+            const bool anchored = network_phase_datum_prioritized_ && !network_phase_datum_eq34_;
             const bool dho = network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                 && network_config_.amb_float_declared_handover && anchored
                 && network_phase_anchor_carry_reref_ && network_phase_datum_handover_continuous_;
@@ -1472,8 +1469,8 @@ namespace GnssProcessor {
      *    basis's L1/L2 pairs), the float vehicle (@c network.ambiguity_vehicle float_kf) and
      *    the held S-basis (@c network.phase_datum_held_basis);
      *  - it refuses @c carry_invariant (the held solve reads the unfolded station factors, and
-     *    the Card-4 DD priors would fold into the same normals), @c phase_datum_ensemble and
-     *    @c phase_datum_eq34 (other phase datums, never measured with the fold),
+     *    the Card-4 DD priors would fold into the same normals), @c phase_datum_eq34 (another
+     *    phase datum, never measured with the fold),
      *    @c cycle_slip.turbo_edit and @c cycle_slip.relevel_delta_bridge (integer repairs of
      *    the float the fold reads), and @c sd_ewl.fix_enable (a second integer path);
      *  - the source is always named; @c lattice (the ledger of fixed cycles, step FCF-3) runs
@@ -1526,8 +1523,6 @@ namespace GnssProcessor {
         if (network_carry_invariant_)
             refuse("refuses network.carry_invariant: the held solve reads the unfolded station "
                    "factors, and the Card-4 DD priors fold into the same normals");
-        if (network_phase_datum_ensemble_)
-            refuse("refuses network.phase_datum_ensemble (a phase datum never measured with the fold)");
         if (network_phase_datum_eq34_)
             refuse("refuses network.phase_datum_eq34 (a phase datum never measured with the fold)");
         if (network_cycle_slip_turbo_edit_)
@@ -8288,7 +8283,7 @@ namespace GnssProcessor {
      * @brief Datum realization and discontinuity signalling knobs, and the card-3/card-4 datum family.
      *
      * Raw parse only for the clock gauge (pivot / sum-to-zero / broadcast-anchored), the
-     * phase-bias gauge (prioritized / ensemble / eq34) and @c network.carry_invariant*; the
+     * phase-bias gauge (prioritized / eq34) and @c network.carry_invariant*; the
      * mutexes and armed-state reports live in @c validateNetworkDatumCoherence_ and
      * @c validateNetworkPhaseDatum_.  The D5 v3/v4 knobs are parsed and host-checked here;
      * the slip-QC instrumentation that feeds them is auto-armed at the end of
@@ -8408,13 +8403,6 @@ namespace GnssProcessor {
         network_phase_datum_prioritized_ =
             jval<bool>(json, "network.phase_datum_prioritized",
                        "network_phase_datum_prioritized", false);
-        // Fix A: anchor-free ensemble (sum-to-zero over receivers) phase-bias gauge.
-        // Reuses the prioritized SPOF-cure machinery (no pivot-first, every station
-        // carries its arcs) but elects no anchor and folds Σ_r zˢ_{r,σ}=0 through the
-        // kernel instead of a single-anchor pin.
-        network_phase_datum_ensemble_ =
-            jval<bool>(json, "network.phase_datum_ensemble",
-                       "network_phase_datum_ensemble", false);
         // Eq-34 / de Jonge single-receiver-chain phase-bias datum (card 3).  Reuses the
         // prioritized SPOF-cure machinery (no pivot-first, every station carries its
         // arcs) but replaces the anchor election with a spanning-tree chain election
@@ -8476,15 +8464,14 @@ namespace GnssProcessor {
             jval<bool>(json, "network.phase_datum_eq34_slip_aware_election",
                        "network_phase_datum_eq34_slip_aware_election", false);
         // Datum-station slip detection is a legacy-pivot-datum mechanism: every
-        // no-pivot datum (prioritized / ensemble / eq34) runs the slip loops from
+        // no-pivot datum (prioritized / eq34) runs the slip loops from
         // i_lo = 0 already, so station 0 has ordinary coverage there and the
         // dedicated path never engages (runtime-guarded).  Parsed in
         // loadNetworkSlipDetectors_, which runs before this helper.
         if (network_cycle_slip_datum_station_detect_
-            && (network_phase_datum_prioritized_ || network_phase_datum_ensemble_
-                || network_phase_datum_eq34_)) {
+            && (network_phase_datum_prioritized_ || network_phase_datum_eq34_)) {
             log->info("Network: network.cycle_slip.datum_station_detect is INERT under a "
-                      "no-pivot phase datum (prioritized/ensemble/eq34) — station 0 is an "
+                      "no-pivot phase datum (prioritized/eq34) — station 0 is an "
                       "ordinary station there and every slip loop already covers it.");
         }
         if (network_phase_datum_eq34_slip_aware_election_) {
@@ -8737,20 +8724,17 @@ namespace GnssProcessor {
                               || network_config_.phase_datum_time_linked
                               || (network_config_.eq34_fresh_pin_sigma_scale > 1.0
                                   && network_config_.eq34_fresh_pin_ramp_ep > 0);
-            // The hygiene acts on the per-(sat, signal) anchor election.  The ensemble
-            // datum elects no anchor (Σ_r z = 0 over every receiver), so there is nothing
-            // to re-host and nothing to bridge: the knobs are inert and are disarmed with
-            // a warning.
-            const bool anchored_datum = (network_phase_datum_prioritized_
-                                         || network_phase_datum_eq34_)
-                                        && !network_phase_datum_ensemble_;
+            // The hygiene acts on the per-(sat, signal) anchor election.  Without one
+            // (the legacy pivot datum) there is nothing to re-host and nothing to bridge:
+            // the knobs are inert and are disarmed with a warning.
+            const bool anchored_datum = network_phase_datum_prioritized_
+                                        || network_phase_datum_eq34_;
             if (hyg_any && !anchored_datum) {
                 log->warn("Network (eq34 hygiene): the reattach-hygiene knobs are set "
                           "but this run has no per-(sat,signal) anchor election "
                           "(needs network.phase_datum_eq34 or "
-                          "network.phase_datum_prioritized, and NOT "
-                          "phase_datum_ensemble) — there is no reattach to guard, so "
-                          "they are INERT (disabled).");
+                          "network.phase_datum_prioritized) — there is no reattach to "
+                          "guard, so they are INERT (disabled).");
                 network_config_.eq34_anchor_min_arc_ep = 0;
                 network_config_.phase_datum_time_linked = false;
                 network_config_.eq34_fresh_pin_sigma_scale = 1.0;
@@ -9727,9 +9711,6 @@ namespace GnssProcessor {
                               : "the observations of a satellite the broadcast flags unhealthy "
                                 "at an epoch are removed from the synced epochs");
         }
-        network_phase_datum_hold_sigma_m_ =
-            jval<double>(json, "network.phase_datum_hold_sigma_m",
-                         "network_phase_datum_hold_sigma_m", 0.0);
         network_phase_datum_pref_elev_deg_ =
             jval<double>(json, "network.phase_datum_pref_elev_deg",
                          "network_phase_datum_pref_elev_deg", 15.0);
@@ -10860,9 +10841,9 @@ namespace GnssProcessor {
     //  network subsection helper: validateNetworkPhaseDatum_
     // =================================================================
     /**
-     * @brief Phase-bias gauge selection report (eq34 / ensemble / prioritized) and its mutexes.
+     * @brief Phase-bias gauge selection report (eq34 / prioritized) and its mutexes.
      *
-     * One if / else-if chain over the three realizations, so exactly one is reported; also
+     * One if / else-if chain over the two realizations, so exactly one is reported; also
      * carries the eq34-under-carry_invariant inert warnings and the PB-filter inert note.
      *
      * @param log   The "gnss_config" logger.
@@ -10871,16 +10852,6 @@ namespace GnssProcessor {
     bool GnssConfig::validateNetworkPhaseDatum_(
                                    const std::shared_ptr<spdlog::logger>& log) {
         if (network_phase_datum_eq34_) {
-            // Mutual exclusion for card 3 (mirroring the clock-gauge check on
-            // network_clock_datum_broadcast_anchored in validateNetworkDatumCoherence_):
-            // eq34 and the ensemble are two different realizations of the same
-            // phase-bias gauge, and neither subsumes the other, so loading both is refused.
-            if (network_phase_datum_ensemble_) {
-                log->error("Network: network.phase_datum_eq34 and network.phase_datum_ensemble "
-                           "are mutually exclusive realizations of the SAME phase-bias gauge "
-                           "(single-receiver chain vs sum-to-zero over receivers).  Pick one.");
-                return false;
-            }
             log->info("Network producer: Eq-34 SINGLE-RECEIVER-CHAIN phase-bias datum ON (Card 3) — "
                       "each (constellation,signal) connected component gets a per-(receiver,system,"
                       "signal) RPB split state δ_{{r,σ}}, ONE datum-receiver RPB pin, and a "
@@ -10908,13 +10879,8 @@ namespace GnssProcessor {
                           "block reports framed vs cold re-hosts.");
             if (network_phase_datum_prioritized_)
                 log->info("Network producer: network.phase_datum_eq34 SUPERSEDES "
-                          "network.phase_datum_prioritized (the ensemble precedent) — the anchor "
+                          "network.phase_datum_prioritized — the anchor "
                           "election is replaced by the chain election.");
-            if (network_phase_datum_hold_sigma_m_ > 0.0)
-                log->warn("Network: network.phase_datum_hold_sigma_m = {} is INERT under "
-                          "network.phase_datum_eq34 — the hold is an ensemble-only stopgap; the "
-                          "chain datum's frame is pinned hard (one RPB pin + tree ambiguity pins), "
-                          "so it needs no temporal hold.", network_phase_datum_hold_sigma_m_);
             if (!network_station_pd_pin_aware_)
                 log->warn("Network: RECOMMEND network.station_pd_pin_aware = true with "
                           "network.phase_datum_eq34 — hub stations (high spanning-tree degree) "
@@ -11022,20 +10988,6 @@ namespace GnssProcessor {
             if (network_phase_datum_eq34_rpb_q_m2s_ > 0.0)
                 log->warn("Network: network.phase_datum_eq34_rpb_q_m2s is INERT under carry_invariant "
                           "(the RPB re-estimates fresh; the DD carry is the phase time-link).");
-        } else if (network_phase_datum_ensemble_) {
-            log->info("Network producer: ANCHOR-FREE ENSEMBLE phase-bias datum ON (Fix A) — the "
-                      "per-(sat,signal) phase-bias gauge is fixed by a sum-to-zero over the "
-                      "tracking receivers' ambiguities (Σ_r zˢ_{{r,σ}}=0, kernel Schur-projected "
-                      "fold), NOT a single-anchor pin.  No pivot, no handover (the emitted bias "
-                      "stops re-referencing → phase accumulates), no single-anchor SPOF, and every "
-                      "satellite referenced to the SAME receiver ensemble (the user's "
-                      "between-satellite fractional bias cancels → DD ambiguity stays integer).  "
-                      "Reuses the prioritized SPOF-cure machinery but elects no anchor; supersedes "
-                      "network.phase_datum_prioritized.");
-            if (network_phase_datum_min_stations_ > 1)
-                log->info("Network producer: ensemble coverage gate ON — a shared phase-bias "
-                          "column (and its gauge) is emitted only when >= {} present stations "
-                          "track it.", network_phase_datum_min_stations_);
         } else if (network_phase_datum_prioritized_) {
             log->info("Network producer: prioritized phase-bias anchor ON — the per-(sat,signal) "
                       "phase-bias gauge is pinned at the highest-coverage receiver tracking each "
@@ -11072,13 +11024,6 @@ namespace GnssProcessor {
                       "that posture a pivot that loses a satellite DELETES the column "
                       "network-wide instead of handing it over, which is the more severe "
                       "form of the same defect.  DISABLED (no behaviour change).");
-            network_phase_datum_handover_continuous_ = false;
-        }
-        if (network_phase_datum_handover_continuous_ && network_phase_datum_ensemble_) {
-            log->warn("Network (phase-datum handover): "
-                      "network.phase_datum_handover_continuous is on with the ENSEMBLE datum, "
-                      "which elects no anchor and holds no pin (the gauge is the kernel "
-                      "sum-to-zero fold), so there is nothing to hand over.  DISABLED.");
             network_phase_datum_handover_continuous_ = false;
         }
         if (network_phase_datum_handover_continuous_ && network_phase_datum_eq34_) {
@@ -11225,13 +11170,6 @@ namespace GnssProcessor {
                       "network.phase_anchor_carry_reref is on with the eq34 CHAIN datum, "
                       "which already owns the eq34_reref carry hygiene this knob mirrors.  "
                       "DISABLED — arming both would double-treat the same edge.");
-            network_phase_anchor_carry_reref_ = false;
-        }
-        if (network_phase_anchor_carry_reref_ && network_phase_datum_ensemble_) {
-            log->warn("Network (phase-anchor carry reref): "
-                      "network.phase_anchor_carry_reref is on with the ENSEMBLE datum, "
-                      "which elects no anchor and holds no pin, so no handover exists to "
-                      "trigger the re-reference.  DISABLED.");
             network_phase_anchor_carry_reref_ = false;
         }
         if (network_phase_anchor_carry_reref_ && !network_phase_datum_prioritized_) {

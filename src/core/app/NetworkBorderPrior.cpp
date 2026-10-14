@@ -5,7 +5,6 @@
  *
  * Folded by networkSolveGlue (filter/NetworkSolveGlue.cpp) before the null-space rank gate:
  *   networkInjectShVtecPrior      the SH-VTEC prior (Kaula bound and temporal random walk);
- *   networkInjectPhaseHoldPrior   the Fix-A held satellite phase-bias datum;
  *   networkInjectPinBridgePrior   the eq34 pin-bridge rows.
  * Folded by networkSolveGlue after the gate:
  *   networkInjectD2CarryPrior     the border carry fold (D2 diagonal or C1 dense), with
@@ -15,12 +14,11 @@
  *   networkCouplingExactPrepare   card CTU: the exact coupling update's inputs, built from
  *                                 the stash the D2 fold reads and the fold's own per-key
  *                                 decision.
- * File order: SH-VTEC, phase hold, pin bridge, readmitNoteSeed, D2, coupling preparation,
- * clock model.  The stash the D2 fold reads is written by networkStashCarry
+ * File order: SH-VTEC, pin bridge, readmitNoteSeed, D2, coupling preparation, clock model.  The stash the D2 fold reads is written by networkStashCarry
  * (NetworkBorderStash.cpp).
  *
- * networkInjectShVtecPrior, networkInjectPhaseHoldPrior, networkInjectD2CarryPrior and
- * networkInjectClockOscPrior open with an alias block (decomposition INC-4) that binds the
+ * networkInjectShVtecPrior, networkInjectD2CarryPrior and networkInjectClockOscPrior open
+ * with an alias block (decomposition INC-4) that binds the
  * driver's former local names to members of the context, so the relocated code keeps those
  * names.
  *
@@ -161,49 +159,6 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         if (within_epoch_armed)
             networkCapturePriors(cap_priors, ws.cap_prior_kinds, sh_priors,
                                  ContributionKind::ShPrior);
-    }
-}
-
-void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
-                                 NetworkEstimator& est, bool within_epoch_armed) {
-    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
-    // their original names.
-    auto& prev_carry = ctx.carry.prev_carry;
-    const bool   phase_hold_on = ctx.knobs.phase_hold_on;
-    const double phase_hold_var = ctx.knobs.phase_hold_var;
-    auto& cap_priors = ws.cap_priors;
-
-    // --- Fix A hold: held satellite phase-bias datum (seed once, then time-locked) ---
-    // Inject the held b_s priors before the null-space gate, like the SH-VTEC prior
-    // above and unlike the clock/code D2 carry below (which stays after the gate so
-    // the gate sees the data-only clock-gauge structure).  A held (sat,signal) has its
-    // Σz=0 fold skipped in buildEnsembleGauges (a hard w→∞ fold would override a
-    // finite prior), so this stiff fixed-variance prior is that column's datum.  It
-    // has to be in the reduced normals the gate inspects, or the held column reads as
-    // a near-null gauge and triggers the O(n³) null-space repair or a withhold every
-    // epoch.  (The tight local ambiguity carry usually lifts it above the cutoff
-    // already, but this makes the datum explicit and robust to a weak or cold carry on
-    // a fresh arc.)  The phase-ensemble datum is orthogonal to the clock-pivot
-    // datum_changed handover, so it is injected every epoch regardless.  Under hold,
-    // phase biases are excluded from the clock-frame D2 carry loops below, so this is
-    // the only injection (no double fold).  No-op unless phase_hold_on
-    // (byte-identical).
-    if (phase_hold_on && !prev_carry.empty()) {
-        std::vector<NetworkEstimator::SharedPrior> hp;
-        hp.reserve(prev_carry.size());
-        for (const CarryPrior& cp : prev_carry) {
-            if (cp.kind != SharedParamKind::PhaseBias) continue;
-            if (!(cp.var > 0.0)) continue;
-            NetworkEstimator::SharedPrior p;
-            p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
-            p.value = cp.value; p.info = 1.0 / cp.var;
-            hp.push_back(p);
-        }
-        est.contributionKind(ContributionKind::PhaseHold);   // card NOM N2a
-        est.addSharedPrior(hp);  // skips keys absent from this epoch's layout
-        if (within_epoch_armed)
-            networkCapturePriors(cap_priors, ws.cap_prior_kinds, hp,
-                                 ContributionKind::PhaseHold);
     }
 }
 
@@ -421,11 +376,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             cp.fold = carryFoldDecide(ctx, est, cp, dt, cta_now_s, now_s);
         }
         const CarryFoldDecision& d = cp.fold;
-        // Fix A hold / the SH prior: folded elsewhere, before the gate.  The phase-ensemble
-        // datum is orthogonal to the clock pivot handover this clock-frame carry is gated
-        // on, so a clock datum change does not drop a held phase bias (otherwise a held
-        // satellite, whose sum-to-zero fold buildEnsembleGauges skipped, would be left
-        // without a datum and the epoch would withhold).
+        // The SH prior: folded elsewhere, before the gate.
         if (d.disposition == CarryDisposition::Held) {
             prmTally(cp, CarryDisposition::Held);
             return false;
@@ -768,10 +719,6 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // The partial-support skip tally (card C-GF) is run-scoped on the estimator and is
     // read once at teardown; reading it here would miss the withdraw and
     // within-epoch-replay folds, which run after this point in the epoch.
-
-    // (Fix A hold: the held phase-bias datum is injected before the gate by
-    // networkInjectPhaseHoldPrior, next to the SH-VTEC prior; it is a datum, so the
-    // gate has to see it.)
 }
 
 void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator& est,
