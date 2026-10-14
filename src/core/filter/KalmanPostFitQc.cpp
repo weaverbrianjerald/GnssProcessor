@@ -10,6 +10,11 @@
  * the bodies read as they did; card UOM step U2c cut them out unchanged
  * (scripts/uom_u2_verify.py proves it).  The responses the dispatch calls (ambiguity
  * reset, row exclusion, complete reset) are in KalmanOutlierResponse.cpp.
+ *
+ * The four coherent-offset pivot detectors of stage S3 are one function over the rows of
+ * kalman::kPivotDetectors (card UOM step U2d): detectPivotOffsets_ groups the rows once
+ * per observable and runs each row of the table over its groups; testPivotGroup_ tests one
+ * group (kalman::testCoherentOffset, then the row's options), reports it and responds.
  */
 
 #include "filter/KalmanFilter.hpp"
@@ -31,19 +36,22 @@ namespace GnssProcessor {
 
     using kalman::splitBssdSatId;
     using kalman::bandWavelengthForSat;
+    using kalman::CoherentOffset;
+    using kalman::PivotDetectorSpec;
+    using kalman::PivotRowGroup;
+    using kalman::PivotRowGroups;
+    using kalman::kPivotDetectors;
+    using kalman::kHandoverExcludeMadK;
+    using kalman::kHandoverExcludeFloorM;
+    using kalman::testCoherentOffset;
+    using kalman::medianInPlace;
 
-    namespace {
+    // ===================================================================
+    // The coherent-offset test (namespace kalman; declared in KalmanPostFitQc.hpp)
+    // ===================================================================
 
-    /**
-     * @brief Median of @p v, reordering it (nth_element); an even count averages
-     *        the two middle values.
-     *
-     * Shared by the coherent-offset group detectors (card UOM step U2c made the
-     * lambda of the single function a file-scope function).
-     *
-     * @param v Values; reordered in place.  Must not be empty.
-     * @return The median.
-     */
+    namespace kalman {
+
     double medianInPlace(std::vector<double>& v) {
         const size_t n = v.size();
         std::nth_element(v.begin(), v.begin() + n / 2, v.end());
@@ -51,6 +59,70 @@ namespace GnssProcessor {
         const double upper = v[n / 2];
         std::nth_element(v.begin(), v.begin() + n / 2 - 1, v.end());
         return 0.5 * (v[n / 2 - 1] + upper);
+    }
+
+    CoherentOffset testCoherentOffset(const PivotDetectorSpec& spec, const PivotRowGroup& g) {
+        // The four criteria in the order of the former four detector loops; each statistic
+        // is the expression those loops used, so a group fires exactly when it did before
+        // card UOM step U2d.
+        CoherentOffset t;
+        t.n = g.indices.size();
+        if (t.n < spec.min_rows) return t;
+        if (spec.pooled && g.bands.size() < spec.min_bands) return t;
+        t.frac = static_cast<double>(g.above) / static_cast<double>(t.n);
+        if (t.frac < spec.above_fraction_min) return t;
+
+        std::vector<double> r_copy = g.residuals;
+        t.med = medianInPlace(r_copy);
+        if (std::abs(t.med) < spec.median_floor_m) return t;
+
+        // The MAD around the median: a coherent pivot disturbance typically gives
+        // MAD/|med| <= 0.1, independent sub-cycle noise well above the cutoff.
+        std::vector<double> abs_dev;
+        abs_dev.reserve(g.residuals.size());
+        for (double v : g.residuals) abs_dev.push_back(std::abs(v - t.med));
+        t.mad = medianInPlace(abs_dev);
+        t.mad_ratio = t.mad / std::abs(t.med);
+        if (t.mad_ratio > spec.mad_ratio_max) return t;
+
+        t.coherent = true;
+        return t;
+    }
+
+    } // namespace kalman
+
+    namespace {
+
+    /**
+     * @brief Exclude every row of a firing group from this rebuild pass, so the per-row
+     *        dispatch does not pile false resets on it; after the handover the rows are
+     *        re-formed against the new pivot.
+     *
+     * @param measurement The pass's measurement (exclusions added).
+     * @param g           The firing group.
+     */
+    void excludeGroupRows(EpochMeasurement& measurement, const PivotRowGroup& g) {
+        for (size_t row_idx : g.indices) {
+            const auto& sat_id = measurement.satellite_ids[row_idx];
+            const auto& sig_t  = measurement.signal_types[row_idx];
+            const auto [prim, _piv] = splitBssdSatId(sat_id);
+            measurement.excluded_measurements.insert(prim + "_" + sig_t);
+        }
+    }
+
+    /**
+     * @brief Join band names with commas for a report line.
+     *
+     * @param bands_set Bands in set order ("L1", "L2", ...).
+     * @return "L1,L2"; empty for an empty set.
+     */
+    std::string joinBands(const std::set<std::string>& bands_set) {
+        std::string bands_str;
+        for (const auto& b : bands_set) {
+            if (!bands_str.empty()) bands_str += ",";
+            bands_str += b;
+        }
+        return bands_str;
     }
 
     } // anonymous namespace
@@ -310,121 +382,63 @@ namespace GnssProcessor {
     // ===================================================================
 
     bool KalmanFilter::detectPivotOffsets_(PostFitQcWork& w) {
-        auto& measurement = w.measurement;
-        auto& klogger = w.klogger;
-        const std::string& epoch_prefix = w.epoch_prefix;
+        // A BSSD pivot with a phase glitch (sub-cycle drift, multipath ringing, partial
+        // reacquisition) or a code bias change (DCB drift, an ATX miscalibration, an SV
+        // hardware glitch) offsets every SD residual that uses it by the same sign and
+        // magnitude.  The per-row |sres| > threshold check would read those as N
+        // independent outliers and peel them one by one, resetting each non-pivot
+        // ambiguity and clearing the MW arc histories of satellites that did not slip.
+        //
+        // The four detectors are the rows of kPivotDetectors (KalmanPostFitQc.hpp, where
+        // each row's parameters are explained), run in table order: phase per signal,
+        // phase across bands, code per signal, code across bands.  Each tests every group
+        // of its observable for the coherent-offset signature (testCoherentOffset).  A
+        // firing group requests a forced pivot handover for the constellation, records the
+        // satellites the handover must not elect, and excludes the group's rows from the
+        // rebuild; the per-row dispatch is then skipped for this pass (exit E2), since the
+        // pivot explains every outlier.  Grouping reads only the rows and their residuals,
+        // which no detector writes, so the code rows are grouped up front with the phase
+        // rows.
+        const PivotRowGroups phase_rows = groupPivotRows_(w, 'L');
+        const PivotRowGroups code_rows  = groupPivotRows_(w, 'C');
+
+        bool any_pivot_slip = false;
+        for (const PivotDetectorSpec& spec : kPivotDetectors) {
+            const PivotRowGroups& rows = (spec.obs_type == 'L') ? phase_rows : code_rows;
+            if (spec.pooled) {
+                for (const auto& [pivot_sat, g] : rows.pooled)
+                    if (testPivotGroup_(w, spec, pivot_sat, std::string(), g)) any_pivot_slip = true;
+            } else {
+                for (const auto& [key, g] : rows.per_signal)
+                    if (testPivotGroup_(w, spec, key.first, key.second, g)) any_pivot_slip = true;
+            }
+        }
+        return any_pivot_slip;
+    }
+
+    PivotRowGroups KalmanFilter::groupPivotRows_(const PostFitQcWork& w, char obs_type) const {
+        const auto& measurement = w.measurement;
         const double threshold = w.threshold;
         const Eigen::VectorXd& res = w.res;
         const Eigen::VectorXd& sres = w.sres;
         const size_t meta_n = w.meta_n;
 
-        // --- Pivot slip detector (MAD-based, percentage-thresholded) ---
-        //
-        // Runs before the per-row dispatch.  A BSSD pivot with a phase glitch
-        // (sub-cycle drift, multipath ringing, partial reacquisition) offsets
-        // every SD residual that uses it by the same sign and magnitude on the
-        // same band.  The per-row |sres| > threshold check would read those as N
-        // independent outliers and peel them one by one, resetting each
-        // non-pivot ambiguity and clearing the MW arc histories of satellites
-        // that did not slip.
-        //
-        // Rows are grouped by (pivot, signal) using the full RINEX-3 code, so
-        // "L1W" and "L1C" are separate groups.  That matches the state
-        // granularity of uncombined PPP-RTK and preserves sensitivity to a
-        // disturbance confined to one tracking attribute, which band-level
-        // grouping would dilute.  Each group is tested for the coherent-offset
-        // signature:
-        //   1. ≥ MIN_GROUP_SIZE rows (statistical power).
-        //   2. ≥ ABOVE_FRACTION_MIN of |sres| above the per-row threshold; a
-        //      fraction rather than a count, so the trigger scales with visibility.
-        //   3. |median(residual)| ≥ MEDIAN_FLOOR_M, so numerical noise cannot fire it.
-        //   4. MAD/|median| ≤ MAD_RATIO_MAX.  This is the robustness step: the
-        //      median ignores one or two satellites that also slipped, and the
-        //      MAD measures spread without being inflated by them.  Tight means
-        //      a coherent pivot offset; loose means independent outliers.
-        //
-        // On detection the detector requests a forced pivot handover for the
-        // constellation, records the satellites the handover must not elect,
-        // and excludes all of the group's rows from the rebuild.  The per-row
-        // dispatch is skipped for this pass, since the pivot slip explains
-        // every outlier.
-        constexpr size_t MIN_GROUP_SIZE      = 4;
-        constexpr size_t MIN_POOL_SIZE       = 3;  // cross-band detector
-        constexpr size_t MIN_DISTINCT_BANDS  = 2;  // cross-band detector
-        constexpr double ABOVE_FRACTION_MIN  = 0.5;
-        constexpr double MAD_RATIO_MAX       = 0.4;
-        constexpr double MEDIAN_FLOOR_M      = 0.005;
-
-        // Robust band (k·MAD, floored) that classifies which non-pivot SD
-        // rows in a firing group disagree with the coherent median.  Those
-        // satellites are co-disturbed or slipping independently, so they
-        // become replacement-pivot exclusions and the handover lands on a
-        // consensus satellite.  k = 3 sits just inside the observed
-        // co-offset separation (a second offset satellite lands about
-        // 3.2·MAD off the median); the floor guards MAD → 0.  The band is
-        // permissive on purpose: PivotManager's retired-pivot backstop
-        // guarantees termination regardless.
-        constexpr double HANDOVER_EXCLUDE_MAD_K   = 3.0;
-        constexpr double HANDOVER_EXCLUDE_FLOOR_M = 0.02;
-
-        // Wavelength-fraction floor for the median.  A real cycle slip
-        // is an integer number of carrier wavelengths; below ~λ/4 the
-        // residual cannot be a slip, only sub-cycle bias (multipath,
-        // PCV miscal, kinematic dynamics).  Config-tunable per the
-        // GnssConfig::getPivotSlipMinCycles() docstring; 0 disables.
-        // Helper is shared with the per-row phase outlier handler;
-        // see @c bandWavelengthForSat in include/filter/KalmanRowIdentity.hpp.
-        const double cyc_floor_fraction = config_.getPivotSlipMinCycles();
-
-        struct Group {
-            std::vector<size_t> indices;
-            std::vector<double> residuals;
-            size_t above = 0;
-        };
-        // Per-signal groups keyed by (pivot, full RINEX-3 signal), so "L1W"
-        // and "L1C" stay separate.
-        std::map<std::pair<std::string, std::string>, Group> groups;
-        // Cross-band per-pivot pools, used as a fallback when individual
-        // signals carry too few non-pivot rows to clear MIN_GROUP_SIZE
-        // but the multi-band picture still shows a coherent slip pattern.
-        // @c pivot_pool_bands tracks distinct bands (the frequency axis),
-        // not signals, because the cross-band detector's evidence depends
-        // on independent frequency channels; two attributes on the same
-        // carrier (L1W + L1C) are not independent.
-        std::map<std::string, Group> pivot_pools;
-        std::map<std::string, std::set<std::string>> pivot_pool_bands;
-
-        // Exclude SD rows whose ATX correction is frequency-fallback-
-        // substituted on either sat or pivot.  The substituted PCV adds a
-        // small per-sat bias that, pooled across non-pivot rows in one band,
-        // mimics a pivot slip (large median, tight MAD).  Because that bias
-        // is structural rather than transient, without this gate "all"-mode
-        // runs covering bands like GPS L5 flip-flop forever: every new pivot
-        // reads as slipped.
-        auto row_atx_substituted = [&](const std::string& sat,
-                                        const std::string& pivot_sat,
-                                        const std::string& signal) -> bool {
-            if (sat.empty() || pivot_sat.empty() || signal.empty()) return false;
-            const System sys =
-                sat[0] == 'G' ? System::GPS :
-                sat[0] == 'E' ? System::Galileo :
-                sat[0] == 'R' ? System::GLONASS :
-                sat[0] == 'C' ? System::BeiDou :
-                sat[0] == 'J' ? System::QZSS :
-                sat[0] == 'S' ? System::SBAS : System::Unknown;
-            if (sys == System::Unknown) return false;
-            if (ppp_model_.wasAtxSubstituted(sat, signal, sys)) return true;
-            if (ppp_model_.wasAtxSubstituted(pivot_sat, signal, sys)) return true;
-            return false;
-        };
-
+        // Per-signal groups are keyed by (pivot, full RINEX-3 signal), so "L1W" and "L1C"
+        // stay separate, matching the per-signal state granularity of uncombined PPP-RTK;
+        // the pools are keyed by pivot across bands, and record the distinct bands (the
+        // frequency axis, not the signals: two attributes on one carrier are not
+        // independent evidence).
+        PivotRowGroups rows;
         for (size_t i = 0; i < meta_n; ++i) {
             const auto& sat_id = measurement.satellite_ids[i];
             const auto& sig    = measurement.signal_types[i];
-            if (sig.size() < 2 || sig[0] != 'L') continue;
+            if (sig.size() < 2 || sig[0] != obs_type) continue;
+            // Code rows skip combined / iono-free pseudo-signals: their residual is not a
+            // clean per-signal bias and the coherence test would mix scales.
+            if (obs_type == 'C' && sig.find('_') != std::string::npos) continue;
             const auto [prim, pivot] = splitBssdSatId(sat_id);
             if (pivot.empty() || prim == pivot) continue;  // not a non-pivot SD row
-            if (row_atx_substituted(prim, pivot, sig)) continue;  // ATX-substituted: bias mimics slip
+            if (rowAtxSubstituted_(prim, pivot, sig)) continue;  // ATX-substituted: bias mimics slip
             const std::string band = sig.substr(0, 2);     // "L1", "L2", "L5": the cross-band gate axis only
             const double r  = res(static_cast<Eigen::Index>(i));
             const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
@@ -433,17 +447,238 @@ namespace GnssProcessor {
             // Per-signal grouping (full RINEX code) for the per-band
             // detector below, matching the per-signal state granularity
             // of uncombined PPP-RTK.
-            auto& g = groups[{ pivot, sig }];
+            auto& g = rows.per_signal[{ pivot, sig }];
             g.indices.push_back(i);
             g.residuals.push_back(r);
             if (ab) ++g.above;
 
-            auto& pp = pivot_pools[pivot];
+            auto& pp = rows.pooled[pivot];
             pp.indices.push_back(i);
             pp.residuals.push_back(r);
             if (ab) ++pp.above;
-            pivot_pool_bands[pivot].insert(band);  // band, not signal: the independence axis
+            pp.bands.insert(band);  // band, not signal: the independence axis
         }
+        return rows;
+    }
+
+    bool KalmanFilter::rowAtxSubstituted_(const std::string& sat, const std::string& pivot_sat,
+                                          const std::string& signal) const {
+        // Exclude SD rows whose ATX correction is frequency-fallback-
+        // substituted on either sat or pivot.  The substituted PCV adds a
+        // small per-sat bias that, pooled across non-pivot rows in one band,
+        // mimics a pivot slip (large median, tight MAD).  Because that bias
+        // is structural rather than transient, without this gate "all"-mode
+        // runs covering bands like GPS L5 flip-flop forever: every new pivot
+        // reads as slipped.
+        if (sat.empty() || pivot_sat.empty() || signal.empty()) return false;
+        const System sys =
+            sat[0] == 'G' ? System::GPS :
+            sat[0] == 'E' ? System::Galileo :
+            sat[0] == 'R' ? System::GLONASS :
+            sat[0] == 'C' ? System::BeiDou :
+            sat[0] == 'J' ? System::QZSS :
+            sat[0] == 'S' ? System::SBAS : System::Unknown;
+        if (sys == System::Unknown) return false;
+        if (ppp_model_.wasAtxSubstituted(sat, signal, sys)) return true;
+        if (ppp_model_.wasAtxSubstituted(pivot_sat, signal, sys)) return true;
+        return false;
+    }
+
+    bool KalmanFilter::testPivotGroup_(PostFitQcWork& w, const PivotDetectorSpec& spec,
+                                       const std::string& pivot_sat, const std::string& signal,
+                                       const PivotRowGroup& g) {
+        // Identify the constellation from the pivot's PRN prefix.  All
+        // non-pivot rows in this group share the constellation by
+        // construction (BSSD groups SD pairs within a constellation).
+        const std::string cons      = PppUtils::getSystemString(pivot_sat);
+        // A pooled (cross-band) row skips a constellation whose handover is already
+        // requested: its rows include those of the group that fired, and a second
+        // warning would report the same physical event again.
+        if (spec.pooled && requested_pivot_handovers_.count(cons)) return false;
+
+        const CoherentOffset t = testCoherentOffset(spec, g);
+        if (!t.coherent) return false;
+        if (spec.wavelength_floor && belowPivotWavelengthFloor_(w, spec, pivot_sat, signal, t))
+            return false;
+
+        logPivotDetection_(w, spec, cons, pivot_sat, signal, g, t);
+
+        // Request a pivot handover for this constellation.  Application
+        // forwards it to PivotManager::requestForcedHandover after the KF
+        // returns NeedsMeasurementRebuild; the next pass's
+        // computeMeasurementUpdate triggers PivotManager's handover path,
+        // which losslessly re-references all SD ambiguities, ionosphere
+        // states and satellite biases to a new pivot.  Resetting every
+        // non-pivot SD ambiguity in place would be wrong: the non-pivots are
+        // stable, and only the pivot's observation drifted.
+        requested_pivot_handovers_.insert(cons);
+        recordHandoverExcludes_(w, g, t.med, t.mad, pivot_sat, cons);
+        if (spec.reinflate_iono) recordIonoReinflate_(w, g, cons);
+        excludeGroupRows(w.measurement, g);
+        return true;
+    }
+
+    bool KalmanFilter::belowPivotWavelengthFloor_(const PostFitQcWork& w,
+                                                  const PivotDetectorSpec& spec,
+                                                  const std::string& pivot_sat,
+                                                  const std::string& signal,
+                                                  const CoherentOffset& t) const {
+        auto& klogger = w.klogger;
+        const std::string& epoch_prefix = w.epoch_prefix;
+        const double med = t.med;
+        const double mad_ratio = t.mad_ratio;
+
+        // Wavelength-fraction floor for the median.  A real cycle slip
+        // is an integer number of carrier wavelengths; below ~λ/4 the
+        // residual cannot be a slip, only sub-cycle bias (multipath,
+        // PCV miscal, kinematic dynamics).  Config-tunable per the
+        // GnssConfig::getPivotSlipMinCycles() docstring; 0 disables.
+        const double cyc_floor_fraction = config_.getPivotSlipMinCycles();
+
+        // The λ-fraction floor rejects sub-cycle medians as "bias, not
+        // slip".  This detector requests a handover, not a per-row
+        // reset, and re-referencing is the right response to any
+        // coherent pivot disturbance: wind-up error, a half-cycle
+        // ambiguity, pivot-only multipath and a hardware bias change all
+        // show sub-cycle coherent SD residuals.  The floor is therefore
+        // bypassed at or below the row's tight-cluster MAD ratio, where a
+        // common pivot disturbance is the only plausible explanation across
+        // several rows (the handover then fires even on a 1 cm median).
+        // Looser clusters keep the floor as a hedge against
+        // single-frequency atmospheric events.
+        if (cyc_floor_fraction > 0.0 && mad_ratio > spec.tight_cluster_mad_ratio) {
+            // The signal is the full code (e.g. "L1W"); the
+            // wavelength is per-band, so strip the attribute.
+            const std::string band_for_lambda = signal.substr(0, 2);
+            const double lambda = bandWavelengthForSat(pivot_sat, band_for_lambda);
+            if (lambda > 0.0) {
+                const double abs_floor = cyc_floor_fraction * lambda;
+                if (std::abs(med) < abs_floor) {
+                    klogger->debug(
+                        "{}Pivot-slip candidate suppressed by λ/{:.2f} floor "
+                        "on {} {} signal: |med|={:.4f} m < floor={:.4f} m "
+                        "(λ={:.4f} m, MAD/|med|={:.2f} > tight-cluster "
+                        "threshold {:.2f})",
+                        epoch_prefix, 1.0 / cyc_floor_fraction,
+                        pivot_sat, signal, std::abs(med), abs_floor,
+                        lambda, mad_ratio, spec.tight_cluster_mad_ratio);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    std::string KalmanFilter::pivotSlipConfidence_(const PostFitQcWork& w,
+                                                   const PivotRowGroup& g) const {
+        const auto& measurement = w.measurement;
+
+        // Temporal corroboration via the residual-history tracker.
+        //
+        // The spatial criteria also match genuine atmospheric events (storm
+        // fronts, scintillation) that shift many satellites at once.  The
+        // tracker adds a second axis, whether each row is anomalous against
+        // its own history: among rows with at least warmup_n samples, it
+        // counts the fraction with |z| > z_threshold.  When that fraction
+        // reaches the tracker's fraction threshold the log reports HIGH
+        // confidence; spatial evidence alone reports MEDIUM.
+        //
+        // The handover fires either way: the temporal signal is
+        // diagnostic only.  Promoting it to a gate is a one-line change
+        // here once the false-positive rate is known.
+        std::string confidence_tag = "MEDIUM (spatial-only)";
+        size_t temporal_total = 0, temporal_outliers = 0;
+        if (residual_history_.isEnabled()) {
+            for (size_t i = 0; i < g.indices.size(); ++i) {
+                const size_t row_idx = g.indices[i];
+                const auto& sat_id = measurement.satellite_ids[row_idx];
+                const auto& sig    = measurement.signal_types[row_idx];
+                const auto [prim, _piv] = splitBssdSatId(sat_id);
+                const double r = g.residuals[i];
+                const auto ev = residual_history_.evaluate(prim, sig, r);
+                if (ev.warmed_up) {
+                    ++temporal_total;
+                    if (ev.is_outlier) ++temporal_outliers;
+                }
+            }
+            if (temporal_total > 0) {
+                const double temporal_frac =
+                    static_cast<double>(temporal_outliers) / static_cast<double>(temporal_total);
+                if (temporal_frac >= residual_history_.fractionThreshold()) {
+                    confidence_tag = std::string("HIGH (temporal agrees: ")
+                        + std::to_string(temporal_outliers) + "/"
+                        + std::to_string(temporal_total) + " rows over z-threshold)";
+                } else {
+                    confidence_tag = std::string("MEDIUM (temporal disagrees: ")
+                        + std::to_string(temporal_outliers) + "/"
+                        + std::to_string(temporal_total) + " rows over z-threshold, "
+                        + "below fraction threshold)";
+                }
+            } else {
+                confidence_tag = "MEDIUM (temporal: no warmed-up rows yet)";
+            }
+        }
+        return confidence_tag;
+    }
+
+    void KalmanFilter::logPivotDetection_(const PostFitQcWork& w, const PivotDetectorSpec& spec,
+                                          const std::string& cons, const std::string& pivot_sat,
+                                          const std::string& signal, const PivotRowGroup& g,
+                                          const CoherentOffset& t) const {
+        auto& klogger = w.klogger;
+        const std::string& epoch_prefix = w.epoch_prefix;
+        const size_t n = t.n;
+        const double med = t.med;
+        const double mad = t.mad;
+        const double mad_ratio = t.mad_ratio;
+        const double frac = t.frac;
+
+        // One report line per row of the table: the observable and the grouping choose
+        // it, and the phase per-signal line carries the temporal confidence tag.
+        if (spec.obs_type == 'L' && !spec.pooled) {
+            const std::string confidence_tag = pivotSlipConfidence_(w, g);
+            klogger->warn(
+                "{}PIVOT SLIP [{}] on {} {} {} signal: {}/{} SD residuals coherent "
+                "(median={:+.4f} m, MAD={:.4f} m, MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
+                "Requesting forced pivot handover.",
+                epoch_prefix, confidence_tag, cons, pivot_sat, signal,
+                g.above, n, med, mad, mad_ratio, frac);
+        } else if (spec.obs_type == 'L') {
+            const auto& bands_set = g.bands;
+            const std::string bands_str = joinBands(bands_set);
+            klogger->warn(
+                "{}PIVOT SLIP [cross-band] on {} {} ({} bands [{}]): {}/{} "
+                "SD residuals coherent across bands (median={:+.4f} m, "
+                "MAD={:.4f} m, MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
+                "Requesting forced pivot handover.",
+                epoch_prefix, cons, pivot_sat, bands_set.size(), bands_str,
+                g.above, n, med, mad, mad_ratio, frac);
+        } else if (!spec.pooled) {
+            klogger->warn(
+                "{}PIVOT CODE DISTURBANCE on {} {} {} signal: {}/{} SD code "
+                "residuals coherent (median={:+.4f} m, MAD={:.4f} m, "
+                "MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
+                "Requesting forced pivot handover.",
+                epoch_prefix, cons, pivot_sat, signal,
+                g.above, n, med, mad, mad_ratio, frac);
+        } else {
+            const auto& bands_set = g.bands;
+            const std::string bands_str = joinBands(bands_set);
+            klogger->warn(
+                "{}PIVOT CODE DISTURBANCE [cross-band] on {} {} ({} bands [{}]): "
+                "{}/{} SD code residuals coherent (median={:+.4f} m, MAD={:.4f} m, "
+                "MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
+                "Requesting forced pivot handover.",
+                epoch_prefix, cons, pivot_sat, bands_set.size(), bands_str,
+                g.above, n, med, mad, mad_ratio, frac);
+        }
+    }
+
+    void KalmanFilter::recordHandoverExcludes_(const PostFitQcWork& w, const PivotRowGroup& grp,
+                                               double med, double mad,
+                                               const std::string& pivot_sat,
+                                               const std::string& cons) {
+        const auto& measurement = w.measurement;
 
         // Record the satellites a forced handover must not elect as the
         // new pivot for @p cons: the flagged @p pivot_sat itself, plus any
@@ -452,432 +687,36 @@ namespace GnssProcessor {
         // independently; electing one would re-anchor the SD frame on
         // another offset satellite and cause a further handover.  Keyed
         // per constellation; drained by takeRequestedPivotHandoverExcludeSats.
-        auto recordHandoverExcludes = [&](const Group& grp, double med,
-                                          double mad,
-                                          const std::string& pivot_sat,
-                                          const std::string& cons) {
-            auto& ex = pivot_handover_exclude_sats_[cons];
-            ex.insert(pivot_sat);
-            const double band = std::max(HANDOVER_EXCLUDE_MAD_K * mad,
-                                         HANDOVER_EXCLUDE_FLOOR_M);
-            for (size_t k = 0; k < grp.indices.size(); ++k) {
-                if (std::abs(grp.residuals[k] - med) <= band) continue;
-                const auto [prim, _piv] =
-                    splitBssdSatId(measurement.satellite_ids[grp.indices[k]]);
-                if (!prim.empty()) ex.insert(prim);
-            }
-        };
+        auto& ex = pivot_handover_exclude_sats_[cons];
+        ex.insert(pivot_sat);
+        const double band = std::max(kHandoverExcludeMadK * mad,
+                                     kHandoverExcludeFloorM);
+        for (size_t k = 0; k < grp.indices.size(); ++k) {
+            if (std::abs(grp.residuals[k] - med) <= band) continue;
+            const auto [prim, _piv] =
+                splitBssdSatId(measurement.satellite_ids[grp.indices[k]]);
+            if (!prim.empty()) ex.insert(prim);
+        }
+    }
+
+    void KalmanFilter::recordIonoReinflate_(const PostFitQcWork& w, const PivotRowGroup& grp,
+                                            const std::string& cons) {
+        const auto& measurement = w.measurement;
 
         // Record every non-pivot member of a firing group for post-handover
         // ionosphere / sat-bias re-inflation (code-detector path only; see
-        // takeRequestedPivotHandoverIonoReinflateSats).  recordHandoverExcludes
+        // takeRequestedPivotHandoverIonoReinflateSats).  recordHandoverExcludes_
         // keeps only the pivot and the few deviators outside the coherent
         // band; this set also holds the coherent majority inside the band,
         // which are the satellites that absorbed the pivot's code bias.
         // Re-inflating them lets the post-handover frame re-estimate the
         // states that the lossless re-reference cannot correct.
-        auto recordIonoReinflate = [&](const Group& grp,
-                                       const std::string& cons) {
-            auto& reinf = pivot_handover_reinflate_sats_[cons];
-            for (size_t k = 0; k < grp.indices.size(); ++k) {
-                const auto [prim, _piv] =
-                    splitBssdSatId(measurement.satellite_ids[grp.indices[k]]);
-                if (!prim.empty()) reinf.insert(prim);
-            }
-        };
-
-        bool any_pivot_slip = false;
-        for (auto& [key, g] : groups) {
-            const size_t n = g.indices.size();
-            if (n < MIN_GROUP_SIZE) continue;
-            const double frac = static_cast<double>(g.above) / static_cast<double>(n);
-            if (frac < ABOVE_FRACTION_MIN) continue;
-
-            std::vector<double> r_copy = g.residuals;
-            const double med = medianInPlace(r_copy);
-            if (std::abs(med) < MEDIAN_FLOOR_M) continue;
-
-            const std::string pivot_sat = key.first;
-
-            // Compute the MAD around the median first, so the cycle-floor
-            // decision below can use cluster tightness as evidence.  A
-            // tight cluster shows that the residuals are not independent
-            // noise: multipath or atmosphere at sub-cycle scale gives
-            // MAD/|med| well above the cutoff, while a coherent pivot
-            // disturbance typically gives MAD/|med| ≤ 0.1.
-            std::vector<double> abs_dev;
-            abs_dev.reserve(g.residuals.size());
-            for (double v : g.residuals) abs_dev.push_back(std::abs(v - med));
-            const double mad = medianInPlace(abs_dev);
-            const double mad_ratio = mad / std::abs(med);
-            if (mad_ratio > MAD_RATIO_MAX) continue;
-
-            // The λ-fraction floor rejects sub-cycle medians as "bias, not
-            // slip".  This detector requests a handover, not a per-row
-            // reset, and re-referencing is the right response to any
-            // coherent pivot disturbance: wind-up error, a half-cycle
-            // ambiguity, pivot-only multipath and a hardware bias change all
-            // show sub-cycle coherent SD residuals.  The floor is therefore
-            // bypassed at or below TIGHT_CLUSTER_MAD_RATIO, where a common
-            // pivot disturbance is the only plausible explanation across
-            // several rows (the handover then fires even on a 1 cm median).
-            // Looser clusters keep the floor as a hedge against
-            // single-frequency atmospheric events.
-            constexpr double TIGHT_CLUSTER_MAD_RATIO = 0.2;
-            if (cyc_floor_fraction > 0.0 && mad_ratio > TIGHT_CLUSTER_MAD_RATIO) {
-                // key.second is the full signal (e.g. "L1W"); the
-                // wavelength is per-band, so strip the attribute.
-                const std::string band_for_lambda = key.second.substr(0, 2);
-                const double lambda = bandWavelengthForSat(pivot_sat, band_for_lambda);
-                if (lambda > 0.0) {
-                    const double abs_floor = cyc_floor_fraction * lambda;
-                    if (std::abs(med) < abs_floor) {
-                        klogger->debug(
-                            "{}Pivot-slip candidate suppressed by λ/{:.2f} floor "
-                            "on {} {} signal: |med|={:.4f} m < floor={:.4f} m "
-                            "(λ={:.4f} m, MAD/|med|={:.2f} > tight-cluster "
-                            "threshold {:.2f})",
-                            epoch_prefix, 1.0 / cyc_floor_fraction,
-                            pivot_sat, key.second, std::abs(med), abs_floor,
-                            lambda, mad_ratio, TIGHT_CLUSTER_MAD_RATIO);
-                        continue;
-                    }
-                }
-            }
-
-            // Identify the constellation from the pivot's PRN prefix.  All
-            // non-pivot rows in this group share the constellation by
-            // construction (BSSD groups SD pairs within a constellation).
-            const std::string cons      = PppUtils::getSystemString(pivot_sat);
-
-            // Temporal corroboration via the residual-history tracker.
-            //
-            // The spatial criteria above also match genuine atmospheric
-            // events (storm fronts, scintillation) that shift many
-            // satellites at once.  The tracker adds a second axis, whether
-            // each row is anomalous against its own history: among rows
-            // with at least warmup_n samples, it counts the fraction with
-            // |z| > z_threshold.  When that fraction reaches the tracker's
-            // fraction threshold the log reports HIGH confidence; spatial
-            // evidence alone reports MEDIUM.
-            //
-            // The handover fires either way: the temporal signal is
-            // diagnostic only.  Promoting it to a gate is a one-line change
-            // here once the false-positive rate is known.
-            std::string confidence_tag = "MEDIUM (spatial-only)";
-            size_t temporal_total = 0, temporal_outliers = 0;
-            if (residual_history_.isEnabled()) {
-                for (size_t i = 0; i < g.indices.size(); ++i) {
-                    const size_t row_idx = g.indices[i];
-                    const auto& sat_id = measurement.satellite_ids[row_idx];
-                    const auto& sig    = measurement.signal_types[row_idx];
-                    const auto [prim, _piv] = splitBssdSatId(sat_id);
-                    const double r = g.residuals[i];
-                    const auto ev = residual_history_.evaluate(prim, sig, r);
-                    if (ev.warmed_up) {
-                        ++temporal_total;
-                        if (ev.is_outlier) ++temporal_outliers;
-                    }
-                }
-                if (temporal_total > 0) {
-                    const double temporal_frac =
-                        static_cast<double>(temporal_outliers) / static_cast<double>(temporal_total);
-                    if (temporal_frac >= residual_history_.fractionThreshold()) {
-                        confidence_tag = std::string("HIGH (temporal agrees: ")
-                            + std::to_string(temporal_outliers) + "/"
-                            + std::to_string(temporal_total) + " rows over z-threshold)";
-                    } else {
-                        confidence_tag = std::string("MEDIUM (temporal disagrees: ")
-                            + std::to_string(temporal_outliers) + "/"
-                            + std::to_string(temporal_total) + " rows over z-threshold, "
-                            + "below fraction threshold)";
-                    }
-                } else {
-                    confidence_tag = "MEDIUM (temporal: no warmed-up rows yet)";
-                }
-            }
-
-            klogger->warn(
-                "{}PIVOT SLIP [{}] on {} {} {} signal: {}/{} SD residuals coherent "
-                "(median={:+.4f} m, MAD={:.4f} m, MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
-                "Requesting forced pivot handover.",
-                epoch_prefix, confidence_tag, cons, pivot_sat, key.second /* signal */,
-                g.above, n, med, mad, mad_ratio, frac);
-
-            // Request a pivot handover for this constellation. Application
-            // forwards this to MeasurementModel::requestPivotHandover after
-            // KF returns NeedsMeasurementRebuild; the next pass's
-            // computeMeasurementUpdate triggers PivotManager's handover
-            // path, which losslessly re-references all SD ambiguities,
-            // ionosphere states, and satellite biases to a new pivot.
-            // Resetting every non-pivot SD ambiguity in place would be
-            // wrong: the non-pivots are stable, and only the pivot's
-            // observation drifted.
-            requested_pivot_handovers_.insert(cons);
-            recordHandoverExcludes(g, med, mad, pivot_sat, cons);
-
-            // Exclude every row in the affected group from this rebuild
-            // pass so the per-row outlier handler doesn't pile on with
-            // false-positive resets.  After the handover (next pass),
-            // these rows will be re-formed against the new pivot and
-            // residuals against clean satellites will be near zero.
-            for (size_t row_idx : g.indices) {
-                const auto& sat_id = measurement.satellite_ids[row_idx];
-                const auto& sig_t  = measurement.signal_types[row_idx];
-                const auto [prim, _piv] = splitBssdSatId(sat_id);
-                measurement.excluded_measurements.insert(prim + "_" + sig_t);
-            }
-            any_pivot_slip = true;
+        auto& reinf = pivot_handover_reinflate_sats_[cons];
+        for (size_t k = 0; k < grp.indices.size(); ++k) {
+            const auto [prim, _piv] =
+                splitBssdSatId(measurement.satellite_ids[grp.indices[k]]);
+            if (!prim.empty()) reinf.insert(prim);
         }
-
-        // Cross-band pivot-slip detector.
-        //
-        // The per-band pass needs ≥ MIN_GROUP_SIZE rows on one signal.
-        // Sparse per-band coverage (mixed BeiDou-2/3 with C2I/C7I against
-        // C1X/C5X, new-block satellites with partial signal sets) can leave
-        // every group short of that while the pooled picture is
-        // unambiguous.  Rows are therefore pooled across bands per pivot,
-        // with MIN_POOL_SIZE = 3 and at least MIN_DISTINCT_BANDS distinct
-        // bands.  The multi-band requirement makes the pooled evidence
-        // stronger than a within-band group: coherent same-sign residuals
-        // across independent frequency channels are hard for multipath or
-        // atmospherics to mimic.
-        for (auto& [pivot_sat, pp] : pivot_pools) {
-            const std::string cons = PppUtils::getSystemString(pivot_sat);
-            // Skip if the per-signal detector already requested a
-            // handover for this constellation: its row set is a
-            // subset of this pool's rows, and a second warning would
-            // report the same physical event again.
-            if (requested_pivot_handovers_.count(cons)) continue;
-
-            const size_t n = pp.indices.size();
-            if (n < MIN_POOL_SIZE) continue;
-
-            const auto& bands_set = pivot_pool_bands[pivot_sat];
-            if (bands_set.size() < MIN_DISTINCT_BANDS) continue;
-
-            const double frac = static_cast<double>(pp.above) / static_cast<double>(n);
-            if (frac < ABOVE_FRACTION_MIN) continue;
-
-            std::vector<double> r_copy = pp.residuals;
-            const double med = medianInPlace(r_copy);
-            if (std::abs(med) < MEDIAN_FLOOR_M) continue;
-
-            std::vector<double> abs_dev;
-            abs_dev.reserve(pp.residuals.size());
-            for (double v : pp.residuals) abs_dev.push_back(std::abs(v - med));
-            const double mad = medianInPlace(abs_dev);
-            const double mad_ratio = mad / std::abs(med);
-            if (mad_ratio > MAD_RATIO_MAX) continue;
-
-            // Build a comma-joined band list for the log line.
-            std::string bands_str;
-            for (const auto& b : bands_set) {
-                if (!bands_str.empty()) bands_str += ",";
-                bands_str += b;
-            }
-
-            klogger->warn(
-                "{}PIVOT SLIP [cross-band] on {} {} ({} bands [{}]): {}/{} "
-                "SD residuals coherent across bands (median={:+.4f} m, "
-                "MAD={:.4f} m, MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
-                "Requesting forced pivot handover.",
-                epoch_prefix, cons, pivot_sat, bands_set.size(), bands_str,
-                pp.above, n, med, mad, mad_ratio, frac);
-
-            requested_pivot_handovers_.insert(cons);
-            recordHandoverExcludes(pp, med, mad, pivot_sat, cons);
-
-            for (size_t row_idx : pp.indices) {
-                const auto& sat_id = measurement.satellite_ids[row_idx];
-                const auto& sig_t  = measurement.signal_types[row_idx];
-                const auto [prim, _piv] = splitBssdSatId(sat_id);
-                measurement.excluded_measurements.insert(prim + "_" + sig_t);
-            }
-            any_pivot_slip = true;
-        }
-
-        // Code-side pivot disturbance detector (per-band + cross-band).
-        //
-        // The phase detectors above, gated on sig[0]=='C' instead of 'L'.  A
-        // pivot-side code bias (DCB drift, band/attribute ATX miscalibration,
-        // SV hardware glitch) puts the same offset on every SD code row that
-        // uses that pivot.  Without a coherence test the per-row dispatch
-        // peels the rows one at a time, the uncombined iono state absorbs the
-        // bias through repeated updates, and bad_residual_count climbs until
-        // the rebuild budget runs out.  The signature is outliers on every SD
-        // pair against one pivot for one code signal, growing each epoch.
-        //
-        // Differences from the phase detector:
-        //   - MEDIAN_FLOOR_M_CODE = 0.30 m, against 5 mm for phase.  Routine
-        //     code multipath reaches 0.1-0.2 m without any pivot problem;
-        //     0.30 m is about 0.6× a typical code σ, above multipath and
-        //     below a real disturbance.
-        //   - No wavelength floor (cycles do not apply to code).
-        //   - No temporal corroboration: the EWMA tracker is tuned for phase
-        //     variance, and code would need its own tuning.
-        //   - No non-pivot multi-band variant.  Without the integer-cycle
-        //     check, coherent code outliers on a non-pivot are bad
-        //     measurements that the per-row dispatch already handles.
-        //
-        // The action matches the phase detectors (bulk-exclude and request
-        // a forced handover) because the bias persists: firing across
-        // consecutive epochs, it contaminates the pivot's iono state, and
-        // re-referencing is the only structural fix.
-        //
-        // Reuses Group, row_atx_substituted, any_pivot_slip and
-        // requested_pivot_handovers_ from the enclosing scope, and the
-        // file-scope medianInPlace.
-        {
-            constexpr size_t MIN_GROUP_CODE        = 4;
-            constexpr size_t MIN_POOL_CODE         = 3;
-            constexpr size_t MIN_DISTINCT_BANDS_C  = 2;
-            constexpr double ABOVE_FRACTION_MIN_C  = 0.5;
-            constexpr double MAD_RATIO_MAX_C       = 0.4;
-            constexpr double MEDIAN_FLOOR_M_CODE   = 0.30;  // m
-
-            std::map<std::pair<std::string, std::string>, Group> code_groups;
-            std::map<std::string, Group> code_pivot_pools;
-            std::map<std::string, std::set<std::string>> code_pivot_pool_bands;
-
-            for (size_t i = 0; i < meta_n; ++i) {
-                const auto& sat_id = measurement.satellite_ids[i];
-                const auto& sig    = measurement.signal_types[i];
-                if (sig.size() < 2 || sig[0] != 'C') continue;
-                // Skip combined / iono-free pseudo-signals: their
-                // residual isn't a clean per-signal bias and the
-                // coherence test would mix scales.
-                if (sig.find('_') != std::string::npos) continue;
-                const auto [prim, pivot] = splitBssdSatId(sat_id);
-                if (pivot.empty() || prim == pivot) continue;  // not a non-pivot SD row
-                if (row_atx_substituted(prim, pivot, sig)) continue;  // ATX-substituted: bias mimics disturbance
-                const std::string band = sig.substr(0, 2);  // "C5", "C7", "C1", ...: the cross-band gate axis only
-                const double r  = res(static_cast<Eigen::Index>(i));
-                const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
-                const bool   ab = std::isfinite(sa) && sa > threshold;
-
-                // Per-signal grouping (full RINEX code, e.g. "C1W"
-                // vs "C1C") matches the per-signal state granularity of
-                // uncombined PPP-RTK: satellite biases and ATX corrections
-                // are keyed per signal, so an attribute-specific pivot
-                // disturbance affects only the matching states and is
-                // detected at that resolution.
-                auto& g = code_groups[{ pivot, sig }];
-                g.indices.push_back(i);
-                g.residuals.push_back(r);
-                if (ab) ++g.above;
-
-                auto& pp = code_pivot_pools[pivot];
-                pp.indices.push_back(i);
-                pp.residuals.push_back(r);
-                if (ab) ++pp.above;
-                code_pivot_pool_bands[pivot].insert(band);  // band, not signal: the independence axis
-            }
-
-            // --- Per-band code pivot-disturbance detector ---
-            // Runs regardless of whether a phase detector already
-            // requested a handover for this constellation: the row
-            // exclusion still matters because phase exclusion didn't
-            // touch the code rows.  The set insert into
-            // @c requested_pivot_handovers_ is idempotent.
-            for (auto& [key, g] : code_groups) {
-                const size_t n = g.indices.size();
-                if (n < MIN_GROUP_CODE) continue;
-                const double frac = static_cast<double>(g.above) / static_cast<double>(n);
-                if (frac < ABOVE_FRACTION_MIN_C) continue;
-
-                std::vector<double> r_copy = g.residuals;
-                const double med = medianInPlace(r_copy);
-                if (std::abs(med) < MEDIAN_FLOOR_M_CODE) continue;
-
-                std::vector<double> abs_dev;
-                abs_dev.reserve(g.residuals.size());
-                for (double v : g.residuals) abs_dev.push_back(std::abs(v - med));
-                const double mad = medianInPlace(abs_dev);
-                const double mad_ratio = mad / std::abs(med);
-                if (mad_ratio > MAD_RATIO_MAX_C) continue;
-
-                const std::string& pivot_sat = key.first;
-                const std::string  cons      = PppUtils::getSystemString(pivot_sat);
-
-                klogger->warn(
-                    "{}PIVOT CODE DISTURBANCE on {} {} {} signal: {}/{} SD code "
-                    "residuals coherent (median={:+.4f} m, MAD={:.4f} m, "
-                    "MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
-                    "Requesting forced pivot handover.",
-                    epoch_prefix, cons, pivot_sat, key.second /* signal */,
-                    g.above, n, med, mad, mad_ratio, frac);
-
-                requested_pivot_handovers_.insert(cons);
-                recordHandoverExcludes(g, med, mad, pivot_sat, cons);
-                recordIonoReinflate(g, cons);
-                for (size_t row_idx : g.indices) {
-                    const auto& sat_id = measurement.satellite_ids[row_idx];
-                    const auto& sig_t  = measurement.signal_types[row_idx];
-                    const auto [prim, _piv] = splitBssdSatId(sat_id);
-                    measurement.excluded_measurements.insert(prim + "_" + sig_t);
-                }
-                any_pivot_slip = true;
-            }
-
-            // --- Cross-band code pivot-disturbance detector ---
-            // Skip when a handover is already queued for the
-            // constellation: the cross-band pool's row set is a
-            // superset of any per-band group already excluded,
-            // and the cross-band log line would otherwise duplicate
-            // the per-band warning for the same physical event.
-            for (auto& [pivot_sat, pp] : code_pivot_pools) {
-                const std::string cons = PppUtils::getSystemString(pivot_sat);
-                if (requested_pivot_handovers_.count(cons)) continue;
-
-                const size_t n = pp.indices.size();
-                if (n < MIN_POOL_CODE) continue;
-
-                const auto& bands_set = code_pivot_pool_bands[pivot_sat];
-                if (bands_set.size() < MIN_DISTINCT_BANDS_C) continue;
-
-                const double frac = static_cast<double>(pp.above) / static_cast<double>(n);
-                if (frac < ABOVE_FRACTION_MIN_C) continue;
-
-                std::vector<double> r_copy = pp.residuals;
-                const double med = medianInPlace(r_copy);
-                if (std::abs(med) < MEDIAN_FLOOR_M_CODE) continue;
-
-                std::vector<double> abs_dev;
-                abs_dev.reserve(pp.residuals.size());
-                for (double v : pp.residuals) abs_dev.push_back(std::abs(v - med));
-                const double mad = medianInPlace(abs_dev);
-                const double mad_ratio = mad / std::abs(med);
-                if (mad_ratio > MAD_RATIO_MAX_C) continue;
-
-                std::string bands_str;
-                for (const auto& b : bands_set) {
-                    if (!bands_str.empty()) bands_str += ",";
-                    bands_str += b;
-                }
-
-                klogger->warn(
-                    "{}PIVOT CODE DISTURBANCE [cross-band] on {} {} ({} bands [{}]): "
-                    "{}/{} SD code residuals coherent (median={:+.4f} m, MAD={:.4f} m, "
-                    "MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
-                    "Requesting forced pivot handover.",
-                    epoch_prefix, cons, pivot_sat, bands_set.size(), bands_str,
-                    pp.above, n, med, mad, mad_ratio, frac);
-
-                requested_pivot_handovers_.insert(cons);
-                recordHandoverExcludes(pp, med, mad, pivot_sat, cons);
-                recordIonoReinflate(pp, cons);
-                for (size_t row_idx : pp.indices) {
-                    const auto& sat_id = measurement.satellite_ids[row_idx];
-                    const auto& sig_t  = measurement.signal_types[row_idx];
-                    const auto [prim, _piv] = splitBssdSatId(sat_id);
-                    measurement.excluded_measurements.insert(prim + "_" + sig_t);
-                }
-                any_pivot_slip = true;
-            }
-        }
-
-        return any_pivot_slip;
     }
 
     // ===================================================================
@@ -1010,11 +849,7 @@ namespace GnssProcessor {
             }
             if (!integer_consistent) continue;
 
-            std::string bands_str;
-            for (const auto& b : e.bands) {
-                if (!bands_str.empty()) bands_str += ",";
-                bands_str += b;
-            }
+            const std::string bands_str = joinBands(e.bands);
             const std::string cons = PppUtils::getSystemString(sat);
 
             klogger->warn(

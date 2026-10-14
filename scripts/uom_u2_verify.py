@@ -8,37 +8,51 @@ read with `git show` (no copy is stored).  Comments and blank lines are ignored 
 (the lexer of scripts/rt_seam_verify.py), so a rewritten comment never fails the check; every
 other character of a carried line is compared, indentation included.
 
+The manifest below records the whole step against that one frozen file: U2a's deletions
+(DROPS), U2b's relocation (one unit per moved item), U2c's stages (alias blocks, published
+results, and the braces and guards the driver replaces, as DROPS), U2d's detector table (the
+loops it rewrites, REWRITTEN, and the statements it carries, with their SUBS).  U2c's
+generator (KalmanPostFitQc.cpp was written from this manifest) and this check read one list.
+
 A unit is one item of a new file (a function, a struct, a constant) written as an ordered
 list of pieces:
 
   ("frozen", a, b, shift)   the frozen code lines a..b, `shift` leading spaces removed, after
-                            the declared substitutions of SUBS on those lines;
-  ("new", text)             one declared new code line (compared without its indentation);
+                            the declared substitutions of SUBS (applied to the frozen text
+                            before its comments are stripped);
+  ("new", text)             one declared new code line (compared without its indentation and
+                            its trailing comment);
   ("alias", [names])        one line per name binding the name the code had as a local of
-                            the single function to the stage's work value, `... name = w.name;`
-                            (the binding check: the alias and the member are the same name);
+  ("alias_rw", [names])     the single function to the stage's work value, `... name =
+                            w.name;` (the binding check: the alias and the member are the
+                            same name; alias_rw is the writable form);
   ("publish", [names])      one line per name, `w.name = name;`, handing a stage's local to
                             the later stages;
   ("comment", text)         text the generator writes and the check ignores.
 
 Exit 0 only when every check passes:
 
-  1. Units.  Each unit is found in its declared file by its first code line, which occurs
+  1. Units.  Each unit is found in its declared file by its first code lines, which occur
      once in that file and in no other file of the set; its code lines equal the pieces one
      for one; and they close the item (balanced braces, the last line ends the item).
   2. Coverage.  Every code line of the frozen file is carried by exactly one unit, or lies in
      SCAFFOLD (the includes and namespace lines each new file writes for itself), or is a
-     declared drop of DROPS, with its reason.  None is dropped silently, none carried twice.
+     declared drop (DROPS) or a declared rewrite (REWRITTEN), each with its reason.  None is
+     dropped silently, none carried twice.
   3. Nothing added.  Outside its units a new .cpp file holds only #include lines, namespace
      lines and their closing braces and `using kalman::<name>;` declarations; a header also
-     holds declarations that end in `;` without a body, and the types of DECLARED_TYPES.
-  4. Literals.  The multiset of string literals (the log formats among them) over the code of
-     the new files equals the frozen file's, less the dropped lines' and the include lines',
-     plus the literals of the declared new lines.
+     holds declarations that end in `;` without a body, and the types and tables of
+     DECLARED_TYPES.
+  4. Literals.  The string literals (the log formats among them) over the code of the new
+     files are exactly those of the carried lines, the declared new lines and the declared
+     types; and every literal of a rewritten line still occurs in the new files, so a
+     rewrite loses no log text.
 
 A carried line is compared as text: the check proves where each line now lives and that it
 is unchanged.  The includes of each new file are new, and the compiler proves them
-sufficient; the gate (scripts/uom_gate.py) proves the output unchanged.
+sufficient; the gate (scripts/uom_gate.py) proves the output unchanged, and for U2d, where
+the four detector loops are rewritten as one function over a table, it is the proof that the
+arithmetic is the same.
 """
 import argparse
 import collections
@@ -83,6 +97,19 @@ DROPS = [
                    "PostFitQcWork, initialized false"),
 ]
 
+# Frozen lines rewritten on purpose: every code line of a range that no unit carries is
+# replaced by the declared new code of the units, with the reason.  A rewrite may not lose a
+# string literal: each literal of a rewritten line must still occur in the new files.
+REWRITTEN = [
+    ((1938, 2476), "U2d: the four coherent-offset detector loops, with their local constants, "
+                   "the Group type, the group maps, the code grouping loop and the lambdas, are "
+                   "one detector over kalman::kPivotDetectors: testCoherentOffset (the four "
+                   "criteria, the loops' expressions in their order), testPivotGroup_ (one row "
+                   "on one group), groupPivotRows_ (one grouping for both observables) and the "
+                   "members they call; the statements they carry are units"),
+    ((2594, 2598), "U2d: the non-pivot detector's band join is a call to joinBands"),
+]
+
 # Declared substitutions on single frozen lines: (line, old text, new text).
 SUBS = [
     (199, "    std::pair<std::string, std::string> splitBssdSatId(",
@@ -99,12 +126,38 @@ SUBS = [
            "return { w.is_outlier_found, w.is_complete_reset };"),
     # U2c: the non-pivot stage's own flag is named for what it records.
     (2638, "any_pivot_slip = true;", "any_nonpivot_slip = true;"),
+    # U2d: the phase grouping loop serves both observables (groupPivotRows_).
+    (2012, "sig[0] != 'L'", "sig[0] != obs_type"),
+    (2015, "row_atx_substituted(", "rowAtxSubstituted_("),
+    (2024, "groups[{ pivot, sig }]", "rows.per_signal[{ pivot, sig }]"),
+    (2029, "pivot_pools[pivot]", "rows.pooled[pivot]"),
+    (2033, "pivot_pool_bands[pivot].insert(band);", "pp.bands.insert(band);"),
+    # U2d: the handover-exclusion band's constants are declared beside the table.
+    (2060, "HANDOVER_EXCLUDE_MAD_K", "kHandoverExcludeMadK"),
+    (2061, "HANDOVER_EXCLUDE_FLOOR_M", "kHandoverExcludeFloorM"),
+    # U2d: the wavelength floor reads the row's tight-cluster ratio and the group's signal,
+    # and answers instead of continuing the loop.
+    (2126, "TIGHT_CLUSTER_MAD_RATIO", "spec.tight_cluster_mad_ratio"),
+    (2129, "key.second.substr(0, 2)", "signal.substr(0, 2)"),
+    (2140, "pivot_sat, key.second,", "pivot_sat, signal,"),
+    (2141, "TIGHT_CLUSTER_MAD_RATIO", "spec.tight_cluster_mad_ratio"),
+    (2142, "continue;", "return true;"),
+    # U2d: the four report lines read the group by one name and the signal by its parameter.
+    (2203, "key.second /* signal */,", "signal,"),
+    (2285, "pp.above,", "g.above,"),
+    (2406, "key.second /* signal */,", "signal,"),
+    (2463, "pp.above,", "g.above,"),
+    # U2d: the lambda is the member recordHandoverExcludes_, called with the group's statistics.
+    (2216, "recordHandoverExcludes(g, med, mad,", "recordHandoverExcludes_(w, g, t.med, t.mad,"),
 ]
 
 # Declarations a header may hold outside the units (new types and tables, no function
 # bodies): header -> regexes of the declaration's first code line.
 DECLARED_TYPES = {
-    H + "KalmanPostFitQc.hpp": [r"^struct KalmanFilter::PostFitQcWork \{$"],
+    H + "KalmanPostFitQc.hpp": [r"^struct KalmanFilter::PostFitQcWork \{$",
+                                r"^struct (PivotDetectorSpec|PivotRowGroup|PivotRowGroups|"
+                                r"CoherentOffset) \{$",
+                                r"^inline constexpr PivotDetectorSpec kPivotDetectors\[\] = \{$"],
 }
 
 
@@ -211,16 +264,6 @@ UNITS = [
         ("comment", ""),
         fz(1865, 1905),
         ("new", "    }")]),
-    ("detectPivotOffsets_", F + "KalmanPostFitQc.cpp", [
-        ("new", "    bool KalmanFilter::detectPivotOffsets_(PostFitQcWork& w) {"),
-        ("alias", ["measurement", "klogger", "epoch_prefix", "threshold", "res", "sres", "meta_n"]),
-        ("comment", ""),
-        fz(1907, 1936),
-        fz(1938, 2035, 4),
-        fz(2047, 2476, 4),
-        ("comment", ""),
-        ("new", "        return any_pivot_slip;"),
-        ("new", "    }")]),
     ("detectNonPivotSlips_", F + "KalmanPostFitQc.cpp", [
         ("new", "    bool KalmanFilter::detectNonPivotSlips_(PostFitQcWork& w) {"),
         ("alias", ["measurement", "P", "klogger", "epoch_prefix", "threshold", "res", "sres",
@@ -228,7 +271,9 @@ UNITS = [
         ("comment", ""),
         fz(2478, 2495, 4),
         ("new", "        bool any_nonpivot_slip = false;"),
-        fz(2497, 2639, 8),
+        fz(2497, 2593, 8),
+        ("new", "            const std::string bands_str = joinBands(e.bands);"),
+        fz(2599, 2639, 8),
         ("comment", ""),
         ("new", "        return any_nonpivot_slip;"),
         ("new", "    }")]),
@@ -330,6 +375,143 @@ UNITS = [
     ("handleBaselinePhaseOutlier", F + "KalmanOutlierResponse.cpp", [fz(1322, 1411)]),
     ("handleCodeOutlier", F + "KalmanOutlierResponse.cpp", [fz(1413, 1464)]),
     ("resetFilterCovariance", F + "KalmanOutlierResponse.cpp", [fz(1466, 1603)]),
+    # U2d: the four coherent-offset pivot detectors as one detector over kalman::kPivotDetectors.
+    ("testCoherentOffset", F + "KalmanPostFitQc.cpp", [
+        ("new", "    CoherentOffset testCoherentOffset(const PivotDetectorSpec& spec, const PivotRowGroup& g) {"),
+        ("new", "        CoherentOffset t;"),
+        ("new", "        t.n = g.indices.size();"),
+        ("new", "        if (t.n < spec.min_rows) return t;"),
+        ("new", "        if (spec.pooled && g.bands.size() < spec.min_bands) return t;"),
+        ("new", "        t.frac = static_cast<double>(g.above) / static_cast<double>(t.n);"),
+        ("new", "        if (t.frac < spec.above_fraction_min) return t;"),
+        ("new", "        std::vector<double> r_copy = g.residuals;"),
+        ("new", "        t.med = medianInPlace(r_copy);"),
+        ("new", "        if (std::abs(t.med) < spec.median_floor_m) return t;"),
+        ("new", "        std::vector<double> abs_dev;"),
+        ("new", "        abs_dev.reserve(g.residuals.size());"),
+        ("new", "        for (double v : g.residuals) abs_dev.push_back(std::abs(v - t.med));"),
+        ("new", "        t.mad = medianInPlace(abs_dev);"),
+        ("new", "        t.mad_ratio = t.mad / std::abs(t.med);"),
+        ("new", "        if (t.mad_ratio > spec.mad_ratio_max) return t;"),
+        ("new", "        t.coherent = true;"),
+        ("new", "        return t;"),
+        ("new", "    }")]),
+    ("excludeGroupRows", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void excludeGroupRows(EpochMeasurement& measurement, const PivotRowGroup& g) {"),
+        fz(2223, 2228, 8),
+        ("new", "    }")]),
+    ("joinBands", F + "KalmanPostFitQc.cpp", [
+        ("new", "    std::string joinBands(const std::set<std::string>& bands_set) {"),
+        fz(2273, 2277, 8),
+        ("new", "        return bands_str;"),
+        ("new", "    }")]),
+    ("detectPivotOffsets_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    bool KalmanFilter::detectPivotOffsets_(PostFitQcWork& w) {"),
+        ("new", "        const PivotRowGroups phase_rows = groupPivotRows_(w, 'L');"),
+        ("new", "        const PivotRowGroups code_rows  = groupPivotRows_(w, 'C');"),
+        fz(2088, 2088, 4),
+        ("new", "        for (const PivotDetectorSpec& spec : kPivotDetectors) {"),
+        ("new", "            const PivotRowGroups& rows = (spec.obs_type == 'L') ? phase_rows : code_rows;"),
+        ("new", "            if (spec.pooled) {"),
+        ("new", "                for (const auto& [pivot_sat, g] : rows.pooled)"),
+        ("new", "                    if (testPivotGroup_(w, spec, pivot_sat, std::string(), g)) any_pivot_slip = true;"),
+        ("new", "            } else {"),
+        ("new", "                for (const auto& [key, g] : rows.per_signal)"),
+        ("new", "                    if (testPivotGroup_(w, spec, key.first, key.second, g)) any_pivot_slip = true;"),
+        ("new", "            }"),
+        ("new", "        }"),
+        ("new", "        return any_pivot_slip;"),
+        ("new", "    }")]),
+    ("groupPivotRows_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    PivotRowGroups KalmanFilter::groupPivotRows_(const PostFitQcWork& w, char obs_type) const {"),
+        ("alias", ["measurement", "threshold", "res", "sres", "meta_n"]),
+        ("new", "        PivotRowGroups rows;"),
+        fz(2009, 2012, 4),
+        ("new", "            if (obs_type == 'C' && sig.find('_') != std::string::npos) continue;"),
+        fz(2013, 2034, 4),
+        ("new", "        return rows;"),
+        ("new", "    }")]),
+    ("rowAtxSubstituted_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    bool KalmanFilter::rowAtxSubstituted_(const std::string& sat, const std::string& pivot_sat,"),
+        ("new", "                                          const std::string& signal) const {"),
+        fz(1995, 2006, 8),
+        ("new", "    }")]),
+    ("testPivotGroup_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    bool KalmanFilter::testPivotGroup_(PostFitQcWork& w, const PivotDetectorSpec& spec,"),
+        ("new", "                                       const std::string& pivot_sat, const std::string& signal,"),
+        ("new", "                                       const PivotRowGroup& g) {"),
+        fz(2150, 2150, 8),
+        ("new", "        if (spec.pooled && requested_pivot_handovers_.count(cons)) return false;"),
+        ("new", "        const CoherentOffset t = testCoherentOffset(spec, g);"),
+        ("new", "        if (!t.coherent) return false;"),
+        ("new", "        if (spec.wavelength_floor && belowPivotWavelengthFloor_(w, spec, pivot_sat, signal, t))"),
+        ("new", "            return false;"),
+        ("new", "        logPivotDetection_(w, spec, cons, pivot_sat, signal, g, t);"),
+        fz(2215, 2216, 8),
+        ("new", "        if (spec.reinflate_iono) recordIonoReinflate_(w, g, cons);"),
+        ("new", "        excludeGroupRows(w.measurement, g);"),
+        ("new", "        return true;"),
+        ("new", "    }")]),
+    ("belowPivotWavelengthFloor_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    bool KalmanFilter::belowPivotWavelengthFloor_(const PostFitQcWork& w,"),
+        ("new", "                                                  const PivotDetectorSpec& spec,"),
+        ("new", "                                                  const std::string& pivot_sat,"),
+        ("new", "                                                  const std::string& signal,"),
+        ("new", "                                                  const CoherentOffset& t) const {"),
+        ("alias", ["klogger", "epoch_prefix"]),
+        ("new", "        const double med = t.med;"),
+        ("new", "        const double mad_ratio = t.mad_ratio;"),
+        fz(1965, 1965, 4),
+        fz(2126, 2145, 8),
+        ("new", "        return false;"),
+        ("new", "    }")]),
+    ("pivotSlipConfidence_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    std::string KalmanFilter::pivotSlipConfidence_(const PostFitQcWork& w,"),
+        ("new", "                                                   const PivotRowGroup& g) const {"),
+        ("alias", ["measurement"]),
+        fz(2166, 2197, 8),
+        ("new", "        return confidence_tag;"),
+        ("new", "    }")]),
+    ("logPivotDetection_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::logPivotDetection_(const PostFitQcWork& w, const PivotDetectorSpec& spec,"),
+        ("new", "                                          const std::string& cons, const std::string& pivot_sat,"),
+        ("new", "                                          const std::string& signal, const PivotRowGroup& g,"),
+        ("new", "                                          const CoherentOffset& t) const {"),
+        ("alias", ["klogger", "epoch_prefix"]),
+        ("new", "        const size_t n = t.n;"),
+        ("new", "        const double med = t.med;"),
+        ("new", "        const double mad = t.mad;"),
+        ("new", "        const double mad_ratio = t.mad_ratio;"),
+        ("new", "        const double frac = t.frac;"),
+        ("new", "        if (spec.obs_type == 'L' && !spec.pooled) {"),
+        ("new", "            const std::string confidence_tag = pivotSlipConfidence_(w, g);"),
+        fz(2199, 2204, 4),
+        ("new", "        } else if (spec.obs_type == 'L') {"),
+        ("new", "            const auto& bands_set = g.bands;"),
+        ("new", "            const std::string bands_str = joinBands(bands_set);"),
+        fz(2279, 2285, 4),
+        ("new", "        } else if (!spec.pooled) {"),
+        fz(2401, 2407, 8),
+        ("new", "        } else {"),
+        ("new", "            const auto& bands_set = g.bands;"),
+        ("new", "            const std::string bands_str = joinBands(bands_set);"),
+        fz(2457, 2463, 8),
+        ("new", "        }"),
+        ("new", "    }")]),
+    ("recordHandoverExcludes_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::recordHandoverExcludes_(const PostFitQcWork& w, const PivotRowGroup& grp,"),
+        ("new", "                                               double med, double mad,"),
+        ("new", "                                               const std::string& pivot_sat,"),
+        ("new", "                                               const std::string& cons) {"),
+        ("alias", ["measurement"]),
+        fz(2058, 2067, 8),
+        ("new", "    }")]),
+    ("recordIonoReinflate_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::recordIonoReinflate_(const PostFitQcWork& w, const PivotRowGroup& grp,"),
+        ("new", "                                            const std::string& cons) {"),
+        ("alias", ["measurement"]),
+        fz(2080, 2085, 8),
+        ("new", "    }")]),
 ]
 
 ALLOWED_OUTSIDE = re.compile(r"^(#include\s.*|#pragma once|namespace \w+ \{|namespace \{|"
@@ -391,22 +573,25 @@ def dropped(i):
     return any(a <= i <= b for (a, b), _ in DROPS)
 
 
-def frozen_source():
-    return Source(git_show(FROZEN_REV, FROZEN_PATH))
+def rewritten(i):
+    return any(a <= i <= b for (a, b), _ in REWRITTEN)
 
 
-def frozen_with_subs(frozen, problems):
-    code = list(frozen.code)
+def frozen_code_with_subs(raw, problems):
+    """The frozen code lines (1-based) after the declared substitutions, which are applied to
+    the raw text first, so a substitution may span a comment."""
+    lines = [""] + raw.lstrip("﻿").replace("\r\n", "\n").split("\n")
     for ln, old, new in SUBS:
-        if old not in code[ln]:
+        if old not in lines[ln]:
             problems.append(f"substitution {old!r} not on frozen line {ln}")
             continue
-        code[ln] = code[ln].replace(old, new)
-    return code
+        lines[ln] = lines[ln].replace(old, new)
+    return [""] + strip_comments("\n".join(lines[1:])).split("\n")
 
 
-def expected(code, pieces, claimed, problems, name):
-    """[(kind, text)] of the code lines a unit must hold, in order."""
+def expected(code, pieces, claimed, problems, name, lits):
+    """[(kind, text)] of the code lines a unit must hold, in order; adds the literals of the
+    carried and the declared new lines to lits."""
     exp = []
     for p in pieces:
         kind = p[0]
@@ -421,8 +606,11 @@ def expected(code, pieces, claimed, problems, name):
                 if code[i][:shift].strip():
                     problems.append(f"{name}: frozen line {i} has fewer than {shift} leading spaces")
                 exp.append(("frozen", code[i][shift:].rstrip()))
+                lits.update(literals(code[i]))
         elif kind == "new":
-            exp.append(("new", strip_comments(p[1]).strip()))
+            text = strip_comments(p[1]).strip()
+            exp.append(("new", text))
+            lits.update(literals(text))
         elif kind in ("alias", "alias_rw", "publish"):
             exp.extend(("publish" if kind == "publish" else "alias", n) for n in p[1])
         elif kind != "comment":
@@ -469,20 +657,18 @@ def main():
     tree = pathlib.Path(a.tree)
 
     problems = []
-    frozen = frozen_source()
-    code = frozen_with_subs(frozen, problems)
+    raw = git_show(FROZEN_REV, FROZEN_PATH)
+    frozen = Source(raw)
+    code = frozen_code_with_subs(raw, problems)
     new = {p: Source((tree / p).read_text(encoding="utf-8")) for p in FILES}
     claimed = collections.Counter()
     covered = {p: set() for p in FILES}
-    new_literals = collections.Counter()
+    lit_expected = collections.Counter()
 
     # 1. Units.
     n_pass = 0
     for name, path, pieces in UNITS:
-        exp = expected(code, pieces, claimed, problems, name)
-        for kind, text in exp:
-            if kind == "new":
-                new_literals.update(literals(text))
+        exp = expected(code, pieces, claimed, problems, name, lit_expected)
         if not exp:
             problems.append(f"{name}: no code lines")
             continue
@@ -516,12 +702,15 @@ def main():
             print(f"PASS {name}: {len(exp)} code lines at {path}:{s}-{e}")
 
     # 2. Coverage.
+    lit_rewritten = collections.Counter()
     for i in range(1, len(frozen.code)):
         if not frozen.code[i].strip():
             continue
         if in_ranges(i, SCAFFOLD):
             claimed[i] += 1
-        if claimed[i] == 0 and not dropped(i):
+        if claimed[i] == 0 and rewritten(i):
+            lit_rewritten.update(literals(code[i]))
+        elif claimed[i] == 0 and not dropped(i):
             problems.append(f"coverage: frozen line {i} is carried by no unit: {frozen.code[i].strip()}")
         elif claimed[i] > 1:
             problems.append(f"coverage: frozen line {i} is carried {claimed[i]} times")
@@ -540,6 +729,8 @@ def main():
                 e = src.extent(i)
                 body = "".join(src.blank[i:e + 1])
                 if any(re.match(t, line) for t in types):
+                    for j in range(i, e + 1):
+                        lit_expected.update(literals(src.code[j]))
                     i = e + 1
                     continue
                 if "{" not in body and body.rstrip().endswith(";"):
@@ -548,30 +739,31 @@ def main():
             problems.append(f"added: {p}:{i}: {line}")
             i += 1
 
-    # 4. Literals.
-    lit_frozen = collections.Counter()
-    for i in range(1, len(frozen.code)):
-        if in_ranges(i, SCAFFOLD) or dropped(i):
-            continue
-        lit_frozen.update(literals(code[i]))
-    lit_frozen.update(new_literals)
-    lit_new = collections.Counter()
+    # 4. Literals: the new files hold exactly the carried, declared-new and declared-type
+    #    literals, and a rewrite loses no literal (each still occurs in the new files).
+    lit_found = collections.Counter()
     for p in FILES:
         for line in new[p].code[1:]:
             if line.strip().startswith("#include"):
                 continue
-            lit_new.update(literals(line))
-    if lit_frozen != lit_new:
-        problems.append(f"literals: only expected {dict(lit_frozen - lit_new)}, "
-                        f"only found {dict(lit_new - lit_frozen)}")
+            lit_found.update(literals(line))
+    if lit_expected != lit_found:
+        problems.append(f"literals: only expected {dict(lit_expected - lit_found)}, "
+                        f"only found {dict(lit_found - lit_expected)}")
+    lost = sorted(t for t in lit_rewritten if t not in lit_found)
+    if lost:
+        problems.append(f"literals of rewritten lines found nowhere in the new files: {lost}")
 
     for p in problems:
         print("FAIL", p)
     n_lines = sum(1 for i in range(1, len(frozen.code)) if frozen.code[i].strip())
     n_drop = sum(1 for i in range(1, len(frozen.code)) if frozen.code[i].strip() and dropped(i))
-    print(f"units {n_pass}/{len(UNITS)} PASS; frozen code lines {n_lines} "
-          f"({n_drop} dropped, {len(DROPS)} declared drops); substitutions {len(SUBS)}; "
-          f"literals {sum(lit_new.values())}; problems {len(problems)}")
+    n_rew = sum(1 for i in range(1, len(frozen.code))
+                if frozen.code[i].strip() and claimed[i] == 0 and rewritten(i))
+    print(f"units {n_pass}/{len(UNITS)} PASS; frozen code lines {n_lines}: {n_drop} dropped "
+          f"({len(DROPS)} declared drops), {n_rew} rewritten ({len(REWRITTEN)} declared "
+          f"rewrites); substitutions {len(SUBS)}; literals {sum(lit_found.values())}; "
+          f"problems {len(problems)}")
     print("RESULT", "PASS" if not problems else "FAIL")
     return 1 if problems else 0
 

@@ -21,6 +21,14 @@ namespace GnssProcessor {
 
     class CycleSlipManager;
 
+    namespace kalman {
+        // The post-fit detector table's types (include/filter/KalmanPostFitQc.hpp).
+        struct PivotDetectorSpec;
+        struct PivotRowGroup;
+        struct PivotRowGroups;
+        struct CoherentOffset;
+    }
+
     /**
      * @file KalmanFilter.hpp
      * @brief Kalman filter for PPP/PPP-RTK state estimation.
@@ -644,8 +652,9 @@ namespace GnssProcessor {
         void reportStatisticalQc_(PostFitQcWork& w);
 
         /**
-         * @brief S3: the coherent pivot-offset detectors over the single-difference rows:
-         *        phase per signal, phase across bands, code per band, code across bands.
+         * @brief S3: the coherent pivot-offset detectors over the single-difference rows,
+         *        the rows of kalman::kPivotDetectors: phase per signal, phase across
+         *        bands, code per signal, code across bands.
          *
          * A firing group requests a forced pivot handover for its constellation, records
          * the satellites the handover must not elect (and, for code, the satellites whose
@@ -656,6 +665,128 @@ namespace GnssProcessor {
          * @return True if any detector fired.
          */
         bool detectPivotOffsets_(PostFitQcWork& w);
+
+        /**
+         * @brief S3, grouping: the non-pivot single-difference rows of one observable,
+         *        grouped by (pivot, full signal) and pooled by pivot across bands.
+         *
+         * Skips pivot rows, rows whose ATX correction was frequency-substituted
+         * (@ref rowAtxSubstituted_) and, for code, combined (ionosphere-free) signals.
+         *
+         * @param w        Work value (read only).
+         * @param obs_type 'L' for phase rows, 'C' for code rows.
+         * @return The groups and the pools, each in map order.
+         */
+        kalman::PivotRowGroups groupPivotRows_(const PostFitQcWork& w, char obs_type) const;
+
+        /**
+         * @brief True if the ATX correction of @p signal was frequency-fallback-substituted
+         *        on @p sat or on @p pivot_sat.
+         *
+         * The substituted PCV adds a small structural per-satellite bias that, pooled over a
+         * pivot's rows, mimics a pivot slip; such rows are kept out of the groups.
+         *
+         * @param sat       Non-pivot satellite ID.
+         * @param pivot_sat Pivot satellite ID.
+         * @param signal    Signal of the row.
+         * @return True if either satellite's correction was substituted.
+         */
+        bool rowAtxSubstituted_(const std::string& sat, const std::string& pivot_sat,
+                                const std::string& signal) const;
+
+        /**
+         * @brief S3, one detector row on one group: test, report and respond.
+         *
+         * A pooled row skips a constellation whose handover is already requested.  A
+         * coherent group (kalman::testCoherentOffset) that clears the row's wavelength
+         * floor requests a forced handover for the constellation, records the replacement
+         * exclusions (and, for code, the satellites to re-inflate) and excludes the
+         * group's rows.
+         *
+         * @param w         Work value; adds exclusions to the measurement.
+         * @param spec      The detector row.
+         * @param pivot_sat The group's pivot.
+         * @param signal    The group's signal (empty for a pool).
+         * @param g         The group.
+         * @return True if the group fired.
+         */
+        bool testPivotGroup_(PostFitQcWork& w, const kalman::PivotDetectorSpec& spec,
+                             const std::string& pivot_sat, const std::string& signal,
+                             const kalman::PivotRowGroup& g);
+
+        /**
+         * @brief True if a coherent group's median is below the wavelength floor
+         *        (estimation.pivot_slip_min_cycles times the pivot band's wavelength) and
+         *        its cluster is not tight; logs the suppression at debug.
+         *
+         * @param w         Work value (read only).
+         * @param spec      The detector row (its tight-cluster MAD ratio).
+         * @param pivot_sat The group's pivot.
+         * @param signal    The group's signal; its band gives the wavelength.
+         * @param t         The group's statistics.
+         * @return True if the group is suppressed.
+         */
+        bool belowPivotWavelengthFloor_(const PostFitQcWork& w,
+                                        const kalman::PivotDetectorSpec& spec,
+                                        const std::string& pivot_sat,
+                                        const std::string& signal,
+                                        const kalman::CoherentOffset& t) const;
+
+        /**
+         * @brief The residual history's temporal confidence of a phase pivot slip, for the
+         *        report line: HIGH when the fraction of warmed-up rows over the history's
+         *        z threshold reaches its fraction threshold, else MEDIUM.  Diagnostic only.
+         *
+         * @param w Work value (read only).
+         * @param g The firing group.
+         * @return The tag, e.g. "MEDIUM (spatial-only)" with the history off.
+         */
+        std::string pivotSlipConfidence_(const PostFitQcWork& w,
+                                         const kalman::PivotRowGroup& g) const;
+
+        /**
+         * @brief Log the warning of a firing group, in the format of its row (phase or
+         *        code, per signal or across bands).
+         *
+         * @param w         Work value (read only).
+         * @param spec      The detector row.
+         * @param cons      The pivot's constellation name.
+         * @param pivot_sat The group's pivot.
+         * @param signal    The group's signal (empty for a pool).
+         * @param g         The group.
+         * @param t         The group's statistics.
+         */
+        void logPivotDetection_(const PostFitQcWork& w, const kalman::PivotDetectorSpec& spec,
+                                const std::string& cons, const std::string& pivot_sat,
+                                const std::string& signal, const kalman::PivotRowGroup& g,
+                                const kalman::CoherentOffset& t) const;
+
+        /**
+         * @brief Record the satellites a forced handover for @p cons must not elect: the
+         *        offset pivot, and every row of the group outside the robust band
+         *        max(kHandoverExcludeMadK * mad, kHandoverExcludeFloorM) around the median.
+         *
+         * @param w         Work value (read only).
+         * @param grp       The firing group.
+         * @param med       Its median residual (m).
+         * @param mad       Its MAD (m).
+         * @param pivot_sat The offset pivot.
+         * @param cons      Its constellation name.
+         */
+        void recordHandoverExcludes_(const PostFitQcWork& w, const kalman::PivotRowGroup& grp,
+                                     double med, double mad, const std::string& pivot_sat,
+                                     const std::string& cons);
+
+        /**
+         * @brief Record every non-pivot satellite of a firing code group for ionosphere
+         *        re-inflation after the handover (they absorbed the pivot's code bias).
+         *
+         * @param w    Work value (read only).
+         * @param grp  The firing group.
+         * @param cons Its constellation name.
+         */
+        void recordIonoReinflate_(const PostFitQcWork& w, const kalman::PivotRowGroup& grp,
+                                  const std::string& cons);
 
         /**
          * @brief S3e: a non-pivot satellite whose phase rows on two or more bands carry
