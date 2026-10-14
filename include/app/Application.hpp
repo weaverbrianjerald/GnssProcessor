@@ -59,6 +59,11 @@ enum class EpochAction;      // filter/NetworkRunTypes.hpp, opaque enum declarat
 
 struct PppEpochWork;         // app/PppPipelineWork.hpp: the values one PPP epoch's stages share (card UOM U7b)
 struct PppRunEndView;        // app/PppPipelineWork.hpp: what the PPP run-end reports read (card UOM U7b)
+struct BaselineRunWork;      // app/ApplicationBaseline.cpp: what one baseline run's stages share (card UOM U7c)
+struct BaselineRoverWork;    // app/ApplicationBaseline.cpp: what one rover's stages share (card UOM U7c)
+struct BaselineEpochWork;    // app/ApplicationBaseline.cpp: what one epoch of one rover shares (card UOM U7c)
+enum class BaselineEpochAction;  // app/ApplicationBaseline.cpp: how a baseline epoch ends (card UOM U7c)
+class  MultiRinexSync;       // rinex/MultiRinexSync.hpp
 
 /**
  * @class Application
@@ -85,6 +90,9 @@ struct PppRunEndView;        // app/PppPipelineWork.hpp: what the PPP run-end re
  *  - the epoch's records (PppEpochRecords.cpp): the smoother snapshots, the
  *    NEQ, the soft-LLI snapshot, the summary line and the CSV traces;
  *  - the run end (PppRunEnd.cpp): a declared table of reports.
+ * The baseline pipeline (@ref runBaseline, ApplicationBaseline.cpp) has the
+ * same shape: a spine over setup, per-rover and per-epoch stages (card UOM
+ * step U7c).
  */
 class Application {
 public:
@@ -785,12 +793,304 @@ private:
      * its own PppModel, and processes each rover against the reference in
      * turn (a star topology for BaselineMulti): DD measurement model, DD state
      * vector and integer ambiguity resolution.  Implemented in
-     * @c ApplicationBaseline.cpp.
+     * @c ApplicationBaseline.cpp as a short ordered driver over the stages declared
+     * below (card UOM step U7c).
      *
      * @return 0 on clean shutdown, non-zero on error (including a run in which
      *         no rover overlaps the reference on any synced epoch).
      */
     int runBaseline();
+
+    // -----------------------------------------------------------------------
+    // The baseline pipeline's stages (ApplicationBaseline.cpp, card UOM step U7c),
+    // in the order runBaseline calls them.  The working values BaselineRunWork,
+    // BaselineRoverWork and BaselineEpochWork are defined in that file.
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Setup: the PathResolver pass (production mode points the observation path
+     *        at the reference station first, for the date inference).
+     * @param log        The main_log logger.
+     * @param bc_initial The baseline configuration before resolution.
+     * @return False when PathResolver fails (logged).
+     */
+    bool resolveBaselineData_(const std::shared_ptr<spdlog::logger>& log,
+                              const BaselineConfig& bc_initial);
+
+    /**
+     * @brief Setup: log the reference and the rovers, and check that each has a RINEX
+     *        path after resolution; warn when no navigation file was resolved.
+     * @param log The main_log logger.
+     * @param bc  The baseline configuration after resolution.
+     * @return False when a station has no RINEX path (logged).
+     */
+    bool checkBaselineInputs_(const std::shared_ptr<spdlog::logger>& log,
+                              const BaselineConfig& bc);
+
+    /**
+     * @brief Setup: load every station's RINEX file and align the epochs.
+     * @param log  The main_log logger.
+     * @param sync The multi-station reader.
+     * @return False when a file fails to load, the alignment fails or no epoch aligns
+     *         (logged).
+     */
+    bool synchronizeBaselineStations_(const std::shared_ptr<spdlog::logger>& log,
+                                      MultiRinexSync& sync);
+
+    /**
+     * @brief Setup: load the products and fill the product cache, which must hold SP3
+     *        orbits for the satellite geometry.
+     * @param log The main_log logger.
+     * @return False when the cache fails to load or holds no orbit (logged).
+     */
+    bool loadBaselineProducts_(const std::shared_ptr<spdlog::logger>& log);
+
+    /**
+     * @brief Setup: the reference station's StateManager (its position fixed at the
+     *        configured ECEF), its PppModel, and the GIM for the higher-order ionosphere
+     *        when that correction is on.
+     * @param ref_parser The reference station's RINEX parser.
+     * @param ref_pos    The reference ECEF (the ARP, used as given).
+     * @param synced     The aligned epochs (the first sets the state epoch).
+     */
+    void buildBaselineReference_(const RinexParser* ref_parser,
+                                 const Eigen::Vector3d& ref_pos,
+                                 const std::vector<SyncedEpoch>& synced);
+
+    /**
+     * @brief One rover against the reference: reset the shared reference state, check
+     *        the overlap, build the rover's a-priori position, filter, AR and traces, run
+     *        its epochs, then log its summaries and roll its totals into the run's.
+     * @param run       The run's working value (the totals are written).
+     * @param rover_idx The rover's index in the configuration.
+     * @return False only when the early-abort diagnostic fired (runBaseline then
+     *         returns 1); a skipped rover returns true.
+     */
+    bool processBaselineRover_(BaselineRunWork& run, size_t rover_idx);
+
+    /**
+     * @brief The zero-overlap guard: count the synced epochs where the rover and the
+     *        reference are both present; with none, log the error and skip the rover.
+     * @param run        The run's working value (rovers_with_data is counted).
+     * @param rover_name The rover.
+     * @return True when the rover overlaps the reference on at least one epoch.
+     */
+    bool roverOverlapsReference_(BaselineRunWork& run, const std::string& rover_name);
+
+    /**
+     * @brief The rover's a-priori position: the configured one, else the RINEX header's
+     *        ARP (marker reduced by the antenna H/E/N offset), else zero; logs the a-priori
+     *        baseline length and warns above max_baseline_km.
+     * @param run        The run's working value.
+     * @param rover_cfg  The rover's configuration.
+     * @param rov_parser The rover's RINEX parser.
+     * @return The a-priori ECEF (ARP).
+     */
+    Eigen::Vector3d baselineRoverApriori_(const BaselineRunWork& run,
+                                          const StationConfig& rover_cfg,
+                                          const RinexParser* rov_parser);
+
+    /**
+     * @brief The rover's filter: its StateManager seeded at the a-priori position, its
+     *        PppModel (with the GIM when loaded), MeasurementModel and KalmanFilter.
+     * @param rov_parser  The rover's RINEX parser.
+     * @param rov_apriori The rover's a-priori ECEF.
+     * @param synced      The aligned epochs (the first sets the state epoch).
+     */
+    void buildBaselineRoverFilter_(const RinexParser* rov_parser,
+                                   const Eigen::Vector3d& rov_apriori,
+                                   const std::vector<SyncedEpoch>& synced);
+
+    /**
+     * @brief The rover's ambiguity resolver when ambiguity_resolution.mode is above 0,
+     *        else none (logged once, for the first rover).
+     * @param run        The run's working value.
+     * @param rover_idx  The rover's index.
+     * @param rover_name The rover.
+     */
+    void buildBaselineRoverAr_(const BaselineRunWork& run, size_t rover_idx,
+                               const std::string& rover_name);
+
+    /**
+     * @brief The rover's trace directory (log_dir_/rover_<name> on a multi-rover run) and
+     *        its TraceLogger.
+     * @param run        The run's working value.
+     * @param rover_name The rover.
+     * @return The trace directory.
+     */
+    std::filesystem::path openBaselineRoverTraces_(const BaselineRunWork& run,
+                                                   const std::string& rover_name);
+
+    /**
+     * @brief Remove every DD ambiguity of the rover's state whose satellite or pivot is
+     *        @p sat.
+     * @param sat The slipped satellite.
+     * @return The number of ambiguities removed.
+     */
+    std::size_t eraseBaselineAmbiguitiesForSat_(const std::string& sat);
+
+    /**
+     * @brief Open baseline_trace.csv in the rover's trace directory and write its header
+     *        when logging.enable_state_trace is set.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (trace_ofs and trace_path are written).
+     */
+    void openBaselineTraceCsv_(const BaselineRunWork& run, BaselineRoverWork& rover);
+
+    /**
+     * @brief One epoch of one rover, as an ordered list of stages.
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     * @param se    The synced epoch.
+     * @return What the rover's epoch loop does next.
+     */
+    BaselineEpochAction processBaselineEpoch_(const BaselineRunWork& run,
+                                              BaselineRoverWork& rover,
+                                              const SyncedEpoch& se);
+
+    /**
+     * @brief The processing.max_duration_s cutoff: the rover's first synced epoch anchors
+     *        the window; an epoch whose span reaches the limit stops the rover (logged).
+     * @param run   The run's working value.
+     * @param rover The rover's working value (the anchor is written).
+     * @param se    The synced epoch.
+     * @return True when the rover's epoch loop stops here.
+     */
+    bool reachedBaselineMaxDuration_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                     const SyncedEpoch& se);
+
+    /**
+     * @brief Find the rover and the reference in the synced epoch and compute the time
+     *        step from the rover's last processed epoch (week rollover included).
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     * @param ep    The epoch's working value; writes rov_it, ref_it, both_present and dt.
+     */
+    void locateBaselineStations_(const BaselineRunWork& run, const BaselineRoverWork& rover,
+                                 BaselineEpochWork& ep);
+
+    /**
+     * @brief The hard-gap reset (both stations present and dt above the data-gap
+     *        tolerance, 60 s by default): drop every DD ambiguity, forget both MW arcs and
+     *        the sticky DD pivots, then the dynamics-mode policy of @ref handleGap.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (n_amb_resets is counted).
+     * @param ep    The epoch's working value.
+     */
+    void resetAtBaselineDataGap_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                 const BaselineEpochWork& ep);
+
+    /**
+     * @brief The MW pre-filter on both stations, before the DD build: a slipped
+     *        satellite's DD ambiguities are erased, its MW arcs reset at both receivers,
+     *        and the DD pivots re-ranked.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (the slip and reset counters are written).
+     * @param ep    The epoch's working value.
+     */
+    void screenBaselineMwSlips_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                const BaselineEpochWork& ep);
+
+    /**
+     * @brief Predict the rover's state, advance its previous-epoch markers, sync both
+     *        stations' PppStates and model both stations' observations.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (prev_week, prev_tow and the epoch counters
+     *              are written).
+     * @param ep    The epoch's working value; writes rov_modeled and ref_modeled.
+     * @return False when modelling fails or leaves a station empty (the epoch is skipped).
+     */
+    bool modelBaselineEpoch_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                             BaselineEpochWork& ep);
+
+    /**
+     * @brief The rebuild-pass update loop: build the DD measurement, update the filter,
+     *        drain the KF's pivot-handover requests, and on NeedsMeasurementRebuild
+     *        exclude the flagged rows and rebuild, within the shared pass budget.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (n_updates is counted).
+     * @param ep    The epoch's working value; writes em, carry_excluded, built_count,
+     *              applied, committed and epoch_failed.
+     */
+    void runBaselineUpdateLoop_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                BaselineEpochWork& ep);
+
+    /**
+     * @brief One pass's DD measurement, with its exception envelope.
+     * @param run  The run's working value.
+     * @param ep   The epoch's working value (em is written).
+     * @param pass The pass index.
+     * @return False when computeMeasurementUpdate throws (logged).
+     */
+    bool buildBaselineDdPass_(const BaselineRunWork& run, BaselineEpochWork& ep, int pass);
+
+    /**
+     * @brief Drain the KalmanFilter's coherent-pivot-slip requests and force a DD pivot
+     *        re-rank on each flagged constellation, excluding the KF's replacement
+     *        exclusions.
+     * @param log The main_log logger.
+     */
+    void drainBaselinePivotHandovers_(const std::shared_ptr<spdlog::logger>& log);
+
+    /**
+     * @brief On a committed epoch: the per-observable DD residual statistics and pivot
+     *        counts, DD ambiguity resolution, and the CSV traces.  No-op otherwise.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (the residual statistics are written).
+     * @param ep    The epoch's working value.
+     */
+    void recordCommittedBaselineEpoch_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                       const BaselineEpochWork& ep);
+
+    /**
+     * @brief The early-abort diagnostic after 20 epochs with DD observations and no
+     *        update (a product window mismatch): logs, closes the position trace.  As
+     *        written it cannot fire (n_geom_ok counts with n_with_dd).
+     * @param run   The run's working value.
+     * @param rover The rover's working value (the trace is closed).
+     * @param ep    The epoch's working value.
+     * @return True when it fired; runBaseline then returns 1.
+     */
+    bool abortBaselineWithoutUpdates_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                      const BaselineEpochWork& ep);
+
+    /**
+     * @brief One row of baseline_trace.csv: the rover position, its sigmas, the rows
+     *        applied and built, the ambiguity count.
+     * @param rover The rover's working value (the trace).
+     * @param ep    The epoch's working value.
+     */
+    void writeBaselineTraceRow_(BaselineRoverWork& rover, const BaselineEpochWork& ep);
+
+    /**
+     * @brief Close the rover's baseline_trace.csv and log its path.
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     */
+    void closeBaselineTraceCsv_(const BaselineRunWork& run, BaselineRoverWork& rover);
+
+    /**
+     * @brief The rover's DD build summary: epochs, DD scalars per observable and
+     *        constellation, the dominant pivots, the residual statistics.
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     */
+    void reportBaselineDdBuild_(const BaselineRunWork& run, const BaselineRoverWork& rover);
+
+    /**
+     * @brief The rover's solution summary: updates, final position and sigma, the
+     *        displacement from the a-priori, the baseline length, the slip counters.
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     */
+    void reportBaselineSolution_(const BaselineRunWork& run, const BaselineRoverWork& rover);
+
+    /**
+     * @brief The run's aggregate summary (multi-rover runs), the closing line and the
+     *        KalmanFilter's timings.
+     * @param run The run's working value.
+     */
+    void reportBaselineAggregate_(const BaselineRunWork& run);
 
     /**
      * @brief Run the minimum-constraint S-system PPP-RTK network producer.

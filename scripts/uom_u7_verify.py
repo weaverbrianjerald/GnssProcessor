@@ -483,7 +483,380 @@ MEMBERS_BASE_B = {}
 DROPS_BASE_B = {}
 DUPLICATES_BASE_B = {}
 LAMBDAS_BASE_B = {}
-ALLOWED_EXTRA_BASE_B = []
+ALLOWED_EXTRA_BASE_B = []  # (unit, event) pairs the cut adds
+
+# Step U7c: runBaseline as a spine over setup, per-rover, per-epoch and summary members, all in
+# ApplicationBaseline.cpp; the baseline working values are defined there too.
+#
+# Alias lines of the baseline stages: each binds one of runBaseline's former local names to the
+# member of that name of BaselineRunWork (run), BaselineRoverWork (rover) or BaselineEpochWork (ep).
+BA = {
+    "log": "const auto& log = run.log;",
+    "bc": "const auto& bc = run.bc;",
+    "sync": "const auto& sync = run.sync;",
+    "synced": "const auto& synced = run.synced;",
+    "ref_pos": "const auto& ref_pos = run.ref_pos;",
+    "mw_ref": "auto& mw_ref = run.mw_ref;",
+    "active_set": "const auto& active_set = run.active_set;",
+    "multi_rover": "const bool multi_rover = run.multi_rover;",
+    "rovers_with_data_w": "auto& rovers_with_data = run.rovers_with_data;",
+    "total_rover_updates": "const auto& total_rover_updates = run.total_rover_updates;",
+    "total_rover_dd_obs": "const auto& total_rover_dd_obs = run.total_rover_dd_obs;",
+    "rover_name": "const auto& rover_name = rover.rover_name;",
+    "rov_apriori": "const auto& rov_apriori = rover.rov_apriori;",
+    "rover_trace_dir": "const auto& rover_trace_dir = rover.rover_trace_dir;",
+    "mw_rov": "auto& mw_rov = rover.mw_rov;",
+    "trace_ofs_w": "auto& trace_ofs = rover.trace_ofs;",
+    "trace_path": "const auto& trace_path = rover.trace_path;",
+    "trace_path_w": "auto& trace_path = rover.trace_path;",
+    "n_with_dd": "const auto& n_with_dd = rover.n_with_dd;",
+    "n_with_dd_w": "auto& n_with_dd = rover.n_with_dd;",
+    "total_dd_obs": "const auto& total_dd_obs = rover.total_dd_obs;",
+    "total_dd_obs_w": "auto& total_dd_obs = rover.total_dd_obs;",
+    "total_code_dd": "const auto& total_code_dd = rover.total_code_dd;",
+    "total_code_dd_w": "auto& total_code_dd = rover.total_code_dd;",
+    "total_phase_dd": "const auto& total_phase_dd = rover.total_phase_dd;",
+    "total_phase_dd_w": "auto& total_phase_dd = rover.total_phase_dd;",
+    "total_doppler_dd": "const auto& total_doppler_dd = rover.total_doppler_dd;",
+    "total_doppler_dd_w": "auto& total_doppler_dd = rover.total_doppler_dd;",
+    "n_geom_ok": "const auto& n_geom_ok = rover.n_geom_ok;",
+    "n_geom_ok_w": "auto& n_geom_ok = rover.n_geom_ok;",
+    "n_updates": "const auto& n_updates = rover.n_updates;",
+    "n_updates_w": "auto& n_updates = rover.n_updates;",
+    "pivot_counts": "const auto& pivot_counts = rover.pivot_counts;",
+    "pivot_counts_w": "auto& pivot_counts = rover.pivot_counts;",
+    "constellation_dd": "const auto& constellation_dd = rover.constellation_dd;",
+    "constellation_dd_w": "auto& constellation_dd = rover.constellation_dd;",
+    "res_stats_t": "using ResStats = BaselineRoverWork::ResStats;",
+    "res_code": "const auto& res_code = rover.res_code;",
+    "res_code_w": "auto& res_code = rover.res_code;",
+    "res_phase": "const auto& res_phase = rover.res_phase;",
+    "res_phase_w": "auto& res_phase = rover.res_phase;",
+    "res_doppler": "const auto& res_doppler = rover.res_doppler;",
+    "res_doppler_w": "auto& res_doppler = rover.res_doppler;",
+    "prev_tow": "const auto& prev_tow = rover.prev_tow;",
+    "prev_tow_w": "auto& prev_tow = rover.prev_tow;",
+    "prev_week": "const auto& prev_week = rover.prev_week;",
+    "prev_week_w": "auto& prev_week = rover.prev_week;",
+    "max_dur_anchor_s_w": "auto& max_dur_anchor_s = rover.max_dur_anchor_s;",
+    "max_dur_anchored_w": "auto& max_dur_anchored = rover.max_dur_anchored;",
+    "n_slips_ref": "const auto& n_slips_ref = rover.n_slips_ref;",
+    "n_slips_ref_w": "auto& n_slips_ref = rover.n_slips_ref;",
+    "n_slips_rov": "const auto& n_slips_rov = rover.n_slips_rov;",
+    "n_slips_rov_w": "auto& n_slips_rov = rover.n_slips_rov;",
+    "n_amb_resets": "const auto& n_amb_resets = rover.n_amb_resets;",
+    "n_amb_resets_w": "auto& n_amb_resets = rover.n_amb_resets;",
+    "se": "const auto& se = ep.se;",
+    "rov_it": "const auto& rov_it = ep.rov_it;",
+    "rov_it_w": "auto& rov_it = ep.rov_it;",
+    "ref_it": "const auto& ref_it = ep.ref_it;",
+    "ref_it_w": "auto& ref_it = ep.ref_it;",
+    "both_present": "const auto& both_present = ep.both_present;",
+    "both_present_w": "auto& both_present = ep.both_present;",
+    "dt": "const auto& dt = ep.dt;",
+    "dt_w": "auto& dt = ep.dt;",
+    "rov_modeled": "const auto& rov_modeled = ep.rov_modeled;",
+    "rov_modeled_w": "auto& rov_modeled = ep.rov_modeled;",
+    "ref_modeled": "const auto& ref_modeled = ep.ref_modeled;",
+    "ref_modeled_w": "auto& ref_modeled = ep.ref_modeled;",
+    "em": "const auto& em = ep.em;",
+    "em_w": "auto& em = ep.em;",
+    "carry_excluded": "const auto& carry_excluded = ep.carry_excluded;",
+    "carry_excluded_w": "auto& carry_excluded = ep.carry_excluded;",
+    "built_count": "const auto& built_count = ep.built_count;",
+    "built_count_w": "auto& built_count = ep.built_count;",
+    "applied": "const auto& applied = ep.applied;",
+    "applied_w": "auto& applied = ep.applied;",
+    "committed": "const auto& committed = ep.committed;",
+    "committed_w": "auto& committed = ep.committed;",
+    "epoch_failed_w": "auto& epoch_failed = ep.epoch_failed;",
+}
+
+
+def ba(*names):
+    return [N("    " + BA[n]) for n in names]
+
+
+UNITS_BASE_C = [
+    # --- The two lambdas that became functions (anonymous namespace).
+    dict(file=BASEF, def_re=r"^std::vector<PppObservation> toMinimalPppObs\(", section=True,
+         pieces=[FB(241, 275, 4)]),
+    dict(file=BASEF, def_re=r"^std::string constellationOfSatPairId\(", section=True,
+         pieces=[FB(731, 741, 12)]),
+    # --- runBaseline: the spine.
+    dict(file=BASEF, def_re=r"^int Application::runBaseline\(", section=True, pieces=[
+        FB(37, 43),
+        N("    if (!resolveBaselineData_(log, bc_initial)) return 1;   // Phase 0: the PathResolver pass"),
+        B(),
+        FB(63, 64),
+        N("    if (!checkBaselineInputs_(log, bc)) return 1;           // the roster; a RINEX path per station"),
+        B(),
+        FB(107, 118),
+        N("    if (!synchronizeBaselineStations_(log, sync)) return 1; // load the stations, align their epochs"),
+        N("    const auto& synced = sync.getSyncedEpochs();"),
+        N("    if (!loadBaselineProducts_(log)) return 1;              // Phase 2: the product cache (SP3 orbits)"),
+        B(),
+        FB(158, 175),
+        N("    buildBaselineReference_(ref_parser, ref_pos, synced);   // its StateManager, PppModel and GIM"),
+        B(),
+        FB(207, 218),
+        B(),
+        FB(278, 290),
+        N("    BaselineRunWork run{ log, bc, sync, synced, ref_pos, mw_ref, active_set, (bc.rovers.size() > 1) };"),
+        B(),
+        FB(296, 296),
+        N("        if (!processBaselineRover_(run, rover_idx)) return 1;  // the early-abort diagnostic fired"),
+        FB(1036, 1036),
+        B(),
+        FB(1038, 1047),
+        B(),
+        N("    reportBaselineAggregate_(run);"),
+        B(),
+        FB(1065, 1077)],
+        subs=[("BASE", 1042, "if (rovers_with_data == 0) {", "if (run.rovers_with_data == 0) {"),
+              ("BASE", 1069, "if (multi_rover) {", "if (run.multi_rover) {")]),
+    # --- Setup stages.
+    dict(file=BASEF, def_re=r"^bool Application::resolveBaselineData_\(", section=True, pieces=[
+        FB(44, 61), N("    return true;")],
+        subs=[("BASE", 60, "return 1;", "return false;")]),
+    dict(file=BASEF, def_re=r"^bool Application::checkBaselineInputs_\(", section=True, pieces=[
+        FB(65, 105), N("    return true;")],
+        subs=[("BASE", 90, "return 1;", "return false;"), ("BASE", 98, "return 1;", "return false;")]),
+    dict(file=BASEF, def_re=r"^bool Application::synchronizeBaselineStations_\(", section=True, pieces=[
+        FB(119, 135), N("    return true;")],
+        subs=[("BASE", 121, "return 1;", "return false;"), ("BASE", 125, "return 1;", "return false;"),
+              ("BASE", 132, "return 1;", "return false;")]),
+    dict(file=BASEF, def_re=r"^bool Application::loadBaselineProducts_\(", section=True, pieces=[
+        FB(137, 156), N("    return true;")],
+        subs=[("BASE", 148, "return 1;", "return false;"), ("BASE", 155, "return 1;", "return false;")]),
+    dict(file=BASEF, def_re=r"^void Application::buildBaselineReference_\(", section=True, pieces=[
+        FB(177, 205)]),
+    # --- One rover.
+    dict(file=BASEF, def_re=r"^bool Application::processBaselineRover_\(", section=True, pieces=[
+        *ba("log", "bc", "sync", "synced", "ref_pos", "mw_ref"), B(),
+        FB(297, 298, 4), B(),
+        FB(300, 301, 4), B(),
+        FB(303, 315, 4), B(),
+        FB(317, 321, 4), B(),
+        N("    if (!roverOverlapsReference_(run, rover_name)) return true;"),
+        N("    const Eigen::Vector3d rov_apriori = baselineRoverApriori_(run, rover_cfg, rov_parser);"),
+        N("    buildBaselineRoverFilter_(rov_parser, rov_apriori, synced);"),
+        N("    buildBaselineRoverAr_(run, rover_idx, rover_name);"),
+        N("    const std::filesystem::path rover_trace_dir = openBaselineRoverTraces_(run, rover_name);"),
+        B(),
+        FB(462, 463, 4), B(),
+        C("    // The rover's working value: its counters, its trace and its previous epoch."),
+        N("    BaselineRoverWork rover{ rover_name, rov_apriori, rover_trace_dir, mw_rov };"),
+        N("    openBaselineTraceCsv_(run, rover);"),
+        B(),
+        FB(524, 524, 4),
+        N("        const BaselineEpochAction action = processBaselineEpoch_(run, rover, se);"),
+        N("        if (action == BaselineEpochAction::StopRover) break;"),
+        N("        if (action == BaselineEpochAction::AbortRun) return false;"),
+        FB(960, 960, 4), B(),
+        N("    closeBaselineTraceCsv_(run, rover);"),
+        N("    reportBaselineDdBuild_(run, rover);"),
+        N("    reportBaselineSolution_(run, rover);"),
+        B(),
+        FB(1031, 1034, 4),
+        N("    return true;")],
+        subs=[("BASE", 320, "continue;", "return true;"),
+              ("BASE", 1033, "total_rover_updates += n_updates;", "run.total_rover_updates += rover.n_updates;"),
+              ("BASE", 1034, "total_rover_dd_obs  += total_dd_obs;", "run.total_rover_dd_obs  += rover.total_dd_obs;")]),
+    dict(file=BASEF, def_re=r"^bool Application::roverOverlapsReference_\(", section=True, pieces=[
+        *ba("log", "bc", "synced", "rovers_with_data_w"), B(),
+        FB(323, 330, 4), FB(332, 348, 8), N("    return true;")],
+        subs=[("BASE", 344, "continue;", "return false;")]),
+    dict(file=BASEF, def_re=r"^Eigen::Vector3d Application::baselineRoverApriori_\(", section=True, pieces=[
+        *ba("log", "bc", "ref_pos"), N("    const std::string& rover_name = rover_cfg.name;"), B(),
+        FB(351, 375, 4), N("    return rov_apriori;")]),
+    dict(file=BASEF, def_re=r"^void Application::buildBaselineRoverFilter_\(", section=True, pieces=[
+        FB(377, 399, 4)]),
+    dict(file=BASEF, def_re=r"^void Application::buildBaselineRoverAr_\(", section=True, pieces=[
+        *ba("log"), B(), FB(401, 437, 4)]),
+    dict(file=BASEF, def_re=r"^std::filesystem::path Application::openBaselineRoverTraces_\(", section=True, pieces=[
+        *ba("log", "multi_rover"), B(), FB(439, 460, 4), N("    return rover_trace_dir;")]),
+    dict(file=BASEF, def_re=r"^void Application::openBaselineTraceCsv_\(", section=True, pieces=[
+        *ba("log", "rover_name", "rover_trace_dir", "trace_ofs_w", "trace_path_w"), B(),
+        FB(480, 480, 4), FB(482, 482, 4), FB(484, 495, 4)]),
+    dict(file=BASEF, def_re=r"^std::size_t Application::eraseBaselineAmbiguitiesForSat_\(", section=True,
+         pieces=[FB(469, 477, 8)]),
+    # --- One epoch of one rover.
+    dict(file=BASEF, def_re=r"^BaselineEpochAction Application::processBaselineEpoch_\(", section=True, pieces=[
+        FB(525, 528, 8),
+        N("    if (reachedBaselineMaxDuration_(run, rover, se)) return BaselineEpochAction::StopRover;"),
+        B(),
+        C("    // The epoch's working value: station presence, the time step, the models, the update."),
+        N("    BaselineEpochWork ep{ se };"),
+        N("    locateBaselineStations_(run, rover, ep);   // station presence and the time step"),
+        N("    resetAtBaselineDataGap_(run, rover, ep);   // a hard data gap: DD ambiguities, MW arcs, pivots"),
+        N("    screenBaselineMwSlips_(run, rover, ep);    // the MW pre-filter on both stations"),
+        B(),
+        FB(667, 672, 8),
+        B(),
+        N("    if (!modelBaselineEpoch_(run, rover, ep)) return BaselineEpochAction::Next;"),
+        N("    runBaselineUpdateLoop_(run, rover, ep);"),
+        FB(853, 853, 8),
+        B(),
+        N("    recordCommittedBaselineEpoch_(run, rover, ep);   // residual statistics, AR, traces"),
+        N("    if (abortBaselineWithoutUpdates_(run, rover, ep)) return BaselineEpochAction::AbortRun;"),
+        N("    writeBaselineTraceRow_(rover, ep);"),
+        N("    return BaselineEpochAction::Next;")],
+        subs=[("BASE", 672, "if (!both_present) continue;", "if (!ep.both_present) return BaselineEpochAction::Next;"),
+              ("BASE", 853, "if (epoch_failed) continue;", "if (ep.epoch_failed) return BaselineEpochAction::Next;")]),
+    dict(file=BASEF, def_re=r"^bool Application::reachedBaselineMaxDuration_\(", section=True, pieces=[
+        *ba("log", "max_dur_anchor_s_w", "max_dur_anchored_w"), B(),
+        FB(530, 545, 8), N("    return false;")],
+        subs=[("BASE", 543, "break;", "return true;")]),
+    dict(file=BASEF, def_re=r"^void Application::locateBaselineStations_\(", section=True, pieces=[
+        *ba("bc", "rover_name", "se", "prev_tow", "prev_week", "rov_it_w", "ref_it_w", "both_present_w",
+            "dt_w"), B(),
+        FB(547, 558, 8)],
+        subs=[("BASE", 552, "auto rov_it =", "rov_it ="), ("BASE", 553, "auto ref_it =", "ref_it ="),
+              ("BASE", 554, "const bool both_present =", "both_present ="),
+              ("BASE", 557, "const double dt =", "dt =")]),
+    dict(file=BASEF, def_re=r"^void Application::resetAtBaselineDataGap_\(", section=True, pieces=[
+        *ba("log", "mw_ref", "mw_rov", "n_amb_resets_w", "prev_tow", "se", "both_present", "dt"), B(),
+        FB(560, 613, 8)]),
+    dict(file=BASEF, def_re=r"^void Application::screenBaselineMwSlips_\(", section=True, pieces=[
+        *ba("log", "bc", "ref_pos", "mw_ref", "active_set", "rover_name", "mw_rov", "n_slips_ref_w",
+            "n_slips_rov_w", "n_amb_resets_w", "se"), B(),
+        FB(615, 620, 8), FB(622, 664, 12)],
+        subs=[("BASE", 648, "eraseAmbiguitiesForSat(sat)", "eraseBaselineAmbiguitiesForSat_(sat)")]),
+    dict(file=BASEF, def_re=r"^bool Application::modelBaselineEpoch_\(", section=True, pieces=[
+        *ba("log", "prev_week_w", "prev_tow_w", "n_with_dd_w", "n_geom_ok_w", "se", "rov_it", "ref_it", "dt",
+            "rov_modeled_w", "ref_modeled_w"), B(),
+        FB(674, 694, 8), FB(696, 704, 8), N("    return true;")],
+        subs=[("BASE", 699, "continue;", "return false;"), ("BASE", 701, "continue;", "return false;")]),
+    dict(file=BASEF, def_re=r"^void Application::runBaselineUpdateLoop_\(", section=True, pieces=[
+        *ba("log", "n_updates_w", "se", "rov_modeled", "ref_modeled", "em_w", "carry_excluded_w",
+            "built_count_w", "applied_w", "committed_w", "epoch_failed_w"), B(),
+        FB(706, 727, 8), B(),
+        FB(751, 751, 8),
+        N("        if (!buildBaselineDdPass_(run, ep, pass)) {"),
+        N("            epoch_failed = true;"),
+        N("            break;"),
+        N("        }"),
+        FB(772, 811, 8),
+        N("        drainBaselinePivotHandovers_(log);"),
+        B(),
+        FB(833, 852, 8)]),
+    dict(file=BASEF, def_re=r"^bool Application::buildBaselineDdPass_\(", section=True, pieces=[
+        *ba("log", "rov_modeled", "ref_modeled", "carry_excluded", "em_w"), B(),
+        FB(752, 761, 16), N("        return false;"), FB(764, 768, 16), N("        return false;"),
+        FB(771, 771, 16), N("    return true;")]),
+    dict(file=BASEF, def_re=r"^void Application::drainBaselinePivotHandovers_\(", section=True, pieces=[
+        FB(813, 830, 16)]),
+    dict(file=BASEF, def_re=r"^void Application::recordCommittedBaselineEpoch_\(", section=True, pieces=[
+        *ba("log", "res_stats_t", "res_code_w", "res_phase_w", "res_doppler_w", "total_code_dd_w",
+            "total_phase_dd_w", "total_doppler_dd_w", "total_dd_obs_w", "pivot_counts_w",
+            "constellation_dd_w", "se", "rov_modeled", "em", "committed"), B(),
+        G("BASE", 855, 917, "    if (!committed) return;"), FB(856, 916, 12)]),
+    dict(file=BASEF, def_re=r"^bool Application::abortBaselineWithoutUpdates_\(", section=True, pieces=[
+        *ba("log", "trace_ofs_w", "n_with_dd", "n_geom_ok", "n_updates", "se"),
+        N("    auto& product_cache = ProductCache::getInstance();"), B(),
+        FB(919, 940, 8), N("    return false;")],
+        subs=[("BASE", 939, "return 1;", "return true;")]),
+    dict(file=BASEF, def_re=r"^void Application::writeBaselineTraceRow_\(", section=True, pieces=[
+        *ba("trace_ofs_w", "se", "built_count", "applied"), B(), FB(942, 959, 8)]),
+    # --- The rover's summary and the run's.
+    dict(file=BASEF, def_re=r"^void Application::closeBaselineTraceCsv_\(", section=True, pieces=[
+        *ba("log", "trace_ofs_w", "trace_path", "n_updates"), B(), FB(962, 966, 4)]),
+    dict(file=BASEF, def_re=r"^void Application::reportBaselineDdBuild_\(", section=True, pieces=[
+        *ba("log", "bc", "synced", "rover_name", "n_with_dd", "n_geom_ok", "total_dd_obs", "total_code_dd",
+            "total_phase_dd", "total_doppler_dd", "constellation_dd", "pivot_counts", "res_stats_t",
+            "res_code", "res_phase", "res_doppler"), B(),
+        FB(968, 1007, 4)]),
+    dict(file=BASEF, def_re=r"^void Application::reportBaselineSolution_\(", section=True, pieces=[
+        *ba("log", "ref_pos", "rov_apriori", "n_updates", "n_with_dd", "n_slips_ref", "n_slips_rov",
+            "n_amb_resets"), B(),
+        FB(1009, 1029, 4)]),
+    dict(file=BASEF, def_re=r"^void Application::reportBaselineAggregate_\(", section=True, pieces=[
+        *ba("log", "bc", "multi_rover", "total_rover_updates", "total_rover_dd_obs"), B(),
+        FB(1049, 1063)]),
+]
+
+MEMBERS_BASE_C = {
+    291: ("BaselineRunWork", "const bool multi_rover;"),
+    292: ("BaselineRunWork", "size_t total_rover_updates = 0;"),
+    293: ("BaselineRunWork", "size_t total_rover_dd_obs  = 0;"),
+    294: ("BaselineRunWork", "size_t rovers_with_data    = 0;"),
+    481: ("BaselineRoverWork", "std::ofstream trace_ofs;"),
+    483: ("BaselineRoverWork", "std::filesystem::path trace_path;"),
+    499: ("BaselineRoverWork", "size_t n_with_dd = 0;"),
+    500: ("BaselineRoverWork", "size_t total_dd_obs = 0;"),
+    501: ("BaselineRoverWork", "size_t total_code_dd = 0, total_phase_dd = 0, total_doppler_dd = 0;"),
+    502: ("BaselineRoverWork", "size_t n_geom_ok = 0;"),
+    503: ("BaselineRoverWork", "size_t n_updates = 0;"),
+    504: ("BaselineRoverWork", "std::map<std::string, size_t> pivot_counts;"),
+    505: ("BaselineRoverWork", "std::map<std::string, size_t> constellation_dd;"),
+    510: ("BaselineRoverWork", "struct ResStats { double sum{ 0.0 }, sq_sum{ 0.0 }, abs_max{ 0.0 }; size_t count{ 0 }; };"),
+    511: ("BaselineRoverWork", "ResStats res_code, res_phase, res_doppler;"),
+    513: ("BaselineRoverWork", "double prev_tow = -1.0;"),
+    514: ("BaselineRoverWork", "int    prev_week = -1;"),
+    519: ("BaselineRoverWork", "double max_dur_anchor_s = 0.0;"),
+    520: ("BaselineRoverWork", "bool   max_dur_anchored = false;"),
+    522: ("BaselineRoverWork", "size_t n_slips_ref = 0, n_slips_rov = 0, n_amb_resets = 0;"),
+    552: ("BaselineEpochWork", "std::map<std::string, std::vector<RinexObservation>>::const_iterator rov_it;"),
+    553: ("BaselineEpochWork", "std::map<std::string, std::vector<RinexObservation>>::const_iterator ref_it;"),
+    554: ("BaselineEpochWork", "bool both_present = false;"),
+    557: ("BaselineEpochWork", "double dt = 0.0;"),
+    695: ("BaselineEpochWork", "std::vector<PppObservation> rov_modeled, ref_modeled;"),
+    744: ("BaselineEpochWork", "EpochMeasurement em;"),
+    745: ("BaselineEpochWork", "std::set<std::string> carry_excluded;"),
+    746: ("BaselineEpochWork", "size_t built_count = 0;"),
+    747: ("BaselineEpochWork", "size_t applied = 0;"),
+    748: ("BaselineEpochWork", "bool committed = false;"),
+    749: ("BaselineEpochWork", "bool epoch_failed = false;"),
+}
+MEMBER_ALSO_CARRIED_BASE_C = {552, 553, 554, 557}
+
+DROPS_BASE_C = {
+    **{i: "the lambda toMinimalPppObs's head became the free function's signature"
+       for i in (237, 238, 239, 240)},
+    276: "the lambda's closing `};`",
+    468: "the lambda eraseAmbiguitiesForSat became the member eraseBaselineAmbiguitiesForSat_",
+    478: "that lambda's closing `};`",
+    730: "the lambda constellationOfSatPairId became a free function",
+    742: "that lambda's closing `};`",
+    331: "the bare block of the overlap guard became the body of roverOverlapsReference_",
+    349: "its closing brace",
+    621: "the bare block of the MW pre-filter became the body of screenBaselineMwSlips_",
+    665: "its closing brace",
+    762: "buildBaselineDdPass_ returns false; the loop sets epoch_failed and breaks once",
+    763: "(the same)",
+    769: "(the same, for the catch-all handler)",
+    770: "(the same)",
+    812: "the bare block of the pivot-handover drain became drainBaselinePivotHandovers_",
+    831: "its closing brace",
+}
+DUPLICATES_BASE_C = {}
+LAMBDAS_BASE_C = {
+    "toMinimalPppObs": (237, 276, 241, "toMinimalPppObs"),
+    "eraseAmbiguitiesForSat": (468, 478, 469, "eraseBaselineAmbiguitiesForSat_"),
+    "constellationOfSatPairId": (730, 742, 731, "constellationOfSatPairId"),
+}
+# New calls the cut adds, by the unit that makes them: the spine re-reads the aligned epochs
+# synchronizeBaselineStations_ checked (a const accessor), and the early-abort diagnostic
+# re-fetches the product-cache singleton the setup loaded.
+ALLOWED_EXTRA_BASE_C = [
+    ("runBaseline", ("getSyncedEpochs", "")),
+    ("abortBaselineWithoutUpdates_", ("getInstance", "")),
+]
+COMMENT_EDITS_C = {
+    # The file banner, rewritten to describe the cut's three levels of stages.
+    "@brief Implementation of Application::runBaseline (DD baseline processing).": "file banner rewritten",
+    "Kept apart from Application.cpp so that each processing mode has its": "file banner rewritten",
+    "own translation unit.  The constructor, the shared helpers and the": "file banner rewritten",
+    "PPP/PPP-RTK @c Application::run() entry point are in Application.cpp;": "file banner rewritten",
+    "the class is declared in app/Application.hpp.": "file banner rewritten",
+    "Lambda: convert a station's epoch RINEX observations into the":
+        "the lambda became the function toMinimalPppObs; the line now reads `Convert a station's ...`",
+    "Per-rover ambiguity erasure lambda.  Captures state_manager_":
+        "the lambda became the member eraseBaselineAmbiguitiesForSat_; its banner is rewritten",
+    "by reference so each rover sees its own state vector (safe": "(the same)",
+    "because state_manager_ was just rebuilt above for this rover).": "(the same)",
+}
 
 STEPS_SPEC = {
     "b": dict(units=UNITS_APP + UNITS_BASE_B,
@@ -493,14 +866,29 @@ STEPS_SPEC = {
               duplicates={**DUPLICATES_APP, **DUPLICATES_BASE_B},
               lambdas={"APP": LAMBDAS_APP, "BASE": LAMBDAS_BASE_B},
               deleted={"APP": DELETED_APP, "BASE": set()},
-              extra={"runBaseline": ALLOWED_EXTRA_BASE_B},
+              extra=ALLOWED_EXTRA_BASE_B,
+              work_decls=["PppEpochWork"],
+              new_files=[f for f in NEW_FILES]),
+    "c": dict(units=UNITS_APP + UNITS_BASE_C,
+              members={"APP": MEMBERS_APP, "BASE": MEMBERS_BASE_C},
+              also_carried={"APP": MEMBER_ALSO_CARRIED_APP, "BASE": MEMBER_ALSO_CARRIED_BASE_C},
+              drops={"APP": DROPS_APP, "BASE": DROPS_BASE_C},
+              duplicates={**DUPLICATES_APP, **DUPLICATES_BASE_C},
+              lambdas={"APP": LAMBDAS_APP, "BASE": LAMBDAS_BASE_C},
+              deleted={"APP": DELETED_APP, "BASE": set()},
+              extra=ALLOWED_EXTRA_BASE_C,
+              work_decls=["PppEpochWork", "BaselineRunWork", "BaselineRoverWork", "BaselineEpochWork"],
               new_files=[f for f in NEW_FILES]),
 }
-DEFAULT_STEP = "b"
+COMMENT_EDITS.update(COMMENT_EDITS_C)
+DEFAULT_STEP = "c"
 
 # The working values and where each is declared.
 WORK_DECLS = {
     "PppEpochWork": (WORK_HDR, r"^struct PppEpochWork\b"),
+    "BaselineRunWork": (BASEF, r"^struct BaselineRunWork\b"),
+    "BaselineRoverWork": (BASEF, r"^struct BaselineRoverWork\b"),
+    "BaselineEpochWork": (BASEF, r"^struct BaselineEpochWork\b"),
 }
 
 # The drivers whose event list is checked: (frozen src, function regex, new unit name).
@@ -823,9 +1211,8 @@ def main():
 
     # 3. Members.
     pools = {}
-    for struct, (path, start_re) in WORK_DECLS.items():
-        if not (TREE / path).exists():
-            continue
+    for struct in spec["work_decls"]:
+        path, start_re = WORK_DECLS[struct]
         text = read_new(path)
         code = strip_comments(text)
         lines = code.split("\n")
@@ -864,12 +1251,13 @@ def main():
              - {uname for _, _, uname in DRIVERS})
 
     def expand(name, seen=()):
+        """The events of unit `name`, each with the unit it comes from, sections expanded."""
         out = []
         for e in events(bodies.get(name, ""), names):
             if e[0] in names and e[0] != name and e[0] not in seen:
                 out += expand(e[0], seen + (name,))
             else:
-                out.append(e)
+                out.append((e, name))
         return out
 
     n_ev = {}
@@ -887,7 +1275,7 @@ def main():
         fev = []
         for e in events(text):
             fev += lam_ev[e[0]] if e[0] in lam_ev else [e]
-        nev = [e for e in expand(uname) if e not in spec["extra"].get(uname, [])]
+        nev = [e for e, unit in expand(uname) if (unit, e) not in spec["extra"]]
         n_ev[uname] = (len(fev), sum(1 for e in fev if e[0] in ("info", "warn", "error", "debug", "trace")))
         if fev != nev:
             k = next((k for k in range(min(len(fev), len(nev))) if fev[k] != nev[k]),
