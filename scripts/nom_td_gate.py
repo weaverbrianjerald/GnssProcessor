@@ -139,6 +139,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE).replace(os.sep, '/')
 RUNS = ROOT + '/runs'
+# A second place to look for a run named without a path: rapid_arm.py's RAPID_RUNS_ROOT.
+RUNS_ALT = (os.environ.get('RAPID_RUNS_ROOT') or '').replace(os.sep, '/').rstrip('/')
 sys.path.insert(0, HERE)
 import prm_ab  # noqa: E402  (the products and traces comparison)
 
@@ -201,7 +203,8 @@ MANIFEST_MASKS = [
 
 
 def resolve(run):
-    for cand in (run, f'{RUNS}/{run}', f'{RUNS}/_rap_{run}'):
+    roots = [RUNS] + ([RUNS_ALT] if RUNS_ALT else [])
+    for cand in [run] + [c for r in roots for c in (f'{r}/{run}', f'{r}/_rap_{run}')]:
         if os.path.isdir(cand):
             return cand.replace(os.sep, '/')
     sys.exit(f'no run directory for {run}')
