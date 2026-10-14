@@ -2349,6 +2349,7 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
             StateManager::reinflateSummary(state_manager_->reinflateCounters()));
 
     if (kalman_filter_) kalman_filter_->logKalmanFilterTimings();
+    if (cycle_slip_manager_) cycle_slip_manager_->logRunEndCounters();
 
     // Optional end-of-run HTML report (pyviz/run_report.py -> gnss_report.html).
     generateReport_();

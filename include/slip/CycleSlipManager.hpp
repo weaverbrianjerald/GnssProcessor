@@ -141,11 +141,11 @@ public:
      * @brief Print the run-end slip counters (@c runEndCounters) to the
      *        "cycle_slip_manager" log, when at least one epoch was processed.
      *
-     * The manager is destroyed with the post-processing @c Application at run
-     * end, after the run's own summary; the table is the slip layer's run-end
-     * telemetry (standing invariant 4).  Never throws.
+     * Called once by the post-processing driver at run end, beside the
+     * KalmanFilter's QC counters; the table is the slip layer's run-end
+     * telemetry (standing invariant 4).
      */
-    ~CycleSlipManager();
+    void logRunEndCounters() const;
 
     /**
      * @brief The slip layer's counters accumulated over the run so far.
@@ -637,12 +637,6 @@ private:
     void tallySlipEpoch(const SlipEpochWork& w);
 
     /**
-     * @brief Log the run-end counter table (@c cycleSlipCounterLines) at info
-     *        level; nothing when no epoch was processed.
-     */
-    void logRunEndCounters() const;
-
-    /**
      * @brief S17: advance the soft-LLI epoch marker and hand the smoother
      *        accumulators (@c epoch_reset_sats_, @c epoch_repairs_) to the
      *        result.
@@ -817,7 +811,7 @@ private:
     /// type backs the real-time path so the two cannot diverge.
     SoftLliBridge soft_lli_;
 
-    /// Run-end counters (@c runEndCounters), printed by the destructor.
+    /// Run-end counters (@c runEndCounters), printed by @ref logRunEndCounters.
     CycleSlipCounters counters_;
 };
 

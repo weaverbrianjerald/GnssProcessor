@@ -26,9 +26,11 @@ organization map, uom_map/gates.md section 8.3):
      timing block (microsecond figures, no unit token), whose header line and call count are
      kept;
   5. the exit code.
-Exit status 0 when every compared arm is IDENTICAL.
+Exit status 0 when every compared arm is IDENTICAL.  With --allow-inserted (a step that only
+adds log lines, such as run-end counters), a .log or stdout.txt may differ by inserted lines
+alone; the inserted lines are listed by file and text, and every CSV must still be identical.
 
-Sets.  `quick` is fourteen 600 s arms (about 5 minutes a side at four jobs), the development
+Sets.  `quick` is sixteen 600 s arms (about 5 minutes a side at four jobs), the development
 gate; `full` is the matrix of the organization map (gates.md section 8.2) without its
 Baseline-Multi arm (not runnable as shipped), about 15 minutes a side.  Known: the two smoother
 arms on BSSD (u_rtk_smooth, UA10) exit 0xC0000005 until the BSSD smoother trace defect is
@@ -81,6 +83,10 @@ QUICK = {
     'u_baseline':    ('baseline_single.json', 600, {}, {}),
     'u_sbf':         ('_rtseam_sbf.json', 600, {}, {}),
     'u_sbf_te':      ('_rtseam_sbf_te.json', 600, {}, {}),
+    # Reach arms (card UOM step U4): the NL/WL ambiguity basis, and the baseline DD
+    # ionosphere-free row collapse.
+    'u_nlwl':        ('test_suite/_nlwl_guarded.json', 600, {}, {}),
+    'u_baseline_if': ('baseline_single.json', 600, {}, {}, {'baseline': {'use_iono_free': True}}),
 }
 FULL = {
     'UA1':  ('ppp_internal.json', 7200, {}, {}),
@@ -125,7 +131,9 @@ def arms_of(tag, sel):
 
 def make(a):
     d = tag_dir(a.tag)
-    for name, (base, dur, proc, est) in SETS[a.set].items():
+    for name, spec in SETS[a.set].items():
+        base, dur, proc, est = spec[:4]
+        top = spec[4] if len(spec) > 4 else {}
         arm = {'extends': CFG + base,
                'files': {'internal_data_root': DATA_ROOT},
                'logging': LOGGING}
@@ -136,6 +144,7 @@ def make(a):
             arm['processing'] = p
         if est:
             arm['estimation'] = est
+        arm.update(top)
         os.makedirs(f'{d}/{name}', exist_ok=True)
         with open(f'{d}/{name}/arm.json', 'w') as f:
             json.dump(arm, f, indent=2)
@@ -176,7 +185,19 @@ def files_under(d):
             for p in glob.glob(d + '/logs/**/*', recursive=True) if os.path.isfile(p)}
 
 
-def compare_arm(da, db, show):
+def inserted_only(a, b):
+    """True when list b is list a with lines inserted (a is a subsequence of b, in order).
+    Returns (ok, inserted) with the inserted lines of b."""
+    inserted, i = [], 0
+    for line in b:
+        if i < len(a) and line == a[i]:
+            i += 1
+        else:
+            inserted.append(line)
+    return i == len(a), inserted
+
+
+def compare_arm(da, db, show, allow_inserted=False, families=None):
     ok = True
     if g.read_lines(da + '/arm.json') != g.read_lines(db + '/arm.json'):
         print('  arm.json differs')
@@ -190,12 +211,25 @@ def compare_arm(da, db, show):
         la, lb = g.read_lines(f'{da}/{rel}'), g.read_lines(f'{db}/{rel}')
         if rel.endswith('.log'):
             la, lb = masked(la, na), masked(lb, nb)
+            if la != lb and allow_inserted:
+                sub, ins = inserted_only(la, lb)
+                if sub:
+                    for line in ins:
+                        families[(rel, line.split('] ', 3)[-1][:90])] = families.get(
+                            (rel, line.split('] ', 3)[-1][:90]), 0) + 1
+                    continue
         if la != lb:
             ok = g.report(rel, la, lb, show) and ok
     sa = masked(g.read_lines(da + '/stdout.txt'), na)
     sb = masked(g.read_lines(db + '/stdout.txt'), nb)
     if sa != sb:
-        ok = g.report('stdout.txt (masked)', sa, sb, show) and ok
+        sub, ins = inserted_only(sa, sb) if allow_inserted else (False, [])
+        if sub:
+            for line in ins:
+                key = ('stdout.txt', line.split('] ', 3)[-1][:90])
+                families[key] = families.get(key, 0) + 1
+        else:
+            ok = g.report('stdout.txt (masked)', sa, sb, show) and ok
     ea = open(da + '/exitcode.txt').read().split()[:1]
     eb = open(db + '/exitcode.txt').read().split()[:1]
     if ea != eb:
@@ -207,16 +241,22 @@ def compare_arm(da, db, show):
 def cmp(a):
     names = arms_of(a.tag_a, a.arms)
     bad = 0
+    families = {}
     for name in names:
         da, db = f'{tag_dir(a.tag_a)}/{name}', f'{tag_dir(a.tag_b)}/{name}'
         if not os.path.isdir(db):
             print(f'{name:16s} MISSING in {a.tag_b}')
             bad += 1
             continue
-        ok, ec = compare_arm(da, db, a.show)
+        ok, ec = compare_arm(da, db, a.show, a.allow_inserted, families)
         print(f'{name:16s} {"IDENTICAL" if ok else "DIFFERENT"} (exit {ec[0] if ec else "?"})')
         bad += 0 if ok else 1
-    print(f'{len(names) - bad}/{len(names)} arm(s) identical')
+    if families:
+        print('inserted log lines (file, text up to 90 characters: count over the arms):')
+        for (rel, text), n in sorted(families.items()):
+            print(f'  {rel:34s} {n:5d}  {text}')
+    print(f'{len(names) - bad}/{len(names)} arm(s) identical'
+          + (' (logs allowed to differ by inserted lines only)' if a.allow_inserted else ''))
     print('RESULT', 'IDENTICAL' if bad == 0 else 'DIFFERENT')
     return 1 if bad else 0
 
@@ -232,6 +272,8 @@ def main():
     r.add_argument('--jobs', type=int, default=4); r.add_argument('--arms')
     c = sub.add_parser('cmp'); c.add_argument('tag_a'); c.add_argument('tag_b')
     c.add_argument('--arms'); c.add_argument('--show', type=int, default=3)
+    c.add_argument('--allow-inserted', action='store_true',
+                   help='CSVs must be identical; a .log or stdout may differ only by inserted lines, which are listed')
     a = p.parse_args()
     if a.cmd == 'make':
         return make(a)

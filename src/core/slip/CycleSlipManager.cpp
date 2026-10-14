@@ -80,14 +80,6 @@ CycleSlipManager::CycleSlipManager(const GnssConfig& config, LogManager& log_man
         counters_.detections.emplace_back(toString(d->kind()), 0);
 }
 
-CycleSlipManager::~CycleSlipManager() {
-    try {
-        logRunEndCounters();
-    } catch (...) {
-        // A run-end report must not throw out of a destructor.
-    }
-}
-
 // ===========================================================================
 // Public API
 // ===========================================================================
