@@ -90,11 +90,11 @@ namespace GnssProcessor {
          * satellite or signal leaves no stale column.
          *
          * Every shared state a gate here withholds from the station (GLONASS
-         * code-only scope, unmatched antenna, coverage allowlist, pivot allowlist,
-         * CB-ADM co-gate) is noted in @ref absorbedSharedStates, which this call
-         * clears first: the parameter inventory counts each as an absorbed instance
-         * (card NOM N1b; the record is measurement/AbsorbedSharedStates.hpp, the
-         * inventory filter/NetworkParamInventory.hpp).
+         * code-only scope, coverage allowlist, pivot allowlist, CB-ADM co-gate) is
+         * noted in @ref absorbedSharedStates, which this call clears first: the
+         * parameter inventory counts each as an absorbed instance (card NOM N1b; the
+         * record is measurement/AbsorbedSharedStates.hpp, the inventory
+         * filter/NetworkParamInventory.hpp).
          *
          * @param observations This station's modeled observations for the epoch.
          * @param allowed_phase_keys If non-empty, restrict phase-bias allocation to
@@ -381,7 +381,6 @@ namespace GnssProcessor {
         /// Network phase-bias coverage allowlist (see @ref setPhaseBiasSignalAllowlist).
         /// system → admitted phase signals.  Empty (default) = allow every signal.
         std::map<std::string, std::set<std::string>> phase_bias_signal_allowlist_;
-
 
         /// The shared states withheld from this station this epoch (see
         /// @ref absorbedSharedStates).  Network producer only.

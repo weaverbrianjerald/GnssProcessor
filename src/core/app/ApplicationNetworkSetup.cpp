@@ -989,13 +989,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // (empty map).  Matters only under enableGlonassNetwork().
         st.mm->setGlonassSlots(parser->getGlonassFreqSlots());
 
-        // Receiver-antenna ATX match check (startup diagnostic and optional phase-bias
-        // exclusion).  A receiver antenna type that matches no loaded ANTEX entry gets
-        // zero receiver PCO/PCV (getAntennaCorrection returns only the satellite-side
-        // terms): a cm-level, elevation-dependent phase-centre error that is otherwise
-        // visible only at trace level (antenna.log is empty at default verbosity).
-        // Checked once per station here; the per-observation trace still fires.  Only
-        // meaningful when a receiver correction would actually be applied.
+        // Receiver-antenna ATX match check (startup diagnostic and the optional station
+        // exclusion, network.exclude_unmodeled_antenna_stations).  A receiver antenna
+        // type that matches no loaded ANTEX entry gets zero receiver PCO/PCV
+        // (getAntennaCorrection returns only the satellite-side terms): a cm-level,
+        // elevation-dependent phase-centre error that is otherwise visible only at trace
+        // level (antenna.log is empty at default verbosity).  Checked once per station
+        // here; the per-observation trace still fires.  Only meaningful when a receiver
+        // correction would actually be applied.
         const auto& mc = config_.getModelCorrections();
         const bool rx_corr_on = (mc.enable_receiver_pco || mc.enable_receiver_pcv);
         if (rx_corr_on && !st.model->hasReceiverAntennaMatch()) {

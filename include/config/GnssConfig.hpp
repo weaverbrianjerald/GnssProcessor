@@ -3536,9 +3536,8 @@ namespace GnssProcessor {
          * so the first pair's decisions are unchanged and the extra pairs are a pure
          * addition.
          *
-         * Stored in @ref NetworkConfig with the other band-scope enums; the getter
-         * name follows the sibling @c if_phase_td knobs.  Inert without
-         * @ref networkCycleSlipIfPhaseTd.
+         * Stored in @ref NetworkConfig; the getter name follows the sibling
+         * @c if_phase_td knobs.  Inert without @ref networkCycleSlipIfPhaseTd.
          *
          * @return The configured pair mode.
          */

@@ -1298,7 +1298,8 @@ int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
     // armed in the loader summary on a carry_invariant run while screening nothing, so
     // an inert tier is the failure this readout has to expose (invariant #4).  The
     // denominators come first so that four outcomes that otherwise look identical can
-    // be told apart: seam never ran, census empty, nothing flagged, actuator off.
+    // be told apart: seam never ran, census empty, nothing flagged, flagged but
+    // measure-only.
     if (ctx.knobs.raim_ci_on) {
         const auto& rc = ctx.counters.raim_ci;
         const double s0_mean = (rc.sigma0_n > 0)
