@@ -79,6 +79,10 @@ add_library(gnss_core STATIC
     src/core/corrections/GnssCorrections.cpp
     src/core/corrections/OceanTideModel.cpp
     src/core/filter/KalmanFilter.cpp
+    src/core/filter/KalmanKernels.cpp
+    src/core/filter/KalmanResidualQc.cpp
+    src/core/filter/KalmanPostFitQc.cpp
+    src/core/filter/KalmanOutlierResponse.cpp
     src/core/filter/Smoother.cpp
     src/core/filter/StateManager.cpp
     src/core/filter/ImuIntegrator.cpp
@@ -604,6 +608,8 @@ add_executable(gnss_tests
     tests/test_resume_datum_restore.cpp
     tests/test_rt_state_snapshot.cpp
     tests/test_state_family.cpp
+    tests/test_kalman_pivot_detectors.cpp
+    tests/test_kalman_qc_counters.cpp
     tests/test_band_scoped_response.cpp
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp

@@ -6,7 +6,7 @@
  *
  * @c ImuAidingSource wraps the existing @c ImuIntegrator (it does not replace it)
  * and exposes the IMU as an @c IAidingSource, so the four IMU-specific touch-points
- * (the StateManager carve-out, KalmanFilter::predictImu, the MeasurementModel TC
+ * (the StateManager carve-out, the KalmanFilter IMU predict, the MeasurementModel TC
  * Jacobian branch, and the construction in Application::run) reduce to one
  * polymorphic seam.  It is the privileged source that @c AidingSourceManager
  * recovers via @c asImu() (the no-RTTI typed-handle pattern that
@@ -22,7 +22,8 @@
  *
  * Migration staging (docs/aiding_source_abstraction_design.md, "IMU migration
  * plan"): the contributions implemented here are the live path via
- * predictAided / collectPredict; KalmanFilter::predictImu has no remaining callers.
+ * predictAided / collectPredict; the IMU-only KalmanFilter predict they replaced
+ * was deleted in card UOM step U2a.
  */
 
 #include "aiding/IAidingSource.hpp"
@@ -152,8 +153,8 @@ private:
      *
      * Pure: copies the 15x15 Phi/Q_ins and the @p ins_map into the
      * contribution and builds the nominal write-backs (pos always; vel and
-     * attitude-zero when their ins_map slots are valid), matching predictImu's
-     * x updates exactly.  Sets @c requires_naive_relinearization from the
+     * attitude-zero when their ins_map slots are valid), matching the
+     * strapdown INS predict's x updates exactly.  Sets @c requires_naive_relinearization from the
      * cached coupling mode.  Expects the canonical 15-slot INS map; any other
      * size returns an invalid contribution.
      */

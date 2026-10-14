@@ -5,8 +5,8 @@
 #include "logging/LogManager.hpp"
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
-#include "filter/ImuIntegrator.hpp"
 #include "filter/ResidualHistoryTracker.hpp"
+#include "filter/KalmanQcCounters.hpp"
 #include "aiding/AidingTypes.hpp"
 #include "common/Constants.hpp"
 #include "logging/KalmanFilterLogger.hpp"
@@ -22,6 +22,14 @@ namespace GnssProcessor {
 
     class CycleSlipManager;
 
+    namespace kalman {
+        // The post-fit detector table's types (include/filter/KalmanPostFitQc.hpp).
+        struct PivotDetectorSpec;
+        struct PivotRowGroup;
+        struct PivotRowGroups;
+        struct CoherentOffset;
+    }
+
     /**
      * @file KalmanFilter.hpp
      * @brief Kalman filter for PPP/PPP-RTK state estimation.
@@ -35,6 +43,19 @@ namespace GnssProcessor {
      * MeasurementModel, and post-fit residual validation.  Reports whether an
      * update was applied, skipped, or needs a measurement rebuild (ambiguity
      * reset or full reset).
+     *
+     * The member functions are defined in five files by concern (card UOM step
+     * U2b), and each declaration below that is not in the driver names its file:
+     *   - src/core/filter/KalmanFilter.cpp: the driver (construction, predict,
+     *     update, the IEKF step, the pseudo-observation update, the drains and
+     *     the per-epoch hooks);
+     *   - src/core/filter/KalmanKernels.cpp: the algebra (the sparse-H products of
+     *     include/filter/KalmanKernels.hpp, the aided-predict splice, the dense
+     *     Joseph update);
+     *   - src/core/filter/KalmanResidualQc.cpp: the Baarda statistics;
+     *   - src/core/filter/KalmanPostFitQc.cpp: the post-fit outlier screen;
+     *   - src/core/filter/KalmanOutlierResponse.cpp: the responses to an outlier
+     *     and the initial covariance seed.
      */
     class KalmanFilter {
     public:
@@ -68,22 +89,7 @@ namespace GnssProcessor {
         void predict(double dt);
 
         /**
-         * @brief IMU-aided prediction replacing predict() when IMU is enabled.
-         *
-         * Runs the strapdown mechanization over [t_start, t_end], propagating
-         * position/velocity/attitude/biases and injecting the INS error-state
-         * transition and process noise.  Non-INS states (clock, tropo,
-         * ambiguities) use the standard random-walk model.
-         *
-         * @param t_start Previous GNSS epoch time.
-         * @param t_end   Current GNSS epoch time.
-         * @param imu     ImuIntegrator holding the loaded data.
-         */
-        void predictImu(const GnssTime& t_start, const GnssTime& t_end,
-                        const ImuIntegrator& imu);
-
-        /**
-         * @brief Composable generalization of predictImu over aiding sources.
+         * @brief Prediction composed from the aiding sources' contributions.
          *
          * Each contribution supplies a Phi/Q sub-block over the full-state
          * indices it owns plus an optional nominal write-back.  Blocks are
@@ -93,9 +99,10 @@ namespace GnssProcessor {
          *
          * With no valid contribution this delegates to predict(dt), preserving
          * GNSS-only behavior byte-for-byte.  With an INS contribution the
-         * assembly mirrors predictImu exactly: Identity-seeded F (non-INS means
-         * are not propagated) and baseline Q over the contribution's integrated
-         * interval rather than the GNSS dt.
+         * assembly is the strapdown INS predict (the kernel of the retired
+         * IMU-only predict, deleted in card UOM step U2a): Identity-seeded F
+         * (non-INS means are not propagated) and baseline Q over the
+         * contribution's integrated interval rather than the GNSS dt.
          *
          * The nominal attitude (C_b_e_) is written by the IMU source during
          * contribution assembly, not here.
@@ -109,8 +116,7 @@ namespace GnssProcessor {
          * @brief Current body-to-ECEF attitude C_b^e.
          *
          * Written by setAttitude() (the IMU aiding source, after each aided
-         * prediction), by predictImu() (which has no callers) and by attitude
-         * error-state feedback after GNSS updates.
+         * prediction) and by attitude error-state feedback after GNSS updates.
          */
         const Eigen::Matrix3d& getAttitude() const { return C_b_e_; }
 
@@ -199,6 +205,8 @@ namespace GnssProcessor {
          * @param R          Measurement noise covariance (m x m).
          * @param[out] x_out Posterior state vector (n).
          * @param[out] P_out Posterior covariance (n x n).
+         *
+         * Defined in src/core/filter/KalmanKernels.cpp.
          */
         static void josephPseudoUpdate(const Eigen::VectorXd& x, const Eigen::MatrixXd& P,
                                        const Eigen::MatrixXd& H, const Eigen::VectorXd& innovation,
@@ -213,9 +221,15 @@ namespace GnssProcessor {
          *        outlier path (@ref handlePhaseOutlier).
          * @param[in,out] P_prev Pre-update covariance; edited in place on the
          *        outlier path (@ref handlePhaseOutlier, or a full covariance reset).
+         * An ordered driver over the private stages S0 to S9 declared below,
+         * which share one working value; include/filter/KalmanPostFitQc.hpp
+         * lists them with the four exits.
+         *
          * @return {outlier found, complete reset}.  A complete reset also sets
          *         the first flag.  On an outlier, @ref update returns
          *         UpdateResult::NeedsMeasurementRebuild.
+         *
+         * Defined in src/core/filter/KalmanPostFitQc.cpp.
          */
         std::pair<bool, bool> validatePostFitResiduals(EpochMeasurement& meas_update, Eigen::VectorXd& x_prev, Eigen::MatrixXd& P_prev);
 
@@ -263,6 +277,8 @@ namespace GnssProcessor {
          *                definite.
          * @param delta_0 Baarda non-centrality (@c baardaDelta0).
          * @return The per-row statistics and the variance-factor sums.
+         *
+         * Defined in src/core/filter/KalmanResidualQc.cpp.
          */
         static ResidualQcStats residualQcKernel(const Eigen::VectorXd& v,
                                                 const Eigen::MatrixXd& R,
@@ -284,6 +300,8 @@ namespace GnssProcessor {
          * @param sr_diag Diagonal of Sr = R − H·P⁺·Hᵀ.
          * @param Sr_full Optional full Sr for the correlation-aware form;
          *                nullptr selects the diagonal form.
+         *
+         * Defined in src/core/filter/KalmanResidualQc.cpp.
          */
         void computeResidualQc_(EpochMeasurement& meas, const Eigen::MatrixXd& R,
                                 const Eigen::VectorXd& sr_diag,
@@ -324,13 +342,28 @@ namespace GnssProcessor {
         void setCycleSlipManager(CycleSlipManager* csm) { cycle_slip_manager_ = csm; }
 
         /**
-         * @brief Log cumulative per-phase timing totals, then reset them.
+         * @brief Log cumulative per-phase timing totals, then reset them; then
+         *        log and reset the QC event counters (@ref logQcCounters).
          *
          * Each update() accumulates microseconds in the four hottest phases
          * (innovation covariance, gain, Joseph covariance, post-fit residuals).
-         * Counters reset only on this call.
+         * Counters reset only on this call.  Called at the run end by
+         * Application and the baseline driver.
          */
         void logKalmanFilterTimings();
+
+        /**
+         * @brief Log the post-fit QC event counters to main_log as one block (the
+         *        rows of kKalmanQcCounterRows), then reset them.
+         *
+         * Called at the end of @ref logKalmanFilterTimings.  RealTimeEngine (and
+         * with it the network's closed-loop consumer) calls neither, so its
+         * counters are not printed yet.
+         */
+        void logQcCounters();
+
+        /** @brief The post-fit QC event counters since the last print. */
+        const KalmanQcCounters& getQcCounters() const { return qc_counters_; }
 
         /**
          * @brief Drain the constellations whose pivot needs a forced handover.
@@ -338,9 +371,8 @@ namespace GnssProcessor {
          * Populated when validatePostFitResiduals sees a coherent residual
          * pattern across every SD pair against one pivot.  The Application
          * driver drains this after NeedsMeasurementRebuild and forwards it to
-         * MeasurementModel::requestPivotHandover, which routes it to
-         * PivotManager for the next rebuild pass.  Returning by value clears
-         * the set.
+         * PivotManager::requestForcedHandover (EpochUpdateSupport.cpp) for the
+         * next rebuild pass.  Returning by value clears the set.
          *
          * @return Constellation names, e.g. {"GPS", "Galileo"}.
          */
@@ -464,7 +496,9 @@ namespace GnssProcessor {
         /// value the target R(i,i) in m², applied at the start of the next
         /// update().  Persists across rebuild passes but is cleared in
         /// beginEpoch so each epoch decides afresh; long-term biases are covered
-        /// by the separate EWMA-based inflation.
+        /// by the separate EWMA-based inflation.  Only Application::run calls
+        /// beginEpoch: under RealTimeEngine (and the network consumer) and the
+        /// baseline driver the queue is never cleared (card UOM, defect K-D1).
         std::map<std::string, double> pending_r_inflations_;
 
         /// Sat-bias resets queued by the stuck-code-bias detector.  Key
@@ -486,6 +520,10 @@ namespace GnssProcessor {
         long long timing_us_Sr_ = 0;   //!< Diagonal-only post-fit covariance
         size_t    timing_n_calls_ = 0; //!< Number of update() calls accumulated.
 
+        /// Post-fit QC event counters (include/filter/KalmanQcCounters.hpp), each
+        /// incremented where its event happens; printed and reset by logQcCounters.
+        KalmanQcCounters qc_counters_;
+
         // --- Construction helpers ---
 
         /**
@@ -493,6 +531,8 @@ namespace GnssProcessor {
          *
          * Overrides only non-finite or negative entries; zero means a
          * deliberately fixed state.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void seedCovarianceDiagonals(Eigen::MatrixXd& P, size_t state_size) const;
 
@@ -500,7 +540,7 @@ namespace GnssProcessor {
          * @brief Splice aiding contributions onto an Identity-seeded transition
          *        and propagate the covariance.
          *
-         * The predictImu assembly as a pure static kernel: writes each
+         * The aided-predict assembly as a pure static kernel: writes each
          * contribution's nominal values into @p x (skipping sentinel or
          * out-of-range indices), ASSIGNS its Phi/Q sub-block over the indices it
          * owns, then propagates P = F·P·Fᵀ + Q_full and symmetrizes.
@@ -510,6 +550,8 @@ namespace GnssProcessor {
          * @param Q_full       Baseline process noise (contribution Q assigned in place).
          * @param state_size   Full state dimension (skip guard for owned indices).
          * @param contributions Predict contributions to splice.
+         *
+         * Defined in src/core/filter/KalmanKernels.cpp.
          */
         static void spliceAndPropagate(Eigen::VectorXd& x, Eigen::MatrixXd& P,
                                        Eigen::MatrixXd& Q_full, std::size_t state_size,
@@ -528,6 +570,8 @@ namespace GnssProcessor {
          * @param x            Pre-update state vector (modified in place).
          * @param P            Pre-update covariance (modified in place).
          * @param epoch_prefix Log prefix.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void handlePhaseOutlier(const EpochMeasurement& measurement,
             const std::string& outlier_sat, const std::string& outlier_sig,
@@ -554,6 +598,8 @@ namespace GnssProcessor {
          * @param x            State vector (modified at the DD index).
          * @param P            Covariance (row/col cleared, diagonal reset).
          * @param epoch_prefix Log prefix.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void handleBaselinePhaseOutlier(const EpochMeasurement& measurement,
             const std::string& outlier_sat, const std::string& outlier_sig,
@@ -569,6 +615,8 @@ namespace GnssProcessor {
          * @param outlier_sig  Signal type.
          * @param max_idx      Row index of the outlier.
          * @param epoch_prefix Log prefix.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void handleCodeOutlier(EpochMeasurement& measurement,
             const std::string& outlier_sat, const std::string& outlier_sig,
@@ -580,8 +628,301 @@ namespace GnssProcessor {
          *
          * @param P            Covariance (zeroed and re-seeded in place).
          * @param epoch_prefix Log prefix.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void resetFilterCovariance(Eigen::MatrixXd& P, const std::string& epoch_prefix);
+
+        // --- The post-fit outlier screen's stages (src/core/filter/KalmanPostFitQc.cpp) ---
+        //
+        // validatePostFitResiduals drives them in order over one working value; the
+        // stage list and its four exits are in include/filter/KalmanPostFitQc.hpp
+        // (card UOM step U2c).  Each is defined in src/core/filter/KalmanPostFitQc.cpp.
+
+        /// The values the post-fit stages share for one pass; defined in
+        /// include/filter/KalmanPostFitQc.hpp.
+        struct PostFitQcWork;
+
+        /**
+         * @brief S0: read the pass's thresholds, bind the residual references and count
+         *        the rows.
+         *
+         * @param measurement The pass's measurement.
+         * @param x           Pre-update state (later stages edit it in place).
+         * @param P           Pre-update covariance (later stages edit it in place).
+         * @return The work value the later stages share.
+         */
+        PostFitQcWork beginPostFitQc_(EpochMeasurement& measurement,
+                                      Eigen::VectorXd& x, Eigen::MatrixXd& P);
+
+        /**
+         * @brief S1: log the per-row residual table (at trace, or at debug on a pass with
+         *        an outlier), find the worst row and log the "Residual summary" line.
+         *
+         * @param w Work value; sets max_idx, max_sres, residual_summary_level and the
+         *          formal position sigmas.
+         */
+        void reportPostFitResiduals_(PostFitQcWork& w);
+
+        /**
+         * @brief S2: log the variance-factor and the data-snooping summary lines, each when
+         *        armed.  Diagnostics only.
+         *
+         * @param w Work value (read only).
+         */
+        void reportStatisticalQc_(PostFitQcWork& w);
+
+        /**
+         * @brief S3: the coherent pivot-offset detectors over the single-difference rows,
+         *        the rows of kalman::kPivotDetectors: phase per signal, phase across
+         *        bands, code per signal, code across bands.
+         *
+         * A firing group requests a forced pivot handover for its constellation, records
+         * the satellites the handover must not elect (and, for code, the satellites whose
+         * ionosphere is re-inflated after it), and excludes the group's rows from the
+         * rebuild.
+         *
+         * @param w Work value; adds exclusions to the measurement.
+         * @return True if any detector fired.
+         */
+        bool detectPivotOffsets_(PostFitQcWork& w);
+
+        /**
+         * @brief S3, grouping: the non-pivot single-difference rows of one observable,
+         *        grouped by (pivot, full signal) and pooled by pivot across bands.
+         *
+         * Skips pivot rows, rows whose ATX correction was frequency-substituted
+         * (@ref rowAtxSubstituted_) and, for code, combined (ionosphere-free) signals.
+         *
+         * @param w        Work value (read only).
+         * @param obs_type 'L' for phase rows, 'C' for code rows.
+         * @return The groups and the pools, each in map order.
+         */
+        kalman::PivotRowGroups groupPivotRows_(const PostFitQcWork& w, char obs_type) const;
+
+        /**
+         * @brief True if the ATX correction of @p signal was frequency-fallback-substituted
+         *        on @p sat or on @p pivot_sat.
+         *
+         * The substituted PCV adds a small structural per-satellite bias that, pooled over a
+         * pivot's rows, mimics a pivot slip; such rows are kept out of the groups.
+         *
+         * @param sat       Non-pivot satellite ID.
+         * @param pivot_sat Pivot satellite ID.
+         * @param signal    Signal of the row.
+         * @return True if either satellite's correction was substituted.
+         */
+        bool rowAtxSubstituted_(const std::string& sat, const std::string& pivot_sat,
+                                const std::string& signal) const;
+
+        /**
+         * @brief S3, one detector row on one group: test, report and respond.
+         *
+         * A pooled row skips a constellation whose handover is already requested.  A
+         * coherent group (kalman::testCoherentOffset) that clears the row's wavelength
+         * floor requests a forced handover for the constellation, records the replacement
+         * exclusions (and, for code, the satellites to re-inflate) and excludes the
+         * group's rows.
+         *
+         * @param w         Work value; adds exclusions to the measurement.
+         * @param spec      The detector row.
+         * @param pivot_sat The group's pivot.
+         * @param signal    The group's signal (empty for a pool).
+         * @param g         The group.
+         * @return True if the group fired.
+         */
+        bool testPivotGroup_(PostFitQcWork& w, const kalman::PivotDetectorSpec& spec,
+                             const std::string& pivot_sat, const std::string& signal,
+                             const kalman::PivotRowGroup& g);
+
+        /**
+         * @brief True if a coherent group's median is below the wavelength floor
+         *        (estimation.pivot_slip_min_cycles times the pivot band's wavelength) and
+         *        its cluster is not tight; logs the suppression at debug.
+         *
+         * @param w         Work value (read only).
+         * @param spec      The detector row (its tight-cluster MAD ratio).
+         * @param pivot_sat The group's pivot.
+         * @param signal    The group's signal; its band gives the wavelength.
+         * @param t         The group's statistics.
+         * @return True if the group is suppressed.
+         */
+        bool belowPivotWavelengthFloor_(const PostFitQcWork& w,
+                                        const kalman::PivotDetectorSpec& spec,
+                                        const std::string& pivot_sat,
+                                        const std::string& signal,
+                                        const kalman::CoherentOffset& t) const;
+
+        /**
+         * @brief The residual history's temporal confidence of a phase pivot slip, for the
+         *        report line: HIGH when the fraction of warmed-up rows over the history's
+         *        z threshold reaches its fraction threshold, else MEDIUM.  Diagnostic only.
+         *
+         * @param w Work value (read only).
+         * @param g The firing group.
+         * @return The tag, e.g. "MEDIUM (spatial-only)" with the history off.
+         */
+        std::string pivotSlipConfidence_(const PostFitQcWork& w,
+                                         const kalman::PivotRowGroup& g) const;
+
+        /**
+         * @brief Log the warning of a firing group, in the format of its row (phase or
+         *        code, per signal or across bands).
+         *
+         * @param w         Work value (read only).
+         * @param spec      The detector row.
+         * @param cons      The pivot's constellation name.
+         * @param pivot_sat The group's pivot.
+         * @param signal    The group's signal (empty for a pool).
+         * @param g         The group.
+         * @param t         The group's statistics.
+         */
+        void logPivotDetection_(const PostFitQcWork& w, const kalman::PivotDetectorSpec& spec,
+                                const std::string& cons, const std::string& pivot_sat,
+                                const std::string& signal, const kalman::PivotRowGroup& g,
+                                const kalman::CoherentOffset& t) const;
+
+        /**
+         * @brief Record the satellites a forced handover for @p cons must not elect: the
+         *        offset pivot, and every row of the group outside the robust band
+         *        max(kHandoverExcludeMadK * mad, kHandoverExcludeFloorM) around the median.
+         *
+         * @param w         Work value (read only).
+         * @param grp       The firing group.
+         * @param med       Its median residual (m).
+         * @param mad       Its MAD (m).
+         * @param pivot_sat The offset pivot.
+         * @param cons      Its constellation name.
+         */
+        void recordHandoverExcludes_(const PostFitQcWork& w, const kalman::PivotRowGroup& grp,
+                                     double med, double mad, const std::string& pivot_sat,
+                                     const std::string& cons);
+
+        /**
+         * @brief Record every non-pivot satellite of a firing code group for ionosphere
+         *        re-inflation after the handover (they absorbed the pivot's code bias).
+         *
+         * @param w    Work value (read only).
+         * @param grp  The firing group.
+         * @param cons Its constellation name.
+         */
+        void recordIonoReinflate_(const PostFitQcWork& w, const kalman::PivotRowGroup& grp,
+                                  const std::string& cons);
+
+        /**
+         * @brief S3e: a non-pivot satellite whose phase rows on two or more bands carry
+         *        the same non-zero integer number of cycles: its ambiguities are marked for
+         *        re-seed with their covariance re-inflated, and its rows are excluded.
+         *
+         * @param w Work value; edits P and the measurement's exclusions.
+         * @return True if any satellite was reset.
+         */
+        bool detectNonPivotSlips_(PostFitQcWork& w);
+
+        /**
+         * @brief E2: a group detector rejected rows; count one bad residual and request a
+         *        rebuild.  Returns before the complete-reset backstop.
+         *
+         * @param w Work value.
+         * @return {true, false}.
+         */
+        std::pair<bool, bool> finishGroupRejection_(PostFitQcWork& w);
+
+        /**
+         * @brief S4: the Huber pass: queue an R target for every sub-cycle phase row whose
+         *        |standardized residual| exceeds the Huber threshold (the post-fit IRLS
+         *        scheme, or the innovation one-shot scheme when armed).
+         *
+         * @param w Work value (read only); writes pending_r_inflations_.
+         * @return True if a target was queued or raised.
+         */
+        bool queueHuberInflations_(PostFitQcWork& w);
+
+        /**
+         * @brief E3: Huber targets were queued; request a rebuild.  Not counted as a bad
+         *        residual, and returns before the complete-reset backstop.
+         *
+         * @param w Work value.
+         * @return {true, false}.
+         */
+        std::pair<bool, bool> finishHuberRebuild_(PostFitQcWork& w);
+
+        /**
+         * @brief S5: choose the gate: the largest |standardized residual| against the
+         *        threshold or, with data snooping armed, the largest |w| over the checkable
+         *        rows against the critical value.
+         *
+         * @param w Work value; sets gate_stat, gate_idx and gate_crit.
+         */
+        void selectGateRow_(PostFitQcWork& w);
+
+        /**
+         * @brief S6: when the gate fires, respond to the gated row (the phase response, or
+         *        the code row's exclusion) and count one bad residual.
+         *
+         * @param w Work value; sets is_outlier_found.
+         */
+        void dispatchWorstRow_(PostFitQcWork& w);
+
+        /**
+         * @brief S6a: the MW tiebreak.  Among the gated constellation's phase rows over the
+         *        threshold and within 5 % of the largest |standardized residual|, choose the
+         *        satellite with the largest MW deviation score.  Only with a
+         *        CycleSlipManager supplied (setCycleSlipManager) and a phase worst row.
+         *
+         * @param w Work value (read only).
+         * @return The row to dispatch: gate_idx, or the MW-chosen row.
+         */
+        size_t chooseOutlierRow_(PostFitQcWork& w);
+
+        /**
+         * @brief S6b: the phase-row response: under the sub-cycle floor the row is only
+         *        excluded and the ambiguity kept, else the ambiguity is reset; then the same
+         *        for the satellite's other phase rows over the threshold.
+         *
+         * @param w           Work value; edits x, P and the measurement's exclusions.
+         * @param chosen_idx  The row being dispatched.
+         * @param outlier_sat Its satellite ID (the pair "G01-G05" under BSSD).
+         * @param outlier_sig Its signal.
+         * @param outlier_res Its post-fit residual (m), captured before the dispatch.
+         */
+        void respondToPhaseOutlier_(PostFitQcWork& w, size_t chosen_idx,
+                                    const std::string& outlier_sat,
+                                    const std::string& outlier_sig, double outlier_res);
+
+        /**
+         * @brief S7: the complete reset, when the epoch's bad-residual count exceeds the
+         *        configured fraction of the rows the epoch started with.
+         *
+         * @param w Work value; may reset P; sets is_outlier_found and is_complete_reset.
+         */
+        void completeResetBackstop_(PostFitQcWork& w);
+
+        /**
+         * @brief S8: log the pass's verdict line (debug).
+         *
+         * @param w Work value (read only).
+         */
+        void logPostFitResult_(PostFitQcWork& w);
+
+        /**
+         * @brief S9: on a clean pass with residual history armed, feed the accepted
+         *        residuals to the history, run the stuck-code-bias scan and log the
+         *        history digest.
+         *
+         * @param w Work value (read only).
+         */
+        void recordCleanCommit_(PostFitQcWork& w);
+
+        /**
+         * @brief S9a: with estimation.stuck_code_bias and satellite biases armed, queue a
+         *        reset for every non-pivot satellite bias the history reports stuck (a
+         *        rejection streak or a drifted mean); update() applies them after the
+         *        commit.
+         *
+         * @param w Work value (read only); writes pending_sat_bias_resets_.
+         */
+        void queueStuckCodeBiasResets_(PostFitQcWork& w);
 
     };
 

@@ -13,7 +13,7 @@
  *
  * The contribution value types generalize the current IMU injection:
  *   - @c PredictContribution generalizes the ins_map Phi/Q injection in
- *     @c KalmanFilter::predictImu;
+ *     the strapdown INS predict (KalmanFilter::predictAided's INS path);
  *   - @c AidingMeasurementRow / @c MeasurementRows generalize one appended
  *     measurement row (H/z/R + label);
  *   - @c StateBlockSpec describes the state block a source owns (a one-shot
@@ -76,7 +76,7 @@ struct StateBlockSpec {
 /**
  * @brief A source's predict-time contribution to F/Q (and optional nominal x).
  *
- * Generalizes the IMU ins_map injection in @c KalmanFilter::predictImu: the
+ * Generalizes the IMU ins_map injection of the strapdown INS predict: the
  * source lists the full-state indices it owns and supplies square Phi/Q
  * sub-blocks over those indices.  KalmanFilter assigns these onto the
  * StateManager baseline (assignment, not @c +=), then propagates P once.  A
