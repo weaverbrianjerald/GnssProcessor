@@ -3240,45 +3240,17 @@ namespace GnssProcessor {
         estimate_network_sat_code_bias_ = jval<bool>(
             json, "network.estimate_sat_code_bias", "estimate_sat_code_bias", false);
 
-        // --- Satellite biases from the external .BIA (EXT-CB) ---------------------
-        // The third satellite-bias posture (see GnssConfig::networkExternalSatCodeBias).
-        // Parsed here, before the estimate_iono_sh coupling below, because its purpose
-        // is to suppress that coupling: co-estimating the SH-VTEC field needs no
-        // satellite DCB column when the product already removed the satellite code
-        // bias, and the W6 chain would otherwise force enable_code_phase_bias off and
-        // make "SH iono + external .BIA" unreachable.
-        network_external_sat_code_bias_ = jval<bool>(
-            json, "network.external_sat_code_bias", "external_sat_code_bias", false);
-        if (network_external_sat_code_bias_ && estimate_network_sat_code_bias_) {
-            log->error("Network: network.external_sat_code_bias and "
-                       "network.estimate_sat_code_bias are mutually exclusive satellite "
-                       "code-bias SOURCES — one consumes the external .BIA, the other "
-                       "estimates the network's own OSB and skips the .BIA entirely.  "
-                       "Arming both would ask for a satellite code-bias state on rows the "
-                       "product has already corrected (the state would absorb only the "
-                       "residual, in a datum the emitted OSB does not describe).  Pick one.");
-            return false;
-        }
-
         // Co-estimated global SH-VTEC ionosphere.  It replaces the external GIM as the
         // iono constraint that makes the satellite DCB observable, so it implies, and
         // forces on, the whole W6 satellite code-bias slice.  Setting it here (before
         // the W6 chain below) lets that chain fire unchanged; the driver then uses the
         // SH row builder instead of the external-GIM one and does not load a GIM (the
         // two iono sources are never both applied).
-        //
-        // EXT-CB suppresses only the W6 force.  The SH field itself is untouched:
-        // ApplicationNetworkSetup's model construction, the assembly's coefficient
-        // registration and the SH row builder all gate on estimateNetworkIonoSh()
-        // alone, never on the code-bias flag, so the field is co-estimated as before,
-        // with the satellite DCB supplied by the product instead of a column.  (That
-        // is the classical known-DCB global-iono setup.)
         estimate_network_iono_sh_ = jval<bool>(
             json, "network.estimate_iono_sh", "estimate_iono_sh", false);
         if (estimate_network_iono_sh_) {
-            if (!network_external_sat_code_bias_)
-                estimate_network_sat_code_bias_ = true;   // SH co-estimation is the W6 iono constraint
-            global_vtec_sh_.enabled             = true;
+            estimate_network_sat_code_bias_ = true;   // SH co-estimation is the W6 iono constraint
+            global_vtec_sh_.enabled         = true;
         }
 
         // Cold-start receiver-clock pre-seed.  On the network path nothing
@@ -3297,28 +3269,10 @@ namespace GnssProcessor {
                       "ambiguity seed (removes the cold-start clock leak into ambiguity seeds).");
         }
 
-        // --- Per-satellite geometry-free code-bias pin (CB-GF-DATUM) --------------
-        // Odijk et al. 2016 (J Geod 90:15-44) §5.1 / Table 7, rank deficiency 3b: the
-        // satellite-side mirror of the receiver gauge below, which closes rd 2b
-        // (receiver biases vs slant iono); this one closes 3b.  Parsed before the W6
-        // chain because it selects which posture that chain arms: with the GF datum
-        // the producer runs Odijk's slant model (no ionosphere constraint), without it
-        // the classical single-layer one.
-        network_code_bias_gf_datum_ = jval<bool>(
-            json, "network.code_bias_gf_datum", "code_bias_gf_datum", false);
-        // The same rd-3b pin, extended to each partitioned secondary receiver channel
-        // family (FAMILY-GF; docs/SPEC_family_gf_datum.md).  Parsed beside its parent;
-        // its interlock sits below the CB-GF-DATUM validation block on purpose, so it
-        // inherits every hard error of that block.
-        network_code_bias_gf_datum_per_family_ = jval<bool>(
-            json, "network.code_bias_gf_datum_per_family",
-            "code_bias_gf_datum_per_family", false);
-
         // --- Ionosphere-constraint selector of the W6 slice (RF-0b) --------------
-        // docs/refound/RF-0_baseline_2026-09-14.md Finding 2.  Parsed here, beside
-        // code_bias_gf_datum and before the W6 chain, for the same reason: it selects
-        // which posture the chain arms.  "auto" is the three-way selection from before
-        // the knob existed (SH field / GF-pinned slant / external GIM) and is
+        // docs/refound/RF-0_baseline_2026-09-14.md Finding 2.  Parsed here, before the
+        // W6 chain, because it selects which posture the chain arms.  "auto" is the
+        // selection from before the knob existed (SH field / external GIM) and is
         // byte-identical; "none" removes the ionosphere constraint and leaves the
         // satellite code-bias datum to the IF pin and the per-(constellation, signal)
         // sum-to-zero rows that NetworkSbasis::buildCodeBiasDatumRows already folds
@@ -3339,8 +3293,7 @@ namespace GnssProcessor {
                 network_config_.w6_iono_constraint = NetworkW6IonoConstraint::Auto;
                 log->error("Network (RF-0b): network.w6_iono_constraint = '{}' is not one of "
                            "auto|none — falling back to 'auto' (today's selection: the SH field "
-                           "if network.estimate_iono_sh, else the geometry-free slant posture if "
-                           "network.code_bias_gf_datum, else the external GIM).  'none' runs the "
+                           "if network.estimate_iono_sh, else the external GIM).  'none' runs the "
                            "W6 slice with NO ionosphere constraint and the sum-to-zero code-bias "
                            "datum, which is a DIFFERENT product datum — never selected by a typo.",
                            s);
@@ -3375,13 +3328,10 @@ namespace GnssProcessor {
         const NetworkSatGfDatum sat_gf_mode = network_config_.sat_gf_datum;
         const bool sat_gf_on = sat_gf_mode != NetworkSatGfDatum::NoneMode;
 
-        // --- The two arms that answer the consumer regression of RF-0d (RF-0e) -----
-        // e1 restores an absolute level datum that the geometry-free pins do not
-        // provide; e2 instead makes the geometry-free rows carry like every other datum
-        // row on a time-linked lineage.  Both default off (byte-identical), and both
-        // are inert without the geometry-free datum itself.
-        network_config_.sat_if_level_datum =
-            jval<bool>(json, "network.sat_if_level_datum", "sat_if_level_datum", false);
+        // --- The arm that answers the consumer regression of RF-0d (RF-0e e2) -------
+        // It makes the geometry-free rows carry like every other datum row on a
+        // time-linked lineage.  Default off (byte-identical), and inert without the
+        // geometry-free datum itself.
         network_config_.sat_gf_datum_time_linked =
             jval<bool>(json, "network.sat_gf_datum_time_linked",
                        "sat_gf_datum_time_linked", false);
@@ -3549,28 +3499,19 @@ namespace GnssProcessor {
             // pinned by the explicit sum-to-zero DCB datum).  runNetwork hard-errors if
             // the GIM is absent at startup (the slice would be inert without it).
             //
-            // The force does not apply when the slant posture is armed.
-            // network.code_bias_gf_datum selects Odijk's §5.1 model instead: the
-            // ionosphere stays free per-LOS slant, the geometry-free code biases are
-            // pinned as datum (rd 2b/3b) and absorbed by that ionosphere, and the
-            // estimable code bias is the modernized DCB from the third frequency
-            // onward.  Forcing an iono constraint there would contradict the model and
-            // destroy the pinned direction, so the force is conditional.
-            //
-            // Nor does it apply when the no-constraint posture of RF-0b is selected.
-            // Under GPS-only dual-frequency the GF-datum escape above is unreachable (it
-            // hard-errors at the frequency gate below), so without this branch a dual W6
-            // run could not be self-contained: it would demand an external IONEX GIM,
-            // against the standing "no external-data dependence" rule, and on the sim
-            // bed the COD GIM is the truth ionosphere.  network.w6_iono_constraint =
+            // The force does not apply when the no-constraint posture of RF-0b is
+            // selected.  Without that branch a dual W6 run could not be self-contained:
+            // it would demand an external IONEX GIM, against the standing "no
+            // external-data dependence" rule, and on the sim bed the COD GIM is the
+            // truth ionosphere.  network.w6_iono_constraint =
             // "none" clears the force explicitly rather than skipping it, so a config
             // that also sets estimation.ionosphere_weighting.enable = true (every RF-0
             // lineage does, because the loader forces it in the "auto" posture) cannot
             // leave a half-armed constraint behind.  The GIM itself is never loaded on this
             // branch (ApplicationNetworkSetup), so the flag would be inert, but a flag
             // that reads on while nothing folds is the case invariant #4 describes.
-            if (w6_iono_none)                 iono_weighting_.enabled = false;
-            else if (!network_code_bias_gf_datum_) iono_weighting_.enabled = true;
+            if (w6_iono_none) iono_weighting_.enabled = false;
+            else              iono_weighting_.enabled = true;
             // The full satellite code bias is estimated from scratch in the network's
             // own datum, not as a residual to .BIA.  The external .BIA is skipped on
             // both the producer and (through the derived consumer config) the held-out
@@ -3586,142 +3527,15 @@ namespace GnssProcessor {
                       "emits its own satellite code biases (GPS + Galileo + BeiDou) under a "
                       "sum-to-zero per-constellation DCB datum.",
                       w6_iono_none ? "OFF (RF-0b: network.w6_iono_constraint = none)" : "on");
-        } else if (network_external_sat_code_bias_) {
-            // --- EXT-CB coupled slice (W6 minus the satellite column) --------------
-            // The satellite code and phase biases come from the .BIA, so there is no
-            // satellite bias state and no OSB datum; what has to travel with the
-            // product is the receiver side.
-            //
-            // enable_code_phase_bias is the apply switch for the whole .BIA, code and
-            // phase alike (PppModel::computeBaseModeledValue is keyed on the raw signal
-            // string).  An explicit false in the JSON contradicts the posture: the
-            // network would then have neither an external nor an estimated satellite
-            // code bias, which is the V1 slant-absorption posture under this knob's
-            // name.  The load fails rather than silently overriding the setting.
-            if (!model_corrections_.enable_code_phase_bias) {
-                log->error("Network: network.external_sat_code_bias is on but "
-                           "model_corrections.enable_code_phase_bias is explicitly false — "
-                           "the .BIA is the satellite bias SOURCE in this posture, so "
-                           "disabling its application leaves the satellite code bias neither "
-                           "applied nor estimated (that is the V1 slant-absorption posture: "
-                           "drop network.external_sat_code_bias instead).  Remove the "
-                           "explicit false, or drop the knob.");
-                return false;
-            }
-            // Estimability trap #4 of the W6 slice applies unchanged: the network is
-            // DifferencingMode::None, so on undifferenced rows the per-(rx,
-            // constellation) GF code lump has nowhere to go unless the receiver DCB is
-            // an explicit pinned state.  Under W6 the satellite OSB would absorb it;
-            // here there is no satellite column, so it would enter the slant iono and
-            // conflict with the SH field (a per-station constant the global field
-            // cannot represent, pulled into a₀₀ and the per-station residual).
-            estimate_ifb_ = true;
-            if (estimate_network_iono_sh_) {
-                // Keep the SH slice's own coupled bundle intact: the elevation cutoff
-                // under estimation.ionosphere_weighting is load-bearing for the SH row
-                // builder (the iw.elevation_cutoff_deg tests in
-                // ApplicationNetworkAssembly.cpp), and the posture ledger checks the
-                // enable alongside it.
-                iono_weighting_.enabled = true;
-                log->info("Network producer (EXT-CB): satellite code+phase biases taken from "
-                          "the EXTERNAL .BIA (enable_code_phase_bias stays ON) with the "
-                          "SH-VTEC ionosphere CO-ESTIMATED — the classical known-DCB global "
-                          "iono setup.  No satellite code-bias state, no OSB datum; forcing "
-                          "estimate_ifb (rx DCB) on so the receiver GF code lump has an "
-                          "explicit state instead of riding inside the slant iono.  Satellite "
-                          "CLOCK and PHASE BIAS are still estimated (as residuals to the "
-                          "product), so the shared border is non-empty and the datum "
-                          "machinery is still exercised.");
-            } else {
-                log->info("Network producer (EXT-CB): satellite code+phase biases taken from "
-                          "the EXTERNAL .BIA (enable_code_phase_bias stays ON), free per-(rx,sat) "
-                          "slant ionosphere, estimate_ifb (rx DCB) forced on.  NOTE: with no iono "
-                          "constraint this differs from the plain V1 posture only by the forced rx "
-                          "DCB state — the knob's purpose (SH-VTEC iono WITH external satellite "
-                          "biases) needs network.estimate_iono_sh = true.");
-            }
         } else {
             log->info("Network producer (V1): satellite code bias deferred "
                       "(estimate_sat_biases / promote_sat_code_bias = false)");
         }
 
-        // --- CB-GF-DATUM validation (the parse is above, before the W6 chain) ----
-        if (network_code_bias_gf_datum_) {
-            if (!estimate_network_sat_code_bias_) {
-                log->error("Network: network.code_bias_gf_datum is armed without "
-                           "network.estimate_sat_code_bias — there are no satellite "
-                           "code-bias columns to gauge, so the rows would fold onto "
-                           "nothing.  Arm the W6 slice or drop the GF datum.");
-                return false;
-            }
-            if (estimate_network_iono_sh_) {
-                // The one combination that destroys content, so it is a hard error and
-                // not a warning: with a single-layer constraint present, the
-                // geometry-free satellite code bias is the estimable DCB (Odijk 2016
-                // Eq. 29-32), and pinning it to zero deletes the only code-bias content
-                // a dual-frequency W6 product carries.
-                log->error("Network: network.code_bias_gf_datum is armed together with "
-                           "network.estimate_iono_sh.  Mutually exclusive by construction: "
-                           "rank deficiency 3b (satellite hardware biases vs the free slant "
-                           "ionosphere) only EXISTS when the ionosphere is unconstrained, "
-                           "and under a single-layer constraint the geometry-free bias is "
-                           "the estimable DCB — pinning it there throws away the code-bias "
-                           "content the W6 product exists to emit.  Drop one.");
-                return false;
-            }
-            if (iono_weighting_.enabled) {
-                log->error("Network: network.code_bias_gf_datum is armed with "
-                           "estimation.ionosphere_weighting.enable — same exclusivity as "
-                           "above (an external-GIM constraint is still a single-layer "
-                           "constraint).  Turn the iono weighting off for the slant "
-                           "posture, or drop the GF datum.");
-                return false;
-            }
-            // Frequency gate.  Below three frequencies the GF datum is the whole model,
-            // not merely unhelpful: IF + GF together fix d_1 and d_2 exactly, so a
-            // dual-frequency run would emit satellite code biases that are identically
-            // the datum (zeros presented as estimates).  Odijk §5.1 states the same
-            // thing as estimability ("only for a triple- or higher-frequency
-            // constellation").  frequency_mode is the only pre-run signal available;
-            // "all" is data-dependent, so it passes with a warning.
-            if (frequency_mode_ == FrequencyMode::Dual) {
-                log->error("Network: network.code_bias_gf_datum with "
-                           "processing.frequency_mode = {} is structurally empty — the IF "
-                           "pin and the GF pin together fix BOTH pinned-pair code biases, "
-                           "so nothing estimable remains and every emitted B record would "
-                           "be the datum itself.  Odijk 2016 §5.1: code biases are "
-                           "estimable only from the THIRD frequency onward under a slant "
-                           "ionosphere.  Use frequency_mode triple/all, or drop the slant "
-                           "posture.", "dual");
-                return false;
-            }
-            // Announce the posture.  An armed datum that logs nothing is the case
-            // invariant #4 describes, and the truth grader auto-detects this posture
-            // from the console: without this line it grades the slant arm with the
-            // single-layer transform (metre-scale phantom residuals on the two pinned
-            // channels, which are datum-fixed to zero by construction).
-            log->info("Network producer (CB-GF-DATUM): per-satellite GEOMETRY-FREE code-bias "
-                      "pin ARMED (Odijk 2016 rd 3b) — (d2-d1)/(mu2-mu1) = 0 on the IF-pinned "
-                      "pair.  With the IF pin this fixes the first two frequencies' code "
-                      "biases EXACTLY, leaving the modernized DCB (j >= 3) as the estimable "
-                      "content; the geometry-free lump is absorbed by the free slant "
-                      "ionosphere (their Table 8), so a consumer must apply the ionosphere "
-                      "and the code biases AS A PAIR.");
-            if (frequency_mode_ == FrequencyMode::All)
-                log->warn("Network (CB-GF-DATUM): processing.frequency_mode = all — the "
-                          "third frequency this posture needs is then DATA-dependent.  A "
-                          "satellite tracked on only two bands has its code bias fully "
-                          "fixed by the datum with nothing estimable left; the run-end "
-                          "count of such satellites is reported (n_gf_only_pair).");
-        }
-
         // --- Validation of the no-constraint W6 posture (RF-0b) -----------------
-        // Placed right after the CB-GF-DATUM block, so the two postures without an
-        // ionosphere constraint are validated side by side as the alternatives they
-        // are.  Both answer rank deficiency 3b and differ only in the datum: the GF
-        // pin fixes the per-satellite geometry-free bias to zero (and needs a third
-        // frequency to leave anything estimable), while "none" leaves it unpinned and
-        // lets the per-(constellation, signal) sum-to-zero rows realize the IGS
+        // "none" answers rank deficiency 3b without an ionosphere constraint: it leaves
+        // the per-satellite geometry-free bias unpinned and lets the
+        // per-(constellation, signal) sum-to-zero rows realize the IGS
         // Sum_s DCB^s = 0 convention.
         if (w6_iono_none) {
             if (!estimate_network_sat_code_bias_) {
@@ -3740,29 +3554,13 @@ namespace GnssProcessor {
                 // constraint (the loader arms the W6 slice from it at the
                 // estimate_iono_sh parse above), so asking for "no constraint"
                 // alongside it is a contradiction, and letting one win silently would
-                // ship a product whose datum nobody chose.  The GF datum applies the same
-                // hard error against the same knob.
+                // ship a product whose datum nobody chose.
                 log->error("Network (RF-0b): network.w6_iono_constraint = none is armed together "
                            "with network.estimate_iono_sh.  Mutually exclusive: the co-estimated "
                            "SH-VTEC field IS the W6 ionosphere constraint (it is what arms the "
                            "slice at all), so 'none' would be either a lie or a silent deletion "
                            "of the field's constraint rows.  Drop one — 'none' is the free-slant "
                            "posture, estimate_iono_sh the single-layer one.");
-                return false;
-            }
-            if (network_code_bias_gf_datum_) {
-                // Both are postures without an ionosphere constraint, so this is not a
-                // rank conflict but a datum ambiguity, which is worse: the run would
-                // still solve and emit a product whose satellite code-bias frame
-                // depends on which branch happened to be tested first.
-                log->error("Network (RF-0b): network.w6_iono_constraint = none is armed together "
-                           "with network.code_bias_gf_datum.  Both remove the ionosphere "
-                           "constraint, but they are DIFFERENT datums for the same rank "
-                           "deficiency 3b: the GF pin fixes each satellite's geometry-free code "
-                           "bias to zero (estimable content only from the third frequency), while "
-                           "'none' leaves it free under the per-(constellation, signal) "
-                           "sum-to-zero rows.  Pick one — arming both makes the emitted OSB frame "
-                           "depend on branch order.");
                 return false;
             }
             // Announce the posture.  An armed datum that logs nothing is the case
@@ -3834,17 +3632,6 @@ namespace GnssProcessor {
                            mode_name, estimate_network_iono_sh_, iono_weighting_.enabled);
                 return false;
             }
-            if (network_code_bias_gf_datum_) {
-                // Both build a geometry-free pin on the same pair.  Two identical rows is
-                // not a stronger datum, it is a singular constraint stack.
-                log->error("Network (RF-0c): network.sat_gf_datum = {} is armed together "
-                           "with network.code_bias_gf_datum.  Both pin the SAME "
-                           "per-satellite geometry-free combination on the SAME "
-                           "ionosphere-free pin pair — arming both folds the row twice.  "
-                           "Use code_bias_gf_datum for the triple-frequency Odijk posture, "
-                           "sat_gf_datum for the dual-frequency one.", mode_name);
-                return false;
-            }
             if (sat_gf_mode == NetworkSatGfDatum::BroadcastTgd)
                 log->info("Network producer (RF-0c): HARD per-satellite GEOMETRY-FREE "
                           "code-bias datum ARMED at the BROADCAST TGD — one pin row per "
@@ -3864,58 +3651,21 @@ namespace GnssProcessor {
                 log->info("Network producer (RF-0c): HARD per-satellite GEOMETRY-FREE "
                           "code-bias datum ARMED at ZERO — one pin row per satellite on "
                           "(d2-d1)/(mu2-mu1) over the ionosphere-free pin's own pair, RHS "
-                          "0 (Odijk 2016 rd 3b, Eq. 30; the same arbitrary-but-legal S-basis "
-                          "choice network.code_bias_gf_datum makes, reached here at DUAL "
-                          "frequency).  Folded as a constraint row BEFORE the null-space "
+                          "0 (Odijk 2016 rd 3b, Eq. 30; an arbitrary-but-legal S-basis "
+                          "choice).  Folded as a constraint row BEFORE the null-space "
                           "gate, so the DECLARED S-basis dimension is UNCHANGED.  The "
                           "geometry-free lump moves into the slant ionosphere (their "
                           "Table 8), so a consumer must apply the emitted ionosphere and "
                           "code biases AS A PAIR.");
         }
 
-        // --- Validation of the two level-datum arms (RF-0e) ---------------------
-        if (network_config_.sat_if_level_datum || network_config_.sat_gf_datum_time_linked) {
+        // --- Validation of the level-datum arm (RF-0e e2) ------------------------
+        if (network_config_.sat_gf_datum_time_linked) {
             if (!sat_gf_on) {
-                log->warn("Network (RF-0e): network.sat_if_level_datum / "
-                          "network.sat_gf_datum_time_linked are INERT without "
-                          "network.sat_gf_datum — the first replaces the per-signal "
-                          "sum-to-zero rows that ONLY the geometry-free datum suppresses, "
-                          "and the second re-targets rows that only it builds.  Arm "
-                          "sat_gf_datum, or drop these.");
-            }
-            if (network_config_.sat_if_level_datum
-                && network_config_.sat_gf_datum_time_linked) {
-                // They are the two arms of one A/B on the same regression.  Arming both
-                // does not measure either, and the result would be attributed to
-                // whichever the reader happened to believe in.
-                log->error("Network (RF-0e): network.sat_if_level_datum and "
-                           "network.sat_gf_datum_time_linked are the TWO ARMS of one A/B "
-                           "on the same defect (RF-0d's consumer regression: an absolute "
-                           "geometry-free RHS against time-linked IF pins).  Arming both "
-                           "measures neither — the outcome would be attributable to "
-                           "whichever mechanism the reader already believed.  Pick one.");
-                return false;
-            }
-            if (network_config_.sat_if_level_datum && sat_gf_on)
-                log->info("Network producer (RF-0e e1): ABSOLUTE IF-LEVEL datum ARMED — one "
-                          "row per constellation pinning Sum_s (a1*d1 + a2*d2) = 0 over the "
-                          "satellites with a valid ionosphere-free pin pair, folded at the "
-                          "gauge weight beside the per-satellite pins.  It constrains ONLY "
-                          "the ionosphere-free part, which the geometry-free pins leave "
-                          "free (they fix differences within a satellite, never the level), "
-                          "so the two are consistent by construction — and under "
-                          "broadcast_tgd the target is EXACTLY true, because the broadcast "
-                          "clock is L1/L2 ionosphere-free and every satellite's "
-                          "ionosphere-free code bias is zero in that frame.  This is the "
-                          "level anchor network.sat_gf_datum's sum-to-zero suppression "
-                          "removed: with code_datum_time_linked the per-satellite IF pins "
-                          "are CHANGE pins, so each level is anchored once at first "
-                          "sighting and carried, and nothing holds the SET.  NOTE the row is "
-                          "STRONG, not gentle: its Jacobian carries one entry per satellite, so "
-                          "at equal gauge weight it beats the n single-entry change pins and "
-                          "re-zeroes the LEVEL each epoch (realized level = carried/(n+1)); the "
-                          "per-satellite DIFFERENCES stay carried.");
-            if (network_config_.sat_gf_datum_time_linked && sat_gf_on)
+                log->warn("Network (RF-0e): network.sat_gf_datum_time_linked is INERT without "
+                          "network.sat_gf_datum: it re-targets rows that only that datum "
+                          "builds.  Arm sat_gf_datum, or drop it.");
+            } else {
                 log->info("Network producer (RF-0e e2): geometry-free datum rows TIME-LINKED "
                           "— each row's RHS is that satellite's PREVIOUS kept-epoch solved "
                           "geometry-free combination when both pinned signals carry a "
@@ -3926,6 +3676,7 @@ namespace GnssProcessor {
                           "anchor stays in force, so the frame is still the broadcast one; "
                           "what changes is that it is carried rather than re-asserted.",
                           sat_gf_mode == NetworkSatGfDatum::BroadcastTgd ? "c*T_GD" : "0");
+            }
         }
 
         // --- Validation of the ISC reparameterization (RF-0f) ---------------------
@@ -3990,38 +3741,9 @@ namespace GnssProcessor {
             }
         }
 
-        // --- The rd-3b pin per partitioned secondary channel family (FAMILY-GF) ---
-        // Placed after the CB-GF-DATUM block closes, so it inherits that block's four
-        // hard errors (sat code bias required; iono_sh, iono_weighting and dual all
-        // refused above, each with `return false`).  The only interlock left to state
-        // is the parent-knob one: without the primary GF frame there is nothing to be
-        // secondary to.
-        if (network_code_bias_gf_datum_per_family_) {
-            if (!network_code_bias_gf_datum_) {
-                log->error("Network: network.code_bias_gf_datum_per_family is armed without "
-                           "network.code_bias_gf_datum.  The per-family rows are SECONDARY to "
-                           "the primary geometry-free pin — they gauge the families the "
-                           "primary pin cannot reach — so without it there is no primary GF "
-                           "frame to be secondary to.  Arm network.code_bias_gf_datum, or "
-                           "drop this knob.");
-                return false;
-            }
-            log->info("Network producer (FAMILY-GF): per-(satellite, secondary-family) "
-                      "GEOMETRY-FREE code-bias pin ARMED.  Odijk rd 3b re-derives PER "
-                      "RECEIVER CHANNEL FAMILY when the station population partitions (the "
-                      "Galileo C/Q-vs-X tracking split): the primary pin never reaches the "
-                      "secondary family's columns.  One GF row per (sat, partitioned family) "
-                      "and deliberately NO IF row — the satellite clock is shared and already "
-                      "realized by the primary IF pin, so the secondary family's IF "
-                      "combination is the ESTIMABLE inter-family ISC.  The run-latched family "
-                      "census reports the partition verdict and the folded row count; with no "
-                      "partitioned family this knob folds NOTHING and the run is "
-                      "byte-identical.");
-        }
-
         // --- Sum-to-zero over the receiver code-bias set (RXCB-DATUM) -------------
         // The receiver-side counterpart of the W6 satellite code-bias gauge.
-        // Parsed after the EXT-CB slice so its estimate_ifb force is visible to the
+        // Parsed after the W6 slice so its estimate_ifb force is visible to the
         // inert check below.
         network_rx_code_bias_datum_ = jval<bool>(
             json, "network.rx_code_bias_datum", "rx_code_bias_datum", false);
@@ -4053,8 +3775,7 @@ namespace GnssProcessor {
                 log->warn("Network: network.rx_code_bias_datum is INERT without "
                           "estimation.estimate_ifb — with no explicit receiver DCB state the "
                           "receiver code delay rides inside the slant ionosphere and there are "
-                          "no columns to gauge.  Arm estimate_ifb (network.external_sat_code_bias "
-                          "forces it) or drop the datum.");
+                          "no columns to gauge.  Arm estimate_ifb or drop the datum.");
             } else if (estimate_network_sat_code_bias_) {
                 // Legal and not over-constraining (the two gauges act on disjoint
                 // parameter sets: satellite columns vs receiver columns), but under W6
@@ -4079,8 +3800,7 @@ namespace GnssProcessor {
                     log->info("Network producer (RXCB-DATUM): receiver code-bias sum-to-zero ON "
                               "ALONGSIDE the W6 satellite code-bias gauge.  Legal (disjoint column "
                               "sets, redundant coverage is PSD-safe) but the receiver half is "
-                              "already determined through the satellite gauge here — this datum is "
-                              "load-bearing only under network.external_sat_code_bias.");
+                              "already determined through the satellite gauge here.");
             } else {
                 log->info("Network producer (RXCB-DATUM): receiver code-bias datum ON — a loose "
                           "zero-mean prior d_r ~ N(0, {:.1f}^2 m) on every station's receiver DCB, "
@@ -4267,22 +3987,6 @@ namespace GnssProcessor {
                            "network.estimate_sat_code_bias.");
                 return false;
             }
-            // Validation 1b (hard error): EXT-CB consumes a daily `.BIA` bias product,
-            // which the self-sufficient real-time service does not have (the same
-            // post-processing-only reasoning that rejects the external-GIM code-bias
-            // path here).  A real-time producer takes its satellite biases from an SSR
-            // stream, not a Bias-SINEX file; that is a different mechanism with its own
-            // age/continuity semantics.
-            if (network_external_sat_code_bias_) {
-                log->error("Network: network.apriori_source = brdc_rts with "
-                           "network.external_sat_code_bias — the `.BIA` is a daily "
-                           "post-processing bias product and is not available to the "
-                           "self-sufficient real-time service (same reason the external-GIM "
-                           "code-bias path is post-processing-only).  Use "
-                           "network.estimate_sat_code_bias + network.estimate_iono_sh for a "
-                           "real-time producer, or drop apriori_source = brdc_rts.");
-                return false;
-            }
             // Validation 2 (a warning, because no per-mount dialect declaration exists
             // yet; RTF-3): the producer's SSR orbit corrections must be IGS-SSR 4076
             // (CoM); legacy 1240-1270 (APC) mountpoints are user-engine-only (RTB-5,
@@ -4433,11 +4137,10 @@ namespace GnssProcessor {
         // which runs two helpers earlier, before anything they test is resolved;
         // there they would read header defaults:
         //
-        //   trace_sat_bias_states: `!estimate_network_sat_code_bias_ &&
-        //   !network_external_sat_code_bias_` reads two members that are both parsed
-        //   in loadNetworkSharedStateForcings_, so at the parse site it is always
-        //   true, and the warning would fire on every run that arms the trace,
-        //   including the W6 and EXT-CB runs where the trace is live.  A live
+        //   trace_sat_bias_states: `!estimate_network_sat_code_bias_` reads a member
+        //   that is parsed in loadNetworkSharedStateForcings_, so at the parse site it
+        //   is always true, and the warning would fire on every run that arms the
+        //   trace, including the W6 runs where the trace is live.  A live
         //   instrument reporting itself inert teaches the reader to ignore the one
         //   line that would matter (invariant #4 in reverse).
         //
@@ -4448,10 +4151,9 @@ namespace GnssProcessor {
         // This is the tail of the last helper that touches any of them, so every
         // value below is final.  A new forcing added after this point has to move
         // these checks with it.
-        if (network_config_.trace_sat_bias_states
-            && !estimate_network_sat_code_bias_ && !network_external_sat_code_bias_)
+        if (network_config_.trace_sat_bias_states && !estimate_network_sat_code_bias_)
             log->warn("Network: network.trace_sat_bias_states is INERT in this posture — "
-                      "with neither estimate_sat_code_bias (W6) nor external_sat_code_bias "
+                      "without estimate_sat_code_bias (W6) "
                       "there are no satellite code-bias columns and no B records, so the "
                       "trace opens and stays empty.  Standing invariant #4: an armed-but-"
                       "inert instrument reads exactly like a clean one.");
@@ -4459,7 +4161,7 @@ namespace GnssProcessor {
             log->warn("Network: network.trace_rx_states will emit CLOCK rows only — "
                       "estimation.estimate_ifb is off, so there is no explicit receiver "
                       "code-bias state (the receiver code delay rides inside the slant "
-                      "ionosphere instead).  The W6, EXT-CB and GLONASS slices each force "
+                      "ionosphere instead).  The W6 and GLONASS slices each force "
                       "estimate_ifb on; none of them is armed here.");
 
         return true;
@@ -8029,17 +7731,6 @@ namespace GnssProcessor {
         network_clock_datum_broadcast_anchored_ =
             jval<bool>(json, "network.clock_datum_broadcast_anchored",
                        "network_clock_datum_broadcast_anchored", false);
-        // Time-consistent (δtˢ, dˢ) emission: holds the per-satellite clock↔code-bias
-        // IF-pin reference signal pair fixed across epochs (latch on first sight,
-        // re-latch only on genuine loss) instead of re-selecting the two lowest
-        // distinct-frequency signals from each epoch's coverage.  Without it, a sparse
-        // channel entering or leaving ≥2-station coverage re-anchors the per-satellite
-        // clock by the satellite's inter-channel code bias, a differential-clock wander
-        // that a receiver clock cannot absorb.  Only the W6 code-bias IF pin realizes
-        // this split, so the toggle is inert without network.estimate_sat_code_bias.
-        network_clock_signal_basis_hold_ =
-            jval<bool>(json, "network.clock_signal_basis_hold",
-                       "network_clock_signal_basis_hold", false);
         // Imposes the W6 code-bias datum (per-sat IF pin + per-(const, signal)
         // sum-to-zero) as a time datum: pins the change from the previous epoch's solved
         // values instead of pinning the level to zero (card 2).  Same row count; removes
@@ -9536,7 +9227,7 @@ namespace GnssProcessor {
      *
      * The single place the datum realizations are made mutually exclusive and reported:
      * retro-bump -> clock-disc coupling, sum-to-zero / broadcast-anchored / pivot,
-     * @c code_datum_time_linked vs @c clock_signal_basis_hold, the set-change trigger, and
+     * @c code_datum_time_linked and card GFC's arms, the set-change trigger, and
      * the Card-4 requirement chain (@c carry_invariant -> @c phase_datum_eq34;
      * @c innov_gate -> @c carry_invariant).
      *
@@ -9714,56 +9405,6 @@ namespace GnssProcessor {
                           "anchored clock datum never re-references (there is no pivot to keep "
                           "or hand over).");
         }
-        if (network_clock_signal_basis_hold_) {
-            // The per-satellite clock↔code-bias IF pin is a W6 construct; without
-            // estimate_sat_code_bias there is no satellite code-bias state and no split
-            // to hold, so arming the toggle alone changes nothing.  It warns rather than
-            // silently ignoring the knob (a common mis-arming: the toggle targets the
-            // same datum whose instability motivates it, which exists only in W6).
-            if (!estimate_network_sat_code_bias_)
-                log->warn("Network: network.clock_signal_basis_hold is INERT without "
-                          "network.estimate_sat_code_bias — the per-satellite clock↔code-bias "
-                          "IF pin it holds fixed only exists when the network estimates its own "
-                          "satellite code biases (W6).");
-            else
-                log->info("Network producer: HOLD clock signal basis ON — each satellite's "
-                          "ionosphere-free clock reference pair is latched on first registration "
-                          "and held while both signals stay in the ≥2-station set, so the emitted "
-                          "(clock, code-bias) split is time-consistent (the IGS fixed-clock-"
-                          "convention analogue) rather than re-anchored by the satellite's "
-                          "inter-channel bias whenever a sparse channel enters/leaves coverage.");
-        }
-        // The time-linked code-bias datum (card 2) and clock_signal_basis_hold both
-        // re-target the same per-satellite IF-pin row (the clock↔code split).  Running
-        // both would realize that split twice with conflicting references; time-linking
-        // already subsumes the hold for the pin value (its RHS references the previous
-        // solved IF combination directly).  The load fails rather than letting one win
-        // silently.
-        if (network_code_datum_time_linked_ && network_clock_signal_basis_hold_)
-            throw std::runtime_error(
-                "network.code_datum_time_linked and network.clock_signal_basis_hold are "
-                "mutually exclusive (both re-target the per-satellite IF-pin row; the time-"
-                "linked datum subsumes the hold for the pin value).  Enable at most one.");
-        // Time-linking makes the GF pin and the sum-to-zero rows inconsistent, not merely
-        // redundant (FAMILY-GF §2.1).  The GF rows over a channel pair sum exactly to
-        // (s2z(sig2) - s2z(sig1))/(mu2-mu1), a rank-1 dependency that is harmless while
-        // every RHS is 0, which is the untimed case.  Time-linking moves the s2z targets
-        // to Sigma b_prev, generally different per channel, so the same dependency then
-        // demands Sigma d_2 - Sigma d_1 = 0 and Sigma d_j = rhs_j with rhs_2 != rhs_1.
-        // Nothing throws, because these fold as heavily weighted pseudo-observations
-        // rather than exact constraints: the solve absorbs the conflict by least
-        // squares, injecting tension of order (rhs_2 - rhs_1)/(mu2 - mu1).  Latent (no
-        // shipped config combines them) and pre-existing for the primary pin, so this
-        // warns rather than refuses; it is named here so the next arm is aware of it.
-        if (network_code_datum_time_linked_ && network_code_bias_gf_datum_)
-            log->warn("Network: network.code_datum_time_linked is armed together with "
-                      "network.code_bias_gf_datum.  The geometry-free rows are rank-1 "
-                      "dependent with the per-(constellation,signal) sum-to-zero rows, and "
-                      "time-linking gives those rows NONZERO and per-channel-DIFFERENT "
-                      "targets — so the dependency becomes inconsistent and least-squares "
-                      "silently against the gauge weight instead of failing.  See "
-                      "docs/SPEC_family_gf_datum.md §2.1.  Prefer the untimed code datum in "
-                      "the slant posture.");
         if (network_code_datum_time_linked_) {
             // The datum it re-times (IF pin + per-(const,signal) sum-to-zero) only exists
             // in W6; without estimate_sat_code_bias there is nothing to time-link.
@@ -9807,9 +9448,7 @@ namespace GnssProcessor {
                           pc && fd ? "Both refine" : "It refines", pc && fd ? "them" : "it");
             } else {
                 const char* pc_blocker = NetworkSbasis::pinPairContinuityBlocker(
-                    network_code_bias_gf_datum_, network_config_.sat_gf_datum,
-                    network_config_.sat_gf_datum_time_linked,
-                    network_config_.sat_if_level_datum);
+                    network_config_.sat_gf_datum, network_config_.sat_gf_datum_time_linked);
                 if (pc && pc_blocker)
                     log->warn("Network (GFC): network.code_datum_pair_continuity is INERT "
                               "under {}.  A continued pin would hold the new pair's "
@@ -12703,12 +12342,6 @@ namespace GnssProcessor {
         c.promote_sat_code_bias_     = false;
         c.estimate_network_sat_code_bias_ = false;  // producer-only switch; the consumer applies the OSB
         c.estimate_network_iono_sh_ = false;        // producer-only; the consumer estimates its own local iono
-        // EXT-CB is likewise producer-only.  It is not translated into a consumer-side
-        // change, on purpose: the consumer inherits enable_code_phase_bias = true (never
-        // force-set false under this posture), so it applies the same external .BIA the
-        // producer modelled against, which is right, because the producer emitted no OSB
-        // to replace it.
-        c.network_external_sat_code_bias_ = false;
         c.global_vtec_sh_.enabled   = false;
         // The consumer applies the network's satellite code biases via ssr_bias_term (not
         // gated by enable_code_phase_bias), and inherits enable_code_phase_bias = false

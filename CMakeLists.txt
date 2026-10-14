@@ -421,7 +421,6 @@ add_executable(gnss_tests
     tests/test_neq_station_prior_before_pd.cpp
     tests/test_pd_safe_fold.cpp
     tests/test_carry_aware_covariance.cpp
-    tests/test_family_gf_datum.cpp
     tests/test_w6_iono_constraint.cpp
     tests/test_sat_gf_extra_band_free.cpp
     tests/test_network_estimator.cpp

@@ -465,7 +465,8 @@ TEST(NetworkRxExtraBandDelayTest, LoaderSaysNothingWithTheKnobOff) {
     ASSERT_TRUE(c.ok);
     EXPECT_FALSE(has(c.text, "card L5B")) << c.text;
     // The RXCB-DATUM line keeps its unarmed text.
-    EXPECT_TRUE(has(c.text, "this datum is load-bearing only under network.external_sat_code_bias"))
+    EXPECT_TRUE(has(c.text, "but the receiver half is already determined through the satellite "
+                            "gauge here."))
         << c.text;
 }
 

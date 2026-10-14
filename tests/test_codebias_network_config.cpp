@@ -168,39 +168,6 @@ TEST(CodeBiasNetworkConfig, BiasCoverageRequiresApplyParsesAndSurvivesCoupling) 
     }
 }
 
-// clock_signal_basis_hold: parses (default false, so the per-epoch IF-pin
-// reference selection is byte-identical), and, armed alongside the W6 slice it
-// modifies, survives the estimate_sat_code_bias coupling.  The toggle holds the
-// per-satellite clock↔code-bias IF-pin reference pair fixed in time; it is
-// meaningful only when the network estimates its own code biases, so it has to
-// coexist with that flag rather than be overwritten by the coupling.
-TEST(CodeBiasNetworkConfig, ClockSignalBasisHoldParsesAndSurvivesCoupling) {
-    LogManager log;
-    // Default: key absent -> false (per-epoch reference re-selection, byte-identical).
-    {
-        const fs::path p = writeTempConfig("basis_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_FALSE(cfg.networkClockSignalBasisHold());
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Armed with the W6 code-bias slice: the coupling forces the prerequisites on,
-    // and the hold toggle survives it.  Both are true, so the emitted (δtˢ, dˢ)
-    // split is estimated (W6) and held to a fixed signal basis in time.
-    {
-        const fs::path p = writeTempConfig("basis_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                          "    \"estimate_sat_code_bias\": true,\n"
-                          "    \"clock_signal_basis_hold\": true,\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.estimateNetworkSatCodeBias());       // coupled slice on
-        EXPECT_TRUE(cfg.networkClockSignalBasisHold());      // hold toggle survives the coupling
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
 // network.code_datum_time_linked (Card 2): parses (default false = the legacy zero-
 // target code-bias datum, byte-identical) and survives the estimate_sat_code_bias
 // coupling (the datum it re-times exists only in W6, so it has to coexist with that
@@ -229,21 +196,6 @@ TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedParsesAndSurvivesCoupling) {
         EXPECT_TRUE(cfg.networkCodeDatumTimeLinked());       // time-linked toggle survives
         std::error_code ec; fs::remove(p, ec);
     }
-}
-
-// code_datum_time_linked and clock_signal_basis_hold both re-target the per-satellite
-// IF-pin row (the clock↔code split): the time-linked datum subsumes the hold for the
-// pin value, so arming both is a hard load error rather than a silent last-wins.
-TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedWithSignalBasisHoldIsError) {
-    LogManager log;
-    const fs::path p = writeTempConfig("cbtl_conflict",
-        networkConfig(kGpsGal, kPriosGps,
-                      "    \"estimate_sat_code_bias\": true,\n"
-                      "    \"code_datum_time_linked\": true,\n"
-                      "    \"clock_signal_basis_hold\": true,\n"));
-    GnssConfig cfg;
-    EXPECT_FALSE(cfg.loadFromJson(p, log));
-    std::error_code ec; fs::remove(p, ec);
 }
 
 // phase_bias_exclude_unmatched_antenna: parses (default false, so every station
@@ -1860,137 +1812,6 @@ TEST(CodeBiasNetworkConfig, CarryAwareCovarianceContract) {
         EXPECT_TRUE(cfg.networkCarryAwareCovariance());
         std::error_code ec; fs::remove(p, ec);
     }
-}
-
-// ===========================================================================
-// network.external_sat_code_bias (EXT-CB): the satellite code and phase biases
-// come from the external .BIA instead of being estimated (the third satellite-
-// bias posture, alongside V1 slant-absorption and W6 own-OSB)
-// ===========================================================================
-
-namespace {
-
-// A network config that can also carry estimation / model_corrections blocks.
-// The EXT-CB contract spans all three sections: it suppresses a network force
-// chain whose observable effect is on model_corrections.enable_code_phase_bias
-// and estimation.estimate_ifb.
-std::string extCbConfig(const std::string& network_extra,
-                        const std::string& estimation_block = "",
-                        const std::string& model_corr_block = "") {
-    return std::string("{\n") +
-        "  \"processing\": {\n"
-        "    \"mode\": \"ppp-rtk-network\",\n"
-        "    \"active_systems\": " + kGpsGal + ",\n"
-        "    \"signal_priorities\": " + kPriosGps + "\n"
-        "  },\n"
-        + estimation_block + model_corr_block +
-        "  \"network\": {\n"
-        "    \"clock_datum_station\": \"AAAA\",\n"
-        + network_extra +
-        "    \"stations\": [\n"
-        "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
-        "      { \"name\": \"BBBB\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n"
-        "    ]\n"
-        "  }\n"
-        "}\n";
-}
-
-} // namespace
-
-// estimate_iono_sh force-chains estimate_sat_code_bias on, which force-sets
-// enable_code_phase_bias off, so without EXT-CB "SH-VTEC ionosphere with external
-// satellite biases" (the classical known-DCB global-iono setup) is unreachable.
-// Arming external_sat_code_bias suppresses that force and nothing else about the
-// SH slice.
-TEST(NetworkExternalSatCodeBiasConfig, SuppressesTheShToW6ForceChain) {
-    LogManager log;
-
-    // Default: absent -> false, and nothing about the existing postures moves.
-    {
-        const fs::path p = writeTempConfig("extcb_default", extCbConfig(""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_FALSE(cfg.networkExternalSatCodeBias());
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Control: estimate_iono_sh alone still force-chains W6 and still turns the
-    // .BIA off.  EXT-CB leaves this behaviour untouched.
-    {
-        const fs::path p = writeTempConfig("extcb_control",
-            extCbConfig("    \"estimate_iono_sh\": true,\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.estimateNetworkIonoSh());
-        EXPECT_TRUE(cfg.estimateNetworkSatCodeBias());
-        EXPECT_FALSE(cfg.getModelCorrections().enable_code_phase_bias);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // EXT-CB + SH: the SH field stays co-estimated, the W6 slice is not armed,
-    // the .BIA stays applied, and the receiver DCB is forced on (trap #4: on
-    // undifferenced rows the per-(rx,constellation) GF code lump needs an
-    // explicit state, or it is absorbed into the slant iono and conflicts with
-    // the field).
-    {
-        const fs::path p = writeTempConfig("extcb_sh",
-            extCbConfig("    \"external_sat_code_bias\": true,\n"
-                        "    \"estimate_iono_sh\": true,\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.networkExternalSatCodeBias());
-        EXPECT_TRUE(cfg.estimateNetworkIonoSh());
-        EXPECT_FALSE(cfg.estimateNetworkSatCodeBias())
-            << "EXT-CB must suppress the estimate_iono_sh -> W6 force chain.";
-        EXPECT_TRUE(cfg.getModelCorrections().enable_code_phase_bias)
-            << "the .BIA is the satellite bias SOURCE in this posture.";
-        EXPECT_TRUE(cfg.estimateIfb());
-        EXPECT_FALSE(cfg.estimateSatBiases())
-            << "no satellite code-bias state — the product supplies it.";
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
-// Two satellite code-bias sources cannot both be selected: W6 estimates its own
-// OSB and skips the .BIA entirely, EXT-CB consumes the .BIA and creates no
-// state.  Arming both would ask for a state on rows the product already
-// corrected.  An explicit enable_code_phase_bias=false under EXT-CB leaves the
-// satellite code bias neither applied nor estimated (the V1 slant-absorption
-// posture under EXT-CB's name).  Both configurations fail the load.
-TEST(NetworkExternalSatCodeBiasConfig, RejectsW6AndAnExplicitBiaOff) {
-    LogManager log;
-
-    {
-        const fs::path p = writeTempConfig("extcb_w6",
-            extCbConfig("    \"external_sat_code_bias\": true,\n"
-                        "    \"estimate_sat_code_bias\": true,\n"));
-        GnssConfig cfg;
-        EXPECT_FALSE(cfg.loadFromJson(p, log));
-        std::error_code ec; fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("extcb_nobia",
-            extCbConfig("    \"external_sat_code_bias\": true,\n",
-                        /*estimation_block=*/"",
-                        "  \"model_corrections\": { \"enable_code_phase_bias\": false },\n"));
-        GnssConfig cfg;
-        EXPECT_FALSE(cfg.loadFromJson(p, log));
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
-// The .BIA is a daily post-processing bias product, and the self-sufficient
-// real-time service does not have one (the same reasoning that makes the
-// external-GIM code-bias path post-processing-only).  A real-time producer
-// takes its satellite biases from an SSR stream, a different mechanism with its
-// own age/continuity semantics.
-TEST(NetworkExternalSatCodeBiasConfig, RejectsBrdcRtsApriori) {
-    LogManager log;
-    const fs::path p = writeTempConfig("extcb_brdc",
-        extCbConfig("    \"external_sat_code_bias\": true,\n"
-                    "    \"estimate_iono_sh\": true,\n"
-                    "    \"apriori_source\": \"brdc_rts\",\n"));
-    GnssConfig cfg;
-    EXPECT_FALSE(cfg.loadFromJson(p, log));
-    std::error_code ec; fs::remove(p, ec);
 }
 
 // ---------------------------------------------------------------------------

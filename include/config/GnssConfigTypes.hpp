@@ -1164,13 +1164,12 @@ namespace GnssProcessor {
      * any consumer that floats its own per-satellite slant ionosphere, as the project's
      * consumer does.
      *
-     * @ref Zero pins the combination at 0, the same arbitrary but legal choice that
-     * @c network.code_bias_gf_datum makes.  That knob implements the identical row but is
-     * refused under @c frequency_mode = dual, where it would also fix the ionosphere-free
-     * half and leave nothing estimable; RF-0c reaches the row at dual because it is armed
-     * independently of that gate.  @ref BroadcastTgd pins it at the value the navigation
-     * message already asserts: the broadcast clock is referenced to the L1/L2
-     * ionosphere-free combination, and the single-frequency user corrections
+     * @ref Zero pins the combination at 0, an arbitrary but legal S-basis choice (the
+     * retired slant-posture pin, @c network.code_bias_gf_datum, built the identical row
+     * but was refused under @c frequency_mode = dual; RF-0c reaches the row at dual
+     * because it is armed independently of that gate).  @ref BroadcastTgd pins it at the
+     * value the navigation message already asserts: the broadcast clock is referenced to
+     * the L1/L2 ionosphere-free combination, and the single-frequency user corrections
      * @f$\Delta t_{L1} = \Delta t_{SV} - T_{GD}@f$, @f$\Delta t_{L2} = \Delta t_{SV} -
      * \gamma T_{GD}@f$ imply @f$d^s_1 = c\,T_{GD}@f$ and @f$d^s_2 = c\,\gamma\,T_{GD}@f$
      * (IS-GPS-200 §20.3.3.3.3.2).  These satisfy the ionosphere-free pin exactly
@@ -1200,15 +1199,13 @@ namespace GnssProcessor {
      * @f$I_r^s \to I_r^s + \beta^s@f$ at every station is exactly compensated by
      * @f$d^s_j \to d^s_j - \mu_j \beta^s@f$ (Odijk et al. 2016, J Geod 90:15-44, rank
      * deficiency 3b).  Something has to close that per-satellite direction.  The other
-     * two answers are a single-layer constraint (the co-estimated SH-VTEC field, or the
-     * external IONEX GIM) and the hard geometry-free pin (@c network.code_bias_gf_datum),
-     * which needs a third frequency to leave anything estimable and is refused under
-     * @c processing.frequency_mode = dual.
+     * answer is a single-layer constraint (the co-estimated SH-VTEC field, or the
+     * external IONEX GIM).
      *
      * Without this option, GPS-only dual-frequency processing has no posture that works
      * without external ionosphere data: the loader forces
      * @c estimation.ionosphere_weighting on, and the run fails without a `.INX` (RF-0
-     * finding 2).  This option adds a third answer: no ionosphere constraint at all,
+     * finding 2).  This option adds a second answer: no ionosphere constraint at all,
      * with the satellite code-bias datum carried by the rows the tree already folds
      * every epoch (@ref NetworkSbasis::buildCodeBiasDatumRows: the per-satellite
      * ionosphere-free pin plus the per-(constellation, signal) sum-to-zero rows, i.e.
@@ -1229,8 +1226,8 @@ namespace GnssProcessor {
      * standing invariant #6).  Solve-affecting when set to @ref None.
      */
     enum class NetworkW6IonoConstraint {
-        Auto, ///< (default) the original three-way selection: the co-estimated SH-VTEC field if `network.estimate_iono_sh`, else the free-slant Odijk posture if `network.code_bias_gf_datum`, else the external IONEX GIM (hard error without a `.INX`).  Byte-identical to the producer before this knob.
-        None  ///< No ionosphere constraint: free per-LOS slant ionosphere, no GIM loaded, `estimation.ionosphere_weighting` forced off, and the satellite code-bias datum left to the IF pin and the per-(constellation, signal) sum-to-zero rows.  Refuses `network.estimate_iono_sh` and `network.code_bias_gf_datum` (each is a different answer to the same rank deficiency); inert without `network.estimate_sat_code_bias`.
+        Auto, ///< (default) the original selection: the co-estimated SH-VTEC field if `network.estimate_iono_sh`, else the external IONEX GIM (hard error without a `.INX`).  Byte-identical to the producer before this knob.
+        None  ///< No ionosphere constraint: free per-LOS slant ionosphere, no GIM loaded, `estimation.ionosphere_weighting` forced off, and the satellite code-bias datum left to the IF pin and the per-(constellation, signal) sum-to-zero rows.  Refuses `network.estimate_iono_sh` (a different answer to the same rank deficiency); inert without `network.estimate_sat_code_bias`.
     };
 
     /**
@@ -1821,53 +1818,16 @@ namespace GnssProcessor {
         /// @c Plan::declared_dimension is untouched.  Requires
         /// @c w6_iono_constraint = @c None.  Solve-affecting when armed.
         NetworkSatGfDatum sat_gf_datum{ NetworkSatGfDatum::NoneMode };
-        /// One absolute sum-to-zero row per constellation on the ionosphere-free
-        /// combination of the satellite code biases,
-        /// @f$\sum_s (a_1 d^s_1 + a_2 d^s_2) = 0@f$, folded at the gauge weight in place
-        /// of the per-signal sum-to-zero rows that @ref sat_gf_datum suppresses (RF-0e,
-        /// arm e1).
-        ///
-        /// Why this row and not the per-signal ones: a per-signal sum-to-zero is
-        /// inconsistent with per-satellite geometry-free pins.  The pins fix each
-        /// satellite's code biases absolutely, so the channel sums are then
-        /// `mu_j*c*Sum_s T_GD^s`, not zero, and the two families conflict (RF-0d removed
-        /// that conflict).  This row constrains only the ionosphere-free part, which the
-        /// geometry-free pins leave entirely free: they fix differences within a
-        /// satellite, never the level.  Under the broadcast convention the row is also
-        /// exactly true: the broadcast clock is referenced to the L1/L2 ionosphere-free
-        /// combination, so every satellite's ionosphere-free code bias is zero there and
-        /// so is the sum, which is why the residual against a `broadcast_tgd`-pinned
-        /// roster is identically 0.
-        ///
-        /// What it fixes: with `code_datum_time_linked` armed, the per-satellite IF pins
-        /// are change pins (@ref NetworkSbasis::buildCodeBiasDatumRows).  The RHS is the
-        /// previous kept epoch's solved IF combination whenever both signals have a
-        /// previous (veteran) value and the pair is unchanged; otherwise it is 0, an
-        /// absolute anchor, and a satellite seen before (or any satellite of a resumed
-        /// run) is marked for a re-seed bump.  Each satellite's level is therefore
-        /// anchored once, at first sighting, and carried by a finite-weight row
-        /// thereafter; nothing holds the level of the set, and over a 6 h run the clock
-        /// / IF-bias split walks.  This row is the absolute anchor, and a strong one: its
-        /// Jacobian carries one entry per satellite, so its leverage on the level scales
-        /// with n and outweighs the n individual single-entry change pins.  At equal
-        /// gauge weight the realized level lands at `carried/(n+1)`: the level is
-        /// re-zeroed each epoch while the per-satellite differences stay carried.  The
-        /// unit test computes this (L = 0.75, n = 32 → 0.0227).
-        ///
-        /// Default off: no row, byte-identical.  Inert (with a warning) without
-        /// @ref sat_gf_datum, whose suppression it replaces.
-        bool sat_if_level_datum{ false };
         /// Time-link the RHS of the geometry-free rows: a change pin on the
         /// geometry-free combination that carries the previous kept epoch's solved
         /// value, with the absolute `c*T_GD` (or 0 under @c Zero) used only at first
         /// sighting (RF-0e, arm e2).
         ///
-        /// The alternative answer to the same RF-0d regression: instead of adding a
-        /// level row, the geometry-free rows behave like every other datum row on a
-        /// `code_datum_time_linked` lineage, so the absolute and the carried families
-        /// stop pulling against each other.  Mutually exclusive with
-        /// @ref sat_if_level_datum by configuration convention, not by construction:
-        /// the two are the arms of one A/B, and arming both measures neither.
+        /// The answer to the RF-0d regression: the geometry-free rows behave like every
+        /// other datum row on a `code_datum_time_linked` lineage, so the absolute and the
+        /// carried families stop pulling against each other.  (The other arm of that
+        /// A/B, e1's absolute ionosphere-free level row, @c network.sat_if_level_datum,
+        /// is retired.)
         ///
         /// Default off: the RF-0c/RF-0d absolute RHS, byte-identical.  Inert (with a
         /// warning) without @ref sat_gf_datum.

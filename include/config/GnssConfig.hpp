@@ -139,8 +139,8 @@ namespace GnssProcessor {
          * @c ProcessingMode::PPP_RTK; turns the producer-forced shared-state
          * estimation flags back off (@c estimate_sat_clocks /
          * @c estimate_sat_phase_biases / @c promote_sat_code_bias /
-         * @c estimate_network_sat_code_bias / @c network_external_sat_code_bias /
-         * @c estimate_network_iono_sh and the SH-VTEC block); couples
+         * @c estimate_network_sat_code_bias / @c estimate_network_iono_sh and the
+         * SH-VTEC block); couples
          * @c estimate_sat_biases to the clock source (@p consume_clock: the
          * network clock folds the satellite code delay, so a consumer of the
          * network clock does not re-estimate it, while a bias-only consumer on
@@ -1640,8 +1640,7 @@ namespace GnssProcessor {
          * promote_sat_code_bias / @c estimate_ifb (receiver DCB) on, and the GIM
          * ionosphere weighting on (the iono constraint that makes the satellite
          * DCB observable) unless @c network.w6_iono_constraint is @c none (then
-         * forced off) or @c network.code_bias_gf_datum is armed (then left as
-         * configured).  It forces @c enable_code_phase_bias and
+         * forced off).  It forces @c enable_code_phase_bias and
          * @c estimate_phase_clock off, so the network estimates the full bias
          * from scratch rather than a residual to @c .BIA.  Default false keeps
          * the clock+phase-bias-only V1 network byte-identical.  See
@@ -1706,73 +1705,9 @@ namespace GnssProcessor {
          * from the external-GIM target to the co-estimated SH field.  Mutually
          * exclusive with loading an external GIM for the same purpose (no
          * double-apply).  Default false keeps the external-GIM W6 path byte-identical.
-         *
-         * @note Exception (EXT-CB): under @ref networkExternalSatCodeBias the W6
-         *       force is suppressed.  The satellite code bias comes from the
-         *       external `.BIA`, so the SH field needs no satellite DCB column to
-         *       be separable.  The rest of the SH slice is unchanged (same model
-         *       construction, same row builder, same elevation cutoff).
          */
         bool estimateNetworkIonoSh() const { return estimate_network_iono_sh_; }
 
-        /**
-         * @brief Take the satellite code and phase biases from the external `.BIA`
-         *        product instead of estimating them (@c network.external_sat_code_bias).
-         *
-         * The third satellite-bias posture, beside the two already reachable:
-         *
-         *  | posture | sat code bias | iono constraint |
-         *  |---|---|---|
-         *  | V1 (default) | absorbed by the free slant iono | none |
-         *  | W6 (@ref estimateNetworkSatCodeBias) | estimated (own OSB) | SH-VTEC or GIM |
-         *  | EXT-CB (this) | external `.BIA` | SH-VTEC (or none) |
-         *
-         * Without it, @c estimate_iono_sh force-chains @c estimate_sat_code_bias
-         * on, which forces @c model_corrections.enable_code_phase_bias off, so
-         * SH-VTEC with external satellite biases (the classical known-DCB
-         * global-iono setup) is unreachable.  Arming this suppresses that chain.
-         *
-         * It forces one coupled slice, W6 minus the satellite column:
-         *  - @c estimate_sat_biases / @c promote_sat_code_bias stay off, since
-         *    the product supplies the bias and there is no state for it;
-         *  - @c model_corrections.enable_code_phase_bias on, the `.BIA` being
-         *    the source (an explicit @c false in the JSON is a hard error, never
-         *    a silent override);
-         *  - @c estimate_ifb on, since on undifferenced rows the
-         *    per-(rx,constellation) GF code lump needs an explicit receiver-DCB
-         *    state; otherwise the slant iono absorbs it and it conflicts with
-         *    the SH field;
-         *  - @c ionosphere_weighting.enable on when the SH field is co-estimated.
-         *
-         * @warning The `.BIA` applies to both code and phase rows: the lookup is
-         *          keyed on the raw signal string, so `"L1W"` hits the phase OSB
-         *          exactly as `"C1W"` hits the code one.  A product with no phase
-         *          OSB for a signal contributes 0 and the float ambiguity absorbs
-         *          the bias.
-         * @warning Product coverage is the binding limit, not the code.  COD MGX
-         *          FIN OSB carries GPS L1/L2 only, so a `frequency_mode: triple`
-         *          arm leaves the third band's satellite delay uncorrected with no
-         *          state to absorb it.  Pair this with a frequency mode the product
-         *          covers; @c estimation.require_bia_for_signals makes the gap a
-         *          hard failure.
-         *
-         * Post-processing only: a hard error under @c network.apriori_source =
-         * @c brdc_rts, since a daily bias product is not available to the
-         * self-sufficient real-time service.  Mutually exclusive with
-         * @c network.estimate_sat_code_bias.  Default false ⇒ byte-identical.
-         *
-         * @see estimateNetworkSatCodeBias, estimateNetworkIonoSh
-         */
-        bool networkExternalSatCodeBias() const { return network_external_sat_code_bias_; }
-
-        /// @brief Per-satellite geometry-free code-bias pin, slant posture (CB-GF-DATUM).
-        /// @return true when the GF gauge rows are folded (see @ref network_code_bias_gf_datum_).
-        bool networkCodeBiasGfDatum() const { return network_code_bias_gf_datum_; }
-        /// @brief Extend the GF pin to each partitioned secondary channel family (FAMILY-GF).
-        /// @return true when per-(satellite, secondary-family) GF rows are folded
-        ///         (see @ref network_code_bias_gf_datum_per_family_ and
-        ///         docs/SPEC_family_gf_datum.md).
-        bool networkCodeBiasGfDatumPerFamily() const { return network_code_bias_gf_datum_per_family_; }
         /**
          * @brief Gauge the receiver code-bias set with one @f$\sum_r d_{r,c}=0@f$
          *        per constellation (@c network.rx_code_bias_datum).
@@ -1780,10 +1715,10 @@ namespace GnssProcessor {
          * The receiver-side counterpart of the W6 per-(constellation,signal)
          * satellite code-bias sum-to-zero, and the standard IGS
          * zero-mean-over-receivers DCB convention.  Needed whenever the
-         * satellite half of that gauge is absent, i.e. under
-         * @ref networkExternalSatCodeBias, where the satellite code biases come
-         * from the product and take their datum with them, leaving the
-         * receiver-DCB common mode confounded with the global ionosphere level.
+         * satellite half of that gauge is absent (no W6 satellite code-bias
+         * columns; it was built for the retired external-.BIA posture, EXT-CB),
+         * leaving the receiver-DCB common mode confounded with the global
+         * ionosphere level.
          *
          * Realized before the reduction as a diagonal prior
          * @f$d_r\sim N(0,\sigma^2)@f$ on every station's receiver DCB
@@ -1798,7 +1733,7 @@ namespace GnssProcessor {
          * without an explicit receiver-DCB state there is nothing to gauge and
          * the toggle is inert (warned).  Default false ⇒ byte-identical.
          *
-         * @see networkExternalSatCodeBias, networkRxCodeBiasDatumSigmaM
+         * @see networkRxCodeBiasDatumSigmaM
          */
         bool networkRxCodeBiasDatum() const { return network_rx_code_bias_datum_; }
 
@@ -4510,52 +4445,6 @@ namespace GnssProcessor {
         bool networkClockDatumBroadcastAnchored() const { return network_clock_datum_broadcast_anchored_; }
 
         /**
-         * @brief Whether the per-satellite clock↔code-bias split (the
-         *        ionosphere-free "signal basis" the emitted satellite clock is
-         *        anchored to) is held fixed across epochs
-         *        (@c network.clock_signal_basis_hold, W6 only).
-         *
-         * @par The datum this fixes (distinct from the per-constellation gauge)
-         * Two independent clock datums exist in the uncombined network:
-         *  - the per-constellation common mode (1 dof/const): pivot / sum-to-zero /
-         *    broadcast-anchored.  A consumer that estimates a receiver clock absorbs
-         *    it, so it does not drive the consumer vertical.
-         *  - the per-satellite clock↔code-bias split (1 dof/sat): which iono-free
-         *    code-signal pair @f$\delta t^s@f$ is referenced to, realized by the IF
-         *    pin @f$a_1 d^s_{\sigma_1}+a_2 d^s_{\sigma_2}=0@f$.  The between-satellite
-         *    difference is datum-invariant at a single epoch, but a per-epoch change
-         *    of the reference pair injects a per-satellite differential step into the
-         *    emitted clock series that a receiver clock cannot absorb.
-         *
-         * @par Why it moves by default
-         * The pair is re-selected every epoch from @c registered_code_keys (the two
-         * lowest distinct-frequency ≥2-station signals).  When a sparse auxiliary
-         * channel crosses that coverage threshold (the band-1 canonical flips
-         * C1C↔C1W, or a band drops), the pair changes and the clock re-anchors by
-         * the satellite's inter-channel code bias.  Over a run that is a continual,
-         * unsignalled per-satellite clock wander, which the consumer absorbs into
-         * per-sat iono and from there into the vertical.
-         *
-         * @par The fix: a fixed, time-consistent convention (the IGS clock model)
-         * When on, each satellite latches its reference pair on first registration
-         * and holds it while both signals stay registered, so the emitted
-         * @f$(\delta t^s, d^s_\sigma)@f$ pair is time-consistent: the clock is
-         * anchored to one signal basis for the whole run (mirroring the fixed
-         * IF(C1W,C2W)/IF(C1C,C5Q) convention IGS clock products publish).  The pair
-         * re-latches only when a held reference signal actually leaves the
-         * ≥2-station set (rare for the dense canonical codes), a much smaller and
-         * far less frequent datum move than per-epoch re-selection.  Composes with
-         * any per-constellation gauge (pin / sum-to-zero / broadcast-anchored);
-         * the directions are orthogonal.  Requires
-         * @c network.estimate_sat_code_bias (the IF pin only exists in W6);
-         * inert and warned otherwise.  Default false = per-epoch re-selection
-         * (byte-identical).
-         *
-         * @see estimateNetworkSatCodeBias, networkClockDatumSumToZero
-         */
-        bool networkClockSignalBasisHold() const { return network_clock_signal_basis_hold_; }
-
-        /**
          * @brief Impose the W6 code-bias datum (per-satellite IF pin + per-
          *        (constellation,signal) sum-to-zero) as a time datum: pin the change
          *        from the previous epoch's solved values, not the level to zero
@@ -4598,15 +4487,12 @@ namespace GnssProcessor {
          * with disc bumps (correct and signalled).  The toggle is in the snapshot
          * fingerprint (estimation-relevant).
          *
-         * Requires @ref networkClockSignalBasisHold to be off (a hard error at load
-         * if both are armed): both mechanisms re-target the same IF-pin row, and
-         * time-linking subsumes the hold for the pin value.  Meaningful only under
-         * @ref estimateNetworkSatCodeBias (the datum it re-times only exists in W6);
-         * inert and warned otherwise.  Default false = the legacy zero-target datum
-         * (byte-identical).
+         * Meaningful only under @ref estimateNetworkSatCodeBias (the datum it
+         * re-times only exists in W6); inert and warned otherwise.  Default false =
+         * the legacy zero-target datum (byte-identical).
          *
-         * @see estimateNetworkSatCodeBias, networkClockSignalBasisHold,
-         *      NetworkSbasis::codeS2zTimeLink, NetworkSbasis::selectIfPinPair
+         * @see estimateNetworkSatCodeBias, NetworkSbasis::codeS2zTimeLink,
+         *      NetworkSbasis::selectIfPinPair
          */
         bool networkCodeDatumTimeLinked() const { return network_code_datum_time_linked_; }
 
@@ -4661,11 +4547,10 @@ namespace GnssProcessor {
          *
          * Both steps keep the clock only when every other row on the satellite's code-bias
          * columns also carries its previous value: no geometry-free datum, or
-         * @c network.sat_gf_datum with @c network.sat_gf_datum_time_linked, and neither
-         * @c network.code_bias_gf_datum nor @c network.sat_if_level_datum
-         * (@c NetworkSbasis::pinPairContinuityBlocker; under any of those the arm is inert
-         * with a warning, because those rows re-assert an absolute target on the new pair
-         * and the step would go out undeclared).  The geometry-free pair and extra rows
+         * @c network.sat_gf_datum with @c network.sat_gf_datum_time_linked
+         * (@c NetworkSbasis::pinPairContinuityBlocker; otherwise the arm is inert with a
+         * warning, because those rows re-assert an absolute target on the new pair and
+         * the step would go out undeclared).  The geometry-free pair and extra rows
          * follow the pinned (held) pair.  A channel-level re-seed (the sum-to-zero or
          * family-difference row of a channel with no veteran) still marks the satellites
          * it re-references, held or continued ones included, and that mark is declared.
@@ -8711,34 +8596,9 @@ namespace GnssProcessor {
         bool enable_glonass_bssd_;                        ///< Allow GLONASS satellites in BSSD (FDMA ICB → off by default).
         bool enable_glonass_ifb_;                         ///< Estimate per-FCN-slot GLONASS receiver code IFB (requires estimate_ifb + uncombined).
         bool enable_glonass_network_{false};              ///< Admit GLONASS to the PPP-RTK network producer (code-only: sat clock + per-slot rx IFB; no FDMA phase bias).
-        bool estimate_network_sat_code_bias_{false};      ///< Estimate satellite code bias (OSB) in the PPP-RTK network producer (W6; forces sat-bias/ifb on, iono weighting on unless the W6 iono constraint is none or the GF datum is armed, .BIA off).
-        bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6 unless EXT-CB is armed; replaces external GIM as the iono constraint).
-        bool network_external_sat_code_bias_{false};      ///< Take satellite code+phase biases from the external .BIA instead of estimating them (EXT-CB; suppresses the estimate_iono_sh -> W6 force; forces enable_code_phase_bias + estimate_ifb on).  Default off => byte-identical.
-        /// A per-satellite geometry-free pin on the IF-pinned code-bias pair,
-        /// `(d_2 − d_1)/(μ2 − μ1) = 0` (CB-GF-DATUM; Odijk 2016 rd 3b, Table 7).  Required
-        /// by, and legal only in, the slant posture (@ref estimateNetworkSatCodeBias with
-        /// no ionosphere constraint), where the satellite hardware biases are otherwise
-        /// rank-deficient against the free per-LOS slant ionosphere.  Under a
-        /// single-layer constraint (SH or GIM) the geometry-free bias is estimable
-        /// (their Eq. 29-32: it is the DCB), so pinning it there would remove the very
-        /// parameter that posture exists to emit; the loader refuses that combination.
-        /// Together with the IF pin it drives the first two frequencies' code biases to
-        /// exactly zero, which is Odijk's "not estimable below three frequencies"
-        /// realized as a datum; what remains estimable is the modernized DCB
-        /// d^s_1 − d^s_j for j ≥ 3.  Default off => byte-identical.
-        bool network_code_bias_gf_datum_{false};
-        /// Extend the GF pin above to one extra geometry-free row per (satellite,
-        /// partitioned secondary channel family) (FAMILY-GF).  Odijk rd 3b re-derives per
-        /// receiver channel family when the station population splits (Galileo C/Q-vs-X):
-        /// the primary family's pin never reaches the secondary family's columns, leaving
-        /// one mu-patterned null direction per satellite that the secondary stations' free
-        /// slant iono absorbs.  Deliberately GF-only: the satellite clock is shared and
-        /// already realized by the primary IF pin, so the secondary family's IF
-        /// combination is the estimable inter-family ISC and pinning it would over-pin a
-        /// data-determined quantity.  Requires network_code_bias_gf_datum_.  Default off =>
-        /// byte-identical (with no partitioned family the census emits no rows at all).
-        bool network_code_bias_gf_datum_per_family_{false};
-        bool network_rx_code_bias_datum_{false};        ///< Receiver-DCB datum (RXCB-DATUM): a loose zero-mean prior on every receiver DCB that realizes one sum-to-zero-over-receivers gauge per constellation (the IGS convention; replaces the satellite-side zero-mean that EXT-CB gives up).  Default off => byte-identical.
+        bool estimate_network_sat_code_bias_{false};      ///< Estimate satellite code bias (OSB) in the PPP-RTK network producer (W6; forces sat-bias/ifb on, iono weighting on unless the W6 iono constraint is none, .BIA off).
+        bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6; replaces external GIM as the iono constraint).
+        bool network_rx_code_bias_datum_{false};        ///< Receiver-DCB datum (RXCB-DATUM): a loose zero-mean prior on every receiver DCB that realizes one sum-to-zero-over-receivers gauge per constellation (the IGS convention; replaces the satellite-side zero-mean where no satellite code-bias column exists).  Default off => byte-identical.
         double network_rx_code_bias_datum_sigma_m_{10.0};  ///< Loose physical-bound sigma (m) of the receiver-DCB datum (RXCB-DATUM); realized common-mode info = 1/sigma^2, station-count independent.
         bool network_cb_admission_{false};                ///< Run-latched W6 code-bias admission census + station-local quarantine (CB-ADM; replaces the per-epoch >=2-station gate as the remedy for BeiDou sparsity).  Default off => legacy path byte-identical.
         int  network_cb_admission_min_stations_{4};       ///< Min supporting-station count for an admitted code pair (CB-ADM); effective_min = max(2, min(this, n_census_stations)).
@@ -8914,8 +8774,7 @@ namespace GnssProcessor {
         bool   network_sticky_pivot_{false};               ///< Keep the incumbent clock-pivot satellite per constellation while it remains registered (RTA-1; re-select only when it sets; a config-pinned satellite still wins); off = lexical first-registered auto-pick every epoch (byte-identical).
         bool   network_clock_datum_sum_to_zero_{false};    ///< Realize the per-constellation clock gauge by a sum-to-zero over that constellation's satellite clocks (folded like the code-bias gauge) instead of a hard pivot pin: anchor-free, no handover seam, no pivot-absent SPOF; ignores clock_datum_satellite. Off = legacy per-constellation pivot pin (byte-identical).
         bool   network_clock_datum_broadcast_anchored_{false}; ///< brdc_rts only: realize the clock gauge by per-satellite soft anchors to each satellite's own broadcast clock (the a-priori; σ = resolveNetworkAprioriClockAnchorSigmaM(), folded before the gate as the datum): no pivot, no handover seam, and unlike sum-to-zero no common-mode redistribution wander on rise/set, so the absolute clock-product frame holds still against the broadcast reference. Mutually exclusive with clock_datum_sum_to_zero; requires apriori_source=brdc_rts (fail-loud). Off = unchanged (byte-identical).
-        bool   network_clock_signal_basis_hold_{false};    ///< Hold the per-satellite clock↔code-bias IF-pin reference pair (the ionosphere-free "signal basis" the emitted satellite clock is anchored to) fixed across epochs (W6 only; latch on first registration, re-latch only when a held reference signal leaves the ≥2-station set), so the emitted (δtˢ, dˢ) split is time-consistent (the IGS fixed-clock-convention analogue) instead of re-anchoring by the satellite's inter-channel bias every time a sparse channel enters/leaves coverage (defect-2 differential-clock wander). Requires estimate_sat_code_bias (inert and warned otherwise); orthogonal to the per-constellation gauge. Off = per-epoch re-selection (byte-identical).
-        bool   network_code_datum_time_linked_{false};     ///< Impose the code-bias datum (per-sat IF pin + per-(const,signal) sum-to-zero) as a time datum (card 2, W6 only): pin the change from the previous epoch's solved values (veteran-referenced sum-to-zero RHS Σ b̂_prev, IF-pin RHS a1·b̂_prev(σ1)+a2·b̂_prev(σ2)) instead of the level to zero. Same row count (rank unchanged), so no set-mean wander/relaxation and no conflict between gauge and carry weights; a no-veteran channel or first split re-seeds at 0 with a per-sat disc bump (value step ↔ signalled discontinuity). The prev-value map crosses a warm resume only with state_snapshot_datum_capture + resume_datum_restore; otherwise a warm resume re-seeds, signalled. Mutually exclusive with clock_signal_basis_hold (both re-target the IF-pin row; fail-loud). Requires estimate_sat_code_bias (inert and warned otherwise). Off = legacy zero-target datum (byte-identical).
+        bool   network_code_datum_time_linked_{false};     ///< Impose the code-bias datum (per-sat IF pin + per-(const,signal) sum-to-zero) as a time datum (card 2, W6 only): pin the change from the previous epoch's solved values (veteran-referenced sum-to-zero RHS Σ b̂_prev, IF-pin RHS a1·b̂_prev(σ1)+a2·b̂_prev(σ2)) instead of the level to zero. Same row count (rank unchanged), so no set-mean wander/relaxation and no conflict between gauge and carry weights; a no-veteran channel or first split re-seeds at 0 with a per-sat disc bump (value step ↔ signalled discontinuity). The prev-value map crosses a warm resume only with state_snapshot_datum_capture + resume_datum_restore; otherwise a warm resume re-seeds, signalled. Requires estimate_sat_code_bias (inert and warned otherwise). Off = legacy zero-target datum (byte-identical).
         bool   network_code_datum_pair_continuity_{false};  ///< Card GFC, hold then continue: at an IF-pin pair change with previous solved values on both new signals, target the new pair's previous IF combination (the clock continues) instead of re-seeding at 0, with no re-seed mark and the re-selection discontinuity left undeclared when the last emitted pair is the pair continued from; where an entering signal has no previous value yet, keep the last kept pair (its own previous combination carries) for the one kept epoch until it has, unless the held pair has no previous values or, under broadcast_tgd, the group delay describes the selected pair and not the held one. Read only under code_datum_time_linked and where no row re-asserts an absolute target at a pair change (NetworkSbasis::pinPairContinuityBlocker); inert and warned otherwise. Fingerprinted when armed. Off = re-seed at every pair change (byte-identical).
         bool   network_code_datum_family_difference_{false}; ///< Card GFC: replace a secondary-family (X) Galileo code channel's surviving sum-to-zero row by Sigma (d_X - d_P) over the satellites carrying both it and its same-band primary-family partner (time-linked like the sum-to-zero row; the sum-to-zero row kept with no partner, no common satellite, all spanned X columns pinned, or for the one epoch a family re-seed would replace a carried level). Read only under code_datum_time_linked (inert and warned otherwise). Fingerprinted when armed. Off = the sum-to-zero row (byte-identical).
         double network_code_family_birth_prior_sigma_m_{0.0}; ///< Card GFC step 2: sigma (m) of the first-sighting family prior, one soft shared row d_X - d_P = mu (mu = the family row's veteran mean of the previous differences, 0 with no veteran) folded once per (satellite, birth) when a Galileo band-1 secondary (X) column or its primary partner is born (the carry does not continue it; a READMIT seed does) while the other is registered; no row where no realized family mean exists (bridged / dependent without a veteran). Read only with code_datum_family_difference under code_datum_time_linked (inert and warned otherwise). Fingerprinted when armed. 0 = off (byte-identical); negative, non-finite or < 0.01 m refused at load, <= 1/sqrt(1e3) m warned.

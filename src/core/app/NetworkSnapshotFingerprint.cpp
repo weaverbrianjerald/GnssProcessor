@@ -75,7 +75,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
     const double q_cb = ctx.knobs.q_cb;
     const bool   clock_sum_to_zero = ctx.knobs.clock_sum_to_zero;
     const bool   clock_brdc_anchored = ctx.knobs.clock_brdc_anchored;
-    const bool   clock_signal_basis_hold = ctx.knobs.clock_signal_basis_hold;
     const bool   pb_excl_unmatched = ctx.knobs.pb_excl_unmatched;
     const bool   cb_time_linked = ctx.knobs.cb_time_linked;
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond;
@@ -291,15 +290,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         add(fmt::format("{}", emit_gen_id));
         add(fmt::format("{}", config_.estimateNetworkSatCodeBias()));
         add(fmt::format("{}", config_.estimateNetworkIonoSh()));
-        // External satellite code bias (EXT-CB): the satellite code bias moves from a
-        // shared column to a modelled correction on the observable, and the forced rx DCB
-        // adds a local state, so a carried shared border means something different with it
-        // armed and a warm resume cannot cross the flip.  The (sat_code_bias, iono_sh) pair
-        // above reads (false, true) only in this posture, but that is an inference from a
-        // coupling, so the knob itself is appended to state it.  Appended only when armed
-        // (the rxcb/shl2/iono2 pattern), so a snapshot written with it off keeps its
-        // fingerprint.
-        if (config_.networkExternalSatCodeBias()) add("extcb:1");
         // The receiver code-bias datum (RXCB-DATUM) changes which receiver-DCB combination
         // is realized, so the carried rx-CB levels mean something different with it armed.
         // Appended only when armed, like the others.
@@ -428,12 +418,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // only when armed, so a snapshot written with it off keeps its fingerprint.
         if (config_.getNetworkConfig().disc_mark_scope == "channel")
             add("discscope=channel");
-        // The held clock signal basis defines which IF combination each carried clock
-        // state is referenced to; a resume across a toggle change would mix clock states in
-        // a frame re-selected per epoch with states in a held frame.  Appended only when
-        // armed, so a snapshot written with it off keeps its fingerprint.
-        if (clock_signal_basis_hold)
-            add(fmt::format("clkbasishold={}", clock_signal_basis_hold));
         // Excluding unmatched-antenna stations from phase-bias emission changes which
         // per-(sat,signal) phase-bias states the carried solution holds; a resume across a
         // toggle change would carry a different shared-state set.  Appended only when

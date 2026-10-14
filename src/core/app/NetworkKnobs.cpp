@@ -208,7 +208,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.sticky_pivot = config_.networkStickyPivot();
     k.clock_sum_to_zero = config_.networkClockDatumSumToZero();
     k.clock_brdc_anchored = config_.networkClockDatumBroadcastAnchored();
-    k.clock_signal_basis_hold = config_.networkClockSignalBasisHold();
     k.cb_time_linked = config_.networkCodeDatumTimeLinked();
     k.scoped_handover = config_.networkScopedHandoverResponse();
     k.handover_stransform = config_.networkHandoverStransform();

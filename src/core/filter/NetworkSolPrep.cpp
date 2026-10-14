@@ -81,7 +81,6 @@ NetworkSolPrepResult networkSolPrep(
     auto& last_pivot = ctx.carry.last_pivot;
     auto& this_epoch_if_pin_sel = ctx.carry.this_epoch_if_pin_sel;
     auto& this_epoch_if_pin_real = ctx.carry.this_epoch_if_pin_real;
-    auto& this_epoch_gf_pin_real = ctx.carry.this_epoch_gf_pin_real;
     auto& last_if_pin_sel = ctx.carry.last_if_pin_sel;
     auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
     auto& emitted_anchor = ctx.carry.emitted_anchor;
@@ -89,7 +88,6 @@ NetworkSolPrepResult networkSolPrep(
     auto& eq34_emitted_pdr = ctx.carry.eq34_emitted_pdr;
     auto& clock_osc = ctx.carry.clock_osc;
     auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
-    auto& basis_relatch_disc_pending = ctx.carry.basis_relatch_disc_pending;
     auto& this_epoch_cb_reseed = ctx.carry.this_epoch_cb_reseed;
     auto& cb_reseed_disc_pending = ctx.carry.cb_reseed_disc_pending;
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
@@ -858,41 +856,8 @@ NetworkSolPrepResult networkSolPrep(
                               std::nullopt, "disc_bump", "clock_anchor_decoupled");
         }
     }
-    // Land the clock_signal_basis_hold re-latch disc bumps this emit (T3c), with the same
-    // present/pending split: a re-latched satellite absent from this emission waits for
-    // its next actual emit.  The re-latch re-splits δtˢ↔dˢ, so all three channels step,
-    // and markSatDiscontinuity bumps the per-satellite phase, code and clock counters;
-    // the landed mark folds into retro_emit_sats (Q3 trap-1) so the R record carries it
-    // to a replay.  The set is filled only under clock_signal_basis_hold &&
-    // emit_clock_disc; otherwise it is empty, this block does nothing, and the output
-    // is byte-identical.  With the hold off, a re-selection is landed just below, at
-    // the emit-only this_epoch_if_pin_sel comparison.
-    if (!basis_relatch_disc_pending.empty()) {
-        std::set<std::string> present, mark, still_pending;
-        for (const auto& s : sol.sats) present.insert(s.sat);
-        for (const auto& sat : basis_relatch_disc_pending)
-            (present.count(sat) ? mark : still_pending).insert(sat);
-        basis_relatch_disc_pending = std::move(still_pending);
-        if (!mark.empty()) {
-            // Dedupe against the blocks above (one event, one step) and serialize every
-            // landed mark, since the counter-only path is invisible to replay (see the
-            // eph-cutover block).
-            std::set<std::string> fresh;
-            for (const auto& s : mark)
-                if (!retro_emit_sats.count(s)) fresh.insert(s);
-            // Full scope (Card MS): the re-latch re-splits dt^s <-> d^s, so all three
-            // channels step.
-            if (!fresh.empty())
-                emitter.markSatDiscontinuity(fresh, NetworkProductEmitter::kDiscChanAll);
-            retro_emit_sats.insert(mark.begin(), mark.end());
-            if (events_trace.is_open())
-                for (const auto& s : mark)
-                    emitEvent("CLK_BASIS", "relatch_disc_landed", s, "", std::nullopt,
-                              std::nullopt, "disc_bump", "if_pin_reference_moved");
-        }
-    }
-    // The deterministic IF-pin re-selection discontinuity with the basis hold off
-    // (T3c).  It is resolved only here at the emit site, so it compares against the
+    // The deterministic IF-pin re-selection discontinuity (T3c).  It is resolved only
+    // here at the emit site, so it compares against the
     // last emitted product's pair, the same discipline as prev_pivot and
     // emitted_anchor.  For every emitted satellite, this product's selected pair
     // (this_epoch_if_pin_sel, from the main pass) is compared with the last emitted
@@ -903,9 +868,8 @@ NetworkSolPrepResult networkSolPrep(
     // pair that leaves and returns to the same emitted reference across withheld
     // epochs raises no bump.  Only emitted satellites are compared and advanced; a
     // satellite withheld this epoch keeps its last emitted baseline and is compared
-    // when it next emits.  The scratch map is empty when emit_clock_disc is off or the
-    // run uses clock_signal_basis_hold, so the block does nothing and the output is
-    // byte-identical.
+    // when it next emits.  The scratch map is empty when emit_clock_disc is off, so the
+    // block does nothing and the output is byte-identical.
     if (!this_epoch_if_pin_sel.empty()) {
         std::set<std::string> present;
         for (const auto& s : sol.sats) present.insert(s.sat);
@@ -1105,10 +1069,10 @@ NetworkSolPrepResult networkSolPrep(
     // to the first emitted epoch rather than the first processed one, which is the
     // right boundary for figures graded at the consumer.  Telemetry only.
     ctx.carry.resume_datum_first_ep = false;
-    // Code-bias datum declaration (§1.5): refresh the realized code-bias datum
-    // (cbpin=, and gfpin= in the slant posture) on every emit, not once at the first,
-    // the same discipline the realized clock pivots follow (NetworkEmitStore refreshes
-    // clock_pivot_sat / pdr= in place before each RTA-5 re-broadcast).  A declaration
+    // Code-bias datum declaration (§1.5): refresh the realized code-bias datum (cbpin=)
+    // on every emit, not once at the first, the same discipline the realized clock
+    // pivots follow (NetworkEmitStore refreshes clock_pivot_sat / pdr= in place before
+    // each RTA-5 re-broadcast).  A declaration
     // stamped once would go stale on the wire after a channel-set shift moved the pin,
     // which is the silent mis-framing the token exists to prevent.  The maps are built
     // fresh and assigned whole, so a constellation that stops being unanimous drops its
@@ -1132,14 +1096,16 @@ NetworkSolPrepResult networkSolPrep(
         // cannot declare a pin is unchanged.
         //
         // The source is this_epoch_if_pin_real, the unconditional declaration record,
-        // not this_epoch_if_pin_sel.  The latter is the hold-off disc-compare scratch,
-        // gated on `!clock_signal_basis_hold && emit_clock_disc`, so reading it would
-        // tie the declaration to a QC-channel gate: emit_clock_disc defaults to false,
-        // and a run without it would declare no cbpin.  The real map also covers the
-        // clock_signal_basis_hold path, whose branch records no selection at all.
-        // Declaration only: the solve and every emitted value are unchanged.
+        // not this_epoch_if_pin_sel.  The latter is the disc-compare scratch, gated on
+        // emit_clock_disc, so reading it would tie the declaration to a QC-channel gate:
+        // emit_clock_disc defaults to false, and a run without it would declare no
+        // cbpin.  Declaration only: the solve and every emitted value are unchanged.
+        //
+        // This producer declares no gfpin= (the wire field NetworkProductContract::
+        // gf_pin_pair stays in the contract, the S-line writer and the parser for
+        // products written with the retired network.code_bias_gf_datum, and is left
+        // empty here).
         std::map<char, std::set<std::pair<std::string, std::string>>> by_const;
-        std::map<char, std::pair<int, int>> gf_by_const;   // const → (gf-pinned, total)
         std::set<std::string> emitted_sats;
         for (const auto& s : sol.sats) emitted_sats.insert(s.sat);
         // Card GFC: the constellations with a satellite emitted on a held pin pair
@@ -1150,13 +1116,10 @@ NetworkSolPrepResult networkSolPrep(
             if (!sat.empty() && emitted_sats.count(sat)) {
                 const char cons = letterOfSat(sat);
                 by_const[cons].insert(sel);
-                auto& tally = gf_by_const[cons];
-                if (this_epoch_gf_pin_real.count(sat)) ++tally.first;
-                ++tally.second;
                 if (ctx.carry.this_epoch_if_pin_holds.count(sat))
                     held_const.emplace(cons, systemOfSat(sat));
             }
-        std::map<std::string, std::string> cb_decl, gf_decl;
+        std::map<std::string, std::string> cb_decl;
         std::string split_note;
         for (const auto& [cst, pairs] : by_const) {
             if (pairs.size() != 1) {
@@ -1168,85 +1131,25 @@ NetworkSolPrepResult networkSolPrep(
             }
             const auto& p = *pairs.begin();
             cb_decl[std::string(1, cst)] = p.first + "-" + p.second;
-            // Declare the geometry-free datum on the same pair under the same unanimity
-            // rule (Odijk rd 3b): every emitted satellite of this constellation that
-            // carries an IF pin must also have taken a GF row.  A partial split is a real
-            // state (a satellite can lose a frequency) that a per-constellation field
-            // cannot describe, so nothing is declared: a missing token reads as
-            // "single-layer", the safer direction for a consumer to be wrong in.
-            const auto& tally = gf_by_const[cst];
-            if (tally.first == 0) continue;                    // GF datum off: no token
-            if (tally.first != tally.second) {
-                split_note += fmt::format("{}{}:{}/{} GF rows", split_note.empty() ? "" : " ",
-                                          cst, tally.first, tally.second);
-                continue;
-            }
-            // Channel families (docs/SPEC_family_gf_datum.md §D.4): a per-constellation
-            // pair correctly describes a single-family product only.  When the receiver
-            // population partitions by channel family, selectIfPinPair still resolves
-            // every satellite to the primary family's pair, deterministically and
-            // unanimously, so the unanimity test above passes and this line would emit
-            // `gfpin=E:C1C-C5Q` on a product whose X channels are in a different
-            // geometry-free frame.  A consumer or grader reading that token applies the
-            // primary family's S-transform to the secondary family's B records, and
-            // nothing else on the wire contradicts it.  The token exists to prevent that
-            // silent mis-framing, so:
-            //  - per-family rows folded: declare the '+'-joined per-family value, which
-            //    the wire parser and checkContract already accept verbatim;
-            //  - partitioned but not pinned (knob off): declare nothing and log why.
-            //    A missing token reads as "single-layer", the safer direction for a
-            //    consumer to be wrong in; a wrong pair is not.
-            const std::string cst_key(1, cst);
-            const bool partitioned = ctx.carry.family_census.partitioned.count(cst_key) > 0;
-            std::set<std::pair<std::string, std::string>> fam_pairs;
-            for (const auto& [sat, sel] : ctx.carry.this_epoch_family_gf_pin_real)
-                if (!sat.empty() && letterOfSat(sat) == cst && emitted_sats.count(sat))
-                    fam_pairs.insert(sel);
-            if (!fam_pairs.empty()) {
-                if (fam_pairs.size() != 1) {
-                    split_note += fmt::format("{}{}:{} secondary-family GF pairs",
-                                              split_note.empty() ? "" : " ", cst,
-                                              fam_pairs.size());
-                    continue;
-                }
-                const auto& fp = *fam_pairs.begin();
-                gf_decl[cst_key] = p.first + "-" + p.second + "+" + fp.first + "-" + fp.second;
-                continue;
-            }
-            if (partitioned) {
-                split_note += fmt::format(
-                    "{}{}: partitioned secondary channel family with NO family GF pin — a "
-                    "single-family pair would mis-frame it",
-                    split_note.empty() ? "" : " ", cst);
-                continue;
-            }
-            gf_decl[cst_key] = p.first + "-" + p.second;
         }
         // Log only on a change: this runs every emit, and restating a stable datum each
         // epoch is noise.  A change is worth a line because it means the pinned pair
         // moved, which re-references the emitted clock↔code split.
-        if (cb_decl != pending_contract.cb_pin_pair || gf_decl != pending_contract.gf_pin_pair) {
-            std::string cd, gd;
+        if (cb_decl != pending_contract.cb_pin_pair) {
+            std::string cd;
             for (const auto& [c, p] : cb_decl) cd += (cd.empty() ? "" : " ") + c + ":" + p;
-            for (const auto& [c, p] : gf_decl) gd += (gd.empty() ? "" : " ") + c + ":" + p;
-            log->info("Network (S-contract §1.5): declaring code-bias datum cbpin=[{}] "
-                      "gfpin=[{}]{}{}.  cbpin is the frame the emitted OSB stream is "
-                      "internally consistent in; gfpin (Odijk rd 3b) means those two "
-                      "channels' B records ARE the datum, only j >= 3 carries content, and "
-                      "each satellite's geometry-free bias has moved into the slant "
-                      "ionosphere (Table 8) — which this product does not emit, so the "
-                      "consumer must estimate it and apply the two AS A PAIR.",
-                      cd.empty() ? "-" : cd, gd.empty() ? "-" : gd,
+            log->info("Network (S-contract §1.5): declaring code-bias datum cbpin=[{}]{}{}.  "
+                      "cbpin is the frame the emitted OSB stream is internally consistent in.",
+                      cd.empty() ? "-" : cd,
                       split_note.empty() ? "" : "; NOT declared (per-satellite split): ",
                       split_note);
         }
         pending_contract.cb_pin_pair = std::move(cb_decl);
-        pending_contract.gf_pin_pair = std::move(gf_decl);
         // Declare the value the hard per-satellite geometry-free datum was pinned at
-        // (RF-0d).  It follows the config, not an epoch's realized rows: unlike
-        // cbpin=/gfpin= it is not a per-epoch selection that can move with the signal
-        // set, the mode is fixed for the run, and a token that appeared and vanished
-        // with row availability would read as a datum change that did not happen.  The
+        // (RF-0d).  It follows the config, not an epoch's realized rows: unlike cbpin= it
+        // is not a per-epoch selection that can move with the signal set, the mode is
+        // fixed for the run, and a token that appeared and vanished with row
+        // availability would read as a datum change that did not happen.  The
         // field is empty in the default mode, so the S line is byte-identical to that of
         // a product written before RF-0d.
         switch (config_.getNetworkConfig().sat_gf_datum) {

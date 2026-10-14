@@ -80,9 +80,6 @@ namespace GnssProcessor {
         CbSatGfPair,              ///< W6 code-bias datum: the per-satellite geometry-free pair row (sat_gf_datum).
         CbExtraBandHeld,          ///< W6 code-bias datum: an extra-band column held at its own level (B5D).
         CbExtraGf,                ///< W6 code-bias datum: an extra signal's geometry-free row (ISC asserted zero, RF-0d).
-        CbGfPin,                  ///< W6 code-bias datum: the slant posture's geometry-free pin row.
-        CbFamilyGf,               ///< W6 code-bias datum: a secondary family's geometry-free row (FAMILY-GF).
-        CbIfLevel,                ///< W6 code-bias datum: the per-constellation ionosphere-free level row (RF-0e e1).
         CbSumToZero,              ///< W6 code-bias datum: the (constellation, signal) sum-to-zero row.
         CbFamilyBirth,            ///< Soft first-sighting family prior on a satellite's inter-family code-bias difference (card GFC step 2): one row per (satellite, birth), at 1/sigma^2, apart from the gauge rows.
         ClockConstraintRows,      ///< Constraint-realized clock datum rows (sum-to-zero or broadcast-anchored).

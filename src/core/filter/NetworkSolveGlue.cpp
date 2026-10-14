@@ -134,17 +134,13 @@ NetworkSolveGlueResult networkSolveGlue(
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_pivot = ctx.carry.prev_pivot;
     auto& last_pivot = ctx.carry.last_pivot;
-    auto& held_clock_ref = ctx.carry.held_clock_ref;
     auto& this_epoch_if_pin_sel = ctx.carry.this_epoch_if_pin_sel;
     auto& this_epoch_if_pin_real = ctx.carry.this_epoch_if_pin_real;
-    auto& this_epoch_gf_pin_real = ctx.carry.this_epoch_gf_pin_real;
-    auto& family_census = ctx.carry.family_census;
     auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
     auto& prev_clk = ctx.carry.prev_clk;
     auto& clock_osc = ctx.carry.clock_osc;
     auto& relevel_iode = ctx.carry.relevel_iode;
     auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
-    auto& basis_relatch_disc_pending = ctx.carry.basis_relatch_disc_pending;
     auto& code_bias_prev_ = ctx.carry.code_bias_prev_;
     auto& code_bias_ifpin_pair_ = ctx.carry.code_bias_ifpin_pair_;
     auto& this_epoch_cb_ifpin = ctx.carry.this_epoch_cb_ifpin;
@@ -170,8 +166,7 @@ NetworkSolveGlueResult networkSolveGlue(
     const bool   sticky_pivot    = ctx.knobs.sticky_pivot;              // keep the incumbent clock pivot while it stays registered (RTA-1)
     const bool   clock_sum_to_zero = ctx.knobs.clock_sum_to_zero;    // anchor-free per-constellation clock gauge (Σδtˢ = 0) in place of a pivot pin; no pivot or handover machinery
     const bool   clock_brdc_anchored = ctx.knobs.clock_brdc_anchored; // brdc_rts: the per-satellite broadcast anchors are the clock gauge (pre-gate); no pivot machinery and no sum-to-zero membership wander
-    const bool   clock_signal_basis_hold = ctx.knobs.clock_signal_basis_hold; // hold each satellite's IF-pin reference pair fixed across epochs (a time-consistent δtˢ↔dˢ split) instead of re-selecting it from each epoch's coverage; inert without estimate_sat_code_bias (W6)
-    const bool   cb_time_linked  = ctx.knobs.cb_time_linked;      // impose the code-bias datum (IF pin and per-(constellation, signal) s2z) as a time datum: pin the change from the previous epoch's solved values rather than the level to zero; mutually exclusive with clock_signal_basis_hold, validated at load (card 2, W6)
+    const bool   cb_time_linked  = ctx.knobs.cb_time_linked;      // impose the code-bias datum (IF pin and per-(constellation, signal) s2z) as a time datum: pin the change from the previous epoch's solved values rather than the level to zero (card 2, W6)
     const bool   scoped_handover = ctx.knobs.scoped_handover;   // per-constellation scoping of the internal handover response (RTA-2)
     const bool   perconst_on       = ctx.knobs.perconst_on;          // per-constellation carve-out of the A4 σ̂0 withhold (RTA-10)
     const int    perconst_min_rows = ctx.knobs.perconst_min_rows;   // minimum σ̂0-pool rows for a constellation to be judged (RTA-10)
@@ -284,8 +279,6 @@ ctx.carry.this_epoch_cb_family_birth_skips.clear();   // and its satellites give
 // The S-contract §1.5 declaration scratch gets the same unconditional per-epoch clear,
 // so a prior epoch's pair cannot reach the emit-site fill.
 this_epoch_if_pin_real.clear();
-this_epoch_gf_pin_real.clear();
-ctx.carry.this_epoch_family_gf_pin_real.clear();
 this_epoch_cb_ifpin.clear();   // this epoch's IF-pin pairs, persisted at harvest (card 2)
 this_epoch_cb_reseed.clear();  // this epoch's re-seeds, merged into the pending disc set at the emit site, which withheld epochs never reach (card 2)
 ctx.carry.this_epoch_cb_reseed_channels.clear();  // their channels, read by the harvest of card L5B
@@ -302,50 +295,6 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             }
         return 0.0;
     };
-
-    // --- Family-GF: run-latched receiver-family census (docs/SPEC_family_gf_datum.md §3.2) ---
-    // Runs whenever the GF datum is armed, with network.code_bias_gf_datum_per_family on
-    // or off, so that an armed but inert configuration shows in the log (standing
-    // invariant #4).  With the per-family knob off, the census lines of a partitioned
-    // constellation also name the null-space gate withholds to expect, which otherwise
-    // appear in the log with no pointer to the receiver-family split.
-    //
-    // This is a separate scan, not a rider on the CB-ADM admission census.  That census
-    // reduces its per-(station, pair) map to an integer support count and discards
-    // station identity, so it cannot tell whether any station bridges the two families,
-    // and it runs only under network.cb_admission; riding on it would mean arming a
-    // different registration path to get a diagnostic.
-    //
-    // Latched on the first epoch with a usable station set: the partition is a property
-    // of the receiver hardware population, not of an epoch.
-    if (config_.networkCodeBiasGfDatum() && !family_census.latched) {
-        std::map<std::string, std::set<std::string>> station_signals;
-        for (size_t i = 0; i < stations.size(); ++i) {
-            if (!present[i] || !stations[i].sm) continue;
-            auto& sigs_of = station_signals[stations[i].name];
-            for (const auto& kv : stations[i].sm->getSatBiasStates())
-                sigs_of.insert(kv.first);
-        }
-        if (!station_signals.empty()) {
-            family_census = NetworkSbasis::runFamilyCensus(station_signals);
-            for (const auto& line : family_census.lines)
-                log->info("Network (FAMILY-GF census): {}{}", line,
-                          (family_census.partitioned.empty() ||
-                           config_.networkCodeBiasGfDatumPerFamily())
-                              ? ""
-                              : "  network.code_bias_gf_datum_per_family is OFF; expect "
-                                "n_sats-1 undeclared near-null directions per partitioned "
-                                "constellation and null-space gate withholds.");
-        }
-    }
-    // Empty unless the per-family knob is on and the census found a partition, so in
-    // every other posture the row builder folds nothing extra and the run is
-    // byte-identical.
-    static const std::set<std::string> kNoFamilies;
-    const std::set<std::string>& gf_family_constellations =
-        (config_.networkCodeBiasGfDatum() && config_.networkCodeBiasGfDatumPerFamily())
-            ? family_census.partitioned
-            : kNoFamilies;
 
     // --- ISC bridging roster (RF-0f) --------------------------------------------
     // Which (satellite, companion signal) inter-signal corrections the data can reach
@@ -398,8 +347,9 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     //
     // Keys carry the pin pair's band digits as well as the satellite and signal
     // ("sat|signal|b1b2"), because the builder's realized pair is not always (L1, L2)
-    // (clock_signal_basis_hold can hold or re-latch it), and a roster that answered for
-    // the wrong pair would free a column that nothing determines.  Built here rather than
+    // (the selection follows the registered signal set, and card GFC's pair hold can hold
+    // it), and a roster that answered for the wrong pair would free a column that nothing
+    // determines.  Built here rather than
     // in the row builder because only the driver sees the stations.  Empty unless
     // network.sat_gf_extra_band_free is armed, so an unarmed run never reaches the
     // builder's lookups.
@@ -445,26 +395,20 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
                                                           : NetworkSbasis::CodeBiasCarryMap{};
     const auto cbd = NetworkSbasis::buildCodeBiasDatumRows(
         est, registered_code_keys, freqOf,
-        cb_time_linked, clock_signal_basis_hold, emit_clock_disc,
-        config_.networkCodeBiasGfDatum(),
+        cb_time_linked, emit_clock_disc,
         // The satellite GF datum mode and the run-latched broadcast targets.  The
         // targets are empty in every mode except broadcast_tgd, and an empty target
         // makes the builder fall back to zero rather than guess (RF-0c).
         config_.getNetworkConfig().sat_gf_datum, setup.sat_gf_target_m,
-        // The two arms of the level-datum A/B; the loader refuses both at once (RF-0e).
-        config_.getNetworkConfig().sat_if_level_datum,
+        // The time link of those rows (RF-0e e2).
         config_.getNetworkConfig().sat_gf_datum_time_linked,
         config_.getNetworkConfig().sat_isc_state, isc_bridged,
         // The extra-band columns the data determine, and the knob that frees them (B5D).
         config_.getNetworkConfig().sat_gf_extra_band_free, extra_band_determined,
-        gf_family_constellations,
         code_bias_prev_, code_bias_ifpin_pair_,
         code_bias_sat_seen_, code_bias_datum_resumed_,
-        held_clock_ref, this_epoch_if_pin_sel,
-        this_epoch_if_pin_real, this_epoch_gf_pin_real,
-        ctx.carry.this_epoch_family_gf_pin_real,
+        this_epoch_if_pin_sel, this_epoch_if_pin_real,
         this_epoch_cb_ifpin, this_epoch_cb_reseed,
-        basis_relatch_disc_pending, emitEvent,
         // Card GFC's arms; the builder reads them only under the time link (and step 2's
         // first-sighting prior only with the family difference).
         NetworkSbasis::CodeDatumFamilyArms{config_.networkCodeDatumPairContinuity(),
@@ -484,8 +428,8 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     // (the harvest erases the entries of a re-seeded family; nothing reads it otherwise).
     ctx.carry.this_epoch_cb_reseed_channels = cbd.reseed_channels;
     // Record the IF pin pair election in the signal roster.  This is the only site that
-    // knows which signals the S-basis pinned this epoch (the realized pair, after the
-    // basis hold and any re-latch).  It fills BandRoster::datum_code / datum_phase and a
+    // knows which signals the S-basis pinned this epoch (the realized pair, after card
+    // GFC's pair hold).  It fills BandRoster::datum_code / datum_phase and a
     // census; the solve does not read them (the wire's signal declaration does, in
     // networkLedgerEmitBuildDeclaration).  Runs on every network epoch, since the roster
     // is built on every run (card NOM step N3a); a no-op only in a context no run set up.
@@ -523,8 +467,6 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ctx.counters.n_sat_gf_sameband += static_cast<std::size_t>(cbd.n_sat_gf_sameband_free);
             ctx.counters.n_sat_gf_s2z_suppressed +=
                 static_cast<std::size_t>(cbd.n_s2z_suppressed);
-            ctx.counters.n_if_level_rows  += static_cast<std::size_t>(cbd.n_if_level_rows);
-            ctx.counters.n_if_level_sats  += static_cast<std::size_t>(cbd.n_if_level_sats);
             ctx.counters.n_sat_gf_carried += static_cast<std::size_t>(cbd.n_sat_gf_carried);
             ctx.counters.n_sat_gf_anchored+= static_cast<std::size_t>(cbd.n_sat_gf_anchored);
             // Card PRM phase 3a: the anchored rows of satellites seen before (row-epochs).
@@ -660,7 +602,7 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     if (spectrum_diag_budget > 0)   // first-N (spectrum block decrements below)
         log->warn("Network[W6-cb]{}: nshared={}, n_cb={}, folded {} code-bias gauge "
                   "rows (IF pin for {} sats + sum-to-zero for {} (const,signal) levels"
-                  "{}{}{})",
+                  "{})",
                   // In the no-constraint posture these rows are the whole satellite
                   // code-bias datum, not a gauge beside an ionosphere constraint.
                   // Naming the posture on the line that reports the row count lets a
@@ -671,21 +613,6 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
                       ? "[iono-none]" : "",
                   est.numShared(), n_cb, cbd.H.rows(), cbd.n_if_pin_sats,
                   cbd.n_s2z_channels,
-                  cbd.n_gf_pin_sats > 0
-                      ? fmt::format(" + GEOMETRY-FREE pin for {} sats, of which {} carry "
-                                    "no third band and are now fully datum-fixed",
-                                    cbd.n_gf_pin_sats, cbd.n_gf_only_pair)
-                      : std::string(),
-                  // Family-GF on-path telemetry for the extra rows.  Printed only when
-                  // rows folded: "0 folded" is what an inert knob looks like, and the
-                  // census line above already reports the verdict that explains a zero
-                  // (invariant #4: check the counter, not the absence of a crash).
-                  cbd.n_family_gf_rows > 0
-                      ? fmt::format(" + FAMILY-GF pin for {} (sat,secondary-family) pairs, "
-                                    "of which {} have a two-band family whose entire "
-                                    "estimable content is the inter-family ISC",
-                                    cbd.n_family_gf_rows, cbd.n_family_gf_only_pair)
-                      : std::string(),
                   // Name the datum on the line that reports the row count, so a first-N
                   // read of any log tells which S-basis produced the product: the zero
                   // and TGD frames differ by c*T_GD on every code bias, and by the same

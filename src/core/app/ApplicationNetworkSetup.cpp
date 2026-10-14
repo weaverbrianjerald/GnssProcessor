@@ -576,8 +576,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // exclusive and are tested in this order:
     //   - network.estimate_iono_sh: the network co-estimates its own SH-VTEC field
     //     and loads no GIM.
-    //   - network.estimate_sat_code_bias with network.code_bias_gf_datum (slant
-    //     posture): no ionosphere constraint; the geometry-free biases are the datum.
     //   - network.estimate_sat_code_bias with network.w6_iono_constraint = none
     //     (self-contained posture): no ionosphere constraint; the sum-to-zero rows
     //     carry the code-bias datum.
@@ -609,33 +607,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                       shc.a00_warn_low_tecu, shc.a00_warn_high_tecu);
         else
             log->info("Network (SH-iono): a₀₀ physical-band WARN disabled (low ≥ high).");
-    } else if (config_.estimateNetworkSatCodeBias() && config_.networkCodeBiasGfDatum()) {
-        // Slant posture (Odijk 2016 §5.1): the ionosphere stays free per-LOS slant and
-        // is not constrained at all (no SH field, no GIM).  The satellite code bias is
-        // made observable by the third frequency, not by an ionosphere constraint:
-        // rank deficiencies 2b/3b are removed by pinning the geometry-free biases as
-        // datum (the GF pin and the receiver DCB gauge), which absorbs the GF lump into
-        // the slant ionosphere (their Table 8) and leaves the modernized DCB
-        // d^s_1 - d^s_j (j >= 3) as the estimable content.  No GIM is loaded and no
-        // error is raised; this branch exists so that the combination is reachable.
-        log->info("Network (W6/slant): NO ionosphere constraint by design — free per-LOS "
-                  "slant delays with the geometry-free code biases pinned as datum "
-                  "(network.code_bias_gf_datum).  The estimable satellite code bias is the "
-                  "MODERNIZED DCB from the third frequency onward; the geometry-free lump "
-                  "is absorbed by the ionosphere, so the emitted ionosphere and code biases "
-                  "must be applied by a consumer AS A PAIR.");
     } else if (config_.estimateNetworkSatCodeBias()
                && config_.getNetworkConfig().w6_iono_constraint
                       == NetworkW6IonoConstraint::None) {
         // Self-contained W6 posture (RF-0b; docs/refound/RF-0_baseline_2026-09-14.md
-        // Finding 2).  It has the same "no ionosphere constraint" shape as the slant
-        // branch above and is kept as a separate branch, not a widened condition on it,
-        // because the two differ in the satellite code-bias datum.  The slant branch pins
-        // each satellite's geometry-free bias to zero (estimable content only from the
-        // third frequency); this one leaves it free and lets the per-(constellation,
-        // signal) sum-to-zero rows realize the IGS convention, which makes the posture
-        // reachable under processing.frequency_mode = dual, where the loader refuses the
-        // GF pin.
+        // Finding 2).  It leaves each satellite's geometry-free bias free and lets the
+        // per-(constellation, signal) sum-to-zero rows realize the IGS convention, which
+        // makes the posture reachable under processing.frequency_mode = dual.
         //
         // No GIM is loaded and no error is raised.  `gim_` stays null, so
         // networkAppendGimIonoRows_ returns immediately and the per-LOS slant ionosphere

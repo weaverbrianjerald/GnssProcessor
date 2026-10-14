@@ -145,12 +145,9 @@ struct Event {
 /// so every channel keeps its level row.
 struct Harness {
     bool cb_time_linked{true};
-    bool clock_signal_basis_hold{false};
     bool emit_clock_disc{false};
-    bool gf_datum{false};
     NetworkSatGfDatum sat_gf_datum{NetworkSatGfDatum::NoneMode};
     std::map<std::string, double> sat_gf_target_m;
-    bool sat_if_level_datum{false};
     bool sat_gf_datum_time_linked{false};
     bool sat_gf_extra_band_free{false};
     std::set<std::string> extra_band_determined;
@@ -161,31 +158,21 @@ struct Harness {
     std::map<std::string, Pair>                          code_bias_ifpin_pair;
     std::set<std::string>                                code_bias_sat_seen;
 
-    std::map<std::string, Pair> held_clock_ref;
-    std::map<std::string, Pair> if_pin_sel, if_pin_real, family_gf_pin_real, cb_ifpin;
-    std::set<std::string>       gf_pin_real, cb_reseed, relatch;
-    std::vector<Event>          events;
+    std::map<std::string, Pair> if_pin_sel, if_pin_real, cb_ifpin;
+    std::set<std::string>       cb_reseed;
 
     NetworkSbasis::CodeBiasDatumRows build(const NetworkEstimator& est,
                                            const std::vector<Pair>& keys) {
-        if_pin_sel.clear(); if_pin_real.clear(); gf_pin_real.clear();
-        family_gf_pin_real.clear(); cb_ifpin.clear(); cb_reseed.clear();
-        events.clear();
+        if_pin_sel.clear(); if_pin_real.clear(); cb_ifpin.clear(); cb_reseed.clear();
         const std::set<std::string> none;
         return NetworkSbasis::buildCodeBiasDatumRows(
-            est, keys, freqOf, cb_time_linked, clock_signal_basis_hold, emit_clock_disc,
-            gf_datum, sat_gf_datum, sat_gf_target_m, sat_if_level_datum,
+            est, keys, freqOf, cb_time_linked, emit_clock_disc,
+            sat_gf_datum, sat_gf_target_m,
             sat_gf_datum_time_linked, /*sat_isc_state=*/false, none,
             sat_gf_extra_band_free, extra_band_determined,
-            /*gf_family_constellations=*/none, code_bias_prev, code_bias_ifpin_pair,
-            code_bias_sat_seen, /*code_bias_datum_resumed=*/false, held_clock_ref,
-            if_pin_sel, if_pin_real, gf_pin_real, family_gf_pin_real, cb_ifpin,
-            cb_reseed, relatch,
-            [this](const char* tier, const char* event, const std::string& sat,
-                   const std::string&, std::optional<double>, std::optional<double>,
-                   const char* action, const std::string& detail) {
-                events.push_back({tier, event, sat, action, detail});
-            },
+            code_bias_prev, code_bias_ifpin_pair,
+            code_bias_sat_seen, /*code_bias_datum_resumed=*/false,
+            if_pin_sel, if_pin_real, cb_ifpin, cb_reseed,
             arms, carry);
     }
 };
@@ -249,7 +236,6 @@ void expectSameOutput(const NetworkSbasis::CodeBiasDatumRows& a, const Harness& 
     EXPECT_TRUE(b.if_pin_pair_changes.empty());
     EXPECT_TRUE(b.if_pin_pair_holds.empty());
     EXPECT_TRUE(b.family_rows.empty());
-    EXPECT_TRUE(hb.events.empty());
 }
 
 /// Fill the previous-epoch maps so that every satellite of kTwoFamily is a veteran on
@@ -523,7 +509,6 @@ TEST(CodeDatumFamilyTest, PairChangeWithPreviousValuesContinuesTheClock) {
     EXPECT_EQ(c.to, (Pair{"C1C", "C5X"}));
     EXPECT_EQ(c.outcome, PinOut::Continued);
     EXPECT_EQ(e.h.cb_ifpin.at("E11"), (Pair{"C1C", "C5X"}));
-    EXPECT_TRUE(e.h.events.empty());
 
     // The unchanged satellite is carried as before and is not a pair change.
     const Eigen::Index r12 = ifPinRow(rows, e.est.codeBiasColumn("E12", "C1C"));
@@ -572,23 +557,15 @@ TEST(CodeDatumFamilyTest, PairChangeWithoutPreviousValuesReseeds) {
 }
 
 // A continued pin holds the clock only when no other row on the satellite's columns
-// re-asserts an absolute target.  The blocking postures: the slant posture's GF pin, the
-// satellite GF datum without its time link, the IF level row.  Under the time-linked
-// satellite GF datum (the field posture) the arm acts.
+// re-asserts an absolute target.  The blocking posture: the satellite GF datum without
+// its time link.  Under the time-linked satellite GF datum (the field posture) the arm
+// acts.
 TEST(CodeDatumFamilyTest, ContinuityIsInertWhereARowReassertsAnAbsoluteTarget) {
     using NS = NetworkSbasis;
-    EXPECT_EQ(NS::pinPairContinuityBlocker(false, NetworkSatGfDatum::NoneMode, false, false),
-              nullptr);
-    EXPECT_EQ(NS::pinPairContinuityBlocker(false, NetworkSatGfDatum::BroadcastTgd, true, false),
-              nullptr);
-    EXPECT_NE(NS::pinPairContinuityBlocker(true, NetworkSatGfDatum::NoneMode, false, false),
-              nullptr);
-    EXPECT_NE(NS::pinPairContinuityBlocker(false, NetworkSatGfDatum::BroadcastTgd, false, false),
-              nullptr);
-    EXPECT_NE(NS::pinPairContinuityBlocker(false, NetworkSatGfDatum::Zero, false, false),
-              nullptr);
-    EXPECT_NE(NS::pinPairContinuityBlocker(false, NetworkSatGfDatum::NoneMode, false, true),
-              nullptr);
+    EXPECT_EQ(NS::pinPairContinuityBlocker(NetworkSatGfDatum::NoneMode, false), nullptr);
+    EXPECT_EQ(NS::pinPairContinuityBlocker(NetworkSatGfDatum::BroadcastTgd, true), nullptr);
+    EXPECT_NE(NS::pinPairContinuityBlocker(NetworkSatGfDatum::BroadcastTgd, false), nullptr);
+    EXPECT_NE(NS::pinPairContinuityBlocker(NetworkSatGfDatum::Zero, false), nullptr);
 
     // Absolute GF rows: the leaving edge re-seeds exactly as with the arm off.
     LeavingEdge abs_gf;
@@ -641,13 +618,11 @@ TEST(CodeDatumFamilyTest, ContinuedSatelliteMarkedByALevelReseedIsNotContinued) 
 // value), while both held signals are registered and have previous values: the pin stays
 // on (C1C, C5X) and carries that pair's own previous combination, as for an unchanged
 // pair.  Nothing is marked, no pair change is recorded (so the emit site has no
-// re-selection to declare, its scratch holding the held pair), the builder emits no
-// event, and the hold is returned with the selection it overrode.  Every pair-keyed record
-// and row follows the held pair: the geometry-free pair row is on (C1C, C5X) and the
-// entering C5Q gets its own extra row, anchored at the group delay because (C1C, C5X) is
-// a pair the Galileo group delay describes (so broadcast_tgd does not refuse the hold).
-// The clock signal-basis hold, were it set, would make the choice instead (the builder
-// keeps the two exclusive).
+// re-selection to declare, its scratch holding the held pair), and the hold is returned
+// with the selection it overrode.  Every pair-keyed record and row follows the held
+// pair: the geometry-free pair row is on (C1C, C5X) and the entering C5Q gets its own
+// extra row, anchored at the group delay because (C1C, C5X) is a pair the Galileo group
+// delay describes (so broadcast_tgd does not refuse the hold).
 TEST(CodeDatumFamilyTest, EnteringSignalKeepsTheHeldPair) {
     EnteringEdge e;
     const auto rows = e.h.build(e.est, e.keys);
@@ -661,7 +636,6 @@ TEST(CodeDatumFamilyTest, EnteringSignalKeepsTheHeldPair) {
     EXPECT_NEAR(rows.z(r11), a1() * e.v1 + a2() * e.v2, 1e-12);
     EXPECT_TRUE(e.h.cb_reseed.empty());
     EXPECT_TRUE(rows.if_pin_pair_changes.empty());
-    EXPECT_TRUE(e.h.events.empty());
     ASSERT_EQ(rows.if_pin_pair_holds.size(), 1u);
     EXPECT_EQ(rows.if_pin_pair_holds.at("E11").selected, (Pair{"C1C", "C5Q"}));
     EXPECT_EQ(rows.if_pin_pair_holds.at("E11").held, (Pair{"C1C", "C5X"}));
@@ -698,16 +672,6 @@ TEST(CodeDatumFamilyTest, EnteringSignalKeepsTheHeldPair) {
     EXPECT_EQ(pair_rows, 1);
     EXPECT_EQ(extra_rows, 1);
     EXPECT_TRUE(g.cb_reseed.empty());
-
-    // Under the clock signal-basis hold the latch makes the choice and there is no pair
-    // hold (the loader refuses that hold with the time link; the builder does not rely on
-    // it).
-    Harness b = e.h;
-    b.clock_signal_basis_hold = true;
-    const auto rb = b.build(e.est, e.keys);
-    EXPECT_TRUE(rb.if_pin_pair_holds.empty());
-    EXPECT_EQ(b.held_clock_ref.at("E11"), (Pair{"C1C", "C5Q"}));
-    EXPECT_EQ(b.cb_ifpin.at("E11"), (Pair{"C1C", "C5Q"}));
 }
 
 // (b) The hold breaks.  After the held epoch of (a) is kept (its pin pair and every
@@ -944,27 +908,20 @@ TEST(CodeDatumFamilyTest, ArmOffKeepsTheSelection) {
 // (d) Under a blocking posture (a row re-asserting an absolute target) the arm is not
 // read: the pin follows the selection, and the output is the arm-off output.
 TEST(CodeDatumFamilyTest, BlockedArmKeepsTheSelection) {
-    for (const bool if_level : {false, true}) {
-        EnteringEdge on;
-        if (if_level) {
-            on.h.sat_if_level_datum = true;
-        } else {
-            on.h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;   // without its time link
-            on.h.sat_gf_target_m = {{"E11", 0.4}, {"E12", -0.2}};
-        }
-        ASSERT_NE(NetworkSbasis::pinPairContinuityBlocker(
-                      on.h.gf_datum, on.h.sat_gf_datum, on.h.sat_gf_datum_time_linked,
-                      on.h.sat_if_level_datum),
-                  nullptr);
-        Harness off = on.h;
-        off.arms = {};
-        const auto r_on  = on.h.build(on.est, on.keys);
-        const auto r_off = off.build(on.est, on.keys);
-        expectSameOutput(r_off, off, r_on, on.h);
-        EXPECT_EQ(on.h.if_pin_sel, off.if_pin_sel) << "if_level " << if_level;
-        EXPECT_EQ(on.h.cb_ifpin.at("E11"), (Pair{"C1C", "C5Q"})) << "if_level " << if_level;
-        EXPECT_TRUE(on.h.cb_reseed.count("E11")) << "if_level " << if_level;
-    }
+    EnteringEdge on;
+    on.h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;   // without its time link
+    on.h.sat_gf_target_m = {{"E11", 0.4}, {"E12", -0.2}};
+    ASSERT_NE(NetworkSbasis::pinPairContinuityBlocker(on.h.sat_gf_datum,
+                                                      on.h.sat_gf_datum_time_linked),
+              nullptr);
+    Harness off = on.h;
+    off.arms = {};
+    const auto r_on  = on.h.build(on.est, on.keys);
+    const auto r_off = off.build(on.est, on.keys);
+    expectSameOutput(r_off, off, r_on, on.h);
+    EXPECT_EQ(on.h.if_pin_sel, off.if_pin_sel);
+    EXPECT_EQ(on.h.cb_ifpin.at("E11"), (Pair{"C1C", "C5Q"}));
+    EXPECT_TRUE(on.h.cb_reseed.count("E11"));
 }
 
 // ===========================================================================

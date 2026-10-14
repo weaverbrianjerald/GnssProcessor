@@ -783,7 +783,7 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.clock_datum_broadcast_anchored",
               "brdc_rts absolute clock frame: set-event step -0.0003 m vs s2z +0.334 m; "
               "consumer-NEUTRAL, not a position win" },
-            { estimate_network_sat_code_bias_ && !network_clock_signal_basis_hold_,
+            { estimate_network_sat_code_bias_,
               network_code_datum_time_linked_,
               Tier::SCOPED, true , "network.code_datum_time_linked",
               "W6 code datum pinned in TIME not level: cures the ~0.92 m hysteretic OSB/clock "
@@ -1137,12 +1137,7 @@ namespace GnssProcessor {
               { { "estimation.ionosphere_weighting.enable", iono_weighting_.enabled },
                 { "estimation.ionosphere_weighting.elevation_cutoff_deg >= 25",
                   iono_weighting_.elevation_cutoff_deg >= 24.9 },
-                // The bundle member is "the satellite code bias has a declared
-                // source", not W6 in particular: EXT-CB satisfies it from the
-                // external .BIA.  Naming only W6 here would log a spurious
-                // partially-armed warning on every EXT-CB run.
-                { "network.estimate_sat_code_bias | network.external_sat_code_bias",
-                  estimate_network_sat_code_bias_ || network_external_sat_code_bias_ } } },
+                { "network.estimate_sat_code_bias", estimate_network_sat_code_bias_ } } },
         };
     }
 

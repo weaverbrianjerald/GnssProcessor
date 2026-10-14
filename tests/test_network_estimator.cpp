@@ -4014,70 +4014,41 @@ const std::set<std::string> kNoIscBridged{};
 
 // Owns the builder's side channels and knob set, and clears the per-epoch
 // scratch outs before each call, as the driver contract requires ("cleared by
-// caller").  The emitEvent stub counts firings and records the last
-// (tier, event, sat, detail) for the re-latch assertions.
+// caller").
 struct CbDatumRowsHarness {
     using Pair = std::pair<std::string, std::string>;
 
     // knobs
     bool cb_time_linked{false};
-    bool clock_signal_basis_hold{false};
     bool emit_clock_disc{false};
-    bool gf_datum{false};          // slant-posture GF pin rows (default off = legacy)
     // Card-2 carry (const in)
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
     std::map<std::string, Pair>                          code_bias_ifpin_pair;
     std::set<std::string>                                code_bias_sat_seen;
     bool                                                 code_bias_datum_resumed{false};
-    // side channels (read/write latch + per-epoch scratch + pending discs)
-    std::map<std::string, Pair> held_clock_ref;
+    // side channels (per-epoch scratch)
     std::map<std::string, Pair> this_epoch_if_pin_sel;
     std::map<std::string, Pair> this_epoch_if_pin_real;   // S-contract §1.5 declaration record
-    std::set<std::string>       this_epoch_gf_pin_real;   // sats that took a GF datum row
-    // The partitioned-secondary-family verdict fed to the builder, and the per-satellite
-    // secondary pair it records back (FAMILY-GF).  Empty set => no extra row, which is
-    // the byte-identity control every other case in this fixture runs under.
-    std::set<std::string>       gf_family_constellations;
-    std::map<std::string, Pair> this_epoch_family_gf_pin_real;
     std::map<std::string, Pair> this_epoch_cb_ifpin;
     std::set<std::string>       this_epoch_cb_reseed;
-    std::set<std::string>       basis_relatch_disc_pending;
-    // emitEvent stub
-    int         events{0};
-    std::string last_tier, last_event, last_sat, last_detail;
 
     NetworkSbasis::CodeBiasDatumRows build(
         const NetworkEstimator& est,
         const std::vector<Pair>& registered_code_keys) {
         this_epoch_if_pin_sel.clear();
         this_epoch_if_pin_real.clear();
-        this_epoch_gf_pin_real.clear();
-        this_epoch_family_gf_pin_real.clear();
         this_epoch_cb_ifpin.clear();
         this_epoch_cb_reseed.clear();
         return NetworkSbasis::buildCodeBiasDatumRows(
-            est, registered_code_keys, gpsCodeFreq, cb_time_linked,
-            clock_signal_basis_hold, emit_clock_disc, gf_datum,
+            est, registered_code_keys, gpsCodeFreq, cb_time_linked, emit_clock_disc,
             NetworkSatGfDatum::NoneMode, kNoSatGfTargets,
-            /*sat_if_level_datum=*/false, /*sat_gf_datum_time_linked=*/false,
+            /*sat_gf_datum_time_linked=*/false,
             /*sat_isc_state=*/false, kNoIscBridged,
             /*sat_gf_extra_band_free=*/false, kNoIscBridged,
-            gf_family_constellations, code_bias_prev,
+            code_bias_prev,
             code_bias_ifpin_pair, code_bias_sat_seen, code_bias_datum_resumed,
-            held_clock_ref, this_epoch_if_pin_sel, this_epoch_if_pin_real,
-            this_epoch_gf_pin_real, this_epoch_family_gf_pin_real,
-            this_epoch_cb_ifpin,
-            this_epoch_cb_reseed, basis_relatch_disc_pending,
-            [this](const char* tier, const char* event, const std::string& sat,
-                   const std::string& /*station*/, std::optional<double> /*stat*/,
-                   std::optional<double> /*thr*/, const char* /*action*/,
-                   const std::string& detail) {
-                ++events;
-                last_tier   = tier;
-                last_event  = event;
-                last_sat    = sat;
-                last_detail = detail;
-            });
+            this_epoch_if_pin_sel, this_epoch_if_pin_real,
+            this_epoch_cb_ifpin, this_epoch_cb_reseed);
     }
 };
 
@@ -4214,66 +4185,18 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsTimeLinked) {
     EXPECT_TRUE(h.this_epoch_cb_reseed.empty());
 }
 
-// network.clock_signal_basis_hold: the satellite's first-latched reference pair
-// is held while both signals stay registered, even when a fresh selection
-// would prefer a newly risen lower band, and re-latched (one
-// "CLK_BASIS"/"relatch" event; per-sat disc pending iff emit_clock_disc) only
-// when a held signal leaves the >=2-station set.
-TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldLatchRelatch) {
-    using Pair = CbDatumRowsHarness::Pair;
-    for (const bool emit_disc : {false, true}) {
-        NetworkEstimator est;
-        est.registerCodeBias("G01", "C1C");
-        est.registerCodeBias("G01", "C2W");
-        est.registerCodeBias("G01", "C5Q");
-
-        CbDatumRowsHarness h;
-        h.clock_signal_basis_hold = true;
-        h.emit_clock_disc         = emit_disc;
-
-        // Epoch 1 (latch): only L2+L5 registered -> (C2W, C5Q) latched with no event.
-        h.build(est, {{"G01", "C2W"}, {"G01", "C5Q"}});
-        EXPECT_EQ(h.events, 0) << "emit_disc=" << emit_disc;
-        ASSERT_EQ(h.held_clock_ref.count("G01"), 1u);
-        EXPECT_EQ(h.held_clock_ref.at("G01"), (Pair{"C2W", "C5Q"}));
-
-        // Epoch 2 (hold): C1C rises; the fresh selection would be (C1C, C2W),
-        // but both held signals are still registered, so the IF row stays on
-        // the held L2/L5 pair and the counting stub does not fire.
-        auto out = h.build(est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G01", "C5Q"}});
-        EXPECT_EQ(h.events, 0) << "emit_disc=" << emit_disc;
-        EXPECT_EQ(h.held_clock_ref.at("G01"), (Pair{"C2W", "C5Q"}));
-        const double fa = gpsCodeFreq("G", "C2W"), fb = gpsCodeFreq("G", "C5Q");
-        const double den = fa * fa - fb * fb;
-        EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G01", "C2W")),  fa * fa / den);
-        EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G01", "C5Q")), -fb * fb / den);
-        EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G01", "C1C")), 0.0);
-
-        // Epoch 3 (re-latch): held C2W leaves the registered set -> adopt the
-        // fresh (C1C, C5Q) pair; exactly one CLK_BASIS/relatch event; the
-        // per-sat disc goes pending iff the clock-disc channel is armed.
-        h.build(est, {{"G01", "C1C"}, {"G01", "C5Q"}});
-        EXPECT_EQ(h.events, 1) << "emit_disc=" << emit_disc;
-        EXPECT_EQ(h.last_tier, "CLK_BASIS");
-        EXPECT_EQ(h.last_event, "relatch");
-        EXPECT_EQ(h.last_sat, "G01");
-        EXPECT_EQ(h.held_clock_ref.at("G01"), (Pair{"C1C", "C5Q"}));
-        EXPECT_EQ(h.basis_relatch_disc_pending.count("G01"), emit_disc ? 1u : 0u);
-    }
-}
-
-// Hold off + emit_clock_disc: this epoch's pin selection is recorded in the
+// emit_clock_disc: this epoch's pin selection is recorded in the
 // this_epoch_if_pin_sel scratch for the emit-site compare, but only for a real
 // two-frequency IF pair (a single-frequency satellite has no clock<->code split
 // to re-reference, so it stays out of the disc channel).
-TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldOffDiscScratch) {
+TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsDiscScratch) {
     NetworkEstimator est;
     est.registerCodeBias("G01", "C1C");
     est.registerCodeBias("G01", "C2W");
     est.registerCodeBias("G02", "C1C");   // single-frequency satellite
 
     CbDatumRowsHarness h;
-    h.emit_clock_disc = true;             // hold stays off
+    h.emit_clock_disc = true;
     const auto out = h.build(
         est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G02", "C1C"}});
 
@@ -4281,8 +4204,6 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldOffDiscScratch) {
     EXPECT_EQ(h.this_epoch_if_pin_sel.at("G01"),
               (CbDatumRowsHarness::Pair{"C1C", "C2W"}));
     EXPECT_EQ(h.this_epoch_if_pin_sel.count("G02"), 0u);
-    // The hold latch is neither read nor written on the off path.
-    EXPECT_TRUE(h.held_clock_ref.empty());
     EXPECT_EQ(out.n_if_pin_sats, 2);      // both sats still get a pin row
     EXPECT_EQ(out.n_s2z_channels, 2);     // G|C1C (2 sats) + G|C2W (1 sat)
     // The declaration record is populated regardless of the disc channel: same
@@ -4292,59 +4213,37 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldOffDiscScratch) {
               (CbDatumRowsHarness::Pair{"C1C", "C2W"}));
 }
 
-// S-contract §1.5: the declaration record (this_epoch_if_pin_real /
-// this_epoch_gf_pin_real) is independent of both the disc channel and the basis
-// hold.  cbpin= and gfpin= are built from it, and a product-contract declaration
-// may not depend on a QC-channel knob.
+// S-contract §1.5: the declaration record (this_epoch_if_pin_real) is independent of
+// the disc channel.  cbpin= is built from it, and a product-contract declaration may
+// not depend on a QC-channel knob.
 //
 // Regression guard: the declaration must not be read from this_epoch_if_pin_sel,
-// which is gated `!clock_signal_basis_hold && emit_clock_disc`.
-// network.emit_clock_disc defaults false and is off in the field postures, so a
-// declaration built from that map names no pin in the field, and the truth grader
-// (which refuses rather than assume a pair) cannot transform the B records.
+// which is gated on emit_clock_disc.  network.emit_clock_disc defaults false, so a
+// declaration built from that map would name no pin wherever the disc channel is off,
+// and the truth grader (which refuses rather than assume a pair) could not transform
+// the B records.
 //
-// The knobs below are the field posture: hold on, disc channel off, GF datum
-// armed.  The declaration is still recorded, and the disc scratch stays empty
-// (that map drives per-satellite discontinuity bumps, so widening it would be a
-// wire change, not a declaration change).
+// The disc channel is off below.  The declaration is still recorded, and the disc
+// scratch stays empty (that map drives per-satellite discontinuity bumps, so widening
+// it would be a wire change, not a declaration change).
 TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsDeclarationRecordIsUngated) {
     NetworkEstimator est;
     est.registerCodeBias("G01", "C1C");
     est.registerCodeBias("G01", "C2W");
-    est.registerCodeBias("G01", "C5Q");   // third band: the estimable content
-    est.registerCodeBias("G02", "C1C");   // single-frequency: no IF pin, no GF row
+    est.registerCodeBias("G01", "C5Q");   // third band
+    est.registerCodeBias("G02", "C1C");   // single-frequency: no IF pin pair
 
     CbDatumRowsHarness h;
-    h.clock_signal_basis_hold = true;     // the hold branch records no selection...
-    h.emit_clock_disc         = false;    // ...and the disc scratch is gated off
-    h.gf_datum                = true;     // slant posture
-    const auto out = h.build(
-        est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G01", "C5Q"}, {"G02", "C1C"}});
+    h.emit_clock_disc = false;            // the disc scratch is gated off
+    h.build(est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G01", "C5Q"}, {"G02", "C1C"}});
 
     // The disc scratch stays empty; the QC channel is not touched.
     EXPECT_TRUE(h.this_epoch_if_pin_sel.empty());
-    // The declaration record carries the held pair anyway.
+    // The declaration record carries the realized pair anyway.
     ASSERT_EQ(h.this_epoch_if_pin_real.size(), 1u);
     EXPECT_EQ(h.this_epoch_if_pin_real.at("G01"),
               (CbDatumRowsHarness::Pair{"C1C", "C2W"}));
     EXPECT_EQ(h.this_epoch_if_pin_real.count("G02"), 0u);   // no dual-freq pin
-    EXPECT_EQ(h.held_clock_ref.at("G01"),
-              (CbDatumRowsHarness::Pair{"C1C", "C2W"}));    // hold really did latch
-    // The GF record names the satellites that took the second row: the same set
-    // the gfpin= unanimity rule tallies over.
-    EXPECT_EQ(h.this_epoch_gf_pin_real, (std::set<std::string>{"G01"}));
-    EXPECT_EQ(out.n_gf_pin_sats, 1);
-    EXPECT_EQ(out.n_gf_only_pair, 0);     // G01 has C5Q outside the pinned pair
-
-    // GF datum off: the pair is still declared, the GF set is empty (so no gfpin=).
-    CbDatumRowsHarness h0;
-    h0.clock_signal_basis_hold = true;
-    h0.gf_datum                = false;
-    const auto out0 = h0.build(
-        est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G01", "C5Q"}, {"G02", "C1C"}});
-    EXPECT_EQ(h0.this_epoch_if_pin_real.size(), 1u);
-    EXPECT_TRUE(h0.this_epoch_gf_pin_real.empty());
-    EXPECT_EQ(out0.n_gf_pin_sats, 0);
 }
 
 // ---------------------------------------------------------------------------

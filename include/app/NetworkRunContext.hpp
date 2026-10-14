@@ -630,10 +630,6 @@ namespace GnssProcessor {
         bool sticky_pivot{};
         bool clock_sum_to_zero{};
         bool clock_brdc_anchored{};
-        /// network.clock_signal_basis_hold: hold each satellite's IF-pin reference pair fixed
-        /// across epochs (a time-consistent δtˢ↔dˢ split) instead of re-selecting it from
-        /// each epoch's coverage; inert without estimate_sat_code_bias (W6).
-        bool clock_signal_basis_hold{};
         bool cb_time_linked{};
         bool scoped_handover{};
         /// network.handover_stransform (queue item 1(b)): at a pivot handover, re-express the
@@ -1134,23 +1130,8 @@ namespace GnssProcessor {
         // with a different pivot still raises datum_changed.  Read only when
         // network.pivot_vanish_return_signal is on (otherwise inert).
         std::map<std::string, std::string> last_pivot;
-        // network.clock_signal_basis_hold: per-satellite held ionosphere-free clock
-        // reference pair (sat -> {sig1, sig2}) for the W6 IF pin.  Latched at the first
-        // epoch a satellite's code-bias columns register a usable dual-frequency pair and
-        // reused every later epoch while both signals stay registered, so the emitted
-        // (δtˢ, dˢ) split stays anchored to one signal basis for the whole run (the
-        // analogue of the IGS fixed-clock convention, which keeps the differential clock
-        // time-consistent).  Re-latched to the current epoch's freshly selected pair only
-        // when a held reference signal leaves the ≥2-station set.  Empty and unread unless
-        // clock_signal_basis_hold (so the IF-pin datum is byte-identical when off).  Not
-        // snapshotted (v1): a warm resume re-latches from first sight, one small per-sat
-        // basis step that is trace-logged but not wire-signalled, like the per-epoch
-        // re-selection it replaces.  The toggle is in the resume fingerprint, so a toggle
-        // change cold-starts.
-        std::map<std::string, std::pair<std::string, std::string>> held_clock_ref;
-        // Deterministic IF-pin selection discontinuity (hold off).  With
-        // clock_signal_basis_hold off, the pin is re-derived from every epoch's coverage;
-        // the deterministic NetworkSbasis::selectIfPinPair makes it a pure function of the
+        // Deterministic IF-pin selection discontinuity.  The pin is re-derived from every
+        // epoch's coverage; the deterministic NetworkSbasis::selectIfPinPair makes it a pure function of the
         // registered signal set, so a change between emitted products means a channel
         // entered or left the ≥2-station set.  That steps the emitted (δtˢ, dˢ) split by
         // the satellite's inter-channel code bias, a per-sat datum move the consumer must
@@ -1162,9 +1143,8 @@ namespace GnssProcessor {
         //  - last_if_pin_sel: the pair of the last emitted product per satellite, compared
         //    and advanced only at the emit site (like emitted_anchor / prev_pivot), so a
         //    withheld epoch leaves it untouched and its transient pair is dropped.
-        // Both are populated only under !clock_signal_basis_hold && emit_clock_disc (the
-        // hold path signals its own re-latch through held_clock_ref), so the output is
-        // byte-identical otherwise.  Not snapshotted: a warm resume has no prior for its
+        // Both are populated only under emit_clock_disc, so the output is byte-identical
+        // otherwise.  Not snapshotted: a warm resume has no prior for its
         // first emit, so it must not fabricate a disc it cannot verify.
         std::map<std::string, std::pair<std::string, std::string>> this_epoch_if_pin_sel;
         std::map<std::string, std::pair<std::string, std::string>> last_if_pin_sel;
@@ -1228,25 +1208,16 @@ namespace GnssProcessor {
         std::map<std::string, std::string> last_cb_family_partner;
         // S-contract §1.5 declaration scratch: the realized code-bias datum pair per
         // satellite, recorded unconditionally (the only guard is a real dual-frequency pin,
-        // f1, f2 > 0) and read only by the cbpin=/gfpin= fill in NetworkSolPrep.  It is
-        // kept apart from this_epoch_if_pin_sel on purpose.  That map is the hold-off
-        // disc-compare scratch, gated on `!clock_signal_basis_hold && emit_clock_disc`:
-        // reading it would make a product-contract declaration depend on a QC-channel knob
-        // (emit_clock_disc defaults false, so a posture without it would declare no pin),
-        // and widening it would change which satellites get a discontinuity bump, a wire
-        // change.  This map covers both selection paths (the hold-off per-epoch
-        // re-selection and the clock_signal_basis_hold latched pair), so the declaration
-        // tracks the datum the run realized.  Cleared each epoch; declaration-only, so the
-        // solve and every emitted numeric value are untouched.
+        // f1, f2 > 0) and read only by the cbpin= fill in NetworkSolPrep.  It is kept apart
+        // from this_epoch_if_pin_sel on purpose.  That map is the disc-compare scratch,
+        // gated on emit_clock_disc: reading it would make a product-contract declaration
+        // depend on a QC-channel knob (emit_clock_disc defaults false, so a posture without
+        // it would declare no pin), and widening it would change which satellites get a
+        // discontinuity bump, a wire change.  This map records the pair the pin realized
+        // (after card GFC's pair hold, when armed), so the declaration tracks the datum the
+        // run realized.  Cleared each epoch; declaration-only, so the solve and every
+        // emitted numeric value are untouched.
         std::map<std::string, std::pair<std::string, std::string>> this_epoch_if_pin_real;
-        // S-contract §1.5: the satellites that also received a geometry-free datum row this
-        // epoch (network.code_bias_gf_datum, Odijk rd 3b).  The GF row is folded on the
-        // same (sig1, sig2) as the IF pin, so the pair itself lives in
-        // this_epoch_if_pin_real; this set records which satellites got the second row,
-        // which the gfpin= declaration needs (a satellite with no valid dual-frequency pin
-        // gets neither row).  Empty whenever the GF datum is off, so there is no gfpin=
-        // token and the S line is byte-identical.  Cleared each epoch.
-        std::set<std::string> this_epoch_gf_pin_real;
         /// This epoch's per-(satellite, companion signal) inter-signal-correction verdicts,
         /// keyed `"sat|signal"` (RF-0f).  A key in @ref this_epoch_isc_obs means some
         /// present station tracked both that companion and the T_GD pin's band-2 signal on
@@ -1267,25 +1238,6 @@ namespace GnssProcessor {
         /// glue, read by the emit prep; empty unless `network.sat_gf_extra_band_free` is
         /// armed.
         std::set<std::string> this_epoch_extra_band_held;
-        // Run-latched family census (FAMILY-GF).  Odijk rd 3b re-derives per receiver
-        // channel family when the station population partitions (the Galileo C/Q-vs-X
-        // tracking split), because the primary pin is built on the satellite's
-        // lowest-ordered signals and so never touches an X-only station's columns.
-        // Whether that partition exists is a property of the receiver population, not of
-        // an epoch, so the verdict is computed once, on the first epoch with a usable
-        // station set, and held for the run: re-deciding it per epoch would make the datum
-        // topology follow coverage churn, the flapping that the CB-ADM census exists to
-        // prevent.  A bridge appearing or disappearing mid-run is not re-detected in v1;
-        // the null-space gate is the backstop, and the latched census line attributes any
-        // such withhold.  An empty `partitioned` gives zero extra rows (byte-identical),
-        // the state of every single-family posture.
-        NetworkSbasis::FamilyCensus family_census;
-        // The secondary family's realized GF pair per satellite this epoch (FAMILY-GF), the
-        // per-family counterpart of this_epoch_if_pin_real.  Feeds the '+'-joined
-        // gfpin=<const>:<primary pair>+<secondary pair> declaration, which the wire parser
-        // and checkContract accept as is.  Cleared each epoch; empty unless the per-family
-        // rows folded.
-        std::map<std::string, std::pair<std::string, std::string>> this_epoch_family_gf_pin_real;
         // Prioritized phase-bias anchor (network.phase_datum_prioritized).  All three maps
         // are keyed by the "sat_signal" ambiguity form and are empty and unread on the
         // legacy path:
@@ -1650,14 +1602,6 @@ namespace GnssProcessor {
         // between consecutive checks impossible); a defensive path for a snapshot gap or a
         // two-roll corner case.
         std::set<std::string> eph_cutover_disc_pending;
-        // Sats whose clock_signal_basis_hold IF-pin reference pair re-latched this epoch
-        // (T3c): the emitted δtˢ↔dˢ split moved (a real per-sat clock step), so a per-sat
-        // disc bump is forced at the next emit (present/pending split, like
-        // eph_cutover_disc_pending).  Populated only under clock_signal_basis_hold &&
-        // emit_clock_disc, so the output is byte-identical otherwise.  (The hold-off
-        // deterministic re-selection uses the emit-only this_epoch_if_pin_sel /
-        // last_if_pin_sel path, not this queue; see the comment near held_clock_ref.)
-        std::set<std::string> basis_relatch_disc_pending;
         // The code-bias datum's previous-epoch solved values, keyed
         // "<constellation>|<signal>" -> satellite -> value.  The veteran-referenced
         // sum-to-zero RHS and the IF-pin RHS read it at gauge construction; it is cleared
@@ -3639,12 +3583,11 @@ namespace GnssProcessor {
         // every column of that channel.
         size_t n_sat_gf_extra = 0, n_sat_gf_isc0 = 0;
         size_t n_sat_gf_sameband = 0, n_sat_gf_s2z_suppressed = 0;
-        // e1's absolute IF-level rows (and the satellites they sum), and e2's split of
-        // geometry-free rows into carried (a change pin on the previous solved value) and
-        // anchored (first sighting, the absolute broadcast target), RF-0e.  The anchored
-        // count is the only place the broadcast frame is re-asserted under e2, so a run
-        // with 0 of them has carried its frame from epoch 1 and never re-checked it.
-        size_t n_if_level_rows = 0, n_if_level_sats = 0;
+        // e2's split of geometry-free rows into carried (a change pin on the previous
+        // solved value) and anchored (first sighting, the absolute broadcast target),
+        // RF-0e.  The anchored count is the only place the broadcast frame is re-asserted
+        // under e2, so a run with 0 of them has carried its frame from epoch 1 and never
+        // re-checked it.
         size_t n_sat_gf_carried = 0, n_sat_gf_anchored = 0;
         // Band-2 companion columns left free because a station bridged the two signals,
         // and those pinned at 0 because none did (RF-0f).  The pinned ones are the part of a

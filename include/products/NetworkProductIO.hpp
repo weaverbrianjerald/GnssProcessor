@@ -62,7 +62,9 @@
  *                                           #   stream is internally consistent in)
  *     [,gfpin=<const>:<s1>-<s2>...]         #   Odijk rd 3b: the geometry-free datum
  *                                           #   pair, present only in the slant
- *                                           #   posture (network.code_bias_gf_datum).
+ *                                           #   posture (the retired
+ *                                           #   network.code_bias_gf_datum; read,
+ *                                           #   no longer written by the producer).
  *                                           #   When present, the pinned pair's
  *                                           #   B records are the datum (0) and the
  *                                           #   GF lump lives in the ionosphere
@@ -265,16 +267,16 @@ struct SbasisContract {
     /// only for constellations the consumer declares (the @c clock_pivot_sat
     /// semantics).
     std::map<std::string, std::string> cb_pin_pair;
-    /// Per-constellation geometry-free datum pair (@c network.code_bias_gf_datum,
-    /// Odijk rd 3b).  Present only when the producer folded a GF row per satellite in
-    /// addition to the IF pin (the "slant posture": free per-LOS ionosphere, no SH
-    /// field, no GIM).  The value is @c "<s1>-<s2>" and is currently always the same
-    /// pair as @ref cb_pin_pair (the GF row is built on the IF pin's post-hold
-    /// @c sig1/@c sig2).  It is carried explicitly rather than implied so the token is
-    /// self-contained and so the per-channel-family form (@c "C1C-C5Q+C1X-C5X", see
-    /// @c docs/SPEC_family_gf_datum.md) is a value extension rather than a new token.
-    /// The parser already accepts that '+'-joined form; this producer writes one pair
-    /// per constellation.
+    /// Per-constellation geometry-free datum pair (the retired
+    /// @c network.code_bias_gf_datum, Odijk rd 3b).  Present only in a product whose
+    /// producer folded a GF row per satellite in addition to the IF pin (the "slant
+    /// posture": free per-LOS ionosphere, no SH field, no GIM).  The producer no longer
+    /// builds that row and leaves the field empty; the writer, the parser and
+    /// @c checkContract keep it for products written before the retirement.  The value
+    /// is @c "<s1>-<s2>", the same pair as @ref cb_pin_pair (the GF row was built on
+    /// the IF pin's @c sig1/@c sig2), or the per-channel-family form
+    /// (@c "C1C-C5Q+C1X-C5X", see @c docs/SPEC_family_gf_datum.md), which the parser
+    /// accepts as a value extension rather than a new token.
     ///
     /// Why the pair is on the wire: under the GF datum, IF+GF together span the
     /// pinned pair's whole 2-D subspace, so those two channels' B records are

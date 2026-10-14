@@ -1865,8 +1865,8 @@ namespace GnssProcessor {
         // logConfigurationSummary_, not here.  This helper is the second of the
         // twelve section loaders in loadFromJson, and several fields that line
         // reports are still changed by later sections (the IMU section, the
-        // app-mode/real-time section and the network section): the W6, EXT-CB and
-        // GLONASS network slices force estimate_ifb_ on, and imu_config_.enabled
+        // app-mode/real-time section and the network section): the W6 and GLONASS
+        // network slices force estimate_ifb_ on, and imu_config_.enabled
         // keeps its NSDMI `false` until the IMU section parses it.  An echo here
         // would print values before those sections resolve them.  (The aiding
         // block is loaded at the tail of the IMU section for the same reason.)
@@ -3415,9 +3415,8 @@ namespace GnssProcessor {
         // Consolidated toggle echo, printed here rather than at the tail of
         // loadEstimationSection_ so every field reports its final, post-resolution
         // value.  loadFromJson calls this last, after every section helper and
-        // every cross-section forcing (the W6 / EXT-CB / GLONASS estimate_ifb_
-        // promotions, the IMU parse, the real-time overrides), so what this prints is
-        // what the run uses.  Keep it last: a toggle on this line that a later
+        // every cross-section forcing (the W6 / GLONASS estimate_ifb_ promotions, the
+        // IMU parse, the real-time overrides), so what this prints is what the run uses.  Keep it last: a toggle on this line that a later
         // section could still change would print a stale value.
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";

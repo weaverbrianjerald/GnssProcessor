@@ -2,9 +2,8 @@
  * @file test_network_solprep_disc.cpp
  * @brief The emit-site landings of per-satellite discontinuities in
  *        networkSolPrep: the Q3 trap-1 rule (docs/SPEC_clock_temporal_anchor.md)
- *        applied to the sibling landing sites eph_cutover, cb_excursion,
- *        basis_relatch, the IF-pin re-selection with the hold off (T3c), and the
- *        CB re-seed queue (Card-2).
+ *        applied to the sibling landing sites eph_cutover, cb_excursion, the IF-pin
+ *        re-selection (T3c), and the CB re-seed queue (Card-2).
  *
  * The contract under test: a queue's landed mark does not stop at
  * markSatDiscontinuity.  That call bumps only the emitter's in-process
@@ -22,7 +21,7 @@
  * Also pinned:
  *  - a satellite landed by more than one queue in the same epoch steps its
  *    counters once (the Q3 "one event, one step" dedupe, chained across all
- *    five queues);
+ *    four queues);
  *  - a queued satellite absent from this epoch's emission stays pending and
  *    is neither marked nor serialized (mark == land, RT0-5 P0-1);
  *  - each queue writes its own trace_events row when it lands.
@@ -221,21 +220,6 @@ TEST(NetworkSolPrepDiscTest, CbExcursionMarkLandsInRRecordAndReplays) {
     EXPECT_EQ(h.eventsCsv().find("cb_excursion_disc_landed") == std::string::npos, false);
 }
 
-TEST(NetworkSolPrepDiscTest, BasisRelatchMarkLandsInRRecordAndReplays) {
-    Harness h("relatch");
-    h.ctx->carry.basis_relatch_disc_pending = {"G04"};
-
-    const NetworkSolPrepResult r = h.run();
-
-    EXPECT_EQ(r.retro_emit_sats.count("G04"), 1u);
-    EXPECT_TRUE(h.ctx->carry.basis_relatch_disc_pending.empty());
-
-    h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
-    EXPECT_EQ(h.setup.emitter->clockDiscontinuityCounter("G04"), 1);
-    EXPECT_EQ(replayedClockDisc(h, r, "G04", "relatch"), 1);
-    EXPECT_EQ(h.eventsCsv().find("relatch_disc_landed") == std::string::npos, false);
-}
-
 TEST(NetworkSolPrepDiscTest, IfPinReselectMarkLandsInRRecordAndReplays) {
     Harness h("reselect");
     // The emitted pair differs from the last emitted product's pair → a genuine
@@ -278,11 +262,10 @@ TEST(NetworkSolPrepDiscTest, CbReseedMarkLandsInRRecordAndReplays) {
 // same satellite in the same epoch (the Q3 rule, chained across the blocks).
 // ---------------------------------------------------------------------------
 
-TEST(NetworkSolPrepDiscTest, SameSatInFiveQueuesStepsCountersOnce) {
+TEST(NetworkSolPrepDiscTest, SameSatInFourQueuesStepsCountersOnce) {
     Harness h("dedupe");
     h.ctx->carry.eph_cutover_disc_pending  = {"G01"};
     h.ctx->carry.cb_excursion_pending_bump = {"G01"};
-    h.ctx->carry.basis_relatch_disc_pending = {"G01"};
     h.ctx->carry.last_if_pin_sel["G01"]      = {"C1W", "C2W"};
     h.ctx->carry.this_epoch_if_pin_sel["G01"] = {"C1W", "C5Q"};
     h.ctx->carry.cb_reseed_disc_pending = {"G01"};
@@ -292,14 +275,13 @@ TEST(NetworkSolPrepDiscTest, SameSatInFiveQueuesStepsCountersOnce) {
     EXPECT_EQ(r.retro_emit_sats.count("G01"), 1u);
 
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
-    EXPECT_EQ(h.setup.emitter->clockDiscontinuityCounter("G01"), 1);   // once, not 5×
+    EXPECT_EQ(h.setup.emitter->clockDiscontinuityCounter("G01"), 1);   // once, not 4×
     EXPECT_EQ(replayedClockDisc(h, r, "G01", "dedupe"), 1);            // one R entry, one step
 
     // Provenance is kept: each queue still writes its own trace row.
     const std::string csv = h.eventsCsv();
     EXPECT_NE(csv.find("eph_cutover_disc_landed"), std::string::npos);
     EXPECT_NE(csv.find("cb_excursion_disc_landed"), std::string::npos);
-    EXPECT_NE(csv.find("relatch_disc_landed"), std::string::npos);
     EXPECT_NE(csv.find("reselect"), std::string::npos);
     EXPECT_NE(csv.find("reseed_disc_landed"), std::string::npos);
 }
@@ -314,7 +296,6 @@ TEST(NetworkSolPrepDiscTest, AbsentSatStaysPendingAndUnserialized) {
     Harness h("absent");
     h.ctx->carry.eph_cutover_disc_pending  = {"G09"};
     h.ctx->carry.cb_excursion_pending_bump = {"G09"};
-    h.ctx->carry.basis_relatch_disc_pending = {"G09"};
     h.ctx->carry.cb_reseed_disc_pending     = {"G09"};
 
     const NetworkSolPrepResult r = h.run();
@@ -322,7 +303,6 @@ TEST(NetworkSolPrepDiscTest, AbsentSatStaysPendingAndUnserialized) {
     EXPECT_TRUE(r.retro_emit_sats.empty());
     EXPECT_EQ(h.ctx->carry.eph_cutover_disc_pending.count("G09"), 1u);
     EXPECT_EQ(h.ctx->carry.cb_excursion_pending_bump.count("G09"), 1u);
-    EXPECT_EQ(h.ctx->carry.basis_relatch_disc_pending.count("G09"), 1u);
     EXPECT_EQ(h.ctx->carry.cb_reseed_disc_pending.count("G09"), 1u);
     EXPECT_EQ(h.ctx->carry.cb_exc_bumps, 0);
 
