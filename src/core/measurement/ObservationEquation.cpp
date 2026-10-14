@@ -193,7 +193,9 @@ bool addIonosphere(Row& r) {
     if (slot.column < 0) return true;
     const double freq = carrierFrequency(r);
     if (!(freq > 0.0)) return true;
-    const double f_ref = Constants::GPS_L1_FREQ;
+    // The slant state is the delay on the reference band's carrier (kIonoReferenceBand,
+    // GPS L1), read on this row's carrier with the coefficient (f_ref / f)^2.
+    const double f_ref = nominalCarrierFrequencyHz(kIonoReferenceBand);
     const double alpha = (f_ref * f_ref) / (freq * freq);
     addPart(open(r.eq, ObsEffect::Ionosphere), ref, (r.is_phase ? -1.0 : 1.0) * alpha, slot);
     return true;

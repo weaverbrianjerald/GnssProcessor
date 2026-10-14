@@ -1095,7 +1095,10 @@ namespace GnssProcessor {
      * a carrier f reads it with the coefficient (f_ref / f)^2, f_ref being
      * @c nominalCarrierFrequencyHz(kIonoReferenceBand), which equals
      * @c Constants::GPS_L1_FREQ bit for bit.  The GIM pseudo-observation is queried at
-     * f_ref, and a TECU converts to metres at f_ref (@ref ionoDelayMetresPerTecu).
+     * f_ref, and a TECU converts to metres at f_ref (@ref ionoDelayMetresPerTecu).  The
+     * observation equation's ionosphere column and the ionosphere and code-bias seeds name
+     * the band through this constant; the GIM pseudo-observation of the PPP driver and the
+     * real-time declared level step still read @c Constants::GPS_L1_FREQ, the same value.
      */
     inline constexpr FrequencyBand kIonoReferenceBand = FrequencyBand::GpsL1;
 

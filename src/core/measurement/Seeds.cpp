@@ -148,7 +148,7 @@ std::optional<IonosphereSeed> seedIonosphere(const ObsInput& in, const PppObserv
             const double mod1 = obs.modeled.at(codes[i].key);
             const double mod2 = obs.modeled.at(codes[j].key);
 
-            const double f_ref = nominalCarrierFrequencyHz(FrequencyBand::GpsL1);
+            const double f_ref = nominalCarrierFrequencyHz(kIonoReferenceBand);
             const double alpha1 = (f_ref * f_ref) / (f1 * f1);
             const double alpha2 = (f_ref * f_ref) / (f2 * f2);
             const double denom = alpha1 - alpha2;
@@ -339,7 +339,7 @@ CodeBiasSeeds seedCodeBias(const ObsInput& in, const ParamLookup& params,
 
             const double freq = in.ppp_utils.getFrequency(ref_type, obs.system, obs.satellite);
             if (freq <= 0.0) continue;
-            const double f_ref = nominalCarrierFrequencyHz(FrequencyBand::GpsL1);
+            const double f_ref = nominalCarrierFrequencyHz(kIonoReferenceBand);
             const double alpha = (f_ref * f_ref) / (freq * freq);
 
             const auto bias = in.receiver_bias->resolveReceiverBias(ref_type, obs.system,
