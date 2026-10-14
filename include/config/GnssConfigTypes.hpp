@@ -329,45 +329,6 @@ namespace GnssProcessor {
         std::string   replay_products_path;
     };
 
-    /**
-     * @brief MW wide-lane lane layers (@c network.mw_wl.*) (M5 card WL-2).
-     *        See docs/SPEC_ewl_wl_cascade_card.md.
-     *
-     * The per-arc Melbourne-Wubbena Welford statistics, double-differenced over the
-     * fundamental-cycle chord basis of the invariant carry, feed the EWL lane decision,
-     * the WL phase bridge and the NL-preserving inject.  Off by default; off is
-     * byte-identical.  Requires @c network.carry_invariant (the chord basis belongs to
-     * that carry; checked at load).  GLONASS is excluded upstream.  The WL-1 float rows
-     * on the primary (1,2) pair (@c enable), their F6 dump and the per-constellation UWL
-     * lane tiers are retired.
-     */
-    struct MwWlConfig {
-        double sigma_floor_cyc{ 0.05 };       ///< per-row R floor (cycles): R = max(Σ var/λ_WL², floor²).
-        int    max_rows_per_epoch{ 0 };       ///< 0 = unlimited; else keep the lowest-R rows first (drops counted).
-        double fix_weight_sigma_cyc{ 0.01 };  ///< Fixed-row σ (a soft-hard constraint that can be rolled back): the WL-2 hold-row σ (SPEC_ewl_wl_cascade_card.md §3.3).
-        // ============================================================================
-        // EWL-first tri-frequency cascade (M5 card WL-2).
-        // An EWL statistic lane that fixes by about epoch 3 (the third band is uncarried,
-        // so its rows do not compete with a carried state), a phase bridge to a fast
-        // WL integer, and the NL-preserving inject primitive that writes the fixed WL
-        // into the invariant carry.  Off by default; off is byte-identical (no
-        // third-band carry exclusion, no lanes, no inject).
-        // ============================================================================
-        bool   ewl_enable{ false };           ///< EWL lane master switch (statistics scope, rows and statistic-gated fix; no inject, since the lane is uncarried) (WL-2).  Requires @c network.carry_invariant.  Off is byte-identical.
-        int    ewl_min_arc_epochs{ 2 };       ///< Lagged Welford n before an EWL cycle is eligible for a decision (first decision at epoch 3 under the F1 lag).
-        double ewl_fix_sigma_cyc{ 0.10 };     ///< EWL FFR gate: fix when the statistic-row σ < this (cyc).
-        double ewl_fix_frac_cyc{ 0.20 };      ///< EWL FFR gate: and |frac(z_EWL)| < this (cyc).
-        bool   wl_inject_enable{ false };     ///< WL lane master switch (bridge on EWL-fixed cycles, MW(1,2) fallback, then injectLaneTarget) (WL-2).  Requires @c carry_invariant; the bridge path also requires @c ewl_enable.  Off is byte-identical.
-        double wl_fix_sigma_cyc{ 0.10 };      ///< WL FFR gate: fix when the WL statistic σ < this (cyc).
-        double wl_fix_frac_cyc{ 0.15 };       ///< WL FFR gate: and |frac(z_WL)| < this (cyc).
-        double bridge_max_sigma_cyc{ 0.15 };  ///< Ionosphere-error guard: no WL fix from a bridge row whose σ exceeds this (cyc).
-        double inject_disagree_min_cyc{ 0.75 };///< Inject trigger threshold on |statistic − carried lane value| (cyc).  After an inject the difference is about 0, so the trigger limits itself.
-        double lane_max_abs_xlin_m{ 1000.0 }; ///< Pre-flight quarantine: skip a lane cycle if any arc's ambiguity linearization |x_lin| exceeds this (m).  Guards against the ~256 km receiver-clock seed at station 1 (§7 pre-flight): such cycles ill-condition the correction-frame rows and do not converge even at full authority.  0 = disabled.
-        bool   bridge_sample_debias{ false }; ///< Fold each bridge sample as GF_k − C_iono·ı̃(t_k) (per-sample de-bias by the estimable ionosphere, pushed with a one-epoch lag) instead of subtracting C_iono·ı̃(now) from the lifetime mean at read time.  The statistic becomes stationary, which removes both the mean bias and the drift-inflated Welford σ that blocked re-decisions as the whole-arc Welford aged (without it, constrained-lane circR fell from 0.89 to 0.24 over 60 epochs).  S-conformant: Σc·ı̃ over a closed cycle = ∇ΔI exactly (Odijk 2016, Table 8: the S-basis lumps cancel by sign balance).  Requires @c ewl_enable (the bridge).  Off: raw accumulation with read-time de-bias, byte-identical.
-        bool   d5_dump{ false };              ///< Diagnostic (log-only, F-A): per-epoch CSV of every D5 innovation flag of the invariant carry (group id, chord (u,v), station, ambiguity key, formally standardized innovation, and adjacency tags {EWL-fixed (station,sat) member, hold-cycle chord, chord injected in the previous epoch}) to logs/network_d5_flags.csv.  Does not change the solve.
-        bool   lane_trace{ false };           ///< Instrument (log-only, F-B): per-epoch CSV of every primary cycle's carried WL lane value and fractional part after install, for both the held or injected population and the untouched control population in one run, to logs/network_wl_lane_trace.csv.  Graded by scripts/grade_lane_trace.py, which resolves the injected-cycle circR that the star dd-frac trace cannot.  Requires @c wl_inject_enable.  Does not change the solve.
-    };
-
     /// SD pre-reduce EWL constraint.  The between-satellite single-differenced
     /// extra-wide-lane MW statistic is folded as a pseudo-observation row into each
     /// station's own pre-reduce block, so it reaches the shared satellite phase and
@@ -1799,7 +1760,6 @@ namespace GnssProcessor {
         double epoch_sync_tolerance_s{ 0.01 };///< Max time-tag difference when matching epochs across stations.
         ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
         NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default off: float product).
-        MwWlConfig       mw_wl;               ///< MW wide-lane lane layers (M5 card WL-2; default off, byte-identical).
         SdEwlConfig      sd_ewl;              ///< SD pre-reduce EWL constraint (default off, byte-identical; docs/SPEC_sd_ewl_prereduce.md).
         SlipQcConfig     slip_qc;             ///< Slip-QC hardening, cards R/L/G and their follow-ups (network.cycle_slip.*; every master default off, byte-identical; docs/SPEC_slip_qc_hardening.md).
         SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier, degraded-phase demotion and re-vet (network.signal_integrity.*; default off, byte-identical; docs/SPEC_flicker_gap_integrity.md).

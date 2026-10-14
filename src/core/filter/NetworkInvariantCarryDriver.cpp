@@ -136,7 +136,6 @@ void NetworkInvariantCarryDriver::resetCarryState_() {
     last_innov_flags_.clear();
     last_innov_sigmas_.clear();
     last_innov_terms_.clear();
-    gate_exempt_.clear();
     innov_flat_.clear();       // corroboration set is cleared with the carry (D5 v3)
 }
 
@@ -229,7 +228,7 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
     line = chomp(line);
     if (line.rfind("CARRY,", 0) != 0) return fail("bad carry header: '" + line + "'");
     // This is a general "install this carry" API, so it starts from a clean driver: no
-    // gate-exemption or innovation side-state survives the install.  The
+    // innovation side-state survives the install.  The
     // counters are also cleared here, and only here.  reset() alone keeps the run tallies
     // (it is a mid-run carry cold start), whereas an installed carry starts a new count,
     // and tallies from earlier driver work would otherwise be attributed to it. (RE-4)
@@ -927,24 +926,6 @@ bool NetworkInvariantCarryDriver::carriedDdForTest(
     return false;
 }
 
-bool NetworkInvariantCarryDriver::injectCarriedChord(
-    int group, const ArcKey& chord, double new_z, double new_var) {
-    for (CarriedBlock& cb : carried_) {
-        if (cb.group != group) continue;
-        auto it = std::find(cb.chords.begin(), cb.chords.end(), chord);
-        if (it == cb.chords.end()) continue;
-        const Eigen::Index i = it - cb.chords.begin();
-        const double keep_var = cb.Pz(i, i);       // fallback if new_var is non-positive
-        cb.z(i) = new_z;                            // the lane-targeted correction-frame DD
-        cb.Pz.row(i).setZero();                     // fresh independent assertion (PSD-safe)
-        cb.Pz.col(i).setZero();
-        cb.Pz(i, i) = (new_var > 0.0) ? new_var : keep_var;
-        gate_exempt_.insert({ group, chord });      // D5-exempt at the next install (§3.3)
-        return true;
-    }
-    return false;   // not a carried chord of `group` (cycle not 1:1); the caller skips and counts
-}
-
 bool NetworkInvariantCarryDriver::carriedCrossForTest(
     int group, const ArcKey& a, const ArcKey& b, double& cov) const {
     for (const CarriedBlock& cb : carried_) {
@@ -1103,8 +1084,6 @@ void NetworkInvariantCarryDriver::installPosterior(
             // non-PD Pᶻ+B as Minv, so Cov(v) inherits its negative diagonals and a degenerate
             // block's rows are all skipped here; the counter makes that visible. (PD-safe INC-0)
             if (!(var > 0.0)) { ++counters_.d5_nonpos_var_rows; continue; }
-            if (gate_exempt_.count({ bm.group, bm.chords[static_cast<std::size_t>(i)] }))
-                continue;
             if (inflation_ && (!have_carried || bm.chord_carried[static_cast<std::size_t>(i)]))
                 inflation_->addRow(kInflationFamily, kInflationSat,
                                    v(i) / std::sqrt(var), /*gap_s=*/0.0,
@@ -1231,7 +1210,6 @@ void NetworkInvariantCarryDriver::installPosterior(
             next.push_back(std::move(S.cb));
         }
         carried_.swap(next);
-        gate_exempt_.clear();   // the one-epoch inject exemption is consumed here (WL-2 §3.3)
         innov_flat_.clear();    // the one-epoch corroboration set is consumed here (D5 v3)
         counters_.z_dim = static_cast<long long>(totalZDim());
         if (counters_.z_dim > counters_.max_z_dim) counters_.max_z_dim = counters_.z_dim;  // INC-C0
@@ -1280,7 +1258,6 @@ void NetworkInvariantCarryDriver::installPosterior(
         next.push_back(std::move(cb));
     }
     carried_.swap(next);
-    gate_exempt_.clear();   // the one-epoch inject exemption is consumed here (WL-2 §3.3)
     innov_flat_.clear();    // the one-epoch corroboration set is consumed here (D5 v3)
     counters_.z_dim = static_cast<long long>(totalZDim());
     if (counters_.z_dim > counters_.max_z_dim) counters_.max_z_dim = counters_.z_dim;  // INC-C0

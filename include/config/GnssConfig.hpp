@@ -3524,8 +3524,8 @@ namespace GnssProcessor {
          * re-tap destroys the hypothesis it would test.
          *
          * For this many processed epochs after a warm resume the D5 gate is therefore
-         * diagnostic-only: a chord that trips k·σ̂₀ is counted (@c d5_warmup_suppressed,
-         * the @c warmup_suppressed column of @c network_d5_flags.csv, and the epoch's
+         * diagnostic-only: a chord that trips k·σ̂₀ is counted (@c d5_warmup_suppressed
+         * and the epoch's
          * @c n_d5_flags, while @c n_d5_retaps stays 0) but is not re-tapped, not marked
          * slipped for the next epoch, and its block is not refolded.  Everything else is
          * untouched: the σ̂₀ accumulator is fed before the decision, so calibration is not
@@ -9259,7 +9259,6 @@ namespace GnssProcessor {
             std::size_t n_sys;        ///< Active-constellation count.
             bool        tri;          ///< Triple/All frequency mode.
             bool        warm;         ///< A state-snapshot path is set (warm-resume lineage).
-            bool        lane;         ///< Any MW/WL lane layer is armed.
             bool        rt;           ///< Real-time or service posture.
             bool        par;          ///< Per-station parallelism actually engages at this size.
             double      spacing_s;    ///< Config-determinable epoch spacing (0 = native RINEX rate).
@@ -9271,7 +9270,7 @@ namespace GnssProcessor {
                                           std::vector<PostureItem>& out) const;
         void appendNetworkPostureItemsScoped_(const PostureRegime& r,
                                               std::vector<PostureItem>& out) const;
-        std::vector<PostureBundle> networkPostureBundles_(const PostureRegime& r) const;
+        std::vector<PostureBundle> networkPostureBundles_() const;
         void logNetworkPosture_(const std::shared_ptr<spdlog::logger>& log) const;
 
         void loadLoggingSection_(const nlohmann::json& json, LogManager& log_manager);
@@ -9509,7 +9508,7 @@ namespace GnssProcessor {
         bool   network_readmit_seed_code_bias_{true};      ///< Re-admission seed sub-knob (READMIT): also park + seed the departing satellite's per-signal code-bias columns (true) or the clock alone (false; FALSIFIED as an improvement).  Inert without readmit_seed_horizon_s.
         bool   network_canonical_pair_admission_{false};   ///< Canonical-pair admission (card CPA, docs/refound/CPA_canonical_pair_admission_2026-09-20.md; ledger KEEP_OFF): a (station, satellite) record enters the network path only while the station holds its canonical phase and code on band digits 1 and 2 (its own PppModel latch decides them), or the last good processed epoch is within canonical_pair_keep_epochs; a withheld record is absent downstream exactly as if the RINEX record were missing, so the row-level gap re-entry tier sees the return as a re-entry.  A constellation with no canonical pair decided on those digits is left untouched.  Off = byte-identical (no copy of the epoch is taken).  Not fingerprinted.
         int    network_canonical_pair_keep_epochs_{3};     ///< Canonical-pair admission tolerance, in processed epochs (card CPA): a record without its canonical pair is still admitted while the last good epoch is at most this many epochs back.  Clamped at 0 (0 admits only the epochs that hold the pair).  Inert without canonical_pair_admission.
-        int    network_resume_d5_warmup_ep_{0};            ///< Epochs after a warm resume during which the card-4 D5 innovation gate is diagnostic-only (RS-2b, SPEC_event_harness §21.6): a tripping chord is counted (d5_warmup_suppressed, the network_d5_flags.csv warmup_suppressed column, the epoch's n_d5_flags) but not re-tapped, not marked slipped, and its block is not refolded, so "branch correct / cold station layer wrong" can be told from "branch inconsistent".  The σ̂₀ feed, the v3 corroboration gate and the MW/LLI/IF-TD drains are untouched.  Counted in processed epochs at the install seam.  0 = off (byte-identical).  Not fingerprinted.
+        int    network_resume_d5_warmup_ep_{0};            ///< Epochs after a warm resume during which the card-4 D5 innovation gate is diagnostic-only (RS-2b, SPEC_event_harness §21.6): a tripping chord is counted (d5_warmup_suppressed and the epoch's n_d5_flags) but not re-tapped, not marked slipped, and its block is not refolded, so "branch correct / cold station layer wrong" can be told from "branch inconsistent".  The σ̂₀ feed, the v3 corroboration gate and the MW/LLI/IF-TD drains are untouched.  Counted in processed epochs at the install seam.  0 = off (byte-identical).  Not fingerprinted.
         int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires on many arcs at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = off.  Not fingerprinted.
         bool   network_carry_iono_{false};                ///< Carry per-LOS slant iono across epochs as a diagonal random-walk prior (QUEUE 8b; via addStationPrior, alongside the ZWD carry); off = per-epoch white-noise slant iono (byte-identical).
         double network_iono_carry_q_{1e-4};               ///< Slant-iono carry random-walk process noise (m²/s; QUEUE 8b); var_eff = max(var + q·Δt, floor). Only used when network.carry_iono.

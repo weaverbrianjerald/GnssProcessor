@@ -240,168 +240,6 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // Tri-frequency phase bridge (M5 card WL-2, SPEC §3.4)
-    // =================================================================
-
-    MwSlipDetector::MwBridgeMean
-    MwSlipDetector::arcBridge(const std::string& sat,
-                              const std::string& sig1,
-                              const std::string& sig2,
-                              const std::string& sig5) const {
-        MwBridgeMean out;
-        const std::string key = sat + "_" + sig1 + "_" + sig2 + "_" + sig5;
-        const auto it = bridge_stats_.find(key);
-        if (it == bridge_stats_.end()) return out;
-        const BridgeArcStats& s = it->second;
-        // Serve the lagged snapshot (state as of the previous epoch's end) so a same-epoch
-        // consumer never re-ingests the current observations: the §3.3/§3.4 double-count
-        // guard, identical to arcZdMean.
-        if (s.count_lag < 2 || !(s.lambda_wl > 0.0) || !(s.lambda_ewl > 0.0)) {
-            out.count = s.count_lag;
-            return out;
-        }
-        const double n = static_cast<double>(s.count_lag);
-        out.gf_mean_m       = s.mean_lag;
-        out.var_of_mean_m2  = s.M2_lag / (n * (n - 1.0));
-        out.count           = s.count_lag;
-        out.lambda_wl       = s.lambda_wl;
-        out.lambda_ewl      = s.lambda_ewl;
-        out.iono_coeff      = s.iono_coeff;
-        out.valid           = std::isfinite(out.gf_mean_m) && std::isfinite(out.var_of_mean_m2);
-        return out;
-    }
-
-    void MwSlipDetector::updateBridgeArc(const PppObservation& obs, bool has_lli) {
-        if (!bridge_enabled_ || obs.satellite.empty()) return;
-
-        // The legacy {1,2,5} band scan for every constellation.  It forms no arc for
-        // Galileo, which has no band '2', so the cascade is GPS-only.
-        const char b1 = '1', b2 = '2', bt = '5';
-
-        // KF-aligned single phase signal per band: min-name over obs.observed, matching
-        // the ApplicationNetwork primary(sig1<sig2 by band then name) + band-top (first
-        // '5') selection so this arc's key aligns with the caller's arcBridge query.
-        std::string s1, s2, s5;  // WL-pair bands (b1, b2) + top band (bt)
-        for (const auto& [k, v] : obs.observed) {
-            if (k.size() < 2 || k[0] != 'L') continue;
-            (void)v;
-            std::string* dst = (k[1] == b1) ? &s1 : (k[1] == b2) ? &s2
-                             : (k[1] == bt) ? &s5 : nullptr;
-            if (!dst) continue;
-            if (dst->empty() || k < *dst) *dst = k;
-        }
-        if (s1.empty() || s2.empty() || s5.empty()) return;
-
-        const double epoch_s = TimeUtils::continuousGpsSeconds(obs.time);
-
-        // One bridge triple (sa, sb, sc): lane A = (sa, sb), lane B = (hi, lo of (sb, sc)).
-        // GF = λ_A(φ_sa−φ_sb) − λ_B(φ_hi−φ_lo) = λ_A·N_A − λ_B·N_B + iono + noise.
-        auto feedTriple = [&](const std::string& sa, const std::string& sb,
-                              const std::string& sc) {
-            const std::string key = obs.satellite + "_" + sa + "_" + sb + "_" + sc;
-
-            // Loss-of-lock on any phase re-warms the bridge (it has no detection statistic
-            // to catch a real slip, unlike MW's threshold gate, so resetting is the safe choice).
-            if (has_lli) { bridge_stats_.erase(key); return; }
-
-            // Raw cycle values (matching computeMwMeters' raw-observation convention).
-            const auto i1 = obs.raw_observed.find(sa);
-            const auto i2 = obs.raw_observed.find(sb);
-            const auto i5 = obs.raw_observed.find(sc);
-            if (i1 == obs.raw_observed.end() || i2 == obs.raw_observed.end() ||
-                i5 == obs.raw_observed.end())
-                return;
-            const double L1c = i1->second, L2c = i2->second, L5c = i5->second;
-            if (!(std::isfinite(L1c) && std::isfinite(L2c) && std::isfinite(L5c))) return;
-
-            const double f1 = ppp_utils_.getFrequency(sa, obs.system, obs.satellite);
-            const double f2 = ppp_utils_.getFrequency(sb, obs.system, obs.satellite);
-            const double f5 = ppp_utils_.getFrequency(sc, obs.system, obs.satellite);
-            if (!(std::isfinite(f1) && std::isfinite(f2) && std::isfinite(f5) &&
-                  f1 > 0.0 && f2 > 0.0 && f5 > 0.0))
-                return;
-            const double df_wl  = f1 - f2;   // lane A: sa − sb (f_sa > f_sb by table order)
-            // Lane-B pair (hi − lo) by actual frequency: GPS's shared band b2 is the top
-            // pair's high side (L2 > L5), Galileo's is its low side (E5a < E5b/E5/E6);
-            // UWL-1 §2 keeps λ_B positive either way.  For GPS this reproduces the
-            // legacy f2 − f5 expression bit-exactly.
-            const bool   b2_hi  = f2 > f5;
-            const double df_top = b2_hi ? (f2 - f5) : (f5 - f2);
-            if (std::abs(df_wl) < 1.0 || std::abs(df_top) < 1.0) return;
-
-            const double c        = Constants::SPEED_OF_LIGHT;
-            const double lam_wl   = c / df_wl;
-            const double lam_ewl  = c / df_top;
-            // GF iono sensitivity to the L1-referenced slant iono I₁ (the estimator's
-            // iono-state frame, f_ref = GPS L1): C_iono = f_ref²·(1/(f1·f2) − 1/(f_hi·f_lo)).
-            // The product is order-free, so the f2·f5 expression is generic (SPEC §3.4 v2:
-            // the consumer subtracts C_iono·Σc·Î₁ to de-bias the bridge).
-            const double f_ref    = Constants::GPS_L1_FREQ;
-            const double iono_co  = f_ref * f_ref * (1.0 / (f1 * f2) - 1.0 / (f2 * f5));
-            // Lane-A phase (m) = λ_A·(φ_sa−φ_sb); lane-B phase (m) = λ_B·(φ_hi−φ_lo).
-            // GF = φ_A − φ_B is geometry-free → λ_A·N_A − λ_B·N_B + differential-iono
-            // residue + phase noise; N_B = N_hi − N_lo matches the MW(hi,lo) integer.
-            double gf = lam_wl * (L1c - L2c)
-                      - lam_ewl * (b2_hi ? (L2c - L5c) : (L5c - L2c));
-            if (!std::isfinite(gf)) return;
-            // Per-sample iono de-bias (setBridgePerSampleDebias, the age-bias fix):
-            // fold GF_k − C_iono·ı̃(t_k) so the accumulated statistic is a stationary
-            // estimable-function realization; every downstream consumer (Welford mean,
-            // gross-jump guard) then compares like frames.  A sample
-            // without an estimate is skipped, never folded in a mixed frame.
-            if (bridge_debias_) {
-                const auto iit = bridge_iono_.find(obs.satellite);
-                if (iit == bridge_iono_.end() || !std::isfinite(iit->second)) {
-                    ++bridge_debias_skipped_;
-                    return;
-                }
-                gf -= iono_co * iit->second;
-            }
-
-            BridgeArcStats& st = bridge_stats_[key];
-
-            // Data-gap reset (same tolerance as the MW arcs).
-            if (st.count > 0 && st.last_epoch_s > 0.0 &&
-                (epoch_s - st.last_epoch_s) > max_gap_seconds_) {
-                st = BridgeArcStats{};
-            }
-            // Gross-jump refloat: a lane slip the ambiguity funnel missed (≥ kBridgeJumpResetM
-            // above the sub-decimetre iono residue).  Refloat rather than corrupt the slow mean.
-            if (st.count > 0 && std::abs(gf - st.mean) > kBridgeJumpResetM) {
-                st = BridgeArcStats{};
-            }
-
-            if (st.count == 0) {
-                st.mean       = gf;
-                st.M2         = 0.0;
-                st.count      = 1;
-                st.last_epoch_s = epoch_s;
-                st.lambda_wl  = lam_wl;
-                st.lambda_ewl = lam_ewl;
-                st.iono_coeff = iono_co;
-                return;
-            }
-
-            // Lagged snapshot before this epoch's value folds in (arcBridge serves these).
-            st.mean_lag  = st.mean;
-            st.M2_lag    = st.M2;
-            st.count_lag = st.count;
-            st.count++;
-            const double eff_n = static_cast<double>(std::min<std::size_t>(st.count, kMaxHatchCount));
-            const double delta = gf - st.mean;
-            st.mean += delta / eff_n;
-            const double delta2 = gf - st.mean;
-            st.M2 += delta * delta2;
-            st.last_epoch_s = epoch_s;
-            st.lambda_wl  = lam_wl;
-            st.lambda_ewl = lam_ewl;
-            st.iono_coeff = iono_co;
-        };
-
-        feedTriple(s1, s2, s5);   // WL lane vs top lane
-    }
-
-    // =================================================================
     // Tracing (CSV output)
     // =================================================================
 
@@ -2386,11 +2224,6 @@ namespace GnssProcessor {
 
             const bool has_lli = hasAnyPhaseLockLoss(obs);
 
-            // Fold this satellite's tri-frequency phase into its GF_b bridge arc
-            // (M5 card WL-2, SPEC §3.4); a no-op unless armed via setBridgeEnabled,
-            // so byte-identical when off.
-            updateBridgeArc(obs, has_lli);
-
             // Try combined (PPP) path first
             const auto if_pairs = collectIonoFreePairs(obs);
             const bool has_if = !if_pairs.empty();
@@ -3392,14 +3225,6 @@ namespace GnssProcessor {
             }
         }
 
-        // Refloat every bridge arc of this satellite (M5 card WL-2): a slip on any of the
-        // three bands invalidates GF_b's constant-ambiguity assumption.  No rollback: the
-        // bridge re-warms fresh, and its σ guard keeps a mid-warm arc from arming a fix.
-        if (!bridge_stats_.empty())
-            for (auto bit = bridge_stats_.begin(); bit != bridge_stats_.end(); )
-                if (bit->first.rfind(prefix, 0) == 0) bit = bridge_stats_.erase(bit);
-                else ++bit;
-
         // An external reset invalidates any demoted-level stash for the
         // sat: a rolled-back arc's mean reverts to the pre-event level, so
         // (mean − stash) would read ~0 with full rollback confidence, a
@@ -3482,27 +3307,6 @@ namespace GnssProcessor {
                          satellite, signal, n_rolled, n_erased);
         }
 
-        // Refloat any bridge arc whose triple ("sat_s1_s2_s5") involves the slipped
-        // signal (M5 card WL-2): a slip on band 1, 2 or 5 jumps GF_b.  This mirrors the
-        // per-pair erase above, extended to the third band.
-        if (!bridge_stats_.empty())
-            for (auto bit = bridge_stats_.begin(); bit != bridge_stats_.end(); ) {
-                bool involves = false;
-                if (bit->first.rfind(prefix, 0) == 0) {
-                    const std::string rest = bit->first.substr(prefix.size());  // "s1_s2_s5"
-                    std::size_t p = 0;
-                    while (p < rest.size()) {
-                        const std::size_t q = rest.find('_', p);
-                        const std::string tok = rest.substr(p, q == std::string::npos ? q : q - p);
-                        if (tok == signal) { involves = true; break; }
-                        if (q == std::string::npos) break;
-                        p = q + 1;
-                    }
-                }
-                if (involves) bit = bridge_stats_.erase(bit);
-                else ++bit;
-            }
-
         // Invalidate demoted-level stashes touching this signal (same
         // rationale as resetSatellite: a rollback corrupts the settle
         // estimate's post-restart mean).
@@ -3536,7 +3340,6 @@ namespace GnssProcessor {
         cross_sat_devs_.clear();
         arc_snapshots_.clear();
         demoted_levels_.clear();
-        bridge_stats_.clear();   // a hard restart drops the bridge accumulators too (M5 card WL-2)
         if (n_arcs > 0 || n_pivots > 0 || n_biases > 0 || n_xsat > 0 || n_snaps > 0) {
             logger->info("MW detector resetAll: cleared {} arc(s), {} SD pivot(s), {} stored bias(es), {} cross-sat σ entries, {} arc snapshot(s)",
                          n_arcs, n_pivots, n_biases, n_xsat, n_snaps);

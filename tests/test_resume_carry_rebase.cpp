@@ -369,7 +369,7 @@ TEST(ResumeCarryRebaseTest, WriteKnobOffEmitsNoZlRow) {
 // ---------------------------------------------------------------------------
 // 5.  The diagnostic-only D5 window (RS-2b, §21.6 of SPEC_event_harness).  A chord
 //     that trips the gate while Config::innov_diagnostic_only is set is counted and
-//     reported (so it reaches network_d5_flags.csv and the epoch's n_d5_flags) and
+//     reported (so it reaches the epoch's n_d5_flags) and
 //     otherwise left alone: prior mean kept, Pᶻ row/col kept, re-tap counter not
 //     incremented, and marked in lastInnovWarmupSuppressed so the caller keeps it out
 //     of the slip funnel.  With the flag clear the same chord re-taps as usual.  The

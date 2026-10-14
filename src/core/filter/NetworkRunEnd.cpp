@@ -62,7 +62,6 @@
 #include "filter/NetworkMdb.hpp"
 #include "filter/NetworkMeasurementAdmission.hpp"
 #include "filter/NetworkMultiGnss.hpp"
-#include "filter/NetworkMwWlLayer.hpp"
 #include "filter/NetworkOraclePin.hpp"
 #include "filter/NetworkParamInventory.hpp"
 #include "filter/NetworkParamRegistry.hpp"
@@ -225,8 +224,6 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkSbasis.cpp", networkSbasisDatumRunEnd},
     {"card GFC's code-datum arms: pair continuity, family difference",
      "filter/NetworkSbasis.cpp", networkCodeDatumFamilyRunEnd},
-    {"the MW/WL lanes: WL-1, EWL, the WL inject, UWL, WL-3",
-     "filter/NetworkMwWlLayer.cpp", networkLanesRunEnd},
     {"the D5 fine-slip innovation gate and its variants",
      "filter/NetworkInvariantCarryDriver.cpp", networkD5GateRunEnd},
     {"the station-adaptive SH-VTEC constraint deweight",

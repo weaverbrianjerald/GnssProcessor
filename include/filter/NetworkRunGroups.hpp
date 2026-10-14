@@ -8,21 +8,18 @@
  * group it reads instead of one parameter per member:
  *   - @ref NetworkRunEngines: a const view of the run's estimation engines (the run end);
  *   - @ref NetworkEmitEngines: the three emit-layer engines (networkEmitStore, the run end);
- *   - @ref NetworkLaneRun: the WL/EWL lane machinery and its tallies
- *     (networkBuildCarryDdPriors, networkInstallCarry, the run end);
  *   - @ref NetworkRunTiming: the epoch-loop wall clock and the D0/D0b section-timer totals
  *     (the driver writes them, the run end reports them);
  *   - @ref ClosedLoopTally: the held-out consumer's integer-recovery tallies
  *     (networkEmitStore writes them, the run end reports them).
  *
  * The groups are not NetworkRunContext members: that header's banner keeps the engines,
- * the lane machinery, the section timers and the closed-loop metrics with the driver.
- * The on/off flags of the lanes and the emit layers are configuration, resolved once in
- * NetworkKnobs::snapshot, and are not repeated here.
+ * the section timers and the closed-loop metrics with the driver.  The on/off flags of
+ * the emit layers are configuration, resolved once in NetworkKnobs::snapshot, and are not
+ * repeated here.
  */
 
-#include "filter/NetworkMwWlLayer.hpp"         // NetworkMwWlLayer (+ ::Config, ::Counters)
-#include "filter/NetworkWlRunTypes.hpp"        // EwlLane / WlCounters / WlInjectPlan / LaneTraceEntry / SubBlockTimer / SB_COUNT
+#include "filter/NetworkWlRunTypes.hpp"        // SubBlockTimer / SB_COUNT
 #include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (card CLK-R)
 #include "products/NetworkEmitRebase.hpp"      // NetworkEmitRebase (card 4 phase D)
 #include "products/NetworkPbEmitFilter.hpp"    // NetworkPbEmitFilter (M5 prerequisite)
@@ -63,30 +60,6 @@ struct NetworkEmitEngines {
     NetworkClockEmitRebase clk_rebase; ///< Clock emission re-base: the common-mode frame hold and the per-satellite step marks (card CLK-R).
 };
 
-/// The WL/EWL lane machinery of one run (card M5 WL-2): the
-/// lane layers, their run and per-build tallies, and the per-build plans the post-solve
-/// install consumes.  The driver builds it before the epoch loop and fills
-/// @ref ewl_lanes; networkBuildCarryDdPriors writes the per-build members on every build
-/// (the last build before the accepted solve wins), networkInstallCarry folds them into
-/// the run totals on an accepted install, and the run end reports the run totals.
-struct NetworkLaneRun {
-    /// @param ewl_cfg    The EWL lane's configuration, shared by every lane instance.
-    explicit NetworkLaneRun(const NetworkMwWlLayer::Config& ewl_cfg)
-        : ewl_cfg(ewl_cfg) {}
-
-    NetworkMwWlLayer::Config     ewl_cfg;          ///< The EWL lane's configuration; its min_arc_epochs is also the WL inject's arc-maturity floor.
-    std::vector<EwlLane>         ewl_lanes;        ///< One filterless statistic-layer instance; empty unless NetworkKnobs::ewl_on.
-    WlCounters                   wl_run;           ///< WL-walk run totals over every constellation (the aggregate).
-    WlCounters                   wl_epoch;         ///< WL-walk per-build tallies.
-    /// The decided WL injects of this build (WL-2): per inject, the two bands' carry
-    /// groups, the shared chord, the integer target, the per-band linearization DD sums (the
-    /// F5 correction frame) and the wavelengths.  Computed from detector statistics
-    /// (§3.0.1 decision source) and applied after installPosterior against the fresh
-    /// posterior, so the preserved NL sum is this epoch's.
-    std::vector<WlInjectPlan>    wl_inject_epoch;
-    std::vector<LaneTraceEntry>  lane_trace_epoch; ///< The F-B lane-trace entries of this build (network.mw_wl.lane_trace), written after the install against the fresh posterior.
-};
-
 /// The run's wall-clock record for the run-end timing report.  The driver writes every
 /// member (the loop start, the D0b brackets' subEnd, the per-epoch readout), except the
 /// assembly wall, which networkPassB_ sums; every value is wall clock and never reaches a
@@ -114,12 +87,11 @@ struct ClosedLoopTally {
     std::deque<double> recent_err3d;       ///< The last @ref kRecentWindow 3D position errors (m), for the converged-segment RMS.
 };
 
-/// The run-end inputs of networkTeardown: const references to the five groups.  The
+/// The run-end inputs of networkTeardown: const references to the four groups.  The
 /// driver binds it once, after the epoch loop; the run end only reads through it.
 struct NetworkRunEndInputs {
     const NetworkRunEngines&  engines;     ///< The run's estimation engines.
     const NetworkEmitEngines& emit;        ///< The emit-layer engines.
-    const NetworkLaneRun&     lanes;       ///< The lane machinery and its run totals.
     const NetworkRunTiming&   timing;      ///< The loop wall clock and the section-timer totals.
     const ClosedLoopTally&    closed_loop; ///< The closed-loop consumer's tallies.
 };

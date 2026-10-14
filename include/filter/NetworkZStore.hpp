@@ -80,8 +80,8 @@
  *
  * Production use: `gnss_core` includes this header.  @ref ArcKey (defined in
  * NetworkArcGraph.hpp since card AGT, included here) keys the carry
- * maps (NetworkRunContext, NetworkDdPriorBuild, NetworkInstallCarry,
- * NetworkWlRunTypes).  The @ref NetworkZStore container, the lifecycle
+ * maps (NetworkRunContext, NetworkDdPriorBuild, NetworkInstallCarry).  The
+ * @ref NetworkZStore container, the lifecycle
  * transforms and the Kalman recursion on z are exercised by the unit gates (the
  * driver's gate uses them as the phase-B oracle), not by the producer.
  *

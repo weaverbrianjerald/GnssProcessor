@@ -463,9 +463,9 @@ namespace GnssProcessor {
          * accumulated noise statistics are kept and the WL lock is broken) and
          * erased otherwise.  Without this call, the sample carrying a slip that
          * the MW test missed would stay in the running statistics and mask the
-         * slip.  The satellite's bridge arcs and demoted-level stashes are
-         * dropped, and an SD pivot entry held by the satellite is cleared so
-         * that a new pivot is selected next epoch.
+         * slip.  The satellite's demoted-level stashes are dropped, and an SD
+         * pivot entry held by the satellite is cleared so that a new pivot is
+         * selected next epoch.
          *
          * @param satellite Satellite identifier (e.g. "G01").
          */
@@ -480,8 +480,8 @@ namespace GnssProcessor {
          * where only one signal slipped on a multi-frequency satellite (e.g.
          * L1C slipped while L2W and L5X are clean: the L2W/L5X arc survives
          * while the L1C/L2W and L1C/L5X arcs are rolled back or cleared).
-         * Rollback and erase follow @c resetSatellite; bridge arcs and
-         * demoted-level stashes that involve the signal are dropped.
+         * Rollback and erase follow @c resetSatellite; demoted-level stashes
+         * that involve the signal are dropped.
          *
          * @param satellite Satellite identifier (e.g. "G01").
          * @param signal    Signal identifier (e.g. "L1C", "L2W", "L5X").
@@ -612,7 +612,7 @@ namespace GnssProcessor {
          * arc is stored single-differenced (a non-pivot BIA arc) or undifferenced (a
          * pivot arc / no-BIA fallback), so a sign-weighted sum around a closed
          * station-satellite cycle cancels the receiver and satellite hardware biases
-         * exactly (M5 card WL-1; see @c NetworkMwWlLayer).
+         * exactly (M5 card WL-1; read by the SD pre-reduce EWL constraint).
          */
         struct MwArcZdMean {
             double      mean_m{ std::numeric_limits<double>::quiet_NaN() };        ///< ZD-consistent MW mean (m), lagged one epoch (SPEC_mw_wl_card §3.3 double-count guard).
@@ -667,114 +667,6 @@ namespace GnssProcessor {
         MwArcZdMean arcZdMean(const std::string& sat,
                               const std::string& sig1,
                               const std::string& sig2) const;
-
-        /**
-         * @brief Arm the tri-frequency phase bridge accumulator
-         *        (docs/SPEC_ewl_wl_cascade_card.md §3.4, M5 card WL-2).
-         *
-         * Off by default: no per-arc @f$GF_b@f$ Welford is maintained, and the
-         * detector output is byte-identical.  @c ApplicationNetwork sets this true only
-         * when @c network.mw_wl.{wl_inject_enable && ewl_enable}, because the bridge
-         * path needs both the WL inject master and the EWL integers it bridges from.
-         * Idempotent.
-         */
-        void setBridgeEnabled(bool on) { bridge_enabled_ = on; }
-
-        /// @return Whether the phase bridge accumulator is armed (@ref setBridgeEnabled).
-        bool bridgeEnabled() const { return bridge_enabled_; }
-
-        /**
-         * @brief Arm the per-sample iono de-bias of the bridge accumulator
-         *        (@c network.mw_wl.bridge_sample_debias, the fix for the age bias).
-         *
-         * The raw @f$GF_b@f$ observable contains @f$C_{iono}\,I_1@f$ (the bridge is
-         * geometry-free, not iono-free).  The read-time de-bias (WL-2 §3.4 v2)
-         * subtracts @f$C_{iono}\,\tilde\imath(t_{now})@f$ from a Welford mean that
-         * accumulated @f$C_{iono}\,\mathrm{mean}(I)@f$ over the arc's lifetime.  The
-         * two terms refer to different epochs, and the residual
-         * @f$C_{iono}(\mathrm{mean}(I)-I_{now})@f$ grows with iono drift (measured:
-         * constrained-lane circR fell from 0.89 to 0.24 over 60 epochs).  Armed, each
-         * sample folds as @f$GF_k - C_{iono}\,\tilde\imath(t_k)@f$ instead, a
-         * stationary estimable-function realization (Odijk 2016 Table 8: the S-basis
-         * code-bias lumps in @f$\tilde\imath@f$ are per-receiver / per-satellite
-         * constants that cancel in the closed DD cycle, so the cycle sum of the
-         * subtraction equals the true @f$\nabla\Delta I@f$ exactly).
-         *
-         * Frame contract: with the flag armed, @ref arcBridge serves iono-de-biased
-         * means, and the consumer
-         * must not subtract @f$C_{iono}\,\Sigma c\,\tilde\imath@f$ again at read time.
-         * The estimates arrive via @ref setBridgeIonoEstimates one epoch lagged (F1).
-         * A sample whose satellite has no pushed estimate is skipped (counted via
-         * @ref bridgeDebiasSkipped); that happens on the first cold-start epoch only,
-         * because the iono state persists across slips (the post-slip re-warm path is
-         * unaffected).  Off by default, with byte-identical raw accumulation.
-         */
-        void setBridgePerSampleDebias(bool on) { bridge_debias_ = on; }
-
-        /**
-         * @brief Push this station's per-satellite estimable slant-iono values
-         *        @f$\tilde\imath@f$ (m, L1-referenced; the estimator's iono states)
-         *        for the per-sample bridge de-bias.  Pushed once per epoch by
-         *        ApplicationNetwork; the values are the prior epoch's linearization
-         *        at push time and apply to the next detector pass, a one-epoch lag
-         *        by construction.  Idempotent within an epoch (safe under a RAIM
-         *        re-solve).
-         */
-        void setBridgeIonoEstimates(std::map<std::string, double> iono_m) {
-            bridge_iono_ = std::move(iono_m);
-        }
-
-        /// @return Samples skipped by the armed per-sample de-bias for want of an iono
-        ///         estimate (expected: first cold-start epoch only; a growing count on
-        ///         a warm run means the push wiring is broken, invariant #4).
-        std::size_t bridgeDebiasSkipped() const { return bridge_debias_skipped_; }
-
-        /**
-         * @brief A per-arc geometry-free WL↔EWL phase bridge Welford summary.
-         *
-         * The bridge observable @f$GF_b=\phi_{WL}-\phi_{EWL}@f$ (meters, phase only, no
-         * code) is geometry-free: the geometry, clock and tropo terms cancel between
-         * the two lane phases, leaving @f$\lambda_{WL}N_{WL}-\lambda_{EWL}N_{EWL}@f$
-         * (constant along the arc) plus a slow differential-iono residue and phase
-         * noise.  The raw phases carry the receiver and satellite hardware biases, so
-         * @f$GF_b@f$ is stored undifferenced (ZD) per (station, sat); those biases
-         * cancel in the closed DD cycle the layer forms, so no MW-style SD pivot is
-         * needed (unlike @ref MwArcZdMean).  The layer double-differences
-         * @f$\sum c\,GF_b@f$ over the Card-4 chord basis and adds
-         * @f$\lambda_{EWL}\,\nabla\Delta N_{EWL}^{\text{fixed}}@f$ to obtain a fast,
-         * iono-limited WL integer determination: @f$z_{WL}^{\text{bridge}}=[\sum
-         * c\,GF_b+\lambda_{EWL}N_{EWL}]/\lambda_{WL}@f$.
-         */
-        struct MwBridgeMean {
-            double      gf_mean_m{ std::numeric_limits<double>::quiet_NaN() };        ///< ZD @f$GF_b@f$ mean (m), lagged one epoch (same double-count guard as @ref MwArcZdMean).
-            double      var_of_mean_m2{ std::numeric_limits<double>::quiet_NaN() };   ///< Welford variance of the lagged mean = M2_lag/(n_lag(n_lag−1)) (m²).  Reflects the differential-iono drift and phase noise (read by the §3.4 v1 iono σ-guard).
-            std::size_t count{ 0 };                                                   ///< Lagged Welford sample count.
-            double      lambda_wl{ 0.0 };                                             ///< cached WL wavelength c/(f1−f2) (m).
-            double      lambda_ewl{ 0.0 };                                            ///< cached EWL wavelength c/(f2−f5) (m).
-            double      iono_coeff{ 0.0 };                                            ///< @f$GF_b@f$ sensitivity to the L1-referenced slant iono @f$I_1@f$ (m/m): @f$C_{iono}=f_{ref}^2(\tfrac1{f_1 f_2}-\tfrac1{f_2 f_5})@f$, @f$f_{ref}=@f$ GPS L1 (the estimator's iono-state frame, MeasurementModel §Jacobian).  Without the per-sample de-bias (@ref setBridgePerSampleDebias) the consumer subtracts @f$C_{iono}\sum c\,\hat I_1@f$ to de-bias the bridge (SPEC §3.4 v2; the v1 Welford-only form fails under a stable differential iono, whose near-zero variance passes the σ-guard yet biases the rounded integer).
-            bool        valid{ false };                                              ///< the arc exists, has ≥2 lagged samples, and a finite mean/variance/λ was recovered.
-        };
-
-        /**
-         * @brief Read a (satellite, WL-pair, EWL-third-band) tri-frequency phase bridge
-         *        arc as a ZD-consistent lagged Welford summary.
-         *
-         * The bridge arc is keyed @c "sat_sig1_sig2_sig5" (the WL pair @c (sig1,sig2)
-         * and the EWL third band @c sig5, GPS L5 / Galileo E5a) and is maintained only
-         * while @ref setBridgeEnabled is armed.  Maturity is not gated here (@c count
-         * is returned so the caller applies its own @c ewl_min_arc_epochs-style
-         * threshold).
-         *
-         * @param sat  Satellite identifier (e.g. "G05").
-         * @param sig1 WL pair band-1 phase signal (higher freq), e.g. "L1C".
-         * @param sig2 WL pair band-2 phase signal (lower freq), e.g. "L2W"; also the EWL pair's high band.
-         * @param sig5 EWL third band phase signal (lowest freq), e.g. "L5Q".
-         * @return The ZD-consistent bridge summary; @c valid=false if no usable arc exists.
-         */
-        MwBridgeMean arcBridge(const std::string& sat,
-                               const std::string& sig1,
-                               const std::string& sig2,
-                               const std::string& sig5) const;
 
         private:
         const GnssConfig& config_;    /**< Reference to processing configuration. */
@@ -948,85 +840,6 @@ namespace GnssProcessor {
 
         /** Per-arc MW statistics, keyed by arc key (e.g. "G01_L1C_L2W"). */
         std::map<std::string, MwArcStats> mw_stats_;
-
-        // --- Tri-frequency phase bridge accumulator (M5 card WL-2) ---------
-
-        /** Whether @ref updateBridgeArc maintains @c bridge_stats_ this run.  Off by
-         *  default: no bridge arc is touched and the detector is byte-identical
-         *  (@ref setBridgeEnabled; armed by ApplicationNetwork under
-         *  @c wl_inject_enable && ewl_enable). */
-        bool bridge_enabled_{ false };
-
-        /**
-         * @brief Per-arc Welford of the geometry-free WL↔EWL phase bridge
-         *        @f$GF_b=\phi_{WL}-\phi_{EWL}@f$ (meters, ZD, phase-only).
-         *
-         * A deliberately lean mirror of @ref MwArcStats: Hatch/Welford mean, M2 and
-         * count, with a one-epoch lag snapshot (the same-epoch double-count guard
-         * that @ref arcZdMean also uses) and a gap reset.  No SD pivot, no BIA
-         * correction, no detection statistic: @f$GF_b@f$ is a raw-phase ZD quantity
-         * (its receiver and satellite biases cancel in the closed DD cycle the layer
-         * forms), and the cycle-slip response comes from the same funnel that resets
-         * the ambiguity.  @ref resetSatellite / @ref resetSatelliteSignal /
-         * @ref resetAll erase the matching bridge arc, and @ref updateBridgeArc
-         * guards against a missed reset with a gross-jump refloat.  Keyed
-         * @c "sat_sig1_sig2_sig5".
-         */
-        struct BridgeArcStats {
-            double mean{ 0.0 };            ///< Running Hatch mean of @f$GF_b@f$ (m).
-            double M2{ 0.0 };              ///< Welford accumulator (m²).
-            std::size_t count{ 0 };        ///< Sample count.
-            double mean_lag{ 0.0 };        ///< Lagged mean as of the previous epoch's end (m).
-            double M2_lag{ 0.0 };          ///< Lagged Welford accumulator (m²).
-            std::size_t count_lag{ 0 };    ///< Lagged sample count.
-            double last_epoch_s{ 0.0 };    ///< Continuous GPS seconds of the last update (gap detection).
-            double lambda_wl{ 0.0 };       ///< WL wavelength c/(f1−f2) (m).
-            double lambda_ewl{ 0.0 };      ///< EWL wavelength c/(f2−f5) (m).
-            double iono_coeff{ 0.0 };      ///< GF_b iono sensitivity C_iono (see @ref MwBridgeMean::iono_coeff).
-        };
-
-        /** Per-(sat, WL-pair, EWL-third-band) bridge arcs, keyed @c "sat_sig1_sig2_sig5".
-         *  Empty (never touched) unless @c bridge_enabled_. */
-        std::map<std::string, BridgeArcStats> bridge_stats_;
-
-        /** Per-sample bridge iono de-bias (@ref setBridgePerSampleDebias).  Off by
-         *  default: raw accumulation, byte-identical. */
-        bool bridge_debias_{ false };
-        /** Per-satellite estimable slant iono @f$\tilde\imath@f$ (m, L1-referenced)
-         *  for the armed de-bias (@ref setBridgeIonoEstimates; one-epoch-lagged). */
-        std::map<std::string, double> bridge_iono_;
-        /** Armed-de-bias samples skipped for want of an estimate (invariant #4). */
-        std::size_t bridge_debias_skipped_{ 0 };
-
-        /** Gross-jump refloat guard for a bridge arc (m).  A WL/EWL cycle slip that the
-         *  ambiguity reset funnel missed jumps @f$GF_b@f$ by ≥ @f$\lambda_{WL}\approx 0.86@f$ m
-         *  (a 1-cycle WL slip), far above the differential-iono residue over an arc
-         *  window (@f$\approx 0.44\cdot\nabla I_1@f$, sub-decimeter).  0.4 m sits between
-         *  the two, so the guard resets the accumulator on a real slip but not on iono
-         *  drift.  It is a secondary guard behind the funnel; the §3.4 bridge-σ guard
-         *  remains the wrong-integer backstop in any case. */
-        static constexpr double kBridgeJumpResetM = 0.4;
-
-        /**
-         * @brief Ingest one satellite's tri-frequency phase into its bridge arc.
-         *
-         * No-op unless @c bridge_enabled_.  Picks the KF-aligned single phase signal per
-         * band from @c obs.observed (the legacy {1,2,5} for every constellation), with a
-         * min-name tie-break that matches the ApplicationNetwork primary/band-top
-         * selection so the key aligns with the caller's @ref arcBridge query.  It reads
-         * the raw cycle values from @c obs.raw_observed, forms
-         * @f$GF_b=\phi_{WL}-\phi_{TOP}@f$ (m; the top-pair term is ordered by actual
-         * frequency), and folds it into @c bridge_stats_["sat_s1_s2_s5"] with a gap
-         * reset, the lag snapshot, and the gross-jump refloat guard.  @p has_lli erases
-         * the arc: a lock loss
-         * on any phase re-warms the bridge, which is safer than the MW path's
-         * preserve-across-LLI because the bridge has no detection statistic to catch
-         * a real slip.
-         *
-         * @param obs      The epoch observation (raw_observed + observed + system + sat + time).
-         * @param has_lli  Whether any phase reported loss-of-lock this epoch.
-         */
-        void updateBridgeArc(const PppObservation& obs, bool has_lli);
 
         /** Pre-update snapshot of each arc taken at the start of every
          *  @c processMwSample call (after gap detection, before any

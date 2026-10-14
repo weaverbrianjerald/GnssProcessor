@@ -1664,188 +1664,134 @@ namespace GnssProcessor {
     //  network subsection helper: loadNetworkLaneLayers_
     // =================================================================
     /**
-     * @brief MW/WL lane layers: @c network.mw_wl.* and @c network.sd_ewl.*.
+     * @brief The SD pre-reduce EWL constraint: @c network.sd_ewl.*.
      *
-     * Parse + range clamps only.  Every cross-knob mutex these layers participate in
-     * (the carry_invariant requirement, the EWL contracts) is enforced later
-     * by @c validateNetworkLaneLayers_, which runs after @c network.carry_invariant is
-     * parsed.
+     * Parse, range clamps and the armed-state reports.  Its inert check needs the
+     * slip-detector flags, which are parsed later, so it runs in
+     * @c validateNetworkLaneLayers_.  The MW/WL lane keys (@c network.mw_wl.*) that
+     * also loaded here were retired with their cards (WL-1, WL-2, WL-3, UWL-1).
      *
      * @param json  Parsed root config object.
      * @param log   The "gnss_config" logger.
      */
     void GnssConfig::loadNetworkLaneLayers_(const nlohmann::json& json,
                                             const std::shared_ptr<spdlog::logger>& log) {
-        // --- MW wide-lane lane layers (network.mw_wl.*; M5 card WL-2) ---
-        // The per-arc Melbourne-Wubbena statistics, double-differenced over the card-4
-        // chord basis (docs/SPEC_ewl_wl_cascade_card.md).  Every lane defaults off =>
-        // byte-identical.  The carry_invariant requirement and the lane contracts are
-        // enforced in validateNetworkLaneLayers_, after network.carry_invariant is parsed.
+        // --- SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md) ---------
+        // Adds the between-satellite SD extra-wide-lane MW statistic as a pseudo-obs
+        // row in each station's own pre-reduce block, so it reaches the shared
+        // satellite phase and code bias columns directly instead of through a DD
+        // chord that is 80.7% eq34 tree pins.  Default off => zero rows appended =>
+        // byte-identical.
         {
-            auto& mw = network_config_.mw_wl;
-            mw.sigma_floor_cyc = jval<double>(json, "network.mw_wl.sigma_floor_cyc",
-                                              "network_mw_wl_sigma_floor_cyc", 0.05);
-            mw.max_rows_per_epoch = jval<int>(json, "network.mw_wl.max_rows_per_epoch",
-                                              "network_mw_wl_max_rows_per_epoch", 0);
-            mw.fix_weight_sigma_cyc = jval<double>(json, "network.mw_wl.fix_weight_sigma_cyc",
-                                                   "network_mw_wl_fix_weight_sigma_cyc", 0.01);
-            mw.d5_dump = jval<bool>(json, "network.mw_wl.d5_dump",
-                                    "network_mw_wl_d5_dump", false);
-            mw.lane_trace = jval<bool>(json, "network.mw_wl.lane_trace",
-                                       "network_mw_wl_lane_trace", false);
-            // --- SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md) ---------
-            // Adds the between-satellite SD extra-wide-lane MW statistic as a pseudo-obs
-            // row in each station's own pre-reduce block, so it reaches the shared
-            // satellite phase and code bias columns directly instead of through a DD
-            // chord that is 80.7% eq34 tree pins.  Default off => zero rows appended =>
-            // byte-identical.
-            {
-                auto& se = network_config_.sd_ewl;
-                se.enable = jval<bool>(json, "network.sd_ewl.enable",
-                                       "network_sd_ewl_enable", false);
-                se.min_arc_epochs = jval<int>(json, "network.sd_ewl.min_arc_epochs",
-                                              "network_sd_ewl_min_arc_epochs", 10);
-                se.sigma_floor_m = jval<double>(json, "network.sd_ewl.sigma_floor_m",
-                                                "network_sd_ewl_sigma_floor_m", 0.05);
-                se.max_abs_z_m = jval<double>(json, "network.sd_ewl.max_abs_z_m",
-                                              "network_sd_ewl_max_abs_z_m", 0.0);
-                se.max_rows_per_station =
-                    jval<int>(json, "network.sd_ewl.max_rows_per_station",
-                              "network_sd_ewl_max_rows_per_station", 0);
-                se.trace = jval<bool>(json, "network.sd_ewl.trace",
-                                      "network_sd_ewl_trace", false);
-                // --- Increments 2a and 2b: integer fixing (2c, the zero-q hold, is not built)
-                se.fix_enable = jval<bool>(json, "network.sd_ewl.fix_enable",
-                                           "network_sd_ewl_fix_enable", false);
-                se.fix_min_ffr = jval<double>(json, "network.sd_ewl.fix_min_ffr",
-                                              "network_sd_ewl_fix_min_ffr", 0.999);
-                se.fix_max_frac_cyc =
-                    jval<double>(json, "network.sd_ewl.fix_max_frac_cyc",
-                                 "network_sd_ewl_fix_max_frac_cyc", 0.15);
-                se.fix_sigma_floor_m =
-                    jval<double>(json, "network.sd_ewl.fix_sigma_floor_m",
-                                 "network_sd_ewl_fix_sigma_floor_m", 1.0);
-                if (se.fix_enable && !se.enable) {
-                    // The integer has nowhere to go without the row layer: 2b folds
-                    // inside networkAppendSdEwlRows_, which returns immediately when
-                    // sd_ewl.enable is false.  An armed knob with no effect is the case
-                    // invariant #4 exists to catch, so it is refused here with a
-                    // warning rather than letting the run report zero fixed rows.
-                    log->warn("Network: network.sd_ewl.fix_enable is INERT without "
-                              "network.sd_ewl.enable — the integer decision has no row "
-                              "layer to fold into (networkAppendSdEwlRows_ returns "
-                              "immediately when enable is false).  Disarming fix_enable.");
-                    se.fix_enable = false;
-                }
-                if (se.fix_enable) {
-                    if (!(se.fix_min_ffr > 0.0) || se.fix_min_ffr >= 1.0) {
-                        log->warn("Network: network.sd_ewl.fix_min_ffr = {} is outside "
-                                  "(0,1) — clamped to 0.999.  It is a PROBABILITY (the "
-                                  "bootstrapped rounding success rate), not a sigma "
-                                  "multiplier.", se.fix_min_ffr);
-                        se.fix_min_ffr = 0.999;
-                    }
-                    if (!(se.fix_max_frac_cyc > 0.0) || se.fix_max_frac_cyc > 0.5) {
-                        log->warn("Network: network.sd_ewl.fix_max_frac_cyc = {} is "
-                                  "outside (0,0.5] — clamped to 0.15.  Above 0.5 the "
-                                  "gate cannot reject anything (every real number is "
-                                  "within half a cycle of some integer).",
-                                  se.fix_max_frac_cyc);
-                        se.fix_max_frac_cyc = 0.15;
-                    }
-                    if (!(se.fix_sigma_floor_m > 0.0)) {
-                        log->warn("Network: network.sd_ewl.fix_sigma_floor_m = {} is "
-                                  "non-positive — clamped to 1.0 m (amendment A1's "
-                                  "measured per-SAMPLE honest point).",
-                                  se.fix_sigma_floor_m);
-                        se.fix_sigma_floor_m = 1.0;
-                    }
-                    log->info("Network SD EWL INTEGER FIX ON (increment 2a+2b) — Route B "
-                              "between-station DD of the SD EWL decides the integer with "
-                              "NO a-priori satellite bias (so it cannot be poisoned by "
-                              "one), a network-COMMON tracking-channel pair is elected "
-                              "per (constellation, satellite) so B^s cancels exactly in "
-                              "the DD, and the A2 DD->SD datum propagates spanning-tree "
-                              "fixes from a sticky per-component reference station.  "
-                              "Gates: FFR >= {:.4f}, |frac| <= {:.3f} cyc, per-sample "
-                              "sigma floor {:.2f} m.  A fixed row REMOVES its four local "
-                              "ambiguity coefficients (rank reduction, not a stiff "
-                              "prior) and hands the whole row weight to the shared "
-                              "satellite PB/CB columns.  The zero-q HOLD (2c) is NOT "
-                              "built: the decision is re-derived every epoch and an "
-                              "integer that disagrees with the previous epoch on a "
-                              "continuous arc is COUNTED and VETOED (dd_flip), which is "
-                              "the standing-invariant-#1 event response.",
-                              se.fix_min_ffr, se.fix_max_frac_cyc, se.fix_sigma_floor_m);
-                }
-                if (se.enable) {
-                    if (se.min_arc_epochs < 2) {
-                        log->warn("Network: network.sd_ewl.min_arc_epochs = {} is below 2 "
-                                  "(arcZdMean needs >=2 LAGGED samples for a finite "
-                                  "variance) — clamped to 2.", se.min_arc_epochs);
-                        se.min_arc_epochs = 2;
-                    }
-                    if (!(se.sigma_floor_m > 0.0)) {
-                        log->warn("Network: network.sd_ewl.sigma_floor_m = {} is "
-                                  "non-positive — clamped to 1e-3 m.  The floor exists "
-                                  "because arcZdMean serves a VARIANCE OF THE MEAN "
-                                  "(~1/n), so a long quiet arc would otherwise dominate "
-                                  "the shared border.", se.sigma_floor_m);
-                        se.sigma_floor_m = 1e-3;
-                    }
-                    log->info("Network SD PRE-REDUCE EWL constraint ON — the "
-                              "between-satellite SD extra-wide-lane MW statistic enters "
-                              "each station's OWN pre-reduce block (min_arc_epochs={}, "
-                              "sigma_floor={:.3f} m, max_abs_z={}, max_rows/sta={}).  "
-                              "Reaches the shared satellite PHASE + CODE bias columns "
-                              "directly; composes EXACTLY with the post-reduce Card-4 DD "
-                              "fold.  FLOAT rows only — no integer fixing (increment 2, "
-                              "unbuilt).  Rows are skipped at the clock-datum station "
-                              "(no MW detector there) and wherever an arc is immature or "
-                              "mixed-BIA-frame; watch the run-end counters.",
-                              se.min_arc_epochs, se.sigma_floor_m,
-                              se.max_abs_z_m > 0.0 ? fmt::format("{:.1f} m", se.max_abs_z_m)
-                                                   : std::string("off"),
-                              se.max_rows_per_station > 0
-                                  ? std::to_string(se.max_rows_per_station)
-                                  : std::string("unlimited"));
-                }
+            auto& se = network_config_.sd_ewl;
+            se.enable = jval<bool>(json, "network.sd_ewl.enable",
+                                   "network_sd_ewl_enable", false);
+            se.min_arc_epochs = jval<int>(json, "network.sd_ewl.min_arc_epochs",
+                                          "network_sd_ewl_min_arc_epochs", 10);
+            se.sigma_floor_m = jval<double>(json, "network.sd_ewl.sigma_floor_m",
+                                            "network_sd_ewl_sigma_floor_m", 0.05);
+            se.max_abs_z_m = jval<double>(json, "network.sd_ewl.max_abs_z_m",
+                                          "network_sd_ewl_max_abs_z_m", 0.0);
+            se.max_rows_per_station =
+                jval<int>(json, "network.sd_ewl.max_rows_per_station",
+                          "network_sd_ewl_max_rows_per_station", 0);
+            se.trace = jval<bool>(json, "network.sd_ewl.trace",
+                                  "network_sd_ewl_trace", false);
+            // --- Increments 2a and 2b: integer fixing (2c, the zero-q hold, is not built)
+            se.fix_enable = jval<bool>(json, "network.sd_ewl.fix_enable",
+                                       "network_sd_ewl_fix_enable", false);
+            se.fix_min_ffr = jval<double>(json, "network.sd_ewl.fix_min_ffr",
+                                          "network_sd_ewl_fix_min_ffr", 0.999);
+            se.fix_max_frac_cyc =
+                jval<double>(json, "network.sd_ewl.fix_max_frac_cyc",
+                             "network_sd_ewl_fix_max_frac_cyc", 0.15);
+            se.fix_sigma_floor_m =
+                jval<double>(json, "network.sd_ewl.fix_sigma_floor_m",
+                             "network_sd_ewl_fix_sigma_floor_m", 1.0);
+            if (se.fix_enable && !se.enable) {
+                // The integer has nowhere to go without the row layer: 2b folds
+                // inside networkAppendSdEwlRows_, which returns immediately when
+                // sd_ewl.enable is false.  An armed knob with no effect is the case
+                // invariant #4 exists to catch, so it is refused here with a
+                // warning rather than letting the run report zero fixed rows.
+                log->warn("Network: network.sd_ewl.fix_enable is INERT without "
+                          "network.sd_ewl.enable — the integer decision has no row "
+                          "layer to fold into (networkAppendSdEwlRows_ returns "
+                          "immediately when enable is false).  Disarming fix_enable.");
+                se.fix_enable = false;
             }
-            // --- EWL-first tri-frequency cascade (SPEC_ewl_wl_cascade_card.md §4; M5 card WL-2). ---
-            mw.ewl_enable = jval<bool>(json, "network.mw_wl.ewl_enable",
-                                       "network_mw_wl_ewl_enable", false);
-            mw.ewl_min_arc_epochs = jval<int>(json, "network.mw_wl.ewl_min_arc_epochs",
-                                              "network_mw_wl_ewl_min_arc_epochs", 2);
-            mw.ewl_fix_sigma_cyc = jval<double>(json, "network.mw_wl.ewl_fix_sigma_cyc",
-                                                "network_mw_wl_ewl_fix_sigma_cyc", 0.10);
-            mw.ewl_fix_frac_cyc = jval<double>(json, "network.mw_wl.ewl_fix_frac_cyc",
-                                               "network_mw_wl_ewl_fix_frac_cyc", 0.20);
-            mw.wl_inject_enable = jval<bool>(json, "network.mw_wl.wl_inject_enable",
-                                             "network_mw_wl_wl_inject_enable", false);
-            mw.wl_fix_sigma_cyc = jval<double>(json, "network.mw_wl.wl_fix_sigma_cyc",
-                                               "network_mw_wl_wl_fix_sigma_cyc", 0.10);
-            mw.wl_fix_frac_cyc = jval<double>(json, "network.mw_wl.wl_fix_frac_cyc",
-                                              "network_mw_wl_wl_fix_frac_cyc", 0.15);
-            mw.bridge_max_sigma_cyc = jval<double>(json, "network.mw_wl.bridge_max_sigma_cyc",
-                                                   "network_mw_wl_bridge_max_sigma_cyc", 0.15);
-            mw.inject_disagree_min_cyc = jval<double>(json, "network.mw_wl.inject_disagree_min_cyc",
-                                                      "network_mw_wl_inject_disagree_min_cyc", 0.75);
-            mw.lane_max_abs_xlin_m = jval<double>(json, "network.mw_wl.lane_max_abs_xlin_m",
-                                                  "network_mw_wl_lane_max_abs_xlin_m", 1000.0);
-            // 60-ep age-bias fix: per-sample estimable-iono de-bias of the bridge.
-            mw.bridge_sample_debias = jval<bool>(json, "network.mw_wl.bridge_sample_debias",
-                                                 "network_mw_wl_bridge_sample_debias", false);
-            if (mw.ewl_min_arc_epochs < 2) {
-                log->warn("Network: network.mw_wl.ewl_min_arc_epochs = {} is below 2 (a "
-                          "variance-of-mean needs >=2 samples) — clamping to 2.",
-                          mw.ewl_min_arc_epochs);
-                mw.ewl_min_arc_epochs = 2;
+            if (se.fix_enable) {
+                if (!(se.fix_min_ffr > 0.0) || se.fix_min_ffr >= 1.0) {
+                    log->warn("Network: network.sd_ewl.fix_min_ffr = {} is outside "
+                              "(0,1) — clamped to 0.999.  It is a PROBABILITY (the "
+                              "bootstrapped rounding success rate), not a sigma "
+                              "multiplier.", se.fix_min_ffr);
+                    se.fix_min_ffr = 0.999;
+                }
+                if (!(se.fix_max_frac_cyc > 0.0) || se.fix_max_frac_cyc > 0.5) {
+                    log->warn("Network: network.sd_ewl.fix_max_frac_cyc = {} is "
+                              "outside (0,0.5] — clamped to 0.15.  Above 0.5 the "
+                              "gate cannot reject anything (every real number is "
+                              "within half a cycle of some integer).",
+                              se.fix_max_frac_cyc);
+                    se.fix_max_frac_cyc = 0.15;
+                }
+                if (!(se.fix_sigma_floor_m > 0.0)) {
+                    log->warn("Network: network.sd_ewl.fix_sigma_floor_m = {} is "
+                              "non-positive — clamped to 1.0 m (amendment A1's "
+                              "measured per-SAMPLE honest point).",
+                              se.fix_sigma_floor_m);
+                    se.fix_sigma_floor_m = 1.0;
+                }
+                log->info("Network SD EWL INTEGER FIX ON (increment 2a+2b) — Route B "
+                          "between-station DD of the SD EWL decides the integer with "
+                          "NO a-priori satellite bias (so it cannot be poisoned by "
+                          "one), a network-COMMON tracking-channel pair is elected "
+                          "per (constellation, satellite) so B^s cancels exactly in "
+                          "the DD, and the A2 DD->SD datum propagates spanning-tree "
+                          "fixes from a sticky per-component reference station.  "
+                          "Gates: FFR >= {:.4f}, |frac| <= {:.3f} cyc, per-sample "
+                          "sigma floor {:.2f} m.  A fixed row REMOVES its four local "
+                          "ambiguity coefficients (rank reduction, not a stiff "
+                          "prior) and hands the whole row weight to the shared "
+                          "satellite PB/CB columns.  The zero-q HOLD (2c) is NOT "
+                          "built: the decision is re-derived every epoch and an "
+                          "integer that disagrees with the previous epoch on a "
+                          "continuous arc is COUNTED and VETOED (dd_flip), which is "
+                          "the standing-invariant-#1 event response.",
+                          se.fix_min_ffr, se.fix_max_frac_cyc, se.fix_sigma_floor_m);
             }
-            if (!(mw.sigma_floor_cyc > 0.0)) {
-                log->warn("Network: network.mw_wl.sigma_floor_cyc = {} is non-positive — "
-                          "clamping to 0.05 cyc (an un-floored R lets a lucky-tight arc fold "
-                          "a near-exact WL constraint).", mw.sigma_floor_cyc);
-                mw.sigma_floor_cyc = 0.05;
+            if (se.enable) {
+                if (se.min_arc_epochs < 2) {
+                    log->warn("Network: network.sd_ewl.min_arc_epochs = {} is below 2 "
+                              "(arcZdMean needs >=2 LAGGED samples for a finite "
+                              "variance) — clamped to 2.", se.min_arc_epochs);
+                    se.min_arc_epochs = 2;
+                }
+                if (!(se.sigma_floor_m > 0.0)) {
+                    log->warn("Network: network.sd_ewl.sigma_floor_m = {} is "
+                              "non-positive — clamped to 1e-3 m.  The floor exists "
+                              "because arcZdMean serves a VARIANCE OF THE MEAN "
+                              "(~1/n), so a long quiet arc would otherwise dominate "
+                              "the shared border.", se.sigma_floor_m);
+                    se.sigma_floor_m = 1e-3;
+                }
+                log->info("Network SD PRE-REDUCE EWL constraint ON — the "
+                          "between-satellite SD extra-wide-lane MW statistic enters "
+                          "each station's OWN pre-reduce block (min_arc_epochs={}, "
+                          "sigma_floor={:.3f} m, max_abs_z={}, max_rows/sta={}).  "
+                          "Reaches the shared satellite PHASE + CODE bias columns "
+                          "directly; composes EXACTLY with the post-reduce Card-4 DD "
+                          "fold.  FLOAT rows only — no integer fixing (increment 2, "
+                          "unbuilt).  Rows are skipped at the clock-datum station "
+                          "(no MW detector there) and wherever an arc is immature or "
+                          "mixed-BIA-frame; watch the run-end counters.",
+                          se.min_arc_epochs, se.sigma_floor_m,
+                          se.max_abs_z_m > 0.0 ? fmt::format("{:.1f} m", se.max_abs_z_m)
+                                               : std::string("off"),
+                          se.max_rows_per_station > 0
+                              ? std::to_string(se.max_rows_per_station)
+                              : std::string("unlimited"));
             }
         }
     }
@@ -5516,8 +5462,8 @@ namespace GnssProcessor {
             log->info("Network (RS-2b): resume D5 warm-up armed — for the first {} PROCESSED "
                       "epoch(s) after a warm resume the Card-4 D5 innovation gate is "
                       "DIAGNOSTIC-ONLY: a chord that trips k·σ̂₀ is counted (run-end "
-                      "d5_warmup_suppressed, the network_d5_flags.csv warmup_suppressed "
-                      "column, and the epoch's n_d5_flags — n_d5_retaps stays 0) but is NOT "
+                      "d5_warmup_suppressed and the epoch's n_d5_flags — n_d5_retaps stays "
+                      "0) but is NOT "
                       "re-tapped, NOT marked slipped for the next epoch, and its block is "
                       "not refolded.  A MEASUREMENT knob: it holds the restored branch "
                       "through the seam so \"branch right, cold station layer wrong\" can be "
@@ -11267,82 +11213,40 @@ namespace GnssProcessor {
     //  network subsection helper: validateNetworkLaneLayers_
     // =================================================================
     /**
-     * @brief Lane contracts of WL-2 and their armed-state reports.
+     * @brief The SD pre-reduce EWL constraint's inert check (@c network.sd_ewl.enable).
      *
-     * Split from @c loadNetworkLaneLayers_ because every rule here needs
-     * @c network_carry_invariant_ and the slip-detector flags, which are parsed after the
-     * lane block.
+     * Split from @c loadNetworkLaneLayers_ because the check needs the slip-detector
+     * flags (phase_leveling, mw_detect, turbo_edit), which are parsed after the lane
+     * block.  The MW/WL lane contracts that also lived here were retired with their
+     * keys (cards WL-1, WL-2, WL-3 and UWL-1).
      *
      * @param json  Parsed root config object.
      * @param log   The "gnss_config" logger.
-     * @return @c false on a fatal misconfiguration (aborts @c loadFromJson).
+     * @return @c false on a fatal misconfiguration (aborts @c loadFromJson); this
+     *         check only warns.
      */
     bool GnssConfig::validateNetworkLaneLayers_(const nlohmann::json& json,
                                                 const std::shared_ptr<spdlog::logger>& log) {
-        // ---- EWL-first tri-frequency cascade (SPEC_ewl_wl_cascade_card.md; M5 card WL-2). ----
-        {
-            auto& mw = network_config_.mw_wl;
-            // Both lanes use the card-4 chord basis (EWL rows on it; inject edits the
-            // carried z's), so both require the carry; the load fails.
-            if ((mw.ewl_enable || mw.wl_inject_enable) && !network_carry_invariant_) {
-                log->error("Network: network.mw_wl.{{ewl_enable,wl_inject_enable}} require "
-                           "network.carry_invariant — the EWL/WL lanes ride the invariant carry's "
-                           "fundamental-cycle chord basis (and the WL inject edits its carried DDs). "
-                           "Enable carry_invariant or disable the WL-2 lanes.");
-                return false;
+        // ---- SD pre-reduce EWL: the statistic source must exist. ----
+        // NetStation::mw_slip is constructed only for non-pivot stations and only
+        // when network.phase_leveling && (cycle_slip.mw_detect || turbo_edit).
+        // Without it arcZdMean() is unreachable at every station and the feature is
+        // silently inert, the armed-but-dead case invariant #4 exists to catch, so
+        // the loader warns.
+        if (network_config_.sd_ewl.enable) {
+            const bool det = network_cycle_slip_mw_detect_
+                             || network_cycle_slip_turbo_edit_;
+            if (!network_phase_leveling_ || !det) {
+                log->warn("Network: network.sd_ewl.enable is INERT — the MW arc "
+                          "accumulator it reads (NetStation::mw_slip -> arcZdMean) is "
+                          "constructed ONLY when network.phase_leveling && "
+                          "(network.cycle_slip.mw_detect || turbo_edit); currently "
+                          "phase_leveling={}, mw_detect={}, turbo_edit={}.  Zero SD "
+                          "EWL rows will be built at any station.",
+                          network_phase_leveling_,
+                          network_cycle_slip_mw_detect_,
+                          network_cycle_slip_turbo_edit_);
             }
-            // The WL bridge path (§3.4) needs the EWL integers; without ewl_enable the WL
-            // lane runs the MW(1,2) fallback only (§3.5), which is allowed but warned about.
-            if (mw.wl_inject_enable && !mw.ewl_enable)
-                log->warn("Network: network.mw_wl.wl_inject_enable is ON without ewl_enable — the "
-                          "phase-bridge WL path (SPEC §3.4) is disabled; the WL lane runs the plain "
-                          "MW(1,2) fallback only (SPEC §3.5, FFR at n≈25–50 ep).  Set ewl_enable for "
-                          "the fast tri-frequency bridge.");
-            if (mw.ewl_enable)
-                log->info("Network WL-2 EWL lane ON (M5 card WL-2) — extra-wide-lane statistic rows "
-                          "on the Card-4 chord basis, third band UNCARRIED so they win cleanly; FFR "
-                          "fix at σ<{} / |frac|<{} cyc, eligible at n>={} (ep ~{}).  Requires "
-                          "frequency_mode with the 3rd band (GPS L5 / Galileo E5b).",
-                          mw.ewl_fix_sigma_cyc, mw.ewl_fix_frac_cyc, mw.ewl_min_arc_epochs,
-                          mw.ewl_min_arc_epochs + 1);
-            if (mw.wl_inject_enable)
-                log->info("Network WL-2 WL inject ON (M5 card WL-2) — WL integers (EWL-bridge {} / "
-                          "MW(1,2) fallback) injected into the Card-4 carry via injectLaneTarget "
-                          "(set ∇ΔN₁−∇ΔN₂, preserve NL) + hold row + 1-epoch D5 exemption; trigger "
-                          "|stat−carried|>{} cyc, FFR σ<{}/|frac|<{}, bridge σ guard {} cyc.",
-                          mw.ewl_enable ? "armed" : "OFF", mw.inject_disagree_min_cyc,
-                          mw.wl_fix_sigma_cyc, mw.wl_fix_frac_cyc, mw.bridge_max_sigma_cyc);
-            // ---- SD pre-reduce EWL: the statistic source must exist. ----
-            // NetStation::mw_slip is constructed only for non-pivot stations and only
-            // when network.phase_leveling && (cycle_slip.mw_detect || turbo_edit).
-            // Without it arcZdMean() is unreachable at every station and the feature is
-            // silently inert, the armed-but-dead case invariant #4 exists to catch, so
-            // the loader warns.
-            if (network_config_.sd_ewl.enable) {
-                const bool det = network_cycle_slip_mw_detect_
-                                 || network_cycle_slip_turbo_edit_;
-                if (!network_phase_leveling_ || !det) {
-                    log->warn("Network: network.sd_ewl.enable is INERT — the MW arc "
-                              "accumulator it reads (NetStation::mw_slip -> arcZdMean) is "
-                              "constructed ONLY when network.phase_leveling && "
-                              "(network.cycle_slip.mw_detect || turbo_edit); currently "
-                              "phase_leveling={}, mw_detect={}, turbo_edit={}.  Zero SD "
-                              "EWL rows will be built at any station.",
-                              network_phase_leveling_,
-                              network_cycle_slip_mw_detect_,
-                              network_cycle_slip_turbo_edit_);
-                }
-            }
-            // ---- Per-sample bridge de-bias (60-ep age-bias fix) contract. ----
-            if (mw.bridge_sample_debias && !mw.ewl_enable)
-                log->warn("Network: network.mw_wl.bridge_sample_debias is INERT without "
-                          "ewl_enable — it changes how the WL-2 GF bridge accumulates.");
-            if (mw.bridge_sample_debias && mw.ewl_enable)
-                log->info("Network bridge PER-SAMPLE iono de-bias ON (60-ep age-bias fix) — "
-                          "bridge samples fold as GF_k − C_iono·ı̃(t_k) (estimable-iono, "
-                          "one-epoch-lagged push; Σc·ı̃ over a closed cycle = ∇ΔI exactly, "
-                          "Odijk 2016 Table 8); the read-time de-bias is disabled.  The "
-                          "decision statistic is stationary at arbitrary arc age.");
         }
 
         return true;

@@ -1,33 +1,27 @@
 #pragma once
 /**
  * @file NetworkInstallCarry.hpp
- * @brief Post-solve DD-carry install and WL zone-4 fold/inject for the PPP-RTK network
- *        producer.  The body was moved unchanged out of Application::runNetwork
- *        (decomposition INC-9b).
+ * @brief Post-solve DD-carry install for the PPP-RTK network producer.  The body was
+ *        moved unchanged out of Application::runNetwork (decomposition INC-9b).
  *
  * Runs on the final accepted x_s and datum, after acceptance and outside the
  * within-epoch RAIM block, so a withheld or contaminated epoch never enters the carry.
- * Three parts, all no-op and byte-identical when carry_invariant is off (the caller
- * keeps the enclosing `if (carry_invariant)` gate and the subBegin/subEnd(SB_INSTALL)
- * brackets):
- *   1. carry_driver.installPosterior (DD posterior mean/cov read back into the carry);
- *   2. the lane counter folds (ewl_lanes[].run, wl_run) and the
- *      application of the WL inject plan against the fresh posterior;
- *   3. the log-only lane-trace / d5-flags CSV writers (network.mw_wl.*).
+ * No-op and byte-identical when carry_invariant is off (the caller keeps the enclosing
+ * `if (carry_invariant)` gate and the subBegin/subEnd(SB_INSTALL) brackets).  It runs
+ * carry_driver.installPosterior (the DD posterior mean and covariance read back into the
+ * carry), the PD-safe fold telemetry, and the D5 innovation-flag drain into the next
+ * epoch's slip funnel.
  *
  * Owns no state: every carry object is an explicit reference into the caller's
- * NetworkRunContext, and every cross-epoch WL run-state instance (ewl_lanes /
- * wl_inject_epoch / wl_run / ...) is a member of the driver's
- * @ref NetworkLaneRun, passed by reference.  The lane switches (carry_innov_gate,
- * ewl_on, wl_inject_on, ...) are read from NetworkKnobs (card NOM step TD1a).
+ * NetworkRunContext.  The D5 gate switch (carry_innov_gate) is read from NetworkKnobs
+ * (card NOM step TD1a).
  */
 
 #include "filter/NetworkEstimator.hpp"          // NetworkEstimator
 #include "filter/NetworkSbasis.hpp"             // NetworkSbasis::Plan
 #include "filter/NetworkInvariantCarryDriver.hpp" // NetworkInvariantCarryDriver
 #include "filter/NetworkRunTypes.hpp"           // NetStation
-#include "filter/NetworkWlRunTypes.hpp"         // EwlLane/WlInjectPlan/LaneTraceEntry/WlCounters (+ NetworkMwWlLayer::Counters)
-#include "filter/NetworkRunGroups.hpp"          // NetworkLaneRun (card NOM step TD1a)
+#include "filter/NetworkWlRunTypes.hpp"         // CarryEigenScope
 #include "slip/NetworkRawObservables.hpp"       // SlipQcChannel
 #include "filter/NetworkZStore.hpp"             // ArcKey (carry_arc_amb_key maps)
 #include "rinex/MultiRinexSync.hpp"             // SyncedEpoch
@@ -49,10 +43,8 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 
 /**
- * @brief Install the accepted DD posterior and fold the WL zone-4 tallies for this epoch.
+ * @brief Install the accepted DD posterior for this epoch.
  * @see NetworkInstallCarry.hpp file banner for the ordering contract.
- * @param lane_run The driver's lane machinery: the per-build members are read and folded
- *                 into its run totals here (in/out).
  */
 void networkInstallCarry(
     NetworkRunContext& ctx,
@@ -69,7 +61,6 @@ void networkInstallCarry(
     const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
     bool carry_par,
     int n_threads,
-    int seam_threads,
-    NetworkLaneRun& lane_run);
+    int seam_threads);
 
 } // namespace GnssProcessor

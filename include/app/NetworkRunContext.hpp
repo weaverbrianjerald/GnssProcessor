@@ -19,10 +19,9 @@
  * per-field "not snapshotted" notes below are the exemption record.
  * Kept out of this header on purpose (they stay locals of the run TU): the
  * engine objects (NetworkEstimator, NetworkInvariantCarryDriver, NetworkCarryVce,
- * NetworkIonoDeweightGate, NetworkEmitRebase, NetworkPbEmitFilter, the WL/UWL
- * lane machinery and its function-local types), the D0/D0b section-timer
- * instrumentation, and the closed-loop consumer metrics.  The driver holds them in
- * the groups of filter/NetworkRunGroups.hpp (engines, emit engines, lane run, run
+ * NetworkIonoDeweightGate, NetworkEmitRebase, NetworkPbEmitFilter), the D0/D0b
+ * section-timer instrumentation, and the closed-loop consumer metrics.  The driver
+ * holds them in the groups of filter/NetworkRunGroups.hpp (engines, emit engines, run
  * timing, closed-loop tally), which the seams receive by reference.
  */
 
@@ -104,9 +103,8 @@ namespace GnssProcessor {
 
     /// @internal Const snapshot of every run-loop config knob (decomposition
     /// INC-4).  snapshot() reads the getters in the original order; members are
-    /// value copies under the original local names and types.  The WL/UWL lane and
-    /// emit-layer on/off flags joined it at card NOM step TD1a; the lane machinery
-    /// itself (layers, tallies) stays with the driver in NetworkLaneRun.
+    /// value copies under the original local names and types.  The invariant-carry gate
+    /// and the emit-layer on/off flags joined it at card NOM step TD1a.
     struct NetworkKnobs {
         double q_clock{};
         double q_pb{};
@@ -1046,7 +1044,7 @@ namespace GnssProcessor {
         double adm_revet_bound_m{};   ///< the tighter |z| bound (m) a re-entering / vetting channel answers to; == adm_bound_m when the scale is 1.0.  Resolved to metres here so the seam never re-multiplies.
         bool   adm_revet_census{};    ///< consult the previous epoch's PREFIT obs_code exceedance flags inside a vet window.
         bool   adm_revet_hold{};      ///< strict posture: withhold a clean re-entry until the adm_heal_ep path readmits it.
-        // --- invariant-carry gate, WL/EWL/UWL lanes and emit layers (card NOM step TD1a) ---
+        // --- invariant-carry gate and emit layers (card NOM step TD1a) ---
         // Resolved here, with the driver's former conjunctions unchanged, so the driver, the
         // DD-prior build, the install, the emit store and the run end read one bool each
         // instead of each receiving it as a parameter.  Every one is false unless
@@ -1054,12 +1052,6 @@ namespace GnssProcessor {
         // emit_pb_filter_on).  Read from the configuration, never written; the snapshot
         // fingerprint does not read them (it reads the configuration getters it needs).
         bool carry_innov_gate{};         ///< D5 estimation-side fine-slip innovation gate: carry_invariant and network.carry_invariant_innov_gate.
-        bool ewl_on{};                   ///< EWL lane (WL-2): carry_invariant and network.mw_wl.ewl_enable.  Also the third-band carry exclusion: the EWL pair's uncarried leg is left out of the carry exactly when the lane is armed.
-        bool bridge_debias_on{};         ///< Per-sample iono-de-biased GF bridge (the 60-epoch age-bias fix): ewl_on and network.mw_wl.bridge_sample_debias.
-        bool wl_inject_on{};             ///< WL-2 phase-bridge decision and NL-preserving inject: ewl_on and network.mw_wl.wl_inject_enable.
-        bool mw_d5_dump{};               ///< F-A D5 attribution dump (log-only): ewl_on or wl_inject_on, and network.mw_wl.d5_dump.
-        bool mw_lane_trace{};            ///< F-B lane trace (log-only): wl_inject_on and network.mw_wl.lane_trace.
-        bool mw_tagsets{};               ///< The hold and inject tag sets, which feed both dumps: mw_d5_dump or mw_lane_trace.
         bool emit_rebase_on{};           ///< Emit-layer frame re-base of the emitted phase biases (card 4 phase D): carry_invariant and network.carry_invariant_emit_rebase.
         bool emit_pb_filter_on{};        ///< Phase-bias emission-continuity filter: emit_rebase_on and network.emit_pb_filter.
         bool pb_filter_emit_sigma{};     ///< Emit the filter's posterior sigma with each filtered bias: network.emit_pb_filter_emit_sigma.
@@ -2452,21 +2444,11 @@ namespace GnssProcessor {
         double first_emit_content_s = -1.0;  ///< Content time of the first emit (grade anchor).
         double grade_metric_s       = -1.0;  ///< cold-start-to-product-grade time (s), RTB-7(c); −1 before lift / ramp off; 0 = warm resume.
 
-        // --- WL/UWL zone-2 run-latched sets and D5 tag state (decomposition INC-4: the
-        // plain-data tier-1 entities; instances with function-local types, namely the
-        // WlInjectPlan/LaneTraceEntry/WlCounters vectors and the lane/layer
-        // engines, stay in the run TU until INC-9b) ---
-        std::set<std::pair<int, std::string>> d5_ewl_stasat;
-        std::set<ArcKey> d5_hold_chords;
-        std::set<ArcKey> d5_inject_chords_prev, d5_inject_chords_now;
+        // --- Invariant-carry graph identities (decomposition INC-4: plain-data tier-1
+        // entities) ---
         std::map<std::string, int>                    carry_sat_vertex;  // stable satellite -> vertex id (disjoint high range)
         std::map<std::pair<char, std::string>, int>   carry_group_id;    // (constellation,signal) -> stable group key
         bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
-        // Once-per-run warnings for skips that must be loud (UWL-1 §3.1): a constellation
-        // whose cycles enter the EWL machinery without a lane tier (untabled under the
-        // armed card, or any non-GPS constellation under the legacy digits) must fail
-        // loudly, not as a silent pile of skip_missing_mw (SPEC §1 fact 3).
-        std::set<char> uwl_warned_cons;
         double carry_prev_tow = std::numeric_limits<double>::quiet_NaN();
         long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
                   carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,
@@ -2480,8 +2462,8 @@ namespace GnssProcessor {
         long long carry_innov_map_miss = 0;   // reverse-map misses from a D5 flag to its ambiguity (should stay 0)
         // The subset of carry_innov_pending whose arc the raw observables measured as
         // continuous at flag time (card-4 D5 v4, network.carry_invariant_innov_retap_only).
-        // Same tri-state as the v3 corroboration gate and the network_d5_flags.csv
-        // `raw_stepped` column: stepped and unmeasurable arcs are absent on purpose, so
+        // Same tri-state as the v3 corroboration gate: stepped and unmeasurable arcs are
+        // absent on purpose, so
         // they keep the refloat (standing invariant #1).  Drained one epoch later into
         // @ref carry_innov_flat_now, in lockstep with carry_innov_pending.
         std::set<std::pair<int, std::string>> carry_innov_pending_flat;

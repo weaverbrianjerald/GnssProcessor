@@ -9,9 +9,6 @@ $arms = @(
     @{n="alloff";   c="config/test_suite/_dcmp_50sta_10ep_alloff.json";   g="runs/decomp_goldens/alloff_a";   seed=$null},
     @{n="allon";    c="config/test_suite/_dcmp_50sta_10ep_allon.json";    g="runs/decomp_goldens/allon_a";    seed=$null},
     @{n="jw";       c="config/test_suite/_dcmp_50sta_10ep_jw.json";       g="runs/decomp_goldens/jw_a";       seed=$null},
-    @{n="wlinj";    c="config/test_suite/_dcmp_50sta_10ep_wlinj.json";    g="runs/decomp_goldens/wlinj_a";    seed=$null},
-    @{n="lane";     c="config/test_suite/_dcmp_50sta_10ep_lane.json";     g="runs/decomp_goldens/lane_a";     seed=$null},
-    @{n="uwl";      c="config/test_suite/_dcmp_50sta_10ep_uwl.json";      g="runs/decomp_goldens/uwl_a";      seed=$null},
     @{n="consumer"; c="config/test_suite/_dcmp_50sta_5ep_consumer.json";  g="runs/decomp_goldens/consumer_a"; seed=$null},
     @{n="snap";     c="config/test_suite/_dcmp_50sta_10ep_snap.json";     g="runs/decomp_goldens/snap_a";     seed=$null},
     @{n="snap_resume"; c="config/test_suite/_dcmp_50sta_10ep_snap_resume.json"; g="runs/decomp_goldens/snap_resume_a";

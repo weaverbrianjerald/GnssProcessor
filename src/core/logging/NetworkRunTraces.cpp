@@ -89,8 +89,6 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
       sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
       sd_ewl_ar_trace_path(log_dir_ / "network_sd_ewl_ar.csv"),
-      d5_flags_trace_path(log_dir_ / "network_d5_flags.csv"),
-      wl_lane_trace_path(log_dir_ / "network_wl_lane_trace.csv"),
       manifest_path(log_dir_ / "network_run_manifest.json") {}
 
 void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& nc,
@@ -1098,54 +1096,6 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     // Capture the L1/L15 config echoes once (pure getter reads; INC-4).
     es_sigma0_trigger_   = config_.networkRaimSigma0Trigger();
     es_withhold_ceiling_ = config_.networkRaimWithholdSigma0();
-}
-
-// The openAll tail for the two MW/WL dumps.  It is a separate function because their
-// arming expressions are derived in the run TU from the WL zone-2 booleans
-// (carry_invariant, ewl_on, wl_inject_on, carry_innov_gate), which are
-// established well after openAll runs; re-deriving that chain here would drift out of
-// step with the driver.  The lifecycle matches every other stream: one truncating
-// open with the header, once per run, before the epoch loop, closed in closeAll.
-void NetworkRunTraces::openMwWlDumps(bool d5_armed, bool lane_trace_armed,
-                                     const std::shared_ptr<spdlog::logger>& log) {
-    std::error_code ec;
-    std::filesystem::create_directories(log_dir_, ec);
-    if (d5_armed) {
-        d5_flags_trace.open(d5_flags_trace_path);
-        if (d5_flags_trace)
-            // raw_stepped is tri-state (1 / 0 / blank); see the writer banner in
-            // NetworkInstallCarry.cpp.  Blank means "no evidence", which is a different
-            // claim from 0 ("a step could be formed and it was flat").
-            // The five algebra columns after raw_stepped are the churn card's instrument:
-            // std_innov alone cannot say whether a standing large value means the
-            // innovation is large or the formal Cov(v) is small.  z_post differenced across
-            // epochs for one chord is the estimate's measured wander; var_v is the formal
-            // claim about that quantity, so the ratio can be read per chord without
-            // re-running anything.  dw_w is the station's SH-constraint deweight weight
-            // (ctx.carry.topo_prev_w, this epoch; blank unless network.trace_topology is
-            // armed), carried here because the chronic-flagger roster overlaps the
-            // deweight gate's chronic >3σ SH-misfit roster (measured), and the
-            // correlation should be gradeable from one file.
-            d5_flags_trace << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
-                              "ewl_stasat,hold_chord,injected_prev,raw_stepped,"
-                              // warmup_suppressed (RS-2b): 1 where the trip fell inside the
-                              // post-resume D5 warm-up and was counted without being acted
-                              // on.  Appended, not inserted, so an existing reader's
-                              // positional columns are unchanged.
-                              "zhat,v,var_v,sigma0,z_post,dw_w,warmup_suppressed\n";
-        else
-            log->warn("Network: failed to open D5 flag dump {}",
-                      d5_flags_trace_path.string());
-    }
-    if (lane_trace_armed) {
-        wl_lane_trace.open(wl_lane_trace_path);
-        if (wl_lane_trace)
-            wl_lane_trace << "week,tow,chord_u,chord_v,station,sat,lane_cyc,frac_cyc,"
-                             "w,decided,held,injected\n";
-        else
-            log->warn("Network: failed to open WL lane trace {}",
-                      wl_lane_trace_path.string());
-    }
 }
 
 void NetworkRunTraces::writeStationRoster(const std::filesystem::path& log_dir,
@@ -2391,8 +2341,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"carry_invariant_innov_k\":{},", config_.networkCarryInvariantInnovK())
                << "\"carry_invariant_innov_calibrate\":"
                << (config_.networkCarryInvariantInnovCalibrate() ? "true" : "false") << ','
-               << fmt::format("\"mw_wl_sigma_floor_cyc\":{},", config_.getNetworkConfig().mw_wl.sigma_floor_cyc)
-               << fmt::format("\"mw_wl_max_rows_per_epoch\":{},", config_.getNetworkConfig().mw_wl.max_rows_per_epoch)
                << "\"emit_pb_filter\":" << (config_.networkEmitPbFilter() ? "true" : "false") << ','
                << fmt::format("\"emit_pb_filter_q\":{},", config_.networkEmitPbFilterQ())
                << fmt::format("\"emit_pb_filter_jump_k\":{},", config_.networkEmitPbFilterJumpK())
@@ -2707,15 +2655,10 @@ void NetworkRunTraces::closeAll() {
     // an unflushed tail would lose the deliverable the card was armed for.
     if (congruence_trace.is_open()) congruence_trace.close();
     if (estimability_trace.is_open()) estimability_trace.close();   // estimability dump (card DG5)
-    // The two MW/WL dumps were added after INC-4; the relocation did not leave them to
-    // the destructor, so the rule above does not cover them.  They are closed here so
-    // their tails are flushed at teardown rather than at scope exit: they are the graded
-    // artifacts of a D5/lane arm, and a crash after teardown should not cost the last
-    // rows.
-    if (d5_flags_trace.is_open()) d5_flags_trace.close();
-    if (wl_lane_trace.is_open()) wl_lane_trace.close();
-    // Same reason as the two dumps above: added after INC-4, and the MDB
-    // distribution is the graded artifact of a reliability arm.
+    // Added after INC-4; the relocation did not leave it to the destructor, so the rule
+    // above does not cover it.  It is closed here so its tail is flushed at teardown
+    // rather than at scope exit: the MDB distribution is the graded artifact of a
+    // reliability arm.
     if (mdb_trace.is_open()) mdb_trace.close();
     // Same reason: added after INC-4, and the contingency is the graded artifact
     // of a datum-graph arm.

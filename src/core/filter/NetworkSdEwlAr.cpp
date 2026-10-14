@@ -394,8 +394,8 @@ void networkSdEwlAr(
             }
             C.sdewl_dd_skip_channel += static_cast<long long>(excluded);
             // The BIA frame must be uniform across the DD's four legs: the satellite-bias
-            // cancellation needs one frame (the same rule NetworkMwWlLayer applies per
-            // cycle).  Majority vote within the elected pair (a tie selects the
+            // cancellation needs one frame (the same rule the retired MW/WL lane layer
+            // applied per cycle).  Majority vote within the elected pair (a tie selects the
             // uncorrected frame); the minority is dropped and counted.  Every EWL arc
             // measured so far reports bia_corrected = false, so this guards against a
             // future mixed state and is not a routine loss.

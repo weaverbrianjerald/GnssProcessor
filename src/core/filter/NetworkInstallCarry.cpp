@@ -3,17 +3,16 @@
  * @brief Implementation of @ref networkInstallCarry, the SB_INSTALL block moved
  *        unchanged out of Application::runNetwork (decomposition INC-9b).  The body is
  *        the former if(carry_invariant) body; the alias preamble reconstructs
- *        nc/nmw/trace, the ctx.carry aliases and the wlAccumulate lambda so the code
- *        reads the original names.
+ *        nc and the ctx.carry aliases so the code reads the original names.
  */
 
 #include "filter/NetworkInstallCarry.hpp"
 
 #include "app/NetworkRunContext.hpp"     // ctx.carry / ctx.counters
-#include "config/GnssConfig.hpp"         // config_.getNetworkConfig() / .mw_wl
+#include "config/GnssConfig.hpp"         // config_.getNetworkConfig()
 #include "filter/StateKeySchema.hpp"     // StateKeys::parse*
 #include "slip/NetworkRawObservables.hpp"// SlipQcChannel
-#include "logging/NetworkRunTraces.hpp"  // traces.trace
+#include "logging/NetworkRunTraces.hpp"  // traces.emitEvent
 
 #include <Eigen/Dense>
 
@@ -47,31 +46,12 @@ void networkInstallCarry(
     const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
     bool carry_par,
     int n_threads,
-    int seam_threads,
-    NetworkLaneRun& lane_run) {
+    int seam_threads) {
     // --- Alias preamble: reconstructs the run-TU aliases the relocated
-    //     SB_INSTALL body reads (nc/nmw/trace, the ctx.carry aliases, and the
-    //     wlAccumulate lambda).  Copies of the former runNetwork() lines. ----
+    //     SB_INSTALL body reads (nc, the D5 gate switch and the ctx.carry aliases).
+    //     Copies of the former runNetwork() lines. ----
     const auto& nc  = config_.getNetworkConfig();
-    const auto& nmw = config_.getNetworkConfig().mw_wl;
-    auto& trace = traces.trace;
-    // The lane switches (NetworkKnobs) and the lane machinery (NetworkLaneRun), under their
-    // former parameter names (card NOM step TD1a).
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
-    const bool ewl_on = ctx.knobs.ewl_on;
-    const bool wl_inject_on = ctx.knobs.wl_inject_on;
-    const bool mw_d5_dump = ctx.knobs.mw_d5_dump;
-    const bool mw_lane_trace = ctx.knobs.mw_lane_trace;
-    const bool mw_tagsets = ctx.knobs.mw_tagsets;
-    std::vector<EwlLane>& ewl_lanes = lane_run.ewl_lanes;
-    std::vector<WlInjectPlan>& wl_inject_epoch = lane_run.wl_inject_epoch;
-    std::vector<LaneTraceEntry>& lane_trace_epoch = lane_run.lane_trace_epoch;
-    WlCounters& wl_run = lane_run.wl_run;
-    WlCounters& wl_epoch = lane_run.wl_epoch;
-    auto& d5_ewl_stasat = ctx.carry.d5_ewl_stasat;
-    auto& d5_hold_chords = ctx.carry.d5_hold_chords;
-    auto& d5_inject_chords_prev = ctx.carry.d5_inject_chords_prev;
-    auto& d5_inject_chords_now = ctx.carry.d5_inject_chords_now;
     auto& carry_prev_tow = ctx.carry.carry_prev_tow;
     auto& carry_epochs = ctx.carry.carry_epochs;
     auto& carry_born_total = ctx.carry.carry_born_total;
@@ -90,21 +70,6 @@ void networkInstallCarry(
     // them.  The loader already forces the knob false without innov_gate (Card 4 D5 v4).
     const bool retap_only =
         carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly();
-    auto wlAccumulate = [](WlCounters& a, const WlCounters& b) {
-        a.rows_seen           += b.rows_seen;
-        a.cycles_decided      += b.cycles_decided;
-        a.holds_folded        += b.holds_folded;
-        a.injects             += b.injects;
-        a.inject_abs_sum      += b.inject_abs_sum;
-        a.skip_bridge_missing += b.skip_bridge_missing;
-        a.skip_no_iono        += b.skip_no_iono;
-        a.skip_bridge_wide    += b.skip_bridge_wide;
-        a.skip_not_fixed      += b.skip_not_fixed;
-        a.skip_closure        += b.skip_closure;
-        a.skip_quarantine     += b.skip_quarantine;
-        a.skip_basis          += b.skip_basis;
-        a.sum_bridge_R        += b.sum_bridge_R;
-    };
 
     // Hand the driver this epoch's corroboration set before the install consumes it: the
     // chords whose underlying arc the raw MW/GF observables measured as continuous.  Built
@@ -115,9 +80,7 @@ void networkInstallCarry(
     // Membership requires "measured and flat": verdict.measured is true and the
     // (station, satellite) is absent from epoch.stepped.  An unmeasured arc is left out so
     // it still re-taps; suppressing on absence of evidence would disable the fine-slip
-    // response on the arcs with the least information (standing invariant #1).  This is
-    // the same tri-state the network_d5_flags.csv `raw_stepped` column encodes, so the
-    // trace and the gate agree.
+    // response on the arcs with the least information (standing invariant #1).
     if (carry_innov_gate && config_.networkCarryInvariantInnovCorroborate()
         && slip_qc.epoch.computed) {
         std::set<std::pair<int, ArcKey>> flat;
@@ -343,91 +306,6 @@ void networkInstallCarry(
         }
     }
 
-    // EWL lane (M5 card WL-2): the same accepted-install accumulation (invariant #4).
-    if (ewl_on) {
-        for (auto& lane : ewl_lanes) {
-            lane.run.cycles_seen       += lane.epoch.cycles_seen;
-            lane.run.rows_built        += lane.epoch.rows_built;
-            lane.run.rows_fixed        += lane.epoch.rows_fixed;
-            lane.run.rows_capped       += lane.epoch.rows_capped;
-            lane.run.skip_not_primary  += lane.epoch.skip_not_primary;
-            lane.run.skip_missing_band += lane.epoch.skip_missing_band;
-            lane.run.skip_missing_mw   += lane.epoch.skip_missing_mw;
-            lane.run.skip_young_arc    += lane.epoch.skip_young_arc;
-            lane.run.skip_bad_lambda   += lane.epoch.skip_bad_lambda;
-            lane.run.skip_mixed_frame  += lane.epoch.skip_mixed_frame;
-            lane.run.skip_quarantine   += lane.epoch.skip_quarantine;
-            lane.run.sum_R             += lane.epoch.sum_R;
-        }
-    }
-    // WL lane (M5 card WL-2, §3.3): apply the stashed inject plan against the fresh
-    // posterior (this epoch's NL), then fold the run counters.  The plan was decided from
-    // detector statistics (§3.0.1) in the accepted build.  Here the carried lane value
-    // and NL sum are read and, only if the carry still disagrees with the WL integer by
-    // more than inject_disagree_min_cyc (self-limiting), the lane difference is set to
-    // the integer while the phase-determined sum is preserved.  injectCarriedChord marks
-    // each moved chord D5-exempt for the next install (the §3.3 storm guard) internally.
-    if (wl_inject_on) {
-        for (const auto& pl : wl_inject_epoch) {
-            double z1 = 0.0, v1 = 0.0, z2 = 0.0, v2 = 0.0;
-            if (!carry_driver.carriedChordValue(pl.group_l1, pl.chord, z1, v1) ||
-                !carry_driver.carriedChordValue(pl.group_l2, pl.chord, z2, v2)) {
-                ++wl_run.skip_basis;   // not 1:1 across both bands' carry bases: skip (§3.3)
-                continue;
-            }
-            const double A1 = (z1 + pl.z_lin1) / pl.lambda1;   // absolute band DDs (cyc)
-            const double A2 = (z2 + pl.z_lin2) / pl.lambda2;
-            const double lane = A1 - A2, s = A1 + A2;          // WL DD + preserved NL sum
-            if (std::abs(pl.w - lane) <= nmw.inject_disagree_min_cyc)
-                continue;   // already lane-consistent (hold/fix row or prior inject): no edit
-            const double A1p = 0.5 * (pl.w + s), A2p = 0.5 * (s - pl.w);
-            const double sg1 = nmw.wl_fix_sigma_cyc * pl.lambda1;
-            const double sg2 = nmw.wl_fix_sigma_cyc * pl.lambda2;
-            const bool i1 = carry_driver.injectCarriedChord(
-                pl.group_l1, pl.chord, A1p * pl.lambda1 - pl.z_lin1, sg1 * sg1);
-            const bool i2 = carry_driver.injectCarriedChord(
-                pl.group_l2, pl.chord, A2p * pl.lambda2 - pl.z_lin2, sg2 * sg2);
-            const bool moved = i1 && i2;
-            if (moved) { ++wl_run.injects; wl_run.inject_abs_sum += std::abs(pl.w - lane);
-                         if (mw_tagsets) d5_inject_chords_now.insert(pl.chord); }
-            else       { ++wl_run.skip_basis; }
-        }
-        // Accepted-install accumulation of the epoch's walk tallies.
-        wlAccumulate(wl_run, wl_epoch);
-
-        // Lane trace (F-B): write every entry's post-install carried lane and tags.
-        if (mw_lane_trace && !lane_trace_epoch.empty()) {
-            std::map<ArcKey, double> w_of;   // decided cycles' integer targets
-            for (const auto& pl : wl_inject_epoch) w_of[pl.chord] = pl.w;
-            // Stream and header are owned by NetworkRunTraces (opened once, truncating, in
-            // openMwWlDumps), so a re-run does not append to the previous run's rows.
-            auto& ltf = traces.wl_lane_trace;
-            if (ltf) {
-                for (const auto& e : lane_trace_epoch) {
-                    double z1 = 0.0, v1 = 0.0, z2 = 0.0, v2 = 0.0;
-                    if (!carry_driver.carriedChordValue(e.g1, e.chord, z1, v1) ||
-                        !carry_driver.carriedChordValue(e.g2, e.chord, z2, v2))
-                        continue;   // not 1:1 carried in both bands this epoch
-                    const double lane = (z1 + e.z_lin1) / e.lam1
-                                      - (z2 + e.z_lin2) / e.lam2;
-                    const double frac = lane - std::round(lane);
-                    const auto wit = w_of.find(e.chord);
-                    const std::string sta_name =
-                        (e.chord.u >= 0 && e.chord.u < static_cast<int>(stations.size()))
-                            ? stations[static_cast<std::size_t>(e.chord.u)].name
-                            : std::string{};
-                    ltf << se.time.week << ',' << fmt::format("{:.1f}", se.time.tow)
-                        << ',' << e.chord.u << ',' << e.chord.v << ',' << sta_name
-                        << ',' << e.sat << ',' << fmt::format("{:.4f}", lane) << ','
-                        << fmt::format("{:.4f}", frac) << ',';
-                    if (wit != w_of.end()) ltf << fmt::format("{:.0f}", wit->second);
-                    ltf << ',' << (wit != w_of.end() ? 1 : 0) << ','
-                        << (d5_hold_chords.count(e.chord) ? 1 : 0) << ','
-                        << (d5_inject_chords_now.count(e.chord) ? 1 : 0) << '\n';
-                }
-            }
-        }
-    }
     const auto& cc = carry_driver.counters();
     carry_epochs       = cc.epochs;
     carry_born_total   = cc.chords_born;
@@ -538,113 +416,6 @@ void networkInstallCarry(
                     }
             }
         }
-    }
-    // Attribution dump (F-A; log-only, network.mw_wl.d5_dump): one CSV row per D5
-    // flag with adjacency tags.  Uses the same reverse map as the funnel above.
-    //
-    // The trailing `raw_stepped` column is the exact-epoch raw-step tag (Card D5-A/D2,
-    // docs/SPEC_slip_qc_hardening.md §9.1): did the receiver's own MW/GF
-    // level step at this (station, satellite) on this epoch?  It is tri-state,
-    // not 0/1:
-    //   1     : this (station, sat) is in slip_qc.epoch.stepped (Card G's
-    //           empirical per-station gate fired);
-    //   0     : a step could be formed (adjacent-epoch dual-band predecessor)
-    //           and it was flat;
-    //   blank : no evidence (raw observables not computed this run, arc
-    //           start / gap / single-band, or the flag's ambiguity key did not
-    //           resolve).  Writing 0 there would claim "no raw step" for the
-    //           population D5-A exists to decompose.
-    // The ±1-epoch offline join in scripts/grade_slip_agreement.py --d5 remains
-    // the reference; this column is a zero-cost exact-epoch tag that makes
-    // network_d5_flags.csv self-contained.  Log-only either way: the solve never
-    // reads it.
-    if (mw_d5_dump && carry_innov_gate) {
-        const auto& flags  = carry_driver.lastInnovFlags();
-        const auto& sigmas = carry_driver.lastInnovFlagSigmas();
-        const auto& terms  = carry_driver.lastInnovFlagTerms();
-        const auto& warm_mask = carry_driver.lastInnovWarmupSuppressed();   // RS-2b
-        if (!flags.empty()) {
-            // Stream and header are owned by NetworkRunTraces (opened once, truncating, in
-            // openMwWlDumps, under the arming expression this block tests), so repeated
-            // runs do not append to one file and A/B row counts stay comparable.
-            auto& d5f = traces.d5_flags_trace;
-            if (d5f) {
-                for (std::size_t fi = 0; fi < flags.size(); ++fi) {
-                    const auto& [gk, chord] = flags[fi];
-                    std::string amb, sat;
-                    const auto git = carry_arc_amb_key.find(gk);
-                    if (git != carry_arc_amb_key.end()) {
-                        const auto ait = git->second.find(chord);
-                        if (ait != git->second.end()) amb = ait->second;
-                    }
-                    if (!amb.empty())
-                        if (const auto parts = StateKeys::parseAmbiguityKey(amb))
-                            sat = parts->satellite;
-                    const std::string sta_name =
-                        (chord.u >= 0 && chord.u < static_cast<int>(stations.size()))
-                            ? stations[static_cast<std::size_t>(chord.u)].name
-                            : std::string{};
-                    // Tri-state raw-step tag (D2; see the banner above).  Reads the
-                    // same per-epoch evidence the run-end d5_retaps_stepped counter
-                    // uses, so the CSV and the counter agree.
-                    std::string raw_stepped;
-                    if (slip_qc.epoch.computed && !sat.empty() && chord.u >= 0
-                        && static_cast<std::size_t>(chord.u)
-                               < slip_qc.epoch.verdict.size()) {
-                        if (slip_qc.epoch.stepped.count({ chord.u, sat })) {
-                            raw_stepped = "1";
-                        } else {
-                            const auto& vmap =
-                                slip_qc.epoch.verdict[static_cast<std::size_t>(chord.u)];
-                            const auto vit = vmap.find(sat);
-                            if (vit != vmap.end() && vit->second.measured)
-                                raw_stepped = "0";
-                        }
-                    }
-                    // The terms behind std_innov (churn card), so the Cov(v)-vs-wander
-                    // question can be answered from this file alone.  Written blank
-                    // rather than zero when the driver has no term for the row, since
-                    // a 0.0 on ẑ or var_v would read as a measurement.
-                    std::string t_zhat, t_v, t_var, t_s0, t_zpost;
-                    if (fi < terms.size()) {
-                        const auto& T = terms[fi];
-                        t_zhat  = fmt::format("{:.6f}", T.zhat);
-                        t_v     = fmt::format("{:.6f}", T.v);
-                        t_var   = fmt::format("{:.6e}", T.var_v);
-                        t_s0    = fmt::format("{:.4f}", T.sigma0);
-                        t_zpost = fmt::format("{:.6f}", T.z_post);
-                    }
-                    // This epoch's SH-constraint deweight weight for the station (the
-                    // topology ledger's snapshot, taken pre-solve).  Blank without
-                    // network.trace_topology, which is the only path that fills the map.
-                    std::string t_dw;
-                    if (const auto wit = ctx.carry.topo_prev_w.find(chord.u);
-                        wit != ctx.carry.topo_prev_w.end())
-                        t_dw = fmt::format("{:.4g}", wit->second);
-                    d5f << se.time.week << ',' << fmt::format("{:.1f}", se.time.tow)
-                        << ',' << gk << ',' << chord.u << ',' << chord.v << ','
-                        << sta_name << ',' << amb << ','
-                        << fmt::format("{:.2f}",
-                               fi < sigmas.size() ? sigmas[fi] : 0.0) << ','
-                        << (d5_ewl_stasat.count({ chord.u, sat }) ? 1 : 0) << ','
-                        << (d5_hold_chords.count(chord) ? 1 : 0) << ','
-                        << (d5_inject_chords_prev.count(chord) ? 1 : 0) << ','
-                        << raw_stepped << ','
-                        << t_zhat << ',' << t_v << ',' << t_var << ','
-                        << t_s0 << ',' << t_zpost << ',' << t_dw << ','
-                        // 1 = this trip was inside the post-resume D5 warm-up (RS-2b), so
-                        // it was only counted: no re-tap, no funnel entry, no refold.
-                        // Plain 0/1 rather than the raw_stepped tri-state, because this
-                        // value is never unknown: the driver either suppressed the row or
-                        // acted on it.
-                        << (fi < warm_mask.size() && warm_mask[fi] ? 1 : 0) << '\n';
-                }
-            }
-        }
-    }
-    if (mw_tagsets) {   // rotate: this epoch's applied injects tag the next install's flags
-        d5_inject_chords_prev.swap(d5_inject_chords_now);
-        d5_inject_chords_now.clear();
     }
 }
 

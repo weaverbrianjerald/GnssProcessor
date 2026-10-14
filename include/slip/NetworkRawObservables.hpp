@@ -941,21 +941,14 @@ struct SlipQcCounters {
     std::vector<long long> ledger_reentry_nv_reason;
     long long ledger_reentry_nv_no_mask{0};
     /// Flag rows of the D5 innovation gate seen at the attribution site, one per
-    /// resolved flag.  This is not a chord count, for two reasons:
-    ///   * under the WL-3 joint pair block the gate runs per band row (rows i and
-    ///     K+i are the two bands of chord i), so a chord flagged on both bands
-    ///     appends the same (group, chord) twice (32 % of the rows on a 150-station
-    ///     gate run);
-    ///   * a flag whose chord does not resolve to an ambiguity in the reverse map
-    ///     is skipped here (the producer warns once) but still gets a row in
-    ///     network_d5_flags.csv with a blank amb_key.
-    /// So dump rows = this counter + reverse-map misses, and the number of arcs the
+    /// resolved flag (a flag whose chord does not resolve to an ambiguity in the
+    /// reverse map is skipped here; the producer warns once).  The number of arcs the
     /// C3c funnel actually re-taps is @ref d5_retap_ambs.  The counter stays
     /// row-based for continuity with the headline of the hardening report
     /// (docs/SPEC_slip_qc_hardening.md §8); the grader and the run-end line state
     /// both.
     long long d5_retaps{0};
-    long long d5_retaps_stepped{0};     ///< …flag rows coincident with a raw step at the same (station, satellite, epoch); the same evidence the dump's `raw_stepped` column reports.
+    long long d5_retaps_stepped{0};     ///< …flag rows coincident with a raw step at the same (station, satellite, epoch); the same evidence the v3 corroboration gate reads.
     /// Distinct (station, ambiguity) pairs inserted into the C3c funnel at each
     /// epoch, summed over the run: the true re-tap count (one per arc that will
     /// re-tap fresh), free of the per-band double counting above.  Taken from the

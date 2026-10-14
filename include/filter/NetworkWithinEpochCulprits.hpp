@@ -12,8 +12,7 @@
  * re-solves the epoch without it, up to a few times: a satellite whose ambiguities refloat
  * at every station, one satellite at one station (an isolated arc), or a whole station,
  * which the re-solve leaves out of the estimator.  Each re-solve rebuilds the DD-carry
- * priors (networkBuildCarryDdPriors, and the MW wide-lane rows it appends,
- * networkMwWlInject).  A culprit satellite or arc invalidates its carried double
+ * priors (networkBuildCarryDdPriors).  A culprit satellite or arc invalidates its carried double
  * differences, so the rebuild treats every carried ambiguity a culprit names as slipped
  * and re-taps the chord, instead of folding the stale carried value again.
  *

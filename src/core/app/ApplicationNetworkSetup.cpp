@@ -102,7 +102,6 @@
 #include "filter/NetworkCarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
-#include "filter/NetworkMwWlLayer.hpp"             // MW-seeded wide-lane pseudo-obs layer (M5 card WL-1)
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
 #include "filter/NetworkRobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
@@ -1162,11 +1161,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         if (config_.getNetworkConfig().adaptive_iono_q)
             st.iono_var = std::make_unique<IonoVariabilityMonitor>(config_, log_manager_);
 
-        // The EWL/WL lanes also need the per-station MW detector running (its per-arc
-        // Welford means feed the EWL/MW(1,2) statistics).  With all lanes disabled the
-        // path is unchanged.  (M5 card WL-2, SPEC_ewl_wl_cascade_card.md §4)
-        const auto& mwc = config_.getNetworkConfig().mw_wl;
-        if (build_slip_for_pl || mwc.ewl_enable || mwc.wl_inject_enable) {
+        if (build_slip_for_pl) {
             st.mw_slip = std::make_unique<MwSlipDetector>(config_, log_manager_);
             // Every station's detector shares one logger, whose records are keyed
             // only by <sat>_<sig1>_<sig2>; the label is what lets the MWDEC / MWSKIP
@@ -1174,18 +1169,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // the label.  Design: §14.10 of docs/SPEC_event_harness.md.
             st.mw_slip->setStationLabel(st.name);
             st.mw_slip->setCorrections(&st.model->getCorrections());
-            // Arm the tri-frequency GF_b phase bridge accumulator only when a consumer of
-            // the bridge exists (the WL-2 inject path) together with the EWL integers it
-            // bridges from.  Off: the detector never touches a bridge arc (byte-identical).
-            // (M5 card WL-2, SPEC §3.4)
-            st.mw_slip->setBridgeEnabled(mwc.wl_inject_enable && mwc.ewl_enable);
-            // Per-sample estimable-iono de-bias of the bridge accumulator
-            // (network.mw_wl.bridge_sample_debias), which removes the bridge's age bias
-            // (the 60-epoch fix); the frame contract is in the setter's Doxygen.  Armed
-            // only with the bridge itself; the per-epoch ı̃ push rides the iono_of build
-            // in NetworkDdPriorBuild.cpp.
-            st.mw_slip->setBridgePerSampleDebias(
-                mwc.wl_inject_enable && mwc.ewl_enable && mwc.bridge_sample_debias);
             // The TurboEdit MW+GF integer repair resolver is built only for turbo_edit
             // (higher-rate 1 s data, where the geometry-free ionospheric drift over the
             // epoch gap is small enough to trust an integer).  mw_detect uses the same MW

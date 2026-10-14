@@ -37,7 +37,6 @@
 #include "filter/NetworkCarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
-#include "filter/NetworkMwWlLayer.hpp"             // MW-seeded wide-lane pseudo-obs layer (M5 card WL-1)
 #include "filter/NetworkSdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "filter/NetworkCoupling.hpp"       // conditional coupling-row builder (Card 1/1b/1d, INC-7b)
 #include "filter/NetworkParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
@@ -651,7 +650,7 @@ void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator
     //
     // Which columns need the x_lin term: the local ambiguity states are seeded from
     // code-minus-phase and reseeded on slips, so their term is large; it is the term
-    // NetworkMwWlLayer subtracts as `z_lin` (its z_corr = z_mw − z_lin).  The shared
+    // a correction-frame row subtracts as `z_lin` (z_corr = z_mw − z_lin).  The shared
     // satellite phase/code-bias states are allocated at value 0 by MeasurementModel, as
     // shared states the network solves, and never written back from the solve, so their
     // term is currently zero.  It is included rather than assumed, so that a future
@@ -923,8 +922,8 @@ void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator
         std::vector<Row> rows;
         for (std::size_t k = 1; k < g.size(); ++k) {
             const Arc& s = *g[k];
-            // Satellite-bias cancellation needs one frame across the difference (the
-            // same rule NetworkMwWlLayer applies per cycle, skip_mixed_frame).
+            // Satellite-bias cancellation needs one frame across the difference
+            // (counted as skip_mixed_frame).
             if (s.bia != p.bia) {
                 ++ctr.skip_mixed_frame;
                 tr2("MIXED_FRAME", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2,
@@ -1674,12 +1673,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                         // to a large spurious integer but with a large frac (left
                         // alone); a known non-zero integer with a small frac is a real
                         // WL slip.  LLI loss-of-lock is handled directly in the serial
-                        // drain.  The branch is gated on mw_detect explicitly: under
-                        // mw_wl alone the detector is built for its Welford means but
-                        // must not refloat the carry, because the WL layer is
-                        // observation-side only.  Configs without mw_wl build the
-                        // detector only under turbo_edit or mw_detect, so for them this
-                        // branch already implied mw_detect (byte-identical).
+                        // drain.  The branch is gated on mw_detect explicitly; the
+                        // detector is built only under turbo_edit or mw_detect, so after
+                        // the TurboEdit branch the test always holds.
                         //
                         // MW evidence refloat (network.cycle_slip.mw_evidence_refloat):
                         // the frac gate above is the T0 repair gate, and this path never

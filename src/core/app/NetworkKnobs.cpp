@@ -679,45 +679,13 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                              ? nc.adm_revet_bound_scale : 0.2;
         k.adm_revet_bound_m = k.adm_bound_m * s;
     }
-    // --- Invariant-carry gate, WL/EWL/UWL lanes and emit layers (card NOM step TD1a) ---
-    // Moved from runNetwork with their conjunctions unchanged.  The lane and mw_wl blocks
-    // are read from config_.getNetworkConfig(), as the driver read them, and not from `nc`,
-    // which a test may build by hand.
+    // --- Invariant-carry gate and emit layers (card NOM step TD1a) ---
+    // Moved from runNetwork with their conjunctions unchanged.
     {
-        const auto& nmw = config_.getNetworkConfig().mw_wl;
         // Estimation-side fine-slip innovation gate: the invariant-carry-native replacement
         // for the RAIM fine-slip layer that the invariant bypass empties.  Requires
         // carry_invariant (rejected at config load otherwise).
         k.carry_innov_gate = k.carry_invariant && config_.networkCarryInvariantInnovGate();
-        // EWL lane (card M5 WL-2): the MW wide-lane layer, run on the (band2, band5) pair with FFR
-        // statistic-gated fixing.  The same conjunction also excludes the constellation's
-        // third band (the EWL pair's uncarried leg: GPS L5, Galileo E5b) from the carry, so
-        // that lane acquires no unearned stiff prior (the F6 wall).
-        k.ewl_on = k.carry_invariant && nmw.ewl_enable;
-        // 60-epoch age-bias fix: the bridge accumulates per-sample iono-de-biased GF, so every
-        // read-time C_iono·Σc·ı̃ subtraction is disabled.  The two frames must not mix:
-        // subtracting twice re-creates the bias with the opposite sign.
-        k.bridge_debias_on = k.ewl_on && nmw.bridge_sample_debias;
-        // WL lane (card M5 WL-2, SPEC §3.3/§3.4): the phase-bridge WL decision plus the
-        // NL-preserving inject.  The bridge path needs the EWL integers, so it runs only when
-        // both masters are on.  wl_inject alone would run the MW(1,2) fallback path (§3.5),
-        // which is deferred: v1 requires the bridge, and without it no WL decision is
-        // produced and the lane is armed but inert.
-        k.wl_inject_on = k.ewl_on && nmw.wl_inject_enable;
-        // F-A attribution dump (network.mw_wl.d5_dump, log-only): adjacency tags for each D5
-        // flag.  They are the (station, sat) pairs an EWL-fixed cycle touched this build, the
-        // chords of hold-folded cycles this build, and the chords injected in the previous
-        // epoch (an inject's residual tension lands in the next install; the injected chord
-        // itself is exempt, its component siblings are not).  All are rebuilt per accepted
-        // build and stay empty unless d5_dump is set.
-        // F-B lane trace (network.mw_wl.lane_trace, log-only): per epoch, the carried WL
-        // lane value of every primary cycle whose chord is carried in both bands.  The
-        // constrained (held or injected) and unconstrained populations come from one run, so
-        // the injected-cycle circR can be graded (scripts/grade_lane_trace.py).  The hold
-        // and inject tag sets feed both dumps.
-        k.mw_d5_dump    = (k.ewl_on || k.wl_inject_on) && nmw.d5_dump;
-        k.mw_lane_trace = k.wl_inject_on && nmw.lane_trace;
-        k.mw_tagsets    = k.mw_d5_dump || k.mw_lane_trace;
         // Emit-layer frame re-base (card 4 phase D), on by default when carry_invariant is
         // armed (spec D7); the PB emission-continuity filter runs inside the re-base block,
         // so it requires emit_rebase_on.

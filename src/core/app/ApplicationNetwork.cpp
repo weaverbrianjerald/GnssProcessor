@@ -96,12 +96,11 @@
 #include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (card 4, M1 C3b)
-#include "filter/NetworkMwWlLayer.hpp"             // MW-seeded wide-lane pseudo-observation layer (card M5 WL-1)
 #include "filter/StateKeySchema.hpp"
-#include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, systemFromLetter, rinexLetter, systemName
+#include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, rinexLetter, systemName
 #include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
-#include "filter/NetworkWlRunTypes.hpp" // WL and RAII types hoisted out of runNetwork() (INC-9b)
-#include "filter/NetworkRunGroups.hpp"  // the driver-owned run groups: engines, emit engines, lane run, timing, closed-loop tally (card NOM TD1a)
+#include "filter/NetworkWlRunTypes.hpp" // RAII and section-timer types hoisted out of runNetwork() (INC-9b)
+#include "filter/NetworkRunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally (card NOM TD1a)
 #include "filter/NetworkRobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
 #include "filter/NetworkPhaseDatum.hpp"    // census, ensemble datum, anchor election, drop-and-heal (INC-8b)
 #include "filter/NetworkAmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
@@ -695,57 +694,6 @@ int Application::runNetwork() {
                              && config_.getNetworkConfig().state_snapshot_carry_lin;
     carry_cfg.carry_rebase = carry_invariant && config_.networkResumeCarryRebase();
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
-    // With the EWL lane armed (card M5 WL-2, ctx.knobs.ewl_on), the constellation's third
-    // band (the EWL pair's uncarried leg: GPS L5, Galileo E5b) is excluded from the
-    // invariant-carry driver, so that lane acquires no unearned stiff prior (the F6 wall)
-    // and its EWL rows are not opposed by a carried value.  The band stays in the eq34
-    // election and datum (shared_phase_keys and pins are built upstream and are
-    // untouched).  Off ⇒ the third band is carried like the others (byte-identical).  v1
-    // covers GPS and Galileo; GLONASS is never carried.  The exclusion itself is applied in
-    // networkBuildCarryDdPriors through the predicate below.
-    const auto& nmw = config_.getNetworkConfig().mw_wl;
-    auto isUncarriedThirdBand = [](char cons, const std::string& signal) -> bool {
-        // The band digit is read directly: besides a carried signal ("L5Q" → '5') the
-        // caller passes band probes "L<digit>", which are not full observation codes.
-        const char band = signal.size() >= 2 ? signal[1] : '\0';
-        switch (systemFromLetter(cons)) {
-            case System::GPS:     return band == '5';   // GPS  EWL = (L2,L5) ⇒ L5 uncarried
-            case System::Galileo: return band == '7';   // Galileo EWL = (E5b,E5a) ⇒ E5b(7) uncarried
-            default:              return false;         // BDS/QZSS deferred; GLONASS excluded from the carry anyway
-        }
-    };
-    // EWL lane (card M5 WL-2): the MW wide-lane layer, run on the (band2, band5) pair with
-    // FFR statistic-gated fixing.  The third band is uncarried (excluded above), so these
-    // rows meet no opposing F6 prior.  It uses the primary-sig1 cycle basis.  ewl_on and
-    // the other lane switches are resolved in NetworkKnobs::snapshot.
-    const bool ewl_on = ctx.knobs.ewl_on;
-    NetworkMwWlLayer::Config ewl_cfg;
-    ewl_cfg.enable              = ewl_on;
-    ewl_cfg.min_arc_epochs      = nmw.ewl_min_arc_epochs;
-    ewl_cfg.sigma_floor_cyc     = nmw.sigma_floor_cyc;
-    ewl_cfg.max_rows_per_epoch  = nmw.max_rows_per_epoch;
-    ewl_cfg.ffr_fix             = true;
-    ewl_cfg.fix_sigma_cyc       = nmw.ewl_fix_sigma_cyc;
-    ewl_cfg.fix_frac_cyc        = nmw.ewl_fix_frac_cyc;
-    ewl_cfg.fix_weight_sigma_cyc= nmw.fix_weight_sigma_cyc;
-    ewl_cfg.max_abs_xlin_m      = nmw.lane_max_abs_xlin_m;
-    // The lane machinery of the run (filter/NetworkRunGroups.hpp): the EWL lanes, their
-    // run and per-build tallies, and the per-build inject and lane-trace plans.
-    // networkBuildCarryDdPriors writes the per-build members, networkInstallCarry folds
-    // them into the run totals, and the run end reports the run totals.
-    NetworkLaneRun lane_run(ewl_cfg);
-    // One filterless statistic-layer instance over every constellation.
-    if (ewl_on)
-        lane_run.ewl_lanes.push_back(EwlLane{ NetworkMwWlLayer(ewl_cfg), {}, {} });
-    // The F-A D5 attribution dump and the F-B lane trace (network.mw_wl.d5_dump and
-    // network.mw_wl.lane_trace, log-only; armed as ctx.knobs.mw_d5_dump and
-    // ctx.knobs.mw_lane_trace) are ordinary NetworkRunTraces streams, opened once
-    // (truncating, with their header) before the epoch loop.  The open sits here rather
-    // than in openAll, beside the lane machinery they trace.  The D5 arm includes
-    // carry_innov_gate for the same reason its writer does: without the gate there are no
-    // flags, so an unarmed gate yields no file rather than an empty one, and the artifact
-    // set shows what actually ran.
-    traces.openMwWlDumps(ctx.knobs.mw_d5_dump && carry_innov_gate, ctx.knobs.mw_lane_trace, log);
     // The emit-layer engines (filter/NetworkRunGroups.hpp), run by networkEmitStore on every
     // emitted epoch:
     //  - the emit-layer frame re-base (card 4 phase D, ctx.knobs.emit_rebase_on).  It
@@ -2350,10 +2298,9 @@ int Application::runNetwork() {
         // adapts that member while it runs and clears it when it ends (card WCF), so the
         // primary build here reads it empty.
         auto buildCarryDdPriors = [&]() {
-            networkBuildCarryDdPriors(ctx, config_, log, traces, carry_driver, est, stations, asm_res,
-                                      est_index_of, present, shared_phase_keys, se, carry_arc_amb_key,
-                                      carry_slipped_ambs, carry_slipped_raw,
-                                      ws.we_culprits, n_threads, lane_run, isUncarriedThirdBand);
+            networkBuildCarryDdPriors(ctx, config_, log, carry_driver, est, stations, asm_res,
+                                      est_index_of, shared_phase_keys, carry_arc_amb_key,
+                                      carry_slipped_ambs, carry_slipped_raw, ws.we_culprits);
         };
         subEnd(SB_GAUGEBUILD);   // close gauge build and carry-driver setup (D0b)
         subBegin(SB_DDBUILD);    // carry_driver.beginEpoch + buildCarryDdPriors, W·Pᶻ·Wᵀ (D0b)
@@ -2406,7 +2353,7 @@ int Application::runNetwork() {
         if (carry_invariant) {
             networkInstallCarry(ctx, config_, log, traces, carry_driver, est, x_s, plan, se, stations,
                                 slip_qc, carry_arc_amb_key, carry_par,
-                                n_threads, seam_threads, lane_run);
+                                n_threads, seam_threads);
         }
         subEnd(SB_INSTALL);     // close installPosterior, the card-4 posterior readback (D0b)
         subBegin(SB_NETAR);     // producer-side network AR phase 2, log-only, off in the tier (D0b)
@@ -2835,7 +2782,7 @@ int Application::runNetwork() {
     const NetworkRunEngines engines{ est, carry_driver, carry_vce_est, prires_est, slip_qc,
                                      iono_deweight };
     return networkTeardown(ctx, config_, log, traces, setup,
-                           NetworkRunEndInputs{ engines, emit_engines, lane_run, timing, cl_tally });
+                           NetworkRunEndInputs{ engines, emit_engines, timing, cl_tally });
 }
 
 } // namespace GnssProcessor

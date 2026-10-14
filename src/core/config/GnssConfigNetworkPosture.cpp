@@ -40,8 +40,8 @@ namespace GnssProcessor {
      * @brief Compute the regime predicates every posture row filters on.
      *
      * A knob validated at one scale can be harmful at another
-     * (@c mw_wl.bridge_sample_debias: validated at 50 stations, net-harmful at 305,
-     * where the short-baseline wrong-integer rate went from 0.0 % to 12.5 %), so a row
+     * (the retired @c mw_wl.bridge_sample_debias: validated at 50 stations, net-harmful
+     * at 305, where the short-baseline wrong-integer rate went from 0.0 % to 12.5 %), so a row
      * is reported only when the regime it was validated in matches this run.  Computed
      * once and passed to every table builder.
      *
@@ -54,7 +54,6 @@ namespace GnssProcessor {
         const bool tri   = frequency_mode_ == FrequencyMode::Triple
                         || frequency_mode_ == FrequencyMode::All;
         const bool warm  = !nc.state_snapshot_path.empty();
-        const bool lane  = nc.mw_wl.ewl_enable;
         // The real-time / service posture.  service_mode is the RT service producer, so a
         // knob scoped to post-processing (carry_invariant: ~57% of epoch wall time at
         // 305 sta) stays silent there, and the RT-only knobs stay silent everywhere else.
@@ -78,7 +77,7 @@ namespace GnssProcessor {
             && std::all_of(active_systems_.begin(), active_systems_.end(),
                            [](const std::string& s) { return s == "GPS" || s == "Galileo"; });
 
-        return PostureRegime{ n_sta, n_sys, tri, warm, lane, rt, par,
+        return PostureRegime{ n_sta, n_sys, tri, warm, rt, par,
                               spacing_s, gps_only, gps_gal_only };
     }
 
@@ -260,7 +259,6 @@ namespace GnssProcessor {
         const auto&       nc           = network_config_;
         const std::size_t n_sta        = r.n_sta;
         const bool        warm         = r.warm;
-        const bool        lane         = r.lane;
         const bool        rt           = r.rt;
         const bool        par          = r.par;
         const double      spacing_s    = r.spacing_s;
@@ -818,10 +816,6 @@ namespace GnssProcessor {
               "a first-sighting family prior at 0.10 m (the family difference's veteran mean): "
               "truth-bed code error from hour 3 0.83 -> 0.05 m, field Galileo clock wire 0.022 "
               "m (level with GPS); hour-2 bars missed (convergence of births at ignition)" },
-            { lane,
-              network_cold_clock_seed_,
-              Tier::SCOPED, false, "network.cold_clock_seed",
-              "lane/WL layers difference ~3e5-magnitude x_lin; measured 269 km at 305 sta cold" },
             { n_sta >= 3 && gps_gal_only,
               estimate_network_sat_code_bias_,
               Tier::SCOPED, true , "network.estimate_sat_code_bias",
@@ -1116,30 +1110,18 @@ namespace GnssProcessor {
     /**
      * @brief The coupled bundles: sets of knobs that are correct only when armed together.
      *
-     * Arming a strict subset is its own failure mode (the MW/WL lane stack without
-     * @c cold_clock_seed quarantines its lane cycles; @c x_lin measured 269 km at 305
-     * stations), so an engaged bundle that is partially armed logs a warning, while one
+     * Arming a strict subset is its own failure mode (a zero-q phase memory without its
+     * slip detectors carries a stale value past a jump, standing invariant #1), so an
+     * engaged bundle that is partially armed logs a warning, while one
      * with no member armed, or with every member armed, logs at info level.
      *
-     * @param r  Regime facts from @ref networkPostureRegime_.
+     * Every bundle keys on its own knobs; none reads the regime facts.
+     *
      * @return The bundle table for this configuration.
      */
     std::vector<GnssConfig::PostureBundle>
-    GnssConfig::networkPostureBundles_(const PostureRegime& r) const {
-        // Alias preamble: the rows below use the names the table was written with.
-        const auto& nc   = network_config_;
-        const bool  lane = r.lane;
-
+    GnssConfig::networkPostureBundles_() const {
         return {
-            { lane, "MW/WL lane stack",
-              "the lane rows are built in the CORRECTION frame, so an unseeded cold receiver "
-              "clock lands in the ambiguity seeds and lane_max_abs_xlin_m quarantines the "
-              "cycles (x_lin 269 km measured at 305 sta); the lane also rides the Card-4 "
-              "chord basis",
-              { { "network.cold_clock_seed", network_cold_clock_seed_ },
-                { "network.carry_invariant", network_carry_invariant_ },
-                { "network.phase_datum_eq34", network_phase_datum_eq34_ },
-                { "network.mw_wl.ewl_enable", nc.mw_wl.ewl_enable } } },
             { network_phase_leveling_ || network_carry_invariant_,
               "zero-q phase memory + slip response",
               "STANDING INVARIANT #1: any stiff time-linked quantity MUST have a wired slip "
@@ -1180,15 +1162,16 @@ namespace GnssProcessor {
      *
      * Two design rules:
      *  - **Regime, not blanket.** A knob validated at one scale can be harmful at another
-     *    (`mw_wl.bridge_sample_debias`: validated at 50 stations, net-harmful at 305, with
+     *    (the retired `mw_wl.bridge_sample_debias`: validated at 50 stations, net-harmful
+     *    at 305, with
      *    the short-baseline wrong-integer rate going from 0.0 % to 12.5 %).  Every entry
      *    carries the regime it was validated in and is reported only when that regime
      *    matches this run.  That filter lives in @ref networkPostureRegime_ and in each
      *    row's `applies` predicate.
      *  - **Bundles, not knobs.** Several options are correct only when armed together;
-     *    arming a strict subset is its own failure mode (the MW/WL lane stack without
-     *    `cold_clock_seed` quarantines its lane cycles; `x_lin` measured 269 km at 305
-     *    stations).  A partially armed bundle logs a warning; the table lives in
+     *    arming a strict subset is its own failure mode (a zero-q phase memory without
+     *    its slip detectors carries a stale value past a jump, standing invariant #1).  A
+     *    partially armed bundle logs a warning; the table lives in
      *    @ref networkPostureBundles_.
      *
      * Log-only: reads already-parsed state and changes nothing.  The full evidence, and
@@ -1205,7 +1188,6 @@ namespace GnssProcessor {
         const std::size_t   n_sta = r.n_sta;
         const std::size_t   n_sys = r.n_sys;
         const bool          warm  = r.warm;
-        const bool          lane  = r.lane;
         const bool          rt    = r.rt;
 
         // ON rows first, then SCOPED: the report is a single pass, so this append order is
@@ -1213,16 +1195,15 @@ namespace GnssProcessor {
         std::vector<PostureItem> items;
         appendNetworkPostureItemsOn_(r, items);
         appendNetworkPostureItemsScoped_(r, items);
-        const std::vector<PostureBundle> bundles = networkPostureBundles_(r);
+        const std::vector<PostureBundle> bundles = networkPostureBundles_();
 
         log->info("=== Network POSTURE (regime: {} station(s), {} constellation(s), {} "
-                  "frequency mode, {} start, {} lane layer, {}) — recommended-vs-armed; "
+                  "frequency mode, {} start, {}) — recommended-vs-armed; "
                   "evidence in docs/CONFIG_promotion_ledger.md ===",
                   n_sta, n_sys,
                   frequency_mode_ == FrequencyMode::All ? "all"
                       : frequency_mode_ == FrequencyMode::Triple ? "triple" : "dual",
                   warm ? "WARM-RESUME" : "cold",
-                  lane ? "with" : "no",
                   rt ? "real-time/service" : "post-processed");
         int on_armed = 0, on_off = 0, sc_armed = 0, sc_off = 0, fp_blocked = 0;
         // ON-tier gaps log a warning: an ON knob has no known regime where it should stay

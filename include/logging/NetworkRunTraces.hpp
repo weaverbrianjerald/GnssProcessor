@@ -481,9 +481,9 @@ namespace GnssProcessor {
      * on-disk path.  Member names match the former runNetwork() locals, so the run
      * loop binds `auto& X = traces.X;` references and every writer use-site stays
      * textually unchanged (the INC-3 migration mechanic).  network_trace.csv and
-     * network_solution.csv always open; every other stream opens in openAll() (the
-     * two MW/WL dumps in openMwWlDumps()) only when its arming toggle is set, and a
-     * toggle left off opens nothing and writes nothing (byte-identical when off).
+     * network_solution.csv always open; every other stream opens in openAll() only when
+     * its arming toggle is set, and a toggle left off opens nothing and writes nothing
+     * (byte-identical when off).
      */
     struct NetworkRunTraces {
         /// @param log_dir The run's log directory (streams live directly in it).
@@ -969,29 +969,6 @@ namespace GnssProcessor {
         /// place from a serial seam, so no per-station buffering is needed.
         std::ofstream sd_ewl_ar_trace;
         const std::filesystem::path sd_ewl_ar_trace_path;
-        /// Attribution dump of the D5 innovation flags (@c network.mw_wl.d5_dump with the
-        /// D5 innovation gate; card 4, F-A): one row per D5 innovation flag per epoch with
-        /// its adjacency tags (EWL-fixed (station, sat) membership, hold-cycle chord,
-        /// injected-last-epoch chord) and the D2 tri-state @c raw_stepped tag.
-        /// Log-only: the solve never reads it.  Written from @ref networkInstallCarry
-        /// through this handle.
-        ///
-        /// Opened by @ref openMwWlDumps, not openAll(): its arming expression
-        /// (@c (ewl_on||wl_inject_on) && nmw.d5_dump && carry_innov_gate) is
-        /// derived in the run TU after openAll() runs, and re-deriving it here would
-        /// drift out of step with the driver.  The lifecycle matches every other
-        /// stream: one truncating open with the header per run, before the epoch loop.
-        std::ofstream d5_flags_trace;
-        const std::filesystem::path d5_flags_trace_path;
-        /// WL lane trace (@c network.mw_wl.lane_trace; card WL-2, F-B): per epoch,
-        /// the post-install carried WL lane value of every primary cycle carried in both
-        /// bands, with the decided/held/injected tags.  The constrained and
-        /// unconstrained populations share one file, so an injected cycle's circular R
-        /// can be graded (@c scripts/grade_lane_trace.py).  Log-only.  Opened by
-        /// @ref openMwWlDumps for the same reason as @ref d5_flags_trace (arming
-        /// expression @c wl_inject_on && nmw.lane_trace).
-        std::ofstream wl_lane_trace;
-        const std::filesystem::path wl_lane_trace_path;
         /// Arc lifecycle trace (card SID phase 1; @c network.signal_roster): one row per
         /// (station, satellite, signal) transition, written through
         /// @ref writeArcLedgerRow from @c networkBuildSignalRoster (raw rows) and
@@ -1075,28 +1052,6 @@ namespace GnssProcessor {
                      const SphericalHarmonicIonosphere* sh_model,
                      bool cl_trace_armed,
                      const std::shared_ptr<spdlog::logger>& log);
-
-        /**
-         * @brief Open the two MW/WL diagnostic dumps (@ref d5_flags_trace,
-         *        @ref wl_lane_trace) with their headers: the openAll() tail for the
-         *        streams whose arming expression is known only later in setup.
-         *
-         * Call once from the run TU, before the epoch loop and after the WL zone-2
-         * arming booleans are derived.  Both open truncating, like every other trace
-         * stream, so re-running a config into a used log directory replaces the file.
-         * Appending would join consecutive runs in one file, and an A/B whose arms had
-         * been re-run a different number of times would then show a false D5 row-count
-         * divergence.  An unarmed dump opens nothing and writes nothing.
-         *
-         * @param d5_armed         @c mw_d5_dump && carry_innov_gate, the condition the
-         *                         per-epoch writer tests, so an armed run with zero
-         *                         flags yields a header-only file rather than an
-         *                         absent one, and an inert gate yields neither.
-         * @param lane_trace_armed @c mw_lane_trace.
-         * @param log              main_log logger for open-failure warnings.
-         */
-        void openMwWlDumps(bool d5_armed, bool lane_trace_armed,
-                           const std::shared_ptr<spdlog::logger>& log);
 
         /**
          * @brief Write the one-shot station-roster CSV (network_stations.csv).

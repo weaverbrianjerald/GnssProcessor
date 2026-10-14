@@ -196,7 +196,6 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkNormalEquationsDetached.cpp
     src/core/filter/NetworkEstimator.cpp
     src/core/filter/NetworkInvariantCarryDriver.cpp
-    src/core/filter/NetworkMwWlLayer.cpp
     src/core/filter/NetworkSbasis.cpp
     src/core/filter/NetworkExtraBandScope.cpp
     src/core/filter/NetworkSecondCodeScope.cpp
@@ -250,7 +249,6 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkFixedCycles.cpp
     src/core/filter/NetworkInstallCarry.cpp
     src/core/filter/NetworkDdPriorBuild.cpp
-    src/core/filter/NetworkMwWlGlue.cpp
     src/core/filter/NetworkSolveGlue.cpp
     src/core/filter/NetworkWithinEpochCulprits.cpp
     src/core/filter/NetworkLevelAuthority.cpp
@@ -469,7 +467,6 @@ add_executable(gnss_tests
     tests/test_network_invariant_carry_driver.cpp
     tests/test_shdev_carry.cpp
     tests/test_rx_cb_carry.cpp
-    tests/test_network_mw_wl_layer.cpp
     tests/test_network_phase_datum.cpp
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
@@ -489,9 +486,7 @@ add_executable(gnss_tests
     tests/test_network_sbasis_complete.cpp
     tests/test_datum_graph_census.cpp
     tests/test_network_fast_clock.cpp
-    tests/test_network_run_traces.cpp
     tests/test_station_block_audit.cpp
-    tests/test_mw_bridge.cpp
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp
     tests/test_pb_jump_decommon.cpp

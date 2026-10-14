@@ -271,7 +271,7 @@ public:
         long long chords_marginalized{0}; ///< chords of previous blocks that fed no component this epoch (whole-block marginalization, e.g. every arc died); per-chord drops are in @ref chords_marg_perchord.
         long long chords_dropped{0};      ///< chords skipped this epoch because a cycle arc was unresolvable (a data-gap refloat, distinct from a slip).
         long long slip_kills{0};          ///< chords that would have been carried but were refloated fresh because a cycle slip or RAIM culprit invalidated an arc of their fundamental cycle (about the slip rate the carry saw) (card 4, C3c).
-        long long innov_flags{0};         ///< chord rows flagged by the D5 gate: post-solve standardized innovation above @c innov_k·σ̂₀ and not exempt, skipped or suppressed (a fine slip the coarse layer missed).  Born chords are tested too unless @c innov_carried_only; flags inside the post-resume warm-up window are included (card 4, D5).
+        long long innov_flags{0};         ///< chord rows flagged by the D5 gate: post-solve standardized innovation above @c innov_k·σ̂₀ and not skipped or suppressed (a fine slip the coarse layer missed).  Born chords are tested too unless @c innov_carried_only; flags inside the post-resume warm-up window are included (card 4, D5).
         long long innov_retaps{0};        ///< flagged chord rows re-tapped fresh at install: @c innov_flags minus @ref d5_warmup_suppressed (card 4, D5).
         long long innov_suppressed{0};    ///< chord rows that tripped the gate but were not re-tapped because the raw observables showed the arc continuous (@c innov_corroborate).  This counter is the only evidence that the corroboration gate acts (invariant #4): 0 with the knob armed means the flat set never reached it, usually because no slip-QC decision card ran the qualify pass that fills the verdicts (SlipQcState::cardsArmed(); network.trace_slip_raw alone computes the observables but adjudicates none, so every verdict map is empty) (D5 v3).
         long long innov_born_skipped{0};  ///< chord rows the gate did not evaluate under @c innov_carried_only because the chord was born this epoch or its Cov(v)_ii is at least half of @c fresh_prior_var.  Counted before the threshold test, so it is the whole skipped population, not only the part that would have flagged: the measure of how much of the gate had no hypothesis to test (D5 v5).
@@ -451,8 +451,8 @@ public:
      * is a serialization representation, not a datum-relevant rule.
      *
      * @ref restoreCarry begins with @ref reset (RE-4) and then zeroes the counters: it is a
-     * general "install this carry" API, so it must not leave stale gate-exemption or
-     * innovation side-state from earlier driver work.  A block whose header carries a
+     * general "install this carry" API, so it must not leave stale innovation side-state
+     * from earlier driver work.  A block whose header carries a
      * non-zero pair flag (a lane pair block of the retired WL-3 lane carry) is refused.
      *
      * Not serialized (they re-warm): the run-end counters.
@@ -650,8 +650,7 @@ public:
 
     /// The formally standardized innovation |v_i|/√Cov(v)_ii of each flag in
     /// @ref lastInnovFlags, index-aligned (compare against k·σ̂₀ for the gate margin).
-    /// Refreshed with the flags every @ref installPosterior.  A D5 diagnostic for the
-    /// WL-2 F-A attribution.
+    /// Refreshed with the flags every @ref installPosterior (a D5 diagnostic).
     const std::vector<double>& lastInnovFlagSigmas() const { return last_innov_sigmas_; }
 
     /**
@@ -754,36 +753,12 @@ public:
     std::size_t numBlocks() const { return block_meta_.size(); }
 
     /**
-     * @brief Edit a carried DD value: the low-level half of the WL inject primitive
-     *        (M5 card WL-2, SPEC_ewl_wl_cascade_card.md §3.3).
-     *
-     * Sets the carried mean of @p chord in @p group to @p new_z (the correction-frame DD,
-     * state units = λ·N; the caller computes it from the lane target minus
-     * @f$\sum c\,x_{lin}@f$) and reseeds its variance to @p new_var (a non-positive
-     * @p new_var keeps the current variance), zeroing the row and column cross-terms to
-     * stay PSD because the injected value is a fresh, independent assertion.  The chord is
-     * then exempt from the D5 gate at the next @ref installPosterior (one epoch): the
-     * inject moves the value by up to half the erroneous lane gap on purpose, and the
-     * per-epoch code-limited innovation would otherwise trip the gate and re-tap it away
-     * (the F6 re-tap storm that card WL-2 avoids).  From the following epoch the data
-     * agrees (the hold row pins the lane), so no exemption is needed.
-     *
-     * The caller pairs the two bands' chords (same @c ArcKey, different group) and injects
-     * both; a chord that is not currently carried in @p group (the cycle is not 1:1 across
-     * the two groups' bases) returns false, and the caller skips and counts it.
-     *
-     * @return true if @p chord is a carried chord of @p group and was edited; false
-     *         otherwise.
-     */
-    bool injectCarriedChord(int group, const ArcKey& chord, double new_z, double new_var);
-
-    /**
      * @brief Set this epoch's chords whose underlying arc the raw observables measured as
      *        continuous (no MW/GF step): the suppression set for
      *        @c Config::innov_corroborate (D5 v3).
      *
-     * One-epoch state, consumed and cleared by @ref installPosterior like the WL-2 inject
-     * exemption, so a stale set cannot suppress a later epoch's re-tap.  Membership must
+     * One-epoch state, consumed and cleared by @ref installPosterior, so a stale set cannot
+     * suppress a later epoch's re-tap.  Membership must
      * mean "measured and flat", never "no evidence".  The caller owns that distinction
      * (@c SlipQcEpoch::verdict[].measured && !@c SlipQcEpoch::stepped): an unmeasured arc
      * passed here would disable the slip response on it without any signal (standing
@@ -821,9 +796,9 @@ public:
         return last_innov_warmup_;
     }
 
-    /// The carried DD mean and variance of @p chord in @p group (false if not carried): the
-    /// read half of the WL inject (it gives the current lane value before the decision to
-    /// inject).  Same as @ref carriedDdForTest, named for production use.
+    /// The carried DD mean and variance of @p chord in @p group (false if not carried), read
+    /// by the driver's gap-resumption classifier.  Same as @ref carriedDdForTest, named for
+    /// production use.
     bool carriedChordValue(int group, const ArcKey& chord, double& z, double& var) const {
         return carriedDdForTest(group, chord, z, var);
     }
@@ -920,7 +895,6 @@ private:
     std::vector<InnovTerms> last_innov_terms_;  ///< the (ẑ, v, Cov(v)_ii, σ̂₀, z_post) behind each flag, aligned with last_innov_flags_; see @ref lastInnovFlagTerms (D5 diagnostic).
     std::vector<char> last_innov_warmup_;       ///< 1 where the flag at the same index was suppressed by the post-resume D5 warm-up (counted, not re-tapped); see @ref lastInnovWarmupSuppressed (RS-2b).
     std::vector<FoldRebirth> last_fold_rebirths_;  ///< blocks rebirthed at the last install; see @ref lastFoldRebirths (PD-safe INC-2a).
-    std::set<std::pair<int, ArcKey>> gate_exempt_;  ///< (group, chord) injected this epoch, exempt from the D5 gate at the next @ref installPosterior (consumed and cleared there). (WL-2 §3.3).
     std::set<std::pair<int, ArcKey>> innov_flat_;   ///< (group, chord) whose arc the raw observables measured as continuous this epoch; see @ref setInnovFlatChords.  Consumed and cleared in @ref installPosterior (D5 v3).
     std::optional<NetworkCarryVce> inflation_;  ///< the σ̂₀² accumulator, present only when Config::innov_calibrate (D5 v2).
     // --- Resume telemetry, set by restoreCarry / applyResumeShock (RTB-7(d) RE-4) ---
