@@ -5,14 +5,14 @@
 - **id:** NOM3
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Pre-registered. The method that turned the 7 277-line run end into 107 owned reports (card NOM2 sections 6 to 8) applied to the four largest network functions: the per-epoch driver `runNetwork` (2 787 lines, a 1 688-line per-epoch lambda), the station assembly `networkPassB_` (2 997 lines, 27 parameters), the solve `networkSolveGlue` (2 686 lines, 29 parameters) and the carry harvest `networkHarvestLocalCarries` (2 577 lines) with the 7 654-line file that holds it. Steps EP, SG, PB and HV, each landed on an identical-output gate and a relocation verifier; one confirmed defect found while mapping (the within-epoch culprit withhold, unreachable since 2026-07-24) is fixed in its own card, WCF, first.
+- **summary:** In progress (2026-10-13: card WCF and step HV0 landed, gate G-EP built; EP0 and EP1 next). The method that turned the 7 277-line run end into 107 owned reports (card NOM2 sections 6 to 8) applied to the four largest network functions: the per-epoch driver `runNetwork` (2 787 lines, a 1 688-line per-epoch lambda), the station assembly `networkPassB_` (2 997 lines, 27 parameters), the solve `networkSolveGlue` (2 686 lines, 29 parameters) and the carry harvest `networkHarvestLocalCarries` (2 577 lines) with the 7 654-line file that holds it. Steps EP, SG, PB and HV, each landed on an identical-output gate and a relocation verifier; one confirmed defect found while mapping (the within-epoch culprit withhold, unreachable since 2026-07-24) is fixed in its own card, WCF, first.
 - **source:** [NOM2](NOM2_network_object_model_rows_2026-10-09.md) sections 6 to 8 (step TD, the method and its tooling); [NOM](NOM_network_object_model_2026-10-08.md) (the object model, steps N4 to N6); the read-only inventory of 2026-10-09 (scripts and tables in the session scratchpad, `giants/`)
 - **knobs / posture:** none; every step is identical output, except card WCF, which restores a documented response on `carry_invariant` postures
-- **dates in the text:** 2026-10-09
-- **hashes / run dirs:** main `6e39dc4` (the measured tree)
+- **dates in the text:** 2026-10-09, 2026-10-13
+- **hashes / run dirs:** main `6e39dc4` (the measured tree); WCF `ee18652`..`e63b498`, HV0 `2fdc636`..`5334513`, gate script `8326da3`; gate arms `runs/_rap_g1_{ref,wcf,hv0}_*`, probes `runs/_rap_wcfp_*`
 - **gates (frozen at pre-registration):** section 5
 
-**Outcome.** Pre-registered; no result yet.
+**Outcome.** In progress. Card WCF landed: the within-epoch culprit sets now reach the DD-carry rebuild through the epoch, counted at both ends. Its own gate (a non-zero withhold) cannot be met yet: on the only lineage where the rebuild reads the sets, `carry_invariant`, the within-epoch phase pool is empty (`SPEC_raim_pool_rehost.md` deferral D1), a correction to section 2, so the fix changes no output and its run-end line names that cause. Step HV0 landed: `NetworkRunContext.cpp` is seven files by concern, a verified pure move. Both are identical on nine whole-run gate arms apart from their declared lines (results of 2026-10-13).
 
 ## 1. The measured state (main `6e39dc4`)
 
@@ -79,3 +79,43 @@ Three telemetry corrections from the review, none of which moves a solve:
 1. The D5 v4 counter `carry_innov_kill_suppressed` counts a funnel entry the retap-only exception spared only when the arc survives the build. With the withhold live, a T2 culprit could kill a spared arc after it had been counted as surviving (the count, the D5 v4 run-end line and the WCF `ambs` count then disagreed about the same arc). Unreachable before WCF, since the culprit sets never reached the rebuild.
 2. `ambs` counts arc ambiguities of the carry graph, tree edges and arcs born that epoch included, so it bounds the carried DDs withheld from above; the run-end line says so.
 3. Both ends count only under the effective `network.carry_invariant`, the knob on which the rebuild returns, so the two counts compare on every posture. On the goldens (the tier armed, the DD carry off) both stay 0; before the correction the writer's count grew there with the reader's at 0, the INERT WIRING signature, hidden only by the report's gate.
+
+## 2026-10-13: card WCF and step HV0 landed; gate G-EP built
+
+Landed on main as `ee18652`, `f8e7cea`, `e63b498` (card WCF) and `2fdc636`, `827fba6`, `5334513` (step HV0), each rebased from its worktree branch (`nom/wcf`, `nom/hv0b`, both built from `e1a9ef0`), after the gate G-EP script `8326da3`.
+
+**Gate G-EP (section 5) built** as `scripts/nom_td_gate.py --whole`: the whole `stdout.txt` and concatenated `main_log`, every CSV anywhere in the run directory in row order, the manifest, `rt_engine.log` and the exit code. Three line families needed masks beyond G-TD's, each found on a same-executable pair: the consumer's wall-clock lag line in every log, the canonical-signal decision lines written from PASS B's parallel loop (compared as a multiset per consecutive run, since their order is the thread schedule), and the per-epoch D0 / D0b timer lines (durations masked, TOW and counts kept). The same-executable pair and all 18 pairs of card NOM2 section 8 read IDENTICAL; two known-different pairs and nine single-edit mutations read as documented in the script.
+
+**Correction to section 2, finding 1.** The finding says the withhold is live on `carry_invariant` postures with the within-epoch tier armed. It is not reachable there either. The tier names a satellite or arc culprit only from its phase pool, which walks the leveling ambiguity columns `StationAssembly::pl_amb` (`NetworkSolveGlue.cpp`, the T2 `assess`), and the assembly fills them only when `do_amb_carry = (prioritized || !is_pivot) && !carry_invariant` (`ApplicationNetworkAssembly.cpp` 4115). The post-fit pool was re-hosted onto the carry-neutral census for that lineage (`network.raim_carry_invariant`); the within-epoch pool was not (`docs/SPEC_raim_pool_rehost.md`, deferral D1). So since `dee2824` the withhold has been dead twice: by the pointer copy, and by an empty pool on the only lineage where the DD-carry rebuild reads the sets. Measured on the retired `golden_field_gps_dual.json` posture: with `network.raim_sigma0_trigger` 1.5 or 2.0, and with `network.raim_sigma0_floor` 0.001 and the trigger at 0.004 or 0.010 (`runs/_rap_wcfp_{t15,t20,f004,f010}`), the tier's sigma0 stays at its 1.0 initializer and T2 never adapts; on the gate arm `cil` the within-epoch pool reports "walks 115; admitted: none". Consequence for the section 4 gate: "the withhold counter non-zero" cannot be met on any posture until D1 is built. Card WCF therefore lands as restored wiring that changes no output today; the hand-off is certified when D1 lands, by the WCF run-end line reading re-solves equal to rebuilds and above zero.
+
+**What card WCF landed.** One culprit type, `WithinEpochCulprits` (satellites, arcs, excluded stations), in its own file pair `filter/NetworkWithinEpochCulprits.{hpp,cpp}`; card FCF's type of the same name (`NetworkSolveGlueResult::we_landed`) is the same type now. The epoch member `EpochWorkspace::we_culprits` holds it: the T2 block's three culprit sets are references into it, cleared at the block's entry and exit, and the DD-carry rebuild (`networkBuildCarryDdPriors`, with the MW wide-lane rows of `networkMwWlInject`) reads it. No pointer copies remain. Counters at both ends (`NetworkServiceCounters::we_culprit_withhold`: the re-solves that ran with a satellite or arc culprit, the rebuilds that read one, and what they withheld), both counted only under the effective `network.carry_invariant`. A run-end row after the within-epoch RAIM report (the table has 116 rows) prints one line when the DD carry and the tier are both armed, with a verdict (no culprit, the counts agree, INERT WIRING, out of step) and, for a run with no culprit, which quiet case it is: phase leveling off, never assessed, an empty phase pool (the D1 case, with the count of assessments), or rows assessed. The review round also corrected the D5 v4 counter `carry_innov_kill_suppressed`, which would have counted an arc as surviving that a culprit then killed (unreachable while the withhold was dead).
+
+**What step HV0 landed.** `src/core/app/NetworkRunContext.cpp` (7 708 lines, 17 top-level items at `e1a9ef0`) is seven files with unchanged signatures, every item moved byte for byte:
+
+| file | concern | items |
+| --- | --- | --- |
+| `NetworkKnobs.cpp` | the knob snapshot | `NetworkKnobs::snapshot` |
+| `NetworkSnapshotFingerprint.cpp` | the snapshot fingerprint | `networkSnapshotFingerprint` |
+| `NetworkWarmResume.cpp` | read, validate, restore | `networkTryWarmResume`, `networkRestoreCanonicalSignals`, `networkApplyRxCbLinRestore` |
+| `NetworkStateSnapshotWrite.cpp` | the periodic snapshot | `networkWriteStateSnapshot` |
+| `NetworkBorderPrior.cpp` | the border priors and the exact coupling update's inputs | the SH-VTEC, phase-hold, pin-bridge, D2 and clock-model priors, `networkCouplingExactPrepare`, the D2 fold's file-local helper |
+| `NetworkBorderStash.cpp` | the epoch-tail stash | `networkRetroUraBookkeeping`, `networkStashCarry` |
+| `NetworkLocalCarryHarvest.cpp` | the station-local carries | `networkRxCbDemeanPrepass`, `networkHarvestLocalCarries` |
+
+Section 3 said six files; the snapshot channel is three (fingerprint, resume, write), each the place the header's three-place rule names. The verifier `scripts/nom_hv0_verify.py` (frozen source `e1a9ef0`) passes: 17 of 17 items byte-exact in the files the split assigns, nothing at file scope stranded, the build list and the header's "Defined in" lines checked; it fails on a changed character and on an item in the wrong file (both tried). Two comments inside the moved knob snapshot that pointed "below" to the fingerprint now name its file, as declared comment-only edits the verifier proves. Declared output move (`827fba6`): the code-site citations the run prints (the "where" column of the parameter responses, the "builder" column of the contribution table and its manifest field) name the new files instead of the deleted one. A frozen verbatim oracle block in `tests/test_network_arc_graph_oracles.cpp` that a comment sweep had touched was restored.
+
+**Gates G1** (`runs/_rap_g1_{ref,wcf,hv0}_*`; reference `gnss_processor_nomref.exe`, main `e1a9ef0`; G-EP whole run):
+
+| arm | what it reaches | card WCF | step HV0 |
+| --- | --- | --- | --- |
+| `f2` | field golden, 2 h | IDENTICAL | IDENTICAL after reversing the declared substitution (64 lines) |
+| `s2` | sim golden, 2 h from 00:30:15 | IDENTICAL | the same (64) |
+| `cil` | retired golden with the lane carry, 1 h (`carry_invariant`, T2 armed) | one added line (the WCF row); IDENTICAL without it | the same (44) |
+| `zero` | zero emit, exit 1 | IDENTICAL | the same (49) |
+| `joint` | T2 adapts, 3 isolated-arc refloats (`carry_invariant` off) | IDENTICAL | the same (62) |
+| `bcl` | border clone, 1 h | IDENTICAL | the same (64) |
+| `wcff` | retired golden, T2 floor and trigger forced down | one added line; IDENTICAL without it | the same (44) |
+| `snapw` | field golden, 0.6 h, a snapshot with every capture layer at TOW 261000 | IDENTICAL; snapshot bytes identical (189 439 bytes, its UTC field masked) | the same (66); snapshot bytes identical |
+| `snapr` | warm resume from the reference's snapshot, 0.25 h | IDENTICAL | the same (66) |
+
+Suite (Debug, worktree, the 24 fixture-gated skips of an empty `data/`): WCF 3 289 run, 3 265 passed; HV0 3 275 run, 3 251 passed; none failed. Cost: not measured for these two steps (WCF adds counters under `carry_invariant` only; HV0 moves code between translation units, and its reviewers found the external symbol sets of the old and new objects identical, the machine code differing only in which helpers the compiler inlined); an idle-machine ABBA over WCF, HV0 and EP0 together against `e1a9ef0` is owed and is taken with EP0.
