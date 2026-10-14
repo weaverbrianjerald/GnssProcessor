@@ -373,11 +373,6 @@ private:
                             const std::vector<PppObservation>& modeled_obs);
 
     /**
-     * @brief Update the stored 3D position sigma from the posterior covariance.
-     */
-    void updatePositionSigma();
-
-    /**
      * @brief Capture the a-priori half of an RTS smoother snapshot.
      *
      * Called immediately after the Kalman predict step (before cycle-slip
@@ -456,13 +451,6 @@ private:
                           const EpochMeasurement& applied_meas,
                           bool have_applied,
                           const std::set<std::string>& reset_satellites);
-
-    /**
-     * @brief Convert a GPS-scale GnssTime to a UTC-scale GnssTime.
-     * @param gps_time GPS epoch (week + tow).
-     * @return GnssTime on the UTC time scale.
-     */
-    static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
     /**
      * @brief Run the real-time processing pipeline.
@@ -970,7 +958,6 @@ private:
     double last_processed_tow_{std::numeric_limits<double>::lowest()}; /**< TOW of the most recently processed epoch; the getGnssRate() decimation measures the spacing from here.  Set together with prev_tow_ after the decimation skip, so a skipped input epoch updates neither. */
     double max_duration_anchor_s_{0.0};       /**< Continuous GPS seconds of the first processed epoch; the processing.max_duration_s cutoff measures elapsed data time from here. Only meaningful once first_epoch_ has cleared. */
     GnssTime prev_epoch_time_{0, 0.0};        /**< Previous epoch full GnssTime for IMU integration. */
-    double prev_pos_sigma_3d_{std::numeric_limits<double>::max()}; /**< Post-update 3D position sigma. */
 
     /// Pre-update position captured at the top of each runFilterUpdateLoop;
     /// used by runGeometryRelinearization for its |Δpos| gate on both the IEKF

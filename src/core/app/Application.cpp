@@ -16,7 +16,6 @@
  *  - detectCycleSlips()          – MW and IF phase slip detection / resets.
  *  - runFilterUpdateLoop()       – iterative KF measurement update loop.
  *  - runGeometryRelinearization()– optional second-pass geometry update.
- *  - updatePositionSigma()       – posterior 3D position uncertainty extraction.
  *  - logEpochSummary()           – per-epoch state logging.
  *  - writeEpochTraces()          – CSV trace output for offline analysis.
  *
@@ -61,19 +60,6 @@ namespace GnssProcessor {
 
 Application::Application(const std::filesystem::path& config_path)
     : config_path_(config_path) {
-}
-
-// ---------------------------------------------------------------------------
-// GPS -> UTC helper (used by trace logging)
-// ---------------------------------------------------------------------------
-
-GnssTime Application::gpsToUtcTime(const GnssTime& gps_time) {
-    const double gps_secs = TimeUtils::continuousGpsSeconds(gps_time);
-    const double utc_secs = gps_secs - TimeUtils::LEAP_SECONDS;
-    int utc_week = static_cast<int>(std::floor(utc_secs / TimeUtils::SECONDS_IN_WEEK));
-    double utc_tow = utc_secs - static_cast<double>(utc_week) * TimeUtils::SECONDS_IN_WEEK;
-    if (utc_tow < 0.0) { utc_tow += TimeUtils::SECONDS_IN_WEEK; --utc_week; }
-    return GnssTime{ utc_week, utc_tow };
 }
 
 // ---------------------------------------------------------------------------
@@ -730,28 +716,6 @@ void Application::handleGap(double dt,
 }
 
 // ---------------------------------------------------------------------------
-// Epoch helper: MW + IF cycle slip detection
-// ---------------------------------------------------------------------------
-
-namespace {
-    /// Extract satellite ID from an ambiguity key (e.g. "G01_L1C" -> "G01").
-    std::string satIdFromAmbiguityKey(const std::string& key) {
-        size_t underscore_pos = key.find('_');
-        if (underscore_pos != std::string::npos && underscore_pos >= 2)
-            return key.substr(0, underscore_pos);
-        return {};
-    }
-
-    /// Extract signal from an ambiguity key (e.g. "G01_L1C" -> "L1C").
-    std::string signalFromAmbiguityKey(const std::string& key) {
-        size_t underscore_pos = key.find('_');
-        if (underscore_pos != std::string::npos && underscore_pos + 1 < key.size())
-            return key.substr(underscore_pos + 1);
-        return {};
-    }
-} // anonymous namespace
-
-// ---------------------------------------------------------------------------
 // Epoch helper: Detect and repair cycle slips
 // ---------------------------------------------------------------------------
 
@@ -1313,25 +1277,6 @@ void Application::runGeometryRelinearizationNaive(const std::string& epoch_prefi
 }
 
 // ---------------------------------------------------------------------------
-// Epoch helper: Update stored 3D position sigma
-// ---------------------------------------------------------------------------
-
-void Application::updatePositionSigma() {
-    const Eigen::MatrixXd P = state_manager_->getCovariance();
-    const size_t pi = state_manager_->getPositionIndex();
-    if (P.rows() > static_cast<Eigen::Index>(pi + 2) &&
-        P.cols() > static_cast<Eigen::Index>(pi + 2)) {
-        const double var_x = P(pi, pi);
-        const double var_y = P(pi + 1, pi + 1);
-        const double var_z = P(pi + 2, pi + 2);
-        if (std::isfinite(var_x) && std::isfinite(var_y) && std::isfinite(var_z) &&
-            var_x >= 0.0 && var_y >= 0.0 && var_z >= 0.0) {
-            prev_pos_sigma_3d_ = std::sqrt(var_x + var_y + var_z);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Epoch helper: Smoother snapshot captures
 // ---------------------------------------------------------------------------
 
@@ -1468,7 +1413,7 @@ void Application::writeEpochTraces(const GnssTime& current_time,
                                    const std::set<std::string>& reset_satellites) {
     // Trace files carry GPS time (week + tow_s in the GPS scale), so the
     // timestamps match the RINEX epoch records.  No leap-second adjustment is
-    // applied (gpsToUtcTime() is not used for traces), and consumers apply
+    // applied (the traces are not converted to UTC), and consumers apply
     // none either: trace time = RINEX time = GPS time.
     const GnssTime gps_time = current_time;
     trace_logger_->logState(gps_time, *state_manager_);
@@ -2186,9 +2131,6 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
                     ar_result.ratio);
             }
         }
-
-        // 4j. Store posterior position sigma for IF slip gating on the next epoch.
-        updatePositionSigma();
 
         // 4k. Per-epoch logging & traces.
         logEpochSummary(epoch_prefix);
