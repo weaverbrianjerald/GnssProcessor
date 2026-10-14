@@ -18,6 +18,11 @@ argument under the new signature:
                        seven references (REF, the same object) and the eleven run-owned engines
                        and groups (OWNER_MOVE).
   COPY_SOURCES         the four const driver copies of setup fields that bind to the field.
+  SPEC_FIELDS          the fields of NetworkEngineSpec (spec 2.2): a setup local the cut moves
+                       under its own name, or one engine constructor argument.
+  ENGINE_CTORS         the run-owned engines and groups as runNetwork constructed them, in
+                       NetworkRunEngines member order, with the specification field each
+                       non-literal constructor argument becomes (SPEC_CUT).
   VALUE_EQUAL_EXPRS    the expression that becomes ep.emitted.
   REMOVED_PARAMS       the std::function parameters that disappear: the third-band predicate
                        (CALLABLE) and the solve's two replay callbacks (CALLBACK_DIRECT).
@@ -272,6 +277,94 @@ CONST_RUN_PREFIXES = ("run.ctx.knobs.",)
 
 def copy_source_paths():
     return {"run." + v for v in COPY_SOURCES.values()}
+
+
+# ---------------------------------------------------------------------------------------------
+# The engines' constructor arguments (spec 2.2, 4.1; SPEC_CUT)
+# ---------------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class SpecField:
+    """One field of NetworkEngineSpec.  local: the runNetwork local the cut moves into the
+    field under its own name ('' for a field that holds one engine constructor argument);
+    type: the field's type text; init: its default member initializer ('' for none)."""
+    name: str
+    type: str
+    doc: str
+    local: str = ""
+    init: str = ""
+
+
+SPEC_FIELDS = (
+    SpecField("vce_families", "std::vector<std::string>",
+              "The VCE monitor's families: empty unless NetworkKnobs::carry_vce.", local="vce_families"),
+    SpecField("vce_window_epochs", "double", "The VCE monitor's window, in epochs.", init="0"),
+    SpecField("vce_seed_floor", "double", "The VCE seed floor (the phase-leveling variance floor).", init="0"),
+    SpecField("vce_seed_rate", "double", "The VCE seed rate (the phase-leveling ambiguity q).", init="0"),
+    SpecField("prires_families", "std::vector<std::string>",
+              "The prior-residual census's families: empty unless NetworkKnobs::prires_on."),
+    SpecField("prires_window_epochs", "double", "The census window, in epochs.", init="0"),
+    SpecField("prires_min_rows", "double", "The census's minimum row count.", init="0"),
+    SpecField("prires_report_sigma", "double", "The census's report threshold.", init="0"),
+    SpecField("prires_corrob", "bool", "The census corroborates against the raw slip evidence.", init="false"),
+    SpecField("prires_s0g", "bool", "The constraint-aware global variance component.", init="false"),
+    SpecField("carry_cfg", "NetworkInvariantCarryDriver::Config",
+              "The DD-carry driver's configuration.", local="carry_cfg"),
+    SpecField("mw_wl_cfg", "NetworkMwWlLayer::Config", "The WL-1 layer's configuration.", local="mw_wl_cfg"),
+    SpecField("ewl_cfg", "NetworkMwWlLayer::Config", "The EWL lane's configuration.", local="ewl_cfg"),
+    SpecField("pb_filter_cfg", "NetworkPbEmitFilter::Config",
+              "The phase-bias emission filter's configuration.", local="pb_filter_cfg"),
+    SpecField("clk_rebase_cfg", "NetworkClockEmitRebase::Config",
+              "The clock emission re-base's configuration.", local="clk_rebase_cfg"),
+    SpecField("idw", "IonoConstraintDeweightConfig",
+              "A copy of config_.getIonoConstraintDeweightConfig() (the deweight gate's arguments).",
+              local="idw"),
+)
+SPEC_FIELD_BY_LOCAL = {f.local: f for f in SPEC_FIELDS if f.local}
+SPEC_FIELD_BY_NAME = {f.name: f for f in SPEC_FIELDS}
+
+
+@dataclass(frozen=True)
+class EngineCtor:
+    """One run-owned engine or group as runNetwork constructed it.  local: the frozen
+    declaration; owner: 'engines' (a NetworkRunEngines member) or 'run' (a NetworkRun
+    member); member: its member name there; arg_fields: per frozen constructor argument, the
+    spec field an argument over other locals becomes (None: the argument is a literal, or
+    reads only field locals, and stays in the member's initializer)."""
+    local: str
+    owner: str
+    member: str
+    arg_fields: tuple = ()
+
+
+# In NetworkRunEngines member order (today's construction order).
+ENGINE_CTORS = (
+    EngineCtor("slip_qc", "engines", "slip_qc"),
+    EngineCtor("fc_ppp_utils", "engines", "fc_ppp_utils"),
+    EngineCtor("carry_vce_est", "engines", "carry_vce",
+               ("vce_families", "vce_window_epochs", None, "vce_seed_floor", "vce_seed_rate")),
+    EngineCtor("prires_est", "engines", "prires",
+               ("prires_families", "prires_window_epochs", "prires_min_rows", "prires_report_sigma",
+                "prires_corrob", "prires_s0g")),
+    EngineCtor("carry_driver", "engines", "carry_driver", ("carry_cfg",)),
+    EngineCtor("iono_deweight", "engines", "iono_deweight", (None,) * 9),
+    EngineCtor("est", "engines", "est"),
+    EngineCtor("emit_engines", "run", "emit", (None, None, None)),
+    EngineCtor("lane_run", "run", "lanes", ("mw_wl_cfg", "ewl_cfg")),
+)
+ENGINE_BY_LOCAL = {e.local: e for e in ENGINE_CTORS}
+
+# The NetworkRunEngines member docs (spec 2.2).
+ENGINE_MEMBER_DOCS = {
+    "slip_qc": "The slip-QC channel.  Declared first, so it is destroyed last: two corroborators "
+               "capture its address.",
+    "fc_ppp_utils": "The fast tier's wavelength provider; null unless NetworkKnobs::fc_on "
+                    "(assigned in setup).",
+    "carry_vce": "The LS-VCE carry-row monitor (M2); was carry_vce_est.",
+    "prires": "The prior-residual census; was prires_est.",
+    "carry_driver": "The DD cycle-basis invariant carry (card 4).",
+    "iono_deweight": "The SH-VTEC-constraint deweight gate.",
+    "est": "The joint estimator: one instance, reset and reused every epoch (its station-block pool).",
+}
 
 
 # ---------------------------------------------------------------------------------------------

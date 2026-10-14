@@ -1,14 +1,45 @@
 #!/usr/bin/env python3
-"""Generator of card NOM3 step EP1, the seam conversion; this stage implements --survey only.
+"""Generator of card NOM3 step EP1, the seam conversion (specification section 5).
 
     python scripts/nom_ep1_cut.py --survey [--base REV] [--rows app,solve,emit,diag]
         [--compact] [--write-compact PATH] [--compare-compact PATH]
         [--write-renames PATH] [--compare-renames PATH]
+    python scripts/nom_ep1_cut.py --stage ep1a1 [--base REV] [--root DIR] [--check]
+    python scripts/nom_ep1_cut.py --stage ep1b [--rows app,solve,emit,diag]
+        [--presolve-writer outputs|epoch] [--base REV] [--root DIR] [--check]
+    python scripts/nom_ep1_cut.py --shared-only --rows <merged rows> [--base REV] [--root DIR]
 
 The frozen source <B> is read from git at --base (default nom_ep1.DEFAULT_BASE); no copy is
-stored, no frozen file is read from the working tree, and nothing is written except the files
-the --write-* options name.  The survey resolves every canonical-table row (scripts/nom_ep1/
-rows_*.py) against <B> and derives, never reads from a row, each call site and each binding.
+stored and no frozen file is read from the working tree.  Every mode derives, never reads from
+a row, each call site and each binding (the survey below).
+
+Generation (--stage, --shared-only).  Every output file is the frozen file with the edits of
+the transforms of specification 5.3 applied once (scripts/nom_ep1/gen.py and its gen_epoch,
+gen_seams and gen_setup modules); the generator never reads its own output, so a second run
+writes nothing (idempotence), and --check writes nothing and exits 1 when a file in the tree
+differs from what the generator would write.  Files are written under --root (default this
+working tree) with each file's own line ends kept.
+  --stage ep1a1   step EP1a-1: the types (app/NetworkRun.hpp, app/NetworkEpoch.hpp,
+                  filter/NetworkRunGroups.hpp: NetworkEngineSpec and the owning
+                  NetworkRunEngines), the run's construction in runNetwork with the engines'
+                  constructor arguments cut into networkEngineSpec (app/NetworkRun.cpp), the
+                  bracket functions, the post-fit hand-off, the third-band predicate, the
+                  epoch function app/ApplicationNetworkEpoch.cpp with every call still explicit
+                  (T-A, T-B, T-E), the contract test (types only), Application.hpp and CMake.
+  --stage ep1b    EP1a-1 plus the seams of --rows converted (T-C, T-D, T-F): signatures,
+                  Doxygen (check V7), preambles, adapters' epoch forms; the two shared files
+                  regenerated for those rows.
+  --shared-only   only the two shared files (the epoch function and the contract test) for
+                  --rows, the union of the merged workers' rows (specification 7, merge risk 1).
+  --presolve-writer epoch   the card's form for the writers before the solve
+                  (`NetworkEpoch& ep`, no named outputs; author decision 1).
+A run writes scripts/nom_ep1/manifest_<rows>.json under --root: the base, the rows, every
+written file with its line count and digest, the frozen ranges each transform resolved, each
+converted call (frozen line, old and new arguments), each seam's preamble lines, and the
+specification cut's ranges; the relocation verifier reads it for pairing only.  A frozen object
+missing at the base, a binding the tables cannot realize, an edit that overlaps another, or a
+name the moved text still reads after its declaration is removed refuses the run and writes
+nothing.
 
 What a clean survey proves at a base (exit 0 only when every point holds):
   1. Each row's seam exists: the frozen lambda calls it as many times as the row says, its
@@ -50,6 +81,7 @@ reported, never a crash.
 import argparse
 import collections
 import difflib
+import json
 import pathlib
 import re
 import sys
@@ -74,7 +106,12 @@ class Frozen:
 
 
 class Binding:
-    __slots__ = ("param", "text", "node", "disp", "value", "out", "problems", "used")
+    """One frozen parameter at one call site.  text: the argument's normalized frozen text;
+    span: its token span; node: its resolved binding; rendered: the binding realized through
+    the tables (None for a kept or removed parameter); out: the output it writes through, or
+    None; gtext: the group member text of a group output (None for a single-member output)."""
+    __slots__ = ("param", "text", "node", "disp", "value", "out", "problems", "used",
+                 "rendered", "span", "gtext")
 
     def __init__(self, param, text, node):
         self.param, self.text, self.node = param, text, node
@@ -82,6 +119,9 @@ class Binding:
         self.out = None
         self.problems = []
         self.used = set()
+        self.rendered = None
+        self.span = None
+        self.gtext = None
 
 
 class RowResult:
@@ -116,6 +156,7 @@ def _pick_decl(funcs, nargs):
 def bind(fz, row, p, s, e):
     T = fz.drv.T
     b = Binding(p, T.norm(s, e), None)
+    b.span = (s, e)
     b.node = fz.res.resolve(s, e)
     if p.name in row.kept:
         b.disp = f"kept: `{b.text}`"
@@ -144,6 +185,7 @@ def bind(fz, row, p, s, e):
         rendered, rp = model.render(b.node, b.used)
         b.problems.extend(f"{p.name} = `{b.text}`: {x}" for x in rp)
     b.disp = f"`{rendered}`"
+    b.rendered = rendered
     if model.is_epoch_path(rendered):
         if row.mech == RUN:
             b.problems.append(f"{p.name}: a run-only seam reads the epoch ({rendered})")
@@ -160,6 +202,7 @@ def bind(fz, row, p, s, e):
                 b.disp = f"**out `{o}`** (the call passes `{rendered}`)"
             else:
                 b.out = o
+                b.gtext = gtext
                 b.disp = f"**{gtext}** (out)"
     b.value = b.disp
     return b
@@ -803,9 +846,171 @@ def survey(args):
     return 1 if bad else 0
 
 
+# ---------------------------------------------------------------------------------------------
+# Generation
+# ---------------------------------------------------------------------------------------------
+def manifest_name(args, rows_names):
+    """manifest_<rows>.json: ep1a1, or the row files' short names joined by '_', with a
+    shared_ prefix for --shared-only and an _epoch suffix for --presolve-writer epoch."""
+    if args.stage == "ep1a1" and not args.shared_only:
+        name = "ep1a1"
+    else:
+        name = "_".join(n[len("rows_"):] for n in rows_names)
+        if args.shared_only:
+            name = "shared_" + name
+    if args.presolve_writer == "epoch":
+        name += "_epoch"
+    return f"manifest_{name}.json"
+
+
+def locate_new_lines(outputs, epoch_cpp, epoch_rec, seam_rec):
+    """Adds to the manifest records the line each object has in the generated text: each
+    converted call in the epoch function (frozen order), each converted declaration and
+    definition (and the line after a definition's preamble), each adapter's epoch form."""
+    lines = outputs[epoch_cpp].split("\n")
+    k = epoch_rec["function_lines"][0] - 1
+    for c in sorted(epoch_rec["calls"], key=lambda c: c["frozen_line"]):
+        needle = c["seam"] + "("
+        while k < len(lines) and needle not in lines[k]:
+            k += 1
+        c["new_line"] = k + 1 if k < len(lines) else None
+        k += 1
+    for r in seam_rec:
+        text = outputs.get(r["file"])
+        if text is None:
+            continue
+        pat = re.compile(r"\b" + re.escape(r["seam"]) + r"\(NetworkRun& n?run\b")
+        m = pat.search(text)
+        r["new_line"] = text.count("\n", 0, m.start()) + 1 if m else None
+        if m and r["kind"] == "definition":
+            end = text.find("// ---- End of the bindings ----", m.end())
+            r["body_first_new_line"] = text.count("\n", 0, end) + 2 if end >= 0 else None
+
+
+def generate(args):
+    """--stage / --shared-only: the generated tree, written under --root (see the banner)."""
+    from nom_ep1 import gen as gen_mod, gen_epoch, gen_seams, gen_setup, textops
+    root = pathlib.Path(args.root).resolve()
+    stage = "ep1b" if args.shared_only else args.stage
+    names = ROW_MODULES if not args.rows else tuple(f"rows_{n}" for n in args.rows.split(","))
+    rows = [] if stage == "ep1a1" else load_rows(names)
+    fz = Frozen(args.base)
+    print(f"NOM3 step EP1 generator at {args.base} ({fz.tree.sha[:10]}): stage {stage}"
+          + (" (shared files only)" if args.shared_only else "")
+          + f", rows {', '.join(names) if rows else '(none)'}, pre-solve writers "
+          f"{args.presolve_writer}; target {root}")
+    blocks = declared.ep2_blocks(fz)
+    block_spans = [sp for spans in blocks.values() for sp in spans]
+    results = [survey_row(fz, r, block_spans) for r in rows]
+    finish_outputs(results, fz.drv)
+    other_callers(fz, results)
+    bad = [f"{rr.row.name}: {x}" for rr in results for x in rr.missing + rr.problems + rr.refusals]
+    if bad:
+        print("generator: the survey refuses these rows; nothing written")
+        for x in bad:
+            print("  " + x)
+        fz.tree.close()
+        return 1
+    target_files = {p for p in (gen_mod.ENGINE_SPEC_TEST,) if (root / p).exists()}
+    try:
+        g = gen_mod.Gen(fz, results, args.presolve_writer, stage, target_files)
+        epoch_text, epoch_rec, _ = gen_epoch.epoch_function(g)
+        seam_rec = gen_seams.seams(g)
+        setup_rec = gen_setup.setup(g)
+        contract = gen_seams.contract_test(g)
+        outputs = {}
+        for path, edits in sorted(g.edits.items()):
+            frozen = fz.tree.read(path)
+            if frozen is None:
+                raise gen_mod.GenError(f"{path} does not exist at the base")
+            outputs[path] = textops.apply_edits(frozen, edits)
+        outputs.update(g.new)
+        outputs[gen_mod.EPOCH_CPP] = epoch_text
+        outputs[gen_mod.CONTRACT_TEST] = contract
+    except (gen_mod.GenError, textops.EditError) as ex:
+        print(f"generator: REFUSED: {ex}")
+        fz.tree.close()
+        return 1
+    except (KeyError, IndexError, ValueError, AttributeError, TypeError):
+        # A frozen shape the generator does not recognize at this base (the REMOVE-key
+        # deletion, a moved seam): reported with its trace, nothing written.
+        import traceback
+        print("generator: REFUSED: the base has a shape the generator does not recognize; "
+              "nothing written.  Trace:")
+        traceback.print_exc(file=sys.stdout)
+        fz.tree.close()
+        return 1
+    locate_new_lines(outputs, gen_mod.EPOCH_CPP, epoch_rec, seam_rec)
+    if args.shared_only:
+        outputs = {k: v for k, v in outputs.items() if k in (gen_mod.EPOCH_CPP, gen_mod.CONTRACT_TEST)}
+    driver_bytes = textops.read_target(root, DRIVER_PATH)
+    default_eol = textops.detect_eol(driver_bytes) if driver_bytes else "\n"
+    files = {}
+    changed = 0
+    for path in sorted(outputs):
+        text = outputs[path]
+        old = textops.read_target(root, path)
+        eol = textops.detect_eol(old) if old else default_eol
+        status = textops.write_target(root, path, text, eol, check=args.check)
+        changed += status != "unchanged"
+        frozen = fz.tree.read(path)
+        files[path] = {"kind": "new" if frozen is None else "edited",
+                       "lines": text.count("\n"),
+                       "frozen_lines": None if frozen is None else frozen.count("\n"),
+                       "edits": len(g.edits.get(path, ())), "sha256_lf": gen_mod._sha(text)}
+        print(f"  {status:9s} {path} ({files[path]['kind']}, {files[path]['lines']} lines"
+              + (f", frozen {files[path]['frozen_lines']}" if frozen is not None else "") + ")")
+    ef = epoch_rec["function_lines"]
+    print(f"  epoch function: lines {ef[0]}-{ef[1]} of {gen_mod.EPOCH_CPP} "
+          f"({ef[1] - ef[0] + 1} lines; preamble {epoch_rec['preamble_count']} names; frozen lambda "
+          f"{epoch_rec['frozen_lambda'][0]}-{epoch_rec['frozen_lambda'][1]})")
+    for x in g.problems:
+        print(f"  problem: {x}")
+    manifest = {
+        "tool": "scripts/nom_ep1_cut.py", "base": args.base, "base_sha": fz.tree.sha,
+        "stage": stage, "shared_only": bool(args.shared_only), "rows": list(names) if rows else [],
+        "presolve_writer": args.presolve_writer,
+        "converted": sorted(g.plans), "files": files,
+        "epoch_function": epoch_rec, "seams": seam_rec, "setup": setup_rec,
+        "spec_cut": [[fz.drv.T.line(s), fz.drv.T.line(e - 1), n] for s, e, n in getattr(g, "cut", [])],
+        "problems": g.problems,
+    }
+    mpath = pathlib.Path(args.manifest) if args.manifest else \
+        root / "scripts" / "nom_ep1" / manifest_name(args, names)
+    mtext = json.dumps(manifest, indent=1, ensure_ascii=False) + "\n"
+    mold = textops.read_target(mpath.parent, mpath.name)
+    meol = textops.detect_eol(mold) if mold else "\n"
+    mstatus = textops.write_target(mpath.parent, mpath.name, mtext, meol, check=args.check)
+    print(f"  {mstatus:9s} manifest {mpath}")
+    fz.tree.close()
+    if args.check and (changed or mstatus != "unchanged"):
+        print(f"generator --check: {changed} file(s) differ from the generated text")
+        return 1
+    print(f"generator: {'checked' if args.check else 'done'} ({changed} file(s) "
+          f"{'differ' if args.check else 'written'}, {len(outputs) - changed} unchanged)")
+    return 1 if g.problems and not args.allow_problems else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--survey", action="store_true", help="resolve every row against the base (the only mode so far)")
+    ap.add_argument("--survey", action="store_true", help="resolve every row against the base")
+    ap.add_argument("--stage", choices=("ep1a1", "ep1b"),
+                    help="generate: ep1a1 (types, run construction, epoch function, every call "
+                         "explicit) or ep1b (also the rows' seams converted)")
+    ap.add_argument("--shared-only", action="store_true",
+                    help="regenerate only the two shared files (the epoch function, the contract "
+                         "test) for --rows")
+    ap.add_argument("--presolve-writer", choices=("outputs", "epoch"), default="outputs",
+                    help="pre-solve writers take named group outputs (default) or the card's "
+                         "NetworkEpoch&")
+    ap.add_argument("--root", default=str(pathlib.Path(__file__).resolve().parents[1]),
+                    help="the tree to write (default: this repository's working tree)")
+    ap.add_argument("--check", action="store_true",
+                    help="write nothing; exit 1 when a generated file differs from the tree's")
+    ap.add_argument("--manifest", metavar="PATH",
+                    help="manifest path (default <root>/scripts/nom_ep1/manifest_<rows>.json)")
+    ap.add_argument("--allow-problems", action="store_true",
+                    help="exit 0 although the generator reported a problem (a doc hunk not found)")
     ap.add_argument("--base", default=DEFAULT_BASE, help=f"frozen revision <B> (default {DEFAULT_BASE})")
     ap.add_argument("--rows", help="comma-separated row files to load (app,solve,emit,diag; default all)")
     ap.add_argument("--compact", action="store_true", help="print the bindings in the design's compact form")
@@ -814,9 +1019,12 @@ def main(argv=None):
     ap.add_argument("--write-renames", metavar="PATH", help="write the renamed-argument list to PATH")
     ap.add_argument("--compare-renames", metavar="PATH", help="compare the renamed-argument list with PATH")
     args = ap.parse_args(argv)
-    if not args.survey:
-        ap.error("only --survey is implemented at this stage")
-    return survey(args)
+    modes = sum(bool(x) for x in (args.survey, args.stage, args.shared_only))
+    if modes != 1:
+        ap.error("give exactly one of --survey, --stage {ep1a1,ep1b}, --shared-only")
+    if args.survey:
+        return survey(args)
+    return generate(args)
 
 
 if __name__ == "__main__":

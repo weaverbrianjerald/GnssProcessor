@@ -630,9 +630,10 @@ def parse_params(T, i):
 # File index: function declarations and definitions
 # ---------------------------------------------------------------------------------------------
 class Func:
-    """A function declaration or definition found in a file."""
+    """A function declaration or definition found in a file.  start: the token that begins
+    the declaration (its first specifier or return-type token)."""
     __slots__ = ("name", "qual", "cls", "params", "ret", "line", "name_tok", "paren", "body",
-                 "is_def", "path")
+                 "is_def", "path", "start")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -818,7 +819,7 @@ class FileIndex:
                 params = None
             f = Func(name=T.t(name_tok), qual=qual, cls=cls, params=params,
                      ret=T.join(i, q), line=T.line(name_tok), name_tok=name_tok,
-                     paren=(fn, pc), body=None, is_def=False, path=T.path)
+                     paren=(fn, pc), body=None, is_def=False, path=T.path, start=i)
             if T.t(k) == "{":
                 f.body = (k, T.close(k))
                 f.is_def = True
