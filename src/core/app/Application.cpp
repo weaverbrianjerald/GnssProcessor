@@ -382,8 +382,12 @@ int Application::runPpp() {
     if (!loadInputData()) return 1;
 
     // --- Phase 3: Create processing components ---
-    constexpr size_t core_state_size = 5; // Position(3) + Clock(1) + Tropo(1)
+    // A hint only: outside baseline mode the StateManager constructor derives the core
+    // layout from the configuration (no receiver clock under BSSD; velocity, gradients,
+    // IMU and the inter-system offsets when armed).
+    constexpr size_t core_state_size = 5;
     state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, config_);
+    state_manager_->logFamiliesAsArmed();   // run-start table "state families as armed"
 
     if (!initializePosition()) return 1;
 

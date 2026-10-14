@@ -638,6 +638,7 @@ void Application::buildBaselineRoverFilter_(const RinexParser* rov_parser,
                                             const std::vector<SyncedEpoch>& synced) {
     // --- Per-rover Kalman filter resources (slice 5d refactor) ---
     state_manager_ = std::make_unique<StateManager>(3, log_manager_, config_);
+    state_manager_->logFamiliesAsArmed();   // run-start table "state families as armed"
     {
         Eigen::VectorXd x0 = state_manager_->getStateVector();
         x0.head<3>() = rov_apriori;
