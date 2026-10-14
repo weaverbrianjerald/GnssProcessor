@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate the network run-end reports from the frozen teardown (card NOM step TD1b).
 
-    python scripts/nom_td_cut.py            # write the reports, the table and the manifest
-    python scripts/nom_td_cut.py --survey   # print each report's frozen range and transform
+    python scripts/nom_td_cut.py                  # write the reports, the table and the manifest
+    python scripts/nom_td_cut.py --survey         # print each report's frozen range and transform
+    python scripts/nom_td_cut.py --manifest-only  # rewrite the manifest only; touch no source
 
 The frozen source is networkTeardown as it stood at main 067fdc1, read with `git show`
 (no copy is stored).  One canonical table, REPORTS below, names every report: its function,
@@ -36,6 +37,17 @@ cut needed elsewhere (the existing run-end functions' *RunEnd names and const co
 the flag-rate writer's new parameter, the run-context fields no one reads any more).
 Re-running it on the tree it produced changes nothing; an edit inside a generated region
 belongs in the table here (a declared substitution), or the verifier fails.
+
+Edits after the cut.  Reports and table rows were added after the cut by hand (the table's
+post-cut rows), and later cards edited relocated bodies.  Two tables record the edits of
+the relocated bodies, so the manifest still proves every body against the frozen source:
+REMOVED names the reports whose mechanism was deleted (their frozen ranges become declared
+drops, with the reason), and POST_CUT declares every later edit of a surviving body (frozen
+lines dropped, substitutions, inserted lines, aliases no longer declared, a new label),
+merged into REPORTS before a body is built.  Because the table and the report regions now
+hold hand-written post-cut rows, the default mode would overwrite them: after the cut, run
+only --manifest-only, which rebuilds every manifest entry from the tables and writes the
+manifest alone.
 """
 import argparse
 import json
@@ -949,6 +961,257 @@ TEARDOWN = dict(
     subs=[(7260, "if (n_emitted == 0) {", "if (ctx.counters.n_emitted == 0) {")],
 )
 
+# ---------------------------------------------------------------------------------------
+# After the cut: the reports whose mechanism the retired-key deletion removed (card RKD,
+# plan commits C6 to C23).  Their frozen ranges are declared drops in the manifest's
+# `removed` list, with the commit and the reason; they have no body, no declaration and
+# no table row.  func -> (commit, reason).
+# ---------------------------------------------------------------------------------------
+REMOVED = {
+    "networkAdaptiveIonoQRunEnd": ("C16", "network.adaptive_iono_q deleted"),
+    "networkDwReleaseHygieneRunEnd": ("C15", "the ionosphere-deweight release hygiene deleted (network.iono_dw_*)"),
+    "networkIonoCarryRunEnd": ("C18", "the diagonal slant-iono carry deleted (network.carry_iono, iono_carry_*)"),
+    "networkFastClockRunEnd": ("C8", "the FC-1 split-cadence fast clock deleted (network.fast_clock.*)"),
+    "networkLanesRunEnd": ("C6", "the MW/WL lane layer deleted (network.mw_wl.*, network.lane_carry.*)"),
+    "networkIonoDeweightRunEnd": ("C15", "the station deweight gate deleted (network.iono_constraint_deweight_*)"),
+    "networkShHealthRunEnd": ("C14", "the SH health gate deleted (network.sh_health_gate)"),
+    "networkReinflateRunEnd": ("C15", "its only producer caller, the deweight release hygiene, deleted: constant zeros (move M18)"),
+    "networkPbEmitFilterRunEnd": ("C12", "the PB emission-continuity filter deleted (network.emit_pb_filter*)"),
+    "networkClockLevelRunEnd": ("C10", "the CLV clock-level re-base deleted (network.clock_level_carry)"),
+    "networkGaugeFreeCarryRunEnd": ("C23", "the gauge-free closure deleted (network.shared_carry_gauge_free)"),
+}
+
+
+def _span(*pairs):
+    """Frozen line numbers of the inclusive ranges (a, b), for a drop list."""
+    return [i for a, b in pairs for i in range(a, b + 1)]
+
+
+# ---------------------------------------------------------------------------------------
+# After the cut: the declared edits of surviving bodies, merged into REPORTS by
+# with_post_cut.  Per report: why (the commit or card), drops (frozen lines no longer
+# carried), subs ((frozen line, from, to), applied after the cut's own), inserts ((frozen
+# line, text): a new line after it, at its own indentation), no_alias (aliases the body
+# no longer declares, because their only readers were dropped), label (the table row's
+# new text).  scripts/nom_td_verify.py checks every body against these.
+# ---------------------------------------------------------------------------------------
+POST_CUT = {
+    "networkRunTimingRunEnd": dict(
+        why="C4 (card WL-3): the LF-1 lane-fold timing line",
+        drops=_span((289, 294)),
+    ),
+    "networkRaimPoolRunEnd": dict(
+        why="C29: the RAIM carry-invariant refloat actuator (queued/drained line, mismatch check); the flagged-but-unacted warning reworded",
+        drops=_span((1002, 1009), (1016, 1021)),
+        subs=[
+            (1001, "if (ctx.knobs.raim_ci_refloat)",
+             "if (rc.sats_flagged > 0 || rc.arcs_flagged > 0)"),
+            (1011, "\"arc-epoch(s) but network.raim_carry_invariant_refloat is OFF — those \"",
+             "\"arc-epoch(s), and the re-host is measure-only — those flags reached NO \""),
+            (1012, "\"flags reached NO carry consumer.  Measure-only is the intended first \"",
+             "\"carry consumer (the seam's local_carry erase and pending-reseed mark \""),
+            (1013, "\"stage; this line exists so the run is never mistaken for a protected \"",
+             "\"cannot move the Card-4 solve).  This line exists so the run is never \""),
+            (1014, "\"one.\",",
+             "\"mistaken for a protected one.\","),
+        ],
+    ),
+    "networkPrefitCensusRunEnd": dict(
+        why="C15: the INC-4 sentence naming the deweight valve; C14/C15: the SH-gate trip site in the dead-wiring warning",
+        drops=_span((1690, 1690)),
+        subs=[
+            (1687, "\"set changed all run.  The deweight valve never moved a tie \"",
+             "\"set changed all run.  This run therefore contains no instance \""),
+            (1688, "\"row here — so this run contains no instance of the era-2 \"",
+             "\"of the era-2 topology event and cannot be used to grade the \""),
+            (1689, "\"topology event and cannot be used to grade the ledger \"",
+             "\"ledger against it.\");"),
+            (1737, "\"consulted the latch — the four trip sites (SH-gate engage, \"",
+             "\"consulted the latch — the three trip sites (sigma0 withhold, \""),
+            (1738, "\"sigma0 withhold, clock runaway, a00 band) are all gated behind \"",
+             "\"clock runaway, a00 band) are all gated behind \""),
+        ],
+    ),
+    "networkProducerArRunEnd": dict(
+        why="card ARL (not the deletion): the cycle-basis run-end clause",
+        inserts=[
+            (2078, "    if (nc.ambiguity_resolution.cycle_basis)"),
+            (2078, "        arCycleBasisRunEndClause(c.netar_cycle, nc.ambiguity_resolution.cycle_basis_sticky, log);"),
+        ],
+    ),
+    "networkSlipMwRelevelRunEnd": dict(
+        why="C7: the bridge v3 EWL slot and the statistical retap line",
+        label="slip QC: MW and LLI detections, the re-level response",
+        drops=_span((2304, 2304), (2307, 2307), (2310, 2310), (2312, 2321)),
+        subs=[
+            (2303, "if (config_.networkCycleSlipRelevelBridgeGf()",
+             "if (config_.networkCycleSlipRelevelBridgeGf())"),
+            (2306, "\"applies {}, wrong-WL plane rejects {}); EWL integers filled \"",
+             "\"applies {}, wrong-WL plane rejects {}).\","),
+            (2309, "qcc.bridge_plane_reject, qcc.bridge_ewl_joint,",
+             "qcc.bridge_plane_reject);"),
+        ],
+    ),
+    "networkLevelingRetirementRunEnd": dict(
+        why="C22: F1 and the F3 age gate; C23: the joint-whitening clause; C21: the young-arc inflate line",
+        label="leveling-carry retirement census [B] and [A]; F3, the clock gate",
+        drops=_span((2383, 2393), (2409, 2409), (2423, 2423), (2427, 2427), (2433, 2434), (2520, 2541)),
+        subs=[
+            (2408, "\"75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed; \"",
+             "\"75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed.  \""),
+            (2422, "(cliff_live && config_.networkCarryConditionalCoupling()",
+             "(cliff_live && config_.networkCarryConditionalCoupling())"),
+            (2425, "\"off, carry_invariant on, carry_conditional_coupling \"",
+             "\"off, carry_invariant on, or carry_conditional_coupling \""),
+            (2426, "\"off, or carry_coupling_joint_whiten on) — a 0 here \"",
+             "\"off) — a 0 here means UNWIRED, not clean\","),
+        ],
+    ),
+    "networkLevelingResponseRunEnd": dict(
+        why="C17: the SH-convergence flush clause of the [C] census (move M14)",
+        drops=_span((2753, 2753), (2761, 2761)),
+        subs=[
+            (2750, "\"REFLOATS: {} T4 attribution, {} T3 consensus (quality-selected), and {} \"",
+             "\"REFLOATS: {} T4 attribution and {} T3 consensus (quality-selected); \""),
+            (2751, "\"entr(ies) in {} whole-fleet SH-convergence flush(es) — the largest \"",
+             "\"the arcs stay tracked and the next harvest re-stashes them, so each \""),
+            (2752, "\"single removal in the producer, but the arcs stay tracked and the \"",
+             "\"costs one solve, not a departure.  \""),
+        ],
+    ),
+    "networkSlipWindupMwRunEnd": dict(
+        why="C7: the lane-observatory sentence (move M16)",
+        subs=[
+            (2879, "\"WUP); the lane observatory grades this response under cause=WU.\",",
+             "\"WUP).\","),
+        ],
+    ),
+    "networkSlipBandResponsesRunEnd": dict(
+        why="C26: the band-scoped responses; C7: the lane observatory and the retap corroboration",
+        label="slip QC: IF-TD pairs",
+        drops=_span((3207, 3238), (3241, 3290), (3295, 3313), (3320, 3357), (3364, 3373)),
+        no_alias=['slip_qc'],
+    ),
+    "networkChainDatumRunEnd": dict(
+        why="card AGT (not the deletion): the slip-aware election's arcLife text",
+        subs=[
+            (4036, "\"from the sticky tree, {} arcLife demotion(s) (sort comparisons, inert \"",
+             "\"from the sticky tree, {} arcLife demotion(s) (slipped arcs ranked last, \""),
+            (4037, "\"without the longevity election), and {} slipped arc(s) became a tree edge \"",
+             "\"each counted once per epoch; inert without the longevity election), \""),
+        ],
+        inserts=[
+            (4037, "                  \"and {} slipped arc(s) became a tree edge \""),
+        ],
+    ),
+    "networkResumeSnapshotRunEnd": dict(
+        why="C24: the resume shock, the RS-2 re-base and the RS-6 shdev switch; C12: the PB emission filter's restore",
+        drops=_span((4172, 4174), (4198, 4199), (4202, 4206), (4208, 4210), (4263, 4263), (4268, 4268), (4271, 4271), (4295, 4295)),
+        subs=[
+            (4164, "log->info(\"Network (RTB-7d resume event): carry restored {}{}; sigma0 [{}] {}; resume \"",
+             "log->info(\"Network (RTB-7d resume event): carry restored {}{}; sigma0 [{}] {}; \""),
+            (4165, "\"shock {}; restored Pᶻ {}.\",",
+             "\"restored Pᶻ {}.\","),
+            (4197, "if (config_.getNetworkConfig().state_snapshot_carry_lin",
+             "if (config_.getNetworkConfig().state_snapshot_carry_lin)"),
+            (4200, "log->info(\"Network (RS-2 linearization carry): write {} / read {}; blob carried \"",
+             "log->info(\"Network (RS-2 linearization carry): write ARMED; blob carried ZL rows \""),
+            (4201, "\"ZL rows on {} restored block(s); re-based {} carried chord row(s) at \"",
+             "\"on {} restored block(s).\","),
+            (4207, "carry_driver.resumeCarryLinBlocks(),",
+             "carry_driver.resumeCarryLinBlocks());"),
+            (4262, "\"{} emit-layer row(s); restored re-base keys {}, filter keys {}, step \"",
+             "\"{} emit-layer row(s); restored re-base keys {}.{}\","),
+            (4267, "C.n_resume_emit_rebase_keys, C.n_resume_emit_filter_keys,",
+             "C.n_resume_emit_rebase_keys,"),
+            (4270, "&& C.n_resume_emit_rebase_keys == 0",
+             "&& C.n_resume_emit_rebase_keys == 0)"),
+            (4273, "\"ER / PF / PS rows (a writer without \"",
+             "\"ER rows (a writer without \""),
+            (4274, "\"network.state_snapshot_emit_capture?), neither emit engine is \"",
+             "\"network.state_snapshot_emit_capture?), the emit re-base is not \""),
+            (4289, "log->info(\"Network (RS-6 station restore): write {} / read {} (rxcb {}, shdev {}); \"",
+             "log->info(\"Network (RS-6 station restore): write {} / read {} (rxcb {}); \""),
+            (4302, "\"network.state_snapshot_station_capture?), both sub-switches are \"",
+             "\"network.state_snapshot_station_capture?), neither carry is armed \""),
+            (4303, "\"off, neither carry is armed this run, or no warm resume \"",
+             "\"this run, or no warm resume happened; check the resume log for \""),
+            (4304, "\"happened; check the resume log for the RS-6 line.\"",
+             "\"the RS-6 line.\""),
+        ],
+    ),
+    "networkRxCodeBiasCarryRunEnd": dict(
+        why="C19: the LV-1, LV-2, LV-4, LV-5 and S2H lines",
+        drops=_span((4530, 4558), (4563, 4570), (4576, 4600), (4607, 4637), (4663, 4693), (4698, 4728)),
+        no_alias=['stations'],
+    ),
+    "networkSbasisDatumRunEnd": dict(
+        why="C20: the IF-LEVEL-DATUM (RF-0e e1) lines and the SAT-GF TIME-LINK pointer to them",
+        drops=_span((4842, 4865), (4879, 4879)),
+        subs=[
+            (4878, "\"never re-checked it, which is the cost of this arm and the thing to \"",
+             "\"never re-checked it, which is the cost of this arm.\","),
+        ],
+    ),
+    "networkD5GateRunEnd": dict(
+        why="card WCF (not the deletion): the culprit kill in the D5 counting note",
+        subs=[
+            (5175, "\"[Counted per arc per build call — a within-epoch RAIM re-solve counts its \"",
+             "\"[Counted per arc per build call in which the arc survives: a within-epoch \""),
+            (5176, "\"arcs twice, the same convention as chords_born.]\",",
+             "\"RAIM re-solve counts its arcs twice, the same convention as chords_born, \""),
+        ],
+        inserts=[
+            (5176, "                  \"except an arc a culprit of the re-solve kills (card WCF).]\","),
+        ],
+    ),
+    "networkAmbVehicleRunEnd": dict(
+        why="C2: amb_float_q_m2s (move M6)",
+        subs=[
+            (5397, "\"m^2, q={} m^2/s, declared_handover={}.  Mechanism counters: {} drop(s) \"",
+             "\"m^2, declared_handover={}.  Mechanism counters: {} drop(s) \""),
+            (5404, "ctx.knobs.amb_birth_var_floor, ctx.knobs.amb_float_q_m2s,",
+             "ctx.knobs.amb_birth_var_floor,"),
+        ],
+    ),
+    "networkCouplingRunEnd": dict(
+        why="C23: the card 1b joint-whitening fallback warning",
+        label="the coupling carry (cards 1, 1d)",
+        drops=_span((5970, 5975)),
+        no_alias=['carry_cpl_joint', 'n_cpl_joint_fallback'],
+    ),
+    "networkClosedLoopRunEnd": dict(
+        why="C27: the JT de-common line; C13: the SMD block member's wire selection",
+        drops=_span((6912, 6912), (6919, 6927), (7110, 7111), (7120, 7123)),
+        subs=[
+            (7100, "log->info(\"  pb hold, smoothed, block clones (SMD){}: {} born ({} on a pinned clock, \"",
+             "log->info(\"  pb hold, smoothed, block clones (SMD), instrument: {} born ({} on a pinned clock, \""),
+            (7107, "\"hour [{}]); {} held emission(s) \"",
+             "\"hour [{}]); \""),
+            (7108, "\"written; |Phi_D| p50 {:.4f} / p90 {:.4f} m, level part |Phi_c - Phi_D| \"",
+             "\"|Phi_D| p50 {:.4f} / p90 {:.4f} m, level part |Phi_c - Phi_D| \""),
+            (7118, "k.smh_pv_step_unmarked_max, ush, k.smh_pv_held, q(pa, 0.50), q(pa, 0.90),",
+             "k.smh_pv_step_unmarked_max, ush, q(pa, 0.50), q(pa, 0.90),"),
+        ],
+    ),
+}
+
+
+def with_post_cut(spec):
+    """The report spec with its POST_CUT declarations merged in (a copy)."""
+    pc = POST_CUT.get(spec["func"])
+    if not pc:
+        return spec
+    s = dict(spec)
+    s["drops"] = sorted(set(spec.get("drops", [])) | set(pc.get("drops", [])))
+    s["subs"] = list(spec.get("subs", [])) + list(pc.get("subs", []))
+    s["inserts"] = list(spec.get("inserts", [])) + list(pc.get("inserts", []))
+    s["no_alias"] = list(spec.get("no_alias", [])) + list(pc.get("no_alias", []))
+    if "label" in pc:
+        s["label"] = pc["label"]
+    return s
+
+
 
 # =======================================================================================
 # Building one function
@@ -984,6 +1247,9 @@ def build_function(F, spec, base_indent=0):
     for line, frm, to in spec.get("subs", []):
         subs.setdefault(line, []).append((frm, to))
     drops = set(spec.get("drops", []))
+    inserts = {}                                  # frozen line -> lines inserted after it
+    for line, ins in spec.get("inserts", []):
+        inserts.setdefault(line, []).append(ins)
 
     # The aliases this body reads (and any declared extras), in ALIAS order.  `C` is never
     # detected (several sections declare their own); a report that needs it says so.
@@ -996,6 +1262,9 @@ def build_function(F, spec, base_indent=0):
     for p in spec["pieces"]:
         if p[0] == "new":
             names.update(IDENT.findall(blank_literals(p[1])))
+    for lst in inserts.values():
+        for ins in lst:
+            names.update(IDENT.findall(blank_literals(ins)))
     names.discard("C")
     want = (names & set(ALIAS_NAMES)) | set(spec.get("aliases", []))
     want -= set(spec.get("no_alias", []))
@@ -1011,13 +1280,13 @@ def build_function(F, spec, base_indent=0):
 
     def emit_frozen(i, k):
         raw = F.raw[i]
-        if i in drops:
-            return
-        for frm, to in subs.get(i, []):
-            if frm not in raw:
-                raise SystemExit(f"{func}: substitution {frm!r} not found on frozen line {i}")
-            raw = raw.replace(frm, to)
-        body.append(shifted(raw, k, f"{func}:{i}"))
+        if i not in drops:
+            for frm, to in subs.get(i, []):
+                if frm not in raw:
+                    raise SystemExit(f"{func}: substitution {frm!r} not found on frozen line {i}")
+                raw = raw.replace(frm, to)
+            body.append(shifted(raw, k, f"{func}:{i}"))
+        body.extend(inserts.get(i, []))           # declared new lines, at their own indent
 
     for n in aliases:
         decl = ALIAS[ALIAS_NAMES.index(n)][1]
@@ -1075,7 +1344,8 @@ def build_function(F, spec, base_indent=0):
     entry = {"func": func, "file": f"src/core/{spec['home']}.cpp", "indent": base_indent,
              "pieces": pieces,
              "subs": [{"line": l, "from": f, "to": t} for l, lst in sorted(subs.items()) for f, t in lst],
-             "drops": sorted(drops)}
+             "drops": sorted(drops),
+             "inserts": [{"after": l, "text": t} for l, lst in sorted(inserts.items()) for t in lst]}
     return lines, entry, aliases, ranges, shape
 
 
@@ -1229,11 +1499,21 @@ def new_header_text(home, decls):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--survey", action="store_true")
+    ap.add_argument("--manifest-only", action="store_true",
+                    help="rebuild the manifest from the tables and write it; touch no source")
     args = ap.parse_args()
     F = Frozen()
 
-    by_home, entries, rows = {}, [], []
+    by_home, entries, rows, removed = {}, [], [], []
     for spec in REPORTS:
+        if spec["func"] in REMOVED:
+            commit, why = REMOVED[spec["func"]]
+            removed.append({"func": spec["func"], "label": spec["label"],
+                            "file": f"src/core/{spec['home']}.cpp",
+                            "frozen": [[p[0], p[1]] for p in spec["pieces"] if p[0] != "new"],
+                            "removed_by": commit, "reason": why})
+            continue
+        spec = with_post_cut(spec)
         home = spec["home"]
         cpp = ROOT / "src" / "core" / (home + ".cpp")
         indent = 0 if home in NEW_FILES else file_indent(cpp)
@@ -1257,6 +1537,10 @@ def main():
             if inc not in h["incs"]:
                 h["incs"].append(inc)
     if args.survey:
+        return
+    if args.manifest_only:
+        write_manifest(entries, write_teardown(F, write=False), removed)
+        print(f"wrote {MANIFEST.relative_to(ROOT)}: {len(entries)} reports, {len(removed)} removed")
         return
 
     why = "The run-end reports at the end of this file (card NOM step TD1b)"
@@ -1282,7 +1566,7 @@ def main():
 
     write_table(rows)
     tentry = write_teardown(F)
-    write_manifest(entries, tentry)
+    write_manifest(entries, tentry, removed)
     print(f"wrote {len(rows)} reports over {len(by_home)} home files; {MANIFEST.relative_to(ROOT)}")
 
 
@@ -1329,8 +1613,9 @@ def write_table(rows):
     TABLE_HPP.write_text(htext, encoding="utf-8", newline="\n")
 
 
-def write_teardown(F):
-    """networkTeardown: the loop wall, the view, the walk, the zero-emit guard, the verdict."""
+def write_teardown(F, write=True):
+    """networkTeardown: the loop wall, the view, the walk, the zero-emit guard, the verdict.
+    With write false, nothing is written and only the manifest entry is returned."""
     head = [
         "int networkTeardown(const NetworkRunContext& ctx,",
         "                    const GnssConfig& config_,",
@@ -1368,7 +1653,13 @@ def write_teardown(F):
                 raw = raw.replace(frm, to)
         guard.append(raw)
     fn = head + new_a + guard + ["    return verdict;", "}"]
-    write_region(TEARDOWN_CPP, fn)
+    if write:
+        write_region(TEARDOWN_CPP, fn)
+    return teardown_entry(new_a)
+
+
+def teardown_entry(new_a):
+    """networkTeardown's manifest entry: its new lines, the frozen guard, the verdict."""
     pieces = []
     for l in new_a:
         if l.strip():
@@ -1378,10 +1669,10 @@ def write_teardown(F):
     return {"func": "networkTeardown", "file": "src/core/filter/NetworkTeardown.cpp", "indent": 0,
             "pieces": pieces,
             "subs": [{"line": l, "from": f, "to": t} for l, f, t in TEARDOWN["subs"]],
-            "drops": [], "label": "the teardown", "adapter": None}
+            "drops": [], "inserts": [], "label": "the teardown", "adapter": None}
 
 
-def write_manifest(entries, tentry):
+def write_manifest(entries, tentry, removed):
     renames = {
         "networkPriorResidualReport": "networkPriorResidualRunEnd",
         "networkMdbReport": "networkMdbRunEnd",
@@ -1393,13 +1684,17 @@ def write_manifest(entries, tentry):
     }
     m = {
         "about": "The cut of networkTeardown into run-end reports (card NOM step TD1b).  Written "
-                 "by scripts/nom_td_cut.py, read by scripts/nom_td_verify.py.",
+                 "by scripts/nom_td_cut.py, read by scripts/nom_td_verify.py.  The reports carry "
+                 "the edits made after the cut as declared drops, substitutions and inserted "
+                 "lines (POST_CUT); `removed` lists the reports whose mechanism was deleted "
+                 "(REMOVED), with their frozen ranges and the reason.",
         "frozen": {"rev": FROZEN_REV, "path": FROZEN_PATH, "function": "networkTeardown"},
         "preamble": list(PREAMBLE),
         "global_drops": {str(k): v for k, v in sorted(GLOBAL_DROPS.items())},
         "renames": renames,
         "table": "src/core/filter/NetworkRunEnd.cpp",
         "reports": entries,
+        "removed": removed,
         "teardown": tentry,
     }
     MANIFEST.write_text(json.dumps(m, indent=1, ensure_ascii=False) + "\n", encoding="utf-8",

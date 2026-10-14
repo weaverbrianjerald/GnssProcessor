@@ -18,18 +18,23 @@ all four checks pass:
        - a guard: the frozen `if (COND) {` becomes `if (!COND) return 0;` (or `!(COND)`) and
          the interior moves one level out; an unwrap: a bare `{ ... }` block's interior
          moves one level out;
-       - a declared substitution on one frozen line (plain text replace), or a declared
-         dropped line.
-     Comments and blank lines are ignored on both sides, as in rt_seam_verify.py.
+       - a declared substitution on one frozen line (plain text replace), a declared
+         dropped line, or a declared line inserted after a frozen line (compared as new).
+     Comments and blank lines are ignored on both sides, as in rt_seam_verify.py.  A
+     report the manifest lists under `removed` (its mechanism was deleted after the cut)
+     has no body to check.
   2. Coverage.  Every code line of the frozen function body is carried by exactly one
-     report, or by networkTeardown, or is a declared drop (with its reason), or belongs to
-     the old alias preamble that the reports' own aliases replace.  None is dropped
-     silently, none is carried twice.
+     report, or by networkTeardown, or is a declared drop (with its reason), or lies in a
+     removed report's frozen range (with the commit and the reason), or belongs to the old
+     alias preamble that the reports' own aliases replace.  None is dropped silently, none
+     is carried twice.
   3. The table.  kNetworkRunEndReports (src/core/filter/NetworkRunEnd.cpp) lists exactly the
      manifest's reports, each once, in the manifest's order.
   4. The print order.  The ordered list of (logger call, level, format literal), with the
      calls into other run-end functions and the run-manifest writes, over the table walk
-     followed by networkTeardown's own lines, equals the frozen function's.  The trace close
+     followed by networkTeardown's own lines, equals the frozen function's, read with every
+     declared edit applied (substitutions, dropped lines and removed reports' ranges blanked,
+     inserted lines added).  The trace close
      (the estimability RUN row and closeAll, which print nothing) is checked to be the
      walk's first action instead: the table moves it ahead of the timing report.
 """
@@ -118,17 +123,22 @@ def expected_lines(F, entry, problems):
     """[(kind, text, frozen_line)] the body must hold, and the frozen lines it covers."""
     code = F.code_with_subs(entry["subs"])
     drops = set(entry["drops"])
+    inserts = {}
+    for ins in entry.get("inserts", []):
+        inserts.setdefault(ins["after"], []).append(ins["text"])
     exp, covered = [], []
     name = entry["func"]
 
     def take(a, b, k):
         for i in range(a, b + 1):
-            if not code[i].strip():
-                continue
-            covered.append(i)
-            if i in drops:
-                continue
-            exp.append(("frozen", unshift(code[i], k, f"{name} frozen {i}").rstrip(), i))
+            if code[i].strip():
+                covered.append(i)
+                if i not in drops:
+                    exp.append(("frozen", unshift(code[i], k, f"{name} frozen {i}").rstrip(), i))
+            for t in inserts.get(i, []):
+                for part in strip_comments(t).split("\n"):
+                    if part.strip():
+                        exp.append(("new", part.strip(), None))
 
     for p in entry["pieces"]:
         if "new" in p:
@@ -289,6 +299,7 @@ def main():
 
     problems = []
     cover = {}
+    removed = m.get("removed", [])
     funcs = m["reports"] + [m["teardown"]]
     n_ok = 0
     acts = {}
@@ -315,6 +326,11 @@ def main():
     for i in range(pre_a, pre_b + 1):
         if fcode[i].strip():
             cover.setdefault(i, []).append("preamble")
+    for r in removed:
+        for a, b in r["frozen"]:
+            for i in range(a, b + 1):
+                if fcode[i].strip():
+                    cover.setdefault(i, []).append("removed:" + r["func"])
     missing = [i for i in range(body_first, body_last + 1) if fcode[i].strip() and i not in cover]
     twice = {i: w for i, w in cover.items() if len(w) > 1}
     outside = [i for i in cover if not (body_first <= i <= body_last)]
@@ -343,7 +359,26 @@ def main():
 
     # 4. The print order.
     inverse = {v: k for k, v in m["renames"].items()}
-    fev = events("\n".join(fcode[body_first:body_last + 1]))
+    # The frozen text as declared: each report's substitutions applied, its dropped lines and
+    # the removed reports' ranges blanked, its inserted lines appended to the line they follow
+    # (one line each, so the frozen line numbers stay put).
+    traw = list(F.raw)
+    for entry in funcs:
+        for s in entry["subs"]:
+            traw[s["line"]] = traw[s["line"]].replace(s["from"], s["to"])
+        for i in entry["drops"]:
+            traw[i] = ""
+    for r in removed:
+        for a, b in r["frozen"]:
+            for i in range(a, b + 1):
+                traw[i] = ""
+    for entry in funcs:
+        for ins in entry.get("inserts", []):
+            traw[ins["after"]] += " " + " ".join(strip_comments(ins["text"]).split())
+    tcode = [""] + strip_comments("\n".join(traw[1:])).split("\n")
+    fev = events("\n".join(tcode[body_first:body_last + 1]))
+    # A substitution may already carry a report's new name; compare on the old names.
+    fev = [(ev[0], inverse.get(ev[1], ev[1])) + ev[2:] for ev in fev]
     wev = []
     for fn in names:
         ev = events(acts.get(fn, ""))
@@ -368,7 +403,8 @@ def main():
     if post_cut:
         print(f"table rows added after the cut (not verified here): {', '.join(post_cut)}")
     print(f"\n{n_ok} of {len(funcs)} bodies verbatim in code ({len(m['reports'])} reports + "
-          f"networkTeardown); {n_code} frozen code lines, {len(missing)} uncovered, "
+          f"networkTeardown; {len(removed)} removed after the cut); {n_code} frozen code lines, "
+          f"{len(missing)} uncovered, "
           f"{len(twice)} carried twice; table {len(names)} rows; print order {len(fev_cmp)} "
           f"events ({n_log} log calls, {n_call} calls and manifest writes) "
           f"{'equal' if fev_cmp == wev_cmp else 'DIFFERENT'}.")

@@ -1,5 +1,5 @@
 {
- "about": "The cut of networkTeardown into run-end reports (card NOM step TD1b).  Written by scripts/nom_td_cut.py, read by scripts/nom_td_verify.py.",
+ "about": "The cut of networkTeardown into run-end reports (card NOM step TD1b).  Written by scripts/nom_td_cut.py, read by scripts/nom_td_verify.py.  The reports carry the edits made after the cut as declared drops, substitutions and inserted lines (POST_CUT); `removed` lists the reports whose mechanism was deleted (REMOVED), with their frozen ranges and the reason.",
  "frozen": {
   "rev": "067fdc1",
   "path": "src/core/filter/NetworkTeardown.cpp",
@@ -59,6 +59,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "trace close: the estimability RUN row, then every trace stream closed",
    "adapter": null
   },
@@ -128,7 +129,15 @@
     }
    ],
    "subs": [],
-   "drops": [],
+   "drops": [
+    289,
+    290,
+    291,
+    292,
+    293,
+    294
+   ],
+   "inserts": [],
    "label": "run timing: the epoch-loop wall, the D0 and D0b section timers",
    "adapter": null
   },
@@ -168,6 +177,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "producer complete: epochs emitted, skipped and withheld",
    "adapter": null
   },
@@ -198,6 +208,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "stations in the solve and the addStation PD rejections",
    "adapter": null
   },
@@ -225,6 +236,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "heartbeats of a deferred product writer that never opened",
    "adapter": null
   },
@@ -258,6 +270,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the observability rank gate and the datum-direction ratio",
    "adapter": null
   },
@@ -289,6 +302,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "S-basis completion (SBC)",
    "adapter": null
   },
@@ -320,6 +334,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the datum graph census",
    "adapter": null
   },
@@ -350,6 +365,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "within-epoch RAIM: the WE-CI screen and the T2 responses",
    "adapter": null
   },
@@ -380,44 +396,8 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the KP prior and the CB-ADM code-pair admission",
-   "adapter": null
-  },
-  {
-   "func": "networkAdaptiveIonoQRunEnd",
-   "file": "src/core/app/NetworkStationIonoRunEnd.cpp",
-   "indent": 0,
-   "pieces": [
-    {
-     "new": "const NetworkRunContext& ctx = v.ctx;"
-    },
-    {
-     "new": "const GnssConfig& config_ = v.config;"
-    },
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
-    },
-    {
-     "guard": [
-      695,
-      715
-     ],
-     "if_line": 700,
-     "close_line": 715,
-     "shift": 0,
-     "cond": "config_.getNetworkConfig().adaptive_iono_q",
-     "line": "if (!config_.getNetworkConfig().adaptive_iono_q) return 0;"
-    },
-    {
-     "new": "return 0;"
-    }
-   ],
-   "subs": [],
-   "drops": [],
-   "label": "the adaptive ionosphere process noise",
    "adapter": null
   },
   {
@@ -444,6 +424,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "phase-anchor hygiene: handover, cold fallback, PHASE_ANCHOR re-reference, eq34",
    "adapter": null
   },
@@ -469,8 +450,50 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
-   "drops": [],
+   "subs": [
+    {
+     "line": 1001,
+     "from": "if (ctx.knobs.raim_ci_refloat)",
+     "to": "if (rc.sats_flagged > 0 || rc.arcs_flagged > 0)"
+    },
+    {
+     "line": 1011,
+     "from": "\"arc-epoch(s) but network.raim_carry_invariant_refloat is OFF — those \"",
+     "to": "\"arc-epoch(s), and the re-host is measure-only — those flags reached NO \""
+    },
+    {
+     "line": 1012,
+     "from": "\"flags reached NO carry consumer.  Measure-only is the intended first \"",
+     "to": "\"carry consumer (the seam's local_carry erase and pending-reseed mark \""
+    },
+    {
+     "line": 1013,
+     "from": "\"stage; this line exists so the run is never mistaken for a protected \"",
+     "to": "\"cannot move the Card-4 solve).  This line exists so the run is never \""
+    },
+    {
+     "line": 1014,
+     "from": "\"one.\",",
+     "to": "\"mistaken for a protected one.\","
+    }
+   ],
+   "drops": [
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007,
+    1008,
+    1009,
+    1016,
+    1017,
+    1018,
+    1019,
+    1020,
+    1021
+   ],
+   "inserts": [],
    "label": "the carried-phase RAIM pools: admissions and the re-host",
    "adapter": null
   },
@@ -530,6 +553,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the gross line-of-sight screen",
    "adapter": null
   },
@@ -560,39 +584,9 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the gross line-of-sight screen's cold-start bound",
    "adapter": "networkGrossLosColdBoundRunEnd"
-  },
-  {
-   "func": "networkDwReleaseHygieneRunEnd",
-   "file": "src/core/filter/NetworkIonoDwRelease.cpp",
-   "indent": 0,
-   "pieces": [
-    {
-     "new": "const NetworkRunContext& ctx = v.ctx;"
-    },
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "guard": [
-      1241,
-      1319
-     ],
-     "if_line": 1250,
-     "close_line": 1319,
-     "shift": 0,
-     "cond": "ctx.knobs.dw_hygiene_on",
-     "line": "if (!ctx.knobs.dw_hygiene_on) return 0;"
-    },
-    {
-     "new": "return 0;"
-    }
-   ],
-   "subs": [],
-   "drops": [],
-   "label": "the ionosphere-deweight release hygiene",
-   "adapter": null
   },
   {
    "func": "networkSignalIntegrityRunEnd",
@@ -631,6 +625,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the flicker and gap signal integrity",
    "adapter": null
   },
@@ -673,6 +668,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the prior-residual census",
    "adapter": "networkPriorResidualRunEnd"
   },
@@ -707,6 +703,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the redundancy and testability census",
    "adapter": null
   },
@@ -743,6 +740,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "Baarda MDB reliability",
    "adapter": "networkMdbRunEnd"
   },
@@ -779,6 +777,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the BlockFormal LOS-block census",
    "adapter": "networkBlockBaardaRunEnd"
   },
@@ -815,6 +814,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the station congruence screen",
    "adapter": "networkCongruenceRunEnd"
   },
@@ -845,8 +845,37 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
-   "drops": [],
+   "subs": [
+    {
+     "line": 1687,
+     "from": "\"set changed all run.  The deweight valve never moved a tie \"",
+     "to": "\"set changed all run.  This run therefore contains no instance \""
+    },
+    {
+     "line": 1688,
+     "from": "\"row here — so this run contains no instance of the era-2 \"",
+     "to": "\"of the era-2 topology event and cannot be used to grade the \""
+    },
+    {
+     "line": 1689,
+     "from": "\"topology event and cannot be used to grade the ledger \"",
+     "to": "\"ledger against it.\");"
+    },
+    {
+     "line": 1737,
+     "from": "\"consulted the latch — the four trip sites (SH-gate engage, \"",
+     "to": "\"consulted the latch — the three trip sites (sigma0 withhold, \""
+    },
+    {
+     "line": 1738,
+     "from": "\"sigma0 withhold, clock runaway, a00 band) are all gated behind \"",
+     "to": "\"clock runaway, a00 band) are all gated behind \""
+    }
+   ],
+   "drops": [
+    1690
+   ],
+   "inserts": [],
    "label": "the prefit tier: census, fuse, seed births, topology, recorder, attribution",
    "adapter": null
   },
@@ -878,6 +907,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the product-referenced measurement admission",
    "adapter": null
   },
@@ -908,6 +938,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the PD-safe invariant-DD fold",
    "adapter": null
   },
@@ -945,6 +976,16 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [
+    {
+     "after": 2078,
+     "text": "    if (nc.ambiguity_resolution.cycle_basis)"
+    },
+    {
+     "after": 2078,
+     "text": "        arCycleBasisRunEndClause(c.netar_cycle, nc.ambiguity_resolution.cycle_basis_sticky, log);"
+    }
+   ],
    "label": "the producer ambiguity-resolution search",
    "adapter": null
   },
@@ -979,6 +1020,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the carry-aware covariance mode",
    "adapter": null
   },
@@ -1016,6 +1058,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the SD pre-reduce EWL rows and integer fix",
    "adapter": null
   },
@@ -1047,9 +1090,40 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
-   "drops": [],
-   "label": "slip QC: MW and LLI detections, the re-level response, the statistical retap",
+   "subs": [
+    {
+     "line": 2303,
+     "from": "if (config_.networkCycleSlipRelevelBridgeGf()",
+     "to": "if (config_.networkCycleSlipRelevelBridgeGf())"
+    },
+    {
+     "line": 2306,
+     "from": "\"applies {}, wrong-WL plane rejects {}); EWL integers filled \"",
+     "to": "\"applies {}, wrong-WL plane rejects {}).\","
+    },
+    {
+     "line": 2309,
+     "from": "qcc.bridge_plane_reject, qcc.bridge_ewl_joint,",
+     "to": "qcc.bridge_plane_reject);"
+    }
+   ],
+   "drops": [
+    2304,
+    2307,
+    2310,
+    2312,
+    2313,
+    2314,
+    2315,
+    2316,
+    2317,
+    2318,
+    2319,
+    2320,
+    2321
+   ],
+   "inserts": [],
+   "label": "slip QC: MW and LLI detections, the re-level response",
    "adapter": null
   },
   {
@@ -1084,9 +1158,70 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
-   "drops": [],
-   "label": "leveling-carry retirement census [B] and [A]; F1, F3, the clock gate, young arcs",
+   "subs": [
+    {
+     "line": 2408,
+     "from": "\"75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed; \"",
+     "to": "\"75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed.  \""
+    },
+    {
+     "line": 2422,
+     "from": "(cliff_live && config_.networkCarryConditionalCoupling()",
+     "to": "(cliff_live && config_.networkCarryConditionalCoupling())"
+    },
+    {
+     "line": 2425,
+     "from": "\"off, carry_invariant on, carry_conditional_coupling \"",
+     "to": "\"off, carry_invariant on, or carry_conditional_coupling \""
+    },
+    {
+     "line": 2426,
+     "from": "\"off, or carry_coupling_joint_whiten on) — a 0 here \"",
+     "to": "\"off) — a 0 here means UNWIRED, not clean\","
+    }
+   ],
+   "drops": [
+    2383,
+    2384,
+    2385,
+    2386,
+    2387,
+    2388,
+    2389,
+    2390,
+    2391,
+    2392,
+    2393,
+    2409,
+    2423,
+    2427,
+    2433,
+    2434,
+    2520,
+    2521,
+    2522,
+    2523,
+    2524,
+    2525,
+    2526,
+    2527,
+    2528,
+    2529,
+    2530,
+    2531,
+    2532,
+    2533,
+    2534,
+    2535,
+    2536,
+    2537,
+    2538,
+    2539,
+    2540,
+    2541
+   ],
+   "inserts": [],
+   "label": "leveling-carry retirement census [B] and [A]; F3, the clock gate",
    "adapter": null
   },
   {
@@ -1119,6 +1254,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "warm-resume restores: frame, coupling regressors, dense border",
    "adapter": null
   },
@@ -1149,6 +1285,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "re-admission continuity",
    "adapter": null
   },
@@ -1183,6 +1320,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the DD fractional-cycle trace's reference identity",
    "adapter": null
   },
@@ -1213,6 +1351,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the seam-scoped ZWD re-seed",
    "adapter": null
   },
@@ -1247,8 +1386,28 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
-   "drops": [],
+   "subs": [
+    {
+     "line": 2750,
+     "from": "\"REFLOATS: {} T4 attribution, {} T3 consensus (quality-selected), and {} \"",
+     "to": "\"REFLOATS: {} T4 attribution and {} T3 consensus (quality-selected); \""
+    },
+    {
+     "line": 2751,
+     "from": "\"entr(ies) in {} whole-fleet SH-convergence flush(es) — the largest \"",
+     "to": "\"the arcs stay tracked and the next harvest re-stashes them, so each \""
+    },
+    {
+     "line": 2752,
+     "from": "\"single removal in the producer, but the arcs stay tracked and the \"",
+     "to": "\"costs one solve, not a departure.  \""
+    }
+   ],
+   "drops": [
+    2753,
+    2761
+   ],
+   "inserts": [],
    "label": "leveling-carry retirement census [C], [D] and the response",
    "adapter": null
   },
@@ -1283,8 +1442,15 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
+   "subs": [
+    {
+     "line": 2879,
+     "from": "\"WUP); the lane observatory grades this response under cause=WU.\",",
+     "to": "\"WUP).\","
+    }
+   ],
    "drops": [],
+   "inserts": [],
    "label": "slip QC: wind-up census and restart, anchor-slip handover, MW admission and scope",
    "adapter": null
   },
@@ -1328,6 +1494,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the extra-band code deweight",
    "adapter": null
   },
@@ -1371,6 +1538,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the second code channel",
    "adapter": null
   },
@@ -1414,6 +1582,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the second phase channel",
    "adapter": null
   },
@@ -1446,6 +1615,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the common-band scope verdicts",
    "adapter": null
   },
@@ -1467,9 +1637,6 @@
      "new": "const NetworkConfig& nc = v.config.getNetworkConfig();"
     },
     {
-     "new": "const SlipQcChannel& slip_qc = v.run.engines.slip_qc;"
-    },
-    {
      "frozen": [
       3170,
       3373
@@ -1481,38 +1648,159 @@
     }
    ],
    "subs": [],
-   "drops": [],
-   "label": "slip QC: IF-TD pairs, band-scoped responses, the lane observatory, retap corroboration",
-   "adapter": null
-  },
-  {
-   "func": "networkIonoCarryRunEnd",
-   "file": "src/core/app/NetworkStationIonoRunEnd.cpp",
-   "indent": 0,
-   "pieces": [
-    {
-     "new": "const NetworkRunContext& ctx = v.ctx;"
-    },
-    {
-     "new": "const GnssConfig& config_ = v.config;"
-    },
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "frozen": [
-      3374,
-      3402
-     ],
-     "shift": 0
-    },
-    {
-     "new": "return 0;"
-    }
+   "drops": [
+    3207,
+    3208,
+    3209,
+    3210,
+    3211,
+    3212,
+    3213,
+    3214,
+    3215,
+    3216,
+    3217,
+    3218,
+    3219,
+    3220,
+    3221,
+    3222,
+    3223,
+    3224,
+    3225,
+    3226,
+    3227,
+    3228,
+    3229,
+    3230,
+    3231,
+    3232,
+    3233,
+    3234,
+    3235,
+    3236,
+    3237,
+    3238,
+    3241,
+    3242,
+    3243,
+    3244,
+    3245,
+    3246,
+    3247,
+    3248,
+    3249,
+    3250,
+    3251,
+    3252,
+    3253,
+    3254,
+    3255,
+    3256,
+    3257,
+    3258,
+    3259,
+    3260,
+    3261,
+    3262,
+    3263,
+    3264,
+    3265,
+    3266,
+    3267,
+    3268,
+    3269,
+    3270,
+    3271,
+    3272,
+    3273,
+    3274,
+    3275,
+    3276,
+    3277,
+    3278,
+    3279,
+    3280,
+    3281,
+    3282,
+    3283,
+    3284,
+    3285,
+    3286,
+    3287,
+    3288,
+    3289,
+    3290,
+    3295,
+    3296,
+    3297,
+    3298,
+    3299,
+    3300,
+    3301,
+    3302,
+    3303,
+    3304,
+    3305,
+    3306,
+    3307,
+    3308,
+    3309,
+    3310,
+    3311,
+    3312,
+    3313,
+    3320,
+    3321,
+    3322,
+    3323,
+    3324,
+    3325,
+    3326,
+    3327,
+    3328,
+    3329,
+    3330,
+    3331,
+    3332,
+    3333,
+    3334,
+    3335,
+    3336,
+    3337,
+    3338,
+    3339,
+    3340,
+    3341,
+    3342,
+    3343,
+    3344,
+    3345,
+    3346,
+    3347,
+    3348,
+    3349,
+    3350,
+    3351,
+    3352,
+    3353,
+    3354,
+    3355,
+    3356,
+    3357,
+    3364,
+    3365,
+    3366,
+    3367,
+    3368,
+    3369,
+    3370,
+    3371,
+    3372,
+    3373
    ],
-   "subs": [],
-   "drops": [],
-   "label": "the slant-ionosphere carry",
+   "inserts": [],
+   "label": "slip QC: IF-TD pairs",
    "adapter": null
   },
   {
@@ -1542,6 +1830,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the withhold era, the R2 station factor, the R4 rate hygiene",
    "adapter": null
   },
@@ -1576,6 +1865,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the LV-6 level-authority census",
    "adapter": null
   },
@@ -1612,6 +1902,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "slip QC: datum-station detection and LLI corroboration",
    "adapter": null
   },
@@ -1642,6 +1933,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the sim-only oracle ambiguity pin",
    "adapter": "networkOraclePinRunEnd"
   },
@@ -1673,6 +1965,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the sim-only oracle slip response",
    "adapter": null
   },
@@ -1706,6 +1999,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "slip QC: the gap instrument, re-entry, GRS, the IF-TD reference gate",
    "adapter": null
   },
@@ -1752,8 +2046,25 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
+   "subs": [
+    {
+     "line": 4036,
+     "from": "\"from the sticky tree, {} arcLife demotion(s) (sort comparisons, inert \"",
+     "to": "\"from the sticky tree, {} arcLife demotion(s) (slipped arcs ranked last, \""
+    },
+    {
+     "line": 4037,
+     "from": "\"without the longevity election), and {} slipped arc(s) became a tree edge \"",
+     "to": "\"each counted once per epoch; inert without the longevity election), \""
+    }
+   ],
    "drops": [],
+   "inserts": [
+    {
+     "after": 4037,
+     "text": "                  \"and {} slipped arc(s) became a tree edge \""
+    }
+   ],
    "label": "the eq34 chain datum: re-references, pin audit, seed round, slip-aware election",
    "adapter": null
   },
@@ -1811,41 +2122,8 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the card 4/M1 invariant carry",
-   "adapter": null
-  },
-  {
-   "func": "networkFastClockRunEnd",
-   "file": "src/core/filter/NetworkFastClock.cpp",
-   "indent": 0,
-   "pieces": [
-    {
-     "new": "const NetworkRunContext& ctx = v.ctx;"
-    },
-    {
-     "new": "const GnssConfig& config_ = v.config;"
-    },
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "guard": [
-      4067,
-      4120
-     ],
-     "if_line": 4071,
-     "close_line": 4120,
-     "shift": 0,
-     "cond": "config_.getNetworkConfig().fast_clock.enable",
-     "line": "if (!config_.getNetworkConfig().fast_clock.enable) return 0;"
-    },
-    {
-     "new": "return 0;"
-    }
-   ],
-   "subs": [],
-   "drops": [],
-   "label": "the FC-1 split-cadence fast clock",
    "adapter": null
   },
   {
@@ -1884,15 +2162,108 @@
    ],
    "subs": [
     {
+     "line": 4164,
+     "from": "log->info(\"Network (RTB-7d resume event): carry restored {}{}; sigma0 [{}] {}; resume \"",
+     "to": "log->info(\"Network (RTB-7d resume event): carry restored {}{}; sigma0 [{}] {}; \""
+    },
+    {
+     "line": 4165,
+     "from": "\"shock {}; restored Pᶻ {}.\",",
+     "to": "\"restored Pᶻ {}.\","
+    },
+    {
+     "line": 4197,
+     "from": "if (config_.getNetworkConfig().state_snapshot_carry_lin",
+     "to": "if (config_.getNetworkConfig().state_snapshot_carry_lin)"
+    },
+    {
+     "line": 4200,
+     "from": "log->info(\"Network (RS-2 linearization carry): write {} / read {}; blob carried \"",
+     "to": "log->info(\"Network (RS-2 linearization carry): write ARMED; blob carried ZL rows \""
+    },
+    {
+     "line": 4201,
+     "from": "\"ZL rows on {} restored block(s); re-based {} carried chord row(s) at \"",
+     "to": "\"on {} restored block(s).\","
+    },
+    {
+     "line": 4207,
+     "from": "carry_driver.resumeCarryLinBlocks(),",
+     "to": "carry_driver.resumeCarryLinBlocks());"
+    },
+    {
+     "line": 4262,
+     "from": "\"{} emit-layer row(s); restored re-base keys {}, filter keys {}, step \"",
+     "to": "\"{} emit-layer row(s); restored re-base keys {}.{}\","
+    },
+    {
+     "line": 4267,
+     "from": "C.n_resume_emit_rebase_keys, C.n_resume_emit_filter_keys,",
+     "to": "C.n_resume_emit_rebase_keys,"
+    },
+    {
+     "line": 4270,
+     "from": "&& C.n_resume_emit_rebase_keys == 0",
+     "to": "&& C.n_resume_emit_rebase_keys == 0)"
+    },
+    {
+     "line": 4273,
+     "from": "\"ER / PF / PS rows (a writer without \"",
+     "to": "\"ER rows (a writer without \""
+    },
+    {
+     "line": 4274,
+     "from": "\"network.state_snapshot_emit_capture?), neither emit engine is \"",
+     "to": "\"network.state_snapshot_emit_capture?), the emit re-base is not \""
+    },
+    {
+     "line": 4289,
+     "from": "log->info(\"Network (RS-6 station restore): write {} / read {} (rxcb {}, shdev {}); \"",
+     "to": "log->info(\"Network (RS-6 station restore): write {} / read {} (rxcb {}); \""
+    },
+    {
+     "line": 4302,
+     "from": "\"network.state_snapshot_station_capture?), both sub-switches are \"",
+     "to": "\"network.state_snapshot_station_capture?), neither carry is armed \""
+    },
+    {
+     "line": 4303,
+     "from": "\"off, neither carry is armed this run, or no warm resume \"",
+     "to": "\"this run, or no warm resume happened; check the resume log for \""
+    },
+    {
+     "line": 4304,
+     "from": "\"happened; check the resume log for the RS-6 line.\"",
+     "to": "\"the RS-6 line.\""
+    },
+    {
      "line": 4315,
      "from": "        auto& C = ctx.counters;",
      "to": "        const auto& C = ctx.counters;"
     }
    ],
    "drops": [
+    4172,
+    4173,
+    4174,
+    4198,
+    4199,
+    4202,
+    4203,
+    4204,
+    4205,
+    4206,
+    4208,
+    4209,
+    4210,
+    4263,
+    4268,
+    4271,
+    4295,
     4324,
     4325
    ],
+   "inserts": [],
    "label": "resume and snapshot: RTB-7, RS-2 to RS-9, the coupling capture",
    "adapter": null
   },
@@ -1933,6 +2304,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the Iono-2 SH deviation carry",
    "adapter": null
   },
@@ -1951,9 +2323,6 @@
      "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
     },
     {
-     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
-    },
-    {
      "frozen": [
       4467,
       4728
@@ -1965,7 +2334,164 @@
     }
    ],
    "subs": [],
-   "drops": [],
+   "drops": [
+    4530,
+    4531,
+    4532,
+    4533,
+    4534,
+    4535,
+    4536,
+    4537,
+    4538,
+    4539,
+    4540,
+    4541,
+    4542,
+    4543,
+    4544,
+    4545,
+    4546,
+    4547,
+    4548,
+    4549,
+    4550,
+    4551,
+    4552,
+    4553,
+    4554,
+    4555,
+    4556,
+    4557,
+    4558,
+    4563,
+    4564,
+    4565,
+    4566,
+    4567,
+    4568,
+    4569,
+    4570,
+    4576,
+    4577,
+    4578,
+    4579,
+    4580,
+    4581,
+    4582,
+    4583,
+    4584,
+    4585,
+    4586,
+    4587,
+    4588,
+    4589,
+    4590,
+    4591,
+    4592,
+    4593,
+    4594,
+    4595,
+    4596,
+    4597,
+    4598,
+    4599,
+    4600,
+    4607,
+    4608,
+    4609,
+    4610,
+    4611,
+    4612,
+    4613,
+    4614,
+    4615,
+    4616,
+    4617,
+    4618,
+    4619,
+    4620,
+    4621,
+    4622,
+    4623,
+    4624,
+    4625,
+    4626,
+    4627,
+    4628,
+    4629,
+    4630,
+    4631,
+    4632,
+    4633,
+    4634,
+    4635,
+    4636,
+    4637,
+    4663,
+    4664,
+    4665,
+    4666,
+    4667,
+    4668,
+    4669,
+    4670,
+    4671,
+    4672,
+    4673,
+    4674,
+    4675,
+    4676,
+    4677,
+    4678,
+    4679,
+    4680,
+    4681,
+    4682,
+    4683,
+    4684,
+    4685,
+    4686,
+    4687,
+    4688,
+    4689,
+    4690,
+    4691,
+    4692,
+    4693,
+    4698,
+    4699,
+    4700,
+    4701,
+    4702,
+    4703,
+    4704,
+    4705,
+    4706,
+    4707,
+    4708,
+    4709,
+    4710,
+    4711,
+    4712,
+    4713,
+    4714,
+    4715,
+    4716,
+    4717,
+    4718,
+    4719,
+    4720,
+    4721,
+    4722,
+    4723,
+    4724,
+    4725,
+    4726,
+    4727,
+    4728
+   ],
+   "inserts": [],
    "label": "the receiver code-bias carry family",
    "adapter": null
   },
@@ -1994,78 +2520,42 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
-   "drops": [],
-   "label": "the S-basis datum arms",
-   "adapter": null
-  },
-  {
-   "func": "networkLanesRunEnd",
-   "file": "src/core/filter/NetworkMwWlLayer.cpp",
-   "indent": 0,
-   "pieces": [
+   "subs": [
     {
-     "new": "const GnssConfig& config_ = v.config;"
-    },
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "new": "const NetworkInvariantCarryDriver& carry_driver = v.run.engines.carry_driver;"
-    },
-    {
-     "new": "const NetworkMwWlLayer::Counters& mw_wl_run = v.run.lanes.mw_wl_run;"
-    },
-    {
-     "new": "const std::vector<EwlLane>& ewl_lanes = v.run.lanes.ewl_lanes;"
-    },
-    {
-     "new": "const WlCounters& wl_run = v.run.lanes.wl_run;"
-    },
-    {
-     "new": "const std::map<char, WlCounters>& wl_cons_run = v.run.lanes.wl_cons_run;"
-    },
-    {
-     "new": "const bool mw_wl_on = v.ctx.knobs.mw_wl_on;"
-    },
-    {
-     "new": "const bool ewl_on = v.ctx.knobs.ewl_on;"
-    },
-    {
-     "new": "const bool wl_inject_on = v.ctx.knobs.wl_inject_on;"
-    },
-    {
-     "new": "const bool uwl_on = v.ctx.knobs.uwl_on;"
-    },
-    {
-     "new": "const bool lane_on = v.ctx.knobs.lane_on;"
-    },
-    {
-     "new": "const auto& nmw = v.config.getNetworkConfig().mw_wl;"
-    },
-    {
-     "new": "const auto& lane_pair_arcs = v.ctx.carry.lane_pair_arcs;"
-    },
-    {
-     "new": "const auto& lane_resid_arcs = v.ctx.carry.lane_resid_arcs;"
-    },
-    {
-     "new": "const auto& lane_pair_tree_mismatch = v.ctx.carry.lane_pair_tree_mismatch;"
-    },
-    {
-     "frozen": [
-      4967,
-      5105
-     ],
-     "shift": 0
-    },
-    {
-     "new": "return 0;"
+     "line": 4878,
+     "from": "\"never re-checked it, which is the cost of this arm and the thing to \"",
+     "to": "\"never re-checked it, which is the cost of this arm.\","
     }
    ],
-   "subs": [],
-   "drops": [],
-   "label": "the MW/WL lanes: WL-1, EWL, the WL inject, UWL, WL-3",
+   "drops": [
+    4842,
+    4843,
+    4844,
+    4845,
+    4846,
+    4847,
+    4848,
+    4849,
+    4850,
+    4851,
+    4852,
+    4853,
+    4854,
+    4855,
+    4856,
+    4857,
+    4858,
+    4859,
+    4860,
+    4861,
+    4862,
+    4863,
+    4864,
+    4865,
+    4879
+   ],
+   "inserts": [],
+   "label": "the S-basis datum arms",
    "adapter": null
   },
   {
@@ -2108,46 +2598,26 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
-   "drops": [],
-   "label": "the D5 fine-slip innovation gate and its variants",
-   "adapter": null
-  },
-  {
-   "func": "networkIonoDeweightRunEnd",
-   "file": "src/core/filter/NetworkIonoDwRelease.cpp",
-   "indent": 0,
-   "pieces": [
+   "subs": [
     {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
+     "line": 5175,
+     "from": "\"[Counted per arc per build call — a within-epoch RAIM re-solve counts its \"",
+     "to": "\"[Counted per arc per build call in which the arc survives: a within-epoch \""
     },
     {
-     "new": "const NetworkIonoDeweightGate& iono_deweight = v.run.engines.iono_deweight;"
-    },
-    {
-     "new": "const bool idw_on = v.run.engines.iono_deweight.active();"
-    },
-    {
-     "new": "const IonoConstraintDeweightConfig& idw = v.config.getIonoConstraintDeweightConfig();"
-    },
-    {
-     "guard": [
-      5244,
-      5266
-     ],
-     "if_line": 5244,
-     "close_line": 5266,
-     "shift": 0,
-     "cond": "idw_on",
-     "line": "if (!idw_on) return 0;"
-    },
-    {
-     "new": "return 0;"
+     "line": 5176,
+     "from": "\"arcs twice, the same convention as chords_born.]\",",
+     "to": "\"RAIM re-solve counts its arcs twice, the same convention as chords_born, \""
     }
    ],
-   "subs": [],
    "drops": [],
-   "label": "the station-adaptive SH-VTEC constraint deweight",
+   "inserts": [
+    {
+     "after": 5176,
+     "text": "                  \"except an arc a culprit of the re-solve kills (card WCF).]\","
+    }
+   ],
+   "label": "the D5 fine-slip innovation gate and its variants",
    "adapter": null
   },
   {
@@ -2181,41 +2651,8 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the CB-excursion guard (Phase 2.1)",
-   "adapter": null
-  },
-  {
-   "func": "networkShHealthRunEnd",
-   "file": "src/core/filter/NetworkShHealth.cpp",
-   "indent": 0,
-   "pieces": [
-    {
-     "new": "const NetworkRunContext& ctx = v.ctx;"
-    },
-    {
-     "new": "const GnssConfig& config_ = v.config;"
-    },
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "guard": [
-      5297,
-      5319
-     ],
-     "if_line": 5300,
-     "close_line": 5319,
-     "shift": 0,
-     "cond": "config_.getNetworkConfig().sh_health_gate",
-     "line": "if (!config_.getNetworkConfig().sh_health_gate) return 0;"
-    },
-    {
-     "new": "return 0;"
-    }
-   ],
-   "subs": [],
-   "drops": [],
-   "label": "the SH health gate (Phase 2.2)",
    "adapter": null
   },
   {
@@ -2245,36 +2682,8 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the post-fit sigma0 and the post-fit rows",
-   "adapter": null
-  },
-  {
-   "func": "networkReinflateRunEnd",
-   "file": "src/core/filter/NetworkIonoDwRelease.cpp",
-   "indent": 0,
-   "pieces": [
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "new": "const std::vector<NetStation>& stations = v.setup.stations;"
-    },
-    {
-     "unwrap": [
-      5354,
-      5375
-     ],
-     "open_line": 5354,
-     "close_line": 5375,
-     "shift": 0
-    },
-    {
-     "new": "return 0;"
-    }
-   ],
-   "subs": [],
-   "drops": [],
-   "label": "the producer's state-manager re-inflations",
    "adapter": null
   },
   {
@@ -2304,6 +2713,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the ZP station-block trace",
    "adapter": null
   },
@@ -2335,8 +2745,20 @@
      "new": "return amb_block_rc;"
     }
    ],
-   "subs": [],
+   "subs": [
+    {
+     "line": 5397,
+     "from": "\"m^2, q={} m^2/s, declared_handover={}.  Mechanism counters: {} drop(s) \"",
+     "to": "\"m^2, declared_handover={}.  Mechanism counters: {} drop(s) \""
+    },
+    {
+     "line": 5404,
+     "from": "ctx.knobs.amb_birth_var_floor, ctx.knobs.amb_float_q_m2s,",
+     "to": "ctx.knobs.amb_birth_var_floor,"
+    }
+   ],
    "drops": [],
+   "inserts": [],
    "label": "the ambiguity vehicle and the joint-block PD-fallback bar",
    "adapter": null
   },
@@ -2368,6 +2790,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the held S-basis (RF-2)",
    "adapter": null
   },
@@ -2398,6 +2821,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the ambiguity-state trace",
    "adapter": null
   },
@@ -2428,6 +2852,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the shared-normal spectrum trace",
    "adapter": null
   },
@@ -2458,6 +2883,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "D5 flags missing from the carry map",
    "adapter": null
   },
@@ -2492,44 +2918,8 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the emit-layer frame re-base",
-   "adapter": null
-  },
-  {
-   "func": "networkPbEmitFilterRunEnd",
-   "file": "src/core/products/NetworkPbEmitFilter.cpp",
-   "indent": 0,
-   "pieces": [
-    {
-     "new": "const GnssConfig& config_ = v.config;"
-    },
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "new": "const NetworkPbEmitFilter& pb_filter_engine = v.run.emit.pb_filter;"
-    },
-    {
-     "new": "const bool emit_pb_filter_on = v.ctx.knobs.emit_pb_filter_on;"
-    },
-    {
-     "guard": [
-      5625,
-      5654
-     ],
-     "if_line": 5625,
-     "close_line": 5654,
-     "shift": 0,
-     "cond": "emit_pb_filter_on",
-     "line": "if (!emit_pb_filter_on) return 0;"
-    },
-    {
-     "new": "return 0;"
-    }
-   ],
-   "subs": [],
-   "drops": [],
-   "label": "the phase-bias emission-continuity filter",
    "adapter": null
   },
   {
@@ -2566,44 +2956,9 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the clock emission re-base and frame hold",
    "adapter": null
-  },
-  {
-   "func": "networkClockLevelRunEnd",
-   "file": "src/core/filter/NetworkClockLevel.cpp",
-   "indent": 0,
-   "pieces": [
-    {
-     "new": "const NetworkRunContext& ctx = v.ctx;"
-    },
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "new": "const NetworkSetupResult& setup = v.setup;"
-    },
-    {
-     "frozen": [
-      5688,
-      5690
-     ],
-     "shift": 0
-    },
-    {
-     "new": "return 0;"
-    }
-   ],
-   "subs": [
-    {
-     "line": 5690,
-     "from": "networkClockLevelTeardown(",
-     "to": "networkClockLevelRunEnd("
-    }
-   ],
-   "drops": [],
-   "label": "the clock level re-base (CLV)",
-   "adapter": "networkClockLevelRunEnd"
   },
   {
    "func": "networkSatHealthRunEnd",
@@ -2636,6 +2991,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "broadcast satellite health (HLT)",
    "adapter": null
   },
@@ -2667,6 +3023,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the Q3 guarded temporal clock anchor",
    "adapter": null
   },
@@ -2698,6 +3055,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "clock-pivot handovers and their S-transform",
    "adapter": null
   },
@@ -2734,6 +3092,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the clock-runaway quarantine (RT0-5)",
    "adapter": null
   },
@@ -2767,6 +3126,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the prioritized-datum drop-and-heal",
    "adapter": null
   },
@@ -2782,13 +3142,7 @@
      "new": "const bool carry_cpl_cond = v.ctx.knobs.carry_cpl_cond;"
     },
     {
-     "new": "const bool carry_cpl_joint = v.ctx.knobs.carry_cpl_joint;"
-    },
-    {
      "new": "const bool carry_cpl_tu = v.ctx.knobs.carry_cpl_tu;"
-    },
-    {
-     "new": "const auto& n_cpl_joint_fallback = v.ctx.counters.n_cpl_joint_fallback;"
     },
     {
      "new": "const auto& n_cpl_stash = v.ctx.counters.n_cpl_stash;"
@@ -2820,8 +3174,16 @@
     }
    ],
    "subs": [],
-   "drops": [],
-   "label": "the coupling carry (cards 1, 1b, 1d)",
+   "drops": [
+    5970,
+    5971,
+    5972,
+    5973,
+    5974,
+    5975
+   ],
+   "inserts": [],
+   "label": "the coupling carry (cards 1, 1d)",
    "adapter": null
   },
   {
@@ -2852,6 +3214,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the CTU level monitor",
    "adapter": null
   },
@@ -2886,6 +3249,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the native broadcast clock a priori (NBP)",
    "adapter": null
   },
@@ -2917,6 +3281,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the phase-visible consistency (PVN)",
    "adapter": null
   },
@@ -2948,6 +3313,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the pivot-frame clock noise (PFQ)",
    "adapter": null
   },
@@ -2990,37 +3356,8 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "the exact coupling time update (CTU, WSX, SCL, SCL2)",
-   "adapter": null
-  },
-  {
-   "func": "networkGaugeFreeCarryRunEnd",
-   "file": "src/core/filter/NetworkClockAnchor.cpp",
-   "indent": 0,
-   "pieces": [
-    {
-     "new": "const NetworkRunContext& ctx = v.ctx;"
-    },
-    {
-     "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
-    },
-    {
-     "new": "const NetworkEstimator& est = v.run.engines.est;"
-    },
-    {
-     "frozen": [
-      6171,
-      6197
-     ],
-     "shift": 0
-    },
-    {
-     "new": "return 0;"
-    }
-   ],
-   "subs": [],
-   "drops": [],
-   "label": "the gauge-free shared carry (C-GF)",
    "adapter": null
   },
   {
@@ -3053,6 +3390,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "coupling reinit sources (1g) and gauge projection (1f)",
    "adapter": null
   },
@@ -3098,6 +3436,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the LS-VCE carry-variance monitor and factor",
    "adapter": null
   },
@@ -3134,6 +3473,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the anchored-union coverage gate and its drop edge",
    "adapter": null
   },
@@ -3168,6 +3508,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the marker to ARP roster reduction (UPO)",
    "adapter": null
   },
@@ -3201,6 +3542,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the per-constellation sigma0 carve-out (RTA-10)",
    "adapter": null
   },
@@ -3235,6 +3577,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the parameter model as armed",
    "adapter": null
   },
@@ -3268,6 +3611,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "parameters as armed (NOM N1)",
    "adapter": "networkParamInventoryRunEnd"
   },
@@ -3301,6 +3645,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "contributions as armed (NOM N2a)",
    "adapter": "networkContributionsRunEnd"
   },
@@ -3334,6 +3679,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "signals as planned (NOM N3a)",
    "adapter": "networkSignalRosterPlanRunEnd"
   },
@@ -3367,6 +3713,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the fold's dispositions of the carried border (PRM 1b)",
    "adapter": null
   },
@@ -3402,6 +3749,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the carried references per site (PRM 2)",
    "adapter": null
   },
@@ -3437,6 +3785,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the declared responses of the carried instances (PRM 3a)",
    "adapter": null
   },
@@ -3468,6 +3817,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the phase-colour state (LGM)",
    "adapter": null
   },
@@ -3507,6 +3857,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the run manifest's complete record",
    "adapter": null
   },
@@ -3549,6 +3900,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the product contract round trip (B6)",
    "adapter": null
   },
@@ -3621,6 +3973,7 @@
     }
    ],
    "drops": [],
+   "inserts": [],
    "label": "flag rates, the run summary and the shared-product line",
    "adapter": null
   },
@@ -3692,8 +4045,47 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
-   "drops": [],
+   "subs": [
+    {
+     "line": 7100,
+     "from": "log->info(\"  pb hold, smoothed, block clones (SMD){}: {} born ({} on a pinned clock, \"",
+     "to": "log->info(\"  pb hold, smoothed, block clones (SMD), instrument: {} born ({} on a pinned clock, \""
+    },
+    {
+     "line": 7107,
+     "from": "\"hour [{}]); {} held emission(s) \"",
+     "to": "\"hour [{}]); \""
+    },
+    {
+     "line": 7108,
+     "from": "\"written; |Phi_D| p50 {:.4f} / p90 {:.4f} m, level part |Phi_c - Phi_D| \"",
+     "to": "\"|Phi_D| p50 {:.4f} / p90 {:.4f} m, level part |Phi_c - Phi_D| \""
+    },
+    {
+     "line": 7118,
+     "from": "k.smh_pv_step_unmarked_max, ush, k.smh_pv_held, q(pa, 0.50), q(pa, 0.90),",
+     "to": "k.smh_pv_step_unmarked_max, ush, q(pa, 0.50), q(pa, 0.90),"
+    }
+   ],
+   "drops": [
+    6912,
+    6919,
+    6920,
+    6921,
+    6922,
+    6923,
+    6924,
+    6925,
+    6926,
+    6927,
+    7110,
+    7111,
+    7120,
+    7121,
+    7122,
+    7123
+   ],
+   "inserts": [],
    "label": "the closed-loop integer-recovery harness",
    "adapter": null
   },
@@ -3721,6 +4113,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the event harness (fault injection)",
    "adapter": "networkInjectRunEnd"
   },
@@ -3748,6 +4141,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the canonical-pair admission (CPA)",
    "adapter": "networkCanonicalPairRunEnd"
   },
@@ -3775,6 +4169,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the signal roster and the arc ledger (SID phase 1)",
    "adapter": "networkSignalRosterRunEnd"
   },
@@ -3808,6 +4203,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the all-channel census (SID phase 6b)",
    "adapter": "networkChannelAllRunEnd"
   },
@@ -3838,6 +4234,7 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the second constellation (GAL)",
    "adapter": "networkMultiGnssRunEnd"
   },
@@ -3865,8 +4262,154 @@
    ],
    "subs": [],
    "drops": [],
+   "inserts": [],
    "label": "the ledger-driven emission (SID phase 5a)",
    "adapter": "networkLedgerEmitRunEnd"
+  }
+ ],
+ "removed": [
+  {
+   "func": "networkAdaptiveIonoQRunEnd",
+   "label": "the adaptive ionosphere process noise",
+   "file": "src/core/app/NetworkStationIonoRunEnd.cpp",
+   "frozen": [
+    [
+     695,
+     715
+    ]
+   ],
+   "removed_by": "C16",
+   "reason": "network.adaptive_iono_q deleted"
+  },
+  {
+   "func": "networkDwReleaseHygieneRunEnd",
+   "label": "the ionosphere-deweight release hygiene",
+   "file": "src/core/filter/NetworkIonoDwRelease.cpp",
+   "frozen": [
+    [
+     1241,
+     1319
+    ]
+   ],
+   "removed_by": "C15",
+   "reason": "the ionosphere-deweight release hygiene deleted (network.iono_dw_*)"
+  },
+  {
+   "func": "networkIonoCarryRunEnd",
+   "label": "the slant-ionosphere carry",
+   "file": "src/core/app/NetworkStationIonoRunEnd.cpp",
+   "frozen": [
+    [
+     3374,
+     3402
+    ]
+   ],
+   "removed_by": "C18",
+   "reason": "the diagonal slant-iono carry deleted (network.carry_iono, iono_carry_*)"
+  },
+  {
+   "func": "networkFastClockRunEnd",
+   "label": "the FC-1 split-cadence fast clock",
+   "file": "src/core/filter/NetworkFastClock.cpp",
+   "frozen": [
+    [
+     4067,
+     4120
+    ]
+   ],
+   "removed_by": "C8",
+   "reason": "the FC-1 split-cadence fast clock deleted (network.fast_clock.*)"
+  },
+  {
+   "func": "networkLanesRunEnd",
+   "label": "the MW/WL lanes: WL-1, EWL, the WL inject, UWL, WL-3",
+   "file": "src/core/filter/NetworkMwWlLayer.cpp",
+   "frozen": [
+    [
+     4967,
+     5105
+    ]
+   ],
+   "removed_by": "C6",
+   "reason": "the MW/WL lane layer deleted (network.mw_wl.*, network.lane_carry.*)"
+  },
+  {
+   "func": "networkIonoDeweightRunEnd",
+   "label": "the station-adaptive SH-VTEC constraint deweight",
+   "file": "src/core/filter/NetworkIonoDwRelease.cpp",
+   "frozen": [
+    [
+     5244,
+     5266
+    ]
+   ],
+   "removed_by": "C15",
+   "reason": "the station deweight gate deleted (network.iono_constraint_deweight_*)"
+  },
+  {
+   "func": "networkShHealthRunEnd",
+   "label": "the SH health gate (Phase 2.2)",
+   "file": "src/core/filter/NetworkShHealth.cpp",
+   "frozen": [
+    [
+     5297,
+     5319
+    ]
+   ],
+   "removed_by": "C14",
+   "reason": "the SH health gate deleted (network.sh_health_gate)"
+  },
+  {
+   "func": "networkReinflateRunEnd",
+   "label": "the producer's state-manager re-inflations",
+   "file": "src/core/filter/NetworkIonoDwRelease.cpp",
+   "frozen": [
+    [
+     5354,
+     5375
+    ]
+   ],
+   "removed_by": "C15",
+   "reason": "its only producer caller, the deweight release hygiene, deleted: constant zeros (move M18)"
+  },
+  {
+   "func": "networkPbEmitFilterRunEnd",
+   "label": "the phase-bias emission-continuity filter",
+   "file": "src/core/products/NetworkPbEmitFilter.cpp",
+   "frozen": [
+    [
+     5625,
+     5654
+    ]
+   ],
+   "removed_by": "C12",
+   "reason": "the PB emission-continuity filter deleted (network.emit_pb_filter*)"
+  },
+  {
+   "func": "networkClockLevelRunEnd",
+   "label": "the clock level re-base (CLV)",
+   "file": "src/core/filter/NetworkClockLevel.cpp",
+   "frozen": [
+    [
+     5688,
+     5690
+    ]
+   ],
+   "removed_by": "C10",
+   "reason": "the CLV clock-level re-base deleted (network.clock_level_carry)"
+  },
+  {
+   "func": "networkGaugeFreeCarryRunEnd",
+   "label": "the gauge-free shared carry (C-GF)",
+   "file": "src/core/filter/NetworkClockAnchor.cpp",
+   "frozen": [
+    [
+     6171,
+     6197
+    ]
+   ],
+   "removed_by": "C23",
+   "reason": "the gauge-free closure deleted (network.shared_carry_gauge_free)"
   }
  ],
  "teardown": {
@@ -3944,6 +4487,7 @@
    }
   ],
   "drops": [],
+  "inserts": [],
   "label": "the teardown",
   "adapter": null
  }
