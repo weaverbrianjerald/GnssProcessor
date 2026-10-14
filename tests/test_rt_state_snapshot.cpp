@@ -172,7 +172,7 @@ TEST(RtStateSnapshotTest, RestoreDynamicStateReplaysExactLayout) {
     const std::size_t core = sm.getStateSize();
     ASSERT_GE(core, 5u);
 
-    using K = StateManager::RestoredStateKind;
+    using K = StateFamily;
     // Interleaved kinds: a layout that a semantic add* replay cannot rebuild
     // (addIonosphereState pairs a rate row when enableIonoRate, elevation-
     // scales seeds, and short-circuits duplicates).

@@ -600,6 +600,7 @@ add_executable(gnss_tests
     tests/test_resume_coupling_restore.cpp
     tests/test_resume_datum_restore.cpp
     tests/test_rt_state_snapshot.cpp
+    tests/test_state_family.cpp
     tests/test_band_scoped_response.cpp
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp

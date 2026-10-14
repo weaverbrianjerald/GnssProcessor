@@ -72,7 +72,7 @@ struct RtStateSnapshot {
     // --- K: dynamic layout (ascending index) ------------------------------
     struct DynState {
         std::size_t idx{ 0 };
-        std::string kind;               ///< One of ION, IONR, AMB, RXCB, SATB, SATPB, RXPB, SATCLK.
+        std::string kind;               ///< A family's snapshot tag (kStateFamilies, filter/StateFamily.hpp).
         std::string key;                ///< The owning map's key, verbatim.
     };
     std::vector<DynState> dyn;

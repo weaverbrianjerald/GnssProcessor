@@ -45,6 +45,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkSbasis.hpp"          // kWindUpYawModelId (wind-up model revision, wu93)
+#include "filter/StateFamily.hpp"
 #include "filter/StateManager.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/NetworkStateSnapshot.hpp" // NetworkStateSnapshotIO::fnv1a64
@@ -56,6 +57,7 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -272,19 +274,14 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
     // --- Exact-layout rebuild (ascending, gapless; enforced by the parser) ---
     std::size_t n_amb = 0, n_ion = 0, n_rxcb = 0;
     for (const auto& d : snap->dyn) {
-        StateManager::RestoredStateKind kind;
-        if      (d.kind == "ION")    { kind = StateManager::RestoredStateKind::Ionosphere; ++n_ion; }
-        else if (d.kind == "IONR")   { kind = StateManager::RestoredStateKind::IonosphereRate; }
-        else if (d.kind == "AMB")    { kind = StateManager::RestoredStateKind::Ambiguity; ++n_amb; }
-        else if (d.kind == "RXCB")   { kind = StateManager::RestoredStateKind::ReceiverCodeBias; ++n_rxcb; }
-        else if (d.kind == "SATB")   { kind = StateManager::RestoredStateKind::SatBias; }
-        else if (d.kind == "SATPB")  { kind = StateManager::RestoredStateKind::SatPhaseBias; }
-        else if (d.kind == "RXPB")   { kind = StateManager::RestoredStateKind::ReceiverPhaseBias; }
-        else if (d.kind == "SATCLK") { kind = StateManager::RestoredStateKind::SatClock; }
-        else
+        const std::optional<StateFamily> family = stateFamilyFromSnapshotTag(d.kind);
+        if (!family)
             return cold(fmt::format("unknown dynamic state kind '{}' (a newer writer?)",
                                     d.kind));
-        if (!sm.restoreDynamicState(kind, d.key,
+        if (*family == StateFamily::Ionosphere)       ++n_ion;
+        if (*family == StateFamily::Ambiguity)        ++n_amb;
+        if (*family == StateFamily::ReceiverCodeBias) ++n_rxcb;
+        if (!sm.restoreDynamicState(*family, d.key,
                                     snap->x(static_cast<Eigen::Index>(d.idx)), d.idx)) {
             // Unreachable on a parse-clean file against a verified-empty manager.
             // If it fires, the manager is partly mutated: log an error and stop
@@ -392,18 +389,11 @@ bool RealTimeEngine::harvestStateSnapshot_(RtStateSnapshot& snap, const GnssTime
     // previous good snapshot on disk intact, and warns once.
     const std::size_t n = sm.getStateSize();
     std::vector<RtStateSnapshot::DynState> rows;
-    auto harvest = [&rows](const std::map<std::string, std::size_t>& m, const char* kind) {
-        for (const auto& [key, idx] : m)
-            rows.push_back(RtStateSnapshot::DynState{ idx, kind, key });
-    };
-    harvest(sm.getIonosphereStates(), "ION");
-    harvest(sm.getIonosphereRateStates(), "IONR");
-    harvest(sm.getAmbiguities(), "AMB");
-    harvest(sm.getCodeBiasStates(), "RXCB");
-    harvest(sm.getSatBiasStates(), "SATB");
-    harvest(sm.getSatPhaseBiasStates(), "SATPB");
-    harvest(sm.getReceiverPhaseBiasStates(), "RXPB");
-    harvest(sm.getSatClockStates(), "SATCLK");
+    for (const auto& spec : kStateFamilies) {
+        if (!spec.snapshot_tag) continue;   // not serialized: its rows fail the tiling check below
+        for (const auto& [key, idx] : sm.indicesOf(spec.family))
+            rows.push_back(RtStateSnapshot::DynState{ idx, spec.snapshot_tag, key });
+    }
     std::sort(rows.begin(), rows.end(),
               [](const RtStateSnapshot::DynState& a, const RtStateSnapshot::DynState& b) {
                   return a.idx < b.idx;

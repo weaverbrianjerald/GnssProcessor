@@ -11,6 +11,7 @@
 
 #include "common/PppTypes.hpp"
 #include "config/GnssConfig.hpp"
+#include "filter/StateFamily.hpp"
 #include <Eigen/Dense>
 #include <array>
 #include <cstdint>
@@ -780,19 +781,19 @@ namespace GnssProcessor {
             last_ssr_discontinuity_ = std::move(mem);
         }
 
-        /// Dynamic state kinds the RT filter-state snapshot serializes, one per
-        /// dynamic key→index map.  The core block (position, clock, ZWD, …) is
-        /// index-stable by construction and is not kind-tagged.
-        enum class RestoredStateKind {
-            Ionosphere,        ///< per-satellite slant iono (getIonosphereStates)
-            IonosphereRate,    ///< per-satellite iono rate (getIonosphereRateStates)
-            Ambiguity,         ///< carrier ambiguity (getAmbiguities)
-            ReceiverCodeBias,  ///< receiver code bias / IFB (getCodeBiasStates)
-            SatBias,           ///< satellite bias (getSatBiasStates)
-            SatPhaseBias,      ///< satellite phase bias (getSatPhaseBiasStates)
-            ReceiverPhaseBias, ///< receiver phase bias (getReceiverPhaseBiasStates)
-            SatClock,          ///< satellite clock (getSatClockStates)
-        };
+        /**
+         * @brief The key->index map of one dynamic state family.
+         *
+         * The families and their properties are declared in @ref kStateFamilies
+         * (`filter/StateFamily.hpp`); code that visits every family loops over that
+         * table and reads each map through this accessor, instead of naming the
+         * maps one by one.
+         *
+         * @param family The family.
+         * @return The family's map (key -> state index); the same object the
+         *         family's named getter returns (e.g. @ref getAmbiguities).
+         */
+        const std::map<std::string, size_t>& indicesOf(StateFamily family) const;
 
         /**
          * @brief Re-create one dynamic state at its serialized index and value
@@ -800,7 +801,9 @@ namespace GnssProcessor {
          *
          * Appends a row with @p value at placeholder unit variance (the resume
          * overwrites the whole covariance via @ref setCovariance once the layout
-         * is rebuilt) and registers @p key in the map @p kind selects.
+         * is rebuilt) and registers @p key in the map of @p family.  Only the
+         * families with an RT snapshot tag (@ref StateFamilySpec::snapshot_tag)
+         * can be restored; any other family is refused.
          *
          * Bypasses the semantic add* functions on purpose: their creation side
          * effects (elevation-scaled seeds, the enableIonoRate paired-rate append,
@@ -808,7 +811,7 @@ namespace GnssProcessor {
          * the serialized one wherever an in-run prune had interleaved the original
          * indices.
          *
-         * @param kind        Which dynamic map owns the key.
+         * @param family      Which dynamic map owns the key.
          * @param key         The map key, verbatim from the snapshot.
          * @param value       Serialized state value.
          * @param expect_idx  The index this row held at serialization; the append
@@ -820,7 +823,7 @@ namespace GnssProcessor {
          *         map-derived and an unregistered appended row would desynchronize
          *         it from the actual vector length.
          */
-        bool restoreDynamicState(RestoredStateKind kind, const std::string& key,
+        bool restoreDynamicState(StateFamily family, const std::string& key,
                                  double value, size_t expect_idx);
 
         /**
@@ -1627,15 +1630,21 @@ namespace GnssProcessor {
         /**
          * @brief Remove a single row/column from the state vector and covariance.
          *
-         * After removal, every entry with index > rem_idx in the eight dynamic maps
-         * (ambiguity, receiver code bias, sat bias, sat phase bias, receiver phase
-         * bias, sat clock, ionosphere, iono rate) is decremented by one.  The new
+         * After removal, every entry with index > rem_idx in the map of every
+         * dynamic family (@ref kStateFamilies) is decremented by one.  The new
          * size comes from getStateSize(), which counts the map entries, so the
          * caller erases the removed row's map entry after this call, not before.
          *
          * @param rem_idx Zero-based index to remove (must be >= core_state_size_).
          */
         void removeStateAtIndex(size_t rem_idx);
+
+        /**
+         * @brief Mutable access to the key->index map of one dynamic family.
+         * @param family The family.
+         * @return The family's map; the only place that names the maps by family.
+         */
+        std::map<std::string, size_t>& indicesOf_(StateFamily family);
     };
 
 } // namespace GnssProcessor

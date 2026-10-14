@@ -152,15 +152,28 @@ namespace GnssProcessor {
         covariance_ = std::move(new_cov);
 
         // Decrement all dynamic-state indices that were above the removed index
-        for (auto& kv : ambiguity_indices_)      if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : code_bias_indices_)      if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : sat_bias_indices_)       if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : sat_phase_bias_indices_) if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : receiver_phase_bias_indices_) if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : phase_colour_indices_)   if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : sat_clock_indices_)      if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : ionosphere_indices_)     if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : iono_rate_indices_)      if (kv.second > rem_idx) --kv.second;
+        for (const auto& spec : kStateFamilies)
+            for (auto& kv : indicesOf_(spec.family))
+                if (kv.second > rem_idx) --kv.second;
+    }
+
+    std::map<std::string, size_t>& StateManager::indicesOf_(StateFamily family) {
+        switch (family) {
+            case StateFamily::Ionosphere:        return ionosphere_indices_;
+            case StateFamily::IonosphereRate:    return iono_rate_indices_;
+            case StateFamily::Ambiguity:         return ambiguity_indices_;
+            case StateFamily::ReceiverCodeBias:  return code_bias_indices_;
+            case StateFamily::SatBias:           return sat_bias_indices_;
+            case StateFamily::SatPhaseBias:      return sat_phase_bias_indices_;
+            case StateFamily::ReceiverPhaseBias: return receiver_phase_bias_indices_;
+            case StateFamily::PhaseColour:       return phase_colour_indices_;
+            case StateFamily::SatClock:          return sat_clock_indices_;
+        }
+        throw std::logic_error("StateManager::indicesOf_: unknown StateFamily");
+    }
+
+    const std::map<std::string, size_t>& StateManager::indicesOf(StateFamily family) const {
+        return const_cast<StateManager*>(this)->indicesOf_(family);
     }
 
     // ===================================================================
@@ -476,12 +489,9 @@ namespace GnssProcessor {
     }
 
     size_t StateManager::getStateSize() const {
-        return core_state_size_ + code_bias_indices_.size() + sat_bias_indices_.size()
-             + sat_phase_bias_indices_.size() + receiver_phase_bias_indices_.size()
-             + phase_colour_indices_.size()
-             + sat_clock_indices_.size()
-             + ionosphere_indices_.size() + iono_rate_indices_.size()
-             + ambiguity_indices_.size();
+        size_t n = core_state_size_;
+        for (const auto& spec : kStateFamilies) n += indicesOf(spec.family).size();
+        return n;
     }
 
     Eigen::VectorXd StateManager::getStateVector() const {
@@ -948,18 +958,12 @@ namespace GnssProcessor {
         }
 
         // --- Dynamic key->index maps.  The keys themselves are the stable labels
-        //     (StateKeySchema); a category tag is prefixed so that keys from
-        //     different maps cannot collide (e.g. iono "G01" vs sat-bias
-        //     "G01|C1W"). ---
-        for (const auto& kv : getAmbiguities())        put(kv.second, "AMB:"   + kv.first);
-        for (const auto& kv : getIonosphereStates())   put(kv.second, "IONO:"  + kv.first);
-        for (const auto& kv : getIonosphereRateStates()) put(kv.second, "IONORATE:" + kv.first);
-        for (const auto& kv : getCodeBiasStates())     put(kv.second, "CBIAS:" + kv.first);
-        for (const auto& kv : getSatBiasStates())      put(kv.second, "SATB:"  + kv.first);
-        for (const auto& kv : getSatPhaseBiasStates()) put(kv.second, "SATPB:" + kv.first);
-        for (const auto& kv : getReceiverPhaseBiasStates()) put(kv.second, "RPB:" + kv.first);
-        for (const auto& kv : getPhaseColourStates())  put(kv.second, "PCOL:"  + kv.first);
-        for (const auto& kv : getSatClockStates())     put(kv.second, "SATCLK:" + kv.first);
+        //     (StateKeySchema); the family's label prefix (kStateFamilies) is
+        //     prepended so that keys from different maps cannot collide (e.g.
+        //     iono "G01" vs sat-bias "G01|C1W"). ---
+        for (const auto& spec : kStateFamilies)
+            for (const auto& kv : indicesOf(spec.family))
+                put(kv.second, spec.label_prefix + kv.first);
 
         return labels;
     }
@@ -1199,25 +1203,19 @@ namespace GnssProcessor {
         return true;
     }
 
-    bool StateManager::restoreDynamicState(RestoredStateKind kind, const std::string& key,
+    bool StateManager::restoreDynamicState(StateFamily family, const std::string& key,
                                            double value, size_t expect_idx) {
         auto logger = log_manager_.getLogger("state_manager");
         if (key.empty()) {
             logger->error("restoreDynamicState: empty key at expected index {}", expect_idx);
             return false;
         }
-        std::map<std::string, size_t>* map = nullptr;
-        switch (kind) {
-            case RestoredStateKind::Ionosphere:        map = &ionosphere_indices_; break;
-            case RestoredStateKind::IonosphereRate:    map = &iono_rate_indices_; break;
-            case RestoredStateKind::Ambiguity:         map = &ambiguity_indices_; break;
-            case RestoredStateKind::ReceiverCodeBias:  map = &code_bias_indices_; break;
-            case RestoredStateKind::SatBias:           map = &sat_bias_indices_; break;
-            case RestoredStateKind::SatPhaseBias:      map = &sat_phase_bias_indices_; break;
-            case RestoredStateKind::ReceiverPhaseBias: map = &receiver_phase_bias_indices_; break;
-            case RestoredStateKind::SatClock:          map = &sat_clock_indices_; break;
+        if (!specOf(family).snapshot_tag) {
+            logger->error("restoreDynamicState: the {} family is not serialized by the RT "
+                          "snapshot and cannot be restored ('{}')", specOf(family).name, key);
+            return false;
         }
-        if (!map) return false;
+        std::map<std::string, size_t>* map = &indicesOf_(family);
         if (map->count(key)) {
             logger->error("restoreDynamicState: key '{}' already registered — the resume "
                           "replay must run on a core-only manager", key);
@@ -1240,7 +1238,7 @@ namespace GnssProcessor {
         // the layout rebuild, so nothing ever reads this value.
         const size_t idx = appendState(value, 1.0);
         (*map)[key] = idx;
-        if (kind == RestoredStateKind::Ambiguity)
+        if (family == StateFamily::Ambiguity)
             noteAmbiguityDiscontinuity(key);
         return true;
     }
