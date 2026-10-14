@@ -3,28 +3,36 @@
  * \brief Between-satellite, between-epoch IF phase slip detector.
  *
  * Organization:
- *  - Construction / tracing
+ *  - Construction / the slip log line
  *  - Signal helpers
- *  - Statistics (median, MAD outlier check)
+ *  - Statistics (median)
  *  - Observation grouping / reference selection
- *  - Double-difference processing
+ *  - The hardened reference-satellite gate (card R)
+ *  - Double-difference processing: processDoubleDifferences, a short driver
+ *    over the steps D1 to D7 that share one ChainWork
+ *    (slip/IfPhaseChainWork.hpp)
  *  - Top-level detect()
- *  - External reset
+ *  - External reset and re-seed
+ * The branches of the staged user path that no shipped configuration reaches
+ * (the combined IF-label input, the position and model-nuisance gates, the
+ * geometry correction, the per-station outlier flagging) are in
+ * IfPhaseStagedUserPath.cpp.
  */
 
 #include "slip/IfPhaseSlipDetector.hpp"
+#include "slip/IfPhaseChainWork.hpp"
 #include "common/Constants.hpp"
 #include "math/RobustStats.hpp"
 #include <algorithm>
 #include <cmath>
-#include <iomanip>
 #include <limits>
 #include <numeric>
+#include <utility>
 
 namespace GnssProcessor {
 
     // =================================================================
-    // Construction / tracing
+    // Construction / the slip log line
     // =================================================================
 
     IfPhaseSlipDetector::IfPhaseSlipDetector(const GnssConfig& config, LogManager& log_manager)
@@ -36,76 +44,24 @@ namespace GnssProcessor {
             kRefElevThreshDeg, kOutlierSigmaMultiplier, kPositionSigmaThresholdM);
     }
 
-    bool IfPhaseSlipDetector::enableTracing(const std::filesystem::path& log_dir) {
-        auto logger = log_manager_.getLogger("if_slip_detector");
-
-        std::error_code ec;
-        if (!std::filesystem::exists(log_dir)) {
-            std::filesystem::create_directories(log_dir, ec);
-            if (ec) {
-                logger->warn("Failed to create log directory '{}': {}", log_dir.string(), ec.message());
-                return false;
-            }
-        }
-
-        const auto trace_path = log_dir / "if_slip_trace.csv";
-        trace_file_.open(trace_path, std::ios::out | std::ios::trunc);
-        if (!trace_file_.is_open()) {
-            logger->warn("Could not open IF slip trace file '{}'", trace_path.string());
-            return false;
-        }
-
-        trace_file_ << "week,tow_s,satellite,system,elevation_deg,"
-                    << "phase_if_key,phi_if_omc_m,"
-                    << "grad_phi_if_m,delta_grad_m,"
-                    << "ref_satellite,ref_changed,"
-                    << "lambda_if_m,is_slip,slip_reason,"
-                    << "pos_sigma_3d_m,pos_gated\n";
-
-        logger->info("IF slip tracing enabled: {}", trace_path.string());
-        return true;
-    }
-
-    void IfPhaseSlipDetector::writeTraceRecord(const SatData& sd,
+    void IfPhaseSlipDetector::logSlipRecord(const SatData& sd,
         const std::string& sys_str,
         double grad, double delta_grad,
-        const std::string& ref_sat, bool ref_changed,
-        double lambda_if, bool is_slip,
+        const std::string& ref_sat,
+        double lambda_if,
         const std::string& slip_reason,
-        double position_sigma_3d, bool pos_gated) const {
+        double position_sigma_3d) const {
 
         auto logger = log_manager_.getLogger("if_slip_detector");
 
-        if (is_slip) {
-            logger->info("[W{} {:.3f}] {} {} elev={:.1f} grad={:.6f} delta_grad={:.6f} "
-                "ref={} lambda_if={:.6f} slip_reason={} pos_sigma={:.3f}{}",
-                current_epoch_.week, current_epoch_.tow,
-                sd.satellite, sys_str, sd.elevation,
-                grad, delta_grad, ref_sat, lambda_if, slip_reason,
-                position_sigma_3d, pos_gated ? " [pos_gated]" : "");
-        } else {
-            logger->debug("[W{} {:.3f}] {} {} elev={:.1f} grad={:.6f} delta_grad={:.6f} "
-                "ref={}{} lambda_if={:.6f} reason={} pos_sigma={:.3f}{}",
-                current_epoch_.week, current_epoch_.tow,
-                sd.satellite, sys_str, sd.elevation,
-                grad, delta_grad, ref_sat,
-                ref_changed ? " [changed]" : "", lambda_if, slip_reason,
-                position_sigma_3d, pos_gated ? " [pos_gated]" : "");
-        }
-
-        if (!trace_file_.is_open()) return;
-
-        trace_file_ << std::fixed << std::setprecision(3)
-            << current_epoch_.week << "," << current_epoch_.tow << ","
-            << sd.satellite << "," << sys_str << ","
-            << std::setprecision(2) << sd.elevation << ","
-            << sd.phase_if_key << ","
-            << std::setprecision(6) << sd.phi_if_omc << ","
-            << grad << "," << delta_grad << ","
-            << ref_sat << "," << (ref_changed ? 1 : 0) << ","
-            << lambda_if << "," << (is_slip ? 1 : 0) << "," << slip_reason << ","
-            << std::setprecision(3) << position_sigma_3d << "," << (pos_gated ? 1 : 0) << "\n";
+        logger->info("[W{} {:.3f}] {} {} elev={:.1f} grad={:.6f} delta_grad={:.6f} "
+            "ref={} lambda_if={:.6f} slip_reason={} pos_sigma={:.3f}",
+            current_epoch_.week, current_epoch_.tow,
+            sd.satellite, sys_str, sd.elevation,
+            grad, delta_grad, ref_sat, lambda_if, slip_reason,
+            position_sigma_3d);
     }
+
 
     // =================================================================
     // Signal helpers
@@ -150,66 +106,13 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // Statistics (median, MAD outlier check)
+    // Statistics (median; the MAD outlier check is staged)
     // =================================================================
 
     double IfPhaseSlipDetector::computeMedian(std::vector<double>& values) {
         // Delegates to the shared RobustStats::median, which does not sort
         // `values` in place.  Every call site uses only the return value.
         return RobustStats::median(values);
-    }
-
-    std::map<std::string, double> IfPhaseSlipDetector::checkOutliers(
-        const std::map<std::string, double>& values,
-        const std::string& ref_satellite,
-        double lambda_if) const {
-
-        std::map<std::string, double> result = values;
-
-        for (size_t pass = 0; pass < kMaxOutlierPasses; ++pass) {
-            // Collect non-ref, finite values
-            std::vector<double> non_ref_vals;
-            for (const auto& [sat, v] : result)
-                if (sat != ref_satellite && std::isfinite(v))
-                    non_ref_vals.push_back(v);
-            if (non_ref_vals.empty()) break;
-
-            // MAD-based adaptive threshold
-            const double median_val = computeMedian(non_ref_vals);
-            std::vector<double> abs_devs(non_ref_vals.size());
-            for (size_t i = 0; i < non_ref_vals.size(); ++i)
-                abs_devs[i] = std::abs(non_ref_vals[i] - median_val);
-            const double mad = computeMedian(abs_devs);
-            const double thres_std = kOutlierSigmaMultiplier * 1.4826 * mad;
-
-            // Max absolute value across all entries
-            double max_abs_val = 0.0;
-            for (const auto& [sat, v] : result)
-                if (std::isfinite(v))
-                    max_abs_val = std::max(max_abs_val, std::abs(v));
-
-            if (thres_std <= lambda_if / 4.0 && max_abs_val <= 0.5 * lambda_if)
-                break;
-
-            // Remove worst outlier exceeding 0.5 * lambda_if
-            double worst_val = 0.0;
-            std::string worst_sat;
-            for (const auto& [sat, v] : result) {
-                if (sat == ref_satellite || !std::isfinite(v)) continue;
-                if ((std::abs(v) > thres_std || std::abs(v) > lambda_if) &&
-                    std::abs(v) > worst_val) {
-                    worst_val = std::abs(v);
-                    worst_sat = sat;
-                }
-            }
-
-            if (worst_val > 0.5 * lambda_if && !worst_sat.empty())
-                result[worst_sat] = std::numeric_limits<double>::quiet_NaN();
-            else
-                break;
-        }
-
-        return result;
     }
 
     // =================================================================
@@ -227,100 +130,89 @@ namespace GnssProcessor {
 
             std::string phase_if_key;
             if (findPhaseIfLabel(obs, phase_if_key)) {
-                // --- Combined (PPP) path: IF key already exists ---
-                std::string sig1, sig2;
-                if (!splitIfLabel(phase_if_key, sig1, sig2)) continue;
-
-                auto obs_it = obs.observed.find(phase_if_key);
-                auto mod_it = obs.modeled.find(phase_if_key);
-                if (obs_it == obs.observed.end() || mod_it == obs.modeled.end()) continue;
-
-                const double phi_if_omc = obs_it->second - mod_it->second;
-                if (!std::isfinite(phi_if_omc)) continue;
-
-                const double lambda_if = computeIfWavelengthMeters(obs, sig1, sig2);
-                if (lambda_if <= 0.0) continue;
-
-                result[PppUtils::getSystemString(obs.system)].push_back(
-                    { obs.satellite, phase_if_key, sig1, sig2,
-                      phi_if_omc, obs.elevation, lambda_if, obs.system, obs.los });
+                groupCombinedIfRow(obs, phase_if_key, result);  // STAGED (IfPhaseStagedUserPath.cpp)
             } else {
-                // --- Uncombined (PPP-RTK) path: synthesize IF OMC ---
-                // Find two phase signals on different frequency bands.
-                std::vector<std::tuple<std::string, double, double>> phase_signals; // sig, observed, modeled
-                for (const auto& [key, val] : obs.observed) {
-                    if (key.empty() || key[0] != 'L') continue;
-                    if (key.find('_') != std::string::npos) continue; // skip IF combinations
-                    auto mod_it = obs.modeled.find(key);
-                    if (mod_it == obs.modeled.end()) continue;
-                    phase_signals.emplace_back(key, val, mod_it->second);
-                }
-                if (phase_signals.size() < 2) continue;
-
-                // Pair width (§14.10).  With all_pairs_ off, the first two phase
-                // signals in key order form the one IF combination, filed under the
-                // bare system string.  With it on, every distinct pair is formed; the
-                // first pair keeps that chain (so its population, reference election,
-                // double differences and log lines are unchanged) and each additional
-                // pair gets a chain of its own, "<system>|<sig1>_<sig2>", with its own
-                // reference, gradient history and reset key.
-                //
-                // With `network.second_phase_channel`, two of these signals can share a
-                // frequency (L1C beside L1W); index pair (0, 1) then fails the `denom`
-                // guard below and files nothing.  Assigning the bare-system chain by
-                // index would leave it empty: every valid pair would land on a
-                // "<system>|<sig1>_<sig2>" chain, and the chain that owns the reference
-                // election, the gradient history and the reset keys would receive no
-                // rows.  The bare-system chain therefore goes to the first pair with
-                // distinct frequencies, tracked by if_pair_taken.  When no two phases
-                // share a frequency that pair is (0, 1) and the output is
-                // byte-identical, also when (0, 1) passes the frequency guard and then
-                // fails a later check, because the flag is set at the frequency guard,
-                // where an index test would also have committed (card SID phase 6a).
-                const std::string sys_key = PppUtils::getSystemString(obs.system);
-                const std::size_t n_use =
-                    all_pairs_ ? phase_signals.size() : std::size_t{ 2 };
-                bool if_pair_taken = false;
-                for (std::size_t a = 0; a < n_use; ++a) {
-                for (std::size_t b = a + 1; b < n_use; ++b) {
-                const auto& [sig1, obs1, mod1] = phase_signals[a];
-                const auto& [sig2, obs2, mod2] = phase_signals[b];
-
-                const double f1 = ppp_utils_.getFrequency(sig1, obs.system, obs.satellite);
-                const double f2 = ppp_utils_.getFrequency(sig2, obs.system, obs.satellite);
-                if (!std::isfinite(f1) || !std::isfinite(f2) || f1 <= 0.0 || f2 <= 0.0) continue;
-
-                const double f1sq = f1 * f1;
-                const double f2sq = f2 * f2;
-                const double denom = f1sq - f2sq;
-                if (std::abs(denom) < 1e-12) continue;
-                // Claim the bare-system chain here, at the frequency guard, and not at
-                // the row push (see the comment above the loop; card SID phase 6a).
-                const bool is_first_pair = !if_pair_taken;
-                if_pair_taken = true;
-
-                const double c1 = f1sq / denom;
-                const double c2 = -f2sq / denom;
-
-                const double omc1 = obs1 - mod1;
-                const double omc2 = obs2 - mod2;
-                const double phi_if_omc = c1 * omc1 + c2 * omc2;
-                if (!std::isfinite(phi_if_omc)) continue;
-
-                const double lambda_if = computeIfWavelengthMeters(obs, sig1, sig2);
-                if (lambda_if <= 0.0) continue;
-
-                const std::string synth_key = sig1 + "_" + sig2;
-
-                result[is_first_pair ? sys_key : (sys_key + "|" + synth_key)].push_back(
-                    { obs.satellite, synth_key, sig1, sig2,
-                      phi_if_omc, obs.elevation, lambda_if, obs.system, obs.los });
-                }  // b: second band of the pair
-                }  // a: first band of the pair
+                groupUncombinedRows(obs, result);
             }
         }
 
         return result;
+    }
+
+    void IfPhaseSlipDetector::groupUncombinedRows(const PppObservation& obs,
+        std::map<std::string, std::vector<SatData>>& result) const {
+        // --- Uncombined (PPP-RTK) path: synthesize IF OMC ---
+        // Find two phase signals on different frequency bands.
+        std::vector<std::tuple<std::string, double, double>> phase_signals; // sig, observed, modeled
+        for (const auto& [key, val] : obs.observed) {
+            if (key.empty() || key[0] != 'L') continue;
+            if (key.find('_') != std::string::npos) continue; // skip IF combinations
+            auto mod_it = obs.modeled.find(key);
+            if (mod_it == obs.modeled.end()) continue;
+            phase_signals.emplace_back(key, val, mod_it->second);
+        }
+        if (phase_signals.size() < 2) return;
+
+        // Pair width (§14.10).  With all_pairs_ off, the first two phase
+        // signals in key order form the one IF combination, filed under the
+        // bare system string.  With it on, every distinct pair is formed; the
+        // first pair keeps that chain (so its population, reference election,
+        // double differences and log lines are unchanged) and each additional
+        // pair gets a chain of its own, "<system>|<sig1>_<sig2>", with its own
+        // reference, gradient history and reset key.
+        //
+        // With `network.second_phase_channel`, two of these signals can share a
+        // frequency (L1C beside L1W); index pair (0, 1) then fails the `denom`
+        // guard below and files nothing.  Assigning the bare-system chain by
+        // index would leave it empty: every valid pair would land on a
+        // "<system>|<sig1>_<sig2>" chain, and the chain that owns the reference
+        // election, the gradient history and the reset keys would receive no
+        // rows.  The bare-system chain therefore goes to the first pair with
+        // distinct frequencies, tracked by if_pair_taken.  When no two phases
+        // share a frequency that pair is (0, 1) and the output is
+        // byte-identical, also when (0, 1) passes the frequency guard and then
+        // fails a later check, because the flag is set at the frequency guard,
+        // where an index test would also have committed (card SID phase 6a).
+        const std::string sys_key = PppUtils::getSystemString(obs.system);
+        const std::size_t n_use =
+            all_pairs_ ? phase_signals.size() : std::size_t{ 2 };
+        bool if_pair_taken = false;
+        for (std::size_t a = 0; a < n_use; ++a) {
+        for (std::size_t b = a + 1; b < n_use; ++b) {
+        const auto& [sig1, obs1, mod1] = phase_signals[a];
+        const auto& [sig2, obs2, mod2] = phase_signals[b];
+
+        const double f1 = ppp_utils_.getFrequency(sig1, obs.system, obs.satellite);
+        const double f2 = ppp_utils_.getFrequency(sig2, obs.system, obs.satellite);
+        if (!std::isfinite(f1) || !std::isfinite(f2) || f1 <= 0.0 || f2 <= 0.0) continue;
+
+        const double f1sq = f1 * f1;
+        const double f2sq = f2 * f2;
+        const double denom = f1sq - f2sq;
+        if (std::abs(denom) < 1e-12) continue;
+        // Claim the bare-system chain here, at the frequency guard, and not at
+        // the row push (see the comment above the loop; card SID phase 6a).
+        const bool is_first_pair = !if_pair_taken;
+        if_pair_taken = true;
+
+        const double c1 = f1sq / denom;
+        const double c2 = -f2sq / denom;
+
+        const double omc1 = obs1 - mod1;
+        const double omc2 = obs2 - mod2;
+        const double phi_if_omc = c1 * omc1 + c2 * omc2;
+        if (!std::isfinite(phi_if_omc)) continue;
+
+        const double lambda_if = computeIfWavelengthMeters(obs, sig1, sig2);
+        if (lambda_if <= 0.0) continue;
+
+        const std::string synth_key = sig1 + "_" + sig2;
+
+        result[is_first_pair ? sys_key : (sys_key + "|" + synth_key)].push_back(
+            { obs.satellite, synth_key, sig1, sig2,
+              phi_if_omc, obs.elevation, lambda_if, obs.system, obs.los });
+        }  // b: second band of the pair
+        }  // a: first band of the pair
     }
 
     bool IfPhaseSlipDetector::selectReference(const std::vector<SatData>& sat_vec,
@@ -605,21 +497,22 @@ namespace GnssProcessor {
     // Double-difference processing
     // =================================================================
 
-    std::map<std::string, double> IfPhaseSlipDetector::processDoubleDifferences(
-        const std::vector<SatData>& sat_vec,
-        const std::string& sys_str,
-        ConstellationState& cs,
-        const std::map<std::string, double>& grad_phi_if,
-        double lambda_if,
-        bool ref_changed,
-        double position_sigma_3d,
-        const Eigen::Vector3d& delta_pos,
-        std::vector<std::string>& reset_keys,
-        bool run_ref_arm,
-        RefArmOutcome* out_outcome,
-        const RefArmOutcome* inherit) {
+    // The steps D1 to D7 below share one ChainWork (slip/IfPhaseChainWork.hpp);
+    // processDoubleDifferences calls them in this order:
+    //   D1  indexChainSatellites       the satellite lookup and the reference row
+    //   D2  rebaseOnReferenceChange    the median offset after a reference change
+    //   D3  formChainDoubleDifferences the between-epoch double differences
+    //   D4  applyGeometryCorrection    STAGED (IfPhaseStagedUserPath.cpp)
+    //   D5  runReferenceArm            the chain's own reference arm (applyRefFire)
+    //   D6  inheritReferenceVerdict    the adopted-reference inheritance path
+    //   D7  flagNonReferenceOutliers   STAGED (IfPhaseStagedUserPath.cpp)
 
-        auto logger = log_manager_.getLogger("if_slip_detector");
+    IfPhaseSlipDetector::ChainResult IfPhaseSlipDetector::processDoubleDifferences(
+        const ChainEpoch& chain, ConstellationState& cs, RefArmPlan plan) {
+        ChainWork w(chain, cs, log_manager_.getLogger("if_slip_detector"));
+        const auto& sys_str = chain.sys_str;
+        auto& run_ref_arm = plan.run_ref_arm;
+        auto& inherit = plan.inherit;
 
         // Second lock (§22.6): an additional chain may run the arm only through
         // the empirical gate.  With ref_gate_.enable off, the legacy candidate
@@ -640,64 +533,16 @@ namespace GnssProcessor {
         // through a closed gate.
         const bool pos_gated = epoch_gated_;
 
-        // Build sat lookup
-        std::map<std::string, const SatData*> sat_map;
-        for (const auto& sd : sat_vec) sat_map[sd.satellite] = &sd;
+        indexChainSatellites(w);                       // D1
+        if (!w.ref_data) return std::move(w.result);
 
-        // Find reference SatData
-        const SatData* ref_data = sat_map.count(cs.ref_satellite) ? sat_map.at(cs.ref_satellite) : nullptr;
-        if (!ref_data) return {};
-
-        // --- Handle reference change: apply median offset to prev gradients ---
-        if (ref_changed && !cs.prev_grad.empty()) {
-            std::vector<double> offsets;
-            for (const auto& [sat, g] : grad_phi_if) {
-                auto prev_it = cs.prev_grad.find(sat);
-                if (prev_it != cs.prev_grad.end())
-                    offsets.push_back(g - prev_it->second);
-            }
-            if (!offsets.empty()) {
-                const double offset = computeMedian(offsets);
-                for (auto& [sat, prev_g] : cs.prev_grad) prev_g += offset;
-                logger->debug("{}: Reference changed to {} (elev {:.1f}), applied median offset {:.6f} m",
-                    sys_str, cs.ref_satellite, cs.ref_elevation, offset);
-            }
-        }
-
-        // --- Compute between-epoch double differences ---
-        std::map<std::string, double> delta_grad;
-        bool all_finite = true;
-        for (const auto& [sat, g] : grad_phi_if) {
-            auto prev_it = cs.prev_grad.find(sat);
-            if (prev_it != cs.prev_grad.end()) {
-                delta_grad[sat] = g - prev_it->second;
-            } else {
-                delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
-                all_finite = false;
-            }
-        }
-        for (const auto& [sat, dd] : delta_grad)
-            if (!std::isfinite(dd)) { all_finite = false; break; }
-
-        // --- Geometry correction: remove (e_sat - e_ref) · Δpos ---
-        // The between-satellite single difference does not fully cancel
-        // geometry.  The epoch-to-epoch position change leaves a residual of
-        // (e_sat - e_ref) · Δpos in each double difference; it is removed here
-        // using the current-epoch LOS vectors and the position change.
-        if (delta_pos.norm() > 1e-6) {
-            const Eigen::Vector3d& ref_los = ref_data->los;
-            for (auto& [sat, dd] : delta_grad) {
-                if (!std::isfinite(dd)) continue;
-                auto sit = sat_map.find(sat);
-                if (sit == sat_map.end()) continue;
-                const double geom_correction = (sit->second->los - ref_los).dot(delta_pos);
-                dd -= geom_correction;
-            }
-        }
+        rebaseOnReferenceChange(w);                    // D2
+        formChainDoubleDifferences(w);                 // D3
+        applyGeometryCorrection(w);                    // D4  STAGED: a pinned station has delta_pos 0
 
         if (pos_gated) {
             // Return geometry-corrected DDs for tracing/caching but suppress slip flagging
-            return delta_grad;
+            return std::move(w.result);
         }
 
         // --- Reference satellite slip check (runs regardless of all_finite) ---
@@ -716,178 +561,9 @@ namespace GnssProcessor {
         // false-alarm cost.  Sharing the reference keeps every chain's gradients
         // in one frame and leaves the screening where it was.
         //
-        // applyRefFire is the action of a reference-arm fire (§22.6), shared by
-        // the chain's own arm and by the adopted-reference inheritance path below
-        // so the two stay identical.  `inherited` changes only the telemetry and
-        // the log text: the reset key, the rebase and the trace record are the
-        // same response, because the claim acted on ("this chain's reference
-        // stepped") is the same whichever arm established it.
-        auto applyRefFire = [&](double median_dd, RefGateVerdict verdict,
-                                std::size_t n_finite, bool inherited) {
-            auto& rc = ref_arm_chain_counters_[sys_str];
-            if (inherited) ++rc.fires_inherited; else ++rc.fires_own;
-
-            const std::string ref_amb_key = cs.ref_satellite + "_" + ref_data->phase_if_key;
-            reset_keys.push_back(ref_amb_key);
-
-            // An own-arm fire logs the unchanged text; only an inherited fire
-            // adds a clause, so no existing log line changes under the knob.
-            if (inherited)
-                logger->warn("{}: Reference satellite {} IF phase slip INHERITED from the "
-                    "first chain's verdict: median(delta_grad)={:.4f} m ({:.1f} IF cyc), "
-                    "lambda_IF={:.4f} m (n_finite={}); reset {}",
-                    sys_str, cs.ref_satellite, median_dd,
-                    median_dd / lambda_if, lambda_if, n_finite, ref_amb_key);
-            else
-                logger->warn("{}: Reference satellite {} IF phase slip: "
-                    "median(delta_grad)={:.4f} m ({:.1f} IF cyc) > 0.5*lambda_IF={:.4f} m "
-                    "(n_finite={}); reset {}",
-                    sys_str, cs.ref_satellite, median_dd,
-                    median_dd / lambda_if, 0.5 * lambda_if,
-                    n_finite, ref_amb_key);
-
-            writeTraceRecord(*ref_data, sys_str, 0.0, median_dd,
-                cs.ref_satellite, false, lambda_if, true, "ref_slip",
-                position_sigma_3d, false);
-
-            // Correct the previous gradients by the median offset and recompute
-            // the double differences, so that the later outlier detection (here,
-            // or the network pool the driver runs on the cached DDs) sees only
-            // the per-satellite residual after the reference slip is removed.
-            // This prevents fan-out: without it the reference's own step appears
-            // in every non-reference DD of the chain and is attributed to arcs
-            // that did not slip (§22.6).
-            //
-            // Skipped for a FireNoRebase verdict (card R).  The rebase asserts
-            // that the reference slipped by median_dd, which holds only for a
-            // coherent common step.  On an incoherent multi-satellite station
-            // event the median is a mixture, and subtracting it from every other
-            // satellite's history would inject a false step into clean arcs and
-            // hide the real per-satellite jumps from the network pool arm
-            // downstream.  The reference arc is still reset (above); only the
-            // magnitude claim is dropped.
-            if (verdict != RefGateVerdict::FireRebase) return;
-
-            // Count the fan-out rows this rebase clears: non-reference DDs above
-            // the chain's physical floor before it and below the floor after.  This
-            // is the on-path count of rows that would otherwise have been
-            // attributed to a clean arc (invariant #4); it counts floor crossings
-            // and makes no claim about what the network pool would have flagged.
-            const double floor_m = ref_gate_.floor_frac * lambda_if;
-            for (const auto& [sat, dd] : delta_grad)
-                if (sat != cs.ref_satellite && std::isfinite(dd)
-                    && std::abs(dd) > floor_m && std::abs(dd - median_dd) <= floor_m)
-                    ++rc.fanout_suppressed;
-
-            for (auto& [sat, prev_g] : cs.prev_grad)
-                if (sat != cs.ref_satellite) prev_g += median_dd;
-
-            delta_grad.clear();
-            all_finite = true;
-            for (const auto& [sat, g] : grad_phi_if) {
-                auto prev_it = cs.prev_grad.find(sat);
-                if (prev_it != cs.prev_grad.end()) {
-                    delta_grad[sat] = g - prev_it->second;
-                } else {
-                    delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
-                    all_finite = false;
-                }
-            }
-        };
-
-        if (run_ref_arm)
-        // Collect finite non-reference double differences.  If their median is
-        // large, the reference satellite slipped, not the non-reference ones.
-        // This runs before individual outlier detection so that the common-mode
-        // reference slip is removed first.
-        {
-            std::vector<double> non_ref_dds;
-            // Geometry for §6.14.6 item 2: the mean sin(elevation) of the family
-            // that forms the median, and sin(el) of the reference, whose own noise
-            // is the median's dominant term.  Both are clamped so a horizon arc
-            // cannot blow up 1/sin(el).  Computed always (a few flops) but read
-            // only under ref_gate_.elev_norm, so with it off the output is
-            // byte-identical.
-            constexpr double kDegToRad = 0.017453292519943295;
-            double sin_sum = 0.0;
-            int    sin_n   = 0;
-            const double sin_clamp =
-                std::sin(std::max(ref_gate_.elev_clamp_deg, 0.0) * kDegToRad);
-            for (const auto& [sat, dd] : delta_grad)
-                if (sat != cs.ref_satellite && std::isfinite(dd)) {
-                    non_ref_dds.push_back(dd);
-                    auto sit = sat_map.find(sat);
-                    if (sit != sat_map.end()) {
-                        sin_sum += std::max(std::sin(sit->second->elevation * kDegToRad),
-                                            sin_clamp);
-                        ++sin_n;
-                    }
-                }
-            const double sin_bar = (sin_n > 0) ? (sin_sum / sin_n) : 1.0;
-            const double sin_ref =
-                std::max(std::sin(ref_data->elevation * kDegToRad), sin_clamp);
-
-            if (non_ref_dds.size() >= 2) {
-                // Tier T1r opportunity (invariant #4): a usable family existed, so
-                // the reference arm could screen this station-epoch-chain.  Counted
-                // whether or not the hardened gate is armed, because the legacy
-                // condition below runs in both modes.  Its denominator is not the
-                // pool arm's per-(station, sat, pair) sample count, which is why
-                // T1r is a separate tier from T1.
-                ++ref_gate_counters_.gate_opportunities;
-                // The same tier split per gradient chain (§22.6).  The aggregate
-                // above sums every chain into one number, so it cannot show
-                // whether the additional chains' arm is a flood or a backstop.
-                auto& rc_own = ref_arm_chain_counters_[sys_str];
-                ++rc_own.opportunities;
-                const double median_dd = computeMedian(non_ref_dds);
-
-                // The legacy condition is the candidate filter; when the hardened
-                // gate is armed it then decides (empirical scale, coherence, thin
-                // family, persistence).  With the gate disabled the legacy
-                // condition is the decision, and the output is byte-identical
-                // (card R).
-                RefGateVerdict verdict =
-                    (std::abs(median_dd) > ref_gate_.floor_frac * lambda_if)
-                        ? RefGateVerdict::FireRebase
-                        : RefGateVerdict::Suppress;
-                if (verdict != RefGateVerdict::Suppress) ++rc_own.candidates;
-                if (ref_gate_.enable) {
-                    // The dispersion scale advances on every epoch with a usable
-                    // family, candidate or not (see updateRefDispersion).
-                    double disp = 0.0;
-                    const double s_eff = updateRefDispersion(
-                        cs, non_ref_dds, median_dd,
-                        (ref_gate_.k > 0.0)
-                            ? (ref_gate_.floor_frac * lambda_if / ref_gate_.k)
-                            : (ref_gate_.floor_frac * lambda_if),
-                        sin_bar, disp);
-                    if (verdict != RefGateVerdict::Suppress) {
-                        ++ref_gate_counters_.legacy_candidates;
-                        verdict = evaluateRefGate(cs, non_ref_dds, disp, s_eff,
-                                                  median_dd, lambda_if, sys_str,
-                                                  sin_bar, sin_ref);
-                    } else {
-                        // A quiet epoch breaks any consecutive-fire run.
-                        cs.ref_consec_fires = 0;
-                    }
-                }
-                const bool ref_fire = (verdict != RefGateVerdict::Suppress);
-                if (ref_fire) ++ref_gate_counters_.gate_flags;  // tier T1r numerator
-
-                if (ref_fire) applyRefFire(median_dd, verdict, non_ref_dds.size(), false);
-
-                // Publish this chain's verdict so the additional chains that
-                // adopted its reference can inherit it (§22.6).  Recorded whether or
-                // not it fired, so the inheritance path can tell "the arm ran and
-                // found nothing" from "the arm did not run".
-                if (out_outcome) {
-                    out_outcome->satellite = cs.ref_satellite;
-                    out_outcome->verdict   = verdict;
-                    out_outcome->fired     = ref_fire;
-                }
-            }
-        }
+        // D5 below runs the chain's own arm; D6 applies an inherited verdict.  Both
+        // act through applyRefFire, so the two responses stay identical.
+        if (run_ref_arm) runReferenceArm(w);
 
         // --- Adopted-reference inheritance path (§22.6) ----------------------
         // An additional chain that adopted the first chain's reference does not
@@ -906,18 +582,7 @@ namespace GnssProcessor {
         if (!run_ref_arm && inherit && inherit->fired
             && !inherit->satellite.empty()
             && inherit->satellite == cs.ref_satellite) {
-            std::vector<double> non_ref_dds;
-            for (const auto& [sat, dd] : delta_grad)
-                if (sat != cs.ref_satellite && std::isfinite(dd))
-                    non_ref_dds.push_back(dd);
-            if (non_ref_dds.size() >= 2) {
-                auto& rc = ref_arm_chain_counters_[sys_str];
-                ++rc.opportunities;
-                const double median_dd = computeMedian(non_ref_dds);
-                if (std::abs(median_dd) > ref_gate_.floor_frac * lambda_if)
-                    ++rc.candidates;
-                applyRefFire(median_dd, inherit->verdict, non_ref_dds.size(), true);
-            }
+            inheritReferenceVerdict(w, inherit);
         }
 
         // --- Non-reference outlier detection ---
@@ -925,50 +590,277 @@ namespace GnssProcessor {
         // outlier flag against a network-pooled per-signal-pair MAD, so it is
         // skipped here.  The between-epoch double differences are still computed,
         // cached and carried forward, and the reference-slip check above still runs.
-        if (!defer_flagging_) {
-        if (all_finite && delta_grad.size() >= 2) {
-            // Full MAD-based adaptive outlier check
-            auto cleaned = checkOutliers(delta_grad, cs.ref_satellite, lambda_if);
-            for (const auto& [sat, dd] : cleaned) {
-                if (sat == cs.ref_satellite) continue;
-                if (!std::isfinite(dd) && std::isfinite(delta_grad[sat])) {
-                    auto sit = sat_map.find(sat);
-                    if (sit == sat_map.end()) continue;
-                    const std::string amb_key = sat + "_" + sit->second->phase_if_key;
-                    reset_keys.push_back(amb_key);
+        if (!defer_flagging_) flagNonReferenceOutliers(w);   // D7  STAGED: the network defers
 
-                    logger->warn("{}: IF phase slip for {}: delta_grad={:.4f} m, lambda_IF={:.4f} m; reset {}",
-                        sys_str, sat, delta_grad[sat], lambda_if, amb_key);
+        return std::move(w.result);
+    }
 
-                    writeTraceRecord(*sit->second, sys_str,
-                        grad_phi_if.at(sat), delta_grad.at(sat),
-                        cs.ref_satellite, ref_changed, lambda_if,
-                        true, "non_ref_outlier", position_sigma_3d, false);
-                }
+    void IfPhaseSlipDetector::indexChainSatellites(ChainWork& w) const {
+        const auto& sat_vec = w.chain.sat_vec;
+        const auto& cs = w.cs;
+        auto& sat_map = w.sat_map;
+        auto& ref_data = w.ref_data;
+
+    // Build sat lookup
+    for (const auto& sd : sat_vec) sat_map[sd.satellite] = &sd;
+
+    // Find reference SatData
+    ref_data = sat_map.count(cs.ref_satellite) ? sat_map.at(cs.ref_satellite) : nullptr;
+    }
+
+    void IfPhaseSlipDetector::rebaseOnReferenceChange(ChainWork& w) const {
+        const auto& logger = w.logger;
+        const auto& sys_str = w.chain.sys_str;
+        const auto& grad_phi_if = w.chain.grad_phi_if;
+        const auto& ref_changed = w.chain.ref_changed;
+        auto& cs = w.cs;
+
+        // --- Handle reference change: apply median offset to prev gradients ---
+        if (ref_changed && !cs.prev_grad.empty()) {
+            std::vector<double> offsets;
+            for (const auto& [sat, g] : grad_phi_if) {
+                auto prev_it = cs.prev_grad.find(sat);
+                if (prev_it != cs.prev_grad.end())
+                    offsets.push_back(g - prev_it->second);
             }
-        } else {
-            // Incomplete data: apply fixed threshold on available diffs
-            for (const auto& [sat, dd] : delta_grad) {
-                if (!std::isfinite(dd) || std::abs(dd) <= lambda_if) continue;
-                auto sit = sat_map.find(sat);
-                if (sit == sat_map.end()) continue;
-                const std::string amb_key = sat + "_" + sit->second->phase_if_key;
-                reset_keys.push_back(amb_key);
-
-                logger->warn("{}: IF phase slip (fixed threshold) for {}: |delta_grad|={:.4f} m > lambda_IF={:.4f} m; reset {}",
-                    sys_str, sat, std::abs(dd), lambda_if, amb_key);
-
-                writeTraceRecord(*sit->second, sys_str,
-                    grad_phi_if.count(sat) ? grad_phi_if.at(sat)
-                        : std::numeric_limits<double>::quiet_NaN(),
-                    dd, cs.ref_satellite, ref_changed, lambda_if,
-                    true, "fixed_threshold", position_sigma_3d, false);
+            if (!offsets.empty()) {
+                const double offset = computeMedian(offsets);
+                for (auto& [sat, prev_g] : cs.prev_grad) prev_g += offset;
+                logger->debug("{}: Reference changed to {} (elev {:.1f}), applied median offset {:.6f} m",
+                    sys_str, cs.ref_satellite, cs.ref_elevation, offset);
             }
         }
-        } // if (!defer_flagging_)
-
-        return delta_grad;
     }
+
+    void IfPhaseSlipDetector::formChainDoubleDifferences(ChainWork& w) {
+        const auto& grad_phi_if = w.chain.grad_phi_if;
+        const auto& cs = w.cs;
+        auto& delta_grad = w.result.delta_grad;
+        auto& all_finite = w.all_finite;
+
+        // --- Compute between-epoch double differences ---
+        formDoubleDifferences(grad_phi_if, cs, delta_grad, all_finite);
+        for (const auto& [sat, dd] : delta_grad)
+            if (!std::isfinite(dd)) { all_finite = false; break; }
+    }
+
+    void IfPhaseSlipDetector::formDoubleDifferences(
+        const std::map<std::string, double>& grad_phi_if, const ConstellationState& cs,
+        std::map<std::string, double>& delta_grad, bool& all_finite) {
+        for (const auto& [sat, g] : grad_phi_if) {
+            auto prev_it = cs.prev_grad.find(sat);
+            if (prev_it != cs.prev_grad.end()) {
+                delta_grad[sat] = g - prev_it->second;
+            } else {
+                delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
+                all_finite = false;
+            }
+        }
+    }
+
+    // Collect finite non-reference double differences.  If their median is
+    // large, the reference satellite slipped, not the non-reference ones.
+    // This runs before individual outlier detection so that the common-mode
+    // reference slip is removed first.
+    void IfPhaseSlipDetector::runReferenceArm(ChainWork& w) {
+        const auto& sys_str = w.chain.sys_str;
+        const auto& lambda_if = w.chain.lambda_if;
+        auto& cs = w.cs;
+        const auto& sat_map = w.sat_map;
+        const auto& ref_data = w.ref_data;
+        const auto& delta_grad = w.result.delta_grad;
+        auto& outcome = w.result.outcome;
+
+        std::vector<double> non_ref_dds;
+        // Geometry for §6.14.6 item 2: the mean sin(elevation) of the family
+        // that forms the median, and sin(el) of the reference, whose own noise
+        // is the median's dominant term.  Both are clamped so a horizon arc
+        // cannot blow up 1/sin(el).  Computed always (a few flops) but read
+        // only under ref_gate_.elev_norm, so with it off the output is
+        // byte-identical.
+        constexpr double kDegToRad = 0.017453292519943295;
+        double sin_sum = 0.0;
+        int    sin_n   = 0;
+        const double sin_clamp =
+            std::sin(std::max(ref_gate_.elev_clamp_deg, 0.0) * kDegToRad);
+        for (const auto& [sat, dd] : delta_grad)
+            if (sat != cs.ref_satellite && std::isfinite(dd)) {
+                non_ref_dds.push_back(dd);
+                auto sit = sat_map.find(sat);
+                if (sit != sat_map.end()) {
+                    sin_sum += std::max(std::sin(sit->second->elevation * kDegToRad),
+                                        sin_clamp);
+                    ++sin_n;
+                }
+            }
+        const double sin_bar = (sin_n > 0) ? (sin_sum / sin_n) : 1.0;
+        const double sin_ref =
+            std::max(std::sin(ref_data->elevation * kDegToRad), sin_clamp);
+
+        if (non_ref_dds.size() >= 2) {
+            // Tier T1r opportunity (invariant #4): a usable family existed, so
+            // the reference arm could screen this station-epoch-chain.  Counted
+            // whether or not the hardened gate is armed, because the legacy
+            // condition below runs in both modes.  Its denominator is not the
+            // pool arm's per-(station, sat, pair) sample count, which is why
+            // T1r is a separate tier from T1.
+            ++ref_gate_counters_.gate_opportunities;
+            // The same tier split per gradient chain (§22.6).  The aggregate
+            // above sums every chain into one number, so it cannot show
+            // whether the additional chains' arm is a flood or a backstop.
+            auto& rc_own = ref_arm_chain_counters_[sys_str];
+            ++rc_own.opportunities;
+            const double median_dd = computeMedian(non_ref_dds);
+
+            // The legacy condition is the candidate filter; when the hardened
+            // gate is armed it then decides (empirical scale, coherence, thin
+            // family, persistence).  With the gate disabled the legacy
+            // condition is the decision, and the output is byte-identical
+            // (card R).
+            RefGateVerdict verdict =
+                (std::abs(median_dd) > ref_gate_.floor_frac * lambda_if)
+                    ? RefGateVerdict::FireRebase
+                    : RefGateVerdict::Suppress;
+            if (verdict != RefGateVerdict::Suppress) ++rc_own.candidates;
+            if (ref_gate_.enable) {
+                // The dispersion scale advances on every epoch with a usable
+                // family, candidate or not (see updateRefDispersion).
+                double disp = 0.0;
+                const double s_eff = updateRefDispersion(
+                    cs, non_ref_dds, median_dd,
+                    (ref_gate_.k > 0.0)
+                        ? (ref_gate_.floor_frac * lambda_if / ref_gate_.k)
+                        : (ref_gate_.floor_frac * lambda_if),
+                    sin_bar, disp);
+                if (verdict != RefGateVerdict::Suppress) {
+                    ++ref_gate_counters_.legacy_candidates;
+                    verdict = evaluateRefGate(cs, non_ref_dds, disp, s_eff,
+                                              median_dd, lambda_if, sys_str,
+                                              sin_bar, sin_ref);
+                } else {
+                    // A quiet epoch breaks any consecutive-fire run.
+                    cs.ref_consec_fires = 0;
+                }
+            }
+            const bool ref_fire = (verdict != RefGateVerdict::Suppress);
+            if (ref_fire) ++ref_gate_counters_.gate_flags;  // tier T1r numerator
+
+            if (ref_fire) applyRefFire(w, median_dd, verdict, non_ref_dds.size(), false);
+
+            // Publish this chain's verdict so the additional chains that
+            // adopted its reference can inherit it (§22.6).  Recorded whether or
+            // not it fired, so the inheritance path can tell "the arm ran and
+            // found nothing" from "the arm did not run".
+            outcome.satellite = cs.ref_satellite;
+            outcome.verdict   = verdict;
+            outcome.fired     = ref_fire;
+        }
+    }
+
+    // applyRefFire is the action of a reference-arm fire (§22.6), shared by
+    // the chain's own arm and by the adopted-reference inheritance path below
+    // so the two stay identical.  `inherited` changes only the telemetry and
+    // the log text: the reset key, the rebase and the trace record are the
+    // same response, because the claim acted on ("this chain's reference
+    // stepped") is the same whichever arm established it.
+    void IfPhaseSlipDetector::applyRefFire(ChainWork& w, double median_dd,
+                                           RefGateVerdict verdict, std::size_t n_finite,
+                                           bool inherited) {
+        const auto& logger = w.logger;
+        const auto& sys_str = w.chain.sys_str;
+        const auto& grad_phi_if = w.chain.grad_phi_if;
+        const auto& lambda_if = w.chain.lambda_if;
+        const auto& position_sigma_3d = w.chain.position_sigma_3d;
+        auto& cs = w.cs;
+        const auto& ref_data = w.ref_data;
+        auto& delta_grad = w.result.delta_grad;
+        auto& reset_keys = w.result.reset_keys;
+        auto& all_finite = w.all_finite;
+
+        auto& rc = ref_arm_chain_counters_[sys_str];
+        if (inherited) ++rc.fires_inherited; else ++rc.fires_own;
+
+        const std::string ref_amb_key = cs.ref_satellite + "_" + ref_data->phase_if_key;
+        reset_keys.push_back(ref_amb_key);
+
+        // An own-arm fire logs the unchanged text; only an inherited fire
+        // adds a clause, so no existing log line changes under the knob.
+        if (inherited)
+            logger->warn("{}: Reference satellite {} IF phase slip INHERITED from the "
+                "first chain's verdict: median(delta_grad)={:.4f} m ({:.1f} IF cyc), "
+                "lambda_IF={:.4f} m (n_finite={}); reset {}",
+                sys_str, cs.ref_satellite, median_dd,
+                median_dd / lambda_if, lambda_if, n_finite, ref_amb_key);
+        else
+            logger->warn("{}: Reference satellite {} IF phase slip: "
+                "median(delta_grad)={:.4f} m ({:.1f} IF cyc) > 0.5*lambda_IF={:.4f} m "
+                "(n_finite={}); reset {}",
+                sys_str, cs.ref_satellite, median_dd,
+                median_dd / lambda_if, 0.5 * lambda_if,
+                n_finite, ref_amb_key);
+
+        logSlipRecord(*ref_data, sys_str, 0.0, median_dd,
+            cs.ref_satellite, lambda_if, "ref_slip",
+            position_sigma_3d);
+
+        // Correct the previous gradients by the median offset and recompute
+        // the double differences, so that the later outlier detection (here,
+        // or the network pool the driver runs on the cached DDs) sees only
+        // the per-satellite residual after the reference slip is removed.
+        // This prevents fan-out: without it the reference's own step appears
+        // in every non-reference DD of the chain and is attributed to arcs
+        // that did not slip (§22.6).
+        //
+        // Skipped for a FireNoRebase verdict (card R).  The rebase asserts
+        // that the reference slipped by median_dd, which holds only for a
+        // coherent common step.  On an incoherent multi-satellite station
+        // event the median is a mixture, and subtracting it from every other
+        // satellite's history would inject a false step into clean arcs and
+        // hide the real per-satellite jumps from the network pool arm
+        // downstream.  The reference arc is still reset (above); only the
+        // magnitude claim is dropped.
+        if (verdict != RefGateVerdict::FireRebase) return;
+
+        // Count the fan-out rows this rebase clears: non-reference DDs above
+        // the chain's physical floor before it and below the floor after.  This
+        // is the on-path count of rows that would otherwise have been
+        // attributed to a clean arc (invariant #4); it counts floor crossings
+        // and makes no claim about what the network pool would have flagged.
+        const double floor_m = ref_gate_.floor_frac * lambda_if;
+        for (const auto& [sat, dd] : delta_grad)
+            if (sat != cs.ref_satellite && std::isfinite(dd)
+                && std::abs(dd) > floor_m && std::abs(dd - median_dd) <= floor_m)
+                ++rc.fanout_suppressed;
+
+        for (auto& [sat, prev_g] : cs.prev_grad)
+            if (sat != cs.ref_satellite) prev_g += median_dd;
+
+        delta_grad.clear();
+        all_finite = true;
+        formDoubleDifferences(grad_phi_if, cs, delta_grad, all_finite);
+    }
+
+    void IfPhaseSlipDetector::inheritReferenceVerdict(ChainWork& w,
+                                                      const RefArmOutcome* inherit) {
+        const auto& sys_str = w.chain.sys_str;
+        const auto& lambda_if = w.chain.lambda_if;
+        const auto& cs = w.cs;
+        const auto& delta_grad = w.result.delta_grad;
+
+        std::vector<double> non_ref_dds;
+        for (const auto& [sat, dd] : delta_grad)
+            if (sat != cs.ref_satellite && std::isfinite(dd))
+                non_ref_dds.push_back(dd);
+        if (non_ref_dds.size() >= 2) {
+            auto& rc = ref_arm_chain_counters_[sys_str];
+            ++rc.opportunities;
+            const double median_dd = computeMedian(non_ref_dds);
+            if (std::abs(median_dd) > ref_gate_.floor_frac * lambda_if)
+                ++rc.candidates;
+            applyRefFire(w, median_dd, inherit->verdict, non_ref_dds.size(), true);
+        }
+    }
+
 
     // =================================================================
     // Top-level detect()
@@ -981,7 +873,6 @@ namespace GnssProcessor {
         double model_nuisance_m) {
 
         std::vector<std::string> reset_keys;
-        auto logger = log_manager_.getLogger("if_slip_detector");
         last_if_jumps_.clear();
         last_if_jumps_all_.clear();
         // Monotonic detect() index: the unit of the reference gate's persistence
@@ -993,20 +884,7 @@ namespace GnssProcessor {
         for (const auto& obs : observations)
             if (!obs.satellite.empty()) { current_epoch_ = obs.time; break; }
 
-        // The model-nuisance gate (§6.14.6 item 3) is the counterpart of the
-        // position gate for the term that survives on the network path.  Both set
-        // the same `pos_gated` flag because the response is the same: keep
-        // differencing and keep the gradient chain current, but do not flag on a
-        // statistic whose null hypothesis does not hold this epoch.
-        const bool nuisance_gated =
-            (nuisance_max_m_ > 0.0) && (model_nuisance_m > nuisance_max_m_);
-        const bool pos_gated = (position_sigma_3d > kPositionSigmaThresholdM) || nuisance_gated;
-        epoch_gated_ = pos_gated;   // the single definition processDoubleDifferences reads
-        if (pos_gated)
-            logger->debug("IF slip detection gated: position_sigma_3d={:.3f} m (thr {:.2f}), "
-                "model_nuisance={:.4f} m (thr {:.4f}, 0 = off)",
-                position_sigma_3d, kPositionSigmaThresholdM,
-                model_nuisance_m, nuisance_max_m_);
+        const bool pos_gated = gateEpoch(position_sigma_3d, model_nuisance_m);  // STAGED gates
 
         auto by_constellation = groupByConstellation(observations);
 
@@ -1108,18 +986,22 @@ namespace GnssProcessor {
             for (const auto& sd : sat_vec)
                 grad_phi_if[sd.satellite] = sd.phi_if_omc - ref_data->phi_if_omc;
 
+            // The chain's epoch: the input of the double-difference step.
+            const ChainEpoch chain{ sys_str, sat_vec, grad_phi_if, lambda_if, ref_changed,
+                                    delta_pos, position_sigma_3d };
+
             // Double-difference processing (if previous epoch exists).
             // Returns geometry-corrected, reference-slip-corrected delta_grads.
             std::map<std::string, double> delta_grad;
             if (!cs.prev_grad.empty()) {
-                RefArmOutcome outcome;
-                delta_grad = processDoubleDifferences(sat_vec, sys_str, cs, grad_phi_if,
-                    lambda_if, ref_changed, position_sigma_3d, delta_pos, reset_keys,
-                    /*run_ref_arm=*/first_pair_chain || run_extra_own_arm,  // §14.10.4 / §22.6
-                    /*out_outcome=*/first_pair_chain ? &outcome : nullptr,
-                    /*inherit=*/inherit);
-                if (first_pair_chain && !outcome.satellite.empty())
-                    first_ref_arm_by_sys[sys_only] = outcome;
+                ChainResult result = processDoubleDifferences(chain, cs,
+                    RefArmPlan{ /*run_ref_arm=*/first_pair_chain || run_extra_own_arm,  // §14.10.4 / §22.6
+                                /*inherit=*/inherit });
+                delta_grad = std::move(result.delta_grad);
+                reset_keys.insert(reset_keys.end(), result.reset_keys.begin(),
+                                  result.reset_keys.end());
+                if (first_pair_chain && !result.outcome.satellite.empty())
+                    first_ref_arm_by_sys[sys_only] = result.outcome;
             }
 
             // For satellites without a previous epoch, fill NaN
@@ -1127,84 +1009,9 @@ namespace GnssProcessor {
                 if (delta_grad.find(sat) == delta_grad.end())
                     delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
 
-            // Build per-satellite lookup for caching: elevation, the IF pair
-            // signature (sig1/sig2), and the per-pair IF wavelength c/(f1+f2) =
-            // the (1,1) slip jump, used as the physical detection floor downstream.
-            std::map<std::string, const SatData*> sat_lookup;
-            for (const auto& sd : sat_vec)
-                sat_lookup[sd.satellite] = &sd;
+            publishChainJumps(chain, cs, delta_grad, first_pair_chain, pos_gated);
 
-            // Write trace records for non-slip satellites
-            if (trace_file_.is_open()) {
-                for (const auto& sd : sat_vec) {
-                    bool was_reset = false;
-                    for (const auto& key : reset_keys)
-                        if (key.find(sd.satellite) == 0) { was_reset = true; break; }
-                    if (was_reset) continue;
-
-                    writeTraceRecord(sd, sys_str,
-                        grad_phi_if.count(sd.satellite) ? grad_phi_if.at(sd.satellite)
-                            : std::numeric_limits<double>::quiet_NaN(),
-                        delta_grad.count(sd.satellite) ? delta_grad.at(sd.satellite)
-                            : std::numeric_limits<double>::quiet_NaN(),
-                        cs.ref_satellite, ref_changed, lambda_if,
-                        false, pos_gated ? "pos_gated" : "ok",
-                        position_sigma_3d, pos_gated);
-                }
-            }
-
-            // Cache IF jump values for external query (network pool / joint MW+IF).
-            for (const auto& [sat, dd] : delta_grad) {
-                IfJumpInfo info;
-                info.delta_grad_m = dd;
-                auto sdit = sat_lookup.find(sat);
-                if (sdit != sat_lookup.end()) {
-                    info.lambda_if_m   = sdit->second->lambda_if;   // per-pair (1,1) floor
-                    info.elevation_deg = sdit->second->elevation;
-                    info.sig1          = sdit->second->sig1;
-                    info.sig2          = sdit->second->sig2;
-                } else {
-                    info.lambda_if_m = lambda_if;                   // fallback: constellation median
-                }
-                // A gated epoch publishes its jumps as invalid (§6.14.6 item 3).
-                // The network pool arm admits any sample with `jp.valid`, so a
-                // jump marked valid on a gated epoch would be thresholded by the
-                // pool even though this detector suppressed its own flagging; the
-                // gate has to hold for both arms.  The jumps are still cached (a
-                // downstream consumer may read the value) and the gradient chain
-                // still advances, so detection resumes directly after the gate.
-                info.valid        = std::isfinite(dd) && !pos_gated;
-                info.is_reference = (sat == cs.ref_satellite);
-                // The chain this sample came from (§14.10), so a driver that flags
-                // it can restart that chain alone.
-                info.state_key    = sys_str;
-                // The post-flag evaluation of a re-seeded gradient (card ARL): the
-                // sample a reset would have left out.
-                info.after_reseed = (cs.reseeded.count(sat) > 0);
-                // The all-pairs cache is a superset and is always filled; the
-                // per-satellite cache holds the first pair only, as with the knob off.
-                if (!info.sig1.empty() && !info.sig2.empty())
-                    last_if_jumps_all_[{ sat, info.sig1 + "_" + info.sig2 }] = info;
-                if (first_pair_chain) last_if_jumps_[sat] = info;
-            }
-
-            // Store gradients for next epoch (exclude reset satellites).  The
-            // re-seed marks described the gradients being replaced, so they go too.
-            cs.prev_grad.clear();
-            cs.prev_los.clear();
-            cs.reseeded.clear();
-            for (const auto& [sat, g] : grad_phi_if) {
-                bool was_reset = false;
-                for (const auto& key : reset_keys)
-                    if (key.find(sat + "_") == 0) { was_reset = true; break; }
-                if (!was_reset) {
-                    cs.prev_grad[sat] = g;
-                    auto sit_it = std::find_if(sat_vec.begin(), sat_vec.end(),
-                        [&](const SatData& sd) { return sd.satellite == sat; });
-                    if (sit_it != sat_vec.end())
-                        cs.prev_los[sat] = sit_it->los;
-                }
-            }
+            storeChainGradients(chain, cs, reset_keys);
 
             // Store receiver position for geometry correction on next epoch.
             if (receiver_position.norm() > 1e-6) {
@@ -1215,6 +1022,75 @@ namespace GnssProcessor {
 
         return reset_keys;
     }
+
+    void IfPhaseSlipDetector::publishChainJumps(const ChainEpoch& chain,
+        const ConstellationState& cs, const std::map<std::string, double>& delta_grad,
+        bool first_pair_chain, bool pos_gated) {
+        const auto& sys_str = chain.sys_str;
+        const auto& sat_vec = chain.sat_vec;
+        const auto& lambda_if = chain.lambda_if;
+
+        // Build per-satellite lookup for caching: elevation, the IF pair
+        // signature (sig1/sig2), and the per-pair IF wavelength c/(f1+f2) =
+        // the (1,1) slip jump, used as the physical detection floor downstream.
+        std::map<std::string, const SatData*> sat_lookup;
+        for (const auto& sd : sat_vec)
+            sat_lookup[sd.satellite] = &sd;
+
+        // Cache IF jump values for external query (network pool / joint MW+IF).
+        for (const auto& [sat, dd] : delta_grad) {
+            IfJumpInfo info;
+            info.delta_grad_m = dd;
+            auto sdit = sat_lookup.find(sat);
+            if (sdit != sat_lookup.end()) {
+                info.lambda_if_m   = sdit->second->lambda_if;   // per-pair (1,1) floor
+                info.elevation_deg = sdit->second->elevation;
+                info.sig1          = sdit->second->sig1;
+                info.sig2          = sdit->second->sig2;
+            } else {
+                info.lambda_if_m = lambda_if;                   // fallback: constellation median
+            }
+            // A gated epoch publishes its jumps as invalid (§6.14.6 item 3).
+            // The network pool arm admits any sample with `jp.valid`, so a
+            // jump marked valid on a gated epoch would be thresholded by the
+            // pool even though this detector suppressed its own flagging; the
+            // gate has to hold for both arms.  The jumps are still cached (a
+            // downstream consumer may read the value) and the gradient chain
+            // still advances, so detection resumes directly after the gate.
+            info.valid        = std::isfinite(dd) && !pos_gated;
+            info.is_reference = (sat == cs.ref_satellite);
+            // The chain this sample came from (§14.10), so a driver that flags
+            // it can restart that chain alone.
+            info.state_key    = sys_str;
+            // The post-flag evaluation of a re-seeded gradient (card ARL): the
+            // sample a reset would have left out.
+            info.after_reseed = (cs.reseeded.count(sat) > 0);
+            // The all-pairs cache is a superset and is always filled; the
+            // per-satellite cache holds the first pair only, as with the knob off.
+            if (!info.sig1.empty() && !info.sig2.empty())
+                last_if_jumps_all_[{ sat, info.sig1 + "_" + info.sig2 }] = info;
+            if (first_pair_chain) last_if_jumps_[sat] = info;
+        }
+    }
+
+    void IfPhaseSlipDetector::storeChainGradients(const ChainEpoch& chain,
+        ConstellationState& cs, const std::vector<std::string>& reset_keys) {
+        const auto& grad_phi_if = chain.grad_phi_if;
+
+        // Store gradients for next epoch (exclude reset satellites).  The
+        // re-seed marks described the gradients being replaced, so they go too.
+        cs.prev_grad.clear();
+        cs.reseeded.clear();
+        for (const auto& [sat, g] : grad_phi_if) {
+            bool was_reset = false;
+            for (const auto& key : reset_keys)
+                if (key.find(sat + "_") == 0) { was_reset = true; break; }
+            if (!was_reset) {
+                cs.prev_grad[sat] = g;
+            }
+        }
+    }
+
 
     // =================================================================
     // External reset
@@ -1227,7 +1103,6 @@ namespace GnssProcessor {
             if (it != cs.prev_grad.end()) {
                 logger->debug("Cleared IF phase history for {} in constellation {}", satellite, sys);
                 cs.prev_grad.erase(it);
-                cs.prev_los.erase(satellite);
                 cs.reseeded.erase(satellite);
             }
             if (cs.ref_satellite == satellite) {
@@ -1251,7 +1126,6 @@ namespace GnssProcessor {
         if (it != cs.prev_grad.end()) {
             logger->debug("Cleared IF phase history for {} in chain {}", satellite, state_key);
             cs.prev_grad.erase(it);
-            cs.prev_los.erase(satellite);
             cs.reseeded.erase(satellite);
         }
         if (cs.ref_satellite == satellite) {
@@ -1302,21 +1176,6 @@ namespace GnssProcessor {
         auto sit = constellation_state_.find(state_key);
         if (sit == constellation_state_.end()) return false;
         return reseedInChain(state_key, sit->second, satellite);
-    }
-
-    void IfPhaseSlipDetector::resetAll() {
-        constellation_state_.clear();
-        last_if_jumps_.clear();
-        last_if_jumps_all_.clear();
-        log_manager_.getLogger("if_slip_detector")->debug("All IF phase slip state cleared");
-    }
-
-    IfPhaseSlipDetector::IfJumpInfo IfPhaseSlipDetector::getLastIfJump(
-        const std::string& satellite) const {
-        auto it = last_if_jumps_.find(satellite);
-        if (it != last_if_jumps_.end())
-            return it->second;
-        return {};
     }
 
 } // namespace GnssProcessor

@@ -323,15 +323,16 @@ public:
     TurboEditResolver(const GnssConfig& config, LogManager& log_manager);
 
     /**
-     * @brief Provide satellite BIA corrections.
+     * @brief Accept satellite BIA corrections, and ignore them.
      *
-     * The GF combination is bias-free in its time-difference, so this is a
-     * no-op today; retained for interface parity with the detectors and for
-     * forward compatibility.
+     * The GF combination is bias-free in its time difference, so the resolver
+     * reads no correction.  The call is kept because three drivers make it
+     * (@c CycleSlipManager::setCorrections, the real-time engine's
+     * construction, network setup); it stores nothing.
      *
-     * @param corrections Bias source (may be nullptr); owned externally.
+     * @param corrections Bias source (may be nullptr); not stored.
      */
-    void setCorrections(const GnssCorrections* corrections) { corrections_ = corrections; }
+    void setCorrections(const GnssCorrections* corrections) { (void)corrections; }
 
     /**
      * @brief Resolve cycle slips for one epoch.
@@ -402,11 +403,6 @@ public:
     void resetSatelliteSignal(const std::string& satellite, const std::string& signal);
 
     /**
-     * @brief Drop all GF arc state (hard-gap restart).
-     */
-    void resetAll();
-
-    /**
      * @brief Override the inter-epoch gap tolerance before a GF arc is reset.
      * @param seconds New gap tolerance; values ≤ 0 are ignored.
      */
@@ -423,10 +419,17 @@ public:
     bool isTracingEnabled() const { return trace_file_.is_open(); }
 
 private:
+    // --- resolve()'s working values (slip/TurboEditEpochWork.hpp) ---------
+    struct MwFlag;         ///< An MW wide-lane flag on one arc this epoch (R2).
+    struct PairEpoch;      ///< One pass-1 row (R3).
+    struct StagedInteger;  ///< One staged per-(satellite, signal) integer (pass 2).
+    struct EpochWork;      ///< resolve()'s per-epoch working value.
+    struct RowWork;        ///< One pass-2 row's working value (A0 to A5).
+    struct BridgeSolve;    ///< One bridged row's across-gap candidate solve (A2).
+
     const GnssConfig& config_;
     LogManager& log_manager_;
     PppUtils ppp_utils_;
-    const GnssCorrections* corrections_{ nullptr };
 
     /// Effective inter-epoch gap tolerance (s); overridable via @c setMaxGapSeconds.
     double max_gap_seconds_{ kDefaultMaxGapSeconds };
@@ -569,20 +572,28 @@ private:
     /// truncating the window.
     static constexpr int kBridgeKWindow = 3;
 
+    /**
+     * @brief One (satellite, signal)'s run of observed epochs, for the gap
+     *        bridge's moot-versus-repair dispatch.
+     */
+    struct SignalRun {
+        double last_seen_s{ 0.0 };         ///< Continuous GPS seconds of the last epoch the signal was observed.
+        double continuous_since_s{ 0.0 };  ///< Start of its current unbroken run of observed epochs.
+    };
     /// Observation-domain per-(sat, signal) phase-continuity tracking for the
     /// gap bridge's moot-vs-repair dispatch.  Key "G03_L2W".
-    /// @c sig_continuous_since_s_ holds the start of the signal's current
+    /// @c SignalRun::continuous_since_s holds the start of the signal's current
     /// unbroken run of observed epochs.  A signal whose run started at or
     /// before a bridge's reference epoch was observed at every epoch through
     /// the gap (a full receiver gap breaks nothing, since no epochs
     /// occurred), so its ambiguity survived.  A signal that missed an epoch
     /// that did occur was pruned and reseeded by the state side
     /// (prune-on-first-miss).  Below-elevation-mask epochs count as missing
-    /// (those observations are excluded from the filter too).  Cleared only
-    /// by @c resetAll: continuity is an observation-domain fact, independent
-    /// of filter resets.
-    std::map<std::string, double> sig_last_seen_s_;
-    std::map<std::string, double> sig_continuous_since_s_;
+    /// (those observations are excluded from the filter too).  Never
+    /// cleared: continuity is an observation-domain fact, independent of
+    /// filter resets.  One record per key: the last-seen time and the run
+    /// start were two parallel maps, always written with the same keys.
+    std::map<std::string, SignalRun> sig_runs_;
     /// (sat, signal) keys ("G03_L2W") the caller holds across a receiver LLI
     /// gap (@c markHeldAcrossLli).  The gap-bridge dispatch adjudicates a
     /// held signal as continuous (integer repair) rather than moot: the
@@ -784,6 +795,310 @@ private:
     static std::string arcKey(const std::string& sat,
                               const std::string& sig1,
                               const std::string& sig2);
+
+    // =======================================================================
+    // resolve(), step by step
+    // =======================================================================
+    // resolve (TurboEditResolver.cpp) calls these in this order over one
+    // EpochWork; R5 runs once per pass-1 row, over one RowWork.
+    //
+    //   R0  adviseCoarseRate               TurboEditResolver.cpp
+    //   R1  stampEpoch                     TurboEditResolver.cpp
+    //   R2  indexMwFlags                   TurboEditChain.cpp
+    //   R3  collectChainRows               TurboEditChain.cpp
+    //         per observation trackSignalContinuity, then per phase pair
+    //         collectPairRow: restartArcOnBreak, a bridged warm-up row or
+    //         rollWarmUpChain, or expireBridgeStash and a TD2 row
+    //   R4  assessIonosphere               TurboEditChain.cpp
+    //   R5  adjudicateRow                  TurboEditAdjudication.cpp
+    //         A0  openRow
+    //         A1  rerouteLateAcrossGap     TurboEditBridge.cpp
+    //         A2  adjudicateBridged        TurboEditBridge.cpp
+    //               adjudicateTrustedBridge: collectBridgeWlCandidates,
+    //               selectBridgeCandidate, applyBridgeSolve
+    //               (deferBridgeAdjudication)
+    //         A3  adjudicateFlagged (classifyCodeEvent)
+    //         A4  traceRow
+    //         A5  advanceArc
+    //   R6  reconcileStagedIntegers        TurboEditAdjudication.cpp
+    //   R7  withdrawContradictedVerdicts   TurboEditAdjudication.cpp
+    //   R8  logEpochSummary                TurboEditResolver.cpp
+    //   R9  finishEpoch                    TurboEditResolver.cpp
+    //
+    // Every adjudication stages its per-signal integers through stageInteger;
+    // the bridged solve's sibling-pair affirmation is affirmedZeroSignals.
+
+    /**
+     * @brief R0: report once per run that the sampling interval exceeds the
+     *        nominal high-rate regime, and mark the resolution's @c rate_ok.
+     * @param w          Epoch work; writes @c out.rate_ok.
+     * @param interval_s The caller's sampling interval (s); 0 or less means unknown.
+     */
+    void adviseCoarseRate(EpochWork& w, double interval_s);
+
+    /**
+     * @brief R1: take the epoch time from the first observation that carries
+     *        a satellite (the trace's time stamp and the consecutive-epoch
+     *        tests).
+     * @param w Epoch work; writes @c epoch_now_s.
+     */
+    void stampEpoch(EpochWork& w);
+
+    /**
+     * @brief R2: index the MW detector's pair flags by arc key, keeping a
+     *        published integer and a float estimate when any entry has one.
+     * @param w Epoch work; reads @c mw_results, writes @c mw_by_pair.
+     */
+    void indexMwFlags(EpochWork& w) const;
+
+    /**
+     * @brief R3 (pass 1): for every observation above the elevation mask,
+     *        record signal continuity and collect one row per dual-band phase
+     *        pair; then index the rows by arc key.
+     * @param w Epoch work; writes @c cache, @c cons_td2 and @c pe_by_key (and,
+     *          in the resolver, the GF arcs, the continuity record and the
+     *          cross-satellite pool).
+     */
+    void collectChainRows(EpochWork& w);
+
+    /**
+     * @brief Record one observation's phase signals in @c sig_runs_: a signal
+     *        not seen at the previous epoch starts a new run.
+     * @param obs     The observation (raw carrier phases).
+     * @param epoch_s Its continuous GPS seconds.
+     */
+    void trackSignalContinuity(const PppObservation& obs, double epoch_s);
+
+    /**
+     * @brief One phase pair of one observation in pass 1: the GF value, the
+     *        chain restart on a break, then a warm-up (a bridged row or a chain
+     *        roll) or a TD2 row with its cross-satellite pool sample.
+     * @param w       Epoch work; appends to @c cache and @c cons_td2.
+     * @param obs     The observation.
+     * @param pr      The pair, higher frequency first.
+     * @param epoch_s The observation's continuous GPS seconds.
+     */
+    void collectPairRow(EpochWork& w, const PppObservation& obs,
+                        const PhasePair& pr, double epoch_s);
+
+    /**
+     * @brief Restart a GF arc whose history is not strictly consecutive (an
+     *        absolute gap or a per-signal dropout), stashing the pre-gap level
+     *        for the gap bridge when the break is within the bridge cap.
+     * @param arc     The arc (written).
+     * @param epoch_s This epoch's continuous GPS seconds.
+     */
+    void restartArcOnBreak(GfArc& arc, double epoch_s) const;
+
+    /**
+     * @brief Roll a warm-up arc (fewer than two epochs) forward by one GF
+     *        sample, updating its rate EWMA when the previous sample exists.
+     * @param arc     The arc (written).
+     * @param gf      This epoch's GF value (m).
+     * @param epoch_s This epoch's continuous GPS seconds.
+     */
+    static void rollWarmUpChain(GfArc& arc, double gf, double epoch_s);
+
+    /**
+     * @brief Invalidate a pre-gap stash older than the bridge cap (extended by
+     *        the WL-settle window while a deferral waits).
+     * @param arc     The arc (written).
+     * @param epoch_s This epoch's continuous GPS seconds.
+     */
+    void expireBridgeStash(GfArc& arc, double epoch_s) const;
+
+    /**
+     * @brief R4: the cross-satellite IVI per constellation and the epoch's
+     *        global ionosphere-stability flag.
+     * @param w Epoch work; reads @c cons_td2, writes @c ivi_by_cons,
+     *          @c out.max_ivi and @c out.iono_stable.
+     */
+    void assessIonosphere(EpochWork& w) const;
+
+    /**
+     * @brief R5 (pass 2): adjudicate one pass-1 row in steps A0 to A5.
+     * @param w      Epoch work.
+     * @param cached The cached row (copied into the row work).
+     */
+    void adjudicateRow(EpochWork& w, const PairEpoch& cached);
+
+    /**
+     * @brief A0: the row's evidence: its constellation's IVI, the TD2 noise σ,
+     *        the split gate, its MW flag and its GF flag.
+     * @param w   Epoch work; reads @c ivi_by_cons and @c mw_by_pair.
+     * @param row Row work; writes the evidence members.
+     */
+    void openRow(const EpochWork& w, RowWork& row) const;
+
+    /**
+     * @brief A1: re-route a non-bridged row to the across-gap jump when its
+     *        pre-gap stash is valid and MW flagged late or a WL-settle deferral
+     *        is pending; abort a pending deferral on a new chain event.
+     * @param w   Epoch work; may add a reset satellite.
+     * @param row Row work; may rewrite @c pe and the arc's bridge state.
+     */
+    void rerouteLateAcrossGap(EpochWork& w, RowWork& row);
+
+    /**
+     * @brief A2: adjudicate a bridged row that carries an MW flag or a pending
+     *        deferral: the trust gates, the trusted adjudication, then the
+     *        pending mark or the one-shot consumption of the bridge.
+     * @param w   Epoch work.
+     * @param row Row work; writes the decision members and the arc's bridge
+     *            state.
+     */
+    void adjudicateBridged(EpochWork& w, RowWork& row);
+
+    /**
+     * @brief The trusted part of A2: a code-domain event when the GF level is
+     *        unmoved across the gap, a decline (or a deferral abort) when the
+     *        gap-widened σ cannot split, otherwise the candidate solve.
+     * @param w   Epoch work.
+     * @param row Row work.
+     * @return True when the adjudication acted (the bridge is then consumed).
+     */
+    bool adjudicateTrustedBridge(EpochWork& w, RowWork& row) const;
+
+    /**
+     * @brief The WL integer candidates of a bridged solve: the published MW
+     *        integer, the settled across-gap estimate on a deferral epoch, or
+     *        round(float) ± @c kBridgeKWindow at the flag epoch.
+     * @param w     Epoch work; reads @c wl_gap_evidence.
+     * @param row   Row work.
+     * @param solve Writes @c k_cands, @c k_published and @c k_settled.
+     */
+    void collectBridgeWlCandidates(const EpochWork& w, const RowWork& row,
+                                   BridgeSolve& solve) const;
+
+    /**
+     * @brief The candidates that pass the fractional, GF-separation and
+     *        sibling-affirmation gates, and the best of them.
+     * @param w         Epoch work.
+     * @param row       Row work.
+     * @param solve     Reads @c k_cands; writes the best candidate and the counts.
+     * @param denom     Lattice spacing λ1 − λ2 (m).
+     * @param zero_gate The gap-widened affirmative-zero bound (m).
+     */
+    void selectBridgeCandidate(const EpochWork& w, const RowWork& row,
+                               BridgeSolve& solve, double denom,
+                               double zero_gate) const;
+
+    /**
+     * @brief Act on a bridged solve: a unique candidate is dispatched per
+     *        signal (a repair or moot, by continuity); otherwise the WL-settle
+     *        deferral, or a reset when candidates existed.
+     * @param w     Epoch work; stages integers, may add moot or reset entries.
+     * @param row   Row work; writes the decision members.
+     * @param solve The solve.
+     * @return True when the solve acted.
+     */
+    bool applyBridgeSolve(EpochWork& w, RowWork& row, const BridgeSolve& solve) const;
+
+    /**
+     * @brief The WL-settle deferral: start (or continue) waiting for the
+     *        post-restart MW mean, or reset once the wait exceeds its cap.
+     * @param w            Epoch work; adds a pending or a reset satellite.
+     * @param row          Row work; writes the arc's deferral state and the
+     *                     decision.
+     * @param n_acceptable Candidates that passed the gates (logged as
+     *                     lattice-ambiguous or unsettled).
+     * @return True on the timeout reset.
+     */
+    bool deferBridgeAdjudication(EpochWork& w, RowWork& row, int n_acceptable) const;
+
+    /**
+     * @brief The signals a satellite's other continuous, unflagged
+     *        cross-frequency arcs affirm as unslipped across a bridged
+     *        interval (the sibling-pair zero affirmation).
+     * @param w           Epoch work; reads @c pe_by_key.
+     * @param sat         Satellite ("G01").
+     * @param exclude_key The bridged arc's own key.
+     * @param ref_epoch_s The bridge's pre-gap reference epoch (continuous GPS s).
+     * @return The affirmed signals.
+     */
+    std::set<std::string> affirmedZeroSignals(const EpochWork& w, const std::string& sat,
+                                              const std::string& exclude_key,
+                                              double ref_epoch_s) const;
+
+    /**
+     * @brief A3: a flagged row with a TD2 of its own: the WL integer (or
+     *        unknown), the MW-only code-domain veto, then ignore (a GF-only
+     *        flag that cannot split), reset, or the joint split.
+     * @param w   Epoch work.
+     * @param row Row work; writes the decision members.
+     */
+    void adjudicateFlagged(EpochWork& w, RowWork& row) const;
+
+    /**
+     * @brief The MW-only code-domain veto of A3: an MW flag with an
+     *        affirmatively flat GF under every trust gate is a code event.
+     * @param w        Epoch work; may add a code event and stage zeros.
+     * @param row      Row work; writes the traced null-line pair and the action.
+     * @param dN_wl    The MW wide-lane integer (0 when unknown).
+     * @param wl_known Whether MW published that integer.
+     * @param denom    Lattice spacing λ1 − λ2 (m).
+     * @return True when the row is a code event.
+     */
+    bool classifyCodeEvent(EpochWork& w, RowWork& row, int dN_wl, bool wl_known,
+                           double denom) const;
+
+    /**
+     * @brief A4: write the row's line of turbo_edit_trace.csv (no-op unless
+     *        tracing is enabled).
+     * @param row Row work (evidence and decision).
+     */
+    void traceRow(const RowWork& row) const;
+
+    /**
+     * @brief A5: re-seed the arc's chain after a slip (keeping the MAD window,
+     *        starting the cooldown), otherwise admit a clean TD2 to the MAD
+     *        window and roll the chain forward.
+     * @param w   Epoch work; reads @c epoch_now_s.
+     * @param row Row work; reads the row and @c did_slip, writes the arc.
+     */
+    static void advanceArc(const EpochWork& w, RowWork& row);
+
+    /**
+     * @brief Stage one per-(satellite, signal) integer; a different integer
+     *        already staged for the signal marks the satellite conflicting.
+     * @param w   Epoch work; writes @c cand or @c conflict_sats.
+     * @param sat Satellite ("G01").
+     * @param sig Signal ("L2W").
+     * @param dN  Integer slip in this signal's cycles (0 = clean).
+     * @param lam Signal wavelength (m).
+     * @param fr  Rounding residual of the float estimate.
+     */
+    static void stageInteger(EpochWork& w, const std::string& sat,
+                             const std::string& sig, int dN, double lam, double fr);
+
+    /**
+     * @brief R6: reset every conflicting satellite, then turn each remaining
+     *        satellite's staged integers into clean signals, moot signals and
+     *        repairs.
+     * @param w Epoch work; writes @c out.
+     */
+    static void reconcileStagedIntegers(EpochWork& w);
+
+    /**
+     * @brief R7: withdraw the code events and the pending deferrals of every
+     *        satellite that ended the epoch in @c reset_sats.
+     * @param w Epoch work; writes @c out.
+     */
+    static void withdrawContradictedVerdicts(EpochWork& w);
+
+    /**
+     * @brief R8: one info line when the epoch has any repair, reset, code
+     *        event, moot signal or pending deferral.
+     * @param w Epoch work; reads @c out.
+     */
+    void logEpochSummary(const EpochWork& w) const;
+
+    /**
+     * @brief R9: fold the epoch's TD2 pool into the cross-satellite tiers,
+     *        advance the previous-epoch marker, flush the trace.
+     * @param w Epoch work; reads @c epoch_now_s.
+     */
+    void finishEpoch(const EpochWork& w);
 
     /// Output stream for the per-pair joint-solve CSV trace.
     mutable std::ofstream trace_file_;

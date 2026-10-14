@@ -154,6 +154,7 @@ add_library(gnss_core STATIC
 	#     wired in; the MW detector currently covers slip detection.
 	# GfSlipDetector.cpp stays excluded until finished; IfPhaseSlipDetector.cpp is built (network).
 	src/core/slip/IfPhaseSlipDetector.cpp
+	src/core/slip/IfPhaseStagedUserPath.cpp
 	#src/core/slip/GfSlipDetector.cpp
 	src/core/slip/GraphicSlipDetector.cpp
 	src/core/slip/EwlSlipDetector.cpp
@@ -167,6 +168,9 @@ add_library(gnss_core STATIC
 	src/core/slip/CycleSlipCounters.cpp
 	src/core/slip/IonoVariabilityMonitor.cpp
 	src/core/slip/TurboEditResolver.cpp
+	src/core/slip/TurboEditChain.cpp
+	src/core/slip/TurboEditAdjudication.cpp
+	src/core/slip/TurboEditBridge.cpp
 	src/core/slip/SoftLliBridge.cpp
 	src/core/slip/JumpGapFitter.cpp
 	src/core/slip/SlipBridgeKernel.cpp
@@ -486,6 +490,7 @@ add_executable(gnss_tests
     tests/test_ledger_emit.cpp
     tests/test_slip_oracle.cpp
     tests/test_if_phase_slip_detector.cpp
+    tests/test_if_phase_ref_gate_defaults.cpp
     tests/test_if_td_pair_width.cpp
     tests/test_if_td_reseed_on_flag.cpp
     tests/test_iftd_ref_arm_all.cpp
