@@ -387,9 +387,15 @@ namespace GnssProcessor {
     // =================================================================
 
     std::string TimeUtils::formatGnssTime(const GnssTime& time) {
-        int year = 0, month = 0, day = 0, hour = 0, minute = 0;
-        double second = 0.0;
-        gpsTimeToGregorian(time, year, month, day, hour, minute, second);
+        // The UTC calendar is the GPS-scale calendar of the epoch shifted by the GPS-UTC
+        // offset (the leap count gpsTimeToGregorian subtracts), printed at millisecond
+        // resolution with the carry.
+        const double gps_seconds = static_cast<double>(time.week)
+                                 * static_cast<double>(SECONDS_IN_WEEK) + time.tow;
+        const double gps_jd = GPS_EPOCH_JD + gps_seconds / static_cast<double>(SECONDS_IN_DAY);
+        const GnssTime utc{ time.week, time.tow - leapSecondsGpsUtc(gps_jd) };
+        int year = 0, month = 0, day = 0, hour = 0, minute = 0, millisecond = 0;
+        gpsTimeToGpsScaleCalendarMs(utc, year, month, day, hour, minute, millisecond);
 
         std::ostringstream oss;
         oss << "GPS week " << time.week
@@ -400,7 +406,8 @@ namespace GnssProcessor {
             << std::setw(2) << day << " "
             << std::setw(2) << hour << ":"
             << std::setw(2) << minute << ":"
-            << std::setw(6) << std::fixed << std::setprecision(3) << second
+            << std::setw(2) << millisecond / 1000 << "."
+            << std::setw(3) << millisecond % 1000
             << " UTC)";
         return oss.str();
     }
@@ -413,6 +420,32 @@ namespace GnssProcessor {
         // No leap-second subtraction: the calendar fields stay on the TOW grid
         // (e.g. TOW=281400 → 06:10:00.000, not 06:09:42).
         julianDayToGregorian(jd_gps, year, month, day, hour, minute, second);
+    }
+
+    void TimeUtils::gpsTimeToGpsScaleCalendarMs(const GnssTime& gpsTime, int& year, int& month,
+                                                int& day, int& hour, int& minute,
+                                                int& millisecond) {
+        constexpr int64_t kMsPerDay = SECONDS_IN_DAY * 1000;
+        // The one rounding: the epoch as an integer count of milliseconds since the GPS
+        // epoch.  Every field below is exact integer arithmetic on that count.
+        const int64_t total_ms = static_cast<int64_t>(gpsTime.week) * SECONDS_IN_WEEK * 1000
+                               + static_cast<int64_t>(std::llround(gpsTime.tow * 1000.0));
+        // Floor division, so a count before the GPS epoch keeps a non-negative time of day.
+        int64_t days = total_ms / kMsPerDay;
+        int64_t ms_of_day = total_ms % kMsPerDay;
+        if (ms_of_day < 0) {
+            ms_of_day += kMsPerDay;
+            --days;
+        }
+        // The date of that day's midnight.  GPS_EPOCH_JD + days is a half-integer Julian
+        // day, exact in a double, so the Gregorian conversion carries no rounding.
+        int midnight_hour = 0, midnight_minute = 0;
+        double midnight_second = 0.0;
+        julianDayToGregorian(GPS_EPOCH_JD + static_cast<double>(days), year, month, day,
+                             midnight_hour, midnight_minute, midnight_second);
+        hour        = static_cast<int>(ms_of_day / 3600000);
+        minute      = static_cast<int>((ms_of_day / 60000) % 60);
+        millisecond = static_cast<int>(ms_of_day % 60000);
     }
 
 } // namespace GnssProcessor
