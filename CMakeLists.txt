@@ -79,6 +79,10 @@ add_library(gnss_core STATIC
     src/core/corrections/GnssCorrections.cpp
     src/core/corrections/OceanTideModel.cpp
     src/core/filter/KalmanFilter.cpp
+    src/core/filter/KalmanKernels.cpp
+    src/core/filter/KalmanResidualQc.cpp
+    src/core/filter/KalmanPostFitQc.cpp
+    src/core/filter/KalmanOutlierResponse.cpp
     src/core/filter/Smoother.cpp
     src/core/filter/StateManager.cpp
     src/core/filter/ImuIntegrator.cpp

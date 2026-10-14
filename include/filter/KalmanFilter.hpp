@@ -34,6 +34,19 @@ namespace GnssProcessor {
      * MeasurementModel, and post-fit residual validation.  Reports whether an
      * update was applied, skipped, or needs a measurement rebuild (ambiguity
      * reset or full reset).
+     *
+     * The member functions are defined in five files by concern (card UOM step
+     * U2b), and each declaration below that is not in the driver names its file:
+     *   - src/core/filter/KalmanFilter.cpp: the driver (construction, predict,
+     *     update, the IEKF step, the pseudo-observation update, the drains and
+     *     the per-epoch hooks);
+     *   - src/core/filter/KalmanKernels.cpp: the algebra (the sparse-H products of
+     *     include/filter/KalmanKernels.hpp, the aided-predict splice, the dense
+     *     Joseph update);
+     *   - src/core/filter/KalmanResidualQc.cpp: the Baarda statistics;
+     *   - src/core/filter/KalmanPostFitQc.cpp: the post-fit outlier screen;
+     *   - src/core/filter/KalmanOutlierResponse.cpp: the responses to an outlier
+     *     and the initial covariance seed.
      */
     class KalmanFilter {
     public:
@@ -183,6 +196,8 @@ namespace GnssProcessor {
          * @param R          Measurement noise covariance (m x m).
          * @param[out] x_out Posterior state vector (n).
          * @param[out] P_out Posterior covariance (n x n).
+         *
+         * Defined in src/core/filter/KalmanKernels.cpp.
          */
         static void josephPseudoUpdate(const Eigen::VectorXd& x, const Eigen::MatrixXd& P,
                                        const Eigen::MatrixXd& H, const Eigen::VectorXd& innovation,
@@ -200,6 +215,8 @@ namespace GnssProcessor {
          * @return {outlier found, complete reset}.  A complete reset also sets
          *         the first flag.  On an outlier, @ref update returns
          *         UpdateResult::NeedsMeasurementRebuild.
+         *
+         * Defined in src/core/filter/KalmanPostFitQc.cpp.
          */
         std::pair<bool, bool> validatePostFitResiduals(EpochMeasurement& meas_update, Eigen::VectorXd& x_prev, Eigen::MatrixXd& P_prev);
 
@@ -247,6 +264,8 @@ namespace GnssProcessor {
          *                definite.
          * @param delta_0 Baarda non-centrality (@c baardaDelta0).
          * @return The per-row statistics and the variance-factor sums.
+         *
+         * Defined in src/core/filter/KalmanResidualQc.cpp.
          */
         static ResidualQcStats residualQcKernel(const Eigen::VectorXd& v,
                                                 const Eigen::MatrixXd& R,
@@ -268,6 +287,8 @@ namespace GnssProcessor {
          * @param sr_diag Diagonal of Sr = R − H·P⁺·Hᵀ.
          * @param Sr_full Optional full Sr for the correlation-aware form;
          *                nullptr selects the diagonal form.
+         *
+         * Defined in src/core/filter/KalmanResidualQc.cpp.
          */
         void computeResidualQc_(EpochMeasurement& meas, const Eigen::MatrixXd& R,
                                 const Eigen::VectorXd& sr_diag,
@@ -477,6 +498,8 @@ namespace GnssProcessor {
          *
          * Overrides only non-finite or negative entries; zero means a
          * deliberately fixed state.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void seedCovarianceDiagonals(Eigen::MatrixXd& P, size_t state_size) const;
 
@@ -494,6 +517,8 @@ namespace GnssProcessor {
          * @param Q_full       Baseline process noise (contribution Q assigned in place).
          * @param state_size   Full state dimension (skip guard for owned indices).
          * @param contributions Predict contributions to splice.
+         *
+         * Defined in src/core/filter/KalmanKernels.cpp.
          */
         static void spliceAndPropagate(Eigen::VectorXd& x, Eigen::MatrixXd& P,
                                        Eigen::MatrixXd& Q_full, std::size_t state_size,
@@ -512,6 +537,8 @@ namespace GnssProcessor {
          * @param x            Pre-update state vector (modified in place).
          * @param P            Pre-update covariance (modified in place).
          * @param epoch_prefix Log prefix.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void handlePhaseOutlier(const EpochMeasurement& measurement,
             const std::string& outlier_sat, const std::string& outlier_sig,
@@ -538,6 +565,8 @@ namespace GnssProcessor {
          * @param x            State vector (modified at the DD index).
          * @param P            Covariance (row/col cleared, diagonal reset).
          * @param epoch_prefix Log prefix.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void handleBaselinePhaseOutlier(const EpochMeasurement& measurement,
             const std::string& outlier_sat, const std::string& outlier_sig,
@@ -553,6 +582,8 @@ namespace GnssProcessor {
          * @param outlier_sig  Signal type.
          * @param max_idx      Row index of the outlier.
          * @param epoch_prefix Log prefix.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void handleCodeOutlier(EpochMeasurement& measurement,
             const std::string& outlier_sat, const std::string& outlier_sig,
@@ -564,6 +595,8 @@ namespace GnssProcessor {
          *
          * @param P            Covariance (zeroed and re-seeded in place).
          * @param epoch_prefix Log prefix.
+         *
+         * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void resetFilterCovariance(Eigen::MatrixXd& P, const std::string& epoch_prefix);
 
