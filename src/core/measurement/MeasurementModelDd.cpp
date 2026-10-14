@@ -37,18 +37,6 @@ namespace GnssProcessor {
     // filter needs.
     // =================================================================
 
-    namespace {
-
-        /// Build the DD ambiguity key: "DD|cons|sat_i|code|pivot".
-        std::string makeDdAmbKey(const std::string& cons,
-                                 const std::string& sat_i,
-                                 const std::string& code,
-                                 const std::string& pivot) {
-            return "DD|" + cons + "|" + sat_i + "|" + code + "|" + pivot;
-        }
-
-    } // anonymous namespace
-
     // ===================================================================
     // The DD build's working types
     // ===================================================================
@@ -684,8 +672,8 @@ namespace GnssProcessor {
         // covariance.
         // Build the expected set as parsed (cons, sat_i, code, pivot) tuples
         // so the prune doesn't depend on string-formatting details of
-        // makeDdAmbKey matching exactly what's stored.  Then walk the
-        // ambiguity map, parse each DD-namespaced key, and remove any
+        // StateKeys::makeDdAmbiguityKey matching exactly what's stored.  Then
+        // walk the ambiguity map, parse each DD-namespaced key, and remove any
         // tuple not in the expected set.
         using DdTuple = std::tuple<std::string, std::string, std::string, std::string>;
         std::set<DdTuple> expected;
@@ -751,7 +739,7 @@ namespace GnssProcessor {
             if (r.obs_type != 'L') continue;
             if (r.integer_capable) continue;
             non_integer_capable_dd_ambiguity_keys_.insert(
-                makeDdAmbKey(r.cons, r.sat_i, r.rov_code, r.sat_p));
+                StateKeys::makeDdAmbiguityKey(r.cons, r.sat_i, r.rov_code, r.sat_p));
         }
     }
 
@@ -772,7 +760,7 @@ namespace GnssProcessor {
             // tracking attribute, the float ambiguity will absorb the
             // residual sat-DCB; integer fixing requires DCB
             // harmonization (Phase 2 plan) to be valid.
-            const std::string key = makeDdAmbKey(r.cons, r.sat_i, r.rov_code, r.sat_p);
+            const std::string key = StateKeys::makeDdAmbiguityKey(r.cons, r.sat_i, r.rov_code, r.sat_p);
             int aidx = state_manager_.getAmbiguityIndex(key);
             if (aidx < 0) {
                 state_manager_.addAmbiguity(key, r.innov_pre);
@@ -884,7 +872,7 @@ namespace GnssProcessor {
                 }
                 em.innovations(a) = r.innov;
                 em.R_v(a)         = r.var_brsd_i + r.var_brsd_p;
-                em.satellite_ids.push_back(r.sat_i + "-" + r.sat_p);
+                em.satellite_ids.push_back(SatPairId{r.sat_i, r.sat_p}.str());
                 // Surface the rover code in residual traces.  When aliased
                 // with a different reference attribute, append the ref
                 // code so log readers can spot mixed-attribute rows.

@@ -193,7 +193,7 @@ namespace GnssProcessor {
                     nlwl_phase_signals[obs.satellite]
                         .try_emplace(ref_type[1], ref_type);
                 } else {
-                    required_ambiguities.insert(obs.satellite + "_" + ref_type);
+                    required_ambiguities.insert(StateKeys::makeAmbiguityKey(obs.satellite, ref_type));
                     if (pc_on && is_uncombined) required_pc_sats[obs.satellite] = obs.elevation;
                 }
             }
@@ -213,13 +213,15 @@ namespace GnssProcessor {
         // uncombined mode their satellites join the iono keep-set, so that a
         // whole-satellite outage does not leave the repaired ambiguity against a
         // reseeded iono state.  The seeding loops are driven by observations and
-        // never touch these keys, so the held state passes through unchanged.
+        // never touch these keys, so the held state passes through unchanged.  The
+        // held keys are ambiguity keys of the state (SoftLliBridge::heldKeys), each
+        // with a satellite and a signal, so parseAmbiguityKey reads the satellite the
+        // first '_' delimits (it refuses only a key with an empty side).
         for (const auto& key : protected_ambiguity_keys_) {
             required_ambiguities.insert(key);
             if (is_uncombined) {
-                const auto p = key.find('_');
-                if (p != std::string::npos)
-                    required_iono_sats.insert(key.substr(0, p));
+                if (const auto parts = StateKeys::parseAmbiguityKey(key))
+                    required_iono_sats.insert(parts->satellite);
             }
         }
     }
@@ -356,7 +358,7 @@ namespace GnssProcessor {
                     continue;
                 for (const auto& [ref_type, val] : obs.observed) {
                     if (obsTypeOf(ref_type) != ObsType::Phase) continue;
-                    const std::string pkey = cons + "|" + ref_type;
+                    const std::string pkey = StateKeys::makePivotSeedKey(cons, ref_type);
                     pivot_abs_seeds[pkey] =
                         ambiguitySeed(obs, ref_type, x_seed);
                 }
@@ -382,7 +384,7 @@ namespace GnssProcessor {
                 const double nl_seed_cyc =
                     ambiguitySeed(obs, ref_sig, x_seed)
                     / lambda_ref;
-                pivot_abs_seeds[cons + "|NL"] = nl_seed_cyc;
+                pivot_abs_seeds[StateKeys::makePivotSeedKey(cons, "NL")] = nl_seed_cyc;
 
                 for (const auto& [b, b_sig] : sit->second) {
                     if (b == ref_band) continue;
@@ -404,7 +406,7 @@ namespace GnssProcessor {
                         ? (nl_seed_cyc - n_b_cyc)
                         : (n_b_cyc - nl_seed_cyc);
                     const std::string wl_pair = std::string{ a } + "_" + std::string{ z };
-                    pivot_abs_seeds[cons + "|WL|" + wl_pair] = wl_seed_cyc;
+                    pivot_abs_seeds[StateKeys::makePivotSeedKey(cons, "WL|" + wl_pair)] = wl_seed_cyc;
                 }
             }
         }
@@ -423,7 +425,7 @@ namespace GnssProcessor {
         for (const auto& obs : observations) {
             for (const auto& [ref_type, observed] : obs.observed) {
                 if (obsTypeOf(ref_type) != ObsType::Phase) continue;
-                const std::string amb_key = obs.satellite + "_" + ref_type;
+                const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, ref_type);
                 if (!required_ambiguities.count(amb_key)) continue;
 
                 const int existing_idx = state_manager_.getAmbiguityIndex(amb_key);
@@ -448,7 +450,7 @@ namespace GnssProcessor {
                             seed = 0.0;
                         } else {
                             // SD against the pivot's same-signal seed.
-                            const std::string pkey = cons + "|" + ref_type;
+                            const std::string pkey = StateKeys::makePivotSeedKey(cons, ref_type);
                             auto ps_it = pivot_abs_seeds.find(pkey);
                             if (ps_it != pivot_abs_seeds.end())
                                 seed -= ps_it->second;
@@ -572,7 +574,7 @@ namespace GnssProcessor {
                         if (is_pivot) {
                             nl_seed_cyc = 0.0;
                         } else {
-                            auto ps_it = pivot_abs_seeds.find(cons + "|NL");
+                            auto ps_it = pivot_abs_seeds.find(StateKeys::makePivotSeedKey(cons, "NL"));
                             if (ps_it != pivot_abs_seeds.end())
                                 nl_seed_cyc -= ps_it->second;
                         }
@@ -630,7 +632,7 @@ namespace GnssProcessor {
                         wl_seed = 0.0;
                     } else {
                         const std::string wl_pair = std::string{ a } + "_" + std::string{ z };
-                        auto ps_it = pivot_abs_seeds.find(cons + "|WL|" + wl_pair);
+                        auto ps_it = pivot_abs_seeds.find(StateKeys::makePivotSeedKey(cons, "WL|" + wl_pair));
                         if (ps_it != pivot_abs_seeds.end())
                             wl_seed -= ps_it->second;
                     }
@@ -743,7 +745,7 @@ namespace GnssProcessor {
                 if (obs.system != System::GLONASS) continue;
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (obsTypeOf(ref_type) != ObsType::Phase) continue;
-                    const std::string amb_key = obs.satellite + "_" + ref_type;
+                    const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, ref_type);
                     if (!required_ambiguities.count(amb_key)) continue;
                     state_manager_.markAmbiguityUnresolvable(amb_key);
                 }
@@ -755,7 +757,7 @@ namespace GnssProcessor {
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (obsTypeOf(ref_type) != ObsType::Phase) continue;
                     if (!isIonoFreePairLabel(ref_type)) continue;
-                    const std::string amb_key = obs.satellite + "_" + ref_type;
+                    const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, ref_type);
                     if (!required_ambiguities.count(amb_key)) continue;
                     const bool missing_bia =
                         !phaseBiasCoveredForAr(rowProducts(), obs.satellite, ref_type, obs.time);
@@ -774,7 +776,7 @@ namespace GnssProcessor {
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (obsTypeOf(ref_type) != ObsType::Phase) continue;
                     if (isIonoFreePairLabel(ref_type)) continue;
-                    const std::string amb_key = obs.satellite + "_" + ref_type;
+                    const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, ref_type);
                     if (!required_ambiguities.count(amb_key)) continue;
                     const bool missing_bia =
                         !phaseBiasCoveredForAr(rowProducts(), obs.satellite, ref_type, obs.time);
@@ -902,7 +904,7 @@ namespace GnssProcessor {
                                 && !isIonoFreePairLabel(s)
                                 && s.substr(0, 2) == band
                                 && piv_obs->modeled.count(s)
-                                && state_manager_.getSatBiasIndex(pivot_sat + "|" + s) >= 0) {
+                                && state_manager_.getSatBiasIndex(StateKeys::makeSatBiasKey(pivot_sat, s)) >= 0) {
                                 piv_sig = s;
                                 break;
                             }
@@ -1028,7 +1030,7 @@ namespace GnssProcessor {
                     if (biaCoversSignal(rowProducts(), obs.satellite, ref_type)
                         || ssrCoversCodeSignal(rowProducts(), obs.satellite, ref_type, obs.time)) continue;
                     if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
-                    const std::string key = obs.satellite + "|" + ref_type;
+                    const std::string key = StateKeys::makeSatBiasKey(obs.satellite, ref_type);
                     required_sat_biases.insert(key);
                     if (state_manager_.getSatBiasIndex(key) < 0) {
                         addOrRestoreSatBias(key, obs, ref_type, observed, "");
@@ -1043,7 +1045,7 @@ namespace GnssProcessor {
                     if (!isIonoFreePairLabel(ref_type)) continue;
                     if (ifCombHasFullBia(rowProducts(), obs.satellite, ref_type)) continue;
                     if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
-                    const std::string key = obs.satellite + "|" + ref_type;
+                    const std::string key = StateKeys::makeSatBiasKey(obs.satellite, ref_type);
                     required_sat_biases.insert(key);
                     if (state_manager_.getSatBiasIndex(key) < 0) {
                         addOrRestoreSatBias(key, obs, ref_type, observed, "IF");

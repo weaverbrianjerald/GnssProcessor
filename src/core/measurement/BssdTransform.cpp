@@ -54,9 +54,11 @@ const bool is_uncombined = config_.isUncombinedEnabled();
 // canonical signal pick is arc-stable and constellation-wide (see
 // PppModel::decideConstellationCanonicals): every satellite in a
 // constellation, pivot included, tracks the same signal set for the run.
+// The group key is the pivot-seed key ("GPS|L1C"): a phase group's key is the key
+// under which MeasurementModel seeds its non-pivot ambiguities against the pivot.
 auto bandGroupKey = [&](const std::string& constellation,
                         const std::string& signal_type) -> std::string {
-    return constellation + "|" + signal_type;
+    return StateKeys::makePivotSeedKey(constellation, signal_type);
 };
 
 // ---- Step 1: Classify rows -----------------------------------------
@@ -312,7 +314,7 @@ for (Eigen::Index i = 0; i < n; ++i) {
         const std::string ref_sat = update.satellite_ids[static_cast<size_t>(r_row)];
 
         if (!nlwl) {
-            const std::string ref_amb_key = ref_sat + "_" + pivot_sig;
+            const std::string ref_amb_key = StateKeys::makeAmbiguityKey(ref_sat, pivot_sig);
             const int ref_amb_idx = state_manager_.getAmbiguityIndex(ref_amb_key);
             if (ref_amb_idx >= 0)
                 ref_amb_cols.insert(static_cast<Eigen::Index>(ref_amb_idx));
@@ -351,9 +353,8 @@ for (Eigen::Index i = 0; i < n; ++i) {
     for (size_t k = 0; k < n_sd; ++k) {
         const Eigen::Index i = sd_entries[k].row;
         const Eigen::Index r = pivot_map[sd_entries[k].gk];
-        new_sat_ids.push_back(
-            update.satellite_ids[static_cast<size_t>(i)] + "-" +
-            update.satellite_ids[static_cast<size_t>(r)]);
+        new_sat_ids.push_back(SatPairId{ update.satellite_ids[static_cast<size_t>(i)],
+                                         update.satellite_ids[static_cast<size_t>(r)] }.str());
         new_sig_types.push_back(update.signal_types[static_cast<size_t>(i)]);
     }
 
