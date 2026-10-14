@@ -1,13 +1,13 @@
 #pragma once
 /**
  * @file NetworkMwWlGlue.hpp
- * @brief The MW-WL / EWL / UWL inject step of the PPP-RTK network producer,
+ * @brief The MW-WL / EWL inject step of the PPP-RTK network producer,
  *        relocated unchanged out of networkBuildCarryDdPriors (the second
  *        `if (mw_mach_on)` block) at decomposition INC-13.
  *
  * This is the back half of the WL machinery.  After the census and signal-selection
  * block has populated the shared per-(rx,sat) maps (revmap, lin_of, iono_of, primary,
- * band_top*_of, band_mid_of) and the invariant DD-carry blocks (Card-4) are built, this
+ * band_top_of) and the invariant DD-carry blocks (Card-4) are built, this
  * step runs the WL-2 EWL FFR-fixed lane, the bridge->WL-integer hold/inject walk and
  * the lane-trace diagnostic, and appends its hold rows to @p blocks.  The
  * `if (mw_mach_on)` guard stays at
@@ -41,7 +41,7 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 
 /**
- * @brief Build this epoch's EWL / UWL pseudo-observation rows and append them to
+ * @brief Build this epoch's EWL pseudo-observation rows and append them to
  *        @p blocks (WL-2 EWL FFR-fixed lane, the bridge->WL-integer hold/inject walk,
  *        and the lane-trace diagnostic).
  *
@@ -71,22 +71,14 @@ void networkMwWlInject(
     std::vector<WlInjectPlan>& wl_inject_epoch,
     std::vector<LaneTraceEntry>& lane_trace_epoch,
     WlCounters& wl_epoch,
-    std::map<char, WlCounters>& wl_cons_epoch,
     const std::map<std::pair<int, int>, Rev>& revmap,
     const std::map<std::pair<int, int>, double>& lin_of,
     const std::map<std::pair<int, std::string>, double>& iono_of,
     const std::map<std::pair<int, std::string>, PP>& primary,
     const std::map<std::pair<int, std::string>, std::pair<std::string, int>>& band_top_of,
-    const std::map<std::pair<int, std::string>, std::pair<std::string, int>>& band_top2_of,
-    const std::map<std::pair<int, std::string>, std::string>& band_mid_of,
     const std::function<double(const std::string&, const std::string&)>& lam,
     std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
     bool ewl_on,
-    bool uwl_on,
-    bool uwl_cold_on,
-    bool uwl_mid_on,
-    bool uwl_dual_on,
-    bool uwl_sib_gate_on,
     bool wl_inject_on,
     bool bridge_debias_on,
     bool mw_d5_dump,

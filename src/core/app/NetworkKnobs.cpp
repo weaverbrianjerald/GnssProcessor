@@ -694,26 +694,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         // third band (the EWL pair's uncarried leg: GPS L5, Galileo E5b) from the carry, so
         // that lane acquires no unearned stiff prior (the F6 wall).
         k.ewl_on = k.carry_invariant && nmw.ewl_enable;
-        // Per-constellation top tier (card M5 UWL-1).  uwl_on generalizes the EWL lane's
-        // hard-coded GPS band digits to the lane-tier table (Galileo UWL (E5b|E5,E5a)); the
-        // cold fix also admits n=1 unlagged statistics to the decision on tiers with
-        // λ ≥ uwl_cold_min_lambda_m (SPEC §3.3; GPS's 5.861 m EWL is excluded on purpose).
-        k.uwl_on      = k.ewl_on && nmw.uwl_enable;
-        k.uwl_cold_on = k.uwl_on && nmw.uwl_cold_fix;
         // 60-epoch age-bias fix: the bridge accumulates per-sample iono-de-biased GF, so every
         // read-time C_iono·Σc·ı̃ subtraction is disabled.  The two frames must not mix:
         // subtracting twice re-creates the bias with the opposite sign.
         k.bridge_debias_on = k.ewl_on && nmw.bridge_sample_debias;
-        // Mid-ladder bridge hop through E6 (motivated by the census): the WL decision is
-        // chained through the Galileo (E6,E5a) λ 2.931 m rung; re-rounding at λ_MID removes the
-        // top hop's λ-scale phase/iono amplification before it reaches the 0.751 m WL statistic.
-        k.uwl_mid_on  = k.uwl_on && nmw.uwl_mid_enable;
-        // Per-cycle preferred ('8') / fallback ('7') Galileo top rung, plus the
-        // untaken-sibling closure statistic 2·N(8,5) = N(7,5) (increment 5).  The hard gate
-        // is off by default until the residual distribution is measured (SPEC
-        // reconciliation note 2).
-        k.uwl_dual_on = k.uwl_on && nmw.uwl_dual_top;
-        k.uwl_sib_gate_on = k.uwl_dual_on && nmw.uwl_sib_gate;
         // WL lane (card M5 WL-2, SPEC §3.3/§3.4): the phase-bridge WL decision plus the
         // NL-preserving inject.  The bridge path needs the EWL integers, so it runs only when
         // both masters are on.  wl_inject alone would run the MW(1,2) fallback path (§3.5),
@@ -746,8 +730,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // resolved above, ahead of the deweight block).  Where the driver tested the SH model
     // (setup.sh_model), the test reads network.estimate_iono_sh: setup builds the model
     // exactly when that flag is set (ApplicationNetworkSetup.cpp), and a run whose setup
-    // fails never reaches the epoch loop.  The Galileo top band is read from
-    // config_.getNetworkConfig(), as the driver read it; the rest from `nc`, which is the
+    // fails never reaches the epoch loop.  The rest is read from `nc`, which is the
     // driver's own configuration in a run.
     {
         const bool sh_field = config_.estimateNetworkIonoSh();
@@ -762,7 +745,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                                    std::string("pb")) != vce_families.end();
         k.vce_wants_cb = std::find(vce_families.begin(), vce_families.end(),
                                    std::string("cb")) != vce_families.end();
-        k.uwl_gal_top  = config_.getNetworkConfig().mw_wl.uwl_gal_top_band;
         k.streaming_on = nc.streaming.enable;
         k.within_epoch_armed = config_.networkRaimWithinEpoch();
         k.pd_sticky          = config_.networkPhaseDatumSticky();

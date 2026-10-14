@@ -8,7 +8,7 @@
  * group it reads instead of one parameter per member:
  *   - @ref NetworkRunEngines: a const view of the run's estimation engines (the run end);
  *   - @ref NetworkEmitEngines: the three emit-layer engines (networkEmitStore, the run end);
- *   - @ref NetworkLaneRun: the WL/EWL/UWL lane machinery and its tallies
+ *   - @ref NetworkLaneRun: the WL/EWL lane machinery and its tallies
  *     (networkBuildCarryDdPriors, networkInstallCarry, the run end);
  *   - @ref NetworkRunTiming: the epoch-loop wall clock and the D0/D0b section-timer totals
  *     (the driver writes them, the run end reports them);
@@ -63,7 +63,7 @@ struct NetworkEmitEngines {
     NetworkClockEmitRebase clk_rebase; ///< Clock emission re-base: the common-mode frame hold and the per-satellite step marks (card CLK-R).
 };
 
-/// The WL/EWL/UWL lane machinery of one run (cards M5 WL-2, WL-3 and UWL-1): the
+/// The WL/EWL lane machinery of one run (card M5 WL-2): the
 /// lane layers, their run and per-build tallies, and the per-build plans the post-solve
 /// install consumes.  The driver builds it before the epoch loop and fills
 /// @ref ewl_lanes; networkBuildCarryDdPriors writes the per-build members on every build
@@ -75,11 +75,9 @@ struct NetworkLaneRun {
         : ewl_cfg(ewl_cfg) {}
 
     NetworkMwWlLayer::Config     ewl_cfg;          ///< The EWL lane's configuration; its min_arc_epochs is also the WL inject's arc-maturity floor.
-    std::vector<EwlLane>         ewl_lanes;        ///< One statistic-layer instance per tabled constellation and top rung under UWL-1, else one filterless instance; empty unless NetworkKnobs::ewl_on.
+    std::vector<EwlLane>         ewl_lanes;        ///< One filterless statistic-layer instance; empty unless NetworkKnobs::ewl_on.
     WlCounters                   wl_run;           ///< WL-walk run totals over every constellation (the aggregate).
     WlCounters                   wl_epoch;         ///< WL-walk per-build tallies.
-    std::map<char, WlCounters>   wl_cons_run;      ///< WL-walk run totals per constellation under UWL-1 (pooled lines hide which lane the events come from).
-    std::map<char, WlCounters>   wl_cons_epoch;    ///< WL-walk per-build tallies per constellation.
     /// The decided WL injects of this build (WL-2): per inject, the two bands' carry
     /// groups, the shared chord, the integer target, the per-band linearization DD sums (the
     /// F5 correction frame) and the wavelengths.  Computed from detector statistics

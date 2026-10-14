@@ -17,7 +17,6 @@
 #include "corrections/GnssCorrections.hpp"
 #include "logging/LogManager.hpp"
 #include "slip/ISlipDetector.hpp"
-#include "slip/MwLaneTiers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -685,24 +684,6 @@ namespace GnssProcessor {
         bool bridgeEnabled() const { return bridge_enabled_; }
 
         /**
-         * @brief Per-constellation lane-tier band digits for the bridge arc's band
-         *        pick (UWL-1).
-         *
-         * Empty (default) = the legacy hardcoded {1,2,5} scan for every constellation
-         * (byte-identical).  That scan forms no bridge arc for Galileo, which has no
-         * band '2', so without the table the cascade is GPS-only.  When the UWL card
-         * is armed, ApplicationNetwork pushes @ref mwLaneTierOf's table; a
-         * constellation absent from the pushed map then forms no bridge arc, on
-         * purpose (BDS-3 stays out until its clock-divergence item is closed, and the
-         * wiring logs a warning instead of skipping silently).  GPS's entry
-         * reproduces the legacy digits, so GPS-only runs are bit-identical with the
-         * table pushed.
-         */
-        void setLaneTiers(std::map<char, MwLaneTier> tiers) {
-            lane_tiers_ = std::move(tiers);
-        }
-
-        /**
          * @brief Arm the per-sample iono de-bias of the bridge accumulator
          *        (@c network.mw_wl.bridge_sample_debias, the fix for the age bias).
          *
@@ -719,8 +700,8 @@ namespace GnssProcessor {
          * constants that cancel in the closed DD cycle, so the cycle sum of the
          * subtraction equals the true @f$\nabla\Delta I@f$ exactly).
          *
-         * Frame contract: with the flag armed, @ref arcBridge and @ref arcBridgeCold
-         * serve iono-de-biased means, and the consumer
+         * Frame contract: with the flag armed, @ref arcBridge serves iono-de-biased
+         * means, and the consumer
          * must not subtract @f$C_{iono}\,\Sigma c\,\tilde\imath@f$ again at read time.
          * The estimates arrive via @ref setBridgeIonoEstimates one epoch lagged (F1).
          * A sample whose satellite has no pushed estimate is skipped (counted via
@@ -794,47 +775,6 @@ namespace GnssProcessor {
                                const std::string& sig1,
                                const std::string& sig2,
                                const std::string& sig5) const;
-
-        // --- Cold-fix (n=1) decision-only accessors (M5 card UWL-1) --------
-
-        /**
-         * @brief Cold read of a (satellite, signal-pair) MW arc: the unlagged
-         *        current-state Welford summary, served from n ≥ 1 (UWL-1).
-         *
-         * Same ZD reconstruction as @ref arcZdMean, but without the one-epoch lag (F1)
-         * and without the two-sample floor: a slipped arc's first re-formed sample is
-         * served the epoch it lands, which shortens the ~3-epoch re-warm window.  At
-         * @c count==1 the Welford variance of the mean does not exist, so
-         * @c var_of_mean_m2 is NaN and the caller substitutes the a-priori per-sample σ
-         * (@c network.mw_wl.uwl_cold_sigma_m); from n ≥ 2 the (unlagged) Welford
-         * variance takes over.  @c valid here means "n ≥ 1 with a finite ZD mean and a
-         * positive λ", deliberately weaker than @ref arcZdMean's contract.
-         *
-         * This accessor exists for integer decisions only (which top-tier integer the
-         * bridge may use).  It must never feed a folded row, which keeps the lagged
-         * sources (@ref arcZdMean / @ref arcBridge).  The
-         * wiring also restricts cold decisions to tiers with
-         * λ ≥ @c uwl_cold_min_lambda_m, which excludes GPS's 5.861 m EWL on purpose.
-         */
-        MwArcZdMean arcZdMeanCold(const std::string& sat,
-                                  const std::string& sig1,
-                                  const std::string& sig2) const;
-
-        /**
-         * @brief Cold read of a bridge arc: the unlagged current-state Welford
-         *        summary, served from n ≥ 2 (UWL-1).
-         *
-         * The bridge's variance of the mean needs two samples, so the cold bridge
-         * serves at n ≥ 2, one epoch earlier than the lagged @ref arcBridge (which
-         * needs count_lag ≥ 2, i.e. three samples).  After a slip the cascade
-         * re-decides the top tier at the first re-formed epoch (via
-         * @ref arcZdMeanCold) and the WL lane re-pins the epoch after.
-         * Decision-only, like @ref arcZdMeanCold.
-         */
-        MwBridgeMean arcBridgeCold(const std::string& sat,
-                                   const std::string& sig1,
-                                   const std::string& sig2,
-                                   const std::string& sig5) const;
 
         private:
         const GnssConfig& config_;    /**< Reference to processing configuration. */
@@ -1049,11 +989,6 @@ namespace GnssProcessor {
          *  Empty (never touched) unless @c bridge_enabled_. */
         std::map<std::string, BridgeArcStats> bridge_stats_;
 
-        /** Constellation → lane-tier band digits for the bridge band pick
-         *  (@ref setLaneTiers, UWL-1).  Empty = the legacy hardcoded {1,2,5} scan for
-         *  every constellation (byte-identical). */
-        std::map<char, MwLaneTier> lane_tiers_;
-
         /** Per-sample bridge iono de-bias (@ref setBridgePerSampleDebias).  Off by
          *  default: raw accumulation, byte-identical. */
         bool bridge_debias_{ false };
@@ -1076,21 +1011,14 @@ namespace GnssProcessor {
          * @brief Ingest one satellite's tri-frequency phase into its bridge arc.
          *
          * No-op unless @c bridge_enabled_.  Picks the KF-aligned single phase signal per
-         * lane-tier band from @c obs.observed: the legacy {1,2,5} for every
-         * constellation, or the constellation's @ref setLaneTiers digits when the UWL
-         * card pushed its table (UWL-1 §3.1; a constellation absent from a pushed table
-         * forms no arc), with a min-name tie-break that matches the ApplicationNetwork
-         * primary/band-top selection so the key aligns with the caller's
-         * @ref arcBridge query.  It reads the raw cycle values from
-         * @c obs.raw_observed, forms @f$GF_b=\phi_{WL}-\phi_{TOP}@f$ (m; the top-pair
-         * term is ordered by actual frequency, so Galileo's (E5b,E5a)/(E5,E5a) top
-         * tier keeps λ &gt; 0), and folds it into @c bridge_stats_["sat_s1_s2_s5"]
-         * with a gap reset, the lag snapshot, and the gross-jump refloat guard.
-         * A tier with a fallback top rung (@ref MwLaneTier::b_top2, increment 5)
-         * also feeds the fallback base triple (b1,b2,b_top2), formed even when the
-         * preferred band is untracked this epoch, and, under an armed mid rung, the
-         * fallback hop-hi (b_mid,b2,b_top2); single-top tiers keep the legacy
-         * single-/mid-triple flow unchanged.  @p has_lli erases the arc: a lock loss
+         * band from @c obs.observed (the legacy {1,2,5} for every constellation), with a
+         * min-name tie-break that matches the ApplicationNetwork primary/band-top
+         * selection so the key aligns with the caller's @ref arcBridge query.  It reads
+         * the raw cycle values from @c obs.raw_observed, forms
+         * @f$GF_b=\phi_{WL}-\phi_{TOP}@f$ (m; the top-pair term is ordered by actual
+         * frequency), and folds it into @c bridge_stats_["sat_s1_s2_s5"] with a gap
+         * reset, the lag snapshot, and the gross-jump refloat guard.  @p has_lli erases
+         * the arc: a lock loss
          * on any phase re-warms the bridge, which is safer than the MW path's
          * preserve-across-LLI because the bridge has no detection statistic to catch
          * a real slip.

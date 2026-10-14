@@ -1055,12 +1055,7 @@ namespace GnssProcessor {
         // fingerprint does not read them (it reads the configuration getters it needs).
         bool carry_innov_gate{};         ///< D5 estimation-side fine-slip innovation gate: carry_invariant and network.carry_invariant_innov_gate.
         bool ewl_on{};                   ///< EWL lane (WL-2): carry_invariant and network.mw_wl.ewl_enable.  Also the third-band carry exclusion: the EWL pair's uncarried leg is left out of the carry exactly when the lane is armed.
-        bool uwl_on{};                   ///< Per-constellation top tier (UWL-1): ewl_on and network.mw_wl.uwl_enable.  Also selects the lane-tier table for the uncarried band.
-        bool uwl_cold_on{};              ///< UWL-1 cold fix (n = 1 unlagged statistics on long-λ tiers): uwl_on and network.mw_wl.uwl_cold_fix.
         bool bridge_debias_on{};         ///< Per-sample iono-de-biased GF bridge (the 60-epoch age-bias fix): ewl_on and network.mw_wl.bridge_sample_debias.
-        bool uwl_mid_on{};               ///< Mid-ladder bridge hop through E6: uwl_on and network.mw_wl.uwl_mid_enable.
-        bool uwl_dual_on{};              ///< Per-cycle preferred and fallback Galileo top rung (increment 5): uwl_on and network.mw_wl.uwl_dual_top.
-        bool uwl_sib_gate_on{};          ///< Hard untaken-sibling closure gate: uwl_dual_on and network.mw_wl.uwl_sib_gate.
         bool wl_inject_on{};             ///< WL-2 phase-bridge decision and NL-preserving inject: ewl_on and network.mw_wl.wl_inject_enable.
         bool mw_d5_dump{};               ///< F-A D5 attribution dump (log-only): ewl_on or wl_inject_on, and network.mw_wl.d5_dump.
         bool mw_lane_trace{};            ///< F-B lane trace (log-only): wl_inject_on and network.mw_wl.lane_trace.
@@ -1102,7 +1097,6 @@ namespace GnssProcessor {
         bool   sh_dev_d5_keep{};   ///< Erase-policy split (Iono-2 v3k): sh_dev_on and estimation.global_vtec_sh.rep_error_d5_keep.  Read by networkPassB_.
         bool   vce_wants_pb{};     ///< The carry LS-VCE monitor (network.carry_vce) lists the "pb" family in network.carry_vce_components.  Read by networkStashStatus.
         bool   vce_wants_cb{};     ///< The same for the "cb" family.  Read by networkStashStatus.
-        char   uwl_gal_top{};      ///< network.mw_wl.uwl_gal_top_band: Galileo's top-tier band digit, read under @ref uwl_on by the driver's uncarried-third-band predicate (isUncarriedThirdBand, which networkBuildCarryDdPriors calls).
         bool   streaming_on{};     ///< network.streaming.enable: the RTF-3 streaming front-end is the epoch source.  Read by the driver (the epoch source, and the code-bias admission census, which is refused under streaming).
         /// network.raim_within_epoch: the within-epoch RAIM tier (T2) is armed, so the solve
         /// glue captures the shared-border folds into the epoch workspace's replay channel

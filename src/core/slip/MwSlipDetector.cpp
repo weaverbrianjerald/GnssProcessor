@@ -271,136 +271,31 @@ namespace GnssProcessor {
         return out;
     }
 
-    // =================================================================
-    // Cold-fix (n=1) decision-only accessors (M5 card UWL-1, SPEC §3.3)
-    // =================================================================
-
-    MwSlipDetector::MwArcZdMean
-    MwSlipDetector::arcZdMeanCold(const std::string& sat,
-                                  const std::string& sig1,
-                                  const std::string& sig2) const {
-        MwArcZdMean out;
-        // Unlagged serve from n ≥ 1, for integer decisions only (header contract).
-        // The variance of the mean = M2/(n(n−1)) is NaN at n==1, where the caller
-        // substitutes the a-priori per-sample σ (uwl_cold_sigma_m); the Welford
-        // variance takes over from n ≥ 2.  Never feeds a folded row or a lane increment.
-        auto varOfMean = [](std::size_t n, double M2) -> double {
-            if (n < 2) return std::numeric_limits<double>::quiet_NaN();
-            const double dn = static_cast<double>(n);
-            return M2 / (dn * (dn - 1.0));
-        };
-
-        const std::string key = sat + "_" + sig1 + "_" + sig2;
-        const auto it = mw_stats_.find(key);
-        if (it == mw_stats_.end()) return out;
-        const MwArcStats& s = it->second;
-        out.exists        = true;          // same contract as arcZdMean (key present)
-        out.bia_corrected = s.bia_corrected;
-        out.code1         = s.code1;
-        out.code2         = s.code2;
-        out.count         = s.count;
-        if (s.count < 1 || !(s.lambda_wl > 0.0)) return out;
-
-        if (!s.bia_corrected) {
-            // Undifferenced (no-BIA fallback or the group's MW pivot arc): ZD already.
-            out.mean_m         = s.mean;
-            out.var_of_mean_m2 = varOfMean(s.count, s.M2);
-            out.lambda_wl      = s.lambda_wl;
-            out.valid          = std::isfinite(out.mean_m);
-            return out;
-        }
-        // Non-pivot BIA arc: re-add the group pivot's unlagged mean (same ZD
-        // reconstruction as arcZdMean; conservative variance sum, NaN when either
-        // side is single-sample, which the caller's a-priori σ covers).
-        const std::string group_key =
-            std::string(1, sat.empty() ? '?' : sat.front()) + "_" + sig1 + "_" + sig2;
-        const auto pit = sd_pivot_sat_.find(group_key);
-        if (pit == sd_pivot_sat_.end()) return out;
-        const auto pvt = mw_stats_.find(pit->second + "_" + sig1 + "_" + sig2);
-        if (pvt == mw_stats_.end() || pvt->second.count < 1) return out;
-        const MwArcStats& p = pvt->second;
-        out.mean_m         = s.mean + p.mean;
-        out.var_of_mean_m2 = varOfMean(s.count, s.M2) + varOfMean(p.count, p.M2);
-        out.count          = std::min(s.count, p.count);
-        out.lambda_wl      = s.lambda_wl;
-        out.valid          = std::isfinite(out.mean_m);
-        return out;
-    }
-
-    MwSlipDetector::MwBridgeMean
-    MwSlipDetector::arcBridgeCold(const std::string& sat,
-                                  const std::string& sig1,
-                                  const std::string& sig2,
-                                  const std::string& sig5) const {
-        MwBridgeMean out;
-        const std::string key = sat + "_" + sig1 + "_" + sig2 + "_" + sig5;
-        const auto it = bridge_stats_.find(key);
-        if (it == bridge_stats_.end()) return out;
-        const BridgeArcStats& s = it->second;
-        out.count = s.count;
-        // Unlagged serve from n ≥ 2 (the variance of the mean needs two samples), one
-        // epoch earlier than the lagged arcBridge (count_lag ≥ 2 ⇔ three samples).
-        // Decision-only (header contract).
-        if (s.count < 2 || !(s.lambda_wl > 0.0) || !(s.lambda_ewl > 0.0)) return out;
-        const double n = static_cast<double>(s.count);
-        out.gf_mean_m      = s.mean;
-        out.var_of_mean_m2 = s.M2 / (n * (n - 1.0));
-        out.lambda_wl      = s.lambda_wl;
-        out.lambda_ewl     = s.lambda_ewl;
-        out.iono_coeff     = s.iono_coeff;
-        out.valid          = std::isfinite(out.gf_mean_m) && std::isfinite(out.var_of_mean_m2);
-        return out;
-    }
-
     void MwSlipDetector::updateBridgeArc(const PppObservation& obs, bool has_lli) {
         if (!bridge_enabled_ || obs.satellite.empty()) return;
 
-        const char cons = obs.satellite.front();
-        // Per-constellation lane-tier band digits (UWL-1, SPEC_uwl_card.md §3.1).
-        // Empty table = the legacy hardcoded {1,2,5} scan for every constellation
-        // (byte-identical; it forms no arc for Galileo, which has no band '2', so the
-        // cascade is then GPS-only).  A pushed table with no entry for this
-        // constellation forms no bridge arc (BDS-3 is deferred on its clock
-        // divergence; the wiring logs a warning).
-        char b1 = '1', b2 = '2', bt = '5', bm = '\0', bt2 = '\0';
-        if (!lane_tiers_.empty()) {
-            const auto tit = lane_tiers_.find(cons);
-            if (tit == lane_tiers_.end()) return;
-            b1 = tit->second.b1; b2 = tit->second.b2; bt = tit->second.b_top;
-            bm = tit->second.b_mid; bt2 = tit->second.b_top2;
-        }
+        // The legacy {1,2,5} band scan for every constellation.  It forms no arc for
+        // Galileo, which has no band '2', so the cascade is GPS-only.
+        const char b1 = '1', b2 = '2', bt = '5';
 
-        // KF-aligned single phase signal per lane-tier band: min-name over obs.observed,
-        // matching the ApplicationNetwork primary(sig1<sig2 by band then name) + band-top
-        // (first b_top) selection so this arc's key aligns with the caller's arcBridge query.
-        std::string s1, s2, s5, sm, st2;  // WL-pair bands (b1, b2) + top band (b_top) + optional mid (b_mid) / fallback top (b_top2)
+        // KF-aligned single phase signal per band: min-name over obs.observed, matching
+        // the ApplicationNetwork primary(sig1<sig2 by band then name) + band-top (first
+        // '5') selection so this arc's key aligns with the caller's arcBridge query.
+        std::string s1, s2, s5;  // WL-pair bands (b1, b2) + top band (bt)
         for (const auto& [k, v] : obs.observed) {
             if (k.size() < 2 || k[0] != 'L') continue;
             (void)v;
             std::string* dst = (k[1] == b1) ? &s1 : (k[1] == b2) ? &s2
-                             : (k[1] == bt) ? &s5
-                             : (bm  != '\0' && k[1] == bm)  ? &sm
-                             : (bt2 != '\0' && k[1] == bt2) ? &st2 : nullptr;
+                             : (k[1] == bt) ? &s5 : nullptr;
             if (!dst) continue;
             if (dst->empty() || k < *dst) *dst = k;
         }
-        // Under a dual-top tier the fallback triple must form even when the preferred
-        // band is untracked at this (rx,sat); that is what the fallback rung is for
-        // (increment 5, uwl_dual_top).  Single-top tiers keep the legacy early-out
-        // unchanged (bt2 == '\0' ⇒ have_top2 is false ⇒ identical flow).
-        const bool have_top  = !s5.empty();
-        const bool have_top2 = (bt2 != '\0') && !st2.empty();
-        if (s1.empty() || s2.empty() || (!have_top && !have_top2)) return;
+        if (s1.empty() || s2.empty() || s5.empty()) return;
 
         const double epoch_s = TimeUtils::continuousGpsSeconds(obs.time);
 
         // One bridge triple (sa, sb, sc): lane A = (sa, sb), lane B = (hi, lo of (sb, sc)).
         // GF = λ_A(φ_sa−φ_sb) − λ_B(φ_hi−φ_lo) = λ_A·N_A − λ_B·N_B + iono + noise.
-        // Extracted so the E6 mid hop (UWL-1, census-motivated) can feed additional
-        // triples per observation: the base (b1,b2,b_top) always (byte-identical to the
-        // single-triple code for the legacy and mid-off shapes), plus (b_mid,b2,b_top)
-        // [hop-hi: mid lane vs top lane] and (b1,b2,b_mid) [hop-lo: WL lane vs mid lane]
-        // when the constellation's tier arms a mid rung and the band is tracked.
         auto feedTriple = [&](const std::string& sa, const std::string& sb,
                               const std::string& sc) {
             const std::string key = obs.satellite + "_" + sa + "_" + sb + "_" + sc;
@@ -503,13 +398,7 @@ namespace GnssProcessor {
             st.iono_coeff = iono_co;
         };
 
-        if (have_top)  feedTriple(s1, s2, s5);   // base: WL lane vs preferred top lane (as before)
-        if (have_top2) feedTriple(s1, s2, st2);  // WL lane vs fallback top lane (increment 5)
-        if (bm != '\0' && !sm.empty()) {         // extra triples for the E6 mid hop, decision-side
-            if (have_top)  feedTriple(sm, s2, s5);   // hop-hi: mid lane (b_mid,b2) vs preferred top
-            if (have_top2) feedTriple(sm, s2, st2);  // hop-hi vs the fallback top (dual only)
-            feedTriple(s1, s2, sm);                  // hop-lo: WL lane vs mid lane (b_mid,b2)
-        }
+        feedTriple(s1, s2, s5);   // WL lane vs top lane
     }
 
     // =================================================================

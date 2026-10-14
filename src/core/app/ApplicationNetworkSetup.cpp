@@ -109,7 +109,6 @@
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
 #include "logging/NetworkRunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
 #include "app/NetworkRunContext.hpp"    // ctx: knobs, Tier-1 carry state, service counters (INC-4)
-#include "slip/MwLaneTiers.hpp"         // per-constellation lane-tier band table (UWL-1)
 #include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, Increment 2)
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
@@ -1187,23 +1186,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // in NetworkDdPriorBuild.cpp.
             st.mw_slip->setBridgePerSampleDebias(
                 mwc.wl_inject_enable && mwc.ewl_enable && mwc.bridge_sample_debias);
-            // Push the per-constellation lane-tier band digits for the bridge band pick
-            // (network.mw_wl.uwl_enable).  Unarmed, nothing is pushed and every
-            // constellation keeps the legacy {1,2,5} scan, byte-identical, including under
-            // multi-GNSS active_systems (§6.1(b)).  With the table pushed, a constellation
-            // absent from it (BDS-3, deferred on its clock divergence) forms no bridge arc,
-            // and the wiring warns instead of skipping it silently.
-            // (M5 card UWL-1, SPEC_uwl_card.md §3.1)
-            if (mwc.uwl_enable) {
-                std::map<char, MwLaneTier> tiers;
-                for (const System sys : { System::GPS, System::Galileo }) {
-                    const char cons = rinexLetter(sys);   // the lane-tier table is keyed by letter
-                    if (const auto t = mwLaneTierOf(cons, mwc.uwl_gal_top_band,
-                                                    mwc.uwl_mid_enable, mwc.uwl_dual_top))
-                        tiers[cons] = *t;
-                }
-                st.mw_slip->setLaneTiers(std::move(tiers));
-            }
             // The TurboEdit MW+GF integer repair resolver is built only for turbo_edit
             // (higher-rate 1 s data, where the geometry-free ionospheric drift over the
             // epoch gap is small enough to trust an integer).  mw_detect uses the same MW

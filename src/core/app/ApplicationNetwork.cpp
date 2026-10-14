@@ -152,7 +152,6 @@
 #include "logging/NetworkRunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
 #include "app/NetworkRunContext.hpp"    // knobs, tier-1 carry state and service counters, as ctx (INC-4)
 #include "app/NetworkSetupResult.hpp"   // setup-phase handoff (setup) and navAvailabilityGpsSeconds (INC-5)
-#include "slip/MwLaneTiers.hpp"         // per-constellation lane-tier band table (UWL-1)
 #include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, increment 2)
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
@@ -705,27 +704,10 @@ int Application::runNetwork() {
     // covers GPS and Galileo; GLONASS is never carried.  The exclusion itself is applied in
     // networkBuildCarryDdPriors through the predicate below.
     const auto& nmw = config_.getNetworkConfig().mw_wl;
-    // With card M5 UWL-1 armed (ctx.knobs.uwl_on, the exclusion and UWL-1 together), the
-    // uncarried band comes from the per-constellation lane-tier table (Galileo's top band
-    // is selectable: '7' = E5b, lane λ 9.768 m; '8' = E5 AltBOC, lane λ 19.537 m).
-    // uwl_enable=false keeps the legacy digits verbatim, which is the §6.1(b) gate: arming
-    // a constellation without the card changes nothing.  For GPS (and Galileo at the
-    // default '7') the table reproduces the legacy digits, so armed GPS-only runs stay
-    // bit-identical too.  The three captures are knobs: `uwl_dual` reads uwl_dual_on
-    // (uwl_on and network.mw_wl.uwl_dual_top), which equals network.mw_wl.uwl_dual_top
-    // wherever it is read, inside the `uwl_excl_on` (uwl_on) branch.
-    auto isUncarriedThirdBand = [uwl_excl_on = ctx.knobs.uwl_on,
-                                 uwl_gal_top = ctx.knobs.uwl_gal_top,
-                                 uwl_dual    = ctx.knobs.uwl_dual_on](   // increment 5: both {b_top, b_top2} uncarried
-                                    char cons, const std::string& signal) -> bool {
+    auto isUncarriedThirdBand = [](char cons, const std::string& signal) -> bool {
         // The band digit is read directly: besides a carried signal ("L5Q" → '5') the
         // caller passes band probes "L<digit>", which are not full observation codes.
         const char band = signal.size() >= 2 ? signal[1] : '\0';
-        if (uwl_excl_on) {
-            const auto tier = mwLaneTierOf(cons, uwl_gal_top, false, uwl_dual);
-            return tier && (band == tier->b_top
-                            || (tier->b_top2 != '\0' && band == tier->b_top2));
-        }
         switch (systemFromLetter(cons)) {
             case System::GPS:     return band == '5';   // GPS  EWL = (L2,L5) ⇒ L5 uncarried
             case System::Galileo: return band == '7';   // Galileo EWL = (E5b,E5a) ⇒ E5b(7) uncarried
@@ -734,11 +716,9 @@ int Application::runNetwork() {
     };
     // EWL lane (card M5 WL-2): the MW wide-lane layer, run on the (band2, band5) pair with
     // FFR statistic-gated fixing.  The third band is uncarried (excluded above), so these
-    // rows meet no opposing F6 prior.  It uses the primary-sig1 cycle basis.  ewl_on, the
-    // UWL-1 top tier (uwl_on) and the other lane switches are resolved in
-    // NetworkKnobs::snapshot.
+    // rows meet no opposing F6 prior.  It uses the primary-sig1 cycle basis.  ewl_on and
+    // the other lane switches are resolved in NetworkKnobs::snapshot.
     const bool ewl_on = ctx.knobs.ewl_on;
-    const bool uwl_on = ctx.knobs.uwl_on;
     NetworkMwWlLayer::Config ewl_cfg;
     ewl_cfg.enable              = ewl_on;
     ewl_cfg.min_arc_epochs      = nmw.ewl_min_arc_epochs;
@@ -754,36 +734,9 @@ int Application::runNetwork() {
     // networkBuildCarryDdPriors writes the per-build members, networkInstallCarry folds
     // them into the run totals, and the run end reports the run totals.
     NetworkLaneRun lane_run(ewl_cfg);
-    // With the card armed there is one statistic-layer instance per tabled
-    // constellation, so the telemetry is per constellation (the F-A dump showed that
-    // pooled lines hide which lane the events come from).  Otherwise a single
-    // filterless instance runs (the legacy shape; for a GPS-only run the 'G'-filtered
-    // instance is bit-identical to it, because the filter never fires).  An armed
-    // constellation that decides 0 cycles still prints its 0 line (invariant #4).
-    if (ewl_on) {
-        if (uwl_on) {
-            for (const System sys : { System::GPS, System::Galileo }) {
-                const char cons = rinexLetter(sys);   // the lane-tier table is keyed by letter
-                const auto tier = mwLaneTierOf(cons, nmw.uwl_gal_top_band,
-                                               nmw.uwl_mid_enable, nmw.uwl_dual_top);
-                if (!tier) continue;
-                NetworkMwWlLayer::Config cfg = ewl_cfg;
-                cfg.cons_filter = cons;
-                // The preferred rung's instance runs first, so its ewl_fixed entries
-                // precede the fallback's and the walk's dedupe keeps the wider-λ
-                // decision.  The fallback instance decides only what the preferred one
-                // did not: a cycle with any arc lacking the preferred band ends there
-                // as skip_missing_band, the per-cycle "where tracked" resolution
-                // (increment 5).
-                lane_run.ewl_lanes.push_back(EwlLane{ cons, tier->b_top, NetworkMwWlLayer(cfg), {}, {} });
-                if (tier->b_top2 != '\0')
-                    lane_run.ewl_lanes.push_back(EwlLane{ cons, tier->b_top2,
-                                                          NetworkMwWlLayer(cfg), {}, {} });
-            }
-        } else {
-            lane_run.ewl_lanes.push_back(EwlLane{ '\0', '\0', NetworkMwWlLayer(ewl_cfg), {}, {} });
-        }
-    }
+    // One filterless statistic-layer instance over every constellation.
+    if (ewl_on)
+        lane_run.ewl_lanes.push_back(EwlLane{ NetworkMwWlLayer(ewl_cfg), {}, {} });
     // The F-A D5 attribution dump and the F-B lane trace (network.mw_wl.d5_dump and
     // network.mw_wl.lane_trace, log-only; armed as ctx.knobs.mw_d5_dump and
     // ctx.knobs.mw_lane_trace) are ordinary NetworkRunTraces streams, opened once

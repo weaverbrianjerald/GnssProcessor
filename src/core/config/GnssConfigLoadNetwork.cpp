@@ -1667,7 +1667,7 @@ namespace GnssProcessor {
      * @brief MW/WL lane layers: @c network.mw_wl.* and @c network.sd_ewl.*.
      *
      * Parse + range clamps only.  Every cross-knob mutex these layers participate in
-     * (the carry_invariant requirement, the EWL/UWL contracts) is enforced later
+     * (the carry_invariant requirement, the EWL contracts) is enforced later
      * by @c validateNetworkLaneLayers_, which runs after @c network.carry_invariant is
      * parsed.
      *
@@ -1676,7 +1676,7 @@ namespace GnssProcessor {
      */
     void GnssConfig::loadNetworkLaneLayers_(const nlohmann::json& json,
                                             const std::shared_ptr<spdlog::logger>& log) {
-        // --- MW wide-lane lane layers (network.mw_wl.*; M5 cards WL-2, UWL-1) ---
+        // --- MW wide-lane lane layers (network.mw_wl.*; M5 card WL-2) ---
         // The per-arc Melbourne-Wubbena statistics, double-differenced over the card-4
         // chord basis (docs/SPEC_ewl_wl_cascade_card.md).  Every lane defaults off =>
         // byte-identical.  The carry_invariant requirement and the lane contracts are
@@ -1832,50 +1832,9 @@ namespace GnssProcessor {
                                                       "network_mw_wl_inject_disagree_min_cyc", 0.75);
             mw.lane_max_abs_xlin_m = jval<double>(json, "network.mw_wl.lane_max_abs_xlin_m",
                                                   "network_mw_wl_lane_max_abs_xlin_m", 1000.0);
-            // --- Per-constellation ultra-wide-lane top tier (SPEC_uwl_card.md §5; M5 card UWL-1). ---
-            mw.uwl_enable = jval<bool>(json, "network.mw_wl.uwl_enable",
-                                       "network_mw_wl_uwl_enable", false);
-            {
-                const int gtb = jval<int>(json, "network.mw_wl.uwl_gal_top_band",
-                                          "network_mw_wl_uwl_gal_top_band", 7);
-                if (gtb == 7 || gtb == 8) {
-                    mw.uwl_gal_top_band = static_cast<char>('0' + gtb);
-                } else {
-                    log->warn("Network: network.mw_wl.uwl_gal_top_band = {} is not 7 (E5b, "
-                              "λ 9.768 m) or 8 (E5 AltBOC, λ 19.537 m) — keeping the default 7.",
-                              gtb);
-                    mw.uwl_gal_top_band = '7';
-                }
-            }
-            mw.uwl_mid_enable = jval<bool>(json, "network.mw_wl.uwl_mid_enable",
-                                           "network_mw_wl_uwl_mid_enable", false);
-            // Increment 5: dual-top tier (band-8 preferred / (5,7) fallback + sibling closure).
-            mw.uwl_dual_top = jval<bool>(json, "network.mw_wl.uwl_dual_top",
-                                         "network_mw_wl_uwl_dual_top", false);
-            mw.uwl_sib_gate = jval<bool>(json, "network.mw_wl.uwl_sib_gate",
-                                         "network_mw_wl_uwl_sib_gate", false);
             // 60-ep age-bias fix: per-sample estimable-iono de-bias of the bridge.
             mw.bridge_sample_debias = jval<bool>(json, "network.mw_wl.bridge_sample_debias",
                                                  "network_mw_wl_bridge_sample_debias", false);
-            mw.uwl_cold_fix = jval<bool>(json, "network.mw_wl.uwl_cold_fix",
-                                         "network_mw_wl_uwl_cold_fix", false);
-            mw.uwl_cold_sigma_m = jval<double>(json, "network.mw_wl.uwl_cold_sigma_m",
-                                               "network_mw_wl_uwl_cold_sigma_m", 0.7);
-            mw.uwl_cold_min_lambda_m = jval<double>(json, "network.mw_wl.uwl_cold_min_lambda_m",
-                                                    "network_mw_wl_uwl_cold_min_lambda_m", 8.0);
-            if (!(mw.uwl_cold_sigma_m > 0.0)) {
-                log->warn("Network: network.mw_wl.uwl_cold_sigma_m = {} is non-positive — "
-                          "clamping to 0.7 m (the cold decision needs an honest a-priori R).",
-                          mw.uwl_cold_sigma_m);
-                mw.uwl_cold_sigma_m = 0.7;
-            }
-            if (mw.uwl_cold_min_lambda_m < 6.0) {
-                log->warn("Network: network.mw_wl.uwl_cold_min_lambda_m = {} m would admit the "
-                          "GPS 5.861 m EWL to the n=1 cold fix — the cold fix is a UWL privilege "
-                          "earned by wavelength (SPEC_uwl_card.md §3.3); clamping to 6.0 m.",
-                          mw.uwl_cold_min_lambda_m);
-                mw.uwl_cold_min_lambda_m = 6.0;
-            }
             if (mw.ewl_min_arc_epochs < 2) {
                 log->warn("Network: network.mw_wl.ewl_min_arc_epochs = {} is below 2 (a "
                           "variance-of-mean needs >=2 samples) — clamping to 2.",
@@ -11308,7 +11267,7 @@ namespace GnssProcessor {
     //  network subsection helper: validateNetworkLaneLayers_
     // =================================================================
     /**
-     * @brief Lane contracts of WL-2 / UWL-1 and their armed-state reports.
+     * @brief Lane contracts of WL-2 and their armed-state reports.
      *
      * Split from @c loadNetworkLaneLayers_ because every rule here needs
      * @c network_carry_invariant_ and the slip-detector flags, which are parsed after the
@@ -11353,34 +11312,6 @@ namespace GnssProcessor {
                           "|stat−carried|>{} cyc, FFR σ<{}/|frac|<{}, bridge σ guard {} cyc.",
                           mw.ewl_enable ? "armed" : "OFF", mw.inject_disagree_min_cyc,
                           mw.wl_fix_sigma_cyc, mw.wl_fix_frac_cyc, mw.bridge_max_sigma_cyc);
-            // ---- Per-constellation ultra-wide-lane top tier (SPEC_uwl_card.md; M5 card UWL-1). ----
-            if (mw.uwl_enable && !mw.ewl_enable) {
-                log->error("Network: network.mw_wl.uwl_enable requires network.mw_wl.ewl_enable — "
-                           "the UWL top tier IS the EWL machinery run on the per-constellation "
-                           "lane-tier pair (statistic layer, FFR gates, bridge, telemetry).  "
-                           "Enable ewl_enable or disable uwl_enable.");
-                return false;
-            }
-            if (mw.uwl_cold_fix && !mw.uwl_enable)
-                log->warn("Network: network.mw_wl.uwl_cold_fix is INERT without uwl_enable — the "
-                          "n=1 cold fix applies only to lane tiers with λ ≥ {} m, which only the "
-                          "UWL table provides (GPS's 5.861 m EWL is excluded by design).",
-                          mw.uwl_cold_min_lambda_m);
-            if (mw.uwl_mid_enable && !mw.uwl_enable)
-                log->warn("Network: network.mw_wl.uwl_mid_enable is INERT without uwl_enable — "
-                          "the E6 mid-ladder hop rides the armed lane-tier table (Galileo "
-                          "(E6,E5a) λ 2.931 m rung).");
-            // ---- Increment 5: dual-top tier contract. ----
-            if (mw.uwl_dual_top && !mw.uwl_enable)
-                log->warn("Network: network.mw_wl.uwl_dual_top is INERT without uwl_enable — "
-                          "the preferred/fallback top rung is a property of the armed "
-                          "lane-tier table.");
-            if (mw.uwl_dual_top && mw.uwl_enable
-                && jval<int>(json, "network.mw_wl.uwl_gal_top_band",
-                             "network_mw_wl_uwl_gal_top_band", 7) != 7)
-                log->info("Network: network.mw_wl.uwl_gal_top_band is IGNORED under "
-                          "uwl_dual_top — the dual tier always prefers '8' (E5 AltBOC, "
-                          "λ 19.537 m) per cycle and falls back to '7' (E5b, λ 9.768 m).");
             // ---- SD pre-reduce EWL: the statistic source must exist. ----
             // NetStation::mw_slip is constructed only for non-pivot stations and only
             // when network.phase_leveling && (cycle_slip.mw_detect || turbo_edit).
@@ -11402,10 +11333,6 @@ namespace GnssProcessor {
                               network_cycle_slip_turbo_edit_);
                 }
             }
-            if (mw.uwl_sib_gate && !(mw.uwl_dual_top && mw.uwl_enable))
-                log->warn("Network: network.mw_wl.uwl_sib_gate is INERT without uwl_dual_top — "
-                          "the sibling closure gate compares the untaken {7,8} rung against "
-                          "the decided one, which only exists under the dual tier.");
             // ---- Per-sample bridge de-bias (60-ep age-bias fix) contract. ----
             if (mw.bridge_sample_debias && !mw.ewl_enable)
                 log->warn("Network: network.mw_wl.bridge_sample_debias is INERT without "
@@ -11416,34 +11343,6 @@ namespace GnssProcessor {
                           "one-epoch-lagged push; Σc·ı̃ over a closed cycle = ∇ΔI exactly, "
                           "Odijk 2016 Table 8); the read-time de-bias is disabled.  The "
                           "decision statistic is stationary at arbitrary arc age.");
-            if (mw.uwl_enable && mw.uwl_mid_enable)
-                log->info("Network UWL-1 E6 MID HOP ON — the Galileo WL determination chains "
-                          "top({}) → (E6,E5a) λ 2.931 m (rounded mid integer) → WL λ 0.751 m, "
-                          "cutting each bridge hop's λ amplification ~3.3×; the direct hop "
-                          "remains the per-cycle fallback + cross-check, MW(6,5) is the mid "
-                          "closure.  Requires frequency_mode covering Galileo E6.",
-                          mw.uwl_gal_top_band == '8' ? "E5-AltBOC, 19.537 m" : "E5b, 9.768 m");
-            if (mw.uwl_enable)
-                log->info("Network UWL-1 top tier ON (M5 card UWL-1) — per-constellation lane-tier "
-                          "table armed: GPS EWL (L2,L5) λ 5.861 m; Galileo UWL ({},E5a) λ {:.3f} m; "
-                          "BDS-3 deferred (clock divergence), GLONASS excluded (FDMA).  Cold fix "
-                          "{} (σ_apriori={} m, λ floor={} m).  Requires frequency_mode covering "
-                          "the tier bands (Galileo E5a+{}).",
-                          mw.uwl_dual_top ? "E5-AltBOC pref | E5b fallback"
-                              : mw.uwl_gal_top_band == '8' ? "E5-AltBOC" : "E5b",
-                          mw.uwl_dual_top ? 19.537
-                              : mw.uwl_gal_top_band == '8' ? 19.537 : 9.768,
-                          mw.uwl_cold_fix ? "ON" : "off",
-                          mw.uwl_cold_sigma_m, mw.uwl_cold_min_lambda_m,
-                          mw.uwl_dual_top ? "E5b+E5(AltBOC)"
-                              : mw.uwl_gal_top_band == '8' ? "E5(AltBOC)" : "E5b");
-            if (mw.uwl_enable && mw.uwl_dual_top)
-                log->info("Network UWL-1 DUAL-TOP tier ON (increment 5) — Galileo prefers the "
-                          "(E5-AltBOC,E5a) λ 19.537 m rung per CYCLE where band 8 is tracked "
-                          "across every arc, falls back to (E5b,E5a) λ 9.768 m otherwise; both "
-                          "{{7,8}} uncarried; the untaken sibling is a closure statistic "
-                          "(2·N(8,5) = N(7,5)) — hard gate {}.",
-                          mw.uwl_sib_gate ? "ON (0.5+3σ_sib)" : "OFF (measure-only)");
         }
 
         return true;

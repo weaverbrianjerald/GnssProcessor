@@ -11,7 +11,7 @@
  * keeps the enclosing `if (carry_invariant)` gate and the subBegin/subEnd(SB_INSTALL)
  * brackets):
  *   1. carry_driver.installPosterior (DD posterior mean/cov read back into the carry);
- *   2. the lane counter folds (ewl_lanes[].run, wl_run, wl_cons_run) and the
+ *   2. the lane counter folds (ewl_lanes[].run, wl_run) and the
  *      application of the WL inject plan against the fresh posterior;
  *   3. the log-only lane-trace / d5-flags CSV writers (network.mw_wl.*).
  *

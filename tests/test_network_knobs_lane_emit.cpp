@@ -72,11 +72,10 @@ const char* kCarryInvariant =
     "    \"cycle_slip\": { \"mw_detect\": true },\n";
 
 /// The switches still in the snapshot, as the driver computed them before card NOM step
-/// TD1a (the WL-1 switches mw_wl_on and mw_wl_f6_dump and the WL-3 lane-carry switches
-/// went with their keys; the conjunctions below drop their terms).
+/// TD1a (the WL-1 switches mw_wl_on and mw_wl_f6_dump, the WL-3 lane-carry switches and
+/// the UWL-1 tier switches went with their keys; the conjunctions below drop their terms).
 struct DriverSwitches {
-    bool carry_innov_gate, ewl_on, uwl_on, uwl_cold_on,
-         bridge_debias_on, uwl_mid_on, uwl_dual_on, uwl_sib_gate_on,
+    bool carry_innov_gate, ewl_on, bridge_debias_on,
          wl_inject_on, mw_d5_dump, mw_lane_trace, mw_tagsets, emit_rebase_on,
          emit_pb_filter_on, pb_filter_emit_sigma;
 };
@@ -88,12 +87,7 @@ DriverSwitches driverSwitches(const GnssConfig& config_) {
     DriverSwitches d{};
     d.carry_innov_gate = carry_invariant && config_.networkCarryInvariantInnovGate();
     d.ewl_on = carry_invariant && nmw.ewl_enable;
-    d.uwl_on = d.ewl_on && nmw.uwl_enable;
-    d.uwl_cold_on = d.uwl_on && nmw.uwl_cold_fix;
     d.bridge_debias_on = d.ewl_on && nmw.bridge_sample_debias;
-    d.uwl_mid_on = d.uwl_on && nmw.uwl_mid_enable;
-    d.uwl_dual_on = d.uwl_on && nmw.uwl_dual_top;
-    d.uwl_sib_gate_on = d.uwl_dual_on && nmw.uwl_sib_gate;
     d.wl_inject_on = d.ewl_on && nmw.wl_inject_enable;
     d.mw_d5_dump = (d.ewl_on || d.wl_inject_on) && nmw.d5_dump;
     d.mw_lane_trace = d.wl_inject_on && nmw.lane_trace;
@@ -110,12 +104,7 @@ NetworkKnobs expectDriverSwitches(const GnssConfig& cfg) {
     const DriverSwitches d = driverSwitches(cfg);
     EXPECT_EQ(k.carry_innov_gate, d.carry_innov_gate);
     EXPECT_EQ(k.ewl_on, d.ewl_on);
-    EXPECT_EQ(k.uwl_on, d.uwl_on);
-    EXPECT_EQ(k.uwl_cold_on, d.uwl_cold_on);
     EXPECT_EQ(k.bridge_debias_on, d.bridge_debias_on);
-    EXPECT_EQ(k.uwl_mid_on, d.uwl_mid_on);
-    EXPECT_EQ(k.uwl_dual_on, d.uwl_dual_on);
-    EXPECT_EQ(k.uwl_sib_gate_on, d.uwl_sib_gate_on);
     EXPECT_EQ(k.wl_inject_on, d.wl_inject_on);
     EXPECT_EQ(k.mw_d5_dump, d.mw_d5_dump);
     EXPECT_EQ(k.mw_lane_trace, d.mw_lane_trace);
@@ -155,12 +144,7 @@ TEST(NetworkKnobsLaneEmit, EwlUwlInjectAndEmitFilterPosture) {
         "    \"emit_pb_filter_emit_sigma\": true,\n"
         "    \"mw_wl\": {\n"
         "      \"ewl_enable\": true,\n"
-        "      \"uwl_enable\": true,\n"
-        "      \"uwl_cold_fix\": true,\n"
         "      \"bridge_sample_debias\": true,\n"
-        "      \"uwl_mid_enable\": true,\n"
-        "      \"uwl_dual_top\": true,\n"
-        "      \"uwl_sib_gate\": true,\n"
         "      \"wl_inject_enable\": true,\n"
         "      \"d5_dump\": true,\n"
         "      \"lane_trace\": true\n"
@@ -170,7 +154,6 @@ TEST(NetworkKnobsLaneEmit, EwlUwlInjectAndEmitFilterPosture) {
     const NetworkKnobs k = expectDriverSwitches(cfg);
     EXPECT_TRUE(k.carry_innov_gate);
     EXPECT_TRUE(k.ewl_on);
-    EXPECT_TRUE(k.uwl_on);
     EXPECT_TRUE(k.wl_inject_on);
     EXPECT_TRUE(k.mw_tagsets);
     EXPECT_TRUE(k.emit_pb_filter_on);

@@ -3,7 +3,7 @@
  * @file NetworkDdPriorBuild.hpp
  * @brief The two per-epoch DD-prior build steps of the PPP-RTK network producer: the
  *        ensemble sum-zero phase-bias gauges, and the invariant DD-carry prior blocks
- *        (card 4) with the WL/UWL lane machinery (mw_wl / ewl / uwl).
+ *        (card 4) with the WL lane machinery (mw_wl / ewl).
  *        Relocated verbatim from Application::runNetwork (decomposition INC-9b).
  *
  * The run TU keeps both lambdas as thin `[&]` wrappers that forward to these free
@@ -58,7 +58,7 @@ void networkBuildEnsembleGauges(NetworkEstimator& est,
 
 
 /**
- * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and the WL/UWL
+ * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and the WL
  *        lane rows, and install them via NetworkEstimator::setDdPriors.  Returns early
  *        unless carry_invariant, so with it off the output is byte-identical.
  * @param lane_run The driver's lane machinery; its per-build members are rewritten on

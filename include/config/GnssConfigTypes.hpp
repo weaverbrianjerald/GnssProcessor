@@ -330,7 +330,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief MW wide-lane lane layers (@c network.mw_wl.*) (M5 cards WL-2 and UWL-1).
+     * @brief MW wide-lane lane layers (@c network.mw_wl.*) (M5 card WL-2).
      *        See docs/SPEC_ewl_wl_cascade_card.md.
      *
      * The per-arc Melbourne-Wubbena Welford statistics, double-differenced over the
@@ -338,7 +338,8 @@ namespace GnssProcessor {
      * the WL phase bridge and the NL-preserving inject.  Off by default; off is
      * byte-identical.  Requires @c network.carry_invariant (the chord basis belongs to
      * that carry; checked at load).  GLONASS is excluded upstream.  The WL-1 float rows
-     * on the primary (1,2) pair (@c enable) and their F6 dump are retired.
+     * on the primary (1,2) pair (@c enable), their F6 dump and the per-constellation UWL
+     * lane tiers are retired.
      */
     struct MwWlConfig {
         double sigma_floor_cyc{ 0.05 };       ///< per-row R floor (cycles): R = max(Σ var/λ_WL², floor²).
@@ -362,23 +363,6 @@ namespace GnssProcessor {
         double bridge_max_sigma_cyc{ 0.15 };  ///< Ionosphere-error guard: no WL fix from a bridge row whose σ exceeds this (cyc).
         double inject_disagree_min_cyc{ 0.75 };///< Inject trigger threshold on |statistic − carried lane value| (cyc).  After an inject the difference is about 0, so the trigger limits itself.
         double lane_max_abs_xlin_m{ 1000.0 }; ///< Pre-flight quarantine: skip a lane cycle if any arc's ambiguity linearization |x_lin| exceeds this (m).  Guards against the ~256 km receiver-clock seed at station 1 (§7 pre-flight): such cycles ill-condition the correction-frame rows and do not converge even at full authority.  0 = disabled.
-        // ============================================================================
-        // Per-constellation ultra-wide-lane top tier (M5 card UWL-1).
-        // Generalizes the cascade's hardcoded GPS band digits to the per-constellation
-        // lane-tier table (include/slip/MwLaneTiers.hpp) and adds the single-epoch cold
-        // fix that the UWL wavelength allows.  Off by default; off is byte-identical,
-        // including under multi-GNSS active_systems (arming a constellation without
-        // uwl_enable changes nothing).  GPS-only runs stay bit-identical even when
-        // armed, because the table reproduces the legacy digits.
-        // ============================================================================
-        bool   uwl_enable{ false };           ///< Master switch: arm the per-constellation top tier for constellations with a close-frequency pair (currently Galileo; BDS-3 is blocked on its clock divergence) (UWL-1).  Requires @c ewl_enable (shared machinery and telemetry).  Off: the legacy GPS-only digit scan everywhere.
-        char   uwl_gal_top_band{ '7' };       ///< Galileo top-tier band digit: '7' = (E5b,E5a), Δf 30.69 MHz, λ 9.768 m (default); '8' = (E5 AltBOC,E5a), Δf 15.345 MHz, λ 19.537 m: twice the wavelength and cm-level AltBOC code, at the cost of sparser C8/L8 tracking (to be measured, not assumed).
-        bool   uwl_mid_enable{ false };       ///< E6 mid-ladder bridge hop: chain the WL determination through the Galileo (E6,E5a) rung, λ 2.931 m.  The high hop bridges the fixed top integer to a rounded mid integer and the low hop bridges that to the WL, which cuts each hop's wavelength-ratio amplification of phase and iono error by about 3.3× against the direct 9.768 → 0.751 m hop.  Target: the measured ~70 % Galileo WL FFR-unfixed rate.  Decision side only; the direct hop remains the per-cycle fallback and cross-check.  Requires @c uwl_enable.  Off is byte-identical (a single bridge triple per constellation).
-        bool   uwl_dual_top{ false };         ///< Per-cycle preferred and fallback Galileo top rung: band '8' (E5 AltBOC, λ 19.537 m) decides where it is tracked across the whole cycle, and the (5,7) rung (λ 9.768 m) decides what '8' could not.  Both bands {7,8} are uncarried, and the untaken sibling serves as a closure statistic (2·N(8,5) = N(7,5), since f_E5 = (f_E5a+f_E5b)/2 exactly), measured and hard-gated only under @c uwl_sib_gate (increment 5, §1b/§7.5).  Supersedes @c uwl_gal_top_band (ignored, noted at load).  Requires @c uwl_enable.  The EWL rows are never folded, so a row decided by both rungs never folds twice (the F-A refold class).  Off: the single-top tier unchanged (byte-identical).
-        bool   uwl_sib_gate{ false };         ///< Sibling-closure hard gate: block a top-tier decision whose untaken-sibling MW statistic disagrees with fx_integer·λ_top/λ_sib by more than 0.5 + 3σ_sib; the blocked cycle falls to the fallback rung in the same epoch (increment 5).  Default off = measure only: receiver half-cycle conventions on AltBOC may offset the identity, and a population of half-integer residuals means the convention differs, so the gate would first have to learn a constant (SPEC reconciliation note 2).  Requires @c uwl_dual_top.
-        bool   uwl_cold_fix{ false };         ///< Single-epoch cold fix (§3.3): a top-tier arc with one unlagged sample (n = 1) is eligible for an FFR decision using the a-priori σ below, on tiers with λ ≥ @c uwl_cold_min_lambda_m only.  Decision side only (which integers the bridge may use); folds nothing; removes the measured ~3-epoch re-warm latency after a slip.
-        double uwl_cold_sigma_m{ 0.7 };       ///< A-priori per-sample MW statistic σ (m), substituted while the Welford variance is immature (n < 2).  Applied per arc: a re-warming arc inside an otherwise mature cycle contributes about this/λ_top cycles to the row σ (0.7 m gives 0.072 cycles at λ 9.768 m).  A cycle whose arcs are all cold aggregates to a σ larger by √Σc² and fails the default FFR σ gate, as intended.
-        double uwl_cold_min_lambda_m{ 8.0 };  ///< Wavelength floor for cold-fix eligibility (m).  Excludes the 5.861 m GPS EWL by design: the cold fix is reserved for UWL wavelengths and is not extended to GPS.
         bool   bridge_sample_debias{ false }; ///< Fold each bridge sample as GF_k − C_iono·ı̃(t_k) (per-sample de-bias by the estimable ionosphere, pushed with a one-epoch lag) instead of subtracting C_iono·ı̃(now) from the lifetime mean at read time.  The statistic becomes stationary, which removes both the mean bias and the drift-inflated Welford σ that blocked re-decisions as the whole-arc Welford aged (without it, constrained-lane circR fell from 0.89 to 0.24 over 60 epochs).  S-conformant: Σc·ı̃ over a closed cycle = ∇ΔI exactly (Odijk 2016, Table 8: the S-basis lumps cancel by sign balance).  Requires @c ewl_enable (the bridge).  Off: raw accumulation with read-time de-bias, byte-identical.
         bool   d5_dump{ false };              ///< Diagnostic (log-only, F-A): per-epoch CSV of every D5 innovation flag of the invariant carry (group id, chord (u,v), station, ambiguity key, formally standardized innovation, and adjacency tags {EWL-fixed (station,sat) member, hold-cycle chord, chord injected in the previous epoch}) to logs/network_d5_flags.csv.  Does not change the solve.
         bool   lane_trace{ false };           ///< Instrument (log-only, F-B): per-epoch CSV of every primary cycle's carried WL lane value and fractional part after install, for both the held or injected population and the untouched control population in one run, to logs/network_wl_lane_trace.csv.  Graded by scripts/grade_lane_trace.py, which resolves the injected-cycle circR that the star dd-frac trace cannot.  Requires @c wl_inject_enable.  Does not change the solve.
@@ -1815,7 +1799,7 @@ namespace GnssProcessor {
         double epoch_sync_tolerance_s{ 0.01 };///< Max time-tag difference when matching epochs across stations.
         ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
         NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default off: float product).
-        MwWlConfig       mw_wl;               ///< MW wide-lane lane layers (M5 cards WL-2, UWL-1; default off, byte-identical).
+        MwWlConfig       mw_wl;               ///< MW wide-lane lane layers (M5 card WL-2; default off, byte-identical).
         SdEwlConfig      sd_ewl;              ///< SD pre-reduce EWL constraint (default off, byte-identical; docs/SPEC_sd_ewl_prereduce.md).
         SlipQcConfig     slip_qc;             ///< Slip-QC hardening, cards R/L/G and their follow-ups (network.cycle_slip.*; every master default off, byte-identical; docs/SPEC_slip_qc_hardening.md).
         SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier, degraded-phase demotion and re-vet (network.signal_integrity.*; default off, byte-identical; docs/SPEC_flicker_gap_integrity.md).

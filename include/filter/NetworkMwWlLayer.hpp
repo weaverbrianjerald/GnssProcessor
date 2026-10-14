@@ -99,8 +99,6 @@ public:
         double fix_frac_cyc{0.20};       ///< FFR gate: and |frac(z_abs)| < this (cyc).
         double fix_weight_sigma_cyc{0.01};///< Fixed-row σ (soft-hard, so a fix can be rolled back): a fixed row's Pz = this² (diagonal, no shared-arc covariance).
         double max_abs_xlin_m{0.0};      ///< Station-1 quarantine (SPEC §7 pre-flight): skip a cycle if any arc's |x_lin| exceeds this (m).  0 = disabled.  Guards against the ~256 km receiver-clock-seed linearization, which ill-conditions the correction-frame rows.
-        // Per-constellation lane instances (UWL-1, docs/SPEC_uwl_card.md).
-        char   cons_filter{'\0'};        ///< Per-constellation instance: when non-zero, only cycles of this constellation (taken from the first arc) are processed; other cycles are left, uncounted, to their own instance (UWL-1).  0 (default) = the single all-constellation lane.
     };
 
     /// The cross-band and MW data a single fundamental-cycle arc contributes, resolved
@@ -124,8 +122,6 @@ public:
         bool   is_primary_sig1{false}; ///< the carry Term's signal is this arc's estimator primary sig1 (the first version restricts WL rows to the primary L1/L2 pair).
         bool   have_mw{false};         ///< a ZD-consistent MW arc exists on the (sig1,sig2) primary pair.
         bool   bia_corrected{false};   ///< satellite-bias frame of the arc (from @ref MwSlipDetector::MwArcZdMean).  Satellite-bias cancellation needs one frame per cycle; mixed-frame cycles are skipped (@c skip_mixed_frame).
-        char   cons{'?'};              ///< The arc's constellation letter, for @ref Config::cons_filter routing (UWL-1).
-        bool   mw_cold{false};         ///< The served statistic is the unlagged cold read (n below the lagged maturity; a-priori or infant Welford variance).  Under UWL-1 §3.3 a cold arc bypasses the young-arc gate, and a cycle with any cold arc is decision-only: its FFR integer is exposed via @ref FixedEwlRow, but the row is never emitted into the returned blocks, because it carries the current epoch's data.
     };
 
     /// Resolve one carry Term (est_station, local_col) → its @ref ArcData.
@@ -142,15 +138,13 @@ public:
         long long rows_built{0};        ///< WL rows emitted (after the max-rows cap).
         long long rows_capped{0};       ///< eligible rows dropped by @c max_rows_per_epoch.
         long long skip_not_primary{0};  ///< cycle skipped: a term is not on its arc's primary sig1 (an L1W / L2 / L5 carry group).
-        long long skip_missing_band{0}; ///< cycle skipped: an arc lacks a band-2 ambiguity column (or failed to reverse-map; that case is counted before the @c cons_filter test, so by every instance).
+        long long skip_missing_band{0}; ///< cycle skipped: an arc lacks a band-2 ambiguity column (or failed to reverse-map).
         long long skip_missing_mw{0};   ///< cycle skipped: an arc has no reconstructable ZD MW mean (channel mismatch / pivot missing).
         long long skip_young_arc{0};    ///< cycle skipped: a warm arc's MW count < @c min_arc_epochs.
         long long skip_bad_lambda{0};   ///< cycle skipped: a non-finite / non-positive wavelength.
         long long skip_mixed_frame{0};  ///< cycle skipped: arcs mix BIA-corrected and raw satellite-bias frames, so the satellite bias would not cancel.  Never fires on the self-contained path (every arc raw); guards runs with BIA.
         long long skip_quarantine{0};   ///< cycle skipped: an arc's |x_lin| exceeds @c max_abs_xlin_m (the station-1 ~256 km linearization).
         long long rows_fixed{0};        ///< Rows folded integer-hard (passed FFR); the rest are floats (WL-2).
-        long long rows_fixed_cold{0};   ///< Cold cycles whose FFR passed; the integer is exposed via @ref FixedEwlRow and the row is not emitted (decision-only; UWL-1 §3.3).
-        long long rows_cold_unfixed{0}; ///< Cold cycles whose FFR failed; dropped entirely, since a cold float row would fold same-epoch data (UWL-1 §3.3).
         double    sum_R{0.0};           ///< Σ of the emitted rows' R (cyc²), for the mean-R report.
     };
 
@@ -181,8 +175,8 @@ public:
      * @param[out] fixed_rows  WL-2 (§3.4): optional; when non-null, cleared at entry and
      *        then receives one @ref FixedEwlRow per FFR-fixed row (source carry block,
      *        row index and the integer @f$N_{EWL}@f$) so the WL phase bridge can key
-     *        the EWL integers back to their carry chords.  Warm fixed rows come first in
-     *        emission order, then the cold decisions.  Only rows that pass FFR
+     *        the EWL integers back to their carry chords, in emission order.  Only rows
+     *        that pass FFR
      *        (@c ffr_fix) are reported, so a float lane (@c ffr_fix=false) reports none.
      * @return One WL block per carry block that yielded ≥1 eligible row.  @c zhat is
      *         the measured lane DD in the correction frame (cycles, z_abs − z_lin).
@@ -213,12 +207,12 @@ private:
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the MW/WL lanes: EWL, the WL inject, UWL.
+ * @brief Run-end report: the MW/WL lanes: EWL and the WL inject.
  *
- * The MW/WL lanes: the EWL lanes, the WL inject and the UWL walk.
+ * The MW/WL lanes: the EWL lane and the WL inject.
  *
  * Gate: each section under its own condition, as in the teardown: `ewl_on`;
- * `wl_inject_on`; `uwl_on && wl_inject_on`.
+ * `wl_inject_on`.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).

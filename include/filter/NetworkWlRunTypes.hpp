@@ -4,7 +4,7 @@
  * @brief Run-loop-local helper types taken out of Application::runNetwork so the
  *        solve-region seams (NetworkInstallCarry / NetworkDdPriorBuild /
  *        NetworkSolveGlue) can name them: EwlLane (owns a NetworkMwWlLayer), the
- *        WL/UWL counter, inject and lane-trace PODs, and the
+ *        WL counter, inject and lane-trace PODs, and the
  *        Eigen-thread-pin RAII.  The definitions are field-for-field the former
  *        runNetwork() ones (INC-9b); the run TU keeps the instances (ewl_lanes /
  *        wl_inject_epoch / ...) and includes this header.
@@ -49,21 +49,6 @@ struct WlCounters {
     long long skip_quarantine{0};    ///< an arc's |x_lin| exceeded lane_max_abs_xlin_m.
     long long skip_basis{0};         ///< inject skipped: the chord is not 1:1 across both bands' carry groups, or the carry refused the edit.
     double    sum_bridge_R{0.0};     ///< Σ decided rows' bridge R (cyc²) for the mean-R report.
-    // --- Cold-fix telemetry (UWL-1; SPEC_uwl_card.md §3.3). ---
-    long long cold_bridge_cycles{0}; ///< decided cycles whose bridge read was the unlagged cold serve (early re-pin after a slip).
-    // --- Mid-ladder hop telemetry (E6; uwl_mid_enable). ---
-    long long mid_decided{0};        ///< decided cycles whose WL statistic came through the two-hop mid chain.
-    long long mid_fallback{0};       ///< cycles with a live mid chain whose mid FFR failed; fell back to the direct hop.
-    long long mid_closure{0};        ///< mid integers blocked by the MW(6,5) closure; fell back to the direct hop.
-    long long mid_disagree{0};       ///< two-hop and direct integers both pass FFR but differ; cycle skipped (wrong-integer backstop).
-    // --- Dual-top tier telemetry (Increment 5; uwl_dual_top). ---
-    long long top2_decided{0};       ///< decided cycles that came through the fallback rung ('7'), i.e. rows the preferred '8' rung did not decide.
-    long long dual_dedupe{0};        ///< fallback-rung entries skipped because the preferred rung already decided the (block,row) this build.
-    long long sib_checked{0};        ///< decided cycles whose untaken-sibling MW statistic was measurable across every arc.
-    long long sib_unavail{0};        ///< decided cycles whose sibling statistic was not measurable (an arc lacks the sibling band / MW arc).
-    long long sib_int_off{0};        ///< checked cycles whose sibling residual rounds to a nonzero integer: a wrong integer or a convention offset (the counter does not tell which).
-    long long sib_blocked{0};        ///< decisions blocked by the armed sibling gate (uwl_sib_gate; the cycle falls to the fallback rung the same epoch).
-    double    sib_abs_frac_sum{0.0}; ///< Σ |frac(sibling residual)| over checked cycles; the mean shows a convention offset (about 0 clean, about 0.5 for a half-cycle convention).
 };
 
 struct WlInjectPlan {
@@ -72,7 +57,6 @@ struct WlInjectPlan {
     double w{0.0};                 ///< integer WL DD target ∇ΔN_WL (cyc).
     double z_lin1{0.0}, z_lin2{0.0};///< Σ coeff·x_lin per band over the cycle (m).
     double lambda1{0.0}, lambda2{0.0};
-    char   cons{'\0'};             ///< the chord's constellation, for per-cons inject telemetry (UWL-1).
 };
 
 struct LaneTraceEntry {
@@ -84,8 +68,6 @@ struct LaneTraceEntry {
 };
 
 struct EwlLane {
-    char cons;                        ///< cons filter (0 = all, the legacy single lane).
-    char top;                         ///< the instance's top-tier band digit ('\0' = legacy single lane) (UWL-1).
     NetworkMwWlLayer layer;
     NetworkMwWlLayer::Counters run, epoch;
 };

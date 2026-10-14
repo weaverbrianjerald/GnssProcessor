@@ -18,7 +18,6 @@
 #include "filter/NetworkNormalEquations.hpp"  // SumZeroGauge / DdPriorBlock / GroupInput
 #include "filter/StateKeySchema.hpp"          // StateKeys::parse*
 #include "logging/NetworkRunTraces.hpp"       // traces.trace
-#include "slip/MwLaneTiers.hpp"               // mwLaneTierOf
 
 #include <Eigen/Dense>
 
@@ -137,14 +136,8 @@ void networkBuildCarryDdPriors(
     std::vector<WlInjectPlan>& wl_inject_epoch = lane_run.wl_inject_epoch;
     std::vector<LaneTraceEntry>& lane_trace_epoch = lane_run.lane_trace_epoch;
     WlCounters& wl_epoch = lane_run.wl_epoch;
-    std::map<char, WlCounters>& wl_cons_epoch = lane_run.wl_cons_epoch;
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
     const bool ewl_on = ctx.knobs.ewl_on;
-    const bool uwl_on = ctx.knobs.uwl_on;
-    const bool uwl_cold_on = ctx.knobs.uwl_cold_on;
-    const bool uwl_mid_on = ctx.knobs.uwl_mid_on;
-    const bool uwl_dual_on = ctx.knobs.uwl_dual_on;
-    const bool uwl_sib_gate_on = ctx.knobs.uwl_sib_gate_on;
     const bool wl_inject_on = ctx.knobs.wl_inject_on;
     const bool bridge_debias_on = ctx.knobs.bridge_debias_on;
     const bool ewl_carry_exclude = ctx.knobs.ewl_on;
@@ -211,20 +204,10 @@ void networkBuildCarryDdPriors(
     // lexicographic for determinism); v1 restricts WL rows to this pair (§11 Q3).
     std::map<std::pair<int, std::string>, PP> primary;
     // Top-tier band signal and column per (rx,sat), for the (band2, top band)
-    // extra-wide lane (WL-2 EWL).  The top digit is '5' (GPS L5 / Galileo E5a)
-    // unless uwl is armed, in which case the lane-tier table's b_top is used (see the
+    // extra-wide lane (WL-2 EWL).  The top digit is '5' (GPS L5 / Galileo E5a; see the
     // top_digit loop below).  arc_signals is sorted by band digit then name, so the
     // first match is deterministic.
     std::map<std::pair<int, std::string>, std::pair<std::string, int>> band_top_of;
-    // The fallback top rung's signal and column per (rx,sat) (Galileo '7' when the
-    // preferred b_top is '8'; increment 5, uwl_dual_top).  Empty unless a tier arms a
-    // fallback rung; the fallback lane instance's resolver and the walk's
-    // fallback-tagged rows read this map instead of band_top_of.
-    std::map<std::pair<int, std::string>, std::pair<std::string, int>> band_top2_of;
-    // The mid-rung band signal per (rx,sat) (E6 mid hop, uwl_mid_enable).  Only the
-    // signal is needed: the hops are phase-only detector reads, and no estimator
-    // column enters the chain.  Empty unless the tier arms a mid rung.
-    std::map<std::pair<int, std::string>, std::string> band_mid_of;
     // Per-(sat,signal) wavelength cache.  Every caller holds an arc of arc_signals or of
     // the carry below, and both exclude GLONASS, so no FDMA slot is needed (slot 0); a
     // code that does not parse has no wavelength (0).  The band is read from the digit
@@ -307,48 +290,22 @@ void networkBuildCarryDdPriors(
             primary[rs] = pp;
         }
         for (auto& [rs, sigs] : arc_signals) {
-            // The top-tier partner band digit (UWL-1 §3.1).  With uwl off it is the
-            // first '5' for every constellation, which is degenerate for Galileo:
-            // its '5' is E5a, the primary sig2 itself, giving the (L5Q,L5Q) pair
-            // with no detector arc and no warning other than the one below.  With
-            // uwl armed it comes from the lane-tier table (GPS '5' reproduces the
-            // legacy pick bit-exactly; Galileo '7'/'8').
-            char top_digit  = '5';
-            char mid_digit  = '\0';
-            char top2_digit = '\0';   // increment 5: the fallback rung's digit
+            // The top-tier partner band digit: the first '5' for every constellation,
+            // which is degenerate for Galileo: its '5' is E5a, the primary sig2 itself,
+            // giving the (L5Q,L5Q) pair with no detector arc and no warning other than
+            // the one below.
+            const char top_digit = '5';
             const System sys = systemOfSat(rs.second);
             const char cons = rinexLetter(sys);
-            if (uwl_on) {
-                const auto tier = mwLaneTierOf(cons, nmw.uwl_gal_top_band,
-                                               nmw.uwl_mid_enable, nmw.uwl_dual_top);
-                if (!tier) {
-                    if (ewl_on && sys != System::Unknown && uwl_warned_cons.insert(cons).second)
-                        log->warn("Network (M5/UWL-1): constellation '{}' has NO lane "
-                                  "tier in the armed table — its cycles contribute no "
-                                  "EWL/UWL statistic and no bridge (BDS-3 deferred on "
-                                  "clock divergence; GLONASS FDMA-excluded).  Loud by "
-                                  "design (SPEC §3.1).", cons);
-                    continue;   // no top-band entry ⇒ counted skip_missing_band downstream
-                }
-                top_digit  = tier->b_top;
-                mid_digit  = tier->b_mid;
-                top2_digit = tier->b_top2;
-            } else if (ewl_on && sys != System::GPS && sys != System::Unknown
-                       && uwl_warned_cons.insert(cons).second) {
-                log->warn("Network (M5/UWL-1): constellation '{}' enters the EWL lane "
-                          "under the LEGACY GPS band digits — its top-tier pair is "
+            if (ewl_on && sys != System::GPS && sys != System::Unknown
+                && uwl_warned_cons.insert(cons).second) {
+                log->warn("Network (M5/WL-2): constellation '{}' enters the EWL lane "
+                          "under the GPS band digits: its top-tier pair is "
                           "degenerate and every cycle dies silently as skip_missing_mw "
-                          "(SPEC_uwl_card.md §1 fact 3).  Arm network.mw_wl.uwl_enable "
-                          "for the per-constellation lane-tier table.", cons);
+                          "(SPEC_uwl_card.md §1 fact 3).", cons);
             }
             for (const auto& [sig, col] : sigs)
                 if (bandDigit(sys, sig) == top_digit) { band_top_of[rs] = { sig, col }; break; }
-            if (top2_digit != '\0')
-                for (const auto& [sig, col] : sigs)
-                    if (bandDigit(sys, sig) == top2_digit) { band_top2_of[rs] = { sig, col }; break; }
-            if (mid_digit != '\0')
-                for (const auto& [sig, col] : sigs)
-                    if (bandDigit(sys, sig) == mid_digit) { band_mid_of[rs] = sig; break; }
         }
     }
     // The carry driver needs this arc's ambiguity linearization value when either half
@@ -478,9 +435,8 @@ void networkBuildCarryDdPriors(
             ctx, config_, log, traces, carry_driver, stations,
             se, carry_slipped_ambs, we_culprits, n_threads, ewl_lanes,
             ewl_cfg, wl_inject_epoch, lane_trace_epoch,
-            wl_epoch, wl_cons_epoch, revmap, lin_of, iono_of, primary,
-            band_top_of, band_top2_of, band_mid_of, lam, blocks,
-            ewl_on, uwl_on, uwl_cold_on, uwl_mid_on, uwl_dual_on, uwl_sib_gate_on,
+            wl_epoch, revmap, lin_of, iono_of, primary,
+            band_top_of, lam, blocks, ewl_on,
             wl_inject_on, bridge_debias_on, mw_d5_dump, mw_lane_trace, mw_tagsets);
     est.contributionKind(ContributionKind::DdPriorBlock);   // card NOM N2a
     est.setDdPriors(std::move(blocks));

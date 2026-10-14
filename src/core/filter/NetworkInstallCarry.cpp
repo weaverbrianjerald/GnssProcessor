@@ -59,7 +59,6 @@ void networkInstallCarry(
     // former parameter names (card NOM step TD1a).
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
     const bool ewl_on = ctx.knobs.ewl_on;
-    const bool uwl_on = ctx.knobs.uwl_on;
     const bool wl_inject_on = ctx.knobs.wl_inject_on;
     const bool mw_d5_dump = ctx.knobs.mw_d5_dump;
     const bool mw_lane_trace = ctx.knobs.mw_lane_trace;
@@ -69,8 +68,6 @@ void networkInstallCarry(
     std::vector<LaneTraceEntry>& lane_trace_epoch = lane_run.lane_trace_epoch;
     WlCounters& wl_run = lane_run.wl_run;
     WlCounters& wl_epoch = lane_run.wl_epoch;
-    std::map<char, WlCounters>& wl_cons_run = lane_run.wl_cons_run;
-    std::map<char, WlCounters>& wl_cons_epoch = lane_run.wl_cons_epoch;
     auto& d5_ewl_stasat = ctx.carry.d5_ewl_stasat;
     auto& d5_hold_chords = ctx.carry.d5_hold_chords;
     auto& d5_inject_chords_prev = ctx.carry.d5_inject_chords_prev;
@@ -107,18 +104,6 @@ void networkInstallCarry(
         a.skip_quarantine     += b.skip_quarantine;
         a.skip_basis          += b.skip_basis;
         a.sum_bridge_R        += b.sum_bridge_R;
-        a.cold_bridge_cycles  += b.cold_bridge_cycles;
-        a.mid_decided         += b.mid_decided;
-        a.mid_fallback        += b.mid_fallback;
-        a.mid_closure         += b.mid_closure;
-        a.mid_disagree        += b.mid_disagree;
-        a.top2_decided        += b.top2_decided;
-        a.dual_dedupe         += b.dual_dedupe;
-        a.sib_checked         += b.sib_checked;
-        a.sib_unavail         += b.sib_unavail;
-        a.sib_int_off         += b.sib_int_off;
-        a.sib_blocked         += b.sib_blocked;
-        a.sib_abs_frac_sum    += b.sib_abs_frac_sum;
     };
 
     // Hand the driver this epoch's corroboration set before the install consumes it: the
@@ -358,15 +343,12 @@ void networkInstallCarry(
         }
     }
 
-    // EWL lane (M5 card WL-2): the same accepted-install accumulation (invariant #4),
-    // per lane instance (under UWL-1, one per tabled constellation when armed).
+    // EWL lane (M5 card WL-2): the same accepted-install accumulation (invariant #4).
     if (ewl_on) {
         for (auto& lane : ewl_lanes) {
             lane.run.cycles_seen       += lane.epoch.cycles_seen;
             lane.run.rows_built        += lane.epoch.rows_built;
             lane.run.rows_fixed        += lane.epoch.rows_fixed;
-            lane.run.rows_fixed_cold   += lane.epoch.rows_fixed_cold;
-            lane.run.rows_cold_unfixed += lane.epoch.rows_cold_unfixed;
             lane.run.rows_capped       += lane.epoch.rows_capped;
             lane.run.skip_not_primary  += lane.epoch.skip_not_primary;
             lane.run.skip_missing_band += lane.epoch.skip_missing_band;
@@ -391,7 +373,6 @@ void networkInstallCarry(
             if (!carry_driver.carriedChordValue(pl.group_l1, pl.chord, z1, v1) ||
                 !carry_driver.carriedChordValue(pl.group_l2, pl.chord, z2, v2)) {
                 ++wl_run.skip_basis;   // not 1:1 across both bands' carry bases: skip (§3.3)
-                if (uwl_on) ++wl_cons_run[pl.cons ? pl.cons : '?'].skip_basis;
                 continue;
             }
             const double A1 = (z1 + pl.z_lin1) / pl.lambda1;   // absolute band DDs (cyc)
@@ -408,22 +389,11 @@ void networkInstallCarry(
                 pl.group_l2, pl.chord, A2p * pl.lambda2 - pl.z_lin2, sg2 * sg2);
             const bool moved = i1 && i2;
             if (moved) { ++wl_run.injects; wl_run.inject_abs_sum += std::abs(pl.w - lane);
-                         if (uwl_on) {
-                             auto& wcr = wl_cons_run[pl.cons ? pl.cons : '?'];
-                             ++wcr.injects; wcr.inject_abs_sum += std::abs(pl.w - lane);
-                         }
                          if (mw_tagsets) d5_inject_chords_now.insert(pl.chord); }
-            else       { ++wl_run.skip_basis;
-                         if (uwl_on) ++wl_cons_run[pl.cons ? pl.cons : '?'].skip_basis; }
+            else       { ++wl_run.skip_basis; }
         }
-        // Accepted-install accumulation: the pooled epoch tallies (also the whole walk
-        // when the UWL card is off) plus, under UWL-1, the per-cons walk tallies, which
-        // are folded into both the aggregate and the per-cons run totals.
+        // Accepted-install accumulation of the epoch's walk tallies.
         wlAccumulate(wl_run, wl_epoch);
-        for (const auto& [wcons, we] : wl_cons_epoch) {
-            wlAccumulate(wl_run, we);
-            wlAccumulate(wl_cons_run[wcons], we);
-        }
 
         // Lane trace (F-B): write every entry's post-install carried lane and tags.
         if (mw_lane_trace && !lane_trace_epoch.empty()) {

@@ -9,7 +9,8 @@
  * Galileo top band, the streaming source, the within-epoch tier, the phase-datum switches,
  * the max-duration and decimation limits, the constant half of the RHS attribution window,
  * the trace switches, the configuration half of the leveling warm-up and the float
- * vehicle's birth-floor arm), into NetworkKnobs::snapshot.  The expressions in
+ * vehicle's birth-floor arm), into NetworkKnobs::snapshot (the Galileo top band has since
+ * gone with the UWL lane tier).  The expressions in
  * driverValues() are the driver's, copied from ApplicationNetwork.cpp as it stood before
  * the step (main 8326da3 with steps HV0 and WCF), with one substitution: where the driver
  * tested the SH model (setup.sh_model), the copy tests network.estimate_iono_sh, under
@@ -30,7 +31,6 @@
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkCarryVce.hpp"
 #include "logging/LogManager.hpp"
-#include "slip/MwLaneTiers.hpp"
 #include "slip/NetworkRawObservables.hpp"
 
 #include <algorithm>
@@ -96,8 +96,6 @@ struct DriverValues {
     double sh_dev_tau;
     bool sh_dev_on, sh_dev_demean, sh_dev_d5_keep;
     bool vce_wants_pb, vce_wants_cb;
-    char uwl_gal_top;
-    bool uwl_dual;
     bool streaming_on, within_epoch_armed;
     bool sticky, anc_slip_handover, gate_drop_erase;
     int min_stations;
@@ -116,7 +114,6 @@ DriverValues driverValues(const GnssConfig& config_, const NetworkConfig& nc) {
     // Setup builds the SH model exactly when network.estimate_iono_sh is set.
     const bool sh_model = config_.estimateNetworkIonoSh();
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
-    const auto& nmw = config_.getNetworkConfig().mw_wl;
     const bool roster_active = true;   // networkSignalRosterArm, every network run
     DriverValues d{};
     d.fc_on     = nc.fast_clock.enable;
@@ -135,8 +132,6 @@ DriverValues driverValues(const GnssConfig& config_, const NetworkConfig& nc) {
                                std::string("pb")) != vce_families.end();
     d.vce_wants_cb = std::find(vce_families.begin(), vce_families.end(),
                                std::string("cb")) != vce_families.end();
-    d.uwl_gal_top = nmw.uwl_gal_top_band;
-    d.uwl_dual    = nmw.uwl_dual_top;
     d.streaming_on = nc.streaming.enable;
     d.within_epoch_armed = config_.networkRaimWithinEpoch();
     d.sticky = config_.networkPhaseDatumSticky();
@@ -173,10 +168,6 @@ NetworkKnobs expectDriverValues(const GnssConfig& cfg, const NetworkConfig& nc) 
     EXPECT_EQ(k.sh_dev_d5_keep, d.sh_dev_d5_keep);
     EXPECT_EQ(k.vce_wants_pb, d.vce_wants_pb);
     EXPECT_EQ(k.vce_wants_cb, d.vce_wants_cb);
-    EXPECT_EQ(k.uwl_gal_top, d.uwl_gal_top);
-    // The uncarried-third-band predicate reads its dual-top capture only under uwl_on, where
-    // the knob it now reads (uwl_dual_on) equals network.mw_wl.uwl_dual_top.
-    if (k.uwl_on) EXPECT_EQ(k.uwl_dual_on, d.uwl_dual);
     EXPECT_EQ(k.streaming_on, d.streaming_on);
     EXPECT_EQ(k.within_epoch_armed, d.within_epoch_armed);
     EXPECT_EQ(k.pd_sticky, d.sticky);
@@ -368,45 +359,6 @@ TEST(NetworkKnobsEpochDriver, ShDeviationAndWarmupFollowTheShField) {
     EXPECT_FALSE(k.sh_dev_d5_keep);
     EXPECT_FALSE(k.pl_warmup_on_sh_conv);
     EXPECT_TRUE(k.pl_warmup_on_conv);
-}
-
-// The lane posture: the uncarried-third-band predicate's captures (uwl_on, the Galileo top
-// band, uwl_dual_on) on the postures that read them.  The predicate passes the band to
-// mwLaneTierOf, which reads it on the single-top tier and ignores it under uwl_dual_top
-// (the dual tier always prefers '8'), so the single-top posture is the one where the
-// captured digit decides Galileo's uncarried band.
-TEST(NetworkKnobsEpochDriver, UncarriedThirdBandCaptures) {
-    const auto lanePosture = [](bool dual_top) {
-        return std::string(
-            "    \"phase_datum_eq34\": true,\n"
-            "    \"carry_invariant\": true,\n"
-            "    \"phase_leveling\": true,\n"
-            "    \"cycle_slip\": { \"mw_detect\": true },\n"
-            "    \"mw_wl\": {\n"
-            "      \"ewl_enable\": true,\n"
-            "      \"uwl_enable\": true,\n"
-            "      \"uwl_gal_top_band\": 8,\n"
-            "      \"uwl_dual_top\": ") + (dual_top ? "true" : "false") + "\n"
-            "    },\n";
-    };
-
-    GnssConfig single;
-    ASSERT_TRUE(loadInto("uwl_single", networkConfig(lanePosture(false)), single));
-    NetworkKnobs k = expectDriverValues(single);
-    EXPECT_TRUE(k.uwl_on);
-    EXPECT_FALSE(k.uwl_dual_on);
-    EXPECT_EQ(k.uwl_gal_top, '8');
-    const auto tier = mwLaneTierOf('E', k.uwl_gal_top, false, k.uwl_dual_on);
-    ASSERT_TRUE(tier.has_value());
-    EXPECT_EQ(tier->b_top, '8');      // the captured digit is Galileo's uncarried band
-    EXPECT_EQ(tier->b_top2, '\0');
-
-    GnssConfig dual;
-    ASSERT_TRUE(loadInto("uwl_dual", networkConfig(lanePosture(true)), dual));
-    k = expectDriverValues(dual);
-    EXPECT_TRUE(k.uwl_on);
-    EXPECT_TRUE(k.uwl_dual_on);
-    EXPECT_EQ(k.uwl_gal_top, '8');
 }
 
 // The float vehicle's birth-floor arm, both conjuncts: on with float_kf and a positive

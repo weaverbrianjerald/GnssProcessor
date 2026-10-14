@@ -51,7 +51,6 @@
 #include "logging/NetworkRunTraces.hpp" // trace-stream ownership + open logic + roster + FlagRate (INC-3)
 #include "app/NetworkRunContext.hpp"    // ctx: knobs + Tier-1 carry state + service counters (INC-4)
 #include "app/NetworkSetupResult.hpp"   // setup-phase handoff (setup) + navAvailabilityGpsSeconds (INC-5)
-#include "slip/MwLaneTiers.hpp"         // per-constellation lane-tier band table (UWL-1)
 #include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, Increment 2)
 #include "slip/TurboEditResolver.hpp"   // per-signal MW+GF integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
@@ -598,7 +597,7 @@ void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator
         return;
     }
 
-    // --- Extra-wide-lane band pair per constellation (the UWL-1 tier table) -----------
+    // --- Extra-wide-lane band pair per constellation -----------------------------------
     // Shared with the increment-2a integer decision through @ref sdEwlBands, a single
     // definition, so the row and the integer folded into it cannot disagree about which
     // lane they are on.  GPS (L2,L5) lambda_EWL 5.861 m; Galileo (E5b,E5a) 9.768 m.
