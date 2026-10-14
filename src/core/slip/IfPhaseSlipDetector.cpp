@@ -3,7 +3,7 @@
  * \brief Between-satellite, between-epoch IF phase slip detector.
  *
  * Organization:
- *  - Construction / tracing
+ *  - Construction / the slip log line
  *  - Signal helpers
  *  - Statistics (median, MAD outlier check)
  *  - Observation grouping / reference selection
@@ -17,14 +17,13 @@
 #include "math/RobustStats.hpp"
 #include <algorithm>
 #include <cmath>
-#include <iomanip>
 #include <limits>
 #include <numeric>
 
 namespace GnssProcessor {
 
     // =================================================================
-    // Construction / tracing
+    // Construction / the slip log line
     // =================================================================
 
     IfPhaseSlipDetector::IfPhaseSlipDetector(const GnssConfig& config, LogManager& log_manager)
@@ -36,75 +35,22 @@ namespace GnssProcessor {
             kRefElevThreshDeg, kOutlierSigmaMultiplier, kPositionSigmaThresholdM);
     }
 
-    bool IfPhaseSlipDetector::enableTracing(const std::filesystem::path& log_dir) {
-        auto logger = log_manager_.getLogger("if_slip_detector");
-
-        std::error_code ec;
-        if (!std::filesystem::exists(log_dir)) {
-            std::filesystem::create_directories(log_dir, ec);
-            if (ec) {
-                logger->warn("Failed to create log directory '{}': {}", log_dir.string(), ec.message());
-                return false;
-            }
-        }
-
-        const auto trace_path = log_dir / "if_slip_trace.csv";
-        trace_file_.open(trace_path, std::ios::out | std::ios::trunc);
-        if (!trace_file_.is_open()) {
-            logger->warn("Could not open IF slip trace file '{}'", trace_path.string());
-            return false;
-        }
-
-        trace_file_ << "week,tow_s,satellite,system,elevation_deg,"
-                    << "phase_if_key,phi_if_omc_m,"
-                    << "grad_phi_if_m,delta_grad_m,"
-                    << "ref_satellite,ref_changed,"
-                    << "lambda_if_m,is_slip,slip_reason,"
-                    << "pos_sigma_3d_m,pos_gated\n";
-
-        logger->info("IF slip tracing enabled: {}", trace_path.string());
-        return true;
-    }
-
-    void IfPhaseSlipDetector::writeTraceRecord(const SatData& sd,
+    void IfPhaseSlipDetector::logSlipRecord(const SatData& sd,
         const std::string& sys_str,
         double grad, double delta_grad,
-        const std::string& ref_sat, bool ref_changed,
-        double lambda_if, bool is_slip,
+        const std::string& ref_sat,
+        double lambda_if,
         const std::string& slip_reason,
-        double position_sigma_3d, bool pos_gated) const {
+        double position_sigma_3d) const {
 
         auto logger = log_manager_.getLogger("if_slip_detector");
 
-        if (is_slip) {
-            logger->info("[W{} {:.3f}] {} {} elev={:.1f} grad={:.6f} delta_grad={:.6f} "
-                "ref={} lambda_if={:.6f} slip_reason={} pos_sigma={:.3f}{}",
-                current_epoch_.week, current_epoch_.tow,
-                sd.satellite, sys_str, sd.elevation,
-                grad, delta_grad, ref_sat, lambda_if, slip_reason,
-                position_sigma_3d, pos_gated ? " [pos_gated]" : "");
-        } else {
-            logger->debug("[W{} {:.3f}] {} {} elev={:.1f} grad={:.6f} delta_grad={:.6f} "
-                "ref={}{} lambda_if={:.6f} reason={} pos_sigma={:.3f}{}",
-                current_epoch_.week, current_epoch_.tow,
-                sd.satellite, sys_str, sd.elevation,
-                grad, delta_grad, ref_sat,
-                ref_changed ? " [changed]" : "", lambda_if, slip_reason,
-                position_sigma_3d, pos_gated ? " [pos_gated]" : "");
-        }
-
-        if (!trace_file_.is_open()) return;
-
-        trace_file_ << std::fixed << std::setprecision(3)
-            << current_epoch_.week << "," << current_epoch_.tow << ","
-            << sd.satellite << "," << sys_str << ","
-            << std::setprecision(2) << sd.elevation << ","
-            << sd.phase_if_key << ","
-            << std::setprecision(6) << sd.phi_if_omc << ","
-            << grad << "," << delta_grad << ","
-            << ref_sat << "," << (ref_changed ? 1 : 0) << ","
-            << lambda_if << "," << (is_slip ? 1 : 0) << "," << slip_reason << ","
-            << std::setprecision(3) << position_sigma_3d << "," << (pos_gated ? 1 : 0) << "\n";
+        logger->info("[W{} {:.3f}] {} {} elev={:.1f} grad={:.6f} delta_grad={:.6f} "
+            "ref={} lambda_if={:.6f} slip_reason={} pos_sigma={:.3f}",
+            current_epoch_.week, current_epoch_.tow,
+            sd.satellite, sys_str, sd.elevation,
+            grad, delta_grad, ref_sat, lambda_if, slip_reason,
+            position_sigma_3d);
     }
 
     // =================================================================
@@ -746,9 +692,9 @@ namespace GnssProcessor {
                     median_dd / lambda_if, 0.5 * lambda_if,
                     n_finite, ref_amb_key);
 
-            writeTraceRecord(*ref_data, sys_str, 0.0, median_dd,
-                cs.ref_satellite, false, lambda_if, true, "ref_slip",
-                position_sigma_3d, false);
+            logSlipRecord(*ref_data, sys_str, 0.0, median_dd,
+                cs.ref_satellite, lambda_if, "ref_slip",
+                position_sigma_3d);
 
             // Correct the previous gradients by the median offset and recompute
             // the double differences, so that the later outlier detection (here,
@@ -940,10 +886,10 @@ namespace GnssProcessor {
                     logger->warn("{}: IF phase slip for {}: delta_grad={:.4f} m, lambda_IF={:.4f} m; reset {}",
                         sys_str, sat, delta_grad[sat], lambda_if, amb_key);
 
-                    writeTraceRecord(*sit->second, sys_str,
+                    logSlipRecord(*sit->second, sys_str,
                         grad_phi_if.at(sat), delta_grad.at(sat),
-                        cs.ref_satellite, ref_changed, lambda_if,
-                        true, "non_ref_outlier", position_sigma_3d, false);
+                        cs.ref_satellite, lambda_if,
+                        "non_ref_outlier", position_sigma_3d);
                 }
             }
         } else {
@@ -958,11 +904,11 @@ namespace GnssProcessor {
                 logger->warn("{}: IF phase slip (fixed threshold) for {}: |delta_grad|={:.4f} m > lambda_IF={:.4f} m; reset {}",
                     sys_str, sat, std::abs(dd), lambda_if, amb_key);
 
-                writeTraceRecord(*sit->second, sys_str,
+                logSlipRecord(*sit->second, sys_str,
                     grad_phi_if.count(sat) ? grad_phi_if.at(sat)
                         : std::numeric_limits<double>::quiet_NaN(),
-                    dd, cs.ref_satellite, ref_changed, lambda_if,
-                    true, "fixed_threshold", position_sigma_3d, false);
+                    dd, cs.ref_satellite, lambda_if,
+                    "fixed_threshold", position_sigma_3d);
             }
         }
         } // if (!defer_flagging_)
@@ -1134,25 +1080,6 @@ namespace GnssProcessor {
             for (const auto& sd : sat_vec)
                 sat_lookup[sd.satellite] = &sd;
 
-            // Write trace records for non-slip satellites
-            if (trace_file_.is_open()) {
-                for (const auto& sd : sat_vec) {
-                    bool was_reset = false;
-                    for (const auto& key : reset_keys)
-                        if (key.find(sd.satellite) == 0) { was_reset = true; break; }
-                    if (was_reset) continue;
-
-                    writeTraceRecord(sd, sys_str,
-                        grad_phi_if.count(sd.satellite) ? grad_phi_if.at(sd.satellite)
-                            : std::numeric_limits<double>::quiet_NaN(),
-                        delta_grad.count(sd.satellite) ? delta_grad.at(sd.satellite)
-                            : std::numeric_limits<double>::quiet_NaN(),
-                        cs.ref_satellite, ref_changed, lambda_if,
-                        false, pos_gated ? "pos_gated" : "ok",
-                        position_sigma_3d, pos_gated);
-                }
-            }
-
             // Cache IF jump values for external query (network pool / joint MW+IF).
             for (const auto& [sat, dd] : delta_grad) {
                 IfJumpInfo info;
@@ -1191,7 +1118,6 @@ namespace GnssProcessor {
             // Store gradients for next epoch (exclude reset satellites).  The
             // re-seed marks described the gradients being replaced, so they go too.
             cs.prev_grad.clear();
-            cs.prev_los.clear();
             cs.reseeded.clear();
             for (const auto& [sat, g] : grad_phi_if) {
                 bool was_reset = false;
@@ -1199,10 +1125,6 @@ namespace GnssProcessor {
                     if (key.find(sat + "_") == 0) { was_reset = true; break; }
                 if (!was_reset) {
                     cs.prev_grad[sat] = g;
-                    auto sit_it = std::find_if(sat_vec.begin(), sat_vec.end(),
-                        [&](const SatData& sd) { return sd.satellite == sat; });
-                    if (sit_it != sat_vec.end())
-                        cs.prev_los[sat] = sit_it->los;
                 }
             }
 
@@ -1227,7 +1149,6 @@ namespace GnssProcessor {
             if (it != cs.prev_grad.end()) {
                 logger->debug("Cleared IF phase history for {} in constellation {}", satellite, sys);
                 cs.prev_grad.erase(it);
-                cs.prev_los.erase(satellite);
                 cs.reseeded.erase(satellite);
             }
             if (cs.ref_satellite == satellite) {
@@ -1251,7 +1172,6 @@ namespace GnssProcessor {
         if (it != cs.prev_grad.end()) {
             logger->debug("Cleared IF phase history for {} in chain {}", satellite, state_key);
             cs.prev_grad.erase(it);
-            cs.prev_los.erase(satellite);
             cs.reseeded.erase(satellite);
         }
         if (cs.ref_satellite == satellite) {
@@ -1302,21 +1222,6 @@ namespace GnssProcessor {
         auto sit = constellation_state_.find(state_key);
         if (sit == constellation_state_.end()) return false;
         return reseedInChain(state_key, sit->second, satellite);
-    }
-
-    void IfPhaseSlipDetector::resetAll() {
-        constellation_state_.clear();
-        last_if_jumps_.clear();
-        last_if_jumps_all_.clear();
-        log_manager_.getLogger("if_slip_detector")->debug("All IF phase slip state cleared");
-    }
-
-    IfPhaseSlipDetector::IfJumpInfo IfPhaseSlipDetector::getLastIfJump(
-        const std::string& satellite) const {
-        auto it = last_if_jumps_.find(satellite);
-        if (it != last_if_jumps_.end())
-            return it->second;
-        return {};
     }
 
 } // namespace GnssProcessor

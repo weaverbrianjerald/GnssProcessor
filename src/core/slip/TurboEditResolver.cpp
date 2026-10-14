@@ -1536,16 +1536,4 @@ void TurboEditResolver::resetSatelliteSignal(const std::string& satellite,
     held_across_lli_.erase(satellite + "_" + signal);
 }
 
-void TurboEditResolver::resetAll() {
-    gf_arcs_.clear();
-    prev_epoch_s_ = 0.0;
-    xsat_sigma_group_.clear();
-    xsat_sigma_cons_.clear();
-    xsat_sigma_global_ = std::numeric_limits<double>::quiet_NaN();
-    xsat_devs_.clear();
-    sig_last_seen_s_.clear();
-    sig_continuous_since_s_.clear();
-    held_across_lli_.clear();
-}
-
 } // namespace GnssProcessor

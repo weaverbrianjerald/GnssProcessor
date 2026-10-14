@@ -64,8 +64,6 @@
 #include "logging/LogManager.hpp"
 #include <Eigen/Dense>
 #include <cstddef>
-#include <filesystem>
-#include <fstream>
 #include <map>
 #include <set>
 #include <string>
@@ -242,13 +240,6 @@ namespace GnssProcessor {
                                     const std::string& satellite);
 
         /**
-         * @brief Clear all internal state (all constellations).
-         *
-         * Called after a complete filter reset.
-         */
-        void resetAll();
-
-        /**
          * @brief IF phase jump information for one satellite from the last detect() call.
          */
         struct IfJumpInfo {
@@ -287,20 +278,6 @@ namespace GnssProcessor {
             /// while no driver re-seeds.
             bool after_reseed{ false };
         };
-
-        /**
-         * @brief Retrieve the IF phase jump for a satellite from the last detect() call.
-         *
-         * Returns the between-epoch, between-satellite double-differenced IF
-         * phase jump (in meters) that was computed during the most recent
-         * call to detect().  This is the quantity denoted delta_grad in the
-         * internal processing.  The value is relative to the constellation's
-         * reference satellite and is valid only when IfJumpInfo::valid is true.
-         *
-         * @param satellite  Satellite identifier (e.g. "G01").
-         * @return IfJumpInfo  Phase jump info (valid=false if not available).
-         */
-        IfJumpInfo getLastIfJump(const std::string& satellite) const;
 
         /**
          * @brief All per-satellite IF jumps from the last detect() call.
@@ -625,22 +602,6 @@ namespace GnssProcessor {
          */
         void setDeferFlagging(bool defer) { defer_flagging_ = defer; }
 
-        /**
-         * @brief Enable CSV tracing for IF phase slip diagnostics.
-         *
-         * Opens or creates "if_slip_trace.csv" in the specified directory.
-         *
-         * @param log_dir Directory where the trace file will be created.
-         * @return true if the file was successfully opened, false otherwise.
-         */
-        bool enableTracing(const std::filesystem::path& log_dir);
-
-        /**
-         * @brief Check if tracing is currently enabled.
-         * @return true if the trace file is open and writable.
-         */
-        bool isTracingEnabled() const { return trace_file_.is_open(); }
-
     private:
         const GnssConfig& config_;
         LogManager& log_manager_;
@@ -694,11 +655,6 @@ namespace GnssProcessor {
         struct ConstellationState {
             /** Previous epoch between-satellite IF OMC gradients keyed by satellite ID. */
             std::map<std::string, double> prev_grad;
-
-            /** Previous epoch LOS unit vectors keyed by satellite ID.  Stored and
-             *  cleared alongside prev_grad but not read: the geometry correction
-             *  uses the current-epoch LOS vectors. */
-            std::map<std::string, Eigen::Vector3d> prev_los;
 
             /** Satellites whose prev_grad entry a driver kept after a flag
              *  (@ref reseedSatellite).  Read by the next published sample
@@ -766,7 +722,7 @@ namespace GnssProcessor {
 
         /** Cached per-satellite IF jump from the most recent detect() call, first
          *  pair only (the chains whose key is the bare system string).
-         *  Populated at the end of detect() so that getLastIfJump() can
+         *  Populated at the end of detect() so that getLastIfJumps() can
          *  return values without re-computing. */
         std::map<std::string, IfJumpInfo> last_if_jumps_;
 
@@ -843,7 +799,7 @@ namespace GnssProcessor {
          * @param lambda_if       Median IF wavelength for this constellation.
          * @param ref_changed     Whether the reference satellite changed.
          * @param position_sigma_3d 3D position sigma (meters), written to the
-         *                        trace; the gate itself is read from
+         *                        slip log line; the gate itself is read from
          *                        @ref epoch_gated_.
          * @param[out] reset_keys Ambiguity keys to reset are appended here.
          * @param run_ref_arm     Run the per-station reference-satellite slip test
@@ -938,19 +894,32 @@ namespace GnssProcessor {
             const std::string& sys_str, double sin_bar, double sin_ref);
 
         /**
-         * @brief Write a single trace CSV record.
+         * @brief Log one flagged slip (info level, logger "if_slip_detector").
+         *
+         * Every flag of this detector (a reference-arm fire, and on the staged
+         * per-station path a non-reference outlier) writes this line, prefixed
+         * with the epoch's GPS week and time of week.
+         *
+         * @param sd                The flagged satellite's data.
+         * @param sys_str           Chain key ("GPS", "GPS|L1C_L5Q").
+         * @param grad              Its between-satellite gradient (m; 0.0 for
+         *                          the reference, whose gradient is 0).
+         * @param delta_grad        Its between-epoch double difference (m), or
+         *                          the family median for a reference fire.
+         * @param ref_sat           The chain's reference satellite.
+         * @param lambda_if         The chain's median IF wavelength (m).
+         * @param slip_reason       "ref_slip", "non_ref_outlier" or
+         *                          "fixed_threshold".
+         * @param position_sigma_3d The caller's 3D position sigma (m).
          */
-        void writeTraceRecord(const SatData& sd, const std::string& sys_str,
+        void logSlipRecord(const SatData& sd, const std::string& sys_str,
             double grad, double delta_grad,
-            const std::string& ref_sat, bool ref_changed,
-            double lambda_if, bool is_slip,
+            const std::string& ref_sat,
+            double lambda_if,
             const std::string& slip_reason,
-            double position_sigma_3d, bool pos_gated) const;
+            double position_sigma_3d) const;
 
-        /** Output stream for IF slip trace CSV file. */
-        mutable std::ofstream trace_file_;
-
-        /** Current epoch time for tracing. */
+        /** Current epoch time (the prefix of the slip log line). */
         mutable GnssTime current_epoch_;
 
         /** Model-nuisance gate threshold, m; 0 ⇒ disabled (§6.14.6 item 3). */

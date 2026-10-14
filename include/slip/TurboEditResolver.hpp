@@ -323,15 +323,16 @@ public:
     TurboEditResolver(const GnssConfig& config, LogManager& log_manager);
 
     /**
-     * @brief Provide satellite BIA corrections.
+     * @brief Accept satellite BIA corrections, and ignore them.
      *
-     * The GF combination is bias-free in its time-difference, so this is a
-     * no-op today; retained for interface parity with the detectors and for
-     * forward compatibility.
+     * The GF combination is bias-free in its time difference, so the resolver
+     * reads no correction.  The call is kept because three drivers make it
+     * (@c CycleSlipManager::setCorrections, the real-time engine's
+     * construction, network setup); it stores nothing.
      *
-     * @param corrections Bias source (may be nullptr); owned externally.
+     * @param corrections Bias source (may be nullptr); not stored.
      */
-    void setCorrections(const GnssCorrections* corrections) { corrections_ = corrections; }
+    void setCorrections(const GnssCorrections* corrections) { (void)corrections; }
 
     /**
      * @brief Resolve cycle slips for one epoch.
@@ -402,11 +403,6 @@ public:
     void resetSatelliteSignal(const std::string& satellite, const std::string& signal);
 
     /**
-     * @brief Drop all GF arc state (hard-gap restart).
-     */
-    void resetAll();
-
-    /**
      * @brief Override the inter-epoch gap tolerance before a GF arc is reset.
      * @param seconds New gap tolerance; values ≤ 0 are ignored.
      */
@@ -426,7 +422,6 @@ private:
     const GnssConfig& config_;
     LogManager& log_manager_;
     PppUtils ppp_utils_;
-    const GnssCorrections* corrections_{ nullptr };
 
     /// Effective inter-epoch gap tolerance (s); overridable via @c setMaxGapSeconds.
     double max_gap_seconds_{ kDefaultMaxGapSeconds };
@@ -578,9 +573,9 @@ private:
     /// occurred), so its ambiguity survived.  A signal that missed an epoch
     /// that did occur was pruned and reseeded by the state side
     /// (prune-on-first-miss).  Below-elevation-mask epochs count as missing
-    /// (those observations are excluded from the filter too).  Cleared only
-    /// by @c resetAll: continuity is an observation-domain fact, independent
-    /// of filter resets.
+    /// (those observations are excluded from the filter too).  Never
+    /// cleared: continuity is an observation-domain fact, independent of
+    /// filter resets.
     std::map<std::string, double> sig_last_seen_s_;
     std::map<std::string, double> sig_continuous_since_s_;
     /// (sat, signal) keys ("G03_L2W") the caller holds across a receiver LLI
