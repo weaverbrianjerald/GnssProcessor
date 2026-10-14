@@ -2256,6 +2256,17 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
                                        static_cast<Eigen::Index>(i));
                     return (std::isfinite(v) && v >= 0.0) ? std::sqrt(v) : 0.0;
                 };
+                // A state the layout does not hold (the receiver clock under BSSD
+                // and in baseline mode: its index is the max() sentinel) is written
+                // as NaN, as the other traces do; indexing x with the sentinel read
+                // outside the vector (card UOM, UB1).
+                constexpr double kAbsent = std::numeric_limits<double>::quiet_NaN();
+                auto value_or_nan = [&](const Eigen::VectorXd& x, size_t i) {
+                    return i < static_cast<size_t>(x.size()) ? x[static_cast<Eigen::Index>(i)] : kAbsent;
+                };
+                auto sig_or_nan = [&](const Eigen::MatrixXd& P, size_t i) {
+                    return i < static_cast<size_t>(P.rows()) ? sig(P, i) : kAbsent;
+                };
                 for (const auto& s : results) {
                     const size_t px = s.pos_idx;
                     ofs << s.t.week << ","
@@ -2266,8 +2277,8 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
                         << fmt::format("{:.4f}", sig(s.P, px))     << ","
                         << fmt::format("{:.4f}", sig(s.P, px + 1)) << ","
                         << fmt::format("{:.4f}", sig(s.P, px + 2)) << ","
-                        << fmt::format("{:.4f}", s.x[static_cast<Eigen::Index>(s.clock_idx)]) << ","
-                        << fmt::format("{:.4f}", sig(s.P, s.clock_idx)) << ","
+                        << fmt::format("{:.4f}", value_or_nan(s.x, s.clock_idx)) << ","
+                        << fmt::format("{:.4f}", sig_or_nan(s.P, s.clock_idx)) << ","
                         << fmt::format("{:.4f}", s.x[static_cast<Eigen::Index>(s.tropo_idx)]) << ","
                         << fmt::format("{:.4f}", sig(s.P, s.tropo_idx)) << ","
                         << (s.smoothed ? 1 : 0) << "\n";
