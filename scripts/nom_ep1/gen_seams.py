@@ -33,7 +33,7 @@ EPOCH_INCLUDES = ('#include "app/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 
 GROUP_WORDS = {"pass_a": "the layout", "funnel": "the slip funnel", "columns": "the shared columns",
                "assembly": "the station blocks", "dd_build": "the DD build's reverse maps",
                "handoff": "the post-fit hand-off"}
-BUILDERS = ("buildEnsembleGauges", "buildCarryDdPriors")
+BUILDERS = tuple(name for name, _ in model.SOLVE_BUILDERS)   # T-F, from the table
 
 
 def namespace_close(T):
@@ -321,8 +321,15 @@ def seams(g):
             parts += ["// ---- End of the epoch forms ----", "", ""]
             g.edits[path].append(Edit(pos, pos, "\n".join(parts), "T-D adapters"))
         # Includes.
+        want = list(EPOCH_INCLUDES)
+        if any(pl.row.name == SOLVE for pl in pls):
+            # T-F: the replay calls its builders directly, so the solve's source includes their
+            # header (the frozen solve reached them only through the callbacks).
+            for h in sorted({g.plans[model.REMOVED_BY_PARAM[(SOLVE, n)].builder].rr.decl.path
+                             for n in BUILDERS}):
+                want.append(f'#include "{h[len("include/"):]}"   // the replay\'s builders (T-F)')
         have = set(re.findall(r'#include\s+"([^"]+)"', text))
-        add = [ln for ln in EPOCH_INCLUDES if re.search(r'"([^"]+)"', ln).group(1) not in have]
+        add = [ln for ln in want if re.search(r'"([^"]+)"', ln).group(1) not in have]
         if add:
             p = include_point(T)
             g.edits[path].append(Edit(p, p, "\n".join(add) + "\n", "T-D includes"))

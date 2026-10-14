@@ -15,7 +15,7 @@ from nom_ep1.gen import (GenError, SOLVE, SHIFT, WIDTH, BRACKETS, CALLABLE_LOCAL
                          LAMBDA_ENUM, comment_block)
 from nom_ep1.textops import Edit, lit, src, apply_edits, leading_comment, wrap_args, dedent
 
-BUILDER_CLOSURES = ("buildEnsembleGauges", "buildCarryDdPriors")
+BUILDER_CLOSURES = tuple(name for name, _ in model.SOLVE_BUILDERS)   # T-F, from the table
 VALUE_EQUAL_EXPR = "ctx.counters.n_emitted != fc_n_emitted_before"
 EMIT_SEAM = "networkEmitStore"
 INPUT_STAGE_LAST = "networkCanonicalPairAdmission"

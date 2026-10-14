@@ -151,7 +151,7 @@ class Gen:
         for name, rr in self.conv.items():
             self.plans[name] = self.plan_seam(rr)
         if SOLVE in self.conv:
-            for b in ("networkBuildEnsembleGauges", "networkBuildCarryDdPriors"):
+            for _, b in model.SOLVE_BUILDERS:
                 if b not in self.conv:
                     raise GenError(f"{SOLVE} is converted but {b} is not: the replay calls it directly (T-F)")
 

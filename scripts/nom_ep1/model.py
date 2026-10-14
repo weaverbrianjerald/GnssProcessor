@@ -391,6 +391,11 @@ REMOVED_PARAMS = (
             "CALLBACK_DIRECT", "direct call in the T2 replay", "networkBuildCarryDdPriors"),
 )
 REMOVED_BY_PARAM = {(r.seam, r.param): r for r in REMOVED_PARAMS}
+# The solve's callbacks that become direct calls in its T2 replay (T-F), in table order:
+# (closure name, builder seam).  The generator reads this one list, so a builder the base no
+# longer has drops with its Removed entry, its row and its declared CALLBACK_DIRECT entry.
+SOLVE_BUILDERS = tuple((r.param, r.builder) for r in REMOVED_PARAMS
+                       if r.cls == "CALLBACK_DIRECT" and r.seam == "networkSolveGlue")
 
 
 # ---------------------------------------------------------------------------------------------
