@@ -621,10 +621,10 @@ struct LocalCarry {
     static constexpr double    kBirthSRestored  = -1.0;
     long long birth_ep{0};                        ///< Loop-epoch index (n_loop_epochs) of the arc's first stash: set once at birth, kept across re-stashes, restarted by an erase-and-rebirth.  0 = never stashed, @ref kBirthEpRestored (−1) = warm-resume-restored with its true birth not snapshotted.  Both read as mature (every reader tests `> 0`).  The harvest's first-stash-wins rule tests `!= 0`, so the −1 sentinel survives it, while a 0 is replaced by the current epoch at the next stash (@ref localCarryStampBirth).  network.phase_leveling_local_block_min_age_ep keeps a leg out of the F3 block (a per-column row instead) until n_loop_epochs − birth_ep reaches the gate: a leg born at a satellite's re-admission carries its code-level birth error, and the block's joint whitening would spread it into the station's mature columns.  Not snapshotted: a restored entry is sentinel-stamped and reads as mature for its whole life (until an erase-and-rebirth), which is the documented restored-entry contract.
     double birth_s{0.0};                          ///< Continuous-GPS seconds (week*604800 + tow) of the arc's first stash: the seconds counterpart of @c birth_ep, set once at birth from the harvest's @c pl_now_s, kept across re-stashes, and restarted by an erase-and-rebirth (a T4 attribution erase deletes the entry, and the next harvest re-creates it with a level that already contains any earlier slip).  Read by the sim-only slip oracle (@c network.cycle_slip.oracle_relevel) as the hard lower edge of its truth-slip window, so a repair never re-applies a jump that the re-created level already absorbed.  Not snapshotted (like @c birth_ep): a warm-resume-restored entry carries @ref kBirthSRestored (−1), which never wins the window's `max` and so leaves the window at its @c oracle_window_s latency bound for the arc's whole restored life.  That is acceptable for a sim-only diagnostic and errs in the conservative direction.
-    /// Continuous-GPS seconds of the arc's last re-level: the age clock of the
-    /// age-aware young-arc variance inflation
-    /// (@c network.phase_leveling_young_inflate_var_m2,
-    /// SPEC_amb_iono_split_overcount §6.17–§6.18).  The harvest sets it to its
+    /// Continuous-GPS seconds of the arc's last re-level (introduced as the age clock
+    /// of the retired young-arc variance inflation,
+    /// @c network.phase_leveling_young_inflate_var_m2; SPEC_amb_iono_split_overcount
+    /// §6.17–§6.18).  The harvest sets it to its
     /// @c pl_now_s (@ref localCarryStampRelevel) on two events, both of which produce a
     /// level whose value is of code quality while its harvested variance is
     /// phase-stiff (conditioned on the station's mature arcs):
@@ -636,13 +636,10 @@ struct LocalCarry {
     ///     one epoch of code.
     /// The float vehicle's drop (@c ambFloatDrop in NetworkAmbFloat.cpp) also sets it,
     /// because a drop doubts the level.  It is preserved across every ordinary
-    /// re-stash, so the age keeps growing while the arc matures.  The inject inflates
-    /// the column's prior variance by V0·exp(−age/τ) until
-    /// @c phase_leveling_young_inflate_max_age_ep, which stops the T4 tier from erasing
-    /// an arc that is merely unrefined rather than wrong (a repeating erase and
-    /// re-level cycle).  Not snapshotted (like @c birth_s and @c birth_ep): a
-    /// warm-resume-restored entry reads 0, which the inflation treats as unstamped,
-    /// hence mature, hence not inflated (the conservative direction).  Unlike
+    /// re-stash, so the age keeps growing while the arc matures.  Read by the AR suspect
+    /// ledger, the arc life stamp and the amb_state trace.  Not snapshotted (like
+    /// @c birth_s and @c birth_ep): a warm-resume-restored entry reads 0 (unstamped).
+    /// Unlike
     /// @c birth_s and @c birth_ep it needs no restore sentinel: it is stamped only on
     /// those events, never on an ordinary re-stash, so a restored entry's 0 survives
     /// every harvest until the arc is actually re-levelled.
@@ -1371,7 +1368,6 @@ struct StationAssembly {
     /// station-epochs.  Produce-phase local, like every other @c pl_blk_* count.
     long long                 pl_blk_fallback_dim{0};
     long long                 pl_blk_young_cols{0};    ///< Injectable columns younger than the F3 age gate (network.phase_leveling_local_block_min_age_ep) this station-epoch, kept out of the block and emitted as per-column rows (F1-scaled if armed).
-    long long                 pl_blk_yng_scaled{0};    ///< Block columns whose row and column of Σ were congruence-scaled this station-epoch (age-aware young-arc inflation, network.phase_leveling_young_inflate_var_m2).  Read against @c yng_cols below: a gap means columns were computed young but their block never reached the scaling (refused by the scalar screen, or the station took the per-column route).
     // The station's receiver-clock (and ISB) columns carried inside the same F3 block
     // (RX-CLK-in-block, network.carry_rx_clock_in_block).  As for the iono carry and
     // unlike the ZWD carry, there is no diagonal fallback row, by design: a diagonal
@@ -1412,15 +1408,6 @@ struct StationAssembly {
     /// @c pl_blk_col_refused): pushed, but never rows of the block.  Read only by the
     /// fold count of card L5B, which counts a column as folded only when it is absent here.
     std::vector<Eigen::Index> rxcb_refused;
-    // Age-aware young-arc inflation (network.phase_leveling_young_inflate_var_m2,
-    // SPEC_amb_iono_split_overcount §6.17–§6.18): per-station telemetry, folded serially
-    // like every other block counter.  Counted at the compute site (once per carried
-    // ambiguity column, whichever route then folds it), so it is the population the
-    // inflation acted on, not a per-route split.
-    long long                 yng_cols{0};             ///< column-epochs handed a strictly positive var_add this station-epoch.
-    long long                 yng_skip_age{0};         ///< Stamped column-epochs refused for age > max_age_ep (an unstamped entry, relevel_s == 0, is treated as mature and counted in neither).
-    double                    yng_var_add_sum{0.0};    ///< Σ of those var_add values (m²).
-    double                    yng_age_sum{0.0};        ///< Σ of their ages (loop epochs); ÷ yng_cols = this station-epoch's mean inflated age.
     long long                 pl_blk_hist[5]{0, 0, 0, 0, 0}; ///< Block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75 (F3).
     long long                 pl_blk_max_dim{0};       ///< Largest block dimension this station-epoch (F3).
     // The ZWD column carried inside the F3 block (B9-in-block, network.carry_zwd_in_block).

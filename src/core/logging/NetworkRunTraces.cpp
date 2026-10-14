@@ -2026,20 +2026,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"phase_leveling_local_block\":" << (pl_local_block ? "true" : "false") << ','
                << fmt::format("\"phase_leveling_local_block_min_age_ep\":{},", config_.networkPhaseLevelingLocalBlockMinAgeEp())
                << "\"phase_leveling_local_block_young_mode\":\"" << config_.networkPhaseLevelingLocalBlockYoungMode() << "\","
-               // The age-aware young-arc inflate (SPEC_amb_iono_split_overcount
-               // §6.17–§6.18) affects the solve, so an archived logs/ folder has to be
-               // able to say which side of it produced the products; the two shape knobs
-               // are recorded too because the prior's weight cannot be recovered without
-               // them.  Emitted only when armed (the adm_screen / I-in-block rule), so an
-               // unarmed run's manifest bytes are unchanged.
-               << (config_.networkPhaseLevelingYoungInflateVarM2() > 0.0
-                       ? fmt::format("\"phase_leveling_young_inflate_var_m2\":{},"
-                                     "\"phase_leveling_young_inflate_tau_ep\":{},"
-                                     "\"phase_leveling_young_inflate_max_age_ep\":{},",
-                                     config_.networkPhaseLevelingYoungInflateVarM2(),
-                                     config_.networkPhaseLevelingYoungInflateTauEp(),
-                                     config_.networkPhaseLevelingYoungInflateMaxAgeEp())
-                       : std::string{})
                << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
                << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
                // Card PFQ: solve-affecting and fingerprinted, so an archived logs/ folder

@@ -91,12 +91,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.trace_amb_state = config_.getNetworkConfig().trace_amb_state;
     k.trace_amb_state_every =
         std::max(1, config_.getNetworkConfig().trace_amb_state_every);
-    // Age-aware young-arc inflation (SPEC_amb_iono_split_overcount §6.17–§6.18).  The
-    // loader already disables it (V0 -> 0) off the leveling vehicle, so Knobs::on() alone
-    // is the live predicate.
-    k.yng.var_m2     = config_.networkPhaseLevelingYoungInflateVarM2();
-    k.yng.tau_ep     = config_.networkPhaseLevelingYoungInflateTauEp();
-    k.yng.max_age_ep = config_.networkPhaseLevelingYoungInflateMaxAgeEp();
     k.pb_var_floor = config_.networkSharedCarryVarFloorPbM2();
     k.cb_var_floor = config_.networkSharedCarryVarFloorCbM2();
     k.fullcov_on = config_.networkSharedCarryFullCov();

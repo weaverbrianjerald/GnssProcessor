@@ -212,9 +212,9 @@ TEST(CarryRxClockInBlockTest, ClockAndIsbJoinTheWhitenedBlockAndCarryTheirHarves
         LocalBlockCol{0, 0.5,   &a0, cdiag[0], 30.0, 1.0},
         LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0},
         LocalBlockCol{2, 1.0,   &a2, cdiag[2], 30.0, 1.0},
-        LocalBlockCol{3, 0.0,   &ck, cdiag[3], 30.0, 1.0, false, false, 0.0,
+        LocalBlockCol{3, 0.0,   &ck, cdiag[3], 30.0, 1.0, false, false,
                       /*is_rx_clk=*/true},
-        LocalBlockCol{4, 0.0,   &ib, cdiag[4], 30.0, 1.0, false, false, 0.0,
+        LocalBlockCol{4, 0.0,   &ib, cdiag[4], 30.0, 1.0, false, false,
                       /*is_rx_clk=*/true, /*is_rx_isb=*/true},
         LocalBlockCol{5, 0.15,  &zw, cdiag[5], 30.0, 1.0, /*is_zwd=*/true},
     };
@@ -292,10 +292,10 @@ TEST(CarryRxClockInBlockTest, IsRxClkFlagChangesTelemetryOnlyNotTheAlgebra) {
     auto noflag = noflag_f.make();
     ASSERT_TRUE(flag.buildLocalBlock(
         {LocalBlockCol{0, 0.5, &a0, cdiag[0], 30.0, 1.0},
-         LocalBlockCol{1, 0.0, &ck, cdiag[1], 30.0, 1.0, false, false, 0.0, true}}));
+         LocalBlockCol{1, 0.0, &ck, cdiag[1], 30.0, 1.0, false, false, true}}));
     ASSERT_TRUE(noflag.buildLocalBlock(
         {LocalBlockCol{0, 0.5, &a0, cdiag[0], 30.0, 1.0},
-         LocalBlockCol{1, 0.0, &ck, cdiag[1], 30.0, 1.0, false, false, 0.0, false}}));
+         LocalBlockCol{1, 0.0, &ck, cdiag[1], 30.0, 1.0, false, false, false}}));
     ASSERT_EQ(flag.crows.size(), noflag.crows.size());
     for (std::size_t k = 0; k < flag.crows.size(); ++k) {
         EXPECT_EQ(flag.crows[k].w, noflag.crows[k].w);
@@ -365,15 +365,15 @@ TEST(CarryRxClockInBlockTest, QInflationTouchesTheClockDiagonalOnlyAndPreservesP
     ASSERT_TRUE(base.buildLocalBlock(
         {LocalBlockCol{0, 0.5,  &a0, cdiag[0], 30.0, 1.0},
          LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0},
-         LocalBlockCol{2, 0.0,  &ck, cdiag[2], 30.0, 1.0, false, false, 0.0, true},
-         LocalBlockCol{3, 0.0,  &ib, cdiag[3], 30.0, 1.0, false, false, 0.0, true, true}}));
+         LocalBlockCol{2, 0.0,  &ck, cdiag[2], 30.0, 1.0, false, false, true},
+         LocalBlockCol{3, 0.0,  &ib, cdiag[3], 30.0, 1.0, false, false, true, true}}));
     ASSERT_TRUE(infl.buildLocalBlock(
         {LocalBlockCol{0, 0.5,  &a0, cdiag[0], 30.0, 1.0},
          LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0},
          LocalBlockCol{2, 0.0,  &ck, cdiag[2] + q * gap_ep, 30.0, 1.0,
-                       false, false, 0.0, true},
+                       false, false, true},
          LocalBlockCol{3, 0.0,  &ib, cdiag[3] + q * gap_ep, 30.0, 1.0,
-                       false, false, 0.0, true, true}}));
+                       false, false, true, true}}));
 
     const Eigen::MatrixXd& Sb = base_f.R.pl_blk.Sigma;
     const Eigen::MatrixXd& Si = infl_f.R.pl_blk.Sigma;
@@ -405,7 +405,7 @@ TEST(CarryRxClockInBlockTest, GapScalingIsLinearInEpochsOnTheClockDiagonal) {
         EXPECT_TRUE(cb.buildLocalBlock(
             {LocalBlockCol{0, 0.5, &a0, cdiag[0], 30.0, 1.0},
              LocalBlockCol{1, 0.0, &ck, cdiag[1] + q * gap_ep, 30.0 * gap_ep, 1.0,
-                           false, false, 0.0, true}}));
+                           false, false, true}}));
         const double s = fx->R.pl_blk.Sigma(1, 1);
         EXPECT_DOUBLE_EQ(fx->R.pl_blk.Sigma(0, 1), 0.0020);   // cross never scales
         return s;
@@ -440,7 +440,7 @@ TEST(CarryRxClockInBlockTest, CarriedClockValueIsAbsoluteSoEtaTracksAMovedXLin) 
         EXPECT_TRUE(cb.buildLocalBlock(
             {LocalBlockCol{0, 0.5, &a0, cdiag[0], 30.0, 1.0},
              LocalBlockCol{1, x_lin_now, &ck, cdiag[1], 30.0, 1.0,
-                           false, false, 0.0, true}}));
+                           false, false, true}}));
         const Eigen::MatrixXd L =
             Eigen::LLT<Eigen::MatrixXd>(fx->R.pl_blk.Sigma).matrixL();
         Eigen::VectorXd z(2);
@@ -472,7 +472,7 @@ TEST(CarryRxClockInBlockTest, NonSpdBlockBuffersNothingAndTheClockSimplyDoesNotF
     auto cb = f.make();
     const bool ok = cb.buildLocalBlock(
         {LocalBlockCol{0, 0.5, &a0, cdiag[0], 30.0, 1.0},
-         LocalBlockCol{1, 0.0, &ck, cdiag[1], 30.0, 1.0, false, false, 0.0, true}});
+         LocalBlockCol{1, 0.0, &ck, cdiag[1], 30.0, 1.0, false, false, true}});
     EXPECT_FALSE(ok);                      // driver: ++pl_blk_fallback, clock not folded
     EXPECT_TRUE(cb.crows.empty());         // nothing buffered ⇒ no double inject
     EXPECT_EQ(f.R.pl_blk_blocks, 0);
@@ -504,7 +504,7 @@ TEST(CarryRxClockInBlockTest, ClockWithoutAHarvestBlockZeroesItsPairsAndIsCounte
         {LocalBlockCol{0, 0.5,   &a0, cdiag[0], 30.0, 1.0},
          LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0},
          LocalBlockCol{2, 1.0,   &a2, cdiag[2], 30.0, 1.0},
-         LocalBlockCol{3, 0.0,   &ck, 0.0025,   30.0, 1.0, false, false, 0.0, true}}));
+         LocalBlockCol{3, 0.0,   &ck, 0.0025,   30.0, 1.0, false, false, true}}));
     ASSERT_EQ(cb.crows.size(), 4u);               // the block still builds
     EXPECT_EQ(f.R.pl_blk_rxclk_cols, 1);
     EXPECT_EQ(f.R.pl_blk_rxclk_missing_cross, 3); // clock ↔ each of the 3 ambiguities
@@ -525,7 +525,7 @@ TEST(CarryRxClockInBlockTest, ClockWithoutAHarvestBlockZeroesItsPairsAndIsCounte
     RxClkBlockFixture g;
     auto cb2 = g.make();
     ASSERT_TRUE(cb2.buildLocalBlock(
-        {LocalBlockCol{0, 0.0,  &ck, 0.0025, 30.0, 1.0, false, false, 0.0, true},
+        {LocalBlockCol{0, 0.0,  &ck, 0.0025, 30.0, 1.0, false, false, true},
          LocalBlockCol{1, 0.15, &zw, 0.0090, 30.0, 1.0, true}}));
     EXPECT_EQ(g.R.pl_blk_pair_missing, 1);
     EXPECT_EQ(g.R.pl_blk_rxclk_missing_cross, 1);

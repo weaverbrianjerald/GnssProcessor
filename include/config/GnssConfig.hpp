@@ -2059,75 +2059,6 @@ namespace GnssProcessor {
             return network_phase_leveling_local_block_young_mode_;
         }
 
-        /**
-         * @brief Age-aware variance inflation of freshly re-levelled leveling arcs:
-         *        the variance added at age 0
-         *        (@c network.phase_leveling_young_inflate_var_m2, m²; 0 = off).
-         *
-         * A detector slip response frees the arc for one epoch
-         * (@c network.cycle_slip.relevel_free_epoch) and the next harvest re-stashes it
-         * at that epoch's posterior.  The re-stashed level has a code-quality value
-         * (0.2–0.4 m off in the sim truth census) but a phase-stiff harvested variance,
-         * because the conditional it is read from is conditioned on the station's
-         * mature arcs.  The arc is then inconsistent with geometry until ~20 min of
-         * geometry change refine it; the T4 attribution tier reads that as a slip and
-         * erases it, and the repeated erase and re-level sustains a metre-class
-         * ZWD/clock plateau (SPEC_amb_iono_split_overcount §6.17–§6.18).
-         *
-         * The inflation states what the level is worth: a column whose
-         * @ref LocalCarry::relevel_s is younger than
-         * @ref networkPhaseLevelingYoungInflateMaxAgeEp gets
-         * @f$V_{add} = V_0 e^{-age/\tau}@f$ added to its prior variance, starting at
-         * code level (0.09 m² = (0.3 m)²) and decaying.  It differs from the falsified
-         * alternatives in two ways: only arcs young since their last re-level are
-         * touched (uniform floors of 1e-4/1e-3 m² and a uniform level q of
-         * 1e-7/1e-6 m²/s were falsified: too small, and applied to every arc), and an
-         * inflated arc stays inside the F3 whitened block (keeping young legs out of
-         * the block, arm 5b, was falsified on the quiet bed's post-eclipse legs).
-         * Inside the block the inflation is a congruence scaling of the arc's row and
-         * column of the harvested Σ: Σ stays PD, every correlation coefficient is
-         * unchanged, and only the arc's own marginal loosens.  See
-         * @ref GnssProcessor::NetworkYoungInflate.
-         *
-         * Requires @c network.phase_leveling (warn + disable otherwise); works with or
-         * without F3 (off the block it is @c var_eff += var_add on the per-column row);
-         * disabled under @c network.carry_invariant.  The run-end clause
-         * "Network (young-arc inflate)" is the on-path telemetry (invariant #4).
-         * Off = structurally byte-identical.
-         */
-        double networkPhaseLevelingYoungInflateVarM2() const {
-            return network_phase_leveling_young_inflate_var_m2_;
-        }
-        /**
-         * @brief e-folding age of the young-arc inflation, in loop epochs
-         *        (@c network.phase_leveling_young_inflate_tau_ep; default 20).
-         *
-         * The age unit is loop epochs, converted from seconds with the run's own
-         * observed inter-epoch spacing (PASS-B time minus the previous harvest stamp),
-         * so the knob means the same thing at 1 s and 30 s cadence and needs no
-         * nominal-rate config.  20 epochs at 30 s ≈ the ~20 min of geometry change a
-         * re-levelled arc needs before it is consistent again (sim truth census).
-         * Must be > 0 (a loader hard error), since a non-positive τ would turn the
-         * exponential into a step.
-         */
-        double networkPhaseLevelingYoungInflateTauEp() const {
-            return network_phase_leveling_young_inflate_tau_ep_;
-        }
-        /**
-         * @brief Age ceiling of the young-arc inflation, in loop epochs
-         *        (@c network.phase_leveling_young_inflate_max_age_ep; default 60).
-         *
-         * Beyond this age nothing is added: the exponential is cut off rather than
-         * left to run into numerical noise, so the on-path cost and reach are both
-         * bounded and the run-end counter reports how many columns were refused for
-         * age (invariant #3: the deferral is measured, not assumed).  An entry with
-         * @c relevel_s == 0 (unstamped: a warm-resume restore, or a lineage without
-         * the stamp) is treated as mature and is neither inflated nor counted here.
-         */
-        int networkPhaseLevelingYoungInflateMaxAgeEp() const {
-            return network_phase_leveling_young_inflate_max_age_ep_;
-        }
-
         /// @brief Floor (m²) on the D2 satellite phase-bias carried prior variance
         ///        (@c network.shared_carry_var_floor_pb_m2, B4).  Caps the carry's
         ///        information so a stiff zero-q phase-bias carry cannot lock a biased
@@ -2386,8 +2317,7 @@ namespace GnssProcessor {
          * @f$M_i^\top B M_k@f$ with @f$B=P-P_{K,S}(P_{SS}+Q_S)^{-1}P_{S,K}@f$.  With this
          * knob, every pair of rows of a station's local block that both took the exact
          * route gets that term in @f$\Sigma_{ik}@f$ (@ref couplingExactCross), after the
-         * harvested conditional covariances and before the young-arc congruence; a row on
-         * card 1d's route adds none.  The cross-station half of the same covariance stays
+         * harvested conditional covariances; a row on card 1d's route adds none.  The cross-station half of the same covariance stays
          * out.  Inert without the whitened local block (counted at the run end).
          *
          * Requires @ref networkCarryCouplingExactUpdate (hard error at load).
@@ -5485,7 +5415,7 @@ namespace GnssProcessor {
          * warm-resume-restored entry whose @c birth_ep reads the restored sentinel
          * @ref LocalCarry::kBirthEpRestored, SPEC_event_harness §15.4) counts as mature,
          * the same restored-entry convention @c phase_leveling_local_block_min_age_ep
-         * and the young-arc inflation use: the conservative direction is to let the
+         * uses: the conservative direction is to let the
          * variance ceiling decide rather than refuse a candidate the ledger says is
          * converged.
          *
@@ -8614,9 +8544,6 @@ namespace GnssProcessor {
         double network_phase_leveling_var_floor_m2_{0.0}; ///< Floor (m²) on the carried prior variance (caps Λ; lock-in guard); 0 = off (no cap).
         bool   network_phase_leveling_los_scale_{false};  ///< Multiply each carried ambiguity row's variance by B_eff (carried columns injected on the same station-satellite LOS this epoch) at inject (F1), which undoes the per-LOS B-fold over-count of the iono-direction carry precision (SPEC_amb_iono_split_overcount).  Off = byte-identical.
         int    network_phase_leveling_local_block_min_age_ep_{0}; ///< Admission age gate of the F3 block (loop epochs since a leg's first stash): younger legs are kept out of the block.  0 = off.  Unknown age (never stashed, or warm-resume-restored: LocalCarry::kBirthEpRestored) = mature, the restored-entry convention.
-        double network_phase_leveling_young_inflate_var_m2_{0.0};  ///< Age-aware young-arc variance inflation (SPEC_amb_iono_split_overcount §6.17–§6.18): the variance added at age 0 to a column whose last re-level (@c LocalCarry::relevel_s) is recent; 0.09 m² = (0.3 m)², the measured code-level error of a one-epoch re-level.  0 = off = byte-identical.  Requires network.phase_leveling; disabled under carry_invariant; works with or without F3 (in-block it is a PD- and correlation-preserving congruence scaling of the arc's row/column of Σ, out of block a plain var_eff += var_add).
-        double network_phase_leveling_young_inflate_tau_ep_{20.0}; ///< … its e-folding age in loop epochs (seconds converted with the run's own observed inter-epoch spacing).  Must be > 0.
-        int    network_phase_leveling_young_inflate_max_age_ep_{60}; ///< … the age ceiling in loop epochs past which nothing is added (counted, so the deferral is measured).  Must be > 0.
         std::string network_phase_leveling_local_block_young_mode_{"free"}; ///< Response of the F3 age gate: "free" (young legs not injected until mature) or "diagonal" (per-column rows; measured harmful, kept for the record).
         bool   network_phase_leveling_local_block_{false}; ///< Carry each station's injectable ambiguity set as one jointly whitened local block (F3; harvested conditional cross covariances on Σ's off-diagonals, departed columns marginalized): exact for every local-local direction, including the station-common ones F1 leaves over-counted (SPEC_amb_iono_split_overcount).  Supersedes F1 on whitened blocks.  Off = byte-identical.
         double network_shared_carry_var_floor_pb_m2_{0.0}; ///< Floor (m²) on the D2 sat-phase-bias carried prior variance (B4; caps Λ, which bounds the zero-q lock-in while preserving Ge-2008 FCB averaging); 0 = off.

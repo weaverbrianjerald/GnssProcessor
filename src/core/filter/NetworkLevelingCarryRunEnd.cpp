@@ -220,39 +220,6 @@ int networkLevelingRetirementRunEnd(const NetworkRunEndView& v) {
                   C.n_rxclk_gate_tests ? C.sum_rxclk_gate_m / C.n_rxclk_gate_tests : 0.0,
                   C.min_rxclk_gate_m, C.max_rxclk_gate_m, C.max_rxclk_innov_m,
                   C.n_rxclk_carry_refused);
-    // ON-path telemetry of the age-aware young-arc inflate
-    // (network.phase_leveling_young_inflate_var_m2, SPEC_amb_iono_split_overcount
-    // §6.17–§6.18; invariant #4).  Printed only when armed, so a log with the knob off
-    // is byte-identical.  0 inflated column-epochs under an armed knob means armed and
-    // inert (the stamps never reached an inject), not a quiet run.  A mean age near
-    // the ceiling says the inflated population is nearly mature and the knob changes
-    // little.  The stamp split (created against freed) says which event produces the
-    // code-quality levels on this bed.  The block-scaled count against the inflated
-    // count separates "computed" from "applied inside Σ": the difference is columns
-    // that took the per-column route (F3 off, factorization fallback, young-leg gate)
-    // or were refused by the block's scalar screen.
-    if (config_.networkPhaseLevelingYoungInflateVarM2() > 0.0)
-        log->info("Network (young-arc inflate): {} column-epoch(s) inflated (V0 {:.4g} m², "
-                  "tau {:.4g} ep, max age {} ep), mean age {:.2f} ep, Σ var_add {:.4g} m²; "
-                  "{} of them congruence-scaled inside an F3 block; {} stamped "
-                  "column-epoch(s) skipped for age > max; {} re-level stamp(s) set "
-                  "(created {} / freed {}).{}",
-                  C.n_yng_cols,
-                  config_.networkPhaseLevelingYoungInflateVarM2(),
-                  config_.networkPhaseLevelingYoungInflateTauEp(),
-                  config_.networkPhaseLevelingYoungInflateMaxAgeEp(),
-                  C.n_yng_cols > 0
-                      ? C.yng_age_sum / static_cast<double>(C.n_yng_cols) : 0.0,
-                  C.yng_var_add_sum, C.n_pl_blk_yng_scaled, C.n_yng_skip_age,
-                  C.n_yng_stamp_create + C.n_yng_stamp_free,
-                  C.n_yng_stamp_create, C.n_yng_stamp_free,
-                  C.n_yng_cols == 0
-                      ? "  ⚠ ARMED AND INERT: 0 column-epochs inflated under an ARMED "
-                        "phase_leveling_young_inflate_var_m2 — no carried column ever "
-                        "reached an inject inside its age window, which is a MISWIRE "
-                        "(no stamps, no leveling inject, or an epoch spacing the run "
-                        "never resolved), not a quiet run."
-                      : "");
     return 0;
 }
 

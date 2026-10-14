@@ -90,8 +90,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             || (static_cast<long long>(ctx.counters.n_loop_epochs)
                 % ctx.knobs.trace_amb_state_every) == 0);
     // Age in epochs for the trace's relevel clock uses the run's own observed
-    // inter-epoch spacing, as the young-arc inflation derives it, so the column means the
-    // same thing at 1 s and 30 s cadence without a nominal rate.  It is read here, not
+    // inter-epoch spacing, so the column means the same thing at 1 s and 30 s cadence
+    // without a nominal rate.  It is read here, not
     // later: ctx.carry.pl_prev_now_s is advanced to this epoch at the end of this
     // function, so inside the stash loop it still holds the previous stamp.
     const double amb_state_dt_ep_s = [&] {
@@ -721,9 +721,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     // stamp it now".  With `> 0`, the first post-resume harvest would
                     // re-stamp every restored arc as born at the resume epoch, and every
                     // age gate would then see a network of newborns for min_age epochs.
-                    // Age-aware young-arc inflation stamp (SPEC_amb_iono_split_overcount
-                    // §6.17–§6.18).  Two events, and only these two, produce a level whose
-                    // value is code-quality while its harvested variance is phase-stiff:
+                    // The re-level stamp (introduced for the retired young-arc inflation,
+                    // SPEC_amb_iono_split_overcount §6.17–§6.18).  Two events, and only
+                    // these two, produce a level whose value is code-quality while its
+                    // harvested variance is phase-stiff:
                     //   * the entry is created: a first stash, or the re-stash after a T4
                     //     attribution erase or gap prune deleted the entry (the erase
                     //     path needs no separate clause because it deletes);
@@ -798,8 +799,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     nlc.relevel_s = localCarryStampRelevel(
                         yng_created ? 0.0 : oldc->second.relevel_s,
                         yng_created, yng_freed, pl_now_s);
-                    if (yng_created)     ++ctx.counters.n_yng_stamp_create;
-                    else if (yng_freed)  ++ctx.counters.n_yng_stamp_free;
                     // The arc's trajectory row (network.trace_amb_state, RF-1 §7.4),
                     // written from the one site that sees the pre-stash entry and the
                     // post-stash value together.  Measure-only: nothing below is read back,

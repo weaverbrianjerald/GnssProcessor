@@ -2978,25 +2978,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // already refuses the arm without phase_leveling + phase_leveling_local_block;
     // this is the live half of that gate.
     const bool   iono_blk_on   = ctx.knobs.iono_blk && pl_blk_on;
-    // Age-aware young-arc inflate (network.phase_leveling_young_inflate_var_m2,
-    // SPEC_amb_iono_split_overcount 6.17-6.18).  Not conjoined with pl_blk_on: the card
-    // is wired on both routes, inside the block as a congruence scaling of the
-    // column's row/column of Sigma, and outside it as var_eff += var_add on the
-    // per-column row.  The loader has already disabled it off the leveling vehicle
-    // (phase_leveling off, carry_invariant on), so on() is the whole live predicate.
-    const auto&  yng           = ctx.knobs.yng;
-    const bool   yng_on        = yng.on();
-    // Age is counted in loop epochs, and the denominator is the run's own observed
-    // inter-epoch spacing (this PASS-B time minus the previous harvest stamp), as in
-    // the I-in-block card and for the same reason: the knob then means the same thing
-    // at 1 s and 30 s cadence and no nominal rate is assumed.  A first epoch or an
-    // implausible spacing leaves it 0, which varAdd() reads as "age unknown, inflate
-    // nothing".
-    const double yng_dt_ep = [&] {
-        if (!yng_on) return 0.0;
-        const double dt = pl_now_s - ctx.carry.pl_prev_now_s;
-        return (std::isfinite(dt) && dt > 0.0 && dt <= pl_max_gap_s) ? dt : 0.0;
-    }();
     const double iono_blk_q    = ctx.knobs.iono_blk_q_m2;      // m² at L1, per epoch
     const double iono_blk_gap_s = ctx.knobs.iono_blk_max_gap_s;
     // Live predicate for RX-CLK-in-block (network.carry_rx_clock_in_block): the
@@ -3860,13 +3841,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     double var_eff;   // var + q·gap, before the tail
                     double gap;       // clamped
                     std::string sat, signal;
-                    /// Young-arc inflate: V0·exp(−age/τ) for this column, 0 when the
-                    /// knob is off or the arc is mature or unstamped.  Carried through
-                    /// the deferral so the F3 block (congruence) and the per-column
-                    /// fallback (var_eff += var_add) read one computed value: the two
-                    /// routes cannot drift, and the counters are keyed to the compute
-                    /// site.
-                    double var_add{0.0};
                 };
                 std::vector<PlPend> pl_pend;   // stays empty when off
                 // This station's LOS elevations by satellite, for the birth-prior
@@ -3995,28 +3969,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // load-bearing here, and this guards the opposite (lock-in)
                     // direction.
                     double var_eff = cit->second.var + pl_q_amb * std::max(0.0, gap);
-                    // Age-aware young-arc inflate: what this column's level is worth.  A
-                    // freshly re-levelled arc holds a code-quality value at the
-                    // phase-stiff variance the conditional hands back, because that
-                    // conditional is taken over the station's mature arcs; the T4 tier
-                    // then reads the resulting geometry inconsistency as a slip and
-                    // erases the arc (21 erases per station-hour), and the repeated
-                    // erase and re-level sustains the ZWD/clock plateau.  Computed once
-                    // here and consumed by whichever route folds the column; counted
-                    // here too, so the counter names the population the card acted on.
-                    double yng_add = 0.0;
-                    if (yng_on) {
-                        const auto ya = NetworkYoungInflate::varAdd(
-                            yng, cit->second.relevel_s, pl_now_s, yng_dt_ep);
-                        if (ya.inflated) {
-                            yng_add = ya.var_add;
-                            ++R.yng_cols;
-                            R.yng_var_add_sum += ya.var_add;
-                            R.yng_age_sum     += ya.age_ep;
-                        } else if (ya.over_age) {
-                            ++R.yng_skip_age;
-                        }
-                    }
                     if (pl_los_scale || pl_blk_on) {
                         // Deferred route (F1 / F3).  Membership uses the same positivity
                         // predicate the inline route applies to the (unscaled) tail;
@@ -4026,15 +3978,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (!(pl_finish_var(var_eff, parts->satellite) > 0.0)) continue;
                         pl_pend.push_back(PlPend{col, amb_idx, &cit->second, var_eff,
                                                  std::max(0.0, gap), parts->satellite,
-                                                 parts->signal, yng_add});
+                                                 parts->signal});
                         continue;
                     }
                     var_eff = pl_finish_var(var_eff, parts->satellite);
-                    // Diagonal route: the inflation is a plain addition, applied after
-                    // the tail so it is symmetric with the block route (whose Sigma
-                    // diagonal is the finished tail).  yng_add is 0 when off, so the
-                    // output is then byte-identical.
-                    var_eff += yng_add;
                     pl_emit_row(col, amb_idx, cit->second, var_eff, std::max(0.0, gap),
                                 parts->satellite, parts->signal);
                 }
@@ -4212,7 +4159,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         rxclk_bc.push_back(LocalBlockCol{
                             rcol, x_lin(rc.sidx), &rxclk_pred.back(), rvar_eff,
                             std::max(0.0, rgap), /*vce_fac=*/1.0, /*is_zwd=*/false,
-                            /*is_iono=*/false, /*var_add=*/0.0, /*is_rx_clk=*/true,
+                            /*is_iono=*/false, /*is_rx_clk=*/true,
                             /*is_rx_isb=*/!rc.kind.empty()});
                     }
                 }
@@ -4271,7 +4218,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             &cbit->second, cb_var_eff,
                             std::max(0.0, pl_now_s - cbit->second.last_seen_s),
                             /*vce_fac=*/1.0, /*is_zwd=*/false, /*is_iono=*/false,
-                            /*var_add=*/0.0, /*is_rx_clk=*/false, /*is_rx_isb=*/false,
+                            /*is_rx_clk=*/false, /*is_rx_isb=*/false,
                             /*is_rx_cb=*/true});
                         rxcb_bc.back().signal = rxCodeBiasSignal(cb_key);   // its block row's tag (card NOM N2a)
                         if (ctx.param_inventory.rx_ifb.estimated_by_knob) {
@@ -4381,8 +4328,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                 p.col, x_lin(p.amb_idx), p.lc,
                                 pl_finish_var(p.var_eff, p.sat), p.gap,
                                 vce_apply.factor(NetworkCarryVceApply::kPl, p.sat),
-                                /*is_zwd=*/false, /*is_iono=*/false,
-                                /*var_add=*/p.var_add});
+                                /*is_zwd=*/false, /*is_iono=*/false});
                             // The column's identity, for its block row's tag (card NOM N2a).
                             if (const auto col_sat = SatId::parse(p.sat)) {
                                 bc.back().sat = *col_sat;
@@ -4527,7 +4473,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             for (const PlPend& p : pl_pend)
                                 if (!localCarryYoung(*p.lc, loop_ep_now, pl_min_age))
                                     amb_state_note(p.sat, p.signal,
-                                                   pl_finish_var(p.var_eff, p.sat) + p.var_add,
+                                                   pl_finish_var(p.var_eff, p.sat),
                                                    AmbFoldRoute::Block);
                         // I-in-block degrade edge (invariant #4/#7): a non-SPD block means
                         // the iono carries did not act this station-epoch.  Unlike the ZWD
@@ -4625,7 +4571,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                     R.pl_los_beff[{p.sat, p.signal}] = b;
                                 }
                                 var_eff = pl_finish_var(var_eff, p.sat);
-                                var_eff += p.var_add;   // young-arc inflate, diagonal route
                                 pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap,
                                             p.sat, p.signal);
                             }
@@ -4655,7 +4600,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                 R.pl_los_beff[{p.sat, p.signal}] = b;
                             }
                             var_eff = pl_finish_var(var_eff, p.sat);
-                            var_eff += p.var_add;   // young-arc inflate, diagonal route
                             pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap,
                                         p.sat, p.signal);
                         }
@@ -5175,7 +5119,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             ctx.counters.n_pl_blk_col_refused  += Rc.pl_blk_col_refused;
             ctx.counters.n_pl_blk_fallback     += Rc.pl_blk_fallback;
             ctx.counters.n_pl_blk_young_cols   += Rc.pl_blk_young_cols;
-            ctx.counters.n_pl_blk_yng_scaled   += Rc.pl_blk_yng_scaled;
             // B9-in-block: same discipline (counted in the parallel produce, reduced here).
             ctx.counters.n_pl_blk_zwd_cols          += Rc.pl_blk_zwd_cols;
             ctx.counters.n_pl_blk_zwd_fallback_diag += Rc.pl_blk_zwd_fallback_diag;
@@ -5211,17 +5154,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             ctx.counters.n_pc_backstop_rows  += Rc.pc_backstop_rows;
             ctx.counters.n_pc_block_folds    += Rc.pc_block_folds;
             ctx.counters.n_pc_fallback_folds += Rc.pc_fallback_folds;
-        }
-    // Age-aware young-arc inflate: its own fold, keyed on the knob and not on
-    // pl_local_block.  The card is wired on the per-column route too, so folding it
-    // inside the F3 block above would report 0 on exactly the postures where the
-    // diagonal route does all the work (invariant #4).
-    if (ctx.knobs.yng.on())
-        for (const StationAssembly& Rc : asm_res) {
-            ctx.counters.n_yng_cols      += Rc.yng_cols;
-            ctx.counters.n_yng_skip_age  += Rc.yng_skip_age;
-            ctx.counters.yng_var_add_sum += Rc.yng_var_add_sum;
-            ctx.counters.yng_age_sum     += Rc.yng_age_sum;
         }
     // Latch the first warm epoch's present/departed split across this fold (§18.12).
     // A restore that reads its rows and then marginalizes most of their terms has

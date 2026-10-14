@@ -382,7 +382,7 @@ void networkElectPhaseAnchors(
     // gate.  An unknown age (no carry entry, an unstamped entry, or a
     // warm-resume-restored entry carrying LocalCarry::kBirthEpRestored,
     // SPEC_event_harness §15.4) counts as mature, the restored-entry convention
-    // that the F3 block gate and the young-arc inflation also use.  That leaves
+    // that the F3 block gate also uses.  That leaves
     // the decision to the variance ceiling instead of refusing a candidate the
     // ledger reports as converged.
     auto candMature = [&](size_t i, const std::string& amb) {

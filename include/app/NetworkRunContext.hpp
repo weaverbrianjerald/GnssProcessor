@@ -39,7 +39,6 @@
 #include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone (card SMH)
 #include "filter/NetworkClockClone.hpp"     // ClockCloneEpoch / ClockCloneCounters (card SCL)
 #include "filter/NetworkSharedHistory.hpp"  // SharedHistoryState / SharedHistoryCounters (card SCL2 X2)
-#include "filter/NetworkYoungInflate.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
 #include "filter/NetworkAnchorHygiene.hpp" // NetworkAnchorTallies (eq34 reattach hygiene)
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
 #include "filter/NetworkRaim.hpp"            // NetworkRaimCiTallies (RAIM pool re-host), RaimPoolAdmissionTally (card NOM N2b)
@@ -232,17 +231,6 @@ namespace GnssProcessor {
         /// network.trace_amb_state_every: epoch stride of the trajectory rows (>= 1;
         /// snapshot() clamps it).  Event rows (birth, drop, erase) ignore it (RF-1 §7.4).
         int  trace_amb_state_every{1};
-    /// Age-aware young-arc variance inflation (network.phase_leveling_young_inflate_*,
-    /// SPEC_amb_iono_split_overcount §6.17–§6.18).  A carried ambiguity column whose last
-    /// re-level (@ref LocalCarry::relevel_s) is recent carries a code-quality level at a
-    /// phase-stiff harvested variance, so the T4 tier erases it, and the repeated
-    /// erase/re-level cycle sustains a metre-class ZWD/clock plateau.  V0·exp(−age/τ) is
-    /// added to the column's prior variance: inside the F3 block as a PD- and
-    /// correlation-preserving congruence scaling of its row and column of Σ, and on the
-    /// per-column row as a plain var_eff += var_add.  @c var_m2 == 0 = off
-    /// (byte-identical); the loader zeroes it unless phase_leveling is on and
-    /// carry_invariant is off.
-    NetworkYoungInflate::Knobs yng{};
         double pb_var_floor{};
         double cb_var_floor{};
         bool fullcov_on{};       ///< network.shared_carry_full_cov: the dense (P_prev+Q)⁻¹ shared carry (C1).
@@ -3162,20 +3150,6 @@ namespace GnssProcessor {
         long long n_pl_blk_col_refused  = 0;             ///< block columns dropped by the scalar-row screen (non-finite RHS or non-positive variance)
         long long n_pl_blk_fallback     = 0;             ///< station-epochs whose block factorization failed → F1/diagonal rows
         long long n_pl_blk_young_cols   = 0;             ///< injectable columns kept out of their block (too young) and emitted per column (F3 age gate)
-        // Invariant #4 telemetry of the age-aware young-arc inflation
-        // (network.phase_leveling_young_inflate_var_m2).  An armed run with n_yng_cols == 0
-        // is armed and inert (no carried column was ever stamped young at an inject), not a
-        // quiet run; a mean age at the ceiling says the inflated population is nearly
-        // mature and the knob buys almost nothing.  n_yng_cols counts columns for which a
-        // positive var_add was computed and handed to a route; a column that the block's
-        // scalar-row screen then refused (n_pl_blk_col_refused) is included.
-        long long n_pl_blk_yng_scaled = 0;               ///< block columns (F3) whose row/column of Σ was congruence-scaled.  Read against n_yng_cols: a gap means columns computed young whose block never reached the scaling (refused by the scalar screen, or the station took the per-column route).
-        long long n_yng_cols        = 0;                 ///< column-epochs inflated (a positive var_add computed and handed to the block congruence or the diagonal row)
-        long long n_yng_skip_age    = 0;                 ///< stamped column-epochs refused because age > phase_leveling_young_inflate_max_age_ep (invariant #3: the deferral is measured).  An unstamped entry (relevel_s == 0: a warm-resume restore, or a lineage without the stamp) is treated as mature and counted in neither.
-        double    yng_var_add_sum   = 0.0;               ///< Σ of the var_add handed out (m²): the total prior information given back
-        double    yng_age_sum       = 0.0;               ///< Σ of the ages (loop epochs) of the inflated columns; ÷ n_yng_cols = the run's mean inflated age
-        long long n_yng_stamp_create = 0;                ///< re-level stamps set at the harvest because the entry was created (first stash, or the re-stash after a T4 erase / gap prune deleted it)
-        long long n_yng_stamp_free   = 0;                ///< re-level stamps set at the harvest because the arc was freed this epoch (the latched relevel.free_ambs set the PASS-B inject consulted)
         long long n_pl_blk_hist[5]      = {0, 0, 0, 0, 0}; ///< block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75
         long long n_pl_blk_max_dim      = 0;             ///< largest block dimension over the run
         // Invariant #4/#7 telemetry of B9-in-block (network.carry_zwd_in_block).  A run with

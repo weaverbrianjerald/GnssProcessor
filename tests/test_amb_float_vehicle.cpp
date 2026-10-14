@@ -294,20 +294,6 @@ TEST(AmbFloatVehicleTest, LevelVehicleLeavesF1AndF3Armed) {
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
 }
 
-// The young-arc inflate is a time-decaying patch on the inject for the same defect that
-// the vehicle's floored birth prior fixes at the source.  It draws a warning, not a
-// refusal, because an arm may want the contrast; the test pins that it is still armed
-// after the load.
-TEST(AmbFloatVehicleTest, FloatKfWarnsButKeepsTheYoungArcInflate) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("yng",
-                         networkConfig(std::string(kRf0Posture)
-                                       + "    \"ambiguity_vehicle\": \"float_kf\",\n"
-                                         "    \"phase_leveling_young_inflate_var_m2\": 0.09,\n"),
-                         cfg));
-    EXPECT_DOUBLE_EQ(cfg.networkPhaseLevelingYoungInflateVarM2(), 0.09);
-}
-
 TEST(AmbFloatVehicleTest, NegativeSupportingKnobsAreRejected) {
     GnssConfig a;
     EXPECT_FALSE(loadInto("negbirth",

@@ -14,18 +14,17 @@ namespace GnssProcessor {
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: leveling-carry retirement census [B] and [A]; F1, F3, the clock gate, young arcs.
+ * @brief Run-end report: leveling-carry retirement census [B] and [A]; F1, F3, the clock gate.
  *
  * The leveling-carry retirement census, families [B] (the cliff) and [A] (departures),
- * on every run; then the F1 per-LOS variance scale, the F3 local block, the
- * receiver-clock jump gate and the young-arc inflate, each under its own knob. The first
+ * on every run; then the F1 per-LOS variance scale, the F3 local block and the
+ * receiver-clock jump gate, each under its own knob. The first
  * part of the census; networkLevelingResponseRunEnd prints families [C] and [D] after
  * the resume, re-admission, DD-reference and ZWD lines.
  *
  * Gate: each section under its own condition, as in the teardown: always;
  * `ctx.knobs.pl_los_scale`; `ctx.knobs.pl_local_block`;
- * `config_.networkCarryRxClockInBlock()`;
- * `config_.networkPhaseLevelingYoungInflateVarM2() > 0.0`.
+ * `config_.networkCarryRxClockInBlock()`.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).

@@ -4234,31 +4234,6 @@ namespace GnssProcessor {
             log->warn("Network (F3 age gate): network.phase_leveling_local_block_min_age_ep is set "
                       "but network.phase_leveling_local_block is OFF — there is no block to keep a "
                       "young leg out of, so the gate is INERT this run.");
-        // Age-aware young-arc variance inflation (SPEC_amb_iono_split_overcount
-        // §6.17–§6.18).  A column whose last re-level is recent carries a code-quality
-        // level at a phase-stiff harvested variance, so the T4 tier erases it, and the
-        // repeated erase and re-level sustains the ZWD/clock plateau.  V0 = 0 is off and
-        // byte-identical.  The two shape knobs keep their defaults on an off run and
-        // are validated here anyway, so an armed run can never reach the inject with a
-        // degenerate exponential.
-        network_phase_leveling_young_inflate_var_m2_ =
-            jval<double>(json, "network.phase_leveling_young_inflate_var_m2",
-                         "phase_leveling_young_inflate_var_m2", 0.0);
-        network_phase_leveling_young_inflate_tau_ep_ =
-            jval<double>(json, "network.phase_leveling_young_inflate_tau_ep",
-                         "phase_leveling_young_inflate_tau_ep", 20.0);
-        network_phase_leveling_young_inflate_max_age_ep_ =
-            jval<int>(json, "network.phase_leveling_young_inflate_max_age_ep",
-                      "phase_leveling_young_inflate_max_age_ep", 60);
-        if (network_phase_leveling_young_inflate_var_m2_ < 0.0)
-            throw std::runtime_error("network.phase_leveling_young_inflate_var_m2 must be >= 0 "
-                                     "(0 = off)");
-        if (network_phase_leveling_young_inflate_tau_ep_ <= 0.0)
-            throw std::runtime_error("network.phase_leveling_young_inflate_tau_ep must be > 0 "
-                                     "(a non-positive e-folding age turns the decay into a step)");
-        if (network_phase_leveling_young_inflate_max_age_ep_ <= 0)
-            throw std::runtime_error("network.phase_leveling_young_inflate_max_age_ep must be > 0 "
-                                     "(0 would arm a knob that can never inflate anything)");
         // ---- The ambiguity vehicle and its supporting knobs (RF-1;
         //      docs/refound/RF-1_float_ambiguities_design.md §7.1).
         //
@@ -11035,20 +11010,6 @@ namespace GnssProcessor {
                            "silently.  Turn one off.");
                 return false;
             }
-            // The young-arc inflate is a time-decaying patch on the inject for the defect
-            // that float_kf's floored birth prior and bounded drop fix at the source
-            // (design §4.1).  It is not refused (it is a validated mechanism, and an arm
-            // may want the contrast on purpose), but an unnoticed carry-over from an RF-0
-            // config would confound the birth-floor calibration, so it is named.
-            if (network_phase_leveling_young_inflate_var_m2_ > 0.0)
-                log->warn("Network (RF-1 §7.1): network.phase_leveling_young_inflate_var_m2 = {} "
-                          "is armed under ambiguity_vehicle = \"float_kf\".  The young-arc "
-                          "inflate is a time-decaying patch on the INJECT for the same defect the "
-                          "vehicle's floored birth prior and bounded drop fix at the source "
-                          "(design §4.1: it should stay unarmed and be retired if RF-1 wins).  "
-                          "Two mechanisms acting on the same young-arc variance make the birth "
-                          "floor's calibration un-attributable — arm it only as a deliberate "
-                          "contrast.", network_phase_leveling_young_inflate_var_m2_);
         }
         // ---- Interlocks of the held S-basis (RF-2).  It is a statement about the
         //      ambiguity that is the phase datum, so it is meaningless on a vehicle where
@@ -11579,62 +11540,6 @@ namespace GnssProcessor {
                           network_carry_iono_in_block_max_gap_s_
                                   == network_phase_leveling_max_gap_s_
                               ? " (= phase_leveling_max_gap_s)" : "");
-            }
-        }
-        // Interlocks for the age-aware young-arc inflate
-        // (network.phase_leveling_young_inflate_var_m2).  The knob acts at the
-        // phase-leveling carry's inject site, so it needs that carry to be the live
-        // vehicle: phase_leveling on, carry_invariant off (card 4's DD carry supersedes
-        // the leveling inject outright: `do_amb_carry` is false and there is no column to
-        // inflate).  F3 is not required, on purpose: in-block the addition is a
-        // congruence scaling of Σ, out of block a plain var_eff += var_add on the
-        // per-column row, and both are wired.
-        if (network_phase_leveling_young_inflate_var_m2_ > 0.0) {
-            if (!network_phase_leveling_) {
-                log->warn("Network: network.phase_leveling_young_inflate_var_m2 is set "
-                          "({:.4g} m²) but network.phase_leveling is OFF — the inflation "
-                          "acts on the phase-leveling carry's inject, so there is no "
-                          "carried column to inflate.  DISABLING the young-arc inflate; "
-                          "arm network.phase_leveling too.",
-                          network_phase_leveling_young_inflate_var_m2_);
-                network_phase_leveling_young_inflate_var_m2_ = 0.0;
-            } else if (network_carry_invariant_) {
-                log->warn("Network: network.phase_leveling_young_inflate_var_m2 is set "
-                          "({:.4g} m²) but network.carry_invariant is ON — the Card-4 "
-                          "invariant DD carry supersedes the leveling ambiguity inject "
-                          "(do_amb_carry is false), so no leveling column is injected and "
-                          "the inflation would be ARMED AND INERT.  DISABLING the "
-                          "young-arc inflate.",
-                          network_phase_leveling_young_inflate_var_m2_);
-                network_phase_leveling_young_inflate_var_m2_ = 0.0;
-            } else {
-                log->info("Network producer (young-arc inflate): AGE-AWARE variance "
-                          "inflation of freshly RE-LEVELLED leveling arcs ARMED — a "
-                          "carried ambiguity column whose LAST RE-LEVEL (creation, or a "
-                          "relevel_free_epoch response) is younger than {} loop epoch(s) "
-                          "gets V0*exp(-age/tau) added to its prior variance, V0 = "
-                          "{:.4g} m² (sigma {:.3f} m, the CODE-level error of a one-epoch "
-                          "re-level) with tau = {:.4g} epoch(s).  Motive "
-                          "(SPEC_amb_iono_split_overcount 6.17-6.18): the re-stashed "
-                          "level's VALUE is code-quality while its harvested VARIANCE is "
-                          "phase-stiff (conditioned on the station's mature arcs), so the "
-                          "T4 tier erases an arc that is merely UNREFINED and the "
-                          "erase-re-level treadmill sustains a metre-class ZWD/clock "
-                          "plateau.  {}  Age is counted in LOOP EPOCHS using the run's "
-                          "OWN observed inter-epoch spacing.  Run-end line 'Network "
-                          "(young-arc inflate)' is the ON-path telemetry.",
-                          network_phase_leveling_young_inflate_max_age_ep_,
-                          network_phase_leveling_young_inflate_var_m2_,
-                          std::sqrt(network_phase_leveling_young_inflate_var_m2_),
-                          network_phase_leveling_young_inflate_tau_ep_,
-                          network_phase_leveling_local_block_
-                              ? "IN BLOCK (phase_leveling_local_block on): applied as a "
-                                "CONGRUENCE scaling of the arc's row/column of the "
-                                "harvested Sigma before the whitening, so Sigma stays PD "
-                                "and every correlation coefficient is EXACTLY unchanged "
-                                "-- only the arc's own marginal loosens."
-                              : "OUT OF BLOCK (phase_leveling_local_block off): applied "
-                                "as var_eff += var_add on the per-column diagonal row.");
             }
         }
         // Interlocks for RX-CLK-in-block (network.carry_rx_clock_in_block): the ZWD rules

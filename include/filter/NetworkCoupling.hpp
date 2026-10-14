@@ -106,18 +106,6 @@ struct LocalBlockCol {
     /// population.  Default false, so an existing 6- or 7-element brace-init keeps its
     /// meaning.
     bool              is_iono{false};
-    /// Age-aware young-arc inflation (@c network.phase_leveling_young_inflate_var_m2,
-    /// SPEC_amb_iono_split_overcount §6.17–§6.18): the variance @f$V_0e^{-age/\tau}@f$ by
-    /// which a freshly re-levelled level is worth less than its phase-stiff harvested
-    /// variance states.  @ref CouplingRowBuilder::buildLocalBlock applies it as a
-    /// congruence scaling of this column's row and column of Σ
-    /// (f = √((Σ_jj+var_add)/Σ_jj) on both), not as an addition to the diagonal, so Σ
-    /// stays PD, every correlation coefficient is unchanged, and only this column's
-    /// marginal loosens.  0 (default) means no scaling and no write to Σ: an existing
-    /// brace-init keeps its meaning and the off path is byte-identical.  Never set on a
-    /// ZWD or iono column; the inflation applies to the re-level of an arc, and neither
-    /// is an arc.
-    double            var_add{0.0};
     /// The entry is one of the station's carried receiver-clock-family columns: the
     /// primary clock, or an ISB under @c network.carry_rx_clock_isb (RX-CLK-in-block,
     /// @c network.carry_rx_clock_in_block).  Like @c is_zwd / @c is_iono it is telemetry

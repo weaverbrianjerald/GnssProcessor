@@ -11,7 +11,6 @@
  */
 
 #include "filter/NetworkCoupling.hpp"
-#include "filter/NetworkYoungInflate.hpp"
 
 #include "filter/NetworkEstimator.hpp"   // est.clockColumn / phaseBiasColumn / codeBiasColumn / vtecCoeffColumn
 #include "filter/NetworkSharedHistory.hpp"   // sharedHistoryRowTerms (card SCL2 X2)
@@ -674,8 +673,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
     // (2a) Card WSX (network.carry_coupling_exact_cross): the exact update's bracket
     //      between two rows that both took the exact route, M_i' B M_k (couplingExactCross,
     //      the term the per-row form drops; the cross-station half stays out).  Added after
-    //      the harvested cross covariances and before the young-arc congruence, so that the
-    //      congruence acts on the whole matrix; not scaled by the VCE factor, as the
+    //      the harvested cross covariances; not scaled by the VCE factor, as the
     //      diagonal's own addend is not.  B is positive semi-definite, so the added matrix
     //      is a Gram matrix over the exact rows, and its diagonal is already on Σ's diagonal
     //      (each row's var_add).  A pair with a row on card 1d's route takes nothing.
@@ -708,35 +706,6 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
             }
         }
         if (any) ++X.cross_blocks;
-    }
-    // (2b) Age-aware young-arc inflation (network.phase_leveling_young_inflate_var_m2,
-    //      SPEC_amb_iono_split_overcount §6.17–§6.18): a column whose last re-level is
-    //      recent holds a code-quality level at the phase-stiff variance that the
-    //      conditional returns (it is conditioned on the station's mature arcs).
-    //      Without the inflation, the T4 tier erases an arc that is only unrefined,
-    //      and the arc cycles through erase and re-level.  The correction is a
-    //      congruence Σ ← DΣD with D = diag(f_j), f_j = √((Σ_jj + var_add_j)/Σ_jj) ≥ 1,
-    //      applied here: after the diagonal and the harvested cross terms are in
-    //      place and before the whitening, the only point at which "this column's
-    //      row and column" is well defined.  It is a congruence rather than a
-    //      diagonal addition for three properties: the target diagonal is inflated
-    //      exactly (f_j²Σ_jj = Σ_jj + a_j); PD is preserved by Sylvester's law of
-    //      inertia (D is diagonal and strictly positive, since the scalar screen
-    //      guarantees Σ_jj > 0); and every correlation coefficient is unchanged,
-    //      because f_jf_kΣ_jk divided by √(f_j²Σ_jj·f_k²Σ_kk) is ρ_jk.  A freshly
-    //      re-levelled arc is not less coupled to the station's other columns; it
-    //      is worth less on its own.  Off (every var_add 0) writes nothing to Σ, so
-    //      the block is byte-identical.
-    {
-        std::vector<double> yng_add(static_cast<std::size_t>(n), 0.0);
-        bool any_yng = false;
-        for (Eigen::Index i = 0; i < n; ++i) {
-            const double a = ing[static_cast<std::size_t>(i)].c->var_add;
-            if (a > 0.0) { yng_add[static_cast<std::size_t>(i)] = a; any_yng = true; }
-        }
-        if (any_yng)
-            R.pl_blk_yng_scaled += static_cast<long long>(
-                NetworkYoungInflate::congruence(blk.Sigma, yng_add));
     }
     // (3) Whiten: Σ = LLᵀ (ridge retry inside), rows L⁻¹·[I | M | y] at unit weight.
     //     A non-SPD factor after the retry (or a kept-row count other than n)
