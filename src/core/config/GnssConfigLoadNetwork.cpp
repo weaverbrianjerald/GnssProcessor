@@ -8020,7 +8020,7 @@ namespace GnssProcessor {
     /**
      * @brief Two-state clock model, C1 emission, and the B1/B1b/M4 quality channels.
      *
-     * @c network.clock_model*, @c emit_clock_rate, @c emit_generation_time, the RT0-5 runaway
+     * @c network.clock_model*, @c emit_generation_time, the RT0-5 runaway
      * quarantine, the RTA-10 epoch-status heartbeat, and URA / phase-bias-sigma /
      * combined-sigma.  The R5 @c ura_staleness_q2 capture sits after the clock-model
      * validity restore on purpose, so it inherits the restored q2.
@@ -8075,40 +8075,6 @@ namespace GnssProcessor {
                       "reseed / drift-reset / C1-ZOH bound; independent of the {:.0f} s "
                       "ambiguity/ZWD phase-leveling max-gap).",
                       network_clock_model_max_gap_s_, network_phase_leveling_max_gap_s_);
-        // Emits C1 (clock rate) from the solved clock without the two-state carry prior: the
-        // recalibration-supported alternative to network.clock_model, which is a no-go (the
-        // estimable is white FM, not RWFM, so the carry buys ~1× yet risks a NIS storm; the
-        // exploitable stability is the deterministic rate, emitted here without carrying).
-        network_emit_clock_rate_ =
-            jval<bool>(json, "network.emit_clock_rate", "network_emit_clock_rate", false);
-        if (network_emit_clock_rate_ && network_clock_model_)
-            log->info("Network: network.emit_clock_rate is on but network.clock_model already "
-                      "supplies C1 from its two-state drift — emit_clock_rate is inert this run "
-                      "(clock_model wins).");
-        else if (network_emit_clock_rate_) {
-            log->info("Network: network.emit_clock_rate on — C1 = finite-differenced solved clock "
-                      "(reseed / drift-reset / C1-ZOH bound {:.0f} s); solution byte-identical, only "
-                      "the emitted C1 changes. Consumer extrapolates c0 + c1·dt (SSR saw-tooth fix).",
-                      network_clock_model_max_gap_s_);
-            // Inert-arming guard: every FD pair spans one emitted-epoch gap, so if the
-            // configured epoch spacing already exceeds the C1-ZOH bound, every pair is
-            // stale and the toggle silently ships C1 = 0 for the whole run.  Only the
-            // config-determinable spacing (gnss_rate_s × epoch_decimation_n) is checked
-            // here; with gnss_rate_s = 0 the native RINEX rate is unknown until data is
-            // read, so a decimated native-rate run (the 300 s dev tier) cannot be caught
-            // at load.
-            const double known_spacing_s =
-                gnss_rate_s_ * static_cast<double>(network_config_.epoch_decimation_n);
-            if (known_spacing_s > network_clock_model_max_gap_s_)
-                log->info("Network: emit_clock_rate is INERT at this cadence — the epoch spacing "
-                          "({:.0f} s = gnss_rate_s {:.0f} × epoch_decimation_n {}) exceeds the "
-                          "{:.0f} s C1-ZOH bound (clock_model_max_gap_s), so every finite-difference "
-                          "pair is stale and C1 stays 0 (ZOH). Raise clock_model_max_gap_s or run at "
-                          "a higher rate (the rate asset is high-rate anyway — see "
-                          "docs/CLOCK_HADAMARD_CALIB).",
-                          known_spacing_s, gnss_rate_s_, network_config_.epoch_decimation_n,
-                          network_clock_model_max_gap_s_);
-        }
         // --- Product generation-time metadata (RT0-4) ---
         network_emit_generation_time_ =
             jval<bool>(json, "network.emit_generation_time", "network_emit_generation_time", false);

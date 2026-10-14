@@ -1551,7 +1551,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
     const bool   emit_gen_id = knobs.emit_gen_id;
     const bool   ser_disc_ctrs = knobs.ser_disc_ctrs;
     const bool   emit_epoch_status = knobs.emit_epoch_status;
-    const bool   emit_clock_rate_on = knobs.emit_clock_rate_on;
     const double pl_q_amb = knobs.pl_q_amb;
     const double pl_max_gap_s = knobs.pl_max_gap_s;
     const double pl_var_floor = knobs.pl_var_floor;
@@ -2289,7 +2288,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"clock_model_k_sigma\":{},", clk_model_k)
                << fmt::format("\"clock_model_meas_std_m\":{},", config_.networkClockModelMeasStdM())
                << fmt::format("\"clock_model_max_gap_s\":{},", clk_model_max_gap)
-               << "\"emit_clock_rate\":" << (config_.networkEmitClockRate() ? "true" : "false") << ','
                << "\"emit_ura\":" << (ura_on ? "true" : "false") << ','
                << fmt::format("\"ura_ewma_alpha\":{},", ura_alpha)
                << "\"consume_ura\":" << (config_.networkConsumeUra() ? "true" : "false") << ','

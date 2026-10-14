@@ -57,7 +57,6 @@
  *   V,<const>,<sat>                                     # prev_pivot
  *   W,<const>,<sat>                                     # last_pivot
  *   K,<sat>,<x0>,<x1>,<p00>,<p01>,<p11>,<t_last>,<init> # clock oscillator
- *   O,<sat>,<x0>,<x1>,<p00>,<p01>,<p11>,<t_last>,<init> # emit_clock_rate decoupled C1 rate state
  *   J,<sat>,<value>,<seen_s>                            # clock-monitor baseline
  *   L,<station_idx>,<sat>,<signal>,<value_abs>,<var>,<last_seen_s>[,<var_first>]
  *                                                       # ambiguity carry (var_first optional)
@@ -246,7 +245,6 @@ struct NetworkStateSnapshot {
         bool   init{false};///< Seeded at least once.
     };
     std::map<std::string, Osc> clock_osc;  ///< sat -> carried oscillator state.
-    std::map<std::string, Osc> clock_rate_est;  ///< network.emit_clock_rate: decoupled C1 rate state (only x0/x1/t_last/init used).
 
     /// Clock-monitor adjacent-epoch baseline: sat -> {Δδtˢ (m), seen_s}.
     std::map<std::string, std::pair<double, double>> prev_clk;

@@ -17,7 +17,7 @@
  *     prev_week / prev_tow) stays in the body.  On SkipEpoch the caller returns
  *     `LoopSignal::Next` before subEnd(SB_SOLVEGLUE), which keeps the original
  *     `continue`'s bypass of subEnd.
- *  2. **Result struct (INC-11pre).** The 18 loop-body locals that the block produces
+ *  2. **Result struct (INC-11pre).** The 17 loop-body locals that the block produces
  *     and the downstream seams (RAIM, ClockQc, SolPrep, EmitStore) consume cross the
  *     seam boundary in @ref NetworkSolveGlueResult (moved in at the end of the body);
  *     the caller re-aliases each with `auto& x = sg_.x;`, so downstream code is
@@ -61,7 +61,7 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 
 /**
- * @brief The 18 loop-body locals SB_SOLVEGLUE produces that downstream epoch seams
+ * @brief The 17 loop-body locals SB_SOLVEGLUE produces that downstream epoch seams
  *        consume, plus the epoch disposition.  On a SkipEpoch return the value fields
  *        are default (the caller ends the epoch before reading them).
  */
@@ -71,7 +71,6 @@ struct NetworkSolveGlueResult {
     std::set<char>                                   changed_consts;
     bool                                             datum_changed{false};
     bool                                             clk_model_warm{false};
-    bool                                             emit_rate_warm{false};
     std::set<std::string>                            clock_refloat_sats;
     std::set<std::string>                            retro_flag_sats;
     bool                                             retro_feed{false};

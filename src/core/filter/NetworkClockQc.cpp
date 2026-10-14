@@ -48,7 +48,6 @@ void networkClockQc(NetworkRunContext& ctx,
                     bool datum_changed,
                     const std::set<char>& changed_consts,
                     bool clk_model_warm,
-                    bool emit_rate_warm,
                     double pl_now_s,
                     double dt,
                     std::set<std::string>& clock_refloat_sats,
@@ -75,7 +74,6 @@ void networkClockQc(NetworkRunContext& ctx,
 
     auto& prev_clk = ctx.carry.prev_clk;
     auto& clock_osc = ctx.carry.clock_osc;
-    auto& clock_rate_est = ctx.carry.clock_rate_est;
 
     auto& n_emitted = ctx.counters.n_emitted;
     auto& fr_clk_model = ctx.counters.fr_clk_model;
@@ -280,47 +278,6 @@ void networkClockQc(NetworkRunContext& ctx,
                           se.time.tow, n_flag, detail, clk_model_k);
             // osc.t_last (stamped above) records each satellite's last update time, so the
             // contiguity and gap decision is exact across skipped epochs (P0-3).
-        }
-    }
-
-    // --- network.emit_clock_rate: decoupled C1 (clock-rate) estimator ---------------------
-    // Finite-difference each satellite's posterior solved clock to derive the emitted C1,
-    // without injecting a prior or driving a refloat, so the network solution is
-    // byte-identical to the off state and only clock_c1_m_s (default 0) changes.  This is the
-    // alternative to network.clock_model that the recalibration supports: the estimable is
-    // white FM (docs/CLOCK_HADAMARD_CALIB), so the two-state carry prior improves stability
-    // by only about 1× and risks bursts of NIS flags, while the deterministic rate emitted here is usable (a
-    // low-latency consumer extrapolates c0 + c1·dt instead of a zero-order hold, which
-    // removes the SSR saw-tooth).  Mirrors the clock-model drift computation's datum wipe and
-    // gap/contiguity handling.  Runs only when clock_model is off (otherwise clock_osc
-    // supplies C1 above); the knob loader clears emit_clock_rate_on when clock_model is on.
-    if (emit_rate_warm) {
-        // Datum re-reference: the carried offsets are in the retired frame.  Drop them so a
-        // datum step is not finite-differenced into a spurious rate (as for clock_model).
-        if (datum_changed && !scoped_handover) {
-            clock_rate_est.clear();
-        } else if (datum_changed) {
-            for (auto rit = clock_rate_est.begin(); rit != clock_rate_est.end();) {
-                if (datumChangeAffectsKey(rit->first, changed_consts, /*scoped=*/true))
-                    rit = clock_rate_est.erase(rit);
-                else
-                    ++rit;
-            }
-        }
-        for (const std::string& sat : registered_clock_sats) {
-            Eigen::Index col;
-            try { col = est.clockColumn(sat); } catch (...) { continue; }
-            const double z = x_s(col);
-            if (!std::isfinite(z) || sat.empty()) continue;
-            ClockOsc& r = clock_rate_est[sat];   // default-constructs (init=false) on first sight
-            // Finite-difference over this satellite's true elapsed time; past the R11 gap bound
-            // the pair is not usable and the drift is 0 (C1 zero-order hold).  A first sighting
-            // or a stale return seeds x1 = 0.
-            const double sat_dt = (r.init && r.t_last > 0.0) ? (pl_now_s - r.t_last) : 0.0;
-            r.x1 = (sat_dt > 0.0 && sat_dt <= clk_model_max_gap) ? (z - r.x0) / sat_dt : 0.0;
-            r.x0 = z;
-            r.t_last = pl_now_s;
-            r.init = true;
         }
     }
 

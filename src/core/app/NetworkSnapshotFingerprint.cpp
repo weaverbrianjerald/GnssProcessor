@@ -267,7 +267,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));
         add(fmt::format("{}", clk_model_q1));    add(fmt::format("{}", clk_model_q2));
         add(fmt::format("{}", clk_model_k));     add(fmt::format("{}", clk_model_max_gap));
-        add(fmt::format("{}", config_.networkEmitClockRate()));
+        // The retired network.emit_clock_rate (card C1) held this position, always false
+        // on a snapshot that can resume today; the constant keeps every stored
+        // fingerprint written with the key off unchanged.
+        add("false");
         add(fmt::format("{}", ura_on));          add(fmt::format("{}", ura_alpha));
         add(fmt::format("{}", ura_retro));       add(fmt::format("{}", ura_refloat_inflate));
         add(fmt::format("{}", emit_clock_disc));

@@ -88,7 +88,6 @@ NetworkSolPrepResult networkSolPrep(
     auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
     auto& eq34_emitted_pdr = ctx.carry.eq34_emitted_pdr;
     auto& clock_osc = ctx.carry.clock_osc;
-    auto& clock_rate_est = ctx.carry.clock_rate_est;
     auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
     auto& basis_relatch_disc_pending = ctx.carry.basis_relatch_disc_pending;
     auto& this_epoch_cb_reseed = ctx.carry.this_epoch_cb_reseed;
@@ -118,7 +117,6 @@ NetworkSolPrepResult networkSolPrep(
     const int    perconst_min_rows = ctx.knobs.perconst_min_rows;   // min σ̂0-pool rows for a constellation to be judged (RTA-10)
     const bool   clk_model_on   = ctx.knobs.clk_model_on;
     const double clk_model_max_gap = ctx.knobs.clk_model_max_gap;  // max gap (s) for clock-model reseed, drift reset, C1 ZOH; default pl_max_gap_s (R11)
-    const bool   emit_clock_rate_on = ctx.knobs.emit_clock_rate_on;
     auto& iod = ctx.counters.iod;
     auto& generation_id = ctx.counters.generation_id;
     auto& last_contract_emit_s = ctx.counters.last_contract_emit_s;
@@ -252,8 +250,7 @@ NetworkSolPrepResult networkSolPrep(
     // Publish the two-state clock-model drift as C1; the consumer extrapolates
     // c0 + c1·dt (B3b).  clock_osc[sat].x1 is the drift carried into this epoch from
     // the previous epoch's posterior, which is the right extrapolation basis; this
-    // epoch's clock-model update runs after the emit.  With clock_model off, C1 stays
-    // 0 unless the emit_clock_rate branch below sets it.
+    // epoch's clock-model update runs after the emit.  With clock_model off, C1 stays 0.
     if (clk_model_on)
         for (auto& s : sol.sats) {
             const auto oit = clock_osc.find(s.sat);
@@ -276,26 +273,6 @@ NetworkSolPrepResult networkSolPrep(
                 // c1_zoh_active, so a satellite that stays stale logs once, not every emit.
                 if (events_trace.is_open() && c1_zoh_active.insert(s.sat).second)
                     emitEvent("T5_clock_model", "c1_zoh_suppress", s.sat, "", sat_dt,
-                              clk_model_max_gap, "c1_zero", "vanish_return");
-            }
-        }
-    // With network.emit_clock_rate, the same C1 publish comes from the decoupled rate
-    // state, which has no carry prior and no refloat: the clock_model carry was a no-go
-    // with a benefit of about 1×, and the useful part is the rate, not the carry.
-    // clock_rate_est[sat].x1 is the drift finite-differenced from the previous epoch's
-    // posterior; its update runs after this emit.  The same R6 staleness gate applies.
-    else if (emit_clock_rate_on)
-        for (auto& s : sol.sats) {
-            const auto rit = clock_rate_est.find(s.sat);
-            if (rit == clock_rate_est.end() || !rit->second.init) continue;
-            const double sat_dt = (rit->second.t_last > 0.0) ? (pl_now_s - rit->second.t_last)
-                                                             : 0.0;
-            if (sat_dt >= 0.0 && sat_dt <= clk_model_max_gap) {
-                s.clock_c1_m_s = rit->second.x1;
-                c1_zoh_active.erase(s.sat);
-            } else {
-                if (events_trace.is_open() && c1_zoh_active.insert(s.sat).second)
-                    emitEvent("T5_clock_rate", "c1_zoh_suppress", s.sat, "", sat_dt,
                               clk_model_max_gap, "c1_zero", "vanish_return");
             }
         }

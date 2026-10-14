@@ -701,7 +701,6 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_FALSE(c0.networkEmitClockDisc());
     EXPECT_FALSE(c0.networkEmitUra());
     EXPECT_FALSE(c0.networkClockModel());
-    EXPECT_FALSE(c0.networkEmitClockRate());   // decoupled C1: off by default (byte-identical)
     EXPECT_FALSE(c0.networkRaimWithinEpoch());
     EXPECT_DOUBLE_EQ(c0.networkRaimWithholdSigma0(), 0.0);
     EXPECT_FALSE(c0.networkSerializeDiscCounters());
@@ -761,38 +760,6 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_TRUE(c2.networkEmitUra());                            // rest still armed
 
     std::error_code ec2; fs::remove(p0, ec2); fs::remove(p1, ec2); fs::remove(p2, ec2);
-}
-
-// network.emit_clock_rate: the decoupled C1 (clock-rate) emission toggle round-trips,
-// is off by default (byte-identical), and is not armed by service_mode (it is the
-// alternative to clock_model, which service_mode arms instead).  It emits the rate
-// without carrying it; clock_model's two-state carry is a no-go (see
-// docs/CLOCK_HADAMARD_CALIB).
-TEST(NetworkEmitClockRate, TogglesAndDefaults) {
-    LogManager log;
-
-    const fs::path pdef = writeTempConfig("emit_rate_def",
-        networkConfig(kGpsGal, kPriosGps, ""));
-    GnssConfig cdef;
-    ASSERT_TRUE(cdef.loadFromJson(pdef, log));
-    EXPECT_FALSE(cdef.networkEmitClockRate());                   // off by default
-
-    const fs::path pon = writeTempConfig("emit_rate_on",
-        networkConfig(kGpsGal, kPriosGps, "    \"emit_clock_rate\": true,\n"));
-    GnssConfig con;
-    ASSERT_TRUE(con.loadFromJson(pon, log));
-    EXPECT_TRUE(con.networkEmitClockRate());                     // explicit on parses
-    EXPECT_FALSE(con.networkClockModel());                       // independent of clock_model
-
-    // service_mode does not arm emit_clock_rate (clock_model carries C1 under the bundle).
-    const fs::path psvc = writeTempConfig("emit_rate_svc",
-        networkConfig(kGpsGal, kPriosGps, "    \"service_mode\": true,\n"));
-    GnssConfig csvc;
-    ASSERT_TRUE(csvc.loadFromJson(psvc, log));
-    EXPECT_FALSE(csvc.networkEmitClockRate());
-    EXPECT_TRUE(csvc.networkClockModel());
-
-    std::error_code ec; fs::remove(pdef, ec); fs::remove(pon, ec); fs::remove(psvc, ec);
 }
 
 // The bundle wins: an explicit `false` on an armed bool, an explicit 0 numeric,

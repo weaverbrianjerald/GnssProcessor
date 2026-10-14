@@ -785,11 +785,6 @@ namespace GnssProcessor {
         double clk_model_k{};
         double clk_model_r{};
         double clk_model_max_gap{};
-        /// network.emit_clock_rate without network.clock_model: the emitted C1 (clock rate)
-        /// comes from the finite-differenced solved clock through the decoupled rate estimator
-        /// NetworkCarryState::clock_rate_est, with no prior and no refloat, so the solution is
-        /// byte-identical.  Off under network.clock_model, which already supplies C1.
-        bool emit_clock_rate_on{};
         double start_offset_s{};
         /// network.trace_flag_rates: the empirical-alpha flag-rate counters.  Observation
         /// only: {opportunities, flags} per QC tier, reported at the end of the run as the
@@ -1717,12 +1712,6 @@ namespace GnssProcessor {
         // [offset, drift] and 2×2 covariance, persisted across epochs.  Empty and inert
         // unless clk_model_on.
         std::map<std::string, ClockOsc> clock_osc;   // per-sat carried [offset,drift]+cov+t_last (P0-3: t_last drives per-sat prediction/drift-FD across gaps)
-        // network.emit_clock_rate: decoupled per-sat rate state, used only to derive the
-        // emitted C1 by finite-differencing the posterior solved clock (x0 = previous solved
-        // offset, x1 = drift, t_last).  It never feeds a prior or a refloat, so the solution
-        // is byte-identical and only clock_c1_m_s changes.  Empty and inert unless
-        // emit_clock_rate_on (which is off whenever clk_model_on supplies C1 from clock_osc).
-        std::map<std::string, ClockOsc> clock_rate_est;
         // The broadcast-ephemeris IODE to which each satellite's carried clock state
         // (clock_osc.x0, the D2 clock carry, the clock-monitor jump baseline) is currently
         // referenced.  Advanced at the eph-cutover re-level (before the solve), not

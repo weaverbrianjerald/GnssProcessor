@@ -185,7 +185,6 @@ NetworkSolveGlueResult networkSolveGlue(
     const int    perconst_min_rows = ctx.knobs.perconst_min_rows;   // minimum σ̂0-pool rows for a constellation to be judged (RTA-10)
     const bool   emit_epoch_status = ctx.knobs.emit_epoch_status;     // per-epoch H heartbeat in the product file, withheld epochs included (RTA-10)
     const bool   clk_model_on   = ctx.knobs.clk_model_on;
-    const bool   emit_clock_rate_on = ctx.knobs.emit_clock_rate_on;
     auto& prev_tow = ctx.counters.prev_tow;
     auto& prev_week = ctx.counters.prev_week;
     auto& n_emitted = ctx.counters.n_emitted;
@@ -1332,9 +1331,6 @@ if (!gate_ok) {
 // cold-start convergence horizon.  Its per-epoch predictions (for the post-solve update
 // + normalized-innovation test) are stashed here.
 const bool clk_model_warm = clk_model_on && (static_cast<int>(n_emitted) >= pl_warmup);
-// network.emit_clock_rate: same warmup gate as the clock model, skipping the cold-start
-// epochs where the floated clock would finite-difference into a large spurious C1 rate.
-const bool emit_rate_warm = emit_clock_rate_on && (static_cast<int>(n_emitted) >= pl_warmup);
 auto& clk_pred = ws.clk_pred;
 auto& clk_prior_info = ws.clk_prior_info;
 
@@ -2843,13 +2839,12 @@ prmRespond(ctx.counters.prm_resp, ResponseSite::AmbT2ReplayFree, prm_we_free_lan
         // release that did not happen; the next computable epoch re-evaluates.
     }
 
-    // --- Result epilogue: hand the 18 crossing locals to the caller. ---
+    // --- Result epilogue: hand the 17 crossing locals to the caller. ---
     result.x_s = std::move(x_s);
     result.plan = std::move(plan);
     result.changed_consts = std::move(changed_consts);
     result.datum_changed = datum_changed;
     result.clk_model_warm = clk_model_warm;
-    result.emit_rate_warm = emit_rate_warm;
     result.clock_refloat_sats = std::move(clock_refloat_sats);
     result.retro_flag_sats = std::move(retro_flag_sats);
     result.retro_feed = retro_feed;

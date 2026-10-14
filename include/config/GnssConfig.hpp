@@ -7828,29 +7828,6 @@ namespace GnssProcessor {
          */
         double networkClockModelMaxGapS() const { return network_clock_model_max_gap_s_; }
 
-        /**
-         * @brief Emit a satellite clock rate (C1) derived from the solved clock, without the
-         *        two-state carry prior (@c network.emit_clock_rate).
-         *
-         * Populates the emitted @c clock_c1_m_s (the product's C1 term, consumed as
-         * @c c0 + c1·dt so a low-latency / real-time consumer extrapolates instead of holding
-         * C0 constant, which removes the SSR clock saw-tooth) by finite-differencing this
-         * satellite's posterior solved clock over its true elapsed time, decoupled from the
-         * solve: it injects no clock prior and drives no refloat, so the network solution is
-         * byte-identical to the off state and only the (otherwise zero) C1 field changes.  This
-         * is the alternative to @ref networkClockModel that the recalibration supports: the
-         * two-state carry prior tightens the solution by a factor of only ~1 (the estimable is
-         * white-FM, not random-walk-FM; see docs/CLOCK_HADAMARD_CALIB) yet risks a burst of NIS
-         * trips, while the usable clock stability lives in the deterministic rate, which this
-         * emits without carrying.  The staleness / reseed
-         * bound is @ref networkClockModelMaxGapS (past a gap the drift is not trustworthy ⇒ C1 ZOH
-         * for one epoch), and a datum re-reference reseeds the rate (no spurious step-driven rate).
-         * When @ref networkClockModel is on it already supplies C1, so this toggle is inert.
-         * The RT0-5 rate ceiling (@ref networkClockRunawayRateMps) policies this C1 too.
-         * Default off ⇒ C1 stays 0 (ZOH) ⇒ the product is byte-identical.
-         */
-        bool networkEmitClockRate() const { return network_emit_clock_rate_; }
-
         /// @brief Emit a per-satellite URA quality channel from the network product
         ///        (@c network.emit_ura, B1).  URA = EWMA(σ̂0) × formal clock σ (from the
         ///        shared covariance).  Default off ⇒ the product is byte-identical.
@@ -9682,7 +9659,6 @@ namespace GnssProcessor {
         bool   network_service_mode_{false};               ///< Curated RT-service profile switch (RTB-8, network.service_mode): the loader arms the coherent producer toggle set (the bundle wins over explicit disables, each override warned; see applyNetworkServiceProfile_, called from loadNetworkSection_).  The member is kept only for provenance (getter + L15 run manifest); off = nothing armed (byte-identical).
         double network_clock_model_meas_std_m_{0.05};    ///< Std (m) of the network-solved offset as the two-state model's measurement (the update R).
         double network_clock_model_max_gap_s_{120.0};    ///< Maximum unseen gap (s) the carried two-state clock model survives before reseed / drift-reset / C1-ZOH (R11); the loader defaults it to network_phase_leveling_max_gap_s_ (clock-model carry only, distinct from the ambiguity/ZWD max-gap).
-        bool   network_emit_clock_rate_{false};          ///< Emit C1 (clock rate) by finite-differencing the solved clock, decoupled from the solve (no prior, no refloat): the alternative to network_clock_model's no-go carry that is byte-identical when off, and the approach the recalibration supports for shipping clock stability (docs/CLOCK_HADAMARD_CALIB). Inert when clock_model is on (it already emits C1). Off ⇒ C1 stays 0/ZOH (byte-identical).
         // --- product generation-time metadata (RT0-4) ---
         bool   network_emit_generation_time_{false}; ///< Stamp a wall-clock time of generation per emitted epoch (RT0-4; optional G record) so a consumer can measure product latency; off = no G record (byte-identical). Wall clock ⇒ non-deterministic when on.
         // --- per-constellation clock-runaway quarantine (RT0-5) ---

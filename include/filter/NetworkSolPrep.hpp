@@ -8,7 +8,7 @@
  * Maps the post-fit shared estimate to a @ref NetworkSolutionEpoch and prepares it
  * for emission:
  *   - build @c sol via @c est.toSolutionEpoch; stamp per-sat C1 drift (two-state
- *     clock_model or the decoupled emit_clock_rate), generation time/id, and, in
+ *     clock_model), generation time/id, and, in
  *     brdc_rts mode, the per-sat broadcast IODE (clock_iode);
  *   - erase record values the solve did not measure: pinned band-2 companion ISCs
  *     (RF-0f) and held extra-band columns (B5D);
@@ -41,7 +41,7 @@
  * serialized_consts, product write), and the applied retro-bump set (heartbeat).
  *
  * Ordering contract: runs on the post-fit @p x_s after SB_CLOCKUPD (whose
- * @c clock_osc / clock_rate_est drift it publishes as C1) and before SB_EMITSTORE
+ * @c clock_osc drift it publishes as C1) and before SB_EMITSTORE
  * (which consumes the returned @ref NetworkSolPrepResult).  It mutates persistent
  * carries (the disc-pending sets, prev_pivot/last_pivot, emitted_anchor,
  * last_if_pin_sel, ura_retro_sats, the RTB-7 ramp state) and the emit-side objects

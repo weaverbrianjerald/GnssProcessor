@@ -63,9 +63,8 @@ namespace GnssProcessor {
         // reported only where the family engages.
         const bool par   = nc.parallel_stations
                         && static_cast<int>(n_sta) > nc.parallel_min_stations;
-        // Config-determinable epoch spacing, the same derivation the emit_clock_rate
-        // inert-arming guard in GnssConfigLoadNetwork.cpp uses.  0 when gnss_rate_s is 0
-        // (native RINEX rate, unknown at load).
+        // Config-determinable epoch spacing (gnss_rate_s x epoch_decimation_n).  0 when
+        // gnss_rate_s is 0 (native RINEX rate, unknown at load).
         const double spacing_s = gnss_rate_s_ * static_cast<double>(nc.epoch_decimation_n);
         // active_systems_ is a vector of names, and a count does not identify a
         // constellation set: n_sys <= 2 admits GPS+BeiDou (for example

@@ -72,7 +72,6 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& c1_zoh_active = ctx.carry.c1_zoh_active;
     auto& prev_clk = ctx.carry.prev_clk;
     auto& clock_osc = ctx.carry.clock_osc;
-    auto& clock_rate_est = ctx.carry.clock_rate_est;
     auto& local_carry = ctx.carry.local_carry;
     auto& zwd_carry = ctx.carry.zwd_carry;
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
@@ -283,14 +282,6 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         c.p00 = o.p00; c.p01 = o.p01; c.p11 = o.p11;
                         c.t_last = o.t_last; c.init = o.init;
                         clock_osc[sat] = c;
-                    }
-                    clock_rate_est.clear();
-                    for (const auto& [sat, o] : snap.clock_rate_est) {   // network.emit_clock_rate decoupled C1 state
-                        ClockOsc c;
-                        c.x0 = o.x0; c.x1 = o.x1;
-                        c.p00 = o.p00; c.p01 = o.p01; c.p11 = o.p11;
-                        c.t_last = o.t_last; c.init = o.init;
-                        clock_rate_est[sat] = c;
                     }
                     local_carry.clear();
                     for (const auto& [key, l] : snap.local_carry) {

@@ -2,11 +2,10 @@
 /**
  * @file NetworkClockQc.hpp
  * @brief Post-solve satellite-clock quality control for the PPP-RTK network
- *        producer: the two-state oscillator model + fault test, the decoupled
- *        emit-clock-rate (C1) estimator, and the per-satellite carried-clock
- *        sanity monitor.
+ *        producer: the two-state oscillator model + fault test and the
+ *        per-satellite carried-clock sanity monitor.
  *
- * Runs on the final (post-adaptation) network solution.  Three cooperating pieces:
+ * Runs on the final (post-adaptation) network solution.  Two cooperating pieces:
  *
  *  1. **Two-state oscillator clock** (`network.clock_model`): update each
  *     satellite's (offset, drift) model from this epoch's solved offset and test
@@ -15,10 +14,7 @@
  *     whole-constellation re-reference cancels.  A NIS-flagged satellite is added to
  *     @p clock_refloat_sats and its model is loosened, so it re-acquires toward the
  *     a-priori anchor instead of freezing.
- *  2. **Emit-clock-rate C1** (`network.emit_clock_rate`, clock_model off): finite-
- *     difference the posterior clock to derive the emitted C1, without injecting a
- *     prior or driving a refloat (the network solution is byte-identical to off).
- *  3. **Carried-clock sanity monitor** (`network.clock_monitor`, clock_model off):
+ *  2. **Carried-clock sanity monitor** (`network.clock_monitor`, clock_model off):
  *     flag any satellite whose per-constellation de-meaned clock exceeds clk_mon_abs
  *     or whose one-epoch jump exceeds clk_mon_jump, and refloat its carried shared
  *     state.  This detects a single satellite whose clock locks onto a wrong value
@@ -36,7 +32,7 @@
  * every carry object is an explicit reference into the caller's NetworkRunContext.
  *
  * Ordering contract: this mutates persistent and epoch-local carries.  It updates
- * @c ctx.carry.clock_osc / clock_rate_est / prev_clk and the excursion detector's
+ * @c ctx.carry.clock_osc / prev_clk and the excursion detector's
  * cb_exc_* state, cb_excursion_sats and cb_excursion_pending_bump, and inserts
  * NIS/monitor culprits into @p clock_refloat_sats (consumed by the epoch stash,
  * which drops or loosens a refloated satellite's carried shared state) and
@@ -68,7 +64,7 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
 /**
  * @brief Run the post-solve satellite-clock QC block for this epoch.
  *
- * @param ctx                  [in/out] carry (clock_osc / clock_rate_est / prev_clk),
+ * @param ctx                  [in/out] carry (clock_osc / prev_clk),
  *                             counters (fr_clk_model / fr_clk_mon / n_emitted) and
  *                             knobs.  Passed whole rather than as ~30 references, so a
  *                             missing `&` cannot silently discard a carry mutation;
@@ -87,7 +83,6 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  * @param datum_changed       Whether a pivot handover re-referenced the datum.
  * @param changed_consts      Constellations whose pivot changed (scoped wipe).
  * @param clk_model_warm      clock_model armed and past the warmup horizon.
- * @param emit_rate_warm      emit_clock_rate armed and past the warmup horizon.
  * @param pl_now_s            Continuous-GPS seconds of this epoch (per-sat drift Δt).
  * @param dt                  Nominal epoch interval (gap/contiguity fallback).
  * @param clock_refloat_sats  [in/out] holds the RAIM culprits on entry; the NIS and
@@ -107,7 +102,6 @@ void networkClockQc(NetworkRunContext& ctx,
                     bool datum_changed,
                     const std::set<char>& changed_consts,
                     bool clk_model_warm,
-                    bool emit_rate_warm,
                     double pl_now_s,
                     double dt,
                     std::set<std::string>& clock_refloat_sats,

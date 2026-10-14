@@ -61,7 +61,6 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
     auto& c1_zoh_active = ctx.carry.c1_zoh_active;
     auto& prev_clk = ctx.carry.prev_clk;
     auto& clock_osc = ctx.carry.clock_osc;
-    auto& clock_rate_est = ctx.carry.clock_rate_est;
     auto& local_carry = ctx.carry.local_carry;
     auto& zwd_carry = ctx.carry.zwd_carry;
     auto& ura_refloat_horizon = ctx.carry.ura_refloat_horizon;
@@ -165,13 +164,6 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             so.p00 = o.p00; so.p01 = o.p01; so.p11 = o.p11;
             so.t_last = o.t_last; so.init = o.init;
             snap.clock_osc[sat] = so;
-        }
-        for (const auto& [sat, o] : clock_rate_est) {   // network.emit_clock_rate decoupled C1 state
-            NetworkStateSnapshot::Osc so;
-            so.x0 = o.x0; so.x1 = o.x1;
-            so.p00 = o.p00; so.p01 = o.p01; so.p11 = o.p11;
-            so.t_last = o.t_last; so.init = o.init;
-            snap.clock_rate_est[sat] = so;
         }
         // network.phase_datum_handover_max_var_ratio: the arc's first-stash variance is an
         // optional trailing L field, filled only when the ratio ceiling is armed, so a

@@ -45,8 +45,7 @@
  * (@c smh_clone, @c smh_block and their pending maps: their own re-base,
  * @c pbHoldCloneRebase, every epoch), card LAH's per-constellation state
  * (@c pb_hold_frz_M, @c pb_hold_frz_prev_clk), the clock-level monitor's previous
- * epoch (@c clm_prev_clk, cleared at a datum change), the clock-rate finite difference
- * (@c clock_rate_est, erased at a datum change), the anchor's one-epoch record
+ * epoch (@c clm_prev_clk, cleared at a datum change), the anchor's one-epoch record
  * (@c clk_anchor), the phase-datum elections' own targets and ledgers (@c phase_basis,
  * @c eq34_prev_target, the handover ledger, rebuilt by their elections), the one- to
  * two-epoch local copies (@c relevel_pend), the receiver-side

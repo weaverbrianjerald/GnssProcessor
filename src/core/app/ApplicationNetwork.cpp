@@ -2288,7 +2288,6 @@ int Application::runNetwork() {
         auto& changed_consts = sg_.changed_consts;
         auto& datum_changed = sg_.datum_changed;
         auto& clk_model_warm = sg_.clk_model_warm;
-        auto& emit_rate_warm = sg_.emit_rate_warm;
         auto& clock_refloat_sats = sg_.clock_refloat_sats;
         auto& retro_flag_sats = sg_.retro_flag_sats;
         auto& retro_feed = sg_.retro_feed;
@@ -2437,7 +2436,7 @@ int Application::runNetwork() {
         subBegin(SB_CLOCKUPD); // block 8: two-state clock update + fault QC + retro-flag feed (D0b)
         networkClockQc(ctx, config_, log, traces, ws, se, est, x_s,
                        registered_clock_sats, datum_changed, changed_consts,
-                       clk_model_warm, emit_rate_warm, pl_now_s, dt,
+                       clk_model_warm, pl_now_s, dt,
                        clock_refloat_sats, retro_flag_sats, retro_feed);
         subEnd(SB_CLOCKUPD);       // close block 8, clock update + retro feed (D0b)
         // The phase-visible consistency instrument (card PVN): measure-only, after the

@@ -339,7 +339,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.clk_model_k = config_.networkClockModelKSigma();
     k.clk_model_r = config_.networkClockModelMeasStdM() * config_.networkClockModelMeasStdM();
     k.clk_model_max_gap = config_.networkClockModelMaxGapS();
-    k.emit_clock_rate_on = config_.networkEmitClockRate() && !k.clk_model_on;
     k.start_offset_s = config_.networkStartOffsetHours() * 3600.0;
     k.trace_flag_rates = nc.trace_flag_rates;
     k.phase_datum_ensemble = config_.networkPhaseDatumEnsemble();
