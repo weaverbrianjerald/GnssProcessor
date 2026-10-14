@@ -21,6 +21,8 @@
 #include "logging/LogManager.hpp"
 
 #include <Eigen/Dense>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
 
@@ -203,4 +205,70 @@ TEST(StateManagerFamiliesTest, DeclaredInitialStdIsTheVarianceTheAddFunctionsWri
                 break;
         }
     }
+}
+
+namespace {
+
+/// A configuration loaded from @p json through the loader, from a file in a directory
+/// unique to this process and test (so concurrent test runs cannot collide).
+GnssConfig loadConfig(const std::string& json, const std::string& tag) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path()
+        / ("uom_families_" + tag + "_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const fs::path file = dir / "config.json";
+    { std::ofstream out(file); out << json; }
+    LogManager log;
+    GnssConfig cfg;
+    EXPECT_TRUE(cfg.loadFromJson(file.string(), log)) << tag;
+    fs::remove_all(dir, ec);
+    return cfg;
+}
+
+/// The WARNING lines of a table.
+std::vector<std::string> warnings(const std::vector<std::string>& lines) {
+    std::vector<std::string> out;
+    for (const auto& l : lines) if (l.rfind("WARNING: ", 0) == 0) out.push_back(l);
+    return out;
+}
+
+}  // namespace
+
+TEST(StateManagerFamiliesTest, ArmedTableWarnsWhenABornFamilyGetsNoProcessNoise) {
+    // PPP with uncombined processing: the slant ionosphere is born and observed, but its
+    // Q applies in PPP_RTK mode only (card UOM defect S1).  The table states it.
+    LogManager lm;
+    const GnssConfig ppp = loadConfig(
+        R"({"processing": {"mode": "PPP", "uncombined_enabled": true}})", "ppp_unc");
+    StateManager sm_ppp{ 5, lm, ppp };
+    const auto lines = sm_ppp.familiesAsArmed();
+    const auto warn = warnings(lines);
+    ASSERT_EQ(warn.size(), 1u);
+    EXPECT_NE(warn[0].find("slant ionosphere"), std::string::npos) << warn[0];
+    EXPECT_NE(lines[1 + static_cast<std::size_t>(StateFamily::Ionosphere)].find("NOT applied on this run"),
+              std::string::npos);
+
+    // The same in PPP_RTK mode: the Q applies and nothing is flagged.
+    const GnssConfig rtk = loadConfig(
+        R"({"processing": {"mode": "PPP-RTK", "uncombined_enabled": true}})", "rtk_unc");
+    StateManager sm_rtk{ 5, lm, rtk };
+    const auto rtk_lines = sm_rtk.familiesAsArmed();
+    EXPECT_TRUE(warnings(rtk_lines).empty());
+    EXPECT_NE(rtk_lines[1 + static_cast<std::size_t>(StateFamily::Ionosphere)].find(", applied on this run"),
+              std::string::npos);
+
+    // Baseline: the DD layout never creates ionosphere states, so nothing is flagged and
+    // the ionosphere family is reported as not born, whatever uncombined_enabled says.
+    const GnssConfig dd = loadConfig(
+        R"({"baseline_fixture": "IGS_Pasadena",
+                "processing": {"mode": "Baseline-Single", "uncombined_enabled": true},
+                "baseline": {"reference": {"name": "", "rinex_path": "", "fixed": true},
+                             "rover": {"name": "", "rinex_path": ""}}})", "dd_unc");
+    ASSERT_TRUE(dd.isBaselineMode());
+    StateManager sm_dd{ 3, lm, dd };
+    const auto dd_lines = sm_dd.familiesAsArmed();
+    EXPECT_TRUE(warnings(dd_lines).empty());
+    EXPECT_NE(dd_lines[1 + static_cast<std::size_t>(StateFamily::Ionosphere)].find("born no"),
+              std::string::npos);
 }

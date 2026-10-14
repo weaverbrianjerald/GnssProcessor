@@ -23,6 +23,10 @@ namespace GnssProcessor {
 
     /// Whether @p c arms the birth site of a family with gate @p gate.
     bool birthArmed(BirthGate gate, const GnssConfig& c) {
+        // The baseline (DD) layout holds the position, the optional differential
+        // troposphere and the DD ambiguities only (StateManager::layoutBaseline_), so no
+        // other family is born there whatever the processing switches say.
+        if (c.isBaselineMode() && gate != BirthGate::PhaseRows) return false;
         switch (gate) {
             case BirthGate::PhaseRows:
                 return !(c.isBaselineMode() && c.getBaselineConfig().code_only);
@@ -69,14 +73,27 @@ namespace GnssProcessor {
         return "?";
     }
 
+    /// Whether the process-noise rule of row @p s gives its states Q on this run.  The
+    /// two ionosphere rules apply only in PPP_RTK mode (StateManager::addIonosphereQ_);
+    /// every other rule applies whenever the family is present.
+    bool processNoiseApplied(const StateFamilySpec& s, const GnssConfig& c) {
+        if (s.q_rule == QRule::ObliquityRandomWalk || s.q_rule == QRule::CwnaWithLevel)
+            return c.getProcessingMode() == ProcessingMode::PPP_RTK;
+        return s.q_rule != QRule::None;
+    }
+
     /// The process-noise column of row @p s.
     std::string processNoiseText(const StateFamilySpec& s, const GnssConfig& c) {
         if (s.q_rule == QRule::None) return "none";
+        const bool mode_gated = s.q_rule != QRule::RandomWalk;
         const char* rule = s.q_rule == QRule::RandomWalk          ? "random walk"
                          : s.q_rule == QRule::ObliquityRandomWalk ? "obliquity random walk (PPP_RTK mode only)"
                          :                                          "CWNA with the level (PPP_RTK mode only)";
-        return fmt::format("{}, filter.process_noise.{} = {:g}", rule, s.q_key,
-                           c.getProcessNoise().*s.q_psd);
+        return fmt::format("{}, filter.process_noise.{} = {:g}{}", rule, s.q_key,
+                           c.getProcessNoise().*s.q_psd,
+                           !mode_gated ? ""
+                           : processNoiseApplied(s, c) ? ", applied on this run"
+                                                       : ", NOT applied on this run");
     }
 
     /// The events column of row @p s.
@@ -106,13 +123,26 @@ namespace GnssProcessor {
                 birthText(s.birth), s.label_prefix, s.snapshot_tag ? s.snapshot_tag : "none",
                 initialStdText(s, config_), processNoiseText(s, config_), eventsText(s)));
         }
+        // A family the configuration creates whose process-noise rule does not apply
+        // on this run: its states are observed and never random-walk (card UOM
+        // defect S1, behaviour step UB2), stated here so a reader sees it at run start.
+        for (const StateFamilySpec& s : kStateFamilies) {
+            if (s.q_rule == QRule::None || !birthArmed(s.birth, config_)) continue;
+            if (processNoiseApplied(s, config_)) continue;
+            lines.push_back(fmt::format(
+                "WARNING: {} states are born on this run ({}) but get no process noise: "
+                "the rule applies in PPP_RTK mode only and this run's mode is not PPP_RTK "
+                "(card UOM defect S1)", s.name, birthText(s.birth)));
+        }
         return lines;
     }
 
     void StateManager::logFamiliesAsArmed() const {
         auto logger = log_manager_.getLogger("state_manager");
-        for (const std::string& line : familiesAsArmed())
-            logger->info("{}", line);
+        for (const std::string& line : familiesAsArmed()) {
+            if (line.rfind("WARNING: ", 0) == 0) logger->warn("{}", line.substr(9));
+            else                                 logger->info("{}", line);
+        }
     }
 
 } // namespace GnssProcessor

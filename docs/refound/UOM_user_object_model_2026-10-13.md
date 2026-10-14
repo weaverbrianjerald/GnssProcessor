@@ -215,3 +215,43 @@ Every fix keeps the network goldens unreachable except G9 (log stamps on every l
 - The newly visible differential ZWD ends the 2 h CIT1-JPLM baseline at -0.644 m (sigma 1.9 mm), implausible for 8.7 km; not investigated.
 - `tests/test_network_rx_extra_band_delay.cpp` writes fixed names in `%TEMP%`, which collide with a concurrent `gnss_tests` from another worktree.
 - After UB7 the slip layer and the KalmanFilter's pivot reactions still build per-band keys; under NL/WL the MW full reset seeds 0 for the non-pivot SD ambiguities.
+
+## 12. 2026-10-14: wave B built and integrated on `uom/work` (`ff7766a`)
+
+Four workers from `f823a36`, worktrees and builds on D: (`D:/GnssProcessorSupport/worktrees/uom_*`), each gated on every commit against its own same-tree reference build (16 user arms) and a relocation verifier against `git show f823a36` with a mutation check; the manager read the drivers and merged the four branches without conflict.
+
+| step | what a reader gets | before / after | gates (worker) |
+| --- | --- | --- | --- |
+| U5m MW detector (`uom/u5m-mw`) | dead code out (the uncalled quality score, label finder, clean-arc counter, a commented-out block); `ISlipDetector` loses three virtuals nothing dispatched; the header split into `MwSlipTypes.hpp` and `MwArcState.hpp` (16 constants as one table) with the 400 network-only lines behind one banner; the bodies in 8 files by concern; `processMwSample` a driver over 12 steps sharing `MwSampleWork`, taking `MwLane`, `MwSample`, `MwSdFrame` and returning an optional `MwVerdict`; `detectLargeMwResets` a driver over begin, collect (two named LLI policies), per-group elect, re-reference, pivot, non-pivots, end | `processMwSample` 1,066 lines, 18 parameters, to 23; `detectLargeMwResets` 888 to 34 | 16 of 16 identical at each of four commits; verifier 71 of 71 units, 2,816 comment lines with none lost; 4 new tests |
+| U5t TurboEdit and IF (`uom/u5t-turboedit-if`) | dead code out (stored corrections nothing read, uncalled resets, the IF trace that could not open); `resolve` a driver over R0 to R9 with per-row A0 to A5 over `EpochWork` and `RowWork`, bodies in chain, adjudication and bridge files, the staging and continuity records one map each; the IF double-difference step takes `ChainEpoch` and `RefArmPlan` and returns `ChainResult` over D1 to D7; the user path no config reaches fenced in `IfPhaseStagedUserPath.cpp`; the reference-gate defaults one table held to `SlipQcConfig` by a test | `resolve` 1,120 to 17; `processDoubleDifferences` 352 lines, 12 parameters, to a 25-line story | 16 of 16 identical at each commit; verifier TurboEdit 33 of 33 and IF 18 of 18 units, every frozen line carried once; 2 new tests |
+| U6 StateManager (`uom/u6-statemanager`) | contradicting comments fixed; dead members and methods out, internal helpers private; `getProcessNoiseMatrix` a driver over 12 Q blocks in `StateManagerProcessNoise.cpp`; the constructor four named steps in `StateManagerLayout.cpp`; the family table gains the re-inflation slot, gap response, satellite-of-key rule, Q rule and field, birth gate, initial-variance source, reset and prune columns, and three lists read it; the run-start table "state families as armed" | `StateManager.cpp` 2,745 to 2,023 plus three files; the Q builder 299 to a 12-call driver; the constructor 258 to 4 calls | 16 of 16 identical at each commit; verifier 21 units, 1,994 frozen lines; 14 new tests |
+| U7 the PPP pipeline (`uom/u7-pipeline`) | dead code out (two `gpsToUtcTime`, unused key splitters, a position-sigma write nothing read); `Application::run` the mode dispatch plus `runPpp`, a spine of one stage call per line over `PppEpochWork`, the stages in `PppSetup.cpp`, `PppEpochSteps.cpp`, `PppEpochUpdate.cpp`, `PppEpochRecords.cpp`, `PppRunEnd.cpp`; the run end a declared 7-row table `kPppRunEndReports`; `runBaseline` a spine at run, rover and epoch level over named stages | `run` 848 to 54 plus a 114-line spine; `runBaseline` 1,043 to 109 (rover 63, epoch 29) | 16 of 16 identical at each commit; verifier 88 of 88 bodies, the old call lists (327 and 394 calls) equal; 2 new tests |
+
+**Integration (`ff7766a`).** The PPP driver and each baseline rover print "state families as armed" once at run start (the network producer and the RT engine do not, so network outputs gain nothing); the core-size hint is documented as the hint the constructor ignores outside baseline mode.
+
+| gate | result |
+| --- | --- |
+| three-branch merge (U5m, U5t, U6), exe against `gnss_processor_wbref.exe` (`f823a36`, same D: tree) | 16 of 16 user arms IDENTICAL; both 2 h goldens IDENTICAL against the wave A runs |
+| wave B integrated (`ff7766a`) | 16 of 16 user arms identical, the logs differing only by the inserted "state families as armed" table; both 2 h goldens IDENTICAL |
+| G-US | 3,308 passed, 24 skipped, 0 failed |
+
+**The table a reader sees at run start** (the PPP arm with uncombined processing, `u_ppp_unc_ar`): one line per family with its birth gate, label, snapshot tag, initial standard deviation and source, Q rule and value, and its events, for example "slant ionosphere: born yes (processing.uncombined_enabled); label IONO:; snapshot ION; initial std filter.initial_std.ionosphere = 5; Q obliquity random walk (PPP_RTK mode only), filter.process_noise.ionosphere_q = 0.01". Defect S1 is legible there only by inference, so the table now states whether a mode-gated Q applies on the run and adds a WARNING when a born family gets no process noise (section 13).
+
+**The three drivers disagree in eleven places** (found by U7, recorded for the behaviour steps, not unified): the time step (PPP has no week rollover, baseline and RT handle it two ways); the gap default (1.5 intervals, 60 s, 1 s); the gap policy; two definitions of the effective interval; the KF-reset fan-out; the AR configuration field counts (20, 19, 18); the pivot-handover drain (baseline discards the ionosphere re-inflation set); the "Skipped" update result (end, break, applied); the exception envelope (baseline only); where the epoch stamp is set; `beginEpoch` and `endEpoch` (PPP only, defect K-D1).
+
+**Recorded, not changed:** the MW lane collectors keep three copies of pair, wavelength, MW, BIA and route (their debug literals differ); `reReferenceGroup_` (217 lines), `onFlag_` (206), `resolveTdConfirm_` (164), `initArc_` (130), `adjudicateSatellite` (197), `buildJacobianRow` (400) and the PPP `runFilterUpdateLoop` (224) remain long; the per-family edit and prune skeletons of StateManager (about 800 lines) remain; GRAPHIC and EWL traces can never open (`enableTracing` uncalled); `TurboEditResolver::setCorrections` is a documented no-op its three callers still call; `RealTimeEngine::gpsToUtcTime` is dead; PPP stamps the epoch after its gates, baseline before.
+
+## 13. 2026-10-14: the run-start table states when a born family gets no process noise
+
+Section 12's table showed defect S1 only by inference ("PPP_RTK mode only" beside a PPP run). Card NOM's tables print a WARNING when a rule's premise fails on the run; the state-family table now does the same. Each mode-gated Q rule says whether it applies on this run ("applied on this run" or "NOT applied on this run"), and a family that the configuration creates but whose Q does not apply gets one warning line:
+
+"slant ionosphere states are born on this run (processing.uncombined_enabled) but get no process noise: the rule applies in PPP_RTK mode only and this run's mode is not PPP_RTK (card UOM defect S1)"
+
+The first build also warned on the baseline arms, which exposed an imprecision of step U6f: the birth predicate read the processing switches in baseline mode, where the DD layout creates no family but the ambiguities. It now reports every other family as not born there.
+
+| gate | result |
+| --- | --- |
+| G-UEP user arms (16, `--allow-inserted`) against `gnss_processor_wbref.exe` | 16 of 16 identical, inserted table lines only; the warning on exactly the two PPP-with-uncombined arms (`u_ppp_unc_ar`, `u_nlwl`), the configurations defect S1 names |
+| unit | `StateManagerFamiliesTest` 10 of 10 (one new case: the PPP warning, the PPP_RTK silence, the baseline silence) |
+
+This is the reader test of card NOM section 6 (G2) on the user side: the run-start log now names the S1 defect without anyone reading code. The fix itself remains behaviour step UB2.
