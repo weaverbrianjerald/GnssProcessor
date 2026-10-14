@@ -228,8 +228,7 @@ void networkShDevVtec(
 int networkShDevCarryRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
-    const bool sh_dev_on =   // as the driver resolves it: the SH model exists and its correlation time is positive
-        (v.setup.sh_model ? v.config.getGlobalVtecShConfig().rep_error_tau_s : 0.0) > 0.0;
+    const bool sh_dev_on = v.ctx.knobs.sh_dev_on;   // the run's one derivation (card NOM3 step EP0)
     const GlobalVtecShConfig& shc = v.config.getGlobalVtecShConfig();
     const auto& sh_dev_carry = v.ctx.carry.sh_dev_carry;
 

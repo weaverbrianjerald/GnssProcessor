@@ -8,18 +8,20 @@
  * resolved clock anchor sigma, the SH-deviation switches, the VCE monitor's families, the
  * Galileo top band, the streaming source, the within-epoch tier, the phase-datum switches,
  * the max-duration and decimation limits, the constant half of the RHS attribution window,
- * the gap-resume census arm, the trace switches, the configuration half of the leveling
- * warm-up and the float vehicle's birth-floor arm), into NetworkKnobs::snapshot.  The
- * expressions in driverValues() are the driver's, copied from ApplicationNetwork.cpp as it
- * stood before the step (main 8326da3 with steps HV0 and WCF), with one substitution: where
- * the driver tested the SH model (setup.sh_model), the copy tests
- * network.estimate_iono_sh, under which setup builds it.  The election's ledger read is
- * checked too: the driver's two conjunctions, with ctx.roster.active true as it is on every
- * network run, against the existing knobs it now reads.
+ * the trace switches, the configuration half of the leveling warm-up and the float
+ * vehicle's birth-floor arm), into NetworkKnobs::snapshot.  The expressions in
+ * driverValues() are the driver's, copied from ApplicationNetwork.cpp as it stood before
+ * the step (main 8326da3 with steps HV0 and WCF), with one substitution: where the driver
+ * tested the SH model (setup.sh_model), the copy tests network.estimate_iono_sh, under
+ * which setup builds it.  The election's ledger read is checked too: the driver's two
+ * conjunctions, with ctx.roster.active true as it is on every network run, against the
+ * existing knobs it now reads.  The gap-resume census arm is not a knob: the census reads
+ * the slip-QC parameters' own predicate (SlipQcParams::collectsResumptions), which its
+ * case checks against the driver's former expression.
  *
  * Every posture checks each knob against its expression; each armed posture also checks
- * that the switches it targets are on, so a posture the loader quietly disarms cannot pass
- * by reading the default on both sides.
+ * the value it targets (a switch on, a band digit), so a posture the loader quietly
+ * disarms cannot pass by reading the default on both sides.
  */
 
 #include <gtest/gtest.h>
@@ -28,6 +30,8 @@
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkCarryVce.hpp"
 #include "logging/LogManager.hpp"
+#include "slip/MwLaneTiers.hpp"
+#include "slip/NetworkRawObservables.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -102,7 +106,7 @@ struct DriverValues {
     bool rhs_on_trip;
     double rhs_tow;
     int rhs_n_ep;
-    bool gap_census_on, trace_postfit_on, trace_sh_spectrum, trace_station_block;
+    bool trace_postfit_on, trace_sh_spectrum, trace_station_block;
     bool warmup_on_sh_conv;
     bool birth_floor_on;
     bool reentry_observe, reentry_restore;
@@ -144,7 +148,6 @@ DriverValues driverValues(const GnssConfig& config_, const NetworkConfig& nc) {
     d.rhs_on_trip = nc.rhs_attrib_on_trip;
     d.rhs_tow = nc.rhs_attrib_tow;
     d.rhs_n_ep = std::max(1, nc.rhs_attrib_n_ep);
-    d.gap_census_on = nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry;
     d.trace_postfit_on = nc.trace_postfit_sigma0 || nc.trace_postfit_keyed || nc.trace_postfit_rows;
     d.trace_sh_spectrum = nc.trace_sh_spectrum;
     d.trace_station_block = nc.trace_station_block;
@@ -185,7 +188,6 @@ NetworkKnobs expectDriverValues(const GnssConfig& cfg, const NetworkConfig& nc) 
     EXPECT_EQ(k.rec_on, d.rhs_on_trip);
     EXPECT_EQ(k.rhs_attrib_tow, d.rhs_tow);
     EXPECT_EQ(k.rhs_attrib_n_ep, d.rhs_n_ep);
-    EXPECT_EQ(k.gap_census_on, d.gap_census_on);
     EXPECT_EQ(k.trace_postfit_on, d.trace_postfit_on);
     EXPECT_EQ(k.trace_sh_spectrum, d.trace_sh_spectrum);
     EXPECT_EQ(k.trace_station_block, d.trace_station_block);
@@ -219,7 +221,6 @@ TEST(NetworkKnobsEpochDriver, DefaultsMatchTheDriver) {
     EXPECT_FALSE(k.within_epoch_armed);
     EXPECT_EQ(k.epoch_decimation_n, 1u);
     EXPECT_LT(k.rhs_attrib_tow, 0.0);
-    EXPECT_FALSE(k.gap_census_on);
     EXPECT_FALSE(k.trace_postfit_on);
     EXPECT_FALSE(k.pl_warmup_on_sh_conv);
     EXPECT_FALSE(k.amb_birth_floor_on);
@@ -239,7 +240,6 @@ TEST(NetworkKnobsEpochDriver, NetworkBlockValuesBothWays) {
     nc.rhs_attrib_on_trip = true;
     nc.rhs_attrib_tow = 345600.0;
     nc.rhs_attrib_n_ep = 5;
-    nc.slip_qc.gap_reentry = true;
     nc.trace_postfit_rows = true;
     nc.trace_sh_spectrum = true;
     nc.trace_station_block = true;
@@ -252,7 +252,6 @@ TEST(NetworkKnobsEpochDriver, NetworkBlockValuesBothWays) {
     EXPECT_TRUE(k.rec_on);
     EXPECT_EQ(k.rhs_attrib_tow, 345600.0);
     EXPECT_EQ(k.rhs_attrib_n_ep, 5);
-    EXPECT_TRUE(k.gap_census_on);
     EXPECT_TRUE(k.trace_postfit_on);
     EXPECT_TRUE(k.trace_sh_spectrum);
     EXPECT_TRUE(k.trace_station_block);
@@ -261,8 +260,6 @@ TEST(NetworkKnobsEpochDriver, NetworkBlockValuesBothWays) {
     nc.fast_clock.shadow = false;
     nc.epoch_decimation_n = 0;
     nc.rhs_attrib_n_ep = 0;
-    nc.slip_qc.gap_reentry = false;
-    nc.slip_qc.gap_instrument = true;
     nc.trace_postfit_rows = false;
     nc.trace_postfit_keyed = true;
     k = expectDriverValues(cfg, nc);
@@ -270,7 +267,6 @@ TEST(NetworkKnobsEpochDriver, NetworkBlockValuesBothWays) {
     EXPECT_FALSE(k.fc_shadow);
     EXPECT_EQ(k.epoch_decimation_n, 1u);
     EXPECT_EQ(k.rhs_attrib_n_ep, 1);
-    EXPECT_TRUE(k.gap_census_on);
     EXPECT_TRUE(k.trace_postfit_on);
     nc.fast_clock.enable = false;
     nc.fast_clock.shadow = true;
@@ -375,25 +371,87 @@ TEST(NetworkKnobsEpochDriver, ShDeviationAndWarmupFollowTheShField) {
 }
 
 // The lane posture: the uncarried-third-band predicate's captures (uwl_on, the Galileo top
-// band, uwl_dual_on) on the posture that reads them.
+// band, uwl_dual_on) on the postures that read them.  The predicate passes the band to
+// mwLaneTierOf, which reads it on the single-top tier and ignores it under uwl_dual_top
+// (the dual tier always prefers '8'), so the single-top posture is the one where the
+// captured digit decides Galileo's uncarried band.
 TEST(NetworkKnobsEpochDriver, UncarriedThirdBandCaptures) {
-    GnssConfig cfg;
-    const std::string network =
-        "    \"phase_datum_eq34\": true,\n"
-        "    \"carry_invariant\": true,\n"
-        "    \"phase_leveling\": true,\n"
-        "    \"cycle_slip\": { \"mw_detect\": true },\n"
-        "    \"mw_wl\": {\n"
-        "      \"ewl_enable\": true,\n"
-        "      \"uwl_enable\": true,\n"
-        "      \"uwl_gal_top_band\": 8,\n"
-        "      \"uwl_dual_top\": true\n"
-        "    },\n";
-    ASSERT_TRUE(loadInto("uwl", networkConfig(network), cfg));
-    const NetworkKnobs k = expectDriverValues(cfg);
+    const auto lanePosture = [](bool dual_top) {
+        return std::string(
+            "    \"phase_datum_eq34\": true,\n"
+            "    \"carry_invariant\": true,\n"
+            "    \"phase_leveling\": true,\n"
+            "    \"cycle_slip\": { \"mw_detect\": true },\n"
+            "    \"mw_wl\": {\n"
+            "      \"ewl_enable\": true,\n"
+            "      \"uwl_enable\": true,\n"
+            "      \"uwl_gal_top_band\": 8,\n"
+            "      \"uwl_dual_top\": ") + (dual_top ? "true" : "false") + "\n"
+            "    },\n";
+    };
+
+    GnssConfig single;
+    ASSERT_TRUE(loadInto("uwl_single", networkConfig(lanePosture(false)), single));
+    NetworkKnobs k = expectDriverValues(single);
+    EXPECT_TRUE(k.uwl_on);
+    EXPECT_FALSE(k.uwl_dual_on);
+    EXPECT_EQ(k.uwl_gal_top, '8');
+    const auto tier = mwLaneTierOf('E', k.uwl_gal_top, false, k.uwl_dual_on);
+    ASSERT_TRUE(tier.has_value());
+    EXPECT_EQ(tier->b_top, '8');      // the captured digit is Galileo's uncarried band
+    EXPECT_EQ(tier->b_top2, '\0');
+
+    GnssConfig dual;
+    ASSERT_TRUE(loadInto("uwl_dual", networkConfig(lanePosture(true)), dual));
+    k = expectDriverValues(dual);
     EXPECT_TRUE(k.uwl_on);
     EXPECT_TRUE(k.uwl_dual_on);
-    EXPECT_EQ(k.uwl_gal_top, cfg.getNetworkConfig().mw_wl.uwl_gal_top_band);
+    EXPECT_EQ(k.uwl_gal_top, '8');
+}
+
+// The float vehicle's birth-floor arm, both conjuncts: on with float_kf and a positive
+// floor, off with the same floor on the level vehicle (the goldens run float_kf with no
+// floor, so they cover only the floor's absence).
+TEST(NetworkKnobsEpochDriver, BirthFloorNeedsTheFloatVehicle) {
+    const std::string vehicle =
+        "    \"phase_leveling\": true,\n"
+        "    \"carry_invariant\": false,\n"
+        "    \"carry_conditional_coupling\": true,\n"
+        "    \"shared_carry_full_cov\": true,\n"
+        "    \"cycle_slip\": { \"mw_detect\": true },\n"
+        "    \"amb_float_birth_var_m2\": 0.25,\n";
+
+    GnssConfig fkf;
+    ASSERT_TRUE(loadInto("birth_fkf",
+                         networkConfig(vehicle + "    \"ambiguity_vehicle\": \"float_kf\",\n"),
+                         fkf));
+    NetworkKnobs k = expectDriverValues(fkf);
+    EXPECT_TRUE(k.amb_float_kf);
+    EXPECT_EQ(k.amb_birth_var_floor, 0.25);
+    EXPECT_TRUE(k.amb_birth_floor_on);
+
+    GnssConfig level;
+    ASSERT_TRUE(loadInto("birth_level", networkConfig(vehicle), level));
+    k = expectDriverValues(level);
+    EXPECT_FALSE(k.amb_float_kf);
+    EXPECT_EQ(k.amb_birth_var_floor, 0.25);
+    EXPECT_FALSE(k.amb_birth_floor_on);
+}
+
+// The arc-resumption bridge census is armed by the slip-QC parameters' own predicate, which
+// the driver copies from network.cycle_slip.gap_instrument and gap_reentry_relevel once at
+// run start: its truth table is the driver's former expression, and it is off by default.
+TEST(NetworkKnobsEpochDriver, GapCensusArmIsTheSlipQcPredicate) {
+    EXPECT_FALSE(SlipQcParams{}.collectsResumptions());
+    for (const bool instrument : {false, true}) {
+        for (const bool reentry : {false, true}) {
+            SlipQcParams p;
+            p.gap_instrument = instrument;
+            p.gap_reentry    = reentry;
+            EXPECT_EQ(p.collectsResumptions(), instrument || reentry)
+                << "gap_instrument " << instrument << ", gap_reentry " << reentry;
+        }
+    }
 }
 
 TEST(NetworkKnobsEpochDriver, BothGoldens) {

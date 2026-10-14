@@ -1105,7 +1105,12 @@ namespace GnssProcessor {
         /// estimation.global_vtec_sh.rep_error_tau_s with a co-estimated SH field
         /// (network.estimate_iono_sh), else 0.  Read by networkPassB_ (the per-LOS aging).
         double sh_dev_tau{};
-        bool   sh_dev_on{};        ///< The SH-deviation carry is live: @ref sh_dev_tau > 0.  Read by networkPassB_ and networkShDevVtec.
+        /// The SH-deviation carry is live: @ref sh_dev_tau > 0.  The one derivation of this
+        /// predicate: read by networkPassB_, networkShDevVtec and its run-end report
+        /// (networkShDevCarryRunEnd), and by this snapshot itself, which disarms the
+        /// iono-deweight screens and bounds without the channel (@ref dw_park_bound_tecu,
+        /// @ref dw_release_validate_k, @ref dw_admit_validate_k).
+        bool   sh_dev_on{};
         bool   sh_dev_demean{};    ///< Anti-ratchet de-mean (Iono-2 v3): sh_dev_on and estimation.global_vtec_sh.rep_error_demean.  Read by networkPassB_.
         bool   sh_dev_d5_keep{};   ///< Erase-policy split (Iono-2 v3k): sh_dev_on and estimation.global_vtec_sh.rep_error_d5_keep.  Read by networkPassB_.
         bool   vce_wants_pb{};     ///< The carry LS-VCE monitor (network.carry_vce) lists the "pb" family in network.carry_vce_components.  Read by networkStashStatus.
@@ -1125,7 +1130,6 @@ namespace GnssProcessor {
         std::size_t epoch_decimation_n{1}; ///< network.epoch_decimation_n clamped to >= 1: only every Nth synced epoch is processed (T2e; 1 = every epoch).  Read by the driver's decimation gate.
         double rhs_attrib_tow{-1.0}; ///< network.rhs_attrib_tow: the first TOW of the reduced-RHS attribution window (< 0 = off).  Read, with @ref rec_on, where the driver arms the estimator's capture recorder; the window test itself stays per epoch.
         int    rhs_attrib_n_ep{1}; ///< network.rhs_attrib_n_ep clamped to >= 1: the window's length in processed epochs.  Read with @ref rhs_attrib_tow.
-        bool   gap_census_on{};    ///< network.cycle_slip.gap_instrument or network.cycle_slip.gap_reentry_relevel: the driver's arc-resumption bridge classification runs on an epoch that has resumptions (that test stays per epoch).
         bool   trace_postfit_on{}; ///< network.trace_postfit_sigma0, trace_postfit_keyed or trace_postfit_rows: the post-fit residual pass (networkPostfitSigma0) runs.  Read by the driver.
         bool   trace_sh_spectrum{};  ///< network.trace_sh_spectrum: networkShSpectrum runs.  Read by the driver.
         bool   trace_station_block{};///< network.trace_station_block (card ZP): networkStationBlock runs.  Read by the driver.

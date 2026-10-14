@@ -488,6 +488,19 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.sig_resume_warmup   = si.census && si.resume_warmup_vet
                                 && (k.sig_withhold || k.sig_unvetted_scale > 1.0);
     }
+    // The SH-deviation carry (card T5, Iono-2): live when a co-estimated SH field
+    // (network.estimate_iono_sh) has a positive correlation time.  Resolved once, ahead of
+    // the deweight block below, whose screens and bounds need the channel.  The epoch
+    // driver tested the SH model (setup.sh_model) where this reads the flag: setup builds
+    // the model exactly when the flag is set, and a run whose setup fails never reaches the
+    // epoch loop or the run end (card NOM3 step EP0).
+    {
+        const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
+        k.sh_dev_tau     = config_.estimateNetworkIonoSh() ? shc.rep_error_tau_s : 0.0;
+        k.sh_dev_on      = k.sh_dev_tau > 0.0;
+        k.sh_dev_demean  = k.sh_dev_on && shc.rep_error_demean;    // anti-ratchet de-mean (Iono-2 v3)
+        k.sh_dev_d5_keep = k.sh_dev_on && shc.rep_error_d5_keep;   // erase-policy split (v3k)
+    }
     // Iono-deweight release hygiene.  The loader already disarms every increment without
     // the SH field (and INC-1 without the adaptive gate, the only source of a release
     // edge); resolving it here as well is a second guard, so a hand-built NetworkConfig
@@ -501,13 +514,13 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                               ? nc.iono_dw_release_floor_eps : 1e-9;
         k.dw_park_bound_tecu = field ? std::max(0.0, nc.iono_dw_park_bound_tecu) : 0.0;
         // Every screen and bound standardizes the harvested T5 deviation, so they need
-        // that channel; the loader has already disarmed them without it.
-        const bool dev = field && config_.getGlobalVtecShConfig().rep_error_tau_s > 0.0;
-        k.dw_park_bound_tecu = dev ? k.dw_park_bound_tecu : 0.0;
+        // that channel (sh_dev_on, resolved above); the loader has already disarmed them
+        // without it.
+        k.dw_park_bound_tecu = k.sh_dev_on ? k.dw_park_bound_tecu : 0.0;
         k.dw_release_validate_k =
-            dev ? std::max(0.0, nc.iono_dw_release_validate_k) : 0.0;
+            k.sh_dev_on ? std::max(0.0, nc.iono_dw_release_validate_k) : 0.0;
         k.dw_admit_validate_k =
-            dev ? std::max(0.0, nc.iono_dw_admit_validate_k) : 0.0;
+            k.sh_dev_on ? std::max(0.0, nc.iono_dw_admit_validate_k) : 0.0;
         k.dw_hygiene_on = k.dw_release_reseed || k.dw_park_bound_tecu > 0.0
                        || k.dw_release_validate_k > 0.0
                        || k.dw_admit_validate_k > 0.0;
@@ -760,23 +773,19 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.pb_filter_emit_sigma = config_.networkEmitPbFilterEmitSigma();
     }
     // --- The epoch driver's configuration-derived values (card NOM3 step EP0) ---
-    // Moved from runNetwork with each expression unchanged.  Where the driver tested the SH
-    // model (setup.sh_model), the test reads network.estimate_iono_sh: setup builds the model
+    // Moved from runNetwork with each expression unchanged (the SH-deviation switches are
+    // resolved above, ahead of the deweight block).  Where the driver tested the SH model
+    // (setup.sh_model), the test reads network.estimate_iono_sh: setup builds the model
     // exactly when that flag is set (ApplicationNetworkSetup.cpp), and a run whose setup
     // fails never reaches the epoch loop.  The Galileo top band is read from
     // config_.getNetworkConfig(), as the driver read it; the rest from `nc`, which is the
     // driver's own configuration in a run.
     {
         const bool sh_field = config_.estimateNetworkIonoSh();
-        const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
         k.fc_on     = nc.fast_clock.enable;
         k.fc_shadow = nc.fast_clock.enable && nc.fast_clock.shadow;
         k.sec_timers_on = nc.trace_section_timers;
         k.clk_anchor_sigma = config_.resolveNetworkAprioriClockAnchorSigmaM();
-        k.sh_dev_tau     = sh_field ? shc.rep_error_tau_s : 0.0;
-        k.sh_dev_on      = k.sh_dev_tau > 0.0;
-        k.sh_dev_demean  = k.sh_dev_on && shc.rep_error_demean;    // anti-ratchet de-mean (Iono-2 v3)
-        k.sh_dev_d5_keep = k.sh_dev_on && shc.rep_error_d5_keep;   // erase-policy split (v3k)
         const std::vector<std::string> vce_families =
             k.carry_vce ? NetworkCarryVce::parseComponents(config_.networkCarryVceComponents())
                         : std::vector<std::string>{};
@@ -795,7 +804,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.epoch_decimation_n = static_cast<std::size_t>(std::max(1, nc.epoch_decimation_n));
         k.rhs_attrib_tow     = nc.rhs_attrib_tow;
         k.rhs_attrib_n_ep    = std::max(1, nc.rhs_attrib_n_ep);
-        k.gap_census_on      = nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry;
         k.trace_postfit_on   = nc.trace_postfit_sigma0 || nc.trace_postfit_keyed
                                || nc.trace_postfit_rows;
         k.trace_sh_spectrum   = nc.trace_sh_spectrum;

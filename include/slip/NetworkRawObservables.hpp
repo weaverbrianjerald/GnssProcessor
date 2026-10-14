@@ -453,6 +453,14 @@ struct SlipQcParams {
     /// posture.
     bool   gap_reentry_unmeasurable{false};
 
+    /// True when the row-level resumption list (@ref RawSlipEpoch::resumptions) is
+    /// collected: the instrument (@ref gap_instrument) or the response
+    /// (@ref gap_reentry) is armed.  Both consume the same records, so either one arms
+    /// the collection.  Read by the qualification pass, networkQualifyRawObservables
+    /// (the resumption step, and the per-signal tier that de-duplicates against its
+    /// list), and by the epoch driver's arc-resumption bridge census.
+    bool collectsResumptions() const { return gap_instrument || gap_reentry; }
+
     // --- Per-signal gap re-entry (card GRS; network.cycle_slip.gap_reentry_per_signal) ---
     /// Rider of @ref gap_reentry: key the re-entry on the signal as well as on the
     /// row, so a loss of lock on the primary pair during which a third signal keeps

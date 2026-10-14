@@ -2322,8 +2322,9 @@ int Application::runNetwork() {
         //     (network.cycle_slip.gap_reentry_relevel): with only the response armed,
         //     the ledger is the before/after measurement of what the response did, and
         //     gating it on the diagnostic would let a response-only arm report its own
-        //     effect as a structural zero.
-        if (ctx.knobs.gap_census_on && !slip_qc.epoch.resumptions.empty()) {
+        //     effect as a structural zero.  It reads the arm that collects its
+        //     population (SlipQcParams::collectsResumptions).
+        if (slip_qc.params.collectsResumptions() && !slip_qc.epoch.resumptions.empty()) {
             // Whether this carry_group_id key's signal component covers `sig`.  Under
             // the WL-3 lane shape a paired arc lives in a group keyed "<sigA>+<sigB>",
             // not in its per-band group, so a per-band-only lookup would report every

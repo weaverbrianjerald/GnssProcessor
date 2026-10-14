@@ -1908,7 +1908,7 @@
      "new": "const std::shared_ptr<spdlog::logger>& log = v.log;"
     },
     {
-     "new": "const bool sh_dev_on =   // as the driver resolves it: the SH model exists and its correlation time is positive\n        (v.setup.sh_model ? v.config.getGlobalVtecShConfig().rep_error_tau_s : 0.0) > 0.0;"
+     "new": "const bool sh_dev_on = v.ctx.knobs.sh_dev_on;   // the run's one derivation (card NOM3 step EP0)"
     },
     {
      "new": "const GlobalVtecShConfig& shc = v.config.getGlobalVtecShConfig();"

@@ -94,8 +94,8 @@ ALIAS = [
     ("wl_inject_on", "const bool wl_inject_on = v.ctx.knobs.wl_inject_on;"),
     ("uwl_on", "const bool uwl_on = v.ctx.knobs.uwl_on;"),
     ("lane_on", "const bool lane_on = v.ctx.knobs.lane_on;"),
-    ("sh_dev_on", "const bool sh_dev_on =   // as the driver resolves it: the SH model exists and its correlation time is positive\n"
-                  "        (v.setup.sh_model ? v.config.getGlobalVtecShConfig().rep_error_tau_s : 0.0) > 0.0;"),
+    # Card NOM3 step EP0: the knob, the run's one derivation (the cut re-derived it from the SH model).
+    ("sh_dev_on", "const bool sh_dev_on = v.ctx.knobs.sh_dev_on;   // the run's one derivation (card NOM3 step EP0)"),
     ("idw_on", "const bool idw_on = v.run.engines.iono_deweight.active();"),
     ("emit_rebase_on", "const bool emit_rebase_on = v.ctx.knobs.emit_rebase_on;"),
     ("emit_pb_filter_on", "const bool emit_pb_filter_on = v.ctx.knobs.emit_pb_filter_on;"),
@@ -200,7 +200,7 @@ for _n in ("mw_wl_run", "ewl_lanes", "wl_run", "wl_cons_run", "emit_rebase_engin
            "cl_epochs", "cl_ar_ran", "cl_ar_fixed", "cl_sum_fixed", "cl_first_fix_tow",
            "cl_first_fix_week", "cl_recent_err3d"):
     ALIAS_INCLUDE[_n] = "filter/NetworkRunGroups.hpp"
-for _n in ("setup", "stations", "synced", "sh_dev_on", "cl_truth", "cl_truth_llh", "closed_loop_on",
+for _n in ("setup", "stations", "synced", "cl_truth", "cl_truth_llh", "closed_loop_on",
            "parallel_on", "n_threads", "product_writer", "prod_path", "pending_contract",
            "contract_pending", "consumer"):
     ALIAS_INCLUDE.setdefault(_n, "app/NetworkSetupResult.hpp")
