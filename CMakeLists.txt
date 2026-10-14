@@ -479,6 +479,7 @@ add_executable(gnss_tests
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
     tests/test_measurement_admission.cpp
+    tests/test_measurement_model_prepass.cpp
     tests/test_iono_dw_release_hygiene.cpp
     tests/test_redundancy_census.cpp
     tests/test_network_mdb.cpp
