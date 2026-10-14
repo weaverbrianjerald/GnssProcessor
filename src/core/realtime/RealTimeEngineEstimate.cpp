@@ -445,7 +445,7 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
         for (Eigen::Index i = 0; i < n_lbl; ++i) {
             const std::size_t u = static_cast<std::size_t>(i);
             const std::string& sat = mu.satellite_ids[u];
-            if (sat.find('-') != std::string::npos) continue;
+            if (hasSatPairSeparator(sat)) continue;
             if (i < mu.innovations.size())
                 innov_of[sat + "|" + mu.signal_types[u]] = mu.innovations(i);
         }

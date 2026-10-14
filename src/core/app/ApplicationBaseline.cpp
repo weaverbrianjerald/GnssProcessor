@@ -1222,9 +1222,9 @@ void Application::recordCommittedBaselineEpoch_(const BaselineRunWork& run, Base
 
         if (i < static_cast<Eigen::Index>(em.satellite_ids.size())) {
             const std::string& sid = em.satellite_ids[static_cast<size_t>(i)];
-            const auto dash = sid.find('-');
-            if (dash != std::string::npos && dash + 1 < sid.size()) {
-                const std::string pivot = sid.substr(dash + 1);
+            const SatPairId row = SatPairId::splitAtFirstDash(sid);
+            if (!row.reference.empty()) {
+                const std::string& pivot = row.reference;
                 const std::string cons = ddConstellationName(pivot);
                 pivot_counts[cons + ":" + pivot]++;
                 constellation_dd[cons]++;

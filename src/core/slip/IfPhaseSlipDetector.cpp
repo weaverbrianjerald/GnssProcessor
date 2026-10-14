@@ -23,6 +23,7 @@
 #include "slip/IfPhaseChainWork.hpp"
 #include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/RobustStats.hpp"
 #include <algorithm>
 #include <cmath>
@@ -781,7 +782,7 @@ namespace GnssProcessor {
         auto& rc = ref_arm_chain_counters_[sys_str];
         if (inherited) ++rc.fires_inherited; else ++rc.fires_own;
 
-        const std::string ref_amb_key = cs.ref_satellite + "_" + ref_data->phase_if_key;
+        const std::string ref_amb_key = StateKeys::makeAmbiguityKey(cs.ref_satellite, ref_data->phase_if_key);
         reset_keys.push_back(ref_amb_key);
 
         // An own-arm fire logs the unchanged text; only an inherited fire

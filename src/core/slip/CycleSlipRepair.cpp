@@ -11,6 +11,7 @@
 
 #include "slip/CycleSlipManager.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <cmath>
 
 namespace GnssProcessor {
@@ -178,7 +179,7 @@ bool CycleSlipManager::repairAmbiguityBssdAware(
         }
     }
 
-    const std::string amb_key = sat_id + "_" + signal;
+    const std::string amb_key = StateKeys::makeAmbiguityKey(sat_id, signal);
     const int amb_idx = state_manager.getAmbiguityIndex(amb_key);
     if (amb_idx < 0) {
         log->info("{}MW slip repair skipped: no ambiguity state for {}",

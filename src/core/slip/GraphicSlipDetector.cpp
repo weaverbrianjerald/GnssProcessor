@@ -14,6 +14,7 @@
 #include "slip/GraphicSlipDetector.hpp"
 #include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/RobustStats.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
@@ -320,7 +321,7 @@ namespace GnssProcessor {
                         std::isfinite(sigma) ? sigma : -1.0, stats.count);
 
                     results.push_back({obs.satellite, sp.phase,
-                                       obs.satellite + "_" + sp.phase,
+                                       StateKeys::makeAmbiguityKey(obs.satellite, sp.phase),
                                        slip_cycles, slip_known, fractional});
 
                     // Reset arc

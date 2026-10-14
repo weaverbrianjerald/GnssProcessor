@@ -10,6 +10,7 @@
 
 #include "slip/CycleSlipManager.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "slip/CycleSlipEpochWork.hpp"
 #include "slip/SlipDetectorRegistry.hpp"
 
@@ -48,7 +49,7 @@ void CycleSlipManager::applyTurboEditGfOnlyResolutions(SlipEpochWork& w) {
         if (handled_sats.count(sat)) continue;  // MW pipeline already acted on this sat
         bool any = false;
         for (const auto* r : reps) {
-            const std::string key = sat + "_" + r->signal;
+            const std::string key = StateKeys::makeAmbiguityKey(sat, r->signal);
             if (state_manager.getAmbiguityIndex(key) < 0) continue;
             // Covariance-preserving additive integer repair; repairAmbiguityBssdAware
             // refuses the BSSD pivot (and returns false when the sat is unobserved
@@ -84,7 +85,7 @@ void CycleSlipManager::applyTurboEditGfOnlyResolutions(SlipEpochWork& w) {
             (void)val;
             if (obsTypeOf(sig) != ObsType::Phase) continue;                // phase only
             if (isIonoFreePairLabel(sig)) continue;               // raw signal only
-            const std::string key = sat + "_" + sig;
+            const std::string key = StateKeys::makeAmbiguityKey(sat, sig);
             if (state_manager.getAmbiguityIndex(key) < 0) continue;
             resetAmbiguityBssdAware(key, sat, sig, modeled_obs,
                                     state_manager, meas_model, epoch_prefix);
@@ -130,7 +131,7 @@ void CycleSlipManager::applyAuxiliarySlipEvents(SlipEpochWork& w) {
 
         auto resetSignal = [&](const std::string& signal) {
             if (signal.empty()) return;
-            const std::string key = sat + "_" + signal;
+            const std::string key = StateKeys::makeAmbiguityKey(sat, signal);
             if (state_manager.getAmbiguityIndex(key) < 0) return;
             resetAmbiguityBssdAware(key, sat, signal, modeled_obs,
                                     state_manager, meas_model, epoch_prefix);

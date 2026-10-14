@@ -15,6 +15,7 @@
 #include "slip/CycleSlipEpochWork.hpp"
 #include "slip/CycleSlipVerdict.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <algorithm>
 
 namespace GnssProcessor {
@@ -377,7 +378,7 @@ void CycleSlipManager::applyCulpritVerdict(SlipEpochWork& w,
     const auto& adjudicated             = verdict.adjudicated_signals;
 
     for (const auto& culprit : culprit_signals) {
-        const std::string targeted_key = sat_id + "_" + culprit;
+        const std::string targeted_key = StateKeys::makeAmbiguityKey(sat_id, culprit);
         const std::string cons = systemName(systemOfSat(sat_id));
         const bool pivot_affected =
             pivot_affected_cons_sig.count({cons, culprit}) > 0;

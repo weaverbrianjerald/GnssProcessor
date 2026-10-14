@@ -12,6 +12,7 @@
 #include "slip/MwSlipDetector.hpp"
 #include "slip/MwDetectorWork.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/TimeUtils.hpp"
 #include <cmath>
 #include <iterator>
@@ -123,7 +124,7 @@ namespace GnssProcessor {
         const auto& logger = w.logger;
 
         for (const auto& ifp : if_pairs) {
-            const std::string amb_key = obs.satellite + "_" + ifp.phase_key;
+            const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, ifp.phase_key);
             results.push_back(MwSlipResult{ amb_key });
             logger->warn("LLI lock loss detected: scheduling ambiguity reset for {}", amb_key);
             std::string s1, s2;
@@ -163,7 +164,7 @@ namespace GnssProcessor {
 
         for (const auto& [key, val] : obs.raw_observed)
             if (obsTypeOf(key) == ObsType::Phase && !isIonoFreePairLabel(key))
-                results.push_back(MwSlipResult{ obs.satellite + "_" + key });
+                results.push_back(MwSlipResult{ StateKeys::makeAmbiguityKey(obs.satellite, key) });
         logger->warn("LLI lock loss (uncombined): scheduling all phase ambiguity resets for {}", obs.satellite);
         // Remember which bands the receiver flagged (§14.11), so the
         // next epoch's stamp can mark the pairs that contain one of
@@ -859,11 +860,11 @@ namespace GnssProcessor {
                                 verdict.arc_epochs, bia_corrected, verdict.step_epoch_s });
         };
         if (!lane.if_label.empty()) {             // a combined lane: its IF ambiguity
-            emit(lane.satellite + "_" + lane.if_label);
+            emit(StateKeys::makeAmbiguityKey(lane.satellite, lane.if_label));
             return;
         }
-        emit(lane.satellite + "_" + lane.sig1);   // an uncombined lane: both signals
-        emit(lane.satellite + "_" + lane.sig2);
+        emit(StateKeys::makeAmbiguityKey(lane.satellite, lane.sig1));   // an uncombined lane: both signals
+        emit(StateKeys::makeAmbiguityKey(lane.satellite, lane.sig2));
     }
 
 } // namespace GnssProcessor

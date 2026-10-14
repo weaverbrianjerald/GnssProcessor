@@ -26,6 +26,7 @@
 #include "slip/IfPhaseSlipDetector.hpp"
 #include "slip/IfPhaseChainWork.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -121,7 +122,7 @@ namespace GnssProcessor {
                 if (!std::isfinite(dd) && std::isfinite(delta_grad[sat])) {
                     auto sit = sat_map.find(sat);
                     if (sit == sat_map.end()) continue;
-                    const std::string amb_key = sat + "_" + sit->second->phase_if_key;
+                    const std::string amb_key = StateKeys::makeAmbiguityKey(sat, sit->second->phase_if_key);
                     reset_keys.push_back(amb_key);
 
                     logger->warn("{}: IF phase slip for {}: delta_grad={:.4f} m, lambda_IF={:.4f} m; reset {}",
@@ -139,7 +140,7 @@ namespace GnssProcessor {
                 if (!std::isfinite(dd) || std::abs(dd) <= lambda_if) continue;
                 auto sit = sat_map.find(sat);
                 if (sit == sat_map.end()) continue;
-                const std::string amb_key = sat + "_" + sit->second->phase_if_key;
+                const std::string amb_key = StateKeys::makeAmbiguityKey(sat, sit->second->phase_if_key);
                 reset_keys.push_back(amb_key);
 
                 logger->warn("{}: IF phase slip (fixed threshold) for {}: |delta_grad|={:.4f} m > lambda_IF={:.4f} m; reset {}",

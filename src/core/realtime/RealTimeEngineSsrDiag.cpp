@@ -204,7 +204,7 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
             // differenced residual to one satellite.  (This consumer is
             // undifferenced on the RF-0hv posture, so nothing is skipped there.)
             const std::string& sat = mu.satellite_ids[u];
-            if (sat.find('-') != std::string::npos) continue;
+            if (hasSatPairSeparator(sat)) continue;
             const std::string k = sat + "|" + mu.signal_types[u];
             if (i < mu.innovations.size()) innov_of[k] = mu.innovations(i);
             if (i < mu.residuals.size())   resid_of[k] = mu.residuals(i);

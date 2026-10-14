@@ -16,6 +16,7 @@
 #include "app/Application.hpp"
 #include "app/PppPipelineWork.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
 #include <cmath>
@@ -399,13 +400,14 @@ void Application::refreshSubstitutedAtxQ_(const PppEpochWork& w) {
     if (mc_atx.loosen_amb_q_for_substituted_atx && ppp_model_) {
         std::map<std::string, double> overrides;
         for (const auto& [amb_key, idx] : state_manager_->getAmbiguities()) {
-            const auto u1 = amb_key.find('_');
-            if (u1 == std::string::npos) continue;
-            const std::string sat = amb_key.substr(0, u1);
-            if (sat.empty()) continue;
+            // parseAmbiguityKey also refuses a key with an empty signal field, which
+            // could set no override: wasAtxSubstituted is false for an empty signal.
+            const auto parts = StateKeys::parseAmbiguityKey(amb_key);
+            if (!parts) continue;
+            const std::string& sat = parts->satellite;
             const System sys = systemOfSat(sat);
             if (sys == System::Unknown) continue;
-            const std::string rest = amb_key.substr(u1 + 1);
+            const std::string& rest = parts->signal;
             const auto u2 = rest.find('_');
             const std::string sig1 = (u2 == std::string::npos) ? rest : rest.substr(0, u2);
             const std::string sig2 = (u2 == std::string::npos) ? std::string{} : rest.substr(u2 + 1);

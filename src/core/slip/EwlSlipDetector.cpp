@@ -16,6 +16,7 @@
 #include "slip/EwlSlipDetector.hpp"
 #include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/RobustStats.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
@@ -409,7 +410,7 @@ namespace GnssProcessor {
                     sr.satellite = obs.satellite;
                     sr.sig1 = pair.phase1;
                     sr.sig2 = pair.phase2;
-                    sr.amb_key = obs.satellite + "_" + pair.phase1;
+                    sr.amb_key = StateKeys::makeAmbiguityKey(obs.satellite, pair.phase1);
                     sr.slip_ewl_cycles = slip_cycles;
                     sr.slip_ewl_known = slip_known;
                     sr.lambda_ewl = lambda_ewl;

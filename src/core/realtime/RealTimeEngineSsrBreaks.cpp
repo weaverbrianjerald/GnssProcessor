@@ -201,9 +201,9 @@ void RealTimeEngine::reactToGenerationChange(RtEpochContext& ctx) {
             // undeclared one.  No-op unarmed.
             if (consumer_sat_trace_)
                 for (const auto& k : keys) {
-                    const auto sep = k.find('_');
-                    if (sep == std::string::npos || sep == 0 || sep + 1 >= k.size()) continue;
-                    noteConsumerSatEvent_(k.substr(0, sep) + "|" + k.substr(sep + 1),
+                    const auto parts = StateKeys::parseAmbiguityKey(k);
+                    if (!parts) continue;
+                    noteConsumerSatEvent_(parts->satellite + "|" + parts->signal,
                                           "reset_gen");
                 }
             const double cb_var =
@@ -304,7 +304,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                 if (auto pb = ssr.getPhaseBias(obs.satellite, code)) {
                     if (state_manager_->noteSsrDiscontinuity(
                             key, pb->discontinuity_counter)) {
-                        state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                        state_manager_->resetAmbiguity(StateKeys::makeAmbiguityKey(obs.satellite, code), reset_std);
                         noteConsumerSatEvent_(key, "reset_disc");   // consumer satellite trace (no-op unarmed)
                         noteAmbLevelDisturbed_(obs.satellite);      // ambiguity level check (no-op unarmed)
                         log->info("{}SSR phase-bias discontinuity: reset {} {}",
@@ -348,7 +348,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                                   epoch_prefix, it->second ? "fresh" : "stale",
                                   applied_now ? "fresh" : "stale", obs.satellite, code);
                     } else {
-                        state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                        state_manager_->resetAmbiguity(StateKeys::makeAmbiguityKey(obs.satellite, code), reset_std);
                         noteConsumerSatEvent_(key, "reset_flip");   // consumer satellite trace (no-op unarmed)
                         noteAmbLevelDisturbed_(obs.satellite);      // ambiguity level check (no-op unarmed)
                         log->info("{}SSR phase-bias freshness flip ({} -> {}): reset {} {}",
@@ -405,7 +405,7 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
             // is carried here as an unheld key's is.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
-            const std::string amb_key = obs.satellite + "_" + code;
+            const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, code);
 
             // The disc-counter bump: the ungated read, exactly as the reset path.
             bool bump = false;
@@ -519,7 +519,7 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
             // is translated here as an unheld key's step is.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
-            const std::string amb_key = obs.satellite + "_" + code;
+            const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, code);
 
             // The disc-counter bump: the ungated read, exactly as the reset path.
             bool bump = false;
@@ -684,7 +684,7 @@ void RealTimeEngine::reactToPbHold_(RtEpochContext& ctx) {
                 state_manager_->noteSsrDiscontinuity(key, pb->discontinuity_counter);
             const auto d = pb_hold_.react(key, pb->hold_generation, disc_changed);
             if (d.action == PbHoldLedger::Action::Refloat) {
-                state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                state_manager_->resetAmbiguity(StateKeys::makeAmbiguityKey(obs.satellite, code), reset_std);
                 noteConsumerSatEvent_(key, "reset_hold_gen");   // consumer satellite trace (no-op unarmed)
                 noteAmbLevelDisturbed_(obs.satellite);          // ambiguity level check (no-op unarmed)
                 log->info("{}SSR phase-bias HOLD generation {} -> {}: reset {} {}",

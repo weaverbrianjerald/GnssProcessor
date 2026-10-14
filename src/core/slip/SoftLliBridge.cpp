@@ -5,6 +5,7 @@
 
 #include "slip/SoftLliBridge.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
@@ -128,7 +129,7 @@ void SoftLliBridge::registerGapHolds(const std::vector<PppObservation>& modeled_
             (void)observed_val;
             if (obsTypeOf(ref_type) != ObsType::Phase) continue;
             if (isIonoFreePairLabel(ref_type)) continue;
-            observed.insert(obs.satellite + "_" + ref_type);
+            observed.insert(StateKeys::makeAmbiguityKey(obs.satellite, ref_type));
         }
     }
 
@@ -270,7 +271,7 @@ void SoftLliBridge::resolveHolds(const TurboEditResolver::EpochResolution& te,
             std::set<std::string> actioned_sigs;
             bool any = false;
             for (const auto* r : rit->second) {
-                const std::string rk = r->satellite + "_" + r->signal;
+                const std::string rk = StateKeys::makeAmbiguityKey(r->satellite, r->signal);
                 actioned_sigs.insert(r->signal);
                 if (restoreOrReset(rk, r->signal, r->dN, r->lambda))
                     any = true;
