@@ -212,6 +212,10 @@ namespace GnssProcessor {
          *        outlier path (@ref handlePhaseOutlier).
          * @param[in,out] P_prev Pre-update covariance; edited in place on the
          *        outlier path (@ref handlePhaseOutlier, or a full covariance reset).
+         * An ordered driver over the private stages S0 to S9 declared below,
+         * which share one working value; include/filter/KalmanPostFitQc.hpp
+         * lists them with the four exits.
+         *
          * @return {outlier found, complete reset}.  A complete reset also sets
          *         the first flag.  On an outlier, @ref update returns
          *         UpdateResult::NeedsMeasurementRebuild.
@@ -599,6 +603,174 @@ namespace GnssProcessor {
          * Defined in src/core/filter/KalmanOutlierResponse.cpp.
          */
         void resetFilterCovariance(Eigen::MatrixXd& P, const std::string& epoch_prefix);
+
+        // --- The post-fit outlier screen's stages (src/core/filter/KalmanPostFitQc.cpp) ---
+        //
+        // validatePostFitResiduals drives them in order over one working value; the
+        // stage list and its four exits are in include/filter/KalmanPostFitQc.hpp
+        // (card UOM step U2c).  Each is defined in src/core/filter/KalmanPostFitQc.cpp.
+
+        /// The values the post-fit stages share for one pass; defined in
+        /// include/filter/KalmanPostFitQc.hpp.
+        struct PostFitQcWork;
+
+        /**
+         * @brief S0: read the pass's thresholds, bind the residual references and count
+         *        the rows.
+         *
+         * @param measurement The pass's measurement.
+         * @param x           Pre-update state (later stages edit it in place).
+         * @param P           Pre-update covariance (later stages edit it in place).
+         * @return The work value the later stages share.
+         */
+        PostFitQcWork beginPostFitQc_(EpochMeasurement& measurement,
+                                      Eigen::VectorXd& x, Eigen::MatrixXd& P);
+
+        /**
+         * @brief S1: log the per-row residual table (at trace, or at debug on a pass with
+         *        an outlier), find the worst row and log the "Residual summary" line.
+         *
+         * @param w Work value; sets max_idx, max_sres, residual_summary_level and the
+         *          formal position sigmas.
+         */
+        void reportPostFitResiduals_(PostFitQcWork& w);
+
+        /**
+         * @brief S2: log the variance-factor and the data-snooping summary lines, each when
+         *        armed.  Diagnostics only.
+         *
+         * @param w Work value (read only).
+         */
+        void reportStatisticalQc_(PostFitQcWork& w);
+
+        /**
+         * @brief S3: the coherent pivot-offset detectors over the single-difference rows:
+         *        phase per signal, phase across bands, code per band, code across bands.
+         *
+         * A firing group requests a forced pivot handover for its constellation, records
+         * the satellites the handover must not elect (and, for code, the satellites whose
+         * ionosphere is re-inflated after it), and excludes the group's rows from the
+         * rebuild.
+         *
+         * @param w Work value; adds exclusions to the measurement.
+         * @return True if any detector fired.
+         */
+        bool detectPivotOffsets_(PostFitQcWork& w);
+
+        /**
+         * @brief S3e: a non-pivot satellite whose phase rows on two or more bands carry
+         *        the same non-zero integer number of cycles: its ambiguities are marked for
+         *        re-seed with their covariance re-inflated, and its rows are excluded.
+         *
+         * @param w Work value; edits P and the measurement's exclusions.
+         * @return True if any satellite was reset.
+         */
+        bool detectNonPivotSlips_(PostFitQcWork& w);
+
+        /**
+         * @brief E2: a group detector rejected rows; count one bad residual and request a
+         *        rebuild.  Returns before the complete-reset backstop.
+         *
+         * @param w Work value.
+         * @return {true, false}.
+         */
+        std::pair<bool, bool> finishGroupRejection_(PostFitQcWork& w);
+
+        /**
+         * @brief S4: the Huber pass: queue an R target for every sub-cycle phase row whose
+         *        |standardized residual| exceeds the Huber threshold (the post-fit IRLS
+         *        scheme, or the innovation one-shot scheme when armed).
+         *
+         * @param w Work value (read only); writes pending_r_inflations_.
+         * @return True if a target was queued or raised.
+         */
+        bool queueHuberInflations_(PostFitQcWork& w);
+
+        /**
+         * @brief E3: Huber targets were queued; request a rebuild.  Not counted as a bad
+         *        residual, and returns before the complete-reset backstop.
+         *
+         * @param w Work value.
+         * @return {true, false}.
+         */
+        std::pair<bool, bool> finishHuberRebuild_(PostFitQcWork& w);
+
+        /**
+         * @brief S5: choose the gate: the largest |standardized residual| against the
+         *        threshold or, with data snooping armed, the largest |w| over the checkable
+         *        rows against the critical value.
+         *
+         * @param w Work value; sets gate_stat, gate_idx and gate_crit.
+         */
+        void selectGateRow_(PostFitQcWork& w);
+
+        /**
+         * @brief S6: when the gate fires, respond to the gated row (the phase response, or
+         *        the code row's exclusion) and count one bad residual.
+         *
+         * @param w Work value; sets is_outlier_found.
+         */
+        void dispatchWorstRow_(PostFitQcWork& w);
+
+        /**
+         * @brief S6a: the MW tiebreak.  Among the gated constellation's phase rows over the
+         *        threshold and within 5 % of the largest |standardized residual|, choose the
+         *        satellite with the largest MW deviation score.  Only with a
+         *        CycleSlipManager supplied (setCycleSlipManager) and a phase worst row.
+         *
+         * @param w Work value (read only).
+         * @return The row to dispatch: gate_idx, or the MW-chosen row.
+         */
+        size_t chooseOutlierRow_(PostFitQcWork& w);
+
+        /**
+         * @brief S6b: the phase-row response: under the sub-cycle floor the row is only
+         *        excluded and the ambiguity kept, else the ambiguity is reset; then the same
+         *        for the satellite's other phase rows over the threshold.
+         *
+         * @param w           Work value; edits x, P and the measurement's exclusions.
+         * @param chosen_idx  The row being dispatched.
+         * @param outlier_sat Its satellite ID (the pair "G01-G05" under BSSD).
+         * @param outlier_sig Its signal.
+         * @param outlier_res Its post-fit residual (m), captured before the dispatch.
+         */
+        void respondToPhaseOutlier_(PostFitQcWork& w, size_t chosen_idx,
+                                    const std::string& outlier_sat,
+                                    const std::string& outlier_sig, double outlier_res);
+
+        /**
+         * @brief S7: the complete reset, when the epoch's bad-residual count exceeds the
+         *        configured fraction of the rows the epoch started with.
+         *
+         * @param w Work value; may reset P; sets is_outlier_found and is_complete_reset.
+         */
+        void completeResetBackstop_(PostFitQcWork& w);
+
+        /**
+         * @brief S8: log the pass's verdict line (debug).
+         *
+         * @param w Work value (read only).
+         */
+        void logPostFitResult_(PostFitQcWork& w);
+
+        /**
+         * @brief S9: on a clean pass with residual history armed, feed the accepted
+         *        residuals to the history, run the stuck-code-bias scan and log the
+         *        history digest.
+         *
+         * @param w Work value (read only).
+         */
+        void recordCleanCommit_(PostFitQcWork& w);
+
+        /**
+         * @brief S9a: with estimation.stuck_code_bias and satellite biases armed, queue a
+         *        reset for every non-pivot satellite bias the history reports stuck (a
+         *        rejection streak or a drifted mean); update() applies them after the
+         *        commit.
+         *
+         * @param w Work value (read only); writes pending_sat_bias_resets_.
+         */
+        void queueStuckCodeBiasResets_(PostFitQcWork& w);
 
     };
 

@@ -57,7 +57,7 @@ F = "src/core/filter/"
 H = "include/filter/"
 FILES = [F + "KalmanFilter.cpp", F + "KalmanKernels.cpp", F + "KalmanResidualQc.cpp",
          F + "KalmanPostFitQc.cpp", F + "KalmanOutlierResponse.cpp",
-         H + "KalmanKernels.hpp", H + "KalmanRowIdentity.hpp"]
+         H + "KalmanKernels.hpp", H + "KalmanRowIdentity.hpp", H + "KalmanPostFitQc.hpp"]
 
 # Frozen lines each new file replaces with its own: the includes, `namespace GnssProcessor {`,
 # the anonymous namespace's braces, the namespace close.
@@ -68,17 +68,44 @@ DROPS = [
     ((492, 591), "U2a: KalmanFilter::predictImu has no caller (the Grep tool and a grep over "
                  "src, include, tests and python find only its definition and declaration)"),
     ((1746, 1746), "U2a: the local epoch_tag of validatePostFitResiduals is never read"),
+    ((1937, 1937), "U2c: the group-detector block's opening brace (the block is detectPivotOffsets_ "
+                   "and detectNonPivotSlips_ now)"),
+    ((2496, 2496), "U2c: the non-pivot block's opening brace (its interior is detectNonPivotSlips_)"),
+    ((2640, 2640), "U2c: the non-pivot block's closing brace"),
+    ((2642, 2642), "U2c: the E2 guard `if (any_pivot_slip) {`, now the driver's "
+                   "`if (pivot_offset || nonpivot_slip)`"),
+    ((2648, 2649), "U2c: the E2 guard's and the group-detector block's closing braces"),
+    ((2657, 2657), "U2c: the Huber block's opening brace (its interior is queueHuberInflations_)"),
+    ((2741, 2741), "U2c: the E3 guard `if (huber_triggered) {`, now the driver's "
+                   "`if (queueHuberInflations_(w))`"),
+    ((2749, 2750), "U2c: the E3 guard's and the Huber block's closing braces"),
+    ((2789, 2790), "U2c: the locals is_outlier_found and is_complete_reset are members of "
+                   "PostFitQcWork, initialized false"),
 ]
 
 # Declared substitutions on single frozen lines: (line, old text, new text).
 SUBS = [
     (199, "    std::pair<std::string, std::string> splitBssdSatId(",
           "    inline std::pair<std::string, std::string> splitBssdSatId("),
+    # U2c: the lambda medianInPlace is a file-scope function, as both group stages call it.
+    (2038, "auto medianInPlace = [](std::vector<double>& v) -> double {",
+           "double medianInPlace(std::vector<double>& v) {"),
+    (2045, "};", "}"),
+    # U2c: E1 and E4 sit in the driver, which reads the work value by its members.
+    (1757, "if (num_obs == 0) {", "if (w.num_obs == 0) {"),
+    (1758, "klogger->warn(", "w.klogger->warn("),
+    (1758, ", epoch_prefix);", ", w.epoch_prefix);"),
+    (3110, "return { is_outlier_found, is_complete_reset };",
+           "return { w.is_outlier_found, w.is_complete_reset };"),
+    # U2c: the non-pivot stage's own flag is named for what it records.
+    (2638, "any_pivot_slip = true;", "any_nonpivot_slip = true;"),
 ]
 
 # Declarations a header may hold outside the units (new types and tables, no function
 # bodies): header -> regexes of the declaration's first code line.
-DECLARED_TYPES = {}
+DECLARED_TYPES = {
+    H + "KalmanPostFitQc.hpp": [r"^struct KalmanFilter::PostFitQcWork \{$"],
+}
 
 
 def fz(a, b=None, shift=0):
@@ -113,7 +140,190 @@ UNITS = [
     ("applyPseudoObservation", F + "KalmanFilter.cpp", [fz(3230, 3238)]),
     ("computeResidualQc_", F + "KalmanResidualQc.cpp", [fz(1609, 1641)]),
     ("residualQcKernel", F + "KalmanResidualQc.cpp", [fz(1643, 1736)]),
-    ("validatePostFitResiduals", F + "KalmanPostFitQc.cpp", [fz(1742, 3111)]),
+    # U2c: validatePostFitResiduals as an ordered driver over named stages.
+    ("medianInPlace", F + "KalmanPostFitQc.cpp", [
+        ("comment", "    /**"),
+        ("comment", "     * @brief Median of @p v, reordering it (nth_element); an even count averages"),
+        ("comment", "     *        the two middle values."),
+        ("comment", "     *"),
+        ("comment", "     * Shared by the coherent-offset group detectors (card UOM step U2c made the"),
+        ("comment", "     * lambda of the single function a file-scope function)."),
+        ("comment", "     *"),
+        ("comment", "     * @param v Values; reordered in place.  Must not be empty."),
+        ("comment", "     * @return The median."),
+        ("comment", "     */"),
+        fz(2038, 2045, 8)]),
+    ("validatePostFitResiduals", F + "KalmanPostFitQc.cpp", [
+        fz(1742, 1743),
+        ("comment", ""),
+        ("comment", "        // The post-fit outlier screen as an ordered list of stages over one working"),
+        ("comment", "        // value (include/filter/KalmanPostFitQc.hpp).  Four exits: E1 no rows; E2 a"),
+        ("comment", "        // group detector rejected rows (counted as a bad residual, and returns before"),
+        ("comment", "        // the complete-reset backstop); E3 the Huber pass queued R targets (not"),
+        ("comment", "        // counted, before the backstop); E4 the dispatch, the backstop and the clean"),
+        ("comment", "        // commit ran."),
+        ("new", "        PostFitQcWork w = beginPostFitQc_(measurement, x, P);              // S0"),
+        ("comment", "        // E1: nothing to screen."),
+        fz(1757, 1760),
+        ("comment", ""),
+        ("new", "        reportPostFitResiduals_(w);                                          // S1"),
+        ("new", "        reportStatisticalQc_(w);                                             // S2"),
+        ("comment", ""),
+        ("comment", "        // S3: the group detectors; both always run, and any rejection is E2."),
+        ("new", "        const bool pivot_offset  = detectPivotOffsets_(w);"),
+        ("new", "        const bool nonpivot_slip = detectNonPivotSlips_(w);"),
+        ("new", "        if (pivot_offset || nonpivot_slip) return finishGroupRejection_(w);  // E2"),
+        ("comment", ""),
+        ("new", "        if (queueHuberInflations_(w)) return finishHuberRebuild_(w);        // S4, E3"),
+        ("comment", ""),
+        ("new", "        selectGateRow_(w);                                                   // S5"),
+        ("new", "        dispatchWorstRow_(w);                                                // S6"),
+        ("new", "        completeResetBackstop_(w);                                           // S7"),
+        ("new", "        logPostFitResult_(w);                                                // S8"),
+        ("new", "        recordCleanCommit_(w);                                               // S9"),
+        ("comment", "        // E4."),
+        fz(3110, 3111)]),
+    ("beginPostFitQc_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    KalmanFilter::PostFitQcWork KalmanFilter::beginPostFitQc_("),
+        ("new", "        EpochMeasurement& measurement, Eigen::VectorXd& x, Eigen::MatrixXd& P) {"),
+        ("comment", ""),
+        fz(1745, 1756),
+        ("comment", ""),
+        fz(1761, 1775),
+        ("comment", ""),
+        ("new", "        return PostFitQcWork{ measurement, x, P, klogger, epoch_prefix, threshold,"),
+        ("new", "                              bad_meas_percent, res, vres, sres, num_obs,"),
+        ("new", "                              total_obs_count, meta_n };"),
+        ("new", "    }")]),
+    ("reportPostFitResiduals_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::reportPostFitResiduals_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "P", "klogger", "epoch_prefix", "threshold", "bad_meas_percent",
+                   "res", "vres", "sres", "num_obs", "meta_n"]),
+        ("comment", ""),
+        fz(1777, 1863),
+        ("comment", ""),
+        ("publish", ["max_idx", "max_sres", "residual_summary_level", "sx", "sy", "sz"]),
+        ("new", "    }")]),
+    ("reportStatisticalQc_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::reportStatisticalQc_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "klogger", "epoch_prefix", "sres", "num_obs",
+                   "residual_summary_level", "sx", "sy", "sz"]),
+        ("comment", ""),
+        fz(1865, 1905),
+        ("new", "    }")]),
+    ("detectPivotOffsets_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    bool KalmanFilter::detectPivotOffsets_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "klogger", "epoch_prefix", "threshold", "res", "sres", "meta_n"]),
+        ("comment", ""),
+        fz(1907, 1936),
+        fz(1938, 2035, 4),
+        fz(2047, 2476, 4),
+        ("comment", ""),
+        ("new", "        return any_pivot_slip;"),
+        ("new", "    }")]),
+    ("detectNonPivotSlips_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    bool KalmanFilter::detectNonPivotSlips_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "P", "klogger", "epoch_prefix", "threshold", "res", "sres",
+                   "meta_n"]),
+        ("comment", ""),
+        fz(2478, 2495, 4),
+        ("new", "        bool any_nonpivot_slip = false;"),
+        fz(2497, 2639, 8),
+        ("comment", ""),
+        ("new", "        return any_nonpivot_slip;"),
+        ("new", "    }")]),
+    ("finishGroupRejection_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    std::pair<bool, bool> KalmanFilter::finishGroupRejection_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "klogger", "epoch_prefix"]),
+        fz(2643, 2647, 8),
+        ("new", "    }")]),
+    ("queueHuberInflations_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    bool KalmanFilter::queueHuberInflations_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "P", "klogger", "epoch_prefix", "res", "sres", "num_obs"]),
+        ("comment", ""),
+        fz(2651, 2656),
+        fz(2658, 2739, 4),
+        ("comment", ""),
+        ("new", "        return huber_triggered;"),
+        ("new", "    }")]),
+    ("finishHuberRebuild_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    std::pair<bool, bool> KalmanFilter::finishHuberRebuild_(PostFitQcWork& w) {"),
+        ("alias", ["klogger", "epoch_prefix"]),
+        fz(2742, 2748, 8),
+        ("new", "    }")]),
+    ("selectGateRow_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::selectGateRow_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "sres", "threshold", "max_idx", "max_sres"]),
+        ("comment", ""),
+        fz(2752, 2786),
+        ("comment", ""),
+        ("publish", ["gate_stat", "gate_idx", "gate_crit"]),
+        ("new", "    }")]),
+    ("dispatchWorstRow_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::dispatchWorstRow_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "klogger", "epoch_prefix", "threshold", "res", "vres", "sres",
+                   "max_sres", "gate_stat", "gate_crit"]),
+        ("alias_rw", ["is_outlier_found"]),
+        ("comment", ""),
+        fz(2788, 2788),
+        fz(2792, 2800),
+        ("comment", "            // MW tiebreaker for competing phase outliers (chooseOutlierRow_)."),
+        ("new", "            const size_t chosen_idx = chooseOutlierRow_(w);"),
+        ("comment", ""),
+        fz(2884, 2902),
+        ("comment", "                // The sub-cycle floor, the reset and the correlated rows on the"),
+        ("comment", "                // satellite's other phase signals (respondToPhaseOutlier_)."),
+        ("new", "                respondToPhaseOutlier_(w, chosen_idx, outlier_sat, outlier_sig, outlier_res);"),
+        fz(2991, 3005),
+        ("new", "    }")]),
+    ("chooseOutlierRow_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    size_t KalmanFilter::chooseOutlierRow_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "klogger", "epoch_prefix", "threshold", "sres", "meta_n",
+                   "max_idx", "max_sres", "gate_idx"]),
+        ("comment", ""),
+        fz(2801, 2883, 4),
+        ("comment", ""),
+        ("new", "        return chosen_idx;"),
+        ("new", "    }")]),
+    ("respondToPhaseOutlier_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::respondToPhaseOutlier_(PostFitQcWork& w, size_t chosen_idx,"),
+        ("new", "        const std::string& outlier_sat, const std::string& outlier_sig, double outlier_res) {"),
+        ("alias", ["measurement", "x", "P", "klogger", "epoch_prefix", "threshold", "res", "sres",
+                   "meta_n"]),
+        ("comment", ""),
+        fz(2903, 2990, 8),
+        ("new", "    }")]),
+    ("completeResetBackstop_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::completeResetBackstop_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "P", "klogger", "epoch_prefix", "bad_meas_percent",
+                   "total_obs_count"]),
+        ("alias_rw", ["is_outlier_found", "is_complete_reset"]),
+        ("comment", ""),
+        fz(3007, 3021),
+        ("new", "    }")]),
+    ("logPostFitResult_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::logPostFitResult_(PostFitQcWork& w) {"),
+        ("alias", ["klogger", "epoch_prefix", "is_outlier_found", "is_complete_reset"]),
+        ("comment", ""),
+        fz(3023, 3026),
+        ("new", "    }")]),
+    ("recordCleanCommit_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::recordCleanCommit_(PostFitQcWork& w) {"),
+        ("alias", ["measurement", "klogger", "epoch_prefix", "res", "meta_n", "is_outlier_found",
+                   "is_complete_reset"]),
+        ("comment", ""),
+        fz(3028, 3045),
+        ("comment", "            // Stuck-code-bias scan (queueStuckCodeBiasResets_)."),
+        ("new", "            queueStuckCodeBiasResets_(w);"),
+        ("comment", ""),
+        fz(3094, 3108),
+        ("new", "    }")]),
+    ("queueStuckCodeBiasResets_", F + "KalmanPostFitQc.cpp", [
+        ("new", "    void KalmanFilter::queueStuckCodeBiasResets_(PostFitQcWork& w) {"),
+        ("alias", ["klogger", "epoch_prefix"]),
+        ("comment", ""),
+        fz(3046, 3093, 4),
+        ("new", "    }")]),
     ("isUnsetVariance", F + "KalmanOutlierResponse.cpp", [fz(194, 196)]),
     ("seedCovarianceDiagonals", F + "KalmanOutlierResponse.cpp", [fz(212, 293)]),
     ("handlePhaseOutlier", F + "KalmanOutlierResponse.cpp", [fz(1178, 1317)]),
@@ -213,8 +423,8 @@ def expected(code, pieces, claimed, problems, name):
                 exp.append(("frozen", code[i][shift:].rstrip()))
         elif kind == "new":
             exp.append(("new", strip_comments(p[1]).strip()))
-        elif kind in ("alias", "publish"):
-            exp.extend((kind, n) for n in p[1])
+        elif kind in ("alias", "alias_rw", "publish"):
+            exp.extend(("publish" if kind == "publish" else "alias", n) for n in p[1])
         elif kind != "comment":
             problems.append(f"{name}: unknown piece {kind}")
     return exp
