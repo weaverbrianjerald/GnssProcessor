@@ -120,6 +120,11 @@ add_library(gnss_core STATIC
     src/core/model/ModelGeometry.cpp
     src/core/model/Planetary.cpp
     src/core/app/Application.cpp
+    src/core/app/PppSetup.cpp
+    src/core/app/PppEpochSteps.cpp
+    src/core/app/PppEpochUpdate.cpp
+    src/core/app/PppEpochRecords.cpp
+    src/core/app/PppRunEnd.cpp
     src/core/app/ApplicationBaseline.cpp
     src/core/app/ApplicationRealtime.cpp
     src/core/app/ApplicationNetwork.cpp
@@ -623,6 +628,7 @@ add_executable(gnss_tests
     tests/test_state_family.cpp
     tests/test_kalman_pivot_detectors.cpp
     tests/test_kalman_qc_counters.cpp
+    tests/test_ppp_epoch_work.cpp
     tests/test_band_scoped_response.cpp
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp

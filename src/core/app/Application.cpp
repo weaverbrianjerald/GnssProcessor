@@ -1,23 +1,27 @@
 ﻿/**
  * @file Application.cpp
- * @brief Top-level application driver for GNSS processing.
+ * @brief Top-level application driver: the mode dispatch and the PPP / PPP-RTK pipeline
+ *        spine.
  *
- * Implements the Application class which orchestrates initialization of
- * configuration, logging and processing components (product parser, RINEX
- * parser, PPP model, measurement model, Kalman filter, WLS estimator, etc.)
- * and runs the epoch-by-epoch processing loop.
- *
- * The pipeline is decomposed into focused private helpers called from run():
- *  - initLoggingAndConfig()      – logging setup and JSON configuration load.
- *  - loadInputData()             – RINEX parsing and product cache population.
- *  - initializePosition()        – filter state seeding from RINEX header.
- *  - collectEpochObservations()  – per-epoch observation grouping and filtering.
- *  - handleWlsSeeding()          – WLS estimation and KF clock seeding.
- *  - detectCycleSlips()          – MW and IF phase slip detection / resets.
- *  - runFilterUpdateLoop()       – iterative KF measurement update loop.
- *  - runGeometryRelinearization()– optional second-pass geometry update.
- *  - logEpochSummary()           – per-epoch state logging.
- *  - writeEpochTraces()          – CSV trace output for offline analysis.
+ * run() loads the configuration and dispatches on the mode: real time
+ * (ApplicationRealtime.cpp), baseline (ApplicationBaseline.cpp), the network producer
+ * (ApplicationNetwork.cpp), or the PPP / PPP-RTK pipeline, whose spine is runPpp().
+ * runPpp() is a short ordered list of named stages (card UOM step U7b); each stage lives
+ * in the file of its concern:
+ *  - PppSetup.cpp         the a-priori position, the components and their wiring;
+ *  - PppEpochSteps.cpp    one epoch up to the measurement update: the observations, the
+ *                         decimation and duration gates, the time step and data gap, the
+ *                         models, the WLS clock seed, the gap policy, the process-noise
+ *                         overrides, the Kalman predict, the cycle slips;
+ *  - PppEpochUpdate.cpp   the measurement update loop, the geometry relinearization, the
+ *                         merged resets, the GIM update, ambiguity resolution;
+ *  - PppEpochRecords.cpp  the smoother snapshots, the NEQ accumulation, the soft-LLI
+ *                         snapshot, the summary line and the CSV traces;
+ *  - PppRunEnd.cpp        the run end: the reports of kPppRunEndReports in order.
+ * The values one epoch's stages share are the members of PppEpochWork
+ * (app/PppPipelineWork.hpp).  This file also holds the input phases the modes share
+ * (initLoggingAndConfig, resolveData, refreshAtxIfEnabled_, loadInputData) and the
+ * end-of-run HTML report.
  *
  * Return value semantics for run():
  *  - 0: success
@@ -25,32 +29,16 @@
  */
 
 #include "app/Application.hpp"
-#include "aiding/ImuAidingSource.hpp"   // full type for aiding_manager_->imu() wiring
-#include "app/EpochUpdateSupport.hpp"
-#include "math/TimeUtils.hpp"
-#include "products/ProductCache.hpp"
-#include "math/Coordinates.hpp"
+#include "app/PppPipelineWork.hpp"   // PppEpochWork, PppRunEndView: the spine's working values
 #include "products/PathResolver.hpp"
-#include "products/ProductResolver.hpp"
-#include "products/StationInfoFile.hpp"
-#include "realtime/NtripClient.hpp"
-#include "realtime/RtcmStreamReader.hpp"
-#include "filter/AmbiguityResolver.hpp"
-#include "rinex/MultiRinexSync.hpp"
-#include "model/ModelGeometry.hpp"
 #include "products/ProductCache.hpp"
-#include "slip/MwSlipDetector.hpp"
-#include "common/PppUtils.hpp"
-#include <chrono>
-#include <set>
-#include <fstream>
-#include <vector>
 #include <algorithm>
-#include <cctype>
-#include <cmath>
-#include <limits>
+#include <chrono>
 #include <cstdlib>
-#include <fmt/format.h>
+#include <filesystem>
+#include <set>
+#include <string>
+#include <vector>
 
 namespace GnssProcessor {
 
@@ -324,1397 +312,94 @@ bool Application::loadInputData() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Seed filter position from RINEX header
-// ---------------------------------------------------------------------------
-
-bool Application::initializePosition() {
-    const Eigen::Vector3d fallback_position(0.0, 0.0, Constants::EARTH_RADIUS);
-    auto approx_pos = rinex_parser_->getHeader().approx_position;
-    bool valid_pos = true;
-    for (double val : approx_pos) {
-        if (!std::isfinite(val) || std::abs(val) > 1e8) { valid_pos = false; break; }
-    }
-
-    initial_position_ = fallback_position;
-    if (valid_pos && approx_pos != std::array<double,3>{0.0,0.0,0.0}) {
-        Eigen::Vector3d marker_pos(approx_pos[0], approx_pos[1], approx_pos[2]);
-
-        // Apply the antenna H/E/N offset (marker to ARP); the state position is the ARP.
-        Eigen::Vector3d hen = rinex_parser_->getAntennaDeltaHen();
-        if (hen.norm() > 1e-6 && marker_pos.norm() > 1e3) {
-            initial_position_ = Coordinates::markerToArp(marker_pos, hen);
-
-            log_manager_.getLogger("main_log")->info(
-                "Applied antenna H/E/N offset ({:.4f}, {:.4f}, {:.4f}) m: marker ({:.3f}, {:.3f}, {:.3f}) -> ARP ({:.3f}, {:.3f}, {:.3f})",
-                hen(0), hen(1), hen(2),
-                marker_pos.x(), marker_pos.y(), marker_pos.z(),
-                initial_position_.x(), initial_position_.y(), initial_position_.z());
-        } else {
-            initial_position_ = marker_pos;
-            log_manager_.getLogger("main_log")->info(
-                "Initialized position from RINEX marker (no/zero antenna offset): ({:.3f}, {:.3f}, {:.3f}) m",
-                initial_position_.x(), initial_position_.y(), initial_position_.z());
-        }
-
-        Eigen::VectorXd sv = state_manager_->getStateVector();
-        if (sv.size() >= static_cast<Eigen::Index>(state_manager_->getPositionIndex() + 3)) {
-            sv.segment<3>(state_manager_->getPositionIndex()) = initial_position_;
-            state_manager_->setStateVector(sv);
-        } else {
-            log_manager_.getLogger("main_log")->warn("State vector size {} too small to set position", sv.size());
-            valid_pos = false;
-        }
-    }
-
-    if (!valid_pos) {
-        Eigen::VectorXd sv = state_manager_->getStateVector();
-        if (sv.size() >= static_cast<Eigen::Index>(state_manager_->getPositionIndex() + 3)) {
-            sv.segment<3>(state_manager_->getPositionIndex()) = fallback_position;
-            state_manager_->setStateVector(sv);
-            log_manager_.getLogger("main_log")->warn("Using fallback position: ({:.3f}, {:.3f}, {:.3f}) m",
-                fallback_position.x(), fallback_position.y(), fallback_position.z());
-        } else {
-            log_manager_.getLogger("main_log")->error("State vector too small to set fallback position");
-            return false;
-        }
-        initial_position_ = fallback_position;
-    }
-
-    // Station Information File a-priori: when enabled and the marker resolves,
-    // seed the filter with the SIF ITRF coordinate propagated to the
-    // first-observation epoch (velocity, seasonal and post-seismic terms).  It is
-    // more accurate than the RINEX APPROX header and in the products' frame
-    // (ITRF2020 / IGS20).  The occupation coordinate refers to the ground
-    // reference point (the monument), like the RINEX APPROX position, while the
-    // state vector is the ARP, so it is reduced marker -> ARP before it seeds the
-    // state: through the header's ANTENNA: DELTA H/E/N as the APPROX seed above
-    // and the network roster (network.station_marker_to_arp) are, or the SIF
-    // antenna window's ARP_MINUS_GRP_ENU when the header carries no record
-    // (reduceSifCoordinateToArp).  Used unreduced, it would seed GRAZ00AUT 1.964 m
-    // below its antenna.  run() re-applies this seed after PppModel::initializeState,
-    // which otherwise replaces it with the RINEX-derived position.
-    //
-    // The pre-override position confirms a 4-char prefix match (a marker that is
-    // not an exact SIF ID / DOMES): find() accepts the candidate only within
-    // SIF_MAX_PREFIX_DISTANCE_M of it.  Only a RINEX-derived position is passed;
-    // the fallback placeholder above (0, 0, R_earth) carries no station
-    // information, so with it find() applies its no-position rule (a bare
-    // 4-char marker only).
-    if (config_.enableStationInfo()) {
-        if (const auto sif = config_.getStationInfo()) {
-            const std::string marker = rinex_parser_->getHeader().marker_name;
-            const bool rinex_seeded =
-                valid_pos && approx_pos != std::array<double, 3>{0.0, 0.0, 0.0};
-            const Eigen::Vector3d pre_override = initial_position_;
-            if (const StationInfo* si = sif->find(marker, rinex_seeded ? &pre_override : nullptr)) {
-                const GnssTime t0 = rinex_parser_->getTimeOfFirstObs();
-                const double year = TimeUtils::mjdToDecimalYear(TimeUtils::gpsTimeToUtcMjd(t0));
-                const ResolvedStationCoord rc = resolveStationCoordinate(*si, year);
-                if (rc.valid && rc.ecef.allFinite() && rc.ecef.norm() > 1e6) {
-                    if (rc.extrapolated)
-                        log_manager_.getLogger("main_log")->warn(
-                            "SIF a-priori for marker '{}' (matched {}) @ {:.3f} is EXTRAPOLATED "
-                            "{:+.3f} yr outside its occupation segment [{:.3f}, {:.3f}); "
-                            "antenna change in gap: {}; receiver change in gap: {}",
-                            marker, si->id, year, rc.extrapolation_years,
-                            rc.segment_start_year, rc.segment_end_year,
-                            rc.antenna_change_in_gap ? "yes" : "no",
-                            rc.receiver_change_in_gap ? "yes" : "no");
-                    const Eigen::Vector3d rinex_hen = rinex_parser_->getAntennaDeltaHen();
-                    const SifArpReduction red = reduceSifCoordinateToArp(
-                        *si, rc.ecef, year,
-                        rinex_parser_->hasAntennaDeltaHen() ? &rinex_hen : nullptr);
-                    const char* ecc_source =
-                        red.source == SifEccentricitySource::RinexHeader      ? "RINEX ANTENNA: DELTA H/E/N"
-                      : red.source == SifEccentricitySource::SifAntennaWindow ? "SIF ARP_MINUS_GRP_ENU"
-                                                                              : "none";
-                    if (red.source == SifEccentricitySource::None)
-                        log_manager_.getLogger("main_log")->warn(
-                            "SIF a-priori for marker '{}' (matched {}): no RINEX ANTENNA: DELTA H/E/N "
-                            "record and no SIF antenna window at {:.3f}; the monument coordinate "
-                            "seeds the ARP state unreduced", marker, si->id, year);
-                    if (red.source == SifEccentricitySource::RinexHeader && red.has_sif_eccentricity
-                        && red.eccentricity_disagreement_m > SIF_ECCENTRICITY_TOLERANCE_M)
-                        log_manager_.getLogger("main_log")->warn(
-                            "SIF a-priori for marker '{}' (matched {}): RINEX ANTENNA: DELTA H/E/N "
-                            "({:.4f}, {:.4f}, {:.4f}) m differs from the SIF ARP_MINUS_GRP "
-                            "H/E/N ({:.4f}, {:.4f}, {:.4f}) m by {:.4f} m; the RINEX value is applied",
-                            marker, si->id, red.delta_hen(0), red.delta_hen(1), red.delta_hen(2),
-                            red.sif_delta_hen(0), red.sif_delta_hen(1), red.sif_delta_hen(2),
-                            red.eccentricity_disagreement_m);
-                    const Eigen::Vector3d prev = initial_position_;
-                    initial_position_ = red.arp_ecef;
-                    sif_apriori_seeded_ = true;
-                    Eigen::VectorXd sv = state_manager_->getStateVector();
-                    if (sv.size() >= static_cast<Eigen::Index>(state_manager_->getPositionIndex() + 3)) {
-                        sv.segment<3>(state_manager_->getPositionIndex()) = initial_position_;
-                        state_manager_->setStateVector(sv);
-                    }
-                    log_manager_.getLogger("main_log")->info(
-                        "SIF a-priori for marker '{}' (matched {}) @ {:.3f}: ITRF {} monument "
-                        "({:.3f}, {:.3f}, {:.3f}) m, H/E/N ({:.4f}, {:.4f}, {:.4f}) m from {} -> ARP "
-                        "({:.3f}, {:.3f}, {:.3f}) m; shift vs RINEX/fallback = {:.3f} m",
-                        marker, si->id, year, si->reference_frame,
-                        rc.ecef.x(), rc.ecef.y(), rc.ecef.z(),
-                        red.delta_hen(0), red.delta_hen(1), red.delta_hen(2), ecc_source,
-                        initial_position_.x(), initial_position_.y(), initial_position_.z(),
-                        (initial_position_ - prev).norm());
-                }
-
-                // Antenna / receiver metadata QC against the SIF active windows
-                // at the first-obs epoch: flag DO_NOT_USE equipment and antenna
-                // type disagreements between the RINEX header and the SIF.
-                const auto trimmed = [](std::string v) {
-                    const auto b = v.find_first_not_of(" \t");
-                    if (b == std::string::npos) return std::string{};
-                    const auto e = v.find_last_not_of(" \t");
-                    return v.substr(b, e - b + 1);
-                };
-                for (const auto& aw : si->antennas) {
-                    if (year < aw.start_year || year >= aw.end_year) continue;
-                    if (aw.do_not_use)
-                        log_manager_.getLogger("main_log")->warn(
-                            "SIF: antenna window for '{}' at {:.3f} is flagged DO_NOT_USE "
-                            "(type '{}')", marker, year, aw.type);
-                    const std::string rinex_ant = trimmed(rinex_parser_->getHeader().antenna_type);
-                    const std::string sif_ant   = trimmed(aw.type);
-                    if (!rinex_ant.empty() && !sif_ant.empty() && rinex_ant != sif_ant)
-                        log_manager_.getLogger("main_log")->warn(
-                            "SIF: antenna type mismatch for '{}': RINEX='{}' vs SIF='{}'",
-                            marker, rinex_ant, sif_ant);
-                    break;  // one covering window
-                }
-                for (const auto& rw : si->receivers) {
-                    if (year < rw.start_year || year >= rw.end_year) continue;
-                    if (rw.do_not_use)
-                        log_manager_.getLogger("main_log")->warn(
-                            "SIF: receiver window for '{}' at {:.3f} is flagged DO_NOT_USE "
-                            "(type '{}')", marker, year, rw.type);
-                    break;
-                }
-            }
-        }
-    }
-
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: Collect observations for one epoch
-// ---------------------------------------------------------------------------
-
-bool Application::collectEpochObservations(const std::vector<RinexObservation>& observations,
-                                           size_t& epoch_idx,
-                                           std::vector<RinexObservation>& epoch_obs,
-                                           GnssTime& current_time) {
-    current_time = observations[epoch_idx].time;
-    epoch_obs.clear();
-    const auto& active_systems = config_.getActiveSystems();
-
-    while (epoch_idx < observations.size() && observations[epoch_idx].time.tow == current_time.tow) {
-        std::string obs_system;
-        switch (observations[epoch_idx].system) {
-        case System::GPS:     obs_system = "GPS";     break;
-        case System::Galileo: obs_system = "Galileo"; break;
-        case System::GLONASS: obs_system = "GLONASS"; break;
-        case System::BeiDou:  obs_system = "BeiDou";  break;
-        case System::QZSS:    obs_system = "QZSS";    break;
-        case System::SBAS:    obs_system = "SBAS";    break;
-        default:              obs_system = "Unknown";  break;
-        }
-        if (std::find(active_systems.begin(), active_systems.end(), obs_system) != active_systems.end()) {
-            epoch_obs.push_back(observations[epoch_idx]);
-        }
-        ++epoch_idx;
-    }
-    return !epoch_obs.empty();
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: WLS estimation & KF clock seeding
-// ---------------------------------------------------------------------------
-
-WlsResult Application::handleWlsSeeding(const GnssTime& current_time,
-                                        const std::string& epoch_prefix,
-                                        const std::vector<PppObservation>& modeled_obs,
-                                        bool gap_detected) {
-    // Under BSSD the KF carries no receiver clock state, so there is nothing to
-    // seed and the WLS clock estimate has no counterpart in the SD filter.  The
-    // whole seeding path is skipped.
-    if (!state_manager_->hasClock()) {
-        return WlsResult{};
-    }
-
-    auto wls_result = wls_estimator_->estimate(current_time, modeled_obs);
-    if (!wls_result.success() || wls_result.state.size() < 4) return wls_result;
-
-    constexpr double kClockJumpThreshSec = 0.00005; // 50 µs (about 15 km)
-
-    const double wls_clock_bias = wls_result.state(3);
-    const Eigen::VectorXd sv0 = state_manager_->getStateVector();
-    const size_t clock_idx = state_manager_->getClockIndex();
-    const double kf_clock_bias = (sv0.size() > static_cast<Eigen::Index>(clock_idx)) ? sv0(clock_idx) : 0.0;
-
-    const double clock_jump_thresh_m = kClockJumpThreshSec * Constants::SPEED_OF_LIGHT;
-    const double delta_clock_m = wls_clock_bias - kf_clock_bias;
-
-    const bool jump_detected = std::abs(delta_clock_m) >= clock_jump_thresh_m;
-    const bool should_seed = jump_detected || gap_detected || first_epoch_;
-
-    if (should_seed && sv0.size() > static_cast<Eigen::Index>(clock_idx)) {
-        Eigen::VectorXd sv = sv0;
-        sv(clock_idx) = wls_clock_bias;
-        state_manager_->setStateVector(sv);
-        ppp_state_.clock_bias = wls_clock_bias;
-        log_manager_.getLogger("main_log")->info(
-            "{}Seeded KF clock from WLS (jump): wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m",
-            epoch_prefix, wls_clock_bias, kf_clock_bias, delta_clock_m);
-    } else {
-        log_manager_.getLogger("main_log")->trace(
-            "{}Skipped WLS clock seeding: wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m, jump_detected={}",
-            epoch_prefix, wls_clock_bias, kf_clock_bias, delta_clock_m, jump_detected);
-    }
-
-    // Only write expensive WLS trace when overall logging level is Debug.
-    if (auto main_logger = log_manager_.getLogger("main_log")) {
-        if (main_logger->level() == spdlog::level::debug) {
-            trace_logger_->logWls(current_time,
-                wls_result, wls_clock_bias, kf_clock_bias, delta_clock_m,
-                jump_detected, should_seed);
-        } else {
-            main_logger->trace("{}WLS trace skipped (log level != Debug)", epoch_prefix);
-        }
-    }
-
-    return wls_result;
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: dynamics-mode classification + gap recovery policy
-// ---------------------------------------------------------------------------
-
-Application::DynamicsMode Application::classifyDynamicsMode() const {
-    // Six orders of magnitude below any process noise that represents
-    // real motion, six orders above the typical 1e-12 m²/s numeric-
-    // stability epsilon some users set in static configs.  Crossing
-    // this threshold is unambiguous in practice.
-    constexpr double kKinematicPnPositionThreshold = 1e-6;  // m²/s
-
-    if (state_manager_->hasVelocity()) {
-        return config_.enableImu() ? DynamicsMode::KinematicIMU
-                                   : DynamicsMode::KinematicNoImu;
-    }
-    return (config_.getProcessNoise().position >= kKinematicPnPositionThreshold)
-               ? DynamicsMode::KinematicNoImu
-               : DynamicsMode::Static;
-}
-
-void Application::handleGap(double dt,
-                            bool long_gap,
-                            const std::string& epoch_prefix,
-                            const WlsResult& wls) {
-    auto log = log_manager_.getLogger("main_log");
-    const DynamicsMode mode = classifyDynamicsMode();
-
-    // KinematicIMU returns early: the IMU has propagated position and velocity
-    // through the predict step at realistic uncertainty, so the gap is already
-    // handled.  Satellite-specific cross-covariances are still suspect (geometry
-    // and multipath have changed), but iono Q inflation covers the dominant
-    // component.  Only the clock cross-covariances are zeroed, so the WLS clock
-    // reseed does not propagate into position.
-    if (mode == DynamicsMode::KinematicIMU) {
-        if (log) {
-            log->info("{}handleGap: dt={:.1f}s, mode=KinematicIMU, long={} "
-                      "→ IMU bridging; zeroing clock×sat cross-cov only",
-                      epoch_prefix, dt, long_gap);
-        }
-        state_manager_->zeroClockCrossCovariancesToSatStates();
-        return;
-    }
-
-    // Common to Static and KinematicNoImu: remove stale clock-to-satellite-state
-    // correlations after the WLS clock reseed.
-    state_manager_->zeroClockCrossCovariancesToSatStates();
-
-    if (mode == DynamicsMode::Static && !long_gap) {
-        if (log) {
-            log->info("{}handleGap: dt={:.1f}s, mode=Static-short "
-                      "→ zeroing position×sat cross-cov",
-                      epoch_prefix, dt);
-        }
-        state_manager_->zeroPositionCrossCovariancesToSatStates();
-        return;
-    }
-
-    // Static-long and KinematicNoImu both get a heavier reset.  Common part:
-    // drop all satellite-specific states so ensureRequiredStates rebuilds them
-    // around the current geometry, and drop the BSSD/DD pivots so the next epoch
-    // elects new ones.
-    state_manager_->zeroPositionCrossCovariancesToSatStates();
-    state_manager_->pruneIonosphereStatesExcept({});
-    state_manager_->pruneAmbiguitiesExcept({});
-    state_manager_->pruneSatBiasStatesExcept({});
-
-    // The ambiguity teardown above invalidates every soft-LLI / gap-bridge hold
-    // and snapshot.  A hold that outlived its state would later restore a
-    // pre-gap value onto a newly rebuilt ambiguity.
-    if (cycle_slip_manager_) cycle_slip_manager_->resetSoftLliBridge();
-    if (meas_model_) meas_model_->setProtectedAmbiguityKeys({});
-
-    if (config_.enableBetweenSatelliteSd() && meas_model_) {
-        meas_model_->getPivotManager().dropAllPivots(*state_manager_);
-    }
-    if (meas_model_) {
-        // Baseline DD path: no-op outside baseline mode (sticky map is empty).
-        meas_model_->resetBaselinePivots();
-    }
-
-    if (mode == DynamicsMode::Static) {
-        // Static-long: the position value is still the best estimate (the
-        // antenna did not move), but the converged variance is too tight to
-        // absorb post-gap residuals, so it is inflated modestly.
-        constexpr double kStaticLongPosSigmaInflation_m = 0.05;  // 5 cm
-        state_manager_->inflatePositionDiagonal(kStaticLongPosSigmaInflation_m);
-        if (log) {
-            log->info("{}handleGap: dt={:.1f}s, mode=Static-long → pos σ+={:.3f}m, "
-                      "dropped iono/amb/sat-bias states, dropped pivots",
-                      epoch_prefix, dt, kStaticLongPosSigmaInflation_m);
-        }
-        return;
-    }
-
-    // KinematicNoImu: full cold start.  Reseed position from WLS, inflate it to
-    // a large prior, reset velocity, and clear the sat-bias cache (the receiver
-    // may have power-cycled, so pre-gap hardware estimates are no more reliable
-    // than a single-epoch seed).
-    constexpr double kKinematicPosSigma_m  = 100.0;  // loose prior
-    constexpr double kKinematicVelSigma_mps = 30.0;  // vehicle-scale
-    if (wls.success() && wls.state.size() >= 3) {
-        Eigen::VectorXd sv = state_manager_->getStateVector();
-        const Eigen::Index pos = static_cast<Eigen::Index>(state_manager_->getPositionIndex());
-        sv(pos + 0) = wls.state(0);
-        sv(pos + 1) = wls.state(1);
-        sv(pos + 2) = wls.state(2);
-        state_manager_->setStateVector(sv);
-        ppp_state_.position = Eigen::Vector3d(wls.state(0), wls.state(1), wls.state(2));
-        if (log) {
-            log->info("{}handleGap: reseeded position from WLS [{:.3f}, {:.3f}, {:.3f}] m",
-                      epoch_prefix, wls.state(0), wls.state(1), wls.state(2));
-        }
-    } else if (log) {
-        log->warn("{}handleGap: WLS unavailable, leaving position value unchanged "
-                  "but inflating variance", epoch_prefix);
-    }
-    state_manager_->inflatePositionDiagonal(kKinematicPosSigma_m);
-    state_manager_->resetVelocityToLoose(kKinematicVelSigma_mps);
-    state_manager_->clearSatBiasCache();
-    if (log) {
-        log->info("{}handleGap: dt={:.1f}s, mode=KinematicNoImu → cold start "
-                  "(pos σ+={:.1f}m, vel σ={:.1f}m/s, dropped iono/amb/sat-bias/cache/pivots)",
-                  epoch_prefix, dt, kKinematicPosSigma_m, kKinematicVelSigma_mps);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: Detect and repair cycle slips
-// ---------------------------------------------------------------------------
-
-CycleSlipEpochResult Application::detectCycleSlips(const std::string& epoch_prefix,
-                               const std::vector<PppObservation>& modeled_obs) {
-    auto result = cycle_slip_manager_->detectAndRepair(
-        epoch_prefix, modeled_obs, *state_manager_, *meas_model_);
-    if (result.state_modified) {
-        state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
-    }
-    return result;
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: GIM ionosphere-weighting pseudo-observation update
-// ---------------------------------------------------------------------------
-
-void Application::applyGimIonoUpdate(const GnssTime& current_time,
-                                     const std::vector<PppObservation>& modeled_obs) {
-    const auto& iw = config_.getIonosphereWeightingConfig();
-    if (!iw.enabled || !gim_ || !gim_->isLoaded() || !kalman_filter_ || !state_manager_) {
-        return;
-    }
-
-    const Eigen::VectorXd x = state_manager_->getStateVector();
-    if (x.size() < 3) return;
-    const Eigen::Vector3d rx = x.head<3>();
-
-    // One pseudo-observation row per satellite that owns a slant-iono
-    // state and has a valid GIM value above the elevation cutoff.
-    std::vector<int>    idx;    // iono-state column index
-    std::vector<double> innov;  // GIM slant delay - current iono state (m)
-    std::vector<double> var;    // per-row pseudo-obs variance (m^2)
-    std::vector<System> cons;   // constellation, for the common-mode block structure
-
-    // BSSD pivot satellites hold their slant-iono state frozen (value 0,
-    // variance 0) as the rank-fixing datum; they must be excluded from the
-    // pseudo-observation entirely (see the per-row guard below).
-    const std::set<std::string>& frozen_pivots =
-        state_manager_->getFrozenPivotSatellites();
-
-    for (const auto& obs : modeled_obs) {
-        if (obs.elevation < iw.elevation_cutoff_deg) continue;
-        const int iono_idx = state_manager_->getIonosphereIndex(obs.satellite);
-        if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
-        // Skip BSSD pivot / any frozen-datum iono row.  A zero-variance state
-        // receives zero Kalman gain, so it cannot benefit from the GIM; but
-        // because it shares the per-constellation common-mode block in R, its
-        // spurious innovation (GIM_STEC - 0 ~ 5-30 m) would otherwise leak into
-        // every other same-constellation iono state through the off-diagonal
-        // S^-1.  The pivot's datum offset is exactly what the common-mode block
-        // is meant to absorb from the *remaining* rows, so it must not appear
-        // as a row itself.
-        if (frozen_pivots.count(obs.satellite) ||
-            state_manager_->getStateVariance(iono_idx) <= 0.0) {
-            continue;
-        }
-        // The slant-iono state is referenced to GPS L1 for every
-        // constellation (see the MeasurementModel iono Jacobian).
-        const GimQuery q = gim_->slantIonoDelay(current_time, rx, obs.sat_pos,
-                                                Constants::GPS_L1_FREQ);
-        if (!q.valid) continue;
-        const double sigma = std::max(iw.floor_m, iw.std_scale * q.std_m);
-        idx.push_back(iono_idx);
-        innov.push_back(q.delay_m - x(iono_idx));
-        var.push_back(sigma * sigma);
-        cons.push_back(obs.system);
-    }
-
-    const int m = static_cast<int>(idx.size());
-    if (m == 0) return;
-    const int n = static_cast<int>(x.size());
-
-    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(m, n);
-    Eigen::VectorXd z(m);
-    for (int k = 0; k < m; ++k) {
-        H(k, idx[k]) = 1.0;
-        z(k) = innov[k];
-    }
-
-    // R = block-diagonal over constellations of  diag(var) + sigma_c^2 * 11^T.
-    // The all-ones block leaves the per-constellation common mode (the
-    // un-modellable receiver iono-datum bias) unconstrained, so only the
-    // between-satellite structure of the GIM is imposed.
-    const double common_var = iw.common_mode_sigma_m * iw.common_mode_sigma_m;
-    Eigen::MatrixXd R = Eigen::MatrixXd::Zero(m, m);
-    for (int r = 0; r < m; ++r) {
-        for (int c = 0; c < m; ++c) {
-            if (cons[r] == cons[c]) R(r, c) = common_var;
-        }
-        R(r, r) += var[r];
-    }
-
-    kalman_filter_->applyPseudoObservation(H, z, R);
-
-    try {
-        state_manager_->updatePppStateFromVector(state_manager_->getStateVector(),
-                                                 ppp_state_, *state_manager_);
-    } catch (const std::exception& e) {
-        log_manager_.getLogger("main_log")->error(
-            "GIM iono update: failed to sync ppp_state: {}", e.what());
-    }
-
-    double sum_abs = 0.0;
-    for (double e : innov) sum_abs += std::abs(e);
-    log_manager_.getLogger("ionosphere")->debug(
-        "GIM iono update: {} sats constrained, mean|innov|={:.3f} m",
-        m, sum_abs / static_cast<double>(m));
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: Iterative KF update / relinearization loop
-// ---------------------------------------------------------------------------
-
-void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
-                                      const std::vector<PppObservation>& modeled_obs,
-                                      EpochMeasurement& applied_meas,
-                                      bool& have_applied,
-                                      std::set<std::string>& reset_satellites,
-                                      bool& was_complete_reset) {
-    reset_satellites.clear();
-    was_complete_reset = false;
-
-    // Snapshot the pre-update position for runGeometryRelinearization's |Δpos|
-    // gate.  It is captured before any KF update so the outlier-rebuild loop below
-    // does not hide the full epoch displacement.  The IEKF's full-state anchor
-    // (x⁻, P⁻) is not captured here: it is the prior that the primary update()
-    // stashes (KalmanFilter::getLastUpdatePriorX/P), whose dimension matches the
-    // post-augmentation state.
-    relinearize_pre_update_pos_ = state_manager_->getStateVector().head<3>();
-    // IEKF relinearization is active when relinearize_geometry is on and the IMU
-    // is not tightly coupled.
-    const bool use_iekf_relinear =
-        config_.relinearizeGeometry() && !config_.tightlyCoupledImu();
-    // Choose a relinearization threshold based on whether phase measurements are present.
-    auto has_phase = [&modeled_obs]() {
-        for (const auto& obs : modeled_obs) {
-            for (const auto& kv : obs.observed) {
-                if (!kv.first.empty() && kv.first[0] == 'L') return true;
-            }
-        }
-        return false;
-    };
-    // With IEKF relinearization active, the in-loop linear relinearization (the
-    // pos_jump gate below) is disabled: runGeometryRelinearization then does all
-    // relinearization, anchored on the prior with a single covariance commit.
-    // An in-loop pass would update a posterior that the IEKF later discards.
-    // With the IEKF path off (feature disabled, or a tightly coupled IMU using
-    // the legacy naive pass), the thresholds are 100 m with phase and 1000 m
-    // without.
-    const double kPosRelinearThreshM =
-        use_iekf_relinear ? std::numeric_limits<double>::infinity()
-                          : (has_phase() ? 100.0 : 1000.0);
-
-    // Pass budget, sized so that the complete-reset backstop, not the pass cap,
-    // terminates a pathological epoch (see computeRebuildPassBudget, which the
-    // baseline and real-time drivers share, so the sizing is the same in all three).
-    const int max_passes =
-        computeRebuildPassBudget(*state_manager_, config_, modeled_obs);
-
-    int relinear_pass = 0;
-    bool need_relinear = true;
-    bool need_update = true;
-    size_t carry_bad_residual_count = 0;
-    std::set<std::string> carry_excluded_measurements;
-    // Soft-LLI bridge: phase signals currently held across a receiver LLI gap
-    // pending a TurboEdit integer repair are excluded from the KF update so
-    // their still-slipped ambiguities cannot contaminate shared states across
-    // the MW one-epoch confirmation delay.  Empty unless turbo_edit_bridge_lli.
-    if (cycle_slip_manager_) {
-        auto held = cycle_slip_manager_->getHeldPendingBridgeKeys();
-        carry_excluded_measurements.insert(held.begin(), held.end());
-        // The held ambiguity states must also survive the measurement model's
-        // prune-on-first-miss for the duration of the outage, because the
-        // bridge repair restores their pre-gap values.  Protection uses the
-        // same set as the exclusion above, so the two cannot diverge; the set
-        // is empty when nothing is held.
-        meas_model_->setProtectedAmbiguityKeys(std::move(held));
-    }
-
-    // Concise-log gate: marks the start of a new epoch's update loop.  When
-    // logging.kalman_filter_concise_log is on, pass-1 messages are written
-    // immediately and passes ≥2 are buffered; endEpoch (below) replays the buffer
-    // of the final pass and discards the rest.  No-op when the flag is off.
-    if (kalman_filter_) kalman_filter_->beginEpoch();
-
-    while ((need_update || need_relinear) && relinear_pass < max_passes) {
-        ++relinear_pass;
-        need_update = false;
-
-        // In tightly-coupled mode, provide current INS attitude and specific
-        // force to the measurement model so Doppler Jacobian rows include
-        // attitude-error and accelerometer-bias partials (implemented in
-        // ImuAidingSource).
-        if (aiding_manager_) aiding_manager_->applyTcJacobianInputs(*meas_model_);
-
-        EpochMeasurement meas_update = meas_model_->computeMeasurementUpdate(
-            modeled_obs, state_manager_->getStateVector(), carry_excluded_measurements);
-        if (meas_update.innovations.size() == 0 || !meas_model_->validateMeasurementUpdate(meas_update)) {
-            log_manager_.getLogger("main_log")->warn("{}Invalid or empty measurement update (pass {})",
-                epoch_prefix, relinear_pass);
-            break;
-        }
-
-        // Carry forward the bad-residual count so the full-reset safety net accumulates across passes.
-        meas_update.bad_residual_count = carry_bad_residual_count;
-
-        // Append composable aiding measurement rows (ZUPT/baro/...) into the
-        // finalized measurement before the KF consumes it.  Row sources are
-        // restricted to undifferenced PPP for now; appendAidingRow hard-errors
-        // if R_full is populated (BSSD/DD active).  The state vector is held in
-        // a local so the context's reference outlives collectMeasurement.
-        if (aiding_manager_ && !aiding_manager_->empty()) {
-            const Eigen::VectorXd aiding_meas_x = state_manager_->getStateVector();
-            const AidingEpochContext aiding_meas_ctx{
-                aiding_meas_x, prev_epoch_time_, meas_update.time, false };
-            for (const auto& row : aiding_manager_->collectMeasurement(aiding_meas_ctx))
-                MeasurementModel::appendAidingRow(meas_update, row);
-        }
-
-        const Eigen::Vector3d old_pos = ppp_state_.position;
-
-        const auto result = kalman_filter_->update(meas_update);
-
-        try {
-            state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
-        } catch (const std::exception& e) {
-            log_manager_.getLogger("main_log")->error("{}Failed to update ppp_state after Kalman update: {}",
-                epoch_prefix, e.what());
-            break;
-        }
-
-        if (result == KalmanFilter::UpdateResult::NeedsMeasurementRebuild) {
-            carry_bad_residual_count = meas_update.bad_residual_count;
-            carry_excluded_measurements = meas_update.excluded_measurements;
-
-            log_manager_.getLogger("main_log")->debug(
-                "{}KF requested measurement rebuild (pass {}): recalculating innovations after ambiguity reset/outlier handling",
-                epoch_prefix, relinear_pass);
-
-            // Forward the KF post-fit detector's forced pivot-handover requests
-            // (drained take-and-clear) to the PivotManager, notify the MW pivot
-            // picker, reset per-constellation residual history, and release the
-            // handled constellations' carried exclusions so their SD rows re-form
-            // against the new pivot.  The real-time driver calls the same
-            // EpochUpdateSupport helper, so both paths perform the same handover.
-            forwardKfPivotHandovers(
-                *kalman_filter_, *meas_model_,
-                cycle_slip_manager_ ? cycle_slip_manager_->mwDetector() : nullptr,
-                log_manager_, epoch_prefix, carry_excluded_measurements);
-
-            // Residual-history tracker, shared by the MW arc-history reset below
-            // (the per-constellation handover reset is done inside the helper).
-            auto& res_hist = kalman_filter_->getResidualHistoryTracker();
-
-            // Reset MW slip detector history for satellites that had ambiguities reset.
-            // Phase wind-up is not reset: it is a continuous geometric quantity,
-            // unaffected by the integer-cycle jump of an in-arc cycle slip.
-            if (kalman_filter_->wasCompleteReset()) {
-                // Complete reset: clear all MW arc history so pre-reset
-                // statistics do not enter post-reset arcs.
-                was_complete_reset = true;
-                for (const auto& obs : modeled_obs) {
-                    cycle_slip_manager_->resetSatellite(obs.satellite);
-                    reset_satellites.insert(obs.satellite);
-                }
-                if (res_hist.isEnabled()) res_hist.resetAll();
-                log_manager_.getLogger("main_log")->info(
-                    "{}Reset MW slip detector state (complete filter reset)", epoch_prefix);
-            } else {
-                // Per-(sat, signal) MW arc cleanup when the KF recorded which
-                // signal was reset.  MW arcs on signal pairs that do not
-                // involve the slipped signal are kept (an L1C slip leaves the
-                // L2W/L5X arc intact).  Satellites in last_reset_satellites_
-                // without a per-signal entry fall back to the per-sat clear.
-                std::set<std::string> covered_sats;
-                for (const auto& [sat_id, sig] : kalman_filter_->getLastResetSignals()) {
-                    cycle_slip_manager_->resetSatelliteSignal(sat_id, sig);
-                    reset_satellites.insert(sat_id);
-                    covered_sats.insert(sat_id);
-                    // Residual history is per satellite; the loop below resets it
-                    // once for each satellite in getLastResetSatellites().
-                    log_manager_.getLogger("main_log")->debug(
-                        "{}Reset MW history for {} {} (KF ambiguity reset, per-signal)",
-                        epoch_prefix, sat_id, sig);
-                }
-                for (const auto& sat_id : kalman_filter_->getLastResetSatellites()) {
-                    if (covered_sats.count(sat_id)) {
-                        // Already covered by a per-signal reset: reset the
-                        // residual history once and skip the sat-wide MW clear.
-                        if (res_hist.isEnabled()) res_hist.resetSatellite(sat_id);
-                        continue;
-                    }
-                    cycle_slip_manager_->resetSatellite(sat_id);
-                    reset_satellites.insert(sat_id);
-                    if (res_hist.isEnabled()) res_hist.resetSatellite(sat_id);
-                    log_manager_.getLogger("main_log")->debug(
-                        "{}Reset MW history for {} (KF ambiguity reset, per-sat fallback)",
-                        epoch_prefix, sat_id);
-                }
-            }
-
-            // Satellite-wide (iono, sat-bias) re-inflation for satellites whose
-            // phase ambiguities were fully reset this pass.  It mirrors the
-            // CycleSlipManager full-reset path and lives in EpochUpdateSupport,
-            // so the real-time engine applies the same partition-baking guard.
-            // No-op on a complete reset (checked inside) and when
-            // slip_state_reinflation is disabled.
-            reinflateResetSatStates(*kalman_filter_, *state_manager_,
-                                    *meas_model_, config_);
-
-            need_update = true;
-            continue;
-        }
-
-        if (result == KalmanFilter::UpdateResult::Applied) {
-            applied_meas = meas_update;
-            have_applied = true;
-        }
-
-        if (ppp_state_.position.norm() < 1e-6 || !ppp_state_.position.allFinite()) {
-            log_manager_.getLogger("main_log")->warn("{}Invalid position after Kalman update, reverting to initial position", epoch_prefix);
-            ppp_state_.position = initial_position_;
-            Eigen::VectorXd sv = state_manager_->getStateVector();
-            sv.segment<3>(state_manager_->getPositionIndex()) = initial_position_;
-            state_manager_->setStateVector(sv);
-        }
-
-        const double pos_jump = (ppp_state_.position - old_pos).norm();
-        log_manager_.getLogger("main_log")->trace(
-            "{}Post-update (pass {}): pos_jump={:.4f} m",
-            epoch_prefix, relinear_pass, pos_jump);
-
-        need_relinear = (pos_jump > kPosRelinearThreshM);
-    }
-
-    // Concise-log gate: replay the final pass's buffer (the "last pass"
-    // visible in the kalman_filter log) and restore passthrough mode.  No-op
-    // when the gate is null.  Runs however the loop exited (max_passes hit, no
-    // more rebuilds, or measurement failure), so the gate state is consistent
-    // for the next epoch's beginEpoch.
-    if (kalman_filter_) kalman_filter_->endEpoch();
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: Geometry relinearization
-// ---------------------------------------------------------------------------
-
-void Application::runGeometryRelinearization(const std::string& epoch_prefix,
-                                             const std::vector<RinexObservation>& epoch_obs,
-                                             EpochMeasurement& applied_meas,
-                                             bool have_applied) {
-    if (!config_.relinearizeGeometry() || !have_applied) return;
-
-    // ---- Gates -------------------------------------------------------
-    // 1. |Δpos| threshold, chosen by whether the epoch has phase: skip
-    //    relinearization when the primary update moved the position less
-    //    than the threshold.  Phase data constrains position tightly, so the
-    //    1 m default fires only in early convergence; code-only epochs have
-    //    SPP-level jitter of about 5 m, so the 100 m default fires only on
-    //    large jumps (cold start, post-gap recovery).  A threshold ≤ 0 disables
-    //    this gate.
-    // 2. Per-run cap on total relinearizations, bounding worst-case cost on
-    //    pathological inputs (-1 = unlimited).
-    const Eigen::Vector3d post_update_pos =
-        state_manager_->getStateVector().head<3>();
-    const double dpos = (post_update_pos - relinearize_pre_update_pos_).norm();
-
-    bool has_phase = false;
-    for (const auto& obs : epoch_obs) {
-        for (const auto& [code, val] : obs.measurements) {
-            if (!code.empty() && code[0] == 'L') { has_phase = true; break; }
-        }
-        if (has_phase) break;
-    }
-    const double thresh = has_phase
-        ? config_.relinearizeDposThresholdPhaseM()
-        : config_.relinearizeDposThresholdCodeOnlyM();
-    if (thresh > 0.0 && dpos < thresh) {
-        log_manager_.getLogger("main_log")->debug(
-            "{}Geometry relinearization skipped: |Δpos|={:.4f} m < threshold {:.4f} m ({})",
-            epoch_prefix, dpos, thresh, has_phase ? "phase" : "code-only");
-        return;
-    }
-    const int cap = config_.relinearizeMaxCount();
-    if (cap >= 0 && relinearize_count_ >= cap) {
-        // No per-epoch log once the cap is hit; one info-level "cap reached"
-        // line is written when the count first reaches it.
-        if (relinearize_count_ == cap) {
-            log_manager_.getLogger("main_log")->info(
-                "{}Geometry relinearization cap ({}) reached; suppressing further passes",
-                epoch_prefix, cap);
-            ++relinearize_count_;  // bump past so the message fires once
-        }
-        return;
-    }
-
-    // ---- Tightly-coupled IMU: legacy single naive second pass ----------
-    // Re-deriving the posterior from the epoch prior conflicts with the
-    // error-state attitude/bias nominal feedback that the primary update already
-    // folded into C_b_e_ (and zeroed).  An IEKF on this path needs deferred
-    // nominal feedback, so tightly coupled configurations keep the single naive
-    // second pass.
-    if (aiding_manager_ && aiding_manager_->anySourceRequiresNaiveRelinearization()) {
-        runGeometryRelinearizationNaive(epoch_prefix, epoch_obs, applied_meas);
-        return;
-    }
-
-    // ---- IEKF: iterate computeModels → updateFromPrior ----------------
-    // Every Gauss–Newton step is anchored on the captured epoch prior (x⁻, P⁻),
-    // with the measurement set held fixed to the one the primary update
-    // converged on (same outlier exclusions).  Each step is then a Gauss–Newton
-    // iteration on the MAP estimate, and the covariance (I−KH)·P⁻ is committed
-    // once, so no information is counted twice.  GNSS geometry is nearly
-    // linear, so this converges in one pass except after large cold-start or
-    // post-gap jumps.
-    // The anchor is the prior that the primary update() stashed this epoch.
-    // It already reflects this epoch's ambiguity augmentation and outlier
-    // resets, so its dimension matches the post-update state and updateFromPrior
-    // never hits a dimension mismatch.  have_applied (checked above) guarantees
-    // it is fresh.  The references stay valid across the loop: updateFromPrior
-    // does not touch the stash (only update() writes it).
-    const Eigen::VectorXd& prior_x = kalman_filter_->getLastUpdatePriorX();
-    const Eigen::MatrixXd& prior_P = kalman_filter_->getLastUpdatePriorP();
-    if (prior_x.size() == 0 || prior_P.size() == 0) {
-        log_manager_.getLogger("main_log")->debug(
-            "{}Geometry relinearization (IEKF): no stashed prior; skipping", epoch_prefix);
-        return;
-    }
-
-    // Copy (not reference) the converged exclusion set: applied_meas is
-    // reassigned inside the loop, which would otherwise mutate the set out
-    // from under the iteration.
-    const std::set<std::string> fixed_excludes = applied_meas.excluded_measurements;
-    constexpr int    kMaxIekfIters = 5;
-    constexpr double kIekfPosTolM  = 1e-4;   // 0.1 mm: geometry change is sub-noise
-    bool any_applied = false;
-
-    for (int iter = 0; iter < kMaxIekfIters; ++iter) {
-        // Sync ppp_state_ to the current iterate so computeModels recomputes
-        // the geometry (sat positions, LOS, troposphere, corrections) about it.
-        try {
-            state_manager_->updatePppStateFromVector(
-                state_manager_->getStateVector(), ppp_state_, *state_manager_);
-        } catch (const std::exception& e) {
-            log_manager_.getLogger("main_log")->error(
-                "{}Relinearize(IEKF): failed to sync ppp_state: {}", epoch_prefix, e.what());
-            break;
-        }
-
-        std::vector<PppObservation> relinear_obs;
-        if (!ppp_model_->computeModels(epoch_obs, ppp_state_, relinear_obs) ||
-            relinear_obs.empty()) {
-            log_manager_.getLogger("main_log")->debug(
-                "{}Geometry relinearization (IEKF): computeModels failed or empty (iter {})",
-                epoch_prefix, iter);
-            break;
-        }
-
-        EpochMeasurement relinear_meas = meas_model_->computeMeasurementUpdate(
-            relinear_obs, state_manager_->getStateVector(), fixed_excludes);
-        if (relinear_meas.innovations.size() == 0 ||
-            !meas_model_->validateMeasurementUpdate(relinear_meas)) {
-            log_manager_.getLogger("main_log")->debug(
-                "{}Geometry relinearization (IEKF): empty/invalid measurement (iter {})",
-                epoch_prefix, iter);
-            break;
-        }
-
-        const Eigen::Vector3d pos_before = state_manager_->getStateVector().head<3>();
-        const auto res = kalman_filter_->updateFromPrior(
-            relinear_meas, prior_x, prior_P);
-        if (res != KalmanFilter::UpdateResult::Applied) {
-            log_manager_.getLogger("main_log")->debug(
-                "{}Geometry relinearization (IEKF): updateFromPrior not applied (iter {}, result={})",
-                epoch_prefix, iter, static_cast<int>(res));
-            break;
-        }
-        any_applied = true;
-        applied_meas = relinear_meas;
-
-        const Eigen::Vector3d pos_after = state_manager_->getStateVector().head<3>();
-        const double step = (pos_after - pos_before).norm();
-        if (step < kIekfPosTolM) {
-            log_manager_.getLogger("main_log")->debug(
-                "{}Geometry relinearization (IEKF) converged at iter {} (step={:.2e} m)",
-                epoch_prefix, iter, step);
-            break;
-        }
-        if (iter + 1 == kMaxIekfIters) {
-            log_manager_.getLogger("main_log")->debug(
-                "{}Geometry relinearization (IEKF) hit iter cap {} (last step={:.4f} m)",
-                epoch_prefix, kMaxIekfIters, step);
-        }
-    }
-
-    if (any_applied) {
-        ++relinearize_count_;
-        try {
-            state_manager_->updatePppStateFromVector(
-                state_manager_->getStateVector(), ppp_state_, *state_manager_);
-        } catch (const std::exception& e) {
-            log_manager_.getLogger("main_log")->error(
-                "{}Relinearize(IEKF): failed to sync after update: {}", epoch_prefix, e.what());
-        }
-        log_manager_.getLogger("main_log")->debug(
-            "{}Geometry relinearization (IEKF) applied", epoch_prefix);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: Geometry relinearization, legacy naive second pass
-// ---------------------------------------------------------------------------
-
-void Application::runGeometryRelinearizationNaive(const std::string& epoch_prefix,
-                                                  const std::vector<RinexObservation>& epoch_obs,
-                                                  EpochMeasurement& applied_meas) {
-    // A single extra full update() layered on top of the primary posterior.
-    // It re-applies the same measurement information against an
-    // already-tightened covariance (mild over-confidence), and is used only on
-    // the tightly coupled IMU path, where the prior-anchored IEKF would
-    // conflict with the error-state nominal feedback.  The caller evaluates the
-    // |Δpos| and per-run-cap gates.
-    try {
-        state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
-    } catch (const std::exception& e) {
-        log_manager_.getLogger("main_log")->error("{}Relinearize: failed to sync ppp_state: {}", epoch_prefix, e.what());
-        return;
-    }
-
-    std::vector<PppObservation> relinear_obs;
-    if (!ppp_model_->computeModels(epoch_obs, ppp_state_, relinear_obs) || relinear_obs.empty()) {
-        log_manager_.getLogger("main_log")->debug("{}Geometry relinearization: computeModels failed or empty", epoch_prefix);
-        return;
-    }
-
-    // Set the IMU state for the tightly coupled Jacobian partials (implemented
-    // in ImuAidingSource).
-    if (aiding_manager_) aiding_manager_->applyTcJacobianInputs(*meas_model_);
-
-    EpochMeasurement relinear_meas = meas_model_->computeMeasurementUpdate(
-        relinear_obs, state_manager_->getStateVector());
-    if (relinear_meas.innovations.size() == 0 || !meas_model_->validateMeasurementUpdate(relinear_meas)) return;
-
-    auto relinear_result = kalman_filter_->update(relinear_meas);
-    ++relinearize_count_;
-    if (relinear_result == KalmanFilter::UpdateResult::Applied) {
-        applied_meas = relinear_meas;
-        try {
-            state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
-        } catch (const std::exception& e) {
-            log_manager_.getLogger("main_log")->error("{}Relinearize: failed to sync after update: {}", epoch_prefix, e.what());
-        }
-        log_manager_.getLogger("main_log")->debug("{}Geometry relinearization applied", epoch_prefix);
-    } else {
-        log_manager_.getLogger("main_log")->debug("{}Geometry relinearization update not applied (result={})",
-            epoch_prefix, static_cast<int>(relinear_result));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: Smoother snapshot captures
-// ---------------------------------------------------------------------------
-
-void Application::capturePriorSnapshot(const GnssTime& current_time, double dt) {
-    if (!config_.runSmoother()) return;
-
-    SmootherEpochSnapshot snap;
-    snap.t  = current_time;
-    snap.dt = dt;
-    snap.x_pred = state_manager_->getStateVector();
-    snap.P_pred = state_manager_->getCovariance();
-    // Transition matrix from the previous epoch to this one.  Evaluated
-    // at the current (post-predict) state size, which equals the state
-    // size at the end of the previous epoch (predict does not grow the
-    // state).  At the first epoch there is no "previous posterior" to
-    // propagate, so the smoother terminates at k=0 and the stored F is
-    // not used.
-    snap.F = state_manager_->getTransitionMatrix(dt);
-    // Default x_post/P_post mirror the prior so that has_posterior=false
-    // (skipped update) falls through to the forward solution.
-    snap.x_post = snap.x_pred;
-    snap.P_post = snap.P_pred;
-    smoother_buffer_.push_back(std::move(snap));
-}
-
-void Application::capturePosteriorSnapshot(const std::set<std::string>& reset_satellites,
-                                           bool was_complete_reset,
-                                           bool update_applied) {
-    if (!config_.runSmoother()) return;
-    if (smoother_buffer_.empty()) return;   // guard: prior half wasn't captured
-
-    SmootherEpochSnapshot& snap = smoother_buffer_.back();
-    snap.x_post        = state_manager_->getStateVector();
-    snap.P_post        = state_manager_->getCovariance();
-    snap.has_posterior = update_applied;
-
-    // Core index metadata, read after the update so the indices match x_post.
-    snap.pos_idx         = state_manager_->getPositionIndex();
-    snap.clock_idx       = state_manager_->getClockIndex();
-    snap.tropo_idx       = state_manager_->getTropoIndex();
-    snap.velocity_idx    = state_manager_->hasVelocity()
-                            ? state_manager_->getVelocityIndex()
-                            : std::numeric_limits<size_t>::max();
-    snap.phase_clock_idx = state_manager_->hasPhaseClock()
-                            ? state_manager_->getPhaseClockIndex()
-                            : std::numeric_limits<size_t>::max();
-    snap.gradient_n_idx  = state_manager_->hasTropoGradients()
-                            ? state_manager_->getTropoGradientNorthIndex()
-                            : std::numeric_limits<size_t>::max();
-    snap.gradient_e_idx  = state_manager_->hasTropoGradients()
-                            ? state_manager_->getTropoGradientEastIndex()
-                            : std::numeric_limits<size_t>::max();
-
-    // Dynamic-key maps are copied, not referenced, because the StateManager
-    // changes them across epochs.
-    snap.ambiguities = state_manager_->getAmbiguities();
-    snap.ionospheres = state_manager_->getIonosphereStates();
-    snap.iono_rates  = state_manager_->getIonosphereRateStates(); // CV model; empty otherwise
-    snap.code_biases = state_manager_->getCodeBiasStates();
-    snap.sat_biases  = state_manager_->getSatBiasStates();
-    for (const auto& sys : state_manager_->getSystemsWithTimeOffsets()) {
-        snap.sys_offsets[sys] = state_manager_->getSystemTimeOffsetIndex(sys);
-    }
-
-    snap.reset_satellites = reset_satellites;
-    snap.is_discontinuity = was_complete_reset;
-
-    // BSSD frame metadata for the backward pass (audit P2-1).
-    // getBssdPivotSatellites is the per-epoch pivot map after all handovers
-    // (routine, forced-rebuild and slip-phase); getCleanHandovers reports the
-    // undisturbed, losslessly invertible legs.  Both are empty when BSSD is
-    // inactive.
-    if (meas_model_) {
-        snap.pivot_satellites = meas_model_->getBssdPivotSatellites();
-        snap.clean_handovers  = meas_model_->getPivotManager().getCleanHandovers();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: Log epoch summary
-// ---------------------------------------------------------------------------
-
-void Application::logEpochSummary(const std::string& epoch_prefix) {
-    const bool is_ppp = (config_.getProcessingMode() == ProcessingMode::PPP);
-    const bool phase_clk = config_.estimatePhaseClock();
-    const bool has_vel = config_.estimateVelocity();
-    const auto& pos = ppp_state_.position;
-    const auto& vel = ppp_state_.velocity;
-
-    // Build optional velocity suffix.
-    std::string vel_str;
-    if (has_vel)
-        vel_str = fmt::format(", Vel ({:.3f}, {:.3f}, {:.3f}) m/s", vel.x(), vel.y(), vel.z());
-
-    if (is_ppp) {
-        if (phase_clk) {
-            log_manager_.getLogger("main_log")->info(
-                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, PhaseClk {:.3f} m, Tropo {:.3f} m{}, mode=PPP",
-                epoch_prefix, pos.x(), pos.y(), pos.z(),
-                ppp_state_.clock_bias, ppp_state_.phase_clock_offset, ppp_state_.troposphere_zwd, vel_str);
-        } else {
-            log_manager_.getLogger("main_log")->info(
-                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m{}, mode=PPP",
-                epoch_prefix, pos.x(), pos.y(), pos.z(),
-                ppp_state_.clock_bias, ppp_state_.troposphere_zwd, vel_str);
-        }
-    } else {
-        if (phase_clk) {
-            log_manager_.getLogger("main_log")->info(
-                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, PhaseClk {:.3f} m, Tropo {:.3f} m{}, IonoStates {}, mode=PPP-RTK",
-                epoch_prefix, pos.x(), pos.y(), pos.z(),
-                ppp_state_.clock_bias, ppp_state_.phase_clock_offset, ppp_state_.troposphere_zwd,
-                vel_str, ppp_state_.slant_ionosphere.size());
-        } else {
-            log_manager_.getLogger("main_log")->info(
-                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m{}, IonoStates {}, mode=PPP-RTK",
-                epoch_prefix, pos.x(), pos.y(), pos.z(),
-                ppp_state_.clock_bias, ppp_state_.troposphere_zwd,
-                vel_str, ppp_state_.slant_ionosphere.size());
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Epoch helper: Write CSV trace records
-// ---------------------------------------------------------------------------
-
-void Application::writeEpochTraces(const GnssTime& current_time,
-                                   const std::vector<RinexObservation>& epoch_obs,
-                                   const std::vector<PppObservation>& modeled_obs,
-                                   const std::map<std::string, DropReason>& drop_reasons,
-                                   const EpochMeasurement& applied_meas,
-                                   bool have_applied,
-                                   const std::set<std::string>& reset_satellites) {
-    // Trace files carry GPS time (week + tow_s in the GPS scale), so the
-    // timestamps match the RINEX epoch records.  No leap-second adjustment is
-    // applied (the traces are not converted to UTC), and consumers apply
-    // none either: trace time = RINEX time = GPS time.
-    const GnssTime gps_time = current_time;
-    trace_logger_->logState(gps_time, *state_manager_);
-    trace_logger_->logAmbiguities(gps_time, *state_manager_);
-    trace_logger_->logIonosphere(gps_time, *state_manager_);
-    trace_logger_->logSatBiases(gps_time, *state_manager_);
-    trace_logger_->logReceiverCodeBiases(gps_time, *state_manager_);
-    if (have_applied) {
-        trace_logger_->logResiduals(gps_time, applied_meas);
-    }
-
-    // Per-satellite epoch status: gather slip set from the CSM's last MW
-    // detector results (only sats that slipped are cached in the map) and
-    // combine with the KF-reset set passed in by the caller.  Both feed
-    // the "Slip" status category in TraceLogger::logSatelliteStatus.  The
-    // raw epoch_obs vector enables the logger to surface "BelowMask" rows
-    // for sats that were tracked in RINEX but dropped by ModelGeometry.
-    std::set<std::string> slipped_sats;
-    if (cycle_slip_manager_) {
-        for (const auto& [sat, mw_res] : cycle_slip_manager_->getLastMwSlips()) {
-            (void)mw_res;
-            slipped_sats.insert(sat);
-        }
-    }
-    trace_logger_->logSatelliteStatus(
-        gps_time, epoch_obs, modeled_obs, drop_reasons, applied_meas, have_applied,
-        *state_manager_, slipped_sats, reset_satellites,
-        config_.getElevationMaskDeg());
-
-    // Per-epoch DOPs (PDOP/HDOP/VDOP/TDOP/GDOP) and ambiguity DOP, plus
-    // per-system + total used-sat counts.
-    trace_logger_->logDops(
-        gps_time, modeled_obs, applied_meas, have_applied, *state_manager_);
-}
-
-// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
 int Application::run() {
-// --- Phase 1: Logging & configuration ---
-if (!initLoggingAndConfig()) return 1;
+    // --- Phase 1: Logging & configuration ---
+    if (!initLoggingAndConfig()) return 1;
 
-// Apply the Eigen thread count.  The config default is 1 (sequential): PPP-RTK
-// and baseline matrix sizes (n≈350, m≈250) are below the size at which the
-// parallel speedup offsets OpenMP fork/join overhead (vcomp140 idle-at-barrier
-// measured at about 13 % of the run).  processing.eigen_threads = 0 selects the
-// OpenMP default; any N > 1 selects N threads.
-const int eigen_threads = config_.eigenThreads();
-if (eigen_threads > 0) {
-    Eigen::setNbThreads(eigen_threads);
-    log_manager_.getLogger("main_log")->info(
-        "Eigen thread count: {} (config-pinned)", eigen_threads);
-} else {
-    log_manager_.getLogger("main_log")->info(
-        "Eigen thread count: {} (OpenMP default)", Eigen::nbThreads());
-}
-
-// --- Branch on application mode ---
-if (config_.getAppMode() == AppMode::RealTime) {
-    return runRealTime();
-}
-
-// --- Branch on processing mode: Baseline modes take the DD pipeline. ---
-if (config_.isBaselineMode()) {
-    return runBaseline();
-}
-
-// --- Branch on processing mode: the network producer takes the joint
-//     multi-station pipeline.  PPP_RTK_User takes the PPP path below as an
-//     uncombined PPP-RTK consumer. ---
-if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
-    // The network producer signals a refused start by throwing
-    // (`network.state_snapshot_require` on any warm-resume refusal, the
-    // carry_vce_apply warm-resume block, a carry blob that does not bind).
-    // main() has no handler, so an uncaught throw aborts with exit code
-    // 0xC0000409 and no reason in the log, where the last line is the
-    // preceding cold-start warning.  The handler logs e.what() as a single
-    // error line and returns 1.  A successful run never reaches it, so its
-    // output is byte-identical.  See docs/SPEC_event_harness.md §6b (HB-1).
-    try {
-        return runNetwork();
-    } catch (const std::exception& e) {
-        auto log = log_manager_.getLogger("main_log");
-        log->error("{}", e.what());
-        log->flush();
-        return 1;
+    // Apply the Eigen thread count.  The config default is 1 (sequential): PPP-RTK
+    // and baseline matrix sizes (n≈350, m≈250) are below the size at which the
+    // parallel speedup offsets OpenMP fork/join overhead (vcomp140 idle-at-barrier
+    // measured at about 13 % of the run).  processing.eigen_threads = 0 selects the
+    // OpenMP default; any N > 1 selects N threads.
+    const int eigen_threads = config_.eigenThreads();
+    if (eigen_threads > 0) {
+        Eigen::setNbThreads(eigen_threads);
+        log_manager_.getLogger("main_log")->info(
+            "Eigen thread count: {} (config-pinned)", eigen_threads);
+    } else {
+        log_manager_.getLogger("main_log")->info(
+            "Eigen thread count: {} (OpenMP default)", Eigen::nbThreads());
     }
+
+    // --- Branch on application mode ---
+    if (config_.getAppMode() == AppMode::RealTime) {
+        return runRealTime();
+    }
+
+    // --- Branch on processing mode: Baseline modes take the DD pipeline. ---
+    if (config_.isBaselineMode()) {
+        return runBaseline();
+    }
+
+    // --- Branch on processing mode: the network producer takes the joint
+    //     multi-station pipeline.  PPP_RTK_User takes the PPP path below as an
+    //     uncombined PPP-RTK consumer. ---
+    if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
+        // The network producer signals a refused start by throwing
+        // (`network.state_snapshot_require` on any warm-resume refusal, the
+        // carry_vce_apply warm-resume block, a carry blob that does not bind).
+        // main() has no handler, so an uncaught throw aborts with exit code
+        // 0xC0000409 and no reason in the log, where the last line is the
+        // preceding cold-start warning.  The handler logs e.what() as a single
+        // error line and returns 1.  A successful run never reaches it, so its
+        // output is byte-identical.  See docs/SPEC_event_harness.md §6b (HB-1).
+        try {
+            return runNetwork();
+        } catch (const std::exception& e) {
+            auto log = log_manager_.getLogger("main_log");
+            log->error("{}", e.what());
+            log->flush();
+            return 1;
+        }
+    }
+
+    // --- The PPP / PPP-RTK pipeline: the spine below ---
+    return runPpp();
 }
 
-// --- Phase 1b: Resolve (download/cache) product and RINEX data ---
-if (!resolveData()) return 1;
+// ---------------------------------------------------------------------------
+// The PPP / PPP-RTK pipeline: the spine
+// ---------------------------------------------------------------------------
 
-// --- Phase 2: Parse RINEX & load products ---
-if (!loadInputData()) return 1;
+int Application::runPpp() {
+    // --- Phase 1b: Resolve (download/cache) product and RINEX data ---
+    if (!resolveData()) return 1;
 
-// --- Phase 3: Create processing components ---
-constexpr size_t core_state_size = 5; // Position(3) + Clock(1) + Tropo(1)
-state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, config_);
+    // --- Phase 2: Parse RINEX & load products ---
+    if (!loadInputData()) return 1;
+
+    // --- Phase 3: Create processing components ---
+    constexpr size_t core_state_size = 5; // Position(3) + Clock(1) + Tropo(1)
+    state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, config_);
 
     if (!initializePosition()) return 1;
 
-    ppp_model_       = std::make_unique<PppModel>(config_, *product_parser_, log_manager_, *rinex_parser_, *state_manager_);
-    meas_model_      = std::make_unique<MeasurementModel>(*state_manager_, *ppp_model_, config_, log_manager_);
-    kalman_filter_   = std::make_unique<KalmanFilter>(*state_manager_, config_, log_manager_, *ppp_model_);
-    wls_estimator_   = std::make_unique<WlsEstimator>(config_, *state_manager_, log_manager_);
-    cycle_slip_manager_  = std::make_unique<CycleSlipManager>(config_, log_manager_);
-
-    // GIM construction.  Two independent consumers can request it:
-    //   - estimation.ionosphere_weighting.enabled  → soft pseudo-obs on
-    //     the per-satellite slant iono state (PPP-RTK).
-    //   - model_corrections.enable_higher_order_ionosphere → STEC source
-    //     for the I₂ + I₃ correction applied per-signal in PppModel.
-    // Either flag triggers the IONEX parse; downstream code uses
-    // gim_->isLoaded() to decide whether its work runs.
-    const bool need_gim_for_weighting =
-        config_.getIonosphereWeightingConfig().enabled;
-    const bool need_gim_for_higher_order =
-        config_.getModelCorrections().enable_higher_order_ionosphere;
-    if (need_gim_for_weighting || need_gim_for_higher_order) {
-        gim_ = std::make_unique<GlobalIonosphereMap>(
-            config_.getProductPath("INX").string(), log_manager_);
-        if (!gim_->isLoaded()) {
-            log_manager_.getLogger("ionosphere")->warn(
-                "GIM is required by the configuration ({}{}{}) but no usable "
-                "IONEX file resolved — the dependent feature(s) will be skipped. "
-                "Set data_download.download_gim (production mode) or place an "
-                ".INX file under the date's products/ directory (internal mode). "
-                "For bias consistency, source the GIM from the same analysis "
-                "centre as the code-bias (OSB) product.",
-                need_gim_for_weighting ? "ionosphere_weighting" : "",
-                (need_gim_for_weighting && need_gim_for_higher_order) ? " + " : "",
-                need_gim_for_higher_order ? "higher_order_ionosphere" : "");
-        } else if (need_gim_for_higher_order) {
-            // PppModel needs the pointer to evaluate the I₂+I₃ correction
-            // each epoch.  The pointer is non-owning.  gim_ is declared after
-            // ppp_model_ in Application.hpp, so it is destroyed first: during
-            // Application teardown PppModel's pointer dangles until ppp_model_
-            // is destroyed, and must not be dereferenced in that window.
-            ppp_model_->setGim(gim_.get());
-        }
-    }
-
-    // Adaptive ionospheric process-noise monitor (opt-in via
-    // estimation.adaptive_iono_process_noise.enable).  Constructed only
-    // when enabled; when absent the iono process noise stays static.
-    if (config_.getAdaptiveIonoQConfig().enabled) {
-        iono_variability_monitor_ =
-            std::make_unique<IonoVariabilityMonitor>(config_, log_manager_);
-    }
-
-    // Cross-session normal-equation accumulator (item #13B).  Post-processing
-    // only (the config loader forces enable_neq_export off in real-time mode).
-    // Accumulates Hᵀ R⁻¹ H and Hᵀ R⁻¹ Δz from each accepted update, eliminating
-    // epoch-local states by Schur reduction, and exports .neq / .asc at the end
-    // of the run.  It does not modify the filter state.
-    if (config_.enableNeqExport()) {
-        neq_accumulator_ = std::make_unique<NeqAccumulator>();
-        log_manager_.getLogger("main_log")->info(
-            "Normal-equation export enabled: accumulating cross-session NEQ "
-            "(.neq/.asc will be written beside the navigation solution)");
-    }
-
-    // Provide BIA satellite biases to the MW and EWL detectors for integer rounding
-    cycle_slip_manager_->setCorrections(&ppp_model_->getCorrections());
-
-    // Adaptive MW arc-reset gap tolerance.  Without IMU gap bridging and with
-    // a sampling interval coarser than 5 s, an inter-epoch gap longer than the
-    // nominal cadence indicates an outage.  Tightening the gap tolerance to the
-    // data rate keeps the MW detector from starting a new arc on a
-    // slip-corrupted sample after a brief outage.  IMU mode keeps the default
-    // 120 s, because INS propagation bridges gaps that long.
-    //
-    // The tolerance is 1.5× the nominal cadence, so a back-to-back epoch
-    // (gap equal to the nominal interval) does not trip the strict
-    // greater-than comparison in MwSlipDetector when floating-point error in
-    // (epoch_s - last_epoch_s) gives values such as 30.000000001 against a
-    // 30 s threshold.  A missed epoch gives a gap of about 2× the cadence
-    // (60 s on a 30 s file), which still exceeds 1.5×.
-    //
-    // With processing.gnss_rate_s set (epoch decimation), the effective
-    // inter-epoch spacing seen by MW is the decimated cadence, not the RINEX
-    // interval.
-    {
-        const double rinex_interval = rinex_parser_->getHeader().interval.value_or(0.0);
-        const double effective_interval = (config_.getGnssRate() > 0.0)
-                                              ? config_.getGnssRate()
-                                              : rinex_interval;
-        if (!config_.enableImu() && effective_interval > 5.0) {
-            if (auto* mw = cycle_slip_manager_->mwDetector())
-                mw->setMaxGapSeconds(effective_interval * 1.5);
-        }
-        // TurboEdit needs the cadence regardless of IMU mode: it tightens its
-        // own GF-arc gap tolerance to the cadence and logs the coarse-rate
-        // advisory (GF trust itself is evidence-gated per arc; see the
-        // TurboEditResolver header's "Rate adaptivity" note).
-        cycle_slip_manager_->setSampleInterval(effective_interval);
-    }
-
-    // Provide MW data to the KF outlier handler for tiebreaking.
-    kalman_filter_->setCycleSlipManager(cycle_slip_manager_.get());
-
-    const auto& logging_cfg = config_.getLoggingConfig();
-    if (logging_cfg.enable_mw_slip_trace) {
-        cycle_slip_manager_->enableMwTracing(log_dir_);
-    }
-    if (logging_cfg.enable_turbo_edit_trace) {
-        cycle_slip_manager_->enableTurboEditTracing(log_dir_);
-    }
-    if (logging_cfg.enable_windup_trace && ppp_model_) {
-        ppp_model_->enableWindUpTracing(log_dir_);
-    }
-    // Wind-up census (estimation.trace_windup_census): the same read-only
-    // step/gap counters the network teardown sums across its roster, armed here
-    // for the single-receiver paths.  carry_gap_s = 0 disables the leveling-carry
-    // bucketing, which has no meaning off the network producer.
-    if (config_.traceWindUpCensus() && ppp_model_) {
-        ppp_model_->enableWindUpCensus(config_.phaseWindUpMaxGapS(), 0.0);
-    }
-    if (iono_variability_monitor_ && config_.getAdaptiveIonoQConfig().trace) {
-        iono_variability_monitor_->enableTracing(log_dir_);
-    }
-
-    // Aiding sources (GNSS/INS coupling; the IMU is the first client, with
-    // ZUPT/NHC/baro/... composing later via AidingSourceRegistry).  The
-    // AidingSourceManager owns the config-selected set; ImuAidingSource wraps
-    // the integrator (load + graceful GNSS-only fallback on failure, logged in
-    // its ctor).  state_manager_ and kalman_filter_ are already constructed
-    // above, so the IMU source can be wired immediately.
-    aiding_manager_ = std::make_unique<AidingSourceManager>(config_, log_manager_);
-    aiding_manager_->reserveAllStates(*state_manager_);   // every source stashes StateManager / reserves blocks
-    if (auto* imu = aiding_manager_->imu()) {
-        imu->attachFilter(*kalman_filter_);    // IMU-only: nominal-attitude owner handle (C_b_e_)
-        if (imu->hasData() && imu->integrator()) {
-            const char* mode_str = config_.tightlyCoupledImu()
-                ? "tightly-coupled" : "loosely-coupled";
-            log_manager_.getLogger("main_log")->info(
-                "IMU integration enabled ({}): {} samples loaded",
-                mode_str, imu->integrator()->sampleCount());
-        }
-    }
-
-    ppp_model_->initializeState(ppp_state_);
-    // initializeState() re-derives the position from a configured reference
-    // position or the RINEX APPROX header, and the sync below would overwrite the
-    // SIF a-priori that initializePosition() wrote to the state vector (as the
-    // real-time engine's seedInitialState() notes for its own seed).  Re-apply it;
-    // a configured reference position keeps precedence.  Inert unless
-    // processing.enable_station_info resolved the marker.
-    if (sif_apriori_seeded_) {
-        if (config_.hasReferencePosition()) {
-            log_manager_.getLogger("main_log")->info(
-                "SIF a-priori not applied: the configured reference position seeds the state");
-        } else {
-            ppp_state_.position = initial_position_;
-        }
-    }
-    state_manager_->syncPppStateToStateVector(ppp_state_);
-
-    // Ambiguity resolution (MLAMBDA)
-    if (config_.getArMode() > 0) {
-        AmbiguityResolverConfig ar_config;
-        ar_config.ar_mode               = config_.getArMode();
-        ar_config.ratio_threshold       = config_.getArRatioThreshold();
-        ar_config.elevation_mask_ar     = config_.getArElevationMask();
-        ar_config.hold_variance         = config_.getArHoldVariance();
-        ar_config.min_epochs            = config_.getArMinEpochs();
-        ar_config.max_position_sigma_m  = config_.getArMaxPositionSigma();
-        ar_config.ratio_upper_bound     = config_.getArRatioUpperBound();
-        ar_config.wl_only               = config_.getArWlOnly();
-        ar_config.wl_only_pseudo_var    = config_.getArWlOnlyPseudoVar();
-        ar_config.wl_max_frac           = config_.getArWlMaxFrac();
-        ar_config.min_success_rate      = config_.getArMinSuccessRate();
-        ar_config.wl_only_ffr           = config_.getArWlOnlyFfr();
-        ar_config.wl_only_min_arc_count = config_.getArWlOnlyMinArcCount();
-        ar_config.wl_only_max_innov_cyc = config_.getArWlOnlyMaxInnovCyc();
-        ar_config.min_arc_info          = config_.getArMinArcInfo();
-        ar_config.nl_max_per_pair_frac  = config_.getArNlMaxPerPairFrac();
-        ar_config.nl_iono_free_row      = config_.getArNlIonoFreeRow();
-        ar_config.enable_partial_ar     = config_.getArEnablePartialAr();
-        ar_config.ar_active_systems     = config_.getArActiveSystems();
-        ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
-        ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
-        log_manager_.getLogger("main_log")->info(
-            "Ambiguity resolution enabled: mode={}, wl_only={}, partial_ar={}, nl_row={}, "
-            "ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
-            "min_epochs={}, max_pos_σ={:.3f} m",
-            ar_config.ar_mode, ar_config.wl_only ? "on" : "off", ar_config.enable_partial_ar ? "on" : "off",
-            ar_config.nl_iono_free_row ? "iono-free" : "narrowlane",
-            ar_config.ratio_threshold, ar_config.ratio_upper_bound,
-            ar_config.elevation_mask_ar, ar_config.min_epochs, ar_config.max_position_sigma_m);
-    }
+    // The components and their wiring, in this order (PppSetup.cpp).
+    buildPppComponents_();          // PppModel, MeasurementModel, KalmanFilter, WLS, CycleSlipManager
+    buildGlobalIonosphereMap_();    // the GIM, for ionosphere weighting or the higher-order term
+    buildIonoVariabilityMonitor_(); // estimation.adaptive_iono_process_noise
+    buildNeqAccumulator_();         // processing.enable_neq_export
+    wireCycleSlipManager_();        // biases, MW gap tolerance, sample interval, KF tiebreak
+    enablePppTraceStreams_();       // MW, TurboEdit, wind-up, census and iono-monitor traces
+    buildAidingSources_();          // the IMU and the other aiding sources
+    initializePppState_();          // PppModel::initializeState; the SIF a-priori re-applied
+    buildAmbiguityResolver_();      // MLAMBDA, when ambiguity_resolution.mode > 0
 
     const bool is_ppp_rtk = (config_.getProcessingMode() == ProcessingMode::PPP_RTK);
-    trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir_, is_ppp_rtk, config_.getLoggingConfig());
-    // Warn only when requested streams failed to open; with no enable_*_trace
-    // toggle set, the logger is uninitialized by design.
-    if (!trace_logger_->isInitialized() && trace_logger_->requestedStreamCount() > 0) {
-        log_manager_.getLogger("main_log")->warn(
-            "TraceLogger could not open CSV trace files in '{}'; continuing without CSV traces", log_dir_.string());
-    }
+    buildTraceLogger_(is_ppp_rtk);  // the CSV trace streams
 
     log_manager_.getLogger("main_log")->info("Processing components initialized, mode={}",
         is_ppp_rtk ? "PPP-RTK" : "PPP");
@@ -1723,575 +408,80 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     const auto& observations = rinex_parser_->getObservations();
     auto wall_start = std::chrono::high_resolution_clock::now();
 
+    // One epoch: the stages of PppEpochSteps.cpp, PppEpochUpdate.cpp and
+    // PppEpochRecords.cpp, in this order, over the epoch's PppEpochWork.
     for (size_t epoch_idx = 0; epoch_idx < observations.size(); ) {
+        PppEpochWork w;
         // 4a. Collect epoch observations (advances epoch_idx).
-        GnssTime current_time{};
-        std::vector<RinexObservation> epoch_obs;
-        if (!collectEpochObservations(observations, epoch_idx, epoch_obs, current_time))
+        if (!collectEpochObservations(observations, epoch_idx, w.epoch_obs, w.current_time))
             continue;
-
-        // 4a2. Optional input-rate decimation (processing.gnss_rate_s).
-        // With a processing rate coarser than the RINEX interval (e.g. 300 s
-        // output from a 30 s file), input epochs that fall between processed
-        // epochs are skipped without a log line.  The first epoch anchors the
-        // schedule.
-        if (config_.getGnssRate() > 0.0 && !first_epoch_) {
-            // 1 ms tolerance absorbs GPS-time rounding.
-            const double since_last = current_time.tow - last_processed_tow_;
-            if (since_last + 1e-3 < config_.getGnssRate()) {
-                continue;
-            }
-        }
-
-        // 4a3. Optional max-duration cutoff (processing.max_duration_s).
-        // Stop the run once the data-time span from the first processed epoch
-        // reaches the configured limit.  The span is epoch GPS time relative to
-        // the first processed observation (3600 s is one hour, or about 3600
-        // epochs of 1 s data), independent of replay speed.  The first epoch
-        // anchors the window and is reached only after any leading decimation
-        // skip above, so skipped epochs do not consume the budget.  0 (default)
-        // means no limit.  Real-time has its own copy in
-        // RealTimeEngine::processEpoch.
-        if (config_.getMaxDuration() > 0.0) {
-            if (first_epoch_) {
-                max_duration_anchor_s_ = TimeUtils::continuousGpsSeconds(current_time);
-            } else {
-                const double span = TimeUtils::continuousGpsSeconds(current_time)
-                                  - max_duration_anchor_s_;
-                if (span >= config_.getMaxDuration()) {
-                    log_manager_.getLogger("main_log")->info(
-                        "Reached max processing duration: {:.1f} s of data processed "
-                        "(limit {:.1f} s); stopping epoch loop", span, config_.getMaxDuration());
-                    break;
-                }
-            }
-        }
-
-        state_manager_->setStateEpochTime(current_time);
-        LogManager::setCurrentEpochTime(current_time);
-
-        // The [%E] field in the spdlog pattern (LogManager) carries the GPS
-        // week, TOW and GPS-scale datetime on every log line, so an epoch
-        // prefix in the message body would duplicate it.  The variable stays,
-        // empty, so the "{}..." format strings keep their argument.
-        const std::string epoch_prefix;
-
-        // 4b. Compute time step and detect data gaps.
-        // With decimation active the effective cadence is
-        // max(gnss_rate, rinex_interval); it sets the gap threshold and the
-        // "unexpected dt" warning, so decimated steps are not flagged as
-        // outages.
-        double dt;
-        bool gap_detected = false;
-        bool long_gap = false;
-        const double rinex_interval = rinex_parser_->getHeader().interval.value_or(30.0);
-        const double effective_interval = config_.getGnssRate() > 0.0
-                                        ? std::max(config_.getGnssRate(), rinex_interval)
-                                        : rinex_interval;
-        if (first_epoch_) {
-            dt = effective_interval;
-            log_manager_.getLogger("main_log")->info("{}First epoch, assuming dt = {}s", epoch_prefix, dt);
-        } else {
-            dt = current_time.tow - prev_tow_;
-            const double gap_tol = config_.getDataGapTolerance() > 0.0
-                                 ? config_.getDataGapTolerance()
-                                 : effective_interval * 1.5;
-            gap_detected = dt > gap_tol;
-            long_gap     = gap_detected && (dt > config_.getLongGapTolerance());
-            if (std::abs(dt - effective_interval) > 0.5) {
-                log_manager_.getLogger("main_log")->warn("{}Unexpected time step {}s (expected {}s)",
-                    epoch_prefix, dt, effective_interval);
-            }
-        }
-        prev_tow_ = current_time.tow;
-        prev_epoch_time_ = current_time;
-        last_processed_tow_ = current_time.tow;
+        if (skipDecimatedEpoch_(w)) continue;   // 4a2 processing.gnss_rate_s decimation
+        if (reachedMaxDuration_(w)) break;      // 4a3 processing.max_duration_s cutoff
+        stepEpochClock_(w);                     // 4b  epoch stamp, time step, data gap
 
         // 4c. Sync PppState from the state vector.
-        try {
-            state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
-        } catch (const std::exception& e) {
-            log_manager_.getLogger("main_log")->error("{}Failed to update ppp_state: {}", epoch_prefix, e.what());
-            return 1;
-        }
-
-        // 4d. Compute modeled observations.
-        // drop_reasons is populated by computeModels for every sat that
-        // fails to make it into modeled_obs (BelowMask / NoProduct /
-        // NoModel).  Consumed by writeEpochTraces -> logSatelliteStatus
-        // so the strip chart distinguishes actionable failure modes.
-        std::vector<PppObservation> modeled_obs;
-        std::map<std::string, DropReason> drop_reasons;
-        if (!ppp_model_->computeModels(epoch_obs, ppp_state_, modeled_obs, &drop_reasons)) {
-            log_manager_.getLogger("main_log")->warn("{}Failed to compute models for epoch", epoch_prefix);
-            continue;
-        }
-        {
-            std::string sat_clk_summary;
-            for (const auto& obs : modeled_obs) {
-                sat_clk_summary += fmt::format("{}:r={:.1f}km ", obs.satellite, obs.range / 1000.0);
-            }
-            log_manager_.getLogger("main_log")->debug(
-                "{}Modeled {} sats: {}", epoch_prefix, modeled_obs.size(), sat_clk_summary);
-        }
+        if (!syncPppState_(w)) return 1;
+        if (!computeEpochModels_(w)) continue;  // 4d  modeled observations, drop reasons
 
         // 4e. WLS estimation & clock seeding.
-        const auto wls_result = handleWlsSeeding(current_time, epoch_prefix, modeled_obs, gap_detected);
+        w.wls_result = handleWlsSeeding(w.current_time, w.epoch_prefix, w.modeled_obs, w.gap_detected);
 
         // 4e1. Gap recovery policy.
         // Runs after the clock has been re-seeded, so the gap helpers edit
         // the covariance of the post-seed state.  No-op when gap_detected is
         // false, which includes the first epoch (dt is not computed against a
         // prior epoch there).
-        if (gap_detected) {
-            handleGap(dt, long_gap, epoch_prefix, wls_result);
+        if (w.gap_detected) {
+            handleGap(w.dt, w.long_gap, w.epoch_prefix, w.wls_result);
         }
 
-        // (4e2) Refresh per-ambiguity process-noise overrides for
-        // substituted-ATX states, if enabled.  Walks the current
-        // ambiguity map and tags any state whose underlying signal(s)
-        // had their ATX correction frequency-fallback-substituted, so
-        // the next predict step inflates that state's variance with
-        // @c ambiguity_q_substituted_atx instead of the standard
-        // @c process_noise.ambiguity.  Refreshed every epoch because
-        // the ambiguity set evolves (new sats, slip resets, pivot
-        // handovers); mid-epoch state additions pick up the override
-        // on the next epoch.
-        {
-            const auto& mc_atx = config_.getModelCorrections();
-            if (mc_atx.loosen_amb_q_for_substituted_atx && ppp_model_) {
-                std::map<std::string, double> overrides;
-                for (const auto& [amb_key, idx] : state_manager_->getAmbiguities()) {
-                    const auto u1 = amb_key.find('_');
-                    if (u1 == std::string::npos) continue;
-                    const std::string sat = amb_key.substr(0, u1);
-                    if (sat.empty()) continue;
-                    const System sys =
-                        sat[0] == 'G' ? System::GPS :
-                        sat[0] == 'E' ? System::Galileo :
-                        sat[0] == 'R' ? System::GLONASS :
-                        sat[0] == 'C' ? System::BeiDou :
-                        sat[0] == 'J' ? System::QZSS :
-                        sat[0] == 'S' ? System::SBAS : System::Unknown;
-                    if (sys == System::Unknown) continue;
-                    const std::string rest = amb_key.substr(u1 + 1);
-                    const auto u2 = rest.find('_');
-                    const std::string sig1 = (u2 == std::string::npos) ? rest : rest.substr(0, u2);
-                    const std::string sig2 = (u2 == std::string::npos) ? std::string{} : rest.substr(u2 + 1);
-
-                    bool sub = ppp_model_->wasAtxSubstituted(sat, sig1, sys);
-                    if (!sub && !sig2.empty()) {
-                        sub = ppp_model_->wasAtxSubstituted(sat, sig2, sys);
-                    }
-                    if (sub) {
-                        overrides[amb_key] = mc_atx.ambiguity_q_substituted_atx;
-                    }
-                }
-                state_manager_->setAmbiguityProcessNoiseOverrides(overrides);
-                log_manager_.getLogger("main_log")->debug(
-                    "{}ATX-sub q overrides refreshed: {} ambiguities flagged "
-                    "(toggle=ON, q={:.3e} m²/s)",
-                    epoch_prefix, overrides.size(),
-                    mc_atx.ambiguity_q_substituted_atx);
-            } else {
-                state_manager_->setAmbiguityProcessNoiseOverrides({});
-                log_manager_.getLogger("main_log")->trace(
-                    "{}ATX-sub q overrides cleared (toggle=OFF; all ambiguities "
-                    "use process_noise.ambiguity)",
-                    epoch_prefix);
-            }
-        }
-
-        // (4e3) Adaptive ionospheric process noise.  Refresh per-satellite
-        // iono process-noise overrides from the geometry-free phase
-        // second-difference variability before the predict step consumes
-        // them.  Active only when estimation.adaptive_iono_process_noise is
-        // enabled (the monitor is null otherwise), leaving the override map
-        // empty so getProcessNoiseMatrix() uses process_noise.ionosphere.
-        if (iono_variability_monitor_) {
-            iono_variability_monitor_->update(modeled_obs);
-            state_manager_->setIonoProcessNoiseOverrides(
-                iono_variability_monitor_->processNoiseOverrides());
-        }
-
-        // 4f. Kalman prediction.
-        if (aiding_manager_ && !aiding_manager_->empty() && !first_epoch_) {
-            // Aiding-augmented prediction (currently IMU strapdown).  predictAided
-            // delegates to predict(dt) when no source contributes this interval
-            // (e.g. no IMU samples), which is the GNSS-only prediction.
-            // The state vector is held in a local so the context's reference
-            // outlives collectPredict.
-            const Eigen::VectorXd aiding_x = state_manager_->getStateVector();
-            const AidingEpochContext aiding_ctx{
-                aiding_x, prev_epoch_time_, current_time, first_epoch_ };
-            kalman_filter_->predictAided(dt, aiding_manager_->collectPredict(aiding_ctx));
-        } else {
-            kalman_filter_->predict(dt);
-        }
-        // Predict is the last site in the epoch body that reads first_epoch_.
-        // The flag is cleared unconditionally here, so it changes once per run
-        // regardless of WLS success or whether the mode has a clock state
-        // (BSSD has neither).
-        first_epoch_ = false;
+        refreshSubstitutedAtxQ_(w);             // 4e2 ATX-substituted ambiguity Q overrides
+        refreshAdaptiveIonoQ_(w);               // 4e3 adaptive ionospheric Q overrides
+        predictEpoch_(w);                       // 4f  Kalman prediction; first_epoch_ cleared
 
         // Smoother prior capture: after predict() and before any cycle-slip or
         // update-driven state change, so the recorded a-priori equals
         // F * x_post_{prev}.
-        capturePriorSnapshot(current_time, dt);
-
-        try {
-            state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
-        } catch (const std::exception& e) {
-            log_manager_.getLogger("main_log")->error("{}Failed to update ppp_state: {}", epoch_prefix, e.what());
-            return 1;
-        }
+        capturePriorSnapshot(w.current_time, w.dt);
+        if (!syncPppState_(w)) return 1;        //     ppp_state_ after the predict
 
         // 4g. Cycle slip detection & ambiguity resets.
-        const CycleSlipEpochResult slip_result =
-            detectCycleSlips(epoch_prefix, modeled_obs);
-
-        // Smoother: fold covariance-preserving repairs into the just-captured
-        // a-priori as a deterministic control input (audit F1).  A repair shifts
-        // the ambiguity by a known dN·λ in the same (pre-update) frame in which
-        // x_pred was captured; adding it to x_pred keeps the backward pass from
-        // absorbing the jump as a spurious measurement innovation.  Indices
-        // resolve against the live layout, which still equals x_pred's layout
-        // here (predict and slip detection do not reindex existing keys; state
-        // growth happens later in the update loop).  A key whose satellite was
-        // also reset this epoch is segmented, not compensated (R6).
-        if (config_.runSmoother() && !smoother_buffer_.empty()
-            && !slip_result.ambiguity_repairs.empty()) {
-            SmootherEpochSnapshot& snap = smoother_buffer_.back();
-            for (const auto& [amb_key, delta_m] : slip_result.ambiguity_repairs) {
-                const auto us = amb_key.find('_');
-                const std::string sat = (us != std::string::npos)
-                                            ? amb_key.substr(0, us) : amb_key;
-                if (slip_result.reset_satellites.count(sat)) continue;  // segmented
-                const int idx = state_manager_->getAmbiguityIndex(amb_key);
-                if (idx >= 0 && static_cast<Eigen::Index>(idx) < snap.x_pred.size())
-                    snap.x_pred(idx) += delta_m;
-            }
-        }
+        w.slip_result =
+            detectCycleSlips(w.epoch_prefix, w.modeled_obs);
+        foldSlipRepairsIntoPrior_(w);           //     repairs into the smoother a-priori
 
         // 4h. Iterative KF measurement update loop.
-        EpochMeasurement applied_meas{};
-        bool have_applied = false;
-        std::set<std::string> epoch_reset_sats;
-        bool epoch_complete_reset = false;
-        runFilterUpdateLoop(epoch_prefix, modeled_obs, applied_meas, have_applied,
-                            epoch_reset_sats, epoch_complete_reset);
+        runFilterUpdateLoop(w.epoch_prefix, w.modeled_obs, w.applied_meas, w.have_applied,
+                            w.epoch_reset_sats, w.epoch_complete_reset);
 
         // 4i. Optional geometry relinearization.
-        runGeometryRelinearization(epoch_prefix, epoch_obs, applied_meas, have_applied);
-
-        // Relinearization can also trigger ambiguity or complete resets through
-        // its internal update() call.  Such resets are merged into the epoch's
-        // accumulators before the smoother captures the posterior.
-        if (kalman_filter_->wasCompleteReset()) epoch_complete_reset = true;
-        for (const auto& sat_id : kalman_filter_->getLastResetSatellites()) {
-            epoch_reset_sats.insert(sat_id);
-        }
-        // Merge the slip-phase resets (SD-aware resets, pivot-disturbance
-        // inflations, soft-LLI bridge restores, post-handover deferred repairs)
-        // so the smoother segments them as well as the KF-internal resets
-        // (audit F1).
-        epoch_reset_sats.insert(slip_result.reset_satellites.begin(),
-                                slip_result.reset_satellites.end());
+        runGeometryRelinearization(w.epoch_prefix, w.epoch_obs, w.applied_meas, w.have_applied);
+        mergeEpochResets_(w);                   //     KF, relinearization and slip resets
 
         // 4h2. Ionosphere weighting: apply the GIM as a between-satellite
         // soft constraint on the slant-iono states.  Post-processing only
         // (runRealTime() does not reach this point).  It runs after the update
         // loop so the smoother posterior capture below records the
         // GIM-constrained state, and before AR so fixing uses it.
-        applyGimIonoUpdate(current_time, modeled_obs);
+        applyGimIonoUpdate(w.current_time, w.modeled_obs);
 
         // Smoother posterior capture, taken before AR so the smoother operates
         // on float ambiguities (v1 policy).  AR-fixed states are applied below
         // to the forward solution only.
-        capturePosteriorSnapshot(epoch_reset_sats, epoch_complete_reset, have_applied);
+        capturePosteriorSnapshot(w.epoch_reset_sats, w.epoch_complete_reset, w.have_applied);
 
-        // Cross-session NEQ accumulation (item #13B).  Mirrors the accepted
-        // update's (H, R, innovation) into a label-keyed normal system; the
-        // state labels are captured here so they match applied_meas.H columns
-        // (no state resize occurs between the accepted update and this point).
-        // Read-only consumer: it does not modify the filter state.
-        if (neq_accumulator_ && have_applied) {
-            const std::vector<std::string> state_labels = state_manager_->getStateLabels();
-            if (static_cast<Eigen::Index>(state_labels.size()) == applied_meas.H.cols()) {
-                neq_accumulator_->accumulate(applied_meas, state_labels, epoch_reset_sats);
-            } else {
-                // Not expected (StateManager only appends and prunes, so labels
-                // stay aligned with the H columns).  Logged at warn, not debug,
-                // so a broken invariant is visible without debug logging: an
-                // unreported per-epoch skip would leave the NEQ incomplete.
-                log_manager_.getLogger("main_log")->warn(
-                    "{}NEQ accumulation skipped: state labels ({}) != H columns ({})",
-                    epoch_prefix, state_labels.size(), applied_meas.H.cols());
-            }
-        }
-
-        // Soft-LLI bridge: update the "last good" ambiguity snapshot from the
-        // converged float posterior (before AR fix-and-hold tightens the
-        // covariance).  Only converged keys update it, so it holds the pre-gap
-        // anchor that a later LLI hold repairs against.  No-op unless
-        // turbo_edit_bridge_lli is set.
-        if (cycle_slip_manager_)
-            cycle_slip_manager_->recordAmbiguitySnapshot(
-                *state_manager_, TimeUtils::continuousGpsSeconds(current_time));
-
-        // 4i2. Integer ambiguity resolution (MLAMBDA).
-        if (ambiguity_resolver_ && have_applied) {
-            auto wl_ambs  = cycle_slip_manager_->getResolvedWlAmbiguities();
-            auto wl_fracs = cycle_slip_manager_->getResolvedWlFractions();
-
-            // Optional AR-side ATX gates: drop WL entries by the ATX coverage
-            // status of either signal in the pair.  The observations stay in
-            // the float Kalman update; only integer fixing is withheld for
-            // these signals, because missing or approximate antenna PCV
-            // introduces sub-cycle errors that bias the integer determination.
-            //
-            // Two complementary gates, usable singly, together, or not at all:
-            //   require_atx_coverage_for_ar     drops pairs without strict
-            //                                   coverage on either signal
-            //                                   (substituted or missing).
-            //   restrict_ar_for_substituted_atx drops pairs where either
-            //                                   signal's ATX correction came
-            //                                   from the frequency-fallback
-            //                                   chain (substituted only; pairs
-            //                                   with no ATX at all pass).
-            const auto& mc = config_.getModelCorrections();
-            const bool gate_strict      = mc.require_atx_coverage_for_ar;
-            const bool gate_substituted = mc.restrict_ar_for_substituted_atx;
-            if ((gate_strict || gate_substituted) && ppp_model_) {
-                int n_dropped_strict      = 0;
-                int n_dropped_substituted = 0;
-                for (auto it = wl_ambs.begin(); it != wl_ambs.end(); ) {
-                    // Key format: "<sat>_<sig1>_<sig2>".
-                    const auto& key = it->first;
-                    const auto u1 = key.find('_');
-                    const auto u2 = (u1 == std::string::npos) ? std::string::npos
-                                                                : key.find('_', u1 + 1);
-                    if (u1 == std::string::npos || u2 == std::string::npos) {
-                        ++it; continue;
-                    }
-                    const std::string sat  = key.substr(0, u1);
-                    const std::string sig1 = key.substr(u1 + 1, u2 - u1 - 1);
-                    const std::string sig2 = key.substr(u2 + 1);
-                    const System sys = sat.empty() ? System::Unknown :
-                        sat[0] == 'G' ? System::GPS :
-                        sat[0] == 'E' ? System::Galileo :
-                        sat[0] == 'R' ? System::GLONASS :
-                        sat[0] == 'C' ? System::BeiDou :
-                        sat[0] == 'J' ? System::QZSS :
-                        sat[0] == 'S' ? System::SBAS : System::Unknown;
-                    bool drop = false;
-                    if (gate_strict) {
-                        const bool a1 = ppp_model_->hasFullAtxCoverage(sat, sig1, sys);
-                        const bool a2 = ppp_model_->hasFullAtxCoverage(sat, sig2, sys);
-                        if (!a1 || !a2) { drop = true; ++n_dropped_strict; }
-                    }
-                    if (!drop && gate_substituted) {
-                        const bool s1 = ppp_model_->wasAtxSubstituted(sat, sig1, sys);
-                        const bool s2 = ppp_model_->wasAtxSubstituted(sat, sig2, sys);
-                        if (s1 || s2) { drop = true; ++n_dropped_substituted; }
-                    }
-                    if (drop) {
-                        wl_fracs.erase(key);
-                        it = wl_ambs.erase(it);
-                    } else {
-                        ++it;
-                    }
-                }
-                if (n_dropped_strict > 0 || n_dropped_substituted > 0) {
-                    log_manager_.getLogger("main_log")->debug(
-                        "{}AR ATX gate: dropped {} (strict-coverage), {} (substituted) WL entries",
-                        epoch_prefix, n_dropped_strict, n_dropped_substituted);
-                }
-            }
-
-            // WL-only FFR gate input (see AmbiguityResolverConfig::wl_only_ffr).
-            // Built from the unfiltered detector map on purpose: entries whose
-            // integer the ATX gate above dropped simply never get looked up,
-            // because no constraint is formed for them.
-            std::map<std::string, WlArcQuality> wl_quality;
-            for (const auto& [k, q] : cycle_slip_manager_->getResolvedWlQuality())
-                wl_quality[k] = WlArcQuality{ q.sigma_mean_cycles, q.count, q.exact };
-            auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs, wl_ambs, wl_fracs, wl_quality);
-            if (ar_result.success) {
-                // Apply fixed state to the filter
-                state_manager_->setStateVector(ar_result.fixed_state);
-                state_manager_->setCovariance(ar_result.fixed_covariance);
-
-                // Fix-and-hold: constrain ambiguities to integer values
-                ambiguity_resolver_->holdAmbiguities(*state_manager_, ar_result);
-
-                log_manager_.getLogger("main_log")->info(
-                    "{}AR: fixed {}/{} ambs, ratio={:.2f}",
-                    epoch_prefix, ar_result.num_fixed, ar_result.num_candidates,
-                    ar_result.ratio);
-            }
-        }
+        accumulateNormalEquations_(w);          //     processing.enable_neq_export
+        recordBridgeSnapshot_(w);               //     the soft-LLI bridge's last-good snapshot
+        resolveEpochAmbiguities_(w);            // 4i2 integer ambiguity resolution (MLAMBDA)
 
         // 4k. Per-epoch logging & traces.
-        logEpochSummary(epoch_prefix);
-        writeEpochTraces(current_time, epoch_obs, modeled_obs, drop_reasons,
-                         applied_meas, have_applied, epoch_reset_sats);
+        logEpochSummary(w.epoch_prefix);
+        writeEpochTraces(w.current_time, w.epoch_obs, w.modeled_obs, w.drop_reasons,
+                         w.applied_meas, w.have_applied, w.epoch_reset_sats);
     }
 
-    // --- Wind-up census readout (estimation.trace_windup_census) ------------
-    // Single-receiver counterpart of the network teardown's roster sum.  The
-    // per-day step rate in SPEC_phase_windup_sign §7 comes from this path, so a
-    // PPP run with the census on cross-checks the network census calibration.
-    if (config_.traceWindUpCensus() && ppp_model_) {
-        const auto& w = ppp_model_->windUpCensus();
-        auto wu_log = log_manager_.getLogger("ppp_model");
-        const bool acc = config_.accumulatePhaseWindUp();
-        if (wu_log) {
-            wu_log->info("Wind-up census (mode {}, horizon {:.0f} s): {} forward "
-                         "transitions ({} out-of-order, excluded).  IN-horizon: {} "
-                         "transitions, {} step(s) >= 0.9 cyc, mean |step| {:.4f} cyc, "
-                         "max {:.3f}.  OUT-of-horizon: {} transitions, {} stepped "
-                         ">= 0.9 cyc (max {:.3f}).  Accumulator RESTARTS (its own "
-                         "verdict, not a threshold): {}.",
-                         acc ? "ACCUMULATED" : "fractional",
-                         config_.phaseWindUpMaxGapS(), w.steps, w.backwards,
-                         w.gap_lt_wu, w.wraps,
-                         w.gap_lt_wu > 0
-                             ? w.sum_abs_step_cyc / static_cast<double>(w.gap_lt_wu)
-                             : 0.0,
-                         w.max_abs_step_in_cyc,
-                         w.steps - w.gap_lt_wu, w.gap_steps, w.max_abs_step_gap_cyc,
-                         w.restarts);
-            wu_log->info("Wind-up census READING: {}  0 transitions on an armed run = "
-                         "dead wiring (invariant #4).",
-                         acc ? "`wraps` is 0 by CONSTRUCTION in accumulated mode — every "
-                               "in-horizon transition is unwrapped into ±0.5 cyc, so a "
-                               "threshold on the applied step is blind; the restart "
-                               "population is the count reported above, and each restart "
-                               "steps the model by an exact integer cycle."
-                             : "the in-horizon steps >= 0.9 cyc ARE the one-cycle "
-                               "staircase (SPEC_phase_windup_sign §7); this is the "
-                               "single-receiver cross-check on the network census, and "
-                               "the path §7's own 43/day figure came from.");
-        }
-    }
-
-    // --- Phase 5: Optional backward RTS smoother pass ---
-    if (config_.runSmoother() && !smoother_buffer_.empty()) {
-        auto smooth_log = log_manager_.getLogger("smoother");
-        if (smooth_log) smooth_log->info("Running backward RTS smoother over {} epochs...",
-                                         smoother_buffer_.size());
-
-        Smoother smoother(std::move(smoother_buffer_), log_manager_);
-        if (smoother.run() && config_.getLoggingConfig().enable_smoother_trace) {
-            const std::filesystem::path out_path = log_dir_ / "smoother_trace.csv";
-            std::ofstream ofs(out_path);
-            if (!ofs) {
-                log_manager_.getLogger("main_log")->error(
-                    "Failed to open smoother trace file: {}", out_path.string());
-            } else {
-                ofs << "week,tow,x,y,z,sigma_x,sigma_y,sigma_z,"
-                       "clock_m,sigma_clock_m,tropo_zwd_m,sigma_tropo_m,smoothed\n";
-                const auto& results = smoother.results();
-                auto sig = [](const Eigen::MatrixXd& P, size_t i) {
-                    const double v = P(static_cast<Eigen::Index>(i),
-                                       static_cast<Eigen::Index>(i));
-                    return (std::isfinite(v) && v >= 0.0) ? std::sqrt(v) : 0.0;
-                };
-                // A state the layout does not hold (the receiver clock under BSSD
-                // and in baseline mode: its index is the max() sentinel) is written
-                // as NaN, as the other traces do; indexing x with the sentinel read
-                // outside the vector (card UOM, UB1).
-                constexpr double kAbsent = std::numeric_limits<double>::quiet_NaN();
-                auto value_or_nan = [&](const Eigen::VectorXd& x, size_t i) {
-                    return i < static_cast<size_t>(x.size()) ? x[static_cast<Eigen::Index>(i)] : kAbsent;
-                };
-                auto sig_or_nan = [&](const Eigen::MatrixXd& P, size_t i) {
-                    return i < static_cast<size_t>(P.rows()) ? sig(P, i) : kAbsent;
-                };
-                for (const auto& s : results) {
-                    const size_t px = s.pos_idx;
-                    ofs << s.t.week << ","
-                        << fmt::format("{:.3f}", s.t.tow) << ","
-                        << fmt::format("{:.4f}", s.x[static_cast<Eigen::Index>(px)])     << ","
-                        << fmt::format("{:.4f}", s.x[static_cast<Eigen::Index>(px + 1)]) << ","
-                        << fmt::format("{:.4f}", s.x[static_cast<Eigen::Index>(px + 2)]) << ","
-                        << fmt::format("{:.4f}", sig(s.P, px))     << ","
-                        << fmt::format("{:.4f}", sig(s.P, px + 1)) << ","
-                        << fmt::format("{:.4f}", sig(s.P, px + 2)) << ","
-                        << fmt::format("{:.4f}", value_or_nan(s.x, s.clock_idx)) << ","
-                        << fmt::format("{:.4f}", sig_or_nan(s.P, s.clock_idx)) << ","
-                        << fmt::format("{:.4f}", s.x[static_cast<Eigen::Index>(s.tropo_idx)]) << ","
-                        << fmt::format("{:.4f}", sig(s.P, s.tropo_idx)) << ","
-                        << (s.smoothed ? 1 : 0) << "\n";
-                }
-                log_manager_.getLogger("main_log")->info(
-                    "Smoother trace written: {} ({} epochs)", out_path.string(), results.size());
-            }
-        }
-    }
-
-    // --- Phase 5b: Cross-session normal-equation export (item #13B) ---
-    // The accumulator mirrored each accepted update's (H, R, innovation) into a
-    // label-keyed normal system with the epoch-local states Schur-eliminated.
-    // x̂ = N⁻¹u is a Gauss-Newton increment about the per-epoch operating points,
-    // not an absolute solution (≈0 for a converged static run, which confirms
-    // the filter solution is a stationary point of the batch system); absolute
-    // coordinates are the final filter state plus that increment.  N, u, the
-    // labels and σ̂₀² form the combinable product written to .neq/.asc.
-    if (neq_accumulator_ && !neq_accumulator_->empty()) {
-        const NeqAccumulator::Solution sol = neq_accumulator_->solve();
-        const std::filesystem::path stem = log_dir_ / "normal_equations";
-        const bool wrote = neq_accumulator_->writeFiles(stem, sol);
-        auto neq_log = log_manager_.getLogger("main_log");
-        if (sol.ok) {
-            double dx = 0.0, dy = 0.0, dz = 0.0;
-            for (std::size_t i = 0; i < sol.labels.size(); ++i) {
-                const auto& lab = sol.labels[i];
-                const double xi = sol.x(static_cast<Eigen::Index>(i));
-                if (lab == "POS_X") dx = xi;
-                else if (lab == "POS_Y") dy = xi;
-                else if (lab == "POS_Z") dz = xi;
-            }
-            const Eigen::Vector3d final_pos =
-                state_manager_->getStateVector().head<3>();
-            const double incr = std::sqrt(dx * dx + dy * dy + dz * dz);
-            neq_log->info(
-                "NEQ export: {} params, {} obs, {} local eliminated, dof={:.1f}, "
-                "sigma0^2={:.3f}",
-                sol.n_params, sol.n_obs, sol.n_local, sol.dof, sol.sigma0_sq);
-            neq_log->info(
-                "NEQ position: increment |dx_pos|={:.4f} m, "
-                "absolute=({:.4f}, {:.4f}, {:.4f}) m",
-                incr, final_pos.x() + dx, final_pos.y() + dy, final_pos.z() + dz);
-        } else {
-            neq_log->warn(
-                "NEQ export: system not solvable ({} params, {} obs); "
-                "matrices still written for inspection",
-                sol.n_params, sol.n_obs);
-        }
-        if (wrote)
-            neq_log->info("Normal equations written: {}.neq / {}.asc",
-                          stem.string(), stem.string());
-        else
-            neq_log->error("Failed to write normal-equation export to {}.*",
-                           stem.string());
-    }
-
-    auto wall_end = std::chrono::high_resolution_clock::now();
-    auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(wall_end - wall_start).count();
-    log_manager_.getLogger("main_log")->info("Processing completed in {} ms, mode={}",
-        duration_ms, is_ppp_rtk ? "PPP-RTK" : "PPP");
-    // Re-inflation counters from the state manager (card OWD, O2).  A re-inflation
-    // never lowers a variance: when the requested value is below the current one,
-    // the current one is kept, and each such case is a "kept" count.
-    if (state_manager_)
-        log_manager_.getLogger("main_log")->info(
-            "card OWD re-inflations ({}): {}", is_ppp_rtk ? "PPP-RTK" : "PPP",
-            StateManager::reinflateSummary(state_manager_->reinflateCounters()));
-
-    if (kalman_filter_) kalman_filter_->logKalmanFilterTimings();
-    if (cycle_slip_manager_) cycle_slip_manager_->logRunEndCounters();
+    // --- Phase 5: the run end, the reports of kPppRunEndReports in order (PppRunEnd.cpp) ---
+    reportPppRunEnd_(PppRunEndView{ wall_start, is_ppp_rtk });
 
     // Optional end-of-run HTML report (pyviz/run_report.py -> gnss_report.html).
     generateReport_();
