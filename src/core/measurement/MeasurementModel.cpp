@@ -6,7 +6,7 @@
  * Turns a set of PPP observations plus the current Kalman state into an
  * EpochMeasurement.  Heavy sub-tasks are delegated:
  *  - StateInitializer:  first-epoch ISB, phase clock, and code bias seeding.
- *  - BssdPivotManager:  pivot selection, handover, and state re-referencing.
+ *  - PivotManager:      pivot selection, handover, and state re-referencing.
  *  - BssdTransform:     between-satellite single-difference S-transformation.
  *
  * Implemented here:
@@ -822,7 +822,8 @@ namespace GnssProcessor {
 
         // Defensive band-count check.  The band filter admits at most N
         // distinct phase bands per satellite, where N follows the configured
-        // signal_mode (Dual = 2, Triple = 3; All and Independent are uncapped).
+        // frequency_mode (Dual = 2, Triple = 3; All and Independent are uncapped;
+        // the warning text below still names it by its deprecated key, signal_mode).
         // A satellite with more bands than that means some upstream path has
         // bypassed the filter (e.g. a slip detector emitting a reset key for a
         // band-filtered signal, or a PPP_RTK override that skips the filter).
@@ -1616,9 +1617,10 @@ namespace GnssProcessor {
         // undifferenced phase rows (Odijk Eq. 4; it carries the network pivot-
         // receiver ambiguity lump).  On a single row it is collinear with the
         // per-receiver float ambiguity; it is separable only across stations
-        // (W4).  This code only reads an existing column (the network estimator
-        // creates and owns it); gated on estimateSatPhaseBiases() (default off),
-        // so it is inert in every other mode.
+        // (W4).  This code only reads an existing column, which
+        // ensureNetworkSharedStates creates on the network producer; gated on
+        // estimateSatPhaseBiases() (default off), so it is inert in every other
+        // mode.
         double sat_phase_bias_term = 0.0;
         if (config_.estimateSatPhaseBiases() && is_phase && is_uncombined
             && ref_type.find('_') == std::string::npos) {
@@ -1658,7 +1660,7 @@ namespace GnssProcessor {
         // already removed the a-priori product clock, so the residual-clock state
         // enters with a −1 Jacobian on both code and phase rows: one clock per
         // satellite, shared by all signals.  Like the bias states, this only reads
-        // an existing column owned by the network estimator; gated on
+        // an existing column, which ensureNetworkSharedStates creates; gated on
         // estimateSatClocks() (default off), so it is inert in every other mode.
         // Single-station PPP would be rank-deficient here (rx-clock ↔ common
         // sat-clock), which is why it is network-only.
@@ -1791,9 +1793,13 @@ namespace GnssProcessor {
         }
 
         // PHASE-DECOMP diagnostic (trace, "measurement_model"): the phase-row
-        // counterpart of CODE-DECOMP below.  It breaks the zero-difference
-        // predicted phase into its terms so that a wandering float or a product
-        // datum step can be attributed to one channel.  ssr_pbias is the applied
+        // counterpart of CODE-DECOMP below.  It prints the zero-difference
+        // predicted phase and the terms that carry a clock, ionosphere, bias or
+        // ambiguity, so that a wandering float or a product datum step can be
+        // attributed to one channel.  It is not a complete decomposition: the
+        // a-priori model, the range correction, the zenith wet delay, the
+        // troposphere gradients, the inter-system bias and the phase-colour term
+        // are in predicted and are not printed.  ssr_pbias is the applied
         // network/SSR satellite phase-bias term (0 when the store has no entry
         // for this (sat, signal); the closed-loop datum attribution uses this
         // term); sat_pbias is the network producer's estimated per-(sat,signal)
@@ -1817,11 +1823,15 @@ namespace GnssProcessor {
         }
 
         // CODE-DECOMP diagnostic (trace, "measurement_model"): for any code
-        // signal, breaks the zero-difference predicted observable into its terms
-        // so that a residual of hundreds of metres or kilometres can be
-        // attributed.  rx_clk is the receiver-clock state (0 under BSSD, where
-        // the between-sat SD removes the physical clock, so zd_innov here still
-        // contains it, equally on every signal, and it cancels only after
+        // signal, prints the zero-difference predicted observable and the clock,
+        // ionosphere and bias terms in it, so that a residual of hundreds of
+        // metres or kilometres can be attributed.  It is not a complete
+        // decomposition: the a-priori model, the range correction, the zenith
+        // wet delay, the troposphere gradients, the inter-system bias and the
+        // network satellite-clock term (on every network producer code row) are
+        // in predicted and are not printed.  rx_clk is the receiver-clock state
+        // (0 under BSSD, where the between-sat SD removes the physical clock, so
+        // zd_innov here still contains it, equally on every signal, and it cancels only after
         // differencing); iono is the per-sat slant-iono term (+alpha*I on code);
         // ssr_cbias is the SSR code bias matched by the exact RINEX obs code (0
         // if the provider's set lacks this code); sat_bias is the estimated
@@ -1854,7 +1864,6 @@ namespace GnssProcessor {
         update.time = observations.empty() ? GnssTime{ 0, 0.0 } : observations[0].time;
         update.observations = observations;
         update.excluded_measurements = excluded_measurements;
-        const std::string epoch_tag = TimeUtils::formatGnssTime(update.time);
         const std::string epoch_prefix;  // %E in spdlog pattern carries the timestamp
 
         if (observations.empty()) {
@@ -2242,7 +2251,6 @@ namespace GnssProcessor {
     // ===================================================================
 
     bool MeasurementModel::validateMeasurementUpdate(const EpochMeasurement& measurement) const {
-        const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
         const std::string epoch_prefix;  // %E in spdlog pattern carries the timestamp
 
         if (measurement.innovations.size() != measurement.R_v.size() ||

@@ -1,10 +1,5 @@
 #pragma once
 
-
-
-
-#pragma once
-
 #include "filter/StateManager.hpp"
 #include "measurement/AbsorbedSharedStates.hpp"  // StationAbsorbed (the network's withheld shared states, card NOM N1b)
 #include "model/PppModel.hpp"
@@ -60,7 +55,31 @@ namespace GnssProcessor {
             LogManager& log_manager);
 
         /**
-         * @brief Compute the measurement update for a single epoch.
+         * @brief Compute the measurement update for a single epoch (single
+         *        receiver: PPP, PPP-RTK, and each network station).
+         *
+         * Runs, in order: the first-epoch inter-system bias and phase-clock
+         * seeds (@c StateInitializer), the differencing strategy's pivot pass,
+         * the state pre-pass @ref ensureRequiredStates (births, seeds and
+         * prunes of every dynamic state category), the first-epoch receiver
+         * code-bias seed, the strategy's pivot covariance freeze, then one row
+         * per usable (satellite, signal): the Jacobian and predicted observable
+         * (@ref buildJacobianRow), the innovation, and the row variance; last,
+         * the strategy's differencing transform (BSSD) on the assembled update.
+         *
+         * @param observations  This epoch's modeled observations (one per satellite).
+         * @param current_state Not read: the rows are built against the state
+         *        after the pre-pass, read from the @c StateManager.  Kept for the
+         *        callers, which pass @c getStateVector() taken before the pre-pass.
+         * @param excluded_measurements Row signatures (@c "<sat>_<signal>") that
+         *        the Kalman filter's rebuild loop rejected on an earlier pass of
+         *        this epoch; copied into the result so the exclusions accumulate.
+         * @return The epoch's measurement update.  Its row arrays are empty when
+         *         there is no observation, no valid state or no usable signal.
+         *         When signals were usable but no row could be built, the
+         *         innovation, variance and H arrays keep their allocated size
+         *         with no satellite ids, which @ref validateMeasurementUpdate
+         *         rejects as a dimension mismatch.
          */
         GnssProcessor::EpochMeasurement computeMeasurementUpdate(const std::vector<PppObservation>& observations,
             const Eigen::VectorXd& current_state,
@@ -73,8 +92,8 @@ namespace GnssProcessor {
          *        station's @c H carries their columns this epoch.
          *
          * No-op unless @c ProcessingMode::PPP_RTK_Network and uncombined.  These
-         * state families are consume-only in @c buildJacobianRow (the network
-         * estimator owns their creation), so without this pre-pass their Jacobian
+         * state families are consume-only in @c buildJacobianRow (this function is
+         * their only creator), so without this pre-pass their Jacobian
          * columns would be all zero and the satellites would receive no information
          * from this station.  Each family is allocated only when its estimation
          * toggle is on.  GLONASS is skipped unless the GLONASS network scope is
@@ -183,10 +202,12 @@ namespace GnssProcessor {
          * GLONASS is FDMA, so the carrier frequency, and with it the iono
          * coefficient and wavelength @c buildJacobianRow uses, depends on each
          * satellite's channel.  This model's private @c PppUtils is constructed
-         * un-seeded, so any caller processing GLONASS uncombined (the network
-         * driver, per station) must seed it from the station's RINEX
-         * "GLONASS SLOT / FRQ #" header; otherwise the Jacobian falls back to the
-         * default table instead of the actual channel.
+         * un-seeded and falls back to the compiled default channel table.  Only
+         * the network driver calls this (per station, from the station's RINEX
+         * "GLONASS SLOT / FRQ #" header).  The post-processing and real-time
+         * constructions do not, so a GLONASS uncombined user run takes the
+         * default table here while @c PppModel uses the header slots (card UOM,
+         * defect MM-D2; identical whenever the header equals the table).
          *
          * @param slots satellite-id -> FCN channel number.
          */
@@ -219,11 +240,19 @@ namespace GnssProcessor {
          * PCO/PCV, stochastic model), holding the baseline measurement to the same
          * standard as PPP.  DD phase ambiguity states
          * ("DD|cons|sat_i|code|pivot") are added lazily as phase rows appear and
-         * removed when their pivot retires.
+         * pruned when no row of the epoch references them (a satellite set, a
+         * code switch, or a pivot change without the handover).  With
+         * @c baseline.enable_pivot_handover a pivot change S-transforms them onto
+         * the new pivot and renames them instead (@c DdPivotManager).
          *
          * @param rov_modeled  Rover output, one PppObservation per satellite.
          * @param ref_modeled  Reference output.
-         * @param current_state Filter state (for amb subtraction on phase rows).
+         * @param current_state The caller's state snapshot, taken before this
+         *        call.  The phase-row innovation subtracts the ambiguity from it
+         *        whenever its size equals the state size after this call's pivot
+         *        handover, prune and births, and from the current state
+         *        otherwise.  Equal size does not imply equal layout or values
+         *        (card UOM, defect DD-D1).
          * @param excluded_measurements Row signatures to skip, formatted
          *        @c "sat_i_<signal_token>" where the token matches
          *        @c EpochMeasurement::signal_types (@c rov_code when rov/ref agree,
@@ -288,6 +317,15 @@ namespace GnssProcessor {
 
         /**
          * @brief Validate an @c EpochMeasurement before Kalman processing.
+         *
+         * Checks that the innovation, variance, H, satellite-id and signal-type
+         * dimensions agree with each other and with the state size, and that
+         * every innovation, variance and H row is finite with a positive
+         * variance.  An innovation above 100 m is logged as a warning and does
+         * not fail the check.
+         *
+         * @param measurement The assembled update.
+         * @return True when the update may be passed to the Kalman filter.
          */
         bool validateMeasurementUpdate(const EpochMeasurement& measurement) const;
 
@@ -381,14 +419,6 @@ namespace GnssProcessor {
          *        @c nullptr for the singleton.
          */
         void setSsrStore(const SsrCorrectionStore* store) { ssr_store_override_ = store; }
-
-        /// Per-satellite NL reference band map for the
-        /// @c StateAmbiguityBasis::NlWl path.  Used by @c BssdTransform to
-        /// look up the pivot's NL/WL state columns when building the SD
-        /// S-transform.  Empty when basis == PerBand.
-        const std::map<std::string, char>& getNlWlReferenceBands() const {
-            return nlwl_ref_band_;
-        }
 
     private:
         // -------------------------------------------------------------------
@@ -508,13 +538,14 @@ namespace GnssProcessor {
         ///
         /// Key: constellation ("GPS"), Value: set of signals
         /// ({"L1W","L1C","C1W","C1C","L2W","C2W",...}).
-        mutable std::map<std::string, std::set<std::string>> bssd_pivot_signals_;
+        std::map<std::string, std::set<std::string>> bssd_pivot_signals_;
 
         /// Per-satellite NL reference band for the @c StateAmbiguityBasis::NlWl
         /// path.  Cleared and rebuilt by @c ensureRequiredStates every epoch as
         /// the lowest-numbered band observed that epoch, and consumed by
-        /// @c buildJacobianRow (and by @c BssdTransform via a getter) to resolve
-        /// which NL state a satellite's phase observation projects onto.  The
+        /// @c buildJacobianRow to resolve which NL state a satellite's phase
+        /// observation projects onto (@c BssdTransform re-derives the reference
+        /// band from the NL state keys and does not read this map).  The
         /// NL/WL state keys contain the reference band, so a change of reference
         /// band creates new keys and the old states are pruned.  Empty when
         /// basis == PerBand.  Key: satellite ID; Value: RINEX band digit (e.g. '1').
@@ -647,10 +678,14 @@ namespace GnssProcessor {
         // -------------------------------------------------------------------
 
         /**
-         * @brief Ensure that all ambiguity, ionosphere, and code-bias states
-         *        required by the current epoch exist in the StateManager.
+         * @brief Ensure that every dynamic state the current epoch requires
+         *        exists in the StateManager, seeded, and prune the rest.
          *
-         * Also prunes states that are no longer needed.
+         * Covers the slant ionosphere, the phase colour (network), the
+         * per-band or NL/WL ambiguities (with the BSSD pivot-relative seeds),
+         * the receiver code biases and the satellite code biases; also runs
+         * the network cold receiver-clock pre-seed, marks the ambiguities AR
+         * may not fix, and warns on a band count above the frequency mode.
          */
         void ensureRequiredStates(const std::vector<PppObservation>& observations,
             const std::string& epoch_prefix);
