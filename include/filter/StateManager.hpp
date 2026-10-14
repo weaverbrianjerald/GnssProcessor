@@ -4,9 +4,11 @@
  * @file StateManager.hpp
  * @brief Kalman filter state vector, covariance and indexed states.
  *
- * Accessors and mutators for the state vector and covariance, the process
- * noise / transition helpers, ambiguity bookkeeping, and the per-measurement
- * variance scaling used for persistent reweighting (e.g. code noise inflation).
+ * Accessors and mutators for the state vector and covariance, the fixed core
+ * layout (position, clock, troposphere and the optional core states), the
+ * key->index maps of the dynamic state families (declared in
+ * `filter/StateFamily.hpp`), the process noise and transition matrices, and the
+ * ambiguity bookkeeping.
  */
 
 #include "common/PppTypes.hpp"
@@ -27,11 +29,14 @@ namespace GnssProcessor {
     /**
      * @brief Owns the Kalman filter's state and the key→index maps over it.
      *
-     * Holds the state epoch time, state vector and covariance; maps ambiguity
-     * keys to state-vector indices; and keeps the measurement variance scales
-     * used for persistent reweighting.  Also provides the transition and
-     * process-noise matrices, core-state index getters (position, clock,
-     * troposphere, ionosphere) and the ambiguity management routines.
+     * Holds the state epoch time, state vector and covariance.  The fixed core
+     * block (position, clock, ZWD and the optional velocity, clock rate, phase
+     * clock, gradients, IMU and inter-system offsets) is laid out once by the
+     * constructor; the dynamic families (ambiguities, slant ionosphere and the
+     * other rows of @ref kStateFamilies) each keep a key->index map that grows
+     * and shrinks at run time.  Also provides the transition and process-noise
+     * matrices, the core-state index getters and the per-family add, prune,
+     * reset and re-inflation routines.
      */
     class StateManager {
     public:
@@ -72,7 +77,8 @@ namespace GnssProcessor {
         void setCovariance(const Eigen::MatrixXd& covariance);
 
         /**
-         * @brief Get the total number of states (core + ambiguity states).
+         * @brief Get the total number of states (the core block plus every
+         *        dynamic family's map, @ref kStateFamilies).
          * @return Total state size.
          */
         size_t getStateSize() const;
@@ -84,8 +90,10 @@ namespace GnssProcessor {
          * synthesized labels for the fixed-core block (position, clock, ZWD,
          * velocity, clock-rate, phase-clock, tropo gradients, IMU
          * attitude/biases, differential ZWD, inter-system time/rate offsets)
-         * with the category-prefixed keys of the dynamic maps (ambiguities,
-         * per-sat iono, receiver code biases, satellite code/phase biases).
+         * with the keys of every dynamic family, each behind its family's label
+         * prefix (@ref kStateFamilies: slant ionosphere, ionosphere rate,
+         * ambiguity, receiver code bias, satellite code bias, satellite phase
+         * bias, receiver phase bias, phase colour, satellite clock).
          *
          * The dynamic keys come from StateKeySchema, so they stay stable across
          * epochs even as rows are appended or pruned and the raw indices shift.
@@ -126,10 +134,16 @@ namespace GnssProcessor {
         double getStateVariance(int idx) const;
 
         /**
-         * @brief Build or retrieve the process noise matrix for prediction.
+         * @brief Build the process noise matrix for prediction.
          *
-         * Implementations typically use configuration parameters and the time
-         * step \p dt to produce a state-dimensioned process noise matrix Q.
+         * Built from @c filter.process_noise and the time step \p dt, one block
+         * per state family (motion, receiver clock, phase clock, troposphere,
+         * slant ionosphere, receiver code bias, satellite code bias, satellite
+         * phase bias, satellite clock, inter-system offsets, ambiguities); every
+         * entry is written by exactly one block.  Per-satellite states of a
+         * frozen BSSD pivot (@ref setFrozenPivotSatellites) get no process noise.
+         * In baseline mode only the motion block, the ambiguities and the
+         * optional differential ZWD are filled.
          *
          * @param dt Time interval in seconds for which Q is requested.
          * @return Process noise matrix Q with dimensions (state_size x state_size).
@@ -252,7 +266,7 @@ namespace GnssProcessor {
         bool hasDifferentialTropo() const;
 
         /**
-         * @brief Index of the single ionospheric zenith delay state (PPP-RTK only).
+         * @brief Index of a single ionospheric zenith delay state, which no mode allocates.
          * @return Always @c std::numeric_limits<size_t>::max(): no such state is
          *         allocated, and the ionosphere is carried in per-satellite states.
          * @deprecated Use getIonosphereIndex(satellite) for per-satellite iono states.
@@ -262,9 +276,9 @@ namespace GnssProcessor {
         /**
          * @brief Lookup the per-satellite ionosphere state index by satellite ID.
          *
-         * In PPP-RTK uncombined mode each satellite has its own slant ionosphere
-         * state managed dynamically (like ambiguities). Keys are satellite IDs
-         * (e.g. "G01").
+         * With uncombined processing (@c processing.uncombined_enabled, in any
+         * mode) each satellite has its own slant ionosphere state managed
+         * dynamically (like ambiguities). Keys are satellite IDs (e.g. "G01").
          *
          * @param satellite Satellite identifier.
          * @return Zero-based index of the ionosphere state, or -1 if not present.
@@ -416,16 +430,10 @@ namespace GnssProcessor {
                                                double new_variance);
 
         /// The seven variance re-inflations, in the order of the run-end line (card OWD, O2).
-        enum class Reinflation : int {
-            CodeBias = 0,       ///< @ref reinflateCodeBiasVariance
-            SystemTimeOffset,   ///< @ref reinflateSystemTimeOffsetVariance (the ISB)
-            Ionosphere,         ///< @ref reinflateIonosphereVariance
-            IonosphereRate,     ///< @ref reinflateIonosphereRateVariance
-            SatBias,            ///< @ref reinflateSatBiasVariancesForSat (per state)
-            SatPhaseBias,       ///< @ref reinflateSatPhaseBiasVariancesForSat (per state)
-            SatClock,           ///< @ref reinflateSatClockVarianceForSat
-            Count
-        };
+        /// Declared with the family table (`filter/StateFamily.hpp`), where each dynamic
+        /// family names its slot (@ref StateFamilySpec::reinflation) and the run-end names
+        /// are @ref kReinflationNames.
+        using Reinflation = GnssProcessor::Reinflation;
 
         /// One re-inflation's counts: states whose diagonal became the request (the request
         /// was at least the current variance) and states that kept a larger current variance
@@ -443,12 +451,6 @@ namespace GnssProcessor {
         /// This state manager's re-inflation counters since construction (card OWD, O2).
         /// @return The counters, indexed by @ref Reinflation.
         const ReinflateCounters& reinflateCounters() const { return reinflate_counters_; }
-
-        /// The stable short name of a re-inflation in the run-end lines ("code_bias", "isb",
-        /// "iono", "iono_rate", "sat_bias", "sat_phase_bias", "sat_clock"; card OWD, O2).
-        /// @param r The re-inflation.
-        /// @return Its name.
-        static const char* reinflationName(Reinflation r);
 
         /**
          * @brief Format re-inflation counters as the run-end summary (card OWD, O2).
@@ -796,6 +798,29 @@ namespace GnssProcessor {
         const std::map<std::string, size_t>& indicesOf(StateFamily family) const;
 
         /**
+         * @brief The run-start table "state families as armed" (card UOM step U6f).
+         *
+         * One line per row of @ref kStateFamilies, after a title line: whether this
+         * configuration arms the family's birth site (@ref StateFamilySpec::birth),
+         * its label prefix and RT snapshot tag, the source and value of its initial
+         * standard deviation, its process-noise rule and value, and the events wired
+         * to it (re-inflation counter, in-place reset, prune and its cache, gap
+         * decouple, frozen-pivot Q skip, RT snapshot).  Every column is read from the
+         * table and the configuration.
+         *
+         * @return The table's lines, without trailing newlines.
+         */
+        std::vector<std::string> familiesAsArmed() const;
+
+        /**
+         * @brief Log @ref familiesAsArmed once on the "state_manager" logger at info.
+         *
+         * Meant for the user-side drivers, once after construction.  The network
+         * producer builds one StateManager per station and does not call it.
+         */
+        void logFamiliesAsArmed() const;
+
+        /**
          * @brief Re-create one dynamic state at its serialized index and value
          *        (RT warm resume).
          *
@@ -871,8 +896,11 @@ namespace GnssProcessor {
         /**
          * @brief Synchronize values from a PppState into the internal state vector.
          *
-         * Writes core-state values (position, clock, tropo, iono) and known ambiguities
-         * from \p ppp_state into the internal state vector and covariance where applicable.
+         * Writes the position, the clock (when allocated), the ZWD and, when
+         * present, the velocity, phase clock and troposphere gradients; in
+         * @c ProcessingMode::PPP_RTK also the slant-iono and iono-rate values of
+         * satellites that have a state; and the inter-system time offsets.  Values
+         * only: the ambiguities and the covariance are not written.
          *
          * @param ppp_state Source PppState containing updated values.
          */
@@ -1102,25 +1130,6 @@ namespace GnssProcessor {
          */
         void consumeSatBiasCacheEntry(const std::string& key);
 
-        /**
-         * @brief Drop cache entries older than @c sat_bias_cache.max_age_s
-         *        relative to @c now.
-         *
-         * Idempotent; called opportunistically (e.g. on each prune) so the cache
-         * does not accumulate entries for a satellite/signal that never reacquires.
-         *
-         * @param now Current epoch time.
-         */
-        void evictExpiredSatBiasCache(const GnssTime& now);
-
-        /**
-         * @brief Read-only access to the sat-bias cache (for diagnostics).
-         * @return Map from key to cached entry.
-         */
-        const std::map<std::string, SatBiasCacheEntry>& getSatBiasCache() const {
-            return sat_bias_cache_;
-        }
-
         // -------------------------------------------------------------------
         // Satellite phase-bias states (PPP_RTK_Network producer).
         //
@@ -1145,20 +1154,6 @@ namespace GnssProcessor {
         ///        (@c initial_std.sat_phase_bias²).  Idempotent if the key
         ///        already exists.  Returns the state index.
         size_t addSatPhaseBiasState(const std::string& key, double initial_value);
-
-        /// @brief Append a satellite phase-bias state with an explicit variance
-        ///        (e.g. a warm restart).  Non-positive variance falls back to
-        ///        @c initial_std.sat_phase_bias².
-        size_t addSatPhaseBiasStateWithVariance(const std::string& key,
-                                                double initial_value,
-                                                double initial_variance);
-
-        /// @brief Reset a satellite phase-bias state (decorrelate row/col, seed a
-        ///        fresh value+variance).  Refuses to disturb a frozen-pivot row
-        ///        (diag == 0), preserving the S-basis datum.
-        void resetSatPhaseBiasState(const std::string& key,
-                                    double new_value,
-                                    double new_variance);
 
         /// @brief Re-inflate the variances of all phase-bias states for a
         ///        satellite (value preserved, since the phase hardware delay is
@@ -1269,20 +1264,6 @@ namespace GnssProcessor {
         ///        (@c initial_std.sat_clock²).  Idempotent if the key already
         ///        exists.  Returns the state index.
         size_t addSatClockState(const std::string& key, double initial_value);
-
-        /// @brief Append a satellite clock state with an explicit variance
-        ///        (e.g. a warm restart / carried-forward prior).  Non-positive
-        ///        variance falls back to @c initial_std.sat_clock².
-        size_t addSatClockStateWithVariance(const std::string& key,
-                                            double initial_value,
-                                            double initial_variance);
-
-        /// @brief Reset a satellite clock state (decorrelate row/col, seed a
-        ///        fresh value+variance).  Refuses to disturb a frozen-pivot row
-        ///        (diag == 0), preserving the S-basis datum.
-        void resetSatClockState(const std::string& key,
-                                double new_value,
-                                double new_variance);
 
         /// @brief Re-inflate the variance of a satellite's clock state, skipping
         ///        a frozen-pivot row.  Value is preserved.  The diagonal is raised to
@@ -1544,7 +1525,7 @@ namespace GnssProcessor {
 
 
     private:
-        size_t core_state_size_;                    //!< Number of core states (e.g. 5 or 6, +2 if gradients, +1 if phase clock, +3 if velocity).
+        size_t core_state_size_;                    //!< Number of core states: position 3, clock 1 (not under BSSD), ZWD 1, then the optional velocity 3, clock rate 1, phase clock 1, gradients 2, IMU 9, one ISB and one ISBR per non-GPS system; baseline: position 3 (+1 differential ZWD).
         size_t base_core_size_;                     //!< Base core size without inter-system time offsets.
         size_t clock_idx_;                          //!< Index of receiver clock-bias state (max if BSSD / baseline).
         size_t tropo_idx_;                          //!< Index of troposphere ZWD state (max in baseline).
@@ -1569,7 +1550,7 @@ namespace GnssProcessor {
         uint64_t next_ambiguity_generation_{ 0 }; //!< Monotone across removals; zero denotes a missing key.
         std::set<std::string> unresolvable_ambiguities_; //!< Ambiguity keys excluded from integer AR (incomplete product coverage).
         std::set<std::string> pending_reseed_ambiguities_; //!< Ambiguity keys awaiting re-seeding after reset.
-        std::map<std::string, size_t> code_bias_indices_; //!< Map code bias key -> state index (PPP-RTK uncombined).
+        std::map<std::string, size_t> code_bias_indices_; //!< Map code bias key -> state index (uncombined processing with estimate_ifb).
         std::map<std::string, size_t> sat_bias_indices_; //!< Map "satellite|signal" -> state index (uncorrected sat HW bias).
         std::map<std::string, SatBiasCacheEntry> sat_bias_cache_; //!< Pruned sat-bias snapshots awaiting potential re-acquisition.
         std::map<std::string, size_t> sat_phase_bias_indices_; //!< Map "satellite|signal|PB" -> state index (PPP_RTK_Network satellite phase bias).
@@ -1577,20 +1558,19 @@ namespace GnssProcessor {
         std::map<std::string, size_t> phase_colour_indices_;  //!< Map satellite -> phase-colour state index (card LGM; network only).
         std::map<std::string, double> phase_colour_elevations_; //!< Map satellite -> last elevation (deg) of its phase-colour state (card LGM).
         std::map<std::string, size_t> sat_clock_indices_;      //!< Map "satellite|SC" -> state index (PPP_RTK_Network satellite clock).
-        std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
+        std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (uncombined processing).
         std::map<std::string, size_t> iono_rate_indices_; //!< Map satellite ID -> per-satellite iono-rate (Idot_s) state index; populated only when enableIonoRate() (constant-velocity model).
-        std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (PPP-RTK).
-        std::map<std::string, double> ionosphere_azimuths_;   //!< Map satellite ID -> last-known azimuth in degrees (PPP-RTK, diagnostics only).
-        std::set<std::string> frozen_pivot_sats_; //!< BSSD pivot satellites: iono, ambiguity, and sat-bias states are frozen (Q=0).
+        std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (uncombined processing).
+        std::map<std::string, double> ionosphere_azimuths_;   //!< Map satellite ID -> last-known azimuth in degrees (uncombined processing, diagnostics only).
+        std::set<std::string> frozen_pivot_sats_; //!< BSSD pivot satellites: their iono, iono-rate, ambiguity, satellite code-bias, phase-bias and clock states get no Q.
         std::map<std::string, double> amb_q_overrides_; //!< Per-(amb_key) ambiguity process noise (m²/s); replaces process_noise.ambiguity for those keys when building Q.
         std::map<std::string, double> iono_q_overrides_; //!< Per-satellite zenith iono process noise (m^2/s); replaces process_noise.ionosphere for those sats when building Q.
         GnssTime state_epoch_time_;                 //!< Epoch time associated with the stored state.
-        Eigen::VectorXd state_vector_;              //!< Filter state vector (core + ambiguities).
+        Eigen::VectorXd state_vector_;              //!< Filter state vector (core block + every dynamic family).
         Eigen::MatrixXd covariance_;                //!< State covariance matrix.
         LogManager& log_manager_;                   //!< Reference to logging manager.
         const GnssConfig& config_;                  //!< Read-only configuration reference.
         bool is_baseline_{ false };                 //!< True when configured for baseline (DD) mode: no clock/tropo/iono/system-offset states.
-        std::map<std::string, double> meas_var_scale_; //!< Per-measurement variance scale map (key -> multiplier).
         std::map<std::string, int> last_ssr_discontinuity_; //!< Last-seen SSR phase-bias discontinuity counter per "sat|signal" key.
         ReinflateCounters reinflate_counters_{};    //!< Raised / kept counts per re-inflation (card OWD, O2).
 
@@ -1611,6 +1591,229 @@ namespace GnssProcessor {
          */
         double reinflateDiag_(Eigen::Index idx, double current_diag, double requested,
                               Reinflation kind);
+
+        // -------------------------------------------------------------------
+        // Internal add and cache helpers (called only by this class)
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Append a satellite phase-bias state with an explicit variance.
+         *
+         * The body of @ref addSatPhaseBiasState, which passes the cold-start
+         * variance.  Idempotent if the key already exists.
+         *
+         * @param key              Key "satellite|signal|PB".
+         * @param initial_value    Initial value (m).
+         * @param initial_variance Initial diagonal (m²); a non-positive value falls
+         *                         back to @c initial_std.sat_phase_bias².
+         * @return The state index.
+         */
+        size_t addSatPhaseBiasStateWithVariance(const std::string& key,
+                                                double initial_value,
+                                                double initial_variance);
+
+        /**
+         * @brief Append a satellite clock state with an explicit variance.
+         *
+         * The body of @ref addSatClockState, which passes the cold-start variance.
+         * Idempotent if the key already exists.
+         *
+         * @param key              Key "satellite|SC".
+         * @param initial_value    Initial value (m).
+         * @param initial_variance Initial diagonal (m²); a non-positive value falls
+         *                         back to @c initial_std.sat_clock².
+         * @return The state index.
+         */
+        size_t addSatClockStateWithVariance(const std::string& key,
+                                            double initial_value,
+                                            double initial_variance);
+
+        /**
+         * @brief Drop cache entries older than @c sat_bias_cache.max_age_s
+         *        relative to @c now.
+         *
+         * Idempotent; called on each sat-bias prune so the cache does not
+         * accumulate entries for a satellite/signal that never reacquires.
+         *
+         * @param now Current epoch time.
+         */
+        void evictExpiredSatBiasCache(const GnssTime& now);
+
+        // -------------------------------------------------------------------
+        // Construction steps (StateManagerLayout.cpp)
+        //
+        // The constructor lays out the baseline core and returns, or lays out the
+        // PPP / PPP-RTK core, seeds its variances and logs the layout, in that
+        // order.
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Baseline (DD) mode: the core is position (3) plus the optional
+         *        differential ZWD; allocates x and P, seeds their variances and
+         *        logs the layout.
+         *
+         * Reads the constructor argument (kept in @c base_core_size_) as the
+         * position block size; clears the inter-system offset maps.
+         */
+        void layoutBaseline_();
+
+        /**
+         * @brief PPP / PPP-RTK mode: assigns the core indices (position, clock when
+         *        BSSD is off, ZWD, then velocity and clock rate, phase clock,
+         *        gradients, IMU, one ISB and one ISBR per non-GPS system) and
+         *        sets @c core_state_size_.
+         */
+        void layoutCore_();
+
+        /**
+         * @brief Allocates x (zero) and P (identity) at the core size and writes
+         *        each allocated core state's initial variance from
+         *        @c filter.initial_std (the IMU states from the IMU configuration).
+         */
+        void seedCoreVariances_();
+
+        /**
+         * @brief Logs the core layout (sizes per block, the BSSD note and the
+         *        systems with an inter-system offset) on the "state_manager" logger.
+         */
+        void logLayout_();
+
+        // -------------------------------------------------------------------
+        // The blocks of the process noise matrix (StateManagerProcessNoise.cpp)
+        //
+        // getProcessNoiseMatrix calls one function per block, in this order.
+        // Each writes its own entries of Q (no entry is written twice), so the
+        // order of the calls does not change Q.
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Q block of the position and velocity states.
+         *
+         * With velocity: the continuous white-noise acceleration (CWNA) block
+         * driven by @c pn.acceleration_psd (dt^3/3, dt^2/2, dt with the pos/vel
+         * cross terms).  Without: a position random walk @c pn.position * dt.
+         *
+         * @param Q  The process noise matrix being built (state-sized, zero where unwritten).
+         * @param pn The configured process noise (@c filter.process_noise).
+         * @param dt Time step in seconds (> 0).
+         */
+        void addMotionQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the baseline (DD) mode: the ambiguities and the
+         *        optional differential ZWD.
+         *
+         * The ambiguity random walk takes the per-key overrides and, unlike
+         * @ref addAmbiguityQ_, skips no frozen pivot (baseline has no BSSD pivot).
+         *
+         * @param Q          The process noise matrix being built.
+         * @param pn         The configured process noise.
+         * @param dt         Time step in seconds.
+         * @param state_size The state size Q was allocated with.
+         */
+        void addBaselineQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt,
+                           size_t state_size) const;
+
+        /**
+         * @brief Q block of the receiver clock: the CWNA clock/clock-rate pair when
+         *        the clock rate is estimated, else a clock random walk.
+         *
+         * Writes nothing under BSSD, where the constructor allocates neither state.
+         *
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addReceiverClockQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the phase clock offset: a random walk, none under BSSD.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addPhaseClockQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the troposphere: the ZWD random walk and, when
+         *        estimated, the two gradient random walks.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addTroposphereQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the slant ionosphere and its rate.
+         *
+         * Applied only in @c ProcessingMode::PPP_RTK (card UOM defect S1).  Per
+         * satellite: the zenith spectral density (or its adaptive override) over
+         * max(sin^2 el, 0.01), as a random walk, or as the CWNA level/rate pair when
+         * the rate state exists.  Frozen pivots get none.
+         *
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addIonosphereQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the receiver code biases: a random walk; under BSSD only
+         *        the GLONASS per-slot IFB keys keep it.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addReceiverCodeBiasQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of one satellite signal family (satellite code bias, phase
+         *        bias, clock): the random walk of the family's table row,
+         *        @c pn.*q_psd * dt, none for a state whose satellite is a frozen pivot.
+         *
+         * One function for the three blocks that were written three times (card UOM
+         * step U6e); the field and the satellite rule come from @ref kStateFamilies.
+         *
+         * @param Q      The process noise matrix being built.
+         * @param family The family (its row has @c QRule::RandomWalk).
+         * @param pn     The configured process noise.
+         * @param dt     Time step in seconds.
+         */
+        void addSatelliteRandomWalkQ_(Eigen::MatrixXd& Q, StateFamily family,
+                                      const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the inter-system time offsets: the CWNA ISB/ISBR pairs
+         *        when the rate offsets exist, else an ISB random walk.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addSystemTimeOffsetQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the ambiguities: the random walk @c pn.ambiguity (or the
+         *        per-key override); a frozen pivot's ambiguities get none.
+         * @param Q          The process noise matrix being built.
+         * @param pn         The configured process noise.
+         * @param dt         Time step in seconds.
+         * @param state_size The state size Q was allocated with.
+         */
+        void addAmbiguityQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt,
+                            size_t state_size) const;
+
+        /**
+         * @brief Whether a key's satellite is a frozen BSSD pivot
+         *        (@ref setFrozenPivotSatellites), read by the family's satellite rule
+         *        (@ref StateFamilySpec::sat_of_key).
+         *
+         * The process-noise and transition builders skip such states.
+         *
+         * @param family The family of @p key.
+         * @param key    A key of that family.
+         * @return True when the key names a satellite and it is a frozen pivot.
+         */
+        bool isFrozenPivotKey_(StateFamily family, const std::string& key) const;
 
         // -------------------------------------------------------------------
         // Internal state vector / covariance manipulation helpers

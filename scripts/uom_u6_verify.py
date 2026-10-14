@@ -1,0 +1,553 @@
+#!/usr/bin/env python3
+"""Relocation verifier for card UOM step U6 (gate G-UR): StateManager organized by concern.
+
+    python scripts/uom_u6_verify.py [--verbose] [--new-root DIR] [--mutation-test]
+
+The frozen source is src/core/filter/StateManager.cpp and its headers at f823a36 (the base
+of step U6), read with `git show` (no copy is stored).  Comments and blank lines are ignored
+on both sides (the lexer of scripts/rt_seam_verify.py), so a rewritten comment never fails
+the check; every other character of a carried line is compared, indentation included.
+
+The manifest below records the whole step against the frozen file: U6b's deletions (DROPS),
+U6c's cut of getProcessNoiseMatrix into one function per block, U6d's cut of the
+constructor, U6e's table reads (declared substitutions) and U6f's new code (declared new
+lines).  A unit is one item of a new file, an ordered list of pieces:
+
+  F(a, b, shift)  the frozen code lines a..b after the declared substitutions of SUBS, with
+                  `shift` leading spaces removed, compared character for character;
+  N(text)         one declared new code line (a signature, a call, a brace), compared without
+                  its surrounding space.
+
+Exit 0 only when every check passes:
+
+  1. Units.  Each unit is found in its file by its first line, which occurs there once; its
+     code lines equal the pieces one for one, consecutively.
+  2. Coverage.  Every code line of the frozen StateManager.cpp is carried by exactly one
+     unit, or is a declared drop (DROPS) with its reason.  None is dropped silently, none
+     carried twice.
+  3. Nothing added.  Outside its units a new file holds only #include lines and namespace
+     lines with their closing braces (one lone closing brace per unclaimed namespace).
+  4. Log calls and literals.  The ordered list of log calls of each unit, and the multiset
+     of string literals and log calls over the new files, equal those of the frozen lines
+     they carry plus the declared new lines: a move loses or adds no log text.
+  5. Headers.  The frozen code lines of each header appear in its new version in the same
+     order, apart from the declared header drops and substitutions, and StateManager's data
+     members are the same names in the same order (their order is the construction order).
+
+--mutation-test changes one character of one carried line (in memory) and requires the
+check to FAIL, so a verifier that cannot see a change is caught.
+"""
+import argparse
+import collections
+import pathlib
+import re
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from rt_seam_verify import strip_comments, _CPP  # noqa: E402
+
+FROZEN = "f823a36"
+CPP = "src/core/filter/StateManager.cpp"
+HPP = "include/filter/StateManager.hpp"
+FAM = "include/filter/StateFamily.hpp"
+SCH = "include/filter/StateKeySchema.hpp"
+D = "src/core/filter/"
+SM, PN, LY, FA = (D + "StateManager.cpp", D + "StateManagerProcessNoise.cpp",
+                  D + "StateManagerLayout.cpp", D + "StateManagerFamilies.cpp")
+NEW_FILES = [SM, PN, LY]
+# Files that carry no frozen line at all (new code, reviewed as such); reported, not matched.
+DECLARED_NEW = {FA: "U6f: the run-start table 'state families as armed' (new code)"}
+
+
+def F(a, b=None, shift=0):
+    return ("F", a, a if b is None else b, shift)
+
+
+def N(text):
+    return ("N", text)
+
+
+# ------------------------------------------------------------------------------------------
+# Manifest
+# ------------------------------------------------------------------------------------------
+
+U6B_DEAD = "U6b: no caller in src or tests"
+U6B_ZERO = "U6b: sat_bias_term was the constant 0.0; x - 0.0 == x for every double"
+U6B_PRIV = "U6b: called only inside the class, declared again in the private section"
+
+# Frozen StateManager.cpp line -> [(from, to)] (plain text replace), applied before the shift.
+FROZEN_SKIP = "if (frozen_pivot_sats_.count(sat)) continue;"
+SUBS = {
+    1355: [(" - iono_term - sat_bias_term;", " - iono_term;")],     # U6b
+    # U6e: the frozen-pivot skip reads the family's satellite-of-key rule
+    648: [(FROZEN_SKIP, "if (isFrozenPivotKey_(StateFamily::Ionosphere, sat)) continue;")],
+    801: [(FROZEN_SKIP, "if (isFrozenPivotKey_(StateFamily::Ambiguity, key)) continue;")],
+    846: [(FROZEN_SKIP, "if (isFrozenPivotKey_(StateFamily::Ionosphere, sat)) continue;")],
+    # U6e: the run-end names come from the table next to the Reinflation enum
+    1758: [("reinflationName(static_cast<Reinflation>(k)),", "kReinflationNames[k],")],
+}
+
+# Frozen StateManager.cpp lines dropped, with the reason.
+U6E_AMB = "U6e: the ambiguity key's satellite is read by the family rule (isFrozenPivotKey_)"
+DROPS = {
+    1353: U6B_ZERO,
+    798: U6E_AMB, 799: U6E_AMB, 800: U6E_AMB, 802: U6E_AMB,
+}
+
+# Frozen StateManager.cpp line ranges dropped whole (their code lines join DROPS).
+DROP_RANGES = [
+    (2118, 2168, U6B_DEAD + " (resetSatPhaseBiasState)"),
+    (2413, 2462, U6B_DEAD + " (resetSatClockState)"),
+    (714, 723, "U6e: the satellite code-bias block is addSatelliteRandomWalkQ_ over the table"),
+    (731, 738, "U6e: the satellite phase-bias block is addSatelliteRandomWalkQ_ over the table"),
+    (745, 752, "U6e: the satellite clock block is addSatelliteRandomWalkQ_ over the table"),
+    (1740, 1752, "U6e: reinflationName replaced by kReinflationNames (filter/StateFamily.hpp)"),
+    (2645, 2656, "U6e: the four gap-decoupled maps are a loop over the table's gap_decouple column"),
+]
+
+SIG = "const ProcessNoise& pn, double dt"
+
+
+def QF(name, extra=""):
+    """The declared signature line of one Q block function (U6c)."""
+    return f"void StateManager::{name}(Eigen::MatrixXd& Q, {SIG}{extra}) const {{"
+
+
+UNITS = [
+    # --- StateManager.cpp: everything but the process-noise section ---
+    # --- StateManager.cpp: everything but construction and the process-noise section ---
+    dict(name="StateManager.cpp head .. indicesOf", file=SM, pieces=[F(11, 182)]),
+    dict(name="StateManager.cpp accessors .. getStateVariance", file=SM, pieces=[F(441, 512)]),
+    dict(name="StateManager.cpp index getters .. end", file=SM, pieces=[
+        F(862, 2644),
+        N("std::size_t n = 0;"),
+        N("for (const auto& spec : kStateFamilies)"),
+        N("if (spec.gap_decouple) n += sm.indicesOf(spec.family).size();"),
+        N("out.reserve(n);"),
+        N("for (const auto& spec : kStateFamilies) {"),
+        N("if (!spec.gap_decouple) continue;"),
+        N("for (const auto& [_, idx] : sm.indicesOf(spec.family))"),
+        N("out.push_back(static_cast<Eigen::Index>(idx));"),
+        N("}"),
+        F(2645, 2745)]),
+    # --- StateManagerLayout.cpp (U6d) ---
+    dict(name="StateManager constructor (driver)", file=LY, pieces=[
+        F(183, 203),
+        N("layoutBaseline_();"),
+        F(242, 243),
+        N("layoutCore_();"),
+        N("seedCoreVariances_();"),
+        N("logLayout_();"),
+        F(440)]),
+    dict(name="layoutBaseline_", file=LY,
+         pieces=[N("void StateManager::layoutBaseline_() {"), F(204, 241, 4), N("}")]),
+    dict(name="layoutCore_", file=LY,
+         pieces=[N("void StateManager::layoutCore_() {"), F(244, 346), N("}")]),
+    dict(name="seedCoreVariances_", file=LY,
+         pieces=[N("void StateManager::seedCoreVariances_() {"), F(347, 414), N("}")]),
+    dict(name="logLayout_", file=LY,
+         pieces=[N("void StateManager::logLayout_() {"), F(415, 439), N("}")]),
+    # --- StateManagerProcessNoise.cpp (U6c) ---
+    dict(name="getProcessNoiseMatrix (driver)", file=PN, pieces=[
+        F(514, 526),
+        N("addMotionQ_(Q, pn, dt);"),
+        F(555, 561),
+        N("addBaselineQ_(Q, pn, dt, state_size);"),
+        F(576, 577),
+        N("addReceiverClockQ_(Q, pn, dt);"),
+        N("addPhaseClockQ_(Q, pn, dt);"),
+        N("addTroposphereQ_(Q, pn, dt);"),
+        N("addIonosphereQ_(Q, pn, dt);"),
+        N("addReceiverCodeBiasQ_(Q, pn, dt);"),
+        N("addSatelliteRandomWalkQ_(Q, StateFamily::SatBias, pn, dt);"),
+        N("addSatelliteRandomWalkQ_(Q, StateFamily::SatPhaseBias, pn, dt);"),
+        N("addSatelliteRandomWalkQ_(Q, StateFamily::SatClock, pn, dt);"),
+        N("addSystemTimeOffsetQ_(Q, pn, dt);"),
+        N("addAmbiguityQ_(Q, pn, dt, state_size);"),
+        F(809, 812)]),
+    dict(name="addMotionQ_ (Q1)", file=PN, pieces=[N(QF("addMotionQ_")), F(528, 553), N("}")]),
+    dict(name="addBaselineQ_ (Q2)", file=PN,
+         pieces=[N(QF("addBaselineQ_", ", size_t state_size")), F(562, 575, 4), N("}")]),
+    dict(name="addReceiverClockQ_ (Q3)", file=PN,
+         pieces=[N(QF("addReceiverClockQ_")), F(579), F(582, 615), N("}")]),
+    dict(name="addPhaseClockQ_ (Q4)", file=PN, pieces=[N(QF("addPhaseClockQ_")), F(617, 623), N("}")]),
+    dict(name="addTroposphereQ_ (Q5)", file=PN,
+         pieces=[N(QF("addTroposphereQ_")), F(580), F(625, 634), N("}")]),
+    dict(name="addIonosphereQ_ (Q6)", file=PN, pieces=[N(QF("addIonosphereQ_")), F(636, 693), N("}")]),
+    dict(name="addReceiverCodeBiasQ_ (Q7)", file=PN,
+         pieces=[N(QF("addReceiverCodeBiasQ_")), F(695, 707), N("}")]),
+    dict(name="addSatelliteRandomWalkQ_ (Q8-Q10, U6e)", file=PN, pieces=[
+        N("void StateManager::addSatelliteRandomWalkQ_(Eigen::MatrixXd& Q, StateFamily family,"),
+        N("const ProcessNoise& pn, double dt) const {"),
+        N("const auto& indices = indicesOf(family);"),
+        N("if (indices.empty()) return;"),
+        N("const double var = pn.*specOf(family).q_psd * dt;"),
+        N("for (const auto& [key, idx] : indices) {"),
+        N("if (isFrozenPivotKey_(family, key)) continue;"),
+        N("Q(idx, idx) = var;"),
+        N("}"),
+        N("}")]),
+    dict(name="isFrozenPivotKey_ (U6e)", file=PN, pieces=[
+        N("bool StateManager::isFrozenPivotKey_(StateFamily family, const std::string& key) const {"),
+        N("const std::optional<std::string> sat = satelliteOfKey(specOf(family).sat_of_key, key);"),
+        N("return sat.has_value() && frozen_pivot_sats_.count(*sat) > 0;"),
+        N("}")]),
+    dict(name="addSystemTimeOffsetQ_ (Q11)", file=PN,
+         pieces=[N(QF("addSystemTimeOffsetQ_")), F(754, 786), N("}")]),
+    dict(name="addAmbiguityQ_ (Q12)", file=PN,
+         pieces=[N(QF("addAmbiguityQ_", ", size_t state_size")), F(788, 800), F(801, 801, 4),
+                 F(802, 807), N("}")]),
+    dict(name="getTransitionMatrix", file=PN, pieces=[F(814, 860)]),
+]
+
+# Frozen header lines: substitutions and drops, per header.
+HSUBS = {HPP: {}, FAM: {}, SCH: {}}
+HDROPS = {
+    HPP: {
+        451: U6B_PRIV + " (reinflationName)",
+        1114: U6B_PRIV + " (evictExpiredSatBiasCache)",
+        **{n: U6B_DEAD + " (getSatBiasCache)" for n in (1120, 1121, 1122)},
+        **{n: U6B_PRIV + " (addSatPhaseBiasStateWithVariance)" for n in (1152, 1153, 1154)},
+        **{n: U6B_DEAD + " (resetSatPhaseBiasState)" for n in (1159, 1160, 1161)},
+        **{n: U6B_PRIV + " (addSatClockStateWithVariance)" for n in (1276, 1277, 1278)},
+        **{n: U6B_DEAD + " (resetSatClockState)" for n in (1283, 1284, 1285)},
+        1593: U6B_DEAD + " (meas_var_scale_: no member function reads or writes it)",
+        **{n: "U6e: the Reinflation enum is declared with the family table "
+              "(filter/StateFamily.hpp); StateManager::Reinflation is an alias"
+           for n in range(419, 429)},
+    },
+    FAM: {
+        **{n: "U6e: the row gains its behaviour columns (written over three to four lines)"
+           for n in range(76, 85)},
+        109: "U6e: the static_assert loop also checks the Q columns (braced body)",
+        110: "U6e: the static_assert loop also checks the Q columns (braced body)",
+        112: "U6e: the static_assert message names the Q columns",
+    },
+    SCH: {},
+}
+
+
+# ------------------------------------------------------------------------------------------
+# Engine
+# ------------------------------------------------------------------------------------------
+LOG_CALL = re.compile(r"->\s*(trace|debug|info|warn|error|critical)\s*\(")
+FURNITURE = re.compile(r"^\s*(#include\b.*|namespace(\s+\w+)?\s*\{\s*|using\s+[\w:]+\s*;\s*)$")
+
+
+def git_show(rev, path):
+    out = subprocess.run(["git", "-C", str(ROOT), "show", f"{rev}:{path}"],
+                         capture_output=True, check=True)
+    return out.stdout.decode("utf-8").replace("\r\n", "\n")
+
+
+def code_lines(text):
+    """1-based list of comment-stripped, right-stripped lines."""
+    return [""] + [l.rstrip() for l in strip_comments(text).split("\n")]
+
+
+def literals(line):
+    return [m.group() for m in _CPP.finditer(line) if m.lastgroup in ("str", "raw")]
+
+
+def log_calls(line):
+    """The log calls of one code line: (level, first literal of the line or '')."""
+    lits = literals(line)
+    return [(m.group(1), lits[0] if lits else "") for m in LOG_CALL.finditer(line)]
+
+
+class Frozen:
+    def __init__(self, text, subs):
+        self.raw = [""] + text.split("\n")
+        raw = list(self.raw)
+        for i, pairs in subs.items():
+            for fr, to in pairs:
+                if fr not in raw[i]:
+                    raise ValueError(f"substitution {fr!r} not on frozen line {i}: {raw[i]!r}")
+                raw[i] = raw[i].replace(fr, to)
+        self.code = code_lines("\n".join(raw[1:]))
+        self.plain = code_lines("\n".join(self.raw[1:]))
+
+
+def expected(unit, FC, claims, problems):
+    """[(text, kind, frozen_line)] the unit must hold; records the frozen lines it claims."""
+    exp = []
+    for p in unit["pieces"]:
+        if p[0] == "F":
+            _, a, b, k = p
+            for i in range(a, b + 1):
+                line = FC.code[i]
+                if not line.strip():
+                    continue
+                claims.setdefault(i, []).append(unit["name"])
+                if i in DROPS:
+                    continue
+                lead = len(line) - len(line.lstrip(" "))
+                if lead < k:
+                    problems.append(f"{unit['name']}: frozen {i} has fewer than {k} leading spaces")
+                    continue
+                exp.append((line[k:], "frozen", i))
+        else:
+            exp.append((p[1].strip(), "new", None))
+    return exp
+
+
+def match_unit(unit, exp, lines, problems):
+    """Locate the unit in `lines` (1-based code lines of its file) and compare.  Returns the
+    list of matched line numbers, or None."""
+    if not exp:
+        problems.append(f"{unit['name']}: empty unit")
+        return None
+    first, kind, _ = exp[0]
+    cand = [i for i in range(1, len(lines))
+            if (lines[i] if kind == "frozen" else lines[i].strip()) == first]
+    if len(cand) != 1:
+        problems.append(f"{unit['name']}: first line {first!r} found {len(cand)} times")
+        return None
+    got, j = [], cand[0]
+    for text, kind, _ in exp:
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        if j >= len(lines):
+            problems.append(f"{unit['name']}: file ends before {text!r}")
+            return None
+        g = lines[j] if kind == "frozen" else lines[j].strip()
+        if g != text:
+            problems.append(f"{unit['name']}: new line {j} differs\n  want {text!r}\n  got  {lines[j]!r}")
+            return None
+        got.append(j)
+        j += 1
+    return got
+
+
+def run_checks(texts, frozen_text, frozen_headers, verbose=False, quiet=False):
+    """All checks over `texts` (new path -> text).  Returns the number of failed checks."""
+    out = (lambda *a: None) if quiet else print
+    FC = Frozen(frozen_text, SUBS)
+    for a, b, why in DROP_RANGES:
+        for i in range(a, b + 1):
+            if FC.plain[i].strip():
+                DROPS.setdefault(i, why)
+    claims = {}
+    lines_of = {p: code_lines(t) for p, t in texts.items()}
+    claimed_new = {p: set() for p in texts}
+    fails = 0
+    lit_expected, lit_found = collections.Counter(), collections.Counter()
+    log_expected, log_found = collections.Counter(), collections.Counter()
+
+    out(f"frozen {FROZEN}: {CPP} ({len(FC.raw) - 1} lines)")
+    out("\n1. Units")
+    for unit in UNITS:
+        problems = []
+        exp = expected(unit, FC, claims, problems)
+        if unit["file"] not in lines_of:
+            problems.append(f"{unit['name']}: file {unit['file']} missing")
+            got = None
+        else:
+            got = match_unit(unit, exp, lines_of[unit["file"]], problems) if not problems else None
+        ok = got is not None and not problems
+        if ok:
+            claimed_new[unit["file"]].update(got)
+            # ordered log calls of the unit equal those of its pieces
+            want_logs = [c for text, _, _ in exp for c in log_calls(text)]
+            got_logs = [c for j in got for c in log_calls(lines_of[unit["file"]][j])]
+            if want_logs != got_logs:
+                problems.append(f"{unit['name']}: ordered log calls differ")
+                ok = False
+        for text, kind, _ in exp:
+            if text.strip().startswith("#include"):
+                continue
+            lit_expected.update(literals(text))
+            log_expected.update(log_calls(text))
+        n_f = sum(1 for _, k, _ in exp if k == "frozen")
+        n_n = sum(1 for _, k, _ in exp if k == "new")
+        out(f"  {'PASS' if ok else 'FAIL'}  {unit['name']}  "
+            f"[{pathlib.Path(unit['file']).name}: {n_f} frozen, {n_n} new]")
+        for p in problems:
+            out("        " + p.replace("\n", "\n        "))
+        fails += 0 if ok else 1
+
+    out("\n2. Coverage of the frozen StateManager.cpp")
+    cov = []
+    for i in range(1, len(FC.plain)):
+        if not FC.plain[i].strip():
+            continue
+        owners = claims.get(i, [])
+        if i in DROPS and not owners:
+            owners = ["drop"]
+        if len(owners) != 1:
+            cov.append(f"frozen {i} claimed {len(owners)} times {owners}: {FC.plain[i].strip()!r}")
+    for i in DROPS:
+        if not FC.plain[i].strip():
+            cov.append(f"declared drop {i} is not a code line")
+    n_code = sum(1 for l in FC.plain[1:] if l.strip())
+    out(f"  {n_code} code lines; {len(DROPS)} declared drops; {'PASS' if not cov else 'FAIL'}")
+    for p in cov:
+        out("        " + p)
+    fails += 1 if cov else 0
+
+    out("\n3. Nothing added outside the units")
+    extra = []
+    for path, lines in lines_of.items():
+        opens, closes = 0, 0
+        for j in range(1, len(lines)):
+            if not lines[j].strip() or j in claimed_new[path]:
+                continue
+            if FURNITURE.match(lines[j]):
+                if lines[j].strip().startswith("namespace"):
+                    opens += 1
+                continue
+            if lines[j].strip() == "}":
+                closes += 1
+                continue
+            extra.append(f"{pathlib.Path(path).name}:{j}: {lines[j].strip()!r}")
+        if opens != closes:
+            extra.append(f"{pathlib.Path(path).name}: {opens} unclaimed namespace(s), {closes} lone brace(s)")
+    out(f"  {len(lines_of)} file(s); {'PASS' if not extra else 'FAIL'}")
+    for p in extra:
+        out("        " + p)
+    fails += 1 if extra else 0
+
+    out("\n4. Log calls and literals over the new files")
+    for path, lines in lines_of.items():
+        for j in range(1, len(lines)):
+            if lines[j].strip().startswith("#include"):
+                continue
+            lit_found.update(literals(lines[j]))
+            log_found.update(log_calls(lines[j]))
+    lit_bad = lit_expected != lit_found
+    log_bad = log_expected != log_found
+    out(f"  literals {sum(lit_found.values())} (expected {sum(lit_expected.values())}); "
+        f"log calls {sum(log_found.values())} (expected {sum(log_expected.values())}); "
+        f"{'PASS' if not (lit_bad or log_bad) else 'FAIL'}")
+    if lit_bad:
+        out(f"        literals only expected {dict(lit_expected - lit_found)}; "
+            f"only found {dict(lit_found - lit_expected)}")
+    if log_bad:
+        out(f"        log calls only expected {dict(log_expected - log_found)}; "
+            f"only found {dict(log_found - log_expected)}")
+    fails += 1 if (lit_bad or log_bad) else 0
+
+    out("\n5. Headers")
+    for hdr, (frozen_h, new_h) in frozen_headers.items():
+        FH = Frozen(frozen_h, HSUBS[hdr])
+        new_lines = [l for l in code_lines(new_h)[1:] if l.strip()]
+        want = [FH.code[i] for i in range(1, len(FH.code))
+                if FH.code[i].strip() and i not in HDROPS[hdr]]
+        j, missing = 0, None
+        for w in want:
+            while j < len(new_lines) and new_lines[j] != w:
+                j += 1
+            if j == len(new_lines):
+                missing = w
+                break
+            j += 1
+        hp = []
+        if missing is not None:
+            hp.append(f"frozen line not found in order: {missing!r}")
+        for i in HDROPS[hdr]:
+            if not FH.plain[i].strip():
+                hp.append(f"declared header drop {i} is not a code line")
+        if hdr == HPP:
+            old_m = data_members([FH.code[i] for i in range(1, len(FH.code)) if i not in HDROPS[hdr]])
+            new_m = data_members(new_lines)
+            if old_m != new_m:
+                hp.append(f"data members differ:\n  frozen {old_m}\n  new    {new_m}")
+        added = len(new_lines) - len(want)
+        out(f"  {'PASS' if not hp else 'FAIL'}  {hdr}: {len(want)} frozen code lines in order, "
+            f"{len(HDROPS[hdr])} dropped, {added} code line(s) added")
+        if verbose:
+            pos = 0
+            wset = collections.Counter(want)
+            for l in new_lines:
+                if wset[l] > 0:
+                    wset[l] -= 1
+                else:
+                    out(f"        + {l.strip()}")
+        for p in hp:
+            out("        " + p.replace("\n", "\n        "))
+        fails += 1 if hp else 0
+    return fails
+
+
+def data_members(lines):
+    pat = re.compile(r"^(?!\s*(?:return|friend|using|typedef)\b)\s*[\w:<][\w:<>,\s\*&]*?"
+                     r"[\w>\*&]\s+([A-Za-z_]\w*_)\s*(\{[^}]*\}|=[^;]*)?;\s*$")
+    return [m.group(1) for l in lines if (m := pat.match(l))]
+
+
+def main():
+    for s in (sys.stdout, sys.stderr):
+        s.reconfigure(encoding="utf-8", errors="replace")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--new-root", default=str(ROOT))
+    ap.add_argument("--mutation-test", action="store_true")
+    a = ap.parse_args()
+    root = pathlib.Path(a.new_root)
+
+    frozen_text = git_show(FROZEN, CPP)
+    texts = {p: (root / p).read_text(encoding="utf-8").replace("\r\n", "\n")
+             for p in NEW_FILES if (root / p).exists()}
+    headers = {h: (git_show(FROZEN, h), (root / h).read_text(encoding="utf-8").replace("\r\n", "\n"))
+               for h in (HPP, FAM, SCH)}
+
+    if a.mutation_test:
+        # In each new file, change one character of the first carried line that holds a
+        # digit (in memory); every such mutation must make the check FAIL.
+        FCm = Frozen(frozen_text, SUBS)
+        results = []
+        for path in texts:
+            done = False
+            for unit in (u for u in UNITS if u["file"] == path):
+                for p in (q for q in unit["pieces"] if q[0] == "F"):
+                    for i in range(p[1], p[2] + 1):
+                        line = FCm.code[i]
+                        m = re.search(r"\d", line)
+                        if done or not m or i in DROPS:
+                            continue
+                        stripped = line[p[3]:].strip()
+                        t = texts[path]
+                        k = t.find(stripped)
+                        if k < 0:
+                            continue
+                        pos = k + stripped.find(m.group())
+                        mutated = dict(texts)
+                        mutated[path] = t[:pos] + ("1" if t[pos] != "1" else "2") + t[pos + 1:]
+                        f = run_checks(mutated, frozen_text, headers, quiet=True)
+                        results.append(bool(f))
+                        print(f"mutation of {pathlib.Path(path).name} (frozen line {i}): "
+                              f"{'FAIL as required' if f else 'NOT DETECTED'}")
+                        done = True
+        return 0 if results and all(results) else 1
+
+    fails = run_checks(texts, frozen_text, headers, verbose=a.verbose)
+    print("\n6. Declared new files (no frozen code)")
+    for path, why in DECLARED_NEW.items():
+        lines = code_lines((root / path).read_text(encoding="utf-8"))
+        n = sum(1 for l in lines[1:] if l.strip())
+        logs = [c for l in lines for c in log_calls(l)]
+        print(f"  {pathlib.Path(path).name}: {n} code lines, {len(logs)} log call(s) {logs}  ({why})")
+    print("\nDeclared substitutions (frozen line: from -> to)")
+    for i in sorted(SUBS):
+        for fr, to in SUBS[i]:
+            print(f"  cpp {i}: {fr!r} -> {to!r}")
+    for h in HSUBS:
+        for i in sorted(HSUBS[h]):
+            for fr, to in HSUBS[h][i]:
+                print(f"  {pathlib.Path(h).name} {i}: {fr!r} -> {to!r}")
+    print("Declared drops")
+    FCp = code_lines(frozen_text)
+    for i in sorted(DROPS):
+        print(f"  cpp {i}: {FCp[i].strip()!r}  ({DROPS[i]})")
+    for h in HDROPS:
+        hp = code_lines(git_show(FROZEN, h))
+        for i in sorted(HDROPS[h]):
+            print(f"  {pathlib.Path(h).name} {i}: {hp[i].strip()!r}  ({HDROPS[h][i]})")
+    print(f"\nTOTAL: {len(UNITS)} unit(s); {'PASS' if fails == 0 else f'FAIL ({fails} check(s))'}")
+    return 0 if fails == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

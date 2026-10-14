@@ -4,12 +4,16 @@
  * @file StateKeySchema.hpp
  * @brief Single source of truth for every dynamic state-vector key format.
  *
- * @c StateManager owns the state vector and exposes several
- * <tt>std::map<std::string, size_t></tt> indices that grow at runtime:
- * ambiguities, per-satellite ionosphere, receiver code biases (IFB / DCB),
- * per-satellite signal biases, inter-system time offsets, and (in baseline
- * mode) double-difference ambiguities.  Each map sends a caller-formatted
- * key string to a row of the state vector.
+ * @c StateManager owns the state vector and exposes one
+ * <tt>std::map<std::string, size_t></tt> index per dynamic state family
+ * (@c kStateFamilies in @c filter/StateFamily.hpp: ambiguities, including the
+ * NL/WL and the baseline double-difference forms; per-satellite ionosphere and
+ * ionosphere rate; receiver code biases; satellite code biases, phase biases
+ * and clocks; receiver phase biases; phase colour), plus the core block's
+ * inter-system time and rate offsets.  Each map sends a caller-formatted key
+ * string to a row of the state vector.  The ionosphere-rate and phase-colour
+ * keys are the bare satellite ID and the rate-offset (ISBR) keys the bare
+ * system name, as in sections 3 and 6; they have no section of their own.
  *
  * The key categories use different delimiters (<tt>'_'</tt> and
  * <tt>'|'</tt>), and the keys are built and read in @c MeasurementModel,
@@ -48,7 +52,7 @@ namespace StateKeys {
 inline constexpr char kAmbiguityDelimiter = '_';
 
 /// Delimiter used inside per-satellite signal-bias keys ("G01|C1W") and
-/// inside double-difference ambiguity keys ("DD|GPS|G05|L1|G01").
+/// inside double-difference ambiguity keys ("DD|GPS|G05|L1C|G01").
 inline constexpr char kPipeDelimiter = '|';
 
 /// Delimiter used inside receiver code-bias keys ("GPS_IFB2", "GPS_DCB").
@@ -90,9 +94,11 @@ inline constexpr std::string_view kWlInfix = "WL";
 // Examples: "G01_L1C", "E11_L5Q", "G01_L1C_L5Q" (iono-free combination; the
 // signal field contains the delimiter, so a parser splits on the first '_').
 //
-// Constructed in:  MeasurementModel.cpp (single-band and IF combinations)
+// Constructed in:  MeasurementModel (single-band and IF combinations)
 // Stored in:       StateManager::ambiguity_indices_
-// Parsed in:       AmbiguityResolver (per-(cons,sig) grouping for MLAMBDA)
+// Parsed in:       AmbiguityResolver (per-(cons,sig) grouping for MLAMBDA),
+//                  MeasurementModel, the signal roster and many network
+//                  producer sites (grep parseAmbiguityKey).
 // ===========================================================================
 
 /// Decomposed ambiguity key.  @c signal may itself contain underscores
@@ -268,14 +274,16 @@ parseWlAmbiguityKey(std::string_view key) {
 // ===========================================================================
 // 2. Double-difference ambiguity keys: "DD|<cons>|<sat_i>|<code>|<pivot>"
 // ---------------------------------------------------------------------------
-// Examples: "DD|GPS|G05|L1|G01", "DD|Galileo|E11|E5|E24"
+// Examples: "DD|GPS|G05|L1C|G01", "DD|Galileo|E11|L5Q|E24"
 //
 //   cons   : constellation name string (e.g. "GPS", "Galileo", "BeiDou")
 //   sat_i  : non-pivot satellite ID    (e.g. "G05", "E11")
-//   code   : RINEX frequency code      (e.g. "L1", "E5")
+//   code   : the rover's RINEX-3 phase observation code (e.g. "L1C", "L5Q");
+//            every builder passes it, and the parser accepts any non-empty text
 //   pivot  : reference satellite ID    (e.g. "G01")
 //
-// Constructed in:  DdPivotManager (handover S-transform), MeasurementModel
+// Constructed in:  DdPivotManager (handover S-transform), MeasurementModel,
+//                  KalmanFilter (the DD outlier response)
 // Parsed in:       DdPivotManager (handover bucketing)
 // ===========================================================================
 
@@ -283,7 +291,7 @@ parseWlAmbiguityKey(std::string_view key) {
 struct DdAmbiguityKeyParts {
     std::string cons;       ///< Constellation name ("GPS", "Galileo", ...).
     std::string sat_i;      ///< Non-pivot satellite ID.
-    std::string code;       ///< RINEX frequency code.
+    std::string code;       ///< The rover's RINEX-3 phase observation code ("L1C").
     std::string pivot;      ///< Pivot (reference) satellite ID.
 };
 
@@ -349,8 +357,10 @@ parseDdAmbiguityKey(std::string_view key) {
 // ===========================================================================
 // 3. Per-satellite ionosphere keys: "<satellite>"
 // ---------------------------------------------------------------------------
-// Just the bare satellite ID, no delimiter.  Present only in PPP-RTK
-// uncombined mode.
+// Just the bare satellite ID, no delimiter.  Present whenever uncombined
+// processing is on (processing.uncombined_enabled), in any mode.  The
+// ionosphere-rate state (enable_iono_rate) and the network's phase-colour state
+// use the same bare key in their own maps.
 //
 // Constructed in:  MeasurementModel (StateManager::addIonosphereState(sat))
 // Stored in:       StateManager::ionosphere_indices_
@@ -700,7 +710,8 @@ parseReceiverIscKey(std::string_view key) {
 // Stored in:       StateManager::sat_bias_indices_
 // Parsed in:       StateManager::getProcessNoiseMatrix (the BSSD freeze check
 //                  reads only the satellite prefix; see
-//                  satelliteFromSatBiasKey below).
+//                  satelliteFromSatBiasKey below), TraceLogger and the network
+//                  producer (parseSatBiasKey).
 // ===========================================================================
 
 /// Decomposed sat-bias key.
