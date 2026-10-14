@@ -19,7 +19,9 @@
 *       convergence) the detector is inert: the position gating below is unsafe
 *       there, and the `enable_if_slip_detector` user toggle has no
 *       instantiation path.  User-side slip detection is in
-*       slip/MwSlipDetector and slip/GraphicSlipDetector.
+*       slip/MwSlipDetector and slip/GraphicSlipDetector.  The branches of
+*       that staged path, which no shipped configuration reaches, are kept
+*       apart in IfPhaseStagedUserPath.cpp.
 *
 * The detector double-differences the IF phase OMC (observed minus computed).
 * The model subtraction is essential: it removes the satellite-specific
@@ -380,6 +382,30 @@ namespace GnssProcessor {
          * Default-constructed params leave @c enable false, so the legacy gate
          * runs unchanged and the output is byte-identical.  The user/kinematic
          * path never calls this setter, so it is unaffected in both modes.
+         *
+         * @par The network.slip_qc defaults table
+         * Every field mirrors one member of the network's slip-QC configuration
+         * (@c SlipQcConfig, config/GnssConfigTypes.hpp), and network setup copies
+         * each one from there (ApplicationNetworkSetup.cpp), so the values a run
+         * uses come from the configuration, not from these defaults.  The
+         * defaults matter to a default-constructed gate (the unit tests) and must
+         * equal the configuration's, or the tests certify a gate the field runs
+         * do not use:
+         *
+         * | field             | SlipQcConfig member     | JSON key (network.cycle_slip.)   | default |
+         * |-------------------|-------------------------|----------------------------------|---------|
+         * | enable            | ref_gate                | if_phase_td_ref_gate             | false   |
+         * | k                 | ref_k                   | if_phase_td_ref_k                | 6.0     |
+         * | min_n             | ref_min_n               | if_phase_td_ref_min_n            | 4       |
+         * | thin_widen        | ref_thin_widen          | if_phase_td_ref_thin_widen       | 3.0     |
+         * | coherence         | ref_coherence           | if_phase_td_ref_coherence        | 0.5     |
+         * | max_consecutive   | ref_max_consecutive     | if_phase_td_ref_max_consecutive  | 1       |
+         * | ewma_alpha        | ref_ewma_alpha          | if_phase_td_ref_ewma_alpha       | 0.15    |
+         * | shrink_kappa      | ref_shrink_kappa        | if_phase_td_ref_shrink_kappa     | 20.0    |
+         * | floor_frac        | ref_floor_frac          | if_phase_td_ref_floor_frac       | 0.5     |
+         * | warmup_abstain    | ref_warmup_abstain      | if_phase_td_ref_warmup_abstain   | false   |
+         * | elev_norm         | ref_elev_norm           | if_phase_td_ref_elev_norm        | false   |
+         * | elev_clamp_deg    | ref_elev_clamp_deg      | if_phase_td_ref_elev_clamp_deg   | 5.0     |
          */
         struct RefGateParams {
             bool   enable{false};          ///< Master switch (default off: legacy gate).
@@ -743,11 +769,31 @@ namespace GnssProcessor {
             Eigen::Vector3d los{ Eigen::Vector3d::Zero() }; ///< LOS unit vector for geometry correction.
         };
 
+        // --- processDoubleDifferences' values (slip/IfPhaseChainWork.hpp) -----------
+        struct ChainEpoch;   ///< One gradient chain's epoch: the double-difference step's input.
+        struct RefArmPlan;   ///< Which reference arm the chain runs (§14.10.4, §22.6).
+        struct ChainResult;  ///< The step's double differences, reset keys and reference-arm outcome.
+        struct ChainWork;    ///< The working value of one call, shared by the steps D1 to D7.
+
         bool findPhaseIfLabel(const PppObservation& obs, std::string& phase_if_key) const;
         bool splitIfLabel(const std::string& label, std::string& sig1, std::string& sig2) const;
         double computeIfWavelengthMeters(const PppObservation& obs,
             const std::string& sig1, const std::string& sig2) const;
 
+        /**
+         * @brief STAGED: the per-station iterative MAD outlier test of the
+         *        non-reference double differences (IfPhaseStagedUserPath.cpp).
+         *
+         * Each pass sets to NaN the largest non-reference value that exceeds
+         * 8·1.4826·MAD or λ_IF and also exceeds 0.5·λ_IF; it stops when no value
+         * qualifies, or when the scale is at most λ_IF/4 and every value at most
+         * 0.5·λ_IF, after at most @c kMaxOutlierPasses passes.
+         *
+         * @param values        Double differences by satellite (m).
+         * @param ref_satellite The chain's reference (never removed).
+         * @param lambda_if     The chain's median IF wavelength (m).
+         * @return @p values with every removed outlier set to NaN.
+         */
         std::map<std::string, double> checkOutliers(
             const std::map<std::string, double>& values,
             const std::string& ref_satellite,
@@ -774,6 +820,27 @@ namespace GnssProcessor {
             const std::vector<PppObservation>& observations) const;
 
         /**
+         * @brief One uncombined observation's rows: the IF phase OMC of its first
+         *        band pair (bare-system chain) and, under @ref all_pairs_, of every
+         *        other pair with distinct frequencies (one chain each).
+         * @param obs    The observation (raw phase signals, observed and modeled).
+         * @param result Chain key -> rows; the observation's rows are appended.
+         */
+        void groupUncombinedRows(const PppObservation& obs,
+            std::map<std::string, std::vector<SatData>>& result) const;
+
+        /**
+         * @brief STAGED: one row from an observation that already carries an IF
+         *        phase label (the combined PPP input; IfPhaseStagedUserPath.cpp).
+         * @param obs          The observation.
+         * @param phase_if_key Its IF phase label ("L1C_L2W").
+         * @param result       Chain key -> rows; the row is appended to the
+         *                     bare-system chain.
+         */
+        void groupCombinedIfRow(const PppObservation& obs, const std::string& phase_if_key,
+            std::map<std::string, std::vector<SatData>>& result) const;
+
+        /**
          * @brief Select or validate the reference satellite for a constellation.
          * @param sat_vec  Satellite data for this constellation.
          * @param cs       Persistent constellation state (ref is updated in-place).
@@ -784,56 +851,153 @@ namespace GnssProcessor {
         /**
          * @brief Process double differences for one gradient chain and flag slips.
          *
-         * Applies the reference-change correction and the geometry correction,
-         * then, unless the epoch is gated, the reference-slip check and (unless
-         * flagging is deferred) the non-reference outlier detection.  Appends
-         * flagged keys to reset_keys.
+         * A short driver over the steps D1 to D7, which share one @c ChainWork:
+         * the satellite lookup (D1), the reference-change rebase (D2), the
+         * between-epoch double differences (D3), the staged geometry correction
+         * (D4); then, unless the epoch is gated, the chain's own reference arm
+         * (D5) or the adopted-reference inheritance (D6), and (unless flagging is
+         * deferred) the staged per-station outlier flagging (D7).
          *
-         * @param sat_vec         Satellite data for this constellation.
-         * @param sys_str         Chain key ("GPS", or "GPS|L1C_L5Q" for an
-         *                        additional chain): names the chain in log lines
-         *                        and per-chain telemetry, and its '|' marks an
-         *                        additional chain.
-         * @param cs              Persistent constellation state.
-         * @param grad_phi_if     Current-epoch between-satellite gradients.
-         * @param lambda_if       Median IF wavelength for this constellation.
-         * @param ref_changed     Whether the reference satellite changed.
-         * @param position_sigma_3d 3D position sigma (meters), written to the
-         *                        slip log line; the gate itself is read from
-         *                        @ref epoch_gated_.
-         * @param[out] reset_keys Ambiguity keys to reset are appended here.
-         * @param run_ref_arm     Run the per-station reference-satellite slip test
-         *                        (tier T1r) on this chain.  True on every chain
-         *                        under the default pair width, so the default path
-         *                        is unchanged.  False on the additional chains of
-         *                        @ref setAllPairs, which take the first chain's
-         *                        reference where present and do not re-run its
-         *                        test (§14.10.4 gives the cost of re-running it);
-         *                        @ref setRefArmAllChains (§22.6) turns it back on
-         *                        through the hardened (empirical) gate.
-         * @param[out] out_outcome Where to record this chain's reference-arm
-         *                        verdict so that the additional chains that
-         *                        adopted the reference can inherit it (§22.6).
-         *                        nullptr: not recorded.
-         * @param inherit         A first-chain verdict to apply on this chain (the
-         *                        adopted-reference path, §22.6).  nullptr: no
-         *                        inheritance.  Ignored unless the hardened gate is
-         *                        enabled, the verdict fired, and it names this
-         *                        chain's current reference.
+         * The second lock (§22.6) applies first: on an additional chain (a '|'
+         * in @c ChainEpoch::sys_str) with the hardened gate off, the plan's own
+         * arm and its inheritance are both refused.
+         *
+         * @param chain The chain's epoch (key, satellites, gradients, λ_IF,
+         *              reference change, position change and sigma).
+         * @param cs    The chain's persistent state.
+         * @param plan  Which reference arm runs (by value: the second lock edits
+         *              this copy).
+         * @return The corrected double differences, the reset keys this chain
+         *         flags, and its reference-arm outcome; empty when the chain's
+         *         reference is absent.
          */
-        std::map<std::string, double> processDoubleDifferences(
-            const std::vector<SatData>& sat_vec,
-            const std::string& sys_str,
-            ConstellationState& cs,
-            const std::map<std::string, double>& grad_phi_if,
-            double lambda_if,
-            bool ref_changed,
-            double position_sigma_3d,
-            const Eigen::Vector3d& delta_pos,
-            std::vector<std::string>& reset_keys,
-            bool run_ref_arm = true,
-            RefArmOutcome* out_outcome = nullptr,
-            const RefArmOutcome* inherit = nullptr);
+        ChainResult processDoubleDifferences(const ChainEpoch& chain, ConstellationState& cs,
+                                             RefArmPlan plan);
+
+        /**
+         * @brief D1: index the chain's satellites by id and find the reference's
+         *        row (nullptr when the reference is absent this epoch).
+         * @param w Chain work; writes @c sat_map and @c ref_data.
+         */
+        void indexChainSatellites(ChainWork& w) const;
+
+        /**
+         * @brief D2: after a reference change, shift every stored gradient by the
+         *        median offset between this epoch's and the stored gradients.
+         * @param w Chain work; writes @c cs.prev_grad.
+         */
+        void rebaseOnReferenceChange(ChainWork& w) const;
+
+        /**
+         * @brief D3: the between-epoch double differences of the chain, and
+         *        whether every one is finite.
+         * @param w Chain work; writes @c result.delta_grad and @c all_finite.
+         */
+        static void formChainDoubleDifferences(ChainWork& w);
+
+        /**
+         * @brief Between-epoch double differences: this epoch's gradient minus
+         *        the stored one, NaN for a satellite with no stored gradient.
+         *
+         * Shared by D3 and by the rebase of a reference-arm fire
+         * (@c applyRefFire), which form the differences with the same expression.
+         *
+         * @param grad_phi_if This epoch's between-satellite gradients (m).
+         * @param cs          The chain's state (its stored gradients).
+         * @param delta_grad  Written: one double difference per satellite (m).
+         * @param all_finite  Set false when a satellite has no stored gradient.
+         */
+        static void formDoubleDifferences(const std::map<std::string, double>& grad_phi_if,
+                                          const ConstellationState& cs,
+                                          std::map<std::string, double>& delta_grad,
+                                          bool& all_finite);
+
+        /**
+         * @brief D4, STAGED: remove the geometric residual (e_sat − e_ref)·Δpos
+         *        of a moving receiver (IfPhaseStagedUserPath.cpp).
+         * @param w Chain work; writes @c result.delta_grad (only when |Δpos| > 1 µm).
+         */
+        static void applyGeometryCorrection(ChainWork& w);
+
+        /**
+         * @brief D5: the chain's own reference-satellite slip test (tier T1r):
+         *        the legacy candidate condition, the hardened gate when armed, the
+         *        fire, and the outcome the additional chains may inherit.
+         * @param w Chain work; writes the counters, @c cs, the result and its
+         *          @c outcome.
+         */
+        void runReferenceArm(ChainWork& w);
+
+        /**
+         * @brief The action of a reference-arm fire (§22.6), shared by the own
+         *        arm and the inheritance: the reset key, the warn and slip log
+         *        lines, and (for a coherent step) the rebase of every other
+         *        satellite's stored gradient by the median and the recomputed
+         *        double differences.
+         * @param w         Chain work.
+         * @param median_dd The median of the non-reference double differences (m).
+         * @param verdict   FireRebase or FireNoRebase.
+         * @param n_finite  Finite non-reference double differences (logged).
+         * @param inherited True on the inheritance path (telemetry and log text).
+         */
+        void applyRefFire(ChainWork& w, double median_dd, RefGateVerdict verdict,
+                          std::size_t n_finite, bool inherited);
+
+        /**
+         * @brief D6: on an additional chain that adopted the first chain's
+         *        reference, apply the first chain's fired verdict with this
+         *        chain's own median.
+         * @param w       Chain work.
+         * @param inherit The first chain's outcome (fired, naming this chain's
+         *                reference; checked by the caller).
+         */
+        void inheritReferenceVerdict(ChainWork& w, const RefArmOutcome* inherit);
+
+        /**
+         * @brief D7, STAGED: the per-station outlier flagging of the non-reference
+         *        double differences: the MAD test when every one is finite, a
+         *        fixed λ_IF threshold otherwise (IfPhaseStagedUserPath.cpp).
+         * @param w Chain work; appends to @c result.reset_keys.
+         */
+        void flagNonReferenceOutliers(ChainWork& w) const;
+
+        /**
+         * @brief STAGED: this epoch's gate: the position uncertainty or the model
+         *        nuisance exceeds its threshold (IfPhaseStagedUserPath.cpp).
+         *
+         * Sets @ref epoch_gated_, the one definition processDoubleDifferences
+         * reads.  The network passes position_sigma_3d = 0 and never arms the
+         * nuisance gate, so there the gate is always open.
+         *
+         * @param position_sigma_3d The caller's 3D position sigma (m).
+         * @param model_nuisance_m  The caller's model-nuisance magnitude (m).
+         * @return True when flagging is suppressed this epoch.
+         */
+        bool gateEpoch(double position_sigma_3d, double model_nuisance_m);
+
+        /**
+         * @brief Cache a chain's double differences as IfJumpInfo, by satellite
+         *        (first chain only) and by (satellite, pair), for the network pool.
+         * @param chain            The chain's epoch.
+         * @param cs               The chain's state (reference, re-seed marks).
+         * @param delta_grad       Its double differences (NaN where none).
+         * @param first_pair_chain The chain is a system's first-pair chain.
+         * @param pos_gated        The epoch is gated (the jumps are then invalid).
+         */
+        void publishChainJumps(const ChainEpoch& chain, const ConstellationState& cs,
+                               const std::map<std::string, double>& delta_grad,
+                               bool first_pair_chain, bool pos_gated);
+
+        /**
+         * @brief Store this epoch's gradients as the chain's next origin, except
+         *        for satellites a reset key of this epoch names; clear the re-seed
+         *        marks.
+         * @param chain      The chain's epoch (its gradients).
+         * @param cs         The chain's state (written).
+         * @param reset_keys The epoch's reset keys so far.
+         */
+        static void storeChainGradients(const ChainEpoch& chain, ConstellationState& cs,
+                                        const std::vector<std::string>& reset_keys);
 
         /**
          * @brief Advance this chain's non-reference DD dispersion scale and

@@ -620,6 +620,325 @@ TE_HEADER_REMOVED = {
     "std::map<std::string, double> sig_continuous_since_s_;": "U5t-b: see sig_last_seen_s_",
 }
 
+# =============================================================================
+# IF phase detector (step U5t-c: processDoubleDifferences' values and steps; the
+# staged user path in one bannered file)
+# =============================================================================
+IF_MAIN = S + "IfPhaseSlipDetector.cpp"
+IF_STAGED = S + "IfPhaseStagedUserPath.cpp"
+IF_WORK = "include/slip/IfPhaseChainWork.hpp"
+IF_HPP = "include/slip/IfPhaseSlipDetector.hpp"
+
+# IF_UNITS: every function of the new IF detector files that carries frozen code.
+IF_UNITS = [
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::logSlipRecord\(', pieces=[
+        F(77, 78, 0),
+        F(80, 85, 4),
+    ], subs=[
+        (81, 'slip_reason={} pos_sigma={:.3f}{}",', 'slip_reason={} pos_sigma={:.3f}",'),
+        (85, 'position_sigma_3d, pos_gated ? " [pos_gated]" : "");', 'position_sigma_3d);'),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    IfPhaseSlipDetector::groupByConstellation\(', pieces=[
+        F(222, 229, 0),
+        N('groupCombinedIfRow(obs, phase_if_key, result);'),
+        F(247, 247, 0),
+        N('groupUncombinedRows(obs, result);'),
+        F(320, 323, 0),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::groupUncombinedRows\(', pieces=[
+        F(248, 319, 8),
+    ], subs=[
+        (258, 'continue;', 'return;'),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    IfPhaseSlipDetector::ChainResult IfPhaseSlipDetector::processDoubleDifferences\(', pieces=[
+        N('ChainWork w(chain, cs, log_manager_.getLogger("if_slip_detector"));'),
+        N('const auto& sys_str = chain.sys_str;'),
+        N('auto& run_ref_arm = plan.run_ref_arm;'),
+        N('auto& inherit = plan.inherit;'),
+        F(624, 642, 0),
+        N('indexChainSatellites(w);'),
+        F(649, 650, 0),
+        N('rebaseOnReferenceChange(w);'),
+        N('formChainDoubleDifferences(w);'),
+        N('applyGeometryCorrection(w);'),
+        F(698, 717, 0),
+        F(798, 798, 0),
+        F(892, 908, 0),
+        N('inheritReferenceVerdict(w, inherit);'),
+        F(921, 927, 0),
+        G(928, 968, 'if (!defer_flagging_) flagNonReferenceOutliers(w);'),
+        F(970, 970, 0),
+    ], subs=[
+        (649, 'if (!ref_data) return {};', 'if (!w.ref_data) return std::move(w.result);'),
+        (700, 'return delta_grad;', 'return std::move(w.result);'),
+        (798, 'if (run_ref_arm)', 'if (run_ref_arm) runReferenceArm(w);'),
+        (970, 'return delta_grad;', 'return std::move(w.result);'),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::indexChainSatellites\(', pieces=[
+        N('const auto& sat_vec = w.chain.sat_vec;'),
+        N('const auto& cs = w.cs;'),
+        N('auto& sat_map = w.sat_map;'),
+        N('auto& ref_data = w.ref_data;'),
+        F(643, 643, 4),
+        F(645, 647, 4),
+        F(648, 648, 4),
+    ], subs=[
+        (648, 'const SatData* ref_data =', 'ref_data ='),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::rebaseOnReferenceChange\(', pieces=[
+        N('const auto& logger = w.logger;'),
+        N('const auto& sys_str = w.chain.sys_str;'),
+        N('const auto& grad_phi_if = w.chain.grad_phi_if;'),
+        N('const auto& ref_changed = w.chain.ref_changed;'),
+        N('auto& cs = w.cs;'),
+        F(651, 665, 0),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::formChainDoubleDifferences\(', pieces=[
+        N('const auto& grad_phi_if = w.chain.grad_phi_if;'),
+        N('const auto& cs = w.cs;'),
+        N('auto& delta_grad = w.result.delta_grad;'),
+        N('auto& all_finite = w.all_finite;'),
+        F(667, 667, 0),
+        N('formDoubleDifferences(grad_phi_if, cs, delta_grad, all_finite);'),
+        F(679, 680, 0),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::formDoubleDifferences\(', pieces=[
+        F(670, 678, 0),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::runReferenceArm\(', pieces=[
+        N('const auto& sys_str = w.chain.sys_str;'),
+        N('const auto& lambda_if = w.chain.lambda_if;'),
+        N('auto& cs = w.cs;'),
+        N('const auto& sat_map = w.sat_map;'),
+        N('const auto& ref_data = w.ref_data;'),
+        N('const auto& delta_grad = w.result.delta_grad;'),
+        N('auto& outcome = w.result.outcome;'),
+        F(804, 883, 4),
+        F(885, 887, 8),
+        F(889, 889, 4),
+    ], subs=[
+        (878, 'applyRefFire(median_dd', 'applyRefFire(w, median_dd'),
+        (885, 'out_outcome->', 'outcome.'),
+        (886, 'out_outcome->', 'outcome.'),
+        (887, 'out_outcome->', 'outcome.'),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::applyRefFire\(', pieces=[
+        N('const auto& logger = w.logger;'),
+        N('const auto& sys_str = w.chain.sys_str;'),
+        N('const auto& grad_phi_if = w.chain.grad_phi_if;'),
+        N('const auto& lambda_if = w.chain.lambda_if;'),
+        N('const auto& position_sigma_3d = w.chain.position_sigma_3d;'),
+        N('auto& cs = w.cs;'),
+        N('const auto& ref_data = w.ref_data;'),
+        N('auto& delta_grad = w.result.delta_grad;'),
+        N('auto& reset_keys = w.result.reset_keys;'),
+        N('auto& all_finite = w.all_finite;'),
+        F(727, 786, 4),
+        N('formDoubleDifferences(grad_phi_if, cs, delta_grad, all_finite);'),
+    ], subs=[
+        (749, 'writeTraceRecord(*ref_data, sys_str, 0.0, median_dd,', 'logSlipRecord(*ref_data, sys_str, 0.0, median_dd,'),
+        (750, 'cs.ref_satellite, false, lambda_if, true, "ref_slip",', 'cs.ref_satellite, lambda_if, "ref_slip",'),
+        (751, 'position_sigma_3d, false);', 'position_sigma_3d);'),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::inheritReferenceVerdict\(', pieces=[
+        N('const auto& sys_str = w.chain.sys_str;'),
+        N('const auto& lambda_if = w.chain.lambda_if;'),
+        N('const auto& cs = w.cs;'),
+        N('const auto& delta_grad = w.result.delta_grad;'),
+        F(909, 920, 4),
+    ], subs=[
+        (919, 'applyRefFire(median_dd', 'applyRefFire(w, median_dd'),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    std::vector<std::string> IfPhaseSlipDetector::detect\(', pieces=[
+        F(983, 983, 0),
+        F(985, 995, 0),
+        N('const bool pos_gated = gateEpoch(position_sigma_3d, model_nuisance_m);'),
+        F(1011, 1110, 0),
+        N('const ChainEpoch chain{ sys_str, sat_vec, grad_phi_if, lambda_if, ref_changed,'),
+        N('delta_pos, position_sigma_3d };'),
+        F(1111, 1114, 0),
+        N('ChainResult result = processDoubleDifferences(chain, cs,'),
+        N('RefArmPlan{ first_pair_chain || run_extra_own_arm,'),
+        N('inherit });'),
+        N('delta_grad = std::move(result.delta_grad);'),
+        N('reset_keys.insert(reset_keys.end(), result.reset_keys.begin(),'),
+        N('result.reset_keys.end());'),
+        F(1121, 1129, 0),
+        N('publishChainJumps(chain, cs, delta_grad, first_pair_chain, pos_gated);'),
+        N('storeChainGradients(chain, cs, reset_keys);'),
+        F(1209, 1216, 0),
+    ], subs=[
+        (1121, '!outcome.satellite.empty()', '!result.outcome.satellite.empty()'),
+        (1122, '= outcome;', '= result.outcome;'),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::publishChainJumps\(', pieces=[
+        N('const auto& sys_str = chain.sys_str;'),
+        N('const auto& sat_vec = chain.sat_vec;'),
+        N('const auto& lambda_if = chain.lambda_if;'),
+        F(1130, 1136, 4),
+        F(1156, 1189, 4),
+    ]),
+    dict(file=IF_MAIN, def_re=r'^    void IfPhaseSlipDetector::storeChainGradients\(', pieces=[
+        N('const auto& grad_phi_if = chain.grad_phi_if;'),
+        F(1191, 1193, 4),
+        F(1195, 1201, 4),
+        F(1206, 1207, 4),
+    ]),
+    dict(file=IF_STAGED, def_re=r'^    bool IfPhaseSlipDetector::gateEpoch\(', pieces=[
+        F(984, 984, 0),
+        F(996, 1009, 0),
+        N('return pos_gated;'),
+    ]),
+    dict(file=IF_STAGED, def_re=r'^    void IfPhaseSlipDetector::groupCombinedIfRow\(', pieces=[
+        F(230, 246, 8),
+    ], subs=[
+        (232, 'continue;', 'return;'),
+        (236, 'continue;', 'return;'),
+        (239, 'continue;', 'return;'),
+        (242, 'continue;', 'return;'),
+    ]),
+    dict(file=IF_STAGED, def_re=r'^    void IfPhaseSlipDetector::applyGeometryCorrection\(', pieces=[
+        N('const auto& delta_pos = w.chain.delta_pos;'),
+        N('const auto& ref_data = w.ref_data;'),
+        N('const auto& sat_map = w.sat_map;'),
+        N('auto& delta_grad = w.result.delta_grad;'),
+        F(682, 696, 0),
+    ]),
+    dict(file=IF_STAGED, def_re=r'^    void IfPhaseSlipDetector::flagNonReferenceOutliers\(', pieces=[
+        N('const auto& logger = w.logger;'),
+        N('const auto& sys_str = w.chain.sys_str;'),
+        N('const auto& grad_phi_if = w.chain.grad_phi_if;'),
+        N('const auto& lambda_if = w.chain.lambda_if;'),
+        N('const auto& position_sigma_3d = w.chain.position_sigma_3d;'),
+        N('const auto& cs = w.cs;'),
+        N('const auto& sat_map = w.sat_map;'),
+        N('auto& delta_grad = w.result.delta_grad;'),
+        N('auto& reset_keys = w.result.reset_keys;'),
+        N('const auto& all_finite = w.all_finite;'),
+        F(929, 967, 0),
+    ], subs=[
+        (943, 'writeTraceRecord(', 'logSlipRecord('),
+        (945, 'cs.ref_satellite, ref_changed, lambda_if,', 'cs.ref_satellite, lambda_if,'),
+        (946, 'true, "non_ref_outlier", position_sigma_3d, false);', '"non_ref_outlier", position_sigma_3d);'),
+        (961, 'writeTraceRecord(', 'logSlipRecord('),
+        (964, 'dd, cs.ref_satellite, ref_changed, lambda_if,', 'dd, cs.ref_satellite, lambda_if,'),
+        (965, 'true, "fixed_threshold", position_sigma_3d, false);', '"fixed_threshold", position_sigma_3d);'),
+    ]),
+]
+
+
+IF_REGIONS = [
+    dict(file=IF_MAIN, a=30, b=37),        # the constructor
+    dict(file=IF_MAIN, a=114, b=160),      # the signal helpers and computeMedian
+    dict(file=IF_STAGED, a=162, b=213),    # checkOutliers (staged)
+    dict(file=IF_MAIN, a=326, b=602),      # selectReference and the hardened reference gate
+    # The external resets and re-seeds (prev_los erases deleted in step U5t-a).
+    dict(file=IF_MAIN, a=1223, b=1229),
+    dict(file=IF_MAIN, a=1231, b=1253),
+    dict(file=IF_MAIN, a=1255, b=1305),
+]
+
+IF_MEMBERS = {
+    644: ("ChainWork", "std::map<std::string, const SatData*> sat_map;"),
+    648: ("ChainWork", "const SatData* ref_data = nullptr;"),
+    668: ("ChainResult", "std::map<std::string, double> delta_grad;"),
+    669: ("ChainWork", "bool all_finite = true;"),
+}
+IF_TYPE_CHANGES = {}
+IF_MEMBER_ALSO_CARRIED = {648}
+
+IF_DROPS = {
+    # Step U5t-a (map SG-19).
+    **R(40, 66, "U5t-a: enableTracing had no caller (the trace file could not be opened)"),
+    79: "U5t-a: every remaining caller of the slip log line passes is_slip true",
+    **R(86, 94, "U5t-a: the non-slip debug branch, reached only from the deleted trace loop"),
+    96: "U5t-a: the trace file (never opened) is deleted",
+    **R(98, 107, "U5t-a: the trace file (never opened) is deleted"),
+    **R(1138, 1154, "U5t-a: the trace loop of detect(), guarded by the never-open trace file"),
+    1194: "U5t-a: ConstellationState::prev_los was never read",
+    **R(1202, 1205, "U5t-a: prev_los (never read)"),
+    1230: "U5t-a: prev_los (never read)",
+    1254: "U5t-a: prev_los (never read)",
+    **R(1308, 1311, "U5t-a: resetAll had no caller"),
+    **R(1316, 1319, "U5t-a: getLastIfJump had no caller"),
+    # Step U5t-c.
+    622: "the module logger is fetched once by the driver into ChainWork::logger",
+    725: "the applyRefFire lambda became a member function (its signature)",
+    726: "the lambda's parameter list (see 725)",
+    796: "the lambda's closing `};` (see 725)",
+    **R(787, 795, "the double-difference loop of the rebase: identical to frozen 670-678 "
+                  "(checked), now the shared formDoubleDifferences"),
+    803: "the bare block of the reference arm became runReferenceArm",
+    890: "the bare block's closing brace (see 803)",
+    884: "the outcome is always recorded in ChainResult::outcome; detect keeps it for the "
+         "first chain only, the one chain that passed a non-null out_outcome",
+    888: "the closing brace of that test (see 884)",
+    1115: "the outcome is returned in ChainResult::outcome",
+    **R(1116, 1120, "the twelve-argument call became "
+                    "processDoubleDifferences(chain, cs, RefArmPlan{...})"),
+}
+# Frozen code lines dropped because an identical run is carried elsewhere:
+# (dropped a, b, carried a, b), compared without leading space.
+IF_DUPLICATES = [(787, 795, 670, 678)]
+
+IF_COMMENT_EDITS = {
+    "- Construction / tracing": "file banner: `- Construction / the slip log line`",
+    "- Statistics (median, MAD outlier check)": "file banner: `- Statistics (median)`",
+    "- External reset": "file banner: `- External reset and re-seed`",
+    "Construction / tracing": "section banner: `Construction / the slip log line`",
+    "Statistics (median, MAD outlier check)": "section banner: the MAD outlier check is staged",
+    "Write trace records for non-slip satellites": "U5t-a: the trace loop is deleted",
+    "- Double-difference processing": "file banner: now names the driver and its steps",
+    "if (!defer_flagging_)": "the closing brace's trailing comment: the block became the call "
+                             "`if (!defer_flagging_) flagNonReferenceOutliers(w);`",
+    "out_outcome=": "an argument comment of the twelve-argument call (out_outcome is now "
+                    "ChainResult::outcome)",
+}
+
+# (level, substring of the frozen format literal) -> None (deleted) or
+# (level, substring of the new literal) (edited).
+IF_LOG_EDITS = {
+    ("warn", "Failed to create log directory"): None,
+    ("warn", "Could not open IF slip trace file"): None,
+    ("info", "IF slip tracing enabled"): None,
+    ("debug", "reason={} pos_sigma"): None,
+    ("debug", "All IF phase slip state cleared"): None,
+    ("info", "slip_reason={} pos_sigma={:.3f}{}"): ("info", 'slip_reason={} pos_sigma={:.3f}"'),
+}
+
+IF_ACTIONS = {
+    "push_back", "erase", "clear", "computeMedian", "updateRefDispersion", "evaluateRefGate",
+    "selectReference", "groupByConstellation", "logSlipRecord", "checkOutliers",
+}
+
+IF_HEADER_REMOVED = {
+    "#include <filesystem>": "U5t-a: no trace file",
+    "#include <fstream>": "U5t-a: no trace file",
+    "void resetAll();": "U5t-a: no caller",
+    "IfJumpInfo getLastIfJump(const std::string& satellite) const;": "U5t-a: no caller",
+    "bool enableTracing(const std::filesystem::path& log_dir);": "U5t-a: no caller",
+    "bool isTracingEnabled() const { return trace_file_.is_open(); }": "U5t-a: no trace file",
+    "std::map<std::string, Eigen::Vector3d> prev_los;": "U5t-a: never read",
+    "void writeTraceRecord(const SatData& sd, const std::string& sys_str,": "U5t-a: now logSlipRecord",
+    "const std::string& ref_sat, bool ref_changed,": "U5t-a: logSlipRecord drops ref_changed",
+    "double lambda_if, bool is_slip,": "U5t-a: logSlipRecord drops is_slip",
+    "double position_sigma_3d, bool pos_gated) const;": "U5t-a: logSlipRecord drops pos_gated",
+    "mutable std::ofstream trace_file_;": "U5t-a: no trace file",
+    "std::map<std::string, double> processDoubleDifferences(": "U5t-c: the new signature",
+    "const std::vector<SatData>& sat_vec,": "U5t-c: now ChainEpoch::sat_vec",
+    "const std::string& sys_str,": "U5t-c: now ChainEpoch::sys_str",
+    "ConstellationState& cs,": "U5t-c: the new signature",
+    "const std::map<std::string, double>& grad_phi_if,": "U5t-c: now ChainEpoch::grad_phi_if",
+    "double lambda_if,": "U5t-c: now ChainEpoch::lambda_if",
+    "bool ref_changed,": "U5t-c: now ChainEpoch::ref_changed",
+    "double position_sigma_3d,": "U5t-c: now ChainEpoch::position_sigma_3d",
+    "const Eigen::Vector3d& delta_pos,": "U5t-c: now ChainEpoch::delta_pos",
+    "std::vector<std::string>& reset_keys,": "U5t-c: now ChainResult::reset_keys",
+    "bool run_ref_arm = true,": "U5t-c: now RefArmPlan::run_ref_arm",
+    "RefArmOutcome* out_outcome = nullptr,": "U5t-c: now ChainResult::outcome",
+    "const RefArmOutcome* inherit = nullptr);": "U5t-c: now RefArmPlan::inherit",
+}
+
 SOURCES = {
     "TE": dict(
         path="src/core/slip/TurboEditResolver.cpp",
@@ -637,6 +956,23 @@ SOURCES = {
         frozen_expand={},
         actions=TE_ACTIONS),
 }
+SOURCES["IF"] = dict(
+    path="src/core/slip/IfPhaseSlipDetector.cpp",
+    header=IF_HPP,
+    new_files=[IF_MAIN, IF_STAGED, IF_WORK, IF_HPP],
+    work_header=IF_WORK, work_prefix="IfPhaseSlipDetector::",
+    units=IF_UNITS, regions=IF_REGIONS, members=IF_MEMBERS,
+    type_changes=IF_TYPE_CHANGES, also_carried=IF_MEMBER_ALSO_CARRIED,
+    drops=IF_DROPS, duplicates=IF_DUPLICATES, comment_edits=IF_COMMENT_EDITS,
+    log_edits=IF_LOG_EDITS, header_removed=IF_HEADER_REMOVED,
+    drivers=[dict(name="detect", body=(983, 1216))],
+    lambdas={"applyRefFire": (725, 796, "expand")},
+    renames={"writeTraceRecord": "logSlipRecord"},
+    leaf={"logSlipRecord", "groupByConstellation", "groupUncombinedRows", "groupCombinedIfRow",
+          "checkOutliers"},
+    frozen_expand={"processDoubleDifferences": (622, 970)},
+    event_skip=[(1137, 1155), (1194, 1194)],
+    actions=IF_ACTIONS)
 
 
 # -----------------------------------------------------------------------------
