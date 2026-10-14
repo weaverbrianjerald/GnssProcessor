@@ -4,15 +4,15 @@
 
 - **id:** QPR 0–3
 - **topic:** queues
-- **status:** open
-- **summary:** Item 1(d), the phase-anchor carry re-reference, VALIDATED and 1f PROMOTED; item 0 downgraded, 1(b) deferred, 1(c) unwritten, item 2's plumbing landed, item 3 dissolved into 1(d).
+- **status:** closed
+- **summary:** Items 0 to 3 resolved: 1(a), 1(b), 1(d), 1f, 1g and the clock marking are armed in the goldens; item 2 landed as tooling; item 0, 1(c), C-GF and the clock sum-to-zero superseded, moot or falsified.
 - **dates in the text:** 2026-08-04 → 2026-08-21
 - **knobs / posture:** `network.phase_datum_time_linked`, `network.phase_anchor_carry_reref`, `network.carry_coupling_gauge_project`, `network.carry_coupling_reinit_sources`, `network.shared_carry_gauge_free`
 - **hashes named in the text** (commit / exe / byte-cert): `ca19d0d`
 - **run dirs named in the text:** `runs/agu63_pbv2`, `runs/s24cpl_`
 - **source:** `docs/archive/QUEUE_principled_replacements.md`, items 0, 1, 2, 3
 
-**Outcome.** Item 0's pin bridge cut the code-bias channel 1.9× but was a net loss on the clock channel, so it was downgraded. Item 1(d), `network.phase_anchor_carry_reref`, took Σ|dev| from 160.46 to 1.53 m; 1f was PROMOTED to RECOMMEND_ON (field withholds 20 of 121 epochs to 0), 1g is RECOMMEND_SCOPED and C-GF is KEEP_OFF (inert by closure). Item 2's election plumbing landed on 2026-08-21. Still owed: 1(b) (deferred, the handover flux is near-empty) and 1(c). The 2026-09-14 frozen posture arms 1(d), 1f and the clock step test ([NETWORK_REFOUNDING](../../refound/NETWORK_REFOUNDING_2026-09-14.md)).
+**Outcome.** The items asked for principled replacements at the re-reference edges of the phase-bias and clock datums. The [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) goldens arm the slip-triggered anchor handover (1(a), `cycle_slip.anchor_slip_handover`), the clock-pivot S-transform (1(b), `handover_stransform`), the phase-anchor carry re-reference (1(d): Σ|dev| 160.46 to 1.53 m), 1f, 1g, `emit_clock_disc` and `clock_disc_jump_test`; item 2's election landed as tooling. Item 0's pin bridge was superseded by 1(d), 1(c) is moot without eq34, C-GF was inert by closure, and the clock sum-to-zero did not graduate (ledger). Nothing is owed. Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

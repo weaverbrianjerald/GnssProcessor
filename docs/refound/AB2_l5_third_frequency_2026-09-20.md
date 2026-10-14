@@ -4,14 +4,14 @@
 
 - **id:** AB2
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Re-opened after a field KEEP_OFF: the L5 field loss is a gap re-entry hole, not an L5 model gap; `gap_reentry_relevel` ARMED in the working bases 2026-09-20; L5 not yet adopted.
+- **status:** superseded
+- **summary:** L5 third frequency: the field loss was a gap re-entry hole, not an L5 model gap; `gap_reentry_relevel` is pinned on the goldens (ledger RECOMMEND_SCOPED); L5 SEQUENCED, superseded by card L5B.
 - **source:** [NETWORK_REFOUNDING](NETWORK_REFOUNDING_2026-09-14.md) (the add-back list); [PBH](PBH_phase_bias_hold_2026-09-19.md) section 8 (the baseline pair and the L5 pre-flight note); code census of 2026-09-20
 - **knobs / posture:** `processing.frequency_mode: triple` plus band-5 entries in `processing.signal_priorities.GPS`; RF-0hv working bases at main `2b12b19`; `network.cycle_slip.gap_reentry_relevel` armed in `config/refound/{field,sim}_gps_dual_rf0hv.json` (section 14)
 - **dates in the text:** 2026-09-20
 - **hashes / run dirs:** baseline pair `runs/_rf0hv3_{field,sim}6`; bench arms `runs/_ab2_{field,sim}6_{T3,T3n}`; exe `gnss_processor_pbh1.exe` sha256 `F1D3BDDB...`; new baseline pair `runs/_rf0hv4_{field,sim}6`; 12 h arms `runs/_rap_d12_{off,on}`
 
-**Outcome.** Question: can GPS L5 join as a third frequency? The first verdict (KEEP_OFF, field hour 6 at 1.11 m) is superseded from section 7: the loss traces to an unflagged 301-cycle L1C slip at a BSHM00ISR return epoch, an L1/L2 loss of lock the re-entry bookkeeping misses while band 5 tracks. Emulating these dropouts, L5 gives 311 epochs below a decimetre against 167, narrowly missing the frozen bar in hours 3 and 4. [L5P](L5P_l5_phase_posture_2026-09-21.md) section 4 counts the hole as one of three network defects; L5 is sequenced, not adopted.
+**Outcome.** Question: can GPS L5 join as a third frequency? The first field KEEP_OFF (hour 6 at 1.11 m) traces to an unflagged 301-cycle L1C slip at a BSHM00ISR return epoch that the re-entry bookkeeping missed. `network.cycle_slip.gap_reentry_relevel` answers it, holds over 12 h (section 15) and is pinned on the goldens; emulating the dropouts, L5 still narrowly missed its frozen bars. L5 is SEQUENCED, not closed: the return plan continues in [L5B](L5B_band5_receiver_delay_2026-10-10.md); the hour-12 lead of section 15 belongs to a retired base. Status reviewed 2026-10-13.
 
 ## 1. What the census found (2026-09-20)
 

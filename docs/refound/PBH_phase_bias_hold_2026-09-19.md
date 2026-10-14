@@ -4,14 +4,14 @@
 
 - **id:** PBH
 - **topic:** consumer
-- **status:** open
-- **summary:** The emit-side phase-bias hold (`network.emit_pb_hold`) is BUILT and ADOPTED: all five PBH-1 bars PASS and the wire's within-arc phase-correction error falls to the clock's (sim 3.0 mm, field 27.4 mm).
+- **status:** closed
+- **summary:** The emit-side phase-bias hold (`network.emit_pb_hold`): all five bars PASS and the wire's within-arc phase error falls to the clock's (sim 3.0, field 27.4 mm); ARMED in both goldens, ledger RECOMMEND_SCOPED.
 - **source:** [PBT-AUDIT](PBT-AUDIT_translation_premise_2026-09-16.md) section 6; [PBT](PBT_consumer_pb_translate_2026-09-15.md); [ALC2](ALC2_restart_policy_adoption_2026-09-19.md) (the baseline pair)
 - **knobs / posture:** PBH-0: `network.closed_loop.pb_step_translate_eps_m` ladder on the RF-0hv working bases (main `ca3666e`), config only. PBH-1: `network.emit_pb_hold` (+ `network.emit_pb_hold_max_gap_s`, default 300), default OFF, built on main `28f9735`; adopted 2026-09-20 into `config/refound/{field,sim}_gps_dual_rf0hv.json` with `closed_loop.pb_step_translate: false` and `closed_loop.amb_level_check: false`
 - **dates in the text:** 2026-09-19, 2026-09-20
 - **hashes / run dirs:** `runs/_ftc_read_20260919/`; `runs/_pbh0_{field,sim}6_{e0,e1,e5,e20}`; exe `gnss_processor_rf0hv2.exe` sha256 `A3D62A24...`; grader `scripts/ftc_step_attrib.py`; PBH-1 arms `runs/_pbh1_{field,sim}6_{H,HA,HP}`, exe `gnss_processor_pbh1.exe` `F1D3BDDB65E554B7`; baseline pair from 2026-09-20 `runs/_rf0hv3_{field,sim}6` (wire `bbaa7fd6...` field, `ea3a646f...` sim)
 
-**Outcome.** The question was whether the wire's phase-bias movement is a frame transfer to translate or error to remove. Only 0.2 % of the translated mass was a known frame move; the zero dead band confirmed the leak hypothesis (PBH-0), and the hold matches that arm to within 0.3 mm per epoch. Under the hold the level check is harmful (field sub-decimetre epochs 167 to 1). ADOPTED 2026-09-20 with the translation and the level check OFF, pinned in the goldens by [GRB](GRB_golden_rebase_2026-09-22.md) and RECOMMEND_SCOPED in the [ledger](../CONFIG_promotion_ledger.md) (A10). Owed: the hold in the state snapshot and the cause of the bias wander ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)).
+**Outcome.** Question: is the wire's phase-bias movement a frame transfer to translate or error to remove? Error: 0.2 % of the translated mass was a known frame move, and the hold (all five PBH-1 bars PASS) equals the zero-dead-band translation to 0.3 mm per epoch; under it the level check is harmful (sub-decimetre epochs 167 to 1). ARMED since [GRB](GRB_golden_rebase_2026-09-22.md), with successors [PBF](PBF_pb_hold_presence_edges_2026-09-28.md) and [LAH](LAH_level_aware_hold_2026-09-29.md). Owed items: the S line exists since [OWD](OWD_owed_defects_2026-09-22.md), the wander passed to [FWS](FWS_field_walk_share_sources_2026-10-01.md), the snapshot waits on the seam add-back. Status reviewed 2026-10-13.
 
 ## 1. The reads that re-aim the contract (2026-09-19)
 

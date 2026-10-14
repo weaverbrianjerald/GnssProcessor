@@ -4,14 +4,14 @@
 
 - **id:** PRM3
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Phase 3a and phase 3b steps 1 and 2 BUILT: byte-identical with knobs off on all 16 harness arms, 0 declaration errors; the step-2 knob is not recommended and step 3 is parked.
+- **status:** closed
+- **summary:** 69 response sites declared (0 errors) and the gap policies unified, byte-identical; carry_rebase_complete inert to mm, not recommended. Closed: the held emission under a shift is card IRD's, the erase family NOM's.
 - **source:** [PRM](PRM_parameter_registry_2026-09-29.md) sections 4.5 and 8 (this file continues that card, which is near the 60 KB bar); [RF-1 design](RF-1_float_ambiguities_design.md) section 1.5
 - **knobs / posture:** phase 3a and step 1 trace class only (run-start and run-end log lines, manifest records `param_model.on` and `param_responses`); step 2 adds `network.carry_rebase_complete` (default off, not recommended)
 - **hashes / run dirs:** exe `gnss_processor_prm3a.exe` `0e815e61c291ec6b`; tags `p3ah6` (6 h goldens), `p3a` (program, scalar, diag, 2 h), `p3ax` (clv, eq34, dho, 1 h), `p3axr` (relevel, 2.1 h) under `runs/_rap_prm_*`; later gates on `gnss_processor_prm3b.exe`, `prm3c`, `prm3d` (sections 5, 7, 8)
 - **dates in the text:** 2026-10-02, 2026-10-03
 
-**Outcome.** Phase 3 of card PRM declares and counts every site where a carried parameter responds to a slip, gap, handover, decouple or readmit event, then gives each policy one implementation. Phase 3a declared 69 sites (31 to 35 armed per harness posture); the completed review widened three arming conditions and narrowed about thirty, and step 1 routes the eight gap prunes through one implementation. Step 2's knob moves the owed references with effects inert or at the millimetre level (eq34 field: phase bias within 7.6 mm). Owed: the held emission under a phase-bias shift and three uncounted responses; step 3 (the erase family) is parked.
+**Outcome.** Question: can every carried parameter's response to a slip, gap, handover, decouple or readmit be declared, counted and implemented once per policy? Phase 3a declared 69 sites (0 declaration errors, 16 harness arms byte-identical); step 1 unified the eight gap prunes; step 2's `network.carry_rebase_complete` moves the owed references inert or millimetric, not recommended. Closed: the held emission under a phase-bias shift passes to [IRD](IRD_integer_recovering_datum_2026-10-13.md) (IRD-7), the erase family to [NOM](NOM_network_object_model_2026-10-08.md)'s entities; the band-5 hold's return count is owed, the clock-monitor and oscillator counts moot. Status reviewed 2026-10-13.
 
 ## 1. The build
 

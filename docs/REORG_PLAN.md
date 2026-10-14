@@ -1,5 +1,7 @@
 # REORG PLAN — the docs/ topic tree (2026-09-14)
 
+> **Reconciled 2026-10-13** against the network re-founding: the split, the index, the seven rules and their checker are done, and the one leftover is relocating or archiving the standing `docs/*.md` files and re-pointing the memory lines that still cite split docs. Items still owed are in [OPEN_ITEMS](status/OPEN_ITEMS.md).
+
 **The complaint this answers, verbatim (author, 2026-09-14):** *"It is incredibly
 difficult to follow because our project seems extremely bloated. For example,
 `docs/SPEC_event_harness.md` is enormous. We need a method to organize our whole

@@ -1,5 +1,7 @@
 # HANDOFF — STABILITY campaign, queue item 1: resume-seam frame restore (2026-09-03)
 
+> **Reconciled 2026-10-13** against the network re-founding: the coupling-regressor restore and the E2 re-admission seed were built (the seed and `sticky_pivot` are pinned in both goldens); the rest served the retired seam lineage and returns only with the seams add-back. Items still owed are in [OPEN_ITEMS](status/OPEN_ITEMS.md).
+
 > **CLOSED 2026-09-06 (leg E, `runs/cplreg_q12warm_e`).**  The seam residual was the one-epoch DIAGONAL border fold at the first warm epoch; `resume_coupling_restore` on a QK/QP (v3) snapshot restores the dense D2 border and the warm restart's consumer converges like a cold consumer on the continuous wire (h12 0.62 m rms vs 2.05).  Both resume knobs are RECOMMEND_SCOPED for warm lineages; the E2 re-admission seed (`readmit_seed_horizon_s: 3900`) is pinned on the sim golden.  Verdicts: SPEC_synthetic_minimum_network §18.14, SPEC_amb_iono_split_overcount §6.11.  Grade every future seam card with a cold-consumer replay (`config/test_suite/_seamctl_replay_*.json`).
 
 Written at the Fable session's wind-down for the continuing (Opus) session.

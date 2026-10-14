@@ -1,5 +1,8 @@
 # SPEC — prefit census + structural fuse + topology ledger + flight recorder
 
+> **Reconciled 2026-10-13** against the network re-founding: every increment is built and gated, the census, topology ledger, flight recorder and H-record sigma0 are armed in both goldens, the fuse and birth check are superseded by the gross line-of-sight and admission screens, the §13 valves are closed or retired on the current posture (EV7 drop-edge erase, re-admission seeds, sticky pivot; SH, D5, Kaula and seam valves gone), and §17's degenerate phase statistic is the one item still live.
+> Items still owed are in [OPEN_ITEMS](status/OPEN_ITEMS.md).
+
 **Status**: SPEC'd 2026-08-01 (the session that root-caused era-2); built and field-gated the
 same day (§15–§18).  Known-answer gates (§12) from `runs/ft63_leg19_rhsat`.
 **Memory context**: `project_ft63_fast_tier` (era-2 root cause + the rhs_attrib instrument),

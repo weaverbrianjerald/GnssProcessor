@@ -4,14 +4,14 @@
 
 - **id:** LGM
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** BUILT, default off, NOT ARMED: no-harm with the posture's white phase sigma but starved, because the colour cannot be separated from the loose carried ambiguity; open behind card AIL.
+- **status:** closed
+- **summary:** BUILT, default off, NOT ARMED: consistent and wired but starved, capped by the carried ambiguity's dilution through the anchor's walk (physical on the field, card AIL). Closed; the joint carry stays unbuilt.
 - **source:** [SFR](SFR_sim_fixture_coloured_phase_2026-10-01.md) sections 1, 4 and 5.2; [FWS](FWS_field_walk_share_sources_2026-10-01.md) sections 2 to 5; [LSR](LSR_long_scale_remainder_2026-10-01.md) section 7; [SOI](SOI_second_order_ionosphere_leak_2026-10-01.md) section 6 (the fallback named there); [PRM](PRM_parameter_registry_2026-09-29.md) sections 4 and 8; [PVN](PVN_phase_visible_nees_2026-09-29.md) section 5; [FXA](FXA_field_excess_phase_visible_motion_2026-09-30.md) (the increment reads); the ranking recorded after cards SOI, I2S, LSR, SFR and WUP (the pre-registration: the nuisance state first, the phase-weight inflation as its one-knob control arm)
 - **knobs / posture:** C0 is config only (`filter.measurement_noise.phase_std_m`); the build adds a default-off block (`network.phase_colour_state` and its parameters, names fixed in section 4.1 before code); no golden, ledger or posture change in this card
 - **dates in the text:** 2026-10-01
 - **hashes / run dirs:** exe `build/x64-Release/gnss_processor_lgm0.exe` (main `17fbb0c`, sha256[:16] `0601c7d08d4f0ed6`); arms `runs/_rap_lgm_*`; the sim colour truth `runs/simnet60_quiet_col_24h/<station>/truth_phase_colour.csv`
 
-**Outcome.** The question: can one band-common, phase-only Gauss-Markov state per station and satellite model the stations' coloured phase error? The control C0 (phase sigma times 2.2) is no substitute. The state passes G0, G4 and G5 and fails G1 to G3 (its estimate a quarter of the truth's amplitude); with a 0.5 mm white sigma the residual whitens, but G1 still fails and the sim consumer loses up to 14 cm. Card [AIL](AIL_ambiguity_information_loss_2026-10-01.md) section 4.1: with that sigma and the anchor's walk near zero (sim), the state carries the colour (10.0 against 12.0 mm) at a clock-level cost.
+**Outcome.** Question: can one band-common, phase-only Gauss-Markov state per station and satellite model the stations' coloured phase error? The state passes G0, G4 and G5 and fails G1 to G3 (starved); a 0.5 mm white sigma whitens the residual but G1 fails and the sim consumer loses up to 14 cm. [AIL](AIL_ambiguity_information_loss_2026-10-01.md): the cap is the anchor's walk (near zero, the sim state carries 10.0 of 12.0 mm at a clock-level cost), physical on the field; [SCL2](SCL2_level_residue_under_the_clone_2026-10-06.md) section 9 left the joint carry unbuilt. Closed, default off. Status reviewed 2026-10-13.
 
 ## 1. Why
 

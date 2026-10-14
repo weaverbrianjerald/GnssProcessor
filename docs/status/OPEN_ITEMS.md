@@ -1,102 +1,157 @@
-# OPEN ITEMS — what is owed, and where the evidence is
+# Open items
 
-Every entry names the card (or standing document) that is its evidence. An item leaves
-this page by being built and graded, by being falsified, or by being re-filed as a card —
-never by being quietly dropped.
+The single register of work owed under the current program: one line per item, each with its
+evidence. It is a register, not a plan: [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md)
+and [the card index](../refound/CARDS.md) set the order of work. An item leaves this page by being
+built and graded, by being falsified, or by being re-filed as a card. GPS L5, lanes and seams are
+add-backs: one that misses its bars is SEQUENCED with a return plan, never closed. The page was
+rebuilt on 2026-10-13 from every open card, the pre-refound registers (the QPR queue, the
+edge-response queue, the valve inventory, the AMB-IONO open questions, the CAF findings, the former
+section A of this page) and the config ledger, whose reconciliation is recorded in each card's
+Outcome; items moot under the re-founding were dropped.
 
-This page is a **register**, not a plan. The order of work for the network producer is
-[the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md): RF-0 → RF-1 →
-RF-2 → RF-3, graded on the cold 6 h consumer and the wire-vs-CODE census and nothing
-else. Items below that the re-founding supersedes are marked as such rather than deleted,
-because each is still a true statement about a defect.
+## Open cards
 
-Harvested 2026-09-14 from the STATUS blocks of every card (`status: open`) and from the
-open registers the texts carry. Regenerate the card half with:
-
-```bash
-python scripts/docs_index_check.py          # gate
-grep -l '^- \*\*status:\*\* open' -r docs/cards docs/decisions
-```
-
----
-
-## A. The current program
-
-Section A grows with every card and took this page past the 60 KB bar, so on 2026-09-22
-it moved, verbatim and in its original row order, to
-[OPEN_ITEMS_A_current_program.md](OPEN_ITEMS_A_current_program.md). Its older rows, those
-whose bold lead-in is last dated before 2026-09-20, continue in
-[OPEN_ITEMS_A_before_2026-09-20.md](OPEN_ITEMS_A_before_2026-09-20.md). This page remains
-the entry point to the register; new section A rows are added to the current-program file.
-
----
-
-## B. Open cards
-
-Every card whose STATUS block says `status: open`. Twenty-four at the time of writing (2026-09-14); 13 on 2026-10-07.
-
-| topic | card | what is open | source section |
-| --- | --- | --- | --- |
-| `consumer` | [CI](../cards/consumer/CI-consumer-instrument.md) | the closed-loop consumer as an INSTRUMENT — what the consumer bars have actually been reading, and the attribution legs | `SPEC_event_harness.md` — 24, 24.1, 24.2, 24.3 |
-| `ionosphere` | [AMB-IONO](../cards/ionosphere/AMB-IONO-SPLIT.md) | why the network producer never reaches per-band integers on the quiet sim bed — the five measurements, the mechanism, the falsified list and the fix ladder | `SPEC_amb_iono_split_overcount.md` — (preamble), §0, §1, §2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, §3, 3.1, §4, §5, 5.1, §8 |
-| `ionosphere` | [AMB-IONO open](../cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | the open-question register — re-cut round 2, with the round-4 closures and items 15–21 | `SPEC_amb_iono_split_overcount.md` — §7 |
-| `queues` | [QPR](../cards/queues/QPR-00-CHARTER.md) | the charter — why this queue exists, how an item enters and leaves it, and the rank order | `QUEUE_principled_replacements.md` — (preamble) |
-| `queues` | [QPR 0–3](../cards/queues/QPR-ITEMS-0-3.md) | items 0–3: the pin bridge, the S-transform re-reference family, datum-station election by criterion, and the clock's re-realization-free posture | `QUEUE_principled_replacements.md` — 0, 1, 2, 3 |
-| `queues` | [QPR 4](../cards/queues/QPR-ITEM-4-T3-NULLS.md) | item 4: T3-class test statistics — correct nulls, not recalibrated constants | `QUEUE_principled_replacements.md` — 4 |
-| `queues` | [QPR 5–8](../cards/queues/QPR-ITEMS-5-8.md) | items 5–8: the level contract, the half-epoch back-off ritual, the SH health-gate release policy, and the per-LOS ionosphere representation | `QUEUE_principled_replacements.md` — 5, 6, 7, 8 |
-| `queues` | [QPR blocked](../cards/queues/QPR-BLOCKED-AND-CLOSED.md) | blocked on root cause, leave-alone (falsified or decided), and the queue's maintenance rule | `QUEUE_principled_replacements.md` — (see body) |
-| `raim-qc` | [DEC-day129-gate-policy](../decisions/DEC-day129-gate-policy.md) | the gate-policy ruling — DEGRADE, DO NOT WITHHOLD; the statistic; the CB-excursion resume window; the validation gates; and the un-derived grace-floor magnitude | `SPEC_day129_frame_guards.md` — D, E1, E2, E3, E4 |
-| `slip` | [REF-FAN](../cards/slip/REF-FAN.md) | the reference-slip fan-out under `if_phase_td_pairs = all` — RECOMMEND_SCOPED, the field pin still owed | `SPEC_event_harness.md` — 22.6, 22.7 |
-| `slip` | [T4 lane restore](../cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore v1 (value-only), `network.cycle_slip.relevel_t4_lane_restore` — spec only, not built | `SPEC_lane_slip_response.md` — §8 |
-| `slip` | [rung 3](../cards/slip/LANE-SNAP-RUNG3.md) | the lane-preserving snap — v1/v2 falsified, the SEED SITE deleted as an exact solve no-op, and the v3 carry-domain observatory through its field arm | `SPEC_lane_slip_response.md` — §6, §7, §7.1, §7.2, §7.3, §7.4, §7.5, §7.6, §7.7, §7.8 |
-| `wire-contract` | [level health](../cards/wire-contract/LEVEL-HEALTH-CHANNEL.md) | `network.emit_level_health` — the contract gap, the one-channel three-class mechanism, and the normative consumer contract | `SPEC_withhold_era_release.md` — §12, §12.1, §12.2, §12.3, §12.4, §12.5, §12.6, §12.7, §12.8, §12.9 |
-
-On 2026-10-07 the card-header cleanup changed the status of 11 rows on written evidence, which each card's Outcome paragraph cites: [Q3-F](../cards/clock/Q3-F-self-contained-time-link.md) (closed), [DEC-field-vehicle](../decisions/DEC-field-vehicle-posture.md) (superseded), [LV roadmap](../cards/ionosphere/LV-ROADMAP.md) (superseded), [LV-SEED](../cards/ionosphere/LV-SEED-per-los-level.md) (closed), [CE](../cards/network-vehicle/CE-chain-era-bisect.md) (closed), [CM2](../cards/network-vehicle/CM2-leveling-vehicle.md) (closed), [PV](../cards/network-vehicle/PV-vehicle-test.md) (closed), [ZP](../cards/network-vehicle/ZP-station-block-parameterization.md) (closed), [GL](../cards/raim-qc/GL-gross-los-screen.md) (closed), [GL-2 + R8](../cards/raim-qc/GL-2-whole-satellite-standdown.md) (closed), [wind-up census](../cards/slip/WINDUP-FRACTIONAL-CENSUS.md) (closed).
-
----
-
-## C. Registers that hold more than a card row can
-
-| register | what is in it | where |
+| area | card | open work |
 | --- | --- | --- |
-| The ambiguity/iono open questions | the re-cut round-2 register with the round-4 closures and items 15–21 — the largest single list of owed work in the corpus | [cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md](../cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) (§7) |
-| The principled-replacement queue | items 0–8 plus "blocked on root cause" and "leave alone" | [cards/queues/QPR-00-CHARTER.md](../cards/queues/QPR-00-CHARTER.md) and the four item cards |
-| The edge-response queue | invariant #7's open valves, per family | [HANDOFF_edge_response_queue.md](../HANDOFF_edge_response_queue.md) |
-| The open valve inventory | which valves still have a bare decoupling or re-coupling edge | [SPEC_prefit_census_observability.md](../SPEC_prefit_census_observability.md) §13 |
-| Tier 3 of the config ledger | **every** row there is "plausible, never measured on field data" — the tier IS an owed list | [CONFIG_promotion_ledger.md](../CONFIG_promotion_ledger.md), `## Tier 3 — UNVALIDATED` |
-| The consolidated OWED / gate ledger | the redundancy-census family's own gate list | [cards/raim-qc/REDUNDANCY-CENSUS.md](../cards/raim-qc/REDUNDANCY-CENSUS.md) (§15) |
-| The comment-audit findings | code defects (open and fixed), unverified suspicions, author checks, CLAUDE.md claims the code contradicts, dead code and wrong output strings, found while every comment was checked against its code | [cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) |
+| network object model | [NOM](../refound/NOM_network_object_model_2026-10-08.md) | Typed identities and a declared disposition for every network object; N0a, N1, N1b, N0b and N0c landed byte-identical; continued in NOM2. |
+| network object model | [NOM2](../refound/NOM2_network_object_model_rows_2026-10-09.md) | A declared kind for every row (N2a, N2b), the signal roster (N3a) and the run end as 107 owned reports (TD1a, TD1b) landed; N3 continues. |
+| network object model | [NOM3](../refound/NOM3_network_giants_2026-10-09.md) | Pre-registered: the four giant network functions (driver, PASS B, solve, carry harvest) cut by the run-end method; the culprit-withhold fix (card WCF) first. |
+| integers (sim) | [ARL](../refound/ARL_integer_ambiguity_ladder_2026-10-09.md) | Integer ladder on the sim: rungs 0 to 3 graded with no wrong fix; phase colour cuts the settled pairs fixed from 42 % to 19 %. |
+| integers (sim) | [IRD](../refound/IRD_integer_recovering_datum_2026-10-13.md) | Integer-recovering datum on the eq34 chain, observatory first; the re-registered negative control passes 44 of 44 cells; IRD-1 next. |
+| add-back: L5 | [L5B](../refound/L5B_band5_receiver_delay_2026-10-10.md) | L5 is SEQUENCED, not closed: R-1b and R-1c built default off; R-1d (robust ignition of receiver code states) awaits the author's design decision. |
+| add-back: lanes | [AB3](../refound/AB3_lanes_2026-09-20.md) | SEQUENCED after L5: readiness AB3-0 passes (field wide-lane gap +0.283 against 0.10); the old lane layer is refused; the lane design is owed. |
 
----
+## Clock and level
 
-## D. Named owed validations, from cards that are otherwise closed
+The phase-clock hold armed by card EXL is interim (valid only with a precise a priori clock
+product). These items are its replacement and the level's open edges.
 
-A closed card can still owe a run. These are the ones the corpus names explicitly.
+- **Self-contained clock level.** Broadcast clock: hour 1 +0.077 m, 0.017 m worse than COD on DOY 130 to 132 (ASCG, HARB, SCRZ); pre-register the next level card first. [NBP §12](../refound/NBP_native_broadcast_clock_posture_2026-10-07.md)
+- **Golden candidate: the SCL regime on COD.** q 5e-6, SMH hold, B1, B2, keep and X2b: census-neutral over four days, prevents ARHT00ATA's divergence; read hour 1 (+0.016 m) first; the author's decision. [NBP §12](../refound/NBP_native_broadcast_clock_posture_2026-10-07.md)
+- **Before arming B2 (dense handover).** Card SMH's orphaned deficits at the edge (2 to 94), the walk frame's one-epoch term Q_q, and the skipped epoch after the edge. [SCL §10](../refound/SCL_self_contained_clock_level_2026-10-03.md)
+- **Shared history X2 and X2b.** Owe G4's site count, the in-loop sim consumer in hours 2 and 3, and X2b's hour-1 held-out cost (+0.012 m, 15 of 36 worse). [SCL2B §12](../refound/SCL2B_shared_history_with_the_hold_2026-10-07.md)
+- **Per-satellite clock q.** Derive it from card PVN's phase-visible NIS (7.2 at the golden q, 1.4 at 5e-6) for the broadcast-clock posture. [SCL §7](../refound/SCL_self_contained_clock_level_2026-10-03.md)
+- **Readmission clock seed.** Check the pre-park clock prior (1.2e-2 to 1.8e-2 m²) against 12 to 55 min eclipses; under X2 the seed lags code (slope 0.27 to 0.62). [SCL2 §12](../refound/SCL2_level_residue_under_the_clone_2026-10-06.md)
+- **Native broadcast posture edge cases.** Untested: a removed record (G6 unit half), a mid-day health flip, a real-time switch delay, the consumer's no-C-record fallback, navigation beyond 6 h. [NBP §7](../refound/NBP_native_broadcast_clock_posture_2026-10-07.md)
+- **Anchor guard on a phase-bias frame event.** A phase-visible step with a steady clock trips a clock decouple; the fitting response is a declared phase-bias step. [CTU2 §5](../refound/CTU2_level_recursion_followup_2026-09-29.md)
 
-| owed | why it is open | evidence |
-| --- | --- | --- |
-| **REF-FAN's field pin (FP-2)** | RECOMMEND_SCOPED, never pinned: the 60-epoch matrix is clean but the 6 h twin refuses the pin on the slip-RESPONSE cost (+107 declared PB re-realizations). The lane-preserving refloat is the lever. | [cards/slip/REF-FAN.md](../cards/slip/REF-FAN.md) (§22.6–§22.7), [cards/harness/FIELD-HARNESS.md](../cards/harness/FIELD-HARNESS.md) (§20.3) |
-| **`network.clock_datum_sum_to_zero` on the field** | first validation was sim-only (50-sta fixture, PASS); the field arm is still owed. The same matrix showed the bigger consumer lever is PIVOT ELECTION. | [cards/network-vehicle/DATUM-WANDER.md](../cards/network-vehicle/DATUM-WANDER.md) (§9.8) |
-| **`network.clock_datum_broadcast_anchored`** | never validated; `declared_dimension = 0` with "no pivot, no handover seam", against a clock that is the worst re-realizer measured. | [CONFIG_promotion_ledger.md](../CONFIG_promotion_ledger.md), Tier 2 row `network.clock_datum_broadcast_anchored` |
-| **`network.emit_clock_disc`** | without it the per-satellite clock disc counter is never populated, so product-wide clock jumps are silent to the consumer. | [CONFIG_promotion_ledger.md](../CONFIG_promotion_ledger.md), Tier 2 row `network.emit_clock_disc`; RF-3 subsumes it |
-| **`network.raim_we_code_iono`** (WE-CI) | joins the fingerprint-SAFE armed set only once its first ON validation passes. | [CONFIG_promotion_ledger.md](../CONFIG_promotion_ledger.md), Tier 3 row `network.raim_we_code_iono` |
-| **The within-epoch RAIM tier is `carry_warm`-gated** | so it is inert without `phase_leveling`. Decoupling it is a sanctioned open fix. | [CONFIG_promotion_ledger.md](../CONFIG_promotion_ledger.md), Tier 2 row `network.raim_within_epoch` |
-| **`network.trace_dd_fractional_ref: oldest`** | BUILT and UNVALIDATED; the goldens stay on `lowest`. An `oldest` trace is quieter, never reference-FREE. | [cards/sim-bed/DD-TRACE-REF-SAT.md](../cards/sim-bed/DD-TRACE-REF-SAT.md) (§6.13) |
-| **The wind-up accumulator's RESTART response** | the flip is blocked on an inverted horizon (accumulator 300 s vs `phase_leveling_max_gap_s: 900`); the census measured ~306 in-horizon wraps/day traded for ~120 uncompensated restarts/day. Build the response, not the flip. | [cards/slip/WINDUP-FRACTIONAL-CENSUS.md](../cards/slip/WINDUP-FRACTIONAL-CENSUS.md) (§10, §11) |
-| **The SH health gate has no release / degrade policy** | a sick-field era withholds the wire for its full duration — 95+ min measured on DOY-129. | [cards/queues/QPR-ITEMS-5-8.md](../cards/queues/QPR-ITEMS-5-8.md) (item 7), [cards/wire-contract/LEVEL-HEALTH-CHANNEL.md](../cards/wire-contract/LEVEL-HEALTH-CHANNEL.md) |
-| **The rx-CB inject gate is FRAME-BLIND** | it compares `\|value_abs − x_lin\|` against a frozen first-epoch seed, bar 5.13 m; 7 of 61 field stations were refused all day. RS-9 fixed continuity only — the gate itself is a solve-affecting card. | [cards/resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md](../cards/resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md) (§21.18) |
-| **The DOY-129 grace-floor MAGNITUDE is un-derived** | the ruling's own named prerequisite; every number in the policy hangs off it. | [decisions/DEC-day129-gate-policy.md](../decisions/DEC-day129-gate-policy.md) (E4) |
-| **`total_IF` was never graded in the lane A/B** | 1 h cannot settle the LEVEL channel; the lane verdict rests on everything except that channel. Grade it on ≥ 2 h before quoting it. | `CLAUDE.md`, "Amendments from the AGU-26 campaign"; [SPEC_lane_carry_card.md](../SPEC_lane_carry_card.md) |
-| **The T4 lane-restore apply leg** | specified, not built — pend-and-restore v1 (value-only). | [cards/slip/T4-LANE-RESTORE-SPEC.md](../cards/slip/T4-LANE-RESTORE-SPEC.md) (§8) |
+## Wire contract and biases
 
----
+- **RF-3c writer.** Gross-LOS exclusions reach the wire at union scope (code_disc, clock_disc); owed: a writer naming the moved channel and tier in the R record (gate G3). [RF-3 §5.3](../refound/RF-3_code_row_qc_2026-09-22.md)
+- **Emitter re-coupling edges without identity.** On `_rf0hv10`: 3 hold generations restarted by an emission gap with no arc (G20), 8 returning families read as first sightings; consumer cost unread. [SID §10](../refound/SID_signal_identity_2026-09-22.md)
+- **Product contract gaps.** The S line omits the wind-up mode and checkContract skips cbjump and clkset, so a mismatched replay consumer passes unchecked; confirm or fix. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **SCC owed reads.** The regional Europe Up shift (11 roster stations, mean -0.017 m) and the pinned pair's 0.285 m standing per-satellite code misfit on the sim. [SCC](../refound/SCC_second_code_channel_2026-09-21.md)
+- **Code bias after its column leaves.** A surviving code row keeps its bias (the code analogue of the armed phase erase); 1 edge per 6 h under SCC; recount on `_rf0hv15`. [EV7 §5.3](../refound/EV7_all_sat_clock_decouple_2026-09-21.md)
 
-## E. Follow-ups this documentation pass created
+## Datum, carry and coordinates
 
-| item | detail |
-| --- | --- |
-| **The ledger was deliberately left whole** | `docs/CONFIG_promotion_ledger.md` is a LIVING REGISTER, not a pile of closed cards: the `scripts/_*_ledger_oneoff.py` family (`_coldfb_`, `_fieldharness_`, `_rs2_refarc_`, `_scopedpromo_`, `_stspromo_`, `_study7_`) and every future promotion append a row at that exact path, in step with `CONFIG_promotion_ledger.json`. It is NOT split, NOT archived and NOT stubbed, and it carries a named size exemption in `scripts/docs_index_check.py` (`SIZE_EXEMPT`). Nothing to do — recorded so a later pass does not "finish the job". |
-| **The 58 standing documents were indexed, not moved** | Each is referenced by path from `src/`, `include/`, `scripts/`, arm configs and the read-only memory directory. Relocating them into `topics/` or `cards/` is a later pass, and it should happen together with the memory re-pointing below so the two do not strand each other. |
-| **123 memory lines across 67 memory files cite a split doc** | None break — the routing stub resolves every `§N.N` in one hop — but the author's own directive says memory files should point at the card files once the tree exists. The per-doc list is in [REORG_PLAN.md](../REORG_PLAN.md) §7. The memory directory is read-only for automated work; this is the author's call. |
-| **The largest card is 59.0 KB and cannot be split** | `cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md` — `SPEC_amb_iono` §7 has no internal heading, so cutting it would mean editing text. When its items are re-filed as cards (register C above), the file shrinks by construction. |
-| **`scripts/` was not reorganised** | Paths are cited everywhere; [scripts/README.md](../../scripts/README.md) groups every script by topic and marks the ones nothing references as archive candidates for a later pass. |
+- **Family ignition datum.** A code family canonical at no station freezes its satellite level (C2L); prerequisite to `channel_mode: all`; card GFC's family prior is the template. [SID §12](../refound/SID_signal_identity_2026-09-22.md)
+- **Float-vehicle drop variance.** A drop restores var_first, a conditional variance, as an absolute precision (CTU2 section 2's double count); read whether material, or restore the marginal. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **Station prior before PD.** Nine residual addStation rejections per 6 h field arm (the non-finite-input guard) and the carry rows judged after the test remain owed. [RF-PD-fix](../refound/RF-PD-fix_station_prior_before_pd_2026-09-15.md)
+- **Per-LOS phase colour state.** Re-grade once mature carried ambiguities are phase-stiff (card AIL's anchor walk); its gates G1 to G3 are unreachable on either posture until then. [LGM](../refound/LGM_los_phase_nuisance_2026-10-01.md)
+- **Station coordinates (parked).** Constrained states with a release, parked until the network works; they carry the Asian Up bias (-0.13 to -0.18 m), MAJU00MHL, POHN00FSM, no post-seismic model. [SCU](../refound/SCU_station_coordinates_unknowns_2026-09-22.md)
+
+## QC, slip and carry responses
+
+- **block_baarda is blind on the float vehicle.** Armed in both goldens, it finds every LOS block singular (field 60279 of 60302, sim all) at 5 % of loop wall; disarm or re-block. [REDUNDANCY-CENSUS](../cards/raim-qc/REDUNDANCY-CENSUS.md)
+- **Carried-prior RAIM channel.** Carried-prior rows owe their own test channel, attributed to their own column, so a prior residual answers its carry without diluting the observation pool. [RPA](../refound/RPA_raim_pool_data_rows_2026-10-08.md)
+- **Prefit census phase column.** It read 1e5 sigma on clean pre-refound data; re-read it on the golden, then fix or drop it before phase joins prefit_event_classes or the fuse. [SPEC_prefit §17](../SPEC_prefit_census_observability.md)
+- **Stash-status mirrors (suspected).** NetworkStashStatus's VCE and census mirrors skip parked readmit seeds that the D2 inject folds; confirm the coverage gap and count those seeds. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **Hard clock refloat uncounted.** `clock_monitor_reinit_sigma_m` <= 0 skips the stash and erases the border entry; count it in the PRM response registry. [PRM3](../refound/PRM3_responses_2026-10-02.md)
+- **One carry-response vocabulary.** Unify the clock refloat set, CarryPrior inflate_q, local_carry erase and markAmbiguityPendingReseed into drop, inflate, repair with declared dominance, not code-order dispatch. [NetworkRunContext.hpp](../../include/app/NetworkRunContext.hpp)
+- **GF arc-jump trigger on the field.** A 6 h field arm (k 6, 0.04 m floor) is owed before any promotion; the field's real-slip share is unknown. [ARL](../refound/ARL_integer_ambiguity_ladder_2026-10-09.md)
+- **Gap re-entry GF test.** It differences raw phases, so the wind-up change over the gap (5.4 cm per cycle on L1/L2) and multipath meet a 4 cm floor. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+
+## Integers
+
+Cards ARL and IRD carry their own step lists (IRD-1 onward: bundle A0, decisions D0 and D-S, the
+consumer veto IRD-7). Only work outside them is listed.
+
+- **L2C against L2W quarter-cycle alignment.** Unexamined across receiver types; a prerequisite before integer work moves from the sim ladder to the field. [ARL](../refound/ARL_integer_ambiguity_ladder_2026-10-09.md)
+- **Held phase bias under an eq34 shift.** The one open item of PRM3 step 2 (257 / 188 family-epochs); it matters for IRD's eq34 bundle. [PRM3](../refound/PRM3_responses_2026-10-02.md)
+
+## L5 (SEQUENCED, never closed)
+
+- **L5 sequence.** L5 is SEQUENCED, not closed: R-1d (robust ignition of receiver code states, the author's design call) and two section-9 diagnostics, then R-2, R-3, R-4. [L5B](../refound/L5B_band5_receiver_delay_2026-10-10.md)
+- **G28's band-5 satellite code column.** Re-read on the current triple posture: on B5D's arm it sat 1.28 m off the raw combination although 37 of 37 stations determined it. [B5D §3](../refound/B5D_band5_code_datum_2026-09-20.md)
+- **REF-FAN inheritance counters.** Adopted-reference inheritance fired 0 times in every leg; read its run-end counters on the first three-band return arm, where it turns live. [REF-FAN](../cards/slip/REF-FAN.md)
+- **Band-5 extra-band hold response.** Count the return response of `network.sat_gf_extra_band_free` in the PRM3 response table before an L5 posture arms the hold (invariants 4 and 7). [PRM3 §5](../refound/PRM3_responses_2026-10-02.md)
+
+## Other add-backs: lanes, seams, SH consumer product
+
+- **Lanes (after L5).** The author's design decision on a float-state lane build; the AB3-1 measure-only wide-lane census first, then actuation with invariant-1 slip and invariant-7 event responses. [AB3](../refound/AB3_lanes_2026-09-20.md)
+- **Seams: warm resume on the float vehicle.** Re-prove the snapshot resume on the goldens with a vehicle-pair token, including the first field validation of the frame and coupling restores (sim-only so far). [RESUME-DENSE-BORDER-E2](../cards/resume-seam/RESUME-DENSE-BORDER-E2.md)
+- **Seams: phase-bias hold snapshot.** Snapshot the hold's held values and generations; a warm resume cold-starts every generation today (conservative, ungraded). [PBH §6.6](../refound/PBH_phase_bias_hold_2026-09-19.md)
+- **Seams: exact-update switch-on.** The resume seam owes an ambiguity-side response (card CTU's G5 failed: restored ambiguities hold the level); `ctu_switch_on_resume` stays off until then. [CTU2](../refound/CTU2_level_recursion_followup_2026-09-29.md)
+- **SH ionosphere consumer product.** Specified by AB1, not built; build only when a single-frequency or regionally dense consumer exists, last among the add-backs. [AB1](../refound/AB1_sh_consumer_product_2026-09-20.md)
+
+## Galileo and constellations
+
+- **Broadcast health mode.** `network.sat_health` (pivot or exclude, built, unarmed) on the GPS + Galileo goldens: E14, E18 unhealthy and kept; G01 unhealthy yet the GPS pivot; author's decision. [HLT §4](../refound/HLT_broadcast_health_2026-09-25.md)
+- **GAD census leftovers.** DAV100ATA (+0.061 m, hours 2 to 6, intermittent pilot family) and HARB00ZAF worse; SEYG00SYC E11/E12 C5Q gross rows (93, bar 10); GFC's hour-2 clauses. [GAD §4](../refound/GAD_galileo_adoption_2026-10-13.md)
+- **Mixed-system clock step.** decommonedClockStep takes one median across GPS and Galileo while the hold's M_k is per constellation, so the coupled-mark run-end census mixes systems. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **GPS + Galileo cost.** Golden arms take 2 to 6 times the GPS-only epoch time (field 2.9, sim 2.0 on one load), a wall-time mean; per-section attribution owed. [GAD](../refound/GAD_galileo_adoption_2026-10-13.md)
+
+## Consumer and real-time service
+
+- **Phase-clock hold C1W regressions.** ARHT00ATA and QUIN00USA lose through the L1W phase (the L1C + C1C family cures it); KOKB00USA's hour 2 is unexplained. [LAH §9](../refound/LAH_level_aware_hold_2026-09-29.md)
+- **ARHT00ATA divergence.** 166 m on DOY 131, 99.7 m on DOY 128 under the golden, +0.20 m for GPS-only users; the COD-regime golden candidate prevents it. [MDR](../refound/MDR_multiday_replay_2026-10-05.md)
+- **Consumer innovation screen.** One 92 m phase row moved the first update 704 m and the peel reset innocent satellites; no pre-update screen against the previous state exists. [PBF](../refound/PBF_pb_hold_presence_edges_2026-09-28.md)
+- **Band-1 code on a mixed latch.** The replay consumer drops band-1 code on a mixed L1C phase / C1W code latch (KOKB, HARB, POHN, DAV1); intended or a defect is unread. [LAH §9](../refound/LAH_level_aware_hold_2026-09-29.md)
+- **Vanished code bias.** The consumer's receiver code-bias re-inflation has an unbounded decoupling edge (invariant 7); triggers fell 50 to 4, but no bounded response is built. [MSC §4](../refound/MSC_multi_site_consumer_2026-09-21.md)
+- **Post-processing consumption.** Network products are consumable only through RealTimeEngine (closed loop, file replay); Application::run and the RTS smoother cannot consume them. [ApplicationConsumerReplay.cpp](../../src/core/app/ApplicationConsumerReplay.cpp)
+- **Real-time gap tolerance.** With `processing.data_gap_tolerance_s` 0, stepTimeAndDetectGap uses 1 s (documented: 1.5 intervals), so every 30 s epoch is a gap and re-seeds the clock from code. [RealTimeEngineAdmit.cpp](../../src/core/realtime/RealTimeEngineAdmit.cpp)
+- **Consumer latency.** The loop is same-epoch with no latency injection; an artificial-latency A/B of ZOH staleness and ssr_max_age is owed before service claims. [SsrCorrectionStore.hpp](../../include/products/SsrCorrectionStore.hpp)
+- **Held SSR weighting.** 1 Hz consumers reuse one correction realization inside a hold interval; count it once per update, not per epoch (the current weighting is optimistic). [SsrCorrectionStore.hpp](../../include/products/SsrCorrectionStore.hpp)
+- **Streaming end to end.** `network.streaming.enable` never ran its ON validation (two-lane file-replay smoke, then a live NTRIP hour); field-blocking before any graded streaming run. [rt_service_conventions §9.5](../rt_service_conventions.md)
+- **brdc_rts before any arm.** Its re-level lands after PASS B, leaving the cut-over epoch's rows in the old frame under the exact update; its closest-toe rule differs from ttom. [NBP](../refound/NBP_native_broadcast_clock_posture_2026-10-07.md)
+- **Real-time suspicions.** The RT state snapshot mutates before rejecting an unknown kind; SBAS may format as S120; brdc_rts declares orbit_ref CoM; TcpClient misses a silent peer. [CAF §4](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **GLONASS 1020 replay date.** decodeGlonass1020 promotes toe with the host clock, so a file replay of historical RTCM places GLONASS ephemerides on the wrong day. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+
+## Sim bed and harness
+
+- **Sim fixture start artifact.** Early epochs extrapolate orbits; sim grades start at 00:30:15; regenerate with the prior day's SP3 and CLK, or re-base the golden's start (author's decision). [CTU2 §1](../refound/CTU2_level_recursion_followup_2026-09-29.md)
+- **Sun and Moon precessed twice.** Arming `estimation.enable_sun_frame_correction` needs a sim fixture regenerated with it, the 6 h pair, the census and a migration card. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **rt_seam_verify.py.** Fails 8 of 30 real-time seams against a frozen pre-cut source kept only on D:; re-base it on the post-cut bodies or retire the gate. [PBH §6.2](../refound/PBH_phase_bias_hold_2026-09-19.md)
+- **Census site list.** `runs/_msc/site_list.json` is untracked (runs/ is git-ignored and relocates); commit it beside census6h.py and gcensus.py, which read it. [MSC §5](../refound/MSC_multi_site_consumer_2026-09-21.md)
+- **Blank-padded RINEX 3 ids in scripts.** Nine Python readers (ab2_l5_raw_read.py, mw_census.py, extcb_raw_if_check.py and others) key on three characters and miss ids like "G 7"; normalize as RinexParser.cpp does. [RXP §3](../refound/RXP_rinex3_blank_prn_2026-09-21.md)
+- **rapid_arm.py unread keys.** It builds arms with keys the loader never reads, which run silently as their base; refuse them as prm_ab.py and ird_make_arms.py do. [AMB-IONO item 38](../cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md)
+- **CDDIS authentication in bootstrap.** bootstrap_internal_data.py uses plain urlopen and never reads .netrc (401); add an HTTPBasicAuthHandler fed from netrc and follow the Earthdata redirect. [CAF §2](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **Archive candidates.** Move the 36 unreferenced one-off scripts that the scripts README marks as archive candidates to scripts/archive/, or delete them (git history keeps them). [scripts/README.md](../../scripts/README.md)
+
+## Documentation
+
+- **Docs relocation.** Relocate or archive the 63 non-stub docs/*.md (mostly pre-refound SPECs), drop docs/attic (44 files), and re-point the 15 memory lines citing split-doc stubs. [REORG_PLAN §4, §7](../REORG_PLAN.md)
+- **Report figures and seam table.** Redraw pipeline_diagrams.tex (SSR 1240 to 1270, the observation-to-SSR hold, the station-modelling pass) and fix network.tex's seam table (four seams missing). [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **Author checks.** RTCM DF490/491, DF389 and DF040 labels, the 5e-5 s clock-jump threshold, rank-gate spectrum figures, eq:imu-tc-jac units, eq:noise-model, the emission-time estimate. [CAF §5](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **CLAUDE.md corrections.** baseline_fixture defaults to Custom, .netrc resolves at the first download, the wind-up exposure is [300, 900] s, and the network driver is 3,010 lines. [CAF §6](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+
+## Code defects
+
+Verified in the code (CAF section 2, the 2026-10-07 pass, or the ledger review of 2026-10-13)
+unless marked suspected.
+
+- **ProductCache deadlock.** loadProducts' catch block calls clearCache(), which relocks the non-recursive load_mutex_ on any product-load exception; fix with an unlocked clearCacheLocked_() called from both. [CAF §2](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **PPP fix-and-hold holds nothing.** holdAmbiguities (ar_mode 3) builds DD pairs with no observations, so every elevation is 0 and the 20 degree AR mask drops every pair. [CAF §2](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **service_mode arms the NO-GO clock model.** It force-arms `network.clock_model` after the clock_pivot_frame_q and clock-clone refusals read raw JSON, so both refusals are bypassed. [ledger](../CONFIG_promotion_ledger.md)
+- **Run manifest toggle dump incomplete.** Hand-enumerated, it omits golden-armed gross_los_screen, carry_coupling_exact_update, phase_datum_held_basis and clock_anchor_q; provenance rests on the config hash chain. [ledger](../CONFIG_promotion_ledger.md)
+- **Loader messages that misstate behaviour.** The eq34 "INERT under carry_invariant" warnings fire on the float vehicle (IRD finding C5); the sd_ewl.enable line denies fixing; a comment calls emit_pb_hold fingerprinted. [GnssConfigLoadNetwork.cpp](../../src/core/config/GnssConfigLoadNetwork.cpp)
+- **Redundancy census mask.** It recomputes the prefit census's centred statistic without its phase-excluding mask, so every cross-flag event is obs_phase (field 93, sim 437); reuse the census's own. [REDUNDANCY-CENSUS](../cards/raim-qc/REDUNDANCY-CENSUS.md)
+- **Start-offset seek.** It compares floating GPS seconds, so bare-hour offsets need a half-epoch back-off; round to the epoch grid, drop the ritual, and bundle the leap-table fix. [QPR item 6](../cards/queues/QPR-ITEMS-5-8.md)
+- **VMF3 path.** Gpt3::load keeps loaded_ true after a failed reload; suspected: a standard-atmosphere a priori silently takes ZHD pressure from GPT3. Settle both with the VMF3 fix. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **Minor verified defects.** GRAPHIC threshold not trend-centred, gim_ destroyed before ppp_model_, the PPP-RTK summary label, no Klobuchar size check, pyviz conftest's 14-column truth_atmo fixture. [CAF §2, §6](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **Minor suspicions.** Unstable same-band signal sort, a leap-second lookup 18 s early, pyviz LLI precedence over a coincident detector slip. [CAF §4](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+
+## Queued after NOM
+
+Five approved builds in the order 5, 2, 1, 3, 4, then the clean-ups that would collide with card
+NOM3.
+
+- **Build 5: SIF outside its window.** Evaluate periodic coordinate blocks outside their window as M-PAGES v1.2 does (first, last, gap rules, warn); keep tools/sif_propagate in step. [StationInfoFile.cpp](../../src/core/products/StationInfoFile.cpp)
+- **Build 2: ocean tide loading on the field golden.** A dedicated OTL-source knob (SIF load is tied to enable_station_info), nodal f/u corrections and GMST from UT1; check against M-PAGES IersHardisp. [CAF §4](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **Build 1: clock pivot election.** By predicted coverage, broadcast health and shadow, at ignition and forced handover, sticky; pinning G14 cut field hour-2 drift -0.180 to -0.063 m/h; sum-to-zero competes. [PAC](../refound/PAC_common_drift_pivot_clock_2026-10-01.md)
+- **Build 3: noon-turn attitude.** One SatAttitude model for PCO and wind-up: GPS IIF/IIR noon turns and Galileo yaw (E21, E27, E31 transients to 5 cm); validate computeBeta's sign first. [GAD §4](../refound/GAD_galileo_adoption_2026-10-13.md)
+- **Build 4: wind-up through gaps.** Advance the accumulator through virtual epochs within the 900 s carry horizon rather than restarting at 300 s; needs build 3's predicate; field check only. [WUP](../refound/WUP_windup_accumulated_promotion_2026-10-01.md)
+- **Delete the REMOVE keys.** The ledger's 141 REMOVE keys (retired lanes, SH constraint, FC-1, CLV, F3 leftovers, phantom amb_float_q_m2s, emit_clock_rate) with parse sites, members and dead paths. [ledger](../CONFIG_promotion_ledger.md)
+- **Code hygiene sweep.** CAF's dead code (section 7), the stale comments of the 2026-09-28 and 2026-10-07 passes, unfollowable references (section 9) and script output strings (section 8). [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)

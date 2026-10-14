@@ -1,5 +1,8 @@
 # HANDOFF — the edge-response queue (bare datum/coupling edges, ranked by measured damage)
 
+> **Reconciled 2026-10-13** against the network re-founding: edges 1 to 3 are built and armed or superseded (the S line on every wire, the H-record sigma0 feed, the clock frame hold and jump test, the Q3 anchor, the phase-bias hold, the per-signal GF pin), edge 4 is moot without the SH field, and edge 5 duplicates the valve inventory of [SPEC_prefit_census_observability.md](SPEC_prefit_census_observability.md) §13.
+> Items still owed are in [OPEN_ITEMS](status/OPEN_ITEMS.md).
+
 2026-08-05. Every failure class here is one template — **an unmediated frame/coupling step
 meeting a long-memory (small-q) carry** — and the codebase already contains working
 responses (S-transform / erase-refloat / re-tap) on the channels where field failures

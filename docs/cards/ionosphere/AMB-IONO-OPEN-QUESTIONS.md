@@ -4,15 +4,15 @@
 
 - **id:** AMB-IONO open
 - **topic:** ionosphere
-- **status:** open
-- **summary:** Register of the split over-count work's owed items (a FIRST item and items 1 to 44); many are CLOSED, FALSIFIED or SUPERSEDED in the text, and the rest stay owed.
+- **status:** closed
+- **summary:** Register of the split over-count work (FIRST and items 1 to 44), reviewed on the float-vehicle posture: 13 done, 10 falsified, 12 superseded, 7 moot, 2 duplicates; one owed line (arms setting unread config keys) re-filed to OPEN_ITEMS.
 - **dates in the text:** 2026-09-04 → 2026-09-10
 - **knobs / posture:** `network.readmit_seed_horizon_s`, `network.readmit_coupling_marg_ep`, `network.cycle_slip.if_phase_td_ref_gate`, `network.phase_datum_handover_max_var_ratio`, `network.phase_datum_handover_max_var_m2`, `network.raim_arc_persist_epochs`, `network.cycle_slip.gap_reentry_relevel`, `network.carry_zwd_in_block`, `network.carry_zwd`, `network.phase_leveling_local_block` … (+14 more in the text)
 - **hashes named in the text** (commit / exe / byte-cert): `18aa2854b2575658`, `9b59a2c`, `7311ad0`, `dd6c81c`, `4bb799a`, `966d4fd`, `5f1f422`, `95afa6d9` … (+3 more in the text)
 - **run dirs named in the text:** `runs/ratio3h`, `runs/fldf3_pl2_bridge`, `runs/fldf3_on2_ctl_sb`, `runs/fldf3_on2`, `runs/golden_sim_tlink_off`, `runs/golden_sim_tri_w6_full`, `runs/golden_sim_campaign_plq7`, `runs/golden_sim_campaign_zwdblk` … (+2 more in the text)
 - **source:** `docs/archive/SPEC_amb_iono_split_overcount.md` §7
 
-**Outcome.** The register's text closes items 1, 2, 5, 10, 14, 24, 28, 34, 37, 40 and 41, supersedes 22, and makes the wire's integers the AR track's critical path. Later cards answered the FIRST item and item 15's ratio ([READMIT](../network-vehicle/READMIT-EDGE.md): seed horizon PROMOTED, the 0.2 cyc settled DD bar MISSED, re-coupling window and ratio KEEP_OFF; the episodes were the DD reference satellite, [DD-REF](../sim-bed/DD-TRACE-REF-SAT.md)), item 20 ([F3 24 h](../ionosphere/AMB-IONO-F3-24H.md), FALSIFIED as written), item 21 ([F3 field](../network-vehicle/F3-FIELD-ARM-RESULTS.md), KEEP OFF) and item 42 ([Study 2](../harness/STUDY-2-rx-clock-carry.md), INERT, then KEEP_OFF). The [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) cut F3.
+**Outcome.** The register held 45 items (FIRST, 1 to 44) of the split over-count work, mostly about the leveling inject, the diagonal carry and slipped-bed probes that the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) retired. Classified on 2026-10-13: 13 done (seed horizon, Card R, receiver code bias in block, clock disc, F3 field arm), 10 falsified, 12 superseded (float vehicle, held basis, gap re-entry, [ARL](../../refound/ARL_integer_ambiguity_ladder_2026-10-09.md)), 7 moot, 2 duplicates. One item stays owed (arms setting keys the loader never reads), re-filed to [OPEN_ITEMS](../../status/OPEN_ITEMS.md). Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

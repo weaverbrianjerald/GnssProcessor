@@ -4,15 +4,15 @@
 
 - **id:** L5R
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** L5 SEQUENCED. R-1 on the exact-update golden: every posture passes the sim and WTZZ00DEU's hour 1 is 0.13 m (1.47 m on 2026-09-21), but all four fail the field census and the clock wire. The field cost is the receiver's band-5 code delay, which the network solve does not estimate (station-constant band-5 offsets up to 29 m when exposed). New step R-1b (estimate it) ahead of R-2.
+- **status:** superseded
+- **summary:** R-1 on the exact-update golden: all four triple postures pass the sim, none the field census or clock wire; the cost is the unestimated receiver band-5 code delay. L5 SEQUENCED, R-1b continues in card L5B.
 - **source:** the author's decision of 2026-10-08 ("run L5 alongside" the Galileo re-attempt, card [GAL2](GAL2_galileo_on_the_exact_update_2026-10-08.md)); [L5P](L5P_l5_phase_posture_2026-09-21.md) section 4 (the return plan R-1 to R-4); [TBI](TBI_three_band_ignition_2026-09-20.md) section 4 (the L5 adoption bars); [B5D](B5D_band5_code_datum_2026-09-20.md); [AB2](AB2_l5_third_frequency_2026-09-20.md) sections 2, 10 and 11; [MSC](MSC_multi_site_consumer_2026-09-21.md) (the census); [EXL](EXL_exact_update_lah_promotion_2026-10-01.md) (the posture)
 - **knobs / posture:** the goldens plus `processing.frequency_mode` triple and the GPS band-5 types appended to `processing.signal_priorities.GPS` (C5Q, C5X, C5I, L5Q, L5X, L5I and their D and S types, the list of `runs/_rap_lS_tri`); B5D's `network.sat_gf_extra_band_free` and L5P's `network.extra_band_code_sigma_scale` per arm. Nothing is armed by this card.
 - **dates in the text:** 2026-10-08
 - **hashes / run dirs:** exe `gnss_processor_gal2.exe` (card GAL2's build, clean worktree at main `a4cda77`); dual control `runs/_rap_gal2_ctl_{f,s}6` (shared with card GAL2); arms `runs/_rap_l5r_*`; census tags `_rap_l5c_*`
 - **gates (frozen at pre-registration):** P0 to P3 and B1 to B4 in section 3
 
-**Outcome.** Question: on the current posture, which three-band posture holds the dual control? None on the field census (10 to 14 of 16 sites worse in hours 2 to 6), though all pass the sim and two pass WTZZ00DEU. The remaining cost is one unmodelled quantity: the receiver's band-5 code delay, dropped from the network solve, which leaves station-constant band-5 offsets of metres. With band-5 code out of the network the wire is clean for dual consumers, and triple consumers still lose (R-2). L5 SEQUENCED: R-1b, then R-2 (section 4).
+**Outcome.** Question: on the exact-update golden, which three-band posture holds the dual control? All four pass the sim and two pass WTZZ00DEU (hour 1 0.13 m, from 1.47 m), but none passes the field census (10 to 14 of 16 sites worse in hours 2 to 6) or the clock wire over all satellites. P3 names the cause: the receiver's band-5 code delay, held out of the network solve. L5 is SEQUENCED, not closed: R-1b (estimate the delay) and the rest of the plan continue in [L5B](L5B_band5_receiver_delay_2026-10-10.md). Status reviewed 2026-10-13.
 
 ## 1. The question
 

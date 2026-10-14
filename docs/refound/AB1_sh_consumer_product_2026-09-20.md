@@ -11,7 +11,7 @@
 - **dates in the text:** 2026-09-20
 - **hashes / run dirs:** `runs/_rf0hv3_{field,sim}6` (wire `bbaa7fd6...` field, `ea3a646f...` sim); `runs/_ab1_proto_20260920/`; diagnostic arm `runs/_diag_field6_noBSHM` (exe `gnss_processor_pbh1.exe`)
 
-**Outcome.** The first add-back on the held-wire posture asked whether a post-solve SH VTEC field beats the dual-frequency consumer's own ionosphere for the first 10 epochs of an arc on both beds. The best causal variant loses on the sim from arc age 3 and never wins on arcs born after hour 1. The per-satellite bias term is decisive (field withheld-station error 0.296 m, 0.968 m without it). BSHM00ISR's gross slant ionosphere poisons any field fit; dropping that station brings the clock wire 2.6 times closer to COD within arcs but worsens the cold consumer's 3D median. PARKED until a consumer for the product exists ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)).
+**Outcome.** The first add-back on the held-wire posture asked whether a post-solve SH VTEC field beats the dual-frequency consumer's own ionosphere for the first 10 epochs of an arc on both beds. The best causal variant loses on the sim from arc age 3 and never wins on arcs born after hour 1. The per-satellite bias term is decisive (field withheld-station error 0.296 m, 0.968 m without it). BSHM00ISR's gross slant ionosphere poisons any field fit; dropping that station brings the clock wire 2.6 times closer to COD within arcs but worsens the cold consumer's 3D median. PARKED until a consumer for the product exists ([OPEN_ITEMS](../status/OPEN_ITEMS.md)).
 
 ## 1. What the census found (2026-09-20)
 

@@ -11,7 +11,7 @@
 - **dates in the text:** 2026-09-22
 - **hashes / run dirs:** `runs/_rf0hv6_field6`, `runs/_rap_arp_roster`, census keys `ev7fix`, `arp`, `tq9`, `tq8`, `tq7`, `up_*`; exe `gnss_processor_ev7.exe`; build main `95c7ea8`, exe `gnss_processor_upo.exe`; armed baseline pair `runs/_rf0hv7_{field,sim}6`
 
-**Outcome.** The question: what holds WTZZ00DEU's consumer 0.085 m low. The network held its roster at monument coordinates while the observations refer to the antenna (48 of 59 stations eccentric, GRAZ00AUT 1.964 m); reduced, WTZZ00DEU's 3D p50 is 0.01 to 0.02 m from hour 3, and on the sim, injected eccentricities reproduce the defect and the knob removes it byte for byte. G0, G1, B1 and B2 PASS; G2 misses one OFF sub-bar (0.406 of H at the 0.1 m station). Card [GRB](GRB_golden_rebase_2026-09-22.md) pinned the knob on the goldens; the residual offsets of section 5.7 are owed under card [SCU](SCU_station_coordinates_unknowns_2026-09-22.md), parked ([OPEN_ITEMS](../status/OPEN_ITEMS_A_current_program.md)).
+**Outcome.** The question: what holds WTZZ00DEU's consumer 0.085 m low. The network held its roster at monument coordinates while the observations refer to the antenna (48 of 59 stations eccentric, GRAZ00AUT 1.964 m); reduced, WTZZ00DEU's 3D p50 is 0.01 to 0.02 m from hour 3, and on the sim, injected eccentricities reproduce the defect and the knob removes it byte for byte. G0, G1, B1 and B2 PASS; G2 misses one OFF sub-bar (0.406 of H at the 0.1 m station). Card [GRB](GRB_golden_rebase_2026-09-22.md) pinned the knob on the goldens; the residual offsets of section 5.7 are owed under card [SCU](SCU_station_coordinates_unknowns_2026-09-22.md), parked ([OPEN_ITEMS](../status/OPEN_ITEMS.md)).
 
 ## 1. The offset
 

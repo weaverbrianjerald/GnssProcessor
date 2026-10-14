@@ -212,8 +212,8 @@ specific subdir that fits — resist the urge to drop new headers into `common/`
 program.** The author's directive: *"We need a method to organize our whole project,
 rather than simply appending to these massive files."* On 2026-09-14, 18 of the 19
 `docs/*.md` over 60 KB were split into a topic tree — verbatim, hash-verified, with the
-originals frozen. The nineteenth, `CONFIG_promotion_ledger.md`, is a **living register**
-and stays whole (see the ⚠ below).
+originals frozen. The nineteenth, `CONFIG_promotion_ledger.md`, is now a generated view
+of the ledger JSON (see the ⚠ below).
 
 ```
 docs/INDEX.md                    entry point: topics, cards, the rules
@@ -234,9 +234,8 @@ The rules — **all seven are enforced or checked**:
    `docs/archive/`, never to a monolith.
 3. **The INDEX line is updated twice:** at pre-registration, and at close.
 4. **No non-archive file over ~60 KB.** Split by topic as one approaches it. The one
-   exemption is a **living register** appended to one row at a time and read by a tool at
-   a fixed path — today `CONFIG_promotion_ledger.md` alone, named in `SIZE_EXEMPT` in
-   `scripts/docs_index_check.py`.
+   exemption is the generated ledger view `CONFIG_promotion_ledger.md`, named in
+   `SIZE_EXEMPT` in `scripts/docs_index_check.py`.
 5. **Every card file starts with the STATUS block** (`id`, `topic`, `status`, `summary`,
    `source`, plus the knobs / hashes / run dirs / dates). `status` ∈ {`open`, `closed`,
    `parked`, `superseded`, `reference`}; PROMOTED / KEEP_OFF / FALSIFIED belong in the
@@ -245,7 +244,8 @@ The rules — **all seven are enforced or checked**:
    words. The header (title, STATUS, Outcome) is revised as results land; the body never is.
 6. **The monoliths are frozen.** `docs/archive/` is read-only; the old path is a stub.
 7. **`python scripts/docs_index_check.py` must pass before a docs commit** (reachability
-   from INDEX, dangling links, STATUS blocks, the 60 KB bar, the archive banners).
+   from INDEX, dangling links, STATUS blocks, the 60 KB bar, the archive banners, the
+   generated ledger view).
 
 **Never rewrite, shorten or reflow existing section text** — the docs are the scientific
 record; a superseded result is annotated, not deleted. A card's history sits below its
@@ -256,12 +256,14 @@ existing split is byte-exact (results appended below a body are reported, not fa
 `--build` renders missing cards from `scripts/docs_map/*.json` and never re-renders an
 existing card, whose header is maintained by hand.
 
-⚠ **`docs/CONFIG_promotion_ledger.md` is a LIVING REGISTER — keep it whole, keep it at
-that path.** The `scripts/_*_ledger_oneoff.py` pattern and every future promotion append a
-row there directly, in step with `docs/CONFIG_promotion_ledger.json` (the machine-read twin
-for `make_golden_config.py --verify` / `config_posture_check.py`). It is deliberately not
-split, not archived and not stubbed, and `docs/topics/config-ledger.md` is its topic page.
-Do not "finish the job" on it in a later pass.
+⚠ **The config ledger is `docs/CONFIG_promotion_ledger.json`: one row, one verdict, per
+config key the network loader reads** (rebuilt 2026-10-13; verdicts RECOMMEND_ON /
+RECOMMEND_SCOPED / ARMED / UNVALIDATED / KEEP_OFF / REMOVE / PARAM / TRACE / CORE).
+`make_golden_config.py --verify` and `config_posture_check.py` read it;
+`docs/CONFIG_promotion_ledger.md` is its view (a hand-written head, then tables rendered by
+`scripts/ledger_render.py`). A ledger change is a JSON edit, a re-render and the two
+verifies; a new knob gets its row in the same commit. The full-prose ledger before
+2026-10-13 is in git (`git show 8326da3:docs/CONFIG_promotion_ledger.md`).
 
 ## Conventions
 
@@ -336,451 +338,142 @@ compound subject (`<areas>: land concurrent workstreams (<item>, <item>, …)`) 
 a body sectioned per workstream — see `9a2f289`, `dee2824`, `18b4502`. Read the
 other sessions' diffs before describing them, and confirm the tree builds first.
 
-## Standing invariants — pre-flight EVERY new estimation card against these
+## Standing invariants: pre-flight every new estimation card against these
 
-Mechanism-independent lessons paid for in field time. Check them at SPEC time
-and again at the validation gate; "my mechanism is different" is not an
-exemption (each was re-learned on a "different" mechanism).
+Mechanism-independent lessons paid for in field time. Check them at SPEC time and again at the
+validation gate; "my mechanism is different" is not an exemption.
 
-1. **Any zero-q / stiff time-linked quantity MUST have a wired, tested
-   slip/jump/event response** (erase, refloat, or re-tap — mechanism-specific)
-   before an ON field run. A stiff prior carrying a stale value past a jump
-   does not degrade gracefully — it warps the whole solution (iono/clock
-   absorb the tension). Instances: phase-leveling zero-q carry (needs slip
-   detector), Card-4 invariant DD carry (slip hole → 10.9 cyc/ep field FAIL,
-   Jul 2026), **and the response's own RE-COUPLING edge: a refloat that
-   re-levels from ONE epoch of code CREATES a fresh zero-q value seeded with
-   station-common iono error — at a realistic slip rate the level channels
-   random-walk metres over hours with every internal instrument silent
-   (60-sta truth campaign, Aug 2026; `docs/SPEC_slip_relevel_walk.md`).**
-2. **Field runs are Release-only** (see Build). Debug perf numbers are
-   artifacts; never profile or grade in Debug.
-3. **Every deferral in a card is triaged field-blocking vs field-inert, with
-   DATA for "inert"** (e.g. I2 measured 0 gap events ⇒ prediction-only chords
-   deferrable). A field-blocking deferral means the toggle is NOT
-   field-runnable and the report must say so.
-4. **Run-end counters are the ON-path telemetry.** "0 driven / 0 folded" means
-   the wiring is inert no matter how clean the log looks. Check counters, not
-   absence of crashes.
-5. **Grade only datum-invariant / SD quantities** (Psychas single-realization
-   mandate); raw wire steps confound benign frame drift with real defects.
-6. **New work is default-OFF with structural byte-identity**; shared-path
-   edits require same-build golden comparison (verification integers are
-   build-config-sensitive at the ppm level — never compare Debug vs Release).
-7. **Any mechanism that changes which information flows into which states —
-   gates, deweights, admissions, coverage/rank drops, datum handovers, holds,
-   withhold eras — is an EVENT at BOTH edges, with counters and identities.
-   The DECOUPLING edge must bound what the decoupled states can accumulate;
-   the RE-COUPLING edge must re-validate or re-seed what it reconnects.
-   "The weight ramps smoothly" is not an exemption — era-2's valve ramped at
-   the configured rate limit and discharged anyway.**
-   Field-demonstrated: the FT63 leg-19 topology ledger
-   (`network.trace_topology`) recovered 13 re-coupling edges that were
-   previously silent, including the three stations (SAVO/OAFA/POVE) whose
-   SH-tie weight went 0.25 → 0.5 at TOW 329190 one epoch after the era-2
-   discharge. Every one of them had been invisible because a station with zero
-   tie rows dropped out of the baseline map and its return read as a *first
-   sighting* rather than a re-coupling — the exact failure this invariant
-   names. The open valve inventory (which valves still have a bare edge) lives
-   in `docs/SPEC_prefit_census_observability.md` §13.
+1. **Every zero-q or stiff time-linked quantity has a wired, tested slip/jump/event response**
+   (drop, refloat or re-seed) before an ON field run. A stiff prior carried past a jump warps the
+   whole solution (ionosphere and clock absorb the tension). The response has its own re-coupling
+   edge: re-seeding from one epoch of code creates a fresh stiff value carrying that epoch's error,
+   and at a realistic slip rate the levels random-walk metres with every instrument silent
+   (`docs/SPEC_slip_relevel_walk.md`; the float vehicle of card RF-1 drops the prior instead).
+2. **Data runs are Release only** (see Build). Debug timings and grades are artifacts.
+3. **Every deferral is triaged field-blocking or field-inert, with data for "inert".** A
+   field-blocking deferral makes the toggle not field-runnable, and the card says so.
+4. **Run-end counters are the ON-path telemetry.** "0 driven / 0 folded" means inert wiring,
+   however clean the log.
+5. **Grade only datum-invariant or SD quantities** (single-realization mandate); raw wire steps mix
+   benign frame drift with defects.
+6. **New work is default-OFF and byte-identical when off**; a shared-path edit gets a same-build
+   golden comparison (never Debug against Release: verification integers move at the ppm level).
+   A refactor may move output when the move is explained before it lands (Conventions).
+7. **A mechanism that changes which information reaches which states (gates, deweights,
+   admissions, coverage or rank drops, datum handovers, holds, withholds) is an EVENT at both
+   edges, with counters and identities.** The decoupling edge bounds what the decoupled states can
+   accumulate; the re-coupling edge re-validates or re-seeds what it reconnects. A smooth weight
+   ramp is no exemption. Instrument: `network.trace_topology` (a returning station is a
+   re-coupling, never a first sighting); the valve inventory is
+   `docs/SPEC_prefit_census_observability.md` §13.
 
-## Standard armed set — every NETWORK run uses these (directive, Jul-28)
+## Network runs: start from a golden
 
-**⚠ THE GOLDEN CONFIGS ARE THIS SET MADE EXECUTABLE (2026-09-05).** Do not re-derive the
-armed set from this prose or from an old arm — start every new network arm from a golden:
+The goldens ARE the posture of the re-founding (`docs/refound/NETWORK_REFOUNDING_2026-09-14.md`;
+card list `docs/refound/CARDS.md`). Every network arm is a copy of one:
 
 ```
-config/golden/golden_sim_refound.json      # sim truth bed, 60 sta   } ONE posture, two beds: the RE-FOUNDING
-config/golden/golden_field_refound.json    # field DOY-129, 59 sta   } posture (card RF-0g): GPS L1/L2 (+ Galileo
-                                           #   E1/E5a since card GAD, 2026-10-13),
-                                           #   self-contained (GF bias pinned at broadcast T_GD, no GIM, no
-                                           #   Kaula prior), free slant iono (no SH), leveling vehicle +
-                                           #   gauge projection + prioritized phase datum, Q3 clock anchor,
-                                           #   clock step test; no lanes / F3 / seams; WTZZ / SZZ consumers
-python scripts/make_golden_config.py --verify   # run at session start and after ANY ledger change
+config/golden/golden_field_refound.json   # field DOY-129, 58 sta, WTZZ00DEU held-out consumer
+config/golden/golden_sim_refound.json     # sim truth bed, 60 sta (runs/simnet60_quiet_col_24h), SZZ000SIM
+python scripts/make_golden_config.py --verify   # at session start and after ANY ledger change
 ```
 
-**Re-based 2026-09-15** (`docs/refound/RF-3-prep_golden_rebase_2026-09-15.md`).  The two
-previous goldens, `golden_sim_tri_w6.json` (GPS+Gal triple, F3) and `golden_field_gps_dual.json`
-(Card-4 carry_invariant, SH), are RETIRED: listed under `retired` in the manifest, frozen
-byte-for-byte at their paths (90 archived configs extend them; `event_leg.py`,
-`ce_make_arms.py`, `cm_make_arms.py`, `make_refound_config.py` still read them), neither
-regenerated nor verified.  Do not base new work on them.  The float vehicle
-(`ambiguity_vehicle: float_kf` + `phase_datum_held_basis`) is built, default OFF, and FAILED on
-this posture (RF-3-prep) — not armed.
+Posture, one on two beds: GPS L1/L2 + Galileo E1/E5a, dual frequency; self-contained (satellite
+GF code bias pinned at broadcast T_GD, no GIM, no Kaula prior); free per-LOS slant ionosphere (no
+SH); float vehicle (`ambiguity_vehicle: float_kf` + `phase_datum_held_basis`) on the
+phase-leveling carry with gauge projection, the prioritized phase datum and the exact coupling
+update; Q3 clock anchor and clock step test; phase-bias hold; gross-LOS screen with its 12 m cold
+bound; accumulated wind-up with restart refloat. No lanes, F3, SH constraint or seams.
 
-**Re-based again 2026-09-22** (`docs/refound/GRB_golden_rebase_2026-09-22.md`): the goldens are
-now the RF-0hv FLOAT-VEHICLE posture as armed that day (`ambiguity_vehicle: float_kf` +
-`phase_datum_held_basis`, the 58-station field roster reduced to the antenna reference
-point, and the knobs of cards GRS, CSL, EV7, UPO, SCC, GRK), from the frozen bases
-`config/refound/{field,sim}_gps_dual_rf0hv_golden_2026-09-22.json` (27 pins, the same 7
-exceptions; `--verify` 57 armed in regime).  The paragraph above describes the 2026-09-15
-state and stays as history; the float vehicle IS the posture now.  Field 6 h consumer 0.560
-0.059 0.028 0.030 0.036 0.045 m by hour, sim 0.598 0.103 0.096 0.056 0.055 0.049 m
-(`runs/_rf0hv9_{field,sim}6`).  Development checks run on 2 h arms (rapid mode, the author's
-directive of 2026-09-22); 6 h is for adoption, the census and the baselines.
-Card RF-3 (2026-09-22, later that day): the gross line-of-sight screen with its one-row rule and
-same-epoch emission exclusion (`network.gross_los_screen`, `gross_los_min_rows_rule: available`,
-`gross_los_emit_exclude`) is armed in the bases and pinned in the goldens (30 pins, `--verify` 61
-armed); baseline pair `runs/_rf0hv10_{field,sim}6` (field 0.560 0.059 0.028 0.030 0.039 0.048 m,
-sim byte-identical to `_rf0hv9_sim6`).
-Card PBF (2026-09-28): the consumer answers a held phase bias's presence edges
-(`network.closed_loop.pb_hold_presence_flip`), armed in the bases and pinned in the goldens (32 pins,
-`--verify` 63 armed); baseline pair `runs/_rf0hv11_{field,sim}6`, byte-identical to the post-OWD references
-`runs/_rap_owd_{field,sim}6f` (0 presence edges at either held-out consumer, so no baseline number moved).
-Card WUP (2026-10-01): accumulated phase wind-up with its restart response (`estimation.accumulate_phase_windup`
-on the field, where it was the wu93 open card; `network.cycle_slip.windup_restart_refloat` on both), armed by the
-promotion path at the outside review's decision and pinned in the goldens (34 pins, `--verify` 65 armed); the
-response was dead wiring until this card (it walked the live ambiguity map, which a re-entering arc no longer has)
-and is fixed.  Baseline pair `runs/_rf0hv12_{field,sim}6` (exe `gnss_processor_wup2.exe`): field WTZZ00DEU 0.559
-0.059 0.029 0.033 0.038 0.041 m by hour, sim 0.601 0.104 0.096 0.055 0.055 0.049 m; the field census with
-accumulating consumers 2.6 cm better at the median site in hours 2 to 6, none worse.  ⚠ A producer and its
-consumers belong on the SAME wind-up mode: the gain is the consumers' own (the wire alone is neutral).
-Card SFR (2026-10-01): the SIM golden re-based on the regenerated fixture `runs/simnet60_quiet_col_24h`
-(`config/sim/simnet60_quiet_col_24h.json`: white phase noise 0.5 mm, multipath phase off, a band-common
-Gauss-Markov phase colour capped at 20 degrees, tau 300 s, 6.0 / 4.9 / 4.4 mm by latitude class, calibrated
-on the field's post-fit ionosphere-free phase residual) through the frozen base
-`config/refound/sim_gps_dual_rf0hv_golden_2026-10-01.json` (RINEX paths only).  Baseline `runs/_rf0hv13_sim6`:
-0.656 0.167 0.042 0.030 0.026 0.025 m by hour.  ⚠ Every persistence-sensitive sim number on the old fixture
-(`simnet60_quiet_wu93_24h`) is SUPERSEDED (PVN, SMH G2/G3, SMD, QPV, REV/SMC, CTU/CTU2, FWS, the sim census):
-re-capture, never compare across the two fixtures.  The old fixture cannot be regenerated from current source.
-Card EXL (2026-10-01): card CTU's EXACT COUPLING UPDATE armed on the goldens with its four companions
-(`network.carry_coupling_exact_update`, `carry_rx_code_bias_in_block`, `amb_float_drop_decouple_always`,
-`clock_anchor_guard_space` phase, `rank_gate_tol` 1e-11) and card LAH's phase-clock hold
-(`network.emit_pb_hold_phase_clock`, INTERIM: valid only with a precise a priori clock product), by the promotion
-path (ledger A15, 69 armed in regime).  The scalar coupling update discarded a young arc's ambiguity information
-every epoch and froze the clock level (cards AIL, CTU); under the plain hold the exact update leaves the field
-consumer at 3.9 m in hour 1, so the two ship together.  Baseline pair `runs/_rf0hv14_{field,sim}6` (exe
-`gnss_processor_exl.exe`): field WTZZ00DEU 0.108 0.024 0.016 0.020 0.030 0.026 m by hour, sim 0.510 0.112 0.031
-0.021 0.028 0.027 m; census medians better in every hour on both beds, ARHT00ATA and KOKB00USA worse (card LAH's
-named regressions).  ⚠ FRESH CONVERGENCE ONLY: a snapshot written without these knobs is not resumed into a run that
-arms them unless `network.ctu_switch_on_resume` (default off; that seam failed card CTU's G5).  ⚠ The sim golden
-starts inside the fixture's start artifact: grade the sim from 00:30:15 (`start_offset_hours` 0.504167).
-Card GAD (2026-10-13): the GALILEO PACKAGE adopted at the author's decision (ledger A16, 77 armed in regime): Galileo
-beside GPS (`processing.active_systems` `["GPS","Galileo"]`, E1 / E5a in both code families
-`["C1C","C1X","L1C","L1X","C5Q","C5X","L5Q","L5X"]`, `frequency_mode` still dual), the consumer's
-`estimation.clock_disc_isb_reinflate_std` 10 and `model_corrections.enable_receiver_cross_system_atx_fallback` (card
-GAL2), and one Galileo clock datum across the two code families (`network.code_datum_family_difference` with
-`network.code_family_birth_prior_sigma_m` 0.10, card GFC; `code_datum_pair_continuity` KEEP_OFF).  Baseline pair
-`runs/_rf0hv15_{field,sim}6` (exe `gnss_processor_galp2.exe`): field WTZZ00DEU 0.058 0.011 0.018 0.010 0.015 0.011 m
-by hour, byte-identical to card GFC's graded arm; sim 0.137 0.072 0.031 0.024 0.026 0.018 m from the run start.  The
-16-site field census is 0.020 m better than GPS only at the median site in hours 2 to 6 (10 better, 2 worse: DAV100ATA,
-HARB00ZAF), the sim census 0.030 m; GPS-only users of the new wire are unchanged at the median (ARHT00ATA +0.20 m).
-⚠ Every golden arm is now GPS + Galileo and 2 to 6 times slower (load-dependent; 2 to 3 on one shared load); constellation-blind graders pool the two
-(`rapid_arm.py score` counts Galileo E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`), and
-`census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
-⚠ FRESH CONVERGENCE ONLY (the two GFC knobs are fingerprinted).  Open: DAV100ATA, the GFC hour-2 clauses, SEYG00SYC's
-E11 / E12 C5Q rows, nominal yaw steering only, E14 / E18 broadcast unhealthy and kept (card GAD section 4).
+- **Generated, never hand-edited.** `make_golden_config.py` builds them from
+  `config/golden/golden_manifest.json` and `docs/CONFIG_promotion_ledger.json`, and FAILS when an
+  in-regime RECOMMEND_ON/SCOPED knob is unarmed without a documented exception. A knob is armed only
+  by the author's decision, through a ledger row and the generator. Loader defaults stay off
+  (flipping one invalidates snapshot fingerprints: a migration card).
+- **An arm** = a golden copy with ONLY the knob under test and the run paths changed
+  (`scripts/rapid_arm.py`). A problem the ledger already resolved means the golden was not the base:
+  `git diff` the arm against it. `golden_sim_tri_w6.json` and `golden_field_gps_dual.json` are
+  RETIRED (frozen for archived configs and old scripts), never a base.
+- **Grading.** A delta against the baseline pair and a same-exe control: the held-out consumer by
+  hour plus the 16-site census; never adopt on one instrument. Development checks on 2 h arms; 6 h
+  for adoption, census and baselines. Hour 1 is ignition: settled claims come from hours 2 to 6.
+- **Fresh convergence only.** Fingerprinted knobs (EXL, GFC and others) never resume from a
+  snapshot written without them (`network.ctu_switch_on_resume` stays off; that seam failed CTU G5).
+- **Sim start.** The sim golden starts inside the fixture's start artifact: grade sim level,
+  ignition and hour 1 from 00:30:15 (`start_offset_hours` 0.504167). Every `start_offset_hours`
+  keeps the half-epoch back-off (bare hours sit on a double-residue boundary).
+- **Conventions shared end to end.** Never compare numbers across sim fixtures (the pre-SFR
+  `simnet60_quiet_wu93_24h` numbers are superseded). Producer, consumers and sim fixture share one
+  wind-up convention (accumulated, `nominal-wu93` frame): a mismatch is ambiguity-absorbed and
+  invisible to σ̂₀.
+- **Interim hold.** `emit_pb_hold_phase_clock` is valid only with a precise a priori clock product
+  (card LAH) until the self-contained clock level lands (cards SCL, NBP).
+- **Armed QC and observability** (in both goldens; verdicts in the ledger): RAIM with attribution,
+  within-epoch tier and `raim_withhold_sigma0` 6.0, clock runaway check, prefit census, topology,
+  RHS attribution on trip, run manifest and epoch status, postfit traces, `emit_ura`,
+  `emit_clock_disc`, the CB jump test with `mw_detect`, `cold_clock_seed`; `parallel_carry` true
+  with `parallel_reduce` false. Response doctrine: adapt and EMIT within the detected epoch; a
+  withhold is the backstop, graded as an adaptation failure unless the epoch is provably
+  unrecoverable. Not armed: `prefit_fuse_sigma`, `sh_health_gate`, the old lane layer
+  (`lane_carry.*`; lanes return only as card AB3's new build) and `emit_pb_filter*` (inert without
+  `carry_invariant`).
 
-They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
-+ `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base
-lineage, pins the manifest's knobs, and FAILS if any ledger RECOMMEND_ON/SCOPED knob that is
-in regime for the golden is unarmed without a documented exception — so a new validated card
-that the goldens do not carry breaks the verify, which is the promotion step this project
-lacked (`docs/CONFIG_promotion_ledger.md` §A4).  An arm = a copy of a golden with ONLY the
-knob under test and the run paths changed.  If you find yourself chasing a problem the
-ledger already resolved, the golden was not the base — check `git diff` of your arm against
-its golden first.
+**Baseline: card GAD (2026-10-13, `docs/refound/GAD_galileo_adoption_2026-10-13.md`).** The
+Galileo package is armed: `processing.active_systems` `["GPS","Galileo"]` with E1/E5a in both code
+families (`["C1C","C1X","L1C","L1X","C5Q","C5X","L5Q","L5X"]`, `frequency_mode` dual),
+`estimation.clock_disc_isb_reinflate_std` 10 and
+`model_corrections.enable_receiver_cross_system_atx_fallback` (card GAL2),
+`network.code_datum_family_difference` with `code_family_birth_prior_sigma_m` 0.10 (card GFC;
+`code_datum_pair_continuity` KEEP_OFF). Pair `runs/_rf0hv15_{field,sim}6` (exe
+`gnss_processor_galp2.exe`): field WTZZ00DEU 0.058 0.011 0.018 0.010 0.015 0.011 m by hour; sim
+SZZ000SIM 0.137 0.072 0.031 0.024 0.026 0.018 m from the run start. Census against GPS only,
+median site in hours 2 to 6: field -0.020 m (10 better, 2 worse: DAV100ATA, HARB00ZAF), sim
+-0.030 m; GPS-only users of the wire unchanged at the median (ARHT00ATA +0.20 m). ⚠ Every golden
+arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems:
+`rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and
+`census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` =
+the wire's arm). Open: DAV100ATA, the GFC hour-2 clauses, SEYG00SYC's E11 / E12 C5Q rows, nominal
+yaw steering only, E14 / E18 broadcast unhealthy and kept (GAD section 4).
 
-"Unguarded" arms are over (the diagnostic cards that needed them are closed).
-Loader DEFAULTS stay off (flipping them invalidates stored-snapshot
-fingerprints — a migration card, not a quick edit); the rule is that every new
-network CONFIG derives from a base that arms this set explicitly
-(`scripts/p2_make_guard_configs.py` is the current template):
+### Grading traps that still apply
 
-- **QC, fingerprint-SAFE** (legal to arm even on a warm resume): `raim`,
-  `raim_attribution`, `raim_within_epoch`, `raim_withhold_sigma0: 6.0` (A4),
-  `clock_runaway_check`, `sh_health_gate`.  `raim_we_code_iono` (WE-CI — the
-  code+iono within-epoch pools) joins this list once its first ON validation
-  passes.  Known gap: the within-epoch tier is `carry_warm`-gated, so it is
-  inert without phase_leveling (decouple is a sanctioned open fix).
-- **Fingerprinted — fresh convergence only**: `phase_leveling`, `emit_ura`,
-  `code_bias_disc_jump_test` (+ explicit `cycle_slip.mw_detect` with
-  leveling).  `cb_excursion_reinit` is conditional-fingerprinted: seed and
-  legs must ALL carry it; never flip it mid-chain.
-- **Cold-start hygiene**: `cold_clock_seed` (the 256 km x_lin cold-start
-  leak fix — mandatory for MW-WL work), half-epoch back-off on every
-  `start_offset_hours` (bare hour values sit on the double-residue boundary),
-  and SEAMLESS (continuous) lineages for event studies — a 19:00-style
-  mid-lineage warm-resume seam measurably erases the events under guards.
-- **Observability**: `write_run_manifest`, `trace_epoch_status`,
-  `trace_events`, `trace_flag_rates`, `health_interval_s: 300`,
-  `emit_epoch_status_record`, `trace_postfit_sigma0`, `trace_postfit_keyed`.
-- **Observability, prefit tier** (promoted Aug-1 on the FT63 leg-19 gates —
-  all three trace-class and fingerprint-SAFE, so legal on a warm resume):
-  `trace_prefit_census` (the ONLY always-on PRE-solve screen: postfit σ̂₀
-  launders a parked cell through the free ambiguities, and `raim_within_epoch`
-  is carry_warm-gated and inert without leveling; 7.6 ms/epoch at 63 sta,
-  solve byte-identical), `trace_topology` (invariant #7's two edges), and
-  `rhs_attrib_on_trip` (the next discharge attributes itself — reproduced the
-  era-2 attribution with no armed TOW).  The FUSE
-  (`network.prefit_fuse_sigma`) is deliberately NOT in this set: it is
-  solve-affecting and stays a validated default-OFF guard until total_IF
-  grading and a second event.
-- **Parallel**: `parallel_carry: true` / `parallel_reduce: false` (mutex).
-- **Lane layer**: OFF **on large networks only** (~300 sta); at ~60 sta it is a
-  small net LOSS. Scale-dependent — see below.
+- **The DD trace has one reference satellite in every chord.** `network_dd_fractional.csv`
+  differences against the lexically lowest satellite seen at two or more stations; its error and
+  its returns enter every chord. Grade ref-free (`scripts/simnet_dd_reref.py`,
+  `simnet_amb_integer.py --ref-free`; the field, without truth, `scripts/dd_frac_reref.py` against
+  its null). A grade built on one reference element reports that element's share or differences it
+  away. The goldens stay on `trace_dd_fractional_ref: lowest` (manifest exception, continuity).
+- **Wrapped-fraction nulls.** Subtracting a group's own circular median shrinks |residual| about
+  42 % on uniform noise: quote the gap to a size-matched null. A triangle-closure null carries the
+  DD structure. A truth-free wrapped grade means something only for sub-cycle errors
+  (`docs/cards/sim-bed/DD-TRACE-REF-SAT.md`).
+- **`network_ionosphere.csv`:** grade `iono_total_m` (= `x_lin + x_r`, absolute slant); `iono_m`
+  is the correction `x_r` to the allocation seed.
+- **An `x_lin` shift on a carried column is an exact solve no-op** (the carried RHS absorbs it): a
+  mechanism whose only write is `x_lin` cannot actuate (`docs/cards/slip/LANE-SNAP-RUNG3.md`).
+- **Seams (an add-back):** grade with a cold-consumer replay (`scripts/splice_wire.py`), never the
+  seam-epoch diff alone; it cannot see an integrated, unsignalled drift.
 
-### Amendments from the AGU-26 campaign (2026-08-04) — measured, not inferred
+### Retired network rules (full pre-2026-10-13 text: `git show 8326da3:CLAUDE.md`)
 
-**1. The MW/WL lane layer is OFF on LARGE networks — the win is scale-dependent
-and it is NOT a blanket default.**
-`applyLaneMeasurement` is **84.7 % of total runtime at 305 stations** — 232 ms
-per row of dense O(dim²) downdate on a **2K×2K joint block** (max K_c 3866, so
-7732² = 478 MB touched per row, twice, because the per-row re-symmetrize
-allocates a second copy). Settled 305-sta GPS epoch:
-
-| arm | s/epoch | note |
-|---|---|---|
-| `lane_carry.enable: true` (the old default) | **310–325** | 3 h of data = 33 h wall |
-| + `fold_blocked` + `parallel_components` | **115** | 2.8×; fold_blocked is NOT bit-identical |
-| `lane_carry.enable: false` | **26.7** | **12×**; 3 h of data = 2.7 h wall |
-
-Turning it off also shrinks the largest carried component **3866 → 2359** (the
-pair-block both merges the two bands into one component and doubles its
-dimension). It buys nothing measurable on DOY-129: AR fix rate is **0 %** and
-med|frac_cyc| is **uniform 0.25** with the layer ON, i.e. the lane layer costs
-85 % of the run to support integer fixing that is not happening. Consistent with
-the standing "MW/WL as conditioning — do NOT arm; net-harmful" verdict.
-
-**~~It does NOT transfer to ~60 stations~~ — SUPERSEDED 2026-08-04. Lane OFF
-wins at 63 stations too, once the window is settled.** The earlier reading
-(30-epoch arms `runs/agu63_nolane_30ep`: dd-build 895 → 241 ms but `install-post`
-108 → 291 and `solve-glue` 233 → 308, TOTAL 2084 → 2207 ms = a small net LOSS)
-was measured **entirely inside ignition** — the same objection this section
-already raises against 30-epoch arms below. Re-measured on matched 1 h arms
-(`_golden63_gps_1h_laneoff` / `_laneon`, 121 epochs, median over the 101 settled
-epochs, single knob differing):
-
-| section (median, settled) | lane OFF | lane ON | ON/OFF |
-|---|---|---|---|
-| **total epoch** | **2266.8 ms** | **2940.1 ms** | **1.30×** |
-| dd-build | 173.3 | 1150.0 | 6.64× |
-| install-post | 706.9 | 526.8 | 0.75× |
-| solve-glue | 363.6 | 386.1 | 1.06× |
-| assembly / reduce / cov-consumers | 250.6 / 134.2 / 163.6 | 252.7 / 93.3 / 163.8 | flat |
-
-It attributes exactly: +977 ms dd-build, −180 ms install-post, net +673 ms =
-the observed median gap. Both component DIRECTIONS matched the old 30-epoch
-reading and the install-post penalty is nearly identical (+183 then, +180 now);
-what flipped the total is the much larger settled dd-build saving (−977 vs −654).
-**Lane OFF is now the speed call at BOTH scales** — the old "decide it on speed
-only above ~100 stations; below that decide it on science" no longer applies,
-though science still points the same way.
-
-**⚠️ It changes carry RETENTION — now measured (2026-08-04), and the answer cuts
-both ways.** Same 1 h arms. Whole-block marginalizations: lane ON = **0**, lane
-OFF = **2549** over 121 epochs (reproducing the ON=0 / OFF=many pattern; the
-earlier figures were ON = 0 over 1440 ep, OFF = 735 over 31 ep). Lane ON ends
-with **726 carried DDs from 2113 births** vs OFF's **498 from 4312** — 46 % more
-retained carry from half the births, and max K_c 460 → 708 (the pair-block
-dimension doubling). Without pair-joining, a per-band component whose chords all
-refloat is discarded wholesale, where the joint block survived if either band did.
-
-**But the two σ̂₀ families split, and that is the finding.** Prior side gets
-QUIETER with lane ON (prires `cb` σ̂₀ 2.3372 → 2.0233, `rxcb` 1.5249 → 1.1417,
-global prior-only σ̂₀ 2.1051 → 1.8463, rows > 4σ̂₀ 717 → 223) while the post-fit
-DATA side gets ~2.3× LOUDER on two independent instruments (block-Baarda G σ̂₀
-6.372 → 15.51; station-congruence σ̂₀ 17.69 → 40.53). The prires drop is not a
-moved-threshold artifact — lane ON's σ̂₀ is *lower*, so its 4σ̂₀ bar is tighter,
-and it still flags 3.2× fewer rows. **Interpretation (consistent with the data,
-not independently proven): that split is what OVER-RETENTION looks like — the
-lane keeps state the data does not support, the carry stays self-consistent
-because it is stiff, and the observation residuals pay for it.** Consistent with
-the standing "MW/WL as conditioning — do NOT arm; net-harmful" verdict, now with
-a visible mechanism. **Still ungraded: total_IF** — 1 h cannot settle the LEVEL
-channel, so grade that on a ≥2 h run before quoting it.
-
-*A/B sanity gate worth reusing:* the block-Baarda block-size histogram and the
-datum-graph census came out **bit-identical** across the two arms (7259 blocks,
-`b1:17 b2:25 b3:15 b4:3672 b5:2 b6:3528`; 67518 edges, 438 tier-2). Both key off
-observation / S-basis structure rather than carry structure, so a lane A/B that
-moves them has a second variable loose.
-
-**2. Do NOT arm `emit_pb_filter_gate_v2` on this lineage.** Tested Aug-4
-(`runs/agu63_pbv2`, 12 h): solve byte-identical (CLK and CB max |Δ| = 0.0, so
-invariant #6 passes), but the effect is null-to-negative — ref-path-slip resets
-unchanged at 538, innovation resets **0 → 31**, PB discontinuity rate 1/128 min
-→ 1/124 min, consumer unchanged at 0 % fix. Its advertised win ("innovation
-resets 5707 → 32") has an **empty target population** here because the inherited
-`emit_pb_filter_jump_k: 8.0` already suppressed them. **91 % of emitted
-phase-bias discontinuities are ref-path SLIP re-referencing**, which no emission
-filter touches.
-
-**3. `emit_pb_filter_jump_k: 8.0` in the FT63 lineage is the RETIRED v1 hand
-tuning** — the code default is 4.0.
-
-**4. `trace_ionosphere` is a DIAGNOSTIC, and `network_ionosphere.csv` is
-frame-broken.** It emits `x_r` alone while the per-LOS iono state is seeded at
-allocation, so it is a CORRECTION, not absolute slant ionosphere (medians 9.9
-TECU against the field's own 30–33 TECU a00, 37 % negative). For anything that
-needs the estimated ionosphere, synthesize `network_vtec_sh.csv` —
-`scripts/sh_vtec.py` (ported basis + `--selftest`).
-
-**5. Candidates that still need their first validation run** (do not arm blind):
-`network.clock_datum_broadcast_anchored` — `declared_dimension = 0` with "no
-pivot, no handover seam", and the clock is the worst re-realizer measured
-(**13 product-wide jumps** post-convergence over 12 h vs 2 for code bias and 0
-for phase bias); and `network.emit_clock_disc: true` — without it the
-per-satellite clock disc counter is never populated, so all 13 of those jumps
-are **silent to the consumer**.  `network.clock_datum_sum_to_zero` got its
-first validation 2026-08-11 on the synthetic 50-sta fixture
-(SPEC_synthetic_minimum_network §9.8): PASS — wire mean pinned exactly, wander
-0.193 → 0.036 m at a fixed polar datum, availability unchanged, set-change
-re-referencing auto-marked.  Sim-only; the field arm is still owed, and the
-same matrix showed the bigger consumer lever is PIVOT ELECTION (the datum-free
-contrast moves 2.2× with the pivot's geometry — `clock_datum_station` is a
-product-quality decision, not a label).
-
-**6. NEVER grade the ionosphere LEVEL against a single GIM number, and never on a
-1 h window** (2026-08-05, `docs/SPEC_level_information_budget.md` §14).  Two
-independent traps, both paid for:
-
-- The GIM's own **global mean VTEC moves through the day** — measured on DOY-129:
-  32.0 TECU at 00 UT, 36.9 at 08, 33.9 at 24.  Every level verdict on the EXT-CB
-  ladder before this was quoted against "GIM 32.24", the 00:00 map alone, so a run
-  tracking the ionosphere reads as drifting and vice versa.  Use
-  `python scripts/gim_global_mean_series.py <run_dir> …`, which reports
-  `a₀₀(t) − GIM_mean(t)` hourly (a sun-fixed a₀₀ **is** the global mean: Ȳ₀₀ ≡ 1).
-- **DEFECT 2 is about half an ignition transient.**  Graded time-matched, the
-  canonical EXT-CB posture starts −15.8 TECU (what every 20-epoch and 1 h arm
-  measured) and from hour 2 wanders in a −4…−15 band, mean ≈ −9.  The level
-  channel's convergence budget is ~2 h; any level claim from a shorter window is
-  measuring ignition.  The LV-1/2/4/5 stack inverts the trade — best ignition on
-  the ladder (+4) and then a ramp to +15…+21 — so **it is NOT armed for settled
-  work**; its cards remain valid fixes to the defects they name.
-- Corollary, measured over four 12 h postures (§15): **the rx-CB carry's rolling
-  common-mode memory is what TRACKS the level**, and the ±6 TECU breathing is its
-  price.  Freezing that memory (de-mean) drifts +20; loosening it (`rx_cb_carry_q`
-  1e-9 → 1e-6) drifts +25 — the frozen pin was RESISTING the drift; removing the
-  carry entirely collapses at −9 TECU/epoch.  Do not "fix" the level by tuning the
-  carry's memory model in either direction; it needs a per-epoch data-derived
-  authority instead.
-
-Grading note: the response doctrine is adapt-and-EMIT within the detected
-epoch; a withhold is the backstop and is graded as an adaptation failure
-unless the epoch is provably unrecoverable.  (The SH gate currently has no
-release/degrade policy — a sick-field era withholds the wire for its full
-duration, 95+ min measured on DOY-129; open policy item.)
-
-### Amendments from the wu93 night (2026-08-21/22) — ledger §A3, measured
-
-**1. The carrier-phase wind-up frame is `nominal-wu93`** (the sign fix,
-`4f49fa2` + consumer-gap closure `0d25aa0`).  Every pre-fix product, golden
-byte-cert hash, and state snapshot is an **expected-fail baseline** —
-re-capture, never re-grade.  **A sim fixture and a producer must sit on the
-SAME side of the fix** (`runs/simnet60_{campaign,quiet}_wu93` are the current
-fixtures): the mixed pairing injects 2φ_wu into every phase obs and is
-INVISIBLE to σ̂₀ at short horizons (ambiguity-absorbed) — enforce by
-provenance, not by instruments (SPEC_phase_windup_sign §9.9).
-
-**2. Slipped sim postures arm `cycle_slip.relevel_free_epoch`** (walk dead,
-720/720, quiet-twin ZWD p50 2.5 cm — the campaign template now pins this).
-**`relevel_retap_statistical` and `relevel_retap_corroborate` are KEEP_OFF —
-both FALSIFIED on the lane-integer instrument** (settled GPS EWL at-own-true-
-integer: refloat-always 70.2 %, corroborated keep 59.6 %, keep-always 54.0 %;
-the raw MW/GF evidence refuses only 1.5 % because T4 catches sub-threshold
-DRIFTS, not steps — SPEC_lane_slip_response).  The lane-integer slip cost is
-**100 % response-inflicted** (response-virgin chords: 98.9–100 % at their own
-true integer); the open build is the LANE-PRESERVING refloat (EWL-MW snap,
-σ ≈ 0.05 cyc) + band-scoped refloat.
-⚠ **UPDATE 2026-08-22 (SPEC_lane_slip_response §7.2): the SEED-SITE snap is
-DELETED and must not be rebuilt.**  Its only write was an `x_lin` shift on a
-local ambiguity column — a proven EXACT solve no-op on the network producer, so
-all three iterations were debugging a mechanism that could not actuate (the
-carried prior's RHS `η = Λ·(value_abs − x_lin)` absorbs the shift, and the
-graded instrument `network_dd_fractional.csv` forms `x_lin + x_r`).  Its `d`
-degenerated to `−Δe_b/λ_b`: one band's frozen-frame model-error change over a
-SINGLE-band wavelength, 3.53× the lane coefficient — which is the whole 15.9-cyc
-"structural discrepancy".  **The lane lives in `LocalCarry::value_abs`** (the
-absolute estimate `x_lin + x_r`, where the frozen frame is structurally absent);
-rung 3 v3 measures it there, OBSERVATORY-FIRST (measure-only, byte-identical on
-every solve artifact — SPEC §7.3).  `network.cycle_slip.relevel_lane_snap` is
-RE-POINTED at that observatory behind two interlocks (`phase_leveling`, and
-`relevel_free_epoch` on its SETTLED value; dies under `carry_invariant`).
-
-**3. `estimation.accumulate_phase_windup` is an OPEN default card** — every
-field lineage silently runs FRACTIONAL (wrapping) mode (±1-cycle staircase,
-MW-blind; the loader now warns).  Do not flip the loader default without the
-migration card; arm it explicitly on fresh-convergence lineages.
-⚠ **UPDATE 2026-08-22 (SPEC_phase_windup_sign §10): the flip is BLOCKED on an
-inverted horizon, not just on evidence.**  The accumulator's continuity horizon
-is 300 s while the FT63/EXT63/FLD63 chain runs `phase_leveling_max_gap_s: 900`,
-so a gap in **(300, 900] s** restarts the unwrap — an exact integer-cycle step
-on every signal of that satellite — while the carried ambiguity and the zero-q
-leveling level SURVIVE and re-inject at their pre-gap values.  Invariant #1 with
-no wired response, invariant #7 with both edges silent, and MW-blind (the step
-is band-common, ΔWL = 0).  The accumulator itself is safe as KEYED (one
-`GnssCorrections` per station makes the satellite-only key injective — verified;
-the simulator's shared-provider fan-out is the exception and already pays a
-process-per-station cost).  **Arm `estimation.trace_windup_census` on a
-fractional field lineage first** — DONE 2026-08-22 (`_fld63_wucensus4h`, 4 h,
-61 sta): the staircase is **51 in-horizon one-cycle steps (~306/day network-wide,
-2.15e-4 per sat-epoch — §7's GCGO rate once cadence-normalised)**, and
-`gap_wu_to_carry` = **20** (~120/day) — NONZERO, so the wired restart response is
-a BLOCKING prerequisite.  ⚠ Sharper than §9.5's algebra implies: accumulation does
-not zero the defect, it trades ~306 fractional wraps/day for ~120 UNCOMPENSATED
-restarts/day — a ~2.5× reduction that moves the problem to an uninstrumented
-channel.  Build the response, not the flip.
-⚠ **UPDATE 2026-10-01 (card WUP): ARMED on the goldens.**  The response built on 2026-08-23 never acted: it
-walked the live ambiguity map, and every restart is a return after a gap whose column was pruned (6 h field arm:
-28 in-horizon restarts, 0 arcs, 3 carries bridged).  Fixed (`networkWindupRestartTargets`: the leveling carry
-inside the horizon is the target, as in the gap re-entry drain); 27 of 28 answered, none bridged; the staircase's
-100 steps per 6 h are gone; both knobs armed and pinned (`docs/refound/WUP_windup_accumulated_promotion_2026-10-01.md`).
-
-**5. THE RE-ADMISSION EDGE (2026-09-05/06, SPEC_amb_iono §6.10/§6.11, SPEC_synthetic
-§18.13/§18.14).**  A satellite's eclipse return was one edge behind three open items.
-`network.readmit_seed_horizon_s: 3900` (clock AND code-bias seeds — the clock-only
-variant is FALSIFIED, the tails return) is VALIDATED and pinned on the sim golden: T3
-clock tails 2–4× smaller, consumer post-eclipse excursion 2–3× smaller, DD unchanged.
-`readmit_coupling_marg_ep`, `phase_datum_handover_max_var_ratio` and BOTH F3 age-gate
-responses are KEEP OFF (the post-eclipse DD episodes are NEITHER the returned columns
-NOR the newborn legs; the ratio's first-stash denominator is biased by pin tenure; ANY
-diagonal leveling row for a subset of legs re-poisons the station).  The warm-restart
-consumer residual was the one-epoch DIAGONAL border fold at the seam: `resume_frame_
-restore` + `resume_coupling_restore` on a QK/QP-bearing snapshot (leg E) gives a warm
-restart whose consumer converges like a cold consumer on the continuous wire — ⚠ grade
-every seam card with a COLD-CONSUMER REPLAY (`_seamctl_replay_*`, `splice_wire.py`),
-never the seam-epoch diff alone: it cannot see an integrated, unsignalled drift.
-
-**6. THE DD TRACE HAS ONE REFERENCE SATELLITE, AND IT IS IN EVERY CHORD (2026-09-06,
-SPEC_amb_iono §6.12).**  `network_dd_fractional.csv` differences every satellite against the
-lexically-lowest one present at ≥ 2 stations (G01 / E02 all day on the sim); its own
-between-station error is common to every chord, and its eclipse return re-references the
-whole trace to newborn legs — the "post-eclipse network-wide DD episode" (as-traced 0.52–0.59
-cyc) was that; ref-free the DD is flat 0.07–0.11 cyc all day.  ⚠ Every DD-integer number
-quoted before 2026-09-06 is as-traced.  Grade with `scripts/simnet_dd_reref.py` or
-`simnet_amb_integer.py --ref-free`.  Rule: any grade built on a single reference element
-reports that element's share or differences it away.
-⚠ **UPDATE 2026-09-06 (§6.13): the FIELD is NOT this artifact — the DOY-129 uniform-0.25
-histogram stands on its own.**  Truth-free instrument `scripts/dd_frac_reref.py` (the field has
-no truth, so it grades `frac_cyc` on the circle against a Monte-Carlo null).  It FIRES on the sim
-base — R 0.610 vs null 0.430, ref-free gap −0.047, and its 0.079 reproduces the truth-graded
-0.089 — and is SILENT on `fld63_stk_on`: R 0.468 vs null 0.473, gap +0.008 on every signal.  The
-field reference also rotates on its own (8–11 switches, 3–9 satellites) with no post-switch
-degradation.  What the field DOES inherit is the COVERAGE half (chords exist only for pairs that
-both see the reference), so per-station field splits off this trace still compare rotating
-populations.  `network.trace_dd_fractional_ref` = `lowest` (default) | `oldest` is BUILT and
-UNVALIDATED — goldens stay on `lowest`; an `oldest` trace is quieter, never reference-FREE.
-⚠ **TWO NULL TRAPS in any wrapped-fraction grade** (both cost a false finding here before they
-were caught): subtracting a group's own circular median shrinks |residual| ~42 % on pure uniform
-noise, so quote the GAP to a size-matched null, never the raw value; and a triangle-closure test
-is confounded because a DD is per-station additive BY CONSTRUCTION — its null must carry the DD
-structure with no reference term (field closure 0.182 reads as structure against 0.250 and as
-NOTHING against the correct 0.172).  ⚠ A truth-free wrapped grade is only meaningful where the
-underlying errors are SUB-CYCLE: two arms picked as controls had 2–20-cycle DD errors, wrapped to
-uniform, and looked like a clean refutation of §6.12.
-
-**4. `network.trace_station_residuals` writes ZERO rows on `carry_invariant`
-chains UNLESS `network.raim_carry_invariant` (the re-hosted screen, pinned on the
-field golden 2026-09-13) is armed** — the writer rides the RAIM pool, which the
-re-host fills (26 k rows / 60 epochs measured 2026-09-14).  ⚠ Its statistic is the
-PHASE cell maximum, and on a `carry_invariant` lineage the free local column absorbs
-the phase tension: `s_raw` p50 ≈ 0.02 with σ̂₀ pinned at its 1.0 floor — post-fit
-phase residuals carry no information there (SPEC_raim_pool_rehost §7.2/§7.3).  For
-the CODE side use `trace_postfit_keyed` (`network_pf_keyed.csv`, STA/SAT/SIG) or
-the per-row trace `trace_postfit_rows` (pre-registered SPEC_event_harness §24.6); the prires /
-block-Baarda / congruence run-end counters remain the σ̂₀ instrument set.
+- Card-4 `carry_invariant` lineage (`emit_pb_filter_gate_v2`, `emit_pb_filter_jump_k` 8.0,
+  `raim_carry_invariant`, the `trace_station_residuals` zero-row trap): float vehicle, cards RF-1,
+  RF-2b, GRB; ledger rows.
+- MW/WL lane layer cost and retention (AGU-26, 63 and 305 stations): ledger `lane_carry.*`, card AB3.
+- Lane slip responses (`relevel_retap_*`, `relevel_lane_snap`, lane-preserving refloat):
+  `docs/cards/slip/`, ledger rows.
+- SH and GIM ionosphere level (GIM mean series, DEFECT 2, rx-CB carry memory, SH gate release):
+  `docs/cards/ionosphere/LV-CORRECTION-AND-12H.md`, card AB1.
+- Pre-golden armed set (the Jul-28 guard list, `scripts/p2_make_guard_configs.py`,
+  `cb_excursion_reinit` chains, `raim_we_code_iono`): the goldens and the ledger.
+- Clock-datum candidates (`clock_datum_broadcast_anchored`, `clock_datum_sum_to_zero`, pivot
+  election): ledger rows; pivot election is a queued build (`docs/status/OPEN_ITEMS.md`).
+- Wind-up accumulation (fractional census, inverted horizon, restart response): card WUP,
+  `docs/cards/slip/WINDUP-FRACTIONAL-CENSUS.md`.
+- Re-admission edge (`readmit_seed_horizon_s` 3900 pinned; its KEEP_OFF siblings):
+  `docs/cards/network-vehicle/READMIT-EDGE.md`.
+- Golden re-bases 2026-09-15 to 2026-10-01 (RF-3-prep, GRB, RF-3, PBF, WUP, SFR, EXL; baselines
+  `_rf0hv9` to `_rf0hv14`): the cards in `docs/refound/CARDS.md`.
 
 ## File management (RINEX, products, downloads)
 

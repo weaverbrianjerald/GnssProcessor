@@ -4,15 +4,15 @@
 
 - **id:** CI
 - **topic:** consumer
-- **status:** open
-- **summary:** Consumer-side bars of §20.3, §21.21 and §23.2 SUSPENDED: the float consumer wanders metres on the network wire, yet converges to 0.25 m on CODE products.
+- **status:** closed
+- **summary:** The cold consumer reached 0.25 m on CODE's products and 6 to 8 m on the old wire, so the wire was the defect; the suspended bars died with their postures. Closed: the re-founding grades the cold 6 h consumer.
 - **dates in the text:** 2026-09-14
 - **knobs / posture:** `network.closed_loop` (legs: `consume_network_iono`, `consume_network_clock`, `consume_network_products`)
 - **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** none as `runs/` paths; seed `evseed_field6h_v8`, legs L0 to L4 from v8 ep0604
 - **source:** `docs/archive/SPEC_event_harness.md` §24, §24.1 to §24.3; the §24.3 results are in the body of [CC](../consumer/CC-declared-step-carry.md)
 
-**Outcome.** The card asks what the consumer bars have been reading and which consumer posture converges. The continuous consumer of seed v8 wanders 3.4 to 8.5 m (hourly p50), a swing wider than the bars it decided, so the consumer-side bars are suspended while the wire-side bars stand; the four slip knobs added no consumer resets. On any combination of the network's products the cold legs sit at 6 to 8 m: the consumer's own modeling is not the defect, and the [CI census](../consumer/CI-census-wire-vs-code.md) located it in the wire. [The re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) grades on the cold 6 h consumer; the suspension has no recorded lift.
+**Outcome.** Which consumer posture converges, and what had the consumer bars read? The §24.3 legs put the cold consumer at 6 to 8 m on any mix of the network's products and 0.25 m on CODE's: the consumer was sound, the wire was the defect ([CI census](CI-census-wire-vs-code.md)). Closed: the suspended bars (four slip knobs, D5-v5, RS-10b) belonged to retired postures and are moot; [the re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) grades the cold 6 h consumer, at WTZZ00DEU 0.058 m in hour 1 on the [GAD baseline](../../refound/GAD_galileo_adoption_2026-10-13.md). Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -4,15 +4,15 @@
 
 - **id:** JT
 - **topic:** wire-contract
-- **status:** open
-- **summary:** The de-commoned jump test declares the frame-hidden G32 L1W step (TOW 276810 now 12/12) but the consumer is worse on every graded bar; the knob does NOT join RF-0hv.
+- **status:** superseded
+- **summary:** De-commoning the phase-bias jump test against the network median declares the frame-hidden G32 L1W step but worsens the consumer on every bar; SUPERSEDED by card PBH's hold, which the jump test now screens.
 - **dates in the text:** 2026-09-15
 - **knobs / posture:** `network.disc_jump_test_decommon` (bool, default OFF, emit-side only; per-signal median, `kDiscDecommonMinSats = 3`; S-line token `discdecom=1`), graded on the CC-arm lineage with `pb_disc_carry`; `serialize_disc_counters` and `serialize_sbasis_contract` off in RF-0hv
 - **hashes named in the text:** main `a60a016` + this card's diff; exe `gnss_processor_jt.exe` `6E1021DBC554840A`; OFF smoke raw `1ACC941CC853ECB2`, data stream `333DCB0871E1F5BC` (canonical raw `9ADD1D3AB9D70657`); Debug suite 2235 / 295 (2234 passed, 1 skipped); gtest `PbJumpDecommonTest` (6 cases)
 - **run dirs named in the text:** `runs/_jt_smoke_off`, `runs/_jt_field6_both`, `runs/_jt_sim6_both`; baselines `runs/_ccarm_field6_both`, `runs/_ccarm_sim6_both`, `runs/_rf2d_smoke_off`, `runs/_cst_smoke_off`
 - **source:** [CST](CST_consumer_sat_trace_2026-09-15.md) section 7.3 (the pre-registration); [CC-arm](CC-arm_pb_disc_carry_rf0hv_2026-09-15.md) (the carry arm it runs on)
 
-**Outcome.** Question: does de-commoning each phase-bias step against its signal's network median declare frame-hidden steps without harming the consumer. With the solve byte-identical, the field event window reaches 3.323 m against a 1.0 m bar. Two causes: in ignition the median is convergence, not a frame, and the network's median differs from the consumer's sky median (0.654 m at TOW 276810). J1 (data stream), J2 and J3a PASS; J3b, J4a, J5 and J6 FAIL. [PBT](PBT_consumer_pb_translate_2026-09-15.md) later reached the cell from the consumer with the wire untouched; section 7's fixes are unbuilt.
+**Outcome.** Question: does de-commoning each phase-bias step against its signal's network median declare frame-hidden steps without harming the consumer? The cell is declared (TOW 276810 12/12), but the field event window reaches 3.323 m against a 1.0 m bar: in ignition the median is convergence, and the network's median is not the consumer's sky median (0.654 m apart). J3b, J4a, J5 and J6 FAIL. SUPERSEDED by [PBH](PBH_phase_bias_hold_2026-09-19.md): the jump test screens held values, constant within a generation, so section 7's fixes are moot. Status reviewed 2026-10-13.
 
 **Status as recorded (2026-09-15):** open — **one producer knob BUILT (`network.disc_jump_test_decommon`, bool, default OFF), two field/sim runs spent on the carry arm, no golden and no ledger touched, nothing promoted.**
 CST §7.3 pre-registered this fix and named its ordering constraint: the emitter's phase-bias jump test screens the RAW epoch-to-epoch ΔPB while

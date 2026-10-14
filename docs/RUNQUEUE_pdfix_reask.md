@@ -1,5 +1,7 @@
 # RUN QUEUE — re-asks on the working fold (2026-08-03) — CLOSED CAMPAIGN RECORD
 
+> **Reconciled 2026-10-13** against the network re-founding: every arm was answered on the Card-4 `carry_invariant` lineage that the re-founding retired, so nothing here is owed, and the integer question continues in cards AB3 and ARL under `docs/refound/`. Items still owed are in [OPEN_ITEMS](status/OPEN_ITEMS.md).
+
 > **A results document, not a live queue.** Every arm P0-P6 ran on 2026-08-03 and carries a
 > verdict below; do not re-run one that already has an answer. The **`P0`…`P6` / `P3b` / `P6(b)`
 > labels are load-bearing anchors** — eleven `config/test_suite/_ft63_pdfix_*.json` plus

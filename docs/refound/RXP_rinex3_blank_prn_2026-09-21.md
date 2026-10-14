@@ -4,14 +4,14 @@
 
 - **id:** RXP
 - **topic:** build-infra
-- **status:** open
-- **summary:** FIXED 2026-09-21: the RINEX 3 reader dropped every satellite below G10 in blank-padded files (16 of 310); the corrected field run, the new baseline, is WORSE at WTZZ00DEU.
+- **status:** closed
+- **summary:** FIXED 2026-09-21: the RINEX 3 reader dropped every satellite below G10 in blank-padded files (16 of 310); the WTZZ00DEU loss of the corrected run was card EV7's decouple; closed, the fix unconditional.
 - **source:** [MSC](MSC_multi_site_consumer_2026-09-21.md) section 4 (ANMG00MYS never reaches a decimetre and solves on a median of five satellites)
 - **knobs / posture:** none (a reader defect; no knob)
 - **dates in the text:** 2026-09-21
 - **hashes / run dirs:** `runs/_rf0hv5_field6`, `runs/_rap_msc_anmg_hv5_d`; build main `23ce39b`, exe `gnss_processor_rxp.exe`; new field baseline `runs/_rap_r6_dual`
 
-**Outcome.** The question: why ANMG00MYS never converged in [MSC](MSC_multi_site_consumer_2026-09-21.md). The RINEX 3 path took a record's first three characters as the identifier, so `G 7` never matched `G07` at four roster stations. The fix passes its controls and G1; ANMG00MYS goes from 0 to 256 epochs below a decimetre. WTZZ00DEU falls from 603 to 533 epochs: a larger burst of the 05:22 UT all-satellite clock-anchor decouple already in the old run, which [EV7](EV7_all_sat_clock_decouple_2026-09-21.md) traced to a coverage-gate defect and fixed (armed 2026-09-22). Owed: nine Python scripts with the same comparison ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)).
+**Outcome.** Question: why did ANMG00MYS never converge in card [MSC](MSC_multi_site_consumer_2026-09-21.md)? The RINEX 3 path took a record's first three characters as the identifier, so `G 7` never matched `G07` (16 of 310 files, four roster stations). Fixed unconditionally; controls and G1 pass; ANMG00MYS 0 to 256 epochs below a decimetre. WTZZ00DEU fell 603 to 533 through the 05:22 UT all-satellite decouple, which [EV7](EV7_all_sat_clock_decouple_2026-09-21.md) fixed and armed. The roster sensitivity read here is moot on today's posture; the Python readers sharing the pattern are [owed](../status/OPEN_ITEMS.md). Status reviewed 2026-10-13.
 
 ## 1. The defect (read by the manager)
 

@@ -4,15 +4,15 @@
 
 - **id:** RF-NS-b
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Nothing was absent: the withheld satellites stay tracked, and `addStation`'s per-station PD test drops a median of 29 (golden) and 42 (vehicle) of 59 stations per settled epoch.
+- **status:** superseded
+- **summary:** Nothing was absent: addStation's per-station PD test dropped a median of 29 (golden) and 42 (vehicle) of 59 stations per epoch; superseded by RF-PD-fix, which removed every rejection (armed in the goldens).
 - **dates in the text:** 2026-09-15
 - **knobs / posture:** the RF-0g golden and the RF-1 + RF-2b + RF-2d vehicle (6 h cold field); the PD test at `NetworkNormalEquations.cpp:476-484`; the readmission seed downstream of the gate (`NetworkSolveGlue.cpp:1159` against `:1048`); `network.amb_float_birth_var_m2` unset; pre-registered, NOT BUILT: (b1) the PD rejection fixed at its source, (b2) fix (a) v2 with the pinned column quarantined behind a column-occupancy accessor; instrument `scripts/rf_obs_loss_read.py`
 - **hashes named in the text:** `network_if_slip.csv` sha256 `dbd4ac1d5818d655…`, identical in both runs
 - **run dirs named in the text:** `runs/_rf0g_field6`, `runs/_rf2d_field6_both`, `runs/_rfns_field6_both`
 - **source:** [RF-NS](RF-NS_null_space_read_2026-09-15.md) section 6 (fix (a) rejected; the absence framing corrected)
 
-**Outcome.** The question: why the returning `CB|Gxx|C1W` columns of RF-NS carry no information. G07, G30 and G04 are tracked by 10 to 13 stations on every withheld epoch, but the vehicle feeds G07 from one in-solve station (the golden from 6 or 7); the withhold starts on the column's return and blocks the seed that would pin it. G04's dip is the same defect. Nothing built. [RF-PD](RF-PD_station_rejection_2026-09-15.md) named the null and corrected the always-rejected count (24 and 36 stations, not six); [RF-PD-fix](RF-PD-fix_station_prior_before_pd_2026-09-15.md) removed every PD rejection and gate withhold (vehicle 720 / 720), but the vehicle consumer FAILED its no-worse bar in 4 of 6 hours.
+**Outcome.** Question: why do the returning `CB|Gxx|C1W` columns of RF-NS carry no information? Nothing was absent: G07, G30 and G04 stay tracked by 10 to 13 stations, but `addStation`'s per-station PD test drops a median of 29 (golden) and 42 (vehicle) of 59 stations, so the column is fed by at most one in-solve station and the withhold blocks its own seed. Superseded: [RF-PD](RF-PD_station_rejection_2026-09-15.md) named the null and [RF-PD-fix](RF-PD-fix_station_prior_before_pd_2026-09-15.md) removed every rejection (armed in the goldens); guard (b2) has no population. Status reviewed 2026-10-13.
 
 **Status as recorded (2026-09-15):** open — **nothing was absent.**  The satellites at the centre of every mid-run withhold are TRACKED by 10–13
 stations on every epoch of their supposed "absence" (`network_if_slip.csv`, whose **sha256 is identical between the two

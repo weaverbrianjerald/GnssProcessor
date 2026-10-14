@@ -105,36 +105,7 @@ namespace GnssProcessor {
         const bool        par   = r.par;
 
         const std::vector<Item> rows = {
-            // --- ON tier: invariant DD carry (Card 4) and its carry couplings ----------
-            // Not reported on the phase-leveling F1/F3 lineages: the two carry vehicles are
-            // mutually exclusive (do_amb_carry skips the leveling inject under
-            // carry_invariant, so F3 would be inert there; SPEC_amb_iono_split_overcount).
-            { !network_phase_leveling_local_block_ && !network_phase_leveling_los_scale_,
-              network_carry_invariant_,
-              Tier::ON, true , "network.carry_invariant",
-              "the ONLY cross-epoch phase memory a per-epoch estimator has; consumer 3D float "
-              "10.9 -> 3.6 m" },
-            { network_carry_invariant_innov_gate_,
-              network_carry_invariant_innov_calibrate_,
-              Tier::ON, false, "network.carry_invariant_innov_calibrate",
-              "raw formal Cov(v) is 10-30x optimistic (M2); calibrated k=4 reproduces the "
-              "hand-tuned k=10 sweet spot" },
-            { network_carry_invariant_,
-              network_carry_invariant_innov_gate_,
-              Tier::ON, false, "network.carry_invariant_innov_gate",
-              "invariant #1 event response for the stiff DD carry; em10 1h-tail DD step 8.33 -> "
-              "2.35 cyc/ep" },
-            { network_carry_invariant_innov_gate_,
-              network_carry_invariant_innov_calibrate_ ? (network_carry_invariant_innov_k_ >= 3.99 &&
-                  network_carry_invariant_innov_k_ <= 30.01) : (network_carry_invariant_innov_k_ >= 9.99),
-              Tier::ON, false, "network.carry_invariant_innov_k",
-              "k=4 (sweep flat over 4-30) is right ONLY with innov_calibrate; on raw formal "
-              "Cov(v) the field value is k=10" },
-            { network_carry_invariant_,
-              network_carry_invariant_qz_ >= 5e-5 && network_carry_invariant_qz_ <= 2e-4,
-              Tier::ON, false, "network.carry_invariant_qz",
-              "set 1e-4 m2/s: beats zero-q, DD step 2.433 -> 1.498 cyc/ep and calib 0.82 -> 0.49 "
-              "at 50 sta 3h" },
+            // --- ON tier: the carry couplings -------------------------------------------
             { network_carry_conditional_coupling_ && !network_carry_invariant_,
               network_carry_coupling_gauge_project_,
               Tier::ON, true , "network.carry_coupling_gauge_project",
@@ -210,11 +181,6 @@ namespace GnssProcessor {
               "set 0.25: the flat 0.05 m gate is 0.26 cyc on L1 but 0.20 on L5; G3 A/B cut PB "
               "disc L5 -20%, total -10%" },
             // --- ON tier: emission and product knobs ----------------------------------
-            { network_emit_pb_filter_ && network_carry_invariant_ && network_carry_invariant_emit_rebase_,
-              network_emit_pb_filter_gate_v2_,
-              Tier::ON, false, "network.emit_pb_filter_gate_v2",
-              "G1-G5 all PASS: disc floor 2.6/ep vs v1 85.5/ep (33x), innovation resets 5707 -> "
-              "32 (178x), solve byte-identical" },
             { true,
               network_phase_leveling_,
               Tier::ON, true , "network.phase_leveling",
@@ -231,25 +197,11 @@ namespace GnssProcessor {
               Tier::ON, false, "network.emit_epoch_status_record",
               "one positional H heartbeat record per epoch incl. withheld ones (gate + sigma0): "
               "record stream 0-diff, solve-neutral; pair with h_sigma0_prefit_census" },
-            // The S contract line is part of every wire (card OWD), so the loader forces this
-            // field true and the row always reads armed.  The row stays so the ledger entry
-            // keeps its loader coverage (config_posture_check.py --verify-loader).
-            { true,
-              nc.serialize_sbasis_contract,
-              Tier::ON, false, "network.serialize_sbasis_contract",
-              "the S-basis contract in the product header (replay consumer -12.7 % RMS, 45 "
-              "spurious resets removed); unconditional since card OWD, the key is inert" },
             { true,
               nc.write_run_manifest,
               Tier::ON, false, "network.write_run_manifest",
               "run provenance: config hash + build stamp + POST-arming toggle dump; no estimation "
               "effect, no product bytes" },
-            // --- ON tier: ionosphere and SH-VTEC --------------------------------------
-            { n_sta >= 3 && tri,
-              estimate_network_iono_sh_,
-              Tier::ON, true , "network.estimate_iono_sh",
-              "USER DIRECTIVE: always on; without SH consumer float 8.19 -> 0.98 m and robust "
-              "clock spread 266 m vs single digits" },
             // --- ON tier: performance / parallelism and network trace_* knobs --------
             { par,
               nc.parallel_seam,
@@ -319,7 +271,7 @@ namespace GnssProcessor {
         const bool        gps_gal_only = r.gps_gal_only;
 
         const std::vector<Item> rows = {
-            // --- SCOPED tier: invariant DD carry (Card 4) and its carry couplings ------
+            // --- SCOPED tier: the carry couplings ---------------------------------------
             { !network_carry_invariant_ && network_phase_leveling_ && network_shared_carry_full_cov_,
               network_carry_conditional_coupling_,
               Tier::SCOPED, true , "network.carry_conditional_coupling",
@@ -375,28 +327,6 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.shared_carry_full_cov",
               "legacy lineage: recovers the clock-to-phase-bias off-diagonals the diagonal stash "
               "drops; 50 sta cost ~0" },
-            { warm && network_carry_invariant_ && gps_only,
-              nc.state_snapshot_carry,
-              Tier::SCOPED, false, "network.state_snapshot_carry",
-              "GPS-only warm resume: CLK slope 55.8 -> 30.2 mm/ep over 60 ep; GPS+Gal at 305 sta "
-              "is NEGATIVE, unresolved" },
-            { nc.state_snapshot_carry && gps_only,
-              nc.state_snapshot_carry_diagonal,
-              Tier::SCOPED, false, "network.state_snapshot_carry_diagonal",
-              "GPS-only: accuracy >= dense at 478x smaller (270.9 -> 0.57 MB at 305 sta); dense "
-              "churns ~186 GB per 6h" },
-            // --- Write half of the linearization-frame carry (RS-2, SPEC_event_harness s21).
-            //     The blob's Z rows are correction-frame DDs; without the writer's sum
-            //     c*x_lin per chord a resumed run folds every restored chord in the wrong
-            //     frame.  Write side only (products byte-identical, only the snapshot grows);
-            //     the regime is any run that writes a carry blob.
-            { nc.state_snapshot_carry,
-              nc.state_snapshot_carry_lin,
-              Tier::SCOPED, false, "network.state_snapshot_carry_lin",
-              "write one ZL row (sum c*x_lin per chord) per carried block so a warm resume can "
-              "re-base the restored branch onto its own linearization (network.resume_carry_rebase); "
-              "the field golden's warm resume went from 61/61 withheld to emitting (SPEC_event_harness "
-              "s21.5)" },
             // --- Write half of datum continuity (RS-3, SPEC_event_harness s21.7): the eq34
             //     chain tree and the time-linked code-bias datum memory are stored in the
             //     snapshot as format-forward rows.  Write side only, products byte-identical.
@@ -654,15 +584,6 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.raim_within_epoch",
               "the ONLY tier that acts BEFORE emit (adapt-and-EMIT); also the only source of the "
               "sigma0_adapt column" },
-            // --- RAIM pool re-host (docs/SPEC_raim_pool_rehost.md s7.1): the post-fit screen
-            //     runs on carry_invariant lineages (qc_amb census) and changes nothing until it
-            //     flags a cell.  The actuator is a separate KEEP_OFF knob.
-            { network_carry_invariant_ && network_raim_,
-              network_raim_carry_invariant_,
-              Tier::SCOPED, false, "network.raim_carry_invariant",
-              "re-host the post-fit RAIM pool onto the carry-neutral qc_amb census so T3/T4 run at all "
-              "under carry_invariant: 107k cells / 118 epochs on the field golden, products byte-identical, "
-              "~5 % epoch cost; sigma0 at its 1.0 floor so far (power leg owed)" },
             // --- The completed gross line-of-sight screen (cards GL / RF-3).  It is the only
             //     acting code-row tier the producer has: every post-fit RAIM pool admits
             //     carried-ambiguity phase rows, so a code-only gross error on one line of
@@ -716,24 +637,6 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.emit_generation_id",
               "a restored non-zero id SUPPRESSES the first-emit mint, so a producer restart does "
               "not hard-reset every consumer" },
-            { network_carry_invariant_ && network_carry_invariant_emit_rebase_,
-              network_emit_pb_filter_,
-              Tier::SCOPED, false, "network.emit_pb_filter",
-              "clears the ~200/ep PB disc floor (median step 0.080 m vs a 0.05 m thresh; 50 of "
-              "11938 genuine); solve unchanged" },
-            { network_emit_pb_filter_ && network_carry_invariant_ && network_carry_invariant_emit_rebase_
-                  && network_emit_pb_filter_gate_v2_,
-              network_emit_pb_filter_jump_k_ > 3.99 && network_emit_pb_filter_jump_k_ < 4.01,
-              Tier::SCOPED, false, "network.emit_pb_filter_jump_k",
-              "keep the k=4.0 default under gate_v2 - one k transfers 30 s to 300 s; jump_k=8 is "
-              "the RETIRED v1 hand tuning" },
-            { network_emit_pb_filter_ && network_carry_invariant_ && network_carry_invariant_emit_rebase_
-                  && (nc.epoch_decimation_n > 1 || spacing_s > 60.0),
-              network_emit_pb_filter_window_epochs_ < 59.99 || network_emit_pb_filter_window_epochs_ >
-                  60.01,
-              Tier::SCOPED, false, "network.emit_pb_filter_window_epochs",
-              "epoch-denominated: the 60.0 default does NOT transfer across cadence; the shipped "
-              "300 s tier uses 15.0" },
             // --- The emit-side phase-bias hold (card PBH).  The emitted phase bias of each
             //     (satellite, signal) is held at the first value of its generation, and a gap
             //     longer than emit_pb_hold_max_gap_s declares a new generation on the wire
@@ -806,43 +709,12 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.phase_leveling_max_gap_s",
               "a gap guard under 2x the epoch spacing drops the carry on any missed epoch; 120 at "
               "30 s, 900 in the 300 s tier" },
-            // --- SCOPED tier: ionosphere and SH-VTEC ----------------------------------
-            { estimate_network_iono_sh_ && n_sta >= 150 && iono_weighting_.elevation_cutoff_deg >= 24.9,
-              global_vtec_sh_.max_degree >= 15,
-              Tier::SCOPED, false, "estimation.global_vtec_sh.max_degree",
-              "deg-15 at >=150 sta: sat code-OSB drift 0.66 vs 2.31 m, epoch step 1.57 vs 4.43 "
-              "cm; only at a 25 deg iono cutoff" },
-            { estimate_network_iono_sh_ && n_sta >= 50,
-              iono_weighting_.elevation_cutoff_deg >= 24.9,
-              Tier::SCOPED, false, "estimation.ionosphere_weighting.elevation_cutoff_deg",
-              "25 deg cuts clock-delta rms 77x vs 10 deg (a00 296 -> -305 TECU); SEPARATE gate "
-              "from processing.elevation_mask_deg" },
-            { estimate_network_iono_sh_ && n_sta >= 50,
-              iono_constraint_deweight_.adaptive,
-              Tier::SCOPED, false, "network.iono_constraint_deweight_adaptive",
-              "robust-z deweight of a hostile iono minority; 2-sta amputation cut ignition 5-9 -> "
-              "0.88 cyc/ep; own A/B never run" },
-            { estimate_network_iono_sh_ && iono_constraint_deweight_.adaptive,
-              iono_constraint_deweight_.min_epochs <= 5,
-              Tier::SCOPED, false, "network.iono_constraint_deweight_min_epochs",
-              "field legs all run 5 clean samples, not the shipped 30 (6x slower gate ignition); "
-              "epoch-denominated, never rescale" },
-            { estimate_network_iono_sh_ && iono_constraint_deweight_.adaptive,
-              iono_constraint_deweight_.window_epochs <= 15.01,
-              Tier::SCOPED, false, "network.iono_constraint_deweight_window_epochs",
-              "field runs use a 15-epoch robust-z half-life; shipped 60 is an un-retuned 30 s "
-              "assumption (Class A, scales w/ rate)" },
             // --- SCOPED tier: performance / parallelism and network trace_* knobs ----
             { true,
               nc.health_interval_s > 0.0,
               Tier::SCOPED, false, "network.health_interval_s",
               "set 60-300 s: the ONLY mid-run-flushed CSV, so a crashed or WER-zombied run loses "
               "every other tail" },
-            { nc.lane_carry.enable && par,
-              nc.lane_carry.parallel_components,
-              Tier::SCOPED, false, "network.lane_carry.parallel_components",
-              "the one lane knob whose ON path is byte-identical (independent joint blocks, Eigen "
-              "re-pinned to 1)" },
             { par && !nc.parallel_reduce,
               nc.parallel_carry,
               Tier::SCOPED, false, "network.parallel_carry",
@@ -894,12 +766,6 @@ namespace GnssProcessor {
               "reproduced the era-2 attribution 0.002 -> +6493 with NO armed TOW); SCOPED on "
               "MEMORY - it retains one epoch of assemblies + kernel blocks (25.4 MB at 63 sta) "
               "and self-disables above rhs_attrib_prev_max_stations" },
-            { estimate_network_iono_sh_ && n_sta <= 50,
-              nc.trace_ionosphere,
-              Tier::SCOPED, false, "network.trace_ionosphere",
-              "the pierce-point / slant-iono viz record; a full extra reconstruct sweep, so KEEP "
-              "OFF above ~50 sta.  Grade iono_total_m, NEVER iono_m (the latter is the seed-less "
-              "correction: median 0.95 m against a true 8.88 m)" },
             { network_raim_ && network_phase_leveling_ && n_sta <= 50,
               nc.trace_raim_redundancy,
               Tier::SCOPED, false, "network.trace_raim_redundancy",
@@ -921,16 +787,6 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.apriori_source",
               "self-sufficient RT service needs apriori_source=brdc_rts; float 2.84 m vs sp3 2.76 "
               "m (3 sta/121 ep)" },
-            { estimate_network_sat_code_bias_ && gps_gal_only,
-              network_cb_kaula_prior_,
-              Tier::SCOPED, false, "network.cb_kaula_prior",
-              "lifts the CODE-dominated near-null direction the PA heal cannot reach (it anchors "
-              "PB only); FT63 GPS+Gal 145/150 -> 150/150 emitted" },
-            { network_cb_kaula_prior_,
-              network_cb_kaula_sigma_m_ <= 3.01,
-              Tier::SCOPED, false, "network.cb_kaula_sigma_m",
-              "sigma=3 m gives 2.7 decades of K2 margin; the 10 m default gives 1.6 and survives "
-              "only by coincidence" },
             { network_apriori_source_ == NetworkAprioriSource::BrdcRts &&
                   !network_clock_datum_sum_to_zero_,
               network_clock_datum_broadcast_anchored_,
@@ -998,11 +854,6 @@ namespace GnssProcessor {
               "code-bias dropouts 50 -> 4, QUIN00USA's excursion gone, median count 282 -> "
               "331.5; costs WTZZ00DEU about 0.02 m from hour 3 and FAILS card SCC's frozen "
               "B1, armed as the author's decision; scale 10" },
-            { network_carry_invariant_,
-              network_phase_datum_eq34_,
-              Tier::SCOPED, true , "network.phase_datum_eq34",
-              "the Card-4 DD datum; arm ONLY with carry_invariant - eq34 alone measured 76.2 vs "
-              "0.085 cyc/ep DD-step" },
             { network_phase_datum_prioritized_ && !network_phase_datum_eq34_ &&
                   network_station_pd_pin_aware_ && n_sta <= 100,
               network_phase_datum_min_stations_ >= 2,
@@ -1071,14 +922,6 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.sbasis_complete",
               "GPS+Gal adds per-sat channel-family PB<->iono trades the declared dimension does "
               "not count; the armed net when the KP lift falls short" },
-            // PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md): keeps the carried DD
-            // prior positive definite (PD gate failures 87.7 % -> 0 on the 3 h field leg).
-            // Reported only where the Card-4 carry exists; fingerprinted ('carry:pdsafe').
-            { network_carry_invariant_,
-              network_carry_invariant_pd_safe_,
-              Tier::SCOPED, true , "network.carry_invariant_pd_safe",
-              "PD-safe fold of the invariant DD carry: PD gate 686/782 failing -> 0/782, mature "
-              "DD steps 2.75 -> 1.02 cyc/ep (fresh-convergence lineages only)" },
             // --- Pivot departure (SPEC_event_harness §19, PROMOTED).  By default a pivot
             //     handover's carry skip, oscillator clear and jump-test suppression apply
             //     network-wide, so one constellation's datum change re-realizes the other's
@@ -1127,19 +970,7 @@ namespace GnssProcessor {
               "sticky clock-pivot election: 8 -> 2 pivot handovers/day, the h16-h18 pivot-eclipse "
               "consumer excursion eliminated (settled 24 h 3D rms 0.303 -> 0.078 m); "
               "triple-freq / weak-third-signal postures" },
-            // --- SCOPED tier: the phase-leveling carry over-count fixes
-            //     (SPEC_amb_iono_split_overcount).  Reported only where the leveling carry is
-            //     the live vehicle (phase_leveling on, carry_invariant off, Card-1 coupling
-            //     rows on, Card-1b joint whitening off).  Both fingerprinted ('pl:losblock' /
-            //     'pl:losscale').  F3 supersedes F1, so F1 is reported only without F3.
-            { network_phase_leveling_ && !network_carry_invariant_
-                  && network_carry_conditional_coupling_ && !network_carry_coupling_joint_whiten_,
-              network_phase_leveling_local_block_,
-              Tier::SCOPED, true , "network.phase_leveling_local_block",
-              "F3 station-wide whitened local block: removes the B-fold per-LOS and the "
-              "~n_LOS-fold station-common over-count of the diagonal leveling carry — settled DD "
-              "2.72 -> 0.22 cyc, WL 36 -> 99 % at the true integer (sim 3 h); pair with "
-              "phase_datum_handover_max_var_m2 >= 1e-2" },
+            // --- SCOPED tier: the ZWD carry on an F3 lineage ----------------------------
             // Reported only where the ZWD carry is armed on an F3 lineage: without either half
             // there is no diagonal row to replace, and the loader interlock has already logged
             // the case (SPEC_amb_iono_split_overcount §6.16.7d, arms Q/Z/F/F2).
@@ -1150,12 +981,6 @@ namespace GnssProcessor {
               "double count F3 exists to remove — quiet sim consumer 3D rms 0.723 m diagonal vs "
               "0.0877 m in-block, field T3c 7619 vs 849 flags; field F3 consumer 3D -27 %, "
               "vertical DC bias +2.83 -> +0.07 m" },
-            { network_phase_leveling_ && !network_carry_invariant_
-                  && !network_phase_leveling_local_block_,
-              network_phase_leveling_los_scale_,
-              Tier::SCOPED, true , "network.phase_leveling_los_scale",
-              "F1 per-LOS B_eff variance scale: undoes the B-fold iono-direction over-count "
-              "(settled DD 2.72 -> 1.28 cyc); SUPERSEDED by phase_leveling_local_block" },
             { network_phase_leveling_local_block_ || network_phase_leveling_los_scale_,
               network_phase_datum_handover_max_var_m2_ >= 0.0099,
               Tier::SCOPED, false, "network.phase_datum_handover_max_var_m2",
@@ -1183,29 +1008,6 @@ namespace GnssProcessor {
               "warm resume rebuilds the Card-1 regressors + the dense border from a v3 (QK/QP) "
               "snapshot: first-fold clock trips 33 -> 1, consumer h12 2.05 -> 0.62 m rms (a cold "
               "consumer on the wire converges like on the continuous run)" },
-            // --- Carry re-base at the seam, the read half (RS-2, SPEC_event_harness s21.4).  At
-            //     the first post-resume DD prior build, z_hat += W*zl_writer - zl_now, where W
-            //     is the cycle-basis projection the build already forms; Pz is untouched.
-            //     Forward-only resume policy, not fingerprinted.  A blob without ZL rows logs a
-            //     warning and the build proceeds without the re-base.
-            { warm && nc.state_snapshot_carry,
-              network_resume_carry_rebase_,
-              Tier::SCOPED, false, "network.resume_carry_rebase",
-              "re-base the restored invariant DD branch onto this run's linearization at the first "
-              "post-resume build instead of folding it in the writer's frame (the field golden's "
-              "61/61-withheld resume: dd_fold 7.8e7 of RHS norm, 676 D5 flags at +1; SPEC_event_harness "
-              "s21.5)" },
-            // --- D5 warm-up after a resume (RS-2b, SPEC_event_harness s21.6/s21.7).  The D5
-            //     gate is diagnostic-only for K post-resume epochs, so the cold station layer's
-            //     one-epoch disagreement does not erase the restored (re-based) branch (chord
-            //     rebirths at +2: 305 -> 7).  Afterwards the gate trips at the seed's own rate.
-            //     Forward-only resume policy.
-            { warm && nc.state_snapshot_carry,
-              network_resume_d5_warmup_ep_ > 0,
-              Tier::SCOPED, false, "network.resume_d5_warmup_ep",
-              "hold the restored invariant DD branch through the first K post-resume epochs "
-              "(D5 trips counted, not re-tapped; K = 1 suffices): +2 chord rebirths 305 -> 7, live "
-              "D5 trips afterwards 0-2 per epoch = the seed's own rate (SPEC_event_harness s21.7)" },
             // --- Datum restore at the seam, the read half (RS-3, SPEC_event_harness s21.7):
             //     continue the writer's eq34 tree and code-bias datum instead of re-electing and
             //     re-seeding them.  Forward-only resume policy, not fingerprinted; requires
@@ -1248,15 +1050,6 @@ namespace GnssProcessor {
               "restore the rx-CB carry + the T5 deviation carry at a warm resume: a00 transient "
               "+4.6 -> +0.4 TECU, +2 clock contrast 0.44 -> 0.29 m, receiver clocks 1.21 -> 0.91 m; "
               "the code-bias level and the rx-CB gate share do not move (RS-6a)" },
-            // --- rx-CB frame restore at the seam, the read half (RS-9, SPEC_event_harness
-            //     s21.18/s21.19).  Forward-only resume policy, not fingerprinted; requires
-            //     resume_station_restore.
-            { warm && network_resume_station_restore_,
-              network_resume_rxcb_lin_restore_,
-              Tier::SCOPED, false, "network.resume_rxcb_lin_restore",
-              "restore each station's code-bias linearization point at a warm resume: rx-CB withheld "
-              "share 26.3 -> 9.8 % (the seed's 11.0), the 11 defect-created stations back to folding, "
-              "receiver clocks at +1 0.93 -> 0.82 m (RS-9)" },
             // --- Canonical-signal map restore, the read half (RS-8, SPEC_event_harness
             //     s21.16/s21.20): the map is restored before any station's first epoch.
             //     Forward-only resume policy, not fingerprinted; requires resume_frame_restore.

@@ -4,15 +4,15 @@
 
 - **id:** RF-PD-fix
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Amputation cured, consumer bar FAILED: PD rejections go to 0 on all four beds and both field arms emit every epoch, while the golden field consumer degrades about 6×.
+- **status:** closed
+- **summary:** `station_prior_before_pd` cured the PD amputation (rejections to 0, 59 of 59 stations, 720 / 720 emitted) but failed the consumer bars on the leveling golden; closed, armed in the goldens since GRB.
 - **dates in the text:** 2026-09-15; annotation 2026-10-01 (card RPD)
 - **knobs / posture:** `network.station_prior_before_pd` (bool, default OFF; folds only the RXCB-DATUM rows, the carry rows stay after the test), armed with `network.trace_station_pd_null` on every arm; new `TOPOLOGY sta_readmitted` event and four appended `network_run_summary.csv` columns; RF-0g golden and RF-1 + RF-2b + RF-2d vehicle, field and sim, 6 h
 - **hashes named in the text:** exe `gnss_processor_rfpdfix.exe` sha256[:16] `14578F851F0C22EC` (main `73e4bd1` + the card); OFF smoke `products.txt` `9ADD1D3AB9D70657`; Debug suite 2223 tests, 2222 passed, 1 skipped
 - **run dirs named in the text:** `runs/_rfpdfix_smoke_off`, `runs/_rfpdfix_rf0g_field6`, `runs/_rfpdfix_field6_both`, `runs/_rfpdfix_rf0g_sim6`, `runs/_rfpdfix_sim6_both`
 - **source:** [RF-PD](RF-PD_station_rejection_2026-09-15.md) section 6 (a)
 
-**Outcome.** The card builds RF-PD's fix (a) and grades it on four beds. Field stations in the solve go from a median of 28 (golden) and 17 (vehicle) to 59 of 59; bars B2b, B3d and B4c (consumer) FAIL, and B3b misses by one station on 9 epochs (a non-finite-input guard). [RF-IGN](RF-IGN_ignition_born_levels_2026-09-15.md) traced about 75 % of the golden loss to ignition-born zero-q levels. The knob joined the [RF-0hv](RF-0hv_working_posture_2026-09-15.md) working posture and, since 2026-09-22, the goldens ([GRB](GRB_golden_rebase_2026-09-22.md)); [RPD](RPD_replay_station_prior_2026-10-01.md) fixed its replay. Owed: those 9 rejections, and the carry rows judged after the test.
+**Outcome.** Question: does folding each station's RXCB-DATUM rows before `addStation`'s PD test cure RF-PD's amputation? PD rejections go to 0 on four beds, field stations in the solve rise to 59 of 59 and both field arms emit 720 / 720; consumer bars B2b, B3d and B4c FAIL (golden field about 6 times worse: [RF-IGN](RF-IGN_ignition_born_levels_2026-09-15.md)'s ignition-born level) and B3b misses on 9 epochs. Closed: in the goldens since [GRB](GRB_golden_rebase_2026-09-22.md), replay fixed by [RPD](RPD_replay_station_prior_2026-10-01.md); leftovers moot (`_rf0hv15_field6`: 0 PD drops). Status reviewed 2026-10-13.
 
 **Status as recorded (2026-09-15):** open — **the amputation is cured and the consumer bar is FAILED, and those are two different findings.**  RF-PD §6 (a) is
 built: the station's own RXCB-DATUM rows now enter `N_rr_r` / `u_r` before `NetworkNormalEquations::addStation` factorizes and applies

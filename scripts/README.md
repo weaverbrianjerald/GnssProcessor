@@ -61,6 +61,7 @@ Goldens, arm generators, posture checks.
 | `guards_cont_anchor_config.py` | Continuous GUARDS-ARMED run 13:00 -> 21:29:30 with full snapshot history. Follow-on to runs/raim_cold_event (Jul-28), which proved the 20:47:00 epoch… | ⚠ 0 |
 | `make_agu305_configs.py` | Generate the 305-station AGU scaling configs (GPS-only, then GPS+Galileo). Same experiment as ``make_agu_configs.py`` at 5x the stations. The roster … | ⚠ 0 |
 | `make_agu_configs.py` | Generate the AGU-abstract network configs from the FT63 pdfix_v3 lineage. The abstract needs ONE producer run whose emitted products a held-out consu… | 1 |
+| `ledger_render.py` | Render docs/CONFIG_promotion_ledger.md from the ledger JSON (one verdict per config key); `--check` exits 1 when the view is stale. | 3 |
 | `make_agu_replay_arms.py` | Generate consumer-replay arms against an already-written network product file. ``Application::runConsumerReplay`` (armed by ``network.closed_loop.rep… | ⚠ 0 |
 | `make_golden_config.py` | make_golden_config.py -- generate and VERIFY the golden network configs. WHY. The project ships new work default-OFF and byte-identity-gated, and the… | 101 |
 | `overnight_make_arms.py` | Generate the overnight follow-on arm configs for the FT63 convergence lineage. Every arm is derived from the validated `_ft63_24h_conv.json` posture … | 1 |
@@ -389,24 +390,18 @@ Cross-checks for the model code; not part of any run.
 | `solid_tide_reference.py` | Standalone reference for the solid Earth tide (IERS 2010 dehanttideinel). This is an INDEPENDENT Python port of the same IERS Conventions dehanttidei… | 3 |
 | `vmf3_reference.py` | Standalone Python port of vmf3.m used to generate reference values for the C++ Vmf3 unit test. Reads coefficients directly from the generated header … | 1 |
 
-## Ledger passes and campaign one-offs
+## Campaign one-offs
 
-Each was written for one card. The `_*_ledger_oneoff.py` family opens `docs/CONFIG_promotion_ledger.md` **by path** and patches or appends a row, in step with `docs/CONFIG_promotion_ledger.json`. That is why the ledger is a LIVING REGISTER and was deliberately left whole by the 2026-09-14 docs reorganisation — do not split it, and keep new ledger passes on this pattern.
+Each was written for one card. Ledger changes are edits to `docs/CONFIG_promotion_ledger.json` followed by `scripts/ledger_render.py`; the `_*_ledger_oneoff.py` patch scripts were retired on 2026-10-13 with the prose ledger they patched (git history keeps them).
 
 | script | purpose | refs |
 | --- | --- | --- |
 | `_arm_compare.py` | Extract the Card-1f/1g A/B metrics from a set of run logs. | ⚠ 0 |
 | `_arm_run.sh` | Run one arm and snapshot the shared trace CSVs into the run dir. | 5 |
-| `_coldfb_ledger_oneoff.py` | COLD ANCHOR-FALLBACK ledger pass (SPEC_event_harness §15), parameterised by verdict. python scripts/_coldfb_ledger_oneoff.py <RECOMMEND_ON\|KEEP_OFF>… | 1 |
-| `_fieldharness_ledger_oneoff.py` | FIELD HARNESS ledger pass (SPEC_event_harness s20) -- one command per outcome. Records, for each of the three sim-validated slip cards, what the FIEL… | 2 |
 | `_ifg_ab.sh` | §6.14.6 three-arm validation. Captures CWD-relative ./logs/ with a SOURCE-mtime freshness assertion (the stale-trace-dir trap, SPEC_amb_iono §6.13.4). | ⚠ 0 |
 | `_ifref_ab.sh` | Card-R ref-gate A/B: capture CWD-relative ./logs/ with SOURCE-mtime freshness assertion. | ⚠ 0 |
 | `_ifsc_ab.sh` | SPEC_amb_iono_split_overcount §6.14.5 defect 2 A/B: does excluding the reference satellite's structural zero from the IF-TD pool scale change the FLA… | 2 |
 | `_ifsc_ab_compare.py` | Compare the two IF-TD pool-scale arms (SPEC_amb_iono_split_overcount §6.14.5 defect 2). old = reference satellite's structural zero INCLUDED in the r… | 2 |
-| `_rs2_refarc_ledger_oneoff.py` | Ledger pass for the two 2026-09-12 cards that share a session (SPEC_event_harness s21, s22). python scripts/_rs2_refarc_ledger_oneoff.py refarc -> NE… | 5 |
-| `_scopedpromo_ledger_oneoff.py` | PROMOTION PASS for network.scoped_handover_response (SPEC_event_harness §19.5). python scripts/_scopedpromo_ledger_oneoff.py Does, in order, the four… | 2 |
-| `_stspromo_ledger_oneoff.py` | ONE-OFF promotion pass for `network.handover_stransform` (queue 1(b), increment 1 of the pivot-departure card, SPEC_event_harness §19.6). Mirrors scr… | 1 |
-| `_study7_ledger_oneoff.py` | Study 7 ledger pass: (1) new row network.cycle_slip.if_phase_td_pairs, (2) update the network.cycle_slip.common_band_scope row (verdict, F2/F3, storm… | 4 |
 
 ## Loose notes
 

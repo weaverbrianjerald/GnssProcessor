@@ -4,14 +4,14 @@
 
 - **id:** PRM
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Phases 0 to 2 BUILT, byte-identical on both goldens: the parameter registry, the border fold decided once per epoch and the carried-reference traversal; the responses continue in card PRM3.
+- **status:** closed
+- **summary:** Phases 0 to 2 BUILT, byte-identical on both goldens (the registry, the fold decided once, one traversal over 26 sites); phase 3 closed in PRM3, the knob table dropped. Closed; card NOM continues the model.
 - **source:** [CTU](CTU_coupling_time_update_2026-09-28.md) sections 9.1 and 13.1 (the mirror of the fold); [CTU2](CTU2_level_recursion_followup_2026-09-29.md) sections 2 and 6; [CLV](CLV_clock_level_2026-09-22.md) section 6.4 item 6; [CLV2](CLV2_clock_level_batch2_2026-09-25.md) section 6.4; [RF-1 design](RF-1_float_ambiguities_design.md) sections 1.3 to 1.5; `docs/network_decomposition_plan.md` sections 10 and 11 (the run-state entity table, the seam constraints); the 2026-06 architecture audit (memory `project_arch_opportunity_backlog`: consolidation over abstraction, the YAGNI list)
 - **knobs / posture:** phases 1, 2 and 4 are pure refactors with no knob, gated by same-build byte identity on both goldens; phase 3a adds counters only; phase 3b (unified event responses) is behaviour-changing and gets one default-off knob per response it replaces; the "model as armed" table is trace class (always written); no golden, ledger or posture change; phase 2 step 3 added `network.handover_stransform_before_rows` (default off, not recommended, section 16.6)
 - **dates in the text:** 2026-09-29; phases 0 and 1a 2026-10-01, 1b and 2 2026-10-02
 - **hashes / run dirs:** the read is against main `001e3da` plus the uncommitted CTU and CTU2 working tree; the counts of section 2 are of that tree (`include/app/NetworkRunContext.hpp`, `include/filter/NetworkRunTypes.hpp`, `src/core/config/GnssConfigLoadNetwork.cpp`); no run at pre-registration; phases 0 to 2: harness `scripts/prm_ab.py` (self-identity on `gnss_processor_lgm0.exe`), exes `gnss_processor_prm1.exe` to `gnss_processor_prm2d.exe`, arms `runs/_rap_prm_*` (sections 13 to 16)
 
-**Outcome.** The author's question after cards CTU and CTU2 (readable parameter objects, an estimator hierarchy) is answered by consolidation, not a class hierarchy: one declared property set per parameter kind, one traversal over the carried references. Phases 0 to 2 pass every gate: one process-noise source, the fold decided once per epoch (card CTU's mirror retired at 0 mismatches), a traversal over 26 declared sites replacing five hand-written walks. The one output-changing option, the handover's S-transform before the rows, reads neutral to slightly worse and is not recommended. Phase 3 continues in [PRM3](PRM3_responses_2026-10-02.md); phase 4, the knob table, is not built.
+**Outcome.** Question: can the network's parameters carry properties a human reads, without an estimator hierarchy? Answered by consolidation: phases 0 to 2 pass every gate byte-identical (one process-noise source, the fold decided once per epoch with card CTU's mirror retired at 0 mismatches, one traversal over 26 declared sites); the handover's S-transform before the rows reads neutral to slightly worse, not recommended. Phase 3 closed in [PRM3](PRM3_responses_2026-10-02.md); phase 4 (the knob table) dropped for the config ledger's one verdict per key; card [NOM](NOM_network_object_model_2026-10-08.md) continues the model. Status reviewed 2026-10-13.
 
 ## 1. Why: one defect class, five instances
 

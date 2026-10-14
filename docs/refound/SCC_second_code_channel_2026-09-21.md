@@ -11,7 +11,7 @@
 - **dates in the text:** 2026-09-21 (pre-registered, approved by the author the same day; built), 2026-09-22
 - **hashes / run dirs:** baselines `runs/_rap_r6_dual` (field), `runs/_rf0hv5_sim6` (sim); census replays `runs/_rap_msc_<site>_r6_d`; build main `61d67c2`, exe `gnss_processor_scc.exe`; armed baseline pair `runs/_rf0hv7_{field,sim}6`
 
-**Outcome.** Question: do code-only rows for every allow-listed band-1 code stop the C1C and C1W code-bias families competing for stations? G0 and G1 PASS (wire C1W coverage 24 to 31 satellites per epoch); G2 FAILS as frozen (0.275 m rms against 0.10), traced to the pinned pair's standing code misfit. The census gains hour 1 (median -0.136 m). Ledger row RECOMMEND_SCOPED; pinned in the goldens by [GRB](GRB_golden_rebase_2026-09-22.md). Listed as owed in [OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md): the Europe Up shift, the misfit, the OFF-path sensitivity to a second band-1 code and the unexercised resume fingerprint.
+**Outcome.** Question: do code-only rows for every allow-listed band-1 code stop the C1C and C1W code-bias families competing for stations? G0 and G1 PASS (wire C1W coverage 24 to 31 satellites per epoch); G2 FAILS as frozen (0.275 m rms against 0.10), traced to the pinned pair's standing code misfit. The census gains hour 1 (median -0.136 m). Ledger row RECOMMEND_SCOPED; pinned in the goldens by [GRB](GRB_golden_rebase_2026-09-22.md). Listed as owed in [OPEN_ITEMS](../status/OPEN_ITEMS.md): the Europe Up shift, the misfit, the OFF-path sensitivity to a second band-1 code and the unexercised resume fingerprint.
 
 ## 1. The problem and the design read
 

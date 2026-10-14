@@ -4,15 +4,15 @@
 
 - **id:** PBT
 - **topic:** consumer
-- **status:** open
-- **summary:** Translating every applied phase-bias step removes the field ignition and hour-6 ramp and improves every sim hour, but field hours 4 and 5 regress; A1 and B1 FAIL.
+- **status:** superseded
+- **summary:** Consumer translation of every applied phase-bias step (fix A) and channel-scoped marks (fix B): A1 and B1 FAIL, neither adopted; SUPERSEDED by card PBH's emit-side hold (`pb_step_translate` false in both goldens).
 - **dates in the text:** 2026-09-15; the correction of section 10, 2026-09-16
 - **knobs / posture:** `network.closed_loop.pb_step_translate` with `pb_step_translate_eps_m` 0.005 m (fix A, consumer) and `network.disc_mark_scope` `sat` | `channel` (fix B, producer; S-line token `discscope=channel`), both default OFF; arms on the RF-0hv baseline with `trace_consumer_sat: true`
 - **hashes named in the text:** main `cd713ab` + this card's diff; exe `gnss_processor_pbt.exe` `F6A75B12A8430647`; OFF smoke record stream `333DCB0871E1F5BC`, whole file `B05F26B1CD0540DB`; Debug suite 2253 / 297 (2252 passed, 1 skipped); gtests `PbStepTranslateTest` (9), `DiscMarkScopeTest` (9)
 - **run dirs named in the text:** `runs/_pbt_smoke_off`, `runs/_pbt_field6`, `runs/_pbt_sim6`, `runs/_pbtms_field6`, `runs/_pbtms_sim6`; baselines `runs/_rfpdfix_field6_both`, `runs/_rfpdfix_sim6_both`, `runs/_ccarm_field6_both`, `runs/_ccarm_sim6_both`, `runs/_cst_field6_both`
 - **source:** [CST](CST_consumer_sat_trace_2026-09-15.md) sections 7.1 and 7.2; [JT](JT_pb_jump_test_decommon_2026-09-15.md) (the emitter-side route it replaces)
 
-**Outcome.** Question: should the consumer translate its ambiguity by every applied phase-bias step, declared or not, and should marks name only their channel? Translation keeps ambiguities the baseline's resets had corrected; channel scope leaves 44 empty declarations against a bar of 20. A2 and A3 PASS; neither knob joins RF-0hv. [ALC](ALC_amb_level_check_2026-09-15.md) then repaired hours 4 and 5, [PBT-AUDIT](PBT-AUDIT_translation_premise_2026-09-16.md) falsified the blanket premise, [ALC2](ALC2_restart_policy_adoption_2026-09-19.md) adopted the translation, and since [PBH](PBH_phase_bias_hold_2026-09-19.md) the bases run the producer hold with `pb_step_translate` false. Fix B on a reset-only consumer is unmeasured.
+**Outcome.** Question: should the consumer translate its ambiguity by every applied phase-bias step, and should marks name only their channel? Translation removed the field ignition and hour-6 ramp but kept ambiguities the baseline's resets had corrected (field hours 4 and 5 worse, A1 FAIL); channel scope left 44 empty declarations against a bar of 20 (B1 FAIL). [PBT-AUDIT](PBT-AUDIT_translation_premise_2026-09-16.md) falsified the blanket premise; SUPERSEDED by [PBH](PBH_phase_bias_hold_2026-09-19.md). Section 7's leftovers are moot under the hold; [EV7](EV7_all_sat_clock_decouple_2026-09-21.md) cut the clock trips behind the empty declarations 50 to 1. Status reviewed 2026-10-13.
 
 **Status as recorded (2026-09-15):** open — **two knobs BUILT (`network.closed_loop.pb_step_translate` + `pb_step_translate_eps_m`, and `network.disc_mark_scope`), both default OFF, four runs spent on both beds, no golden and no ledger touched, nothing promoted.**
 CST §7.1 and §7.2 named two halves of one defect: the consumer resets an ambiguity for every declaration it sees, 117 of 390 of those

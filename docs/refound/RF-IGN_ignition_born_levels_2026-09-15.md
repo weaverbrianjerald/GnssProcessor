@@ -4,15 +4,15 @@
 
 - **id:** RF-IGN
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** H1 CONFIRMED as the dominant driver: restoring the pre-fix level-harvest era closes 85 to 95 % of the hours 3 to 5 consumer gap, 720 / 720 emitted; H2 REFUTED.
+- **status:** closed
+- **summary:** H1 CONFIRMED (harvest delayed to epoch 76 closes 85 to 95 % of the hours 3 to 5 gap), H2 REFUTED; closed, follow-ups moot on the float vehicle (RF-0hv refused the knob, CTU removed the level lock).
 - **dates in the text:** 2026-09-15 (source run `_rf0g_field6` 2026-09-14)
 - **knobs / posture:** RF-0g golden + `network.station_prior_before_pd`; `network.phase_leveling_warmup_epochs` (default 6; 76 on the A/B arm; in the warm-resume fingerprint) gating `carry_warm` (`ApplicationNetwork.cpp:1515`, counts EMITTED epochs); `network.phase_leveling_warmup_on_convergence` SH-gated, inert on RF-0g; `network.trace_amb_state` on the vehicle arms only; reader `scripts/rf_ign_level_read.py`
 - **hashes named in the text:** exe `gnss_processor_rfign.exe` `14578F851F0C22EC` (a copy of `gnss_processor_rfpdfix.exe`); `products.txt` `9c4ef087fc30bcc4`
 - **run dirs named in the text:** `runs/_rfign_rf0g_field6` (the one new run), `runs/_rf0g_field6`, `runs/_rfpdfix_rf0g_field6`, `runs/_rf2d_field6_both`, `runs/_rfpdfix_field6_both`
 - **source:** [RF-PD-fix](RF-PD-fix_station_prior_before_pd_2026-09-15.md) section 5.3 (the golden consumer loss and H2); standing invariant #1 in CLAUDE.md
 
-**Outcome.** Question: is RF-PD-fix's golden field consumer loss the ignition-born zero-q level (H1) or the receiver code-bias common mode (H2)? Ending the withholds moved the first level harvest 70 epochs earlier; the rx-CB harvest count is unchanged (42 463 against 42 459). The prediction misses hours 1, 2 and 6 (about 25 % unattributed); the `pl` prior residual is blind to the defect. Nothing promoted; a declared level-harvest era is owed. [RF-0hv](RF-0hv_working_posture_2026-09-15.md) REFUSED the knob on the float vehicle, and [GAL](GAL_gps_galileo_dual_2026-09-22.md) section 6.1 judged a delayed harvest not the fix ([CLV](CLV_clock_level_2026-09-22.md)).
+**Outcome.** Question: is RF-PD-fix's golden consumer loss the ignition-born zero-q level (H1) or the receiver code-bias common mode (H2)? Delaying the level harvest to epoch 76 closes 85 to 95 % of the hours 3 to 5 gap; the rx-CB harvest count is unchanged: H1 dominant, H2 REFUTED; hours 1, 2 and 6 miss (25 % unattributed). Follow-ups moot: the leveling golden is retired, [RF-0hv](RF-0hv_working_posture_2026-09-15.md) REFUSED the knob on the float vehicle, and [CTU](CTU_coupling_time_update_2026-09-28.md)'s exact update (armed by EXL) removed the clock-level lock. Status reviewed 2026-10-13.
 
 **Status as recorded (2026-09-15):** open — **H1 is CONFIRMED as the dominant driver and H2 is REFUTED as one; ~75 % of the RF-PD-fix consumer loss is the
 phase-leveling zero-q level being born 70 epochs earlier, into a 7-epoch-old network.**  The mechanism is `carry_warm` at

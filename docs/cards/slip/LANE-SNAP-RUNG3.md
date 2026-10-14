@@ -4,15 +4,15 @@
 
 - **id:** rung 3
 - **topic:** slip
-- **status:** open
-- **summary:** Seed-site snap v1/v2 is FALSIFIED and deleted (an exact solve no-op); the carry-domain observatory passes on sim (settled mean |δ| 1.18 cycles); the unbuilt apply leg is re-scoped to T4.
+- **status:** closed
+- **summary:** Seed-site snap v1/v2 FALSIFIED and deleted (an exact solve no-op); the observatory is solve-inert; the apply leg passed to T4, superseded by RF-1's bounded drop. Closed; lanes return only via AB3.
 - **dates in the text:** 2026-08-22 → 2026-08-23
 - **knobs / posture:** `network.cycle_slip.relevel_lane_snap`, `network.trace_events`
 - **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/camp60wu_f5`, `runs/camp60wu_f5c`, `runs/_wd`, `runs/camp60wu_f6smoke`
 - **source:** `docs/archive/SPEC_lane_slip_response.md`: §6, §7, §7.1, §7.2, §7.3, §7.4, §7.5, §7.6, §7.7, §7.8
 
-**Outcome.** Question: can a refloat keep the lane at the MW-measured jump? The seed-site snap blew its 25-cycle cap on 92 to 97 % of attempts. The v3 observatory's field aggregate was NOT ADJUDICABLE; the re-run found the detector population too thin (22 rows above 30°, the redesign trigger) while T4 refloats typically remove real lane error (de-clustered median 2.94 cycles). The apply leg is specified, not built ([T4 lane restore](T4-LANE-RESTORE-SPEC.md)); [Card ORACLE](CARD-ORACLE-RELEVEL.md) found truth-fed level preservation leaves the sim plateau unmoved, and lanes are now out of scope ([slip topic](../../topics/slip.md)).
+**Outcome.** Question: can a refloat keep the lane at the MW-measured jump? The seed-site snap blew its 25-cycle cap on 92 to 97 % of attempts and proved an exact solve no-op, so it was deleted. The v3 observatory is solve-inert (field products identical four times), its detector population too thin (22 rows above 30°); T4 refloats remove real lane error (de-clustered median 2.94 cycles). The apply leg passed to [T4 lane restore](T4-LANE-RESTORE-SPEC.md), now superseded; lanes return only as card [AB3](../../refound/AB3_lanes_2026-09-20.md)'s new build. Closed, nothing owed. Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

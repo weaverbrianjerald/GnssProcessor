@@ -4,15 +4,15 @@
 
 - **id:** CAF
 - **topic:** queues
-- **status:** open
-- **summary:** Checklist of what the comment audit found in the code: 14 verified defects open and 5 fixed, plus unverified suspicions, author checks, wrong CLAUDE.md claims and dead code.
+- **status:** closed
+- **summary:** Comment-audit register: 5 code defects fixed; on 2026-10-13 the Card-4, lane and stand-down rows moot, two suspicions refuted, the rest re-filed to OPEN_ITEMS.
 - **dates in the text:** 2026-09-22 → 2026-10-07
 - **knobs / posture:** `processing.enable_noncausal_slip_bridge`, `model_corrections.apply_phase_shifts`, `network.gross_los_emit_exclude`
 - **hashes named in the text** (commit / exe / byte-cert): `b3a8e48`, `ae53603`, `335f640`
 - **run dirs named in the text:** none
 - **source:** the comment rewrite (commit `b3a8e48`); every comment and docstring was rewritten with its claims checked against the code
 
-**Outcome.** The comment rewrite (`b3a8e48`) changed no code; this checklist holds what it found in the code, plus the findings of the 2026-09-28 report prose passes. Section 2 holds 11 verified open defects, among them a `ProductCache` error-path deadlock and a PPP fix-and-hold that holds nothing; the report passes add a GLONASS ephemeris anchored on the host clock, a chordless-block dimension mismatch in `ddPriorPosteriorMean` and Sun and Moon directions precessed twice. The Sun-frame fix's 2 h on/off run is neutral on the field at the millimetre level and no verdict on the sim; a regenerated sim fixture, the 6 h pair and the census are owed. The 2026-10-07 network-chapter pass adds the RF-1 birth floor and the declared handover found unarmed on the goldens, the phantom knob `network.amb_float_q_m2s`, a consistency question on the drop's restored variance, and eight stale comments.
+**Outcome.** Question: which code defects did the comment rewrite (`b3a8e48`) and the report passes of 2026-09-28 and 2026-10-07 find, and which remain? Five were fixed (`ae53603`, `335f640`). Re-checked against the code on 2026-10-13, no open row was fixed since; the Card-4 driver, lane-layer and stand-down rows are moot, two suspicions are refuted, and the held emission under a datum move is card [IRD](../../refound/IRD_integer_recovering_datum_2026-10-13.md)'s (IRD-7). The rest is re-filed to [OPEN_ITEMS](../../status/OPEN_ITEMS.md) (ProductCache deadlock, PPP hold no-op, birth floor, phantom knob, wire contract, a hygiene sweep after NOM). Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE. An item is closed by ticking its box and adding the commit or the reason.
 

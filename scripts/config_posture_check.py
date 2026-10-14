@@ -500,10 +500,9 @@ def main():
                 print(f"      ^ CHAIN: fingerprinted - arming it on this resumed leg "
                       f"{'hard-aborts (state_snapshot_require on)' if require else 'SILENTLY cold-starts (state_snapshot_require is FALSE)'}"
                       f".  Arm it in a FRESH lineage (new seed), not here.")
-            print(f"      default at {k['default_at']}")
-            print(f"      scope: {k['scope']}")
-            if k.get("interlock"):
-                print(f"      interlock: {k['interlock']}")
+            print(f"      default {k.get('default', '')!r}; {k.get('why', '')}")
+            if k.get("card"):
+                print(f"      evidence: {k['card']}")
         if a.show_suppressed:
             for k, found, v, pred in suppressed:
                 print(f"  [out of regime] {k['knob']}  (needs: {pred})")

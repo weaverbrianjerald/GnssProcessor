@@ -4,8 +4,8 @@
 
 - **id:** HLT
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** BUILT 2026-09-25, NOT ARMED: neither health mode is consistently better at 2 h, because any satellite-set or pivot change re-draws the ignition-frozen clock levels; the mode decision is the author's.
+- **status:** closed
+- **summary:** `network.sat_health` (pivot, exclude) BUILT, NOT ARMED: every 2 h difference is the size of the ignition level re-draw. Closed; the mode for E14 and E18 on the Galileo goldens is owed.
 - **source:** the author's direction of 2026-09-25 (the network path checks the broadcast health flag); [OWD](OWD_owed_defects_2026-09-22.md) section 4 (health on the network path) and
   section 1 (O3, the latch's healthy records); [CLV](CLV_clock_level_2026-09-22.md) section 8
   (the pivot as the clock level's reference)
@@ -20,7 +20,7 @@
   `runs/_rap_gal_g5s_field6`, `runs/_rap_gal_g2b_sim6`; census keys `hltpv`, `hltex`
   (`runs/_rap_msc_<site>_hlt{pv,ex}_d`), paired against `rp1g0`
 
-**Outcome.** The question: whether the network should honour the broadcast health flag, set all day on DOY 129 for G01 (the GPS clock pivot), E14 and E18, which CODE carries at full rate. H0 and H1 PASS. The pre-registered rule selects "exclude" ("pivot" fails two bars), but "exclude" costs the GPS+Galileo sim 0.056 m in hour 2; NOT ARMED, sequenced behind card CLV, a 6 h pair owed for "pivot". Card [PAC](PAC_common_drift_pivot_clock_2026-10-01.md) later named the pivot mode a clock-product lever; card [SCL](SCL_self_contained_clock_level_2026-10-03.md) section 3.7 found the pivot does not decide the field's locked level.
+**Outcome.** Question: should the network honour the broadcast health flag (DOY 129: G01, the GPS clock pivot, E14 and E18, all in CODE's products)? `network.sat_health` (pivot, exclude) built; H0 and H1 PASS. The pre-registered rule selects exclude (pivot misses two bars), but every 2 h difference is the size of the ignition level re-draw and exclude costs the GPS+Galileo sim 0.056 m in hour 2: NOT ARMED. Card [GAD](GAD_galileo_adoption_2026-10-13.md) armed Galileo with E14 and E18 kept; the mode decision is owed ([OPEN_ITEMS](../status/OPEN_ITEMS.md)). Status reviewed 2026-10-13.
 
 ## 1. The survey (measured before the build)
 

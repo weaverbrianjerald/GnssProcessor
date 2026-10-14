@@ -4,14 +4,14 @@
 
 - **id:** MDR
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** The field golden (HEAD `3959f24`) transfers to four more days in hours 3 to 6 (census medians 0.030 to 0.066 m); ARHT00ATA's consumer divergence stays owed.
+- **status:** closed
+- **summary:** The field golden (HEAD `3959f24`) transfers to DOY 128 and 130 to 132 in hours 3 to 6 (census medians 0.030 to 0.066 m). Closed; ARHT00ATA's divergence under the golden's hold is owed.
 - **source:** the author's direction of 2026-10-03 (multi-day testing before the clock-level theory); [LAH](LAH_level_aware_hold_2026-09-29.md) (the census tool and the named regressions ARHT00ATA, KOKB00USA)
 - **knobs / posture:** none; the field golden `config/golden/golden_field_refound.json` moved to each day by `scripts/mday_golden_config.py`
 - **hashes / run dirs:** exe `gnss_processor_prm3d.exe` `80db53d9733d3f2f` (main `3959f24`); wires `runs/_rap_mday{128,130,131,132}_f6`, `runs/_rap_mday131late_f6`, DOY 129 `runs/_rap_prm_s3ah6_gf`; census replays `runs/_rap_mdc_<doy>_<site>`; the DOY 128 rerun with DOY 127 products `runs/_rap_mday128p_f6`, census `runs/_rap_mdcp_128_<site>` (2026-10-06, same exe)
 - **dates in the text:** 2026-10-05, 2026-10-06
 
-**Outcome.** Question: does the field golden, graded only on DOY 129, hold on other days. Over 6 h on four more days, hours 3 to 6 transfer, the in-storm window (DOY 132) included; the G5 storm's onset (DOY 131 from 18 UT) was graded on WTZZ00DEU only. DOY 128's bad first two hours were its missing DOY 127 products (CONFIRMED, section 4). Owed: ARHT00ATA diverges (166 m on DOY 131, 99.7 m on DOY 128), and WTZZ00DEU drifts to 0.08 m on DOY 130. Card [NBP](NBP_native_broadcast_clock_posture_2026-10-07.md) section 12: the self-contained regime on the COD a priori prevents the DOY 131 divergence.
+**Outcome.** Question: does the field golden, graded on DOY 129, hold on other days? On DOY 128 and 130 to 132, hours 3 to 6 transfer (census medians 0.030 to 0.066 m), the storm day included; DOY 128's bad hours 1 and 2 were missing DOY 127 products (section 4). ARHT00ATA diverges under the golden (166 m); the self-contained regime on the COD a priori prevents it ([NBP](NBP_native_broadcast_clock_posture_2026-10-07.md) section 12), owed in [OPEN_ITEMS](../status/OPEN_ITEMS.md). The WTZZ00DEU DOY 130 drift is dropped: GPS-only grades are re-captured on the Galileo goldens. Status reviewed 2026-10-13.
 
 ## 1. The data
 
