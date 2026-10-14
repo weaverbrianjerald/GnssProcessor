@@ -243,9 +243,6 @@ namespace GnssProcessor {
     /// (byte-identical); the loader zeroes it unless phase_leveling is on and
     /// carry_invariant is off.
     NetworkYoungInflate::Knobs yng{};
-        bool pl_warmup_on_conv{};   ///< network.phase_leveling_warmup_on_convergence: warm-up on SH convergence (T1d); the driver reads it through @ref pl_warmup_on_sh_conv.
-        bool pl_refloat_on_conv{};
-        double pl_conv_rms_thresh{};
         double pb_var_floor{};
         double cb_var_floor{};
         bool fullcov_on{};       ///< network.shared_carry_full_cov: the dense (P_prev+Q)⁻¹ shared carry (C1).
@@ -1020,8 +1017,8 @@ namespace GnssProcessor {
         // again on every epoch, and read in its epoch body or passed to a seam.  Resolved here
         // with the driver's expression unchanged, so the driver and those seams read one field
         // each.  Constant for the run: the configuration is not written after load, and setup
-        // builds the SH model exactly when network.estimate_iono_sh is set (the sh_dev_* and
-        // pl_warmup_on_sh_conv rows read that flag where the driver tested the model).  The
+        // builds the SH model exactly when network.estimate_iono_sh is set (the sh_dev_* rows
+        // read that flag where the driver tested the model).  The
         // snapshot fingerprint reads none of them.
         bool   sec_timers_on{};    ///< network.trace_section_timers: the D0 / D0b per-epoch section timers.  Read by the driver (the estimator and carry-driver timers, the subBegin / subEnd brackets, the per-epoch readout) and by networkPassB_ (the D0 assembly wall).
         /// The a-priori satellite-clock anchor sigma (m), resolved once by
@@ -1062,12 +1059,6 @@ namespace GnssProcessor {
         bool   trace_postfit_on{}; ///< network.trace_postfit_sigma0, trace_postfit_keyed or trace_postfit_rows: the post-fit residual pass (networkPostfitSigma0) runs.  Read by the driver.
         bool   trace_sh_spectrum{};  ///< network.trace_sh_spectrum: networkShSpectrum runs.  Read by the driver.
         bool   trace_station_block{};///< network.trace_station_block (card ZP): networkStationBlock runs.  Read by the driver.
-        /// The configuration half of the leveling carry's warm-up test (T1d):
-        /// @ref pl_warmup_on_conv with a co-estimated SH field (network.estimate_iono_sh).
-        /// True: the carry warms once the field has converged
-        /// (NetworkCarryState::sh_converged_latch); false: after @ref pl_warmup emitted
-        /// epochs.  Read by the driver's carry_warm, which stays computed per epoch.
-        bool   pl_warmup_on_sh_conv{};
         bool   amb_birth_floor_on{}; ///< The float vehicle's birth variance floor is armed: @ref amb_float_kf and @ref amb_birth_var_floor > 0.  Read by the driver (this epoch's elevation map for the bounded drop) and by networkPassB_ (the inject).
 
         /// One-shot factory: the knob-snapshot statements, in the original read order
@@ -2590,17 +2581,11 @@ namespace GnssProcessor {
         // queue.
         std::set<std::pair<int, std::string>> raim_refloat_pending;
 
-        // --- SH-field warning edge state and convergence latch (T1a/T1d) ---
+        // --- SH-field warning edge state (T1a) ---
         // Persistent state for the a₀₀ physical-band divergence warning (T1a).  It starts
         // "in band", so the first out-of-band epoch is always reported (transition edge);
         // later reports are throttled.
         bool sh_a00_was_in_band = true;
-        // SH-field convergence latch and previous coefficient vector (T1d), for the
-        // epoch-over-epoch RMS-change stationarity test that can gate the leveling-carry
-        // warmup and/or the one-shot carry refloat.  Empty/false until the first emitted
-        // SH epoch.
-        bool sh_converged_latch = false;
-        Eigen::VectorXd sh_coeff_prev;
 
         // --- SD EWL Route-B integer decision (increment 2a, filter/NetworkSdEwlAr) ---
         // None of the three is snapshotted, on purpose (the exemption record of the RTB-7
@@ -3418,8 +3403,6 @@ namespace GnssProcessor {
 
         // (C) One-solve refloats: the entry is erased after the harvest, so the arc
         //     refloats on the next epoch.  Selected by quality.
-        long long n_cr_sh_conv_flush      = 0;  ///< whole-fleet one-shot flush at SH convergence (pl_refloat_on_conv), the largest single removal in the producer.  Family (C), not (A): the arcs are still tracked and the next harvest re-stashes them, so it costs one solve, not a departure.
-        long long n_cr_sh_conv_flushes    = 0;  ///< how many times that flush fired (expected 1)
         long long n_cr_raim_attrib        = 0;  ///< attribution refloat, T4 (live only when network.raim_attribution is armed)
         long long n_cr_raim_consensus     = 0;  ///< consensus refloat, T3 (live only when raim_attribution is not armed; the two are a run-constant either/or, never a split)
         long long n_cr_gross_los          = 0;  ///< level entries erased by a gross line-of-sight declaration (card GL, docs/SPEC_event_harness.md §24.18).  Family (C) like the T4 erase: the arc is still tracked and its next harvest re-stashes it.  Zero unless network.gross_los_screen.

@@ -265,10 +265,9 @@ int networkLevelingResponseRunEnd(const NetworkRunEndView& v) {
     const SlipQcChannel& slip_qc = v.run.engines.slip_qc;
 
     log->info("Network (leveling-carry retirement census) [C] ONE-SOLVE "
-              "REFLOATS: {} T4 attribution, {} T3 consensus (quality-selected), and {} "
-              "entr(ies) in {} whole-fleet SH-convergence flush(es) — the largest "
-              "single removal in the producer, but the arcs stay tracked and the "
-              "next harvest re-stashes them, so it costs one solve, not a departure.  "
+              "REFLOATS: {} T4 attribution and {} T3 consensus (quality-selected); "
+              "the arcs stay tracked and the next harvest re-stashes them, so each "
+              "costs one solve, not a departure.  "
               "⚠ These are a run-constant EITHER/OR, not a split — "
               "network.raim_attribution is {} on this run, so the other channel "
               "is structurally 0 and its zero means \"path not armed\", not "
@@ -276,7 +275,6 @@ int networkLevelingResponseRunEnd(const NetworkRunEndView& v) {
               "chain-datum re-reference, {} phase-datum family re-reference, {} "
               "datum-slip re-reference.  [RESPONSE] {} A4 withhold free-erase.",
               C.n_cr_raim_attrib, C.n_cr_raim_consensus,
-              C.n_cr_sh_conv_flush, C.n_cr_sh_conv_flushes,
               config_.networkRaimAttribution() ? "ARMED" : "off",
               C.n_cr_eq34_reref, C.n_cr_phase_datum_reref,
               slip_qc.counters.datum_slip_carry_erases, C.n_wh_free_erases);

@@ -72,8 +72,6 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
      "NetworkPhaseDatum.cpp networkApplyPhaseAnchorCarryReref", "arcs erased"},
     {R::AmbEq34Erase, "amb_eq34_erase", K::Ambiguity, E::Handover, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkChainDatum.cpp eq34 re-reference", "arcs erased"},
-    {R::AmbFleetFlush, "amb_fleet_flush", K::Ambiguity, E::Handover, P::EraseAndRebirth, Src::Increment, kNoDisp,
-     "NetworkLeveling.cpp SH convergence flush", "arcs erased"},
     // --- Slant ionosphere --------------------------------------------------------------
     {R::IonoSlipErase, "iono_slip_erase", K::SlantIono, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "ApplicationNetworkAssembly.cpp the iono carry's slip scope", "carried ionospheres erased"},
@@ -305,8 +303,6 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::AmbAnchorRerefErase:
             return k.pl_on && k.pa_carry_reref && (!k.pd_held_basis || k.pd_held_cold_release);
         case R::AmbEq34Erase:         return k.phase_datum_eq34 && ambCarried;
-        case R::AmbFleetFlush:
-            return ambCarried && k.pl_refloat_on_conv && config.estimateNetworkIonoSh();
         // --- The slant ionosphere and the phase colour (erased with their line of sight).
         case R::IonoSlipErase:        return k.iono_on;
         case R::IonoRaimErase:        return k.raim_on && k.pl_on && t4 && (k.iono_on || k.iono_blk);

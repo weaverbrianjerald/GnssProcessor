@@ -4755,16 +4755,6 @@ namespace GnssProcessor {
             network_config_.trace_amb_state_every = 1;
         network_shared_carry_var_floor_pb_m2_ =
             jval<double>(json, "network.shared_carry_var_floor_pb_m2", "shared_carry_var_floor_pb_m2", 0.0);
-        // Convergence-gated leveling-carry warmup (T1d; default off = fixed epoch count).
-        network_phase_leveling_warmup_on_convergence_ =
-            jval<bool>(json, "network.phase_leveling_warmup_on_convergence",
-                       "phase_leveling_warmup_on_convergence", false);
-        network_phase_leveling_refloat_at_convergence_ =
-            jval<bool>(json, "network.phase_leveling_refloat_at_convergence",
-                       "phase_leveling_refloat_at_convergence", false);
-        network_phase_leveling_conv_rms_thresh_tecu_ =
-            jval<double>(json, "network.phase_leveling_conv_rms_thresh_tecu",
-                         "phase_leveling_conv_rms_thresh_tecu", 0.5);
         network_shared_carry_var_floor_cb_m2_ =
             jval<double>(json, "network.shared_carry_var_floor_cb_m2", "shared_carry_var_floor_cb_m2", 0.0);
         // Full dense cross-covariance carry of the shared border (C1): an

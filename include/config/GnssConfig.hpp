@@ -1976,20 +1976,9 @@ namespace GnssProcessor {
          * Cold-start epochs are ill-conditioned (the clock/SH field has not
          * converged); carrying an ambiguity before then would freeze a contaminated
          * value.  No carry is stashed or injected until this many product epochs
-         * have been emitted.  (@ref networkPhaseLevelingWarmupOnConvergence ties
-         * the warmup to SH-field convergence instead.)
+         * have been emitted.
          */
         int networkPhaseLevelingWarmupEpochs() const { return network_phase_leveling_warmup_epochs_; }
-
-        /// @brief Gate the leveling-carry warmup on SH-field convergence instead of the fixed
-        ///        emitted-epoch count (@c network.phase_leveling_warmup_on_convergence; T1d).
-        bool networkPhaseLevelingWarmupOnConvergence() const { return network_phase_leveling_warmup_on_convergence_; }
-        /// @brief One-shot refloat of all carried ambiguities at the SH-field convergence
-        ///        rising edge (@c network.phase_leveling_refloat_at_convergence; T1d).
-        bool networkPhaseLevelingRefloatAtConvergence() const { return network_phase_leveling_refloat_at_convergence_; }
-        /// @brief SH coefficient-vector RMS-change threshold (TECU) defining field stationarity
-        ///        for the convergence latch (@c network.phase_leveling_conv_rms_thresh_tecu; T1d).
-        double networkPhaseLevelingConvRmsThreshTecu() const { return network_phase_leveling_conv_rms_thresh_tecu_; }
 
         /**
          * @brief Maximum gap (s) a carried ambiguity survives unseen before it is
@@ -9135,9 +9124,6 @@ namespace GnssProcessor {
         bool   network_phase_leveling_local_block_{false}; ///< Carry each station's injectable ambiguity set as one jointly whitened local block (F3; harvested conditional cross covariances on Σ's off-diagonals, departed columns marginalized): exact for every local-local direction, including the station-common ones F1 leaves over-counted (SPEC_amb_iono_split_overcount).  Supersedes F1 on whitened blocks.  Off = byte-identical.
         double network_shared_carry_var_floor_pb_m2_{0.0}; ///< Floor (m²) on the D2 sat-phase-bias carried prior variance (B4; caps Λ, which bounds the zero-q lock-in while preserving Ge-2008 FCB averaging); 0 = off.
         double network_shared_carry_var_floor_cb_m2_{0.0}; ///< Floor (m²) on the D2 sat-code-bias carried prior variance (B4; caps Λ); 0 = off.
-        bool   network_phase_leveling_warmup_on_convergence_{false}; ///< Gate the leveling-carry warmup on SH-field convergence (epoch-over-epoch coeff RMS Δ < thresh and a₀₀ in physical band) instead of the fixed emitted-epoch count (T1d), which avoids locking the wrong iono/ambiguity split while a₀₀ is still diverging.  Falls back to the epoch count when no SH field is active.  Off = byte-identical.
-        bool   network_phase_leveling_refloat_at_convergence_{false}; ///< One-shot flush of all carried ambiguities at the SH-field convergence rising edge (T1d; pairs with the default early warmup: the epoch-count warm-up is kept, and the possibly contaminated early split is dropped once the field settles, so the carry re-accumulates from the converged state).  Off = byte-identical.
-        double network_phase_leveling_conv_rms_thresh_tecu_{0.5};  ///< Epoch-over-epoch SH coefficient-vector RMS-change threshold (TECU) defining "stationary" for the convergence latch (T1d).  Heuristic; flagged for tuning.
         bool   network_shared_carry_gauge_free_{false};    ///< Marginalize the declared datum directions out of the carried shared information (Λ ← Λ − ΛU(UᵀΛU)⁻¹UᵀΛ) as a property of the carry rather than of the unrelated Q3 clock anchor (card C-GF), with a support-closure test on U so a partially carried direction is skipped instead of having a real estimable contrast deleted; requires shared_carry_full_cov.  Off = byte-identical.
         bool   network_shared_carry_full_cov_{false};      ///< Carry the full dense cross-covariance of the shared border across epochs (C1; information-form KF on the border that recovers the clock↔phase-bias off-diagonals the diagonal D2 stash discards): fold Λ=(P_prev+Q)⁻¹ as one dense block, marginalize departed/pinned/retired keys, degrade to the diagonal fold on a non-PD block.  Off = legacy per-key diagonal carry (byte-identical).
         bool   network_carry_conditional_coupling_{false}; ///< Carry each persistent local parameter (phase-leveling ambiguity, ZWD) as a conditional pseudo-observation row coupling it to the free shared border (card 1; coeff +1 on the local, regression M_r on the border, variance = pure conditional (N_rr⁻¹)_{rr}), not as an independent diagonal prior; this removes the shared-information double count so the sequential recursion equals the batch solve.  Requires shared_carry_full_cov (hard error otherwise).  Off = legacy diagonal addStationPrior carry (byte-identical).

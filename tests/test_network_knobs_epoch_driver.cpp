@@ -104,7 +104,6 @@ struct DriverValues {
     double rhs_tow;
     int rhs_n_ep;
     bool trace_postfit_on, trace_sh_spectrum, trace_station_block;
-    bool warmup_on_sh_conv;
     bool birth_floor_on;
     bool reentry_observe, reentry_restore;
 };
@@ -143,7 +142,6 @@ DriverValues driverValues(const GnssConfig& config_, const NetworkConfig& nc) {
     d.trace_postfit_on = nc.trace_postfit_sigma0 || nc.trace_postfit_keyed || nc.trace_postfit_rows;
     d.trace_sh_spectrum = nc.trace_sh_spectrum;
     d.trace_station_block = nc.trace_station_block;
-    d.warmup_on_sh_conv = config_.networkPhaseLevelingWarmupOnConvergence() && sh_model;
     d.birth_floor_on = (config_.getNetworkConfig().ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf)
                        && config_.getNetworkConfig().amb_float_birth_var_m2 > 0.0;
     d.reentry_observe = config_.networkLedgerScreens() && roster_active;
@@ -177,7 +175,6 @@ NetworkKnobs expectDriverValues(const GnssConfig& cfg, const NetworkConfig& nc) 
     EXPECT_EQ(k.trace_postfit_on, d.trace_postfit_on);
     EXPECT_EQ(k.trace_sh_spectrum, d.trace_sh_spectrum);
     EXPECT_EQ(k.trace_station_block, d.trace_station_block);
-    EXPECT_EQ(k.pl_warmup_on_sh_conv, d.warmup_on_sh_conv);
     EXPECT_EQ(k.amb_birth_floor_on, d.birth_floor_on);
     // The election's ledger read (AnchorReentry::observe / restore) as the driver now forms
     // it, with ctx.roster.active true as on every network run.
@@ -207,7 +204,6 @@ TEST(NetworkKnobsEpochDriver, DefaultsMatchTheDriver) {
     EXPECT_EQ(k.epoch_decimation_n, 1u);
     EXPECT_LT(k.rhs_attrib_tow, 0.0);
     EXPECT_FALSE(k.trace_postfit_on);
-    EXPECT_FALSE(k.pl_warmup_on_sh_conv);
     EXPECT_FALSE(k.amb_birth_floor_on);
 }
 
@@ -304,9 +300,9 @@ TEST(NetworkKnobsEpochDriver, CarryVceFamilies) {
     EXPECT_TRUE(k.vce_wants_cb);
 }
 
-// The SH-deviation switches and the leveling warm-up follow the SH field: the same
-// estimation block reads 0 / off without network.estimate_iono_sh.
-TEST(NetworkKnobsEpochDriver, ShDeviationAndWarmupFollowTheShField) {
+// The SH-deviation switches follow the SH field: the same estimation block reads
+// 0 / off without network.estimate_iono_sh.
+TEST(NetworkKnobsEpochDriver, ShDeviationFollowsTheShField) {
     const std::string estimation =
         "  \"estimation\": {\n"
         "    \"global_vtec_sh\": {\n"
@@ -317,7 +313,6 @@ TEST(NetworkKnobsEpochDriver, ShDeviationAndWarmupFollowTheShField) {
         "  },\n";
     const std::string leveling =
         "    \"phase_leveling\": true,\n"
-        "    \"phase_leveling_warmup_on_convergence\": true,\n"
         "    \"cycle_slip\": { \"mw_detect\": true },\n";
     GnssConfig field;
     ASSERT_TRUE(loadInto("sh_on",
@@ -330,7 +325,6 @@ TEST(NetworkKnobsEpochDriver, ShDeviationAndWarmupFollowTheShField) {
     EXPECT_TRUE(k.sh_dev_on);
     EXPECT_TRUE(k.sh_dev_demean);
     EXPECT_TRUE(k.sh_dev_d5_keep);
-    EXPECT_TRUE(k.pl_warmup_on_sh_conv);
 
     GnssConfig no_field;
     ASSERT_TRUE(loadInto("sh_off", networkConfig(leveling, "", estimation), no_field));
@@ -340,8 +334,6 @@ TEST(NetworkKnobsEpochDriver, ShDeviationAndWarmupFollowTheShField) {
     EXPECT_FALSE(k.sh_dev_on);
     EXPECT_FALSE(k.sh_dev_demean);
     EXPECT_FALSE(k.sh_dev_d5_keep);
-    EXPECT_FALSE(k.pl_warmup_on_sh_conv);
-    EXPECT_TRUE(k.pl_warmup_on_conv);
 }
 
 // The float vehicle's birth-floor arm, both conjuncts: on with float_kf and a positive

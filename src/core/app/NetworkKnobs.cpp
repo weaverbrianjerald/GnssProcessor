@@ -97,9 +97,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.yng.var_m2     = config_.networkPhaseLevelingYoungInflateVarM2();
     k.yng.tau_ep     = config_.networkPhaseLevelingYoungInflateTauEp();
     k.yng.max_age_ep = config_.networkPhaseLevelingYoungInflateMaxAgeEp();
-    k.pl_warmup_on_conv = config_.networkPhaseLevelingWarmupOnConvergence();
-    k.pl_refloat_on_conv = config_.networkPhaseLevelingRefloatAtConvergence();
-    k.pl_conv_rms_thresh = config_.networkPhaseLevelingConvRmsThreshTecu();
     k.pb_var_floor = config_.networkSharedCarryVarFloorPbM2();
     k.cb_var_floor = config_.networkSharedCarryVarFloorCbM2();
     k.fullcov_on = config_.networkSharedCarryFullCov();
@@ -648,13 +645,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     }
     // --- The epoch driver's configuration-derived values (card NOM3 step EP0) ---
     // Moved from runNetwork with each expression unchanged (the SH-deviation switches are
-    // resolved above).  Where the driver tested the SH model
-    // (setup.sh_model), the test reads network.estimate_iono_sh: setup builds the model
-    // exactly when that flag is set (ApplicationNetworkSetup.cpp), and a run whose setup
-    // fails never reaches the epoch loop.  The rest is read from `nc`, which is the
-    // driver's own configuration in a run.
+    // resolved above).  The rest is read from `nc`, which is the driver's own
+    // configuration in a run.
     {
-        const bool sh_field = config_.estimateNetworkIonoSh();
         k.sec_timers_on = nc.trace_section_timers;
         k.clk_anchor_sigma = config_.resolveNetworkAprioriClockAnchorSigmaM();
         const std::vector<std::string> vce_families =
@@ -678,7 +671,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                                || nc.trace_postfit_rows;
         k.trace_sh_spectrum   = nc.trace_sh_spectrum;
         k.trace_station_block = nc.trace_station_block;
-        k.pl_warmup_on_sh_conv = k.pl_warmup_on_conv && sh_field;
         k.amb_birth_floor_on   = k.amb_float_kf && k.amb_birth_var_floor > 0.0;
     }
     return k;

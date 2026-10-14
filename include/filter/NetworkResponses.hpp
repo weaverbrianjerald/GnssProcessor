@@ -71,7 +71,6 @@ enum class ResponseSite : int {
     AmbWithholdErase,      ///< a withheld epoch's free response erased a carried arc
     AmbAnchorRerefErase,   ///< a phase-anchor re-reference (handover, coverage drop) erased the family's arcs
     AmbEq34Erase,          ///< the eq34 chain's re-reference erased a carried arc
-    AmbFleetFlush,         ///< the SH field's convergence flushed every carried arc
     // --- Slant ionosphere (iono_carry, iono_blk_carry) ---------------------------------
     IonoSlipErase,         ///< a slip on the line of sight erased its carried ionosphere
     IonoRaimErase,         ///< RAIM's attribution erased the line of sight's carried ionosphere
@@ -135,7 +134,7 @@ enum class ResponseSite : int {
 };
 
 /// Number of @ref ResponseSite values (array sizing).
-inline constexpr int kResponseSites = 68;
+inline constexpr int kResponseSites = 67;
 
 static_assert(static_cast<int>(ResponseSite::ShRetire) + 1 == kResponseSites,
               "kResponseSites must follow the ResponseSite enum");

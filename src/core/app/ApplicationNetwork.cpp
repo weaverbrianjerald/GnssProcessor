@@ -141,7 +141,7 @@
 #include "filter/NetworkShDevVtec.hpp"    // SH-deviation carry KF and VTEC-coefficient trace (INC-11b)
 #include "filter/NetworkShHealth.hpp"    // SH-field health probe, carry LS-VCE (INC-11b)
 #include "filter/NetworkLevelAuthority.hpp"  // per-epoch level-authority census (LV-6)
-#include "filter/NetworkLeveling.hpp"    // phase-leveling carry harvest, D2/C1 stash, SH-convergence latch (INC-11b)
+#include "filter/NetworkLeveling.hpp"    // phase-leveling carry harvest, D2/C1 stash (INC-11b)
 #include "filter/NetworkStashStatus.hpp"    // carry re-stash, LS-VCE fold, epoch-status QC row (INC-11b)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
 #include "logging/NetworkRunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
@@ -719,7 +719,6 @@ int Application::runNetwork() {
     timing.loop_begin = std::chrono::steady_clock::now();
     auto& n_loop_epochs = ctx.counters.n_loop_epochs;
     auto& decim_counter = ctx.counters.decim_counter;
-    auto& sh_converged_latch = ctx.carry.sh_converged_latch;
 
     // The joint estimator is constructed once, outside the epoch loop, and reset() and
     // reused each epoch.  A fresh NetworkEstimator per epoch reallocates one dense Schur
@@ -1182,16 +1181,7 @@ int Application::runNetwork() {
         // ambiguity onto a contaminated cold-start value would propagate that value.
         // n_emitted here excludes the current epoch, which is not yet emitted.
         const double pl_now_s   = TimeUtils::continuousGpsSeconds(se.time);
-        // With convergence-gated warmup armed and an SH field active, the carry warms only
-        // once the field has gone stationary (sh_converged_latch, set after the solve in
-        // NetworkLeveling from the epoch-over-epoch coefficient RMS Δ and the a₀₀ physical
-        // band); otherwise, including when there is no SH field to converge, the fixed
-        // emitted-epoch count applies.  Off (default) ⇒ the exact epoch-count gate ⇒
-        // byte-identical (T1d).  The configuration half of the test is
-        // ctx.knobs.pl_warmup_on_sh_conv; the test itself is per epoch.
-        const bool   carry_warm = pl_on && (ctx.knobs.pl_warmup_on_sh_conv
-                                                ? sh_converged_latch
-                                                : (static_cast<int>(n_emitted) >= pl_warmup));
+        const bool   carry_warm = pl_on && (static_cast<int>(n_emitted) >= pl_warmup);
 
         // This epoch's slip event feed for the DD invariant carry: the (app station index,
         // ambiguity key) pairs the PASS-A slip detectors flagged.  It is filled at the
@@ -2272,11 +2262,11 @@ int Application::runNetwork() {
         networkShHealth(ctx, config_, log, traces, setup, se, est, x_s, asm_res, est_index_of,
                         modeled, carry_vce_est, prires_est, datum_changed, pl_now_s);
         subEnd(SB_T1A);        // close block 3, T1a health (D0b)
-        subBegin(SB_LEVELING); // block 5: phase-leveling carry harvest + T1d SH convergence (D0b)
+        subBegin(SB_LEVELING); // block 5: phase-leveling carry harvest (D0b)
         networkLeveling(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
                         est_index_of, carry_vce_est, prires_est, carry_warm, pl_now_s,
                         registered_clock_sats, registered_code_keys, shared_phase_keys);
-        subEnd(SB_LEVELING);   // close block 5, leveling + T1d SH convergence (D0b)
+        subEnd(SB_LEVELING);   // close block 5, leveling (D0b)
         subBegin(SB_RAIM);     // block 2: post-fit network RAIM + median-polish attribution (D0b)
         // RAIM pool re-host: `carry_warm` requires network.phase_leveling, so gating on
         // it alone would leave post-fit RAIM unreachable on every card-4 lineage that

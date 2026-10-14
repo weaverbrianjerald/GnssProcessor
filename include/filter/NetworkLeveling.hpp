@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file NetworkLeveling.hpp
- * @brief Network producer epoch block: phase-leveling carry harvest + D2/C1 stash + T1d SH-convergence latch.
+ * @brief Network producer epoch block: phase-leveling carry harvest + D2/C1 stash.
  *
  * Relocated verbatim (dedent only, no substitution) out of Application::runNetwork
  * at decomposition INC-11b.  void and self-contained (it produces no locals that
@@ -39,7 +39,7 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
 
 /**
  * @brief Harvest this epoch's phase-leveling carry from the post-fit solution, stash the
- *        D2/C1 carried quantities into @p ctx, and latch the T1d SH-convergence state.
+ *        D2/C1 carried quantities into @p ctx.
  *        This is the feed of the zero-q phase-leveling carry (and the LS-VCE leveling-row
  *        fold); it updates the persistent carries that the next epoch's prior depends on.
  *        The caller keeps the subBegin/subEnd(SB_LEVELING) brackets.

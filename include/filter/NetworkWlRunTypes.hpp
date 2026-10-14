@@ -62,7 +62,7 @@ enum SubBlock {
     SB_DDFRAC,       // block 6: cross-station DD fractional-residual (B5) trace
     SB_SHDEV_VTEC,   // block 4: T5 SH-deviation carry KF + co-estimated VTEC coeff trace
     SB_T1A,          // block 3: T1a SH-field health probe
-    SB_LEVELING,     // block 5: phase-leveling carry harvest + D2/C1 stash + T1d SH-conv
+    SB_LEVELING,     // block 5: phase-leveling carry harvest + D2/C1 stash
     SB_RAIM,         // block 2: post-fit network RAIM pass-1/2 + median-polish attribution
     SB_CLOCKUPD,     // block 8: two-state clock update + fault QC + retro-flag feed
     SB_FRAMEDIAG,    // shared-normal spectrum + post-fit sigma0, both off by default (P1-3/P1-4)
