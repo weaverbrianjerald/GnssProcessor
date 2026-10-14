@@ -57,6 +57,14 @@ class  PppUtils;             // common/PppUtils.hpp (decomposition INC-7)
 struct SlipQcChannel;        // slip/NetworkRawObservables.hpp (slip-QC hardening)
 enum class EpochAction;      // filter/NetworkRunTypes.hpp, opaque enum declaration (decomposition INC-7)
 
+struct PppEpochWork;         // app/PppPipelineWork.hpp: the values one PPP epoch's stages share (card UOM U7b)
+struct PppRunEndView;        // app/PppPipelineWork.hpp: what the PPP run-end reports read (card UOM U7b)
+struct BaselineRunWork;      // app/ApplicationBaseline.cpp: what one baseline run's stages share (card UOM U7c)
+struct BaselineRoverWork;    // app/ApplicationBaseline.cpp: what one rover's stages share (card UOM U7c)
+struct BaselineEpochWork;    // app/ApplicationBaseline.cpp: what one epoch of one rover shares (card UOM U7c)
+enum class BaselineEpochAction;  // app/ApplicationBaseline.cpp: how a baseline epoch ends (card UOM U7c)
+class  MultiRinexSync;       // rinex/MultiRinexSync.hpp
+
 /**
  * @class Application
  * @brief High-level program driver for GNSSProcessor.
@@ -64,13 +72,27 @@ enum class EpochAction;      // filter/NetworkRunTypes.hpp, opaque enum declarat
  * Constructs the runtime application with an optional path to a configuration
  * file and exposes a single `run()` method that executes the program.
  *
- * Internally, `run()` delegates to a sequence of private helpers that each
- * handle one logical phase of the pipeline:
- *  - Logging and configuration loading.
- *  - Input data parsing (RINEX, products).
- *  - Filter state initialization (position seeding).
- *  - Per-epoch processing (observation collection, WLS seeding, cycle slip
- *    detection, Kalman predict/update, geometry relinearization, trace logging).
+ * `run()` loads the configuration and dispatches on the mode: real time
+ * (@ref runRealTime), baseline (@ref runBaseline), the network producer
+ * (@ref runNetwork), or the PPP / PPP-RTK pipeline (@ref runPpp).  runPpp() is
+ * a short ordered list of named private stages (card UOM step U7b), declared
+ * below in pipeline order under the file each lives in:
+ *  - the input phases (Application.cpp): logging and configuration, data
+ *    resolution, RINEX and product loading;
+ *  - setup (PppSetup.cpp): the a-priori position, the components and their
+ *    wiring, the traces;
+ *  - one epoch (PppEpochSteps.cpp): the observations, the decimation and
+ *    duration gates, the time step and data gap, the models, the WLS clock
+ *    seed, the gap policy, the process-noise overrides, the Kalman predict,
+ *    the cycle slips;
+ *  - the update (PppEpochUpdate.cpp): the update loop, the geometry
+ *    relinearization, the merged resets, the GIM update, ambiguity resolution;
+ *  - the epoch's records (PppEpochRecords.cpp): the smoother snapshots, the
+ *    NEQ, the soft-LLI snapshot, the summary line and the CSV traces;
+ *  - the run end (PppRunEnd.cpp): a declared table of reports.
+ * The baseline pipeline (@ref runBaseline, ApplicationBaseline.cpp) has the
+ * same shape: a spine over setup, per-rover and per-epoch stages (card UOM
+ * step U7c).
  */
 class Application {
 public:
@@ -99,7 +121,8 @@ public:
 
 private:
     // -----------------------------------------------------------------------
-    // Pipeline phase helpers (called from run())
+    // The input phases (Application.cpp): run() loads the configuration; the
+    // modes resolve and load their own inputs
     // -----------------------------------------------------------------------
 
     /**
@@ -147,6 +170,25 @@ private:
     bool loadInputData();
 
     /**
+     * @brief The PPP / PPP-RTK pipeline: the spine @c run() dispatches to for the PPP,
+     *        PPP-RTK and PPP-RTK-user modes.
+     *
+     * A short ordered list of named stages (card UOM step U7b): the input phases
+     * (@ref resolveData, @ref loadInputData), the setup stages (PppSetup.cpp), the epoch
+     * loop over the stages of PppEpochSteps.cpp, PppEpochUpdate.cpp and
+     * PppEpochRecords.cpp with one @c PppEpochWork per epoch, and the run end
+     * (@ref reportPppRunEnd_, then @ref generateReport_).  Defined in Application.cpp.
+     *
+     * @return 0 on success; 1 when an input phase or the position seed fails, or when
+     *         ppp_state_ cannot be synced from the state vector.
+     */
+    int runPpp();
+
+    // -----------------------------------------------------------------------
+    // PPP setup (PppSetup.cpp), in the order runPpp calls the stages
+    // -----------------------------------------------------------------------
+
+    /**
      * @brief Seed the filter state vector with an initial receiver position.
      *
      * Uses the RINEX header approximate position, moved from the marker to the
@@ -158,12 +200,90 @@ private:
      * H/E/N offset or, when the header carries none, by the SIF antenna window's
      * ARP-minus-GRP vector (@c reduceSifCoordinateToArp).  PppModel::initializeState
      * later re-derives the position from a configured reference position or the
-     * RINEX header, so run() re-applies the SIF seed after it unless a reference
+     * RINEX header, so @ref initializePppState_ re-applies the SIF seed after it unless a reference
      * position is configured (@c sif_apriori_seeded_).
      *
      * @return true on success, false on unrecoverable error.
      */
     bool initializePosition();
+
+    /**
+     * @brief Build the PPP processing components: PppModel, MeasurementModel,
+     *        KalmanFilter, WlsEstimator and CycleSlipManager, in that order.
+     *
+     * Requires @c state_manager_, @c product_parser_ and @c rinex_parser_.
+     */
+    void buildPppComponents_();
+
+    /**
+     * @brief Build the global ionosphere map (GIM) when ionosphere weighting
+     *        (estimation.ionosphere_weighting) or the higher-order ionosphere
+     *        correction (model_corrections.enable_higher_order_ionosphere) asks for it,
+     *        and hand it to PppModel for the latter.
+     *
+     * A missing IONEX file is a warning; the dependent features then skip their work.
+     */
+    void buildGlobalIonosphereMap_();
+
+    /**
+     * @brief Build the adaptive ionospheric process-noise monitor when
+     *        estimation.adaptive_iono_process_noise.enable is set; otherwise it stays
+     *        null and the ionospheric process noise stays static.
+     */
+    void buildIonoVariabilityMonitor_();
+
+    /**
+     * @brief Build the cross-session normal-equation accumulator when
+     *        processing.enable_neq_export is set, and log that the export is on.
+     */
+    void buildNeqAccumulator_();
+
+    /**
+     * @brief Wire the cycle-slip manager: the BIA satellite biases for the MW and EWL
+     *        detectors, the MW arc gap tolerance and the TurboEdit sample interval from
+     *        the processing cadence, and the manager as the KalmanFilter's MW tiebreak
+     *        source.
+     */
+    void wireCycleSlipManager_();
+
+    /**
+     * @brief Open the module traces the configuration arms: the MW and TurboEdit
+     *        traces, the wind-up trace and census (estimation.trace_windup_census), and
+     *        the adaptive ionospheric monitor's trace.
+     */
+    void enablePppTraceStreams_();
+
+    /**
+     * @brief Build the aiding sources (the IMU first), reserve their states and attach
+     *        the IMU to the KalmanFilter; log the IMU sample count when it has data.
+     */
+    void buildAidingSources_();
+
+    /**
+     * @brief Initialize @c ppp_state_ through PppModel::initializeState, re-apply the
+     *        SIF a-priori position it would overwrite (a configured reference position
+     *        keeps precedence), and sync the state vector from it.
+     */
+    void initializePppState_();
+
+    /**
+     * @brief Build the ambiguity resolver from the ambiguity_resolution section when its
+     *        mode is above 0, and log its configuration.
+     */
+    void buildAmbiguityResolver_();
+
+    /**
+     * @brief Open the CSV trace logger in @c log_dir_; warns when requested streams fail
+     *        to open.
+     * @param is_ppp_rtk The processing mode is PPP-RTK (the PPP-RTK trace columns).
+     */
+    void buildTraceLogger_(bool is_ppp_rtk);
+
+    // -----------------------------------------------------------------------
+    // One PPP epoch up to the measurement update (PppEpochSteps.cpp), in the order
+    // runPpp calls the stages.  A stage taking a PppEpochWork reads and writes the
+    // epoch's working value (app/PppPipelineWork.hpp).
+    // -----------------------------------------------------------------------
 
     /**
      * @brief Collect all observations belonging to the current epoch and
@@ -183,6 +303,48 @@ private:
                                   size_t& epoch_idx,
                                   std::vector<RinexObservation>& epoch_obs,
                                   GnssTime& current_time);
+
+    /**
+     * @brief Stage 4a2: whether processing.gnss_rate_s decimation skips this epoch
+     *        (closer than the processing rate to the last processed epoch, with 1 ms of
+     *        tolerance).  The first epoch anchors the schedule and is never skipped.
+     * @param w The epoch's working value (reads current_time).
+     * @return True to skip the epoch, without a log line.
+     */
+    bool skipDecimatedEpoch_(const PppEpochWork& w) const;
+
+    /**
+     * @brief Stage 4a3: the processing.max_duration_s cutoff.  The first processed
+     *        epoch anchors the window; an epoch whose data-time span reaches the limit
+     *        ends the loop, with a log line.
+     * @param w The epoch's working value (reads current_time).
+     * @return True when the run stops at this epoch.
+     */
+    bool reachedMaxDuration_(const PppEpochWork& w);
+
+    /**
+     * @brief Stage 4b: stamp the epoch on the state manager and the log, compute the
+     *        time step and the data-gap flags, and advance the previous-epoch markers
+     *        (@c prev_tow_, @c prev_epoch_time_, @c last_processed_tow_).
+     * @param w The epoch's working value; writes dt, gap_detected and long_gap.
+     */
+    void stepEpochClock_(PppEpochWork& w);
+
+    /**
+     * @brief Stage 4c: sync @c ppp_state_ from the state vector; runPpp calls it again
+     *        after the predict.
+     * @param w The epoch's working value (reads epoch_prefix).
+     * @return False when the sync throws (logged); runPpp then returns 1.
+     */
+    bool syncPppState_(const PppEpochWork& w);
+
+    /**
+     * @brief Stage 4d: model the epoch's observations at @c ppp_state_ and log the
+     *        modeled satellites (debug).
+     * @param w The epoch's working value; writes modeled_obs and drop_reasons.
+     * @return False when modelling fails (logged); the epoch is then skipped.
+     */
+    bool computeEpochModels_(PppEpochWork& w);
 
     /**
      * @brief Run WLS estimation and optionally seed the Kalman filter clock.
@@ -278,6 +440,30 @@ private:
                    const WlsResult& wls);
 
     /**
+     * @brief Stage 4e2: refresh the per-ambiguity process-noise overrides of the
+     *        ambiguities whose signals' ATX corrections were frequency-substituted
+     *        (model_corrections.loosen_amb_q_for_substituted_atx), or clear them when the
+     *        toggle is off.  The next predict reads them.
+     * @param w The epoch's working value (reads epoch_prefix).
+     */
+    void refreshSubstitutedAtxQ_(const PppEpochWork& w);
+
+    /**
+     * @brief Stage 4e3: refresh the per-satellite ionospheric process-noise overrides
+     *        from the adaptive monitor; no-op when the monitor is off.
+     * @param w The epoch's working value (reads modeled_obs).
+     */
+    void refreshAdaptiveIonoQ_(const PppEpochWork& w);
+
+    /**
+     * @brief Stage 4f: the Kalman prediction (aiding-augmented when an aiding source is
+     *        active after the first epoch), then clear @c first_epoch_, whose last reader
+     *        it is.
+     * @param w The epoch's working value (reads current_time and dt).
+     */
+    void predictEpoch_(const PppEpochWork& w);
+
+    /**
      * @brief Detect cycle slips and reset or repair the affected ambiguities.
      *
      * Delegates to CycleSlipManager::detectAndRepair(), which runs the MW
@@ -290,6 +476,10 @@ private:
      */
     CycleSlipEpochResult detectCycleSlips(const std::string& epoch_prefix,
                                           const std::vector<PppObservation>& modeled_obs);
+
+    // -----------------------------------------------------------------------
+    // The measurement update and ambiguity resolution (PppEpochUpdate.cpp)
+    // -----------------------------------------------------------------------
 
     /**
      * @brief Run the iterative Kalman filter update / relinearization loop.
@@ -357,6 +547,14 @@ private:
                                          EpochMeasurement& applied_meas);
 
     /**
+     * @brief Merge into the epoch's reset set the KalmanFilter's last reset flags and the
+     *        slip phase's resets, so the smoother segments every one of them.
+     * @param w The epoch's working value; reads slip_result, writes epoch_reset_sats and
+     *          epoch_complete_reset.
+     */
+    void mergeEpochResets_(PppEpochWork& w);
+
+    /**
      * @brief Apply the GIM ionosphere-weighting pseudo-observation update.
      *
      * Post-processing only.  When ionosphere weighting is enabled and an
@@ -373,9 +571,33 @@ private:
                             const std::vector<PppObservation>& modeled_obs);
 
     /**
-     * @brief Update the stored 3D position sigma from the posterior covariance.
+     * @brief Stage 4i2: integer ambiguity resolution (MLAMBDA) on an epoch with an
+     *        applied update: the WL entries from the cycle-slip manager, the AR-side ATX
+     *        gates, the WL-only FFR quality input, then on a fix the fixed state and
+     *        covariance and the fix-and-hold constraint.  No-op without a resolver.
+     * @param w The epoch's working value (reads epoch_prefix, modeled_obs and
+     *          have_applied).
      */
-    void updatePositionSigma();
+    void resolveEpochAmbiguities_(const PppEpochWork& w);
+
+    /**
+     * @brief The AR-side ATX gates: drop the WL entries, and their fractions, whose
+     *        either signal lacks strict ATX coverage
+     *        (model_corrections.require_atx_coverage_for_ar) or had its correction
+     *        frequency-substituted (model_corrections.restrict_ar_for_substituted_atx).
+     *        The observations stay in the float update.
+     * @param epoch_prefix     Log prefix.
+     * @param[in,out] wl_ambs  WL integers keyed "<sat>_<sig1>_<sig2>".
+     * @param[in,out] wl_fracs Their fractional parts, under the same keys.
+     */
+    void dropAtxGatedWlEntries_(const std::string& epoch_prefix,
+                                std::map<std::string, int>& wl_ambs,
+                                std::map<std::string, double>& wl_fracs);
+
+    // -----------------------------------------------------------------------
+    // What the epoch records (PppEpochRecords.cpp): the smoother snapshots, the
+    // NEQ, the soft-LLI snapshot, the summary line and the CSV traces
+    // -----------------------------------------------------------------------
 
     /**
      * @brief Capture the a-priori half of an RTS smoother snapshot.
@@ -392,6 +614,15 @@ private:
      * @param dt Time step from the previous epoch (seconds).
      */
     void capturePriorSnapshot(const GnssTime& current_time, double dt);
+
+    /**
+     * @brief Fold the slip phase's covariance-preserving integer repairs into the
+     *        a-priori of the snapshot just captured (a deterministic control input), so
+     *        the backward pass does not absorb the jump; a satellite also reset this
+     *        epoch is segmented instead.  No-op without the smoother or a repair.
+     * @param w The epoch's working value (reads slip_result).
+     */
+    void foldSlipRepairsIntoPrior_(const PppEpochWork& w);
 
     /**
      * @brief Complete the current epoch's RTS smoother snapshot.
@@ -414,6 +645,22 @@ private:
     void capturePosteriorSnapshot(const std::set<std::string>& reset_ambiguities,
                                   bool was_complete_reset,
                                   bool update_applied);
+
+    /**
+     * @brief Mirror the accepted update into the cross-session normal equations, a
+     *        read-only consumer of the filter; warns when the state labels do not match
+     *        the update's H columns.  No-op without the accumulator.
+     * @param w The epoch's working value (reads epoch_prefix, applied_meas,
+     *          have_applied and epoch_reset_sats).
+     */
+    void accumulateNormalEquations_(const PppEpochWork& w);
+
+    /**
+     * @brief Update the soft-LLI bridge's last-good ambiguity snapshot from the float
+     *        posterior, before AR tightens it; no-op unless turbo_edit_bridge_lli.
+     * @param w The epoch's working value (reads current_time).
+     */
+    void recordBridgeSnapshot_(const PppEpochWork& w);
 
     /**
      * @brief Log the epoch summary (position, clock, tropo) to the main log.
@@ -457,12 +704,72 @@ private:
                           bool have_applied,
                           const std::set<std::string>& reset_satellites);
 
+    // -----------------------------------------------------------------------
+    // The PPP run end (PppRunEnd.cpp): the rows of kPppRunEndReports in order
+    // -----------------------------------------------------------------------
+
     /**
-     * @brief Convert a GPS-scale GnssTime to a UTC-scale GnssTime.
-     * @param gps_time GPS epoch (week + tow).
-     * @return GnssTime on the UTC time scale.
+     * @brief Walk the run-end table kPppRunEndReports, declared in this function as the
+     *        run end's table of contents, and call each report in order.
+     * @param v What the reports read beyond the Application's members.
      */
-    static GnssTime gpsToUtcTime(const GnssTime& gps_time);
+    void reportPppRunEnd_(const PppRunEndView& v);
+
+    /**
+     * @brief Report: the wind-up census readout (estimation.trace_windup_census): the
+     *        forward transitions, the in-horizon steps, the accumulator restarts and the
+     *        line that says how to read them.
+     * @param v The run-end view (unused: the census is PppModel's).
+     */
+    void reportWindUpCensus_(const PppRunEndView& v);
+
+    /**
+     * @brief Run the backward RTS smoother over the buffered snapshots
+     *        (processing.run_smoother) and write its trace when
+     *        logging.enable_smoother_trace is set.  The buffer moves into the smoother.
+     * @param v The run-end view (unused).
+     */
+    void runSmootherPass_(const PppRunEndView& v);
+
+    /**
+     * @brief Write smoother_trace.csv: per smoothed epoch the position, the receiver
+     *        clock and the zenith wet delay with their sigmas (a state the layout does
+     *        not hold as NaN).
+     * @param smoother The smoother after a successful backward pass.
+     */
+    void writeSmootherTrace_(const Smoother& smoother);
+
+    /**
+     * @brief Report: solve and write the cross-session normal equations
+     *        (processing.enable_neq_export) and log the solution summary.
+     * @param v The run-end view (unused).
+     */
+    void exportNormalEquations_(const PppRunEndView& v);
+
+    /**
+     * @brief Report: the "Processing completed in N ms" line, timed from the start of the
+     *        epoch loop to this row.
+     * @param v Reads wall_start and is_ppp_rtk.
+     */
+    void reportProcessingTime_(const PppRunEndView& v);
+
+    /**
+     * @brief Report: the state manager's re-inflation counters (card OWD).
+     * @param v Reads is_ppp_rtk.
+     */
+    void reportReinflations_(const PppRunEndView& v);
+
+    /**
+     * @brief Report: the KalmanFilter's timing block and QC counters.
+     * @param v The run-end view (unused).
+     */
+    void reportKalmanFilterRunEnd_(const PppRunEndView& v);
+
+    /**
+     * @brief Report: the cycle-slip manager's run-end counters.
+     * @param v The run-end view (unused).
+     */
+    void reportCycleSlipRunEnd_(const PppRunEndView& v);
 
     /**
      * @brief Run the real-time processing pipeline.
@@ -486,12 +793,304 @@ private:
      * its own PppModel, and processes each rover against the reference in
      * turn (a star topology for BaselineMulti): DD measurement model, DD state
      * vector and integer ambiguity resolution.  Implemented in
-     * @c ApplicationBaseline.cpp.
+     * @c ApplicationBaseline.cpp as a short ordered driver over the stages declared
+     * below (card UOM step U7c).
      *
      * @return 0 on clean shutdown, non-zero on error (including a run in which
      *         no rover overlaps the reference on any synced epoch).
      */
     int runBaseline();
+
+    // -----------------------------------------------------------------------
+    // The baseline pipeline's stages (ApplicationBaseline.cpp, card UOM step U7c),
+    // in the order runBaseline calls them.  The working values BaselineRunWork,
+    // BaselineRoverWork and BaselineEpochWork are defined in that file.
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Setup: the PathResolver pass (production mode points the observation path
+     *        at the reference station first, for the date inference).
+     * @param log        The main_log logger.
+     * @param bc_initial The baseline configuration before resolution.
+     * @return False when PathResolver fails (logged).
+     */
+    bool resolveBaselineData_(const std::shared_ptr<spdlog::logger>& log,
+                              const BaselineConfig& bc_initial);
+
+    /**
+     * @brief Setup: log the reference and the rovers, and check that each has a RINEX
+     *        path after resolution; warn when no navigation file was resolved.
+     * @param log The main_log logger.
+     * @param bc  The baseline configuration after resolution.
+     * @return False when a station has no RINEX path (logged).
+     */
+    bool checkBaselineInputs_(const std::shared_ptr<spdlog::logger>& log,
+                              const BaselineConfig& bc);
+
+    /**
+     * @brief Setup: load every station's RINEX file and align the epochs.
+     * @param log  The main_log logger.
+     * @param sync The multi-station reader.
+     * @return False when a file fails to load, the alignment fails or no epoch aligns
+     *         (logged).
+     */
+    bool synchronizeBaselineStations_(const std::shared_ptr<spdlog::logger>& log,
+                                      MultiRinexSync& sync);
+
+    /**
+     * @brief Setup: load the products and fill the product cache, which must hold SP3
+     *        orbits for the satellite geometry.
+     * @param log The main_log logger.
+     * @return False when the cache fails to load or holds no orbit (logged).
+     */
+    bool loadBaselineProducts_(const std::shared_ptr<spdlog::logger>& log);
+
+    /**
+     * @brief Setup: the reference station's StateManager (its position fixed at the
+     *        configured ECEF), its PppModel, and the GIM for the higher-order ionosphere
+     *        when that correction is on.
+     * @param ref_parser The reference station's RINEX parser.
+     * @param ref_pos    The reference ECEF (the ARP, used as given).
+     * @param synced     The aligned epochs (the first sets the state epoch).
+     */
+    void buildBaselineReference_(const RinexParser* ref_parser,
+                                 const Eigen::Vector3d& ref_pos,
+                                 const std::vector<SyncedEpoch>& synced);
+
+    /**
+     * @brief One rover against the reference: reset the shared reference state, check
+     *        the overlap, build the rover's a-priori position, filter, AR and traces, run
+     *        its epochs, then log its summaries and roll its totals into the run's.
+     * @param run       The run's working value (the totals are written).
+     * @param rover_idx The rover's index in the configuration.
+     * @return False only when the early-abort diagnostic fired (runBaseline then
+     *         returns 1); a skipped rover returns true.
+     */
+    bool processBaselineRover_(BaselineRunWork& run, size_t rover_idx);
+
+    /**
+     * @brief The zero-overlap guard: count the synced epochs where the rover and the
+     *        reference are both present; with none, log the error and skip the rover.
+     * @param run        The run's working value (rovers_with_data is counted).
+     * @param rover_name The rover.
+     * @return True when the rover overlaps the reference on at least one epoch.
+     */
+    bool roverOverlapsReference_(BaselineRunWork& run, const std::string& rover_name);
+
+    /**
+     * @brief The rover's a-priori position: the configured one, else the RINEX header's
+     *        ARP (marker reduced by the antenna H/E/N offset), else zero; logs the a-priori
+     *        baseline length and warns above max_baseline_km.
+     * @param run        The run's working value.
+     * @param rover_cfg  The rover's configuration.
+     * @param rov_parser The rover's RINEX parser.
+     * @return The a-priori ECEF (ARP).
+     */
+    Eigen::Vector3d baselineRoverApriori_(const BaselineRunWork& run,
+                                          const StationConfig& rover_cfg,
+                                          const RinexParser* rov_parser);
+
+    /**
+     * @brief The rover's filter: its StateManager seeded at the a-priori position, its
+     *        PppModel (with the GIM when loaded), MeasurementModel and KalmanFilter.
+     * @param rov_parser  The rover's RINEX parser.
+     * @param rov_apriori The rover's a-priori ECEF.
+     * @param synced      The aligned epochs (the first sets the state epoch).
+     */
+    void buildBaselineRoverFilter_(const RinexParser* rov_parser,
+                                   const Eigen::Vector3d& rov_apriori,
+                                   const std::vector<SyncedEpoch>& synced);
+
+    /**
+     * @brief The rover's ambiguity resolver when ambiguity_resolution.mode is above 0,
+     *        else none (logged once, for the first rover).
+     * @param run        The run's working value.
+     * @param rover_idx  The rover's index.
+     * @param rover_name The rover.
+     */
+    void buildBaselineRoverAr_(const BaselineRunWork& run, size_t rover_idx,
+                               const std::string& rover_name);
+
+    /**
+     * @brief The rover's trace directory (log_dir_/rover_<name> on a multi-rover run) and
+     *        its TraceLogger.
+     * @param run        The run's working value.
+     * @param rover_name The rover.
+     * @return The trace directory.
+     */
+    std::filesystem::path openBaselineRoverTraces_(const BaselineRunWork& run,
+                                                   const std::string& rover_name);
+
+    /**
+     * @brief Remove every DD ambiguity of the rover's state whose satellite or pivot is
+     *        @p sat.
+     * @param sat The slipped satellite.
+     * @return The number of ambiguities removed.
+     */
+    std::size_t eraseBaselineAmbiguitiesForSat_(const std::string& sat);
+
+    /**
+     * @brief Open baseline_trace.csv in the rover's trace directory and write its header
+     *        when logging.enable_state_trace is set.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (trace_ofs and trace_path are written).
+     */
+    void openBaselineTraceCsv_(const BaselineRunWork& run, BaselineRoverWork& rover);
+
+    /**
+     * @brief One epoch of one rover, as an ordered list of stages.
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     * @param se    The synced epoch.
+     * @return What the rover's epoch loop does next.
+     */
+    BaselineEpochAction processBaselineEpoch_(const BaselineRunWork& run,
+                                              BaselineRoverWork& rover,
+                                              const SyncedEpoch& se);
+
+    /**
+     * @brief The processing.max_duration_s cutoff: the rover's first synced epoch anchors
+     *        the window; an epoch whose span reaches the limit stops the rover (logged).
+     * @param run   The run's working value.
+     * @param rover The rover's working value (the anchor is written).
+     * @param se    The synced epoch.
+     * @return True when the rover's epoch loop stops here.
+     */
+    bool reachedBaselineMaxDuration_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                     const SyncedEpoch& se);
+
+    /**
+     * @brief Find the rover and the reference in the synced epoch and compute the time
+     *        step from the rover's last processed epoch (week rollover included).
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     * @param ep    The epoch's working value; writes rov_it, ref_it, both_present and dt.
+     */
+    void locateBaselineStations_(const BaselineRunWork& run, const BaselineRoverWork& rover,
+                                 BaselineEpochWork& ep);
+
+    /**
+     * @brief The hard-gap reset (both stations present and dt above the data-gap
+     *        tolerance, 60 s by default): drop every DD ambiguity, forget both MW arcs and
+     *        the sticky DD pivots, then the dynamics-mode policy of @ref handleGap.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (n_amb_resets is counted).
+     * @param ep    The epoch's working value.
+     */
+    void resetAtBaselineDataGap_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                 const BaselineEpochWork& ep);
+
+    /**
+     * @brief The MW pre-filter on both stations, before the DD build: a slipped
+     *        satellite's DD ambiguities are erased, its MW arcs reset at both receivers,
+     *        and the DD pivots re-ranked.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (the slip and reset counters are written).
+     * @param ep    The epoch's working value.
+     */
+    void screenBaselineMwSlips_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                const BaselineEpochWork& ep);
+
+    /**
+     * @brief Predict the rover's state, advance its previous-epoch markers, sync both
+     *        stations' PppStates and model both stations' observations.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (prev_week, prev_tow and the epoch counters
+     *              are written).
+     * @param ep    The epoch's working value; writes rov_modeled and ref_modeled.
+     * @return False when modelling fails or leaves a station empty (the epoch is skipped).
+     */
+    bool modelBaselineEpoch_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                             BaselineEpochWork& ep);
+
+    /**
+     * @brief The rebuild-pass update loop: build the DD measurement, update the filter,
+     *        drain the KF's pivot-handover requests, and on NeedsMeasurementRebuild
+     *        exclude the flagged rows and rebuild, within the shared pass budget.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (n_updates is counted).
+     * @param ep    The epoch's working value; writes em, carry_excluded, built_count,
+     *              applied, committed and epoch_failed.
+     */
+    void runBaselineUpdateLoop_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                BaselineEpochWork& ep);
+
+    /**
+     * @brief One pass's DD measurement, with its exception envelope.
+     * @param run  The run's working value.
+     * @param ep   The epoch's working value (em is written).
+     * @param pass The pass index.
+     * @return False when computeMeasurementUpdate throws (logged).
+     */
+    bool buildBaselineDdPass_(const BaselineRunWork& run, BaselineEpochWork& ep, int pass);
+
+    /**
+     * @brief Drain the KalmanFilter's coherent-pivot-slip requests and force a DD pivot
+     *        re-rank on each flagged constellation, excluding the KF's replacement
+     *        exclusions.
+     * @param log The main_log logger.
+     */
+    void drainBaselinePivotHandovers_(const std::shared_ptr<spdlog::logger>& log);
+
+    /**
+     * @brief On a committed epoch: the per-observable DD residual statistics and pivot
+     *        counts, DD ambiguity resolution, and the CSV traces.  No-op otherwise.
+     * @param run   The run's working value.
+     * @param rover The rover's working value (the residual statistics are written).
+     * @param ep    The epoch's working value.
+     */
+    void recordCommittedBaselineEpoch_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                       const BaselineEpochWork& ep);
+
+    /**
+     * @brief The early-abort diagnostic after 20 epochs with DD observations and no
+     *        update (a product window mismatch): logs, closes the position trace.  As
+     *        written it cannot fire (n_geom_ok counts with n_with_dd).
+     * @param run   The run's working value.
+     * @param rover The rover's working value (the trace is closed).
+     * @param ep    The epoch's working value.
+     * @return True when it fired; runBaseline then returns 1.
+     */
+    bool abortBaselineWithoutUpdates_(const BaselineRunWork& run, BaselineRoverWork& rover,
+                                      const BaselineEpochWork& ep);
+
+    /**
+     * @brief One row of baseline_trace.csv: the rover position, its sigmas, the rows
+     *        applied and built, the ambiguity count.
+     * @param rover The rover's working value (the trace).
+     * @param ep    The epoch's working value.
+     */
+    void writeBaselineTraceRow_(BaselineRoverWork& rover, const BaselineEpochWork& ep);
+
+    /**
+     * @brief Close the rover's baseline_trace.csv and log its path.
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     */
+    void closeBaselineTraceCsv_(const BaselineRunWork& run, BaselineRoverWork& rover);
+
+    /**
+     * @brief The rover's DD build summary: epochs, DD scalars per observable and
+     *        constellation, the dominant pivots, the residual statistics.
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     */
+    void reportBaselineDdBuild_(const BaselineRunWork& run, const BaselineRoverWork& rover);
+
+    /**
+     * @brief The rover's solution summary: updates, final position and sigma, the
+     *        displacement from the a-priori, the baseline length, the slip counters.
+     * @param run   The run's working value.
+     * @param rover The rover's working value.
+     */
+    void reportBaselineSolution_(const BaselineRunWork& run, const BaselineRoverWork& rover);
+
+    /**
+     * @brief The run's aggregate summary (multi-rover runs), the closing line and the
+     *        KalmanFilter's timings.
+     * @param run The run's working value.
+     */
+    void reportBaselineAggregate_(const BaselineRunWork& run);
 
     /**
      * @brief Run the minimum-constraint S-system PPP-RTK network producer.
@@ -954,7 +1553,7 @@ private:
 
     PppState ppp_state_;                      /**< Current PPP state (synced with filter).  In baseline mode this is the rover state. */
     Eigen::Vector3d initial_position_;        /**< Position used for sanity-check reversion. */
-    bool sif_apriori_seeded_{ false };        /**< True when @ref initializePosition seeded @c initial_position_ from the SIF (ARP-reduced); run() then re-applies it after PppModel::initializeState, which re-derives the position from the RINEX header. */
+    bool sif_apriori_seeded_{ false };        /**< True when @ref initializePosition seeded @c initial_position_ from the SIF (ARP-reduced); initializePppState_ then re-applies it after PppModel::initializeState, which re-derives the position from the RINEX header. */
 
     // Baseline-mode reference-station companions.  In baseline mode PppModel
     // runs twice per epoch (rover + reference), so per-receiver errors
@@ -970,7 +1569,6 @@ private:
     double last_processed_tow_{std::numeric_limits<double>::lowest()}; /**< TOW of the most recently processed epoch; the getGnssRate() decimation measures the spacing from here.  Set together with prev_tow_ after the decimation skip, so a skipped input epoch updates neither. */
     double max_duration_anchor_s_{0.0};       /**< Continuous GPS seconds of the first processed epoch; the processing.max_duration_s cutoff measures elapsed data time from here. Only meaningful once first_epoch_ has cleared. */
     GnssTime prev_epoch_time_{0, 0.0};        /**< Previous epoch full GnssTime for IMU integration. */
-    double prev_pos_sigma_3d_{std::numeric_limits<double>::max()}; /**< Post-update 3D position sigma. */
 
     /// Pre-update position captured at the top of each runFilterUpdateLoop;
     /// used by runGeometryRelinearization for its |Δpos| gate on both the IEKF
