@@ -68,12 +68,21 @@ What a clean survey proves at a base (exit 0 only when every point holds):
      naming only some row files, coverage is printed but not required.
   5. Every realization the bindings used is backed by a declared substitution of
      scripts/nom_ep1/declared.py, and every declared entry's locators find their frozen
-     object (file:line printed).
+     object (file:line printed).  The proofs of COPY_SOURCE and VALUE_EQUAL hold at the base
+     (declared.Writers: no write to a copied setup field outside networkSetup_; no writer of
+     ctx.counters.n_emitted the per-epoch body reaches but the emitter, used once); each
+     write found and its verdict are printed.
   6. With --compare-compact / --compare-renames, the derived bindings and renamed-argument
      list equal the EP1 design's frozen tables (its conv_compact.md and renames.txt, made by
      the inventory scripts at the EP0 base); a declaration that only moved to another line is
      listed, not failed.  With partial --rows, only the call sites those rows cover are
      compared.
+  7. The engine and specification tables of scripts/nom_ep1/model.py fit the base: each
+     ENGINE_CTORS entry's frozen declaration exists, default-constructed exactly when the
+     table lists no arguments and otherwise with as many constructor arguments as it lists;
+     each SPEC_FIELDS local is declared in runNetwork and moved by a SPEC_CUT entry.  These
+     are the shapes the generator refuses, reported here first, so a REMOVE-key base that
+     takes the PB emit filter or the lane layer fails the survey, not only the generation.
 
 Also printed: the seams whose definitions declare or use `run`, `ep` or one of their group
 outputs' names (they take the fallback names nrun / nep / <output>_out, spec 3.2), the epoch
@@ -90,7 +99,7 @@ import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from nom_cpp import (DRIVER_PATH, Driver, GitTree, Ref, Tokens, calls_in)  # noqa: E402
+from nom_cpp import (DRIVER_PATH, Driver, GitTree, Ref, Tokens, calls_in, split_args)  # noqa: E402
 from nom_ep1 import DEFAULT_BASE, ROW_MODULES, load_rows  # noqa: E402
 from nom_ep1 import model, declared  # noqa: E402
 from nom_ep1.model import MEMBER, RUN, ADAPTER, DIRECT, Explicit  # noqa: E402
@@ -417,6 +426,48 @@ def locate_declared(fz):
     return rows
 
 
+def engine_table_checks(fz):
+    """Problems of model.ENGINE_CTORS and model.SPEC_FIELDS at the base: each engine's frozen
+    declaration exists in runNetwork's outermost scope, is default-constructed when the table
+    lists no arguments, and otherwise is direct-initialized with as many arguments as the
+    table lists; each field that replaces a setup local names a local declared there and
+    moved by a SPEC_CUT entry."""
+    drv = fz.drv
+    T = drv.T
+    root = {d.name: d for d in drv.scopes.root.decls}
+    out = []
+    for ec in model.ENGINE_CTORS:
+        d = root.get(ec.local)
+        if d is None:
+            out.append(f"engine {ec.local} ({ec.owner}.{ec.member}): not declared in runNetwork at this base")
+            continue
+        if d.init is None:
+            if ec.arg_fields:
+                out.append(f"engine {ec.local}: default-constructed at the base, the table lists "
+                           f"{len(ec.arg_fields)} arguments")
+            continue
+        if d.init_kind not in ("(", "{"):
+            out.append(f"engine {ec.local}: not direct-initialized at the base")
+            continue
+        n = len(split_args(T, d.init[0] - 1))
+        if n != len(ec.arg_fields):
+            out.append(f"engine {ec.local}: {n} constructor arguments at the base, the table lists "
+                       f"{len(ec.arg_fields)}")
+    cut = set()
+    for e in declared.declared("SPEC_CUT"):
+        for loc in e.where:
+            cut |= set(getattr(loc, "names", ()))
+    for f in model.SPEC_FIELDS:
+        if not f.local:
+            continue
+        if f.local not in root:
+            out.append(f"specification field {f.name}: its setup local {f.local} is not declared in "
+                       "runNetwork at this base")
+        elif f.local not in cut:
+            out.append(f"specification field {f.name}: its setup local {f.local} is in no SPEC_CUT entry")
+    return out
+
+
 def spec_cut_stays(fz, hits):
     """Driver statements inside a SPEC_CUT entry's overall span that the entry leaves in place."""
     if not hits:
@@ -732,6 +783,7 @@ def survey(args):
     # Declared substitutions.
     print("\n## Declared substitutions (spec 5.6), located at the base\n")
     decl_rows = locate_declared(fz)
+    loop = declared.driver_loop(drv)
     counts = collections.Counter(d.cls for d, _ in decl_rows)
     print("  " + ", ".join(f"{c} {counts[c]}" for c in declared.CLASSES))
     for d, hits in decl_rows:
@@ -747,7 +799,7 @@ def survey(args):
             else:
                 parts.append(f"{type(loc).__name__}: " + ", ".join(
                     f"{h.path}:{h.line}{'-' + str(h.end) if h.end != h.line else ''}"
-                    + (f" [{h.note}]" if (type(loc).__name__ == "WriteScan"
+                    + (f" [{h.note}]" if (type(loc).__name__ == "Writers"
                                           or "initializer" in h.note) else "")
                     for h in hs))
             if type(loc).__name__ == "DriverDecl":
@@ -761,6 +813,22 @@ def survey(args):
         if d.cls == "BRACKET":
             n_sites = sum(len(hs) for loc, hs in hits if type(loc).__name__ == "CallSitesOf")
             print(f"  {'':15s}   {n_sites} call sites in the lambda")
+        for loc in d.where:
+            if isinstance(loc, declared.Writers):
+                wp, wn = loc.prove(fz.tree, loop)
+                for x in wn:
+                    print(f"  {'':15s}   proof: {x}")
+                for x in wp:
+                    print(f"  {'':15s}   proof FAILS: {x}")
+                    problems.append(f"declared {d.cls} {d.name}: {x}")
+
+    # The engine and specification tables against the base (the generator's member_inits and
+    # spec_body refuse the same shapes; the survey reports them first).
+    print("\n## Engines and specification fields (model.py) against the base\n")
+    for x in engine_table_checks(fz):
+        print(f"  {x}")
+        problems.append(x)
+    print(f"  {len(model.ENGINE_CTORS)} engines, {len(model.SPEC_FIELDS)} specification fields checked")
 
     # Non-conversions located.
     print("\n## Declared non-conversions (the calls each covers in the coverage above)\n")

@@ -16,8 +16,11 @@ sh_health_gate code out before EP1a-1).
   FIELD_MOVE       a field moves to a new owner path, type unchanged: the three hand-off fields
                    into NetworkPostFitHandoff, the three bracket timer vectors into
                    NetworkRunTiming.
-  COPY_SOURCE      a const driver copy of a setup field is read from the field (4).
-  VALUE_EQUAL      `ctx.counters.n_emitted != fc_n_emitted_before` is ep.emitted.
+  COPY_SOURCE      a const driver copy of a setup field is read from the field (4); its proof
+                   (Writers) admits no write to the field outside networkSetup_.
+  VALUE_EQUAL      `ctx.counters.n_emitted != fc_n_emitted_before` is ep.emitted; its proof
+                   (Writers) admits no writer of the counter the per-epoch body reaches but
+                   the emitter, used once in that body.
   ACCESSOR         x_emit is ep.x_emit().
   CALLABLE         the third-band closure is networkIsUncarriedThirdBand.
   CALLBACK_DIRECT  the solve's two replay callbacks are direct builder calls.
@@ -40,7 +43,8 @@ import collections
 import re
 from dataclasses import dataclass
 
-from nom_cpp import DRIVER_PATH, Tokens, calls_in, parse_declaration, statements, stmt_end
+from nom_cpp import (DRIVER_PATH, Ref, Resolver, Scopes, Tokens, calls_in, parse_declaration,
+                     statements, stmt_end)
 
 Hit = collections.namedtuple("Hit", "path line end note")
 _ASSIGN_OPS = ("=", "+=", "-=", "*=", "/=", "|=", "&=")
@@ -311,22 +315,77 @@ class LambdaStmtWith:
 
 
 @dataclass(frozen=True)
-class WriteScan:
+class LoopBody:
+    """Where the per-epoch body is in a tree, for the write proofs: the file and the token range
+    of the lambda (the frozen tree, an empty conversion) or of networkProcessEpoch_ (a converted
+    tree), and the token spans of runNetwork's own closures that body calls (their bodies run
+    inside the loop although they lie outside its range).  @p root names the function that runs
+    the loop (Application::runNetwork): a use there, outside the per-epoch body, runs before or
+    after the loop, and the walk back through callers stops at it."""
+    path: str
+    open: int
+    close: int
+    closures: tuple = ()
+    root: str = "runNetwork"
+
+    def holds(self, path, tok):
+        return path == self.path and (self.open < tok < self.close
+                                      or any(a < tok < b for a, b in self.closures))
+
+
+def driver_loop(drv):
+    """The LoopBody of a nom_cpp.Driver (the frozen lambda and the root closures it calls)."""
+    T = drv.T
+    called = {c.name for c in calls_in(T, drv.lam_open + 1, drv.lam_close)}
+    spans = tuple((T.match[d.lambda_scope.end], d.lambda_scope.end) for d in drv.scopes.root.decls
+                  if d.kind == "closure" and d.lambda_scope is not None and d.name in called)
+    return LoopBody(DRIVER_PATH, drv.lam_open, drv.lam_close, spans)
+
+
+def _enclosing_def(tree, path, tok):
+    """The innermost function definition of @p path whose body holds token @p tok, or None."""
+    idx = tree.index(path)
+    best = None
+    for f in (idx.funcs if idx else []):
+        if f.is_def and f.body and f.body[0] < tok < f.body[1]:
+            if best is None or f.body[0] > best.body[0]:
+                best = f
+    return best
+
+
+@dataclass(frozen=True)
+class Writers:
     """Writes to a member named @p member (`x.member = `, `++x.member`, `x.member += `, ...)
-    in every file under @p prefixes at the base: the proof obligation of COPY_SOURCE (no write
-    after setup) and VALUE_EQUAL (the single writer inside the loop)."""
+    in every file under src/: the proof obligation of COPY_SOURCE (no write to the setup field
+    after networkSetup_ returns) and VALUE_EQUAL (the emitter is the only writer of the
+    counter inside the loop).
+
+    locate() lists every write by member name (the survey prints them).  prove() resolves each
+    write's object with a scope walk of its enclosing function (a reference declaration is
+    followed to its initializer) and keeps the writes whose object matches @p obj, a regular
+    expression on the rendered object (`(^|[:.])setup\\.n_threads$`); an object that does not
+    resolve is kept.  Each kept write must lie in a function named in @p writers, or, with
+    @p preloop, in a function the per-epoch body cannot reach (no use of its name, direct or
+    through other functions, inside the loop); a write inside the loop itself fails.  With
+    @p once, each writer is used exactly once inside the loop (the store that follows it
+    then sees the only in-loop write)."""
     member: str
+    obj: str = ""
+    writers: tuple = ()
+    preloop: bool = False
+    once: bool = False
     prefixes: tuple = ("src/",)
 
-    def locate(self, fz):
+    def scan(self, tree):
+        """[(path, Tokens, member token, first token of the written expression)]."""
         out = []
-        for path in fz.tree.files(*self.prefixes):
+        for path in tree.files(*self.prefixes):
             if not path.endswith((".cpp", ".hpp", ".h")):
                 continue
-            text = fz.tree.read(path)
+            text = tree.read(path)
             if not text or self.member not in text:
                 continue
-            T = fz.tree.tokens(path)
+            T = tree.tokens(path)
             for j in range(1, T.n - 1):
                 if T.t(j) != self.member or T.k(j) != "id":
                     continue
@@ -336,12 +395,103 @@ class WriteScan:
                         k -= 2
                 elif nxt == "=" and (T.k(k) == "id" or T.t(k) in ("&", "*", "&&", ">", ">>", "::")):
                     continue   # a declaration (`auto& n = ...;`, `std::size_t n = 0;`)
-                pre = T.t(k)
-                if pre in ("++", "--"):
-                    out.append(Hit(path, T.line(j), T.line(j), T.src(k, j + 1)))
-                elif nxt in _ASSIGN_OPS + ("++", "--"):
-                    out.append(Hit(path, T.line(j), T.line(j), T.src(k + 1, j + 2)))
+                if T.t(k) in ("++", "--") or nxt in _ASSIGN_OPS + ("++", "--"):
+                    out.append((path, T, j, k + 1))
         return out
+
+    def locate(self, fz):
+        out = []
+        for path, T, j, a in self.scan(fz.tree):
+            pre = T.t(a - 1) in ("++", "--")
+            note = T.src(a - 1, j + 1) if pre else T.src(a, j + 2)
+            out.append(Hit(path, T.line(j), T.line(j), note))
+        return out
+
+    def written_object(self, tree, path, T, j, a):
+        """The rendered object of the write at member token @p j (expression from @p a), and
+        the enclosing function; None when no function holds it."""
+        f = _enclosing_def(tree, path, j)
+        if f is None:
+            return None, None
+        sc = Scopes(T, f.body[0], f.body[1], f.params)
+        try:
+            node = Resolver(sc, {id(sc.root): "S"}).resolve(a, j + 1)
+        except (ValueError, IndexError):
+            return None, f
+        return (node.render() if isinstance(node, Ref) else None), f
+
+    def prove(self, tree, loop):
+        """(problems, notes) of the proof on @p tree, the per-epoch body being @p loop."""
+        problems, notes = [], []
+        pat = re.compile(self.obj) if self.obj else None
+        kept = 0
+        for path, T, j, a in self.scan(tree):
+            obj, f = self.written_object(tree, path, T, j, a)
+            where = f"{path}:{T.line(j)} `{T.src(a, j + 1)}`"
+            if obj is not None and pat is not None and not pat.search(obj):
+                notes.append(f"{where}: another object ({obj})")
+                continue
+            kept += 1
+            if loop.holds(path, j):
+                problems.append(f"{where}: a write inside the per-epoch body")
+                continue
+            if f is None:
+                problems.append(f"{where}: a write outside any function definition")
+                continue
+            if f.name in self.writers:
+                notes.append(f"{where}: in {f.name}, the declared writer")
+                continue
+            if not self.preloop:
+                problems.append(f"{where}: written in {f.name}, not in {', '.join(self.writers)}")
+                continue
+            chain = reaches_loop(tree, f.name, loop)
+            if chain:
+                problems.append(f"{where}: written in {f.name}, which the per-epoch body reaches "
+                                f"({' <- '.join(chain)})")
+            else:
+                notes.append(f"{where}: in {f.name}, which the per-epoch body does not reach")
+        if self.once:
+            T = tree.tokens(loop.path)
+            for w in self.writers:
+                uses = [j for j in range(loop.open + 1, loop.close) if T.t(j) == w and T.k(j) == "id"]
+                if len(uses) != 1:
+                    problems.append(f"{w} is used {len(uses)} times in the per-epoch body (once expected)")
+        notes.append(f"{kept} writes of the object, {len(problems)} outside the proof")
+        return problems, notes
+
+
+def reaches_loop(tree, name, loop, limit=400):
+    """The call chain [name, caller, ...] by which the per-epoch body @p loop uses a function
+    named @p name (any use of the name, call or not, directly or through other functions under
+    src/), or [] when it does not.  Names are compared unqualified, so a same-named function
+    elsewhere counts as a caller (a conservative over-approximation)."""
+    files = [p for p in tree.files("src/", "include/") if p.endswith((".cpp", ".hpp", ".h"))]
+    seen, frontier = {name}, [[name]]
+    while frontier and len(seen) < limit:
+        chain = frontier.pop()
+        n = chain[-1]
+        for p in files:
+            text = tree.read(p)
+            if not text or n not in text:
+                continue
+            T = tree.tokens(p)
+            idx = tree.index(p)
+            own = {f.name_tok for f in idx.funcs if f.name == n}
+            for j in range(T.n):
+                if T.t(j) != n or T.k(j) != "id" or j in own:
+                    continue
+                if loop.holds(p, j):
+                    return chain + [f"{p}:{T.line(j)}"]
+                f = _enclosing_def(tree, p, j)
+                if f is None:
+                    return chain + [f"{p}:{T.line(j)} (a use outside any function: not proved)"]
+                if f.name in seen or f.name == loop.root:
+                    continue
+                seen.add(f.name)
+                frontier.append(chain + [f.name])
+    if frontier:
+        return [name, f"(more than {limit} callers: not proved)"]
+    return []
 
 
 # ---------------------------------------------------------------------------------------------
@@ -358,7 +508,8 @@ CLASSES = {
     "FIELD_MOVE": "a field moved to a new owner path, type text unchanged, no frozen use of the "
                   "old path left",
     "COPY_SOURCE": "a const driver copy of a setup field is read from the field; proof: no write "
-                   "to the field after networkSetup_ returns (write scan over src/)",
+                   "to the field outside networkSetup_ (Writers: a write scan over src/, each "
+                   "write's object resolved)",
     "VALUE_EQUAL": "an expression replaced by an epoch value equal to it at every reader; proof: "
                    "the single writer of ctx.counters.n_emitted inside the loop is the emitter, "
                    "and no call between the store and the last reader reaches it",
@@ -462,9 +613,12 @@ DECLARED = (
              "reads the spec field", (DriverStmts(("mw_wl_cfg",)),)),
     Declared("SPEC_CUT", "ewl_cfg", "the EWL lane's configuration; the EWL fill reads the spec field",
              (DriverStmts(("ewl_cfg",)),)),
-    Declared("SPEC_CUT", "pb_filter_cfg, clk_rebase_cfg",
-             "the emit engines' configurations (spec fields)",
-             (DriverStmts(("pb_filter_cfg", "clk_rebase_cfg")),)),
+    Declared("SPEC_CUT", "pb_filter_cfg",
+             "the phase-bias emission filter's configuration (a spec field)",
+             (DriverStmts(("pb_filter_cfg",)),)),
+    Declared("SPEC_CUT", "clk_rebase_cfg",
+             "the clock emission re-base's configuration (a spec field)",
+             (DriverStmts(("clk_rebase_cfg",)),)),
     Declared("SPEC_CUT", "idw, iono_deweight",
              "the deweight gate's configuration copy and constructor arguments; the name "
              "becomes a reference (OWNER_MOVE); release tracking and the two warnings stay",
@@ -482,14 +636,17 @@ DECLARED = (
 
     # COPY_SOURCE
     *(Declared("COPY_SOURCE", n, f"`const ... {n} = setup.{n};` is read as run.setup.{n}",
-               (DriverDecl(n, expect=f"setup.{n}"), WriteScan(n)))
+               (DriverDecl(n, expect=f"setup.{n}"),
+                Writers(n, obj=r"(^|[:.])setup\." + n + "$", writers=("networkSetup_",))))
       for n in ("n_threads", "seam_threads", "carry_par", "brdc_rts")),
 
     # VALUE_EQUAL
     Declared("VALUE_EQUAL", "emitted",
              "ep.emitted, stored once after the emit bracket, replaces the four comparisons",
              (ExprSites("ctx.counters.n_emitted != fc_n_emitted_before"),
-              LambdaDecl("fc_n_emitted_before"), WriteScan("n_emitted"))),
+              LambdaDecl("fc_n_emitted_before"),
+              Writers("n_emitted", obj=r"\.counters\.n_emitted$", writers=("networkEmitStore",),
+                      preloop=True, once=True))),
 
     # ACCESSOR
     Declared("ACCESSOR", "x_emit",

@@ -29,8 +29,12 @@ What it proves (spec sections 2.3, 3.1 and 5.5 of the EP1 specification):
       A group is available from its first write in the epoch function: the epoch's
       construction for `se` and `ws`, else the first statement that assigns into it, calls a
       member function that writes it, or passes it to an output parameter (a reference
-      binding alone is not a write).  The banner's prose "available from" column is not
-      machine-read; the first write is its executable form.
+      binding alone is not a write).  A converted seam that a spine seam's body calls with
+      the caller's own run and epoch (the solve's replay builders, at any depth) reads only
+      groups written strictly before the caller's spine line: the caller's own writes are
+      still under way while it runs, so a builder inside the solve cannot read ep.solve.
+      The banner's prose "available from" column is not machine-read; the first write is
+      its executable form.
   V11 Writer banners.  For every group, the set of seams whose spine call passes `ep.<group>`
       (or a member of it) to an output parameter equals the seams named in the group's
       "written by" cell of the banner table in include/app/NetworkEpoch.hpp, and the seams
@@ -48,7 +52,9 @@ What it proves (spec sections 2.3, 3.1 and 5.5 of the EP1 specification):
 A converted seam is recognized by its definition: its first parameter is `NetworkRun&` and
 its second `const NetworkEpoch&` (the parameter names may be the fallback names nrun / nep).
 Its bindings are the lines between the generated markers `// ---- From the run` (and the
-epoch) and `// ---- End of the bindings ----`; an adapter's epoch form is one forwarding call.
+epoch) and `// ---- End of the bindings ----`, which open the body (preamble_leads; the
+relocation verifier's V1b fails code before them); an adapter's epoch form is one forwarding
+call.
 
 The module also holds the tree reader and the comment-free statement rendering that
 scripts/nom_ep1_verify.py uses (DiskTree, render(), epoch_function()), so the relocation
@@ -372,6 +378,14 @@ def preamble_span(T, f):
     return first, end
 
 
+def preamble_leads(T, f):
+    """True when the generated bindings of definition @p f open its body: no code token lies
+    between the body's `{` and the opening marker (code there would run before the bindings
+    and outside every check that reads the bindings or the body below them)."""
+    span = preamble_span(T, f)
+    return span is not None and span[0] == f.body[0] + 1
+
+
 def binding_reads(T, f):
     """The epoch paths ('ep.pass_a.present', ...) a converted definition's bindings read, with
     the token of each.  Reads go through the second parameter (ep or nep); an adapter's epoch
@@ -618,13 +632,41 @@ def parse_banner(text):
 # The lint
 # ---------------------------------------------------------------------------------------------
 class SpineCall:
-    __slots__ = ("callee", "call", "stmt", "defn", "out_paths", "reads")
+    __slots__ = ("callee", "call", "stmt", "defn", "out_paths", "reads", "nested")
 
     def __init__(self, callee, call, stmt):
         self.callee, self.call, self.stmt = callee, call, stmt
         self.defn = None
         self.out_paths = []   # epoch paths passed to output parameters
         self.reads = []       # epoch paths the bindings read
+        self.nested = []      # (callee, path:line, epoch paths its bindings read) of the converted
+                              # seams this seam's body calls with its own run and epoch
+
+
+def nested_epoch_calls(tree, defs, f, depth=0, seen=None):
+    """The converted seams the body of converted definition @p f calls in epoch form, passing
+    its own run and epoch parameters (the solve's replay builders, for example), at any depth:
+    [(callee, "path:line", [epoch paths its bindings read])]."""
+    seen = set() if seen is None else seen
+    out = []
+    if depth > 4 or len(f.params) < 2 or (f.path, f.line) in seen:
+        return out
+    seen.add((f.path, f.line))
+    T = tree.tokens(f.path)
+    span = preamble_span(T, f)
+    lo = span[1] if span else f.body[0] + 1
+    rn, en = f.params[0].name, f.params[1].name
+    for c in calls_in(T, lo, f.body[1]):
+        if c.nargs < 2 or T.join(*c.args[0]) != rn or T.join(*c.args[1]) != en:
+            continue
+        leaf = re.split(r"\.|->|::", c.name)[-1]
+        ds = [g for g in defs.find(leaf) if len(g.params) == c.nargs]
+        if not ds:
+            continue
+        DT = tree.tokens(ds[0].path)
+        out.append((leaf, f"{f.path}:{c.line}", [p for p, _ in binding_reads(DT, ds[0])]))
+        out += nested_epoch_calls(tree, defs, ds[0], depth + 1, seen)
+    return out
 
 
 def arg_epoch_path(T, s, e):
@@ -680,6 +722,7 @@ class Lint:
                         sc.out_paths.append(path)
                 if is_card_form(sc.defn):
                     sc.out_paths += written_bindings(DT, sc.defn)
+                sc.nested = nested_epoch_calls(self.tree, self.defs, sc.defn)
             self.spine.append(sc)
 
     # -- positions --
@@ -770,8 +813,12 @@ class Lint:
                                                "ep.clock before its store")
 
     def v10(self):
+        """Every group a spine seam's bindings read is written at or before its spine line; a
+        converted seam that a spine seam's body calls with the caller's run and epoch (the
+        solve's replay builders) reads only groups written strictly before the caller's spine
+        line, since the caller's own writes are still under way while it runs."""
         avail = self.first_writes()
-        n = 0
+        n = n_nested = 0
         for sc in self.spine:
             if sc.defn is None:
                 continue
@@ -789,8 +836,20 @@ class Lint:
                     self.problems["V10"].append(
                         f"{self.fn.path}:{sc.call.line}: {sc.callee} reads {p} before the group is "
                         f"available (first written at line {self.fn.T.line(first)})")
+            for callee, where, reads in sc.nested:
+                for p in reads:
+                    g = group_of(p)
+                    if g is None:
+                        continue
+                    n_nested += 1
+                    if g not in avail or avail[g] >= sc.stmt:
+                        self.problems["V10"].append(
+                            f"{where}: {callee}, called inside {sc.callee} (spine line "
+                            f"{self.fn.path}:{sc.call.line}), reads {p}, which is not written before "
+                            "that spine line")
         self.info["V10"].append(f"{len(self.spine)} spine calls, {n} epoch reads checked against "
-                                f"{len(avail)} groups' first writes")
+                                f"{len(avail)} groups' first writes; {n_nested} reads of seams called "
+                                "inside a seam")
 
     def v11(self, partial=False):
         """@p partial: the tree is mid-conversion (the relocation verifier's EP1a-1 and EP1b

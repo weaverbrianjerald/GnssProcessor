@@ -58,18 +58,32 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
       spec 5.3 checked by rule (the epoch's construction after the canonical-pair statement,
       the dropped workspace, an epoch local's alias / sized store / result store at its
       declaration, the clock store after the three clock locals, ep.emitted after the emit
-      bracket, the bracket and converted-call rewrites, the two replay closures).  (b) Each
-      converted body below its bindings equals the frozen body, except the solve's two
-      replay lines and three epilogue lines; the bindings region holds declarations only.
-      (c) Every unconverted row's declaration and definition, and every adapter's explicit
-      form, equal frozen (the solve's three epilogue lines excepted from step EP1a-1 on).
-      (d) runNetwork equals frozen apart from the spec 4.1 edits, and what those edits took
-      out is where the spec puts it: the predicate's and the two brackets' bodies (against
-      the frozen closures), the timer scratch and the hand-off fields (types), LoopSignal.
-      (e) Every changed code line of the tree (a line diff of src/, include/, tests/ and
-      CMakeLists.txt against <B>) lies in a region another check verified, a new file of
-      the step, an #include or forward-declaration line, or a declared hunk of step EP1a-1
-      (the run's and the engines' structs, the hand-off struct, the build list).
+      bracket, the bracket and converted-call rewrites, the two replay closures).  Each
+      carried statement and each store's initializer is then paired with its frozen text
+      token by token: an `ep.<path>` read as a local's name must pair with a frozen token
+      that IS that lambda local (the scope walk, so the DD-carry predict's own block-local
+      `dt` is never ep.clock.dt), ep.emitted with the frozen comparison, a bracket with the
+      driver's closure.  The VALUE_EQUAL proof runs here (below).  (b) Each converted body
+      below its bindings equals the frozen body, except the solve's two replay lines and
+      three epilogue lines; the bindings open the body (no code between the `{` and the
+      opening marker) and hold declarations only.  (c) Every unconverted row's declaration
+      and definition, and every adapter's explicit form, equal frozen (the solve's three
+      epilogue lines excepted from step EP1a-1 on).  (d) runNetwork equals frozen apart from
+      the spec 4.1 edits, and what those edits took out is where the spec puts it: the
+      predicate and the two brackets as functions with the closures' parameters, return
+      type and body, under a preamble that binds exactly the closures' captures (a
+      reference for a by-reference capture, `const auto` for a by-value one, each resolving
+      to the captured object) and otherwise only references to frozen driver objects the
+      body never names; the timer scratch in NetworkRunTiming (type and initializer); the
+      hand-off fields in NetworkPostFitHandoff with their frozen declarations, in frozen
+      order; NetworkRunEngines with the engines in the frozen construction order, of their
+      frozen types, built by one constructor with an empty body; LoopSignal.  (e) Every
+      changed code line of the tree (a line diff of src/, include/, tests/ and
+      CMakeLists.txt against <B>) lies in a region another check verified line by line, a
+      new file of the step, an #include or forward-declaration line, or a declared hunk of
+      step EP1a-1.  Of a struct the base already has (NetworkRunTiming,
+      NetworkSolveGlueResult) only the moved or new members are claimed, so any other edit
+      there (a member's default, a stray field) is unaccounted.
   V2  Signatures: each converted seam has one epoch-form declaration and one definition,
       (NetworkRun&, const NetworkEpoch&, kept..., outs...) as its row says (the card's
       NetworkEpoch& under --presolve-writer epoch, for a writer before the solve); kept
@@ -77,19 +91,36 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
       prepared solution are outputs.
   V3  Bindings.  (a) At every frozen call site of a converted seam paired with its new site
       (callee and occurrence), and at the solve's two replay calls, every frozen parameter's
-      binding agrees; the binding line keeps the frozen declarator and carries `// written`
-      exactly when it writes the epoch; a kept argument keeps its text; a removed
-      std::function parameter is a declared CALLABLE or CALLBACK_DIRECT; adapters' other
-      callers keep their text.  (b) Every read of a captured driver name in the epoch body
-      resolves to the frozen object; each preamble line declares a captured name, a copy
-      only where the frozen name was one.  (c) Each epoch member is realized at its local's
-      frozen position, with the local's type and initializer (NetworkEpoch.hpp), and bound
-      nowhere before it; EpochClock's members are the clock store's order.  (d) The
-      NetworkRun construction passes, for each reference member, a name of runNetwork's
-      outermost scope that is the frozen object.  (e) No body reads a free run, ep, nrun or
-      nep (the solve's replay calls excepted).  (f) Folded arguments are member reads with
-      an optional & or *, a final .get(), ep.x_emit(), literals, conditionals over those,
-      or TimeUtils::continuousGpsSeconds of a member read.
+      binding agrees; the binding line is copy-initialized (`<declarator> = <expression>;`,
+      one name), keeps the frozen declarator and carries `// written` exactly when it
+      writes the epoch; a kept argument keeps its text; a removed std::function parameter
+      is a declared CALLBACK_DIRECT, or the CALLABLE predicate's one declared forwarder
+      (below); adapters' other callers keep their text.  (b) Every read of a captured driver
+      name in the epoch body resolves to the frozen object, over every token V1a paired;
+      each preamble line declares a captured name with the frozen declarator (a run
+      reference member under its spec type, an owned engine or a moved timer vector as a
+      reference of the frozen type, anything else with the frozen type text and operators,
+      `const` alone addable on a reference) and binds the frozen object.  The third-band
+      forwarder, in the epoch preamble and in the DD build's bindings, is exactly
+      `[&X](<the closure's parameters>) -> <its return> { return
+      networkIsUncarriedThirdBand(X.<path>, <the parameters>); }` with X.<path> the knobs.
+      The COPY_SOURCE proof runs here (below).  (c) Each epoch member is realized at its
+      local's frozen position, with the local's type and initializer (NetworkEpoch.hpp), and
+      bound nowhere before it; EpochClock's members are the clock store's order, with the
+      frozen locals' types; NetworkEpoch holds `se`, `clock`, the declared groups and
+      `emitted{false}` and nothing else, each group exactly its declared locals; its one
+      constructor binds `se` and has an empty body; x_emit() is const, returns the frozen
+      local's declarator, and its one return resolves, members read as ep.<member>, to the
+      frozen x_emit initializer (ACCESSOR).  (d) The NetworkRun construction passes, for
+      each reference member, a name of runNetwork's outermost scope that is the frozen
+      object; each reference member is declared with its spec type and initialized from a
+      constructor parameter of that same type; the owned members have the frozen locals'
+      types and no default member initializer; the constructor builds `engines(<spec>)` and
+      only the owned members the frozen code constructed with arguments, and its body is
+      empty.  (e) No body reads a free run, ep, nrun or nep (the solve's replay calls
+      excepted).  (f) Folded arguments are member reads with an optional & or *, a final
+      .get(), ep.x_emit(), literals, conditionals over those, or
+      TimeUtils::continuousGpsSeconds of a member read.
   V4  Driver writes into the epoch after the solve (scripts/nom_epoch_lint.py).
   V5  Deep const: no member of NetworkEpoch, or of a project type held by value inside it,
       is a non-const reference, a pointer to non-const, a smart pointer, a std::function or
@@ -108,30 +139,51 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
   V9  No new overload: no translation unit that newly reaches app/NetworkRun.hpp or
       app/NetworkEpoch.hpp calls, in its frozen code, a function name that only the new
       headers it reaches declare; the two headers declare only their types,
-      networkEngineSpec and the two brackets.
+      networkEngineSpec and the two brackets, and their structs define no member function
+      but the run's and the epoch's constructors and x_emit() (the rest are deleted).
   V10, V11  Stage order and writer banners (scripts/nom_epoch_lint.py; banner writers not
-      yet converted are skipped while the conversion is partial).
+      yet converted are skipped while the conversion is partial).  V10 includes the
+      converted seams a seam calls with its own run and epoch (the solve's replay builders),
+      which may read only groups written before the caller's spine line.
   V12 Spec cut: the setup statements that built the engines' constructor arguments are the
       frozen ones, character-exact and in order (in runNetwork for an empty conversion, in
       networkEngineSpec after it, a built local's declaration becoming a reference to its
       spec field or a field initializer); they read only config_, nc, the knobs and their
       own locals, call only the allowlist, and no other statement entered their range; each
       engine constructor argument of NetworkRunEngines and NetworkRun is the frozen
-      argument or the spec field that holds it.
+      argument or the spec field that holds it; each NetworkEngineSpec field has the type of
+      what it holds (the replaced local's type without const, or the argument expression's:
+      a static_cast's target, a frozen local's or a knob's declared type), so no argument
+      is narrowed on its way to its engine.
   V13 Names: a converted seam whose frozen body declares or reads run, ep or an output's
       name takes that parameter's fallback name (nrun, nep, <output>_out); a seam that
       needs none takes run and ep; no other definition of a row takes those names.
 
---controls builds each pre-registered negative control of spec 5.7 as a mutation of the
-candidate (an overlay: one or two of its files replaced in memory, no disk copy) and runs
-every check on it; a control fires when its named check fails (N8 V1a or V3c, N10 V1a or
-V3e, N16 V4 or V6, N4 V3a or V10, N13 V2 or V8).  On an empty conversion N5, N6, N7, N8,
-N10, N11 and N12 run in their frozen-tree form (spec 7: "N5-N12 fire on synthetic mutations
-of <B>"); a control whose target does not exist in the candidate yet (an unconverted seam,
-no epoch function) is reported as pending, never as passed.  On an epoch tree the standalone
-lint (scripts/nom_epoch_lint.py, with --partial while rows remain unconverted and with this
-run's --presolve-writer) runs on the unmutated candidate, where it must pass, and on N7 and
-N16, which fire only when it also fails there.  --rows takes row names space- or
+The proofs of spec 5.6 (declared.Writers), on the frozen base and on the candidate:
+COPY_SOURCE, no write to n_threads / seam_threads / carry_par / brdc_rts of the setup result
+outside networkSetup_; VALUE_EQUAL, no writer of ctx.counters.n_emitted that the per-epoch
+body reaches (directly or through other functions) but networkEmitStore, which the body uses
+once.  Each write's object is resolved by a scope walk of its function (an alias is followed
+to its initializer), so `snap.n_emitted` is another object.  A failed proof fails V3b
+(COPY_SOURCE) or V1a (VALUE_EQUAL) and withdraws the substitution.
+
+--controls builds each pre-registered negative control as a mutation of the candidate (an
+overlay: one or two of its files replaced in memory, no disk copy) and runs every check on
+it: the sixteen of spec 5.7 (N1 to N16) and seventeen added at the review round (R1 to R17,
+each a mutation an earlier version of this verifier accepted).  A control fires when its
+named check fails (N8 V1a or V3c, N10 V1a or V3e, N16 V4 or V6, N13 V2 or V8; N4 only when
+V3a and V10 both fail).  N4's mutation keeps the trip's adapter and gives the solve's
+internal call the epoch form, which binds ep.solve.plan at that call exactly as the spec's
+direct conversion would (a declared deviation from the spec's wording, not from its
+target).  N11 cuts the debug_r_scale warning where the base still has it, else a synthetic
+warning, so it does not depend on the lane layer.  On an empty conversion the controls run in
+their frozen-tree form (spec 7: "N5-N12 fire on synthetic mutations of <B>").  A control
+whose target the stage cannot have yet (an unconverted seam, no epoch function) is pending;
+one whose target the stage must have (its `due` rule) but the tree lacks is MISSING, which
+fails the run, so a control never falls silent at a later base.  On an epoch tree the
+standalone lint (scripts/nom_epoch_lint.py, with --partial while rows remain unconverted and
+with this run's --presolve-writer) runs on the unmutated candidate, where it must pass, and on
+N7 and N16, which fire only when it also fails there.  --rows takes row names space- or
 comma-separated, or `all`.
 
 Not covered here (spec 5.8): run-time behaviour (default construction then assignment,
@@ -152,7 +204,8 @@ import traceback
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from nom_cpp import (APPLICATION_HPP, DRIVER_PATH, KEYWORDS, LAMBDA_NAME, SEAM_CALL,  # noqa: E402
                      CallNode, Cond, Copy, Driver, Expr, GitTree, Lit, Opaque, Ref, Resolver,
-                     Scopes, Tokens, calls_in, parse_declaration, statements)
+                     Scopes, Tokens, _lambda_at, calls_in, match_angle, parse_declaration,
+                     parse_params, statements)
 from nom_ep1 import DEFAULT_BASE, ROW_MODULES, load_rows, declared  # noqa: E402
 from nom_ep1.model import ADAPTER, MEMBER, RUN, Explicit  # noqa: E402  (the row type only)
 import nom_epoch_lint as lint  # noqa: E402
@@ -175,6 +228,12 @@ GROUPS_HPP = "include/filter/NetworkRunGroups.hpp"
 RUN_REFS = collections.OrderedDict([("ctx", "D:ctx"), ("config", "A:config_"), ("nc", "D:nc"),
                                     ("log", "D:log"), ("traces", "D:traces"), ("setup", "D:setup"),
                                     ("log_dir", "A:log_dir_")])
+# Their declared types (spec 2.1): each a reference, so the run holds the frozen object itself.
+RUN_REF_TYPES = {"ctx": "NetworkRunContext&", "config": "const GnssConfig&", "nc": "const NetworkConfig&",
+                 "log": "const std::shared_ptr<spdlog::logger>&", "traces": "NetworkRunTraces&",
+                 "setup": "NetworkSetupResult&", "log_dir": "const std::filesystem::path&"}
+# The third-band forwarder's one form (CALLABLE): the predicate it calls.
+PREDICATE = "networkIsUncarriedThirdBand"
 # Group outputs and their parameter types (spec 3.1); single-member outputs keep the frozen
 # declarator.
 GROUP_TYPES = {"pass_a": "EpochPassA", "funnel": "NetworkSlipFunnel", "columns": "EpochColumns",
@@ -283,6 +342,37 @@ SUBST = Substitutions()
 # ---------------------------------------------------------------------------------------------
 # Small helpers over tokens
 # ---------------------------------------------------------------------------------------------
+class EpSub(Sub):
+    """A rendering substitution of a candidate statement that stands for frozen text (V1a):
+    kind `epath` (an `ep.<path>` run rendered as the local it realizes, @p local), `value`
+    (ep.emitted rendered as the VALUE_EQUAL expression), `handoff` (a result alias's
+    `.handoff.` path rendered as the frozen field), `bracket` (networkSubBegin(run, ...)
+    rendered as subBegin(...)).  The frozen token paired with each is checked to denote what
+    the substitution claims (check_alignment)."""
+    __slots__ = ("kind", "local")
+
+    def __init__(self, a, b, text, kind, local=None, eat_before=False, eat_after=False):
+        super().__init__(a, b, text, eat_before, eat_after)
+        self.kind, self.local = kind, local
+
+
+def _units(T, s, e, subs):
+    """The tokens of [s, e) with each substitution's range replaced by the tokens of its text:
+    [(text, token index or None, the substitution or None, position inside its text)]."""
+    by = {x.a: x for x in subs}
+    out, i = [], s
+    while i < e:
+        x = by.get(i)
+        if x is not None:
+            for k, t in enumerate(Tokens(x.text).toks):
+                out.append((t.text, None, x, k))
+            i = x.b
+            continue
+        out.append((T.t(i), i, None, 0))
+        i += 1
+    return out
+
+
 def join_text(text):
     T = Tokens(text)
     return T.join(0, len(T))
@@ -472,11 +562,13 @@ class Canon:
     (ep.se is the epoch function's se); E:<name> (the epoch function's top level) to L:<name>
     for a name the frozen lambda declares at its top level; B:<line>.x to B:x."""
 
-    def __init__(self, run_refs, lam_names, resolve_key, ep_keys=("E:ep",), run_keys=("E:run",)):
+    def __init__(self, run_refs, lam_names, resolve_key, ep_keys=("E:ep",), run_keys=("E:run",),
+                 value_equal=None):
         self.run_refs = dict(run_refs)      # reference member -> its frozen object (a node)
         self.lam_names = set(lam_names)
         self.resolve_key = resolve_key      # a frozen key ('D:est') -> its storage node
         self.ep_keys, self.run_keys = set(ep_keys), set(run_keys)
+        self.value_equal = value_equal      # the VALUE_EQUAL expression, None when its proof failed
 
     def run_path(self, chain):
         """run.<path> as its frozen object: a reference member through the NetworkRun
@@ -506,7 +598,7 @@ class Canon:
         for local, p in SUBST.accessor.items():
             if p and path == p:
                 return Ref("L:" + local)
-        if path == "ep.emitted" and SUBST.value_equal:
+        if path == "ep.emitted" and self.value_equal:
             return Ref("L:emitted")          # VALUE_EQUAL: the frozen comparison, stored once
         if path == "ep.se" or path.startswith("ep.se."):
             return Ref("L:se", tuple(_segs(path[len("ep.se"):])))
@@ -628,9 +720,15 @@ class Verifier:
         self.fdecls = {}          # row name -> (decl Func, defn Func) at the base
         self.run_refs = {}
         lam_names = {d.name for d in fz.rn.lam_scope.decls}
-        self.canon = Canon({}, lam_names, self.frozen_root)
+        # The two substitutions whose proofs read the whole tree (spec 5.6) hold until proofs()
+        # finds otherwise: then ep.emitted no longer stands for the frozen comparison and a copy
+        # of the setup field no longer equals the driver's copy of it.
+        self.value_equal = SUBST.value_equal
+        self.copy_ok = set(SUBST.copy_sources)
+        self.canon = Canon({}, lam_names, self.frozen_root, value_equal=self.value_equal)
         self.lam_names = lam_names
         self.const_roots = self._const_roots()
+        self.aligned = []         # (frozen [a, b), new [c, d), unit pairs) compared by V3b
 
     # -- shared facts --------------------------------------------------------------------
     def frozen_root(self, key):
@@ -653,7 +751,8 @@ class Verifier:
             if d.is_const and not d.is_ptr and not d.is_ref:
                 out.add("D:" + d.name)
         for n in SUBST.copy_sources:
-            out.add("D:setup." + n)
+            if n in self.copy_ok:
+                out.add("D:setup." + n)
         return out
 
     def frozen_rows(self):
@@ -677,7 +776,8 @@ class Verifier:
     # -- run ---------------------------------------------------------------------------------
     def run(self, only=None):
         self.frozen_rows()
-        steps = [("V8", self.v8), ("V3d", self.v3d), ("V1a", self.v1a), ("V3b", self.v3b),
+        steps = [("V1a", self.proofs), ("V8", self.v8), ("V3d", self.v3d), ("V1a", self.v1a),
+                 ("V3b", self.v3b),
                  ("V3e", self.v3e), ("V4", self.v4), ("V6", self.v6), ("V1c", self.v1c),
                  ("V1d", self.v1d), ("V12", self.v12), ("V13", self.v13), ("V2", self.v2),
                  ("V1b", self.v1b), ("V3a", self.v3a), ("V3f", self.v3f), ("V3c", self.v3c),
@@ -701,6 +801,50 @@ class Verifier:
     @property
     def epoch(self):
         return self.cand.mode == "epoch"
+
+    def cand_loop(self):
+        """The candidate's per-epoch body for the write proofs: networkProcessEpoch_, or the
+        lambda (and the runNetwork closures it calls) of an empty conversion."""
+        c = self.cand
+        if self.epoch:
+            return declared.LoopBody(c.fn.path, c.fn.open, c.fn.close)
+        T = c.rn.T
+        called = {x.name for x in calls_in(T, c.rn.lam_open + 1, c.rn.lam_close)}
+        spans = tuple((T.match[d.lambda_scope.end], d.lambda_scope.end) for d in c.rn.scopes.root.decls
+                      if d.kind == "closure" and d.lambda_scope is not None and d.name in called)
+        return declared.LoopBody(DRIVER_PATH, c.rn.lam_open, c.rn.lam_close, spans)
+
+    def proofs(self):
+        """The proof obligations of COPY_SOURCE and VALUE_EQUAL (spec 5.6; declared.Writers),
+        on the frozen base and on the candidate: no write to a COPY_SOURCE setup field outside
+        networkSetup_, and no writer of ctx.counters.n_emitted the per-epoch body reaches but
+        the emitter, used once.  A failed proof is reported (VALUE_EQUAL under V1a, whose
+        ep.emitted it licenses; COPY_SOURCE under V3b, whose preamble copies it licenses) and
+        withdraws the substitution, so every binding that relied on it fails too."""
+        R = self.R
+        floop = declared.driver_loop(self.fz.drv)
+        nloop = self.cand_loop()
+        cache = self.fz.__dict__.setdefault("_proofs", {})
+        for d in declared.declared("COPY_SOURCE") + declared.declared("VALUE_EQUAL"):
+            chk = "V1a" if d.cls == "VALUE_EQUAL" else "V3b"
+            bad = False
+            for w in d.where:
+                if not isinstance(w, declared.Writers):
+                    continue
+                if w not in cache:
+                    cache[w] = w.prove(self.fz.tree, floop)
+                for label, (probs, notes) in (("the base", cache[w]),
+                                              ("the candidate", w.prove(self.tree, nloop))):
+                    for x in probs:
+                        R.fail(chk, f"{d.cls} {d.name} ({label}): {x}")
+                        bad = True
+            if bad and d.cls == "COPY_SOURCE":
+                self.copy_ok.discard(d.name)
+            if bad and d.cls == "VALUE_EQUAL":
+                self.value_equal = None
+        self.const_roots = self._const_roots()
+        R.note("V1a", "the VALUE_EQUAL proof " + ("holds" if self.value_equal else "FAILS")
+               + f" on the base and the candidate; COPY_SOURCE holds for {sorted(self.copy_ok)}")
 
     def claim(self, path, a, b):
         self.claims[path].append((a, b))
@@ -760,14 +904,15 @@ class Verifier:
         R = self.R
         if not self.epoch:
             R.na("V3d", "empty conversion: no NetworkRun")
-            self.canon = Canon({}, self.lam_names, self.frozen_root, ep_keys=(), run_keys=())
+            self.canon = Canon({}, self.lam_names, self.frozen_root, ep_keys=(), run_keys=(),
+                               value_equal=self.value_equal)
             return
         rn, T = self.cand.rn, self.cand.rn.T
         run_decl = next((d for d in rn.scopes.root.decls if d.name == "run" and d.type_span
                          and T.join(*d.type_span) == "NetworkRun"), None)
         if run_decl is None or run_decl.init_kind != "(":
             R.fail("V3d", f"{DRIVER_PATH}: no `NetworkRun run(...)` in runNetwork's outermost scope")
-            self.canon = Canon({}, self.lam_names, self.frozen_root)
+            self.canon = Canon({}, self.lam_names, self.frozen_root, value_equal=self.value_equal)
             return
         args = list(_split_top(T, *run_decl.init))
         hdr = self.tree.index(RUN_HPP)
@@ -777,7 +922,7 @@ class Verifier:
                          and f.params and len(f.params) == len(args)), None)
         if ctor is None:
             R.fail("V3d", f"{RUN_HPP}: no NetworkRun constructor with {len(args)} parameters")
-            self.canon = Canon({}, self.lam_names, self.frozen_root)
+            self.canon = Canon({}, self.lam_names, self.frozen_root, value_equal=self.value_equal)
             return
         HT = self.tree.tokens(RUN_HPP)
         inits = _mem_initializers(HT, ctor)
@@ -808,7 +953,82 @@ class Verifier:
         R.note("V3d", f"NetworkRun run(...) at {DRIVER_PATH}:{T.line(run_decl.tok)}: "
                       f"{len(self.run_refs)} reference members bound")
         self.claim(DRIVER_PATH, T.line(run_decl.stmt[0]), T.line(run_decl.stmt[1] - 1))
-        self.canon = Canon(self.run_refs, self.lam_names, self.frozen_root)
+        self.canon = Canon(self.run_refs, self.lam_names, self.frozen_root, value_equal=self.value_equal)
+        self.run_struct()
+
+    def run_struct(self):
+        """NetworkRun (V3d): each reference member is declared with its spec type (a
+        reference: the run holds the frozen object itself) and initialized from a constructor
+        parameter of that same type; the owned members are the engines' owner, the emit
+        engines, the lanes, the timing and the closed-loop tally, each of the frozen driver
+        local's type with no default member initializer; the one constructor initializes the
+        references, `engines(<spec>)` and the owned members the frozen driver constructed with
+        arguments (emit, lanes: V12 checks their arguments), has an empty body, and every other
+        member function is deleted."""
+        R, fz = self.R, self.fz
+        fT = fz.rn.T
+        cp = class_parts(self.tree, RUN_HPP, "NetworkRun")
+        if cp is None:
+            R.fail("V3d", f"{RUN_HPP}: struct NetworkRun is missing")
+            return
+        froot = {d.name: d for d in fz.rn.scopes.root.decls}
+        # The owned members: the engines' owner, and each group an OWNER_MOVE entry places
+        # directly under the run whose frozen local the base has (the lanes go with the lane
+        # layer at a REMOVE-key base).
+        owned = collections.OrderedDict()
+        for n, path in SUBST.owner.items():
+            m = path.split(".")[1]
+            if m != "engines" and n in froot:
+                owned[m] = froot[n]
+        want = list(RUN_REFS) + ["engines"] + list(owned)
+        if set(cp["members"]) != set(want) or cp["others"]:
+            R.fail("V3d", f"NetworkRun members {list(cp['members'])}"
+                          + (f" and {[o[2][:40] for o in cp['others']]}" if cp["others"] else "")
+                          + f"; the spec declares {want}")
+        for m, t in RUN_REF_TYPES.items():
+            x = cp["members"].get(m)
+            if x is None:
+                continue
+            if (x["type"] + x["ops"]).replace(" ", "") != t.replace(" ", "") or x["init"]:
+                R.fail("V3d", f"NetworkRun::{m} is `{x['type']}{x['ops']}`, not the reference `{t}`")
+        for m in ["engines"] + list(owned):
+            x = cp["members"].get(m)
+            if x is None:
+                continue
+            t = "NetworkRunEngines" if m == "engines" else (fT.join(*owned[m].type_span) if m in owned else None)
+            if t is None or x["type"] != t or x["ops"] or x["init"]:
+                R.fail("V3d", f"NetworkRun::{m} is `{x['type']}{x['ops']} {x['init']}`, not a `{t}` with no "
+                              "default member initializer")
+        ctors = [f for f in cp["funcs"] if not f["deleted"]]
+        if len(ctors) != 1 or ctors[0]["name"] != "NetworkRun":
+            R.fail("V3d", f"NetworkRun: member functions {[f['name'] for f in ctors]} besides the deleted "
+                          "ones; one constructor expected")
+            return
+        c = ctors[0]
+        params = {q.name: lint.ptype(q) for q in c["params"]}
+        spec = [q.name for q in c["params"] if lint.ptype(q) == "const NetworkEngineSpec&"]
+        inits = {i[0]: i for i in c["inits"]}
+        if len(inits) != len(c["inits"]):
+            R.fail("V3d", "NetworkRun's constructor initializes a member twice")
+        for m, t in RUN_REF_TYPES.items():
+            i = inits.get(m)
+            if i is None or len(i[2]) != 1:
+                R.fail("V3d", f"NetworkRun's constructor does not initialize {m} from one parameter")
+                continue
+            arg = cp["T"].join(*i[2][0])
+            if params.get(arg, "").replace(" ", "") != t.replace(" ", ""):
+                R.fail("V3d", f"NetworkRun::{m} is initialized from `{arg}` of type `{params.get(arg)}`, not a "
+                              f"`{t}` parameter (a reference member bound to anything else dangles or rebinds)")
+        allowed = set(RUN_REF_TYPES) | {"engines"} | {m for m, d in owned.items() if d.init_kind in ("(", "{")}
+        extra = sorted(set(inits) - allowed)
+        if extra:
+            R.fail("V3d", f"NetworkRun's constructor initializes {extra}, which the frozen driver "
+                          "default-constructed or the spec does not declare")
+        e = inits.get("engines")
+        if e is None or len(spec) != 1 or [cp["T"].join(*x) for x in e[2]] != spec:
+            R.fail("V3d", f"NetworkRun's constructor does not build `engines({spec[0] if spec else 'spec'})`")
+        if c["body"] is None or c["body"][1] != c["body"][0] + 1:
+            R.fail("V3d", "NetworkRun's constructor body is not empty")
 
     # ==== V1a: the lambda's lines =========================================================
     def frozen_subs(self, s, e, tf):
@@ -829,7 +1049,9 @@ class Verifier:
     def new_subs(self, s, e, stores=False):
         """Rendering substitutions of a candidate statement: converted calls' arguments, the
         bracket rewrite, ep.emitted, and the epoch paths of dropped locals back to the
-        local's name (spec 5.3 T-B7, T-B9, T-E)."""
+        local's name (spec 5.3 T-B7, T-B9, T-E).  Every substitution but a converted call's
+        arguments is an EpSub, so check_alignment can prove that the frozen token it pairs
+        with denotes what it stands for."""
         T = self.cand.T
         subs = []
         for c in calls_in(T, s, e):
@@ -844,24 +1066,24 @@ class Verifier:
                     if got != want:
                         self.R.fail("V1a", f"{T.path}:{c.line}: bracket call `{got}...` is not `{want}...`")
                     old = "subBegin(" if c.name == "networkSubBegin" else "subEnd("
-                    subs.append(Sub(c.tok, a0, old, False, True))
+                    subs.append(EpSub(c.tok, a0, old, "bracket", old[:-1], False, True))
             j = s
             while j < e:
                 if T.t(j) == "ep" and T.k(j) == "id" and T.t(j - 1) not in (".", "->", "::"):
                     k = ep_path_tokens(T, j, e)
                     path = norm_subs(T, j, k, ())
-                    if path == "ep.emitted" and T.t(k) != "=" and SUBST.value_equal:
-                        subs.append(Sub(j, k, SUBST.value_equal))
+                    if path == "ep.emitted" and T.t(k) != "=" and self.value_equal:
+                        subs.append(EpSub(j, k, self.value_equal, "value"))
                     else:
-                        txt = self.inverse_path(path)
-                        if txt is not None:
-                            subs.append(Sub(j, k, txt))
+                        inv = self.inverse_path(path)
+                        if inv is not None:
+                            subs.append(EpSub(j, k, inv[0], "epath", inv[1]))
                     j = k
                     continue
                 if T.t(j) in self.result_aliases() and T.t(j + 1) == "." and T.t(j + 2) == "handoff":
                     f = T.t(j + 4) if T.t(j + 3) == "." else ""
                     if f in SUBST.field_solve:
-                        subs.append(Sub(j, j + 5, f"{T.t(j)}.{f}"))
+                        subs.append(EpSub(j, j + 5, f"{T.t(j)}.{f}", "handoff", T.t(j)))
                         j += 5
                         continue
                 j += 1
@@ -871,20 +1093,74 @@ class Verifier:
         return {loc for loc, (p, t) in SUBST.epoch.items() if t == "RESULT"}
 
     def inverse_path(self, path):
-        """The frozen text a candidate epoch path stands for (`ep.solve.action` -> `sg_.action`,
-        `ep.solve.handoff.retro_flag_sats` -> `sg_.retro_flag_sats`), or None."""
+        """(the frozen text a candidate epoch path stands for, the lambda local it names), or
+        None: `ep.solve.action` -> (`sg_.action`, sg_), `ep.solve.handoff.retro_flag_sats` ->
+        (`sg_.retro_flag_sats`, sg_), `ep.x_emit()` -> (`x_emit`, x_emit)."""
         for name, (struct, new) in SUBST.field_solve.items():
             p = "ep.solve." + new
             if path == p or path.startswith(p + "."):
                 local = SUBST.paths.get("ep.solve", "sg_")
-                return local + "." + name + path[len(p):]
+                return local + "." + name + path[len(p):], local
         for local, p in SUBST.accessor.items():
             if path == p:
-                return local
+                return local, local
         local, rest = SUBST.epoch_local_of(path)
         if local is None:
             return None
-        return local + rest
+        return local + rest, local
+
+    def check_alignment(self, fs, fe, ns, ne, where, record=True):
+        """The frozen tokens [fs, fe) and the candidate's [ns, ne), each with its rendering
+        substitutions, paired token by token (V1a): the candidate's substitutions must stand
+        for frozen tokens that denote what they claim.  An `ep.<path>` rendered as a local's
+        name must pair with a frozen token that is that very local (the lambda's top-level
+        declaration, found by the frozen scope walk, not a nested declaration of the same
+        name: the DD-carry predict's own `dt` is not ep.clock.dt); ep.emitted must pair with
+        the frozen comparison over the driver's and the lambda's own names; a bracket with the
+        driver's closure; a result alias with that alias.  Records the pairs for V3b."""
+        R, fz = self.R, self.fz
+        fT, nT = fz.drv.T, self.cand.T
+        tf = "networkSolveGlue" in self.converted
+        fu = _units(fT, fs, fe, self.frozen_subs(fs, fe, tf))
+        nu = _units(nT, ns, ne, self.new_subs(ns, ne))
+        if [u[0] for u in fu] != [u[0] for u in nu]:
+            R.fail("V1a", f"{where}: the statement's tokens do not pair with frozen "
+                          f"{DRIVER_PATH}:{fT.line(fs)} one to one")
+            return False
+        ok = True
+        lam = fz.rn.lam_scope
+        root = fz.rn.scopes.root
+        for (ft, fi, fsub, _), (nt, ni, nsub, k) in zip(fu, nu):
+            if not isinstance(nsub, EpSub):
+                continue
+            if fi is None:
+                R.fail("V1a", f"{where}: `{nsub.text}` pairs with frozen substituted text")
+                ok = False
+                continue
+            name_head = (fT.k(fi) == "id" and fT.t(fi - 1) not in (".", "->", "::")
+                         and fT.t(fi) not in KEYWORDS)
+            if not name_head:
+                continue
+            d = fz.rn.scopes.lookup(fT.t(fi), fi)
+            if nsub.kind in ("epath", "handoff"):
+                good = k > 0 or (d is not None and d.scope is lam and d.name == nsub.local)
+                why = "the lambda's top-level local " + str(nsub.local)
+            elif nsub.kind == "value":
+                good = d is not None and d.scope in (lam, root)
+                why = "a name of the lambda's or the driver's top level"
+            else:                           # bracket
+                good = d is not None and d.scope is root and d.name == nsub.local
+                why = "the driver's closure " + str(nsub.local)
+            if not good:
+                got = ("nothing" if d is None else
+                       f"a declaration at {DRIVER_PATH}:{d.line}" + ("" if d.scope in (lam, root)
+                                                                    else " in a nested scope"))
+                R.fail("V1a", f"{where}: `{nsub.text}` stands for frozen `{fT.t(fi)}` at "
+                              f"{DRIVER_PATH}:{fT.line(fi)}, which denotes {got}, not {why}")
+                ok = False
+        if record:
+            self.aligned.append((where, fu, nu))
+        return ok
 
     def classify(self, s, e):
         """(kind, declarations) of a frozen lambda statement for the pairing of V1a."""
@@ -970,6 +1246,7 @@ class Verifier:
             elif kind == "MEMBER_ALIAS":
                 if j < len(N) and self.same_stmt(s, e, *N[j], quiet=True):
                     self.pairs.append((i, j))
+                    self.check_alignment(s, e, *N[j], f"{nT.path}:{nT.line(N[j][0])}")
                     j += 1
                     carried += 1
                 else:
@@ -985,6 +1262,7 @@ class Verifier:
                         R.fail("V1a", f"{nT.path}:{nT.line(N[x][0])}: a statement the lambda does not "
                                       f"have: `{nT.join(N[x][0], min(N[x][1], N[x][0] + 12))}...`")
                     self.pairs.append((i, k))
+                    self.check_alignment(s, e, *N[k], f"{nT.path}:{nT.line(N[k][0])}")
                     j = k + 1
                     carried += 1
             for tag, text in inserts.get(i, ()):
@@ -1004,7 +1282,8 @@ class Verifier:
                     if tr != "WS" or j >= len(N):
                         continue
                     nd = parse_declaration(nT, *N[j]) or []
-                    if len(nd) == 1 and nd[0].name == local and nd[0].is_ref and nd[0].init                             and nT.join(*nd[0].init) == path and not nd[0].is_const:
+                    if (len(nd) == 1 and nd[0].name == local and nd[0].is_ref and nd[0].init
+                            and nT.join(*nd[0].init) == path and not nd[0].is_const):
                         ntype = nT.join(*nd[0].type_span)
                         ftype = self.realized.get(local, {}).get("type") or ntype
                         if ntype not in ("auto", ftype):
@@ -1097,6 +1376,11 @@ class Verifier:
                 if rhs != want:
                     R.fail("V1a", f"{nT.path}:{nT.line(ns)}: {d.name} ({tr}) stores `{rhs}`, the frozen "
                                   f"initializer is `{want}`")
+                elif tr == "RESULT":
+                    self.check_alignment(d.init[0], d.init[1], q, ne - 1, f"{nT.path}:{nT.line(ns)}")
+                elif nT.t(ne - 2) == ")" and nT.match[ne - 2] > q:
+                    self.check_alignment(d.init[0], d.init[1], nT.match[ne - 2] + 1, ne - 2,
+                                         f"{nT.path}:{nT.line(ns)}")
                 rec["stmt"] = j
                 self.claim(nT.path, nT.line(ns), nT.line(ne - 1))
                 j += 1
@@ -1123,24 +1407,21 @@ class Verifier:
 
     # ==== V3b: captured names =============================================================
     def v3b(self):
+        """Every read of a captured driver name in the epoch body against its frozen root, over
+        the token pairs check_alignment recorded for each carried statement and each epoch
+        store's initializer (a substituted token is proved there, so no statement is skipped),
+        then the epoch function's preamble (check_preamble)."""
         R, fz, cand = self.R, self.fz, self.cand
         fT, nT = fz.drv.T, cand.T
         fres = fz.res
         nres = cand.resolver()
-        tf = "networkSolveGlue" in self.converted
         n = bad = 0
-        for i, j in self.pairs:
-            fs, fe = fz.lam_stmts[i]
-            ns, ne = cand.stmts[j]
-            fsubs = self.frozen_subs(fs, fe, tf)
-            nsubs = self.new_subs(ns, ne)
-            ftoks = [t for t in range(fs, fe) if not any(x.a <= t < x.b for x in fsubs)]
-            ntoks = [t for t in range(ns, ne) if not any(x.a <= t < x.b for x in nsubs)]
-            if len(ftoks) != len(ntoks):
-                continue
-            for a, b in zip(ftoks, ntoks):
-                if fT.k(a) != "id" or fT.t(a) in KEYWORDS or fT.t(a - 1) in (".", "->", "::") \
-                        or fT.t(a + 1) == "::" or fT.t(a) != nT.t(b):
+        for where, fu, nu in self.aligned:
+            for (ft, a, fsub, _), (nt, b, nsub, _) in zip(fu, nu):
+                if a is None or b is None:
+                    continue                # substituted text: proved by check_alignment (V1a)
+                if (fT.k(a) != "id" or fT.t(a) in KEYWORDS or fT.t(a - 1) in (".", "->", "::")
+                        or fT.t(a + 1) == "::" or fT.t(a) != nT.t(b)):
                     continue
                 d = fz.rn.scopes.lookup(fT.t(a), a)
                 if d is None or d.kind == "type" or d.scope is not fz.rn.scopes.root:
@@ -1159,15 +1440,22 @@ class Verifier:
             R.fail("V3b", f"... {bad - 25} more")
         if self.epoch:
             self.check_preamble()
-        R.note("V3b", f"{n} reads of captured driver names compared with their frozen roots")
+        R.note("V3b", f"{n} reads of captured driver names in {len(self.aligned)} paired statements "
+                      "compared with their frozen roots")
 
     def check_preamble(self):
         """Each line of the epoch function's preamble declares a name the frozen lambda
-        captured (or the third-band predicate) and binds its frozen object (V3b)."""
+        captured and binds its frozen object (V3b), with the frozen declarator: a run
+        reference member (spec 2.1) under its member type, an owned engine or group
+        (OWNER_MOVE) and a moved timer vector (FIELD_MOVE) as a reference of the frozen type,
+        anything else with the frozen declaration's type text and operators (`const` may be
+        added on a reference, nothing else changes).  The third-band predicate's forwarder is
+        its one declared form (check_forwarder)."""
         R, cand = self.R, self.cand
         T = cand.T
         res = cand.resolver()
         fres = self.fz.res
+        fT = self.fz.rn.T
         caps = self.fz.drv.captures()
         froot = {d.name: d for d in self.fz.rn.scopes.root.decls}
         for s, e in cand.preamble:
@@ -1176,16 +1464,35 @@ class Verifier:
             if not ds:
                 R.fail("V3b", f"{T.path}:{T.line(s)}: the preamble holds a statement that declares "
                               f"nothing: `{T.join(s, min(e, s + 10))}...`")
+            if len(ds) > 1:
+                R.fail("V3b", f"{T.path}:{T.line(s)}: the preamble line declares {len(ds)} names")
             for d in ds:
+                fd = froot.get(d.name)
                 if d.name in SUBST.callable:
+                    want = fT.src(fd.stmt[0], fd.init[0] - 1) if fd and fd.init else None
+                    self.check_forwarder(T, s, e, d, res, "V3b", want)
                     continue
                 if d.name not in caps:
                     R.fail("V3b", f"{T.path}:{d.line}: the preamble declares `{d.name}`, which the frozen "
                                   "lambda did not capture")
                     continue
-                fd = froot.get(d.name)
                 if fd is None:
                     continue
+                if d.init_kind != "=":
+                    R.fail("V3b", f"{T.path}:{d.line}: `{d.name}` is not copy-initialized (`=`)")
+                ftype = fT.join(*fd.type_span)
+                got_t = T.join(*d.type_span) + d.ops
+                if RUN_REFS.get(d.name) == "D:" + d.name:
+                    allowed = {join_text(RUN_REF_TYPES[d.name])}
+                elif d.name in SUBST.owner or d.name in SUBST.field_timing:
+                    allowed = {ftype + "&"}
+                else:
+                    allowed = {ftype + fd.ops}
+                    if fd.ops.startswith("&") and not ftype.startswith("const"):
+                        allowed.add(join_text("const " + ftype) + fd.ops)
+                if got_t not in allowed:
+                    R.fail("V3b", f"{T.path}:{d.line}: `{d.name}` is declared `{got_t}`; the frozen "
+                                  f"declaration admits {' or '.join(sorted(allowed))}")
                 if fd.is_ref and not d.is_ref:
                     R.fail("V3b", f"{T.path}:{d.line}: `{d.name}` is a copy; the frozen name is a reference")
                 if not fd.is_ref and not d.is_ref and not d.is_const:
@@ -1198,6 +1505,80 @@ class Verifier:
                                      self.const_roots)
                     if show(got) != show(want) and not (isinstance(got, Ref) and show(got) == "D:" + d.name):
                         R.fail("V3b", f"{T.path}:{d.line}: `{d.name}` binds {show(got)}; frozen {show(want)}")
+
+    def callable_closure(self):
+        """(tokens, declaration, lambda parts) of the frozen third-band closure, or None."""
+        fT = self.fz.rn.T
+        fd = next((d for d in self.fz.rn.scopes.root.decls if d.name in SUBST.callable
+                   and d.kind == "closure"), None)
+        if fd is None:
+            return None
+        lam = _lambda_at(fT, fd.init[0], fd.init[1])
+        return (fT, fd, lam) if lam else None
+
+    def check_forwarder(self, T, s, e, d, res, chk, want_decl):
+        """CALLABLE (spec 5.6): the binding of the third-band closure in the epoch function's
+        preamble and in the DD build's bindings is its one declared form,
+            <frozen declarator> = [&X](<the frozen closure's parameters>) -> <its return> {
+                return networkIsUncarriedThirdBand(X.<path>, <the parameters, in order>);
+            };
+        where X is the one capture, by reference, and X.<path> resolves to the knobs
+        (D:ctx.knobs, through the run's construction where X is the run).  @p want_decl is the
+        frozen declarator text (the closure's `auto isUncarriedThirdBand`, or the DD build's
+        std::function parameter); @p res resolves names at the binding."""
+        R = self.R
+        where = f"{T.path}:{T.line(s)}"
+        fc = self.callable_closure()
+        if fc is None:
+            R.fail(chk, f"{where}: the frozen third-band closure was not found")
+            return
+        fT, fd, (fcc, fpo, fbo) = fc
+        if d.kind != "closure" or d.init_kind != "=":
+            R.fail(chk, f"{where}: {d.name} is not bound to a lambda")
+            return
+        if want_decl is None or join_text(T.src(s, d.init[0] - 1)) != join_text(want_decl):
+            R.fail(chk, f"{where}: {d.name} is declared `{T.src(s, d.init[0] - 1)}`, frozen `{want_decl}`")
+        a, b = d.init
+        lam = _lambda_at(T, a, b)
+        if not lam:
+            R.fail(chk, f"{where}: {d.name}'s initializer is not a lambda")
+            return
+        cc, po, bo = lam
+        bc = T.close(bo)
+        if bc + 1 != b:
+            R.fail(chk, f"{where}: {d.name}'s initializer continues after the lambda")
+        if not (cc == a + 3 and T.t(a + 1) == "&" and T.k(a + 2) == "id"):
+            R.fail(chk, f"{where}: {d.name}'s lambda captures `{T.join(a, cc + 1)}`, not one name by reference")
+            return
+        cap = T.t(a + 2)
+        fpc = fT.close(fpo)
+        if po is None or T.join(po, T.close(po) + 1) != fT.join(fpo, fpc + 1):
+            R.fail(chk, f"{where}: {d.name}'s parameters are not the frozen closure's "
+                        f"`{fT.join(fpo, fpc + 1)}`")
+            return
+        if T.join(T.close(po) + 1, bo) != fT.join(fpc + 1, fbo):
+            R.fail(chk, f"{where}: {d.name}'s return is not the frozen closure's `{fT.join(fpc + 1, fbo)}`")
+        names = [q.name for q in parse_params(fT, fpo)[0]]
+        st = statements(T, bo + 1, bc)
+        q = st[0][0] if len(st) == 1 else None
+        if (q is None or T.t(q) != "return" or T.t(q + 1) != PREDICATE or T.t(q + 2) != "("
+                or T.close(q + 2) + 2 != st[0][1] or T.t(st[0][1] - 1) != ";"):
+            R.fail(chk, f"{where}: {d.name}'s body is not the one statement `return {PREDICATE}(...);`")
+            return
+        args = _split_top(T, q + 3, T.close(q + 2))
+        if len(args) != 1 + len(names) or [T.join(*x) for x in args[1:]] != names:
+            R.fail(chk, f"{where}: {d.name} forwards `{T.join(q + 3, T.close(q + 2))}`, not the knobs and "
+                        f"{', '.join(names)} in order")
+            return
+        k0, k1 = args[0]
+        if T.t(k0) != cap:
+            R.fail(chk, f"{where}: {d.name} forwards `{T.join(k0, k1)}`, which is not read through its "
+                        f"capture `{cap}`")
+            return
+        got = normalize(self.canon(res.resolve(k0, k1)), self.const_roots)
+        if show(got) != "D:ctx.knobs":
+            R.fail(chk, f"{where}: {d.name} forwards `{T.join(k0, k1)}`, which binds {show(got)}, not the "
+                        "knobs (D:ctx.knobs)")
 
     # ==== V3e: fresh names ================================================================
     def v3e(self):
@@ -1538,8 +1919,17 @@ class Verifier:
                 self.fclaim(DRIVER_PATH, fT.line(s), fT.line(e - 1))
                 continue
             if fT.t(s) == "return" and any(c.name == "networkTeardown" for c in calls_in(fT, s, e)):
-                want = join_text("return networkTeardown(ctx, config_, log, traces, setup, NetworkRunEndInputs{ "
-                                 "run.engines, run.emit, run.lanes, run.timing, run.closed_loop });")
+                # The frozen run end with each group the run now owns read through the run
+                # (spec 2.2: NetworkRunEndInputs{ run.engines, run.emit, ... }), derived from the
+                # frozen statement so a base without the lane layer is read as it is.
+                parts = []
+                for q in range(s, e):
+                    t = fT.t(q)
+                    if fT.k(q) == "id" and fT.t(q - 1) not in (".", "->", "::") and (
+                            t == "engines" or t in SUBST.owner):
+                        t = "run.engines" if t == "engines" else SUBST.owner[t]
+                    parts.append(t)
+                want = join_text(" ".join(parts))
                 if j < len(N) and nT.join(*N[j]) == want:
                     self.claim(DRIVER_PATH, nT.line(N[j][0]), nT.line(N[j][1] - 1))
                     j += 1
@@ -1581,84 +1971,21 @@ class Verifier:
 
     def v1d_moved(self):
         """Where the spec 4.1 edits put what they took out of runNetwork, each against frozen,
-        each region claimed for V1e: the third-band predicate's body (CALLABLE), the two
-        bracket closures' bodies (BRACKET), the timer scratch in NetworkRunTiming and the
-        hand-off fields in NetworkPostFitHandoff (FIELD_MOVE), LoopSignal in Application
-        (TYPE_MOVE), and the declared header hunks of step EP1a-1 (the engines' owner and
-        spec, the run's and the epoch's declarations, the build list)."""
+        each region claimed for V1e: the third-band predicate and the two bracket closures as
+        functions (moved_closure), the timer scratch in NetworkRunTiming, the hand-off fields
+        in NetworkPostFitHandoff (FIELD_MOVE), the engines' owner NetworkRunEngines,
+        LoopSignal in Application (TYPE_MOVE), and the declared header hunks of step EP1a-1
+        (the run's and the epoch's declarations, the build list).  Only the lines a rule
+        checks are claimed: every other line of a struct that existed at the base is left to
+        V1e's line diff, so an edit there (a member's default, a stray field) fails."""
         R, fz = self.R, self.fz
         fT = fz.rn.T
         froot = {d.name: d for d in fz.rn.scopes.root.decls}
-        # CALLABLE and BRACKET: a function whose body is the closure's, under a binding preamble.
-        moved = [(n, "network" + n[0].upper() + n[1:]) for n in SUBST.callable + SUBST.bracket]
-        for closure, fname in moved:
-            fd = froot.get(closure)
-            if fd is None or fd.lambda_scope is None:
-                R.fail("V1d", f"the frozen closure {closure} was not found")
-                continue
-            ls = fd.lambda_scope
-            fbody = render(fT, fT.match[ls.end] + 1, ls.end)
-            defs = find_defs(self.tree, fname)
-            if len(defs) != 1:
-                R.fail("V1d", f"{fname}: {len(defs)} definitions (the {closure} closure's body moves into one)")
-                continue
-            f = defs[0]
-            T = self.tree.tokens(f.path)
-            st = statements(T, f.body[0] + 1, f.body[1])
-            own = {x.name for a2, b2 in statements(fT, fT.match[ls.end] + 1, ls.end)
-                   for x in (parse_declaration(fT, a2, b2) or [])}
-            k = 0
-            while k < len(st):
-                ds2 = parse_declaration(T, *st[k]) or []
-                if not ds2 or any(x.name in own for x in ds2):
-                    break
-                k += 1
-            lo = st[k][0] if k < len(st) else f.body[1]
-            nbody = render(T, lo, f.body[1])
-            shift = (fbody[0][0] - nbody[0][0]) if fbody and nbody else 0
-            d = same_lines(fbody, nbody, shift)
-            if d is not None:
-                R.fail("V1d", f"{f.path}:{f.line}: {fname}'s body differs from the frozen {closure} closure's at "
-                              f"code line {d[0]}: frozen `{d[1][1] if d[1] else '<end>'}`, here "
-                              f"`{d[2][1] if d[2] else '<end>'}`")
-            if closure in SUBST.callable:
-                caps = _init_captures(fT, fd)
-                mine = {x.name: x for q in range(k) for x in parse_declaration(T, *st[q]) or []}
-                p0 = f.params[0].name if f.params else ""
-                for cname, ctext in caps.items():
-                    x = mine.get(cname)
-                    want = ctext.replace("ctx.knobs", p0, 1) if ctext.startswith("ctx.knobs") else ctext
-                    if x is None or not x.is_const or T.join(*x.init) != want:
-                        R.fail("V1d", f"{fname}: the init-capture {cname} = {ctext} is not the const binding "
-                                      f"`{cname} = {want}`")
-            self.claim(f.path, T.line(decl_start(T, f)), T.line(f.body[1]))
-            for g in find_decls(self.tree, fname):
-                GT = self.tree.tokens(g.path)
-                self.claim(g.path, GT.line(decl_start(GT, g)), GT.line(decl_end(GT, g) - 1))
-        # FIELD_MOVE: the bracket scratch in NetworkRunTiming, with the frozen type and size.
-        timing = struct_members(self.tree, "NetworkRunTiming") or {}
-        for name, member in SUBST.field_timing.items():
-            fd = froot.get(name)
-            m = timing.get(member)
-            if fd is None or m is None:
-                R.fail("V1d", f"NetworkRunTiming::{member} (the frozen {name}) is missing")
-                continue
-            ft = fT.join(*fd.type_span)
-            init = fT.join(*fd.init) if fd.init else ""
-            if m["type"] != ft or m["init"].replace(" ", "") not in (f"{ft}({init})".replace(" ", ""),
-                                                                    "{" + init + "}", f"({init})"):
-                R.fail("V1d", f"NetworkRunTiming::{member} is `{m['type']} = {m['init']}`, frozen `{ft} {name}({init})`")
-        # FIELD_MOVE: the hand-off fields.
-        fres = struct_members(fz.tree, "NetworkSolveGlueResult") or {}
-        nres = struct_members(self.tree, "NetworkSolveGlueResult") or {}
-        for name, (struct, newpath) in SUBST.field_solve.items():
-            grp, _, fld = newpath.partition(".")
-            if name in nres:
-                R.fail("V1d", f"NetworkSolveGlueResult still has {name} (moved to {newpath})")
-            g = nres.get(grp)
-            hs = struct_members(self.tree, g["type"]) if g else None
-            if not hs or fld not in hs or fres.get(name, {}).get("type") != hs[fld]["type"]:
-                R.fail("V1d", f"{struct}::{newpath}: missing, or not of the frozen type of {struct}::{name}")
+        for n in SUBST.callable + SUBST.bracket:
+            self.moved_closure(n, "network" + n[0].upper() + n[1:], froot)
+        self.timing_fields(froot)
+        self.handoff_structs()
+        self.engines_struct(froot)
         # TYPE_MOVE: LoopSignal is an Application member enum with the frozen enumerators.
         for name in SUBST.type_move:
             fd = froot.get(name) or next((d for d in fz.rn.lam_scope.parent.decls if d.name == name), None)
@@ -1680,17 +2007,6 @@ class Verifier:
         for f in self.tree.index(APPLICATION_HPP).funcs:
             if f.name == lint.EPOCH_FN or (f.params and lint.is_epoch_form(f)):
                 self.claim(APPLICATION_HPP, AT.line(decl_start(AT, f)), AT.line(decl_end(AT, f) - 1))
-        for path, structs in ((GROUPS_HPP, ("NetworkEngineSpec", "NetworkRunEngines", "NetworkRunTiming")),
-                              (SOLVE_HPP, ("NetworkPostFitHandoff", "NetworkSolveGlueResult"))):
-            for st_name in structs:
-                sp = struct_span(self.tree, path, st_name)
-                if sp is None:
-                    R.fail("V1d", f"{path}: struct {st_name} is missing")
-                else:
-                    self.claim(path, *sp)
-                fsp = struct_span(fz.tree, path, st_name)
-                if fsp is not None:
-                    self.fclaim(path, *fsp)
         for path in (GROUPS_HPP, APPLICATION_HPP, RUN_HPP, lint.EPOCH_HPP):
             T = self.tree.tokens(path)
             if T is None:
@@ -1706,6 +2022,276 @@ class Verifier:
         for k, ln in enumerate(cm.split("\n"), 1):
             if any(pathlib.PurePosixPath(p).name in ln for p in NEW_FILES):
                 self.claim("CMakeLists.txt", k, k)
+
+    def moved_closure(self, closure, fname, froot):
+        """A driver closure that became a free function (CALLABLE, BRACKET): one definition,
+        the frozen closure's parameters after the one new leading parameter (the knobs, or the
+        run), its return type, and a body that is a binding preamble followed by the frozen
+        body character-exact.  Each preamble declaration names a frozen capture of the
+        closure, with the capture's declarator kind (a reference for a by-reference capture;
+        `const auto` for a by-value capture of a non-mutable lambda) and an initializer that
+        resolves to the captured object; or names a frozen driver object the closure body
+        never mentions (a helper alias another binding reads through, such as `timing` in
+        networkSubBegin), declared as a reference to that very object.  Every capture is
+        bound; nothing else is declared, so no preamble line can shadow a name the body reads
+        or copy a captured reference."""
+        R, fz = self.R, self.fz
+        fT = fz.rn.T
+        fd = froot.get(closure)
+        if fd is None or fd.lambda_scope is None:
+            R.fail("V1d", f"the frozen closure {closure} was not found")
+            return
+        ls = fd.lambda_scope
+        fbo, fbc = fT.match[ls.end], ls.end
+        flam = _lambda_at(fT, fd.init[0], fd.init[1])
+        fbody = render(fT, fbo + 1, fbc)
+        defs = find_defs(self.tree, fname)
+        if len(defs) != 1:
+            R.fail("V1d", f"{fname}: {len(defs)} definitions (the {closure} closure's body moves into one)")
+            return
+        f = defs[0]
+        T = self.tree.tokens(f.path)
+        where = f"{f.path}:{f.line}"
+        # The signature: one leading parameter, then the closure's own.
+        if flam is not None and flam[1] is not None:
+            fpo = flam[1]
+            fpc = fT.close(fpo)
+            want = fT.join(fpo + 1, fpc)
+            got = T.join(f.params[1].span[0], f.params[-1].span[1]) if len(f.params) > 1 else ""
+            if got != want:
+                R.fail("V1d", f"{where}: {fname}'s parameters after the first are `{got}`, the frozen "
+                              f"closure's `{want}`")
+            lead = lint.ptype(f.params[0]) if f.params else ""
+            want_lead = "NetworkRun&" if closure in SUBST.bracket else "const NetworkKnobs&"
+            if lead != want_lead:
+                R.fail("V1d", f"{where}: {fname}'s first parameter is `{lead}`, not `{want_lead}`")
+            fret = fT.join(fpc + 1, fbo).replace("->", "", 1) if fT.t(fpc + 1) == "->" else "void"
+            nret = T.join(decl_start(T, f), f.name_tok)
+            if nret != fret:
+                R.fail("V1d", f"{where}: {fname} returns `{nret}`, the frozen closure `{fret}`")
+            for g in find_decls(self.tree, fname):
+                GT = self.tree.tokens(g.path)
+                if [lint.ptype(q) for q in g.params] != [lint.ptype(q) for q in f.params]:
+                    R.fail("V1d", f"{g.path}:{g.line}: {fname}'s declaration differs from its definition")
+                self.claim(g.path, GT.line(decl_start(GT, g)), GT.line(decl_end(GT, g) - 1))
+        # The preamble: the leading declarations up to the first statement of the frozen body.
+        st = statements(T, f.body[0] + 1, f.body[1])
+        own = {x.name for a2, b2 in statements(fT, fbo + 1, fbc)
+               for x in (parse_declaration(fT, a2, b2) or [])}
+        k = 0
+        while k < len(st):
+            ds2 = parse_declaration(T, *st[k]) or []
+            if not ds2 or any(x.name in own for x in ds2):
+                break
+            k += 1
+        lo = st[k][0] if k < len(st) else f.body[1]
+        nbody = render(T, lo, f.body[1])
+        shift = (fbody[0][0] - nbody[0][0]) if fbody and nbody else 0
+        d = same_lines(fbody, nbody, shift)
+        if d is not None:
+            R.fail("V1d", f"{where}: {fname}'s body differs from the frozen {closure} closure's at "
+                          f"code line {d[0]}: frozen `{d[1][1] if d[1] else '<end>'}`, here "
+                          f"`{d[2][1] if d[2] else '<end>'}`")
+        caps, mutable = closure_captures(fz.rn, fd)
+        body_names = {fT.t(j) for j in range(fbo + 1, fbc) if fT.k(j) == "id"}
+        lead_param = f.params[0].name if f.params else ""
+        pmap = {lead_param: Ref("E:run") if closure in SUBST.bracket else Ref("D:ctx.knobs")}
+        sc = Scopes(T, f.body[0], f.body[1], f.params)
+        res = Resolver(sc, {id(sc.root): "S"}, (), set(), params=pmap)
+        bound = set()
+        for q in range(k):
+            ds2 = parse_declaration(T, *st[q]) or []
+            if len(ds2) != 1:
+                R.fail("V1d", f"{f.path}:{T.line(st[q][0])}: {fname}'s binding line declares {len(ds2)} names")
+                continue
+            x = ds2[0]
+            xt = T.join(*x.type_span) + x.ops
+            if x.init_kind != "=" or x.init is None:
+                R.fail("V1d", f"{f.path}:{x.line}: {fname}'s binding of {x.name} is not `T {x.name} = ...;`")
+                continue
+            got = normalize(self.canon(res.resolve(*x.init)), self.const_roots)
+            if not x.is_ref and not x.is_ptr:
+                got = normalize(Copy(got) if isinstance(got, (Ref, Copy)) else got, self.const_roots)
+            if x.name in caps:
+                by_ref = caps[x.name]
+                if by_ref:
+                    allowed = self.declarators(x.name, froot.get(x.name)) | {"auto&", "constauto&"}
+                    ok_kind = x.is_ref and xt.replace(" ", "") in {t.replace(" ", "") for t in allowed}
+                    kind_txt = "a reference of the frozen type (or auto&)"
+                else:
+                    ok_kind = (not x.is_ref and not x.is_ptr
+                               and xt == ("auto" if mutable else "const auto"))
+                    kind_txt = "`auto`" if mutable else "`const auto` (a non-mutable lambda's capture)"
+                if not ok_kind:
+                    R.fail("V1d", f"{f.path}:{x.line}: {fname} binds the capture {x.name} as `{xt}`, not "
+                                  f"{kind_txt}")
+                want = normalize(frozen_canon(fz.res.name_ref(x.name, fbo + 1, ())), self.const_roots)
+                if show(got) != show(want):
+                    R.fail("V1d", f"{f.path}:{x.line}: {fname} binds {x.name} to {show(got)}; the closure "
+                                  f"captured {show(want)}")
+                bound.add(x.name)
+                continue
+            fdd = froot.get(x.name)
+            if x.name in body_names or fdd is None or not x.is_ref:
+                R.fail("V1d", f"{f.path}:{x.line}: {fname}'s preamble declares `{x.name}`, which is not a "
+                              f"capture of the frozen {closure} closure"
+                              + (" and is a name its body reads" if x.name in body_names else ""))
+                continue
+            want = normalize(frozen_canon(self.frozen_root("D:" + x.name)), self.const_roots)
+            allowed = self.declarators(x.name, fdd) | {"auto&"}
+            if show(got) != show(want) or xt.replace(" ", "") not in {t.replace(" ", "") for t in allowed}:
+                R.fail("V1d", f"{f.path}:{x.line}: {fname}'s helper `{xt} {x.name}` binds {show(got)}; a "
+                              f"helper is a reference to the frozen {x.name} ({show(want)})")
+        missing = sorted(set(caps) - bound)
+        if missing:
+            R.fail("V1d", f"{where}: {fname} does not bind the closure's captures {missing}")
+        self.claim(f.path, T.line(decl_start(T, f)), T.line(f.body[1]))
+
+    def declarators(self, name, fd):
+        """The declarator texts (type and operators, minimal spacing) a binding of the frozen
+        driver name @p name may have in a preamble (check_preamble's rule)."""
+        if fd is None:
+            return set()
+        ftype = self.fz.rn.T.join(*fd.type_span)
+        if RUN_REFS.get(name) == "D:" + name:
+            return {join_text(RUN_REF_TYPES[name])}
+        if name in SUBST.owner or name in SUBST.field_timing:
+            return {ftype + "&"}
+        out = {ftype + fd.ops}
+        if fd.ops.startswith("&") and not ftype.startswith("const"):
+            out.add(join_text("const " + ftype) + fd.ops)
+        return out
+
+    def timing_fields(self, froot):
+        """FIELD_MOVE: the bracket scratch in NetworkRunTiming, each with the frozen type and
+        initializer; only their lines are claimed (the struct existed at the base)."""
+        R, fT = self.R, self.fz.rn.T
+        cp = class_parts(self.tree, GROUPS_HPP, "NetworkRunTiming")
+        if cp is None:
+            R.fail("V1d", f"{GROUPS_HPP}: struct NetworkRunTiming is missing")
+            return
+        for name, member in SUBST.field_timing.items():
+            fd = froot.get(name)
+            m = cp["members"].get(member)
+            if fd is None or m is None:
+                R.fail("V1d", f"NetworkRunTiming::{member} (the frozen {name}) is missing")
+                continue
+            ft = fT.join(*fd.type_span)
+            init = fT.join(*fd.init) if fd.init else ""
+            if m["type"] != ft or m["ops"] or m["init"].replace(" ", "") not in (
+                    f"{ft}({init})".replace(" ", ""), "{" + init + "}", f"({init})"):
+                R.fail("V1d", f"NetworkRunTiming::{member} is `{m['type']}{m['ops']} = {m['init']}`, frozen "
+                              f"`{ft} {name}({init})`")
+            self.claim(GROUPS_HPP, m["first"], m["last"])
+
+    def handoff_structs(self):
+        """FIELD_MOVE: NetworkSolveGlueResult keeps every frozen member but the three hand-off
+        fields, which NetworkPostFitHandoff holds with their frozen declarations, in frozen
+        order and nothing else; the result's new `handoff` member is the only claimed line of
+        the result (its other lines are V1e's), the new struct is claimed whole."""
+        R = self.R
+        fres = class_parts(self.fz.tree, SOLVE_HPP, "NetworkSolveGlueResult")
+        nres = class_parts(self.tree, SOLVE_HPP, "NetworkSolveGlueResult")
+        if fres is None or nres is None:
+            R.fail("V1d", f"{SOLVE_HPP}: struct NetworkSolveGlueResult is missing")
+            return
+        groups = {}
+        for name, (struct, newpath) in SUBST.field_solve.items():
+            grp, _, fld = newpath.partition(".")
+            groups.setdefault(grp, []).append((name, fld))
+            if name in nres["members"]:
+                R.fail("V1d", f"NetworkSolveGlueResult still has {name} (moved to {newpath})")
+            fm = fres["members"].get(name)
+            if fm is not None:
+                self.fclaim(SOLVE_HPP, fm["first"], fm["last"])
+        for grp, fields in groups.items():
+            g = nres["members"].get(grp)
+            if g is None:
+                R.fail("V1d", f"NetworkSolveGlueResult has no member {grp}")
+                continue
+            if g["ops"] or g["init"] not in ("", "{}"):
+                R.fail("V1d", f"NetworkSolveGlueResult::{grp} is `{g['type']}{g['ops']} = {g['init']}`, not a "
+                              "default-constructed value")
+            self.claim(SOLVE_HPP, g["first"], g["last"])
+            hp = class_parts(self.tree, SOLVE_HPP, g["type"])
+            if hp is None:
+                R.fail("V1d", f"{SOLVE_HPP}: struct {g['type']} (NetworkSolveGlueResult::{grp}) is missing")
+                continue
+            order = sorted(fields, key=lambda x: fres["members"].get(x[0], {}).get("start", 0))
+            if list(hp["members"]) != [fl for _, fl in order]:
+                R.fail("V1d", f"{g['type']} has members {list(hp['members'])}, expected the moved fields "
+                              f"{[fl for _, fl in order]} in frozen order")
+            for name, fld in order:
+                fm, hm = fres["members"].get(name), hp["members"].get(fld)
+                if fm is None or hm is None:
+                    continue
+                if (fm["type"], fm["ops"], fm["init"]) != (hm["type"], hm["ops"], hm["init"]):
+                    R.fail("V1d", f"{g['type']}::{fld} is `{hm['type']}{hm['ops']} {fld}{{{hm['init']}}}`, frozen "
+                                  f"NetworkSolveGlueResult::{name} `{fm['type']}{fm['ops']} {name}{{{fm['init']}}}`")
+            if hp["funcs"] or hp["others"]:
+                R.fail("V1d", f"{g['type']} declares more than its fields: "
+                              f"{[x['text'][:50] for x in hp['funcs']] + [o[2][:50] for o in hp['others']]}")
+            HT = hp["T"]
+            self.claim(SOLVE_HPP, HT.line(hp["head"]), HT.line(hp["close"] + 1))
+
+    def engines_struct(self, froot):
+        """OWNER_MOVE: NetworkRunEngines owns the engines.  Its members are the engines the
+        OWNER_MOVE entries place under run.engines, in the frozen construction order (so
+        construction and destruction order among them are the frozen ones), each of its frozen
+        declaration's type with no default member initializer; its one constructor takes the
+        NetworkEngineSpec, has an empty body, and initializes exactly the engines the frozen
+        code constructed with arguments (whose arguments V12 checks) plus, with empty
+        parentheses, any of the default-constructed ones; every other member function is
+        deleted.  The frozen struct (a const view) is replaced whole."""
+        R, fT = self.R, self.fz.rn.T
+        fsp = struct_span(self.fz.tree, GROUPS_HPP, "NetworkRunEngines")
+        if fsp is not None:
+            self.fclaim(GROUPS_HPP, *fsp)
+        cp = class_parts(self.tree, GROUPS_HPP, "NetworkRunEngines")
+        if cp is None:
+            R.fail("V1d", f"{GROUPS_HPP}: struct NetworkRunEngines is missing")
+            return
+        T = cp["T"]
+        eng = [(froot[n].tok, p.split(".", 2)[2], froot[n]) for n, p in SUBST.owner.items()
+               if p.startswith("run.engines.") and n in froot]
+        eng.sort(key=lambda x: x[0])
+        want = [m for _, m, _ in eng]
+        if list(cp["members"]) != want:
+            R.fail("V1d", f"NetworkRunEngines members {list(cp['members'])}; the frozen construction order "
+                          f"is {want}")
+        for _, m, d in eng:
+            x = cp["members"].get(m)
+            if x is None:
+                continue
+            ft = fT.join(*d.type_span)
+            if x["type"] != ft or x["ops"] or x["init"]:
+                R.fail("V1d", f"NetworkRunEngines::{m} is `{x['type']}{x['ops']} {m}{x['init']}`, frozen "
+                              f"`{ft} {d.name}` (no default member initializer)")
+        if cp["others"]:
+            R.fail("V1d", f"NetworkRunEngines declares {[o[2][:50] for o in cp['others']]}")
+        ctors = [f for f in cp["funcs"] if not f["deleted"]]
+        if len(ctors) != 1 or ctors[0]["name"] != "NetworkRunEngines":
+            R.fail("V1d", f"NetworkRunEngines: member functions {[f['name'] for f in ctors]} besides the "
+                          "deleted ones; one constructor expected")
+        else:
+            c = ctors[0]
+            if [lint.ptype(q) for q in c["params"]] != ["const NetworkEngineSpec&"]:
+                R.fail("V1d", "NetworkRunEngines' constructor does not take one `const NetworkEngineSpec&`")
+            if c["body"] is None or c["body"][1] != c["body"][0] + 1:
+                R.fail("V1d", "NetworkRunEngines' constructor body is not empty")
+            args_of = {m: d for _, m, d in eng}
+            names = [i[0] for i in c["inits"]]
+            if len(set(names)) != len(names) or not set(names) <= set(args_of):
+                R.fail("V1d", f"NetworkRunEngines' constructor initializes {names}")
+            for m, d in args_of.items():
+                init = next((i for i in c["inits"] if i[0] == m), None)
+                if d.init_kind in ("(", "{") and init is None:
+                    R.fail("V1d", f"NetworkRunEngines' constructor does not construct {m} (frozen "
+                                  f"`{fT.join(*d.stmt)[:60]}`)")
+                if d.init is None and init is not None and init[2]:
+                    R.fail("V1d", f"NetworkRunEngines' constructor gives the default-constructed {m} the "
+                                  f"arguments `{init[3]}`")
+        self.claim(GROUPS_HPP, T.line(cp["head"]), T.line(cp["close"] + 1))
 
     # ==== V12: the spec cut ===============================================================
     def cut_statements(self, fzlike):
@@ -1869,8 +2455,71 @@ class Verifier:
                           f"a frozen cut statement nor a declared form: `{T.join(s, min(e, s + 12))}...`")
         for s, e in body:
             self.spec_tokens(T, s, e, None, "networkEngineSpec")
+        nf = self.spec_struct(body, T)
         R.note("V12", f"networkEngineSpec: {len(body)} statements against {len(frozen)} frozen cut "
-                      f"statements; {len(fields)} engine arguments are spec fields")
+                      f"statements; {len(fields)} engine arguments are spec fields; NetworkEngineSpec's "
+                      f"{nf} field types checked")
+
+    def spec_struct(self, body, ST):
+        """NetworkEngineSpec (V12): data members only, and each field's type is the type of
+        what it holds, so no argument is narrowed or converted on its way to its engine: a
+        field that replaces a setup local (`T& name = spec.F;` or `spec.F = <its frozen
+        initializer>;`) has the local's type without const; a field that holds one engine
+        argument (`spec.F = <the frozen argument>;`) has that expression's type (the T of a
+        `static_cast<T>`, a frozen local's declared type, a knob's declared type, the type a
+        conditional's `T{}` branch constructs).  A field nothing assigns would reach its engine
+        as its default; a built local's field has no default initializer, so it starts as the
+        default-constructed local did."""
+        R, fz = self.R, self.fz
+        fT = fz.rn.T
+        cp = class_parts(self.tree, GROUPS_HPP, "NetworkEngineSpec")
+        if cp is None:
+            R.fail("V12", f"{GROUPS_HPP}: struct NetworkEngineSpec is missing")
+            return 0
+        if cp["funcs"] or cp["others"]:
+            R.fail("V12", f"NetworkEngineSpec declares more than fields: "
+                          f"{[f['text'][:40] for f in cp['funcs']] + [o[2][:40] for o in cp['others']]}")
+        expr, bound = {}, {}
+        for s, e in body:
+            if ST.t(s) == "spec" and ST.t(s + 1) == "." and ST.t(s + 3) == "=":
+                expr[ST.t(s + 2)] = (s + 4, e - 1)
+            for d in parse_declaration(ST, s, e) or []:
+                if d.is_ref and d.init and ST.t(d.init[0]) == "spec" and ST.t(d.init[0] + 1) == ".":
+                    bound[ST.t(d.init[0] + 2)] = d.name
+        froot = {d.name: d for d in fz.rn.scopes.root.decls}
+        knobs = struct_members(fz.tree, "NetworkKnobs") or {}
+        n = 0
+        for name, m in cp["members"].items():
+            n += 1
+            got = m["type"] + m["ops"]
+            if name in bound or (name in froot and name in expr
+                                 and ST.join(*expr[name]) == fT.join(*(froot[name].init or (0, 0)))):
+                local = froot.get(bound.get(name, name))
+                if local is None:
+                    R.fail("V12", f"NetworkEngineSpec::{name}: no frozen local {bound.get(name, name)}")
+                    continue
+                want = fT.join(*local.type_span)
+                want = want[len("const "):] if want.startswith("const ") else want
+                if got != want:
+                    R.fail("V12", f"NetworkEngineSpec::{name} is `{got}`; the frozen local "
+                                  f"{local.name} is `{fT.join(*local.type_span)}{local.ops}`")
+                if name in bound and m["init"] not in ("", "{}"):
+                    R.fail("V12", f"NetworkEngineSpec::{name} has the default `{m['init']}`; the frozen local "
+                                  f"{local.name} was default-constructed")
+                continue
+            if name not in expr:
+                R.fail("V12", f"NetworkEngineSpec::{name}: networkEngineSpec never assigns it")
+                continue
+            want, why = _expr_type(ST, *expr[name], froot, fT, knobs)
+            if want is None:
+                R.fail("V12", f"NetworkEngineSpec::{name}: the type of `{ST.join(*expr[name])}` is not "
+                              f"derivable ({why})")
+            elif join_text(got) != join_text(want):
+                R.fail("V12", f"NetworkEngineSpec::{name} is `{got}`; it holds `{ST.join(*expr[name])}`, "
+                              f"of type `{want}` ({why})")
+        T = cp["T"]
+        self.claim(GROUPS_HPP, T.line(cp["head"]), T.line(cp["close"] + 1))
+        return n
 
     @staticmethod
     def _binds_field(T, s, e, name, ftype):
@@ -2102,6 +2751,10 @@ class Verifier:
                 if sp is None:
                     R.fail("V1b", f"{f.path}:{f.line}: {name} has no generated binding markers")
                     continue
+                if not lint.preamble_leads(NT, f):
+                    R.fail("V1b", f"{f.path}:{f.line}: {name}'s body holds code before its bindings: "
+                                  f"`{NT.join(f.body[0] + 1, min(sp[0], f.body[0] + 13))}...` (the opening "
+                                  "marker must be the first thing in the body)")
                 self.claim(f.path, NT.line(decl_start(NT, f)), NT.line(sp[1] - 1) if sp[1] > sp[0] else f.line)
                 self.fclaim(r.cpp, FT.line(decl_start(FT, fdef)), FT.line(fdef.body[0]))
                 names = {p.name for p in fdef.params} | set(SUBST.callable)
@@ -2178,25 +2831,31 @@ class Verifier:
                     R.fail("V3a", f"{r.name} at {where}: kept {p.name} is `{kept_text.get(p.name)}`, frozen `{ftext}`")
                 continue
             if p.kind == "F":
-                self.removed_param(r, p, f, DT)
+                self.removed_param(r, p, f, DT, actual)
                 continue
             n += 1
             want = apply_declarator(p.kind, frozen_canon(fres.resolve(*fc.args[k])))
-            if fT.join(*fc.args[k]).replace(" ", "") == (SUBST.value_equal or "?").replace(" ", ""):
+            if fT.join(*fc.args[k]).replace(" ", "") == (self.value_equal or "?").replace(" ", ""):
                 want = apply_declarator(p.kind, Ref("L:emitted"))
             got = b.get(p.name)
             if got is None:
                 R.fail("V3a", f"{r.name}: no binding line for frozen parameter {p.name}")
                 continue
-            node, dtext, written = got
-            if dtext is not None and join_text(dtext) != join_text(p.text):
-                R.fail("V3a", f"{r.name}: {p.name} is declared `{dtext}`, frozen `{p.text}`")
-            if dtext is not None and r.mech != ADAPTER:
-                is_out = isinstance(node, Ref) and node.root in self.canon.ep_keys and p.kind in ("W", "W*")
-                if is_out != written:
-                    R.fail("V3a", f"{r.name}: the binding of {p.name} "
-                                  + ("writes the epoch but is not marked `// written`" if is_out
-                                     else "is marked `// written` but writes no epoch member"))
+            node, dtext, written, form = got
+            if form not in ("param", "forward", "="):
+                R.fail("V3a", f"{r.name}: {p.name}'s binding `{dtext}` is initialized with `{form}`; a "
+                              "binding line is `<the frozen declarator> = <expression>;`")
+            if form == "multi":
+                R.fail("V3a", f"{r.name}: {p.name} shares its binding statement with another name")
+            if form != "forward":
+                if dtext is None or join_text(dtext) != join_text(p.text):
+                    R.fail("V3a", f"{r.name}: {p.name} is declared `{dtext}`, frozen `{p.text}`")
+                if r.mech != ADAPTER:
+                    is_out = isinstance(node, Ref) and node.root in self.canon.ep_keys and p.kind in ("W", "W*")
+                    if is_out != written:
+                        R.fail("V3a", f"{r.name}: the binding of {p.name} "
+                                      + ("writes the epoch but is not marked `// written`" if is_out
+                                         else "is marked `// written` but writes no epoch member"))
             gw = normalize(self.canon(node), self.const_roots)
             ww = normalize(want, self.const_roots)
             if show(gw) != show(ww):
@@ -2245,14 +2904,18 @@ class Verifier:
         return n
 
     def new_bindings(self, r, f, DT, actual):
-        """{frozen parameter name: (node, declarator text or None, written)} of a converted
+        """{frozen parameter name: (node, declarator text, written, form)} of a converted
         definition: its binding lines (or an adapter's forwarding arguments), resolved with the
-        definition's parameters bound to @p actual."""
+        definition's parameters bound to @p actual.  form: `param` (the name is one of the
+        definition's own parameters, an output or a kept one), `forward` (an adapter's
+        forwarding argument), `=` (a binding line `T name = ...;`), the initializer's bracket
+        for a direct-initialized line, or `multi` for a line that declares several names; the
+        declarator text is the binding line's declarator in every form (V3a compares it)."""
         out = {}
         sc = Scopes(DT, f.body[0], f.body[1], f.params)
         res = Resolver(sc, {id(sc.root): "S"}, (), set(), params=actual)
         for p in f.params[2:]:
-            out[p.name] = (actual.get(p.name), p.text, True)
+            out[p.name] = (actual.get(p.name), p.text, True, "param")
         if r.mech == ADAPTER:
             st = statements(DT, f.body[0] + 1, f.body[1])
             fwd = next((c for c in calls_in(DT, *st[0]) if c.name == r.name), None) if st else None
@@ -2260,31 +2923,50 @@ class Verifier:
             if fwd is not None:
                 for k, p in enumerate(fdecl.params):
                     if k < fwd.nargs:
-                        out[p.name] = (apply_declarator(p.kind, res.resolve(*fwd.args[k])), None, False)
+                        out[p.name] = (apply_declarator(p.kind, res.resolve(*fwd.args[k])), None, False,
+                                       "forward")
             return out
         sp = lint.preamble_span(DT, f)
         if sp is None:
             return out
         for s, e in statements(DT, sp[0], sp[1]):
-            for d in parse_declaration(DT, s, e) or []:
+            ds = parse_declaration(DT, s, e) or []
+            for d in ds:
                 if not d.init:
                     continue
                 node = res.resolve(*d.init)
                 if not d.is_ref and not d.is_ptr:
                     node = Copy(node) if isinstance(node, (Ref, Copy)) else node
-                text = DT.src(s, d.init[0] - 1).strip() if DT.t(d.init[0] - 1) == "=" else None
+                if d.init_kind == "=":
+                    text = DT.src(d.type_span[0], d.init[0] - 1).strip()
+                else:
+                    text = DT.src(d.type_span[0], d.tok + 1).strip()
+                form = "multi" if len(ds) > 1 else (d.init_kind or "?")
                 line_end = DT.source.find("\n", DT[e - 1].end)
                 written = "// written" in DT.source[DT[e - 1].end:line_end if line_end >= 0 else None]
-                out[d.name] = (node, text, written)
+                out[d.name] = (node, text, written, form)
         return out
 
-    def removed_param(self, r, p, f, DT):
+    def removed_param(self, r, p, f, DT, actual):
+        """A frozen std::function parameter the conversion removed: a declared CALLBACK_DIRECT
+        (the solve's replay calls the builder directly, checked by replay_sites), or the
+        CALLABLE third-band predicate, whose binding line must be its one declared forwarder
+        (check_forwarder) over this call site's run."""
         if p.name in SUBST.callable:
             sp = lint.preamble_span(DT, f)
-            a, b = sp if sp else (f.body[0], f.body[1])
-            txt = DT.src(a, b)
-            if p.name not in txt or "networkIsUncarriedThirdBand" not in txt:
-                self.R.fail("V3a", f"{r.name}: no binding of {p.name} forwarding to networkIsUncarriedThirdBand")
+            hits = []
+            for s, e in (statements(DT, *sp) if sp else []):
+                for d in parse_declaration(DT, s, e) or []:
+                    if d.name == p.name:
+                        hits.append((s, e, d))
+            if len(hits) != 1:
+                self.R.fail("V3a", f"{r.name}: {len(hits)} binding lines of {p.name} (one forwarder to "
+                                   f"{PREDICATE} expected)")
+                return
+            s, e, d = hits[0]
+            sc = Scopes(DT, f.body[0], f.body[1], f.params)
+            res = Resolver(sc, {id(sc.root): "S"}, (), set(), params=actual)
+            self.check_forwarder(DT, s, e, d, res, "V3a", p.text)
         elif p.name not in SUBST.callbacks:
             self.R.fail("V3a", f"{r.name}: std::function parameter {p.name} removed without a declared class")
 
@@ -2399,7 +3081,147 @@ class Verifier:
         clk = [n for n, (p, t) in SUBST.epoch.items() if t == "CLOCK"]
         if list(clock.keys())[:len(clk)] != clk:
             R.fail("V3c", f"EpochClock members {list(clock.keys())}, the CLOCK store's order is {clk}")
+        self.epoch_type()
         R.note("V3c", f"{len(SUBST.epoch)} epoch members checked against their locals")
+
+    def epoch_type(self):
+        """NetworkEpoch holds nothing but what the declared substitutions place in it, and
+        starts every epoch in the frozen state (V3c): its members are `se` (a reference to
+        const), `clock`, the groups of the EPOCH_MEMBER paths and `emitted` (bool, false); each
+        group holds exactly its declared locals and EpochClock the three clock values with the
+        frozen locals' types; its one constructor binds `se` and does nothing else (an empty
+        body, so no member starts other than as its local did); the ACCESSOR x_emit() returns,
+        by reference, the frozen x_emit initializer under the EPOCH_MEMBER mapping; every other
+        member function is deleted, and the other structs of the header declare none."""
+        R, fz = self.R, self.fz
+        fT = fz.rn.T
+        H = lint.EPOCH_HPP
+        ep = class_parts(self.tree, H, "NetworkEpoch")
+        if ep is None:
+            R.fail("V3c", f"{H}: struct NetworkEpoch is missing")
+            return
+        groups = collections.OrderedDict()
+        for local, (path, tr) in SUBST.epoch.items():
+            parts = path.split(".")
+            if len(parts) == 3:
+                groups.setdefault(parts[1], []).append((parts[2], local, tr))
+            else:
+                groups.setdefault(parts[1], None)
+        want = {"se", "emitted"} | set(groups)
+        got = set(ep["members"])
+        if got != want:
+            R.fail("V3c", f"NetworkEpoch members {sorted(got)}; the declared substitutions place {sorted(want)}")
+        se = ep["members"].get("se")
+        if se is not None and (se["type"], se["ops"], se["init"]) != ("const SyncedEpoch", "&", ""):
+            R.fail("V3c", f"NetworkEpoch::se is `{se['type']}{se['ops']}`, not `const SyncedEpoch&`")
+        em = ep["members"].get("emitted")
+        if em is not None and (em["type"], em["ops"], em["init"]) != ("bool", "", "false"):
+            R.fail("V3c", f"NetworkEpoch::emitted is `{em['type']}{em['ops']} {{{em['init']}}}`, not `bool{{false}}`")
+        lam = {d.name: d for d in fz.rn.lam_scope.decls}
+        for g, fields in groups.items():
+            m = ep["members"].get(g)
+            if m is None or fields is None:
+                continue
+            if m["ops"] or m["init"] not in ("", "{}"):
+                R.fail("V3c", f"NetworkEpoch::{g} is `{m['type']}{m['ops']} {m['init']}`, not a default-built value")
+            gp = class_parts(self.tree, H, m["type"]) or class_parts_anywhere(self.tree, m["type"])
+            if gp is None:
+                continue
+            names = [f for f, _, _ in fields]
+            if set(gp["members"]) != set(names):
+                R.fail("V3c", f"{m['type']} members {list(gp['members'])}; the declared epoch locals of "
+                              f"ep.{g} are {names}")
+            for fname, local, tr in fields:
+                x = gp["members"].get(fname)
+                if tr == "CLOCK" and x is not None and local in lam:
+                    want_t = fT.join(*lam[local].type_span).replace("const ", "", 1)
+                    if x["type"] != want_t or x["ops"]:
+                        R.fail("V3c", f"EpochClock::{fname} is `{x['type']}{x['ops']}`, the frozen const local "
+                                      f"`{fT.join(*lam[local].type_span)}`")
+        ctors = [f for f in ep["funcs"] if not f["deleted"] and f["name"] == "NetworkEpoch"]
+        if len(ctors) != 1:
+            R.fail("V3c", f"NetworkEpoch: {len(ctors)} constructors that are not deleted (one expected)")
+        else:
+            c = ctors[0]
+            pn = c["params"][0].name if c["params"] else ""
+            if [lint.ptype(q) for q in c["params"]] != ["const SyncedEpoch&"]:
+                R.fail("V3c", "NetworkEpoch's constructor does not take one `const SyncedEpoch&`")
+            if [(i[0], i[3]) for i in c["inits"]] != [("se", f"se({pn})")]:
+                R.fail("V3c", f"NetworkEpoch's constructor initializes {[i[3] for i in c['inits']]}; only "
+                              f"`se({pn})` is declared")
+            if c["body"] is None or c["body"][1] != c["body"][0] + 1:
+                R.fail("V3c", "NetworkEpoch's constructor body is not empty: every member starts as its "
+                              "local did, so the constructor does nothing but bind se")
+        acc = [f for f in ep["funcs"] if not f["deleted"] and f["name"] != "NetworkEpoch"]
+        for f in acc:
+            if f["name"] not in [x.replace("ep.", "").replace("()", "") for x in SUBST.accessor.values() if x]:
+                R.fail("V3c", f"NetworkEpoch declares the member function {f['name']}")
+        for local, path in SUBST.accessor.items():
+            fname = path.replace("ep.", "").replace("()", "") if path else None
+            fs = [f for f in acc if f["name"] == fname]
+            if len(fs) != 1:
+                R.fail("V3c", f"NetworkEpoch: {len(fs)} definitions of the accessor {fname}()")
+                continue
+            self.accessor_check(ep, fs[0], local)
+        TT = ep["T"]
+        for i in range(TT.n - 2):
+            if TT.t(i) in ("struct", "class") and TT.k(i + 1) == "id" and TT.t(i + 1) != "NetworkEpoch" \
+                    and TT.t(i + 2) == "{":
+                gp = class_parts(self.tree, H, TT.t(i + 1))
+                live = [f["name"] for f in (gp["funcs"] if gp else []) if not f["deleted"]]
+                if live:
+                    R.fail("V3c", f"{H}: {TT.t(i + 1)} declares member functions {live}")
+
+    def accessor_check(self, ep, f, local):
+        """ACCESSOR: the accessor's return type is the frozen local's declarator, it is const
+        and takes nothing, and its body is one return whose expression, its NetworkEpoch
+        members read as ep.<member>, resolves to the frozen initializer of @p local."""
+        R, fz = self.R, self.fz
+        T = ep["T"]
+        d = next((x for x in fz.rn.lam_scope.decls if x.name == local), None)
+        if d is None or d.init is None:
+            R.fail("V3c", f"the frozen accessor local {local} was not found")
+            return
+        fT = fz.rn.T
+        want_ret = fT.join(*d.type_span) + d.ops
+        ret = T.join(f["start"], f["po"] - 1)
+        if ret != want_ret or f["params"] or not f["const"]:
+            R.fail("V3c", f"NetworkEpoch::{f['name']} is `{ret} {f['name']}(...)"
+                          f"{' const' if f['const'] else ''}`; the frozen local is `{want_ret} {local}`, so "
+                          f"`{want_ret} {f['name']}() const` is declared")
+        if f["body"] is None:
+            R.fail("V3c", f"NetworkEpoch::{f['name']} has no body")
+            return
+        bo, bc = f["body"]
+        st = statements(T, bo + 1, bc)
+        if len(st) != 1 or T.t(st[0][0]) != "return":
+            R.fail("V3c", f"NetworkEpoch::{f['name']}'s body is not one return statement")
+            return
+        a, b = st[0][0] + 1, st[0][1] - 1
+        sc = Scopes(T, bo, bc)
+        node = Resolver(sc, {id(sc.root): "S"}, (), set(ep["members"])).resolve(a, b)
+        got = normalize(self.epoch_members_node(node), self.const_roots)
+        want = normalize(frozen_canon(fz.res.resolve(*d.init)), self.const_roots)
+        if show(got) != show(want):
+            R.fail("V3c", f"NetworkEpoch::{f['name']} returns `{T.join(a, b)}` = {show(got)}; the frozen "
+                          f"{local} is `{fT.join(*d.init)}` = {show(want)}")
+
+    def epoch_members_node(self, node):
+        """A node resolved inside a NetworkEpoch member function (its members as roots A:<m>)
+        in the frozen vocabulary: A:<m>.<chain> is ep.<m>.<chain> through the declared paths."""
+        if isinstance(node, Ref) and node.root.startswith("A:"):
+            r = self.canon.ep_path(("." + node.root[2:],) + tuple(node.chain))
+            return Ref(r.root, r.chain, node.prefix) if isinstance(r, Ref) else r
+        if isinstance(node, Copy):
+            return Copy(self.epoch_members_node(node.inner))
+        if isinstance(node, Cond):
+            return Cond(self.epoch_members_node(node.c), self.epoch_members_node(node.a),
+                        self.epoch_members_node(node.b))
+        if isinstance(node, Expr):
+            return Expr(node.op, [self.epoch_members_node(x) for x in node.args])
+        if isinstance(node, CallNode):
+            return CallNode(node.fn, [self.epoch_members_node(x) for x in node.args])
+        return node
 
     # ==== V5: deep const ==================================================================
     def v5(self):
@@ -2485,7 +3307,18 @@ class Verifier:
             for f in idx.funcs:
                 if f.name not in allowed and not f.cls:
                     R.fail("V9", f"{h}:{f.line}: declares {f.name}")
-            self.claim(h, 1, self.tree.tokens(h).line(self.tree.tokens(h).n - 1))
+            # Member functions: only the run's and the epoch's constructors and the accessor
+            # are defined (V3c and V3d check their bodies); everything else is deleted.
+            HT = self.tree.tokens(h)
+            live_ok = {"NetworkRun": {"NetworkRun"}, "NetworkEpoch": {"NetworkEpoch", "x_emit"}}
+            for i in range(HT.n - 2):
+                if HT.t(i) in ("struct", "class") and HT.k(i + 1) == "id" and HT.t(i + 2) == "{":
+                    cp = class_parts(self.tree, h, HT.t(i + 1))
+                    for f in (cp["funcs"] if cp else []):
+                        if not f["deleted"] and f["name"] not in live_ok.get(HT.t(i + 1), set()):
+                            R.fail("V9", f"{h}:{HT.line(f['start'])}: {HT.t(i + 1)} declares the member "
+                                         f"function {f['name']}")
+            self.claim(h, 1, HT.line(HT.n - 1))
         fg, ng = include_graph(self.fz.tree), include_graph(self.tree)
         newh = {RUN_HPP, lint.EPOCH_HPP}
         fmemo, nmemo = {}, {}
@@ -2713,6 +3546,71 @@ def _mem_init_args(T, f):
     return out
 
 
+def _expr_type(T, a, b, froot, fT, knobs):
+    """(type text, how) of the expression [a, b) an engine argument field holds, or (None,
+    why): `static_cast<T>(...)` gives T; a frozen driver local, its declared type without
+    const; `ctx.knobs.X`, the knob's declared type; `c ? x : y`, the type of a `T{}` branch."""
+    while T.t(a) == "(" and T.match[a] == b - 1:
+        a, b = a + 1, b - 1
+    if T.t(a) == "static_cast" and T.t(a + 1) == "<":
+        m = match_angle(T, a + 1, b)
+        if m is not None and T.t(m + 1) == "(" and T.close(m + 1) == b - 1:
+            return T.join(a + 2, m), "static_cast"
+    if b == a + 1 and T.k(a) == "id" and T.t(a) in froot:
+        d = froot[T.t(a)]
+        t = fT.join(*d.type_span)
+        return (t[len("const "):] if t.startswith("const ") else t), f"the frozen local {T.t(a)}"
+    if b == a + 5 and T.join(a, a + 4) == "ctx.knobs.":
+        k = knobs.get(T.t(a + 4))
+        if k is not None:
+            return k["type"], f"the knob {T.t(a + 4)}"
+    q = next((j for j in range(a, b) if T.t(j) == "?" and T.k(j) == "op"), None)
+    if q is not None:
+        c = next((j for j in range(q + 1, b) if T.t(j) == ":" and T.k(j) == "op"), None)
+        for x, y in ((c + 1, b), (q + 1, c)) if c is not None else ():
+            if T.t(y - 1) == "}" and T.t(y - 2) == "{":
+                return T.join(x, y - 2), "the conditional's T{} branch"
+    return None, "no rule"
+
+
+def closure_captures(rn, fd):
+    """({captured name: by reference}, mutable) of the frozen driver closure @p fd: its
+    init-captures, and every name its body reads that is declared outside it (a `[&]` default
+    or an explicit `&name` capture is by reference, `[=]` or a plain name by value)."""
+    T, scopes = rn.T, rn.scopes
+    ls = fd.lambda_scope
+    lam = _lambda_at(T, fd.init[0], fd.init[1])
+    cc, po, bo = lam
+    bc = T.close(bo)
+    mutable = any(T.t(j) == "mutable" for j in range((T.close(po) + 1) if po is not None else cc + 1, bo))
+    items = _split_top(T, fd.init[0] + 1, cc)
+    default_ref = any(T.join(a, b) == "&" for a, b in items)
+    explicit = {}
+    for a, b in items:
+        txt = T.join(a, b)
+        if txt in ("&", "="):
+            continue
+        k = a + 1 if T.t(a) == "&" else a
+        explicit[T.t(k)] = T.t(a) == "&"
+    out = {}
+    for d in ls.decls:
+        if d.kind == "capture":
+            out[d.name] = d.is_ref
+    for j in range(bo + 1, bc):
+        if T.k(j) != "id" or T.t(j) in KEYWORDS or T.t(j - 1) in (".", "->", "::") or T.t(j + 1) == "::":
+            continue
+        d = scopes.lookup(T.t(j), j)
+        if d is None or d.kind == "type" or d.name in out:
+            continue
+        sc = d.scope
+        while sc is not None and sc is not ls:
+            sc = sc.parent
+        if sc is ls:
+            continue                       # declared inside the closure
+        out[d.name] = explicit.get(d.name, default_ref)
+    return out, mutable
+
+
 def _expand_lambda_calls(ev):
     return [("call", lint.EPOCH_FN) if e == ("call", LAMBDA_NAME) else e for e in ev]
 
@@ -2815,6 +3713,164 @@ def _members_of(T, a, b):
                     out[d.name] = {"type": T.join(*d.type_span), "ops": d.ops, "init": init,
                                    "line": d.line}
         i = e
+    return out
+
+
+def class_parts_anywhere(tree, name):
+    """class_parts of @p name in the first header under include/ that defines it."""
+    pat = re.compile(r"\b(?:struct|class)\s+" + re.escape(name) + r"\b[^;{]*\{")
+    for p in [x for x in tree.files("include") if x.endswith((".hpp", ".h"))]:
+        text = tree.read(p)
+        if text and name in text and pat.search(text):
+            cp = class_parts(tree, p, name)
+            if cp is not None:
+                return cp
+    return None
+
+
+def class_parts(tree, path, name):
+    """The body of struct / class @p name defined in @p path, statement by statement:
+    {'T', 'open', 'close', 'members': OrderedDict(name -> data member), 'funcs': [member
+    function], 'others': [(first, end, text)]}, or None.  A data member is {'type', 'ops',
+    'init', 'init_kind', 'start', 'end', 'first', 'last'} (token range and lines of its
+    statement); a member function is parsed by _member_function; `others` holds what is
+    neither (static members, using, static_assert, friend, nested types)."""
+    T = tree.tokens(path)
+    if T is None:
+        return None
+    for i in range(T.n - 2):
+        if T.t(i) in ("struct", "class") and T.t(i + 1) == name:
+            k = i + 2
+            while k < T.n and T.t(k) not in ("{", ";", "("):
+                k += 1
+            if T.t(k) != "{":
+                continue
+            c = T.close(k)
+            out = {"T": T, "head": i, "open": k, "close": c, "members": collections.OrderedDict(),
+                   "funcs": [], "others": []}
+            j = k + 1
+            while j < c:
+                if T.t(j) in ("public", "private", "protected") and T.t(j + 1) == ":":
+                    j += 2
+                    continue
+                e, kind = _class_stmt(T, j, c)
+                if kind == "func":
+                    out["funcs"].append(_member_function(T, j, e))
+                elif T.t(j) in ("using", "static_assert", "friend", "enum", "template", "typedef",
+                                "static", "struct", "class") or T.k(j) == "pp":
+                    out["others"].append((j, e, T.join(j, e)))
+                else:
+                    # A reference member has no initializer: read the statement as a range
+                    # declaration, which admits one.
+                    ds = parse_declaration(T, j, e) or parse_declaration(T, j, e, "range") or []
+                    if not ds:
+                        out["others"].append((j, e, T.join(j, e)))
+                    for d in ds:
+                        init = T.norm(*d.init) if d.init else ""
+                        if d.init_kind == "{" and not init:
+                            init = "{}"
+                        out["members"][d.name] = {"type": T.join(*d.type_span), "ops": d.ops,
+                                                  "init": init, "init_kind": d.init_kind, "start": j,
+                                                  "end": e, "first": T.line(j), "last": T.line(e - 1)}
+                j = e
+            return out
+    return None
+
+
+def _class_stmt(T, i, b):
+    """(end, kind) of the class-body statement at token @p i: kind `func` for a member
+    function (declared, defaulted, deleted or defined in place, a constructor's member
+    initializers included), `data` otherwise (it ends at its `;`)."""
+    j = i
+    while j < b:
+        x = T.t(j)
+        if x == "operator":
+            j += 1
+            if T.t(j) == "(" and T.t(j + 1) == ")":
+                j += 2
+            while j < b and T.t(j) != "(":
+                j += 1
+            return _func_end(T, j, b), "func"
+        if x == "(" and T.k(j - 1) == "id" and T.t(j - 1) not in KEYWORDS:
+            return _func_end(T, j, b), "func"
+        if x == "<" and T.k(j - 1) == "id":
+            m = match_angle(T, j, b)
+            j = m + 1 if m is not None else j + 1
+            continue
+        if x in ("=", "{", ";", ":"):
+            k = j
+            while k < b and T.t(k) != ";":
+                k = T.close(k) + 1 if T.t(k) in ("(", "[", "{") else k + 1
+            return min(k + 1, b), "data"
+        if x == "[":
+            j = T.close(j) + 1
+            continue
+        j += 1
+    return b, "data"
+
+
+def _func_end(T, po, b):
+    """One past the member function whose parameter list opens at @p po: its `;` (a
+    declaration, `= default`, `= delete`) or its body's `}` (and a `;` right after it)."""
+    k = T.close(po) + 1
+    while k < b:
+        x = T.t(k)
+        if x == ";":
+            return k + 1
+        if x == ":":
+            k += 1
+            while k < b and T.t(k) != "{":
+                if T.t(k) in ("(", "{"):
+                    break
+                k += 1
+            while k < b and T.t(k) in ("(", "{"):
+                c = T.close(k)
+                k = c + 1
+                if T.t(k) == ",":
+                    k += 1
+                    while k < b and T.t(k) not in ("(", "{"):
+                        k += 1
+                    continue
+                break
+            continue
+        if x == "{":
+            c = T.close(k)
+            return c + 2 if T.t(c + 1) == ";" else c + 1
+        if x in ("(", "["):
+            k = T.close(k) + 1
+            continue
+        k += 1
+    return b
+
+
+def _member_function(T, a, e):
+    """A member function statement [a, e): {'name', 'start', 'end', 'po', 'pc', 'params',
+    'deleted', 'const', 'inits' [(member, bracket, [argument spans], text)], 'body' (open,
+    close) or None, 'text'}."""
+    po = next(j for j in range(a, e) if T.t(j) == "(" and (T.k(j - 1) == "id" or T.t(j - 1) != "operator"))
+    name = T.t(po - 1)
+    if T.t(a) == "operator" or "operator" in [T.t(j) for j in range(a, po)]:
+        q = max(j for j in range(a, po) if T.t(j) == "operator")
+        name = T.join(q, po)
+    pc = T.close(po)
+    out = {"name": name, "start": a, "end": e, "po": po, "pc": pc,
+           "params": parse_params(T, po)[0], "deleted": T.join(max(a, e - 3), e) == "=delete;",
+           "const": False, "inits": [], "body": None, "text": T.join(a, e)}
+    k = pc + 1
+    while k < e and T.t(k) in ("const", "noexcept", "override", "final"):
+        out["const"] = out["const"] or T.t(k) == "const"
+        k += 1
+    if T.t(k) == ":":
+        k += 1
+        while k < e and T.t(k) != "{" or (k < e and T.t(k) == "{" and T.k(k - 1) == "id"):
+            if T.k(k) == "id" and T.t(k + 1) in ("(", "{"):
+                c = T.close(k + 1)
+                out["inits"].append((T.t(k), T.t(k + 1), _split_top(T, k + 2, c), T.join(k, c + 1)))
+                k = c + 1
+                continue
+            k += 1
+    if k < e and T.t(k) == "{":
+        out["body"] = (k, T.close(k))
     return out
 
 
@@ -2926,8 +3982,14 @@ def reach(g, start):
 # Negative controls (spec 5.7)
 # ---------------------------------------------------------------------------------------------
 class Control:
-    def __init__(self, cid, check, what, build):
-        self.cid, self.check, self.what, self.build = cid, check, what, build
+    """A pre-registered negative control: @p build mutates the candidate (an overlay) and
+    returns (overrides, what) or (None, why) when its target is not in the tree; @p due says
+    whether the stage being verified must have that target (a seam it converts, the epoch
+    function, ...).  A due control whose target is missing does not fire: it is reported as
+    MISSING and fails the run, so a control cannot fall silent at a later base."""
+
+    def __init__(self, cid, check, what, build, due=lambda v: True):
+        self.cid, self.check, self.what, self.build, self.due = cid, check, what, build, due
 
 
 def _replace(text, a, b, new):
@@ -3012,35 +4074,44 @@ def ctl_n10(v):
 
 
 def ctl_n11(v):
+    """A log line inside the engine spec's statements: the debug_r_scale warning of spec 5.7
+    where the base still has it (it went with the lane layer otherwise), else a synthetic
+    warning, so the control does not depend on what the REMOVE-key deletion keeps.  On an
+    empty conversion it enters a cut range of runNetwork (between two of its statements), on
+    an epoch tree networkEngineSpec."""
     c = v.cand
     rT = c.rn.T
     warn = None
     for s, e in c.rn.statements():
         if rT.t(s) == "if" and "debug_r_scale" in rT.join(s, e) and any(x.name == "log->warn" for x in calls_in(rT, s, e)):
             warn = (s, e)
-    if warn is None:
-        return None, "the debug_r_scale warning is not in runNetwork"
-    wtext = rT.source[rT[warn[0]].pos:rT[warn[1] - 1].end]
+    synthetic = 'log->warn("negative control N11: a log line in the engine spec");'
+    wtext = rT.source[rT[warn[0]].pos:rT[warn[1] - 1].end] if warn else synthetic
+    rsrc = (rT.source[:rT[warn[0]].pos] + rT.source[rT[warn[1] - 1].end:]) if warn else rT.source
     if c.mode == "empty":
-        last = None
-        for s, e in c.rn.statements():
-            if e <= warn[0] and rT.t(s) == "mw_wl_cfg" and rT.t(s + 1) == ".":
-                last = (s, e)
-        if last is None:
-            return None, "no mw_wl_cfg cut statement before the warning"
-        src = rT.source
-        src = src[:rT[warn[0]].pos] + src[rT[warn[1] - 1].end:]
-        src = src[:rT[last[0]].pos] + wtext + "\n    " + src[rT[last[0]].pos:]
-        return {DRIVER_PATH: src}, "the debug_r_scale warning moved into the mw_wl_cfg cut range"
+        cfz = CandFz(v.tree)
+        for d, sts in v.cut_statements(cfz):
+            if len(sts) >= 2 and (warn is None or sts[1][0] < warn[0]):
+                at = sts[1][0]
+                src = rsrc if warn is None else rT.source
+                pos = rT[at].pos
+                out = src[:pos] + wtext + "\n    " + src[pos:]
+                if warn is not None:      # drop the warning from its own place (after the insert)
+                    ws, we = rT[warn[0]].pos + len(wtext) + 5, rT[warn[1] - 1].end + len(wtext) + 5
+                    out = out[:ws] + out[we:]
+                return {DRIVER_PATH: out}, \
+                    f"{'the debug_r_scale warning' if warn else 'a synthetic warning'} inside the {d.name} cut range"
+        return None, "no cut range of two statements"
     idx = v.tree.index(RUN_CPP)
     f = next((g for g in (idx.funcs if idx else []) if g.name == "networkEngineSpec" and g.is_def), None)
     if f is None:
         return None, "networkEngineSpec does not exist yet"
     ST = v.tree.tokens(RUN_CPP)
     ret = next((s for s, e in statements(ST, f.body[0] + 1, f.body[1]) if ST.t(s) == "return"), f.body[1])
-    src = rT.source[:rT[warn[0]].pos] + rT.source[rT[warn[1] - 1].end:]
-    return {DRIVER_PATH: src, RUN_CPP: _replace(ST.source, ST[ret].pos, ST[ret].pos, wtext + "\n    ")}, \
-        "the debug_r_scale warning cut into networkEngineSpec"
+    out = {RUN_CPP: _replace(ST.source, ST[ret].pos, ST[ret].pos, wtext + "\n    ")}
+    if warn:
+        out[DRIVER_PATH] = rsrc
+    return out, f"{'the debug_r_scale warning' if warn else 'a synthetic warning'} cut into networkEngineSpec"
 
 
 def ctl_n12(v):
@@ -3160,30 +4231,342 @@ def ctl_n4(v):
     return None, "the solve's internal networkRhsAttribTrip call is not found"
 
 
+def _epoch_text_edit(v, path, old, new, what):
+    T = v.tree.read(path)
+    if T is None or T.count(old) != 1:
+        return None, f"`{old[:50]}` is not in {path} once"
+    return {path: T.replace(old, new, 1)}, what
+
+
+def ctl_r1(v):
+    """The DD-carry predict's two reads of its own TOW-only `dt` rewritten to ep.clock.dt."""
+    c = v.cand
+    if c.mode != "epoch":
+        return None, "no epoch function"
+    T = c.T
+    for x in calls_in(T, c.open + 1, c.close):
+        if x.name.endswith("beginEpoch") and x.args and any(T.t(j) == "dt" for j in range(*x.args[0])):
+            a, b = x.args[0]
+            src = T.source
+            for j in sorted((j for j in range(a, b) if T.t(j) == "dt" and T.t(j - 1) != "."), reverse=True):
+                src = src[:T[j].pos] + "ep.clock.dt" + src[T[j].end:]
+            return {T.path: src}, "carry_driver.beginEpoch reads ep.clock.dt for its own dt"
+    return None, "the DD-carry predict's beginEpoch call is not in the epoch body"
+
+
+def ctl_r2(v):
+    """An epoch-preamble copy narrowed: `const int pl_warmup` declared `const bool`."""
+    c = v.cand
+    if c.mode != "epoch":
+        return None, "no epoch function"
+    T = c.T
+    for s, e in c.preamble:
+        for d in parse_declaration(T, s, e) or []:
+            if d.name == "pl_warmup" or (not d.is_ref and T.join(*d.type_span) == "const int"):
+                j = next((q for q in range(*d.type_span) if T.t(q) == "int"), None)
+                if j is not None:
+                    return {T.path: _replace(T.source, T[j].pos, T[j].end, "bool")}, \
+                        f"the preamble's `{d.name}` declared bool"
+    return None, "no const int copy in the epoch preamble"
+
+
+def ctl_r3(v):
+    """A seam binding direct-initialized with a narrower type: `float pl_now_s(...)`."""
+    seam = "networkClockQc"
+    if seam not in v.converted:
+        return None, f"{seam} is not converted"
+    for f in v.new_defs(seam):
+        DT = v.tree.tokens(f.path)
+        sp = lint.preamble_span(DT, f)
+        for s, e in (statements(DT, *sp) if sp else []):
+            for d in parse_declaration(DT, s, e) or []:
+                if not d.is_ref and d.init_kind == "=" and DT.join(*d.type_span) == "double":
+                    new = f"float {d.name}({DT.src(*d.init)});"
+                    return {f.path: _replace(DT.source, DT[s].pos, DT[e - 1].end, new)}, \
+                        f"{seam}'s {d.name} bound as `{new}`"
+    return None, f"no by-value double binding in {seam}"
+
+
+def _forwarder_negated(v, path, a, b):
+    T = v.tree.tokens(path)
+    k = T.source.find(f"return {PREDICATE}(", T[a].pos, T[b - 1].end if b > a else None)
+    if k < 0:
+        return None
+    return {path: T.source[:k] + f"return !{PREDICATE}(" + T.source[k + len(f"return {PREDICATE}("):]}
+
+
+def ctl_r4(v):
+    """The DD build's third-band forwarder negated (every third-band test inverts)."""
+    seam = "networkBuildCarryDdPriors"
+    if seam not in v.converted:
+        return None, f"{seam} is not converted"
+    for f in v.new_defs(seam):
+        sp = lint.preamble_span(v.tree.tokens(f.path), f)
+        ov = _forwarder_negated(v, f.path, *sp) if sp else None
+        if ov:
+            return ov, f"{seam}'s forwarder returns !{PREDICATE}(...)"
+    return None, f"no forwarder in {seam}'s bindings"
+
+
+def ctl_r5(v):
+    """The epoch preamble's third-band forwarder negated (the DD build still explicit)."""
+    c = v.cand
+    if c.mode != "epoch" or not c.preamble:
+        return None, "no epoch preamble"
+    ov = _forwarder_negated(v, c.T.path, c.preamble[0][0], c.preamble[-1][1])
+    return (ov, f"the epoch preamble's forwarder returns !{PREDICATE}(...)") if ov else \
+        (None, "the epoch preamble holds no forwarder")
+
+
+def _before_end_of_bindings(v, fname, line, what):
+    defs = find_defs(v.tree, fname)
+    if len(defs) != 1:
+        return None, f"{fname} is not defined once"
+    f = defs[0]
+    T = v.tree.tokens(f.path)
+    k = T.source.find("// ---- End of the bindings", T[f.body[0]].pos, T[f.body[1]].pos)
+    if k < 0:
+        return None, f"{fname} has no end-of-bindings marker"
+    return {f.path: T.source[:k] + line + "\n    " + T.source[k:]}, what
+
+
+def ctl_r6(v):
+    """A predicate binding that shadows a function its body calls (systemFromLetter)."""
+    if not v.epoch:
+        return None, "no epoch function"
+    return _before_end_of_bindings(v, PREDICATE, "const auto systemFromLetter = [](char) { return System::GPS; };",
+                                   f"{PREDICATE}'s preamble shadows systemFromLetter")
+
+
+def ctl_r7(v):
+    """A bracket capture by reference made a copy (`auto sub_tmr0 = ...`)."""
+    if not v.epoch:
+        return None, "no epoch function"
+    defs = find_defs(v.tree, "networkSubBegin")
+    if len(defs) != 1:
+        return None, "networkSubBegin is not defined once"
+    f = defs[0]
+    T = v.tree.tokens(f.path)
+    sp = lint.preamble_span(T, f)
+    for s, e in reversed(statements(T, *sp) if sp else []):
+        for d in parse_declaration(T, s, e) or []:
+            if d.is_ref and T.t(d.type_span[1]) == "&":
+                j = d.type_span[1]
+                return {f.path: _replace(T.source, T[j].pos, T[j].end, "")}, \
+                    f"networkSubBegin copies the capture {d.name}"
+    return None, "no reference binding in networkSubBegin"
+
+
+def ctl_r8(v):
+    """The accessor returns the float vector (NetworkEpoch::x_emit() is `solve.x_s`)."""
+    if not v.epoch:
+        return None, "no epoch function"
+    cp = class_parts(v.tree, lint.EPOCH_HPP, "NetworkEpoch")
+    f = next((x for x in (cp["funcs"] if cp else []) if x["name"] == "x_emit" and x["body"]), None)
+    if f is None:
+        return None, "NetworkEpoch has no x_emit()"
+    T = cp["T"]
+    bo, bc = f["body"]
+    q = next((j for j in range(bc - 1, bo, -1) if T.t(j) == ":" and T.k(j) == "op"), None)
+    if q is None:
+        return None, "x_emit() is not a conditional"
+    return {T.path: T.source[:T[bo].pos] + "{ return " + T.src(q + 1, bc - 1) + "; }" + T.source[T[bc].end:]}, \
+        "NetworkEpoch::x_emit() returns its last branch"
+
+
+def ctl_r9(v):
+    """The epoch's constructor body starts a member off its local's state."""
+    if not v.epoch:
+        return None, "no epoch function"
+    cp = class_parts(v.tree, lint.EPOCH_HPP, "NetworkEpoch")
+    f = next((x for x in (cp["funcs"] if cp else []) if x["name"] == "NetworkEpoch" and x["body"]), None)
+    if f is None:
+        return None, "NetworkEpoch has no constructor body"
+    T = cp["T"]
+    bo, bc = f["body"]
+    return {T.path: T.source[:T[bo].end] + ' funnel.carry_slipped_ambs.insert({0, "G01"}); ' + T.source[T[bc].pos:]}, \
+        "NetworkEpoch's constructor inserts a phantom slip"
+
+
+def ctl_r10(v):
+    """A run reference member made a copy (`const GnssConfig config;`)."""
+    if not v.epoch:
+        return None, "no epoch function"
+    cp = class_parts(v.tree, RUN_HPP, "NetworkRun")
+    m = (cp["members"] if cp else {}).get("config")
+    if m is None:
+        return None, "NetworkRun has no config member"
+    T = cp["T"]
+    j = next((q for q in range(m["start"], m["end"]) if T.t(q) == "&"), None)
+    if j is None:
+        return None, "NetworkRun::config is not a reference"
+    return {T.path: _replace(T.source, T[j].pos, T[j].end, "")}, "NetworkRun::config held by value"
+
+
+def ctl_r11(v):
+    """The run's constructor body logs."""
+    if not v.epoch:
+        return None, "no epoch function"
+    cp = class_parts(v.tree, RUN_HPP, "NetworkRun")
+    f = next((x for x in (cp["funcs"] if cp else []) if x["name"] == "NetworkRun" and x["body"]), None)
+    if f is None:
+        return None, "NetworkRun has no constructor body"
+    T = cp["T"]
+    bo, bc = f["body"]
+    return {T.path: T.source[:T[bo].end] + ' log->info("NetworkRun built"); ' + T.source[T[bc].pos:]}, \
+        "NetworkRun's constructor logs"
+
+
+def ctl_r12(v):
+    """Code between a converted body's `{` and its opening binding marker."""
+    seam = "networkClockQc"
+    if seam not in v.converted:
+        return None, f"{seam} is not converted"
+    for f in v.new_defs(seam):
+        T = v.tree.tokens(f.path)
+        out = f.params[-1].name if f.params else ""
+        return {f.path: T.source[:T[f.body[0]].end] + f' {out}.retro_flag_sats.insert("G01");'
+                + T.source[T[f.body[0]].end:]}, f"{seam} writes {out} before its bindings"
+    return None, f"{seam}'s epoch form is missing"
+
+
+def ctl_r13(v):
+    """A default of a struct that existed at the base changed (NetworkSolveGlueResult::action)."""
+    return _epoch_text_edit(v, SOLVE_HPP, "action{EpochAction::Proceed};", "action{EpochAction::SkipEpoch};",
+                            "NetworkSolveGlueResult::action defaults to SkipEpoch")
+
+
+def ctl_r14(v):
+    """A specification field narrowed (NetworkEngineSpec::vce_window_epochs as float)."""
+    if not v.epoch:
+        return None, "no epoch function"
+    cp = class_parts(v.tree, GROUPS_HPP, "NetworkEngineSpec")
+    m = (cp["members"] if cp else {}).get("vce_window_epochs")
+    if m is None:
+        return None, "NetworkEngineSpec has no vce_window_epochs"
+    T = cp["T"]
+    j = next(q for q in range(m["start"], m["end"]) if T.t(q) == "double")
+    return {T.path: _replace(T.source, T[j].pos, T[j].end, "float ")}, "NetworkEngineSpec::vce_window_epochs is float"
+
+
+def ctl_r15(v):
+    """Two engines' declarations swapped in NetworkRunEngines (construction order)."""
+    if not v.epoch:
+        return None, "no epoch function"
+    cp = class_parts(v.tree, GROUPS_HPP, "NetworkRunEngines")
+    ms = list((cp["members"] if cp else {}).values())
+    if len(ms) < 4:
+        return None, "NetworkRunEngines has fewer than four members"
+    T = cp["T"]
+    src = T.source
+    lines = src.split("\n")
+    a, b = ms[2]["first"] - 1, ms[3]["first"] - 1
+    if ms[2]["last"] != ms[2]["first"] or ms[3]["last"] != ms[3]["first"]:
+        return None, "the members span several lines"
+    lines[a], lines[b] = lines[b], lines[a]
+    return {T.path: "\n".join(lines)}, f"NetworkRunEngines declares {list(cp['members'])[3]} before " \
+                                       f"{list(cp['members'])[2]}"
+
+
+def _insert_in_seam(v, prefer, head, member, statement):
+    """Insert @p statement (a format over the object path) at the top of a per-epoch seam's
+    body, below its bindings: the seam @p prefer when the tree defines it, else the first row
+    of the canonical table that does (the emitter excepted), so the control does not depend on
+    one seam surviving a later base.  The object is `<run>.<member>` in an epoch form, or the
+    explicit definition's parameter @p head."""
+    names = [prefer] + [r.name for r in v.rows if r.name not in (prefer, lint.EMIT)
+                        and not isinstance(r.mech, Explicit)]
+    for name in names:
+        defs = find_defs(v.tree, name)
+        epoch_defs = [f for f in defs if lint.is_epoch_form(f)]
+        for f in epoch_defs + [f for f in defs if not lint.is_epoch_form(f)]:
+            if lint.is_epoch_form(f):
+                obj = f"{f.params[0].name}.{member}"
+            elif any(q.name == head for q in f.params):
+                obj = member.replace(member.split(".")[0], head, 1)
+            else:
+                continue
+            T = v.tree.tokens(f.path)
+            sp = lint.preamble_span(T, f)
+            at = T[sp[1]].pos if sp and sp[1] < f.body[1] else T[f.body[0]].end
+            text = statement.format(obj)
+            return {f.path: T.source[:at] + text + "\n    " + T.source[at:]}, f"{name} runs `{text}`"
+    return None, "no per-epoch seam to write from"
+
+
+def ctl_r16(v):
+    """A second writer of ctx.counters.n_emitted inside the loop (networkIonoDiag)."""
+    return _insert_in_seam(v, "networkIonoDiag", "ctx", "ctx.counters.n_emitted", "++{};")
+
+
+def ctl_r17(v):
+    """A write to a COPY_SOURCE setup field inside the loop (networkSdEwlAr)."""
+    return _insert_in_seam(v, "networkSdEwlAr", "setup", "setup.n_threads", "{} = 1;")
+
+
+def _conv(*names):
+    return lambda v: all(n in v.converted for n in names)
+
+
+def _epoch_only(v):
+    return v.epoch
+
+
 CONTROLS = (
     Control("N1", "V3a", "WCF shape: a by-value copy of we_culprits in the DD build's bindings",
             ctl_preamble_edit("networkBuildCarryDdPriors", "we_culprits", "const WithinEpochCulprits& we_culprits",
-                              "WithinEpochCulprits we_culprits", "we_culprits copied")),
+                              "WithinEpochCulprits we_culprits", "we_culprits copied"),
+            _conv("networkBuildCarryDdPriors")),
     Control("N2", "V3a", "networkPassASlipScan_ binds funnel.carry_slipped_ambs",
             ctl_preamble_edit("networkPassASlipScan_", "carry_slipped_ambs", "funnel.carry_slipped_raw",
-                              "funnel.carry_slipped_ambs", "the raw subset bound to the funnel")),
+                              "funnel.carry_slipped_ambs", "the raw subset bound to the funnel"),
+            _conv("networkPassASlipScan_")),
     Control("N3", "V3a", "networkSolPrep's adapter forwards ep.solve.x_s",
-            ctl_preamble_edit("networkSolPrep", "x_emit", "ep.x_emit()", "ep.solve.x_s", "x_s instead of x_emit")),
-    Control("N4", "V3a", "the solve's internal networkRhsAttribTrip call bound to the epoch", ctl_n4),
+            ctl_preamble_edit("networkSolPrep", "x_emit", "ep.x_emit()", "ep.solve.x_s", "x_s instead of x_emit"),
+            _conv("networkSolPrep")),
+    Control("N4", "V3a", "the solve's internal networkRhsAttribTrip call bound to the epoch", ctl_n4,
+            _conv("networkRhsAttribTrip", "networkSolveGlue")),
     Control("N5", "V3b", "a copy of a captured reference", ctl_n5),
     Control("N6", "V6", "networkIonoDiag and networkDdFrac swapped", ctl_n6),
     Control("N7", "V4", "a driver write into the epoch after the solve", ctl_n7),
     Control("N8", "V1a", "est_index_of sized with 0 instead of -1", ctl_n8),
-    Control("N9", "V1b", "a one-token edit inside a converted body", ctl_n9),
+    Control("N9", "V1b", "a one-token edit inside a converted body", ctl_n9,
+            lambda v: any(v.by_name[n].mech != ADAPTER for n in v.converted)),
     Control("N10", "V1a", "the shadowing dt rewritten to ep.clock.dt", ctl_n10),
-    Control("N11", "V12", "the debug_r_scale warning cut into the engine spec", ctl_n11),
+    Control("N11", "V12", "a log line cut into the engine spec", ctl_n11),
     Control("N12", "V13", "networkFixedCycles defined with `ep` as a parameter name", ctl_n12),
-    Control("N13", "V2", "networkClockQc given EpochPassA& as a second output", ctl_n13),
-    Control("N14", "V1b", "the replay's WCF resolves counter dropped", ctl_n14),
-    Control("N15", "V10", "networkHandoverStransformBeforeRows binds ep.solve.plan", ctl_n15),
-    Control("N16", "V4", "ep.emitted stored before networkEmitStore", ctl_n16),
+    Control("N13", "V2", "networkClockQc given EpochPassA& as a second output", ctl_n13, _conv("networkClockQc")),
+    Control("N14", "V1b", "the replay's WCF resolves counter dropped", ctl_n14, _conv("networkSolveGlue")),
+    Control("N15", "V10", "networkHandoverStransformBeforeRows binds ep.solve.plan", ctl_n15,
+            _conv("networkHandoverStransformBeforeRows")),
+    Control("N16", "V4", "ep.emitted stored before networkEmitStore", ctl_n16, _epoch_only),
+    # The review round (each a mutation an earlier verifier accepted).
+    Control("R1", "V1a", "the shadowing dt's reads rewritten to ep.clock.dt (beside N10)", ctl_r1, _epoch_only),
+    Control("R2", "V3b", "an epoch-preamble copy declared with another type", ctl_r2, _epoch_only),
+    Control("R3", "V3a", "a seam binding direct-initialized with a narrower type", ctl_r3, _conv("networkClockQc")),
+    Control("R4", "V3a", "the DD build's third-band forwarder negated", ctl_r4,
+            lambda v: "networkBuildCarryDdPriors" in v.converted and v.callable_closure() is not None),
+    Control("R5", "V3b", "the epoch preamble's third-band forwarder negated", ctl_r5,
+            lambda v: v.epoch and "networkBuildCarryDdPriors" not in v.converted
+            and v.callable_closure() is not None),
+    Control("R6", "V1d", "a predicate binding that shadows a function its body calls", ctl_r6,
+            lambda v: v.epoch and v.callable_closure() is not None),
+    Control("R7", "V1d", "a bracket capture by reference made a copy", ctl_r7, _epoch_only),
+    Control("R8", "V3c", "NetworkEpoch::x_emit() returns the float vector", ctl_r8, _epoch_only),
+    Control("R9", "V3c", "NetworkEpoch's constructor writes a member", ctl_r9, _epoch_only),
+    Control("R10", "V3d", "a run reference member held by value", ctl_r10, _epoch_only),
+    Control("R11", "V3d", "NetworkRun's constructor logs", ctl_r11, _epoch_only),
+    Control("R12", "V1b", "code before a converted seam's bindings", ctl_r12, _conv("networkClockQc")),
+    Control("R13", "V1e", "a default of a struct the base has changed", ctl_r13),
+    Control("R14", "V12", "a specification field narrowed", ctl_r14, _epoch_only),
+    Control("R15", "V1d", "two engines' construction order swapped", ctl_r15, _epoch_only),
+    Control("R16", "V1a", "a second in-loop writer of ctx.counters.n_emitted (VALUE_EQUAL)", ctl_r16),
+    Control("R17", "V3b", "a setup field written inside the loop (COPY_SOURCE)", ctl_r17),
 )
 ALSO = {"N8": ("V3c",), "N10": ("V3e",), "N16": ("V6",), "N4": ("V10",), "N13": ("V8",)}
+# Controls that fire only when every named check fails (spec 5.7: N4 fails V3a at the solve's
+# internal call "and V10").
+REQUIRE_ALL = {"N4"}
 # Controls the permanent lint (scripts/nom_epoch_lint.py, run standalone on the mutated tree)
 # must also fail (spec 5.7: N7 "V4 (and the lint)"; N16 is a driver write the lint's V4 owns).
 LINT_CONTROLS = ("N7", "N16")
@@ -3225,8 +4608,17 @@ def run_controls(fz, tree, rows, converted, args, out):
         except Exception as ex:  # noqa: BLE001
             ov, what = None, f"the mutation could not be built ({type(ex).__name__}: {ex})"
         if ov is None:
-            results.append((ctl, "pending", what, []))
-            out(f"  {ctl.cid:4s} {ctl.check:4s} pending   {ctl.what}: {what}")
+            try:
+                due = ctl.due(base)
+            except Exception:  # noqa: BLE001
+                due = True
+            if due:
+                results.append((ctl, "MISSING", what, []))
+                out(f"  {ctl.cid:4s} {ctl.check:4s} MISSING   {ctl.what}: {what} (this stage must have the "
+                    "control's target)")
+            else:
+                results.append((ctl, "pending", what, []))
+                out(f"  {ctl.cid:4s} {ctl.check:4s} pending   {ctl.what}: {what}")
             continue
         mtree = tree.overlay(ov)
         t0 = time.time()
@@ -3237,7 +4629,7 @@ def run_controls(fz, tree, rows, converted, args, out):
         except SystemExit as ex:
             failed, res = ["(the mutated tree could not be read: %s)" % ex], None
         names = (ctl.check,) + ALSO.get(ctl.cid, ())
-        fired = any(n in failed for n in names)
+        fired = (all if ctl.cid in REQUIRE_ALL else any)(n in failed for n in names)
         lint_note = ""
         if ctl.cid in LINT_CONTROLS and lint_ok is not None:
             lrc, llines = _lint_rc(mtree, partial, args.presolve_writer)
