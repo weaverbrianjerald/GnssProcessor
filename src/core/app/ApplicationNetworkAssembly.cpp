@@ -2903,11 +2903,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double pl_q_amb      = ctx.knobs.pl_q_amb;
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
-    const bool   pl_los_scale  = ctx.knobs.pl_los_scale;  // per-LOS B_eff variance scale at inject (F1, SPEC_amb_iono_split_overcount); off = byte-identical
     const bool   pl_local_block = ctx.knobs.pl_local_block; // station-wide jointly whitened local block at inject (F3, SPEC_amb_iono_split_overcount); off = byte-identical
     // Record, per folded ambiguity column, the variance the fold actually used and
-    // the route it took, into this station's own StationAssembly (the pl_los_beff
-    // discipline; network.trace_amb_state, RF-1 §7.4).  Measure-only; when off the
+    // the route it took, into this station's own StationAssembly (network.trace_amb_state,
+    // RF-1 §7.4).  Measure-only; when off the
     // map is never touched, so the produce loop pays one bool test per folded column.
     const bool   amb_state_tr  = ctx.knobs.trace_amb_state;
     // The ambiguity vehicle owns the slip response (RF-1 step 4).  Under float_kf the
@@ -2964,7 +2963,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double zwd_q_eff     = ctx.knobs.zwdQEff(zwd_seam_live);
     // Live predicate for B9-in-block (network.carry_zwd_in_block): the carried ZWD
     // column joins the F3 whitened block instead of folding as a diagonal coupling row
-    // outside it.  Conjoined with pl_blk_on, so a station-epoch that takes the F1 /
+    // outside it.  Conjoined with pl_blk_on, so a station-epoch that takes the
     // per-column route (F3 off, joint whitening on, coupling rows off) is never
     // touched; there the ZWD keeps its B9 row.  The loader already refuses the arm
     // without carry_zwd + phase_leveling_local_block; this is the live half of the
@@ -3767,30 +3766,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 // its harvest still feeds the VCE monitor and the sticky tree.
                 const bool do_amb_carry =
                     (phase_datum_prioritized || !st.is_pivot) && !carry_invariant;
-                // Per-LOS variance scale (F1, network.phase_leveling_los_scale,
-                // SPEC_amb_iono_split_overcount).  Each carried ambiguity row's variance
-                // is the per-column conditional on the shared border, marginal over the
-                // LOS's own free slant iono, so with phase ≈ exact
-                // (N_b = c_b + (μ_b/λ_b)·I) the B rows of one (station, satellite) LOS
-                // assert the same iono-direction datum B times per epoch, and the carry
-                // recursion runs p_k = B·p_{k−1} + p_code instead of p_{k−1} + p_code
-                // (the formal σ collapses geometrically and the level freezes at
-                // K_eff = (B+1)/(B−1) epochs).  Multiplying each row's variance by B_eff
-                // (the carried columns injected on that LOS this epoch) makes the B rows
-                // sum to one unit of iono-direction precision, exact along that
-                // direction; along the B−1 lane directions the prior is B× looser, which
-                // the phase rows re-fix every epoch at σ_φ.  Station-common directions
-                // (rx clock / ZWD / rx-DCB, shared by every LOS of the station) stay
-                // over-counted ~n_sat×; F1 names that but does not fix it.  F1 only
-                // loosens.
-                //
                 // Structure: the variance tail (var floor, then the M2 v2 VCE factor) and
-                // the row build are one lambda each, shared by the inline (off) route and
-                // the deferred (on) route so the two cannot drift.  Off: the loop body is
-                // the inline sequence with the tail/build behind the lambdas, the same
-                // operations in the same order, byte-identical.  On: B_eff is a property
-                // of the whole LOS, so injectable columns are collected first and then
-                // scaled and built in the same visiting order.
+                // the row build are one lambda each, shared by the inline route and the
+                // deferred F3 route so the two cannot drift.  Under F3 the injectable
+                // columns are collected first and then folded as one block, or built per
+                // column in the same visiting order on a factorization fallback.
                 //
                 // M2 v2 (docs/SPEC_carry_vce_apply.md §2): the LASER 5-95 variance
                 // factor, applied last ("the hand model evaluated as today, then × α²").
@@ -3836,7 +3816,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     inj.emplace_back(col, lambda, eta, amb_tag);
                     amb_state_note(sat, signal, var_eff, AmbFoldRoute::Diag);
                 };
-                struct PlPend {   // an injectable column awaiting its LOS B_eff (F1 on route)
+                struct PlPend {   // an injectable column awaiting the F3 block (or its fallback)
                     Eigen::Index col; int amb_idx; const LocalCarry* lc;
                     double var_eff;   // var + q·gap, before the tail
                     double gap;       // clamped
@@ -3845,7 +3825,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 std::vector<PlPend> pl_pend;   // stays empty when off
                 // This station's LOS elevations by satellite, for the birth-prior
                 // floor's elevation mapping (RF-1 step 4).  Built only when the floor is
-                // armed (the pl_los_beff / el_of precedent), so an unarmed run never
+                // armed (the el_of precedent), so an unarmed run never
                 // walks the modeled set for this.
                 std::map<std::string, double> amb_elev_of;
                 if (amb_floor_on)
@@ -3969,12 +3949,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // load-bearing here, and this guards the opposite (lock-in)
                     // direction.
                     double var_eff = cit->second.var + pl_q_amb * std::max(0.0, gap);
-                    if (pl_los_scale || pl_blk_on) {
-                        // Deferred route (F1 / F3).  Membership uses the same positivity
-                        // predicate the inline route applies to the (unscaled) tail;
-                        // ×B_eff, a finite integer ≥ 1, cannot flip it, so the injected
-                        // set is identical.  (F3 reads the same finished tail as its Σ
-                        // diagonal, and its scalar screen is the row build's own.)
+                    if (pl_blk_on) {
+                        // Deferred route (F3).  Membership uses the same positivity
+                        // predicate the inline route applies to the tail.  (F3 reads the
+                        // same finished tail as its Σ diagonal, and its scalar screen is
+                        // the row build's own.)
                         if (!(pl_finish_var(var_eff, parts->satellite) > 0.0)) continue;
                         pl_pend.push_back(PlPend{col, amb_idx, &cit->second, var_eff,
                                                  std::max(0.0, gap), parts->satellite,
@@ -4002,10 +3981,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 //     the block the harvested (N_rr⁻¹) cross terms subtract that overlap
                 //     exactly.  Consequently there is no inject-side var floor (the floor
                 //     bounded how far a double-counted prior could out-stiffen the code
-                //     channel; exactness replaces it), no F1 los_scale (F1 repairs the
-                //     same over-count the block already handles, so applying it here would
-                //     under-weight), and no F3 young-column age gate (a first sighting
-                //     already carries nothing).
+                //     channel; exactness replaces it); a first sighting already carries
+                //     nothing.
                 std::vector<LocalBlockCol> iono_bc;
                 if (iono_blk_on) {
                     // q is per epoch (m² at L1), so the gap needs an epoch length, taken
@@ -4080,13 +4057,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 //     near-constant bias; the sim injects a fixed 8.000 m) and takes a pure
                 //     random walk.
                 //
-                //     Differences from an ambiguity column, as for the ZWD: no F3
-                //     young-column age gate (a clock is not an arc and has no code-level
-                //     birth error to quarantine; its uninformative first prior serves as
-                //     the quarantine), no pl_finish_var tail (the var floor and the M2 VCE
-                //     factor are keyed to the phase-leveling ambiguity family, α² being a
-                //     per-satellite lookup), and vce_fac 1.0, so the cross terms are
-                //     unscaled.
+                //     Differences from an ambiguity column, as for the ZWD: no
+                //     pl_finish_var tail (the var floor and the M2 VCE factor are keyed to
+                //     the phase-leveling ambiguity family, α² being a per-satellite
+                //     lookup), and vce_fac 1.0, so the cross terms are unscaled.
                 std::vector<LocalBlockCol> rxclk_bc;
                 // The drift-predicted copies that the pushed columns point at.  A copy
                 // rather than a mutation of the carry map, because PASS B's contract is
@@ -4291,39 +4265,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         // (departed / stale / freed / reseed / non-finite x_lin) is thereby
                         // marginalized out of the block: invariant #7's decoupling edge,
                         // counted here and never conditioned on.  A non-SPD factor falls
-                        // through to the per-column route below (F1-scaled if armed) and is
-                        // counted; F1's pl_los_beff mirror stays empty on a whitened block,
-                        // which is how the harvest mirror knows nothing was scaled.
-                        // Block admission age gate
-                        // (network.phase_leveling_local_block_min_age_ep, SPEC_amb_iono
-                        // §6.12): a leg younger than the gate (loop epochs since its first
-                        // stash) stays out of the block, because it carries its code-level
-                        // birth error and the joint whitening would spread that into the
-                        // station's mature columns.  In the default "free" mode the young
-                        // leg is not injected at all; in "diagonal" mode it is emitted
-                        // below as a per-column row (F1-scaled over the young set when
-                        // los_scale is armed).  0 = off: every pending column enters.
-                        const int  pl_min_age = ctx.knobs.pl_blk_min_age_ep;
-                        const long long loop_ep_now =
-                            static_cast<long long>(ctx.counters.n_loop_epochs);
-                        std::vector<PlPend> pl_young;
+                        // through to the per-column route below and is counted.
                         std::vector<LocalBlockCol> bc;
                         bc.reserve(pl_pend.size());
                         for (const PlPend& p : pl_pend) {
-                            // localCarryYoung (filter/NetworkRunTypes.hpp) is the single
-                            // definition of the maturity test, shared with the cold
-                            // anchor-fallback candidacy bar, including the restored-arc
-                            // age convention (SPEC_event_harness §15.4): a non-positive
-                            // birth stamp is never young.
-                            if (localCarryYoung(*p.lc, loop_ep_now, pl_min_age)) {
-                                // "free" (default): the young leg is not injected at all;
-                                // it re-solves from this epoch's data and carries no memory
-                                // until it matures.  "diagonal": deferred to the per-column
-                                // route below (measured harmful, kept for the record).
-                                if (!ctx.knobs.pl_blk_young_free) pl_young.push_back(p);
-                                else ++R.pl_blk_young_cols;
-                                continue;
-                            }
                             bc.push_back(LocalBlockCol{
                                 p.col, x_lin(p.amb_idx), p.lc,
                                 pl_finish_var(p.var_eff, p.sat), p.gap,
@@ -4335,20 +4280,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                 if (const auto col_sig = SignalId::fromObsCode(col_sat->sys, p.signal))
                                     bc.back().signal = *col_sig;
                             }
-                        }
-                        R.pl_blk_young_cols += static_cast<long long>(pl_young.size());
-                        // "free" young legs must not fall through to the per-column fallback
-                        // either: drop them from pl_pend so a factorization failure re-emits
-                        // only the mature set (and the marginalized count below reads them as
-                        // kept out of the block, which they are).
-                        if (ctx.knobs.pl_blk_young_free && pl_min_age > 0
-                            && bc.size() != pl_pend.size()) {
-                            std::vector<PlPend> mature;
-                            mature.reserve(bc.size());
-                            for (const PlPend& p : pl_pend)
-                                if (!localCarryYoung(*p.lc, loop_ep_now, pl_min_age))
-                                    mature.push_back(p);
-                            pl_pend.swap(mature);
                         }
                         long long n_sta_carry = 0;   // read-only walk of this station's entries
                         for (auto it = local_carry.lower_bound(std::make_tuple(
@@ -4372,11 +4303,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         //
                         // The predicates are the B9 injector's own, re-read here (the
                         // behaviour is not duplicated: the diagonal route below is skipped
-                        // for exactly the station-epochs this pushes).  Three deliberate
+                        // for exactly the station-epochs this pushes).  Two deliberate
                         // differences from an ambiguity column:
-                        //   * No young-column age gate: a ZWD is not an arc, it has no
-                        //     code-level birth error to quarantine, and its state exists
-                        //     from the station's first epoch.
                         //   * No pl_finish_var tail: the var floor and the M2 VCE factor
                         //     are keyed to the phase-leveling ambiguity family (α² is a
                         //     per-satellite lookup), so the block's ZWD diagonal is the
@@ -4471,10 +4399,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         // arc instead of only as a run total.
                         if (amb_state_tr && blk_done)
                             for (const PlPend& p : pl_pend)
-                                if (!localCarryYoung(*p.lc, loop_ep_now, pl_min_age))
-                                    amb_state_note(p.sat, p.signal,
-                                                   pl_finish_var(p.var_eff, p.sat),
-                                                   AmbFoldRoute::Block);
+                                amb_state_note(p.sat, p.signal,
+                                               pl_finish_var(p.var_eff, p.sat),
+                                               AmbFoldRoute::Block);
                         // I-in-block degrade edge (invariant #4/#7): a non-SPD block means
                         // the iono carries did not act this station-epoch.  Unlike the ZWD
                         // there is no diagonal row to fall back to, by design, so this is a
@@ -4549,57 +4476,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             R.pl_zwd_in_block = true;
                             R.pl_zwd_injected = true;   // a carry was actually folded (L7)
                         }
-                        // In "diagonal" mode the young legs take the per-column route
-                        // whether or not the block factorized (on a fallback the loop below
-                        // re-emits every pending column, young ones included, so they are
-                        // emitted here only on success).  In "free" mode pl_young is empty.
-                        if (blk_done && !pl_young.empty()) {
-                            std::map<std::string, int> beff_y;
-                            if (pl_los_scale) {
-                                for (const PlPend& p : pl_young) ++beff_y[p.sat];
-                                for (const auto& [sat, b] : beff_y)
-                                    ++R.pl_los_scale_hist[std::min(b, 4) - 1];
-                            }
-                            for (const PlPend& p : pl_young) {
-                                double var_eff = p.var_eff;
-                                if (pl_los_scale) {
-                                    const int b = beff_y[p.sat];
-                                    if (b > 1) {
-                                        var_eff *= static_cast<double>(b);
-                                        ++R.pl_los_scale_rows;
-                                    }
-                                    R.pl_los_beff[{p.sat, p.signal}] = b;
-                                }
-                                var_eff = pl_finish_var(var_eff, p.sat);
-                                pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap,
-                                            p.sat, p.signal);
-                            }
-                        }
                     }
                     if (!blk_done) {
-                        // Per-LOS route (F1, or the F3 fallback): B_eff per (station,
-                        // satellite) LOS = injectable columns on it, then the tail and build
-                        // in the original visiting order.  Telemetry is per station here
-                        // (parallel produce) and folded serially below.  With F1 off (F3
-                        // fallback only) this is the plain per-column route: tail and
-                        // build, unscaled.
-                        std::map<std::string, int> beff;
-                        if (pl_los_scale) {
-                            for (const PlPend& p : pl_pend) ++beff[p.sat];
-                            for (const auto& [sat, b] : beff)
-                                ++R.pl_los_scale_hist[std::min(b, 4) - 1];
-                        }
+                        // The F3 fallback: the plain per-column route, tail and build in
+                        // the original visiting order.
                         for (const PlPend& p : pl_pend) {
-                            double var_eff = p.var_eff;
-                            if (pl_los_scale) {
-                                const int b = beff[p.sat];
-                                if (b > 1) {
-                                    var_eff *= static_cast<double>(b);
-                                    ++R.pl_los_scale_rows;
-                                }
-                                R.pl_los_beff[{p.sat, p.signal}] = b;
-                            }
-                            var_eff = pl_finish_var(var_eff, p.sat);
+                            const double var_eff = pl_finish_var(p.var_eff, p.sat);
                             pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap,
                                         p.sat, p.signal);
                         }
@@ -5078,14 +4960,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             }
         }
     }
-    // Fold the per-station LOS-scale telemetry (F1, network.phase_leveling_los_scale;
-    // counted in the parallel produce, reduced serially here).
-    if (pl_los_scale)
-        for (const StationAssembly& Rc : asm_res) {
-            ctx.counters.n_pl_los_scale_rows += Rc.pl_los_scale_rows;
-            for (int b = 0; b < 4; ++b)
-                ctx.counters.n_pl_los_scale_hist[b] += Rc.pl_los_scale_hist[b];
-        }
     // Fold the per-station block telemetry (F3, network.phase_leveling_local_block;
     // same discipline).  Keyed on the knob, not the live predicate, so an armed but
     // inert posture still prints its zeros at run end (invariant #4).
@@ -5118,7 +4992,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             ctx.counters.n_pl_blk_pair_missing += Rc.pl_blk_pair_missing;
             ctx.counters.n_pl_blk_col_refused  += Rc.pl_blk_col_refused;
             ctx.counters.n_pl_blk_fallback     += Rc.pl_blk_fallback;
-            ctx.counters.n_pl_blk_young_cols   += Rc.pl_blk_young_cols;
             // B9-in-block: same discipline (counted in the parallel produce, reduced here).
             ctx.counters.n_pl_blk_zwd_cols          += Rc.pl_blk_zwd_cols;
             ctx.counters.n_pl_blk_zwd_fallback_diag += Rc.pl_blk_zwd_fallback_diag;

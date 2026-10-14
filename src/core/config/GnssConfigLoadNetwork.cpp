@@ -4201,39 +4201,10 @@ namespace GnssProcessor {
             jval<double>(json, "network.phase_leveling_max_gap_s", "phase_leveling_max_gap_s", 120.0);
         network_phase_leveling_var_floor_m2_ =
             jval<double>(json, "network.phase_leveling_var_floor_m2", "phase_leveling_var_floor_m2", 0.0);
-        // Per-LOS B_eff scale of the carried ambiguity row variance at inject (F1;
-        // SPEC_amb_iono_split_overcount).  Default off = byte-identical.
-        network_phase_leveling_los_scale_ =
-            jval<bool>(json, "network.phase_leveling_los_scale", "phase_leveling_los_scale", false);
         // Station-wide jointly whitened local block on the carried ambiguity inject
         // (F3; SPEC_amb_iono_split_overcount).  Default off = byte-identical.
         network_phase_leveling_local_block_ =
             jval<bool>(json, "network.phase_leveling_local_block", "phase_leveling_local_block", false);
-        // Admission age gate for the F3 block (SPEC_amb_iono_split_overcount §6.12): legs
-        // younger than this many loop epochs are injected per column, not in the block.
-        // 0 = off.
-        network_phase_leveling_local_block_min_age_ep_ =
-            jval<int>(json, "network.phase_leveling_local_block_min_age_ep",
-                      "phase_leveling_local_block_min_age_ep", 0);
-        if (network_phase_leveling_local_block_min_age_ep_ < 0)
-            throw std::runtime_error("network.phase_leveling_local_block_min_age_ep must be >= 0");
-        network_phase_leveling_local_block_young_mode_ =
-            jval<std::string>(json, "network.phase_leveling_local_block_young_mode",
-                              "phase_leveling_local_block_young_mode", "free");
-        if (network_phase_leveling_local_block_young_mode_ != "free"
-            && network_phase_leveling_local_block_young_mode_ != "diagonal")
-            throw std::runtime_error("network.phase_leveling_local_block_young_mode must be "
-                                     "\"free\" or \"diagonal\"");
-        if (network_phase_leveling_local_block_min_age_ep_ > 0
-            && network_phase_leveling_local_block_young_mode_ == "diagonal")
-            log->warn("Network (F3 age gate): young_mode \"diagonal\" is MEASURED HARMFUL (runs/"
-                      "readmit8h_young: every hour back at the pre-F1 over-count — any diagonal "
-                      "leveling row re-asserts the station-common directions ~n*B-fold); armed "
-                      "for the record only.");
-        if (network_phase_leveling_local_block_min_age_ep_ > 0 && !network_phase_leveling_local_block_)
-            log->warn("Network (F3 age gate): network.phase_leveling_local_block_min_age_ep is set "
-                      "but network.phase_leveling_local_block is OFF — there is no block to keep a "
-                      "young leg out of, so the gate is INERT this run.");
         // ---- The ambiguity vehicle and its supporting knobs (RF-1;
         //      docs/refound/RF-1_float_ambiguities_design.md §7.1).
         //
@@ -4244,7 +4215,7 @@ namespace GnssProcessor {
         // CouplingRowBuilder::buildLocalBlock, the floored birth prior and bounded drop of
         // filter/NetworkAmbFloat.hpp) and reaches the driver as
         // NetworkKnobs::amb_float_kf.  The cross-section interlocks (float_kf requires
-        // phase_leveling and !carry_invariant; F1/F3 are refused under it) live in
+        // phase_leveling and !carry_invariant; F3 is refused under it) live in
         // validateNetworkCarryPosture_, the first point where network_carry_invariant_ is
         // populated.
         {
@@ -10862,17 +10833,6 @@ namespace GnssProcessor {
                           "sat phase-bias {:.2e} m², sat code-bias {:.2e} m² (caps Λ so a stiff zero-q "
                           "carry cannot lock a biased product in; 0 = off).",
                           network_shared_carry_var_floor_pb_m2_, network_shared_carry_var_floor_cb_m2_);
-            if (network_phase_leveling_los_scale_)
-                log->info("Network producer (phase-leveling F1): per-LOS variance scale ARMED — at "
-                          "inject every carried ambiguity row's variance is multiplied by B_eff, the "
-                          "number of carried ambiguity columns injected on the same (station, "
-                          "satellite) line of sight this epoch (after q·gap, before the var floor "
-                          "and the VCE factor), so the B rows of one LOS sum to ONE unit of "
-                          "iono-direction precision instead of B — undoing the per-LOS B-fold "
-                          "over-count of the iono-direction carry precision "
-                          "(SPEC_amb_iono_split_overcount: p_k = B·p_k-1 + p_code froze the level "
-                          "at K_eff = (B+1)/(B-1) epochs).  B_eff = 1 ⇒ unchanged; loosens only.  "
-                          "Run-end line 'Network (leveling LOS-scale F1)' is the ON-path telemetry.");
             if (network_phase_leveling_local_block_)
                 log->info("Network producer (phase-leveling F3): station-wide jointly-whitened "
                           "local block ARMED — each station's injectable carried ambiguity "
@@ -10883,39 +10843,23 @@ namespace GnssProcessor {
                           "pinned) out of Sigma, factors Sigma = L L^T and emits n unit-weight "
                           "rows L^-1 [I | M | y] — exact for EVERY local-local direction given "
                           "the border, i.e. the per-LOS iono direction AND the station-common "
-                          "rx clock / ZWD / rx-DCB directions F1 leaves over-counted "
+                          "rx clock / ZWD / rx-DCB directions alike "
                           "(SPEC_amb_iono_split_overcount).  A non-SPD factor falls back to the "
                           "per-column rows for that station-epoch and is counted.  Run-end line "
-                          "'Network (leveling local-block F3)' is the ON-path telemetry.{}",
-                          network_phase_leveling_los_scale_
-                              ? "  phase_leveling_los_scale is ALSO armed: F3 supersedes it on "
-                                "every whitened block; the F1 scale applies only on a "
-                                "factorization fallback."
-                              : "");
+                          "'Network (leveling local-block F3)' is the ON-path telemetry.");
         } else if (network_cycle_slip_turbo_edit_) {
             log->warn("Network: network.cycle_slip.turbo_edit is on but network.phase_leveling is "
                       "off — T0 slip repair acts on the carried ambiguities, so it is INERT "
                       "without phase-leveling.  Enable network.phase_leveling too.");
         }
-        // Inert guard for F1: the scale acts on the phase-leveling carry rows at their
-        // inject site, which exists only when that carry is the live vehicle
-        // (phase_leveling on and carry_invariant off; card 4's DD carry supersedes it and
-        // `do_amb_carry` skips the inject outright).  network_carry_invariant_ is
-        // populated by this point (the M2 v2 guard below relies on the same).
-        if (network_phase_leveling_los_scale_
-            && (!network_phase_leveling_ || network_carry_invariant_))
-            log->warn("Network: network.phase_leveling_los_scale is on but the phase-leveling "
-                      "ambiguity carry is NOT folded on this lineage (phase_leveling={}, "
-                      "carry_invariant={}) — F1 scales those carry rows at inject, so there is "
-                      "nothing to scale: this knob is INERT on this posture (standing invariant "
-                      "#4).  Arm it on a phase_leveling, non-carry_invariant lineage.",
-                      network_phase_leveling_, network_carry_invariant_);
-        // Inert guard for F3: the block is built at the same inject site as F1 (so the
-        // same phase_leveling / carry_invariant conditions apply), and its rows live in
-        // A_s/A_r as card-1 coupling rows, so it needs carry_conditional_coupling; the
-        // card-1b joint departed-column whitening owns that station's row block in this
-        // build (mutually exclusive: the block path is predicated on !carry_cpl_joint at
-        // the inject).  All four members are populated by here.
+        // Inert guard for F3: the block is built at the phase-leveling carry's inject site,
+        // which exists only when that carry is the live vehicle (phase_leveling on and
+        // carry_invariant off; card 4's DD carry supersedes it and `do_amb_carry` skips the
+        // inject outright), and its rows live in A_s/A_r as card-1 coupling rows, so it
+        // needs carry_conditional_coupling; the card-1b joint departed-column whitening owns
+        // that station's row block in this build (mutually exclusive: the block path is
+        // predicated on !carry_cpl_joint at the inject).  All four members are populated by
+        // here.
         if (network_phase_leveling_local_block_
             && (!network_phase_leveling_ || network_carry_invariant_
                 || !network_carry_conditional_coupling_ || network_carry_coupling_joint_whiten_))
@@ -10953,22 +10897,11 @@ namespace GnssProcessor {
                            network_phase_leveling_, network_carry_invariant_);
                 return false;
             }
-            // The F1 scale (×B_eff) and the F3 station-wide whitened block are the
-            // mechanisms float_kf subsumes: the joint block removes the per-LOS iono
-            // over-count exactly where F1 corrects it approximately, and F3's
+            // The F3 station-wide whitened block is the mechanism float_kf subsumes: F3's
             // buildLocalBlock is the fold that float_kf makes structural (design §3.2 /
-            // §4.1).  Leaving either armed beside the vehicle would make the effective fold
-            // unattributable between two knobs, so both are refused with a log line rather
-            // than silently ignored.
-            if (network_phase_leveling_los_scale_) {
-                log->error("Network (RF-1 §7.1): network.phase_leveling_los_scale (F1) is REFUSED "
-                           "under network.ambiguity_vehicle = \"float_kf\" and has been forced "
-                           "OFF.  F1's ×B_eff is an APPROXIMATE correction for the per-LOS iono "
-                           "over-count that the vehicle's joint block removes EXACTLY; arming "
-                           "both would apply the correction twice and make the fold "
-                           "un-attributable between two knobs.");
-                network_phase_leveling_los_scale_ = false;
-            }
+            // §4.1).  Leaving the knob armed beside the vehicle would make the effective
+            // fold unattributable between two switches, so it is refused with a log line
+            // rather than silently ignored.
             if (network_phase_leveling_local_block_) {
                 log->error("Network (RF-1 §7.1): network.phase_leveling_local_block (F3) is "
                            "REFUSED under network.ambiguity_vehicle = \"float_kf\" and has been "
@@ -11455,10 +11388,9 @@ namespace GnssProcessor {
                           "against every carried ambiguity column, one Cholesky for the whole "
                           "station) instead of folding as a diagonal coupling row outside it — the "
                           "station-common ZWD direction is then asserted ONCE per epoch, not once "
-                          "per carried row.  Exempt from the F3 young-column age gate ({} ep): a "
-                          "ZWD is not an arc.  A non-SPD block degrades this station-epoch to the "
+                          "per carried row.  A non-SPD block degrades this station-epoch to the "
                           "B9 diagonal row (counted).  RW q {:.3e} m²/s.",
-                          network_phase_leveling_local_block_min_age_ep_, network_zwd_carry_q_);
+                          network_zwd_carry_q_);
             }
         } else if (network_carry_zwd_ && network_phase_leveling_local_block_) {
             // The converse of the interlocks above, and the only combination the ledger calls a
@@ -11530,9 +11462,9 @@ namespace GnssProcessor {
                           "per-LOS iono direction is then asserted ONCE per epoch on top "
                           "of the B band priors, not twice.  ABSOLUTE value carried "
                           "(x_lin + x_r).  RW q {:.3e} m² PER EPOCH at L1 (⚠ per epoch, "
-                          "not per second), stale drop at {:.0f} s{}.  No var floor, no "
-                          "F1 los_scale, no F3 young-column age gate (first sighting "
-                          "already carries nothing).  A non-SPD block folds NO iono this "
+                          "not per second), stale drop at {:.0f} s{}.  No var floor (a "
+                          "first sighting already carries nothing).  A non-SPD block folds "
+                          "NO iono this "
                           "station-epoch (counted) — there is deliberately no diagonal "
                           "fallback row.",
                           network_carry_iono_in_block_q_m2_,

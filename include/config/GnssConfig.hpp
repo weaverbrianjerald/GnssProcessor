@@ -1941,41 +1941,13 @@ namespace GnssProcessor {
         double networkPhaseLevelingVarFloorM2() const { return network_phase_leveling_var_floor_m2_; }
 
         /**
-         * @brief Per-LOS variance scale (F1) on the phase-leveling carry inject
-         *        (@c network.phase_leveling_los_scale, default off).
-         *
-         * The leveling carry stashes one scalar variance per (station, satellite,
-         * signal) ambiguity column (the pure conditional on the shared border,
-         * marginal over the LOS's own free slant iono; card 1) and injects each
-         * column as its own row.  With phase ≈ exact, the B band ambiguities of
-         * one LOS are affine in that single free iono (N_b = c_b + (μ_b/λ_b)·I),
-         * so the B rows assert the same iono-direction datum B times per epoch
-         * and the carried precision compounds as p_k = B·p_{k−1} + p_code instead
-         * of p_{k−1} + p_code: the formal σ shrinks geometrically while the value
-         * freezes at K_eff = (B+1)/(B−1) epochs (the per-LOS B-fold over-count of
-         * the iono-direction carry precision; SPEC_amb_iono_split_overcount).
-         *
-         * When armed, every carried ambiguity row's effective variance is
-         * multiplied by B_eff, the number of carried ambiguity columns injected
-         * on the same (station, satellite) LOS this epoch; the factor applies
-         * after the q·gap term and before the var floor and the VCE factor.
-         * Along the iono direction the B rows then sum to exactly 1/var(I_prev)
-         * (correct recursion); along the B−1 lane directions the prior is B×
-         * looser, which the phase rows re-fix every epoch at σ_φ.  B_eff = 1 ⇒
-         * unchanged.  The knob only loosens priors.  Station-common directions
-         * (rx clock / ZWD / rx-DCB) remain over-counted ~n_sat×; this knob does
-         * not address them (see @ref networkPhaseLevelingLocalBlock).  Off =
-         * byte-identical.
-         */
-        bool networkPhaseLevelingLosScale() const { return network_phase_leveling_los_scale_; }
-
-        /**
          * @brief Station-wide jointly whitened local block (F3) on the
          *        phase-leveling carry inject (@c network.phase_leveling_local_block,
          *        default off).
          *
-         * F1 (@ref networkPhaseLevelingLosScale) is exact along each LOS's iono
-         * direction but leaves the station-common directions (receiver clock, ZWD,
+         * F1 (the retired per-LOS variance scale, @c network.phase_leveling_los_scale)
+         * was exact along each LOS's iono direction but left the station-common
+         * directions (receiver clock, ZWD,
          * receiver DCB) over-counted ~n_LOS×, because every carried ambiguity row
          * of a station asserts the same station-common datum again (on the quiet
          * sim bed, a ZWD formal σ of 0.005 m against 0.35 m actual at hour 2).
@@ -1988,14 +1960,14 @@ namespace GnssProcessor {
          * unchanged predicates (departed / stale / freed / reseed / pinned columns
          * are marginalized out of Σ, never conditioned on), adds q·gap and the var
          * floor on the diagonal only, factors Σ = LLᵀ (LLT with a ridge retry;
-         * on failure it falls back to the per-column rows, F1-scaled if armed, and
-         * counts it), and emits n unit-weight rows
+         * on failure it falls back to the per-column rows and counts it), and emits n
+         * unit-weight rows
          * L⁻¹·[(value_abs − x_lin) + Σ_j M_j ŝ_prev,j], with A_r = L⁻¹ over the
          * block's local columns and A_s = L⁻¹·(per-column regressor rows).
          *
          * That is exact for every local-local direction given the border (the
-         * per-LOS iono direction and the station-common ones alike), so it
-         * supersedes F1 wherever a block whitens.  The harvest re-stashes the whole
+         * per-LOS iono direction and the station-common ones alike).  The harvest
+         * re-stashes the whole
          * block each epoch from the posterior, so Σ does not drift.
          *
          * Requires @c network.carry_conditional_coupling (the rows live in A_s/A_r)
@@ -2016,48 +1988,6 @@ namespace GnssProcessor {
          * warning does not.
          */
         bool networkPhaseLevelingLocalBlock() const { return network_phase_leveling_local_block_; }
-        /**
-         * @brief Admission age gate of the F3 block
-         *        (@c network.phase_leveling_local_block_min_age_ep, loop epochs;
-         *        sub-knob of @ref networkPhaseLevelingLocalBlock).
-         *
-         * A carried leg younger than this many loop epochs since its first stash is kept
-         * out of its station's jointly whitened block.
-         * @ref networkPhaseLevelingLocalBlockYoungMode decides what happens to it
-         * instead: by default it is not injected at all; in "diagonal" mode it is
-         * injected as a per-column row (F1-scaled when
-         * @ref networkPhaseLevelingLosScale is armed, else the plain diagonal row).
-         * Motivation: a leg born at a satellite's re-admission carries the
-         * station-common code-level error of its birth epoch (SPEC_amb_iono_split_overcount
-         * §3.1, birth-frame inheritance), and inside the block the joint whitening L⁻¹
-         * spreads that error into the station's mature columns at their tight variance
-         * (§6.11).  Once mature, the leg joins the block.  Counted per station-epoch
-         * (`pl_blk_young_cols`).  0 (default) = off, byte-identical.  Not
-         * fingerprinted; inert without the block.  The age test is
-         * @ref localCarryYoung, shared with the candidacy bar, so an entry with a
-         * non-positive birth stamp (never stashed (0), or restored by a warm resume:
-         * @c LocalCarry::kBirthEpRestored, SPEC_event_harness §15.4) is never young.
-         */
-        int networkPhaseLevelingLocalBlockMinAgeEp() const {
-            return network_phase_leveling_local_block_min_age_ep_;
-        }
-        /**
-         * @brief What the F3 age gate does with a young leg
-         *        (@c network.phase_leveling_local_block_young_mode: "free" | "diagonal").
-         *
-         * "free" (default): the leg is not injected at all until it matures; it
-         * re-solves from its own epoch's data, carries no memory, and joins the block
-         * at age K with its then-current conditional variance.  "diagonal": the leg is
-         * injected as a per-column row (F1-scaled if los_scale is armed).  Diagonal
-         * mode is measured harmful: an 8 h arm with ~15 % young diagonal rows returned
-         * to the pre-F1 over-count in every hour, because any diagonal leveling row
-         * re-asserts the station-common directions ~n·B-fold (SPEC_amb_iono §3.1) and
-         * freezes the station level for mature and young legs alike.  Kept selectable
-         * for the record; inert unless the age gate is > 0.
-         */
-        const std::string& networkPhaseLevelingLocalBlockYoungMode() const {
-            return network_phase_leveling_local_block_young_mode_;
-        }
 
         /// @brief Floor (m²) on the D2 satellite phase-bias carried prior variance
         ///        (@c network.shared_carry_var_floor_pb_m2, B4).  Caps the carry's
@@ -2563,9 +2493,7 @@ namespace GnssProcessor {
          *
          * Interlocks (loader-enforced, warn + disable): requires @ref networkCarryZwd
          * and @ref networkPhaseLevelingLocalBlock, so the knob is never armed and inert.
-         * The ZWD column is deliberately not subject to the F3 young-column age gate
-         * (@ref networkPhaseLevelingLocalBlockMinAgeEp): a ZWD is not an arc and has no
-         * code-level birth error to quarantine.  When the block does not factorize the
+         * When the block does not factorize the
          * ZWD degrades to the existing B9 diagonal row (counted,
          * @c pl_blk_zwd_fallback_diag).  Default false = byte-identical (the harvest
          * @c cols set, and therefore @c C's dimension, is unchanged).
@@ -2609,11 +2537,9 @@ namespace GnssProcessor {
          *
          * Deliberate differences from the QUEUE-8(b) diagonal carry: no inject-side
          * variance floor (the floor bounded how far a double-counted prior could
-         * out-stiffen the code channel; the block's exactness replaces it), no
-         * @ref networkPhaseLevelingLosScale scaling (F1 repairs the same over-count
-         * the block already handles, so applying it here would under-weight), and no
-         * F3 young-column age gate (the "first sighting ⇒ no carry" rule already
-         * gives every newborn LOS a one-epoch cold start).
+         * out-stiffen the code channel; the block's exactness replaces it); the
+         * "first sighting ⇒ no carry" rule gives every newborn LOS a one-epoch cold
+         * start.
          *
          * Interlocks (loader-enforced): requires @ref networkPhaseLeveling and
          * @ref networkPhaseLevelingLocalBlock (warn + disable otherwise, since an
@@ -5414,8 +5340,8 @@ namespace GnssProcessor {
          * phase-leveling carry for the key.  An unknown age (no carry entry, or a
          * warm-resume-restored entry whose @c birth_ep reads the restored sentinel
          * @ref LocalCarry::kBirthEpRestored, SPEC_event_harness §15.4) counts as mature,
-         * the same restored-entry convention @c phase_leveling_local_block_min_age_ep
-         * uses: the conservative direction is to let the
+         * the restored-entry convention (@ref localCarryYoung): the conservative
+         * direction is to let the
          * variance ceiling decide rather than refuse a candidate the ledger says is
          * converged.
          *
@@ -8542,10 +8468,7 @@ namespace GnssProcessor {
         int    network_phase_leveling_warmup_epochs_{6};  ///< Emitted-epoch count before a carried ambiguity is trusted (cold-start convergence guard).
         double network_phase_leveling_max_gap_s_{120.0};  ///< Max unseen gap (s) a carried ambiguity survives before it is dropped (stale-carry / map-growth guard).
         double network_phase_leveling_var_floor_m2_{0.0}; ///< Floor (m²) on the carried prior variance (caps Λ; lock-in guard); 0 = off (no cap).
-        bool   network_phase_leveling_los_scale_{false};  ///< Multiply each carried ambiguity row's variance by B_eff (carried columns injected on the same station-satellite LOS this epoch) at inject (F1), which undoes the per-LOS B-fold over-count of the iono-direction carry precision (SPEC_amb_iono_split_overcount).  Off = byte-identical.
-        int    network_phase_leveling_local_block_min_age_ep_{0}; ///< Admission age gate of the F3 block (loop epochs since a leg's first stash): younger legs are kept out of the block.  0 = off.  Unknown age (never stashed, or warm-resume-restored: LocalCarry::kBirthEpRestored) = mature, the restored-entry convention.
-        std::string network_phase_leveling_local_block_young_mode_{"free"}; ///< Response of the F3 age gate: "free" (young legs not injected until mature) or "diagonal" (per-column rows; measured harmful, kept for the record).
-        bool   network_phase_leveling_local_block_{false}; ///< Carry each station's injectable ambiguity set as one jointly whitened local block (F3; harvested conditional cross covariances on Σ's off-diagonals, departed columns marginalized): exact for every local-local direction, including the station-common ones F1 leaves over-counted (SPEC_amb_iono_split_overcount).  Supersedes F1 on whitened blocks.  Off = byte-identical.
+        bool   network_phase_leveling_local_block_{false}; ///< Carry each station's injectable ambiguity set as one jointly whitened local block (F3; harvested conditional cross covariances on Σ's off-diagonals, departed columns marginalized): exact for every local-local direction, including the station-common ones (SPEC_amb_iono_split_overcount).  Off = byte-identical.
         double network_shared_carry_var_floor_pb_m2_{0.0}; ///< Floor (m²) on the D2 sat-phase-bias carried prior variance (B4; caps Λ, which bounds the zero-q lock-in while preserving Ge-2008 FCB averaging); 0 = off.
         double network_shared_carry_var_floor_cb_m2_{0.0}; ///< Floor (m²) on the D2 sat-code-bias carried prior variance (B4; caps Λ); 0 = off.
         bool   network_shared_carry_gauge_free_{false};    ///< Marginalize the declared datum directions out of the carried shared information (Λ ← Λ − ΛU(UᵀΛU)⁻¹UᵀΛ) as a property of the carry rather than of the unrelated Q3 clock anchor (card C-GF), with a support-closure test on U so a partially carried direction is skipped instead of having a real estimable contrast deleted; requires shared_carry_full_cov.  Off = byte-identical.

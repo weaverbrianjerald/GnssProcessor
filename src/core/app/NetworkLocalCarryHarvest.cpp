@@ -70,7 +70,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const double pl_max_gap_s = ctx.knobs.pl_max_gap_s;
     const double pl_q_amb = ctx.knobs.pl_q_amb;
     const double pl_var_floor = ctx.knobs.pl_var_floor;
-    const bool   pl_los_scale = ctx.knobs.pl_los_scale;   // mirror the injector's per-LOS B_eff in the fold-variance readback (F1)
     const bool   pl_local_block = ctx.knobs.pl_local_block; // stash the harvest cross-covariance block beside the per-column carry (F3)
     // Birth-prior floor that the stash records in LocalCarry::var_birth (RF-1 §3.3(b)).
     // 0.0 (default) ⇒ var_birth == var_first to the ULP, so the floor has no effect.
@@ -563,28 +562,14 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             const double fold_var_hand =
                                 [&] {
                                     double v = oc->second.var + pl_q_amb * std::max(0.0, gapv);
-                                    // Mirror of the F1 scaling: the injector multiplied this
-                                    // column's variance by its LOS B_eff (before the floor).  Keyed
-                                    // by the injected (sat, signal), so a sibling band the
-                                    // inject skipped (freed / stale / reseed) is not scaled
-                                    // here either: the mirror reports the weight the fold
-                                    // used, or the hand value when it did not fold.
                                     // Under F3 (phase_leveling_local_block) a column carried
                                     // in a whitened block folded with the block's joint Σ,
                                     // whose diagonal for this column is this hand value
                                     // (plus the card-1d / departed terms neither path
                                     // mirrors), so the mirror reports Σ's diagonal, the
-                                    // column's marginal prior variance, unscaled.  This is
+                                    // column's marginal prior variance.  This is
                                     // deliberate: the census standardizes e by the marginal
-                                    // prior σ the column carried, and pl_los_beff is filled
-                                    // only on the F1 route (under F3, a factorization
-                                    // fallback), so the ×B_eff below is absent for block
-                                    // columns.
-                                    if (pl_los_scale) {
-                                        const auto bf = R.pl_los_beff.find({pa.sat, pa.signal});
-                                        if (bf != R.pl_los_beff.end() && bf->second > 1)
-                                            v *= static_cast<double>(bf->second);
-                                    }
+                                    // prior σ the column carried.
                                     if (pl_var_floor > 0.0) v = std::max(v, pl_var_floor);
                                     return v;
                                 }();

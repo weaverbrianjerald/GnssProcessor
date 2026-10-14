@@ -619,7 +619,7 @@ struct LocalCarry {
     /// @ref kBirthEpRestored, under the same rule (a real stamp is a continuous-GPS
     /// second, so it is always ≫ 0).
     static constexpr double    kBirthSRestored  = -1.0;
-    long long birth_ep{0};                        ///< Loop-epoch index (n_loop_epochs) of the arc's first stash: set once at birth, kept across re-stashes, restarted by an erase-and-rebirth.  0 = never stashed, @ref kBirthEpRestored (−1) = warm-resume-restored with its true birth not snapshotted.  Both read as mature (every reader tests `> 0`).  The harvest's first-stash-wins rule tests `!= 0`, so the −1 sentinel survives it, while a 0 is replaced by the current epoch at the next stash (@ref localCarryStampBirth).  network.phase_leveling_local_block_min_age_ep keeps a leg out of the F3 block (a per-column row instead) until n_loop_epochs − birth_ep reaches the gate: a leg born at a satellite's re-admission carries its code-level birth error, and the block's joint whitening would spread it into the station's mature columns.  Not snapshotted: a restored entry is sentinel-stamped and reads as mature for its whole life (until an erase-and-rebirth), which is the documented restored-entry contract.
+    long long birth_ep{0};                        ///< Loop-epoch index (n_loop_epochs) of the arc's first stash: set once at birth, kept across re-stashes, restarted by an erase-and-rebirth.  0 = never stashed, @ref kBirthEpRestored (−1) = warm-resume-restored with its true birth not snapshotted.  Both read as mature (every reader tests `> 0`).  The harvest's first-stash-wins rule tests `!= 0`, so the −1 sentinel survives it, while a 0 is replaced by the current epoch at the next stash (@ref localCarryStampBirth).  The age gates read it through @ref localCarryYoung.  Not snapshotted: a restored entry is sentinel-stamped and reads as mature for its whole life (until an erase-and-rebirth), which is the documented restored-entry contract.
     double birth_s{0.0};                          ///< Continuous-GPS seconds (week*604800 + tow) of the arc's first stash: the seconds counterpart of @c birth_ep, set once at birth from the harvest's @c pl_now_s, kept across re-stashes, and restarted by an erase-and-rebirth (a T4 attribution erase deletes the entry, and the next harvest re-creates it with a level that already contains any earlier slip).  Read by the sim-only slip oracle (@c network.cycle_slip.oracle_relevel) as the hard lower edge of its truth-slip window, so a repair never re-applies a jump that the re-created level already absorbed.  Not snapshotted (like @c birth_ep): a warm-resume-restored entry carries @ref kBirthSRestored (−1), which never wins the window's `max` and so leaves the window at its @c oracle_window_s latency bound for the arc's whole restored life.  That is acceptable for a sim-only diagnostic and errs in the conservative direction.
     /// Continuous-GPS seconds of the arc's last re-level (introduced as the age clock
     /// of the retired young-arc variance inflation,
@@ -792,10 +792,9 @@ inline LocalCarry makeRestoredLocalCarry(double value_abs, double var,
 }
 
 /// True when this carried entry is younger than the maturity bar.  One definition
-/// with two readers: the F3 block admission gate
-/// `network.phase_leveling_local_block_min_age_ep` in ApplicationNetworkAssembly, and
-/// the cold anchor-fallback candidacy bar `network.phase_datum_candidacy_min_age_ep`
-/// in NetworkPhaseDatum.
+/// with two readers, both in NetworkPhaseDatum: the held S-basis age gate
+/// `network.phase_anchor_min_age_ep` and the cold anchor-fallback candidacy bar
+/// `network.phase_datum_candidacy_min_age_ep`.
 ///
 /// The restored-arc age convention: an entry whose @c birth_ep is not positive has no
 /// usable age, whether it is 0 (never stashed, or restored without the sentinel) or
@@ -1324,27 +1323,18 @@ struct StationAssembly {
     long long                 opin_rows{0};           ///< …folded as a diagonal pin prior row.
     long long                 opin_gauge_skipped{0};  ///< …skipped: the arc is gauge-pinned (an anchor), whose 1e10 datum pin owns the family's frame.
     long long                 opin_no_column{0};      ///< …skipped: the column is not in this epoch's A_r (or its x_lin / the row is non-finite).
-    /// Per injected (sat, signal) ambiguity column, the B_eff by which the inject
-    /// multiplied its carried variance: the count of carried ambiguity columns injected
-    /// on that (station, satellite) LOS this epoch (F1, network.phase_leveling_los_scale,
-    /// SPEC_amb_iono_split_overcount).  Filled only when the knob is armed (empty
-    /// otherwise); read by the serial harvest so that its fold-variance mirror (carry-VCE
-    /// and prires standardization) reports the weight the fold used.
-    std::map<std::pair<std::string, std::string>, int> pl_los_beff;
     /// Per folded (sat, signal) ambiguity column of this station-epoch, the variance
     /// the fold used and the route it took (RF-1 §7.4, @c network.trace_amb_state).
     /// Filled only when the trace is armed; otherwise the map is never touched, and an
     /// unarmed run pays one bool test per column.  Read by the serial harvest, which
-    /// owns the row write.  Same discipline as @c pl_los_beff: recorded in the parallel
-    /// produce phase into this station's own object, consumed serially afterwards.
+    /// owns the row write.  Recorded in the parallel produce phase into this station's
+    /// own object, consumed serially afterwards.
     ///
     /// A column absent from this map was not folded this epoch: the harvest writes its
     /// row with @c folded = 0 and names the cause in @c event.  That is the population
     /// that D2 and D3 count, so the absence is itself the record.
     std::map<std::pair<std::string, std::string>, std::pair<double, AmbFoldRoute>>
         amb_state_fold;
-    long long                 pl_los_scale_rows{0};            ///< Rows whose variance was multiplied by a B_eff > 1 (F1; produce-phase local, summed serially).
-    long long                 pl_los_scale_hist[4]{0, 0, 0, 0}; ///< LOS groups by B_eff = 1 / 2 / 3 / ≥4 (F1; produce-phase local, summed serially).
     /// This station-epoch's jointly whitened leveling-carry block ingredients (F3,
     /// network.phase_leveling_local_block, SPEC_amb_iono_split_overcount).  Empty when
     /// the knob is off, when the station had no injectable carried column, or when the
@@ -1352,14 +1342,14 @@ struct StationAssembly {
     /// RAIM refloat, which re-whitens the surviving columns (the whitening mixes the
     /// block's rows, so a refloat cannot zero a single output row); the same contract as
     /// @c cpl_raw for card 1b.  All F3 counts below are produce-phase local and summed
-    /// serially, as the pl_los_scale counts are.
+    /// serially.
     PlBlockRaw                pl_blk;
     long long                 pl_blk_blocks{0};        ///< Blocks whitened (0 or 1 per station-epoch; F3).
     long long                 pl_blk_rows{0};          ///< Whitened rows emitted (F3).
     long long                 pl_blk_marg_cols{0};     ///< Carried entries of this station not injected this epoch (departed / stale / freed / reseed / non-finite), marginalized out of the block (F3).
     long long                 pl_blk_pair_missing{0};  ///< (i, j) pairs zeroed because the two columns were harvested at different epochs, or one carries no harvest block (F3).
     long long                 pl_blk_col_refused{0};   ///< Block columns dropped by the scalar-row screen (non-finite RHS or σ² ≤ 0; F3).
-    long long                 pl_blk_fallback{0};      ///< Block factorization failed after the ridge retry, so this station-epoch emitted F1/diagonal rows instead (F3).
+    long long                 pl_blk_fallback{0};      ///< Block factorization failed after the ridge retry, so this station-epoch emitted per-column rows instead (F3).
     /// Dimension of the block that failed to factorize this station-epoch, 0 when none
     /// did (RF-1 step 3, design risk #3).  Under the @c float_kf vehicle a fallback is
     /// not the degradation of an optional knob but a change of vehicle for one
@@ -1367,7 +1357,6 @@ struct StationAssembly {
     /// and this dimension, and the run-end bar fails the run above 1 % of attempted
     /// station-epochs.  Produce-phase local, like every other @c pl_blk_* count.
     long long                 pl_blk_fallback_dim{0};
-    long long                 pl_blk_young_cols{0};    ///< Injectable columns younger than the F3 age gate (network.phase_leveling_local_block_min_age_ep) this station-epoch, kept out of the block and emitted as per-column rows (F1-scaled if armed).
     // The station's receiver-clock (and ISB) columns carried inside the same F3 block
     // (RX-CLK-in-block, network.carry_rx_clock_in_block).  As for the iono carry and
     // unlike the ZWD carry, there is no diagonal fallback row, by design: a diagonal

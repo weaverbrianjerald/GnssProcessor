@@ -276,8 +276,8 @@ TEST(CarryZwdInBlockTest, IsZwdFlagChangesTelemetryOnlyNotTheAlgebra) {
 //     ingredients of the unarmed path.
 // =============================================================================
 //
-// Byte-identical ingredients are asserted bitwise (EXPECT_EQ on doubles, as in the
-// LosScaledVariance tests): the off-path ZWD row's weight, RHS, primary column and
+// Byte-identical ingredients are asserted bitwise (EXPECT_EQ on doubles): the off-path
+// ZWD row's weight, RHS, primary column and
 // border coefficient equal what buildCplRow emits standalone, and the row is a
 // scalar row (empty `local`), not a block row.
 TEST(CarryZwdInBlockTest, KnobOffLeavesKBlockRowsAndTheZwdAsTheDiagonalB9Row) {
@@ -484,8 +484,6 @@ TEST(CarryZwdInBlockTest, ArmedHappyPathSurvivesLoadAndLeavesQAtItsDefault) {
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
     // The card changes the vehicle, not the process-noise model.
     EXPECT_DOUBLE_EQ(cfg.networkZwdCarryQ(), 1e-9);
-    // Nor does it subject the ZWD to the F3 young-column age gate.
-    EXPECT_EQ(cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 0);
 }
 
 // The ledger's recommend branch (SPEC_amb_iono_split_overcount §6.16.7d arm F2):

@@ -49,7 +49,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
     const int    pl_warmup = ctx.knobs.pl_warmup;
     const double pl_max_gap_s = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor = ctx.knobs.pl_var_floor;
-    const bool   pl_los_scale = ctx.knobs.pl_los_scale;   // per-LOS B_eff scale at inject (F1)
     const bool   pl_local_block = ctx.knobs.pl_local_block; // station-wide whitened local block at inject (F3)
     const double pb_var_floor = ctx.knobs.pb_var_floor;
     const double cb_var_floor = ctx.knobs.cb_var_floor;
@@ -147,23 +146,18 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // and has to be fingerprinted.
         add(fmt::format("{}", pl_on));           add(fmt::format("{}", pl_q_amb));
         add(fmt::format("{}", pl_warmup));       add(fmt::format("{}", pl_max_gap_s));
-        // Per-LOS scale (F1, network.phase_leveling_los_scale).  The stash is unchanged,
-        // but the inject-side weighting of the same stashed variances differs across the
-        // flip (the carried level was accumulated under a different recursion), so a
-        // resume across it has to cold-start, as for pl_var_floor.  Appended only when
-        // armed, so the fingerprint of a snapshot written with it off is unchanged.
-        if (pl_los_scale) add("pl:losscale");
-        // Local block (F3, network.phase_leveling_local_block): the same rule for a
-        // stronger reason.  The carried levels were accumulated under a different prior
-        // (joint against independent rows), and the harvest block itself is not in the
-        // snapshot.  Appended only when armed, beside the F1 tag.
+        // Local block (F3, network.phase_leveling_local_block).  The carried levels were
+        // accumulated under a different prior (joint against independent rows), and the
+        // harvest block itself is not in the snapshot, so a resume across the flip has to
+        // cold-start, as for pl_var_floor.  Appended only when armed, so the fingerprint
+        // of a snapshot written with it off is unchanged.
         if (pl_local_block) add("pl:losblock");
         // ZWD in the local block (B9-in-block, network.carry_zwd_in_block) affects the
         // solve for the same reason F3 does: the carried ZWD and the carried levels were
         // accumulated under a different prior geometry (one joint Σ over {ambiguities,
         // ZWD} against a block plus an independent diagonal row), so a warm resume cannot
         // cross the flip.  The harvest block is not snapshotted either way.  Appended only
-        // when armed, beside the F1/F3 tags, so a snapshot written with it off keeps its
+        // when armed, beside the F3 tag, so a snapshot written with it off keeps its
         // fingerprint.
         if (config_.networkCarryZwdInBlock()) add("zwd:blk");
         // Iono in the local block (network.carry_iono_in_block) affects the solve for the
@@ -171,7 +165,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // did or did not include the station's iono columns in the joint Σ, so a warm
         // resume cannot cross the flip.  The in-block iono carry itself is not snapshotted
         // (it cold-starts), but the levels that resume were shaped by it.  Appended only
-        // when armed, beside the F1/F3/ZWD tags, so a snapshot written with it off keeps
+        // when armed, beside the F3/ZWD tags, so a snapshot written with it off keeps
         // its fingerprint.  q and the gap bound are included because both change the
         // prior's weight.
         if (config_.networkCarryIonoInBlock()) {
@@ -185,7 +179,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // joint Σ, so a warm resume cannot cross the flip.  The clock carry itself is not
         // snapshotted (it cold-starts, which gives one epoch of white-clock behaviour), but
         // the levels that resume were shaped by it.  Appended only when armed, beside the
-        // F1/F3/ZWD/iono tags, so a snapshot written with it off keeps its fingerprint.
+        // F3/ZWD/iono tags, so a snapshot written with it off keeps its fingerprint.
         // The whole variance ladder is included: q, rate_q, rate_var0 and the ISB flag
         // each change the prior's weight, and jump_k changes which epochs carried anything.
         if (config_.networkCarryRxClockInBlock()) {
@@ -203,7 +197,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // restore) receiver code-bias columns that the other side does not have, and the
         // companion code rows that determine them change the local block every epoch, so
         // the knob affects the solve on both counts.  Appended only when armed, beside the
-        // F1/F3/ZWD/iono/rxclk tags, so a snapshot written with it off keeps its
+        // F3/ZWD/iono/rxclk tags, so a snapshot written with it off keeps its
         // fingerprint.  The allow-list and the sigma scale are included: the list decides
         // which columns exist, and the scale sets the weight at which their rows were
         // accumulated.
@@ -272,8 +266,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Handover S-transform (queue 1(b)): it changes which carried priors fold at a
         // pivot switch, so a resume across a toggle change would read a carry that was
         // (or was not) re-expressed in the wrong datum.  Appended only when armed, as for
-        // phase_datum_eq34 and phase_leveling_los_scale, so the off path keeps its
-        // fingerprint.  When armed, the lineage needs a fresh convergence.
+        // phase_datum_eq34, so the off path keeps its fingerprint.  When armed, the
+        // lineage needs a fresh convergence.
         if (ctx.knobs.handover_stransform) add("sts:1");
         // Card PRM phase 2: the transform before the coupling rows changes the handover
         // epoch's rows (armed-only token, so every existing fingerprint is unchanged).

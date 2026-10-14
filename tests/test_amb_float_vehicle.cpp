@@ -265,32 +265,27 @@ TEST(AmbFloatVehicleTest, CarryInvariantLoadsFineOnTheLevelVehicle) {
     EXPECT_EQ(cfg.getNetworkConfig().ambiguity_vehicle, NetworkAmbiguityVehicle::Level);
 }
 
-// float_kf subsumes F1 (×B_eff) and F3 (the station-wide whitened block): the joint
-// block removes the over-count that F1 corrects approximately, and F3's buildLocalBlock
-// is the fold the vehicle makes structural.  Both are refused with a log line and
-// forced off, so the effective fold is never attributable to two knobs.
-TEST(AmbFloatVehicleTest, FloatKfRefusesF1AndF3) {
+// float_kf subsumes F3 (the station-wide whitened block): F3's buildLocalBlock is the
+// fold the vehicle makes structural.  The knob is refused with a log line and forced
+// off, so the effective fold is never attributable to two switches.
+TEST(AmbFloatVehicleTest, FloatKfRefusesF3) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("refuse",
                          networkConfig(std::string(kRf0Posture)
                                        + "    \"ambiguity_vehicle\": \"float_kf\",\n"
-                                         "    \"phase_leveling_los_scale\": true,\n"
                                          "    \"phase_leveling_local_block\": true,\n"),
                          cfg));
-    EXPECT_FALSE(cfg.networkPhaseLevelingLosScale());
     EXPECT_FALSE(cfg.networkPhaseLevelingLocalBlock());
 }
 
-// On the level vehicle both stay armed: the refusal is scoped to the float_kf arm, not
+// On the level vehicle it stays armed: the refusal is scoped to the float_kf arm, not
 // a blanket disable that would silently change every existing F3 lineage.
-TEST(AmbFloatVehicleTest, LevelVehicleLeavesF1AndF3Armed) {
+TEST(AmbFloatVehicleTest, LevelVehicleLeavesF3Armed) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("keep",
                          networkConfig(std::string(kRf0Posture)
-                                       + "    \"phase_leveling_los_scale\": true,\n"
-                                         "    \"phase_leveling_local_block\": true,\n"),
+                                       + "    \"phase_leveling_local_block\": true,\n"),
                          cfg));
-    EXPECT_TRUE(cfg.networkPhaseLevelingLosScale());
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
 }
 

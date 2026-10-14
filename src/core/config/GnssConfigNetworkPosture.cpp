@@ -967,7 +967,7 @@ namespace GnssProcessor {
               "double count F3 exists to remove — quiet sim consumer 3D rms 0.723 m diagonal vs "
               "0.0877 m in-block, field T3c 7619 vs 849 flags; field F3 consumer 3D -27 %, "
               "vertical DC bias +2.83 -> +0.07 m" },
-            { network_phase_leveling_local_block_ || network_phase_leveling_los_scale_,
+            { network_phase_leveling_local_block_,
               network_phase_datum_handover_max_var_m2_ >= 0.0099,
               Tier::SCOPED, false, "network.phase_datum_handover_max_var_m2",
               "under F1/F3's honest sigma the lineage's 1e-4 m^2 PB-gauge handover ceiling refuses "

@@ -124,21 +124,13 @@ namespace GnssProcessor {
         int pl_warmup{};
         double pl_max_gap_s{};
         double pl_var_floor{};
-        /// network.phase_leveling_los_scale (F1): at the leveling-carry inject, multiply
-        /// each carried ambiguity row's variance by B_eff, the number of carried ambiguity
-        /// columns injected on the same (station, satellite) LOS this epoch, so the B rows
-        /// assert one unit of iono-direction precision instead of B (the over-count that
-        /// holds the level for K_eff = (B+1)/(B−1) epochs).  Applied after q·gap, before
-        /// the variance floor and the VCE factor.  Off by default (byte-identical).
-        bool pl_los_scale{};
         /// network.phase_leveling_local_block (F3): carry each station's injectable
         /// carried ambiguity set as one jointly whitened local block (the harvested
         /// conditional cross covariances (N_rr⁻¹)_{c_i c_j} on Σ's off-diagonals;
         /// non-admitted columns marginalized) instead of independent per-column rows.
         /// Given the border, the block is exact in every local-local direction: the
-        /// per-LOS iono direction that F1 fixes, and the station-common rx clock, ZWD and
-        /// rx-DCB directions that F1 leaves over-counted.  Supersedes pl_los_scale on
-        /// whitened blocks (F1 applies only on a factorization fallback).  Live only with
+        /// per-LOS iono direction and the station-common rx clock, ZWD and rx-DCB
+        /// directions alike.  Live only with
         /// phase_leveling on, carry_invariant off, carry_cpl_cond on and carry_cpl_joint
         /// off; the loader warns that the knob is inert otherwise.  The knob is off by
         /// default (byte-identical).
@@ -155,19 +147,6 @@ namespace GnssProcessor {
         /// @ref pl_local_block and, by design, cannot tell the two sources apart
         /// (RF-1 step 3).
         bool pl_blk_from_vehicle{};
-        /// network.phase_leveling_local_block_min_age_ep: F3 block admission age gate.  A
-        /// carried leg younger than this many loop epochs (counted from its first stash)
-        /// is kept out of the station block; @ref pl_blk_young_free decides whether it is
-        /// emitted as a per-column row (F1-scaled if armed) or not injected.  A leg born at
-        /// a satellite's re-admission carries its code-level birth error, and the block's
-        /// joint whitening would spread that error into the station's mature columns: the
-        /// post-eclipse DD episodes measured in SPEC_amb_iono_split_overcount §6.9 (§6.11
-        /// shows they do not come from the shared border).  0 = off (byte-identical).
-        int  pl_blk_min_age_ep{};
-        /// network.phase_leveling_local_block_young_mode == "free": a young leg is not
-        /// injected until it matures.  false = "diagonal": per-column rows, measured
-        /// harmful (SPEC_amb_iono §6.11 arm 5).
-        bool pl_blk_young_free{};
         /// network.ambiguity_vehicle == "float_kf": the float state with a carried joint
         /// covariance, a floored birth prior, and a bounded drop as the slip response
         /// (docs/refound/RF-1_float_ambiguities_design.md §7.1).  Read by the slip
@@ -333,8 +312,7 @@ namespace GnssProcessor {
         /// more `LocalBlockCol`.  A diagonal ZWD row asserts a station-common direction that
         /// every carried ambiguity row already asserts: the ~n_LOS over-count named in
         /// SPEC_amb_iono_split_overcount §7 item 17, and the reason B9 was falsified on the
-        /// quiet bed.  Exempt from the F3 young-column age gate (a ZWD is not an arc).  The
-        /// loader requires zwd_on and pl_local_block and disables the knob otherwise.  Off
+        /// quiet bed.  The loader requires zwd_on and pl_local_block and disables the knob otherwise.  Off
         /// by default (byte-identical).
         bool zwd_in_block{};
         bool zwd_seam_on{};    ///< network.zwd_seam_reseed: post-resume ZWD re-seed window (SPEC_synthetic_minimum_network §17 finding 3).  Not fingerprinted (forward-only resume response policy).
@@ -3122,14 +3100,6 @@ namespace GnssProcessor {
         long long n_amb_state_epochs      = 0;  ///< network_amb_state.csv: epochs that wrote at least one row.
         long long n_amb_state_erase_rows  = 0;  ///< network_amb_state.csv: `erase:<cause>` rows, entries captured at the four erase sites before deletion.
 
-        // On-path telemetry of the inject-side per-LOS variance scale (F1,
-        //     network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount; invariant
-        //     #4).  Counted per station in the parallel produce phase (StationAssembly) and
-        //     folded here serially.  Armed on a multi-band posture with rows = 0 means the
-        //     inject never saw two carried bands on one LOS: a miswire, not a quiet run.
-        long long n_pl_los_scale_rows    = 0;             ///< carried ambiguity rows whose variance was multiplied by a B_eff > 1
-        long long n_pl_los_scale_hist[4] = {0, 0, 0, 0};  ///< LOS groups (station, sat, epoch) by B_eff = 1 / 2 / 3 / ≥4 injected columns
-
         // On-path telemetry of the station-wide jointly whitened leveling-carry block (F3,
         //     network.phase_leveling_local_block, SPEC_amb_iono_split_overcount; invariant
         //     #4).  Counted per station in the parallel produce phase (StationAssembly) and
@@ -3148,8 +3118,7 @@ namespace GnssProcessor {
         long long n_pl_blk_marg_cols    = 0;             ///< carried entries not injected (marginalized out of their station's block)
         long long n_pl_blk_pair_missing = 0;             ///< (i,j) pairs zeroed: harvested at different epochs / no harvest block
         long long n_pl_blk_col_refused  = 0;             ///< block columns dropped by the scalar-row screen (non-finite RHS or non-positive variance)
-        long long n_pl_blk_fallback     = 0;             ///< station-epochs whose block factorization failed → F1/diagonal rows
-        long long n_pl_blk_young_cols   = 0;             ///< injectable columns kept out of their block (too young) and emitted per column (F3 age gate)
+        long long n_pl_blk_fallback     = 0;             ///< station-epochs whose block factorization failed → per-column rows
         long long n_pl_blk_hist[5]      = {0, 0, 0, 0, 0}; ///< block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75
         long long n_pl_blk_max_dim      = 0;             ///< largest block dimension over the run
         // Invariant #4/#7 telemetry of B9-in-block (network.carry_zwd_in_block).  A run with

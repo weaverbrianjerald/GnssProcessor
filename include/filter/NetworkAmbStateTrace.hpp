@@ -18,8 +18,8 @@
  *
  * Measure-only.  Every value written is read off state the inject and the harvest
  * already computed: the fold variance and route are recorded at the inject into the
- * station's own @c StationAssembly::amb_state_fold (the same pattern as
- * @c pl_los_beff), the carried quantities are read at the stash, and the `erase:` rows
+ * station's own @c StationAssembly::amb_state_fold, the carried quantities are read at
+ * the stash, and the `erase:` rows
  * are captured at the erase sites immediately before the entry is deleted.  Nothing is
  * written back.  Off by default: no stream, no file, no rows, and the solve is
  * byte-identical.

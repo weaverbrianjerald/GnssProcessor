@@ -327,11 +327,10 @@ struct CouplingRowBuilder {
     /// (appended by the scalar branch of @ref appendCouplingRows), and the
     /// pre-whitening ingredients are retained in @c R.pl_blk for the within-epoch RAIM
     /// refloat re-whiten.  The result is exact in every local-local direction given the
-    /// border: the per-LOS iono direction that F1 corrects, and also the
-    /// station-common rx clock, ZWD and rx-DCB directions that F1 leaves over-counted.
+    /// border: the per-LOS iono direction, and also the station-common rx clock, ZWD
+    /// and rx-DCB directions.
     /// Returns false when the factor is non-SPD after the ridge retry; nothing is then
-    /// buffered, and the caller falls back to per-column rows (F1-scaled if that knob
-    /// is also armed) and counts the fallback.  Returns true with nothing buffered when
+    /// buffered, and the caller falls back to per-column rows and counts the fallback.  Returns true with nothing buffered when
     /// no column survives.  Columns refused by the scalar screen are dropped from the
     /// block and counted.  Not valid under @c carry_cpl_joint (the caller's predicate
     /// excludes it).

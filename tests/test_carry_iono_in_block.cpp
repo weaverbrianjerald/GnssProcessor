@@ -633,8 +633,6 @@ TEST(CarryIonoInBlockTest, ArmedHappyPathResolvesQAndTheGapSentinel) {
     // the block it belongs to.
     EXPECT_DOUBLE_EQ(cfg.networkCarryIonoInBlockMaxGapS(),
                      cfg.networkPhaseLevelingMaxGapS());
-    // Arming it does not subject the iono columns to the F3 young-column age gate.
-    EXPECT_EQ(cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 0);
 }
 
 TEST(CarryIonoInBlockTest, ExplicitQAndGapOverrideTheDefaults) {

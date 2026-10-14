@@ -87,24 +87,6 @@ int networkLevelingRetirementRunEnd(const NetworkRunEndView& v) {
                   : 0.0,
               C.n_cr_gap_prune_max_week, C.cr_gap_prune_max_tow,
               C.n_cr_zwd_gap_prune, C.n_cr_rpb_gap_prune);
-    // ON-path telemetry of the inject-side per-LOS variance scale (F1,
-    // network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount; invariant
-    // #4).  Printed only when armed, so a log with the knob off is byte-identical.
-    // Armed on a multi-band posture with 0 rows scaled means the inject never saw two
-    // carried bands on one LOS: a miswire, not a quiet run.  A histogram concentrated
-    // at B_eff = 1 on a triple-frequency bed says the sibling bands were skipped
-    // (freed, stale, reseed) rather than carried.
-    if (ctx.knobs.pl_los_scale)
-        log->info("Network (leveling LOS-scale F1){}: {} row(s) scaled over {} LOS "
-                  "group(s); B_eff histogram 1:{} 2:{} 3:{} 4+:{}",
-                  cliff_live ? "" : " ⚠ CHANNEL NOT ARMED on this posture "
-                                    "(phase_leveling off or carry_invariant on) — a 0 "
-                                    "here means UNWIRED, not clean",
-                  C.n_pl_los_scale_rows,
-                  C.n_pl_los_scale_hist[0] + C.n_pl_los_scale_hist[1]
-                      + C.n_pl_los_scale_hist[2] + C.n_pl_los_scale_hist[3],
-                  C.n_pl_los_scale_hist[0], C.n_pl_los_scale_hist[1],
-                  C.n_pl_los_scale_hist[2], C.n_pl_los_scale_hist[3]);
     // ON-path telemetry of the station-wide, jointly whitened leveling-carry block
     // (F3, network.phase_leveling_local_block, SPEC_amb_iono_split_overcount;
     // invariant #4).  Printed only when armed, so a log with the knob off is
@@ -113,14 +95,13 @@ int networkLevelingRetirementRunEnd(const NetworkRunEndView& v) {
     // carry never warmed), not a quiet run.  A histogram below the station's
     // carried-column count says the sibling columns were marginalized out (freed,
     // stale, reseed) rather than carried; fallbacks are the station-epochs that got
-    // F1 or diagonal rows instead of the block.
+    // per-column rows instead of the block.
     if (ctx.knobs.pl_local_block)
         log->info("Network (leveling local-block F3){}: {} block(s) whitened, {} row(s) "
                   "emitted, {} column(s) marginalized at inject, {} pair(s) zeroed "
                   "(harvest-stamp mismatch), {} column(s) refused, {} factorization "
                   "fallback(s); block dim histogram <10:{} 10-24:{} 25-49:{} 50-74:{} "
-                  "75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed; "
-                  "age gate {} ep ({}): {} young column(s) kept out of the block.  "
+                  "75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed.  "
                   "ZWD in block: {} col(s), {} diagonal fallback(s), {} missing cross "
                   "term(s), {} RAIM-pool admission(s) of the ZWD row{}.  "
                   "Iono in block: {} col(s), {} fallback(s) (block non-SPD ⇒ NOT "
@@ -144,8 +125,6 @@ int networkLevelingRetirementRunEnd(const NetworkRunEndView& v) {
                   C.n_pl_blk_hist[0], C.n_pl_blk_hist[1], C.n_pl_blk_hist[2],
                   C.n_pl_blk_hist[3], C.n_pl_blk_hist[4], C.n_pl_blk_max_dim,
                   C.n_pl_blk_refloat_rewhiten, C.n_pl_blk_refloat_fail,
-                  config_.networkPhaseLevelingLocalBlockMinAgeEp(),
-                  config_.networkPhaseLevelingLocalBlockYoungMode(), C.n_pl_blk_young_cols,
                   // ZWD in the block (B9-in-block, network.carry_zwd_in_block), printed
                   // on the F3 line because the block carries it.  0 columns under an
                   // armed knob means unwired, not clean (invariant #4); a large fallback

@@ -1541,7 +1541,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
     const double pl_q_amb = knobs.pl_q_amb;
     const double pl_max_gap_s = knobs.pl_max_gap_s;
     const double pl_var_floor = knobs.pl_var_floor;
-    const bool   pl_los_scale = knobs.pl_los_scale;   // per-LOS B_eff scale at inject (F1)
     const bool   pl_local_block = knobs.pl_local_block; // station-wide whitened local block at inject (F3)
     const double pb_var_floor = knobs.pb_var_floor;
     const double cb_var_floor = knobs.cb_var_floor;
@@ -2022,10 +2021,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"phase_leveling_warmup_epochs\":" << pl_warmup << ','
                << fmt::format("\"phase_leveling_max_gap_s\":{},", pl_max_gap_s)
                << fmt::format("\"phase_leveling_var_floor_m2\":{},", pl_var_floor)
-               << "\"phase_leveling_los_scale\":" << (pl_los_scale ? "true" : "false") << ','
                << "\"phase_leveling_local_block\":" << (pl_local_block ? "true" : "false") << ','
-               << fmt::format("\"phase_leveling_local_block_min_age_ep\":{},", config_.networkPhaseLevelingLocalBlockMinAgeEp())
-               << "\"phase_leveling_local_block_young_mode\":\"" << config_.networkPhaseLevelingLocalBlockYoungMode() << "\","
                << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
                << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
                // Card PFQ: solve-affecting and fingerprinted, so an archived logs/ folder

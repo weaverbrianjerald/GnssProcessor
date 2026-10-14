@@ -36,7 +36,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_warmup = config_.networkPhaseLevelingWarmupEpochs();
     k.pl_max_gap_s = config_.networkPhaseLevelingMaxGapS();
     k.pl_var_floor = config_.networkPhaseLevelingVarFloorM2();
-    k.pl_los_scale = config_.networkPhaseLevelingLosScale();
     // Under the float_kf vehicle the station-wide jointly whitened local block is part of
     // the vehicle, not a knob: `buildLocalBlock` is the vehicle's definition of the fold.
     // pl_local_block is therefore the resolved predicate (F3 knob or vehicle), and every
@@ -49,8 +48,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_blk_from_vehicle = config_.getNetworkConfig().ambiguity_vehicle
                             == NetworkAmbiguityVehicle::FloatKf;
     k.pl_local_block = config_.networkPhaseLevelingLocalBlock() || k.pl_blk_from_vehicle;
-    k.pl_blk_min_age_ep = config_.networkPhaseLevelingLocalBlockMinAgeEp();   // admission age gate of the F3 block
-    k.pl_blk_young_free = config_.networkPhaseLevelingLocalBlockYoungMode() == "free";
     // Ambiguity vehicle and its supporting knobs (RF-1 §7.1,
     // docs/refound/RF-1_float_ambiguities_design.md).  The joint block (step 3) follows the
     // vehicle (above); the birth variance and the drop (step 4) and the declared anchor

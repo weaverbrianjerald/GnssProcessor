@@ -378,11 +378,11 @@ void networkElectPhaseAnchors(
     };
     // Cold anchor fallback: whether arc (i, amb) is mature.  Age is
     // n_loop_epochs − birth_ep of the station's own phase-leveling carry, tested
-    // through localCarryYoung, the definition shared with the F3 block admission
+    // through localCarryYoung, the definition shared with the held S-basis age
     // gate.  An unknown age (no carry entry, an unstamped entry, or a
     // warm-resume-restored entry carrying LocalCarry::kBirthEpRestored,
-    // SPEC_event_harness §15.4) counts as mature, the restored-entry convention
-    // that the F3 block gate also uses.  That leaves
+    // SPEC_event_harness §15.4) counts as mature, the restored-entry convention.
+    // That leaves
     // the decision to the variance ceiling instead of refusing a candidate the
     // ledger reports as converged.
     auto candMature = [&](size_t i, const std::string& amb) {
