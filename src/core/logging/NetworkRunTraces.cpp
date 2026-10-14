@@ -2391,8 +2391,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"carry_invariant_innov_k\":{},", config_.networkCarryInvariantInnovK())
                << "\"carry_invariant_innov_calibrate\":"
                << (config_.networkCarryInvariantInnovCalibrate() ? "true" : "false") << ','
-               << "\"mw_wl_enable\":" << (config_.networkMwWlSeed() ? "true" : "false") << ','   // MW-WL seed (card WL-1, M5)
-               << fmt::format("\"mw_wl_min_arc_epochs\":{},", config_.getNetworkConfig().mw_wl.min_arc_epochs)
                << fmt::format("\"mw_wl_sigma_floor_cyc\":{},", config_.getNetworkConfig().mw_wl.sigma_floor_cyc)
                << fmt::format("\"mw_wl_max_rows_per_epoch\":{},", config_.getNetworkConfig().mw_wl.max_rows_per_epoch)
                << "\"emit_pb_filter\":" << (config_.networkEmitPbFilter() ? "true" : "false") << ','

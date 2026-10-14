@@ -135,15 +135,11 @@ void networkBuildCarryDdPriors(
     // carry exactly when the EWL lane is armed, so ewl_carry_exclude is ewl_on.
     std::vector<EwlLane>& ewl_lanes = lane_run.ewl_lanes;
     const NetworkMwWlLayer::Config& ewl_cfg = lane_run.ewl_cfg;
-    NetworkMwWlLayer& mw_wl_layer = lane_run.mw_wl_layer;
-    F6Capture& mw_wl_f6 = lane_run.mw_wl_f6;
-    NetworkMwWlLayer::Counters& mw_wl_epoch = lane_run.mw_wl_epoch;
     std::vector<WlInjectPlan>& wl_inject_epoch = lane_run.wl_inject_epoch;
     std::vector<LaneTraceEntry>& lane_trace_epoch = lane_run.lane_trace_epoch;
     WlCounters& wl_epoch = lane_run.wl_epoch;
     std::map<char, WlCounters>& wl_cons_epoch = lane_run.wl_cons_epoch;
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
-    const bool mw_wl_on = ctx.knobs.mw_wl_on;
     const bool ewl_on = ctx.knobs.ewl_on;
     const bool uwl_on = ctx.knobs.uwl_on;
     const bool uwl_cold_on = ctx.knobs.uwl_cold_on;
@@ -162,7 +158,6 @@ void networkBuildCarryDdPriors(
     const bool mw_d5_dump = ctx.knobs.mw_d5_dump;
     const bool mw_lane_trace = ctx.knobs.mw_lane_trace;
     const bool mw_tagsets = ctx.knobs.mw_tagsets;
-    const bool mw_wl_f6_dump = ctx.knobs.mw_wl_f6_dump;
     auto& carry_glonass_warned = ctx.carry.carry_glonass_warned;
     auto& carry_group_id = ctx.carry.carry_group_id;
     const bool carry_invariant = ctx.knobs.carry_invariant;
@@ -203,12 +198,12 @@ void networkBuildCarryDdPriors(
     std::map<int, NetworkInvariantCarryDriver::GroupInput> groups;
     if (carry_innov_gate) { carry_arc_amb_key.clear(); carry_arc_amb_key2.clear(); }  // rebuilt with this call's arcs (D5)
 
-    // --- Shared WL-1/WL-2/WL-3 machinery (revmap / arc_signals / lin_of / iono_of /
+    // --- Shared WL-2/WL-3 machinery (revmap / arc_signals / lin_of / iono_of /
     // primary / band_top_of / λ cache).  Built before the group build because the WL-3
     // pair regroup routes each primary-band ambiguity by its (rx,sat) primary pair.
     // Byte-identical when every lane is off: nothing here is populated, and building
     // it earlier has no effect on the solve (it only reads station state).
-    const bool mw_mach_on = mw_wl_on || ewl_on || lane_on;
+    const bool mw_mach_on = ewl_on || lane_on;
     // Reverse map (est_station,col)->arc identity and per-(rx,sat) ambiguity
     // signals over all resolvable ambiguities (both bands, including those not in
     // shared_phase_keys: the WL row needs the L2 column even when L2 is not an eq34
@@ -758,22 +753,21 @@ void networkBuildCarryDdPriors(
                       gid, gk.first, gk.second, is_pair ? " [PAIR]" : "", n_arcs);
         }
 
-    // --- Append the MW-seeded wide-lane pseudo-obs blocks (M5 card WL-1). ---
-    // They use the carry's chord basis: each carry block row is a fundamental cycle on
-    // one band's ambiguity columns; the WL layer pairs each cycle arc with its L2
-    // ambiguity column and folds Σ c·MW̄/λ_WL as a rank-K constraint on the
-    // cross-band columns.  Appended after the carry blocks so their indices [0,Nc)
-    // stay valid for installPosterior (which reads only its own Nc blocks).
+    // --- The lane step (WL-2 EWL decision, WL-3 lane increments, the WL hold rows). ---
+    // It uses the carry's chord basis: each carry block row is a fundamental cycle on
+    // one band's ambiguity columns.  Its hold rows are appended after the carry blocks so
+    // their indices [0,Nc) stay valid for installPosterior (which reads only its own Nc
+    // blocks).
     if (mw_mach_on)
         networkMwWlInject(
             ctx, config_, log, traces, carry_driver, stations,
             se, carry_slipped_ambs, we_culprits, n_threads, ewl_lanes,
-            ewl_cfg, mw_wl_layer, mw_wl_f6, mw_wl_epoch, wl_inject_epoch, lane_trace_epoch,
+            ewl_cfg, wl_inject_epoch, lane_trace_epoch,
             wl_epoch, wl_cons_epoch, revmap, lin_of, iono_of, primary,
-            band_top_of, band_top2_of, band_mid_of, lam, blocks, mw_wl_on,
+            band_top_of, band_top2_of, band_mid_of, lam, blocks,
             ewl_on, uwl_on, uwl_cold_on, uwl_mid_on, uwl_dual_on, uwl_sib_gate_on,
             wl_inject_on, bridge_debias_on, lane_on, lane_meas_on, lane_bridge_on, lane_fix_on,
-            lane_parallel_components, mw_d5_dump, mw_lane_trace, mw_tagsets, mw_wl_f6_dump);
+            lane_parallel_components, mw_d5_dump, mw_lane_trace, mw_tagsets);
     // Under fold_blocked the lane primitives skip their per-row re-symmetrize, so exact
     // symmetry is restored here once per joint block, after all of this epoch's MW /
     // bridge / fix rows are applied (no-op unless fold_blocked; LF-1 INC-1).  Runs on

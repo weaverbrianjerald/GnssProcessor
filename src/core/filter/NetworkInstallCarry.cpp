@@ -23,14 +23,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <filesystem>
-#include <fstream>
-#include <limits>
 #include <map>
 #include <optional>
 #include <set>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -60,11 +56,9 @@ void networkInstallCarry(
     const auto& nc  = config_.getNetworkConfig();
     const auto& nmw = config_.getNetworkConfig().mw_wl;
     auto& trace = traces.trace;
-    // The lane switches (NetworkKnobs), the lane machinery (NetworkLaneRun) and the log
-    // directory, under their former parameter names (card NOM step TD1a).
-    const std::filesystem::path& log_dir_ = traces.log_dir_;
+    // The lane switches (NetworkKnobs) and the lane machinery (NetworkLaneRun), under their
+    // former parameter names (card NOM step TD1a).
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
-    const bool mw_wl_on = ctx.knobs.mw_wl_on;
     const bool lane_on = ctx.knobs.lane_on;
     const bool ewl_on = ctx.knobs.ewl_on;
     const bool uwl_on = ctx.knobs.uwl_on;
@@ -73,17 +67,13 @@ void networkInstallCarry(
     const bool mw_d5_dump = ctx.knobs.mw_d5_dump;
     const bool mw_lane_trace = ctx.knobs.mw_lane_trace;
     const bool mw_tagsets = ctx.knobs.mw_tagsets;
-    const bool mw_wl_f6_dump = ctx.knobs.mw_wl_f6_dump;
     std::vector<EwlLane>& ewl_lanes = lane_run.ewl_lanes;
     std::vector<WlInjectPlan>& wl_inject_epoch = lane_run.wl_inject_epoch;
     std::vector<LaneTraceEntry>& lane_trace_epoch = lane_run.lane_trace_epoch;
-    NetworkMwWlLayer::Counters& mw_wl_run = lane_run.mw_wl_run;
-    NetworkMwWlLayer::Counters& mw_wl_epoch = lane_run.mw_wl_epoch;
     WlCounters& wl_run = lane_run.wl_run;
     WlCounters& wl_epoch = lane_run.wl_epoch;
     std::map<char, WlCounters>& wl_cons_run = lane_run.wl_cons_run;
     std::map<char, WlCounters>& wl_cons_epoch = lane_run.wl_cons_epoch;
-    F6Capture& mw_wl_f6 = lane_run.mw_wl_f6;
     auto& d5_ewl_stasat = ctx.carry.d5_ewl_stasat;
     auto& d5_hold_chords = ctx.carry.d5_hold_chords;
     auto& d5_inject_chords_prev = ctx.carry.d5_inject_chords_prev;
@@ -377,153 +367,6 @@ void networkInstallCarry(
         }
     }
 
-    // Fold the accepted build's WL eligibility tallies into the run totals (M5 card WL-1).
-    // This install runs only for an accepted epoch, and the last buildCarryDdPriors before
-    // the accepted solve set mw_wl_epoch.  The run totals are the ON-path telemetry
-    // (invariant #4).
-    if (mw_wl_on) {
-        mw_wl_run.cycles_seen       += mw_wl_epoch.cycles_seen;
-        mw_wl_run.rows_built        += mw_wl_epoch.rows_built;
-        mw_wl_run.rows_capped       += mw_wl_epoch.rows_capped;
-        mw_wl_run.skip_not_primary  += mw_wl_epoch.skip_not_primary;
-        mw_wl_run.skip_missing_band += mw_wl_epoch.skip_missing_band;
-        mw_wl_run.skip_missing_mw   += mw_wl_epoch.skip_missing_mw;
-        mw_wl_run.skip_young_arc    += mw_wl_epoch.skip_young_arc;
-        mw_wl_run.skip_bad_lambda   += mw_wl_epoch.skip_bad_lambda;
-        mw_wl_run.skip_mixed_frame  += mw_wl_epoch.skip_mixed_frame;
-        mw_wl_run.sum_R             += mw_wl_epoch.sum_R;
-
-        // --- F6 one-shot attribution write (log-only; docs/SPEC_mw_wl_card.md §14). ---
-        // The accepted epoch's x_s is final here; add reconstructed_abs (the estimator's
-        // current WL DD over the same cycle) and the kernel WL-block innovation, then dump.
-        if (mw_wl_f6_dump && !mw_wl_f6.written && mw_wl_f6.pending
-            && mw_wl_f6.tow == se.time.tow) {
-            std::map<int, Eigen::VectorXd> xr_of;   // est_station -> local corrections
-            for (const auto& fr : mw_wl_f6.rows)
-                for (const auto& a : fr.arcs)
-                    if (a.est_station >= 0 && !xr_of.count(a.est_station)) {
-                        try { xr_of[a.est_station] = est.reconstructStation(
-                                  static_cast<std::size_t>(a.est_station), x_s); }
-                        catch (...) { xr_of[a.est_station] = Eigen::VectorXd(); }
-                    }
-            // Kernel innovation v = z_free − Gᵀx_s − ẑ.  ddPriorInnovation is block-scoped, so
-            // under f6_all_blocks each block gets its own request and each row indexes into
-            // its own block's vector (rows of a block are contiguous in the capture).
-            std::map<std::size_t, Eigen::VectorXd> v_of;
-            {
-                const Eigen::MatrixXd cov0 = Eigen::MatrixXd::Zero(x_s.size(), x_s.size());
-                std::set<std::size_t> want(mw_wl_f6.row_block.begin(),
-                                           mw_wl_f6.row_block.end());
-                if (want.empty()) want.insert(mw_wl_f6.wl_block_index);
-                for (const std::size_t bi : want) {
-                    Eigen::VectorXd v; Eigen::MatrixXd cov_v;   // (cov unused; v is cov-free)
-                    try { est.ddPriorInnovation(bi, x_s, cov0, v, cov_v); }
-                    catch (...) { v.resize(0); }
-                    v_of[bi] = std::move(v);
-                }
-            }
-            std::map<std::size_t, std::size_t> row_in_block;   // block -> running row index
-            std::error_code ec_f6;
-            std::filesystem::create_directories(log_dir_, ec_f6);
-            std::ofstream f6(log_dir_ / "network_mw_wl_f6.csv");
-            if (f6) {
-                f6 << "# M5 WL-1 F6 attribution dump — first arming epoch (week "
-                   << mw_wl_f6.week << ", tow " << fmt::format("{:.1f}", mw_wl_f6.tow)
-                   << ", loop_epoch " << mw_wl_f6.loop_epoch << ", wl_block_index "
-                   << mw_wl_f6.wl_block_index << ")\n";
-                f6 << "row,n_arcs,z_mw_cyc,z_mw_frac,z_lin_cyc,z_corr_cyc,zhat_block_cyc,"
-                      "reconstructed_abs_cyc,recon_minus_zmw_cyc,recon_abs_frac,innovation_v_cyc\n";
-                for (std::size_t r = 0; r < mw_wl_f6.rows.size(); ++r) {
-                    const auto& fr = mw_wl_f6.rows[r];
-                    double recon = 0.0; bool recon_ok = true;
-                    for (const auto& a : fr.arcs) {
-                        const auto it = xr_of.find(a.est_station);
-                        double xr1 = 0.0, xr2 = 0.0;
-                        if (it != xr_of.end()
-                            && a.col1 >= 0 && static_cast<Eigen::Index>(a.col1) < it->second.size()
-                            && a.col2 >= 0 && static_cast<Eigen::Index>(a.col2) < it->second.size()) {
-                            xr1 = it->second(a.col1); xr2 = it->second(a.col2);
-                        } else { recon_ok = false; }
-                        if (a.lambda1 > 0.0 && a.lambda2 > 0.0)
-                            recon += (a.coeff / a.lambda1) * (a.x_lin1 + xr1)
-                                   - (a.coeff / a.lambda2) * (a.x_lin2 + xr2);
-                    }
-                    const double zmw_frac = fr.z_mw - std::round(fr.z_mw);
-                    const std::size_t bi = (r < mw_wl_f6.row_block.size())
-                                               ? mw_wl_f6.row_block[r]
-                                               : mw_wl_f6.wl_block_index;
-                    const std::size_t rb = row_in_block[bi]++;
-                    const auto vit = v_of.find(bi);
-                    const double vrow =
-                        (vit != v_of.end() && static_cast<Eigen::Index>(rb) < vit->second.size())
-                            ? vit->second(static_cast<Eigen::Index>(rb))
-                            : std::numeric_limits<double>::quiet_NaN();
-                    f6 << r << ',' << fr.arcs.size() << ','
-                       << fmt::format("{:.4f}", fr.z_mw) << ','
-                       << fmt::format("{:.4f}", zmw_frac) << ','
-                       << fmt::format("{:.4f}", fr.z_lin) << ','
-                       << fmt::format("{:.4f}", fr.z_corr) << ','
-                       << fmt::format("{:.4f}", fr.zhat_block) << ','
-                       << (recon_ok ? fmt::format("{:.4f}", recon) : std::string("nan")) << ','
-                       << (recon_ok ? fmt::format("{:.4f}", recon - fr.z_mw) : std::string("nan")) << ','
-                       << (recon_ok ? fmt::format("{:.4f}", recon - std::round(recon)) : std::string("nan")) << ','
-                       << fmt::format("{:.4f}", vrow) << '\n';
-                }
-                f6 << "row,arc,est_station,sat,sig1,sig2,coeff,mw_mean_m,mw_arc_cyc,mw_count,"
-                      "mw_sigma_m,bia_corrected,col1,col2,lambda1,lambda2,lambda_wl,"
-                      "x_lin1_m,x_lin2_m,xr1_m,xr2_m,n1_abs_cyc,n2_abs_cyc,wl_arc_kf_cyc\n";
-                for (std::size_t r = 0; r < mw_wl_f6.rows.size(); ++r) {
-                    const auto& fr = mw_wl_f6.rows[r];
-                    for (std::size_t k = 0; k < fr.arcs.size(); ++k) {
-                        const auto& a = fr.arcs[k];
-                        const auto it = xr_of.find(a.est_station);
-                        double xr1 = 0.0, xr2 = 0.0; bool have_xr = false;
-                        if (it != xr_of.end()
-                            && a.col1 >= 0 && static_cast<Eigen::Index>(a.col1) < it->second.size()
-                            && a.col2 >= 0 && static_cast<Eigen::Index>(a.col2) < it->second.size()) {
-                            xr1 = it->second(a.col1); xr2 = it->second(a.col2); have_xr = true;
-                        }
-                        const double n1abs = (a.lambda1 > 0.0) ? (a.x_lin1 + xr1) / a.lambda1 : 0.0;
-                        const double n2abs = (a.lambda2 > 0.0) ? (a.x_lin2 + xr2) / a.lambda2 : 0.0;
-                        const double mw_arc_cyc = (a.lambda_wl > 0.0) ? a.mw_mean_m / a.lambda_wl : 0.0;
-                        f6 << r << ',' << k << ',' << a.est_station << ','
-                           << a.sat << ',' << a.sig1 << ',' << a.sig2 << ','
-                           << fmt::format("{:.1f}", a.coeff) << ','
-                           << fmt::format("{:.4f}", a.mw_mean_m) << ','
-                           << fmt::format("{:.4f}", mw_arc_cyc) << ','
-                           << a.mw_count << ','
-                           << fmt::format("{:.4f}", std::sqrt(std::max(a.mw_var_m2, 0.0))) << ','
-                           << (a.bia_corrected ? 1 : 0) << ','
-                           << a.col1 << ',' << a.col2 << ','
-                           << fmt::format("{:.6f}", a.lambda1) << ','
-                           << fmt::format("{:.6f}", a.lambda2) << ','
-                           << fmt::format("{:.6f}", a.lambda_wl) << ','
-                           << fmt::format("{:.4f}", a.x_lin1) << ','
-                           << fmt::format("{:.4f}", a.x_lin2) << ','
-                           << (have_xr ? fmt::format("{:.4f}", xr1) : std::string("nan")) << ','
-                           << (have_xr ? fmt::format("{:.4f}", xr2) : std::string("nan")) << ','
-                           << fmt::format("{:.4f}", n1abs) << ','
-                           << fmt::format("{:.4f}", n2abs) << ','
-                           << fmt::format("{:.4f}", n1abs - n2abs) << '\n';
-                    }
-                }
-                mw_wl_f6.written = true;
-                mw_wl_f6.pending = false;
-                log->info("Network (M5/WL-1 F6): wrote {} — first arming epoch tow {:.1f}, "
-                          "{} row(s) over {} WL block(s); attribute z_mw_frac (MW "
-                          "integer-ness) + recon_minus_zmw (state-frame gap).  ⚠️ This is a "
-                          "capped SAMPLE (network.mw_wl.f6_max_rows={}, f6_all_blocks={}) — "
-                          "its size is NOT the WL population; read the run-end WL-1 counters "
-                          "for that.",
-                          (log_dir_ / "network_mw_wl_f6.csv").string(), mw_wl_f6.tow,
-                          mw_wl_f6.rows.size(),
-                          std::set<std::size_t>(mw_wl_f6.row_block.begin(),
-                                                mw_wl_f6.row_block.end()).size(),
-                          config_.getNetworkConfig().mw_wl.f6_max_rows,
-                          config_.getNetworkConfig().mw_wl.f6_all_blocks);
-            }
-        }
-    }
     // EWL lane (M5 card WL-2): the same accepted-install accumulation (invariant #4),
     // per lane instance (under UWL-1, one per tabled constellation when armed).
     if (ewl_on) {

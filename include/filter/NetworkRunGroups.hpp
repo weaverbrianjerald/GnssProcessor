@@ -22,7 +22,7 @@
  */
 
 #include "filter/NetworkMwWlLayer.hpp"         // NetworkMwWlLayer (+ ::Config, ::Counters)
-#include "filter/NetworkWlRunTypes.hpp"        // EwlLane / WlCounters / WlInjectPlan / LaneTraceEntry / F6Capture / SubBlockTimer / SB_COUNT
+#include "filter/NetworkWlRunTypes.hpp"        // EwlLane / WlCounters / WlInjectPlan / LaneTraceEntry / SubBlockTimer / SB_COUNT
 #include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (card CLK-R)
 #include "products/NetworkEmitRebase.hpp"      // NetworkEmitRebase (card 4 phase D)
 #include "products/NetworkPbEmitFilter.hpp"    // NetworkPbEmitFilter (M5 prerequisite)
@@ -63,24 +63,19 @@ struct NetworkEmitEngines {
     NetworkClockEmitRebase clk_rebase; ///< Clock emission re-base: the common-mode frame hold and the per-satellite step marks (card CLK-R).
 };
 
-/// The WL/EWL/UWL lane machinery of one run (cards M5 WL-1, WL-2, WL-3 and UWL-1): the
+/// The WL/EWL/UWL lane machinery of one run (cards M5 WL-2, WL-3 and UWL-1): the
 /// lane layers, their run and per-build tallies, and the per-build plans the post-solve
 /// install consumes.  The driver builds it before the epoch loop and fills
 /// @ref ewl_lanes; networkBuildCarryDdPriors writes the per-build members on every build
 /// (the last build before the accepted solve wins), networkInstallCarry folds them into
 /// the run totals on an accepted install, and the run end reports the run totals.
 struct NetworkLaneRun {
-    /// @param mw_wl_cfg  The WL-1 layer's configuration (MW-seeded wide-lane rows).
     /// @param ewl_cfg    The EWL lane's configuration, shared by every lane instance.
-    NetworkLaneRun(const NetworkMwWlLayer::Config& mw_wl_cfg,
-                   const NetworkMwWlLayer::Config& ewl_cfg)
-        : mw_wl_layer(mw_wl_cfg), ewl_cfg(ewl_cfg) {}
+    explicit NetworkLaneRun(const NetworkMwWlLayer::Config& ewl_cfg)
+        : ewl_cfg(ewl_cfg) {}
 
-    NetworkMwWlLayer             mw_wl_layer;      ///< The MW-seeded wide-lane pseudo-observation layer (WL-1); builds no block unless NetworkKnobs::mw_wl_on.
     NetworkMwWlLayer::Config     ewl_cfg;          ///< The EWL lane's configuration; its min_arc_epochs is also the WL inject's arc-maturity floor.
     std::vector<EwlLane>         ewl_lanes;        ///< One statistic-layer instance per tabled constellation and top rung under UWL-1, else one filterless instance; empty unless NetworkKnobs::ewl_on.
-    NetworkMwWlLayer::Counters   mw_wl_run;        ///< WL-1 run-total eligibility and skip tallies (invariant #4).
-    NetworkMwWlLayer::Counters   mw_wl_epoch;      ///< WL-1 per-build tallies (the last build before the accepted solve wins).
     WlCounters                   wl_run;           ///< WL-walk run totals over every constellation (the aggregate).
     WlCounters                   wl_epoch;         ///< WL-walk per-build tallies.
     std::map<char, WlCounters>   wl_cons_run;      ///< WL-walk run totals per constellation under UWL-1 (pooled lines hide which lane the events come from).
@@ -92,11 +87,6 @@ struct NetworkLaneRun {
     /// posterior, so the preserved NL sum is this epoch's.
     std::vector<WlInjectPlan>    wl_inject_epoch;
     std::vector<LaneTraceEntry>  lane_trace_epoch; ///< The F-B lane-trace entries of this build (network.mw_wl.lane_trace), written after the install against the fresh posterior.
-    /// The one-shot F6 dump (WL-1, network.mw_wl.f6_dump, log-only): a per-arc, per-row
-    /// attribution of the WL rows of the first arming epoch, captured at build time (z_MW,
-    /// z_lin, z_corr, the per-arc MW mean and x_lin) and finalized after the solve (the
-    /// reconstructed absolute values and the kernel's WL-block innovation).
-    F6Capture                    mw_wl_f6;
 };
 
 /// The run's wall-clock record for the run-end timing report.  The driver writes every

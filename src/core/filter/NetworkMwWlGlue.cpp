@@ -24,7 +24,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <limits>
 #include <optional>
 
 namespace GnssProcessor {
@@ -36,15 +35,12 @@ void networkMwWlInject(
     NetworkRunTraces& traces,
     NetworkInvariantCarryDriver& carry_driver,
     const std::vector<NetStation>& stations,
-    const SyncedEpoch& se,
+    const SyncedEpoch& /*se*/,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
     const WithinEpochCulprits& we_culprits,
     int n_threads,
     std::vector<EwlLane>& ewl_lanes,
     const NetworkMwWlLayer::Config& ewl_cfg,
-    NetworkMwWlLayer& mw_wl_layer,
-    F6Capture& mw_wl_f6,
-    NetworkMwWlLayer::Counters& mw_wl_epoch,
     std::vector<WlInjectPlan>& wl_inject_epoch,
     std::vector<LaneTraceEntry>& lane_trace_epoch,
     WlCounters& wl_epoch,
@@ -58,7 +54,6 @@ void networkMwWlInject(
     const std::map<std::pair<int, std::string>, std::string>& band_mid_of,
     const std::function<double(const std::string&, const std::string&)>& lam,
     std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
-    bool mw_wl_on,
     bool ewl_on,
     bool uwl_on,
     bool uwl_cold_on,
@@ -74,8 +69,7 @@ void networkMwWlInject(
     bool lane_parallel_components,
     bool mw_d5_dump,
     bool mw_lane_trace,
-    bool mw_tagsets,
-    bool mw_wl_f6_dump) {
+    bool mw_tagsets) {
     // --- Alias preamble: byte-copies of the run-TU / networkBuildCarryDdPriors
     //     aliases the relocated WL/EWL/UWL inject body reads. ----
     const auto& nmw = config_.getNetworkConfig().mw_wl;
@@ -84,138 +78,19 @@ void networkMwWlInject(
     auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
     auto& d5_ewl_stasat = ctx.carry.d5_ewl_stasat;
     auto& d5_hold_chords = ctx.carry.d5_hold_chords;
-    auto& n_loop_epochs = ctx.counters.n_loop_epochs;
 
-    // Both lanes read the pure carry blocks, not each other's appended rows, so their
-    // outputs are collected here and appended after both have been built.  The WL bridge
-    // lane adds a third block set (integer-hard hold rows on the (1,2) columns).
-    std::vector<NetworkNormalEquations::DdPriorBlock> wl_out, ewl_out, wl_hold_out;
+    // The lanes read the pure carry blocks, not each other's rows.  The EWL lane folds no
+    // row (it decides, FFR-fixes and exposes its integers only); the WL bridge lane's
+    // integer-hard hold rows on the (1,2) columns are collected here and appended last.
+    std::vector<NetworkNormalEquations::DdPriorBlock> wl_hold_out;
     std::vector<NetworkMwWlLayer::FixedEwlRow> ewl_fixed;   // bridge input (WL-2 §3.4)
     // Per-entry top-rung tag, parallel to ewl_fixed: '\0' on the legacy single lane, the
     // lane's b_top or b_top2 digit under the UWL card (Increment 5).
     std::vector<char> ewl_fixed_top;
-  if (mw_wl_on) {   // --- float lane on the primary L1/L2 pair (WL-1) ---
-    mw_wl_epoch = NetworkMwWlLayer::Counters{};   // per-build; the last build before the accepted solve wins
-    auto resolver = [&](std::size_t est_station, Eigen::Index local_col,
-                        NetworkMwWlLayer::ArcData& out) -> bool {
-        const auto rit = revmap.find(
-            { static_cast<int>(est_station), static_cast<int>(local_col) });
-        if (rit == revmap.end()) return false;
-        const Rev& rv = rit->second;
-        const auto pit = primary.find({ rv.rx, rv.sat });
-        const PP* pp = (pit != primary.end()) ? &pit->second : nullptr;
-        if (pp && pp->ok && rv.signal == pp->sig1
-            && static_cast<int>(local_col) == pp->col1) {
-            out.is_primary_sig1 = true;
-            out.col1    = pp->col1;
-            out.col2    = pp->col2;
-            out.lambda1 = lam(rv.sat, pp->sig1);
-            out.lambda2 = lam(rv.sat, pp->sig2);
-            MwSlipDetector::MwArcZdMean zd;
-            if (stations[rv.rx].mw_slip)
-                zd = stations[rv.rx].mw_slip->arcZdMean(rv.sat, pp->sig1, pp->sig2);
-            out.have_mw       = zd.valid;
-            out.mw_zd_mean_m  = zd.mean_m;
-            out.mw_var_m2     = zd.var_of_mean_m2;
-            out.mw_count      = static_cast<long long>(zd.count);
-            out.lambda_wl     = zd.lambda_wl;
-            out.bia_corrected = zd.bia_corrected;   // frame flag (mixed-frame cycle guard)
-            {   // correction-frame re-expression inputs (F5)
-                const auto l1it = lin_of.find({ static_cast<int>(est_station),
-                                                static_cast<int>(pp->col1) });
-                const auto l2it = lin_of.find({ static_cast<int>(est_station),
-                                                static_cast<int>(pp->col2) });
-                if (l1it == lin_of.end() || l2it == lin_of.end()) {
-                    out.have_mw = false;   // no linearization value ⇒ cannot frame the row
-                } else {
-                    out.x_lin1 = l1it->second;
-                    out.x_lin2 = l2it->second;
-                }
-            }
-        } else {
-            // Not the primary L1 signal: a secondary/other-band carry group
-            // (→ skip_not_primary) or a single-band band-1 arc lacking L2
-            // (is_primary_sig1 true + col2=-1 → skip_missing_band).
-            const auto sig = SignalId::fromObsCode(systemOfSat(rv.sat), rv.signal);
-            out.is_primary_sig1 = (!pp || !pp->ok) && (sig && sig->digit == '1');
-            out.col1    = local_col;
-            out.col2    = -1;
-            out.have_mw = false;
-        }
-        return true;
-    };
-    auto wl_blocks = mw_wl_layer.build(blocks, resolver, mw_wl_epoch);
-    // --- Attribution capture (F6): WL rows of the first epoch that has any (log-only). ---
-    // Each cycle arc is re-resolved (resolver and revmap are in scope here) to record the
-    // per-arc MW̄ and x_lin and the row aggregates z_MW, z_lin and z_corr; the post-solve
-    // site adds reconstructed_abs and the kernel innovation.  The last build before the
-    // accepted solve wins (matched on tow at the write site).
-    if (mw_wl_f6_dump && !mw_wl_f6.written && !wl_blocks.empty()) {
-        const std::size_t Nc = blocks.size();      // WL blocks are appended after the carry blocks
-        mw_wl_f6.rows.clear();
-        mw_wl_f6.row_block.clear();
-        mw_wl_f6.week           = se.time.week;
-        mw_wl_f6.tow            = se.time.tow;
-        mw_wl_f6.loop_epoch     = static_cast<int>(n_loop_epochs);
-        mw_wl_f6.wl_block_index = Nc;              // first WL block's index in `blocks`
-        // Row budget.  The default dump takes min(rows, 8) rows of wl_blocks.front() alone:
-        // a fixed-size sample, not a population, so its size says nothing about how many
-        // cycles the layer built.  f6_max_rows <= 0 lifts the cap; f6_all_blocks walks every
-        // WL block.  The defaults (8, false) keep the single-block sample byte for byte.
-        const std::size_t cap = (nmw.f6_max_rows <= 0)
-            ? std::numeric_limits<std::size_t>::max()
-            : static_cast<std::size_t>(nmw.f6_max_rows);
-        const std::size_t n_blk = nmw.f6_all_blocks ? wl_blocks.size() : std::size_t{1};
-        for (std::size_t b = 0; b < n_blk && mw_wl_f6.rows.size() < cap; ++b) {
-            const auto& wb = wl_blocks[b];
-            const std::size_t nrow =
-                std::min<std::size_t>(wb.rows.size(), cap - mw_wl_f6.rows.size());
-            for (std::size_t r = 0; r < nrow; ++r) {
-                const auto& terms = wb.rows[r];
-                F6Row fr;
-                fr.zhat_block = (static_cast<Eigen::Index>(r) < wb.zhat.size())
-                                    ? wb.zhat(static_cast<Eigen::Index>(r)) : 0.0;
-                for (std::size_t t = 0; t + 1 < terms.size(); t += 2) {
-                    const auto& tL1 = terms[t];   // rows are [L1_0,L2_0, L1_1,L2_1, ...]
-                    NetworkMwWlLayer::ArcData ad;
-                    if (!resolver(tL1.station, tL1.local_col, ad)) continue;
-                    F6Arc a;
-                    a.est_station   = static_cast<int>(tL1.station);
-                    a.col1          = static_cast<int>(ad.col1);
-                    a.col2          = static_cast<int>(ad.col2);
-                    a.coeff         = (ad.lambda1 > 0.0) ? tL1.coeff * ad.lambda1 : tL1.coeff;
-                    a.mw_mean_m     = ad.mw_zd_mean_m;
-                    a.mw_var_m2     = ad.mw_var_m2;
-                    a.mw_count      = ad.mw_count;
-                    a.bia_corrected = ad.bia_corrected;
-                    a.x_lin1        = ad.x_lin1;
-                    a.x_lin2        = ad.x_lin2;
-                    a.lambda1       = ad.lambda1;
-                    a.lambda2       = ad.lambda2;
-                    a.lambda_wl     = ad.lambda_wl;
-                    const auto r1 = revmap.find({ a.est_station, a.col1 });
-                    if (r1 != revmap.end()) { a.sat = r1->second.sat; a.sig1 = r1->second.signal; }
-                    const auto r2 = revmap.find({ a.est_station, a.col2 });
-                    if (r2 != revmap.end()) a.sig2 = r2->second.signal;
-                    if (a.lambda_wl > 0.0) fr.z_mw += a.coeff * a.mw_mean_m / a.lambda_wl;
-                    if (a.lambda1 > 0.0 && a.lambda2 > 0.0)
-                        fr.z_lin += (a.coeff / a.lambda1) * a.x_lin1
-                                  - (a.coeff / a.lambda2) * a.x_lin2;
-                    fr.arcs.push_back(std::move(a));
-                }
-                fr.z_corr = fr.z_mw - fr.z_lin;
-                mw_wl_f6.rows.push_back(std::move(fr));
-                mw_wl_f6.row_block.push_back(Nc + b);
-            }
-        }
-        mw_wl_f6.pending = !mw_wl_f6.rows.empty();
-    }
-    wl_out = std::move(wl_blocks);
-  }  // --- end WL-1 float lane ---
 
   if (ewl_on) {   // --- EWL lane (WL-2): (band2, band-top) pair, fix gated on the FFR statistic ---
     for (auto& lane : ewl_lanes) lane.epoch = NetworkMwWlLayer::Counters{};
-    // Same eligibility as WL-1 (a primary-sig1 cycle), but the row is the top-tier DD
+    // The eligible cycle is a primary-sig1 cycle, and the row is the top-tier DD
     // on the same (rx,sat) arcs, pairing the estimator's primary sig2 (channel
     // discipline) with the constellation's top band: GPS EWL (L2,L5); Galileo UWL
     // (E5b|E5, E5a) under the UWL card.  (hi,lo) is ordered by actual frequency (GPS's
@@ -303,7 +178,6 @@ void networkMwWlInject(
         }
         return true;
     };
-    ewl_out.clear();
     ewl_fixed.clear();
     ewl_fixed_top.clear();
     for (auto& lane : ewl_lanes) {
@@ -319,8 +193,9 @@ void networkMwWlInject(
                }();
         ewl_top_map = is_top2 ? &band_top2_of : &band_top_of;
         std::vector<NetworkMwWlLayer::FixedEwlRow> lane_fixed;
-        auto lane_blocks = lane.layer.build(blocks, ewl_resolver, lane.epoch, &lane_fixed);
-        for (auto& b : lane_blocks) ewl_out.push_back(std::move(b));
+        // The returned row blocks are not folded: the lane decides, fixes and exposes its
+        // integers (lane_fixed) and its counters only.
+        (void)lane.layer.build(blocks, ewl_resolver, lane.epoch, &lane_fixed);
         ewl_fixed.insert(ewl_fixed.end(), lane_fixed.begin(), lane_fixed.end());
         ewl_fixed_top.insert(ewl_fixed_top.end(), lane_fixed.size(), lane.top);
     }
@@ -1014,9 +889,6 @@ void networkMwWlInject(
         }
     }
   }
-    for (auto& wb : wl_out)      blocks.push_back(std::move(wb));   // first the WL-1 rows, at [Nc, Nc+n_wl)
-    if (nmw.ewl_fold_rows)                                          // F-A discriminant: false ⇒
-        for (auto& wb : ewl_out) blocks.push_back(std::move(wb));   // decide/expose but fold nothing
     for (auto& wb : wl_hold_out) blocks.push_back(std::move(wb));   // then WL hold rows
 }
 

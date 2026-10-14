@@ -71,12 +71,13 @@ const char* kCarryInvariant =
     "    \"phase_leveling\": true,\n"
     "    \"cycle_slip\": { \"mw_detect\": true },\n";
 
-/// The 24 switches as the driver computed them before card NOM step TD1a.
+/// The switches still in the snapshot, as the driver computed them before card NOM step
+/// TD1a (the WL-1 switches mw_wl_on and mw_wl_f6_dump went with their keys).
 struct DriverSwitches {
-    bool carry_innov_gate, lane_on, lane_joint, mw_wl_on, ewl_on, uwl_on, uwl_cold_on,
+    bool carry_innov_gate, lane_on, lane_joint, ewl_on, uwl_on, uwl_cold_on,
          bridge_debias_on, uwl_mid_on, uwl_dual_on, uwl_sib_gate_on, uwl_family_on,
          wl_inject_on, lane_meas_on, lane_bridge_on, lane_fix_on, lane_parallel_components,
-         mw_d5_dump, mw_lane_trace, mw_tagsets, mw_wl_f6_dump, emit_rebase_on,
+         mw_d5_dump, mw_lane_trace, mw_tagsets, emit_rebase_on,
          emit_pb_filter_on, pb_filter_emit_sigma;
 };
 
@@ -91,7 +92,6 @@ DriverSwitches driverSwitches(const GnssConfig& config_) {
     d.lane_joint = d.lane_on
         && (lane_cfg.q_wl_scale != 1.0 || lane_cfg.sigma_wl_fresh_cyc > 0.0
             || lane_cfg.lane_meas || lane_cfg.bridge_meas);
-    d.mw_wl_on = carry_invariant && config_.networkMwWlSeed();
     d.ewl_on = carry_invariant && nmw.ewl_enable;
     d.uwl_on = d.ewl_on && nmw.uwl_enable;
     d.uwl_cold_on = d.uwl_on && nmw.uwl_cold_fix;
@@ -108,7 +108,6 @@ DriverSwitches driverSwitches(const GnssConfig& config_) {
     d.mw_d5_dump = (d.ewl_on || d.wl_inject_on || d.lane_on) && nmw.d5_dump;
     d.mw_lane_trace = (d.wl_inject_on || d.lane_fix_on) && nmw.lane_trace;
     d.mw_tagsets = d.mw_d5_dump || d.mw_lane_trace;
-    d.mw_wl_f6_dump = d.mw_wl_on && config_.getNetworkConfig().mw_wl.f6_dump;
     d.emit_rebase_on = carry_invariant && config_.networkCarryInvariantEmitRebase();
     d.emit_pb_filter_on = d.emit_rebase_on && config_.networkEmitPbFilter();
     d.pb_filter_emit_sigma = config_.networkEmitPbFilterEmitSigma();
@@ -122,7 +121,6 @@ NetworkKnobs expectDriverSwitches(const GnssConfig& cfg) {
     EXPECT_EQ(k.carry_innov_gate, d.carry_innov_gate);
     EXPECT_EQ(k.lane_on, d.lane_on);
     EXPECT_EQ(k.lane_joint, d.lane_joint);
-    EXPECT_EQ(k.mw_wl_on, d.mw_wl_on);
     EXPECT_EQ(k.ewl_on, d.ewl_on);
     EXPECT_EQ(k.uwl_on, d.uwl_on);
     EXPECT_EQ(k.uwl_cold_on, d.uwl_cold_on);
@@ -139,7 +137,6 @@ NetworkKnobs expectDriverSwitches(const GnssConfig& cfg) {
     EXPECT_EQ(k.mw_d5_dump, d.mw_d5_dump);
     EXPECT_EQ(k.mw_lane_trace, d.mw_lane_trace);
     EXPECT_EQ(k.mw_tagsets, d.mw_tagsets);
-    EXPECT_EQ(k.mw_wl_f6_dump, d.mw_wl_f6_dump);
     EXPECT_EQ(k.emit_rebase_on, d.emit_rebase_on);
     EXPECT_EQ(k.emit_pb_filter_on, d.emit_pb_filter_on);
     EXPECT_EQ(k.pb_filter_emit_sigma, d.pb_filter_emit_sigma);
@@ -204,8 +201,6 @@ TEST(NetworkKnobsLaneEmit, LaneCarrySupersedesTheInject) {
     GnssConfig cfg;
     const std::string extra = std::string(kCarryInvariant) +
         "    \"mw_wl\": {\n"
-        "      \"enable\": true,\n"
-        "      \"f6_dump\": true,\n"
         "      \"ewl_enable\": true,\n"
         "      \"uwl_enable\": true,\n"
         "      \"uwl_family_pairs\": true,\n"
@@ -225,7 +220,6 @@ TEST(NetworkKnobsLaneEmit, LaneCarrySupersedesTheInject) {
     EXPECT_TRUE(k.lane_joint);
     EXPECT_TRUE(k.lane_fix_on);
     EXPECT_TRUE(k.uwl_family_on);
-    EXPECT_TRUE(k.mw_wl_f6_dump);
     EXPECT_FALSE(k.wl_inject_on);   // WL-3 supersedes the WL-2 inject
 }
 

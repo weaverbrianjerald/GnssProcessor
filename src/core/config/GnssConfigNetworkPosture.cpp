@@ -54,7 +54,7 @@ namespace GnssProcessor {
         const bool tri   = frequency_mode_ == FrequencyMode::Triple
                         || frequency_mode_ == FrequencyMode::All;
         const bool warm  = !nc.state_snapshot_path.empty();
-        const bool lane  = nc.mw_wl.ewl_enable || nc.mw_wl.enable || nc.lane_carry.enable;
+        const bool lane  = nc.mw_wl.ewl_enable || nc.lane_carry.enable;
         // The real-time / service posture.  service_mode is the RT service producer, so a
         // knob scoped to post-processing (carry_invariant: ~57% of epoch wall time at
         // 305 sta) stays silent there, and the RT-only knobs stay silent everywhere else.

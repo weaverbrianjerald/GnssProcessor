@@ -1149,12 +1149,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // GnssCorrections) engages the BIA-corrected wide-lane path (integer dN) where
         // biases are available; arc state lives on the detector and is station-local
         // (parallel-safe).
-        //
-        // The MW-seeded wide-lane layer also needs the per-station MW detector running
-        // (its per-arc Welford means feed the WL fold), including in the 3card lineage
-        // where phase_leveling is off, so network.mw_wl.enable builds the detector on
-        // every station independent of phase_leveling / turbo_edit / mw_detect.  With
-        // mw_wl disabled the path is unchanged.  (M5 card WL-1)
         const bool build_slip_for_pl =
             (config_.networkPhaseDatumPrioritized() || !is_pivot
              || config_.networkCycleSlipDatumStationDetect())
@@ -1174,7 +1168,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // path is unchanged.  (M5 card WL-2, SPEC_ewl_wl_cascade_card.md §4)
         const auto& mwc = config_.getNetworkConfig().mw_wl;
         const auto& lcc = config_.getNetworkConfig().lane_carry;   // lane carry (M5 WL-3)
-        if (build_slip_for_pl || config_.networkMwWlSeed()
+        if (build_slip_for_pl
             || mwc.ewl_enable || mwc.wl_inject_enable || lcc.enable) {
             st.mw_slip = std::make_unique<MwSlipDetector>(config_, log_manager_);
             // Every station's detector shares one logger, whose records are keyed

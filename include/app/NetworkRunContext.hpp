@@ -1056,7 +1056,6 @@ namespace GnssProcessor {
         bool carry_innov_gate{};         ///< D5 estimation-side fine-slip innovation gate: carry_invariant and network.carry_invariant_innov_gate.
         bool lane_on{};                  ///< Lane-coordinate carry (WL-3): carry_invariant and network.lane_carry.enable.
         bool lane_joint{};               ///< The lane shape of WL-3 (joint pair blocks, lane prior and rows, fold-on-change fixing): lane_on with any lane feature off its isotropic or off sentinel.
-        bool mw_wl_on{};                 ///< MW-seeded wide-lane pseudo-observation layer (WL-1): carry_invariant and network.mw_wl.enable.
         bool ewl_on{};                   ///< EWL lane (WL-2): carry_invariant and network.mw_wl.ewl_enable.  Also the third-band carry exclusion: the EWL pair's uncarried leg is left out of the carry exactly when the lane is armed.
         bool uwl_on{};                   ///< Per-constellation top tier (UWL-1): ewl_on and network.mw_wl.uwl_enable.  Also selects the lane-tier table for the uncarried band.
         bool uwl_cold_on{};              ///< UWL-1 cold fix (n = 1 unlagged statistics on long-λ tiers): uwl_on and network.mw_wl.uwl_cold_fix.
@@ -1073,7 +1072,6 @@ namespace GnssProcessor {
         bool mw_d5_dump{};               ///< F-A D5 attribution dump (log-only): any of ewl_on, wl_inject_on, lane_on, and network.mw_wl.d5_dump.
         bool mw_lane_trace{};            ///< F-B lane trace (log-only): wl_inject_on or lane_fix_on, and network.mw_wl.lane_trace.
         bool mw_tagsets{};               ///< The hold and inject tag sets, which feed both dumps: mw_d5_dump or mw_lane_trace.
-        bool mw_wl_f6_dump{};            ///< One-shot F6 WL attribution dump: mw_wl_on and network.mw_wl.f6_dump.
         bool emit_rebase_on{};           ///< Emit-layer frame re-base of the emitted phase biases (card 4 phase D): carry_invariant and network.carry_invariant_emit_rebase.
         bool emit_pb_filter_on{};        ///< Phase-bias emission-continuity filter: emit_rebase_on and network.emit_pb_filter.
         bool pb_filter_emit_sigma{};     ///< Emit the filter's posterior sigma with each filtered bias: network.emit_pb_filter_emit_sigma.
@@ -2469,7 +2467,7 @@ namespace GnssProcessor {
 
         // --- WL/UWL zone-2 run-latched sets and D5 tag state (decomposition INC-4: the
         // plain-data tier-1 entities; instances with function-local types, namely the
-        // WlInjectPlan/LaneTraceEntry/WlCounters/F6Capture vectors and the lane/layer
+        // WlInjectPlan/LaneTraceEntry/WlCounters vectors and the lane/layer
         // engines, stay in the run TU until INC-9b) ---
         std::set<std::pair<int, std::string>> d5_ewl_stasat;
         std::set<ArcKey> d5_hold_chords;

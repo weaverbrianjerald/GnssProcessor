@@ -8,9 +8,9 @@
  * This is the back half of the WL machinery.  After the census and signal-selection
  * block has populated the shared per-(rx,sat) maps (revmap, lin_of, iono_of, primary,
  * band_top*_of, band_mid_of) and the invariant DD-carry blocks (Card-4) are built, this
- * step constructs the WL-1 float lane, the WL-2 EWL FFR-fixed lane, the WL-3 per-epoch MW
- * lane increments, the bridge->WL-integer hold/inject walk, and the F6 and lane-trace
- * diagnostics, and appends its rows to @p blocks.  The `if (mw_mach_on)` guard stays at
+ * step runs the WL-2 EWL FFR-fixed lane, the WL-3 per-epoch MW lane increments, the
+ * bridge->WL-integer hold/inject walk and the lane-trace diagnostic, and appends its
+ * hold rows to @p blocks.  The `if (mw_mach_on)` guard stays at
  * the call site, so with it off the run is byte-identical.  The step owns no state:
  * every WL run-state instance and the three cross-epoch channels are references into
  * objects owned by the run TU (through ctx or explicit arguments), and the shared maps
@@ -21,7 +21,7 @@
 #include "filter/NetworkMwWlLayer.hpp"          // NetworkMwWlLayer (+ ::Config / ::Counters)
 #include "filter/NetworkNormalEquations.hpp"    // NetworkNormalEquations::DdPriorBlock
 #include "filter/NetworkRunTypes.hpp"           // NetStation
-#include "filter/NetworkWlRunTypes.hpp"         // EwlLane / WlInjectPlan / LaneTraceEntry / WlCounters / F6Capture / Rev / PP
+#include "filter/NetworkWlRunTypes.hpp"         // EwlLane / WlInjectPlan / LaneTraceEntry / WlCounters / Rev / PP
 #include "rinex/MultiRinexSync.hpp"             // SyncedEpoch
 
 #include <functional>
@@ -41,15 +41,15 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 
 /**
- * @brief Build this epoch's MW-WL / EWL / UWL / lane-carry pseudo-observation rows and
- *        append them to @p blocks (WL-1 float lane, WL-2 EWL FFR-fixed lane, WL-3 MW lane
- *        increments, the bridge->WL-integer hold/inject walk, and the F6 and lane-trace
- *        diagnostics).
+ * @brief Build this epoch's EWL / UWL / lane-carry pseudo-observation rows and append
+ *        them to @p blocks (WL-2 EWL FFR-fixed lane, WL-3 MW lane increments, the
+ *        bridge->WL-integer hold/inject walk, and the lane-trace diagnostic).
  *
  * Called under `if (mw_mach_on)` from networkBuildCarryDdPriors, after
  * carry_driver.buildDdPriors.  The shared per-(rx,sat) maps are read-only inputs
- * populated by the census block.  Rows are appended in the order WL-1, then EWL (only
- * with mw_wl.ewl_fold_rows), then WL hold rows.  See the .cpp for the relocated body.
+ * populated by the census block.  Only the WL hold rows are appended; the EWL lane
+ * decides and exposes its integers without folding a row.  See the .cpp for the
+ * relocated body.
  *
  * @p we_culprits is the caller's culprit set (card WCF, filter/NetworkWithinEpochCulprits):
  * a chord term whose (station, satellite) a culprit names is treated as slipped, so its
@@ -69,9 +69,6 @@ void networkMwWlInject(
     int n_threads,
     std::vector<EwlLane>& ewl_lanes,
     const NetworkMwWlLayer::Config& ewl_cfg,
-    NetworkMwWlLayer& mw_wl_layer,
-    F6Capture& mw_wl_f6,
-    NetworkMwWlLayer::Counters& mw_wl_epoch,
     std::vector<WlInjectPlan>& wl_inject_epoch,
     std::vector<LaneTraceEntry>& lane_trace_epoch,
     WlCounters& wl_epoch,
@@ -85,7 +82,6 @@ void networkMwWlInject(
     const std::map<std::pair<int, std::string>, std::string>& band_mid_of,
     const std::function<double(const std::string&, const std::string&)>& lam,
     std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
-    bool mw_wl_on,
     bool ewl_on,
     bool uwl_on,
     bool uwl_cold_on,
@@ -101,7 +97,6 @@ void networkMwWlInject(
     bool lane_parallel_components,
     bool mw_d5_dump,
     bool mw_lane_trace,
-    bool mw_tagsets,
-    bool mw_wl_f6_dump);
+    bool mw_tagsets);
 
 } // namespace GnssProcessor

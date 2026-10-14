@@ -712,11 +712,6 @@ int Application::runNetwork() {
         carry_cfg.skip_pinned_within_n   = lane_cfg.skip_pinned_within_n;
     }
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
-    // MW-seeded wide-lane pseudo-observation layer (card M5 WL-1), resolved in
-    // NetworkKnobs::snapshot.  Off (mw_wl.enable=false) ⇒ NetworkMwWlLayer::build returns
-    // no blocks and the per-station MW detectors are not built for it, so the producer is
-    // byte-identical.
-    const bool mw_wl_on = ctx.knobs.mw_wl_on;
     // With the EWL lane armed (card M5 WL-2, ctx.knobs.ewl_on), the constellation's third
     // band (the EWL pair's uncarried leg: GPS L5, Galileo E5b) is excluded from the
     // invariant-carry driver, so that lane acquires no unearned stiff prior (the F6 wall)
@@ -753,21 +748,11 @@ int Application::runNetwork() {
             default:              return false;         // BDS/QZSS deferred; GLONASS excluded from the carry anyway
         }
     };
-    NetworkMwWlLayer::Config mw_wl_cfg;
-    mw_wl_cfg.enable             = mw_wl_on;
-    mw_wl_cfg.min_arc_epochs     = config_.getNetworkConfig().mw_wl.min_arc_epochs;
-    mw_wl_cfg.sigma_floor_cyc    = config_.getNetworkConfig().mw_wl.sigma_floor_cyc;
-    mw_wl_cfg.max_rows_per_epoch = config_.getNetworkConfig().mw_wl.max_rows_per_epoch;
-    mw_wl_cfg.debug_r_scale      = config_.getNetworkConfig().mw_wl.debug_r_scale;   // diagnostic probe (F6)
-    if (mw_wl_on && mw_wl_cfg.debug_r_scale != 1.0)
-        log->warn("Network (M5/WL-1): network.mw_wl.debug_r_scale = {} — DIAGNOSTIC probe, the WL "
-                  "rows' Pz is scaled (not honest MW variance).  Do NOT grade this run.",
-                  mw_wl_cfg.debug_r_scale);
-    // EWL lane (card M5 WL-2): the same layer, run on the (band2, band5) pair with FFR
-    // statistic-gated fixing.  The third band is uncarried (excluded above), so these rows
-    // meet no opposing F6 prior; a passed FFR folds an integer-hard row.  It uses the
-    // primary-sig1 cycle basis, as WL-1 does.  ewl_on, the UWL-1 top tier (uwl_on) and the
-    // other lane switches are resolved in NetworkKnobs::snapshot.
+    // EWL lane (card M5 WL-2): the MW wide-lane layer, run on the (band2, band5) pair with
+    // FFR statistic-gated fixing.  The third band is uncarried (excluded above), so these
+    // rows meet no opposing F6 prior.  It uses the primary-sig1 cycle basis.  ewl_on, the
+    // UWL-1 top tier (uwl_on) and the other lane switches are resolved in
+    // NetworkKnobs::snapshot.
     const bool ewl_on = ctx.knobs.ewl_on;
     const bool uwl_on = ctx.knobs.uwl_on;
     NetworkMwWlLayer::Config ewl_cfg;
@@ -780,11 +765,11 @@ int Application::runNetwork() {
     ewl_cfg.fix_frac_cyc        = nmw.ewl_fix_frac_cyc;
     ewl_cfg.fix_weight_sigma_cyc= nmw.fix_weight_sigma_cyc;
     ewl_cfg.max_abs_xlin_m      = nmw.lane_max_abs_xlin_m;
-    // The lane machinery of the run (filter/NetworkRunGroups.hpp): the WL-1 layer, the EWL
-    // lanes, their run and per-build tallies, and the per-build inject and lane-trace
-    // plans.  networkBuildCarryDdPriors writes the per-build members, networkInstallCarry
-    // folds them into the run totals, and the run end reports the run totals.
-    NetworkLaneRun lane_run(mw_wl_cfg, ewl_cfg);
+    // The lane machinery of the run (filter/NetworkRunGroups.hpp): the EWL lanes, their
+    // run and per-build tallies, and the per-build inject and lane-trace plans.
+    // networkBuildCarryDdPriors writes the per-build members, networkInstallCarry folds
+    // them into the run totals, and the run end reports the run totals.
+    NetworkLaneRun lane_run(ewl_cfg);
     // With the card armed there is one statistic-layer instance per tabled
     // constellation, so the telemetry is per constellation (the F-A dump showed that
     // pooled lines hide which lane the events come from).  Otherwise a single

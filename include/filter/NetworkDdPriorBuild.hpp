@@ -9,8 +9,8 @@
  * The run TU keeps both lambdas as thin `[&]` wrappers that forward to these free
  * functions, so the initial gauge/DD build and the within-epoch RAIM re-solve
  * (`resolve_dropping`) keep byte-identical capture semantics.  These functions own no
- * state.  Every WL run-state instance (ewl_lanes / wl_inject_epoch / mw_wl_layer /
- * mw_wl_f6 / ...) is a member of the driver's @ref NetworkLaneRun, and the lane switches
+ * state.  Every WL run-state instance (ewl_lanes / wl_inject_epoch / wl_epoch /
+ * lane_trace_epoch / ...) is a member of the driver's @ref NetworkLaneRun, and the lane switches
  * are read from NetworkKnobs (card NOM step TD1a).  Two inputs carry state across
  * epochs or passes and need care: carry_slipped_ambs, the driver's per-epoch slip
  * funnel, passed by reference, and lane_admit_pairs, read and written through
@@ -22,7 +22,7 @@
 #include "filter/NetworkInvariantCarryDriver.hpp" // NetworkInvariantCarryDriver
 #include "filter/NetworkMwWlLayer.hpp"          // NetworkMwWlLayer (+ ::Config)
 #include "filter/NetworkRunTypes.hpp"           // NetStation / StationAssembly / CarryPrior
-#include "filter/NetworkWlRunTypes.hpp"         // EwlLane / WlInjectPlan / LaneTraceEntry / WlCounters / F6Capture
+#include "filter/NetworkWlRunTypes.hpp"         // EwlLane / WlInjectPlan / LaneTraceEntry / WlCounters
 #include "filter/NetworkRunGroups.hpp"          // NetworkLaneRun (card NOM step TD1a)
 #include "filter/NetworkZStore.hpp"             // ArcKey (carry_arc_amb_key maps)
 #include "rinex/MultiRinexSync.hpp"             // SyncedEpoch

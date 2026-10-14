@@ -699,11 +699,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.lane_joint = k.lane_on
             && (lane_cfg.q_wl_scale != 1.0 || lane_cfg.sigma_wl_fresh_cyc > 0.0
                 || lane_cfg.lane_meas || lane_cfg.bridge_meas);
-        // MW-seeded wide-lane pseudo-observation layer (card M5 WL-1).  It uses the carry
-        // driver's chord basis, so it requires carry_invariant (rejected at config load
-        // otherwise).
-        k.mw_wl_on = k.carry_invariant && config_.networkMwWlSeed();
-        // EWL lane (card M5 WL-2): the same layer, run on the (band2, band5) pair with FFR
+        // EWL lane (card M5 WL-2): the MW wide-lane layer, run on the (band2, band5) pair with FFR
         // statistic-gated fixing.  The same conjunction also excludes the constellation's
         // third band (the EWL pair's uncarried leg: GPS L5, Galileo E5b) from the carry, so
         // that lane acquires no unearned stiff prior (the F6 wall).
@@ -761,9 +757,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.mw_d5_dump    = (k.ewl_on || k.wl_inject_on || k.lane_on) && nmw.d5_dump;
         k.mw_lane_trace = (k.wl_inject_on || k.lane_fix_on) && nmw.lane_trace;
         k.mw_tagsets    = k.mw_d5_dump || k.mw_lane_trace;
-        // One-shot F6 diagnostic (card M5 WL-1): a per-arc, per-row attribution dump of the
-        // WL rows of the first arming epoch.  Log-only; off by default.
-        k.mw_wl_f6_dump = k.mw_wl_on && config_.getNetworkConfig().mw_wl.f6_dump;
         // Emit-layer frame re-base (card 4 phase D), on by default when carry_invariant is
         // armed (spec D7); the PB emission-continuity filter runs inside the re-base block,
         // so it requires emit_rebase_on.

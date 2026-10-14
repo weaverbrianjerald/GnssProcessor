@@ -1676,50 +1676,19 @@ namespace GnssProcessor {
      */
     void GnssConfig::loadNetworkLaneLayers_(const nlohmann::json& json,
                                             const std::shared_ptr<spdlog::logger>& log) {
-        // --- MW-seeded wide-lane pseudo-obs layer (network.mw_wl.*; M5 card WL-1) ---
-        // Feeds the per-arc Melbourne-Wubbena Welford means, double-differenced over
-        // the card-4 chord basis, into the solve as rank-K WL pseudo-obs blocks: the
-        // code-coherence accumulator the per-epoch network lacks
-        // (docs/SPEC_mw_wl_card.md).  Default enable=false => byte-identical.  The
-        // carry_invariant requirement and the Phase-B warnings are enforced in
-        // validateNetworkLaneLayers_, after network.carry_invariant is parsed.
+        // --- MW wide-lane lane layers (network.mw_wl.*; M5 cards WL-2, UWL-1) ---
+        // The per-arc Melbourne-Wubbena statistics, double-differenced over the card-4
+        // chord basis (docs/SPEC_ewl_wl_cascade_card.md).  Every lane defaults off =>
+        // byte-identical.  The carry_invariant requirement and the lane contracts are
+        // enforced in validateNetworkLaneLayers_, after network.carry_invariant is parsed.
         {
             auto& mw = network_config_.mw_wl;
-            mw.enable = jval<bool>(json, "network.mw_wl.enable", "network_mw_wl_enable", false);
-            mw.min_arc_epochs = jval<int>(json, "network.mw_wl.min_arc_epochs",
-                                          "network_mw_wl_min_arc_epochs", 10);
             mw.sigma_floor_cyc = jval<double>(json, "network.mw_wl.sigma_floor_cyc",
                                               "network_mw_wl_sigma_floor_cyc", 0.05);
             mw.max_rows_per_epoch = jval<int>(json, "network.mw_wl.max_rows_per_epoch",
                                               "network_mw_wl_max_rows_per_epoch", 0);
-            mw.fix_enable = jval<bool>(json, "network.mw_wl.fix_enable",
-                                       "network_mw_wl_fix_enable", false);
-            mw.fix_sigma_cyc = jval<double>(json, "network.mw_wl.fix_sigma_cyc",
-                                            "network_mw_wl_fix_sigma_cyc", 0.10);
-            mw.fix_frac_cyc = jval<double>(json, "network.mw_wl.fix_frac_cyc",
-                                           "network_mw_wl_fix_frac_cyc", 0.15);
             mw.fix_weight_sigma_cyc = jval<double>(json, "network.mw_wl.fix_weight_sigma_cyc",
                                                    "network_mw_wl_fix_weight_sigma_cyc", 0.01);
-            mw.f6_dump = jval<bool>(json, "network.mw_wl.f6_dump",
-                                    "network_mw_wl_f6_dump", false);
-            // Row budget and block span for the F6 dump.  The legacy dump samples 8 rows
-            // of one block; that fixed size is a sample and says nothing about how many
-            // cycles the layer built (read as a count, it suggests a ~99.7% quarantine).
-            // Both default to the legacy shape, so an unset config dumps as before.
-            mw.f6_max_rows = jval<int>(json, "network.mw_wl.f6_max_rows",
-                                       "network_mw_wl_f6_max_rows", 8);
-            mw.f6_all_blocks = jval<bool>(json, "network.mw_wl.f6_all_blocks",
-                                          "network_mw_wl_f6_all_blocks", false);
-            mw.debug_r_scale = jval<double>(json, "network.mw_wl.debug_r_scale",
-                                            "network_mw_wl_debug_r_scale", 1.0);
-            mw.ewl_fold_rows = jval<bool>(json, "network.mw_wl.ewl_fold_rows",
-                                          "network_mw_wl_ewl_fold_rows", false);
-            if (mw.ewl_fold_rows)
-                log->warn("network.mw_wl.ewl_fold_rows=true — F-A STUDY SHAPE: folding the EWL "
-                          "integer rows into the solve re-creates the ~2x D5 elevation the "
-                          "Jul-16 A/B attributed (border-mediated tension against the stiff "
-                          "carries).  The WL cascade does not need the fold (it reads the "
-                          "detector statistic).  Diagnostic only, NOT a production shape.");
             mw.d5_dump = jval<bool>(json, "network.mw_wl.d5_dump",
                                     "network_mw_wl_d5_dump", false);
             mw.lane_trace = jval<bool>(json, "network.mw_wl.lane_trace",
@@ -1992,12 +1961,6 @@ namespace GnssProcessor {
                           "variance-of-mean needs >=2 samples) — clamping to 2.",
                           mw.ewl_min_arc_epochs);
                 mw.ewl_min_arc_epochs = 2;
-            }
-            if (mw.min_arc_epochs < 2) {
-                log->warn("Network: network.mw_wl.min_arc_epochs = {} is below 2 (a "
-                          "variance-of-mean needs >=2 samples) — clamping to 2.",
-                          mw.min_arc_epochs);
-                mw.min_arc_epochs = 2;
             }
             if (!(mw.sigma_floor_cyc > 0.0)) {
                 log->warn("Network: network.mw_wl.sigma_floor_cyc = {} is non-positive — "
@@ -10671,7 +10634,7 @@ namespace GnssProcessor {
      * retro-bump -> clock-disc coupling, sum-to-zero / broadcast-anchored / pivot,
      * @c code_datum_time_linked vs @c clock_signal_basis_hold, the set-change trigger, and
      * the Card-4 requirement chain (@c carry_invariant -> @c phase_datum_eq34;
-     * @c innov_gate -> @c carry_invariant; @c mw_wl.enable -> @c carry_invariant).
+     * @c innov_gate -> @c carry_invariant).
      *
      * @param log   The "gnss_config" logger.
      * @return @c false on a fatal misconfiguration (aborts @c loadFromJson).
@@ -11417,41 +11380,6 @@ namespace GnssProcessor {
                        "the innovation gate or disable the calibration.");
             return false;
         }
-        // The WL layer (M5 card WL-1) uses the card-4 chord basis, so v1 requires the
-        // carry (mutex check, SPEC §11 Q1).  The load fails rather than silently doing
-        // nothing.
-        if (network_config_.mw_wl.enable && !network_carry_invariant_) {
-            log->error("Network: network.mw_wl.enable requires network.carry_invariant — the "
-                       "wide-lane pseudo-observations are double-differenced over the Card-4 "
-                       "invariant carry's fundamental-cycle chord basis; with no carry there is "
-                       "no cycle basis to seed.  Enable carry_invariant or disable mw_wl.");
-            return false;
-        }
-        if (network_config_.mw_wl.enable) {
-            log->info("Network MW-WL seed ON (M5 card WL-1) — MW Welford means DD'd over the "
-                      "Card-4 chord basis fold as WL pseudo-obs (min_arc_epochs={}, "
-                      "sigma_floor={} cyc, max_rows_per_epoch={}).  GLONASS excluded (with the "
-                      "carry).  Per-station MW detector is built even with phase_leveling off.",
-                      network_config_.mw_wl.min_arc_epochs, network_config_.mw_wl.sigma_floor_cyc,
-                      network_config_.mw_wl.max_rows_per_epoch);
-            // Phase B (WL integer fixing) is a config contract only in v1.  The un-fix
-            // wiring (invariant #1: no stiff integer assertion without a wired,
-            // force-fire-tested slip response) is a follow-up increment, so the loader
-            // warns rather than silently folding nothing.
-            if (network_config_.mw_wl.fix_enable)
-                log->warn("Network: network.mw_wl.fix_enable is set but Phase-B WL integer "
-                          "fixing is NOT yet implemented (v1 is Phase-A float only) — the fix "
-                          "gate is INERT.  Grade Phase A first (SPEC §7.7), then arm Phase B "
-                          "once its un-fix wiring is force-fire tested (SPEC §7.4).");
-            if (network_config_.mw_wl.f6_dump)
-                log->info("Network: network.mw_wl.f6_dump ON — one-shot F6 attribution dump "
-                          "to logs/network_mw_wl_f6.csv on the first arming epoch (per-arc "
-                          "MW̄/x_lin + per-row z_MW/z_lin/z_corr/reconstructed_abs/innovation). "
-                          "Log-only; does not change the solve.");
-        } else if (network_config_.mw_wl.fix_enable) {
-            log->warn("Network: network.mw_wl.fix_enable is INERT without network.mw_wl.enable "
-                      "(Phase B requires Phase A).");
-        }
 
         return true;
     }
@@ -11476,7 +11404,7 @@ namespace GnssProcessor {
         {
             auto& mw = network_config_.mw_wl;
             // Both lanes use the card-4 chord basis (EWL rows on it; inject edits the
-            // carried z's), so both require the carry; the load fails, as for WL-1.
+            // carried z's), so both require the carry; the load fails.
             if ((mw.ewl_enable || mw.wl_inject_enable) && !network_carry_invariant_) {
                 log->error("Network: network.mw_wl.{{ewl_enable,wl_inject_enable}} require "
                            "network.carry_invariant — the EWL/WL lanes ride the invariant carry's "
@@ -11491,21 +11419,6 @@ namespace GnssProcessor {
                           "phase-bridge WL path (SPEC §3.4) is disabled; the WL lane runs the plain "
                           "MW(1,2) fallback only (SPEC §3.5, FFR at n≈25–50 ep).  Set ewl_enable for "
                           "the fast tri-frequency bridge.");
-            // The WL-1 float layer (mw.enable) is superseded by WL-2 (SPEC §3.0.2): it
-            // stays as a default-off diagnostic, and running it with the inject drives the
-            // WL columns twice.
-            if (mw.enable && mw.wl_inject_enable)
-                log->warn("Network: network.mw_wl.enable (WL-1 float rows) is a DIAGNOSTIC under "
-                          "WL-2 and is armed together with wl_inject_enable — the float pseudo-obs "
-                          "and the inject both drive the WL columns (F6: the float layer loses and "
-                          "adds churn).  Disable mw_wl.enable for a clean WL-2 A/B.");
-            // The WL-1 Phase-B posterior-gated surface is deprecated: WL-2 fixes on detector
-            // statistics (SPEC §3.0.1), never on the carry-contaminated posterior.
-            if ((mw.ewl_enable || mw.wl_inject_enable) && mw.fix_enable)
-                log->warn("Network: network.mw_wl.fix_enable (WL-1 Phase-B, never implemented) is "
-                          "REPLACED under WL-2 by statistic-gated fixing "
-                          "(ewl_fix_*/wl_fix_*/inject_disagree_min_cyc).  The fix_enable flag is "
-                          "ignored.");
             if (mw.ewl_enable)
                 log->info("Network WL-2 EWL lane ON (M5 card WL-2) — extra-wide-lane statistic rows "
                           "on the Card-4 chord basis, third band UNCARRIED so they win cleanly; FFR "
@@ -11542,13 +11455,6 @@ namespace GnssProcessor {
                 log->warn("Network: network.mw_wl.uwl_dual_top is INERT without uwl_enable — "
                           "the preferred/fallback top rung is a property of the armed "
                           "lane-tier table.");
-            if (mw.uwl_dual_top && mw.uwl_enable && mw.ewl_fold_rows) {
-                log->warn("Network: network.mw_wl.ewl_fold_rows is FORCED OFF under "
-                          "uwl_dual_top — a cycle decided by both the preferred and the "
-                          "fallback rung must never fold two integer rows (the F-A refold "
-                          "class), and fold-off is the validated production shape anyway.");
-                mw.ewl_fold_rows = false;
-            }
             if (mw.uwl_dual_top && mw.uwl_enable
                 && jval<int>(json, "network.mw_wl.uwl_gal_top_band",
                              "network_mw_wl_uwl_gal_top_band", 7) != 7)

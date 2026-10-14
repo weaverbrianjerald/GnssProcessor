@@ -11,23 +11,22 @@
  * keeps the enclosing `if (carry_invariant)` gate and the subBegin/subEnd(SB_INSTALL)
  * brackets):
  *   1. carry_driver.installPosterior (DD posterior mean/cov read back into the carry);
- *   2. the M5/WL-1 counter folds (mw_wl_epoch -> mw_wl_run, ewl_lanes[].run, wl_run,
- *      wl_cons_run) and the application of the WL inject plan against the fresh
- *      posterior;
- *   3. the log-only F6 / lane-trace / d5-flags CSV writers (network.mw_wl.*).
+ *   2. the lane counter folds (ewl_lanes[].run, wl_run, wl_cons_run) and the
+ *      application of the WL inject plan against the fresh posterior;
+ *   3. the log-only lane-trace / d5-flags CSV writers (network.mw_wl.*).
  *
  * Owns no state: every carry object is an explicit reference into the caller's
  * NetworkRunContext, and every cross-epoch WL run-state instance (ewl_lanes /
- * wl_inject_epoch / mw_wl_run / mw_wl_f6 / ...) is a member of the driver's
+ * wl_inject_epoch / wl_run / ...) is a member of the driver's
  * @ref NetworkLaneRun, passed by reference.  The lane switches (carry_innov_gate,
- * mw_wl_on, lane_on, ...) are read from NetworkKnobs (card NOM step TD1a).
+ * ewl_on, lane_on, ...) are read from NetworkKnobs (card NOM step TD1a).
  */
 
 #include "filter/NetworkEstimator.hpp"          // NetworkEstimator
 #include "filter/NetworkSbasis.hpp"             // NetworkSbasis::Plan
 #include "filter/NetworkInvariantCarryDriver.hpp" // NetworkInvariantCarryDriver
 #include "filter/NetworkRunTypes.hpp"           // NetStation
-#include "filter/NetworkWlRunTypes.hpp"         // EwlLane/WlInjectPlan/LaneTraceEntry/WlCounters/F6Capture (+ NetworkMwWlLayer::Counters)
+#include "filter/NetworkWlRunTypes.hpp"         // EwlLane/WlInjectPlan/LaneTraceEntry/WlCounters (+ NetworkMwWlLayer::Counters)
 #include "filter/NetworkRunGroups.hpp"          // NetworkLaneRun (card NOM step TD1a)
 #include "slip/NetworkRawObservables.hpp"       // SlipQcChannel
 #include "filter/NetworkZStore.hpp"             // ArcKey (carry_arc_amb_key maps)

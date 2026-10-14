@@ -5567,13 +5567,6 @@ namespace GnssProcessor {
         /// Keep this epoch's slipped arcs out of the eq34 spanning tree, so a slip costs one chord, not every cycle through a tree edge (@c network.phase_datum_eq34_slip_aware_election; cards 3/4).
         bool networkPhaseDatumEq34SlipAwareElection() const { return network_phase_datum_eq34_slip_aware_election_; }
 
-        /// Master toggle of the MW-seeded wide-lane pseudo-observation layer
-        /// (@c network.mw_wl.enable; M5 card WL-1).  When on, the per-station MW
-        /// detector is built (even with @c network.phase_leveling off) so its per-arc
-        /// Welford means feed the WL fold; off => byte-identical.  Requires
-        /// @c network.carry_invariant.
-        bool networkMwWlSeed() const { return network_config_.mw_wl.enable; }
-
         /// PB emission-continuity filter (M5 prerequisite): slip-gated per-key
         /// scalar KF on the post-rebase emitted phase biases plus a noise-calibrated
         /// jump gate; an outputs-only, S-transparent smoother that clears the

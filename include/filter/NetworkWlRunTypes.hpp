@@ -4,10 +4,10 @@
  * @brief Run-loop-local helper types taken out of Application::runNetwork so the
  *        solve-region seams (NetworkInstallCarry / NetworkDdPriorBuild /
  *        NetworkSolveGlue) can name them: EwlLane (owns a NetworkMwWlLayer), the
- *        WL/UWL counter, inject, lane-trace and F6-capture PODs, and the
+ *        WL/UWL counter, inject and lane-trace PODs, and the
  *        Eigen-thread-pin RAII.  The definitions are field-for-field the former
  *        runNetwork() ones (INC-9b); the run TU keeps the instances (ewl_lanes /
- *        wl_inject_epoch / mw_wl_f6 / ...) and includes this header.
+ *        wl_inject_epoch / ...) and includes this header.
  *
  * CarryEigenScope is a general Eigen-threading RAII, not WL-specific; it is here
  * because it was also a runNetwork()-local type that the seams need.  The D0b
@@ -96,38 +96,6 @@ struct EwlLane {
     char top;                         ///< the instance's top-tier band digit ('\0' = legacy single lane) (UWL-1).
     NetworkMwWlLayer layer;
     NetworkMwWlLayer::Counters run, epoch;
-};
-
-struct F6Arc {
-    int         est_station{-1};
-    int         col1{-1}, col2{-1};
-    std::string sat, sig1, sig2;
-    double      coeff{0.0};       // signed cycle coefficient c (±1 for a plain DD)
-    double      mw_mean_m{0.0};   // ZD-consistent arc MW mean (m)
-    double      mw_var_m2{0.0};
-    long long   mw_count{0};
-    bool        bia_corrected{false};
-    double      x_lin1{0.0}, x_lin2{0.0};              // amb linearization values (m)
-    double      lambda1{0.0}, lambda2{0.0}, lambda_wl{0.0};
-};
-
-struct F6Row {
-    std::vector<F6Arc> arcs;
-    double z_mw{0.0}, z_lin{0.0}, z_corr{0.0}, zhat_block{0.0};
-};
-
-struct F6Capture {
-    bool                 pending{false};   // captured this epoch, awaiting the post-solve write
-    bool                 written{false};   // one-shot latch (whole run)
-    double               week{0.0}, tow{0.0};
-    int                  loop_epoch{-1};
-    std::size_t          wl_block_index{0};   ///< index of the first WL block in `blocks`.
-    std::vector<F6Row>   rows;
-    /// Parallel to `rows`: the `blocks` index of each row's WL block.  Under
-    /// f6_all_blocks the capture spans several blocks, and the kernel innovation must be
-    /// requested per block (ddPriorInnovation is block-scoped), so the write site groups by
-    /// this.  Single-block captures leave every entry == wl_block_index.
-    std::vector<std::size_t> row_block;
 };
 
 struct CarryEigenScope {

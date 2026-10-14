@@ -330,31 +330,23 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief MW-seeded wide-lane pseudo-observation layer (@c network.mw_wl.*)
-     *        (M5 card WL-1).  See docs/SPEC_mw_wl_card.md.
+     * @brief MW wide-lane lane layers (@c network.mw_wl.*) (M5 cards WL-2 and UWL-1).
+     *        See docs/SPEC_ewl_wl_cascade_card.md.
      *
-     * Feeds the per-arc Melbourne-Wubbena Welford means, double-differenced over the
-     * fundamental-cycle chord basis of the invariant carry, into the producer solve
-     * as rank-K pseudo-observation blocks on the cross-band ambiguity columns.  The
-     * per-epoch network has no per-arc code-coherence accumulator; these blocks
-     * supply one.  Off by default; off is byte-identical (no detectors built for
-     * this layer, no blocks folded).  Requires @c network.carry_invariant (the chord
-     * basis belongs to that carry; checked at load).  GLONASS is excluded upstream.
+     * The per-arc Melbourne-Wubbena Welford statistics, double-differenced over the
+     * fundamental-cycle chord basis of the invariant carry, feed the EWL lane decision,
+     * the WL phase bridge and the NL-preserving inject.  Off by default; off is
+     * byte-identical.  Requires @c network.carry_invariant (the chord basis belongs to
+     * that carry; checked at load).  GLONASS is excluded upstream.  The WL-1 float rows
+     * on the primary (1,2) pair (@c enable) and their F6 dump are retired.
      */
     struct MwWlConfig {
-        bool   enable{ false };               ///< Phase-A master switch.  Off is byte-identical.
-        int    min_arc_epochs{ 10 };          ///< Welford n per arc before its cycles are eligible.
         double sigma_floor_cyc{ 0.05 };       ///< per-row R floor (cycles): R = max(Σ var/λ_WL², floor²).
         int    max_rows_per_epoch{ 0 };       ///< 0 = unlimited; else keep the lowest-R rows first (drops counted).
-        // --- Phase B (WL integer fixing): config contract only, not implemented. ---
-        bool   fix_enable{ false };           ///< Phase-B master switch (requires @c enable).  Parsed for the contract; inert, with a warning (the un-fix response that standing invariant #1 requires is not built).
-        double fix_sigma_cyc{ 0.10 };         ///< Phase-B FFR gate: fix a cycle when its constrained WL posterior σ < this.
-        double fix_frac_cyc{ 0.15 };          ///< Phase-B FFR gate: and |frac| < this.
-        double fix_weight_sigma_cyc{ 0.01 };  ///< Phase-B fixed-row σ (a soft-hard constraint that can be rolled back).  WL-2 reuses it as the hold-row σ (SPEC_ewl_wl_cascade_card.md §3.3).
+        double fix_weight_sigma_cyc{ 0.01 };  ///< Fixed-row σ (a soft-hard constraint that can be rolled back): the WL-2 hold-row σ (SPEC_ewl_wl_cascade_card.md §3.3).
         // ============================================================================
         // EWL-first tri-frequency cascade (M5 card WL-2).
-        // Supersedes the WL-1 float layer (@c enable becomes diagnostic-only) with an
-        // EWL statistic lane that fixes by about epoch 3 (the third band is uncarried,
+        // An EWL statistic lane that fixes by about epoch 3 (the third band is uncarried,
         // so its rows do not compete with a carried state), a phase bridge to a fast
         // WL integer, and the NL-preserving inject primitive that writes the fixed WL
         // into the invariant carry.  Off by default; off is byte-identical (no
@@ -370,12 +362,6 @@ namespace GnssProcessor {
         double bridge_max_sigma_cyc{ 0.15 };  ///< Ionosphere-error guard: no WL fix from a bridge row whose σ exceeds this (cyc).
         double inject_disagree_min_cyc{ 0.75 };///< Inject trigger threshold on |statistic − carried lane value| (cyc).  After an inject the difference is about 0, so the trigger limits itself.
         double lane_max_abs_xlin_m{ 1000.0 }; ///< Pre-flight quarantine: skip a lane cycle if any arc's ambiguity linearization |x_lin| exceeds this (m).  Guards against the ~256 km receiver-clock seed at station 1 (§7 pre-flight): such cycles ill-condition the correction-frame rows and do not converge even at full authority.  0 = disabled.
-        // --- Diagnostics (log-only; off by default, off is byte-identical). ---
-        bool   f6_dump{ false };              ///< One-shot F6 attribution dump: on the first epoch that folds ≥ 1 WL row, write logs/network_mw_wl_f6.csv with per-arc (sat/sig/coeff/MW̄/x_lin) and per-row (z_MW/z_lin/z_corr/reconstructed_abs/innovation) fields.  Diagnostic only; does not change the solve.
-        int    f6_max_rows{ 8 };              ///< F6 dump row cap.  The default dumps 8 rows of one block: a sample, not a population, so skip and quarantine rates cannot be inferred from it.  Raise it (with f6_all_blocks) for a population-scale cycle census, e.g. the per-cycle station membership that a lane-chord baseline histogram needs.  ≤ 0 = uncapped.  Log-only.
-        bool   f6_all_blocks{ false };        ///< F6 dump walks every WL block instead of only wl_blocks.front().  Default false keeps the single-block sample, byte for byte.  Log-only.
-        double debug_r_scale{ 1.0 };          ///< Diagnostic only: multiply every WL row's Pz by this (1.0 = unscaled default).  A value ≪ 1 lets the WL rows dominate the stiff carry; this is the F6 probe of whether separate-Woodbury composition is itself the failure or whether more authority suffices.  Changes the solve; not a production knob.
-        bool   ewl_fold_rows{ false };        ///< Fold the EWL integer rows into the solve.  Folding adds cost and no benefit: the WL cascade reads the detector statistic, never the posterior, and the σ = 0.01 rows perturb the shared clock/PB border enough to raise the D5 flag count network-wide by about 2× (679 against 342 for the control), including on secondary-channel groups the EWL never touches (F-A).  Default false: decide, FFR-fix and expose the integers, fold nothing (D5 at the control level).  true is the study shape that reproduces the elevation; not a production knob.
         // ============================================================================
         // Per-constellation ultra-wide-lane top tier (M5 card UWL-1).
         // Generalizes the cascade's hardcoded GPS band digits to the per-constellation
@@ -388,7 +374,7 @@ namespace GnssProcessor {
         bool   uwl_enable{ false };           ///< Master switch: arm the per-constellation top tier for constellations with a close-frequency pair (currently Galileo; BDS-3 is blocked on its clock divergence) (UWL-1).  Requires @c ewl_enable (shared machinery and telemetry).  Off: the legacy GPS-only digit scan everywhere.
         char   uwl_gal_top_band{ '7' };       ///< Galileo top-tier band digit: '7' = (E5b,E5a), Δf 30.69 MHz, λ 9.768 m (default); '8' = (E5 AltBOC,E5a), Δf 15.345 MHz, λ 19.537 m: twice the wavelength and cm-level AltBOC code, at the cost of sparser C8/L8 tracking (to be measured, not assumed).
         bool   uwl_mid_enable{ false };       ///< E6 mid-ladder bridge hop: chain the WL determination through the Galileo (E6,E5a) rung, λ 2.931 m.  The high hop bridges the fixed top integer to a rounded mid integer and the low hop bridges that to the WL, which cuts each hop's wavelength-ratio amplification of phase and iono error by about 3.3× against the direct 9.768 → 0.751 m hop.  Target: the measured ~70 % Galileo WL FFR-unfixed rate.  Decision side only; the direct hop remains the per-cycle fallback and cross-check.  Requires @c uwl_enable.  Off is byte-identical (a single bridge triple per constellation).
-        bool   uwl_dual_top{ false };         ///< Per-cycle preferred and fallback Galileo top rung: band '8' (E5 AltBOC, λ 19.537 m) decides where it is tracked across the whole cycle, and the (5,7) rung (λ 9.768 m) decides what '8' could not.  Both bands {7,8} are uncarried, and the untaken sibling serves as a closure statistic (2·N(8,5) = N(7,5), since f_E5 = (f_E5a+f_E5b)/2 exactly), measured and hard-gated only under @c uwl_sib_gate (increment 5, §1b/§7.5).  Supersedes @c uwl_gal_top_band (ignored, noted at load).  Requires @c uwl_enable; forces @c ewl_fold_rows=false, since a row decided twice must not fold twice (the F-A refold class).  Off: the single-top tier unchanged (byte-identical).
+        bool   uwl_dual_top{ false };         ///< Per-cycle preferred and fallback Galileo top rung: band '8' (E5 AltBOC, λ 19.537 m) decides where it is tracked across the whole cycle, and the (5,7) rung (λ 9.768 m) decides what '8' could not.  Both bands {7,8} are uncarried, and the untaken sibling serves as a closure statistic (2·N(8,5) = N(7,5), since f_E5 = (f_E5a+f_E5b)/2 exactly), measured and hard-gated only under @c uwl_sib_gate (increment 5, §1b/§7.5).  Supersedes @c uwl_gal_top_band (ignored, noted at load).  Requires @c uwl_enable.  The EWL rows are never folded, so a row decided by both rungs never folds twice (the F-A refold class).  Off: the single-top tier unchanged (byte-identical).
         bool   uwl_sib_gate{ false };         ///< Sibling-closure hard gate: block a top-tier decision whose untaken-sibling MW statistic disagrees with fx_integer·λ_top/λ_sib by more than 0.5 + 3σ_sib; the blocked cycle falls to the fallback rung in the same epoch (increment 5).  Default off = measure only: receiver half-cycle conventions on AltBOC may offset the identity, and a population of half-integer residuals means the convention differs, so the gate would first have to learn a constant (SPEC reconciliation note 2).  Requires @c uwl_dual_top.
         bool   uwl_family_pairs{ false };     ///< Census recovery (v2): admit minority receiver-family primary pairs (e.g. Galileo (L1C,L5Q) beside the majority (L1X,L5X)) into lane pair groups of their own instead of leaving them per band.  A pair is admitted when its joint-census count is ≥ @c uwl_family_min_arcs and stays admitted for the run (latched: membership flicker would refloat carried chords, the WL-3 micro pair-group hazard).  Measured stake: about 40 of 104 decided Galileo integers (101 of 154 with the mid hop) are lost at skip_basis on minority-family cycles.  Requires @c uwl_enable and @c lane_carry.enable (the pair groups are lane machinery); otherwise inert, with a warning.
         int    uwl_family_min_arcs{ 8 };      ///< First-admission threshold for @c uwl_family_pairs: a census pair joins the admissible set when at least this many (rx,sat) arcs carry it in one epoch's census (clamped ≥ 1).  The fixture families measure about 115–132 arcs, so 8 is far from the decision boundary; it keeps one-off channel anomalies from latching a permanent group.
@@ -405,7 +391,7 @@ namespace GnssProcessor {
     /// station's own pre-reduce block, so it reaches the shared satellite phase and
     /// code bias columns directly instead of through a DD chord.  Most DD chords
     /// (80.7 %) are eq34 tree pins, and folding the EWL rows as chords
-    /// (@c mw_wl.ewl_fold_rows) moved the soft-end eigenvalue of reduced_N_ss by only
+    /// (the retired @c mw_wl.ewl_fold_rows study shape) moved the soft-end eigenvalue of reduced_N_ss by only
     /// 0.6 % and mass_pb/span_pb not at all.  Folded before the reduction, the row
     /// composes exactly with the post-reduce DD fold of the invariant carry
     /// (@c DdPriorBlock in NetworkNormalEquations.hpp), unlike two post-reduce
@@ -423,7 +409,7 @@ namespace GnssProcessor {
     /// corrupts the emitted product for every consumer.
     struct SdEwlConfig {
         bool   enable{ false };               ///< Master switch.  Off appends zero rows (byte-identical).
-        int    min_arc_epochs{ 10 };          ///< Minimum lagged Welford count on both arcs of a row (mirrors mw_wl.min_arc_epochs).
+        int    min_arc_epochs{ 10 };          ///< Minimum lagged Welford count on both arcs of a row.
         double sigma_floor_m{ 0.05 };         ///< Per-arc sigma floor (m) applied to var_of_mean before the R assembly: arcZdMean's variance of the mean shrinks as 1/n, so a long quiet arc would otherwise dominate the shared border.
         double max_abs_z_m{ 0.0 };            ///< Reject a row whose |z_SD| exceeds this (m).  0 = disabled.  Guards against the cold-clock x_lin seed at station 1, which ill-conditions correction-frame rows.
         int    max_rows_per_station{ 0 };     ///< 0 = unlimited; else keep the lowest-variance rows first (drops counted).

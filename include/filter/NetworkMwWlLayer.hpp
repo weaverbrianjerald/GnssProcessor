@@ -4,6 +4,11 @@
  * @brief MW-seeded wide-lane pseudo-observation layer (M5 card WL-1).
  *        See docs/SPEC_mw_wl_card.md.
  *
+ * The WL-1 float lane on the primary (1,2) pair (network.mw_wl.enable) is retired; the
+ * class now serves only the WL-2 EWL lane instances (@ref Config::ffr_fix true), whose
+ * blocks are decided and exposed but never folded.  The design notes below describe the
+ * original WL-1 rows.
+ *
  * The network producer is a per-epoch estimator whose cross-epoch ambiguity
  * information travels in the invariant DD carry (card 4), which is phase-side.
  * Long-horizon code coherence, which is what determines the wide-lane integer N_WL,
@@ -86,12 +91,10 @@ public:
         int    min_arc_epochs{10};       ///< Welford n per arc before its cycles are eligible.
         double sigma_floor_cyc{0.05};    ///< per-row R floor (cycles): R = max(Σ c²·var/λ_WL², floor²).
         int    max_rows_per_epoch{0};    ///< 0 = unlimited; otherwise keep the lowest-R rows (drops are counted in @c rows_capped).
-        double debug_r_scale{1.0};       ///< Diagnostic only, not a production knob (`network.mw_wl.debug_r_scale`): multiplies every float row's Pz (R and shared-arc covariance) by this.  1.0 (default) leaves Pz unscaled.  A value ≪ 1 makes the WL rows dominate the stiff carry; this is the F6 probe of whether the separate-Woodbury composition is the limit or the rows only lack authority.
         // FFR statistic-gated fixing and the station-1 quarantine (WL-2,
-        // SPEC_ewl_wl_cascade_card.md).  These knobs are per lane; the same @ref build serves
-        // the WL-1 (1,2) lane (ffr_fix=false: pure float, byte-identical) and the WL-2 EWL
-        // (2,5) lane (ffr_fix=true).
-        bool   ffr_fix{false};           ///< When a row's statistic passes FFR, fold it as an integer-hard row (zhat = round(z_abs) in the correction frame, Pz = fix_weight_sigma_cyc²) instead of a float pseudo-obs (WL-2).  Off: WL-1 float behaviour.
+        // SPEC_ewl_wl_cascade_card.md).  These knobs are per lane; the WL-2 EWL (2,5) lane
+        // instances set ffr_fix=true (the retired WL-1 (1,2) float lane was the false case).
+        bool   ffr_fix{false};           ///< When a row's statistic passes FFR, fold it as an integer-hard row (zhat = round(z_abs) in the correction frame, Pz = fix_weight_sigma_cyc²) instead of a float pseudo-obs (WL-2).  Off: float rows.
         double fix_sigma_cyc{0.10};      ///< FFR gate: fix when the row's formal σ (√R before the floor) < this (cyc).
         double fix_frac_cyc{0.20};       ///< FFR gate: and |frac(z_abs)| < this (cyc).
         double fix_weight_sigma_cyc{0.01};///< Fixed-row σ (soft-hard, so a fix can be rolled back): a fixed row's Pz = this² (diagonal, no shared-arc covariance).
@@ -180,8 +183,7 @@ public:
      *        row index and the integer @f$N_{EWL}@f$) so the WL phase bridge can key
      *        the EWL integers back to their carry chords.  Warm fixed rows come first in
      *        emission order, then the cold decisions.  Only rows that pass FFR
-     *        (@c ffr_fix) are reported, so the WL-1 float lane (@c ffr_fix=false)
-     *        reports none.
+     *        (@c ffr_fix) are reported, so a float lane (@c ffr_fix=false) reports none.
      * @return One WL block per carry block that yielded ≥1 eligible row.  @c zhat is
      *         the measured lane DD in the correction frame (cycles, z_abs − z_lin).
      *         For float rows, @c Pz has diagonal = per-row R (floored) and
@@ -211,12 +213,12 @@ private:
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the MW/WL lanes: WL-1, EWL, the WL inject, UWL, WL-3.
+ * @brief Run-end report: the MW/WL lanes: EWL, the WL inject, UWL, WL-3.
  *
- * The MW/WL lanes: the WL-1 seeded rows, the EWL lanes, the WL inject, the UWL walk and
- * the WL-3 lane-coordinate carry.
+ * The MW/WL lanes: the EWL lanes, the WL inject, the UWL walk and the WL-3
+ * lane-coordinate carry.
  *
- * Gate: each section under its own condition, as in the teardown: `mw_wl_on`; `ewl_on`;
+ * Gate: each section under its own condition, as in the teardown: `ewl_on`;
  * `wl_inject_on`; `uwl_on && (wl_inject_on || lane_on)`; `lane_on`.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).

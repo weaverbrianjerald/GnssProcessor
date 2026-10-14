@@ -1801,60 +1801,6 @@ TEST(CodeBiasNetworkConfig, PhaseDatumEq34SlipAwareElectionParsesAndNeedsEq34) {
     }
 }
 
-// network.mw_wl.enable uses the Card-4 chord basis, so it requires
-// network.carry_invariant (SPEC §11 Q1 mutex).  Default off (byte-identical), and the
-// knobs parse when armed alongside carry_invariant.  (M5 card WL-1)
-TEST(CodeBiasNetworkConfig, MwWlSeedContract) {
-    LogManager log;
-    // Default: absent → off (the producer is byte-identical).
-    {
-        const fs::path p = writeTempConfig("mwwl_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_FALSE(cfg.networkMwWlSeed());
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // enable=true without carry_invariant → the load fails (a hard mutex, not a silent no-op).
-    {
-        const fs::path p = writeTempConfig("mwwl_no_carry",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"mw_wl\": { \"enable\": true },\n"));
-        GnssConfig cfg;
-        EXPECT_FALSE(cfg.loadFromJson(p, log))
-            << "network.mw_wl.enable without network.carry_invariant must be rejected.";
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // enable=true with carry_invariant (+eq34) → loads; the knobs parse.
-    {
-        const fs::path p = writeTempConfig("mwwl_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"mw_wl\": { \"enable\": true, \"min_arc_epochs\": 15, "
-                "\"sigma_floor_cyc\": 0.08, \"max_rows_per_epoch\": 500 },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.networkMwWlSeed());
-        EXPECT_EQ(cfg.getNetworkConfig().mw_wl.min_arc_epochs, 15);
-        EXPECT_NEAR(cfg.getNetworkConfig().mw_wl.sigma_floor_cyc, 0.08, 1e-12);
-        EXPECT_EQ(cfg.getNetworkConfig().mw_wl.max_rows_per_epoch, 500);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // min_arc_epochs below 2 clamps to 2 (a variance-of-mean needs >=2 samples).
-    {
-        const fs::path p = writeTempConfig("mwwl_clamp",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"mw_wl\": { \"enable\": true, \"min_arc_epochs\": 1 },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_EQ(cfg.getNetworkConfig().mw_wl.min_arc_epochs, 2);
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
 // PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §4): default off (the fold's
 // arithmetic is byte-identical), and inert without network.carry_invariant, where there
 // is no DD-prior fold to make PD-safe.  The response is a warning plus disarm, not a load
@@ -2036,7 +1982,6 @@ TEST(CodeBiasNetworkConfig, UwlTierContract) {
 }
 
 // The dual-top tier and the per-family pair census.  Defaults off (byte-identical);
-// dual_top forces ewl_fold_rows off (a doubly-decided row is never folded twice);
 // family_min_arcs clamps to ≥1; the inert combinations load with warnings, not errors
 // (the wiring gates them on the masters).  (Increment 5 + v2, docs/SPEC_uwl_card.md
 // §1b/§7.5, HANDOFF reconciliation)
@@ -2055,8 +2000,7 @@ TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
         EXPECT_EQ(mw.uwl_family_min_arcs, 8);
         std::error_code ec; fs::remove(p, ec);
     }
-    // Armed dual + sib gate + family: knobs parse; ewl_fold_rows is forced off
-    // under dual_top even when explicitly requested (the F-A refold class).
+    // Armed dual + sib gate + family: knobs parse.
     {
         const fs::path p = writeTempConfig("uwl_dual_armed",
             networkConfig(kGpsGal, kPriosGps,
@@ -2065,8 +2009,7 @@ TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
                 "    \"lane_carry\": { \"enable\": true },\n"
                 "    \"mw_wl\": { \"ewl_enable\": true, \"uwl_enable\": true, "
                 "\"uwl_dual_top\": true, \"uwl_sib_gate\": true, "
-                "\"uwl_family_pairs\": true, \"uwl_family_min_arcs\": 12, "
-                "\"ewl_fold_rows\": true },\n"));
+                "\"uwl_family_pairs\": true, \"uwl_family_min_arcs\": 12 },\n"));
         GnssConfig cfg;
         ASSERT_TRUE(cfg.loadFromJson(p, log));
         const auto& mw = cfg.getNetworkConfig().mw_wl;
@@ -2074,9 +2017,6 @@ TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
         EXPECT_TRUE(mw.uwl_sib_gate);
         EXPECT_TRUE(mw.uwl_family_pairs);
         EXPECT_EQ(mw.uwl_family_min_arcs, 12);
-        EXPECT_FALSE(mw.ewl_fold_rows)
-            << "uwl_dual_top must force ewl_fold_rows OFF (a cycle decided by both "
-               "rungs must never fold two integer rows).";
         std::error_code ec; fs::remove(p, ec);
     }
     // Inert combinations still load (with warnings): dual/sib/family without their masters.
