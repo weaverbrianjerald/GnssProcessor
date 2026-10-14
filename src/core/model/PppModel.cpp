@@ -25,8 +25,10 @@
 #include "products/ProductParser.hpp"
 #include "products/StationInfoFile.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/Coordinates.hpp"
 #include "measurement/MeasurementModel.hpp"
+#include "measurement/StateInitializer.hpp"    // systemToClockRefChar
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
 #include "products/LiveEphemerisStore.hpp"
@@ -47,15 +49,13 @@ namespace GnssProcessor {
 
 namespace {
 
-/// Map system display name to the single-char key used in ClockRefMap.
+/// Map system display name to the single-char key used in ClockRefMap: the RINEX
+/// letter of systemFromName, with '\0' (not rinexLetter's '?') for a name outside the
+/// traits table.  It differs from the name match it replaced on a one-letter text
+/// ("G" reads as GPS), and only names reach it (the caller passes systemName of an
+/// observation's system).
 char systemNameToClockRefChar(const std::string& sys) {
-    if (sys == "GPS")     return 'G';
-    if (sys == "Galileo") return 'E';
-    if (sys == "GLONASS") return 'R';
-    if (sys == "BeiDou")  return 'C';
-    if (sys == "QZSS")    return 'J';
-    if (sys == "SBAS")    return 'S';
-    return '\0';
+    return StateInitializer::systemToClockRefChar(systemFromName(sys));
 }
 
 /// Maps RINEX observation code prefixes to frequency band names per system.
@@ -533,7 +533,7 @@ std::vector<std::string> activeFrequencyBands(
         // only consider that constellation's satellites.
         std::map<std::string, std::vector<const RinexObservation*>> by_cons;
         for (const auto& obs : observations) {
-            const std::string sys = PppUtils::getSystemString(obs.system);
+            const std::string sys = systemName(obs.system);
             if (sys == "Unknown") continue;
             by_cons[sys].push_back(&obs);
         }
@@ -967,7 +967,7 @@ std::vector<std::string> activeFrequencyBands(
                 geom.los.x(), geom.los.y(), geom.los.z(), geom.range);
 
             // --- Validate system ---
-            std::string system_str = PppUtils::getSystemString(obs.system);
+            std::string system_str = systemName(obs.system);
             if (system_str == "Unknown") {
                 log_manager_.getLogger("ppp_model")->warn("Unknown system for satellite {} at TOW {:.3f}", obs.satellite, obs.time.tow);
                 note_drop(obs.satellite, DropReason::NoModel);

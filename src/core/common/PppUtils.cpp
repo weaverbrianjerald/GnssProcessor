@@ -10,6 +10,7 @@
 
 #include "common/PppUtils.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 
 namespace GnssProcessor {
 
@@ -84,43 +85,28 @@ namespace GnssProcessor {
     /**
      * @brief Convert a System enum value to a human-readable string.
      *
-     * The returned string is suitable for log messages and textual output.
+     * The identity layer's @c systemName, as a @c std::string.
      *
      * @param system System enum value.
      * @return std::string Human-readable name (e.g. "GPS", "Galileo", "Unknown").
      */
     std::string PppUtils::getSystemString(System system) {
-        switch (system) {
-        case System::GPS: return "GPS";
-        case System::Galileo: return "Galileo";
-        case System::GLONASS: return "GLONASS";
-        case System::BeiDou: return "BeiDou";
-        case System::QZSS: return "QZSS";
-        case System::SBAS: return "SBAS";
-        default: return "Unknown";
-        }
+        return systemName(system);
     }
 
     /**
      * @brief Convert a satellite identifier to a human-readable system string.
      *
-     * Extracts the system from the first character of the satellite ID
-     * (e.g., "G01" -> "GPS", "E11" -> "Galileo").
+     * The identity layer's @c systemName of @c systemOfSat, as a @c std::string: the
+     * constellation is read from the first character of the satellite ID (e.g., "G01"
+     * -> "GPS", "E11" -> "Galileo").
      *
      * @param satellite Satellite identifier string (e.g., "G01", "E11", "R05").
-     * @return std::string Human-readable system name, or "Unknown" if unrecognized.
+     * @return std::string Human-readable system name, or "Unknown" for an empty ID and
+     *         for a first character outside the traits table (IRNSS 'I' included).
      */
     std::string PppUtils::getSystemString(const std::string& satellite) {
-        if (satellite.empty()) return "Unknown";
-        switch (satellite[0]) {
-        case 'G': return "GPS";
-        case 'E': return "Galileo";
-        case 'R': return "GLONASS";
-        case 'C': return "BeiDou";
-        case 'J': return "QZSS";
-        case 'S': return "SBAS";
-        default:  return "Unknown";
-        }
+        return systemName(systemOfSat(satellite));
     }
 
     /**

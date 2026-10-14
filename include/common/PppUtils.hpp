@@ -11,7 +11,9 @@
  * before any GLONASS observation is processed.
  *
  * The static @c getSystemString helpers don't need an instance and
- * are used for log formatting and constellation lookup throughout.
+ * are used for log formatting and constellation lookup throughout.  They
+ * forward to the identity layer (@c systemName and @c systemOfSat in
+ * common/GnssIdentity.hpp), which new code reads directly.
  *
  * Implementation lives in @c PppUtils.cpp.
  */
@@ -116,15 +118,23 @@ namespace GnssProcessor {
 
         /**
          * @brief Convert a System enum value to its printable string representation.
+         *
+         * Forwards to @c systemName (common/GnssIdentity.hpp).
+         *
          * @param system System enum value.
-         * @return std::string Human-readable system name (e.g. "GPS", "Galileo").
+         * @return std::string Human-readable system name (e.g. "GPS", "Galileo";
+         *         "Unknown" for @c System::Unknown).
          */
         static std::string getSystemString(System system);
 
         /**
         * @brief Convert a satellite identifier to its system string representation.
+        *
+        * Forwards to @c systemName(systemOfSat(satellite)) (common/GnssIdentity.hpp).
+        *
         * @param satellite Satellite identifier (e.g., "G01", "E11", "R05").
-        * @return std::string Human-readable system name (e.g. "GPS", "Galileo").
+        * @return std::string Human-readable system name (e.g. "GPS", "Galileo";
+        *         "Unknown" for an empty ID or a letter outside the traits table).
         */
         static std::string getSystemString(const std::string& satellite);
 

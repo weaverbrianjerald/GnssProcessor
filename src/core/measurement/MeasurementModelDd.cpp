@@ -15,6 +15,7 @@
 
 #include "measurement/MeasurementModel.hpp"
 #include "measurement/BrsdTransform.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/SignalBand.hpp"
 #include "filter/StateKeySchema.hpp"
 #include <cmath>
@@ -44,34 +45,6 @@ namespace GnssProcessor {
                                  const std::string& code,
                                  const std::string& pivot) {
             return "DD|" + cons + "|" + sat_i + "|" + code + "|" + pivot;
-        }
-
-        /// Map first char of a satellite id to constellation name.
-        std::string ddConstellationOf(const std::string& sat) {
-            if (sat.empty()) return {};
-            switch (sat[0]) {
-                case 'G': return "GPS";
-                case 'E': return "Galileo";
-                case 'R': return "GLONASS";
-                case 'C': return "BeiDou";
-                case 'J': return "QZSS";
-                case 'S': return "SBAS";
-                case 'I': return "IRNSS";
-                default:  return std::string(1, sat[0]);
-            }
-        }
-
-        /// Constellation string -> System enum.  Used by IF row collapse
-        /// to look up frequencies via PppUtils::getFrequency().  Returns
-        /// System::Unknown for unrecognised names so the caller can skip.
-        System ddSystemFromConsName(const std::string& cons) {
-            if (cons == "GPS")     return System::GPS;
-            if (cons == "Galileo") return System::Galileo;
-            if (cons == "GLONASS") return System::GLONASS;
-            if (cons == "BeiDou")  return System::BeiDou;
-            if (cons == "QZSS")    return System::QZSS;
-            if (cons == "SBAS")    return System::SBAS;
-            return System::Unknown;
         }
 
     } // anonymous namespace
@@ -338,7 +311,7 @@ namespace GnssProcessor {
         // math run in a single pass.
 
         for (const auto& [sat, rov_ptr] : rov_by_sat) {
-            const std::string cons = ddConstellationOf(sat);
+            const std::string cons = ddConstellationName(sat);
             if (!active_set.empty() && active_set.find(cons) == active_set.end()) continue;
             if (config_.isSatelliteExcluded(sat)) continue;
 
@@ -576,8 +549,13 @@ namespace GnssProcessor {
                 // staying under the cap.  For dual-frequency receivers
                 // there's only one pair so this reduces to the prior
                 // behavior; for triple-/all-frequency it picks the best
-                // available combination.
-                const System sys = ddSystemFromConsName(rows[idxs.front()].cons);
+                // available combination.  The row's constellation is a
+                // ddConstellationName (a constellation name, "IRNSS", a letter
+                // outside the traits table, or ""), never one of the letters
+                // systemFromName also accepts ("G", "E", ...), so it reads as a
+                // name: Unknown unless it is one of the six names, and the
+                // frequency lookups below then give 0.
+                const System sys = systemFromName(rows[idxs.front()].cons);
                 double best_K = std::numeric_limits<double>::infinity();
                 size_t best_hi = 0, best_lo = 0;
                 bool found = false;
@@ -735,7 +713,7 @@ namespace GnssProcessor {
             std::string code = ex.substr(us + 1);
             const auto slash = code.find('/');
             if (slash != std::string::npos) code = code.substr(0, slash);  // rover code
-            const std::string cons = ddConstellationOf(sat_i);
+            const std::string cons = ddConstellationName(sat_i);
             auto pit = pivots.find(cons);
             if (pit == pivots.end()) continue;
             expected.emplace(cons, sat_i, code, pit->second);

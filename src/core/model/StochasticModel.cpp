@@ -5,6 +5,7 @@
 
 #include "model/StochasticModel.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/PppUtils.hpp"
 #include <cmath>
 #include <algorithm>
@@ -300,7 +301,7 @@ namespace GnssProcessor {
         if (obs_type.size() >= 3) {
             const char attr = obs_type[2];
             const auto& all_tables = obs_scale.tracking_attr_scale;
-            const std::string system = PppUtils::getSystemString(satellite);
+            const std::string system = systemName(systemOfSat(satellite));
 
             auto find_in = [&](const std::string& sys_key) -> bool {
                 auto sys_it = all_tables.find(sys_key);
@@ -323,7 +324,7 @@ namespace GnssProcessor {
             "SatBlock: sat={} ({}), obs={} [{}], atx='{}', block='{}', "
             "zenith_std={:.4f} m, freq_scale={:.2f}, attr_scale={:.2f} "
             "(per-system), scaled_std={:.4f} m",
-            satellite, PppUtils::getSystemString(satellite),
+            satellite, systemName(systemOfSat(satellite)),
             obs_type, is_code ? "code" : "phase",
             atx_type, matched_block,
             zenith_std, freq_scale, attr_scale, scaled_std);

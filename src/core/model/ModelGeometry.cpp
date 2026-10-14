@@ -17,6 +17,7 @@
 #include "products/StationInfoFile.hpp"
 #include "corrections/OceanTideModel.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/Coordinates.hpp"
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -442,7 +443,10 @@ namespace GnssProcessor {
             // needed and no per-signal bias enters.  This path is preferred.
             {
                 const auto& clock_refs = product_cache_.getClockRefSignals();
-                const char sys_char = obs.satellite.empty() ? '\0' : obs.satellite[0];
+                // '?' for an empty id or a letter outside the traits table (the
+                // first-character read gave '\0' or the letter): no BIA reference is
+                // keyed '?', and only the six constellations' satellites reach here.
+                const char sys_char = letterOfSat(obs.satellite);
                 auto it_ref = clock_refs.find(sys_char);
                 if (it_ref != clock_refs.end()) {
                     const std::string& s1 = it_ref->second.sig1;
@@ -468,7 +472,7 @@ namespace GnssProcessor {
             // collapses into combination noise instead of an uncancelled
             // offset in t_em.
             if (code_obs.size() >= 2) {
-                const std::string sys_str = PppUtils::getSystemString(obs.system);
+                const std::string sys_str = systemName(obs.system);
                 auto prio_it = signal_priorities_.find(sys_str);
                 if (prio_it != signal_priorities_.end()) {
                     std::string sig1, sig2;
@@ -511,7 +515,7 @@ namespace GnssProcessor {
             // (about 10 ns of t_em error, about 40 μm of satellite
             // displacement), which is below the KF noise floor.
             if (code_obs.size() >= 2) {
-                const std::string sys_str = PppUtils::getSystemString(obs.system);
+                const std::string sys_str = systemName(obs.system);
                 auto prio_it = signal_priorities_.find(sys_str);
                 if (prio_it != signal_priorities_.end()) {
                     std::string sig1, sig2;

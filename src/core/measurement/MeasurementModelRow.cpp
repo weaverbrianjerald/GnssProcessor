@@ -19,6 +19,7 @@
 
 #include "measurement/MeasurementModel.hpp"
 #include "measurement/RowRules.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/PppTypes.hpp"
 #include "common/PppUtils.hpp"
 #include "common/SignalBand.hpp"
@@ -183,7 +184,7 @@ namespace GnssProcessor {
         // ISBR in same-system pairs.
         if (!pivot_signals.empty() && ref_type.size() >= 2
             && (ref_type[0] == 'C' || ref_type[0] == 'L' || ref_type[0] == 'D')) {
-            const std::string cons = PppUtils::getSystemString(obs.satellite);
+            const std::string cons = systemName(systemOfSat(obs.satellite));
             auto cit = pivot_signals.find(cons);
             if (cit != pivot_signals.end()
                 && !cit->second.count(ref_type)) return false;

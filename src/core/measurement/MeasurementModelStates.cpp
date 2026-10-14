@@ -20,6 +20,7 @@
  */
 
 #include "measurement/MeasurementModel.hpp"
+#include "common/GnssIdentity.hpp"
 #include "measurement/Seeds.hpp"
 #include "filter/StateKeySchema.hpp"
 #include <algorithm>
@@ -168,7 +169,7 @@ namespace GnssProcessor {
                 // BssdTransform groups SD rows by that key.
                 if (!bssd_pivot_signals_.empty() && ref_type.size() >= 2
                     && (ref_type[0] == 'C' || ref_type[0] == 'L')) {
-                    const std::string cons = PppUtils::getSystemString(obs.satellite);
+                    const std::string cons = systemName(systemOfSat(obs.satellite));
                     auto cit = bssd_pivot_signals_.find(cons);
                     if (cit != bssd_pivot_signals_.end()
                         && !cit->second.count(ref_type)) continue;
@@ -347,7 +348,7 @@ namespace GnssProcessor {
             const Eigen::VectorXd x_seed = state_manager_.getStateVector();
             const auto& pivot_sats = pivot_manager_.getPivotSatellites();
             for (const auto& obs : observations) {
-                const std::string cons = PppUtils::getSystemString(obs.satellite);
+                const std::string cons = systemName(systemOfSat(obs.satellite));
                 auto piv_it = pivot_sats.find(cons);
                 if (piv_it == pivot_sats.end() || piv_it->second != obs.satellite)
                     continue;
@@ -363,7 +364,7 @@ namespace GnssProcessor {
             const Eigen::VectorXd x_seed = state_manager_.getStateVector();
             const auto& pivot_sats = pivot_manager_.getPivotSatellites();
             for (const auto& obs : observations) {
-                const std::string cons = PppUtils::getSystemString(obs.satellite);
+                const std::string cons = systemName(systemOfSat(obs.satellite));
                 auto piv_it = pivot_sats.find(cons);
                 if (piv_it == pivot_sats.end() || piv_it->second != obs.satellite)
                     continue;
@@ -433,7 +434,7 @@ namespace GnssProcessor {
                     double seed = ambiguitySeed(obs, ref_type, x_now);
 
                     if (bssd_active) {
-                        const std::string cons = PppUtils::getSystemString(obs.satellite);
+                        const std::string cons = systemName(systemOfSat(obs.satellite));
                         const auto& pivot_sats = pivot_manager_.getPivotSatellites();
                         auto piv_it = pivot_sats.find(cons);
                         const bool is_pivot = piv_it != pivot_sats.end()
@@ -547,7 +548,7 @@ namespace GnssProcessor {
                 obs.system, ref_sig, obs.satellite);
             if (!std::isfinite(lambda_ref) || lambda_ref <= 0.0) continue;
 
-            const std::string cons = PppUtils::getSystemString(obs.satellite);
+            const std::string cons = systemName(systemOfSat(obs.satellite));
             const auto& pivot_sats = pivot_manager_.getPivotSatellites();
             auto piv_it = pivot_sats.find(cons);
             const bool is_pivot = bssd_active
@@ -878,7 +879,7 @@ namespace GnssProcessor {
             // frame exists to reference; otherwise the raw seed defines the frame
             // and is correct.
             if (config_.enableBetweenSatelliteSd()) {
-                const std::string cons = PppUtils::getSystemString(obs.satellite);
+                const std::string cons = systemName(systemOfSat(obs.satellite));
                 const auto& pivots = pivot_manager_.getPivotSatellites();
                 auto piv_it = pivots.find(cons);
                 if (piv_it != pivots.end() && piv_it->second != obs.satellite) {
@@ -932,7 +933,7 @@ namespace GnssProcessor {
         auto signalCoveredByPivot = [&](const std::string& sat,
                                          const std::string& sig) -> bool {
             if (bssd_pivot_signals_.empty()) return true;  // BSSD off
-            const std::string cons = PppUtils::getSystemString(sat);
+            const std::string cons = systemName(systemOfSat(sat));
             auto cit = bssd_pivot_signals_.find(cons);
             if (cit == bssd_pivot_signals_.end()) return true;  // no pivot for cons
             if (sig.size() < 2) return false;

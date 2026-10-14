@@ -9,6 +9,7 @@
  */
 
 #include "measurement/BssdTransform.hpp"
+#include "common/GnssIdentity.hpp"
 #include "filter/StateKeySchema.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
@@ -77,7 +78,7 @@ for (Eigen::Index i = 0; i < n; ++i) {
     ri.row = i;
     ri.satellite   = update.satellite_ids[static_cast<size_t>(i)];
     ri.signal_type = update.signal_types[static_cast<size_t>(i)];
-    ri.constellation = PppUtils::getSystemString(ri.satellite);
+    ri.constellation = systemName(systemOfSat(ri.satellite));
     ri.group_key = bandGroupKey(ri.constellation, ri.signal_type);
     auto it = sat_elev.find(ri.satellite);
     ri.elevation = (it != sat_elev.end()) ? it->second : 0.0;
