@@ -925,7 +925,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     localCarryStampBirth(
                         nlc, (oldc != local_carry.end() ? &oldc->second : nullptr),
                         static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
-                    nlc.relevel_s = NetworkYoungInflate::stamp(
+                    nlc.relevel_s = localCarryStampRelevel(
                         yng_created ? 0.0 : oldc->second.relevel_s,
                         yng_created, yng_freed, pl_now_s);
                     if (yng_created)     ++ctx.counters.n_yng_stamp_create;

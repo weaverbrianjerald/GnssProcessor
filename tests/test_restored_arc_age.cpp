@@ -40,6 +40,11 @@
  *    site performs (@ref GnssProcessor::makeRestoredLocalCarry).  This pins the
  *    file-format half of the contract end to end: the snapshot carries no birth
  *    field, so the reader applies the sentinel.
+ * 4. The re-level stamp (@ref GnssProcessor::localCarryStampRelevel), the rule of
+ *    @ref LocalCarry::relevel_s: set when the entry is created and when the arc is
+ *    freed, kept on every other re-stash.  It needs no restore sentinel: a restored
+ *    entry's 0 reads as unstamped, and an ordinary re-stash keeps it (suite
+ *    @c LocalCarryRelevelStamp).
  *
  * Out of scope: the per-epoch harvest loop itself (inside `runNetwork`, certified by
  * the same-build byte-identity A/B and the harness leg pair in SPEC_event_harness
@@ -416,6 +421,41 @@ TEST(RestoredArcAge, ASnapshotRoundTripYieldsSentinelAgesOnEveryRestoredEntry) {
     EXPECT_DOUBLE_EQ(back.local_carry.at({0, "G10", "L1C"}).var_first, 0.0);
 
     std::filesystem::remove(path, ec);
+}
+
+// ===========================================================================
+// 4: the re-level stamp (localCarryStampRelevel): LocalCarry::relevel_s moves on
+//    two events only
+// ===========================================================================
+
+// A created entry: a first stash, or the re-stash after a T4 attribution erase or gap
+// prune deleted the entry (the erase needs no clause of its own because it deletes, so
+// the next harvest creates).  Its level came from one epoch of code.
+TEST(LocalCarryRelevelStamp, StampIsSetWhenTheEntryIsCreated) {
+    EXPECT_DOUBLE_EQ(localCarryStampRelevel(/*prev=*/0.0, /*created=*/true,
+                                            /*freed=*/false, /*now_s=*/1'234'567.0),
+                     1'234'567.0);
+}
+
+// A freed arc: it was in this epoch's latched relevel.free_ambs set, so this harvest
+// re-levelled it from one epoch of code although the entry already existed.
+TEST(LocalCarryRelevelStamp, StampIsSetWhenTheArcWasFreedThisEpoch) {
+    EXPECT_DOUBLE_EQ(localCarryStampRelevel(/*prev=*/1'000'000.0, /*created=*/false,
+                                            /*freed=*/true, /*now_s=*/1'234'567.0),
+                     1'234'567.0);
+}
+
+// Every other re-stash preserves the stamp; otherwise the age would reset every epoch
+// and no arc could mature out of the inflation.
+TEST(LocalCarryRelevelStamp, StampIsPreservedOnAnOrdinaryRestash) {
+    EXPECT_DOUBLE_EQ(localCarryStampRelevel(/*prev=*/1'000'000.0, /*created=*/false,
+                                            /*freed=*/false, /*now_s=*/1'234'567.0),
+                     1'000'000.0);
+}
+
+TEST(LocalCarryRelevelStamp, StampIsSetWhenBothEventsCoincide) {
+    EXPECT_DOUBLE_EQ(localCarryStampRelevel(0.0, /*created=*/true, /*freed=*/true, 500.0),
+                     500.0);
 }
 
 }  // namespace

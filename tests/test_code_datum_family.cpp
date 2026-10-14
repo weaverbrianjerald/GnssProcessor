@@ -47,7 +47,8 @@
  * or with the prior inert, its kept-epoch counts and events, its knob and its run-end
  * line; its birth test on the carry, through the stash and the fold decision across a
  * READMIT park and seed and a clock-monitor reinit; no target on a bridged channel; the
- * carry map; and the fold at its own weight and kind).
+ * carry map; and the fold at its own weight and kind); and the channel family key the
+ * family row reads (@c NetworkSbasis::channelFamilyOf).
  *
  * Suite name @c CodeDatumFamilyTest is owned by this file alone (one suite name, one
  * file).
@@ -2592,4 +2593,61 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsBirthSkipsAndDeclaresNoReference) {
     EXPECT_EQ(events[1].detail,
               "E05: C1X-C1C, C1X born with no realized family mean to target (channel "
               "bridged, no veteran): no row");
+}
+
+// ===========================================================================
+// (i) The channel family key (NetworkSbasis::channelFamilyOf, SPEC_family_gf_datum
+//     section 3.1), which the family-difference row reads twice (its secondary-channel
+//     test and its partner selection): it is not the RINEX attribute character, since
+//     the Galileo primary family is C1C/C5Q/C7Q, whose attributes are 'C','Q','Q'.
+// ===========================================================================
+
+TEST(CodeDatumFamilyTest, ChannelFamilyIsNotTheAttributeCharacter) {
+    // The Galileo primary family spans different attribute characters.  Keying on the
+    // character would split it in two and declare C1C a family of its own.
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C1C"),
+              NetworkSbasis::ChannelFamily::Primary);
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C5Q"),
+              NetworkSbasis::ChannelFamily::Primary);
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C7Q"),
+              NetworkSbasis::ChannelFamily::Primary);
+    // Other discrete components belong to the same family: a receiver tracking the E1
+    // data component or the E5a in-phase component is not a third population.
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C1B"),
+              NetworkSbasis::ChannelFamily::Primary);
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C5I"),
+              NetworkSbasis::ChannelFamily::Primary);
+    // Only combined I+Q tracking is the secondary family.
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C1X"),
+              NetworkSbasis::ChannelFamily::Secondary);
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C5X"),
+              NetworkSbasis::ChannelFamily::Secondary);
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C7X"),
+              NetworkSbasis::ChannelFamily::Secondary);
+}
+
+TEST(CodeDatumFamilyTest, GpsCodelessAndCivilChannelsAreOneFamily) {
+    // Regression guard.  An attribute-character key would place C2W and C2L in different
+    // families and add rows on the GPS postures, which have no family split.  Every GPS
+    // channel the field arms register belongs to the primary family.
+    for (const char* sig : {"C1C", "C1W", "C1P", "C1S", "C1L",
+                            "C2W", "C2L", "C2S", "C2P",
+                            "C5Q", "C5I"})
+        EXPECT_EQ(NetworkSbasis::channelFamilyOf("G", sig),
+                  NetworkSbasis::ChannelFamily::Primary)
+            << "GPS " << sig << " must not be a secondary family";
+}
+
+TEST(CodeDatumFamilyTest, UnrecognisedConstellationNeverPartitions) {
+    // The allow-list of SPEC_family_gf_datum section 7 is enforced in the mapper rather
+    // than at the call site: a constellation whose family split has not been validated
+    // reports no secondary family, so its census cannot partition and no row is built
+    // for it.
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("R", "C1X"),
+              NetworkSbasis::ChannelFamily::Primary);
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("J", "C5X"),
+              NetworkSbasis::ChannelFamily::Primary);
+    // BeiDou is on the list (the expected next case), so it maps normally.
+    EXPECT_EQ(NetworkSbasis::channelFamilyOf("C", "C2X"),
+              NetworkSbasis::ChannelFamily::Secondary);
 }

@@ -9,8 +9,9 @@
  * budget (an "escalation" at or below the stock within-epoch cap of 5 is a no-op
  * that would read as armed), and the three warn-and-disarm interlocks (each
  * responder needs an armed A4 ceiling; the erase half also needs
- * @c cycle_slip.relevel_free_epoch, whose latch it consumes).  The era mechanics
- * are graded on field runs, not here.
+ * @c cycle_slip.relevel_free_epoch, whose latch it consumes).  The latch's own
+ * disarms (without @c phase_leveling, and under @c carry_invariant) take the erase
+ * half with them.  The era mechanics are graded on field runs, not here.
  */
 
 #include <gtest/gtest.h>
@@ -155,6 +156,24 @@ TEST(WithholdReleaseConfig, FreeEraseDisarmsWhenLevelingDisarmsTheLatch) {
         "    \"cycle_slip\": { \"mw_detect\": true, \"relevel_free_epoch\": true },\n"
         "    \"raim_withhold_free_erase\": true,\n";
     ASSERT_TRUE(loadInto("erase_nolvl", networkConfig(extra), cfg));
+    EXPECT_FALSE(cfg.networkCycleSlipRelevelFreeEpoch());
+    EXPECT_FALSE(cfg.networkRaimWithholdFreeErase());
+}
+
+TEST(WithholdReleaseConfig, FreeEraseDisarmsWhenCarryInvariantDisarmsTheLatch) {
+    // The latch's other disarm: under network.carry_invariant the leveling local carry
+    // is superseded and structurally empty, so relevel_free_epoch is disarmed (the
+    // loader's re-level interlock, which runs after carry_invariant is parsed), and the
+    // erase half disarms with it.  This is the only test of that interlock.
+    // carry_invariant is a hard load error without phase_datum_eq34 (the DD cycle
+    // basis it carries is defined only in that datum), so the posture is spelled out
+    // completely; otherwise the case would assert on a failed load.
+    GnssConfig cfg;
+    const std::string extra =
+        std::string(kArmedBlock) +
+        "    \"carry_invariant\": true,\n"
+        "    \"phase_datum_eq34\": true,\n";
+    ASSERT_TRUE(loadInto("erase_carryinv", networkConfig(extra), cfg));
     EXPECT_FALSE(cfg.networkCycleSlipRelevelFreeEpoch());
     EXPECT_FALSE(cfg.networkRaimWithholdFreeErase());
 }

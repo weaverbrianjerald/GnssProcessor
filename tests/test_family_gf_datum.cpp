@@ -11,10 +11,11 @@
  * remains, absorbed by the X stations' free slant ionosphere; in the field these showed
  * up as 20 undeclared near-null directions and a wire withheld at every epoch.
  *
- * The cases check three properties that are easy to get wrong and not visible in a
- * field log: the family key (it is not the RINEX attribute character), the count
- * closure (and its equal-support precondition), and the intended absence of a secondary
- * IF row (that combination is the estimable inter-family ISC, not a gauge).
+ * The cases check two properties that are easy to get wrong and not visible in a
+ * field log: the count closure (and its equal-support precondition), and the intended
+ * absence of a secondary IF row (that combination is the estimable inter-family ISC, not
+ * a gauge).  The third, the family key (it is not the RINEX attribute character), is
+ * read by the GFC rows too, and its cases are in test_code_datum_family.cpp.
  */
 
 #include <gtest/gtest.h>
@@ -161,58 +162,9 @@ int survivingNullDims(const NetworkEstimator& est, const Eigen::MatrixXd& H,
 }  // namespace
 
 // ===========================================================================
-// The family key, §3.1: it is not the RINEX attribute character: the Galileo
-// primary family is C1C/C5Q/C7Q, whose attributes are 'C','Q','Q'.
+// The family key, §3.1 (NetworkSbasis::channelFamilyOf): its cases are section (i)
+// of test_code_datum_family.cpp, beside the GFC rows that read it.
 // ===========================================================================
-
-TEST(FamilyGfDatumTest, ChannelFamilyIsNotTheAttributeCharacter) {
-    // The Galileo primary family spans different attribute characters.  Keying on the
-    // character would split it in two and declare C1C a family of its own.
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C1C"),
-              NetworkSbasis::ChannelFamily::Primary);
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C5Q"),
-              NetworkSbasis::ChannelFamily::Primary);
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C7Q"),
-              NetworkSbasis::ChannelFamily::Primary);
-    // Other discrete components belong to the same family: a receiver tracking the E1
-    // data component or the E5a in-phase component is not a third population.
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C1B"),
-              NetworkSbasis::ChannelFamily::Primary);
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C5I"),
-              NetworkSbasis::ChannelFamily::Primary);
-    // Only combined I+Q tracking is the secondary family.
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C1X"),
-              NetworkSbasis::ChannelFamily::Secondary);
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C5X"),
-              NetworkSbasis::ChannelFamily::Secondary);
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("E", "C7X"),
-              NetworkSbasis::ChannelFamily::Secondary);
-}
-
-TEST(FamilyGfDatumTest, GpsCodelessAndCivilChannelsAreOneFamily) {
-    // Regression guard.  An attribute-character key would place C2W and C2L in different
-    // families and add rows on the GPS postures, which have no family split.  Every GPS
-    // channel the field arms register belongs to the primary family.
-    for (const char* sig : {"C1C", "C1W", "C1P", "C1S", "C1L",
-                            "C2W", "C2L", "C2S", "C2P",
-                            "C5Q", "C5I"})
-        EXPECT_EQ(NetworkSbasis::channelFamilyOf("G", sig),
-                  NetworkSbasis::ChannelFamily::Primary)
-            << "GPS " << sig << " must not be a secondary family";
-}
-
-TEST(FamilyGfDatumTest, UnrecognisedConstellationNeverPartitions) {
-    // The allow-list of §7 is enforced in the mapper rather than at the call site: a
-    // constellation whose family split has not been validated reports no secondary
-    // family, so its census cannot partition and no row is built for it.
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("R", "C1X"),
-              NetworkSbasis::ChannelFamily::Primary);
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("J", "C5X"),
-              NetworkSbasis::ChannelFamily::Primary);
-    // BeiDou is on the list (the expected next case), so it maps normally.
-    EXPECT_EQ(NetworkSbasis::channelFamilyOf("C", "C2X"),
-              NetworkSbasis::ChannelFamily::Secondary);
-}
 
 // ===========================================================================
 // The census, §3.2: a bridge decides the outcome: with one, the primary pin

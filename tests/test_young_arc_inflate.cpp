@@ -34,8 +34,8 @@
  * (@c CouplingRowBuilder::buildLocalBlock over a registered @c NetworkEstimator).  A
  * unit test cannot reach the harvest's stamping site or the PASS-B age arithmetic
  * against a live run clock, so the stamp rule is factored into
- * @ref GnssProcessor::NetworkYoungInflate::stamp, which the harvest calls and these
- * cases check.
+ * @ref GnssProcessor::localCarryStampRelevel (filter/NetworkRunTypes.hpp), which the
+ * harvest calls; its cases are in test_restored_arc_age.cpp.
  */
 
 #include <gtest/gtest.h>
@@ -184,37 +184,10 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 }  // namespace
 
 // =============================================================================
-// (1) The stamp.  relevel_s is the age clock, and it moves on two events only.
+// (1) The stamp.  relevel_s is the age clock, and it moves on two events only.  The
+//     rule is localCarryStampRelevel (filter/NetworkRunTypes.hpp); its cases are the
+//     LocalCarryRelevelStamp suite in test_restored_arc_age.cpp.
 // =============================================================================
-
-// A created entry: a first stash, or the re-stash after a T4 attribution erase or gap
-// prune deleted the entry (the erase needs no clause of its own because it deletes, so
-// the next harvest creates).  Its level came from one epoch of code.
-TEST(YoungArcInflateTest, StampIsSetWhenTheEntryIsCreated) {
-    EXPECT_DOUBLE_EQ(YI::stamp(/*prev=*/0.0, /*created=*/true, /*freed=*/false,
-                               /*now_s=*/1'234'567.0),
-                     1'234'567.0);
-}
-
-// A freed arc: it was in this epoch's latched relevel.free_ambs set, so this harvest
-// re-levelled it from one epoch of code although the entry already existed.
-TEST(YoungArcInflateTest, StampIsSetWhenTheArcWasFreedThisEpoch) {
-    EXPECT_DOUBLE_EQ(YI::stamp(/*prev=*/1'000'000.0, /*created=*/false, /*freed=*/true,
-                               /*now_s=*/1'234'567.0),
-                     1'234'567.0);
-}
-
-// Every other re-stash preserves the stamp; otherwise the age would reset every epoch
-// and no arc could mature out of the inflation.
-TEST(YoungArcInflateTest, StampIsPreservedOnAnOrdinaryRestash) {
-    EXPECT_DOUBLE_EQ(YI::stamp(/*prev=*/1'000'000.0, /*created=*/false, /*freed=*/false,
-                               /*now_s=*/1'234'567.0),
-                     1'000'000.0);
-}
-
-TEST(YoungArcInflateTest, StampIsSetWhenBothEventsCoincide) {
-    EXPECT_DOUBLE_EQ(YI::stamp(0.0, /*created=*/true, /*freed=*/true, 500.0), 500.0);
-}
 
 // =============================================================================
 // (2) The decay.  V_add = V0·exp(−age/τ), age in loop epochs.

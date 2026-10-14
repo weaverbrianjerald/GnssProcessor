@@ -641,9 +641,9 @@ struct LocalCarry {
     /// age-aware young-arc variance inflation
     /// (@c network.phase_leveling_young_inflate_var_m2,
     /// SPEC_amb_iono_split_overcount §6.17–§6.18).  The harvest sets it to its
-    /// @c pl_now_s on two events, both of which produce a level whose value is of code
-    /// quality while its harvested variance is phase-stiff (conditioned on the
-    /// station's mature arcs):
+    /// @c pl_now_s (@ref localCarryStampRelevel) on two events, both of which produce a
+    /// level whose value is of code quality while its harvested variance is
+    /// phase-stiff (conditioned on the station's mature arcs):
     ///   * the entry is created (no previous entry): a first stash, or the re-stash
     ///     after a T4 attribution erase or a gap prune deleted the entry;
     ///   * the arc was freed this epoch by the slip response
@@ -856,6 +856,29 @@ inline void localCarryStampBirth(LocalCarry& fresh, const LocalCarry* prev,
                                  long long now_ep, double now_s) {
     fresh.birth_ep = (prev && prev->birth_ep != 0) ? prev->birth_ep : now_ep;
     fresh.birth_s  = (prev && prev->birth_s != 0.0) ? prev->birth_s : now_s;
+}
+
+/// The stamp rule of @ref LocalCarry::relevel_s, the arc's re-level clock; the one
+/// definition that the phase-leveling harvest applies at every stash.
+///
+/// Two events, and only these two, stamp the arc with the harvest's time: the entry is
+/// created (a first stash, or the re-stash after a T4 attribution erase or a gap prune
+/// deleted the entry), or the arc was freed this epoch, so this harvest re-levelled it
+/// from one epoch of code.  Every other re-stash keeps the previous stamp, so the age
+/// keeps growing while the arc matures.  A re-level does not reset @c birth_s
+/// (@ref localCarryStampBirth), and an ordinary re-stash does not reset this.
+///
+/// @param prev_relevel_s  The previous entry's stamp (0 when there was no entry).
+/// @param created         True when no previous entry existed: a first stash, or the
+///                        re-stash after a T4 erase / gap prune deleted the entry.
+/// @param freed           True when the arc was in this epoch's latched free set (the
+///                        same @c relevel.free_ambs the PASS-B inject consulted).
+/// @param now_s           This harvest's continuous-GPS seconds (@c pl_now_s).
+/// @return The stamp to store: @p now_s on either event, otherwise @p prev_relevel_s
+///         unchanged.
+inline double localCarryStampRelevel(double prev_relevel_s, bool created, bool freed,
+                                     double now_s) {
+    return (created || freed) ? now_s : prev_relevel_s;
 }
 
 /// One confident MW wide-lane integer that the MW drain defers to the IF-TD driver

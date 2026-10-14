@@ -143,9 +143,9 @@ TEST(LaneObservatoryConfig, DisarmsUnderCarryInvariant) {
         "    \"phase_datum_eq34\": true,\n";
     ASSERT_TRUE(loadInto("carryinv", networkConfig(extra), cfg));
     EXPECT_FALSE(cfg.networkCycleSlipRelevelLaneSnap());
-    // Its base dies on the same posture; if this ever changes, the rider's
-    // ordering assumption needs re-checking.
-    EXPECT_FALSE(cfg.networkCycleSlipRelevelFreeEpoch());
+    // Its base dies on the same posture (asserted by
+    // WithholdReleaseConfig.FreeEraseDisarmsWhenCarryInvariantDisarmsTheLatch); if
+    // that ever changes, the rider's ordering assumption needs re-checking.
 }
 
 TEST(LaneObservatoryConfig, DisarmsWhenFreeEpochIsJsonTrueButUnsupported) {

@@ -26,8 +26,9 @@
  * differs on both counts:
  *
  *  - only arcs young since their last re-level are touched.  The age clock is
- *    @ref LocalCarry::relevel_s, stamped at creation and at every free-epoch response,
- *    not @ref LocalCarry::birth_s (which a re-level deliberately preserves);
+ *    @ref LocalCarry::relevel_s, stamped at creation and at every free-epoch response
+ *    (@ref localCarryStampRelevel, NetworkRunTypes.hpp), not @ref LocalCarry::birth_s
+ *    (which a re-level deliberately preserves);
  *  - the inflated arc stays inside the F3 whitened block with its cross terms.  The
  *    inflation is applied as a congruence scaling of the arc's row/column of the
  *    harvested Σ (@ref congruence), which keeps Σ positive-definite and leaves every
@@ -73,21 +74,6 @@ struct Knobs {
     /// The loader already rejects it; this check is the second guard.
     bool on() const { return var_m2 > 0.0 && tau_ep > 0.0 && max_age_ep > 0; }
 };
-
-/// The stamp rule, isolated so the harvest site and the unit suite read one function.
-///
-/// @param prev_relevel_s  the previous entry's stamp (0 when there was no entry).
-/// @param created         true when no previous entry existed: a first stash, or the
-///                        re-stash after a T4 erase / gap prune deleted the entry.
-/// @param freed           true when the arc was in this epoch's latched free set (the
-///                        same @c relevel.free_ambs the PASS-B inject consulted).
-/// @param now_s           the harvest's continuous-GPS seconds (@c pl_now_s).
-/// @return the stamp to store: @p now_s on either event, otherwise @p prev_relevel_s
-///         unchanged (a re-level does not reset @c birth_s, and an ordinary re-stash
-///         does not reset this).
-inline double stamp(double prev_relevel_s, bool created, bool freed, double now_s) {
-    return (created || freed) ? now_s : prev_relevel_s;
-}
 
 /// One column's inflation, with the age it was evaluated at.
 struct Add {

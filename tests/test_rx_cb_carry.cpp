@@ -7,7 +7,8 @@
  * phase is parallel, so a breach is answered by withholding the fold, and the
  * serial harvest then overwrites the stale entry (an implicit drop).  These
  * tests cover the decision table: gap staleness, RW variance inflation, the
- * k·sigma innovation gate with its variance guard, and NaN/degenerate inputs.
+ * k·sigma innovation gate with its variance guard, NaN/degenerate inputs, and the
+ * innovation test switched off (the in-block route's call).
  */
 
 #include <gtest/gtest.h>
@@ -75,6 +76,37 @@ TEST(RxCbInjectGate, NegativeGapDoesNotDeflate) {
     const auto act = rxCbInjectGate(-5.0, 900.0, 4e-4, 1e-3, 0.0, 10.0, 0.25, var_eff);
     EXPECT_EQ(act, RxCbInjectAction::Fold);
     EXPECT_DOUBLE_EQ(var_eff, 4e-4);
+}
+
+// The innovation test switched off (innov_test = false), as the in-block route
+// (network.carry_rx_code_bias_in_block) calls the gate.  The innovation compares the
+// carried absolute value with a frozen linearization point, so a quiet receiver whose
+// first-epoch seed landed 6 m away is withheld with the test on and folds with it off;
+// the frame-free gap and variance checks still run.
+TEST(RxCbInjectGate, InnovationTestOffKeepsTheFrameFreeChecks) {
+    constexpr double kVar = 1e-2, kQ = 1e-9, kGap = 30.0, kK = 10.0, kGuard = 0.25;
+    constexpr double kXlin = -6.0;        // where the first-epoch seed happened to land
+    constexpr double kAbsPrev = 0.02;     // a perfectly quiet receiver
+    const double frame_innov = kAbsPrev - kXlin;        // 6.02 m of pure frame
+
+    double var_eff = 0.0;
+    EXPECT_EQ(rxCbInjectGate(kGap, 900.0, kVar, kQ, frame_innov, kK, kGuard, var_eff),
+              RxCbInjectAction::SkipInnov);             // withheld, though nothing happened
+    var_eff = 0.0;
+    EXPECT_EQ(rxCbInjectGate(kGap, 900.0, kVar, kQ, frame_innov, kK, kGuard, var_eff,
+                             /*innov_test=*/false),
+              RxCbInjectAction::Fold);
+    EXPECT_GT(var_eff, 0.0);              // the frame-free checks still ran
+
+    // Disabling the innovation test leaves the frame-free ones in place.
+    var_eff = 0.0;
+    EXPECT_EQ(rxCbInjectGate(/*gap_s=*/5000.0, 900.0, kVar, kQ, 0.0, kK, kGuard, var_eff,
+                             /*innov_test=*/false),
+              RxCbInjectAction::SkipGap);
+    var_eff = 0.0;
+    EXPECT_EQ(rxCbInjectGate(kGap, 900.0, /*var=*/-1.0, kQ, 0.0, kK, kGuard, var_eff,
+                             /*innov_test=*/false),
+              RxCbInjectAction::SkipGap);
 }
 
 }  // namespace
