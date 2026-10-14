@@ -615,10 +615,9 @@ struct LocalCarry {
     static constexpr double    kBirthSRestored  = -1.0;
     long long birth_ep{0};                        ///< Loop-epoch index (n_loop_epochs) of the arc's first stash: set once at birth, kept across re-stashes, restarted by an erase-and-rebirth.  0 = never stashed, @ref kBirthEpRestored (−1) = warm-resume-restored with its true birth not snapshotted.  Both read as mature (every reader tests `> 0`).  The harvest's first-stash-wins rule tests `!= 0`, so the −1 sentinel survives it, while a 0 is replaced by the current epoch at the next stash (@ref localCarryStampBirth).  The age gates read it through @ref localCarryYoung.  Not snapshotted: a restored entry is sentinel-stamped and reads as mature for its whole life (until an erase-and-rebirth), which is the documented restored-entry contract.
     double birth_s{0.0};                          ///< Continuous-GPS seconds (week*604800 + tow) of the arc's first stash: the seconds counterpart of @c birth_ep, set once at birth from the harvest's @c pl_now_s, kept across re-stashes, and restarted by an erase-and-rebirth (a T4 attribution erase deletes the entry, and the next harvest re-creates it with a level that already contains any earlier slip).  Read by the sim-only slip oracle (@c network.cycle_slip.oracle_relevel) as the hard lower edge of its truth-slip window, so a repair never re-applies a jump that the re-created level already absorbed.  Not snapshotted (like @c birth_ep): a warm-resume-restored entry carries @ref kBirthSRestored (−1), which never wins the window's `max` and so leaves the window at its @c oracle_window_s latency bound for the arc's whole restored life.  That is acceptable for a sim-only diagnostic and errs in the conservative direction.
-    /// Continuous-GPS seconds of the arc's last re-level (introduced as the age clock
-    /// of the retired young-arc variance inflation,
-    /// @c network.phase_leveling_young_inflate_var_m2; SPEC_amb_iono_split_overcount
-    /// §6.17–§6.18).  The harvest sets it to its
+    /// Continuous-GPS seconds of the arc's last re-level (introduced as the age clock of
+    /// the retired young-arc variance inflation, @c network.phase_leveling_young_inflate_var_m2;
+    /// SPEC_amb_iono_split_overcount §6.17–§6.18).  The harvest sets it to its
     /// @c pl_now_s (@ref localCarryStampRelevel) on two events, both of which produce a
     /// level whose value is of code quality while its harvested variance is
     /// phase-stiff (conditioned on the station's mature arcs):

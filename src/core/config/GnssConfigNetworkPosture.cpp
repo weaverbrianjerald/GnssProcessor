@@ -1017,12 +1017,12 @@ namespace GnssProcessor {
               "past discThresholdM on more than 10 % of the jump test's own population "
               "(measured ~17 m p50 with datum_changed 0 today, SPEC_event_harness s21.9)" },
             // --- Emit-engine restore at the seam, the read half (RS-5, SPEC_event_harness
-            //     s21.10/s21.11): both emit engines are restored.  Forward-only resume policy,
-            //     not fingerprinted; requires resume_frame_restore.
+            //     s21.10/s21.11): the emit re-base frame is restored.  Forward-only resume
+            //     policy, not fingerprinted; requires resume_frame_restore.
             { warm && network_resume_frame_restore_,
               network_resume_emit_restore_,
               Tier::SCOPED, false, "network.resume_emit_restore",
-              "restore the eq34 emit re-base frame + the PB emission filter at a warm resume: emitted "
+              "restore the eq34 emit re-base frame at a warm resume: emitted "
               "phase biases match the continuous wire to p50 0.000 m at +1, a stateful consumer sees 0 "
               "PB resets at the seam (control 19); products otherwise byte-identical (RS-5)" },
             // --- Station-layer restore at the seam, the read half (RS-6a, SPEC_event_harness

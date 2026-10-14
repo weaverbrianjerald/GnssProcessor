@@ -13,8 +13,8 @@
  * @f$\sum c\,(x_{\rm lin,writer}-x_{\rm lin,now})@f$.  That is metres per chord,
  * folded at the carry's stiffness on the whole branch at once; the D5 gate runs
  * post-solve and can only flag the result.  On the field golden's 60-epoch null legs
- * the first post-resume solve discharges through the `dd_fold` prior class and the
- * SH health gate then withholds every epoch.
+ * the first post-resume solve discharged through the `dd_fold` prior class and the
+ * (since retired) SH health gate then withheld every epoch.
  *
  * The repair was a frame translation in two halves.  The writer half stays (off by
  * default): it stores @f$z_\ell=\sum c\,x_{\rm lin}@f$ per chord, one @c ZL row per
