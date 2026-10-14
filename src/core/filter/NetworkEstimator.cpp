@@ -361,7 +361,7 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
     if (!epoch_open_) {
         throw std::logic_error("NetworkEstimator::solve: call beginEpoch() first");
     }
-    neq_.reduce(reduce_threads_);
+    neq_.reduce();
     // Fold the anchor-free sum-to-zero phase-bias gauges onto the reduced system
     // (Fix A).  The fold is idempotent within one reduce, because the null-space
     // gate path may already have folded them.  Empty on the anchor / off path:
@@ -819,7 +819,7 @@ Eigen::VectorXd NetworkEstimator::rowRedundancy(
 }
 
 const Eigen::MatrixXd& NetworkEstimator::reducedSharedNormals() {
-    neq_.reduce(reduce_threads_);
+    neq_.reduce();
     // Fold the anchor-free phase-bias gauges before the null-space gate inspects
     // the reduced normals, so the phase gauge reads as fixed (Fix A).  The gate's
     // declared dimension then stays equal to the clock deficiency count, as in the

@@ -22,9 +22,8 @@
  * @c GnssConfigNetworkPosture.cpp.
  *
  * **The call order in @c loadNetworkSection_ is load-bearing.**  The cross-knob
- * forcings are expressed as sequence: the @c parallel_carry / @c parallel_reduce
- * mutex, the RTF-3 refusal of inert arming (which reads state parsed
- * before it), the D5 corroboration gate that auto-arms the slip-QC
+ * forcings are expressed as sequence: the RTF-3 refusal of inert arming (which
+ * reads state parsed before it), the D5 corroboration gate that auto-arms the slip-QC
  * instrumentation feeding it, the RAIM tier auto-couplings, the RTB-8 service
  * arming and its P3 re-validation, and the @c network.process_noise table
  * (resolved first, settled last).  Several helpers therefore read state that a
@@ -1726,9 +1725,7 @@ namespace GnssProcessor {
     /**
      * @brief Product output path/flush, per-station compute parallelism, and the pyviz trace toggles.
      *
-     * Holds the @c parallel_reduce / @c parallel_carry mutex (both OpenMP-fan the per-station
-     * passes against Eigen-threaded dense algebra, so armed together they oversubscribe) and
-     * @c network.epoch_decimation_n.
+     * Holds @c network.epoch_decimation_n.
      *
      * @param json  Parsed root config object.
      * @param log   The "gnss_config" logger.
@@ -1760,26 +1757,10 @@ namespace GnssProcessor {
             jval<int>(json, "network.parallel_min_stations", "parallel_min_stations", 10);
         network_config_.parallel_max_threads =
             jval<int>(json, "network.parallel_max_threads", "parallel_max_threads", 0);
-        network_config_.parallel_reduce =
-            jval<bool>(json, "network.parallel_reduce", "parallel_reduce", false);
         network_config_.parallel_seam =
             jval<bool>(json, "network.parallel_seam", "parallel_seam", false);
         network_config_.parallel_carry =
             jval<bool>(json, "network.parallel_carry", "parallel_carry", false);
-        // parallel_reduce and parallel_carry are mutually exclusive.  Both fan the
-        // per-station passes out over OpenMP, and est.solve()'s dense algebra (the
-        // fold's GEMMs and the K×K middle inverse) is itself Eigen-threaded, so armed
-        // together they nest OpenMP × Eigen inside reduce() and oversubscribe.  The
-        // conflict is resolved here, at load time (one early, config-visible point
-        // rather than in the epoch driver), by forcing parallel_carry off when both are
-        // set.  No shipped config arms parallel_reduce, so this only guards new configs.
-        if (network_config_.parallel_reduce && network_config_.parallel_carry) {
-            log->warn("Network: parallel_reduce AND parallel_carry both set — forcing "
-                      "parallel_carry OFF (both OpenMP-fan the per-station passes and "
-                      "est.solve() is Eigen-threaded, so together they nest OpenMP × Eigen "
-                      "inside reduce()).  Set one false in config to silence this.");
-            network_config_.parallel_carry = false;
-        }
 
         // --- Visualization traces (pyviz network viewers) ---
         network_config_.trace_stations =

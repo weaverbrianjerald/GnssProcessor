@@ -720,24 +720,8 @@ int Application::runNetwork() {
     // 121-epoch run, which exhausts RAM).  Reusing the estimator's station-block pool
     // (NetworkNormalEquations::reset) holds the footprint to one epoch's working set.
     NetworkEstimator est;
-    // Opt-in fan-out of the Schur reduction, kept separate from the build-phase
-    // parallelism.  The build's serial-ordered scatter is byte-identical to a serial
-    // run, but the reduce fan-out reassociates the per-station summation: reproducible
-    // for a given thread count, yet ULP-different from the serial reduce, and the
-    // network's ill-conditioning amplifies that to ~1e-5 in the products (physically
-    // null, but not byte-identical).  Off by default, which keeps the reduce serial while
-    // the build still threads and the deterministic serial-tail savings (eigensolver
-    // gate, no double reduce, factor reuse) still apply.
-    //
-    // parallel_reduce and parallel_carry are mutually exclusive: the first fans
-    // reduce()'s per-station Schur loop, the second fans the fold's per-station
-    // reduction while est.solve()'s dense algebra is itself Eigen-threaded, so arming
-    // both nests OpenMP inside Eigen and oversubscribes.  The loader resolves it
-    // (parallel_carry is forced off when both are set), so at most one is true here;
-    // the `!carry_par` below is a redundant guard.
-    const bool reduce_par   = parallel_on && nc.parallel_reduce && !carry_par;
-    const int  reduce_threads = reduce_par ? n_threads : 1;
-    est.setReduceThreads(reduce_threads);
+    // The Schur reduction runs serially (byte-identical at any thread count) while the
+    // build phase threads.
     // Deterministic-parallel DD carry-fold fan-out (network.parallel_seam); 1 = serial.
     est.setSeamThreads(seam_threads);
     // With network.parallel_carry armed, solve()'s foldReducedDdPriors runs serially over
@@ -781,10 +765,6 @@ int Application::runNetwork() {
     // once here (it survives est.reset(), like the timers).  Off ⇒ byte-identical; the
     // INC-0 counters it feeds are always on and solve-neutral.
     est.setDdFoldPdSafe(carry_cfg.pd_safe);
-    if (reduce_par)
-        log->info("Network: Schur reduce PARALLEL across {} threads "
-                  "(serial≡parallel byte-identity intentionally relaxed to ~1e-5)",
-                  n_threads);
 
     // === Tier D0: per-epoch section timers (network.trace_section_timers) =====
     // Arms the estimator's wall-clock accumulators around assembly, reduce, solve, the

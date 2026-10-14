@@ -703,7 +703,7 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.health_interval_s",
               "set 60-300 s: the ONLY mid-run-flushed CSV, so a crashed or WER-zombied run loses "
               "every other tail" },
-            { par && !nc.parallel_reduce,
+            { par,
               nc.parallel_carry,
               Tier::SCOPED, false, "network.parallel_carry",
               "2.13x wall-clock (48.6 -> 22.8 s/ep at 20 thr); reassociates ~1e-4, so graded "

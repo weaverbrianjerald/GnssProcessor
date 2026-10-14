@@ -1652,7 +1652,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"parallel_stations\":" << (nc.parallel_stations ? "true" : "false") << ','
                << "\"parallel_min_stations\":" << nc.parallel_min_stations << ','
                << "\"parallel_max_threads\":" << nc.parallel_max_threads << ','
-               << "\"parallel_reduce\":" << (nc.parallel_reduce ? "true" : "false") << ','
                << "\"parallel_seam\":" << (nc.parallel_seam ? "true" : "false") << ','
                << "\"parallel_carry\":" << (nc.parallel_carry ? "true" : "false") << ','
                << "\"n_threads\":" << n_threads << ','

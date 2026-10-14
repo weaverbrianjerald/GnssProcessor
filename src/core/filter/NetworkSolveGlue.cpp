@@ -1349,9 +1349,7 @@ try {
     // its dense GEMMs and the K×K middle inverse run under Eigen's own threading.  So,
     // unlike the two isolated build/install GEMM stages, solve() is not wrapped in a
     // CarryEigenScope: an un-pin here would nest the fold's OpenMP inside Eigen's GEMM
-    // threads.  For the same reason parallel_carry cannot coexist with parallel_reduce
-    // (which would spread this Eigen-threaded solve across stations with OpenMP); the
-    // loader keeps the two mutually exclusive.
+    // threads.
     x_s = est.solve(plan.shared_datum);
     // Debug: full-precision solve checksum for differencing A/B arms without print
     // precision loss.  Budgeted by n_cpl_solve_dump; log only (card 1d).

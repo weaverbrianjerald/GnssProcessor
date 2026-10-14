@@ -1696,19 +1696,6 @@ namespace GnssProcessor {
         bool parallel_stations{ true };   ///< Master enable for per-station threading (only takes effect above @ref parallel_min_stations).
         int  parallel_min_stations{ 10 }; ///< Parallelize only when the network has strictly more than this many stations.
         int  parallel_max_threads{ 0 };   ///< Optional worker-thread cap (0 => omp_get_max_threads()).
-        // Spread the per-epoch Schur reduction across threads too (the @ref
-        // NetworkNormalEquations::reduce station loop).  Off by default and kept
-        // separate from @ref parallel_stations because, unlike the build phase (whose
-        // serial-ordered scatter keeps it bit-identical to a serial run), the reduce
-        // fan-out combines per-thread partials in a different summation grouping.  Its
-        // result is reproducible for a fixed thread count but differs from the serial
-        // reduce at the ULP level, which the network's ill-conditioning amplifies to
-        // ~1e-5 in the products: physically null, but it breaks serial≡parallel
-        // byte-identity.  Enable only for maximum-speed runs that do not rely on a
-        // serial-versus-parallel byte comparison for regression.  Uses the same thread
-        // budget (@ref parallel_max_threads) and acts only when @ref parallel_stations
-        // is active.
-        bool parallel_reduce{ false };    ///< Parallelize the Schur reduce loop (opt-in; trades serial≡parallel byte-identity for speed).
 
         // --- eq34 reattach hygiene ---------
         // The phase datum may be re-hosted only onto an arc whose ambiguity has
@@ -1733,8 +1720,8 @@ namespace GnssProcessor {
         // 305-station epoch that reduce/assembly parallelism does not cover (the DD
         // carry-fold of the invariant carry, @ref NetworkNormalEquations::foldReducedDdPriors,
         // and the D5 innovation-gate readouts in
-        // @ref NetworkInvariantCarryDriver::installPosterior).  Unlike
-        // @ref parallel_reduce this preserves serial≡parallel byte-identity: the
+        // @ref NetworkInvariantCarryDriver::installPosterior).  Unlike a reassociating
+        // parallel reduction this preserves serial≡parallel byte-identity: the
         // independent per-(const,signal)-block algebra (G, M=(Pᶻ+B)⁻¹, GMGᵀ, the
         // posterior mean/cov and innovation GᵀΣG products) is computed into pre-sized
         // per-block slots, then accumulated and installed serially in a fixed
@@ -1759,8 +1746,8 @@ namespace GnssProcessor {
         // per-station reduction with small inner-dimension matmuls and a serial LDLT,
         // which Eigen cannot thread) spreads that reduction across stations with OpenMP
         // (per-thread partials, ascending combine) with Eigen pinned, and
-        // column-parallelizes the K×K middle inverse (byte-identical given Pᶻ+B).  Like
-        // @ref parallel_reduce this reassociates the dense reduction, so a run with it on
+        // column-parallelizes the K×K middle inverse (byte-identical given Pᶻ+B).  This
+        // reassociates the dense reduction, so a run with it on
         // is reproducible for a fixed thread count but not byte-identical to serial, and
         // not merely at the ULP level: through this ill-conditioned, stiff (near-zero
         // q_z) carry, the reassociation reached ~1e-4 at the solution level over a run
@@ -1775,10 +1762,7 @@ namespace GnssProcessor {
         // dense Σ_ss (§2 there), and INC-C0's census closed as case (a), so no
         // O(K·n_s²+n_s³) reduction is pending behind this knob.
         //
-        // Not combinable with @ref parallel_reduce on the same solve: the config loader
-        // forces parallel_carry off (with a warning) when both are armed, since
-        // est.solve() is itself Eigen-threaded and would nest OpenMP × Eigen inside
-        // reduce().  Acts only when @ref parallel_stations is active.  Default off: Eigen
+        // Acts only when @ref parallel_stations is active.  Default off: Eigen
         // stays pinned and the carry runs its @ref parallel_seam / serial path, byte for
         // byte as without this knob.
         bool parallel_carry{ false };     ///< Thread the invariant carry's dense per-block algebra (opt-in; gives up serial≡parallel byte-identity, ~1e-4 at the solution level, so graded verdicts come from off runs only, for ~2.4× wall-clock; needs @ref parallel_stations).

@@ -293,28 +293,13 @@ public:
                                NetworkNormalEquations::StationPrior{});
 
     /**
-     * @brief Set the per-station fan-out used by the Schur reduction (@ref
-     *        NetworkNormalEquations::reduce), the dominant per-epoch serial cost.
-     *
-     * Default 1 (serial, byte-identical output).  The network driver sets this to
-     * its per-station thread budget when station-parallelism is enabled so the
-     * reduction runs across cores; values > 1 make reduce()'s output
-     * reproducible-but-ULP-dependent on the thread count (see that method).  Takes
-     * effect on the next @ref solve / @ref reducedSharedNormals.
-     *
-     * @param n_threads Thread count (clamped to ≥ 1).
-     */
-    void setReduceThreads(int n_threads) {
-        reduce_threads_ = n_threads > 1 ? n_threads : 1;
-    }
-
-    /**
      * @brief Set the thread budget for the deterministic-parallel DD carry-fold
      *        (@c network.parallel_seam): the per-block fan-out of
      *        @ref NetworkNormalEquations::foldReducedDdPriors.
      *
-     * Default 1 (serial fold, byte-identical).  Unlike @ref setReduceThreads, this
-     * keeps the output byte-identical at any thread count: the per-block algebra
+     * Default 1 (serial fold, byte-identical).  Unlike the threaded branch of
+     * @ref NetworkNormalEquations::reduce, this keeps the output byte-identical at any
+     * thread count: the per-block algebra
      * is computed in parallel but accumulated serially in block-index order.
      * Takes effect on the next @ref solve.
      *
@@ -1651,7 +1636,6 @@ private:
     SharedFoldLog contrib_log_;                                  ///< This epoch's shared folds (cleared by reset()).
     bool attrib_armed_{false};                   ///< RHS-attribution capture recorder armed (diagnostics)
     std::vector<AttribCapture> attrib_shared_;   ///< captured shared-info RHS increments (armed epochs only)
-    int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
     int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = off; > 1 gives ULP-level differences on the reduction and stays byte-identical on the middle inverse; set by the driver)
     double dense_fold_kappa_{1e-6};               ///< relative-pivot bound of the dense border fold (network.dense_fold_kappa, card CTU section 14); 1e-6 = the historical constant, byte-identical (@ref setDenseFoldKappa)

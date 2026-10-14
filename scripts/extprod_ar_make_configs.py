@@ -77,9 +77,8 @@ ARMED_QC = {
     "emit_epoch_status_record": True,
     "trace_postfit_sigma0": True,
     "trace_postfit_keyed": True,
-    # parallel (mutex: pcarry XOR preduce)
+    # parallel
     "parallel_carry": True,
-    "parallel_reduce": False,
 }
 
 ARMS = {

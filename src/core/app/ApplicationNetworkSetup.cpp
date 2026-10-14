@@ -1381,8 +1381,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // Deterministic-parallel post-solve seam (network.parallel_seam): the per-block
     // DD carry fold and the D5 innovation-gate readouts.  It rides on the per-station
     // parallel path (same thread budget, Eigen already pinned to one thread for the
-    // epoch) and, unlike network.parallel_reduce, is byte-identical at any thread
-    // count: blocks are computed in parallel and accumulated/installed serially in
+    // epoch) and is byte-identical at any thread count: blocks are computed in parallel and accumulated/installed serially in
     // fixed block order.  With seam_threads == 1 the seam runs its original serial
     // path, so with the knob off the run is byte-for-byte the run without the seam.
     const bool seam_on      = parallel_on && nc.parallel_seam;
@@ -1397,9 +1396,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // blocks; this un-pins Eigen so each block's O(K²–K³) matmul spreads across
     // cores.  Those stages then run serially over blocks (n_threads = 1), so Eigen
     // threading does not nest inside the seam's OpenMP.  The dense products are
-    // reassociated, which drifts from the serial result at the ~1e-X ULP level (as
-    // network.parallel_reduce does); the default (off) keeps Eigen pinned and the
-    // seam/serial path byte-identical.
+    // reassociated, which drifts from the serial result at the ~1e-X ULP level; the
+    // default (off) keeps Eigen pinned and the seam/serial path byte-identical.
     setup.carry_par = parallel_on && nc.parallel_carry;
     const bool carry_par = setup.carry_par;
     if (carry_par)

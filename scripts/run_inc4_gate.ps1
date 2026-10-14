@@ -27,8 +27,6 @@ foreach ($a in $arms) {
         python scripts/run_decomp_arm.py $exe $a.c $dir --force
     }
     if ($LASTEXITCODE -ne 0) { Write-Output "ARM-FAIL(run) $($a.n)"; $fail = 1; continue }
-    $warn = Select-String -Path "$dir/run.log" -Pattern "parallel_carry.*parallel_reduce|forces pcarry" -Quiet
-    if ($warn) { Write-Output "ARM-WARN(mutex) $($a.n)" ; $fail = 1 }
     python scripts/compare_network_run.py compare $a.g $dir --maskspec goldens/decomp/maskspec.json
     if ($LASTEXITCODE -ne 0) { Write-Output "ARM-FAIL(compare) $($a.n)"; $fail = 1 }
     else { Write-Output "ARM-PASS $($a.n)" }
