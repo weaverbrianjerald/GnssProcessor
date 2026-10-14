@@ -164,54 +164,6 @@ struct RaimPoolAdmissionTally {
 };
 
 /**
- * @brief Outcome of the band-scoped T4 erase decision for one cell (§Z).
- *
- * See docs/SPEC_event_harness.md §Z.  @c act false means there is no per-band
- * evidence for this (station, satellite) this epoch; the caller then erases the whole
- * arc as an unscoped run does, because refusing the response on missing evidence is
- * the other failure mode (standing invariant #1).
- */
-struct RaimEraseBandScope {
-    bool        act{false};            ///< The scope decided this cell.
-    bool        single_band{false};    ///< One signal only: @ref erase is empty and the caller skips the erase.
-    bool        kept_over_gate{false}; ///< Every band stood above the gate, so @ref keep is the least-bad band, not a clean one.
-    std::string keep;                  ///< The signal left pinned as the line of sight's level anchor.
-    std::set<std::string> erase;       ///< The signals to free.
-};
-
-/**
- * @brief Decide which bands of one T4-flagged cell to erase (§Z).  Pure function.
- *
- * Study 1 (docs/SPEC_event_harness.md §9) measured that the ~0.445-cycle level
- * floor a T4 attribution erase leaves on a healthy arc comes from the band scope
- * alone, not from anything else on the erase path: the same erase restricted to 2
- * of 3 bands leaves 0.050 cycles on every band, including the one not erased.
- * Freeing all bands removes the line of sight's last level anchor, so (ρ, I, N₁..N₃)
- * are re-drawn from one epoch of code, and the station-common iono error that lands
- * in the fresh zero-q level persists (the re-coupling edge of invariant #1).
- *
- * Rule: erase every band whose own post-fit normalized residual exceeds the T4
- * gate, and always keep the band with the smallest |r| (ties go to the lexically
- * lowest signal, so the choice is deterministic).  Two edge cases are deliberate:
- *  - **No band over the gate.**  The cell was flagged by the median-polish
- *    interaction, which is net of the row and column effects, so a per-signal
- *    residual can sit under k·σ̂₀ while the arc still stands out.  Every band except
- *    the pin is erased; a slip response is not suppressed for lack of per-band
- *    evidence.
- *  - **Every band over the gate.**  The pin is then the least-bad band;
- *    @ref RaimEraseBandScope::kept_over_gate marks it, so the cells that keep a
- *    suspect level are visible (invariant #7).
- *
- * @param sig_r One (signal, |r|) pair per carried ambiguity of the cell: the Pass-1
- *              attribution cells before @c cell_max collapses the signal axis.
- *              Empty ⇒ @c act false.
- * @param bar   The T4 gate in the same units as @p sig_r (k·σ̂₀).
- * @return The decision.
- */
-RaimEraseBandScope networkRaimEraseBandScope(
-    const std::vector<std::pair<std::string, double>>& sig_r, double bar);
-
-/**
  * @brief Run the post-fit network RAIM pass for this epoch (Pass 1 residual scan,
  *        Pass 2 consensus, median-polish attribution, and the resulting refloats).
  *

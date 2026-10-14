@@ -3,8 +3,7 @@
  * @brief Serial slip-QC drains of the network run loop: the phase-leveling T0
  *        repair drain, the MW-detect / LLI refloat drain with its delta-bridge
  *        kernels, the IF-phase triple-difference driver, the wind-up restart
- *        drain, the injected arc-free drain and the gap re-entry drains, plus
- *        the band-scope decision they share.
+ *        drain, the injected arc-free drain and the gap re-entry drains.
  *
  * The first three drains were moved here from the SB_SLIP block of
  * ApplicationNetwork.cpp at decomposition INC-6 (see
@@ -33,168 +32,6 @@
 #include <string>
 
 namespace GnssProcessor {
-
-// ---------------------------------------------------------------------------
-// Band-scoped detector refloat (docs/SPEC_event_harness.md §Z)
-// ---------------------------------------------------------------------------
-BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
-                                       const std::set<std::string>& implicated,
-                                       const std::set<std::string>& already_freed,
-                                       const RawSlipObs* obs,
-                                       const RawSlipVerdict* verdict) {
-    BandScopeDecision d;
-    if (live_bands.empty()) return d;
-    if (live_bands.size() == 1) {
-        // One band: nothing to spare, and nothing to anchor either.  The caller
-        // frees it exactly as an unscoped run would (see the header rationale).
-        d.single_band = true;
-        return d;
-    }
-    // A live band that this drain does not implicate and no earlier drain has
-    // freed still anchors the arc.  Then the scope has nothing to do: return the
-    // no-op decision so the run follows the unscoped path unchanged.
-    for (const auto& b : live_bands)
-        if (implicated.count(b) == 0 && already_freed.count(b) == 0) return d;
-    // Bands an earlier drain already freed cannot be un-freed.
-    std::set<std::string> candidates;
-    for (const auto& b : live_bands)
-        if (already_freed.count(b) == 0) candidates.insert(b);
-    if (candidates.empty()) {
-        // Every band was already freed before this drain ran, so the arc lost its
-        // anchor upstream and this response cannot restore it.  The case is
-        // counted: a nonzero tally means an earlier freeing site is not routed
-        // through the scope (invariant #4).
-        d.too_late = true;
-        return d;
-    }
-
-    // --- per-band evidence from the arc's primary pair -----------------------
-    // dN1 - dN2 = dMW/lam_WL  and  lam1*dN1 - lam2*dN2 = dGF  separate exactly.
-    // lam2 is recovered from the pair's own wide-lane wavelength
-    // (lam_WL = lam1*lam2/(lam2-lam1)), so nothing outside RawSlipObs is
-    // consulted and FDMA stays exact.  A verdict with `pair_changed` set is
-    // refused, for the reason the struct documents: its step was formed on a
-    // different lane than the one the conversion would use.
-    std::map<std::string, double> dn_cyc;
-    if (obs && verdict && obs->dual && verdict->measured && !verdict->pair_changed
-        && obs->lambda_wl_m > 0.0 && obs->lam1_m > 0.0
-        && obs->lambda_wl_m > obs->lam1_m) {
-        const double lam1 = obs->lam1_m;
-        const double lwl  = obs->lambda_wl_m;
-        const double lam2 = lam1 * lwl / (lwl - lam1);
-        const double den  = lam1 - lam2;                // < 0; nonzero by construction
-        if (std::abs(den) > 1e-9) {
-            const double dmw = verdict->d_mw / lwl;     // Delta(N1 - N2), cycles
-            dn_cyc[obs->sig1] = std::abs((verdict->d_gf - lam2 * dmw) / den);
-            if (!obs->sig2.empty())
-                dn_cyc[obs->sig2] = std::abs((verdict->d_gf - lam1 * dmw) / den);
-        }
-    }
-
-    // The surviving band with the smallest measured |dN| is pinned (a tie goes
-    // to the lexically lower band).  A band with no evidence never outranks a
-    // measured one, since missing evidence does not show that a band is clean.
-    for (const auto& b : candidates) {
-        const auto it = dn_cyc.find(b);
-        if (it == dn_cyc.end()) continue;
-        if (!d.measured || it->second < d.keep_dn_cyc
-            || (it->second == d.keep_dn_cyc && b < d.keep)) {
-            d.measured    = true;
-            d.keep        = b;
-            d.keep_dn_cyc = it->second;
-        }
-    }
-    if (!d.measured) {
-        // No usable raw evidence (single-band raw row, a gap, a changed pair, or
-        // survivors that are all off the primary pair): keep the lexically
-        // lowest survivor.  Deterministic; for GPS the lowest band is also the
-        // shortest wavelength, so a retained cycle costs the smallest metric
-        // level error.  For Galileo and BeiDou, band 5 sorts before bands 6-8
-        // but has the longest wavelength of them.
-        d.keep        = *candidates.begin();
-        d.keep_dn_cyc = 0.0;
-    }
-    d.scoped = true;
-    return d;
-}
-
-namespace {
-
-/// The signals of (i, sat) that an earlier drain already freed this epoch (SS-Z).
-/// Both freeing paths are read, `relevel->free_ambs` (the phase-leveling latch the
-/// PASS-B inject consumes) and the `carry_slipped_ambs` funnel of the invariant
-/// carry (Card 4), because which one is live depends on the posture and the scope
-/// must not.
-std::set<std::string> bandScopeFreedSoFar(
-        int i, const std::string& sat,
-        const RelevelEpochState* relevel,
-        const std::set<std::pair<int, std::string>>* carry_slipped) {
-    std::set<std::string> out;
-    auto scan = [&](const std::set<std::pair<int, std::string>>& src) {
-        for (const auto& kv : src) {
-            if (kv.first != i) continue;
-            const auto parts = StateKeys::parseAmbiguityKey(kv.second);
-            if (parts && parts->satellite == sat) out.insert(parts->signal);
-        }
-    };
-    if (relevel) scan(relevel->free_ambs);
-    if (carry_slipped) scan(*carry_slipped);
-    return out;
-}
-
-/// Call-site wrapper for the band scope (SS-Z): read the arc's live bands from the
-/// state manager and the bands already freed this epoch, run the pure decision,
-/// update the counters, and return the band the caller skips.  An empty string
-/// means free every band, which is the unscoped path; an unarmed run always gets
-/// it, so every call site is byte-identical with the knob off.
-std::string bandScopeKeepAt(bool on, const NetStation& sta, int i,
-                            const std::string& sat,
-                            const std::set<std::string>& implicated,
-                            const RawSlipEpoch* raw,
-                            const RelevelEpochState* relevel,
-                            const std::set<std::pair<int, std::string>>* carry_slipped,
-                            SlipQcCounters& cnt) {
-    if (!on || !sta.sm) return {};
-    std::set<std::string> live;
-    for (const auto& kv : sta.sm->getAmbiguities()) {
-        const auto parts = StateKeys::parseAmbiguityKey(kv.first);
-        if (parts && parts->satellite == sat) live.insert(parts->signal);
-    }
-    const RawSlipObs*     obs = nullptr;
-    const RawSlipVerdict* vd  = nullptr;
-    if (raw && raw->computed && i >= 0
-        && static_cast<std::size_t>(i) < raw->rows.size()) {
-        for (const auto& r : raw->rows[static_cast<std::size_t>(i)])
-            if (r.satellite == sat) { obs = &r; break; }
-        const auto& vmap = raw->verdict[static_cast<std::size_t>(i)];
-        const auto vit = vmap.find(sat);
-        if (vit != vmap.end()) vd = &vit->second;
-    }
-    const auto freed = bandScopeFreedSoFar(i, sat, relevel, carry_slipped);
-    const BandScopeDecision d =
-        networkSlipBandScope(live, implicated, freed, obs, vd);
-    if (d.single_band) { ++cnt.bscope_single_band; return {}; }
-    if (d.too_late)    { ++cnt.bscope_too_late;    return {}; }
-    if (!d.scoped) return {};
-    ++cnt.bscope_arcs;
-    ++cnt.bscope_kept;
-    // Count what this drain frees: its implicated live bands minus the pin.  The
-    // pin is always one of them, because a survivor outside `implicated` would
-    // leave the arc an anchor and the scope would not have acted.
-    long long freed_now = 0;
-    for (const auto& b : implicated)
-        if (live.count(b) && b != d.keep) ++freed_now;
-    cnt.bscope_freed += freed_now;
-    if (d.measured) ++cnt.bscope_measured;
-    // The scope acts only when every live band is covered, which is the all-band
-    // case, so this counter always equals bscope_arcs.  It is kept separate
-    // because the run-end report names it: the number of times a band that may
-    // have truly slipped stayed pinned.
-    ++cnt.bscope_all_band_fallback;
-    return d.keep;
-}
-
-} // namespace
 
 void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_,
                                const std::vector<NetStation>& stations,
@@ -471,10 +308,6 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                const CommonBandEpoch* common_band) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_mw_refloat = pa.sta_mw_refloat;
-    // Band-scoped refloat (docs/SPEC_event_harness.md §Z).  With it off, every
-    // bandScopeKeepAt below returns "" and the drain runs the unscoped path unchanged.
-    const bool bscope_on = config_.getNetworkConfig().cycle_slip_refloat_band_scope
-                               == NetworkRefloatBandScope::Implicated;
     // Sim-only oracle: this epoch's continuous GPS seconds, the time frame the
     // truth table is indexed in (the same expression as the wind-up drain's now_s).
     const double oracle_now_s =
@@ -800,32 +633,16 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         }
                     }
                 }
-                // MW names a pair, so on a 3-band arc it already leaves the third
-                // band pinned and the band scope (§Z) is a no-op.  On a 2-band arc
-                // the pair is the whole arc, which is the all-band case.
-                const std::string bs_keep =
-                    bandScopeKeepAt(bscope_on, stations[i], i, sat, { sig1, sig2 },
-                                    &raw, relevel, &carry_slipped_ambs, qc_cnt);
-                // A satellite can carry several MW pairs in one epoch (e.g.
-                // (L1C,L5Q) and (L1C,L2W) of the same arc) while the detection row
-                // is one per satellite, so a keep decided on a later pair would not
-                // reach the trace.  Such a keep gets its own row: invariant #7 asks
-                // for an identity at the edge, not only a counter.
-                if (!bs_keep.empty() && mw_done.count(sat))
-                    emitEvent("T0_mw_detect", "band_scope", sat, stations[i].name,
-                              std::nullopt, std::nullopt, "keep",
-                              sig1 + ";" + sig2 + ";band_scope=implicated;kept="
-                                  + bs_keep);
                 // Common-band scope (§14): this pair may free only those of its
                 // bands that the epoch's single verdict implicated.  With a null
                 // verdict (knob off), or no narrowed verdict for this (station,
                 // satellite), both calls return true and the unscoped path runs.
                 const bool cb1 = commonBandMayFree(common_band, i, sat, sig1);
                 const bool cb2 = commonBandMayFree(common_band, i, sat, sig2);
-                const auto a = (bs_keep == sig1 || !cb1) ? SignalAction{}
+                const auto a = !cb1 ? SignalAction{}
                              : refloat_signal(i, sat, sig1,
                                               RelevelEpochState::kCauseMw);
-                const auto b = (bs_keep == sig2 || !cb2) ? SignalAction{}
+                const auto b = !cb2 ? SignalAction{}
                              : refloat_signal(i, sat, sig2,
                                               RelevelEpochState::kCauseMw);
                 // Bridge v2: a same-epoch candidate (MW and T1 firing together) is
@@ -876,8 +693,6 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                     : (refloated ? "refloat" : "diagnostic"),
                               (orc_h ? (sig1 + ";" + sig2 + ";" + orc_detail)
                                      : (sig1 + ";" + sig2))
-                                  + (bs_keep.empty() ? std::string{}
-                                       : ";band_scope=implicated;kept=" + bs_keep)
                                   + ev_detail);
                     ++qc_cnt.mw_detections;
                     if (refloated) ++qc_cnt.mw_refloats;
@@ -980,22 +795,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 bool matched = false, refloated = false;
                 bool orc_h = false, orc_r = false;
                 std::string orc_detail;
-                // The receiver can assert LLI on every band of the satellite (a
-                // whole-satellite loss of lock), which is the case the band scope
-                // exists for (§Z).  Collect the implicated set first, then decide
-                // once.
-                std::set<std::string> lli_impl;
-                if (bscope_on)
-                    for (const auto& [code, lli] : obs.lli_flags)
-                        if (obsTypeOf(code) == ObsType::Phase && (lli & 1))
-                            lli_impl.insert(code);
-                const std::string bs_keep_lli =
-                    bandScopeKeepAt(bscope_on, stations[i], i, obs.satellite,
-                                    lli_impl, &raw, relevel, &carry_slipped_ambs,
-                                    qc_cnt);
                 for (const auto& [code, lli] : obs.lli_flags) {
                     if (obsTypeOf(code) != ObsType::Phase || !(lli & 1)) continue;
-                    if (!bs_keep_lli.empty() && code == bs_keep_lli) continue;
                     // The §14 rule always implicates an LLI band, so this guard
                     // never fires on a band the receiver flagged.  It is here
                     // because the LLI loop and the MW loop must follow the same
@@ -1028,9 +829,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                               (corr_mw ? std::string("LLI;mw_step")
                                        : (corr_gf ? std::string("LLI;gf_step")
                                                   : std::string("LLI")))
-                                  + (orc_h ? (";" + orc_detail) : std::string{})
-                                  + (bs_keep_lli.empty() ? std::string{}
-                                       : ";band_scope=implicated;kept=" + bs_keep_lli));
+                                  + (orc_h ? (";" + orc_detail) : std::string{}));
                     ++n_lli;
                     ++qc_cnt.lli_detections;
                     if (refloated) ++qc_cnt.lli_refloats;
@@ -1162,29 +961,14 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
         // Refloat both band ambiguities of (sat, sig1, sig2) at station i (only
         // when the carry is warm; cold, the detection is diagnostic only).
-        // Band-scoped refloat (§Z rule): an IF-TD pair on a 3-band arc already
-        // leaves the third band pinned; on a 2-band arc the pair is the whole arc,
-        // and that is where the scope acts (keeping the pair's least-suspect band).
-        const bool bscope_on = config_.getNetworkConfig().cycle_slip_refloat_band_scope
-                                   == NetworkRefloatBandScope::Implicated;
-        auto bandScopeKeepIf = [&](int i, const std::string& sat,
-                                   const std::string& sig1,
-                                   const std::string& sig2) -> std::string {
-            if (!bscope_on || !bridge_cnt) return {};
-            return bandScopeKeepAt(true, stations[i], i, sat, { sig1, sig2 },
-                                   raw_epoch, relevel, &carry_slipped_ambs,
-                                   *bridge_cnt);
-        };
         auto refloat_pair = [&](int i, const std::string& sat,
                                 const std::string& sig1,
-                                const std::string& sig2,
-                                const std::string& keep = std::string{}) -> PairAction {
+                                const std::string& sig2) -> PairAction {
             PairAction pact;
             StateManager& sm = *stations[i].sm;
             for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(amb_key);
                 if (!parts || parts->satellite != sat) continue;
-                if (!keep.empty() && parts->signal == keep) continue;   // kept pinned (§Z rule)
                 // Common-band scope, §14 rule: free (this pair's bands ∩ implicated).
                 // With a null verdict (knob off) or no narrowed verdict the call
                 // returns true and the unscoped path runs.
@@ -1414,13 +1198,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                         } else {
                             det.resetSatellite(sp->sat);  // restart arc
                         }
-                        // Band scope (§Z rule): called once, because it updates
-                        // counters; the event row reads the hoisted value instead
-                        // of deciding again.
-                        const std::string bs_keep =
-                            bandScopeKeepIf(sp->sta, sp->sat, sp->sig1, sp->sig2);
                         const auto pact =
-                            refloat_pair(sp->sta, sp->sat, sp->sig1, sp->sig2, bs_keep);
+                            refloat_pair(sp->sta, sp->sat, sp->sig1, sp->sig2);
                         if (tally && pact.freed) ++tally->refloated;
                         emitEvent("T1_if_slip", "if_slip", sp->sat,
                                   stations[sp->sta].name, abs_dev, thr,
@@ -1430,8 +1209,6 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                   (pact.handled
                                       ? (sp->sig1 + ";" + sp->sig2 + ";" + pact.detail)
                                       : (sp->sig1 + ";" + sp->sig2))
-                                  + (bs_keep.empty() ? std::string{}
-                                       : ";band_scope=implicated;kept=" + bs_keep)
                                   // Which pair fired (§14.10 rule).  Added only
                                   // under `all`, where a satellite has several rows
                                   // per epoch and sig1;sig2 alone does not identify
@@ -1608,17 +1385,14 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             for (const auto& rkey : sta_if_resets[i]) {
                 std::string sat, sig1, sig2;
                 if (!parseIfPairResetKey(rkey, sat, sig1, sig2)) continue;
-                const std::string bs_keep = bandScopeKeepIf(i, sat, sig1, sig2);
-                const auto pact = refloat_pair(i, sat, sig1, sig2, bs_keep);
+                const auto pact = refloat_pair(i, sat, sig1, sig2);
                 emitEvent("T1_if_slip", "refsat_reset", sat, stations[i].name,
                           std::nullopt, std::nullopt,
                           pact.handled
                               ? (pact.repaired ? "oracle_repair" : "oracle_keep")
                               : (carry_warm ? "refloat" : "diagnostic"),
                           (pact.handled ? (sig1 + ";" + sig2 + ";" + pact.detail)
-                                        : (sig1 + ";" + sig2))
-                          + (bs_keep.empty() ? std::string{}
-                               : ";band_scope=implicated;kept=" + bs_keep));
+                                        : (sig1 + ";" + sig2)));
                 // Queue the satellite for a per-sat discontinuity mark at its next
                 // actual emit (network.mark_refsat_reset_disc, Edge-1 piece 2;
                 // refsat_mark_sats is null when off, which keeps the run
@@ -1694,17 +1468,10 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    std::map<std::tuple<int, std::string, std::string>,
                                             RelevelPend>* relevel_pend,
                                    NetworkSlipOracle* oracle,
-                                   const RawSlipEpoch* bscope_raw,
                                    const std::map<std::tuple<int, std::string, std::string>,
                                                   LocalCarry>* local_carry,
                                    double pl_now_s, double pl_max_gap_s) {
     if (!config_.networkCycleSlipWindupRestartRefloat()) return;
-    // The whole-satellite site of the band scope (§Z rule): an accumulator restart
-    // steps every signal of the satellite, so the implicated set is the whole arc,
-    // and the scope acts on every multi-band arc that still has a pinned band.
-    // That bounds invariant #7's decoupling edge: the LOS keeps a level anchor.
-    const bool bscope_on = config_.getNetworkConfig().cycle_slip_refloat_band_scope
-                               == NetworkRefloatBandScope::Implicated;
     const double now_s = static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
     const double carry_gap_s = config_.networkPhaseLevelingMaxGapS();
     int n_resp = 0;
@@ -1757,18 +1524,6 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             const std::vector<std::pair<std::string, std::string>> targets =
                 networkWindupRestartTargets(sm, i, sat, local_carry, pl_now_s,
                                             pl_max_gap_s, &via_carry);
-            // Band scope (§Z rule): the implicated set is every target band of the
-            // satellite.  On the live path it equals the live set the helper
-            // resolves internally; on the carry path no band is live, and the
-            // helper's scope does not act.
-            std::string bs_keep;
-            if (bscope_on) {
-                std::set<std::string> impl;
-                for (const auto& tg : targets) impl.insert(tg.second);
-                bs_keep = bandScopeKeepAt(true, stations[static_cast<std::size_t>(i)],
-                                          i, sat, impl, bscope_raw, relevel,
-                                          &carry_slipped_ambs, qc_cnt);
-            }
             // Sim-only oracle: a restart steps every signal of the satellite, so
             // each signal is offered to the oracle independently (truth localizes
             // what the band-common model step cannot).  A signal with no truth
@@ -1777,7 +1532,6 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             bool orc_h = false, orc_r = false, orc_freed = false;
             std::string orc_detail;
             for (const auto& [amb_key, signal] : targets) {
-                if (!bs_keep.empty() && signal == bs_keep) continue;  // kept (§Z rule)
                 ++matched;
                 if (oracle) {
                     OracleOutcome oc = OracleOutcome::NotHandled;
@@ -1860,9 +1614,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                              (orc_h ? fmt::format("accumulator restart; {} arc(s); {}",
                                                   matched, orc_detail)
                                     : fmt::format("accumulator restart; {} arc(s) marked",
-                                                  matched))
-                                 + (bs_keep.empty() ? std::string{}
-                                      : ";band_scope=implicated;kept=" + bs_keep));
+                                                  matched)));
         }
         stations[static_cast<std::size_t>(i)].model->clearWuRestarts();
     }

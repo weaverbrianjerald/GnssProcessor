@@ -1903,20 +1903,9 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      "\"mdb_event_holdoff_ep\":{},",
                                      nc.mdb_event_m, nc.mdb_event_holdoff_ep)
                        : std::string())
-               // Band-scoped responses (§Z): both affect the solve, so the arm
-               // provenance belongs in the manifest; a grader must be able to see that
-               // two arms are not like for like without re-reading the config.
-               // Emitted only when armed (as for mdb and adm_screen; the decomposition
-               // golden hashes this file).
-               << (nc.raim_erase_band_scope == NetworkRaimEraseBandScope::MinKeepOne
-                       ? std::string("\"raim_erase_band_scope\":\"min_keep_one\",")
-                       : std::string())
-               << (nc.cycle_slip_refloat_band_scope == NetworkRefloatBandScope::Implicated
-                       ? std::string("\"cycle_slip_refloat_band_scope\":\"implicated\",")
-                       : std::string())
                // Anchor-slip handover (§12.7): affects the solve when armed (it moves
                // which station realizes a family's gauge), so the arm provenance
-               // belongs in the manifest; armed-only, as for the band scopes.
+               // belongs in the manifest; armed-only, as for mdb.
                << (nc.cycle_slip_anchor_slip_handover
                        ? std::string("\"cycle_slip_anchor_slip_handover\":true,")
                        : std::string())

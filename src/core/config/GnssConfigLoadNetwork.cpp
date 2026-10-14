@@ -1821,44 +1821,6 @@ namespace GnssProcessor {
             }
         }
 
-        // Band-scoped responses (§Z, docs/SPEC_event_harness.md).  Both change the
-        // solve when armed and default to the behavior from before the knobs existed,
-        // so an unarmed run is byte-identical (invariant #6).  A typo must not silently
-        // arm or disarm a carry-shaping response, so an unknown value is logged as an
-        // error and the default is taken.
-        {
-            const std::string s = jval<std::string>(json, "network.raim_erase_band_scope",
-                                                    "raim_erase_band_scope",
-                                                    std::string{"all"});
-            if (s.empty() || s == "all")
-                network_config_.raim_erase_band_scope = NetworkRaimEraseBandScope::All;
-            else if (s == "min_keep_one")
-                network_config_.raim_erase_band_scope = NetworkRaimEraseBandScope::MinKeepOne;
-            else {
-                network_config_.raim_erase_band_scope = NetworkRaimEraseBandScope::All;
-                log->error("Network (§Z): network.raim_erase_band_scope = '{}' is not one of "
-                           "all|min_keep_one — falling back to 'all' (today's whole-arc erase).  "
-                           "min_keep_one keeps the least-suspect band pinned so the line of "
-                           "sight retains a level anchor across the erase.", s);
-            }
-        }
-        {
-            const std::string s = jval<std::string>(json, "network.cycle_slip.refloat_band_scope",
-                                                    "network_cycle_slip_refloat_band_scope",
-                                                    std::string{"all"});
-            if (s.empty() || s == "all")
-                network_config_.cycle_slip_refloat_band_scope = NetworkRefloatBandScope::All;
-            else if (s == "implicated")
-                network_config_.cycle_slip_refloat_band_scope = NetworkRefloatBandScope::Implicated;
-            else {
-                network_config_.cycle_slip_refloat_band_scope = NetworkRefloatBandScope::All;
-                log->error("Network (§Z): network.cycle_slip.refloat_band_scope = '{}' is not one "
-                           "of all|implicated — falling back to 'all' (today's whole-satellite "
-                           "free).  'implicated' frees only the bands the detector named and, "
-                           "when that is every band, keeps the least-suspect one pinned.", s);
-            }
-        }
-
         // Per-(cons, signal, sat) -> anchor station map for the spectrometer's anchor
         // partition (S1; docs/SPEC_lane_spectrometer.md §3.3).  Trace-only, with no
         // stride: the row count scales with gauge freedoms (sats x signals), not with
@@ -3253,7 +3215,7 @@ namespace GnssProcessor {
         //
         // A typo must not silently pick a different datum for the product, so an
         // unrecognized value falls back to "auto" with an error (the same contract
-        // network.raim_erase_band_scope and network.trace_dd_fractional_ref use).
+        // network.trace_dd_fractional_ref uses).
         {
             const std::string s = jval<std::string>(json, "network.w6_iono_constraint",
                                                     "w6_iono_constraint",
@@ -4181,8 +4143,8 @@ namespace GnssProcessor {
         // ---- The ambiguity vehicle and its supporting knobs (RF-1;
         //      docs/refound/RF-1_float_ambiguities_design.md §7.1).
         //
-        // String enum on the established loader pattern (network.trace_dd_fractional_ref,
-        // network.raim_erase_band_scope): an unknown value is logged as an error naming
+        // String enum on the established loader pattern (network.trace_dd_fractional_ref):
+        // an unknown value is logged as an error naming
         // what the knob changes and falls back to the default "level" rather than
         // ending the run.  "float_kf" changes the solve (the joint block of
         // CouplingRowBuilder::buildLocalBlock, the floored birth prior and bounded drop of

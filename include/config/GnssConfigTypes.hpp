@@ -1231,24 +1231,6 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Band scope of the T4 attribution erase (docs/SPEC_event_harness.md §Z).
-     *
-     * On three fault-free arcs of the quiet sim bed (study 1), the persistent level
-     * floor of 0.445 cycles that a T4 erase leaves comes from the band scope alone,
-     * not from anything else on the erase path: restricting the same erase to 2 of
-     * a 3-band arc lowers the floor 9× (0.445 → 0.050) on every band, including the
-     * band that was never touched.  Freeing all bands of a line of sight removes
-     * that LOS's last level anchor, so (ρ, I, N₁..N₃) must be re-drawn together
-     * from one epoch of code, which is exactly the re-coupling edge of standing
-     * invariant #1.  With one band left pinned, the re-tapped levels land on the
-     * survivor's ionosphere instead of on code noise.
-     */
-    enum class NetworkRaimEraseBandScope {
-        All,        ///< (default) erase every signal of the flagged (station, satellite): the original path, byte-identical.
-        MinKeepOne  ///< Erase the bands whose own post-fit normalized residual |r|/σ̂₀ stands above the T4 gate, and always keep the band with the smallest |r|/σ̂₀ pinned as the LOS's level anchor.  A single-band arc is skipped entirely (there is no band to spare).
-    };
-
-    /**
      * @brief Which vehicle carries a network ambiguity between epochs
      *        (@c network.ambiguity_vehicle, docs/refound/RF-1_float_ambiguities_design.md §7.1).
      *
@@ -1290,22 +1272,6 @@ namespace GnssProcessor {
     enum class NetworkGrossLosMinRowsRule {
         Fixed,     ///< (default) at least @c gross_los_min_rows rows over the bar, whatever the line of sight has.
         Available  ///< The bar is @c min(gross_los_min_rows, the LOS's code rows this epoch): a one-row LOS can reach it, a three-row LOS still needs two.
-    };
-
-    /**
-     * @brief Band scope of the whole-satellite detector refloats
-     *        (docs/SPEC_event_harness.md §Z).
-     *
-     * The detector-side counterpart of @ref NetworkRaimEraseBandScope.  MW and LLI
-     * already act per pair or per signal; the paths that can free an entire arc are
-     * the IF-TD pair on a 2-band arc, an LLI asserted on every band, and the wind-up
-     * accumulator restart drain (a band-common model step, which implicates all bands
-     * by construction).  @c Implicated frees only what the detector named and, when
-     * that covers every live band, keeps the least suspect one pinned.
-     */
-    enum class NetworkRefloatBandScope {
-        All,        ///< (default) free every band the detector named: the original path, byte-identical.
-        Implicated  ///< Free only the implicated bands; when they cover the whole arc, keep the band with the smallest raw detector evidence (the MW/GF per-band decomposition) pinned and count the fallback.
     };
 
     /**
@@ -2019,11 +1985,6 @@ namespace GnssProcessor {
         /// 'all': two band-1 phases share a frequency, so that tier's single pair is
         /// degenerate and produces no rows for such a satellite.
         bool second_phase_warn_iftd_pairs{ false };
-        /// Band scope of the T4 attribution erase (@ref NetworkRaimEraseBandScope) (§Z).
-        /// Default @c All reproduces the original instruction stream byte for byte.
-        /// Solve-affecting when armed (it changes which carried levels survive an
-        /// erase), so it is fingerprinted like any other carry-shaping knob.
-        NetworkRaimEraseBandScope raim_erase_band_scope{ NetworkRaimEraseBandScope::All };
         /// Which vehicle carries a network ambiguity between epochs
         /// (@ref NetworkAmbiguityVehicle) (RF-1 §7.1).  Default @c Level is the zero-q
         /// phase-leveling scalar carry, byte-identical.  @c FloatKf arms the joint local
@@ -2146,9 +2107,6 @@ namespace GnssProcessor {
         /// never the row index).  Event rows (birth / drop / erase) are written every
         /// epoch regardless of the stride, so the event inventory is complete.
         int trace_amb_state_every{ 1 };
-        /// Band scope of the whole-satellite detector refloats
-        /// (@ref NetworkRefloatBandScope) (§Z).  Default @c All is byte-identical.
-        NetworkRefloatBandScope cycle_slip_refloat_band_scope{ NetworkRefloatBandScope::All };
         /// How many band pairs the IF-TD detector evaluates per satellite
         /// (@ref NetworkIfPhaseTdPairs) (§14.10).  Default @c First is the original
         /// single pair, byte-identical.  Solve-affecting when armed (new pairs can
@@ -2213,8 +2171,8 @@ namespace GnssProcessor {
         /// exoneration (a silent, mature MW pair exonerates both of its bands), and
         /// every drain then frees only those of its bands that are implicated.
         /// Without exoneration the response is unchanged.  Deliberately not the
-        /// study-3 @ref cycle_slip_refloat_band_scope mechanism, which picked the band
-        /// from the MW/GF decomposition and was falsified on the storm bed; this rule
+        /// retired study-3 band scope, which picked the band from the MW/GF
+        /// decomposition and was falsified on the storm bed; this rule
         /// is set-theoretic and needs no decomposition.  Default @c false is
         /// byte-identical (no verdict object is consulted).  Solve-affecting when
         /// armed, fingerprint-exempt (forward-only response knob, the

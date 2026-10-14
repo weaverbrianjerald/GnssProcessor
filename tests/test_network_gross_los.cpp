@@ -12,9 +12,8 @@
  * `network_raim.csv` filed zero rows, and a station driven to a 54 m code rms.
  *
  * This suite exercises what can be exercised without a network: the two
- * decision rules, which are pure functions for this reason (the
- * `networkRaimEraseBandScope` precedent), the act half on hand-built station
- * assemblies, and the loader.  What a declaration does to a real line of sight
+ * decision rules, which are pure functions for this reason, the act half on
+ * hand-built station assemblies, and the loader.  What a declaration does to a real line of sight
  * is graded by the 6 h arm the SPEC records, not here (the suite guards
  * structure and non-regression; it does not validate estimation accuracy).
  *

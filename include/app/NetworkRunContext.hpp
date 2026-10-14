@@ -3689,16 +3689,6 @@ namespace GnssProcessor {
         /// miswire (invariant #4): the drains latched but the inject never consulted, or no
         /// marked arc ever had a live carry.
         long long n_relevel_free_skips = 0;
-        /// Band-scoped T4 erase (network.raim_erase_band_scope = min_keep_one;
-        /// docs/SPEC_event_harness.md §Z).  cells: isolated-arc erase cells the scope
-        /// adjudicated.  erased / kept: bands freed and bands left pinned (kept is one per
-        /// adjudicated multi-band cell by construction).  kept_over_gate: cells where every
-        /// band stood above k·σ̂₀, so the pin is the least bad band rather than a clean one.
-        /// single_band: cells skipped outright because the arc had one band and none to
-        /// spare.  Armed with cells = 0 on a T4-active run is a miswire (invariant #4).
-        long long n_bscope_t4_cells = 0, n_bscope_t4_erased = 0,
-                  n_bscope_t4_kept = 0, n_bscope_t4_kept_over_gate = 0,
-                  n_bscope_t4_single_band = 0;
         /// Anchor-slip handover (network.cycle_slip.anchor_slip_handover;
         /// docs/SPEC_event_harness.md §12.7).  staged: directives the seam put up (families
         /// whose anchor arc a slip response freed).  handed: of those, the ones the election

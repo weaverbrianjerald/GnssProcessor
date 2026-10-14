@@ -187,8 +187,8 @@ TEST(AmbFloatVehicleTest, ParsesLevelAndFloatKf) {
 }
 
 // An unknown value must not kill a long run, and must not pass silently either: the
-// established pattern (network.trace_dd_fractional_ref, network.raim_erase_band_scope)
-// is log->error naming what the knob changes, then the default.
+// established pattern (network.trace_dd_fractional_ref) is log->error naming what the
+// knob changes, then the default.
 TEST(AmbFloatVehicleTest, UnknownVehicleFallsBackToLevel) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("typo", networkConfig(std::string(kRf0Posture)

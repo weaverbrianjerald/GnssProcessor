@@ -44,12 +44,13 @@ int networkSlipMwRelevelRunEnd(const NetworkRunEndView& v);
 int networkSlipWindupMwRunEnd(const NetworkRunEndView& v);
 
 /**
- * @brief Run-end report: slip QC: IF-TD pairs and band-scoped responses.
+ * @brief Run-end report: slip QC: IF-TD pairs.
  *
- * Slip QC: the IF-TD pair width and the band-scoped responses.
+ * Slip QC: the IF-TD pair width.  (The band-scoped response clause of study 3 was
+ * retired; the function keeps its name and table label for the relocation records.)
  *
  * Gate: each section under its own condition, as in the teardown:
- * `config_.networkCycleSlipIfPhaseTd()`; always (a block).
+ * `config_.networkCycleSlipIfPhaseTd()`.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).

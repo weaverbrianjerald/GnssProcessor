@@ -303,8 +303,7 @@ struct GrossLosVerdict {
 /**
  * @brief Pure function: adjudicate one line of sight's code rows for this epoch.
  *
- * The rule is a free function so it can be unit-tested without a network,
- * following the @c networkRaimEraseBandScope precedent.
+ * The rule is a free function so it can be unit-tested without a network.
  *
  * Two edge cases:
  *  - **Counted as rows, not distinct signal labels.**  Before card NOM step N2b a

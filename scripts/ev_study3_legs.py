@@ -9,6 +9,10 @@ This matrix grades the production knobs that make that the default response:
     network.raim_erase_band_scope        = min_keep_one
     network.cycle_slip.refloat_band_scope = implicated
 
+Both knobs were deleted with the retired network keys (2026-10-14): an executable
+built after that ignores them, so a leg made now runs the whole-arc response and
+measures nothing.  The script is kept for the archived Study 3 runs.
+
 Every leg resumes from the same snapshot as the §6/§9 validation legs
 (``runs/evseed_quiet6h`` ep0665, 61 epochs, event at +10) and is graded against
 the same null, so the warm-resume seam transient cancels. Legs that differ only

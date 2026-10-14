@@ -2285,11 +2285,6 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
 
     // The mark sink is passed only when armed (Edge-1 piece 2), so the off path
     // passes nullptr and the driver's insert is never reached (byte-identical).
-    // Band-scoped detector refloat (§Z, docs/SPEC_event_harness.md): the two
-    // whole-satellite drains below need the raw per-band evidence and a counter sink
-    // they do not otherwise receive.  Off: both stay nullptr (byte-identical).
-    const bool bscope_on = config_.getNetworkConfig().cycle_slip_refloat_band_scope
-                               == NetworkRefloatBandScope::Implicated;
     networkSlipIfTdDriver(pa, config_, stations, present, i_lo, n_sta_total,
                           carry_invariant, carry_warm, carry_slipped_ambs,
                           trace_flag_rates, fr_if_slip, se, traces, log,
@@ -2297,20 +2292,12 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               ? &ctx.carry.refsat_mark_sats : nullptr,
                           relevel_ptr,
                           relevel_ptr ? &local_carry : nullptr,
-                          (relevel_ptr || bscope_on) ? &qc.counters : nullptr,
+                          relevel_ptr ? &qc.counters : nullptr,
                           relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
                           // The qualified raw verdicts (d_gf) and per-station
                           // empirical step scales (bridge v3 E4), only when the
                           // GF row is armed (nullptr keeps the off path inert).
-                          // §Z also needs the raw epoch (per-band MW/GF evidence)
-                          // and a counter sink.  Widening these two conditions is
-                          // inert with the scope off, and safe with it on: the
-                          // bridge's own uses are all under `br_gf_on`, which still
-                          // requires relevel_bridge_gf, and every bridge_cnt
-                          // increment sits inside a `relevel` / `relevel_pend`
-                          // guard that is null on that path.
-                          (config_.networkCycleSlipRelevelBridgeGf() || bscope_on)
-                              ? &qc.epoch : nullptr,
+                          config_.networkCycleSlipRelevelBridgeGf() ? &qc.epoch : nullptr,
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.hist : nullptr,
                           ctx.carry.slip_oracle.get(),    // simulation-only oracle
                           common_band_ptr,                // common-band scope (§14)
@@ -2360,7 +2347,6 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                   carry_slipped_ambs, qc.counters, se, traces,
                                   log, relevel_ptr, &ctx.carry.relevel_pend,
                                   ctx.carry.slip_oracle.get(),    // simulation-only oracle
-                                  bscope_on ? &qc.epoch : nullptr,  // band-scope evidence (§Z)
                                   &local_carry, pl_now_s, ctx.knobs.pl_max_gap_s);
 
     // ---- Gap re-entry refloat (card G response) ------------------------------
