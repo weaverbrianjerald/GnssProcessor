@@ -1,15 +1,20 @@
 /**
  * @file CycleSlipAdjudication.cpp
  * @brief Section S11 of @c CycleSlipManager::detectAndRepair (one satellite's
- *        MW mandates adjudicated and acted on), its culprit-analysis helpers,
- *        and the per-epoch MW summary line (S14).
+ *        MW mandates: the verdict, then the action it selects), its
+ *        culprit-analysis helpers, and the per-epoch MW summary line (S14).
  *
- * Bodies moved verbatim from CycleSlipManager.cpp (card UOM step U3;
- * scripts/uom_u3_verify.py).
+ * @c handleSatelliteMandates asks @c adjudicateSatellite for a
+ * @c SatelliteSlipVerdict (slip/CycleSlipVerdict.hpp), which touches no filter
+ * state, and applies it through one action: the culprit repair, the TurboEdit
+ * suppression, or the full reset (with the LLI arc handling and the
+ * satellite-wide re-inflation).  Bodies moved from CycleSlipManager.cpp (card
+ * UOM steps U3b and U3c; scripts/uom_u3_verify.py).
  */
 
 #include "slip/CycleSlipManager.hpp"
 #include "slip/CycleSlipEpochWork.hpp"
+#include "slip/CycleSlipVerdict.hpp"
 #include <algorithm>
 
 namespace GnssProcessor {
@@ -125,38 +130,49 @@ std::set<std::string> CycleSlipManager::identifySlippedSignals(
 }
 
 // ===========================================================================
-// S11: one satellite's MW mandates
+// S11: one satellite's MW mandates, verdict then action
 // ===========================================================================
 
 void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
                                                const std::string& sat_id,
                                                const std::set<std::string>& amb_keys) {
-    const auto& log           = w.log;
-    const auto& epoch_prefix  = w.epoch_prefix;
-    const auto& modeled_obs   = w.modeled_obs;
-    auto& state_manager       = w.state_manager;
-    const auto& meas_model    = w.meas_model;
-    const auto& epoch_now_s   = w.epoch_now_s;
-    auto& result              = w.result;
-    const auto& te            = w.te;
+    const SatelliteSlipVerdict verdict = adjudicateSatellite(w, sat_id);
+    switch (verdict.action) {
+        case SatelliteSlipAction::SkipBridgeRepaired:
+        case SatelliteSlipAction::SkipWlSettlePending:
+            return;
+        case SatelliteSlipAction::RepairCulprits:
+            applyCulpritVerdict(w, sat_id, amb_keys, verdict);
+            return;
+        case SatelliteSlipAction::SuppressMandates:
+            applySuppressionVerdict(w, sat_id, amb_keys, verdict);
+            return;
+        case SatelliteSlipAction::FullReset:
+            resetEveryMandate(w, sat_id, amb_keys, verdict);
+            holdOrResetLliArcs(w, sat_id, amb_keys, verdict);
+            reinflateSatelliteStates(w, sat_id);
+            return;
+    }
+}
+
+SatelliteSlipVerdict CycleSlipManager::adjudicateSatellite(SlipEpochWork& w,
+                                                           const std::string& sat_id) const {
+    const auto& log                = w.log;
+    const auto& epoch_prefix       = w.epoch_prefix;
+    const auto& te                 = w.te;
     const auto& te_culprits_by_sat = w.te_culprits_by_sat;
-    auto& te_slips_by_sat     = w.te_slips_by_sat;
-    auto& te_suppress_by_sat  = w.te_suppress_by_sat;
-    const auto& soft_lli_repaired = w.soft_lli_repaired;
-    auto& reset_sats          = w.reset_sats;
-    const auto& slips_by_sat  = w.slips_by_sat;
-    auto& all_pairs_by_sat    = w.all_pairs_by_sat;
-    const auto& lli_sats      = w.lli_sats;
-    auto& epoch_reset_amb_keys = w.epoch_reset_amb_keys;
-    const auto& pivot_affected_cons_sig = w.pivot_affected_cons_sig;
-    auto& deferred_integer_repairs = w.deferred_integer_repairs;
-    auto& deferred_resets     = w.deferred_resets;
+    auto& te_slips_by_sat          = w.te_slips_by_sat;
+    const auto& te_suppress_by_sat = w.te_suppress_by_sat;
+    const auto& soft_lli_repaired  = w.soft_lli_repaired;
+    const auto& slips_by_sat       = w.slips_by_sat;
+    auto& all_pairs_by_sat         = w.all_pairs_by_sat;
+    const auto& lli_sats           = w.lli_sats;
 
     // Soft-LLI bridge already integer-repaired this satellite's
     // held ambiguities in the pre-pass (snapshot+dN·λ); its MW
     // mandate (typically wl_known=false → full reset) does not
     // override that covariance-restoring repair.
-    if (soft_lli_repaired.count(sat_id)) return;
+    if (soft_lli_repaired.count(sat_id)) return SatelliteSlipVerdict{ SatelliteSlipAction::SkipBridgeRepaired };
     // WL-settle deferral: the resolver is adjudicating this
     // satellite's across-gap event against a settling MW
     // estimate.  Its mandate is suppressed (the holds keep the
@@ -167,7 +183,7 @@ void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
         log->info("{}MW mandate for {} suppressed: TurboEdit "
                   "WL-settle deferral pending (holds active)",
                   epoch_prefix, sat_id);
-        return;
+        return SatelliteSlipVerdict{ SatelliteSlipAction::SkipWlSettlePending };
     }
     const auto& sat_all_pairs = all_pairs_by_sat[sat_id];
     const auto slips_it = slips_by_sat.find(sat_id);
@@ -196,8 +212,10 @@ void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
     // its ΔN_WL = 0 premise cannot be checked across a lock loss.
     const bool lli_sat = lli_sats.count(sat_id) > 0;
 
-    std::set<std::string> culprit_signals;
-    std::map<std::string, int> per_signal_slips;
+    SatelliteSlipVerdict verdict;
+    verdict.lli = lli_sat;
+    auto& culprit_signals  = verdict.culprit_signals;
+    auto& per_signal_slips = verdict.known_integers;
     bool culprits_from_te = false;
     if (!lli_sat && has_pair_slips && sat_all_pairs.size() >= 2
         && slips_it->second.size() < sat_all_pairs.size()) {
@@ -250,114 +268,54 @@ void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
                 culprit_signals.clear();
                 per_signal_slips.clear();
                 culprits_from_te = false;
-                te_suppress_by_sat.erase(tce_c);
+                verdict.suppression_withdrawn = true;
             }
         }
     }
+
+    verdict.n_slipped_pairs = has_pair_slips ? slips_it->second.size() : 0;
+    verdict.n_mature_pairs  = sat_all_pairs.size();
+
     if (!culprit_signals.empty()) {
-        {
-            for (const auto& culprit : culprit_signals) {
-                const std::string targeted_key = sat_id + "_" + culprit;
-                const std::string cons = PppUtils::getSystemString(sat_id);
-                const bool pivot_affected =
-                    pivot_affected_cons_sig.count({cons, culprit}) > 0;
-
-                if (pivot_affected) {
-                    // Defer: the integer adjustment is applied
-                    // post-handover in the new SD frame.  The
-                    // state vector is not touched now because the
-                    // handover transform expects the pre-slip SD
-                    // values (the old pivot's frozen 0 is the
-                    // implicit reference); applying dN here in the
-                    // old frame would be off by dN_pivot · λ.
-                    auto slip_it = per_signal_slips.find(culprit);
-                    if (slip_it != per_signal_slips.end()) {
-                        deferred_integer_repairs.push_back(
-                            { sat_id, culprit, slip_it->second });
-                        log->info("{}MW deferred: {} {} dN={} cyc "
-                                  "(integer repair queued; applied in-place if the pivot integer is "
-                                  "known, else after forced handover)",
-                                  epoch_prefix, sat_id, culprit, slip_it->second);
-                    } else {
-                        deferred_resets.emplace_back(sat_id, culprit);
-                        log->info("{}MW deferred: {} {} (reset queued; resolved in-place or "
-                                  "post-handover — no clean per-pair integer)",
-                                  epoch_prefix, sat_id, culprit);
-                    }
-                    ++result.n_repaired;
-                    result.state_modified = true;
-                    continue;
-                }
-
-                // Non-pivot-affected: existing repair/reset path.
-                bool repaired = false;
-                auto slip_it = per_signal_slips.find(culprit);
-                if (slip_it != per_signal_slips.end()) {
-                    repaired = repairAmbiguityBssdAware(
-                        sat_id, culprit, slip_it->second,
-                        modeled_obs, state_manager, meas_model,
-                        epoch_prefix);
-                }
-                if (!repaired) {
-                    resetAmbiguityBssdAware(targeted_key, sat_id, culprit,
-                                            modeled_obs, state_manager, meas_model,
-                                            epoch_prefix);
-                    epoch_reset_amb_keys.insert(targeted_key);
-                    log->info("{}MW cross-consistency: targeted reset {} (culprit signal {})",
-                              epoch_prefix, targeted_key, culprit);
-                }
-                ++result.n_repaired;
-                result.state_modified = true;
+        verdict.action = SatelliteSlipAction::RepairCulprits;
+        verdict.source = culprits_from_te ? CulpritSource::TurboEdit
+                                          : CulpritSource::CrossConsistency;
+        // The set formed here decides which mandates applyCulpritVerdict
+        // resets as residual.  The account below predates the split of
+        // verdict and action: its "here" and "below" are that action.
+        // --- Residual mandated resets ---
+        // amb_keys collects every reset mandate the detector
+        // issued for this satellite, but the culprit handling
+        // above adjudicated only part of it.  Cross-consistency
+        // adjudicates every signal of every analyzed pair (a
+        // non-culprit appears in a clean pair by construction).
+        // The TurboEdit fallback adjudicates only the pairs its
+        // GF arcs could actually solve: culprits (dN ≠ 0) and
+        // their confidently-clean partners (dN == 0, reported
+        // via clean_signals).  A flagged pair outside the solve
+        // (GF arc in warm-up, per-signal dropout) still
+        // carries an un-adjudicated mandate, which takes its
+        // reset here instead of being dropped by the
+        // `continue` below.  This also covers the combined-IF
+        // mode: per-raw-signal culprit keys do not exist in
+        // the IF state (the repair above does nothing for
+        // them), but the IF amb_key arrives here
+        // un-adjudicated and is reset, so the slip is not
+        // lost in that mode.
+        auto& adjudicated = verdict.adjudicated_signals;
+        adjudicated = culprit_signals;
+        if (culprits_from_te) {
+            auto tcl = te.clean_signals.find(sat_id);
+            if (tcl != te.clean_signals.end())
+                adjudicated.insert(tcl->second.begin(),
+                                   tcl->second.end());
+        } else {
+            for (const auto& pr : sat_all_pairs) {
+                adjudicated.insert(pr.sig1);
+                adjudicated.insert(pr.sig2);
             }
-
-            // --- Residual mandated resets ---
-            // amb_keys collects every reset mandate the detector
-            // issued for this satellite, but the culprit handling
-            // above adjudicated only part of it.  Cross-consistency
-            // adjudicates every signal of every analyzed pair (a
-            // non-culprit appears in a clean pair by construction).
-            // The TurboEdit fallback adjudicates only the pairs its
-            // GF arcs could actually solve: culprits (dN ≠ 0) and
-            // their confidently-clean partners (dN == 0, reported
-            // via clean_signals).  A flagged pair outside the solve
-            // (GF arc in warm-up, per-signal dropout) still
-            // carries an un-adjudicated mandate, which takes its
-            // reset here instead of being dropped by the
-            // `continue` below.  This also covers the combined-IF
-            // mode: per-raw-signal culprit keys do not exist in
-            // the IF state (the repair above does nothing for
-            // them), but the IF amb_key arrives here
-            // un-adjudicated and is reset, so the slip is not
-            // lost in that mode.
-            std::set<std::string> adjudicated = culprit_signals;
-            if (culprits_from_te) {
-                auto tcl = te.clean_signals.find(sat_id);
-                if (tcl != te.clean_signals.end())
-                    adjudicated.insert(tcl->second.begin(),
-                                       tcl->second.end());
-            } else {
-                for (const auto& pr : sat_all_pairs) {
-                    adjudicated.insert(pr.sig1);
-                    adjudicated.insert(pr.sig2);
-                }
-            }
-            for (const auto& key : amb_keys) {
-                const std::string signal = signalFromAmbiguityKey(key);
-                if (adjudicated.count(signal)) continue;
-                resetAmbiguityBssdAware(key, sat_id, signal,
-                                        modeled_obs, state_manager,
-                                        meas_model, epoch_prefix);
-                epoch_reset_amb_keys.insert(key);
-                ++result.n_reset;
-                result.state_modified = true;
-                log->info("{}Residual reset {} (mandate not adjudicated "
-                          "by the culprit analysis)",
-                          epoch_prefix, key);
-            }
-
-            reset_sats.insert(sat_id);
-            return;
         }
+        return verdict;
     }
 
     // --- TurboEdit no-state-action adjudications ---------------
@@ -383,48 +341,176 @@ void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
     // take their reset, as in the residual-mandate rule above.
     // LLI sats do not reach this block (gated above): a
     // receiver-declared loss of lock outranks the GF evidence.
-    if (!lli_sat) {
+    if (!lli_sat && !verdict.suppression_withdrawn) {
         const auto tce = te_suppress_by_sat.find(sat_id);
         if (tce != te_suppress_by_sat.end() && !tce->second.empty()) {
-            std::size_t n_suppressed = 0;
-            bool any_reset = false;
-            for (const auto& key : amb_keys) {
-                const std::string signal = signalFromAmbiguityKey(key);
-                if (tce->second.count(signal)) {
-                    ++n_suppressed;
-                    continue;
-                }
-                resetAmbiguityBssdAware(key, sat_id, signal, modeled_obs,
-                                        state_manager, meas_model,
-                                        epoch_prefix);
-                epoch_reset_amb_keys.insert(key);
-                ++result.n_reset;
-                result.state_modified = true;
-                any_reset = true;
-                log->info("{}Residual reset {} (mandate outside the "
-                          "TurboEdit adjudication)", epoch_prefix, key);
-            }
-            ++result.n_code_events;
-            log->info("{}TurboEdit adjudication for {}: {} phase reset "
-                      "mandate(s) suppressed (code event / bridged moot "
-                      "/ adjudicated clean), ambiguities preserved "
-                      "(KF residual gate is the backstop)",
-                      epoch_prefix, sat_id, n_suppressed);
-            // Mark the sat as handled only when state actually
-            // changed: a fully vetoed sat stays eligible for the
-            // GF-only pass and the auxiliary detectors (their
-            // independent evidence must not be muted by a veto
-            // that touched nothing).
-            if (any_reset) reset_sats.insert(sat_id);
-            return;
+            verdict.action = SatelliteSlipAction::SuppressMandates;
+            verdict.suppressed_signals = tce->second;
+            return verdict;
         }
     }
+
+    verdict.action = SatelliteSlipAction::FullReset;
+    return verdict;
+}
+
+void CycleSlipManager::applyCulpritVerdict(SlipEpochWork& w,
+                                           const std::string& sat_id,
+                                           const std::set<std::string>& amb_keys,
+                                           const SatelliteSlipVerdict& verdict) {
+    const auto& log                     = w.log;
+    const auto& epoch_prefix            = w.epoch_prefix;
+    const auto& modeled_obs             = w.modeled_obs;
+    auto& state_manager                 = w.state_manager;
+    const auto& meas_model              = w.meas_model;
+    auto& result                        = w.result;
+    auto& reset_sats                    = w.reset_sats;
+    auto& epoch_reset_amb_keys          = w.epoch_reset_amb_keys;
+    const auto& pivot_affected_cons_sig = w.pivot_affected_cons_sig;
+    auto& deferred_integer_repairs      = w.deferred_integer_repairs;
+    auto& deferred_resets               = w.deferred_resets;
+    const auto& culprit_signals         = verdict.culprit_signals;
+    const auto& per_signal_slips        = verdict.known_integers;
+    const auto& adjudicated             = verdict.adjudicated_signals;
+
+    for (const auto& culprit : culprit_signals) {
+        const std::string targeted_key = sat_id + "_" + culprit;
+        const std::string cons = PppUtils::getSystemString(sat_id);
+        const bool pivot_affected =
+            pivot_affected_cons_sig.count({cons, culprit}) > 0;
+
+        if (pivot_affected) {
+            // Defer: the integer adjustment is applied
+            // post-handover in the new SD frame.  The
+            // state vector is not touched now because the
+            // handover transform expects the pre-slip SD
+            // values (the old pivot's frozen 0 is the
+            // implicit reference); applying dN here in the
+            // old frame would be off by dN_pivot · λ.
+            auto slip_it = per_signal_slips.find(culprit);
+            if (slip_it != per_signal_slips.end()) {
+                deferred_integer_repairs.push_back(
+                    { sat_id, culprit, slip_it->second });
+                log->info("{}MW deferred: {} {} dN={} cyc "
+                          "(integer repair queued; applied in-place if the pivot integer is "
+                          "known, else after forced handover)",
+                          epoch_prefix, sat_id, culprit, slip_it->second);
+            } else {
+                deferred_resets.emplace_back(sat_id, culprit);
+                log->info("{}MW deferred: {} {} (reset queued; resolved in-place or "
+                          "post-handover — no clean per-pair integer)",
+                          epoch_prefix, sat_id, culprit);
+            }
+            ++result.n_repaired;
+            result.state_modified = true;
+            continue;
+        }
+
+        // Non-pivot-affected: existing repair/reset path.
+        bool repaired = false;
+        auto slip_it = per_signal_slips.find(culprit);
+        if (slip_it != per_signal_slips.end()) {
+            repaired = repairAmbiguityBssdAware(
+                sat_id, culprit, slip_it->second,
+                modeled_obs, state_manager, meas_model,
+                epoch_prefix);
+        }
+        if (!repaired) {
+            resetAmbiguityBssdAware(targeted_key, sat_id, culprit,
+                                    modeled_obs, state_manager, meas_model,
+                                    epoch_prefix);
+            epoch_reset_amb_keys.insert(targeted_key);
+            log->info("{}MW cross-consistency: targeted reset {} (culprit signal {})",
+                      epoch_prefix, targeted_key, culprit);
+        }
+        ++result.n_repaired;
+        result.state_modified = true;
+    }
+
+    // --- Residual mandated resets ---
+    // Every mandate on a signal the culprit analysis did not adjudicate is
+    // reset (the rule and its cases are stated where the adjudicated set is
+    // formed, in adjudicateSatellite).
+    for (const auto& key : amb_keys) {
+        const std::string signal = signalFromAmbiguityKey(key);
+        if (adjudicated.count(signal)) continue;
+        resetAmbiguityBssdAware(key, sat_id, signal,
+                                modeled_obs, state_manager,
+                                meas_model, epoch_prefix);
+        epoch_reset_amb_keys.insert(key);
+        ++result.n_reset;
+        result.state_modified = true;
+        log->info("{}Residual reset {} (mandate not adjudicated "
+                  "by the culprit analysis)",
+                  epoch_prefix, key);
+    }
+
+    reset_sats.insert(sat_id);
+}
+
+void CycleSlipManager::applySuppressionVerdict(SlipEpochWork& w,
+                                               const std::string& sat_id,
+                                               const std::set<std::string>& amb_keys,
+                                               const SatelliteSlipVerdict& verdict) {
+    const auto& log            = w.log;
+    const auto& epoch_prefix   = w.epoch_prefix;
+    const auto& modeled_obs    = w.modeled_obs;
+    auto& state_manager        = w.state_manager;
+    const auto& meas_model     = w.meas_model;
+    auto& result               = w.result;
+    auto& reset_sats           = w.reset_sats;
+    auto& epoch_reset_amb_keys = w.epoch_reset_amb_keys;
+
+    std::size_t n_suppressed = 0;
+    bool any_reset = false;
+    for (const auto& key : amb_keys) {
+        const std::string signal = signalFromAmbiguityKey(key);
+        if (verdict.suppressed_signals.count(signal)) {
+            ++n_suppressed;
+            continue;
+        }
+        resetAmbiguityBssdAware(key, sat_id, signal, modeled_obs,
+                                state_manager, meas_model,
+                                epoch_prefix);
+        epoch_reset_amb_keys.insert(key);
+        ++result.n_reset;
+        result.state_modified = true;
+        any_reset = true;
+        log->info("{}Residual reset {} (mandate outside the "
+                  "TurboEdit adjudication)", epoch_prefix, key);
+    }
+    ++result.n_code_events;
+    log->info("{}TurboEdit adjudication for {}: {} phase reset "
+              "mandate(s) suppressed (code event / bridged moot "
+              "/ adjudicated clean), ambiguities preserved "
+              "(KF residual gate is the backstop)",
+              epoch_prefix, sat_id, n_suppressed);
+    // Mark the sat as handled only when state actually
+    // changed: a fully vetoed sat stays eligible for the
+    // GF-only pass and the auxiliary detectors (their
+    // independent evidence must not be muted by a veto
+    // that touched nothing).
+    if (any_reset) reset_sats.insert(sat_id);
+}
+
+void CycleSlipManager::resetEveryMandate(SlipEpochWork& w,
+                                         const std::string& sat_id,
+                                         const std::set<std::string>& amb_keys,
+                                         const SatelliteSlipVerdict& verdict) {
+    const auto& log            = w.log;
+    const auto& epoch_prefix   = w.epoch_prefix;
+    const auto& modeled_obs    = w.modeled_obs;
+    auto& state_manager        = w.state_manager;
+    const auto& meas_model     = w.meas_model;
+    auto& result               = w.result;
+    auto& reset_sats           = w.reset_sats;
+    auto& epoch_reset_amb_keys = w.epoch_reset_amb_keys;
 
     // --- Fall through to full reset ---
     log->debug("{}MW full reset for {} ({} slipped pairs, {} total mature pairs, {} amb_keys)",
                epoch_prefix, sat_id,
-               has_pair_slips ? slips_it->second.size() : 0,
-               sat_all_pairs.size(), amb_keys.size());
+               verdict.n_slipped_pairs,
+               verdict.n_mature_pairs, amb_keys.size());
     for (const auto& key : amb_keys) {
         const std::string signal = signalFromAmbiguityKey(key);
         resetAmbiguityBssdAware(key, sat_id, signal, modeled_obs,
@@ -434,6 +520,16 @@ void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
         result.state_modified = true;
     }
     reset_sats.insert(sat_id);
+}
+
+void CycleSlipManager::holdOrResetLliArcs(SlipEpochWork& w,
+                                          const std::string& sat_id,
+                                          const std::set<std::string>& amb_keys,
+                                          const SatelliteSlipVerdict& verdict) {
+    const auto& epoch_prefix = w.epoch_prefix;
+    const auto& meas_model   = w.meas_model;
+    const auto& epoch_now_s  = w.epoch_now_s;
+    const bool lli_sat       = verdict.lli;
 
     // Receiver-declared loss of lock also invalidates the
     // TurboEdit GF arc levels for this satellite.  The MW EWMA
@@ -454,21 +550,28 @@ void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
     // the signals held-continuous in the resolver.  The BSSD
     // pivot is excluded (its SD ambiguity is frozen at 0; a pivot
     // LLI needs a handover, not an in-frame integer shift).
-    if (lli_sat && turbo_) {
-        bool is_bssd_pivot = false;
-        if (config_.enableBetweenSatelliteSd()) {
-            const auto& pivots = meas_model.getBssdPivotSatellites();
-            auto pit = pivots.find(PppUtils::getSystemString(sat_id));
-            is_bssd_pivot = (pit != pivots.end() && pit->second == sat_id);
-        }
-        if (!is_bssd_pivot && soft_lli_.qualifies(sat_id, epoch_now_s)) {
-            soft_lli_.registerHold(sat_id, amb_keys, *turbo_,
-                                   epoch_now_s, epoch_prefix);
-            // GF arc kept on purpose (no resetSatellite).
-        } else {
-            turbo_->resetSatellite(sat_id);
-        }
+    if (!lli_sat || !turbo_) return;
+
+    bool is_bssd_pivot = false;
+    if (config_.enableBetweenSatelliteSd()) {
+        const auto& pivots = meas_model.getBssdPivotSatellites();
+        auto pit = pivots.find(PppUtils::getSystemString(sat_id));
+        is_bssd_pivot = (pit != pivots.end() && pit->second == sat_id);
     }
+    if (!is_bssd_pivot && soft_lli_.qualifies(sat_id, epoch_now_s)) {
+        soft_lli_.registerHold(sat_id, amb_keys, *turbo_,
+                               epoch_now_s, epoch_prefix);
+        // GF arc kept on purpose (no resetSatellite).
+    } else {
+        turbo_->resetSatellite(sat_id);
+    }
+}
+
+void CycleSlipManager::reinflateSatelliteStates(SlipEpochWork& w, const std::string& sat_id) {
+    const auto& log          = w.log;
+    const auto& epoch_prefix = w.epoch_prefix;
+    auto& state_manager      = w.state_manager;
+    const auto& meas_model   = w.meas_model;
 
     // --- Sat-wide state re-inflation ---
     // Runs after the full-reset fall-through above, which resets
@@ -493,33 +596,33 @@ void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
     // either do nothing (the diag==0 guard in StateManager)
     // or break the BSSD frame.
     const auto& sr_cfg = config_.getSlipStateReinflationConfig();
-    if (sr_cfg.enabled) {
-        bool is_pivot = false;
-        if (config_.enableBetweenSatelliteSd()) {
-            const auto& pivots_now = meas_model.getBssdPivotSatellites();
-            const std::string cons = PppUtils::getSystemString(sat_id);
-            auto pit = pivots_now.find(cons);
-            is_pivot = (pit != pivots_now.end() && pit->second == sat_id);
+    if (!sr_cfg.enabled) return;
+
+    bool is_pivot = false;
+    if (config_.enableBetweenSatelliteSd()) {
+        const auto& pivots_now = meas_model.getBssdPivotSatellites();
+        const std::string cons = PppUtils::getSystemString(sat_id);
+        auto pit = pivots_now.find(cons);
+        is_pivot = (pit != pivots_now.end() && pit->second == sat_id);
+    }
+    if (!is_pivot) {
+        const double io_std = sr_cfg.iono_std_m;
+        const double sb_std = sr_cfg.sat_bias_std_m;
+        if (io_std > 0.0) {
+            state_manager.reinflateIonosphereVariance(
+                sat_id, io_std * io_std);
+            // Constant-velocity model: decorrelate the companion
+            // rate too (no-op unless enableIonoRate).  0.0 => the
+            // initial_std.ionosphere_rate default variance.
+            state_manager.reinflateIonosphereRateVariance(sat_id, 0.0);
         }
-        if (!is_pivot) {
-            const double io_std = sr_cfg.iono_std_m;
-            const double sb_std = sr_cfg.sat_bias_std_m;
-            if (io_std > 0.0) {
-                state_manager.reinflateIonosphereVariance(
-                    sat_id, io_std * io_std);
-                // Constant-velocity model: decorrelate the companion
-                // rate too (no-op unless enableIonoRate).  0.0 => the
-                // initial_std.ionosphere_rate default variance.
-                state_manager.reinflateIonosphereRateVariance(sat_id, 0.0);
-            }
-            if (sb_std > 0.0) {
-                state_manager.reinflateSatBiasVariancesForSat(
-                    sat_id, sb_std * sb_std);
-            }
-        } else {
-            log->debug("{}Slip-state reinflation skipped for BSSD pivot {}",
-                        epoch_prefix, sat_id);
+        if (sb_std > 0.0) {
+            state_manager.reinflateSatBiasVariancesForSat(
+                sat_id, sb_std * sb_std);
         }
+    } else {
+        log->debug("{}Slip-state reinflation skipped for BSSD pivot {}",
+                    epoch_prefix, sat_id);
     }
 }
 

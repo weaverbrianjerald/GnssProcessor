@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Relocation verifier for card UOM step U3 (gate G-UR): the cut of
-CycleSlipManager::detectAndRepair into section members.
+CycleSlipManager::detectAndRepair into section members (step U3b) and the
+split of its per-satellite section S11 into a verdict and its actions (U3c).
 
     python scripts/uom_u3_verify.py [--verbose]
 
@@ -253,16 +254,86 @@ UNITS = [
              F(1491, 1506, 12),
              N("std::set<std::string> exclude_sats = handoverExcludeSet(w);"),
              F(1532, 1630, 12)]),
-    # --- S11 and S14 (CycleSlipAdjudication.cpp).
+    # --- S11 (CycleSlipAdjudication.cpp): the verdict, then the one action it
+    #     selects (step U3c).
     dict(file=ADJ, def_re=r"^void CycleSlipManager::handleSatelliteMandates\(", section=True, pieces=[
-        *aliases("log", "epoch_prefix", "modeled_obs", "state_manager", "meas_model", "epoch_now_s",
-                 "result", "te", "te_culprits_by_sat", "te_slips_by_sat_w", "te_suppress_by_sat_w",
-                 "soft_lli_repaired", "reset_sats_w", "slips_by_sat", "all_pairs_by_sat_w", "lli_sats",
-                 "epoch_reset_amb_keys_w", "pivot_affected_cons_sig", "deferred_integer_repairs_w",
-                 "deferred_resets_w"),
-        F(829, 1191, 12)],
-        subs=[(833, "continue;", "return;"), (844, "continue;", "return;"),
-              (1033, "continue;", "return;"), (1093, "continue;", "return;")]),
+        N("const SatelliteSlipVerdict verdict = adjudicateSatellite(w, sat_id);"),
+        N("switch (verdict.action) {"),
+        N("case SatelliteSlipAction::SkipBridgeRepaired:"),
+        N("case SatelliteSlipAction::SkipWlSettlePending:"),
+        N("return;"),
+        N("case SatelliteSlipAction::RepairCulprits:"),
+        N("applyCulpritVerdict(w, sat_id, amb_keys, verdict);"),
+        N("return;"),
+        N("case SatelliteSlipAction::SuppressMandates:"),
+        N("applySuppressionVerdict(w, sat_id, amb_keys, verdict);"),
+        N("return;"),
+        N("case SatelliteSlipAction::FullReset:"),
+        N("resetEveryMandate(w, sat_id, amb_keys, verdict);"),
+        N("holdOrResetLliArcs(w, sat_id, amb_keys, verdict);"),
+        N("reinflateSatelliteStates(w, sat_id);"),
+        N("return;"),
+        N("}")]),
+    dict(file=ADJ, def_re=r"^SatelliteSlipVerdict CycleSlipManager::adjudicateSatellite\(", section=True,
+         pieces=[
+             *aliases("log", "epoch_prefix", "te", "te_culprits_by_sat", "te_slips_by_sat_w",
+                      "te_suppress_by_sat", "soft_lli_repaired", "slips_by_sat", "all_pairs_by_sat_w",
+                      "lli_sats"),
+             F(829, 872, 12),
+             N("SatelliteSlipVerdict verdict;"),
+             N("verdict.lli = lli_sat;"),
+             N("auto& culprit_signals = verdict.culprit_signals;"),
+             N("auto& per_signal_slips = verdict.known_integers;"),
+             F(875, 930, 12),
+             N("verdict.n_slipped_pairs = has_pair_slips ? slips_it->second.size() : 0;"),
+             N("verdict.n_mature_pairs = sat_all_pairs.size();"),
+             N("if (!culprit_signals.empty()) {"),
+             N("verdict.action = SatelliteSlipAction::RepairCulprits;"),
+             N("verdict.source = culprits_from_te ? CulpritSource::TurboEdit"),
+             N(": CulpritSource::CrossConsistency;"),
+             N("auto& adjudicated = verdict.adjudicated_signals;"),
+             F(1006, 1017, 16),
+             N("return verdict;"),
+             N("}"),
+             F(1060, 1062, 12),
+             N("verdict.action = SatelliteSlipAction::SuppressMandates;"),
+             N("verdict.suppressed_signals = tce->second;"),
+             N("return verdict;"),
+             F(1094, 1095, 12),
+             N("verdict.action = SatelliteSlipAction::FullReset;"),
+             N("return verdict;")],
+         subs=[(833, "continue;", "return SatelliteSlipVerdict{ SatelliteSlipAction::SkipBridgeRepaired };"),
+               (844, "continue;", "return SatelliteSlipVerdict{ SatelliteSlipAction::SkipWlSettlePending };"),
+               (927, "te_suppress_by_sat.erase(tce_c);", "verdict.suppression_withdrawn = true;"),
+               (1006, "std::set<std::string> adjudicated = culprit_signals;", "adjudicated = culprit_signals;"),
+               (1060, "if (!lli_sat) {", "if (!lli_sat && !verdict.suppression_withdrawn) {")]),
+    dict(file=ADJ, def_re=r"^void CycleSlipManager::applyCulpritVerdict\(", section=True, pieces=[
+        *aliases("log", "epoch_prefix", "modeled_obs", "state_manager", "meas_model", "result",
+                 "reset_sats_w", "epoch_reset_amb_keys_w", "pivot_affected_cons_sig",
+                 "deferred_integer_repairs_w", "deferred_resets_w"),
+        N("const auto& culprit_signals = verdict.culprit_signals;"),
+        N("const auto& per_signal_slips = verdict.known_integers;"),
+        N("const auto& adjudicated = verdict.adjudicated_signals;"),
+        F(933, 985, 20), F(1018, 1030, 20), F(1032, 1032, 20)]),
+    dict(file=ADJ, def_re=r"^void CycleSlipManager::applySuppressionVerdict\(", section=True, pieces=[
+        *aliases("log", "epoch_prefix", "modeled_obs", "state_manager", "meas_model", "result",
+                 "reset_sats_w", "epoch_reset_amb_keys_w"),
+        F(1063, 1092, 20)],
+        subs=[(1067, "tce->second.count(signal)", "verdict.suppressed_signals.count(signal)")]),
+    dict(file=ADJ, def_re=r"^void CycleSlipManager::resetEveryMandate\(", section=True, pieces=[
+        *aliases("log", "epoch_prefix", "modeled_obs", "state_manager", "meas_model", "result",
+                 "reset_sats_w", "epoch_reset_amb_keys_w"),
+        F(1097, 1110, 12)],
+        subs=[(1100, "has_pair_slips ? slips_it->second.size() : 0,", "verdict.n_slipped_pairs,"),
+              (1101, "sat_all_pairs.size(), amb_keys.size());", "verdict.n_mature_pairs, amb_keys.size());")]),
+    dict(file=ADJ, def_re=r"^void CycleSlipManager::holdOrResetLliArcs\(", section=True, pieces=[
+        *aliases("epoch_prefix", "meas_model", "epoch_now_s"),
+        N("const bool lli_sat = verdict.lli;"),
+        G(1131, 1145, "if (!lli_sat || !turbo_) return;"), F(1132, 1144, 16)]),
+    dict(file=ADJ, def_re=r"^void CycleSlipManager::reinflateSatelliteStates\(", section=True, pieces=[
+        *aliases("log", "epoch_prefix", "state_manager", "meas_model"),
+        F(1163, 1163, 12), G(1164, 1191, "if (!sr_cfg.enabled) return;"), F(1165, 1190, 16)]),
+    # --- S14 (CycleSlipAdjudication.cpp).
     dict(file=ADJ, def_re=r"^void CycleSlipManager::logMwEpochSummary\(", section=True, pieces=[
         *aliases("log", "epoch_prefix", "result_c"), F(1633, 1638, 8)]),
     # --- S15 and S16 (CycleSlipNonMwPasses.cpp): the pass's guard moved from
@@ -322,6 +393,14 @@ DROPS = {
     1640: "the bare block's closing brace (see 555)",
     1650: "the driver's call became the pass itself (applyTurboEditGfOnlyResolutions(w))",
     1651: "the call's continuation line",
+    873: "the culprit set is the verdict's culprit_signals (step U3c)",
+    874: "the culprit integers are the verdict's known_integers (step U3c)",
+    931: "the culprit branch is the action RepairCulprits selected by the verdict (step U3c)",
+    932: "a bare block with no declaration of its own",
+    1033: "the `continue` that ended the culprit branch: applyCulpritVerdict returns",
+    1034: "the bare block's closing brace (see 932)",
+    1035: "the culprit branch's closing brace (see 931)",
+    1093: "the `continue` that ended the suppression branch: applySuppressionVerdict returns",
     1656: "the driver's call became the pass itself (applyAuxiliarySlipEvents(w))",
     1657: "the call's continuation line",
     1686: None,

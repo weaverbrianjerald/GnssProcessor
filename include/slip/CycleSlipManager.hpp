@@ -57,7 +57,8 @@
 
 namespace GnssProcessor {
 
-struct SlipEpochWork;  // detectAndRepair's per-epoch working value (slip/CycleSlipEpochWork.hpp)
+struct SlipEpochWork;         // detectAndRepair's per-epoch working value (slip/CycleSlipEpochWork.hpp)
+struct SatelliteSlipVerdict;  // one satellite's adjudicated mandates (slip/CycleSlipVerdict.hpp)
 
 /**
  * @brief Epoch-level result of cycle slip processing.
@@ -279,6 +280,9 @@ private:
     //   S8   collectMwMandates                    CycleSlipDetection.cpp
     //   S9   scanPivotCulprits                    CycleSlipPivot.cpp
     //   S11  handleSatelliteMandates              CycleSlipAdjudication.cpp
+    //          adjudicateSatellite (the verdict), then one action:
+    //          applyCulpritVerdict | applySuppressionVerdict |
+    //          resetEveryMandate + holdOrResetLliArcs + reinflateSatelliteStates
     //   S12  repairAcrossSlippedPivotInPlace      CycleSlipPivot.cpp
     //   S13  forcePivotHandoverAndApplyDeferred   CycleSlipPivot.cpp
     //   S14  logMwEpochSummary                    CycleSlipAdjudication.cpp
@@ -378,26 +382,116 @@ private:
     void scanPivotCulprits(SlipEpochWork& w) const;
 
     /**
-     * @brief S11: adjudicate one satellite's MW mandates and act on them.
+     * @brief S11: one satellite's MW mandates: the verdict
+     *        (@c adjudicateSatellite), then the one action it selects.
      *
-     * In order: skip a satellite the soft-LLI bridge already repaired or whose
-     * TurboEdit WL-settle deferral is pending; resolve the culprit signals
-     * (cross-consistency over 3+ pairs, else the TurboEdit split), demoting a
-     * culprit set that contradicts a code-event adjudication; repair or reset
-     * each culprit (deferring pivot-affected ones) and reset the mandates the
-     * analysis did not adjudicate; or suppress the TurboEdit-adjudicated
-     * mandates; or fall through to a full reset of every mandated key, with
-     * the LLI arc handling and the satellite-wide re-inflation.
+     * Skip verdicts do nothing; @c RepairCulprits runs
+     * @c applyCulpritVerdict; @c SuppressMandates runs
+     * @c applySuppressionVerdict; @c FullReset runs @c resetEveryMandate,
+     * @c holdOrResetLliArcs and @c reinflateSatelliteStates in that order.
      *
-     * @param w        Epoch work; writes the state, the result counters,
-     *                 @c reset_sats, @c epoch_reset_amb_keys and the deferred
-     *                 queues.
+     * @param w        Epoch work; the actions write the state, the result
+     *                 counters, @c reset_sats, @c epoch_reset_amb_keys and the
+     *                 deferred queues.
      * @param sat_id   Satellite, e.g. "G05".
      * @param amb_keys The satellite's mandated ambiguity keys.
      */
     void handleSatelliteMandates(SlipEpochWork& w,
                                  const std::string& sat_id,
                                  const std::set<std::string>& amb_keys);
+
+    /**
+     * @brief S11, the verdict: decide what to do with one satellite's
+     *        mandates, without touching the filter state.
+     *
+     * In order: a satellite the soft-LLI bridge already repaired, or whose
+     * TurboEdit WL-settle deferral is pending, is skipped; the culprit signals
+     * come from cross-consistency (two or more pairs, one clean), else from the
+     * TurboEdit split (never on a loss of lock); a culprit set that contradicts
+     * a code-event adjudication is withdrawn with it; culprits select
+     * @c RepairCulprits (with the signals the analysis adjudicated), else a
+     * TurboEdit no-state-action adjudication selects @c SuppressMandates, else
+     * @c FullReset.  Logs its reasoning (the pending skip, the TurboEdit split,
+     * the contradiction).
+     *
+     * @param w      Epoch work (the evidence; @c all_pairs_by_sat and
+     *               @c te_slips_by_sat are read through @c operator[]).
+     * @param sat_id Satellite, e.g. "G05".
+     * @return The verdict.
+     */
+    SatelliteSlipVerdict adjudicateSatellite(SlipEpochWork& w,
+                                             const std::string& sat_id) const;
+
+    /**
+     * @brief S11, action @c RepairCulprits: repair each culprit with a known
+     *        integer (covariance preserved), reset the others, defer the
+     *        pivot-affected ones to S12 / S13, then reset every mandate on a
+     *        signal the analysis did not adjudicate.
+     * @param w        Epoch work; writes the state, the result counters,
+     *                 @c reset_sats, @c epoch_reset_amb_keys and the deferred
+     *                 queues.
+     * @param sat_id   Satellite.
+     * @param amb_keys The satellite's mandated ambiguity keys.
+     * @param verdict  Its verdict (culprits, known integers, adjudicated set).
+     */
+    void applyCulpritVerdict(SlipEpochWork& w,
+                             const std::string& sat_id,
+                             const std::set<std::string>& amb_keys,
+                             const SatelliteSlipVerdict& verdict);
+
+    /**
+     * @brief S11, action @c SuppressMandates: leave the TurboEdit-adjudicated
+     *        signals untouched and reset only the mandates outside the
+     *        adjudication.  Counts the satellite as a code-event veto; marks it
+     *        handled only when a reset happened.
+     * @param w        Epoch work; writes the state, the result counters,
+     *                 @c reset_sats and @c epoch_reset_amb_keys.
+     * @param sat_id   Satellite.
+     * @param amb_keys The satellite's mandated ambiguity keys.
+     * @param verdict  Its verdict (the suppressed signals).
+     */
+    void applySuppressionVerdict(SlipEpochWork& w,
+                                 const std::string& sat_id,
+                                 const std::set<std::string>& amb_keys,
+                                 const SatelliteSlipVerdict& verdict);
+
+    /**
+     * @brief S11, action @c FullReset, first part: reset every mandated key of
+     *        the satellite (BSSD-aware) and mark it handled.
+     * @param w        Epoch work; writes the state, the result counters,
+     *                 @c reset_sats and @c epoch_reset_amb_keys.
+     * @param sat_id   Satellite.
+     * @param amb_keys The satellite's mandated ambiguity keys.
+     * @param verdict  Its verdict (the pair counts of the debug line).
+     */
+    void resetEveryMandate(SlipEpochWork& w,
+                           const std::string& sat_id,
+                           const std::set<std::string>& amb_keys,
+                           const SatelliteSlipVerdict& verdict);
+
+    /**
+     * @brief S11, action @c FullReset, second part: on a receiver loss of lock
+     *        with TurboEdit on, hold the satellite for a soft-LLI bridge repair
+     *        (GF arc kept) when it qualifies and is not the BSSD pivot, else
+     *        reset its TurboEdit GF arcs.  No-op otherwise.
+     * @param w        Epoch work (the pivot map and the epoch time).
+     * @param sat_id   Satellite.
+     * @param amb_keys The satellite's mandated ambiguity keys (the hold's keys).
+     * @param verdict  Its verdict (the loss-of-lock flag).
+     */
+    void holdOrResetLliArcs(SlipEpochWork& w,
+                            const std::string& sat_id,
+                            const std::set<std::string>& amb_keys,
+                            const SatelliteSlipVerdict& verdict);
+
+    /**
+     * @brief S11, action @c FullReset, third part: re-inflate the satellite's
+     *        slant-ionosphere (and rate) and satellite-bias variances
+     *        (@c estimation.slip_state_reinflation), except on the BSSD pivot.
+     * @param w      Epoch work; writes the state.
+     * @param sat_id Satellite.
+     */
+    void reinflateSatelliteStates(SlipEpochWork& w, const std::string& sat_id);
 
     /**
      * @brief Whether a satellite is affirmatively clean on a signal this
