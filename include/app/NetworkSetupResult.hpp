@@ -143,7 +143,7 @@ namespace GnssProcessor {
         /// (RTA-10 gap fix).  Without them, a leg that opens inside a withhold era
         /// writes nothing for the whole era, which leaves "withheld" and "producer
         /// stopped" indistinguishable, the ambiguity the H line exists to resolve.
-        /// The three withhold sites (rank gate, A4 σ̂0 ceiling, SH health gate)
+        /// The two withhold sites (rank gate, A4 σ̂0 ceiling)
         /// append here while product_writer is null and a deferred v2 open is
         /// pending (contract_pending); the buffer is flushed in tow order right after
         /// the writer opens at the first emit.  A run that never emits logs a warning

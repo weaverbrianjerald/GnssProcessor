@@ -137,25 +137,9 @@ NetworkSolPrepResult networkSolPrep(
     };
 
     // Card GFC: count this kept epoch's pin pair changes and family-row realizations, and
-    // declare each family-row switch.  It sits before the SH health gate's early return
-    // below because it is datum bookkeeping, not emission: the harvest that advances the
-    // builder's comparison baselines runs on such an epoch too.  Both scratch maps are
-    // empty unless an arm is effective, so otherwise it does nothing.
+    // declare each family-row switch.  This is datum bookkeeping, not emission.  Both
+    // scratch maps are empty unless an arm is effective, so otherwise it does nothing.
     networkCodeDatumFamilyKeptEpoch(ctx, emitEvent);
-
-    // An engaged SH health gate withholds this epoch's emission
-    // (SPEC_day129_frame_guards Phase 2.2).  Every step below is emit machinery
-    // (solution serialization, present/pending landing of disc bumps, the
-    // pivot/anchor baseline advance, URA and ramp stamps), which the whole-epoch
-    // withhold paths skip by `continue`-ing before this seam; the early return does
-    // the same.  Pending disc bumps stay queued and land with the next actual emit
-    // (the Card-2 rule that a value step and its signal coincide), and the emit-only
-    // baselines (last_pivot, emitted_anchor, last_if_pin_sel, the cb_reseed merge)
-    // stay at the last emitted product.  NetworkEmitStore returns early on the same
-    // flag and writes the withheld H heartbeat and its counter there.  The solve,
-    // carry and QC steps before and after this seam are unaffected.
-    if (nc.sh_health_gate && ctx.carry.sh_gate_engaged)
-        return NetworkSolPrepResult{};
 
     // --- Emit -----------------------------------------------------------
     NetworkSolutionEpoch sol = est.toSolutionEpoch(x_s, se.time, iod++,

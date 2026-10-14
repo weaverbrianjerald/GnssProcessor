@@ -25,10 +25,6 @@
  *     the M4 combined-correction σ (sigc/sigcc/rho), and the L14 satellite
  *     bias-state trace.
  *
- * With the SH health gate engaged (network.sh_health_gate), the seam returns an empty
- * result before any of these steps, so pending bumps and emit baselines wait for the
- * next actual emit.
- *
  * Created at decomposition INC-11pre, which moved the SB_SOLPREP block unchanged out
  * of Application::runNetwork (dedent only, no substitution).  Owns no state: every
  * carry / emit-side object is an explicit reference into the caller's

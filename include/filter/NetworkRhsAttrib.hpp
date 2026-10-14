@@ -722,7 +722,7 @@ NetworkRhsLocalShares networkRhsAttribLocalShares(const NetworkAttribFrame& f,
  * @param log     Run logger (closure-violation warning and the dump line).
  * @param dir     Output directory (created if absent).
  * @param kind    Short tag naming the reason for the dump ("armed",
- *                "trip:sigma0", "trip-prev:sh_gate", …).  It appears in the log
+ *                "trip:sigma0", "trip-prev:clk_runaway", …).  It appears in the log
  *                text only, so the CSVs stay byte-comparable across dump reasons.
  * @param columns The named columns (@c network.rhs_attrib_columns); empty = no
  *                `cols_` or `loc_` file.
@@ -827,7 +827,7 @@ void networkRhsAttribTrip(NetworkRunContext& ctx, const GnssConfig& config_,
  * (invariant #4).  A site that calls only on the true branch is miswired.
  *
  * @param ctx    Run context (latch set and counters).
- * @param kind   Stable era name ("sh_gate", "sigma0", "clk_runaway", "a00_band"),
+ * @param kind   Stable era name ("sigma0", "clk_runaway", "a00_band"),
  *               passed as a string literal.  It is copied into a std::string,
  *               so its lifetime does not matter.
  * @param active Whether the condition holds this epoch.

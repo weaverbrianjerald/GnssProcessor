@@ -548,7 +548,7 @@ NetworkProducerStatus::State NetworkProducerStatus::parseState(const std::string
     if (token == "partial")         return State::Partial;
     if (token == "withheld_sigma0") return State::WithheldSigma0;
     if (token == "withheld_gate")   return State::WithheldGate;
-    if (token == "withheld_sh")     return State::WithheldShGate;   // Phase 2.2 SH health gate
+    if (token == "withheld_sh")     return State::WithheldShGate;   // Phase 2.2 SH health gate (retired producer; archived product files)
     return State::Unknown;
 }
 

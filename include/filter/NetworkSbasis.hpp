@@ -1806,8 +1806,7 @@ NetworkSbasis::CodeBiasCarryMap networkCodeBiasCarryMap(const NetworkRunContext&
  * baselines (the pin pair map, the previous solved values) advance only at the harvest of
  * a kept epoch, so the same pair change or hold is seen again on every withheld pass
  * until an epoch is kept.  Counting here, once per kept epoch, makes each count and event
- * one physical change.  The emit-site call (networkSolPrep) runs before the SH health
- * gate's early return because the harvest runs on such an epoch too.
+ * one physical change.
  *
  * Reads @c ctx.carry.this_epoch_if_pin_holds, @c ctx.carry.this_epoch_if_pin_changes and
  * @c ctx.carry.this_epoch_cb_family_rows (the builder's outputs, main-pass scratch), and

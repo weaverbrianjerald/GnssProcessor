@@ -13,7 +13,6 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, constellationKey, SignalId
-#include "atmosphere/SphericalHarmonicIonosphere.hpp"   // SH gate (Phase 2.2): coeffs()
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkChainDatum.hpp"
@@ -2719,110 +2718,6 @@ if (a4_over_ceiling && !perconst_active) {
 }
 // Card PRM phase 3a: the epoch is kept, so the landed replay's withheld priors are responses.
 prmRespond(ctx.counters.prm_resp, ResponseSite::AmbT2ReplayFree, prm_we_free_landed);
-
-
-    // --- SH-field health gate verdict (SPEC_day129_frame_guards Phase 2.2) -----
-    // After the solve and before emission (this is the only pre-emit seam holding
-    // x_s), on epochs that passed the rank gate and the A4 σ̂0 withhold above.  The
-    // verdict affects emission only: NetworkSolPrep and NetworkEmitStore return
-    // early on ctx.carry.sh_gate_engaged, while the carry stash and every QC tier
-    // still run, because an out-of-band era lasting hours must not expire the carry
-    // as the A4 skip-epoch semantics would.  Out-of-band epochs are counted, not
-    // warned (the throttled T1a warning under-counts them), and every engage and
-    // release transition is logged and evented without throttling.
-    if (nc.sh_health_gate && sh_model) {
-        const GlobalVtecShConfig& shc_g = config_.getGlobalVtecShConfig();
-        const auto& coeffs_g = sh_model->coeffs();
-        double a00_total = std::numeric_limits<double>::quiet_NaN();
-        double rms_all = 0.0;
-        int rms_n = 0;
-        bool coeff_ok = true;
-        for (std::size_t k = 0; k < coeffs_g.size() && coeff_ok; ++k) {
-            try {
-                const double val =
-                    x_s(est.vtecCoeffColumn(coeffs_g[k].n, coeffs_g[k].m, coeffs_g[k].trig));
-                rms_all += val * val;
-                ++rms_n;
-                if (coeffs_g[k].n == 0 && coeffs_g[k].m == 0 && coeffs_g[k].trig == 'C')
-                    a00_total = val;
-            } catch (...) { coeff_ok = false; }
-        }
-        // Dual-layer: the physical band bounds the total mean VTEC (layer sum), as
-        // the T1a warning does.
-        if (coeff_ok && sh_model2 && std::isfinite(a00_total)) {
-            try { a00_total += x_s(est.vtecCoeffColumn(0, 0, 'C', 1)); }
-            catch (...) { coeff_ok = false; }
-        }
-        if (coeff_ok && std::isfinite(a00_total)) {
-            rms_all = (rms_n > 0) ? std::sqrt(rms_all / rms_n) : 0.0;
-            ctx.carry.sh_gate_last_a00 = a00_total;
-            ctx.carry.sh_gate_last_rms = rms_all;
-            const bool band_active = shc_g.a00_warn_low_tecu < shc_g.a00_warn_high_tecu;
-            const bool band_oob = band_active
-                && (a00_total < shc_g.a00_warn_low_tecu
-                    || a00_total > shc_g.a00_warn_high_tecu);
-            const bool rms_oob = nc.sh_gate_rms_max_tecu > 0.0
-                && rms_all > nc.sh_gate_rms_max_tecu;
-            const bool oob = band_oob || rms_oob;
-            if (oob) {
-                ++ctx.carry.sh_gate_oob_epochs_total;
-                ++ctx.carry.sh_gate_oob_run;
-            } else {
-                ctx.carry.sh_gate_oob_run = 0;
-            }
-            const bool engage = ctx.carry.sh_gate_oob_run >= nc.sh_gate_min_epochs;
-            // Flight-recorder trigger for the engage era (INC-5).  Called on every
-            // evaluated epoch (false clears the era); it must precede the engage
-            // block below so that the SB_FRAMEDIAG consumer, which runs later in the
-            // same epoch, sees the pending trip.
-            networkRhsTripEdge(ctx, "sh_gate", engage);
-            if (engage && !ctx.carry.sh_gate_engaged) {
-                ++ctx.carry.sh_gate_engagements;
-                log->warn("Network (SH gate): ENGAGED at TOW {:.1f} — a00 {:.1f} TECU "
-                          "(band [{:.1f}, {:.1f}]), rms_all {:.2f} TECU{} — out of band "
-                          "{} consecutive epoch(s); WITHHOLDING emission until the field "
-                          "returns (solve/carry/QC continue).",
-                          se.time.tow, a00_total, shc_g.a00_warn_low_tecu,
-                          shc_g.a00_warn_high_tecu, rms_all,
-                          rms_oob ? fmt::format(" > ceiling {:.1f}", nc.sh_gate_rms_max_tecu)
-                                  : std::string{},
-                          ctx.carry.sh_gate_oob_run);
-                emitEvent("SH_GATE", "engage", "", "", a00_total,
-                          band_oob ? (a00_total < shc_g.a00_warn_low_tecu
-                                          ? shc_g.a00_warn_low_tecu
-                                          : shc_g.a00_warn_high_tecu)
-                                   : nc.sh_gate_rms_max_tecu,
-                          "withhold_emission",
-                          fmt::format("rms_all={:.2f} oob_run={} rms_oob={}", rms_all,
-                                      ctx.carry.sh_gate_oob_run, rms_oob ? 1 : 0));
-            } else if (!engage && ctx.carry.sh_gate_engaged) {
-                log->info("Network (SH gate): RELEASED at TOW {:.1f} — a00 {:.1f} TECU "
-                          "back in band (rms_all {:.2f}); emission resumes.  Run totals: "
-                          "{} out-of-band epoch(s), {} engagement(s), {} emission(s) "
-                          "withheld.",
-                          se.time.tow, a00_total, rms_all,
-                          ctx.carry.sh_gate_oob_epochs_total, ctx.carry.sh_gate_engagements,
-                          ctx.counters.n_sh_gate_withheld);
-                emitEvent("SH_GATE", "release", "", "", a00_total, std::nullopt,
-                          "resume_emission",
-                          fmt::format("rms_all={:.2f} withheld_total={}", rms_all,
-                                      ctx.counters.n_sh_gate_withheld));
-            } else if (engage && (ctx.carry.sh_gate_oob_run % 20) == 0) {
-                // Visibility during a long engaged era: a periodic line with the
-                // counts every 20 epochs (10 min at 30 s).  The era's full extent is
-                // in the per-epoch counters and events in any case.
-                log->warn("Network (SH gate): still engaged at TOW {:.1f} — {} consecutive "
-                          "out-of-band epoch(s), a00 {:.1f} TECU, rms_all {:.2f}; {} "
-                          "emission(s) withheld so far.",
-                          se.time.tow, ctx.carry.sh_gate_oob_run, a00_total, rms_all,
-                          ctx.counters.n_sh_gate_withheld);
-            }
-            ctx.carry.sh_gate_engaged = engage;
-        }
-        // coeff_ok false means a column lookup failed (the field is not in this
-        // epoch's solve): leave the gate state unchanged rather than report a
-        // release that did not happen; the next computable epoch re-evaluates.
-    }
 
     // --- Result epilogue: hand the 17 crossing locals to the caller. ---
     result.x_s = std::move(x_s);

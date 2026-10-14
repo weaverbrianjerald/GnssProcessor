@@ -2571,22 +2571,6 @@ namespace GnssProcessor {
         double    cb_exc_max_median      = 0.0; ///< largest median |Δclock| observed (m): the trip statistic's run maximum
         double    cb_exc_max_median_tow  = -1.0;///< its epoch
 
-        // --- SH-field health gate (SPEC_day129_frame_guards Phase 2.2) ---
-        // Not snapshotted (three-place-rule exemption): the gate is emission-only (no
-        // carried state changes meaning across it), so a resume re-accrues the out-of-band
-        // run within sh_gate_min_epochs, at worst one epoch of conservative extra emission
-        // and never a wrong-frame fold.  For the same reason the toggle is not in the
-        // resume fingerprint (the raim / clock_runaway_check class, not the cb_excursion
-        // class).  The verdict is computed post-solve in NetworkSolveGlue (the only
-        // pre-emit seam holding x_s), enforced by early returns in NetworkSolPrep and
-        // NetworkEmitStore, and its disposition is stamped by NetworkStashStatus.
-        int       sh_gate_oob_run        = 0;     ///< consecutive out-of-band epochs (0 = in band)
-        bool      sh_gate_engaged        = false; ///< this epoch's emission verdict (true = withhold)
-        long long sh_gate_oob_epochs_total = 0;   ///< run total of out-of-band epochs (handoff §4.2: count epochs, not warnings)
-        long long sh_gate_engagements    = 0;     ///< engage transitions over the run
-        double    sh_gate_last_a00       = 0.0;   ///< last computed total a00 (TECU; engage/release log detail)
-        double    sh_gate_last_rms       = 0.0;   ///< last computed total-field RMS (TECU)
-
         // --- SH representativeness-error deviation carry of T5/Iono-2 (struct
         // ShDevCarry: filter/NetworkRunTypes.hpp; v2 units = vertical TECU) ---
         std::map<std::string, ShDevCarry> sh_dev_carry;   // key "<station>|<sat>"
@@ -3714,10 +3698,6 @@ namespace GnssProcessor {
         double    lvlauth_sum = 0.0;            ///< Σ L_cs (teardown mean)
         double    lvlauth_min =  1.0e30;        ///< run min L_cs (TECU)
         double    lvlauth_max = -1.0e30;        ///< run max L_cs (TECU)
-        // Epochs whose emission the SH health gate withheld (Phase 2.2).  Not a subset of
-        // n_skipped: the solve, carry and QC all ran (the gate is emission-only), so these
-        // epochs are counted nowhere else.
-        size_t n_sh_gate_withheld = 0;
         // Invariant #4 counters for the per-satellite consumer readout (card CST,
         // network.trace_consumer_sat).  0 epochs on an armed run means the consumer
         // deferred every epoch (admission gates) and the file is a bare header; 0 rows

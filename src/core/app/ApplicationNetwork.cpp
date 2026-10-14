@@ -1377,9 +1377,9 @@ int Application::runNetwork() {
                                carry_slipped_ambs, carry_slipped_raw,
                                carry_invariant, carry_warm);
         // Product-referenced measurement admission, the first layer of the defence in
-        // depth (this screen, then tie admission, the prefit fuse, and the SH health
-        // gate).  It is the absolute test for a channel whose code and phase are
-        // displaced together, the class every differential check passes by construction
+        // depth (this screen, then tie admission and the prefit fuse).  It is the
+        // absolute test for a channel whose code and phase are displaced together,
+        // the class every differential check passes by construction
         // (stations have been seen +198.2 km and +99.9 km off SP3+CLK).  The statistic is
         // `observed - modeled` on code alone, centred on the station median; `modeled` is
         // the state-free deterministic model, which lets the screen fire at a cell's

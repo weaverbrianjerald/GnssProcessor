@@ -2673,8 +2673,8 @@ namespace GnssProcessor {
         // --- Product-referenced measurement admission
         //     (docs/SPEC_measurement_admission.md; filter/NetworkMeasurementAdmission)
         // The corrupt-channel screen: the first layer of a layered defense (this
-        // screen -> iono_dw_admit_validate_k -> prefit_fuse_sigma -> the SH health
-        // gate).  A receiver can emit a channel offset by ~1e5 m against SP3+CLK
+        // screen -> iono_dw_admit_validate_k -> prefit_fuse_sigma).  A receiver can
+        // emit a channel offset by ~1e5 m against SP3+CLK
         // (measured: two satellites at one station, +198.2 km and +99.9 km).  Because
         // the offset rides both the code and the phase of the channel, it is invisible
         // to every differential check (TD, phase-minus-code, GF and MW all pass by
@@ -3180,39 +3180,6 @@ namespace GnssProcessor {
          * move.  Default off: nothing is collected or folded early, byte-identical.
          */
         bool station_prior_before_pd{ false };
-        /**
-         * @brief SH-field health gate: withhold emission, not only warn
-         *        (@c network.sh_health_gate) (SPEC_day129_frame_guards phase 2.2).
-         *
-         * Without it, a run can emit a non-physical ionosphere for many epochs with
-         * @c gate_ok=1 (on the reference day: 80 minutes, a₀₀ up to 2151 TECU), because
-         * the a₀₀ physical-band check alone is a warn-only probe, edge-triggered and
-         * throttled (9 warnings for 214 out-of-band epochs).  With this on, an epoch
-         * whose total mean VTEC a₀₀ (layer sum) leaves the physical band
-         * [@c a00_warn_low_tecu, @c a00_warn_high_tecu], or whose total-field
-         * coefficient RMS exceeds @ref sh_gate_rms_max_tecu, for @ref sh_gate_min_epochs
-         * consecutive epochs is withheld from emission: no store push, no product
-         * write, no closed-loop consume, no @c n_emitted advance.  Emission only: the
-         * solve, the carry stash and every QC tier still run, so state evolution is
-         * untouched (a multi-hour out-of-band era must not expire the carry the way the
-         * A4 skip-epoch semantics would), and the toggle is not in the warm-resume
-         * fingerprint (same class as @c raim / @c clock_runaway_check).  Engage and
-         * release transitions are logged without throttling and counted per epoch
-         * (run-end and @c network_events.csv @c SH_GATE rows), per the handoff §4.2
-         * lesson.  Default off: byte-identical.
-         */
-        bool sh_health_gate{ false };
-        /// Consecutive out-of-band epochs before the gate engages (phase 2.2).  1 =
-        /// withhold from the onset epoch: the code-bias ratchet of the reference event
-        /// lands in one epoch, so waiting would emit the damaged product.  Release is
-        /// immediate on the first in-band epoch.  Inert unless @ref sh_health_gate.
-        int sh_gate_min_epochs{ 1 };
-        /// Total-field coefficient RMS ceiling (TECU; the same all-coefficient RMS
-        /// that the T1a health trace reports as @c rms_all), the spec's "or
-        /// total-field RMS" band clause (phase 2.2).  Catches a blow-up that an
-        /// in-band a₀₀ hides (e.g. a degree-1 tilt excursion).  0 = off (a₀₀ band
-        /// only).  Inert unless @ref sh_health_gate.
-        double sh_gate_rms_max_tecu{ 0.0 };
         bool trace_section_timers{ false };  ///< Per-epoch section-timer breakdown of the network solve (D0): @c NetworkEstimator wall-clock accumulators around assembly / Schur reduce / constrained point-solve / the explicit shared-covariance full inverse / the per-station covariance consumers.  Arms @c NetworkNormalEquations::setPerfTiming so those primitives record their milliseconds; the driver logs a @c "Network (D0)" line per emitted epoch and an end-of-run "RUN TOTALS" line, so a profiling run shows which term dominates and therefore which Tier-D scaling option (D1 selected inverse / D2 rate split / D3-D4 channel and ordering) is worth pursuing.  Diagnostic only: no product bytes, no decision change; when off, every instrumented primitive skips the clock read entirely (no measurable overhead, numerically byte-identical).
         bool write_run_manifest{ false }; ///< Write @c network_run_manifest.json (JSONL, two records) (L15): a run-provenance snapshot at startup (config path and FNV-1a-64 hash of the config bytes, build stamp, and the full network.* toggle/knob dump), plus an end-of-run record with the epoch counts and loop wall time.  Makes an archived @c logs/ folder self-describing (which toggle set produced it) even when the code is uncommitted.  Does not read git state.  Off by default.
         double health_interval_s{ 0.0 };  ///< Operator health-record cadence in seconds of processed (content) time (RTB-6).  When > 0, the producer appends a machine-readable @c network_service_health.csv row every @c health_interval_s of data: cumulative epochs emitted / skipped / gate-withheld / σ̂0-withheld / runaway, the σ̂0 EWMA (−1 sentinel = unavailable when its feeding tiers @ref emit_ura, @ref raim and @ref phase_leveling are not all armed; the value would otherwise stay at its 1.0 initial value), stations present, clock satellites, mean ms per epoch over the health window just ended, last-emit age, and the realized per-constellation clock pivots ("G:G05;E:E11"; empty before the first emit).  A service run is thereby observable without waiting for the exit-time summary (every other health output assumes a finite run).  Distinct from the RTA-10 per-epoch product @c H status record (this is an aggregate operator heartbeat, not product content) and from the pyviz @c network_health viewer (which reads @c network_trace.csv, a different output, hence this file's @c service name).  Column semantics: @c docs/rt_service_operations.md.  Negative values clamp to 0 with a warning.  Default 0 = off: no file, byte-identical.

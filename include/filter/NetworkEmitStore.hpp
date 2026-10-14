@@ -7,8 +7,6 @@
  *
  * Consumes the prepared @ref NetworkSolutionEpoch (and the datum-bump / withheld /
  * retro state @ref networkSolPrep returned) and finalizes the epoch:
- *   - with the SH health gate engaged, writes only the withheld H heartbeat and
- *     returns (no store push, no product write, no closed-loop consume);
  *   - the Card-4 phase-D emit-layer frame re-base on the emitted phase biases, the
  *     CLK-R clock emission re-base, the RS-4 warm-resume phase-bias seam mark and the
  *     PBH phase-bias hold, all baked into @c sol before the store push so a

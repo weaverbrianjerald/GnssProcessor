@@ -25,8 +25,8 @@
  *
  * Layers of defense, in order of engagement: this seam (layer 0, at the origin);
  * the INC-3b admission validation (the valve, `network.iono_dw_admit_validate_k`);
- * the prefit fuse (a bound on the symptom, `network.prefit_fuse_sigma`); the SH
- * health gate (the backstop).
+ * the prefit fuse (a bound on the symptom, `network.prefit_fuse_sigma`).  The card's
+ * fourth layer, the SH health gate (the backstop), was retired with its keys.
  *
  * ## The screen statistic: absolute, coarse, clock-free and state-free
  *
@@ -164,7 +164,7 @@
  *   * after `networkSignalIntegrity` (see below); and
  *   * before the phase-datum census and election, the shared-column registration
  *     and PASS B.  It is layer 0 of the card's §1 defense in depth (this seam, the
- *     INC-3b tie admission, the prefit fuse, the SH gate), and every later layer,
+ *     INC-3b tie admission, the prefit fuse), and every later layer,
  *     the election, the prefit census and RAIM observe the admitted set rather
  *     than the raw one.
  *

@@ -657,17 +657,10 @@ void networkStashStatus(
             es.worst_sat      = worst_sat_name;
             es.worst_dev_m    = worst;
         }
-        // An SH-gate-withheld epoch ran the full solve/carry/QC but emitted nothing,
-        // and its disposition row says so.  The row is the per-epoch out-of-band count
-        // that the handoff §4.2 lesson requires (Phase 2.2).
-        emitEpochStatus(config_.getNetworkConfig().sh_health_gate
-                            && ctx.carry.sh_gate_engaged
-                        ? "sh_gate_withheld" : "emitted", es);
+        emitEpochStatus("emitted", es);
     }
 
-    const bool sh_gate_withheld_ep =
-        config_.getNetworkConfig().sh_health_gate && ctx.carry.sh_gate_engaged;
-    if (!sh_gate_withheld_ep && (n_emitted == 1 || n_emitted % 60 == 0)) {
+    if (n_emitted == 1 || n_emitted % 60 == 0) {
         log->info("Network: TOW {:.1f} emitted epoch {} — {} stations, {} sat clocks, "
                   "{} phase biases, {} code biases ({} single-station sat(s) dropped), "
                   "datum dim {}, clock-Δ rms {:.3f} m",

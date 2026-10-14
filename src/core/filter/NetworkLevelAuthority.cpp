@@ -104,20 +104,17 @@ void networkLevelAuthorityCensus(
     if (red->level_tecu > ctx.counters.lvlauth_max) ctx.counters.lvlauth_max = red->level_tecu;
 
     if (out.is_open()) {
-        // FLEET row, with the SH a00 in the last column when there is one, so the
-        // in-run comparison needs no join.
+        // FLEET row, with the SH a00 column last (see below).
         out << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow)
             << ",FLEET,," << fmt::format("{:.4f}", red->level_tecu) << ','
             << fmt::format("{:.4f}", red->mad_tecu) << ',' << red->n_sta << ','
             << red->n_los << ',' << immature << ',';
         // The a00 field is written only when the SH channel is estimated, and is
-        // blank otherwise: sh_gate_last_a00 is initialized to 0.0, which cannot be
-        // told apart from a real near-zero level.  With SH on it holds the last
-        // finite a00 recorded in the SH gate of an earlier epoch's solve (0.0
-        // before the first one).
-        if (config_.estimateNetworkIonoSh() &&
-            std::isfinite(ctx.carry.sh_gate_last_a00))
-            out << fmt::format("{:.4f}", ctx.carry.sh_gate_last_a00);
+        // blank otherwise.  Its only producer was the retired SH health gate, so with
+        // SH on it holds the constant 0.0000 it printed whenever that gate was off: a
+        // placeholder that keeps the column layout, not a measurement.
+        if (config_.estimateNetworkIonoSh())
+            out << fmt::format("{:.4f}", 0.0);
         out << '\n';
         // STA rows: the per-station tier-1 means, which are the d_r,GF-class
         // diagnostic and the sampling-matched grading population for G2.

@@ -6795,7 +6795,7 @@ namespace GnssProcessor {
     //  network subsection helper: loadNetworkQcTiers_
     // =================================================================
     /**
-     * @brief Post-fit / within-epoch QC tiers: RAIM, clock monitor, SH health gate, adaptive iono q.
+     * @brief Post-fit / within-epoch QC tiers: RAIM, clock monitor, adaptive iono q.
      *
      * Holds the tier auto-couplings (a withhold ceiling pulls in the within-epoch tier, which
      * pulls in post-fit RAIM + attribution; WE-CI pulls in the tier it extends) and the
@@ -7893,49 +7893,6 @@ namespace GnssProcessor {
                           network_config_.cb_excursion_reinit_all_sats
                               ? "ALL satellites'" : "clock-PIVOT satellite's",
                           network_clock_monitor_reinit_sigma_m_);
-            }
-        }
-
-        // SH-field health gate (SPEC_day129_frame_guards Phase 2.2; the gate-not-warn
-        // rework of the T1a a00 band probe, handoff §7).  Emission-only: the solve and
-        // carry are untouched, so it is not in the resume fingerprint (same class as
-        // raim / clock_runaway_check).
-        network_config_.sh_health_gate =
-            jval<bool>(json, "network.sh_health_gate", "sh_health_gate", false);
-        network_config_.sh_gate_min_epochs =
-            jval<int>(json, "network.sh_gate_min_epochs", "sh_gate_min_epochs", 1);
-        network_config_.sh_gate_rms_max_tecu =
-            jval<double>(json, "network.sh_gate_rms_max_tecu", "sh_gate_rms_max_tecu", 0.0);
-        if (network_config_.sh_health_gate) {
-            const GlobalVtecShConfig& shc_gate = global_vtec_sh_;
-            const bool band_active = shc_gate.a00_warn_low_tecu < shc_gate.a00_warn_high_tecu;
-            const bool rms_active  = network_config_.sh_gate_rms_max_tecu > 0.0;
-            if (network_config_.sh_gate_min_epochs < 1) {
-                log->warn("Network: network.sh_gate_min_epochs = {} clamped to 1.",
-                          network_config_.sh_gate_min_epochs);
-                network_config_.sh_gate_min_epochs = 1;
-            }
-            if (!estimate_network_iono_sh_) {
-                log->warn("Network: network.sh_health_gate is on but estimate_iono_sh is "
-                          "off — there is no SH field to band-check, so the gate is INERT "
-                          "(disabled).");
-                network_config_.sh_health_gate = false;
-            } else if (!band_active && !rms_active) {
-                log->warn("Network: network.sh_health_gate is on but the a00 band is "
-                          "silenced (low {} >= high {}) and sh_gate_rms_max_tecu is 0 — "
-                          "no active condition, so the gate is INERT (disabled).",
-                          shc_gate.a00_warn_low_tecu, shc_gate.a00_warn_high_tecu);
-                network_config_.sh_health_gate = false;
-            } else {
-                log->info("Network (Phase 2.2): SH health GATE armed — an epoch with total "
-                          "a00 outside [{:.1f}, {:.1f}] TECU{} for >= {} consecutive "
-                          "epoch(s) is WITHHELD from emission (solve/carry/QC continue; "
-                          "counted per EPOCH, transitions logged un-throttled).",
-                          shc_gate.a00_warn_low_tecu, shc_gate.a00_warn_high_tecu,
-                          rms_active ? fmt::format(" (or rms_all > {:.1f} TECU)",
-                                                   network_config_.sh_gate_rms_max_tecu)
-                                     : std::string{},
-                          network_config_.sh_gate_min_epochs);
             }
         }
 

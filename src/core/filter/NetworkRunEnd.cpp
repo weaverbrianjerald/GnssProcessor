@@ -78,7 +78,6 @@
 #include "filter/NetworkSecondCodeScope.hpp"
 #include "filter/NetworkSecondPhaseScope.hpp"
 #include "filter/NetworkShDevVtec.hpp"
-#include "filter/NetworkShHealth.hpp"
 #include "filter/NetworkSignalIntegrity.hpp"
 #include "filter/NetworkSolPrep.hpp"
 #include "filter/NetworkStationBlock.hpp"
@@ -226,8 +225,6 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkIonoDwRelease.cpp", networkIonoDeweightRunEnd},
     {"the CB-excursion guard (Phase 2.1)",
      "filter/NetworkClockQc.cpp", networkCbExcursionRunEnd},
-    {"the SH health gate (Phase 2.2)",
-     "filter/NetworkShHealth.cpp", networkShHealthRunEnd},
     {"the post-fit sigma0 and the post-fit rows",
      "filter/NetworkFrameDiag.cpp", networkPostfitRunEnd},
     {"the producer's state-manager re-inflations",

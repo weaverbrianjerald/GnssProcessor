@@ -124,45 +124,6 @@ void networkEmitStore(
     int& cl_first_fix_week = cl_tally.first_fix_week;
     std::deque<double>& cl_recent_err3d = cl_tally.recent_err3d;
 
-    // An engaged SH health gate withholds this epoch's emission: no store push, no
-    // product write, no closed-loop consume or iono supply, no n_emitted advance
-    // (NetworkSolPrep already returned early on the same flag, so `sol` is empty).
-    // The withheld H heartbeat and the per-epoch SH_GATE event keep the withheld era
-    // visible on the wire and in the traces; NetworkStashStatus stamps the
-    // epoch-status disposition.  The carry stash and every QC tier still run; the gate
-    // acts on emission only.  See SPEC_day129_frame_guards Phase 2.2.
-    if (nc.sh_health_gate && ctx.carry.sh_gate_engaged) {
-        ++ctx.counters.n_sh_gate_withheld;
-        traces.emitEvent(se.time, "SH_GATE", "withhold", "", "",
-                         ctx.carry.sh_gate_last_a00, std::nullopt, "skip_emission",
-                         fmt::format("rms_all={:.2f} oob_run={}",
-                                     ctx.carry.sh_gate_last_rms,
-                                     ctx.carry.sh_gate_oob_run));
-        // Product-level heartbeat for the withheld epoch (H line, no E line), so a
-        // live tail can tell "SH gate withheld" from "producer stopped".  Before the
-        // deferred writer opens (at the first emit) the heartbeat is buffered in
-        // setup.pending_h_pre_open and flushed at the open (RTA-10).
-        if (emit_epoch_status) {
-            NetworkProducerStatus hst;
-            hst.time.week = se.time.week;
-            hst.time.tow  = se.time.tow;
-            hst.state     = NetworkProducerStatus::State::WithheldShGate;
-            // H-rider: the census σ̂₀ is computed pre-solve, so it exists on a withheld
-            // epoch too.
-            if (ctx.knobs.h_sigma0_census) hst.sigma0 = ctx.carry.ep_h_sigma0_census;
-            hst.withheld  = "*";
-            if (product_writer) {
-                product_writer->writeEpochStatus(hst);
-                if (nc.product_flush_per_epoch) product_writer->flush();
-            } else if (setup.contract_pending) {
-                // Buffer only while a deferred (v2) writer open is still pending; with
-                // no product path, or a v1 immediate open, there is nothing to flush into.
-                setup.pending_h_pre_open.push_back(hst);
-            }
-        }
-        return;
-    }
-
     // Emit-layer frame re-base (docs/SPEC_card4_invariant_carry.md §10 §1; Card 4 (M1)
     // phase D).  Under carry_invariant the eq34 datum is re-realized freely, so the raw
     // emitted per-(sat,σ) phase bias changes every epoch by a gauge element (a common

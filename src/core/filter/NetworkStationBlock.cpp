@@ -260,8 +260,8 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
 
     // Cadence: one row set per emitted epoch, for emissions 1..20 and every 60th
     // thereafter.  The gate keys on n_emitted rather than on the seam running
-    // (C1/R11): an epoch withheld by the observability gate, the A4 sigma0 ceiling
-    // or the SH health gate still reaches this group, and auditing it would mix
+    // (C1/R11): an epoch withheld by the observability gate or the A4 sigma0
+    // ceiling still reaches this group, and auditing it would mix
     // withheld epochs into a trace that describes the wire.  sb_last_emitted keeps
     // a repeated emission count from writing twice.
     const std::size_t ne = ctx.counters.n_emitted;
