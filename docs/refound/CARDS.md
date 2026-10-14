@@ -167,3 +167,4 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   control: golden chord WL and 6 h wire E_L1 up to 0.029 cycle off the null (tolerance 0.02); graders, truth-wire
   positive control and the E_b slope pass. Re-registered by the author's ruling (IRD-0r: above 0.15 cycle and
   within max(0.05, the null's 99 % band)); PASSES in 44 of 44 cells; re-based onto `a02ccfb`; IRD-1 next.
+- [UOM](UOM_user_object_model_2026-10-13.md): open, 2026-10-13: pre-registered. Card NOM's standard on the user side (KalmanFilter, MeasurementModel, the slip layer, then StateManager and the PPP pipeline); 19 defects confirmed by reading; U0 (the gate) and U1a (the state families declared once) built, identical on 14 user arms and both goldens.
