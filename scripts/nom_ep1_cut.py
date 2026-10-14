@@ -17,8 +17,11 @@ Generation (--stage, --shared-only).  Every output file is the frozen file with 
 the transforms of specification 5.3 applied once (scripts/nom_ep1/gen.py and its gen_epoch,
 gen_seams and gen_setup modules); the generator never reads its own output, so a second run
 writes nothing (idempotence), and --check writes nothing and exits 1 when a file in the tree
-differs from what the generator would write.  Files are written under --root (default this
-working tree) with each file's own line ends kept.
+differs from what the generator would write (this stage's manifest included when the tree has
+it; an absent manifest is reported, not failed).  Files are written under --root (default this
+working tree) with each file's own line ends kept.  --rows takes comma-separated row names
+(app,solve,emit,diag) or `all`, in any order: the row files are taken in canonical order, so
+a union of merged workers' rows writes the same files and manifest name however it is typed.
   --stage ep1a1   step EP1a-1: the types (app/NetworkRun.hpp, app/NetworkEpoch.hpp,
                   filter/NetworkRunGroups.hpp: NetworkEngineSpec and the owning
                   NetworkRunEngines), the run's construction in runNetwork with the engines'
@@ -603,11 +606,29 @@ def compare_renames(total, items, path):
     return diffs
 
 
+def row_names(arg):
+    """The row modules --rows names, in the canonical order of ROW_MODULES (so a union of
+    merged workers' rows gives the same files and manifest name in whichever order it is
+    typed): comma-separated short names (app,solve,emit,diag), `rows_` names, or `all`;
+    every row file when --rows is not given."""
+    if not arg:
+        return ROW_MODULES
+    want = set()
+    for n in filter(None, (x.strip() for x in arg.split(","))):
+        if n == "all":
+            return ROW_MODULES
+        stem = n if n.startswith("rows_") else "rows_" + n
+        if stem not in ROW_MODULES:
+            raise SystemExit(f"nom_ep1_cut: unknown row file {n!r} (one of {', '.join(ROW_MODULES)}, or all)")
+        want.add(stem)
+    return tuple(m for m in ROW_MODULES if m in want)
+
+
 # ---------------------------------------------------------------------------------------------
 # Survey
 # ---------------------------------------------------------------------------------------------
 def survey(args):
-    names = ROW_MODULES if not args.rows else tuple(f"rows_{n}" for n in args.rows.split(","))
+    names = row_names(args.rows)
     rows = load_rows(names)
     fz = Frozen(args.base)
     drv, T = fz.drv, fz.drv.T
@@ -892,7 +913,7 @@ def generate(args):
     from nom_ep1 import gen as gen_mod, gen_epoch, gen_seams, gen_setup, textops
     root = pathlib.Path(args.root).resolve()
     stage = "ep1b" if args.shared_only else args.stage
-    names = ROW_MODULES if not args.rows else tuple(f"rows_{n}" for n in args.rows.split(","))
+    names = row_names(args.rows)
     rows = [] if stage == "ep1a1" else load_rows(names)
     fz = Frozen(args.base)
     print(f"NOM3 step EP1 generator at {args.base} ({fz.tree.sha[:10]}): stage {stage}"
@@ -980,11 +1001,18 @@ def generate(args):
     mtext = json.dumps(manifest, indent=1, ensure_ascii=False) + "\n"
     mold = textops.read_target(mpath.parent, mpath.name)
     meol = textops.detect_eol(mold) if mold else "\n"
-    mstatus = textops.write_target(mpath.parent, mpath.name, mtext, meol, check=args.check)
+    if args.check and mold is None:
+        # A tree that never ran this stage (a merged tree checked with --shared-only, an
+        # EP1a-1 tree checked for a worker's rows) has no manifest of it: nothing to compare,
+        # and nothing the verifier would pair.
+        mstatus = "absent"
+    else:
+        mstatus = textops.write_target(mpath.parent, mpath.name, mtext, meol, check=args.check)
     print(f"  {mstatus:9s} manifest {mpath}")
     fz.tree.close()
-    if args.check and (changed or mstatus != "unchanged"):
-        print(f"generator --check: {changed} file(s) differ from the generated text")
+    if args.check and (changed or mstatus == "differs"):
+        print(f"generator --check: {changed} file(s)"
+              + (" and the manifest" if mstatus == "differs" else "") + " differ from the generated text")
         return 1
     print(f"generator: {'checked' if args.check else 'done'} ({changed} file(s) "
           f"{'differ' if args.check else 'written'}, {len(outputs) - changed} unchanged)")
@@ -1012,7 +1040,7 @@ def main(argv=None):
     ap.add_argument("--allow-problems", action="store_true",
                     help="exit 0 although the generator reported a problem (a doc hunk not found)")
     ap.add_argument("--base", default=DEFAULT_BASE, help=f"frozen revision <B> (default {DEFAULT_BASE})")
-    ap.add_argument("--rows", help="comma-separated row files to load (app,solve,emit,diag; default all)")
+    ap.add_argument("--rows", help="comma-separated row files to load (app,solve,emit,diag, or all; default all)")
     ap.add_argument("--compact", action="store_true", help="print the bindings in the design's compact form")
     ap.add_argument("--write-compact", metavar="PATH", help="write the compact bindings table to PATH")
     ap.add_argument("--compare-compact", metavar="PATH", help="compare the bindings with a compact table")

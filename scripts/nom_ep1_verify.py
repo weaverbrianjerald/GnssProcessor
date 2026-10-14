@@ -26,10 +26,13 @@ vocabulary; a candidate path enters that vocabulary only through a declared subs
 (run.<member> through the NetworkRun construction or an OWNER_MOVE / FIELD_MOVE path;
 ep.<path> through an EPOCH_MEMBER / FIELD_MOVE / ACCESSOR path or the epoch's construction
 on `se`).  A copy of a const object (a const local, the knobs, a declared COPY_SOURCE field)
-counts as the object.  The generator's manifest (--manifest, or every
-scripts/nom_ep1/manifest_*.json of the tree) is read for pairing only: an entry
-{"name": <seam>, "def": "<path>:<line>"} under "seams" must name the definition the verifier
-found itself, else V8 fails; no binding is read from it.
+counts as the object.  The generator's manifest (--manifest, or each
+scripts/nom_ep1/manifest_*.json of the tree whose converted seams and pre-solve form are this
+run's; the manifests of other stages are listed in V8 and not paired) is read for pairing
+only: its base, its converted seams and the epoch function's lines must be what the verifier
+found, and each entry {"seam", "kind", "file", "frozen_line", "new_line"} under "seams" must
+name the declaration or definition the verifier found itself, else V8 fails; no binding is
+read from it.
 
 The candidate is one of two shapes, found from the tree itself:
   empty   Application::runNetwork still holds the lambda processSyncedEpoch and no
@@ -125,7 +128,11 @@ every check on it; a control fires when its named check fails (N8 V1a or V3c, N1
 V3e, N16 V4 or V6, N4 V3a or V10, N13 V2 or V8).  On an empty conversion N5, N6, N7, N8,
 N10, N11 and N12 run in their frozen-tree form (spec 7: "N5-N12 fire on synthetic mutations
 of <B>"); a control whose target does not exist in the candidate yet (an unconverted seam,
-no epoch function) is reported as pending, never as passed.
+no epoch function) is reported as pending, never as passed.  On an epoch tree the standalone
+lint (scripts/nom_epoch_lint.py, with --partial while rows remain unconverted and with this
+run's --presolve-writer) runs on the unmutated candidate, where it must pass, and on N7 and
+N16, which fire only when it also fails there.  --rows takes row names space- or
+comma-separated, or `all`.
 
 Not covered here (spec 5.8): run-time behaviour (default construction then assignment,
 construction and destruction order, code generation), which gate G-EP's arms cover; the
@@ -3177,12 +3184,41 @@ CONTROLS = (
     Control("N16", "V4", "ep.emitted stored before networkEmitStore", ctl_n16),
 )
 ALSO = {"N8": ("V3c",), "N10": ("V3e",), "N16": ("V6",), "N4": ("V10",), "N13": ("V8",)}
+# Controls the permanent lint (scripts/nom_epoch_lint.py, run standalone on the mutated tree)
+# must also fail (spec 5.7: N7 "V4 (and the lint)"; N16 is a driver write the lint's V4 owns).
+LINT_CONTROLS = ("N7", "N16")
+
+
+def _lint_rc(tree, partial, presolve_writer):
+    """The standalone lint's exit code on @p tree (its printed lines kept for the report)."""
+    lines = []
+    try:
+        rc = lint.run(tree, out=lines.append, partial=partial, presolve_writer=presolve_writer)
+    except Exception as ex:  # noqa: BLE001
+        lines.append(f"lint raised {type(ex).__name__}: {ex}")
+        rc = 3
+    return rc, lines
 
 
 def run_controls(fz, tree, rows, converted, args, out):
     base = Verifier(fz, tree, rows, converted, args.presolve_writer)
     base.frozen_rows()
     results = []
+    # The lint on the unmutated candidate: it must pass before its failure on a control means
+    # anything.  A tree part way through the conversion runs it with --partial, the card's
+    # pre-solve form with --presolve-writer epoch (its V11 n/a).
+    partial = len(base.converted) < len([r for r in rows if not isinstance(r.mech, Explicit)])
+    lint_ok = None
+    if base.epoch:
+        rc, lines = _lint_rc(tree, partial, args.presolve_writer)
+        lint_ok = rc == 0
+        out(f"  lint on the candidate{' (--partial)' if partial else ''}: "
+            f"{'PASS' if lint_ok else 'FAIL (rc %d)' % rc}")
+        if not lint_ok:
+            for ln in lines[1:]:
+                out("    " + ln)
+    else:
+        out("  lint on the candidate: n/a (no epoch function)")
     for ctl in CONTROLS:
         try:
             ov, what = ctl.build(base)
@@ -3202,6 +3238,13 @@ def run_controls(fz, tree, rows, converted, args, out):
             failed, res = ["(the mutated tree could not be read: %s)" % ex], None
         names = (ctl.check,) + ALSO.get(ctl.cid, ())
         fired = any(n in failed for n in names)
+        lint_note = ""
+        if ctl.cid in LINT_CONTROLS and lint_ok is not None:
+            lrc, llines = _lint_rc(mtree, partial, args.presolve_writer)
+            lint_fired = lint_ok and lrc == 1
+            fired = fired and lint_fired
+            lint_note = "; lint " + ("fails" if lint_fired else
+                                     f"DOES NOT FAIL (rc {lrc}{', and fails unmutated' if not lint_ok else ''})")
         results.append((ctl, "fires" if fired else "DOES NOT FIRE", what, failed))
         first = ""
         if res is not None:
@@ -3210,7 +3253,7 @@ def run_controls(fz, tree, rows, converted, args, out):
                     first = res.problems[n][0]
                     break
         out(f"  {ctl.cid:4s} {ctl.check:4s} {'fires    ' if fired else 'NOT FIRED'} {what}; failing: "
-            f"{', '.join(failed) or 'none'} ({time.time() - t0:.0f} s)")
+            f"{', '.join(failed) or 'none'}{lint_note} ({time.time() - t0:.0f} s)")
         if first:
             out(f"       {first[:160]}")
     return results
@@ -3220,9 +3263,12 @@ def run_controls(fz, tree, rows, converted, args, out):
 # Main
 # ---------------------------------------------------------------------------------------------
 def pick_rows(names):
+    """The row modules named by --rows: space- or comma-separated (`app solve` or
+    `app,solve`, the generator's form), `all` for every row file."""
+    names = [n for x in (names or []) for n in x.split(",") if n]
     if not names:
         return []
-    if names == ["all"]:
+    if "all" in names:
         return list(ROW_MODULES)
     out = []
     for n in names:
@@ -3298,6 +3344,27 @@ def check_manifest(v, path):
     R.note("V8", f"manifest {name_}: {n} seam entries paired")
 
 
+def this_stage_manifests(v, args):
+    """The tree's manifests (scripts/nom_ep1/manifest_*.json) written for the stage being
+    verified: those whose converted seams equal --rows / --seams and whose pre-solve form is
+    --presolve-writer.  A tree keeps the manifests of earlier stages (step EP1a-1's beside a
+    worker's), which describe other conversions; they are listed in V8 and not paired."""
+    out = []
+    for p in sorted((pathlib.Path(args.tree) / "scripts" / "nom_ep1").glob("manifest_*.json")):
+        try:
+            m = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            out.append(str(p))           # unreadable: check_manifest reports it
+            continue
+        if not isinstance(m, dict) or (set(m.get("converted") or []) == v.converted
+                                       and m.get("presolve_writer", "outputs") == args.presolve_writer):
+            out.append(str(p))
+        else:
+            v.R.note("V8", f"manifest {p.name}: another stage's ({len(m.get('converted') or [])} seams, "
+                           f"{m.get('presolve_writer', 'outputs')}), not paired")
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--tree", required=True, help="the candidate source tree (a directory)")
@@ -3331,8 +3398,7 @@ def main(argv=None):
           + f"; converted rows: {', '.join(pick_rows(args.rows)) or 'none'}"
           + (f" + seams {args.seams}" if args.seams else "") + f" ({len(converted)} seams)")
     res = v.run(only)
-    mpaths = [args.manifest] if args.manifest else sorted(
-        str(p) for p in (pathlib.Path(args.tree) / "scripts" / "nom_ep1").glob("manifest_*.json"))
+    mpaths = [args.manifest] if args.manifest else this_stage_manifests(v, args)
     for mp in mpaths:
         check_manifest(v, mp)
         res.done("V8")

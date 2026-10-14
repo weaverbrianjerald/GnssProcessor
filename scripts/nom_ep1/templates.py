@@ -144,7 +144,8 @@ NETWORK_EPOCH_HPP = """#pragma once
  *                                                                (inline until EP2: shared_phase_keys), networkPassB_ (modeled, present)
  *   columns       EpochColumns         networkAssemblyRegisterColumns_   that seam only
  *   assembly      EpochAssembly        networkPassB_             networkPassB_; est_index_of also networkSolveGlue (each T2 replay rebuilds it)
- *   dd_build      EpochDdBuild         the DD build              networkBuildCarryDdPriors (the driver's primary call and each replay's)
+ *   dd_build      EpochDdBuild         the DD build              networkBuildCarryDdPriors (the driver's primary call), networkSolveGlue
+ *                                                                (each replay's DD rebuild)
  *   ws            EpochWorkspace       construction (empty)      networkSolveGlue (the primary DD build reads it empty, card WCF)
  *   solve         NetworkSolveGlueResult  the solve              the driver stores the solve's return; solve.handoff also networkPostFitRaim, networkClockQc
  *   ar_fixes      ArEpochFixes         the producer AR           the driver stores networkProducerAr's return

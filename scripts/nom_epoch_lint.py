@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Permanent lint of the network producer's epoch function (card NOM3 step EP1, checks V4, V10, V11).
 
-    python scripts/nom_epoch_lint.py [--tree DIR]
+    python scripts/nom_epoch_lint.py [--tree DIR] [--partial] [--presolve-writer {outputs,epoch}]
 
 Run it with PYTHONIOENCODING=utf-8 on a cp1252 console, before committing a change to a per-epoch seam signature or to
 src/core/app/ApplicationNetworkEpoch.cpp (the seam contract in CLAUDE.md).  It reads the
@@ -37,8 +37,13 @@ What it proves (spec sections 2.3, 3.1 and 5.5 of the EP1 specification):
       whose return the driver stores into the group (`ep.<group> = networkX(...)`) equal the
       cell's "stores networkX's return" phrases ("the solve's return" names networkSolveGlue,
       "that seam" the seam of the "available from" cell).  A banner writer with no epoch
-      form fails here; the relocation verifier, which runs this check on a tree part way
-      through the conversion, skips such writers instead.
+      form fails here; with --partial (a tree part way through the conversion: step
+      EP1a-1, a worker's branch of step EP1b, the merges before the last), and in the
+      relocation verifier's runs on such a tree, such writers are skipped instead.  Once
+      the last worker's rows are merged the lint runs without --partial.  On the card's
+      pre-solve form (--presolve-writer epoch, as in the generator and the verifier: the
+      writers before the solve take `NetworkEpoch& ep`) a spine line names no group, so V11
+      is reported n/a; in the default form a seam that takes `NetworkEpoch&` fails V11.
 
 A converted seam is recognized by its definition: its first parameter is `NetworkRun&` and
 its second `const NetworkEpoch&` (the parameter names may be the fallback names nrun / nep).
@@ -829,8 +834,15 @@ class Lint:
                                 + (f"; {len(skipped)} banner writers not converted yet" if skipped else ""))
 
 
-def run(tree, out=print):
-    out(f"nom_epoch_lint: {tree.rev}")
+def run(tree, out=print, partial=False, presolve_writer="outputs"):
+    """The three checks on @p tree; 0 pass, 1 a check fails, 2 no epoch function or type.
+    @p partial: the tree is part way through the conversion (steps EP1a-1 and EP1b before
+    the last merge), so a banner writer with no epoch form yet is skipped in V11.
+    @p presolve_writer: "epoch" for the card's pre-solve form (the writers before the solve
+    take `NetworkEpoch& ep`), where V11 is n/a; in the default form a seam taking
+    `NetworkEpoch&` fails V11."""
+    out(f"nom_epoch_lint: {tree.rev}" + (" (partial conversion)" if partial else "")
+        + (" (the card's pre-solve form)" if presolve_writer == "epoch" else ""))
     lint = Lint(tree)
     if lint.fn is None:
         out(f"nom_epoch_lint: Application::{EPOCH_FN} is not defined in {tree.rev}")
@@ -840,12 +852,27 @@ def run(tree, out=print):
         return 2
     lint.v4()
     lint.v10()
-    lint.v11()
+    card = presolve_writer == "epoch"
+    if card:
+        # The card's pre-solve form: a pre-solve writer takes the whole epoch, so its spine
+        # line names no group the banner could be checked against (the relocation verifier
+        # reports V11 as n/a for the same reason).
+        n = len({sc.callee for sc in lint.spine if sc.defn is not None and is_card_form(sc.defn)})
+        lint.info["V11"].append(f"the card's pre-solve form ({n} writers take NetworkEpoch&), "
+                                "no group outputs on the spine")
+    else:
+        lint.v11(partial=partial)
+        for callee in sorted({sc.callee for sc in lint.spine
+                              if sc.defn is not None and is_card_form(sc.defn)}):
+            lint.problems["V11"].append(
+                f"{callee} takes NetworkEpoch& (the card's pre-solve form); in this form a writer "
+                "names its groups as output parameters (--presolve-writer epoch lints the card's form)")
     bad = 0
     for chk in ("V4", "V10", "V11"):
         probs = lint.problems[chk]
         bad += len(probs)
-        out(f"  [{'pass' if not probs else 'FAIL'}] {chk}: " + "; ".join(lint.info[chk]))
+        st = "n/a" if chk == "V11" and card else ("pass" if not probs else "FAIL")
+        out(f"  [{st}] {chk}: " + "; ".join(lint.info[chk]))
         for p in probs:
             out("      " + p)
     out(f"nom_epoch_lint: {'PASS' if not bad else f'FAIL ({bad})'}")
@@ -855,8 +882,14 @@ def run(tree, out=print):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--tree", default=str(ROOT), help="the source tree to lint (default: this repository)")
+    ap.add_argument("--partial", action="store_true",
+                    help="the conversion is not finished (steps EP1a-1 and EP1b before the last merge): "
+                         "V11 skips banner writers that have no epoch form yet")
+    ap.add_argument("--presolve-writer", choices=("outputs", "epoch"), default="outputs",
+                    help="the tree's pre-solve form: named group outputs (default) or the card's "
+                         "NetworkEpoch& (V11 n/a)")
     args = ap.parse_args(argv)
-    return run(DiskTree(args.tree))
+    return run(DiskTree(args.tree), partial=args.partial, presolve_writer=args.presolve_writer)
 
 
 if __name__ == "__main__":
