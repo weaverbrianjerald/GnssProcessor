@@ -71,11 +71,25 @@ def N(text):
 # Manifest
 # ------------------------------------------------------------------------------------------
 
+U6B_DEAD = "U6b: no caller in src or tests"
+U6B_ZERO = "U6b: sat_bias_term was the constant 0.0; x - 0.0 == x for every double"
+U6B_PRIV = "U6b: called only inside the class, declared again in the private section"
+
 # Frozen StateManager.cpp line -> [(from, to)] (plain text replace), applied before the shift.
-SUBS = {}
+SUBS = {
+    1355: [(" - iono_term - sat_bias_term;", " - iono_term;")],     # U6b
+}
 
 # Frozen StateManager.cpp lines dropped, with the reason.
-DROPS = {}
+DROPS = {
+    1353: U6B_ZERO,
+}
+
+# Frozen StateManager.cpp line ranges dropped whole (their code lines join DROPS).
+DROP_RANGES = [
+    (2118, 2168, U6B_DEAD + " (resetSatPhaseBiasState)"),
+    (2413, 2462, U6B_DEAD + " (resetSatClockState)"),
+]
 
 UNITS = [
     dict(name="StateManager.cpp (carried whole)", file=SM, pieces=[F(11, 2745)]),
@@ -83,7 +97,20 @@ UNITS = [
 
 # Frozen header lines: substitutions and drops, per header.
 HSUBS = {HPP: {}, FAM: {}, SCH: {}}
-HDROPS = {HPP: {}, FAM: {}, SCH: {}}
+HDROPS = {
+    HPP: {
+        451: U6B_PRIV + " (reinflationName)",
+        1114: U6B_PRIV + " (evictExpiredSatBiasCache)",
+        **{n: U6B_DEAD + " (getSatBiasCache)" for n in (1120, 1121, 1122)},
+        **{n: U6B_PRIV + " (addSatPhaseBiasStateWithVariance)" for n in (1152, 1153, 1154)},
+        **{n: U6B_DEAD + " (resetSatPhaseBiasState)" for n in (1159, 1160, 1161)},
+        **{n: U6B_PRIV + " (addSatClockStateWithVariance)" for n in (1276, 1277, 1278)},
+        **{n: U6B_DEAD + " (resetSatClockState)" for n in (1283, 1284, 1285)},
+        1593: U6B_DEAD + " (meas_var_scale_: no member function reads or writes it)",
+    },
+    FAM: {},
+    SCH: {},
+}
 
 
 # ------------------------------------------------------------------------------------------
@@ -182,6 +209,10 @@ def run_checks(texts, frozen_text, frozen_headers, verbose=False, quiet=False):
     """All checks over `texts` (new path -> text).  Returns the number of failed checks."""
     out = (lambda *a: None) if quiet else print
     FC = Frozen(frozen_text, SUBS)
+    for a, b, why in DROP_RANGES:
+        for i in range(a, b + 1):
+            if FC.plain[i].strip():
+                DROPS.setdefault(i, why)
     claims = {}
     lines_of = {p: code_lines(t) for p, t in texts.items()}
     claimed_new = {p: set() for p in texts}

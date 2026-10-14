@@ -458,12 +458,6 @@ namespace GnssProcessor {
         /// @return The counters, indexed by @ref Reinflation.
         const ReinflateCounters& reinflateCounters() const { return reinflate_counters_; }
 
-        /// The stable short name of a re-inflation in the run-end lines ("code_bias", "isb",
-        /// "iono", "iono_rate", "sat_bias", "sat_phase_bias", "sat_clock"; card OWD, O2).
-        /// @param r The re-inflation.
-        /// @return Its name.
-        static const char* reinflationName(Reinflation r);
-
         /**
          * @brief Format re-inflation counters as the run-end summary (card OWD, O2).
          *
@@ -1119,25 +1113,6 @@ namespace GnssProcessor {
          */
         void consumeSatBiasCacheEntry(const std::string& key);
 
-        /**
-         * @brief Drop cache entries older than @c sat_bias_cache.max_age_s
-         *        relative to @c now.
-         *
-         * Idempotent; called opportunistically (e.g. on each prune) so the cache
-         * does not accumulate entries for a satellite/signal that never reacquires.
-         *
-         * @param now Current epoch time.
-         */
-        void evictExpiredSatBiasCache(const GnssTime& now);
-
-        /**
-         * @brief Read-only access to the sat-bias cache (for diagnostics).
-         * @return Map from key to cached entry.
-         */
-        const std::map<std::string, SatBiasCacheEntry>& getSatBiasCache() const {
-            return sat_bias_cache_;
-        }
-
         // -------------------------------------------------------------------
         // Satellite phase-bias states (PPP_RTK_Network producer).
         //
@@ -1162,20 +1137,6 @@ namespace GnssProcessor {
         ///        (@c initial_std.sat_phase_bias²).  Idempotent if the key
         ///        already exists.  Returns the state index.
         size_t addSatPhaseBiasState(const std::string& key, double initial_value);
-
-        /// @brief Append a satellite phase-bias state with an explicit variance
-        ///        (e.g. a warm restart).  Non-positive variance falls back to
-        ///        @c initial_std.sat_phase_bias².
-        size_t addSatPhaseBiasStateWithVariance(const std::string& key,
-                                                double initial_value,
-                                                double initial_variance);
-
-        /// @brief Reset a satellite phase-bias state (decorrelate row/col, seed a
-        ///        fresh value+variance).  Refuses to disturb a frozen-pivot row
-        ///        (diag == 0), preserving the S-basis datum.
-        void resetSatPhaseBiasState(const std::string& key,
-                                    double new_value,
-                                    double new_variance);
 
         /// @brief Re-inflate the variances of all phase-bias states for a
         ///        satellite (value preserved, since the phase hardware delay is
@@ -1286,20 +1247,6 @@ namespace GnssProcessor {
         ///        (@c initial_std.sat_clock²).  Idempotent if the key already
         ///        exists.  Returns the state index.
         size_t addSatClockState(const std::string& key, double initial_value);
-
-        /// @brief Append a satellite clock state with an explicit variance
-        ///        (e.g. a warm restart / carried-forward prior).  Non-positive
-        ///        variance falls back to @c initial_std.sat_clock².
-        size_t addSatClockStateWithVariance(const std::string& key,
-                                            double initial_value,
-                                            double initial_variance);
-
-        /// @brief Reset a satellite clock state (decorrelate row/col, seed a
-        ///        fresh value+variance).  Refuses to disturb a frozen-pivot row
-        ///        (diag == 0), preserving the S-basis datum.
-        void resetSatClockState(const std::string& key,
-                                double new_value,
-                                double new_variance);
 
         /// @brief Re-inflate the variance of a satellite's clock state, skipping
         ///        a frozen-pivot row.  Value is preserved.  The diagonal is raised to
@@ -1607,7 +1554,6 @@ namespace GnssProcessor {
         LogManager& log_manager_;                   //!< Reference to logging manager.
         const GnssConfig& config_;                  //!< Read-only configuration reference.
         bool is_baseline_{ false };                 //!< True when configured for baseline (DD) mode: no clock/tropo/iono/system-offset states.
-        std::map<std::string, double> meas_var_scale_; //!< Unused: no member function reads or writes it.
         std::map<std::string, int> last_ssr_discontinuity_; //!< Last-seen SSR phase-bias discontinuity counter per "sat|signal" key.
         ReinflateCounters reinflate_counters_{};    //!< Raised / kept counts per re-inflation (card OWD, O2).
 
@@ -1628,6 +1574,59 @@ namespace GnssProcessor {
          */
         double reinflateDiag_(Eigen::Index idx, double current_diag, double requested,
                               Reinflation kind);
+
+        /// The stable short name of a re-inflation in the run-end lines ("code_bias", "isb",
+        /// "iono", "iono_rate", "sat_bias", "sat_phase_bias", "sat_clock"; card OWD, O2).
+        /// @param r The re-inflation.
+        /// @return Its name.
+        static const char* reinflationName(Reinflation r);
+
+        // -------------------------------------------------------------------
+        // Internal add and cache helpers (called only by this class)
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Append a satellite phase-bias state with an explicit variance.
+         *
+         * The body of @ref addSatPhaseBiasState, which passes the cold-start
+         * variance.  Idempotent if the key already exists.
+         *
+         * @param key              Key "satellite|signal|PB".
+         * @param initial_value    Initial value (m).
+         * @param initial_variance Initial diagonal (m²); a non-positive value falls
+         *                         back to @c initial_std.sat_phase_bias².
+         * @return The state index.
+         */
+        size_t addSatPhaseBiasStateWithVariance(const std::string& key,
+                                                double initial_value,
+                                                double initial_variance);
+
+        /**
+         * @brief Append a satellite clock state with an explicit variance.
+         *
+         * The body of @ref addSatClockState, which passes the cold-start variance.
+         * Idempotent if the key already exists.
+         *
+         * @param key              Key "satellite|SC".
+         * @param initial_value    Initial value (m).
+         * @param initial_variance Initial diagonal (m²); a non-positive value falls
+         *                         back to @c initial_std.sat_clock².
+         * @return The state index.
+         */
+        size_t addSatClockStateWithVariance(const std::string& key,
+                                            double initial_value,
+                                            double initial_variance);
+
+        /**
+         * @brief Drop cache entries older than @c sat_bias_cache.max_age_s
+         *        relative to @c now.
+         *
+         * Idempotent; called on each sat-bias prune so the cache does not
+         * accumulate entries for a satellite/signal that never reacquires.
+         *
+         * @param now Current epoch time.
+         */
+        void evictExpiredSatBiasCache(const GnssTime& now);
 
         // -------------------------------------------------------------------
         // Internal state vector / covariance manipulation helpers

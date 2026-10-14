@@ -1360,12 +1360,9 @@ namespace GnssProcessor {
                 }
             }
 
-            // Per-satellite signal bias: estimated for code only.  Phase
-            // ambiguities absorb the satellite phase biases, so no sat-bias
-            // state exists for L signals and the term is zero.
-            double sat_bias_term = 0.0;
-
-            return observed_m - modeled_m - clk_term - tropo_wet - isb - tropo_grad - iono_term - sat_bias_term;
+            // No satellite signal-bias term: the bias is estimated for code only,
+            // and phase ambiguities absorb the satellite phase biases.
+            return observed_m - modeled_m - clk_term - tropo_wet - isb - tropo_grad - iono_term;
         } catch (...) {
             return 0.0;
         }
@@ -2128,58 +2125,6 @@ namespace GnssProcessor {
         return index;
     }
 
-    void StateManager::resetSatPhaseBiasState(const std::string& key,
-                                              double new_value,
-                                              double new_variance) {
-        auto logger = log_manager_.getLogger("state_manager");
-
-        const auto it = sat_phase_bias_indices_.find(key);
-        if (it == sat_phase_bias_indices_.end()) {
-            logger->debug("resetSatPhaseBiasState: unknown key {}", key);
-            return;
-        }
-        const auto idx = static_cast<Eigen::Index>(it->second);
-        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
-            logger->error("resetSatPhaseBiasState index out of bounds for key {}: idx={}, state_size={}, cov={}x{}",
-                key, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
-            return;
-        }
-
-        // A frozen-pivot row (held at value=0, variance=0 by the S-basis datum)
-        // is left alone: re-inflating it would let the datum drift on the next
-        // update and break the frame for the constellation/band group.
-        const double current_diag = covariance_(idx, idx);
-        if (!(current_diag > 0.0)) {
-            logger->warn("resetSatPhaseBiasState refused on frozen pivot row {} "
-                          "(idx={}, P_diag={:.3e}); S-basis datum preserved",
-                          key, idx, current_diag);
-            return;
-        }
-
-        if (!(new_variance > 0.0)) {
-            const double spb_std = config_.getInitialStd().sat_phase_bias;
-            logger->warn("resetSatPhaseBiasState: non-positive variance {} for {}; "
-                          "falling back to initial_std.sat_phase_bias^2 = {}",
-                          new_variance, key, spb_std * spb_std);
-            new_variance = spb_std * spb_std;
-        }
-
-        const double prev_value = state_vector_(idx);
-        const double prev_diag  = current_diag;
-
-        covariance_.row(idx).setZero();
-        covariance_.col(idx).setZero();
-        covariance_(idx, idx) = new_variance;
-        state_vector_(idx)    = new_value;
-
-        logger->info("Reset sat phase-bias state {} at index {}: "
-                      "value {:+.4f} -> {:+.4f} m, std {:.4f} -> {:.4f} m",
-                      key, idx,
-                      prev_value, new_value,
-                      std::sqrt(std::max(prev_diag, 0.0)),
-                      std::sqrt(new_variance));
-    }
-
     void StateManager::reinflateSatPhaseBiasVariancesForSat(const std::string& satellite,
                                                             double new_variance) {
         auto logger = log_manager_.getLogger("state_manager");
@@ -2421,57 +2366,6 @@ namespace GnssProcessor {
         logger->info("Added sat clock state for {} at index {}, initial={:.3f} m, std={:.3f} m",
             key, index, initial_value, std::sqrt(initial_variance));
         return index;
-    }
-
-    void StateManager::resetSatClockState(const std::string& key,
-                                          double new_value,
-                                          double new_variance) {
-        auto logger = log_manager_.getLogger("state_manager");
-
-        const auto it = sat_clock_indices_.find(key);
-        if (it == sat_clock_indices_.end()) {
-            logger->debug("resetSatClockState: unknown key {}", key);
-            return;
-        }
-        const auto idx = static_cast<Eigen::Index>(it->second);
-        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
-            logger->error("resetSatClockState index out of bounds for key {}: idx={}, state_size={}, cov={}x{}",
-                key, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
-            return;
-        }
-
-        // A frozen-pivot row (held at value=0, variance=0 by the S-basis datum)
-        // is left alone: re-inflating it would let the datum drift.
-        const double current_diag = covariance_(idx, idx);
-        if (!(current_diag > 0.0)) {
-            logger->warn("resetSatClockState refused on frozen pivot row {} "
-                          "(idx={}, P_diag={:.3e}); S-basis datum preserved",
-                          key, idx, current_diag);
-            return;
-        }
-
-        if (!(new_variance > 0.0)) {
-            const double sc_std = config_.getInitialStd().sat_clock;
-            logger->warn("resetSatClockState: non-positive variance {} for {}; "
-                          "falling back to initial_std.sat_clock^2 = {}",
-                          new_variance, key, sc_std * sc_std);
-            new_variance = sc_std * sc_std;
-        }
-
-        const double prev_value = state_vector_(idx);
-        const double prev_diag  = current_diag;
-
-        covariance_.row(idx).setZero();
-        covariance_.col(idx).setZero();
-        covariance_(idx, idx) = new_variance;
-        state_vector_(idx)    = new_value;
-
-        logger->info("Reset sat clock state {} at index {}: "
-                      "value {:+.4f} -> {:+.4f} m, std {:.4f} -> {:.4f} m",
-                      key, idx,
-                      prev_value, new_value,
-                      std::sqrt(std::max(prev_diag, 0.0)),
-                      std::sqrt(new_variance));
     }
 
     void StateManager::reinflateSatClockVarianceForSat(const std::string& satellite,
