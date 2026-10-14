@@ -37,13 +37,12 @@ namespace GnssProcessor {
 
     bool ifCombHasFullBia(const RowProducts& products, const std::string& satellite,
                           const std::string& if_key) {
-        const size_t us = if_key.find('_');
-        if (us == std::string::npos || us == 0 || us + 1 >= if_key.size())
-            return true; // not an IF key: treated as covered
-        const std::string sig1 = if_key.substr(0, us);
-        const std::string sig2 = if_key.substr(us + 1);
-        return products.ppp_model.hasBiasEntry(satellite, sig1)
-            && products.ppp_model.hasBiasEntry(satellite, sig2);
+        // The members are read as text (the .BIA lookup key), so the label is split,
+        // not parsed into signals.
+        const auto pair = IonoFreePairLabel::parse(if_key);
+        if (!pair) return true; // not an IF key: treated as covered
+        return products.ppp_model.hasBiasEntry(satellite, pair->first)
+            && products.ppp_model.hasBiasEntry(satellite, pair->second);
     }
 
     bool ssrCoversCodeSignal(const RowProducts& products, const std::string& satellite,
@@ -105,8 +104,9 @@ namespace GnssProcessor {
     bool phaseBiasCoveredForAr(const RowProducts& products, const std::string& satellite,
                                const std::string& signal, const GnssTime& obs_time) {
         const GnssConfig& config = products.config;
-        const size_t us = signal.find('_');
-        const bool is_if = (us != std::string::npos && us > 0 && us + 1 < signal.size());
+        // An IF label's members are read as text (the store and .BIA lookup keys).
+        const auto if_pair = IonoFreePairLabel::parse(signal);
+        const bool is_if = if_pair.has_value();
         // Veto AR eligibility when the covering network phase bias declares
         // signal_integer=false (a product of the retired anchor-free ensemble datum carries
         // non-integer biases).
@@ -123,7 +123,7 @@ namespace GnssProcessor {
                 return pb.has_value() && !pb->signal_integer;
             };
             if (is_if) {
-                if (nonInteger(signal.substr(0, us)) || nonInteger(signal.substr(us + 1)))
+                if (nonInteger(if_pair->first) || nonInteger(if_pair->second))
                     return false;
             } else if (nonInteger(signal)) {
                 return false;
@@ -135,8 +135,8 @@ namespace GnssProcessor {
                          : products.ppp_model.hasBiasEntry(satellite, signal);
         }
         if (is_if) {
-            const std::string sig1 = signal.substr(0, us);
-            const std::string sig2 = signal.substr(us + 1);
+            const std::string& sig1 = if_pair->first;
+            const std::string& sig2 = if_pair->second;
             return (biaCoversSignal(products, satellite, sig1)
                     && biaCoversSignal(products, satellite, sig2))
                 || (ssrCoversPhaseSignal(products, satellite, sig1, obs_time)
@@ -148,13 +148,10 @@ namespace GnssProcessor {
 
     bool ifCombHasFullRxAtx(const RowProducts& products, const std::string& if_key,
                             System system) {
-        const size_t us = if_key.find('_');
-        if (us == std::string::npos || us == 0 || us + 1 >= if_key.size())
-            return true;
-        const std::string sig1 = if_key.substr(0, us);
-        const std::string sig2 = if_key.substr(us + 1);
-        return products.ppp_model.hasReceiverAtxEntry(sig1, system)
-            && products.ppp_model.hasReceiverAtxEntry(sig2, system);
+        const auto pair = IonoFreePairLabel::parse(if_key);  // members as text (ATX lookup)
+        if (!pair) return true;
+        return products.ppp_model.hasReceiverAtxEntry(pair->first, system)
+            && products.ppp_model.hasReceiverAtxEntry(pair->second, system);
     }
 
     // ===================================================================
@@ -182,8 +179,10 @@ namespace GnssProcessor {
         // optimization.  Doppler is included: under BSSD it is SD-transformed
         // alongside code/phase, which cancels the receiver clock rate and the
         // ISBR in same-system pairs.
+        const ObsType obs_type = obsTypeOf(ref_type);
         if (!pivot_signals.empty() && ref_type.size() >= 2
-            && (ref_type[0] == 'C' || ref_type[0] == 'L' || ref_type[0] == 'D')) {
+            && (obs_type == ObsType::Code || obs_type == ObsType::Phase
+                || obs_type == ObsType::Doppler)) {
             const std::string cons = systemName(systemOfSat(obs.satellite));
             auto cit = pivot_signals.find(cons);
             if (cit != pivot_signals.end()
@@ -197,7 +196,7 @@ namespace GnssProcessor {
             return false;
 
         const bool is_uncombined = config.isUncombinedEnabled();
-        const bool has_underscore = (ref_type.find('_') != std::string::npos);
+        const bool has_underscore = isIonoFreePairLabel(ref_type);
 
         if (mt == MeasurementType::Doppler) {
             if (has_underscore) return false;

@@ -342,7 +342,7 @@ namespace GnssProcessor {
             // single-frequency fallback path at the end.
             std::vector<std::pair<std::string, double>> code_obs;
             for (const auto& [key, val] : obs.measurements)
-                if (!key.empty() && key[0] == 'C' && std::isfinite(val) && val > 1e6)
+                if (obsTypeOf(key) == ObsType::Code && std::isfinite(val) && val > 1e6)
                     code_obs.emplace_back(key, val);
 
             if (code_obs.empty()) {
@@ -478,7 +478,7 @@ namespace GnssProcessor {
                     std::string sig1, sig2;
                     char band1 = '\0';
                     for (const auto& sig : prio_it->second) {
-                        if (sig.empty() || sig[0] != 'C') continue;
+                        if (obsTypeOf(sig) != ObsType::Code) continue;
                         if (obs.measurements.count(sig) == 0) continue;
                         if (!corrections_.hasBiasEntry(obs.satellite, sig)) continue;
                         const double v = obs.measurements.at(sig);
@@ -521,7 +521,7 @@ namespace GnssProcessor {
                     std::string sig1, sig2;
                     char band1 = '\0';
                     for (const auto& sig : prio_it->second) {
-                        if (sig.empty() || sig[0] != 'C') continue;
+                        if (obsTypeOf(sig) != ObsType::Code) continue;
                         if (obs.measurements.count(sig) == 0) continue;
                         const double v = obs.measurements.at(sig);
                         if (!std::isfinite(v) || v < 1e6) continue;

@@ -44,7 +44,7 @@ double computeMedian(std::vector<double>& values) {
 /// Whether a signal is a row of the configured combination: a raw signal in uncombined mode,
 /// an iono-free pair otherwise.
 bool isRowOfMode(const GnssConfig& config, const std::string& ref_type) {
-    const bool is_pair = ref_type.find('_') != std::string::npos;
+    const bool is_pair = isIonoFreePairLabel(ref_type);
     return config.isUncombinedEnabled() != is_pair;
 }
 

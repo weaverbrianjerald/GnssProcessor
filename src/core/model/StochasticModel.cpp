@@ -49,8 +49,8 @@ namespace GnssProcessor {
 
         if (obs_type.empty()) return default_var;
 
-        const char mt = obs_type[0];
-        const bool is_code_or_phase = (mt == 'C' || mt == 'L');
+        const ObsType mt = obsTypeOf(obs_type);
+        const bool is_code_or_phase = (mt == ObsType::Code || mt == ObsType::Phase);
 
         switch (model_type_) {
         case StochasticModelType::Constant:
@@ -85,13 +85,13 @@ namespace GnssProcessor {
             return computeVariance(obs_type, measurements, elevation_deg, default_var);
         }
 
-        const char mt = obs_type[0];
-        if (mt == 'C') {
+        const ObsType mt = obsTypeOf(obs_type);
+        if (mt == ObsType::Code) {
             // Code always takes the full block + band + tracking-attribute
             // + elevation pipeline.
             return computeSatBlock(obs_type, elevation_deg, default_var, satellite, antennas);
         }
-        if (mt == 'L') {
+        if (mt == ObsType::Phase) {
             // Phase takes the full pipeline when @c apply_to_phase is on
             // (default), and otherwise the flat default_phase_std_m ×
             // elevation path.  PLL noise alone is below the observed
@@ -130,7 +130,7 @@ namespace GnssProcessor {
         // phase power, all others the code power (an empty obs_type, from
         // fallback paths, included).  Both default to 1.0, which gives
         // csc²(θ) on variance; a phase power of 0.5 gives the gentler csc(θ).
-        const double power = (!obs_type.empty() && obs_type[0] == 'L')
+        const double power = (obsTypeOf(obs_type) == ObsType::Phase)
             ? phase_elevation_power_
             : code_elevation_power_;
         return default_var * std::pow(sin_el, -2.0 * power);
@@ -171,7 +171,7 @@ namespace GnssProcessor {
         // and the SNR-dependent term b).  The σ-additive form
         // σ = a + b·10^(-CN0/10) would add an unphysical 2ab cross-term
         // on squaring.
-        const bool is_code = (obs_type[0] == 'C');
+        const bool is_code = (obsTypeOf(obs_type) == ObsType::Code);
         const double a = is_code ? snr_params_.code_a : snr_params_.phase_a;
         const double b = is_code ? snr_params_.code_b : snr_params_.phase_b;
         const double cn0_factor = std::pow(10.0, -snr_dbhz / 10.0);
@@ -246,7 +246,7 @@ namespace GnssProcessor {
         for (auto& ch : atx_upper) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
 
         // --- Look up zenith noise by block type ---
-        const bool is_code = (obs_type[0] == 'C');
+        const bool is_code = (obsTypeOf(obs_type) == ObsType::Code);
         const auto& block_table = is_code
             ? sat_block_params_.block_code_std_m
             : sat_block_params_.block_phase_std_m;

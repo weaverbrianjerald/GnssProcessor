@@ -343,7 +343,7 @@ namespace GnssProcessor {
             // SNR averaging: any 'S*' RINEX code on the rover side.
             double snr_sum = 0.0; size_t snr_cnt = 0;
             for (const auto& [code, val] : rov_ptr->observed) {
-                if (!code.empty() && code[0] == 'S') { snr_sum += val; ++snr_cnt; }
+                if (obsTypeOf(code) == ObsType::Snr) { snr_sum += val; ++snr_cnt; }
             }
             info.num_sigs = info.brsd_signals.size();
             info.avg_snr  = (snr_cnt > 0) ? (snr_sum / snr_cnt) : 0.0;

@@ -12,6 +12,7 @@
 #include "measurement/ObservationEquation.hpp"
 
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/GnssTypes.hpp"
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
@@ -397,7 +398,7 @@ ObservationEquation observationEquation(const ObsInput& in, const PppObservation
     Row r{in, in.products.config, obs, ref_type, params, eq,
           /*is_phase=*/type == MeasurementType::Phase,
           /*is_uncombined=*/in.products.config.isUncombinedEnabled(),
-          /*is_pair=*/ref_type.find('_') != std::string::npos,
+          /*is_pair=*/isIonoFreePairLabel(ref_type),
           canonicalSat(obs.satellite),
           effects};
     if (type == MeasurementType::Doppler) {

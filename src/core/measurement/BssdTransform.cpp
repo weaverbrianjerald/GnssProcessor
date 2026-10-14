@@ -307,7 +307,7 @@ for (Eigen::Index i = 0; i < n; ++i) {
         const auto& entry = sd_entries[k];
         const Eigen::Index r_row = pivot_map[entry.gk];
         const std::string& pivot_sig = update.signal_types[static_cast<size_t>(r_row)];
-        if (pivot_sig.empty() || pivot_sig[0] != 'L') continue;
+        if (obsTypeOf(pivot_sig) != ObsType::Phase) continue;
 
         const std::string ref_sat = update.satellite_ids[static_cast<size_t>(r_row)];
 
