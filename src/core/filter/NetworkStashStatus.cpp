@@ -57,8 +57,6 @@ void networkStashStatus(
     const std::set<std::string>& shared_phase_keys,
     double sigma0_adapt,
     int total_pins,
-    bool vce_wants_cb,
-    bool vce_wants_pb,
     double dt,
     bool datum_changed,
     const std::set<char>& changed_consts,
@@ -87,6 +85,8 @@ void networkStashStatus(
     const double pb_var_floor  = ctx.knobs.pb_var_floor;  // D2 phase-bias carry floor (B4); 0 = off
     const double cb_var_floor  = ctx.knobs.cb_var_floor;  // D2 code-bias carry floor (B4);  0 = off
     const bool   carry_vce     = ctx.knobs.carry_vce;
+    const bool   vce_wants_cb  = ctx.knobs.vce_wants_cb;   // the monitor lists "cb" (card NOM3 step EP0: was a parameter)
+    const bool   vce_wants_pb  = ctx.knobs.vce_wants_pb;   // the monitor lists "pb"
     auto& prev_tow = ctx.counters.prev_tow;
     auto& prev_week = ctx.counters.prev_week;
     auto& n_emitted = ctx.counters.n_emitted;

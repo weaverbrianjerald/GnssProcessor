@@ -45,6 +45,8 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  *        carry VCE apply factor, and writes the per-epoch trace row, the epoch-status
  *        disposition row and the periodic progress log line (present / clock / PB / CB /
  *        dropped-sat counts).  The caller keeps the subBegin/subEnd(SB_STASH_STATUS) brackets.
+ *        The VCE monitor's family switches (vce_wants_pb, vce_wants_cb) are read from
+ *        @c ctx.knobs (card NOM3 step EP0).
  */
 void networkStashStatus(
     NetworkRunContext& ctx,
@@ -66,8 +68,6 @@ void networkStashStatus(
     const std::set<std::string>& shared_phase_keys,
     double sigma0_adapt,
     int total_pins,
-    bool vce_wants_cb,
-    bool vce_wants_pb,
     double dt,
     bool datum_changed,
     const std::set<char>& changed_consts,

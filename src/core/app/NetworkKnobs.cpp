@@ -759,6 +759,50 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.emit_pb_filter_on = k.emit_rebase_on && config_.networkEmitPbFilter();
         k.pb_filter_emit_sigma = config_.networkEmitPbFilterEmitSigma();
     }
+    // --- The epoch driver's configuration-derived values (card NOM3 step EP0) ---
+    // Moved from runNetwork with each expression unchanged.  Where the driver tested the SH
+    // model (setup.sh_model), the test reads network.estimate_iono_sh: setup builds the model
+    // exactly when that flag is set (ApplicationNetworkSetup.cpp), and a run whose setup
+    // fails never reaches the epoch loop.  The Galileo top band is read from
+    // config_.getNetworkConfig(), as the driver read it; the rest from `nc`, which is the
+    // driver's own configuration in a run.
+    {
+        const bool sh_field = config_.estimateNetworkIonoSh();
+        const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
+        k.fc_on     = nc.fast_clock.enable;
+        k.fc_shadow = nc.fast_clock.enable && nc.fast_clock.shadow;
+        k.sec_timers_on = nc.trace_section_timers;
+        k.clk_anchor_sigma = config_.resolveNetworkAprioriClockAnchorSigmaM();
+        k.sh_dev_tau     = sh_field ? shc.rep_error_tau_s : 0.0;
+        k.sh_dev_on      = k.sh_dev_tau > 0.0;
+        k.sh_dev_demean  = k.sh_dev_on && shc.rep_error_demean;    // anti-ratchet de-mean (Iono-2 v3)
+        k.sh_dev_d5_keep = k.sh_dev_on && shc.rep_error_d5_keep;   // erase-policy split (v3k)
+        const std::vector<std::string> vce_families =
+            k.carry_vce ? NetworkCarryVce::parseComponents(config_.networkCarryVceComponents())
+                        : std::vector<std::string>{};
+        k.vce_wants_pb = std::find(vce_families.begin(), vce_families.end(),
+                                   std::string("pb")) != vce_families.end();
+        k.vce_wants_cb = std::find(vce_families.begin(), vce_families.end(),
+                                   std::string("cb")) != vce_families.end();
+        k.uwl_gal_top  = config_.getNetworkConfig().mw_wl.uwl_gal_top_band;
+        k.streaming_on = nc.streaming.enable;
+        k.within_epoch_armed = config_.networkRaimWithinEpoch();
+        k.pd_sticky          = config_.networkPhaseDatumSticky();
+        k.anc_slip_handover  = config_.networkCycleSlipAnchorSlipHandover();
+        k.pd_gate_drop_erase = config_.networkPhaseDatumGateDropErase();
+        k.pd_min_stations    = config_.networkPhaseDatumMinStations();
+        k.max_duration_s     = config_.getMaxDuration();
+        k.epoch_decimation_n = static_cast<std::size_t>(std::max(1, nc.epoch_decimation_n));
+        k.rhs_attrib_tow     = nc.rhs_attrib_tow;
+        k.rhs_attrib_n_ep    = std::max(1, nc.rhs_attrib_n_ep);
+        k.gap_census_on      = nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry;
+        k.trace_postfit_on   = nc.trace_postfit_sigma0 || nc.trace_postfit_keyed
+                               || nc.trace_postfit_rows;
+        k.trace_sh_spectrum   = nc.trace_sh_spectrum;
+        k.trace_station_block = nc.trace_station_block;
+        k.pl_warmup_on_sh_conv = k.pl_warmup_on_conv && sh_field;
+        k.amb_birth_floor_on   = k.amb_float_kf && k.amb_birth_var_floor > 0.0;
+    }
     return k;
 }
 

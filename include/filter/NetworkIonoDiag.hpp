@@ -42,7 +42,9 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  *        ZWD, receiver clock and biases) from the shared solution and writes the
  *        per-station trace rows.  Diagnostic only: it mutates no estimation state, and
  *        with the viz traces unarmed it writes nothing and the run is byte-identical.
- *        The caller keeps the subBegin/subEnd(SB_IONODIAG) brackets.
+ *        The caller keeps the subBegin/subEnd(SB_IONODIAG) brackets.  The anchor-info
+ *        trace reads the resolved clock anchor sigma from @c ctx.knobs.clk_anchor_sigma
+ *        (card NOM3 step EP0).
  */
 void networkIonoDiag(
     NetworkRunContext& ctx,
@@ -58,7 +60,6 @@ void networkIonoDiag(
     const std::vector<StationAssembly>& asm_res,
     const std::vector<int>& est_index_of,
     const std::vector<std::vector<PppObservation>>& modeled,
-    const std::vector<std::string>& registered_clock_sats,
-    double clk_anchor_sigma);
+    const std::vector<std::string>& registered_clock_sats);
 
 } // namespace GnssProcessor

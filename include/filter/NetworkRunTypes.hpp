@@ -2638,8 +2638,11 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 /// RAIM-replay capture channel (network.raim_within_epoch): the within-epoch re-solve
 /// (resolve_dropping) replays the epoch over a fresh beginEpoch(), so every
 /// shared-border input folded outside the per-station assembly must be captured when
-/// armed and re-applied verbatim.  Writer sites (a new prior fold elsewhere must
-/// mirror into this channel):
+/// armed and re-applied verbatim.  addSharedPrior is additive, so the captured prior
+/// sets concatenate into one replayable vector.  The writers capture only when the tier
+/// is armed (NetworkKnobs::within_epoch_armed, which networkSolveGlue reads); otherwise
+/// the channel stays empty.  Writer sites (a new prior fold elsewhere must mirror into
+/// this channel):
 ///   - cap_H / cap_z / cap_constraint_weight / cap_has_constraint / cap_row_kinds: the W6
 ///     satellite code-bias datum constraint rows and their kinds (SB_SOLVEGLUE, W6
 ///     block; the kinds name the replay's re-fold, card NOM step N2b).

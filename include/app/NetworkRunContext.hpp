@@ -118,9 +118,9 @@ namespace GnssProcessor {
         /// network.ledger_screens (the reason-mask writers and the anchor read) and
         /// network.ledger_anchor (the restore that acts on that read), card SID phase 4.
         /// Snapshotted for the run-end readout, which has no config; it reads
-        /// @ref ledger_anchor.  @ref ledger_screens has no reader through this struct:
-        /// the writers and the anchor read take their switch from
-        /// @c ArcReasonEpoch::armed and @c AnchorReentry::observe.
+        /// @ref ledger_anchor.  The driver reads both when it arms the election's anchor
+        /// read (@c AnchorReentry::observe and @c restore, card NOM3 step EP0); the reason-mask
+        /// writers take their switch from @c ArcReasonEpoch::armed.
         bool ledger_screens{};
         bool ledger_anchor{};
         bool pl_on{};
@@ -250,13 +250,13 @@ namespace GnssProcessor {
     /// (byte-identical); the loader zeroes it unless phase_leveling is on and
     /// carry_invariant is off.
     NetworkYoungInflate::Knobs yng{};
-        bool pl_warmup_on_conv{};
+        bool pl_warmup_on_conv{};   ///< network.phase_leveling_warmup_on_convergence: warm-up on SH convergence (T1d); the driver reads it through @ref pl_warmup_on_sh_conv.
         bool pl_refloat_on_conv{};
         double pl_conv_rms_thresh{};
         double pb_var_floor{};
         double cb_var_floor{};
-        bool fullcov_on{};
-        bool carry_cpl_cond{};
+        bool fullcov_on{};       ///< network.shared_carry_full_cov: the dense (P_prev+Q)⁻¹ shared carry (C1).
+        bool carry_cpl_cond{};   ///< network.carry_conditional_coupling: the conditional local carry on the coupling rows (card 1); requires fullcov_on, enforced at load.
         bool carry_cpl_joint{};
         bool carry_cpl_tu{};
         /// network.carry_coupling_exact_update (card CTU): the exact conditional time update
@@ -668,6 +668,9 @@ namespace GnssProcessor {
         bool sticky_pivot{};
         bool clock_sum_to_zero{};
         bool clock_brdc_anchored{};
+        /// network.clock_signal_basis_hold: hold each satellite's IF-pin reference pair fixed
+        /// across epochs (a time-consistent δtˢ↔dˢ split) instead of re-selecting it from
+        /// each epoch's coverage; inert without estimate_sat_code_bias (W6).
         bool clock_signal_basis_hold{};
         bool cb_time_linked{};
         bool scoped_handover{};
@@ -777,14 +780,28 @@ namespace GnssProcessor {
         // --- Card HLT, broadcast satellite health on the network path.  SOLVE-AFFECTING and
         // FINGERPRINTED.
         int    sat_health{};         ///< network.sat_health: 0 off, 1 "pivot" (the election passes over an unhealthy satellite), 2 "exclude" (the setup door removed its observations)
+        /// network.clock_model: the two-state (offset and drift) oscillator clock model.  When
+        /// on, the satellite clock is carried through the Allan-derived Q model in
+        /// NetworkCarryState::clock_osc instead of the scalar prev_carry random walk, and a
+        /// satellite is flagged by the normalized-innovation dynamics-fault test rather than
+        /// by the absolute and jump bounds.
         bool clk_model_on{};
         double clk_model_q1{};
         double clk_model_q2{};
         double clk_model_k{};
         double clk_model_r{};
         double clk_model_max_gap{};
+        /// network.emit_clock_rate without network.clock_model: the emitted C1 (clock rate)
+        /// comes from the finite-differenced solved clock through the decoupled rate estimator
+        /// NetworkCarryState::clock_rate_est, with no prior and no refloat, so the solution is
+        /// byte-identical.  Off under network.clock_model, which already supplies C1.
         bool emit_clock_rate_on{};
         double start_offset_s{};
+        /// network.trace_flag_rates: the empirical-alpha flag-rate counters.  Observation
+        /// only: {opportunities, flags} per QC tier, reported at the end of the run as the
+        /// realized rate against the implied one-sided Gaussian alpha for the configured k.
+        /// Never fed back into a decision; every increment is guarded, so with the knob off
+        /// the output is byte-identical.
         bool trace_flag_rates{};
         bool phase_datum_ensemble{};
         bool phase_datum_eq34{};
@@ -1064,6 +1081,61 @@ namespace GnssProcessor {
         bool emit_rebase_on{};           ///< Emit-layer frame re-base of the emitted phase biases (card 4 phase D): carry_invariant and network.carry_invariant_emit_rebase.
         bool emit_pb_filter_on{};        ///< Phase-bias emission-continuity filter: emit_rebase_on and network.emit_pb_filter.
         bool pb_filter_emit_sigma{};     ///< Emit the filter's posterior sigma with each filtered bias: network.emit_pb_filter_emit_sigma.
+        // --- the epoch driver's configuration-derived values (card NOM3 step EP0) ---
+        // Each is a value runNetwork computed from the configuration, once in its setup or
+        // again on every epoch, and read in its epoch body or passed to a seam.  Resolved here
+        // with the driver's expression unchanged, so the driver and those seams read one field
+        // each.  Constant for the run: the configuration is not written after load, and setup
+        // builds the SH model exactly when network.estimate_iono_sh is set (the sh_dev_* and
+        // pl_warmup_on_sh_conv rows read that flag where the driver tested the model).  The
+        // snapshot fingerprint reads none of them.
+        bool   fc_on{};            ///< network.fast_clock.enable: the split-cadence clocks-only fast tier (FC-1).  Read by the driver: it builds the tier's wavelength provider, runs the fast tick on a decimated-out epoch and harvests the fast anchor on an emitted one.
+        bool   fc_shadow{};        ///< network.fast_clock.enable and network.fast_clock.shadow: the fast tick also runs on every full epoch, traced and discarded (a permanent grading instrument that never feeds back).  Read by the driver.
+        bool   sec_timers_on{};    ///< network.trace_section_timers: the D0 / D0b per-epoch section timers.  Read by the driver (the estimator and carry-driver timers, the subBegin / subEnd brackets, the per-epoch readout) and by networkPassB_ (the D0 assembly wall).
+        /// The a-priori satellite-clock anchor sigma (m), resolved once by
+        /// GnssConfig::resolveNetworkAprioriClockAnchorSigmaM from
+        /// network.apriori_clock_anchor_sigma_m (an explicit value > 0 wins; brdc_rts auto
+        /// 3.0 m; sp3 auto initial_std.sat_clock), so the anchor fold and its
+        /// information-fraction diagnostic share one value.  The < 100 m binding gate stays at
+        /// the fold site (NetworkSolveGlue.cpp).  Read by networkSolveGlue (the clock datum's
+        /// declaration and the anchor fold), networkHandoverStransformBeforeRows (the
+        /// declaration) and networkIonoDiag (the B7 anchor-information diagnostic).
+        double clk_anchor_sigma{};
+        /// The SH-deviation carry's correlation time (s; card T5, Iono-2):
+        /// estimation.global_vtec_sh.rep_error_tau_s with a co-estimated SH field
+        /// (network.estimate_iono_sh), else 0.  Read by networkPassB_ (the per-LOS aging).
+        double sh_dev_tau{};
+        bool   sh_dev_on{};        ///< The SH-deviation carry is live: @ref sh_dev_tau > 0.  Read by networkPassB_ and networkShDevVtec.
+        bool   sh_dev_demean{};    ///< Anti-ratchet de-mean (Iono-2 v3): sh_dev_on and estimation.global_vtec_sh.rep_error_demean.  Read by networkPassB_.
+        bool   sh_dev_d5_keep{};   ///< Erase-policy split (Iono-2 v3k): sh_dev_on and estimation.global_vtec_sh.rep_error_d5_keep.  Read by networkPassB_.
+        bool   vce_wants_pb{};     ///< The carry LS-VCE monitor (network.carry_vce) lists the "pb" family in network.carry_vce_components.  Read by networkStashStatus.
+        bool   vce_wants_cb{};     ///< The same for the "cb" family.  Read by networkStashStatus.
+        char   uwl_gal_top{};      ///< network.mw_wl.uwl_gal_top_band: Galileo's top-tier band digit, read under @ref uwl_on by the driver's uncarried-third-band predicate (isUncarriedThirdBand, which networkBuildCarryDdPriors calls).
+        bool   streaming_on{};     ///< network.streaming.enable: the RTF-3 streaming front-end is the epoch source.  Read by the driver (the epoch source, and the code-bias admission census, which is refused under streaming).
+        /// network.raim_within_epoch: the within-epoch RAIM tier (T2) is armed, so the solve
+        /// glue captures the shared-border folds into the epoch workspace's replay channel
+        /// (EpochWorkspace) and may re-solve the epoch without a culprit.  Read by
+        /// networkSolveGlue.
+        bool   within_epoch_armed{};
+        bool   pd_sticky{};        ///< network.phase_datum_sticky: the prioritized election keeps a (satellite, signal) anchor while it still tracks the satellite with a usable ambiguity.  Read by the driver (the election's first argument).
+        bool   anc_slip_handover{};///< network.cycle_slip.anchor_slip_handover (SPEC_event_harness §12.7): a family whose anchor arc a slip just freed is handed to a successor before the election.  Read by the driver.
+        bool   pd_gate_drop_erase{}; ///< network.phase_datum_gate_drop_erase (card EV7 §6): the coverage gate's drop edge erases the family's carried ambiguities.  Read by the driver (PhaseGateDrop::on).
+        int    pd_min_stations{};  ///< network.phase_datum_min_stations: the phase datum's coverage gate.  Read by the driver as the threshold column of the gate-drop event row.
+        double max_duration_s{};   ///< processing.max_duration_s: the data span after which the run stops (0 = no limit).  Read by the driver's max-duration cutoff.
+        std::size_t epoch_decimation_n{1}; ///< network.epoch_decimation_n clamped to >= 1: only every Nth synced epoch is processed (T2e; 1 = every epoch).  Read by the driver's decimation gate.
+        double rhs_attrib_tow{-1.0}; ///< network.rhs_attrib_tow: the first TOW of the reduced-RHS attribution window (< 0 = off).  Read, with @ref rec_on, where the driver arms the estimator's capture recorder; the window test itself stays per epoch.
+        int    rhs_attrib_n_ep{1}; ///< network.rhs_attrib_n_ep clamped to >= 1: the window's length in processed epochs.  Read with @ref rhs_attrib_tow.
+        bool   gap_census_on{};    ///< network.cycle_slip.gap_instrument or network.cycle_slip.gap_reentry_relevel: the driver's arc-resumption bridge classification runs on an epoch that has resumptions (that test stays per epoch).
+        bool   trace_postfit_on{}; ///< network.trace_postfit_sigma0, trace_postfit_keyed or trace_postfit_rows: the post-fit residual pass (networkPostfitSigma0) runs.  Read by the driver.
+        bool   trace_sh_spectrum{};  ///< network.trace_sh_spectrum: networkShSpectrum runs.  Read by the driver.
+        bool   trace_station_block{};///< network.trace_station_block (card ZP): networkStationBlock runs.  Read by the driver.
+        /// The configuration half of the leveling carry's warm-up test (T1d):
+        /// @ref pl_warmup_on_conv with a co-estimated SH field (network.estimate_iono_sh).
+        /// True: the carry warms once the field has converged
+        /// (NetworkCarryState::sh_converged_latch); false: after @ref pl_warmup emitted
+        /// epochs.  Read by the driver's carry_warm, which stays computed per epoch.
+        bool   pl_warmup_on_sh_conv{};
+        bool   amb_birth_floor_on{}; ///< The float vehicle's birth variance floor is armed: @ref amb_float_kf and @ref amb_birth_var_floor > 0.  Read by the driver (this epoch's elevation map for the bounded drop) and by networkPassB_ (the inject).
 
         /// One-shot factory: the knob-snapshot statements, in the original read order
         /// (parameter names match the former use sites).
@@ -2866,6 +2938,16 @@ namespace GnssProcessor {
         long long mdb_seq = 0;                 ///< flush passes: the per-cell event-holdoff clock.
         std::map<std::string, long long> mdb_event_last;  ///< "station\x1fsat\x1fclass" -> mdb_seq of its last emitted MDB event.
         bool      mdb_join_warned = false;     ///< one-shot: the uncheckable join disagreed with the census.
+
+        // --- Carry LS-VCE monitor, the hourly trace flush (M2) ---
+        // Snapshot: exempt; observer state.  The pair only schedules the hourly flush of
+        // network_carry_vce.csv by content hour, and the monitor it flushes (the run-TU local
+        // NetworkCarryVce) is not snapshotted either, so a warm-resumed leg re-anchors its
+        // content hour at its first monitored epoch.  They were driver locals until card NOM3
+        // step EP0, with the same initial values and the same resume behaviour.  Written and
+        // read only by networkShHealth, under ctx.knobs.carry_vce.
+        int    last_vce_hour = -1;   ///< content-hour bucket of the last LS-VCE monitor flush (-1 = none yet).
+        double first_vce_s   = -1.0; ///< content time of the first monitored epoch, the hour anchor (s; -1 = not yet anchored).
 
         // --- Carry variance factor (M2 v2) ---
         // Snapshot: exempt, and the exemption is enforced by refusal rather than free.  α²

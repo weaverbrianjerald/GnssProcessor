@@ -114,6 +114,8 @@ SbasisDeclaration networkClockDatumDeclaration(const NetworkRunContext& ctx,
  * @brief Run the datum build, solve and within-epoch RAIM adaptation for this epoch.
  * @see the file banner for the EpochAction and result-struct contract.  @p buildEnsembleGauges
  *      and @p buildCarryDdPriors are the run-TU wrapper lambdas (re-invoked on re-solve).
+ *      The within-epoch tier's arming and the resolved clock anchor sigma are read from
+ *      @c ctx.knobs (within_epoch_armed, clk_anchor_sigma; card NOM3 step EP0).
  */
 NetworkSolveGlueResult networkSolveGlue(
     NetworkRunContext& ctx,
@@ -137,10 +139,8 @@ NetworkSolveGlueResult networkSolveGlue(
     int n_present,
     int total_pins,
     bool carry_warm,
-    bool within_epoch_armed,
     double dt,
     double pl_now_s,
-    double clk_anchor_sigma,
     const std::function<void()>& buildEnsembleGauges,
     const std::function<void()>& buildCarryDdPriors);
 

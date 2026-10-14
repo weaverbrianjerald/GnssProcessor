@@ -442,9 +442,12 @@ struct PreviewBed {
     std::unique_ptr<NetworkEstimator> est;
     std::vector<std::string> registered;
     const NetworkSbasis::SatHealth health{};
+    // The anchor sigma the preview's declaration reads (ctx.knobs.clk_anchor_sigma) is set
+    // to the 3.0 m this bed passed as an argument before card NOM3 step EP0.
     explicit PreviewBed(const std::string& tag, bool armed = true)
         : L(tag, std::string("    \"scoped_handover_response\": true,\n"
-                             "    \"handover_stransform\": true,\n")
+                             "    \"handover_stransform\": true,\n"
+                             "    \"apriori_clock_anchor_sigma_m\": 3.0,\n")
                      + (armed ? "    \"handover_stransform_before_rows\": true,\n" : "")) {
         static auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
         const auto log = std::make_shared<spdlog::logger>("sts_rows_test", sink);
@@ -478,7 +481,7 @@ struct PreviewBed {
     }
     void preview() {
         networkHandoverStransformBeforeRows(*ctx, L.cfg, nullptr, *traces, health, *est,
-                                            GnssTime{2313, 276150.0}, registered, 3.0);
+                                            GnssTime{2313, 276150.0}, registered);
     }
     const CoupledShared& term(int i) {
         return ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))]

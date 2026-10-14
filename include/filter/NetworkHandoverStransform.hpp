@@ -284,7 +284,9 @@ long long undoClockStransform(NetworkCarryState& carry, char constellation, doub
  * @param est                   This epoch's estimator, columns registered.
  * @param t                     This epoch's time.
  * @param registered_clock_sats This epoch's registered satellite clocks.
- * @param clk_anchor_sigma      The resolved broadcast anchor sigma (m; the declaration).
+ *
+ * The declaration reads the resolved broadcast anchor sigma from
+ * @c ctx.knobs.clk_anchor_sigma (card NOM3 step EP0).
  */
 void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
                                          const GnssConfig& config_,
@@ -293,8 +295,7 @@ void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
                                          const NetworkSbasis::SatHealth& sat_health,
                                          const NetworkEstimator& est,
                                          const GnssTime& t,
-                                         const std::vector<std::string>& registered_clock_sats,
-                                         double clk_anchor_sigma);
+                                         const std::vector<std::string>& registered_clock_sats);
 
 /**
  * @brief Re-express the carried shared state of each changed constellation in the

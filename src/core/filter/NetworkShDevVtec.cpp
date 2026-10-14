@@ -51,9 +51,9 @@ void networkShDevVtec(
     const std::vector<StationAssembly>& asm_res,
     const std::vector<int>& est_index_of,
     const std::vector<std::vector<PppObservation>>& modeled,
-    NetworkIonoDeweightGate& iono_deweight,
-    bool sh_dev_on) {
+    NetworkIonoDeweightGate& iono_deweight) {
     // --- Alias preamble: mechanically-derived run-TU aliases (+ reconstructions). --
+    const bool sh_dev_on = ctx.knobs.sh_dev_on;   // was a parameter (card NOM3 step EP0)
     auto& sh_model = setup.sh_model;
     auto& sh_model2 = setup.sh_model2;   // Iono-2 dual-layer second shell (null unless armed)
     auto& stations = setup.stations;

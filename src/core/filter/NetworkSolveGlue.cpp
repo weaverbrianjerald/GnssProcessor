@@ -119,13 +119,15 @@ NetworkSolveGlueResult networkSolveGlue(
     int n_present,
     int total_pins,
     bool carry_warm,
-    bool within_epoch_armed,
     double dt,
     double pl_now_s,
-    double clk_anchor_sigma,
     const std::function<void()>& buildEnsembleGauges,
     const std::function<void()>& buildCarryDdPriors) {
     // --- Alias preamble (byte-copies of the run-TU alias block). ---
+    // The two run constants below were parameters, computed by the driver with the
+    // expressions NetworkKnobs::snapshot now holds (card NOM3 step EP0).
+    const bool   within_epoch_armed = ctx.knobs.within_epoch_armed;   // network.raim_within_epoch
+    const double clk_anchor_sigma   = ctx.knobs.clk_anchor_sigma;     // D6-resolved anchor sigma (m)
     const auto& nc = config_.getNetworkConfig();
     const bool brdc_rts = setup.brdc_rts;
     auto& sh_model = setup.sh_model;

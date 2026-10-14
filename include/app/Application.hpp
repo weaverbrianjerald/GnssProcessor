@@ -875,7 +875,9 @@ private:
      * prev_week/prev_tow advance).  @p asm_res, @p est_index_of and @p total_pins
      * are the driver's epoch locals, filled here for the solve, RAIM and emit
      * seams downstream; @p sec_asm_ms_epoch / @p sec_asm_wall_ms receive the D0
-     * wall time, which accumulates even when the epoch skips.
+     * wall time, which accumulates even when the epoch skips.  The SH-deviation carry's
+     * switches (sh_dev_tau, sh_dev_on, sh_dev_demean, sh_dev_d5_keep) are read from
+     * @c ctx.knobs (card NOM3 step EP0).
      * Implemented in @c ApplicationNetworkAssembly.cpp.
      *
      * @return Proceed, or SkipEpoch when the epoch failed assembly or has an
@@ -885,8 +887,6 @@ private:
                               NetworkSetupResult& setup, NetworkRunTraces& traces,
                               NetworkEstimator& est,
                               const NetworkIonoDeweightGate& iono_deweight,
-                              double sh_dev_tau, bool sh_dev_on, bool sh_dev_demean,
-                              bool sh_dev_d5_keep,
                               const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                               const std::set<std::pair<int, std::string>>& carry_slipped_raw,
                               bool carry_warm, double pl_now_s,

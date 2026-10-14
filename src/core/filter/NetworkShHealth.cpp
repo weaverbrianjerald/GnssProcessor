@@ -55,10 +55,12 @@ void networkShHealth(
     NetworkCarryVce& carry_vce_est,
     NetworkPriorResidual& prires_est,
     bool datum_changed,
-    double pl_now_s,
-    double& first_vce_s,
-    int& last_vce_hour) {
+    double pl_now_s) {
     // --- Alias preamble: run-TU aliases derived mechanically (+ reconstructions). --
+    // The VCE monitor's hourly flush schedule: driver locals passed by reference until card
+    // NOM3 step EP0, now run carry (not snapshotted).
+    double& first_vce_s   = ctx.carry.first_vce_s;
+    int&    last_vce_hour = ctx.carry.last_vce_hour;
     auto& sh_model = setup.sh_model;
     auto& sh_model2 = setup.sh_model2;   // Iono-2 dual-layer second shell (null unless armed)
     auto& stations = setup.stations;

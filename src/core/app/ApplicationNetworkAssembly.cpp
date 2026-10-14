@@ -3041,8 +3041,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                        NetworkRunTraces& traces,
                                        NetworkEstimator& est,
                                        const NetworkIonoDeweightGate& iono_deweight,
-                                       double sh_dev_tau, bool sh_dev_on, bool sh_dev_demean,
-                                       bool sh_dev_d5_keep,
                                        const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                                        const std::set<std::pair<int, std::string>>& carry_slipped_raw,
                                        bool carry_warm, double pl_now_s,
@@ -3059,7 +3057,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // alias/derivation lines, bound to the same underlying objects.
     auto log = log_manager_.getLogger("main_log");
     const auto& nc = config_.getNetworkConfig();
-    const bool sec_timers_on = nc.trace_section_timers;
+    const bool sec_timers_on = ctx.knobs.sec_timers_on;
+    // The SH-deviation carry's switches, resolved in NetworkKnobs::snapshot (card NOM3
+    // step EP0; they were parameters, computed by the driver with the same expressions).
+    const double sh_dev_tau     = ctx.knobs.sh_dev_tau;
+    const bool   sh_dev_on      = ctx.knobs.sh_dev_on;
+    const bool   sh_dev_demean  = ctx.knobs.sh_dev_demean;    // anti-ratchet de-mean (Iono-2 v3)
+    const bool   sh_dev_d5_keep = ctx.knobs.sh_dev_d5_keep;   // erase-policy split (v3k)
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     auto& stations = setup.stations;
     const int n_sta_total = setup.n_sta_total;
@@ -3088,7 +3092,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // their birth variance, so they fold at birth strength.  Off, both sites keep
     // their `continue`.
     const bool   amb_float_kf  = ctx.knobs.amb_float_kf;
-    const bool   amb_floor_on  = amb_float_kf && ctx.knobs.amb_birth_var_floor > 0.0;
+    const bool   amb_floor_on  = ctx.knobs.amb_birth_floor_on;   // amb_float_kf and a birth floor > 0
     // Read-only parallel consult of the latched free-epoch set
     // (SPEC_slip_relevel_walk; filled serially in PASS-A, const for the whole produce).
     const bool   relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();

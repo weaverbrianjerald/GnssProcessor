@@ -50,9 +50,9 @@ void networkIonoDiag(
     const std::vector<StationAssembly>& asm_res,
     const std::vector<int>& est_index_of,
     const std::vector<std::vector<PppObservation>>& modeled,
-    const std::vector<std::string>& registered_clock_sats,
-    double clk_anchor_sigma) {
+    const std::vector<std::string>& registered_clock_sats) {
     // --- Alias preamble: mechanically-derived run-TU aliases (+ reconstructions). --
+    const double clk_anchor_sigma = ctx.knobs.clk_anchor_sigma;   // was a parameter (card NOM3 step EP0)
     auto& stations = setup.stations;
     auto& iono_trace           = traces.iono_trace;
     auto& anchor_info_trace    = traces.anchor_info_trace;

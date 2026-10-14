@@ -296,9 +296,9 @@ void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
                                          const NetworkSbasis::SatHealth& sat_health,
                                          const NetworkEstimator& est,
                                          const GnssTime& t,
-                                         const std::vector<std::string>& registered_clock_sats,
-                                         double clk_anchor_sigma) {
+                                         const std::vector<std::string>& registered_clock_sats) {
     (void)log;   // seam signature is uniform across the run loop
+    const double clk_anchor_sigma = ctx.knobs.clk_anchor_sigma;   // was a parameter (card NOM3 step EP0)
     // The record is per-epoch state: cleared first, so the solve glue never reads an earlier
     // epoch's preview, and empty with the knob off.
     ctx.carry.sts_pre.clear();
