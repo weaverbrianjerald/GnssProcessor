@@ -4,10 +4,10 @@
  * @file ISlipDetector.hpp
  * @brief Polymorphic contract shared by the registry-built cycle-slip detectors.
  *
- * Each detector (Melbourne-Wübbena, GRAPHIC, extra-wide-lane, and the staged
- * geometry-free and ionosphere-free phase detectors) has its own per-epoch
- * entry point (@c detectLargeMwResets, @c detect, ...) and its own result
- * struct (@c MwSlipResult, @c GraphicSlipResult, ...).
+ * Each detector (Melbourne-Wübbena, GRAPHIC, extra-wide-lane, the staged
+ * geometry-free detector and the network-only ionosphere-free phase detector)
+ * has its own per-epoch entry point (@c detectLargeMwResets, @c detect, ...)
+ * and its own result struct (@c MwSlipResult, @c GraphicSlipResult, ...).
  *
  * @c ISlipDetector places one contract over them:
  *   - a single per-epoch entry point @c detect(SlipEpochContext) returning a
@@ -25,6 +25,19 @@
  * Implemented by @c MwSlipDetector, @c GraphicSlipDetector and
  * @c EwlSlipDetector.  @c GfSlipDetector and @c IfPhaseSlipDetector do not
  * derive from this interface.
+ *
+ * @par What is dispatched through the base (post-processing only)
+ * @c CycleSlipManager calls @c detect (GRAPHIC and EWL only: the MW detector
+ * is skipped by @c kind and driven through its concrete
+ * @c detectLargeMwResets), @c resetSatellite, @c resetSatelliteSignal,
+ * @c setCorrections, @c kind and @c asMelbourneWubbena; the registry calls
+ * @c name.  @c resetAll, @c enableTracing and @c isTracingEnabled are never
+ * called through the base: the MW detector's are reached on the concrete type
+ * (@c CycleSlipManager::enableMwTracing and the real-time and baseline
+ * drivers), and the GRAPHIC and EWL traces are never opened.  The real-time, baseline
+ * and network pipelines hold concrete detector types and use none of this
+ * interface.  Whether the interface stays or becomes a declared detector table
+ * is a decision owed by the author (card UOM section 7 item 1).
  */
 
 #include "common/PppTypes.hpp"
@@ -41,8 +54,8 @@ class MwSlipDetector;   // forward decl: target of the typed down-cast accessor
 /**
  * @brief Identifies the algorithm behind a slip detector.
  *
- * Used as the registry key, the @c SlipEvent provenance tag, and the
- * config-selection token (see @c slipDetectorKindFromString).
+ * Used as the registry key, the @c SlipEvent provenance tag, and (through
+ * @c toString) the token printed in the slip log lines.
  */
 enum class SlipDetectorKind {
     MelbourneWubbena, ///< Wide-lane MW combination (primary; the registry always has a creator for it).
@@ -73,6 +86,11 @@ enum class SlipGranularity {
  * cannot size the slip (GF, IF) leave @c slip_known false; band-difference
  * detectors (MW, EWL) report the wide-lane integer in @c slip_cycles with
  * @c granularity == @c BandDifference and populate @c sig2.
+ *
+ * The only reader, @c CycleSlipManager::applyAuxiliarySlipEvents, uses
+ * @c satellite, @c sig1, @c sig2, @c amb_key, @c granularity and @c source
+ * (its response is a reset); @c slip_cycles, @c slip_known, @c fractional and
+ * @c lambda are written by the detectors and read by no caller.
  */
 struct SlipEvent {
     std::string satellite;       ///< Satellite identifier (e.g. "G01").
@@ -93,9 +111,10 @@ struct SlipEvent {
  * The bundle keeps @c ISlipDetector::detect to one signature although
  * detectors need different context.  The registered detectors (MW, GRAPHIC,
  * EWL) read only @c observations.  @c position_sigma_3d and
- * @c receiver_position carry what the ionosphere-free phase detector needs to
- * form and gate its double-differenced OMC; no detector that implements this
- * interface reads them.  A detector ignores the fields it does not need.
+ * @c receiver_position were meant to carry what the ionosphere-free phase
+ * detector needs to form and gate its double-differenced OMC; that detector
+ * does not implement this interface, and no caller sets either field or any
+ * detector reads it.  A detector ignores the fields it does not need.
  */
 struct SlipEpochContext {
     const std::vector<PppObservation>& observations; ///< Modeled observations for this epoch.
@@ -153,18 +172,31 @@ public:
      * @brief Drop all per-arc state (hard-gap restart).
      *
      * Default no-op; detectors with cross-arc or pivot bookkeeping override
-     * it (the MW detector does).
+     * it (the MW detector does).  Never called through this interface: the
+     * baseline driver calls the MW detector's override on the concrete type.
      */
     virtual void resetAll() {}
 
     /**
      * @brief Enable CSV trace output for this detector.
+     *
+     * Never called through this interface: the MW detector's override is
+     * called on the concrete type (@c CycleSlipManager::enableMwTracing, the
+     * real-time and baseline drivers), and no caller opens the GRAPHIC or EWL
+     * trace.
+     *
      * @param log_dir Directory in which to create the trace file.
      * @return true if the trace file was opened.
      */
     virtual bool enableTracing(const std::filesystem::path& log_dir) = 0;
 
-    /// @brief Whether tracing is currently active.
+    /**
+     * @brief Whether tracing is currently active.
+     *
+     * Never called through this interface (no caller on any detector type).
+     *
+     * @return true if the detector's trace file is open.
+     */
     virtual bool isTracingEnabled() const = 0;
 
     /**

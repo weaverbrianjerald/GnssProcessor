@@ -170,12 +170,23 @@ public:
     /// continuity is broken, so a later bridged adjudication must not treat
     /// it as continuous.
     ///
+    /// @param te        This epoch's TurboEdit resolution (repairs, reset and
+    ///             pending satellites).
     /// @param resolver  The gap-bridge resolver holding the held-continuous
     ///             marks; per-key timeouts void their signal's marks/arcs.
+    /// @param modeled_obs   This epoch's modeled observations (wavelength
+    ///             lookup when a repair carries none).
+    /// @param state_manager Filter state (restored keys are overwritten).
+    /// @param epoch_now_s   Continuous GPS seconds of this epoch.
+    /// @param epoch_prefix  Log prefix.
     /// @param[out] repaired_sats Satellites whose held ambiguities were
     ///             integer-repaired; the caller skips its own reset for them.
-    /// @param[in,out] n_repaired,n_reset Counters incremented for reporting.
-    /// @param reset_fn Path-specific reset for the timeout fallback.
+    /// @param[in,out] n_repaired Incremented once per repaired SATELLITE
+    ///             (not per signal).
+    /// @param[in,out] n_reset Incremented once per ambiguity KEY reset by a
+    ///             restore failure or a timeout.
+    /// @param reset_fn Path-specific reset for the timeout and restore-failure
+    ///             fallbacks.
     void resolveHolds(const TurboEditResolver::EpochResolution& te,
                       TurboEditResolver& resolver,
                       const std::vector<PppObservation>& modeled_obs,

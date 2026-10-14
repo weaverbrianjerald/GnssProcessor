@@ -2,6 +2,9 @@
  * @file JumpGapFitter.hpp
  * @brief Pure, stateless both-sides trend+step least-squares estimator.
  *
+ * STAGED: no production caller.  Compiled into gnss_core; its only callers are
+ * the staged @c SlipBridgeKernel and tests/test_jump_gap_fitter.cpp.
+ *
  * Fits an independent first-order polynomial @f$ y = a + b\,(t - t_b) @f$ to a
  * "pre" window and a "post" window of samples bracketing a boundary epoch
  * @f$ t_b @f$, then reports the discontinuity (step) of the extrapolated level
