@@ -90,6 +90,11 @@ add_library(gnss_core STATIC
     src/core/filter/IlsCore.cpp
     src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
+    src/core/measurement/MeasurementModelStates.cpp
+    src/core/measurement/MeasurementModelRow.cpp
+    src/core/measurement/MeasurementModelVariance.cpp
+    src/core/measurement/MeasurementModelDd.cpp
+    src/core/measurement/MeasurementModelNetwork.cpp
     src/core/measurement/MeasurementBuilder.cpp
     src/core/measurement/StateInitializer.cpp
     src/core/measurement/BssdTransform.cpp
@@ -484,6 +489,7 @@ add_executable(gnss_tests
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
     tests/test_measurement_admission.cpp
+    tests/test_measurement_model_prepass.cpp
     tests/test_iono_dw_release_hygiene.cpp
     tests/test_redundancy_census.cpp
     tests/test_network_mdb.cpp
