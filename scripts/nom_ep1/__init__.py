@@ -24,7 +24,7 @@ _SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))   # nom_cpp, rt_seam_verify live beside this package
 
-DEFAULT_BASE = "c483a11"
+DEFAULT_BASE = "0e14eb9"
 
 ROW_MODULES = ("rows_app", "rows_solve", "rows_emit", "rows_diag")
 
