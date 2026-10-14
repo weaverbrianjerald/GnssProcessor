@@ -486,126 +486,22 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // IMU-aided prediction
-    // ===================================================================
-
-    void KalmanFilter::predictImu(const GnssTime& t_start, const GnssTime& t_end,
-                                   const ImuIntegrator& imu) {
-        auto klogger = log_manager_.getLogger("kalman_filter");
-
-        Eigen::VectorXd x = state_manager_.getStateVector();
-        Eigen::MatrixXd P = state_manager_.getCovariance();
-        const size_t state_size = state_manager_.getStateSize();
-
-        // --- Extract current IMU-related states ---
-        const Eigen::Vector3d pos = x.segment<3>(state_manager_.getPositionIndex());
-        Eigen::Vector3d vel = Eigen::Vector3d::Zero();
-        if (state_manager_.hasVelocity())
-            vel = x.segment<3>(state_manager_.getVelocityIndex());
-
-        Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
-        Eigen::Vector3d gyro_bias  = Eigen::Vector3d::Zero();
-        if (state_manager_.hasImuBiases()) {
-            accel_bias = x.segment<3>(state_manager_.getAccelBiasIndex());
-            gyro_bias  = x.segment<3>(state_manager_.getGyroBiasIndex());
-        }
-
-        // --- Run strapdown mechanization ---
-        const ImuPrediction pred = imu.integrate(t_start, t_end, pos, vel, C_b_e_,
-                                                  accel_bias, gyro_bias);
-        if (!pred.valid) {
-            klogger->warn("IMU integration returned no valid samples, falling back to standard predict");
-            const double dt = TimeUtils::continuousGpsSeconds(t_end)
-                            - TimeUtils::continuousGpsSeconds(t_start);
-            predict(std::max(dt, 0.01));
-            return;
-        }
-
-        // --- Apply mechanized state to the state vector ---
-        x.segment<3>(state_manager_.getPositionIndex()) = pred.position;
-        if (state_manager_.hasVelocity())
-            x.segment<3>(state_manager_.getVelocityIndex()) = pred.velocity;
-        C_b_e_ = pred.attitude;
-
-        // Attitude error state is reset to zero after each mechanization
-        // (the attitude correction is directly applied to C_b_e_).
-        if (state_manager_.hasImuBiases()) {
-            x.segment<3>(state_manager_.getAttitudeIndex()).setZero();
-        }
-
-        // --- Build the full-state transition and process noise ---
-        // The IMU supplies a 15x15 Phi/Q over the INS error states
-        // [dp(3), dv(3), dpsi(3), dba(3), dbg(3)], mapped here to full-state
-        // indices.  Non-INS states (clock, tropo, ambiguities, ISB) keep the
-        // standard random-walk noise from predict().
-
-        Eigen::MatrixXd F_full = Eigen::MatrixXd::Identity(state_size, state_size);
-        Eigen::MatrixXd Q_full = state_manager_.getProcessNoiseMatrix(pred.dt_total);
-
-        // Map INS error-state indices to full state indices.
-        // INS order: pos(0-2), vel(3-5), att(6-8), ba(9-11), bg(12-14)
-        std::vector<size_t> ins_map(15, std::numeric_limits<size_t>::max());
-        ins_map[0] = state_manager_.getPositionIndex();
-        ins_map[1] = state_manager_.getPositionIndex() + 1;
-        ins_map[2] = state_manager_.getPositionIndex() + 2;
-        if (state_manager_.hasVelocity()) {
-            ins_map[3] = state_manager_.getVelocityIndex();
-            ins_map[4] = state_manager_.getVelocityIndex() + 1;
-            ins_map[5] = state_manager_.getVelocityIndex() + 2;
-        }
-        if (state_manager_.hasImuBiases()) {
-            ins_map[6]  = state_manager_.getAttitudeIndex();
-            ins_map[7]  = state_manager_.getAttitudeIndex() + 1;
-            ins_map[8]  = state_manager_.getAttitudeIndex() + 2;
-            ins_map[9]  = state_manager_.getAccelBiasIndex();
-            ins_map[10] = state_manager_.getAccelBiasIndex() + 1;
-            ins_map[11] = state_manager_.getAccelBiasIndex() + 2;
-            ins_map[12] = state_manager_.getGyroBiasIndex();
-            ins_map[13] = state_manager_.getGyroBiasIndex() + 1;
-            ins_map[14] = state_manager_.getGyroBiasIndex() + 2;
-        }
-
-        // Inject the INS Phi and Q into the full matrices.
-        for (size_t i = 0; i < 15; ++i) {
-            if (ins_map[i] >= state_size) continue;
-            for (size_t j = 0; j < 15; ++j) {
-                if (ins_map[j] >= state_size) continue;
-                F_full(ins_map[i], ins_map[j]) = pred.Phi(i, j);
-                Q_full(ins_map[i], ins_map[j]) = pred.Q_ins(i, j);
-            }
-        }
-
-        // --- Covariance propagation ---
-        P = F_full * P * F_full.transpose() + Q_full;
-        P = 0.5 * (P + P.transpose());
-
-        // --- Store ---
-        state_manager_.setStateVector(x);
-        state_manager_.setCovariance(P);
-
-        klogger->info("IMU prediction: {} samples over {:.3f}s, pos_delta={:.3f}m",
-            pred.num_samples, pred.dt_total, (pred.position - pos).norm());
-
-        if (logger_) logger_->logStateVector(x, "IMU Predicted State Vector");
-        if (logger_) logger_->logCovarianceMatrix(P, "IMU Predicted Covariance Matrix");
-    }
-
-    // ===================================================================
-    // Aiding-source-aided prediction (composable generalization of predictImu)
+    // Aiding-source-aided prediction (the strapdown INS predict, composable)
     // ===================================================================
 
     void KalmanFilter::spliceAndPropagate(Eigen::VectorXd& x, Eigen::MatrixXd& P,
                                           Eigen::MatrixXd& Q_full, std::size_t state_size,
                                           const std::vector<PredictContribution>& contributions) {
-        // Identity-seeded transition, as in predictImu (F_full = I): the means of
-        // states no contribution owns (non-INS states) are not propagated.
+        // Identity-seeded transition (F_full = I), the strapdown INS convention:
+        // the means of states no contribution owns (non-INS states) are not
+        // propagated.
         Eigen::MatrixXd F_full = Eigen::MatrixXd::Identity(state_size, state_size);
 
         for (const auto& c : contributions) {
             if (!c.valid) continue;
 
             // Nominal write-backs (pos/vel/att-zero for the IMU), out-of-range
-            // / sentinel indices skipped exactly as predictImu skips them.
+            // / sentinel indices skipped.
             for (size_t k = 0; k < c.nominal_indices.size(); ++k) {
                 const size_t idx = c.nominal_indices[k];
                 if (idx < state_size)
@@ -614,8 +510,8 @@ namespace GnssProcessor {
             }
 
             // Write the contribution's Phi/Q over the full-state indices it
-            // owns.  This is assignment, not accumulation (as in predictImu), so
-            // the baseline process noise on owned rows is not counted twice.
+            // owns.  This is assignment, not accumulation, so the baseline
+            // process noise on owned rows is not counted twice.
             const size_t n = c.indices.size();
             for (size_t i = 0; i < n; ++i) {
                 if (c.indices[i] >= state_size) continue;
@@ -650,7 +546,7 @@ namespace GnssProcessor {
         const size_t state_size = state_manager_.getStateSize();
 
         // Baseline Q over the contributions' integrated interval (the largest
-        // valid dt_total), as in predictImu, rather than the GNSS dt: the
+        // valid dt_total) rather than the GNSS dt: the
         // non-owned rows keep their configured random-walk process noise, scaled
         // by the interval the INS integrated.
         Eigen::MatrixXd Q_full = state_manager_.getProcessNoiseMatrix(baseline_dt);
@@ -1743,7 +1639,6 @@ namespace GnssProcessor {
         EpochMeasurement& measurement, Eigen::VectorXd& x, Eigen::MatrixXd& P) {
 
         auto klogger = log_manager_.getLogger("kalman_filter");
-        const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
         const std::string epoch_prefix;  // see KalmanFilter::update for rationale
 
         const double threshold = config_.getResidualThreshold();

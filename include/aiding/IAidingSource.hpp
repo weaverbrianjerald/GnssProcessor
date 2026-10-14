@@ -7,7 +7,7 @@
  * An aiding source is anything that contributes navigation information beyond
  * GNSS pseudorange, phase and Doppler: IMU, ZUPT, NHC, wheel odometry, baro
  * height, vision.  Without this interface each modality needs its own branch at
- * four sites (StateManager, KalmanFilter::predictImu, a MeasurementModel
+ * four sites (StateManager, the KalmanFilter IMU predict, a MeasurementModel
  * branch, and Application::run).  The interface lets sources compose: each
  * contributes up to three things, each at the seam where the IMU injects that
  * same thing.

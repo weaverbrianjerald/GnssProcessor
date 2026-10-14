@@ -5,7 +5,6 @@
 #include "logging/LogManager.hpp"
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
-#include "filter/ImuIntegrator.hpp"
 #include "filter/ResidualHistoryTracker.hpp"
 #include "aiding/AidingTypes.hpp"
 #include "common/Constants.hpp"
@@ -68,22 +67,7 @@ namespace GnssProcessor {
         void predict(double dt);
 
         /**
-         * @brief IMU-aided prediction replacing predict() when IMU is enabled.
-         *
-         * Runs the strapdown mechanization over [t_start, t_end], propagating
-         * position/velocity/attitude/biases and injecting the INS error-state
-         * transition and process noise.  Non-INS states (clock, tropo,
-         * ambiguities) use the standard random-walk model.
-         *
-         * @param t_start Previous GNSS epoch time.
-         * @param t_end   Current GNSS epoch time.
-         * @param imu     ImuIntegrator holding the loaded data.
-         */
-        void predictImu(const GnssTime& t_start, const GnssTime& t_end,
-                        const ImuIntegrator& imu);
-
-        /**
-         * @brief Composable generalization of predictImu over aiding sources.
+         * @brief Prediction composed from the aiding sources' contributions.
          *
          * Each contribution supplies a Phi/Q sub-block over the full-state
          * indices it owns plus an optional nominal write-back.  Blocks are
@@ -93,9 +77,10 @@ namespace GnssProcessor {
          *
          * With no valid contribution this delegates to predict(dt), preserving
          * GNSS-only behavior byte-for-byte.  With an INS contribution the
-         * assembly mirrors predictImu exactly: Identity-seeded F (non-INS means
-         * are not propagated) and baseline Q over the contribution's integrated
-         * interval rather than the GNSS dt.
+         * assembly is the strapdown INS predict (the kernel of the retired
+         * IMU-only predict, deleted in card UOM step U2a): Identity-seeded F
+         * (non-INS means are not propagated) and baseline Q over the
+         * contribution's integrated interval rather than the GNSS dt.
          *
          * The nominal attitude (C_b_e_) is written by the IMU source during
          * contribution assembly, not here.
@@ -109,8 +94,7 @@ namespace GnssProcessor {
          * @brief Current body-to-ECEF attitude C_b^e.
          *
          * Written by setAttitude() (the IMU aiding source, after each aided
-         * prediction), by predictImu() (which has no callers) and by attitude
-         * error-state feedback after GNSS updates.
+         * prediction) and by attitude error-state feedback after GNSS updates.
          */
         const Eigen::Matrix3d& getAttitude() const { return C_b_e_; }
 
@@ -500,7 +484,7 @@ namespace GnssProcessor {
          * @brief Splice aiding contributions onto an Identity-seeded transition
          *        and propagate the covariance.
          *
-         * The predictImu assembly as a pure static kernel: writes each
+         * The aided-predict assembly as a pure static kernel: writes each
          * contribution's nominal values into @p x (skipping sentinel or
          * out-of-range indices), ASSIGNS its Phi/Q sub-block over the indices it
          * owns, then propagates P = F·P·Fᵀ + Q_full and symmetrizes.
