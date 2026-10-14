@@ -193,8 +193,8 @@ std::vector<PppObservation> toMinimalPppObs(const std::vector<RinexObservation>&
         p.lli_flags  = r.lli_flags.toStdMap();
         for (const auto& [code, val] : r.measurements) {
             if (code.empty()) continue;
-            const char t = code[0];
-            if (t != 'C' && t != 'L') continue;  // MW uses code + phase only
+            const ObsType t = obsTypeOf(code);
+            if (t != ObsType::Code && t != ObsType::Phase) continue;  // MW uses code + phase only
             p.observed[code]     = val;
             p.raw_observed[code] = val;
         }
@@ -1205,14 +1205,13 @@ void Application::recordCommittedBaselineEpoch_(const BaselineRunWork& run, Base
     for (Eigen::Index i = 0; i < em.innovations.size(); ++i) {
         const double r = em.innovations(i);
         if (!std::isfinite(r)) continue;
-        const char t = (i < static_cast<Eigen::Index>(em.signal_types.size())
-            && !em.signal_types[static_cast<size_t>(i)].empty())
-            ? em.signal_types[static_cast<size_t>(i)][0] : '?';
+        const ObsType t = (i < static_cast<Eigen::Index>(em.signal_types.size()))
+            ? obsTypeOf(em.signal_types[static_cast<size_t>(i)]) : ObsType::Unknown;
         ResStats* bucket = nullptr;
         switch (t) {
-        case 'C': bucket = &res_code;    ++total_code_dd;    break;
-        case 'L': bucket = &res_phase;   ++total_phase_dd;   break;
-        case 'D': bucket = &res_doppler; ++total_doppler_dd; break;
+        case ObsType::Code:    bucket = &res_code;    ++total_code_dd;    break;
+        case ObsType::Phase:   bucket = &res_phase;   ++total_phase_dd;   break;
+        case ObsType::Doppler: bucket = &res_doppler; ++total_doppler_dd; break;
         default: continue;
         }
         bucket->sum += r;

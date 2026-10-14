@@ -90,16 +90,16 @@ namespace GnssProcessor {
 
         for (const auto& [key, val] : obs.raw_observed) {
             if (key.size() < 2) continue;
-            const char prefix = key[0];
-            if (prefix != 'C' && prefix != 'L') continue;
+            const ObsType type = obsTypeOf(key);
+            if (type != ObsType::Code && type != ObsType::Phase) continue;
             // Skip combined (IF) labels containing '_'
-            if (key.find('_') != std::string::npos) continue;
+            if (isIonoFreePairLabel(key)) continue;
             const char band = key[1];
             if (band < '1' || band > '9') continue;
 
             auto& bs = bands[band];
-            if (prefix == 'C' && bs.code.empty())  bs.code  = key;
-            if (prefix == 'L' && bs.phase.empty()) bs.phase = key;
+            if (type == ObsType::Code && bs.code.empty())  bs.code  = key;
+            if (type == ObsType::Phase && bs.phase.empty()) bs.phase = key;
         }
 
         std::vector<SignalPair> pairs;

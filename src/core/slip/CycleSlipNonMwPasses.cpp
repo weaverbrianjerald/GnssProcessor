@@ -9,6 +9,7 @@
  */
 
 #include "slip/CycleSlipManager.hpp"
+#include "common/GnssIdentity.hpp"
 #include "slip/CycleSlipEpochWork.hpp"
 #include "slip/SlipDetectorRegistry.hpp"
 
@@ -81,8 +82,8 @@ void CycleSlipManager::applyTurboEditGfOnlyResolutions(SlipEpochWork& w) {
         bool any = false;
         for (const auto& [sig, val] : obs->observed) {
             (void)val;
-            if (sig.empty() || sig[0] != 'L') continue;          // phase only
-            if (sig.find('_') != std::string::npos) continue;     // raw signal only
+            if (obsTypeOf(sig) != ObsType::Phase) continue;                // phase only
+            if (isIonoFreePairLabel(sig)) continue;               // raw signal only
             const std::string key = sat + "_" + sig;
             if (state_manager.getAmbiguityIndex(key) < 0) continue;
             resetAmbiguityBssdAware(key, sat, sig, modeled_obs,

@@ -80,8 +80,8 @@ void TurboEditResolver::trackSignalContinuity(const PppObservation& obs, double 
     // were excluded above and therefore count as missing, matching the
     // filter's own usage of these observations).
     for (const auto& [sig, val] : obs.raw_observed) {
-        if (sig.size() < 2 || sig[0] != 'L') continue;
-        if (sig.find('_') != std::string::npos) continue;
+        if (sig.size() < 2 || obsTypeOf(sig) != ObsType::Phase) continue;
+        if (isIonoFreePairLabel(sig)) continue;
         if (!std::isfinite(val)) continue;
         const std::string skey = obs.satellite + "_" + sig;
         const auto ls = sig_runs_.find(skey);

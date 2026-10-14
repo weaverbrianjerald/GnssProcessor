@@ -52,7 +52,7 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
     auto has_phase = [&modeled_obs]() {
         for (const auto& obs : modeled_obs) {
             for (const auto& kv : obs.observed) {
-                if (!kv.first.empty() && kv.first[0] == 'L') return true;
+                if (obsTypeOf(kv.first) == ObsType::Phase) return true;
             }
         }
         return false;
@@ -285,7 +285,7 @@ void Application::runGeometryRelinearization(const std::string& epoch_prefix,
     bool has_phase = false;
     for (const auto& obs : epoch_obs) {
         for (const auto& [code, val] : obs.measurements) {
-            if (!code.empty() && code[0] == 'L') { has_phase = true; break; }
+            if (obsTypeOf(code) == ObsType::Phase) { has_phase = true; break; }
         }
         if (has_phase) break;
     }

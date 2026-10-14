@@ -122,8 +122,8 @@ TurboEditResolver::collectPhasePairs(const PppObservation& obs) const {
     std::vector<std::string> phases;
     for (const auto& [key, val] : obs.raw_observed) {
         (void)val;
-        if (key.size() < 2 || key[0] != 'L') continue;
-        if (key.find('_') != std::string::npos) continue;  // skip combined labels
+        if (key.size() < 2 || obsTypeOf(key) != ObsType::Phase) continue;
+        if (isIonoFreePairLabel(key)) continue;  // skip combined labels
         const char band = key[1];
         if (band < '1' || band > '9') continue;
         phases.push_back(key);

@@ -71,7 +71,7 @@ namespace GnssProcessor {
     bool IfPhaseSlipDetector::findPhaseIfLabel(const PppObservation& obs, std::string& phase_if_key) const {
         phase_if_key.clear();
         for (const auto& [k, v] : obs.observed)
-            if (k.find('_') != std::string::npos && !k.empty() && k[0] == 'L') {
+            if (isIonoFreePairLabel(k) && obsTypeOf(k) == ObsType::Phase) {
                 phase_if_key = k;
                 return true;
             }
@@ -82,11 +82,11 @@ namespace GnssProcessor {
         std::string& sig1, std::string& sig2) const {
         sig1.clear();
         sig2.clear();
-        const size_t pos = label.find('_');
-        if (pos == std::string::npos || pos == 0 || pos + 1 >= label.size()) return false;
-        sig1 = label.substr(0, pos);
-        sig2 = label.substr(pos + 1);
-        return (!sig1.empty() && !sig2.empty());
+        const auto pair = IonoFreePairLabel::parse(label);
+        if (!pair) return false;
+        sig1 = pair->first;
+        sig2 = pair->second;
+        return true;
     }
 
     double IfPhaseSlipDetector::computeIfWavelengthMeters(const PppObservation& obs,
@@ -146,8 +146,8 @@ namespace GnssProcessor {
         // Find two phase signals on different frequency bands.
         std::vector<std::tuple<std::string, double, double>> phase_signals; // sig, observed, modeled
         for (const auto& [key, val] : obs.observed) {
-            if (key.empty() || key[0] != 'L') continue;
-            if (key.find('_') != std::string::npos) continue; // skip IF combinations
+            if (obsTypeOf(key) != ObsType::Phase) continue;
+            if (isIonoFreePairLabel(key)) continue; // skip IF combinations
             auto mod_it = obs.modeled.find(key);
             if (mod_it == obs.modeled.end()) continue;
             phase_signals.emplace_back(key, val, mod_it->second);

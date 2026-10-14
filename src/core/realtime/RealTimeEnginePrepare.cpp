@@ -13,6 +13,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "math/WlsEstimator.hpp"
 #include <algorithm>
@@ -103,7 +104,7 @@ void RealTimeEngine::regaugeBssd(RtEpochContext& ctx) {
         code_innov.reserve(modeled_obs.size());
         for (const auto& o : modeled_obs) {
             for (const auto& [code, val] : o.observed) {
-                if (code.empty() || code[0] != 'C') continue;      // code only
+                if (obsTypeOf(code) != ObsType::Code) continue;            // code only
                 const auto mit = o.modeled.find(code);
                 if (mit == o.modeled.end()) continue;
                 const double innov = val - mit->second;
@@ -120,8 +121,8 @@ void RealTimeEngine::regaugeBssd(RtEpochContext& ctx) {
                     for (auto& kv : o.observed) {
                         const std::string& code = kv.first;
                         if (code.empty()) continue;
-                        const char c0 = code[0];
-                        if (c0 != 'C' && c0 != 'L') continue;      // code + phase
+                        const ObsType type = obsTypeOf(code);
+                        if (type != ObsType::Code && type != ObsType::Phase) continue;  // code + phase
                         kv.second -= common_clock_m;               // common-mode: SD-invariant
                         ++n_reduced;
                     }

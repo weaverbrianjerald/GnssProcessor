@@ -177,8 +177,8 @@ void RealTimeEngine::detectAndRepairSlips(RtEpochContext& ctx) {
             if (!obs) continue;
             for (const auto& [sig, val] : obs->observed) {
                 (void)val;
-                if (sig.empty() || sig[0] != 'L') continue;
-                if (sig.find('_') != std::string::npos) continue;
+                if (obsTypeOf(sig) != ObsType::Phase) continue;
+                if (isIonoFreePairLabel(sig)) continue;
                 const std::string key = sat + "_" + sig;
                 if (state_manager_->getAmbiguityIndex(key) < 0) continue;
                 state_manager_->resetAmbiguity(key, reset_std);

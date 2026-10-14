@@ -145,7 +145,7 @@ namespace GnssProcessor {
         {
             auto& bands = cur_lli_bands_[obs.satellite];
             for (const auto& [code, lli] : obs.lli_flags)
-                if (!code.empty() && code[0] == 'L' && lli != 0)
+                if (obsTypeOf(code) == ObsType::Phase && lli != 0)
                     bands.insert(code);
         }
         for (auto it = mw_stats_.begin(); it != mw_stats_.end(); )
@@ -162,7 +162,7 @@ namespace GnssProcessor {
         const auto& logger = w.logger;
 
         for (const auto& [key, val] : obs.raw_observed)
-            if (!key.empty() && key[0] == 'L' && key.find('_') == std::string::npos)
+            if (obsTypeOf(key) == ObsType::Phase && !isIonoFreePairLabel(key))
                 results.push_back(MwSlipResult{ obs.satellite + "_" + key });
         logger->warn("LLI lock loss (uncombined): scheduling all phase ambiguity resets for {}", obs.satellite);
         // Remember which bands the receiver flagged (§14.11), so the
@@ -174,8 +174,8 @@ namespace GnssProcessor {
         {
             auto& bands = cur_lli_bands_[obs.satellite];
             for (const auto& [code, lli] : obs.lli_flags)
-                if (!code.empty() && code[0] == 'L'
-                    && code.find('_') == std::string::npos && lli != 0)
+                if (obsTypeOf(code) == ObsType::Phase
+                    && !isIonoFreePairLabel(code) && lli != 0)
                     bands.insert(code);
             // Readout (§14.10): the LLI epoch has no MWDEC line of its
             // own, so log it explicitly; otherwise the gap reads as

@@ -9,6 +9,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "common/GnssIdentity.hpp"
 #include "filter/StateKeySchema.hpp"   // StateKeys::makeAmbiguityKey
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -108,12 +109,12 @@ void RealTimeEngine::traceSsrConsumer(RtEpochContext& ctx) {
             int cb_disc_max = std::numeric_limits<int>::min();
             for (const auto& kv : obs.modeled) {              // mirror the A5 tracked-signal filter
                 const std::string& code = kv.first;
-                if (code.empty() || code.find('_') != std::string::npos) continue;
-                if (code[0] == 'L') {
+                if (code.empty() || isIonoFreePairLabel(code)) continue;
+                if (obsTypeOf(code) == ObsType::Phase) {
                     auto pb = bias_age_on ? store.getPhaseBias(sat, code, current_time, bias_limit)
                                           : store.getPhaseBias(sat, code);
                     if (pb) { ++n_pb; pb_disc_max = std::max(pb_disc_max, pb->discontinuity_counter); }
-                } else if (code[0] == 'C') {
+                } else if (obsTypeOf(code) == ObsType::Code) {
                     auto d = store.getCodeBiasDiscontinuity(
                         sat, code, current_time,
                         bias_age_on ? bias_limit : std::numeric_limits<double>::max());
@@ -228,7 +229,7 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
         int n_sig = 0;
         for (const auto& kv : obs.modeled) {
             const std::string& c = kv.first;
-            if (c.size() >= 2 && c[0] == 'L' && c.find('_') == std::string::npos) ++n_sig;
+            if (c.size() >= 2 && obsTypeOf(c) == ObsType::Phase && !isIonoFreePairLabel(c)) ++n_sig;
         }
         if (n_sig == 0) continue;
 
@@ -245,8 +246,8 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
 
         for (const auto& kv : obs.modeled) {
             const std::string& sig = kv.first;
-            if (sig.size() < 2 || sig[0] != 'L') continue;              // phase only
-            if (sig.find('_') != std::string::npos) continue;            // raw signal only
+            if (sig.size() < 2 || obsTypeOf(sig) != ObsType::Phase) continue;      // phase only
+            if (isIonoFreePairLabel(sig)) continue;                     // raw signal only
 
             ConsumerSatRow r;
             r.sat = sat;

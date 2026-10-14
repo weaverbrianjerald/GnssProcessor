@@ -12,6 +12,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "common/GnssIdentity.hpp"
 #include "app/EpochUpdateSupport.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -469,8 +470,8 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
         std::map<char, std::string> band_sig;
         for (const auto& kv : obs.modeled) {
             const std::string& sig = kv.first;
-            if (sig.size() < 2 || sig[0] != 'L') continue;
-            if (sig.find('_') != std::string::npos) continue;
+            if (sig.size() < 2 || obsTypeOf(sig) != ObsType::Phase) continue;
+            if (isIonoFreePairLabel(sig)) continue;
             const std::string code_sig = "C" + sig.substr(1);
             if (obs.modeled.find(code_sig) == obs.modeled.end()) continue;
             if (!innov_of.count(sat + "|" + sig) || !innov_of.count(sat + "|" + code_sig))

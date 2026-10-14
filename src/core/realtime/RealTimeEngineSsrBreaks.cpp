@@ -291,8 +291,8 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
-            if (code.empty() || code[0] != 'L') continue;       // phase only
-            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            if (obsTypeOf(code) != ObsType::Phase) continue;             // phase only
+            if (isIonoFreePairLabel(code)) continue;           // raw signal only
             const std::string key = obs.satellite + "|" + code;
             // A key the hold seam claimed skips the discontinuity-counter reaction,
             // which the hold owns.  With processing.ssr_pb_hold_presence_flip
@@ -398,8 +398,8 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
-            if (code.empty() || code[0] != 'L') continue;       // phase only
-            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            if (obsTypeOf(code) != ObsType::Phase) continue;             // phase only
+            if (isIonoFreePairLabel(code)) continue;           // raw signal only
             const std::string key     = obs.satellite + "|" + code;
             // A claimed key: the hold owns its counter; armed, its A5 edge
             // is carried here as an unheld key's is.
@@ -512,8 +512,8 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
-            if (code.empty() || code[0] != 'L') continue;       // phase only
-            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            if (obsTypeOf(code) != ObsType::Phase) continue;             // phase only
+            if (isIonoFreePairLabel(code)) continue;           // raw signal only
             const std::string key     = obs.satellite + "|" + code;
             // A claimed key: the hold owns its counter; armed, its A5 edge
             // is translated here as an unheld key's step is.
@@ -670,8 +670,8 @@ void RealTimeEngine::reactToPbHold_(RtEpochContext& ctx) {
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
-            if (code.empty() || code[0] != 'L') continue;       // phase only
-            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            if (obsTypeOf(code) != ObsType::Phase) continue;             // phase only
+            if (isIonoFreePairLabel(code)) continue;           // raw signal only
             // The ungated read, exactly as the three reactions below make it.
             const auto pb = ssr.getPhaseBias(obs.satellite, code);
             if (!pb || pb->hold_generation == 0) continue;        // not held: unchanged path
@@ -766,8 +766,8 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
         for (const auto& obs : modeled_obs) {
             for (const auto& kv : obs.modeled) {
                 const std::string& code = kv.first;
-                if (code.empty() || code[0] != 'C') continue;          // code obs only
-                if (code.find('_') != std::string::npos) continue;      // raw signal only
+                if (obsTypeOf(code) != ObsType::Code) continue;                // code obs only
+                if (isIonoFreePairLabel(code)) continue;              // raw signal only
                 if (auto c = ssr.getCodeBiasDiscontinuity(obs.satellite, code)) {
                     if (state_manager_->noteSsrDiscontinuity(
                             "CB|" + obs.satellite + "|" + code, *c)) {
@@ -867,7 +867,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                 bool hit = false;
                 for (const auto& kv : obs.modeled) {
                     const std::string& code = kv.first;
-                    if (code.empty() || code[0] != 'C' || code.find('_') != std::string::npos) continue;
+                    if (obsTypeOf(code) != ObsType::Code || isIonoFreePairLabel(code)) continue;
                     if (ssr.getCodeBiasDiscontinuity(obs.satellite, code)) { hit = true; break; }
                 }
                 if (hit) {
@@ -989,8 +989,8 @@ void RealTimeEngine::reactToDeclaredLevelSteps_(RtEpochContext& ctx) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
             if (code.size() != 3) continue;
-            if (code[0] == 'C')      sigs[obs.satellite].first.insert(code);
-            else if (code[0] == 'L') sigs[obs.satellite].second.insert(code);
+            if (obsTypeOf(code) == ObsType::Code)       sigs[obs.satellite].first.insert(code);
+            else if (obsTypeOf(code) == ObsType::Phase) sigs[obs.satellite].second.insert(code);
         }
     }
     std::vector<std::pair<std::vector<std::pair<int, double>>, double>> inflations;
