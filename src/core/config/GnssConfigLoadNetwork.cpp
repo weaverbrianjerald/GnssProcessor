@@ -900,12 +900,11 @@ namespace GnssProcessor {
                           : "");
 
         // Card PRM phase 3b step 2 (network.carry_rebase_complete), on the final values: the
-        // knob widens the walks of the four re-base mechanisms that carry owed exemptions, so
+        // knob widens the walks of the three re-base mechanisms that carry owed exemptions, so
         // without any of them armed it is a structural zero (invariant #4) and is disarmed,
         // which also keeps its fingerprint token off.  Each condition is the one
         // NetworkKnobs::snapshot resolves for the mechanism (carryMechanismArmed).
         if (network_carry_rebase_complete_) {
-            const bool clv = network_clock_level_carry_ && !network_clock_model_;
             const bool relevel = network_apriori_source_ == NetworkAprioriSource::BrdcRts;
             const bool eq34 = network_phase_datum_eq34_
                 && ((network_phase_datum_eq34_carry_shift_ && !network_carry_invariant_)
@@ -916,27 +915,25 @@ namespace GnssProcessor {
             const bool dho = network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                 && network_config_.amb_float_declared_handover && anchored
                 && network_phase_anchor_carry_reref_ && network_phase_datum_handover_continuous_;
-            if (!clv && !relevel && !eq34 && !dho) {
+            if (!relevel && !eq34 && !dho) {
                 log->warn("Network: network.carry_rebase_complete is INERT: no carry re-base "
-                          "mechanism with owed sites is armed (card CLV's "
-                          "network.clock_level_carry without network.clock_model, "
-                          "network.apriori_source brdc_rts, the eq34 chain datum's carry shift or "
+                          "mechanism with owed sites is armed (network.apriori_source "
+                          "brdc_rts, the eq34 chain datum's carry shift or "
                           "seed-round re-host, the float vehicle's declared anchor handover) "
                           "-- disabled.");
                 network_carry_rebase_complete_ = false;
             } else {
-                log->info("Network producer (card PRM phase 3b): carry re-base COMPLETE ({}{}{}{}): "
+                log->info("Network producer (card PRM phase 3b): carry re-base COMPLETE ({}{}{}): "
                           "each armed re-base mechanism also moves the carried references its "
                           "exemption table marks as owed (the stash's pivot value, the clock "
                           "baselines, the last solved phase bias, an open pin bridge, the gross "
                           "screen's held ambiguity, every coupling map's terms), each with the "
                           "mechanism's own rule; the by-design exemptions and the phase hold's "
                           "held value stay.  FINGERPRINTED: fresh convergence only.",
-                          clv ? "clock level" : "",
-                          relevel ? (clv ? ", ephemeris re-level" : "ephemeris re-level") : "",
-                          eq34 ? ((clv || relevel) ? ", eq34 shift" : "eq34 shift") : "",
-                          dho ? ((clv || relevel || eq34) ? ", declared handover"
-                                                          : "declared handover")
+                          relevel ? "ephemeris re-level" : "",
+                          eq34 ? (relevel ? ", eq34 shift" : "eq34 shift") : "",
+                          dho ? ((relevel || eq34) ? ", declared handover"
+                                                   : "declared handover")
                               : "");
             }
         }
@@ -2733,11 +2730,6 @@ namespace GnssProcessor {
             if (!network_config_.emit_pb_hold)
                 throw std::runtime_error("network.emit_pb_hold_phase_clock requires "
                                          "network.emit_pb_hold (it is a mode of the hold; card LAH)");
-            if (jval<bool>(json, "network.clock_level_carry", "network_clock_level_carry", false))
-                throw std::runtime_error("network.emit_pb_hold_phase_clock refuses "
-                                         "network.clock_level_carry: both move the held phase bias "
-                                         "with the clock level, and the phase-clock hold already "
-                                         "passes every clock move to the code side (card LAH)");
             log->info("Network (card LAH): network.emit_pb_hold_phase_clock = true: a held "
                       "(satellite, signal) keeps its phase-visible clock over the generation. "
                       "The held emission is p(t0) + [c~(t) - c~(t0)], c~ the emitted clock less "
@@ -2779,10 +2771,6 @@ namespace GnssProcessor {
             // network.raim_within_epoch and card Q3's anchor are refused at the end of this
             // section, on their resolved values (the within-epoch tier can be armed by
             // other knobs, and the anchor is disarmed by the clock model).
-            if (jval<bool>(json, "network.clock_level_carry", "network_clock_level_carry", false))
-                throw std::runtime_error("network.emit_pb_hold_smoothed refuses "
-                                         "network.clock_level_carry: CLV's discrete re-base is a "
-                                         "revision the clone would not see (card SMH)");
             log->info("Network (card SMH): network.emit_pb_hold_smoothed = true: a held "
                       "(satellite, signal) emits the phase-clock transfer minus the passed motion "
                       "Phi = c(t|t) - c(t0|t), with c(t0|t) a clock clone time-updated by the "
@@ -9633,93 +9621,6 @@ namespace GnssProcessor {
             // mechanism, the defect card C1 recorded against this knob pair.  It lives in
             // the P3 post-arming re-validation block instead.
         }
-        // Code-only level re-base (card CLV; docs/refound/CLV_clock_level_2026-09-22.md).
-        // Solve-affecting and fingerprinted; every knob is inert unless
-        // network.clock_level_carry is on, so an unarmed run is byte-identical.  The
-        // clock_model interlock is checked in the P3 post-arming block, where the arming
-        // values are final.
-        network_clock_level_carry_ =
-            jval<bool>(json, "network.clock_level_carry",
-                       "network_clock_level_carry", false);
-        network_clock_level_sigma_floor_m_ =
-            jval<double>(json, "network.clock_level_sigma_floor_m",
-                         "network_clock_level_sigma_floor_m", 0.01);
-        network_clock_level_horizon_s_ =
-            jval<double>(json, "network.clock_level_horizon_s",
-                         "network_clock_level_horizon_s", 7200.0);
-        // Card CLV return plan (R-A, R-B, R-C): each default reproduces the built card.
-        network_clock_level_pin_pair_read_ =
-            jval<bool>(json, "network.clock_level_pin_pair_read",
-                       "network_clock_level_pin_pair_read", false);
-        {
-            const std::string follow =
-                jval<std::string>(json, "network.clock_level_free_cb_follow",
-                                  "network_clock_level_free_cb_follow", std::string("off"));
-            if (follow == "off") {
-                network_clock_level_free_cb_follow_ = 0;
-            } else if (follow == "if") {
-                network_clock_level_free_cb_follow_ = 1;
-            } else if (follow == "full") {
-                network_clock_level_free_cb_follow_ = 2;
-            } else {
-                log->warn("Network (card CLV): network.clock_level_free_cb_follow = '{}' is not "
-                          "one of off, if, full; using off.", follow);
-                network_clock_level_free_cb_follow_ = 0;
-            }
-        }
-        network_clock_level_datum_pause_ =
-            jval<bool>(json, "network.clock_level_datum_pause",
-                       "network_clock_level_datum_pause", false);
-        network_clock_level_confirm_epochs_ =
-            jval<int>(json, "network.clock_level_confirm_epochs",
-                      "network_clock_level_confirm_epochs", 1);
-        if (network_clock_level_confirm_epochs_ < 1) {
-            log->warn("Network (card CLV): network.clock_level_confirm_epochs = {} is below 1; "
-                      "using 1.", network_clock_level_confirm_epochs_);
-            network_clock_level_confirm_epochs_ = 1;
-        }
-        network_clock_level_pivot_ref_ =
-            jval<bool>(json, "network.clock_level_pivot_ref",
-                       "network_clock_level_pivot_ref", false);
-        network_clock_level_free_cb_rebase_ =
-            jval<bool>(json, "network.clock_level_free_cb_rebase",
-                       "network_clock_level_free_cb_rebase", false);
-        if (network_clock_level_carry_) {
-            if (!(network_clock_level_sigma_floor_m_ > 0.0)) {
-                log->warn("Network (card CLV): network.clock_level_sigma_floor_m = {:.4f} is not "
-                          "positive; restoring the default 0.01 m (a zero floor would let the "
-                          "filter's gain decay to zero).", network_clock_level_sigma_floor_m_);
-                network_clock_level_sigma_floor_m_ = 0.01;
-            }
-            if (!(network_clock_level_horizon_s_ > 0.0)) {
-                log->warn("Network (card CLV): network.clock_level_horizon_s = {:.1f} is not "
-                          "positive; restoring the default 7200 s.",
-                          network_clock_level_horizon_s_);
-                network_clock_level_horizon_s_ = 7200.0;
-            }
-            log->info("Network producer (card CLV): CLOCK LEVEL RE-BASE ON. After every kept "
-                      "epoch each anchored satellite's level (the clock and every phase bias "
-                      "shifted together; every phase row is blind to it) is estimated from the "
-                      "post-fit ionosphere-free code residuals (a two-way satellite and station "
-                      "fit) by a filter with the code-only information I_L, V_L = max(1 / I_L, "
-                      "{:.3f}^2 m^2), I_L decayed with a {:.0f} s horizon, and the carry is moved "
-                      "along the direction by the update; the emit hold follows, so the wire's "
-                      "phase side does not move.  SOLVE-AFFECTING + FINGERPRINTED: fresh "
-                      "convergence only.",
-                      network_clock_level_sigma_floor_m_, network_clock_level_horizon_s_);
-            static const char* const kFollowName[] = {"off", "if", "full"};
-            log->info("Network producer (card CLV return plan): pin_pair_read {}, "
-                      "free_cb_follow {}, datum_pause {}, confirm_epochs {}, pivot_ref {}.",
-                      network_clock_level_pin_pair_read_,
-                      kFollowName[network_clock_level_free_cb_follow_],
-                      network_clock_level_datum_pause_, network_clock_level_confirm_epochs_,
-                      network_clock_level_pivot_ref_);
-            if (network_clock_level_free_cb_rebase_)
-                log->info("Network producer (card CLV2): R-A2 free-column re-base ON: each free "
-                          "same-band code-bias column is re-based from the same-band code "
-                          "difference at the stations that track both codes, and no longer "
-                          "follows the level while its filter is armed.");
-        }
         // Card CTU (docs/refound/CTU_coupling_time_update_2026-09-28.md section 9.3): the
         // measure-only level monitor and the raise of the stashed block to its bound.
         network_clock_level_monitor_ =
@@ -9789,10 +9690,6 @@ namespace GnssProcessor {
                 "network.clock_level_bound_raise requires network.clock_level_monitor = true "
                 "(the raise reads the monitor's per-satellite information).");
         if (network_clock_level_monitor_) {
-            if (network_clock_level_carry_)
-                throw std::runtime_error(
-                    "network.clock_level_monitor refuses network.clock_level_carry (card CTU "
-                    "measures the level the estimator holds; card CLV moves it).");
             if (!network_shared_carry_full_cov_)
                 throw std::runtime_error(
                     "network.clock_level_monitor requires network.shared_carry_full_cov = true "
@@ -11811,22 +11708,6 @@ namespace GnssProcessor {
                        "so).  The oscillator is a measured NO-GO on this lineage (Hadamard p ≈ 1 "
                        "⇒ white-FM, RWFM undetectable); disarm network.clock_model.",
                        network_service_mode_ ? " (FORCE-ARMED by network.service_mode)" : "");
-        }
-        // (d) Card CLV x network.clock_model, post-arming for the same reason as (c): the
-        //     re-base moves the D2 clock carry, which the two-state oscillator replaces, so
-        //     the card resolves itself off (NetworkKnobs::clv_on) and says so here.
-        if (network_clock_level_carry_) {
-            if (network_clock_model_)
-                log->warn("Network (card CLV): network.clock_level_carry is armed with "
-                          "network.clock_model ON{}: the satellite clock is on the two-state "
-                          "oscillator, not in the D2 carry the re-base moves, so the card is "
-                          "resolved OFF for this run.",
-                          network_service_mode_ ? " (FORCE-ARMED by network.service_mode)" : "");
-            if (!network_clock_temporal_anchor_)
-                log->warn("Network (card CLV): network.clock_level_carry is armed without "
-                          "network.clock_temporal_anchor: the level filter normally arms when the "
-                          "Q3 anchor takes a satellite's clock (the end of its ignition), so on "
-                          "this run it arms at each satellite's first update instead.");
         }
         if (network_raim_withhold_sigma0_ != 0.0 && network_raim_withhold_sigma0_ <= 1.0) {
             log->warn("Network: network.raim_withhold_sigma0 {} (service-armed at 2x "

@@ -103,17 +103,18 @@ struct NetworkSatSolution {
     /// reference signal (both share the clock term, so typically 0.6–0.9); 0 unless
     /// populated.  Serialized as the C-record rho= token (M4, contract v2).
     double                                  rho{0.0};
-    /// Level step of this satellite since its previous emission (m) (card CLV,
-    /// @c network.clock_level_carry).  The code-only level re-base moved its clock
+    /// Level step of this satellite since its previous emission (m) (card CLV; the
+    /// producer's re-base was removed, so only a wire written with it carries a nonzero
+    /// step).  The code-only level re-base moved its clock
     /// record and each of its phase-bias records by this amount, so the phase side
     /// that the consumer applies (-clock + phase bias) did not move.  Serialized as
     /// the C-record @c lvl= token (written only when nonzero, so an unarmed wire is
     /// byte-identical) and read back by NetworkProductReader, because the emitter's
     /// phase-bias value-jump test subtracts it from each phase-bias step before
     /// testing.  The producer and a replay use the same arithmetic, so a replay
-    /// reproduces every declaration.  0 unless the card moved the level.
+    /// reproduces every declaration.  0 unless the wire declares a step.
     double                                  level_step_m{0.0};
-    /// Card CLV return plan R-A (@c network.clock_level_free_cb_follow): per code-bias
+    /// Card CLV return plan R-A (removed from the producer; read from an old wire): per code-bias
     /// signal, the FOLLOW STEP of a free same-band column since this satellite's previous
     /// emission (m): the re-base moved that code-bias record by this amount together with
     /// the clock, so a consumer reading band 1 through it sees no level step.  Serialized
@@ -388,14 +389,14 @@ public:
     ///        only because of the satellite's declared level step
     ///        (@ref NetworkSatSolution::level_step_m, the C-record lvl= token), and
     ///        which therefore did not declare once the step was removed (card CLV).
-    /// @return the run count (0 on an unarmed run).
+    /// @return the run count (0 unless the wire declares a level step).
     long long clvJumpExcluded() const { return clv_jump_excluded_; }
 
     /// @brief Card CLV return plan R-A: code-bias value-jump tests whose raw step exceeded
     ///        the bar only because of the column's declared follow step
     ///        (@ref NetworkSatSolution::cb_level_step_m, the B-record lvl= token), and
     ///        which the step's removal therefore did not declare.
-    /// @return the run count (0 unless network.clock_level_free_cb_follow moved a column).
+    /// @return the run count (0 unless the wire declares a follow step).
     long long clvCbJumpExcluded() const { return clv_cb_jump_excluded_; }
 
     /// Classified cells of the last @ref emitToStore call, cleared at the top of every

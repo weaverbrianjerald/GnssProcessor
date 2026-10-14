@@ -1,8 +1,9 @@
 /**
  * @file test_clock_level_carry.cpp
- * @brief Tests for the satellite clock level, estimated from the code alone and
- *        re-based into the carry (@c network.clock_level_carry).  Suite
- *        @c ClockLevelCarryTest (card CLV, docs/refound/CLV_clock_level_2026-09-22.md).
+ * @brief Tests for the satellite clock level read from the code alone, and for its
+ *        declaration on the wire.  Suite @c ClockLevelCarryTest (card CLV,
+ *        docs/refound/CLV_clock_level_2026-09-22.md; the producer's re-base was removed,
+ *        the level read stays for card CTU's monitor and the wire's lvl= token stays).
  *
  * What is pinned here:
  *  - the level direction (+1 on the satellite clock, +1 on each of its phase biases) is
@@ -11,14 +12,10 @@
  *  - why the carry freezes it: Card 1d's time update shrinks a coupling row's clock
  *    term at the legacy clock rate and keeps its phase-bias term, so a carried
  *    ambiguity row states its satellite's level;
- *  - the code-only information (the ionosphere-free pair formulas, the decay, the
- *    variance and its floor);
+ *  - the code-only information (the ionosphere-free pair formulas);
  *  - the two-way fit separates satellite levels from station offsets exactly, screens a
  *    gross pair and drops a thin satellite;
- *  - the filter arms, accumulates, breaks and caps;
- *  - the re-base moves every carried reference of the satellite and nothing else, and
- *    every coupling row keeps its residual when the border moves with it;
- *  - with the carry tight along the level, a solve started from the re-based prior
+ *  - with the carry tight along the level, a solve started from a re-based prior
  *    keeps the shift and the phase side;
  *  - the level step travels on the wire (the C record's lvl= token): an emitter fed the
  *    epochs directly and one fed the written-then-read records declare the same phase,
@@ -149,17 +146,6 @@ CoupledShared term(SharedParamKind kind, const std::string& sat, const std::stri
     return cs;
 }
 
-CarryPrior prior(SharedParamKind kind, const std::string& sat, const std::string& sig,
-                 double value) {
-    CarryPrior cp{};
-    cp.kind   = kind;
-    cp.sat    = sat;
-    cp.signal = sig;
-    cp.value  = value;
-    cp.var    = 1e-4;
-    return cp;
-}
-
 /// The part of a built coupling row that depends on the border: y - m^T s.
 double rowResidual(const PendCplRow& row, const Eigen::VectorXd& s) {
     double r = row.y;
@@ -258,7 +244,7 @@ TEST(ClockLevelCarryTest, TimeUpdateTurnsAnAmbiguityRowIntoALevelStatement) {
 // The code-only information (R2).
 // ---------------------------------------------------------------------------
 
-TEST(ClockLevelCarryTest, InformationAccumulatesDecaysAndFloors) {
+TEST(ClockLevelCarryTest, IonosphereFreePairInformationAndResidual) {
     // L1/L2: A = f1^2/(f1^2-f2^2), B = f2^2/(f1^2-f2^2); one IF pair of unit weights
     // carries 1/(A^2 + B^2), and its residual is A v1 - B v2.
     const double f1 = 1575.42e6, f2 = 1227.60e6;
@@ -275,25 +261,6 @@ TEST(ClockLevelCarryTest, InformationAccumulatesDecaysAndFloors) {
     const double alpha2 = (f1 / f2) * (f1 / f2);
     for (double delta : {0.0, 0.713, -2.0})
         EXPECT_NEAR(clockLevelIfResidual(1.0 - delta, f1, 1.0 - alpha2 * delta, f2), 1.0, 1e-12);
-
-    // Decay: one horizon multiplies by 1/e; never set reads 0; no elapsed time or no
-    // horizon leaves it unchanged.
-    const double t0 = 2313.0 * 604800.0 + 259230.0;
-    EXPECT_NEAR(clockLevelDecayedInfo(10.0, t0, t0 + 7200.0, 7200.0), 10.0 * std::exp(-1.0),
-                1e-12);
-    EXPECT_EQ(clockLevelDecayedInfo(10.0, 0.0, t0, 7200.0), 0.0);
-    EXPECT_EQ(clockLevelDecayedInfo(10.0, t0, t0, 7200.0), 10.0);
-    EXPECT_EQ(clockLevelDecayedInfo(10.0, t0, t0 + 30.0, 0.0), 10.0);
-
-    // Variance: 1/I above the floor, the floor at or below it, the ignition variance
-    // with no information.
-    bool at_floor = true;
-    EXPECT_NEAR(clockLevelVariance(4.0, 0.01, 1e6, &at_floor), 0.25, 1e-15);
-    EXPECT_FALSE(at_floor);
-    EXPECT_NEAR(clockLevelVariance(1e6, 0.01, 1e6, &at_floor), 1e-4, 1e-18);
-    EXPECT_TRUE(at_floor);
-    EXPECT_EQ(clockLevelVariance(0.0, 0.01, 1e6, &at_floor), 1e6);
-    EXPECT_FALSE(at_floor);
 }
 
 // ---------------------------------------------------------------------------
@@ -350,156 +317,8 @@ TEST(ClockLevelCarryTest, TwoWayFitSeparatesSatelliteLevelsFromStationOffsets) {
 }
 
 // ---------------------------------------------------------------------------
-// The filter.
+// A re-based level survives the solve.
 // ---------------------------------------------------------------------------
-
-TEST(ClockLevelCarryTest, FilterArmsAccumulatesBreaksAndCaps) {
-    // Arming: gain 1, the level is set to this epoch's code estimate.
-    ClockLevelUpdate u = clockLevelFilterUpdate(0.0, /*armed=*/false, 8.0, 0.6, kClvBreakK, 0.01);
-    EXPECT_TRUE(u.restarted);
-    EXPECT_FALSE(u.broke);
-    EXPECT_DOUBLE_EQ(u.gain, 1.0);
-    EXPECT_DOUBLE_EQ(u.info, 8.0);
-    // Accumulating: the running mean, gain = i / (I + i).
-    u = clockLevelFilterUpdate(24.0, /*armed=*/true, 8.0, 0.1, kClvBreakK, 0.01);
-    EXPECT_FALSE(u.restarted);
-    EXPECT_DOUBLE_EQ(u.info, 32.0);
-    EXPECT_DOUBLE_EQ(u.gain, 0.25);
-    // Breaking: a residual beyond k sqrt(1/I + 1/i) restarts the filter.
-    const double spred = std::sqrt(1.0 / 24.0 + 1.0 / 8.0);
-    u = clockLevelFilterUpdate(24.0, true, 8.0, 1.01 * kClvBreakK * spred, kClvBreakK, 0.01);
-    EXPECT_TRUE(u.restarted);
-    EXPECT_TRUE(u.broke);
-    EXPECT_DOUBLE_EQ(u.gain, 1.0);
-    u = clockLevelFilterUpdate(24.0, true, 8.0, 0.99 * kClvBreakK * spred, kClvBreakK, 0.01);
-    EXPECT_FALSE(u.restarted);
-    // The floor caps the information at 1 / floor^2, which keeps a minimum gain.
-    u = clockLevelFilterUpdate(9999.0, true, 8.0, 0.0, kClvBreakK, 0.01);
-    EXPECT_TRUE(u.at_floor);
-    EXPECT_DOUBLE_EQ(u.info, 1e4);
-    EXPECT_DOUBLE_EQ(u.gain, 8.0 / 1e4);
-    // No information: nothing to do.
-    u = clockLevelFilterUpdate(24.0, true, 0.0, 0.3, kClvBreakK, 0.01);
-    EXPECT_EQ(u.info, 0.0);
-    EXPECT_EQ(u.gain, 0.0);
-}
-
-// ---------------------------------------------------------------------------
-// The re-base moves every carried reference of the satellite, nothing else (R3, R5).
-// ---------------------------------------------------------------------------
-
-TEST(ClockLevelCarryTest, ReBaseMovesEveryCarriedReferenceAlongTheLevel) {
-    NetworkCarryState carry;
-    carry.prev_carry = {
-        prior(SharedParamKind::Clock, "G01", "", 0.8),
-        prior(SharedParamKind::PhaseBias, "G01", "L1C", -0.4),
-        prior(SharedParamKind::PhaseBias, "G01", "L2W", 0.6),
-        prior(SharedParamKind::CodeBias, "G01", "C1C", 1.5),
-        prior(SharedParamKind::Clock, "G02", "", -1.1),
-        prior(SharedParamKind::PhaseBias, "G02", "L1C", 0.2),
-    };
-    LocalCarry amb{1.25, 1e-4, 0.0};
-    amb.coupling = {term(SharedParamKind::Clock, "G01", "", -1.0, 0.8, 1e-5),
-                    term(SharedParamKind::PhaseBias, "G01", "L1C", 1.0, -0.4, 1e-5),
-                    term(SharedParamKind::CodeBias, "G01", "C1C", 0.01, 1.5, 1e-4),
-                    term(SharedParamKind::Clock, "G02", "", 0.2, -1.1, 1e-5)};
-    carry.local_carry[{3, "G01", "L1C"}] = amb;
-    LocalCarry zwd{0.1, 1e-4, 0.0};
-    zwd.coupling = {term(SharedParamKind::Clock, "G01", "", 0.3, 0.8, 1e-5)};
-    carry.zwd_carry[3] = zwd;
-    carry.prev_clk["G01"] = {0.8, 1.0};
-    carry.prev_clk["G02"] = {-1.1, 1.0};
-    carry.cb_exc_prev_clk["G01"] = 0.8;
-    carry.pb_hold_prev_clock_m["G01"] = 0.8;
-    carry.pb_level_prev["G01_L1C"] = -0.4;
-    carry.pb_level_prev["G02_L1C"] = 0.2;
-    carry.pb_hold["G01|L5Q"] = {};   // held but not carried: its transfer must follow too
-
-    const double d = 0.37;
-    const long long moved = clockLevelShiftCarry(carry, {{"G01", d}});
-    // 3 border keys (clock, two phase biases), 3 coupling terms (two on the ambiguity,
-    // one on the ZWD), 3 clock baselines, 1 last-solved phase bias.
-    EXPECT_EQ(moved, 10);
-    EXPECT_DOUBLE_EQ(carry.prev_carry[0].value, 0.8 + d);
-    EXPECT_DOUBLE_EQ(carry.prev_carry[1].value, -0.4 + d);
-    EXPECT_DOUBLE_EQ(carry.prev_carry[2].value, 0.6 + d);
-    EXPECT_DOUBLE_EQ(carry.prev_carry[3].value, 1.5) << "code biases are not on the level";
-    EXPECT_DOUBLE_EQ(carry.prev_carry[4].value, -1.1) << "other satellites are untouched";
-    EXPECT_DOUBLE_EQ(carry.prev_carry[5].value, 0.2);
-    const LocalCarry& a = carry.local_carry.at({3, "G01", "L1C"});
-    EXPECT_DOUBLE_EQ(a.coupling[0].s_prev, 0.8 + d);
-    EXPECT_DOUBLE_EQ(a.coupling[1].s_prev, -0.4 + d);
-    EXPECT_DOUBLE_EQ(a.coupling[2].s_prev, 1.5);
-    EXPECT_DOUBLE_EQ(a.coupling[3].s_prev, -1.1);
-    EXPECT_DOUBLE_EQ(a.value_abs, 1.25) << "the ambiguity itself does not move";
-    EXPECT_DOUBLE_EQ(carry.zwd_carry.at(3).coupling[0].s_prev, 0.8 + d);
-    EXPECT_DOUBLE_EQ(carry.prev_clk.at("G01").first, 0.8 + d);
-    EXPECT_DOUBLE_EQ(carry.prev_clk.at("G02").first, -1.1);
-    EXPECT_DOUBLE_EQ(carry.cb_exc_prev_clk.at("G01"), 0.8 + d);
-    EXPECT_DOUBLE_EQ(carry.pb_hold_prev_clock_m.at("G01"), 0.8 + d);
-    EXPECT_DOUBLE_EQ(carry.pb_level_prev.at("G01_L1C"), -0.4 + d);
-    EXPECT_DOUBLE_EQ(carry.pb_level_prev.at("G02_L1C"), 0.2);
-    const auto& xf = carry.clk_level.sat.at("G01").xfer;
-    EXPECT_DOUBLE_EQ(xf.at("L1C"), d);
-    EXPECT_DOUBLE_EQ(xf.at("L2W"), d);
-    EXPECT_DOUBLE_EQ(xf.at("L5Q"), d);
-    EXPECT_EQ(carry.clk_level.sat.count("G02"), 0u);
-
-    // A second shift accumulates; an empty shift is a no-op.
-    clockLevelShiftCarry(carry, {{"G01", -0.07}});
-    EXPECT_NEAR(carry.clk_level.sat.at("G01").xfer.at("L1C"), d - 0.07, 1e-15);
-    EXPECT_EQ(clockLevelShiftCarry(carry, {}), 0);
-}
-
-// Every coupling row keeps its residual when the border and its s_prev move together
-// along the level, including a row the Card-1d time update shrank and a row with terms
-// on another satellite, so the re-base never pulls a carried row (R4).
-TEST(ClockLevelCarryTest, CouplingRowsKeepTheirResidualUnderTheReBase) {
-    NetworkEstimator est;
-    const Net n = makeNet(est, /*S=*/3, /*R=*/1);
-    GlobalVtecShConfig shc;
-    const std::map<std::tuple<SharedParamKind, std::string, std::string>, double> hist;
-    const double q_clock = 1e-3, q_cb = 1e-10, q_pb = 1e-12, gap = 30.0;
-
-    const Eigen::VectorXd s0 = (Eigen::VectorXd(est.numShared()) << 0.35, -2.4, -0.72, 0.31,
-                                1.12, 0.05).finished();
-    const std::map<std::string, double> shift = {{"G01", 0.42}, {"G02", -0.15}};
-    Eigen::VectorXd s1 = s0;
-    for (int s = 0; s < n.S; ++s) {
-        const auto it = shift.find(n.sats[static_cast<std::size_t>(s)]);
-        if (it != shift.end()) s1 += it->second * levelDir(n, est, s);
-    }
-    for (const auto& [tu, gauge] : std::vector<std::pair<bool, bool>>{
-             {false, false}, {true, false}, {true, true}}) {
-        NetworkCarryState carry;
-        LocalCarry lc{1.25, 1e-4, 0.0};
-        lc.coupling = {
-            term(SharedParamKind::Clock, "G01", "", -(1.0 - 1.0 / 3.0), 0.40, 1e-5),
-            term(SharedParamKind::Clock, "G02", "", 1.0 / 3.0, -0.70, 1e-5),
-            term(SharedParamKind::Clock, "G03", "", 1.0 / 3.0, 1.10, 1e-5),
-            term(SharedParamKind::PhaseBias, "G01", "L1C", 1.0, -2.50, 2e-5),
-            term(SharedParamKind::PhaseBias, "G02", "L1C", -0.1, 0.30, 2e-5),
-        };
-        carry.local_carry[{0, "G01", "L1C"}] = lc;
-        auto build = [&](PendCplRow& row) {
-            StationAssembly R;
-            double sigma2 = 0.0;
-            CouplingRowBuilder cb{est, shc, q_clock, q_cb, q_pb,
-                                  /*joint=*/false, tu, /*shmarg=*/false, gauge,
-                                  /*reinit=*/false, hist, R};
-            EXPECT_TRUE(cb.scalarRowIngredients(/*col=*/1, /*x_lin=*/0.05,
-                                                carry.local_carry.at({0, "G01", "L1C"}), 1e-4,
-                                                gap, row, sigma2));
-        };
-        PendCplRow r0;
-        build(r0);
-        const double res0 = rowResidual(r0, s0);
-        clockLevelShiftCarry(carry, shift);
-        PendCplRow r1;
-        build(r1);
-        EXPECT_NEAR(rowResidual(r1, s1), res0, 1e-12) << "tu " << tu << " gauge " << gauge;
-    }
-}
 
 // With the carry tight along the level (the frozen posture), a solve started from the
 // re-based prior keeps the shift: the clock and the phase bias move together by it and
@@ -658,100 +477,8 @@ TEST(ClockLevelCarryTest, LevelStepRoundTripsTheWireAndKeepsTheDeclarations) {
 }
 
 // ---------------------------------------------------------------------------
-// Return plan R-A: the free same-band code-bias families.
+// Return plan R-A: the free same-band code-bias follow step on the wire.
 // ---------------------------------------------------------------------------
-
-// Only a code on the band of the pin pair's first signal that is not in the pair is a
-// free same-band extra; the second band's companions are pinned at the group delay.
-TEST(ClockLevelCarryTest, FreeSameBandExtraIsTheFirstBandCompanionOnly) {
-    EXPECT_TRUE(clockLevelIsFreeSameBand("C1W", "C1C", "C2W"));
-    EXPECT_TRUE(clockLevelIsFreeSameBand("C1X", "C1C", "C5Q"));
-    EXPECT_FALSE(clockLevelIsFreeSameBand("C1C", "C1C", "C2W")) << "the pinned signal itself";
-    EXPECT_FALSE(clockLevelIsFreeSameBand("C2W", "C1C", "C2W"));
-    EXPECT_FALSE(clockLevelIsFreeSameBand("C2L", "C1C", "C2W")) << "second-band companion";
-    EXPECT_FALSE(clockLevelIsFreeSameBand("C5X", "C1C", "C5Q")) << "second-band companion";
-    EXPECT_FALSE(clockLevelIsFreeSameBand("L1W", "C1C", "C2W")) << "a phase signal";
-    EXPECT_FALSE(clockLevelIsFreeSameBand("C1W", "", "")) << "no pin pair";
-}
-
-// The "if" share keeps the ionosphere-free combination of the free extra and the pinned
-// second signal unchanged under the shift: with the extra moved by x and the slant
-// ionosphere by d / mu2, both code rows vanish, and the IF combination of the two rows
-// does not move for any ionosphere.
-TEST(ClockLevelCarryTest, FollowFactorKeepsTheExtraPairIonosphereFree) {
-    const double f1 = 1575.42e6, f2 = 1227.60e6, f5 = 1176.45e6;
-    EXPECT_NEAR(clockLevelFreeCbFollowFactor(1, f1, f2), 0.392815, 1e-6);
-    EXPECT_NEAR(clockLevelFreeCbFollowFactor(1, f1, f5), 0.442360, 1e-6);
-    EXPECT_DOUBLE_EQ(clockLevelFreeCbFollowFactor(2, f1, f2), 1.0);
-    EXPECT_DOUBLE_EQ(clockLevelFreeCbFollowFactor(0, f1, f2), 0.0);
-    EXPECT_DOUBLE_EQ(clockLevelFreeCbFollowFactor(1, 0.0, f2), 0.0);
-
-    const double d   = 0.8;
-    const double x   = clockLevelFreeCbFollowFactor(1, f1, f2) * d;
-    const double mu2 = (f1 / f2) * (f1 / f2);
-    const double a   = f1 * f1 / (f1 * f1 - f2 * f2);
-    const double b   = f2 * f2 / (f1 * f1 - f2 * f2);
-    // Rows after the clock moves by d: extra -d + x + I, pinned second -d + mu2 I.
-    const double I = d / mu2;
-    EXPECT_NEAR(-d + x + I, 0.0, 1e-12);
-    EXPECT_NEAR(-d + mu2 * I, 0.0, 1e-12);
-    // The IF combination with the ionosphere left where it was (I = 0).
-    EXPECT_NEAR(a * (-d + x) - b * (-d), 0.0, 1e-12);
-    // A full follow leaves an IF step of d (a - 1) - ... = 1.546 d on that pair.
-    EXPECT_NEAR(a * (-d + d) - b * (-d), b * d, 1e-12);
-}
-
-// The shift moves a free extra's carried value, its coupling s_prev, its time-linked
-// datum reference and its pending declaration by factor x d; the pinned pair's columns
-// and other satellites stay.
-TEST(ClockLevelCarryTest, ReBaseMovesTheFreeCodeBiasFamilyByItsShare) {
-    NetworkCarryState carry;
-    carry.prev_carry = {
-        prior(SharedParamKind::Clock, "G01", "", 0.8),
-        prior(SharedParamKind::CodeBias, "G01", "C1C", 1.5),
-        prior(SharedParamKind::CodeBias, "G01", "C2W", 2.5),
-        prior(SharedParamKind::CodeBias, "G01", "C1W", 1.9),
-        prior(SharedParamKind::CodeBias, "G02", "C1W", -0.3),
-    };
-    LocalCarry rx{0.0, 1e-4, 0.0};
-    rx.coupling = {term(SharedParamKind::CodeBias, "G01", "C1W", 0.5, 1.9, 1e-4),
-                   term(SharedParamKind::CodeBias, "G01", "C1C", 0.5, 1.5, 1e-4)};
-    carry.rx_cb_carry[{3, "C1W"}] = rx;
-    carry.code_bias_prev_["G|C1W"]["G01"] = 1.9;
-    carry.code_bias_prev_["G|C1W"]["G02"] = -0.3;
-    carry.code_bias_prev_["G|C1C"]["G01"] = 1.5;
-
-    const double d = 0.5, share = 0.4;
-    std::map<std::string, ClockLevelCbFollow> follow;
-    follow["G01"] = ClockLevelCbFollow{share, "C1C", "C2W"};
-    std::map<std::pair<std::string, std::string>, double> moved;
-    const long long n = clockLevelShiftCarry(carry, {{"G01", d}}, &follow, &moved);
-    // clock, the C1W carry, its coupling term, its datum reference.
-    EXPECT_EQ(n, 4);
-    EXPECT_DOUBLE_EQ(carry.prev_carry[0].value, 0.8 + d);
-    EXPECT_DOUBLE_EQ(carry.prev_carry[1].value, 1.5) << "pinned C1C stays";
-    EXPECT_DOUBLE_EQ(carry.prev_carry[2].value, 2.5) << "pinned C2W stays";
-    EXPECT_DOUBLE_EQ(carry.prev_carry[3].value, 1.9 + share * d);
-    EXPECT_DOUBLE_EQ(carry.prev_carry[4].value, -0.3) << "other satellites stay";
-    const LocalCarry& r = carry.rx_cb_carry.at({3, "C1W"});
-    EXPECT_DOUBLE_EQ(r.coupling[0].s_prev, 1.9 + share * d);
-    EXPECT_DOUBLE_EQ(r.coupling[1].s_prev, 1.5);
-    EXPECT_DOUBLE_EQ(carry.code_bias_prev_.at("G|C1W").at("G01"), 1.9 + share * d);
-    EXPECT_DOUBLE_EQ(carry.code_bias_prev_.at("G|C1W").at("G02"), -0.3);
-    EXPECT_DOUBLE_EQ(carry.code_bias_prev_.at("G|C1C").at("G01"), 1.5);
-    EXPECT_DOUBLE_EQ(carry.clk_level.sat.at("G01").cb_pending.at("C1W"), share * d);
-    ASSERT_EQ(moved.size(), 1u);
-    EXPECT_DOUBLE_EQ(moved.at({"G01", "C1W"}), share * d);
-
-    // Without a follow the code biases are untouched, as in the built card.
-    NetworkCarryState c2;
-    c2.prev_carry = {prior(SharedParamKind::Clock, "G01", "", 0.8),
-                     prior(SharedParamKind::CodeBias, "G01", "C1W", 1.9)};
-    c2.code_bias_prev_["G|C1W"]["G01"] = 1.9;
-    EXPECT_EQ(clockLevelShiftCarry(c2, {{"G01", d}}), 1);
-    EXPECT_DOUBLE_EQ(c2.prev_carry[1].value, 1.9);
-    EXPECT_DOUBLE_EQ(c2.code_bias_prev_.at("G|C1W").at("G01"), 1.9);
-}
 
 // The B-record lvl= token carries the follow step: an emitter fed the epochs directly
 // and one fed the written-then-read records declare the same code-bias discontinuities,
@@ -840,41 +567,6 @@ TEST(ClockLevelCarryTest, CodeBiasFollowStepRoundTripsTheWire) {
     EXPECT_EQ(blind.codeBiasDiscontinuityCounter("G05", "C1W"), 3);
     EXPECT_EQ(blind.clvCbJumpExcluded(), 0);
     fs::remove(p, ec);
-}
-
-// ---------------------------------------------------------------------------
-// Return plan R-B: confirmation before an arm or a break.
-// ---------------------------------------------------------------------------
-
-TEST(ClockLevelCarryTest, ConfirmationNeedsConsecutiveSameSignEpochs) {
-    ClockLevelSat ls;
-    // An arm over three epochs: the mean of the effects, weighted by information.
-    ClockLevelConfirm c = clockLevelConfirmStep(ls, 0, 10.0, 1.0, 3);
-    EXPECT_FALSE(c.apply);
-    c = clockLevelConfirmStep(ls, 0, 30.0, 2.0, 3);
-    EXPECT_FALSE(c.apply);
-    c = clockLevelConfirmStep(ls, 0, 60.0, 0.5, 3);
-    ASSERT_TRUE(c.apply);
-    EXPECT_DOUBLE_EQ(c.info, 100.0);
-    EXPECT_NEAR(c.e, (10.0 * 1.0 + 30.0 * 2.0 + 60.0 * 0.5) / 100.0, 1e-12);
-    EXPECT_EQ(ls.pend_n, 0) << "cleared once applied";
-
-    // A break whose sign alternates never confirms; two of the same sign do.
-    c = clockLevelConfirmStep(ls, +1, 5.0, 2.0, 2);
-    EXPECT_FALSE(c.apply);
-    c = clockLevelConfirmStep(ls, -1, 5.0, -2.0, 2);
-    EXPECT_FALSE(c.apply);
-    EXPECT_TRUE(c.reset);
-    c = clockLevelConfirmStep(ls, -1, 5.0, -3.0, 2);
-    ASSERT_TRUE(c.apply);
-    EXPECT_DOUBLE_EQ(c.e, -2.5);
-
-    // One epoch needed: every step applies at once (the built card).
-    ClockLevelSat one;
-    c = clockLevelConfirmStep(one, 0, 7.0, 0.3, 1);
-    ASSERT_TRUE(c.apply);
-    EXPECT_DOUBLE_EQ(c.e, 0.3);
-    EXPECT_DOUBLE_EQ(c.info, 7.0);
 }
 
 }  // namespace GnssProcessor

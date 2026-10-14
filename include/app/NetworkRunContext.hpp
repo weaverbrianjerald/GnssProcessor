@@ -688,8 +688,8 @@ namespace GnssProcessor {
         /// the anchor (cta_on); the loader forces it false without handover_stransform_dense.
         bool cta_datum_keep{};
         /// network.carry_rebase_complete (card PRM phase 3b step 2): each carry re-base
-        /// mechanism's walk (card CLV's level re-base, the ephemeris re-level, the eq34 D4
-        /// shift, the declared anchor handover) also moves the sites its exemption table
+        /// mechanism's walk (the ephemeris re-level, the eq34 D4 shift, the declared
+        /// anchor handover) also moves the sites its exemption table
         /// marks as owed (carryMechanismOwedSites; the phase hold's held value excepted).
         /// The loader forces it false when none of those mechanisms is armed.
         bool rebase_complete{};
@@ -758,19 +758,6 @@ namespace GnssProcessor {
         // because what it un-folds has to be what was folded.
         bool   cta_stat_proj_post{};  ///< P⁺ = the gauge-projected posterior variance of the common-removed contrast, not the raw marginal cov(c,c)
         bool   cta_stat_proj_prior{}; ///< P⁻ = the gauge-projected prior variance of that same contrast, not the raw per-satellite var_eff.  Set only by 'proj', the one consistent pairing.
-        // --- Satellite clock level: a code-only re-base of the carry (card CLV) ---
-        // Solve-affecting and fingerprinted.  `clv_on` is the one predicate every site
-        // reads.
-        bool   clv_on{};             ///< network.clock_level_carry, resolved (off under network.clock_model, whose oscillator state the re-base does not move)
-        double clv_floor_m{};        ///< network.clock_level_sigma_floor_m: V_L = max(1 / I_L, floor^2), so I_L never exceeds 1 / floor^2
-        double clv_horizon_s{};      ///< network.clock_level_horizon_s: I_L decays by exp(-dt / horizon)
-        double clv_ignition_var{};   ///< V_L reported for a satellite whose filter is not armed: filter.initial_std.sat_clock^2 (the clock's cold-start variance)
-        bool   clv_pin_pair_read{};  ///< network.clock_level_pin_pair_read (R-A): read the level only from the realized pin pair
-        int    clv_cb_follow{};      ///< network.clock_level_free_cb_follow (R-A): 0 off, 1 "if" (d (1 - (f2/f1)^2)), 2 "full" (d)
-        bool   clv_datum_pause{};    ///< network.clock_level_datum_pause (R-B): a datum-class decouple pauses the filter instead of disarming it
-        int    clv_confirm_epochs{1};///< network.clock_level_confirm_epochs (R-B): consecutive epochs an arm or a break needs
-        bool   clv_pivot_ref{};      ///< network.clock_level_pivot_ref (R-C): shifts referenced to the constellation's clock pivot
-        bool   clv_free_cb_rebase{}; ///< network.clock_level_free_cb_rebase (card CLV2 R-A2): each free same-band code-bias column re-based from the same-band difference at dual-tracking stations
         // --- Card HLT, broadcast satellite health on the network path.  SOLVE-AFFECTING and
         // FINGERPRINTED.
         int    sat_health{};         ///< network.sat_health: 0 off, 1 "pivot" (the election passes over an unhealthy satellite), 2 "exclude" (the setup door removed its observations)
@@ -1131,10 +1118,6 @@ namespace GnssProcessor {
         // (SPEC_synthetic_minimum_network §18.10).  The knob is in the resume fingerprint,
         // so a toggle change cold-starts.
         ClockAnchorState clk_anchor;
-        // Per-satellite code-only level filters and the emit-side transfer (card CLV).
-        // Empty and untouched unless network.clock_level_carry.  Not snapshotted (see
-        // ClockLevelState).
-        ClockLevelState clk_level;
         // Satellites whose anchor decoupled and whose per-sat wire mark has not yet landed
         // in an emitted product.  Drained by networkSolPrep with the same present/pending
         // split that every other forced-bump queue uses (mark == land), so a replay
@@ -1908,11 +1891,6 @@ namespace GnssProcessor {
             double        held_m{0.0};       ///< The value every emission of this generation writes.
             std::uint32_t generation{0};     ///< 1-based; 0 never appears on a live entry.
             double        last_emit_s{0.0};  ///< Product content time (s) of this key's last emission.
-            /// This (satellite, signal)'s accumulated level shift (@c ClockLevelSat::xfer)
-            /// at this generation's start (card CLV).  The held emission is
-            /// @c held_m + (shift - level_ref), so the wire's phase side does not move when
-            /// the level is re-based.  0 and unread unless network.clock_level_carry.
-            double        level_ref{0.0};
             /// Card LAH (@c network.emit_pb_hold_phase_clock): the satellite's
             /// common-removed emitted clock @f$\tilde c = c - M@f$ at this generation's
             /// start.  The held emission is @c held_m + (c~(t) - frz_ref).  0 and unread
@@ -3109,45 +3087,6 @@ namespace GnssProcessor {
         long long cta_trip_ext = 0;          ///< decouples: an external tier (clock monitor / RAIM) already refloated this satellite
         long long cta_resolves = 0;          ///< in-epoch re-solves executed (the adapt-and-emit half)
         long long cta_resolve_failed = 0;    ///< in-epoch re-solves that threw and were reverted to the anchored solution
-        // --- Code-only level re-base (card CLV).  Standing invariant #4: on an armed run
-        // `clv_shifts == 0` means the mechanism never moved a level, and
-        // `clv_refs_shifted == 0` with shifts means the carried state never followed.
-        long long clv_epochs = 0;            ///< kept epochs the re-base ran (the denominator)
-        long long clv_skip_datum = 0;        ///< …of which were skipped whole: a datum change this epoch
-        long long clv_twoway_failed = 0;     ///< …of which the two-way solve failed (no shift)
-        long long clv_pairs = 0;             ///< (station,sat,epoch) ionosphere-free pairs entering the two-way fit
-        long long clv_pairs_clipped = 0;     ///< …of which the per-satellite robust screen removed
-        long long clv_sat_few = 0;           ///< (sat,epoch) with fewer than the minimum pairs (no update)
-        long long clv_sat_tripped = 0;       ///< (sat,epoch) skipped: the Q3 anchor decoupled the satellite this epoch
-        long long clv_sat_unarmed = 0;       ///< (sat,epoch) skipped: the anchor does not hold the clock (loose), so no level is carried to re-base
-        long long clv_arms = 0;              ///< filter (re)starts when a satellite becomes eligible (first sighting or after a decouple)
-        long long clv_breaks = 0;            ///< filter restarts at an innovation break (|e| over the break bar)
-        long long clv_updates = 0;           ///< (sat,epoch) filter updates (a shift was computed)
-        long long clv_at_floor = 0;          ///< …of which I_L was capped at 1 / floor^2
-        double    clv_shift_sum_abs = 0.0;   ///< Σ |applied shift| (m)
-        double    clv_shift_max_abs = 0.0;   ///< largest |applied shift| (m)
-        long long clv_refs_shifted = 0;      ///< carried references moved (shared-carry keys, coupling terms, clock baselines, bridges)
-        long long clv_held_moved = 0;        ///< held phase-bias emissions moved by the transfer (non-zero offset)
-        // Card CLV return plan (R-A, R-B, R-C).  All zero unless the matching knob is armed.
-        long long clv_pairs_offpin = 0;      ///< R-A: (station,sat,band) cells whose heaviest row was not a pin-pair signal (the rows the pin-pair read left out)
-        long long clv_cb_follow_moves = 0;   ///< R-A: (sat,signal,epoch) free same-band code-bias columns moved with the level
-        double    clv_cb_follow_sum_abs = 0.0; ///< R-A: Σ |code-bias follow step| (m)
-        long long clv_paused = 0;            ///< R-B: (sat,epoch) skipped with the filter's information kept (datum pause)
-        long long clv_pause_marks = 0;       ///< R-B: armed satellites marked paused at a datum change
-        long long clv_confirm_wait = 0;      ///< R-B: (sat,epoch) arms or breaks waiting for confirmation (no shift applied)
-        long long clv_confirm_reset = 0;     ///< R-B: break sequences reset by an in-band epoch or a sign change
-        long long clv_pivot_ref_epochs = 0;  ///< R-C: (constellation,epoch) shifts referenced to the pivot's update
-        long long clv_pivot_ref_missing = 0; ///< R-C: (constellation,epoch) the pivot had no update, so the de-mean was used
-        // Card CLV2 R-A2, the free columns' own re-base.  All zero unless the knob is armed.
-        long long clv_fcb_cells = 0;         ///< (station,sat,signal,epoch) same-band difference cells entering the fits
-        long long clv_fcb_clipped = 0;       ///< …of which the per-satellite robust screen removed
-        long long clv_fcb_few = 0;           ///< (sat,signal,epoch) with fewer than the minimum cells (no update)
-        long long clv_fcb_fit_failed = 0;    ///< (constellation,signal,epoch) same-band fits that failed
-        long long clv_fcb_updates = 0;       ///< (sat,signal,epoch) filter updates (a step was computed)
-        long long clv_fcb_arms = 0;          ///< …of which were first arms
-        long long clv_fcb_breaks = 0;        ///< …of which were restarts at an innovation break
-        double    clv_fcb_sum_abs = 0.0;     ///< Σ |applied step| (m)
-        double    clv_fcb_max_abs = 0.0;     ///< largest |applied step| (m)
         // Card HLT, broadcast health on the network path.  All zero unless network.sat_health.
         long long hlt_unhealthy_registered = 0; ///< (sat,epoch) registered clock satellites the broadcast flags unhealthy (processed in "pivot" mode, absent in "exclude")
         long long hlt_pivot_skips = 0;          ///< (constellation,epoch) pivot picks that passed over an unhealthy satellite

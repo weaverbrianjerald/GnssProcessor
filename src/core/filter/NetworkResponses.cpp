@@ -369,7 +369,6 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
 
 bool carryMechanismArmed(CarryMechanism m, const NetworkKnobs& k, const GnssConfig& config) {
     switch (m) {
-        case CarryMechanism::ClockLevel:         return k.clv_on;
         case CarryMechanism::EphRelevel:
             return config.networkAprioriSource() == NetworkAprioriSource::BrdcRts;
         case CarryMechanism::Handover:           return k.handover_stransform;
@@ -388,9 +387,6 @@ bool carryMechanismArmed(CarryMechanism m, const NetworkKnobs& k, const GnssConf
 std::uint32_t carryMechanismBorderKinds(CarryMechanism m, const NetworkKnobs& k) {
     const auto bit = [](SharedParamKind x) { return std::uint32_t{1} << static_cast<int>(x); };
     switch (m) {
-        case CarryMechanism::ClockLevel:
-            return bit(SharedParamKind::Clock) | bit(SharedParamKind::PhaseBias)
-                 | ((k.clv_cb_follow > 0 || k.clv_free_cb_rebase) ? bit(SharedParamKind::CodeBias) : 0u);
         case CarryMechanism::EphRelevel:
         case CarryMechanism::Handover:
         case CarryMechanism::HandoverBeforeRows: return bit(SharedParamKind::Clock);

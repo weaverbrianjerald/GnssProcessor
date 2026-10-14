@@ -661,7 +661,6 @@ namespace GnssProcessor {
                   && nc.closed_loop.enable && nc.emit_pb_hold
                   && network_apriori_source_ != NetworkAprioriSource::BrdcRts
                   && network_apriori_source_ != NetworkAprioriSource::Sp3BrdcClock
-                  && !network_clock_level_carry_
                   && !nc.emit_pb_hold_smoothed,
               nc.emit_pb_hold_phase_clock,
               Tier::SCOPED, false, "network.emit_pb_hold_phase_clock",

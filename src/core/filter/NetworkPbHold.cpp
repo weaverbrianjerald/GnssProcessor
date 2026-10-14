@@ -160,16 +160,6 @@ void networkPbHold(NetworkRunContext& ctx,
 
     for (auto& s : sol.sats) {
         if (s.sat.empty() || s.phase_bias.empty()) continue;
-        // The satellite's accumulated clock-level shift per signal
-        // (network.clock_level_carry, card CLV).  The re-base moves the carried clock
-        // and every phase bias of the satellite by the same amount, so the estimator's
-        // phase side does not move; a hold that froze P while C moved would move the
-        // wire's phase side instead.  Null when CLV is not armed (then never read).
-        const std::map<std::string, double>* xfer = nullptr;
-        if (ctx.knobs.clv_on) {
-            const auto lit = ctx.carry.clk_level.sat.find(s.sat);
-            if (lit != ctx.carry.clk_level.sat.end()) xfer = &lit->second.xfer;
-        }
         const auto     fcit    = frz_on ? frz_c.find(s.sat) : frz_c.end();
         const bool     has_frz = frz_on && fcit != frz_c.end();
         const unsigned marked  = emitter.pendingMarkChannels(s.sat);
@@ -179,11 +169,6 @@ void networkPbHold(NetworkRunContext& ctx,
 
         for (auto& [signal, npb] : s.phase_bias) {
             const std::string key = s.sat + "|" + signal;
-            double level_acc = 0.0;   // this signal's accumulated level shift (card CLV)
-            if (xfer) {
-                const auto xit = xfer->find(signal);
-                if (xit != xfer->end()) level_acc = xit->second;
-            }
             auto  it    = hold.find(key);
             const bool first = (it == hold.end());
             const bool gap   = !first && max_gap_s > 0.0
@@ -198,7 +183,6 @@ void networkPbHold(NetworkRunContext& ctx,
                 st.generation  = first ? 1u : (it->second.generation + 1u);
                 st.held_m      = npb.bias_m;
                 st.last_emit_s = epoch_s;
-                st.level_ref   = level_acc;   // the level transfer counts from here (card CLV)
                 if (has_frz) {                // the phase-visible clock is held from here (card LAH)
                     st.frz_ref = fcit->second;
                     st.frz_ok  = true;
@@ -246,17 +230,7 @@ void networkPbHold(NetworkRunContext& ctx,
             // Decoupling edge: the hold writes.  |estimate - held| is the whole cost,
             // and it is recorded on every held emission, not sampled.
             auto& st = it->second;
-            // With card CLV armed, the held value follows the level shift (the
-            // satellite's level step is declared on its C record, see
-            // networkClockLevelDeclare, so the emitter's value-jump test does not read
-            // the level as a discontinuity).  With it off, the held value is emitted
-            // unchanged.
             double held_emit = st.held_m;
-            if (ctx.knobs.clv_on) {
-                const double level_off = level_acc - st.level_ref;
-                held_emit = st.held_m + level_off;
-                if (level_off != 0.0) ++ctx.counters.clv_held_moved;
-            }
             // Card LAH: the held phase bias moves with the satellite's common-removed
             // clock, so c - p stays at its generation-start value.  An epoch without the
             // satellite's clock reuses the last transfer; a generation started without

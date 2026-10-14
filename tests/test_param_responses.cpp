@@ -321,9 +321,9 @@ TEST(ParamResponses, TraversalTalliesBorderMovesPerKind) {
     EXPECT_EQ(cc.moved_border[static_cast<int>(SharedParamKind::PhaseBias)], 1);
     EXPECT_EQ(cc.moved_border[static_cast<int>(SharedParamKind::CodeBias)], 0);
     CarryMovedTally t;
-    carryTallyMoved(t, CarryMechanism::ClockLevel, cc);
-    carryTallyMoved(t, CarryMechanism::ClockLevel, cc);
-    const int m = static_cast<int>(CarryMechanism::ClockLevel);
+    carryTallyMoved(t, CarryMechanism::EphRelevel, cc);
+    carryTallyMoved(t, CarryMechanism::EphRelevel, cc);
+    const int m = static_cast<int>(CarryMechanism::EphRelevel);
     EXPECT_EQ(t.border[static_cast<int>(SharedParamKind::Clock)][m], 4);
     EXPECT_EQ(t.site[static_cast<int>(CarrySite::PrevCarry)][m], 6);
 }

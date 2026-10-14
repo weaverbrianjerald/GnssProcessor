@@ -251,8 +251,6 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "products/NetworkPbEmitFilter.cpp", networkPbEmitFilterRunEnd},
     {"the clock emission re-base and frame hold",
      "products/NetworkClockEmitRebase.cpp", networkClockEmitRebaseRunEnd},
-    {"the clock level re-base (CLV)",
-     "filter/NetworkClockLevel.cpp", networkClockLevelRunEnd},
     {"broadcast satellite health (HLT)",
      "filter/NetworkHandoverStransform.cpp", networkSatHealthRunEnd},
     {"the Q3 guarded temporal clock anchor",

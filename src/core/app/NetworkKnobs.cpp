@@ -276,19 +276,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
-    // Code-only clock level re-base (card CLV).  Resolved against the clock_model
-    // interlock: under the two-state oscillator the clock lives on clock_osc, which the
-    // re-base does not move, so the carried clock and its oscillator would diverge.
-    k.clv_on           = config_.networkClockLevelCarry() && !k.clk_model_on;
-    k.clv_floor_m      = config_.networkClockLevelSigmaFloorM();
-    k.clv_horizon_s    = config_.networkClockLevelHorizonS();
-    k.clv_ignition_var = config_.getInitialStd().sat_clock * config_.getInitialStd().sat_clock;
-    k.clv_pin_pair_read  = config_.networkClockLevelPinPairRead();
-    k.clv_cb_follow      = config_.networkClockLevelFreeCbFollow();
-    k.clv_datum_pause    = config_.networkClockLevelDatumPause();
-    k.clv_confirm_epochs = std::max(1, config_.networkClockLevelConfirmEpochs());
-    k.clv_pivot_ref      = config_.networkClockLevelPivotRef();
-    k.clv_free_cb_rebase = config_.networkClockLevelFreeCbRebase();
     // Card HLT: broadcast satellite health on the network path.
     k.sat_health         = config_.networkSatHealth();
     // Gauge-free carry downdate: one resolved predicate that every fold, withdraw and

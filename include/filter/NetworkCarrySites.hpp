@@ -12,8 +12,8 @@
  * baseline of a step test, an open pin bridge holds the value the bridge pins, the
  * stash records the pinned pivot's value, and an ambiguity's own carried value is
  * expressed in the frame of its satellite's phase bias.  A mechanism that moves the
- * parameter's frame (a clock-level re-base, an ephemeris cut-over, a clock-pivot handover,
- * a phase-bias datum shift, a declared anchor handover) must move every one of those
+ * parameter's frame (an ephemeris cut-over, a clock-pivot handover, a phase-bias datum
+ * shift, a declared anchor handover) must move every one of those
  * references by the same amount, or the next epoch reads the parameter in two frames.
  *
  * Until this card each such mechanism enumerated the containers by hand, and each list
@@ -39,9 +39,7 @@
  * Containers that hold a border-frame quantity and are deliberately not sites (each
  * either rebuilt every epoch, cleared at a datum change, re-based by its own mechanism,
  * or holding no value): the per-epoch scratch (@c cxu_epoch, @c readmit_seed_check,
- * @c sts_c0, @c sts_dense, @c oracle_pin), the clock-level declarations card CLV accumulates
- * (@c clk_level: @c xfer, @c pending_step, @c cb_pending; derived from the moved
- * references, not carried references themselves), the smoothed hold's clones
+ * @c sts_c0, @c sts_dense, @c oracle_pin), the smoothed hold's clones
  * (@c smh_clone, @c smh_block and their pending maps: their own re-base,
  * @c pbHoldCloneRebase, every epoch), card LAH's per-constellation state
  * (@c pb_hold_frz_M, @c pb_hold_frz_prev_clk), the clock-level monitor's previous
@@ -161,8 +159,7 @@ inline constexpr std::uint32_t kAllCarrySites = (std::uint32_t{1} << kCarrySites
  * card PRM phase 2's third step).
  */
 enum class CarryMechanism : int {
-    ClockLevel = 0,       ///< card CLV's level re-base (@c clockLevelShiftCarry): clock and phase biases together
-    EphRelevel,           ///< the ephemeris cut-over re-level (@c networkEphCutoverRelevel): one clock by -Δ_eph
+    EphRelevel = 0,       ///< the ephemeris cut-over re-level (@c networkEphCutoverRelevel): one clock by -Δ_eph
     Handover,             ///< the clock-pivot handover S-transform after PASS B (@c applyClockStransform)
     HandoverBeforeRows,   ///< the same transform before PASS B, over every clock reference of the constellation
     Eq34Shift,            ///< the eq34 chain datum's D4 carry shift (@c eq34ShiftCarry): phase biases and receiver phase biases (also for the seed-round re-host's edges)
@@ -170,7 +167,7 @@ enum class CarryMechanism : int {
 };
 
 /// Number of @ref CarryMechanism values (array sizing).
-inline constexpr int kCarryMechanisms = 6;
+inline constexpr int kCarryMechanisms = 5;
 
 /// Short name of a mechanism (the run-end table, the manifest).
 const char* carryMechanismName(CarryMechanism m);
@@ -196,14 +193,13 @@ std::uint32_t carryMechanismSites(CarryMechanism m);
  *        (card PRM sections 16.2 and 16.7), which @c network.carry_rebase_complete moves.
  *
  * A site is owed when its exemption's reason is one of the owed reasons (a gap of the hand
- * list card PRM phase 2 replaced, card CLV section 6.4 item 6, card LGM's carry after card
- * CLV's list).  Never in the set: a site the mechanism already moves, a site outside its
- * direction (no reason), a by-design exemption (card CLV's hold transfer, the oscillator
- * under the clock model, the D4 shift's bridged root, the handover's reasons, the receiver
- * clock under the handover included), and @c PbHold for every mechanism: the phase hold's
- * held value is an emitted value in the emit frame, and moving it needs its own design (card
- * CLV accumulates an emit-side transfer instead), so it stays exempt with that reason.  The
- * two handover mechanisms have no owed site (their walks take no knob).
+ * list card PRM phase 2 replaced, card CLV section 6.4 item 6).  Never in the set: a site
+ * the mechanism already moves, a site outside its direction (no reason), a by-design
+ * exemption (the D4 shift's bridged root, the handover's reasons, the receiver clock under
+ * the handover included), and @c PbHold for every mechanism: the phase hold's held value
+ * is an emitted value in the emit frame, and moving it needs its own design, so it stays
+ * exempt with that reason.  The two handover mechanisms have no owed site (their walks take
+ * no knob).
  * @param m the mechanism.
  * @return the owed site mask (disjoint from @ref carryMechanismSites).
  */
@@ -281,8 +277,8 @@ struct CarryMovedTally {
  * The order is the order of @ref CarrySite, and within a site the container's own order
  * (vector order for @c prev_carry, key order for a map, term order within a local
  * carry's coupling).  A shift of a frame moves each referenced double once, so the order
- * cannot change a value; a visitor that accumulates side outputs (card CLV's transfer
- * signals) keeps them in ordered or de-duplicating containers.  The walk itself writes
+ * cannot change a value; a visitor that accumulates side outputs keeps them in ordered or
+ * de-duplicating containers.  The walk itself writes
  * nothing, creates no container entry and reads no value.
  *
  * @param carry  the run's carried state.

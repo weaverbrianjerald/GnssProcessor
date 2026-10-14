@@ -6,7 +6,7 @@
  * The held emission is p(t0) + [c~(t) - c~(t0)], with c~ = c - M and M the accumulated
  * median emitted-clock step over the satellites present at consecutive emissions.
  * Covered here:
- *   - the loader requires network.emit_pb_hold and refuses network.clock_level_carry;
+ *   - the loader requires network.emit_pb_hold;
  *   - a level move of one satellite (its clock and phase bias together) leaves the
  *     wire's c - p at its generation-start value, where the plain hold moves it;
  *   - a clock move common to every satellite stays on the clock (the held phase bias
@@ -99,7 +99,7 @@ std::uint32_t genOf(const NetworkSolutionEpoch& sol, const std::string& sat) {
     return 0;
 }
 
-std::string lahConfig(bool hold, bool phase_clock, bool clv, double max_gap_s) {
+std::string lahConfig(bool hold, bool phase_clock, double max_gap_s) {
     return std::string("{\n") +
         "  \"processing\": {\n"
         "    \"mode\": \"ppp-rtk-network\",\n"
@@ -109,7 +109,6 @@ std::string lahConfig(bool hold, bool phase_clock, bool clv, double max_gap_s) {
         "  \"network\": {\n"
         "    \"emit_pb_hold\": " + (hold ? "true" : "false") + ",\n"
         "    \"emit_pb_hold_phase_clock\": " + (phase_clock ? "true" : "false") + ",\n"
-        "    \"clock_level_carry\": " + (clv ? "true" : "false") + ",\n"
         "    \"emit_pb_hold_max_gap_s\": " + std::to_string(max_gap_s) + ",\n"
         "    \"stations\": [\n"
         "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
@@ -119,11 +118,11 @@ std::string lahConfig(bool hold, bool phase_clock, bool clv, double max_gap_s) {
         "}\n";
 }
 
-bool lahLoads(bool hold, bool phase_clock, bool clv, const char* tag) {
+bool lahLoads(bool hold, bool phase_clock, const char* tag) {
     LogManager log_mgr;
     GnssConfig cfg;
     const fs::path p = fs::temp_directory_path() / (std::string("lah_load_") + tag + ".json");
-    { std::ofstream f(p); f << lahConfig(hold, phase_clock, clv, 300.0); }
+    { std::ofstream f(p); f << lahConfig(hold, phase_clock, 300.0); }
     const bool ok = cfg.loadFromJson(p, log_mgr);
     std::error_code ec; fs::remove(p, ec);
     return ok;
@@ -143,7 +142,7 @@ struct LahHarness {
     LahHarness(bool phase_clock, const char* tag, double max_gap_s = 300.0) {
         cfg_path = fs::temp_directory_path()
                    / ("lah_cfg_" + std::string(tag) + (phase_clock ? "_on" : "_off") + ".json");
-        { std::ofstream f(cfg_path); f << lahConfig(true, phase_clock, false, max_gap_s); }
+        { std::ofstream f(cfg_path); f << lahConfig(true, phase_clock, max_gap_s); }
         EXPECT_TRUE(cfg.loadFromJson(cfg_path, log_mgr));
         EXPECT_TRUE(cfg.getNetworkConfig().emit_pb_hold);
         EXPECT_EQ(cfg.getNetworkConfig().emit_pb_hold_phase_clock, phase_clock);
@@ -173,14 +172,10 @@ std::string slurp(const fs::path& p) {
 
 // --- 1. The loader -----------------------------------------------------------------
 
-TEST(PbHoldPhaseClockTest, LoaderRequiresTheHoldAndRefusesClockLevelCarry) {
-    EXPECT_TRUE(lahLoads(true, true, false, "ok"));
-    EXPECT_FALSE(lahLoads(false, true, false, "nohold"))
+TEST(PbHoldPhaseClockTest, LoaderRequiresTheHold) {
+    EXPECT_TRUE(lahLoads(true, true, "ok"));
+    EXPECT_FALSE(lahLoads(false, true, "nohold"))
         << "the phase-clock mode is a mode of the hold";
-    EXPECT_FALSE(lahLoads(true, true, true, "clv"))
-        << "card CLV's transfer and the phase-clock mode both move the held phase bias";
-    EXPECT_TRUE(lahLoads(true, false, true, "clv_off"))
-        << "the refusal is the mode's: the plain hold with CLV still loads";
 }
 
 // --- 2. The level move --------------------------------------------------------------

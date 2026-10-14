@@ -58,8 +58,7 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
      "an open pin bridge's held phase bias (value)", "moves", nullptr, "cold-started"},
     {S::PbHold, "pb_hold", "pb_hold", "SAT|SIGNAL", R::Held,
      "the phase hold's held value (held_m, emit frame)",
-     "not moved: a re-base accumulates the emit-side transfer (clk_level xfer) for the "
-     "hold's signals instead",
+     "not moved: held_m is an emitted value in the emit frame",
      nullptr, "cold-started (the generation advances)"},
     {S::CodeBiasPrev, "code_bias_prev", "code_bias_prev_", "<const>|<signal> -> sat",
      R::Baseline, "the time-linked code-bias datum's previous solved value", "moves", "CBP",
@@ -127,13 +126,6 @@ constexpr const char* kOwed =
     "not moved before card PRM phase 2 (a gap of the hand-written list; owed to phase 3b)";
 constexpr const char* kOwedClv64 =
     "not moved before card PRM phase 2 (card CLV section 6.4 item 6; owed to phase 3b)";
-constexpr const char* kLgmAfterClv =
-    "card LGM's carry postdates card CLV's list; the two are not armed together (owed)";
-constexpr const char* kOscOffWithClv =
-    "card CLV is resolved off with network.clock_model (the loader)";
-constexpr const char* kHoldTransfer =
-    "held_m stays in the emit frame; the re-base accumulates the emit-side transfer "
-    "(clk_level xfer) for the hold's signals instead";
 constexpr const char* kStsRowsBefore =
     "the handover epoch's rows are built before the transform; from the next epoch every "
     "term is re-harvested in the incoming datum";
@@ -161,7 +153,7 @@ constexpr const char* kPbHoldEmit =
 /// card PRM phase 3b step 2).  The handover's reasons, the receiver clock's included, are its
 /// own design and its walks take no knob.
 bool owedReason(const char* reason) {
-    return reason == kOwed || reason == kOwedClv64 || reason == kLgmAfterClv;
+    return reason == kOwed || reason == kOwedClv64;
 }
 
 /// One mechanism's row: the sites it moves and the sites it exempts with a reason.
@@ -171,21 +163,6 @@ struct MechRow {
 };
 
 constexpr std::uint32_t bit(S s) { return carrySiteBit(s); }
-
-MechRow clockLevelRow() {
-    MechRow r{};
-    r.moves = bit(S::PrevCarry) | bit(S::PrevClk) | bit(S::CbExcPrevClk)
-            | bit(S::PbHoldPrevClock) | bit(S::PbLevelPrev) | bit(S::PinBridge)
-            | bit(S::CodeBiasPrev) | bit(S::AmbiguityCoupling) | bit(S::ZwdCoupling)
-            | bit(S::IonoCoupling) | bit(S::IonoBlockCoupling) | bit(S::HoldAmbiguityCoupling)
-            | bit(S::HoldIonoCoupling) | bit(S::HoldIonoBlockCoupling) | bit(S::RxClockCoupling)
-            | bit(S::RxPhaseBiasCoupling) | bit(S::RxCodeBiasCoupling);
-    r.exempt[static_cast<int>(S::CxuPivot)]            = kOwed;
-    r.exempt[static_cast<int>(S::ClockOsc)]            = kOscOffWithClv;
-    r.exempt[static_cast<int>(S::PbHold)]              = kHoldTransfer;
-    r.exempt[static_cast<int>(S::PhaseColourCoupling)] = kLgmAfterClv;
-    return r;
-}
 
 MechRow ephRelevelRow() {
     MechRow r{};
@@ -255,8 +232,8 @@ MechRow declaredHandoverRow() {
 
 const MechRow& mechRow(CarryMechanism m) {
     static const std::array<MechRow, kCarryMechanisms> rows{{
-        clockLevelRow(), ephRelevelRow(), handoverRow(false), handoverRow(true),
-        eq34ShiftRow(), declaredHandoverRow()}};
+        ephRelevelRow(), handoverRow(false), handoverRow(true), eq34ShiftRow(),
+        declaredHandoverRow()}};
     return rows[static_cast<std::size_t>(m)];
 }
 
@@ -280,7 +257,6 @@ const char* carryRefRoleName(CarryRefRole r) {
 
 const char* carryMechanismName(CarryMechanism m) {
     switch (m) {
-        case CarryMechanism::ClockLevel:         return "clock_level";
         case CarryMechanism::EphRelevel:         return "eph_relevel";
         case CarryMechanism::Handover:           return "handover";
         case CarryMechanism::HandoverBeforeRows: return "handover_before_rows";

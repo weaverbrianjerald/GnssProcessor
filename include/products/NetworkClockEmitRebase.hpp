@@ -115,7 +115,6 @@ public:
         bool        forced{false}; ///< A per-satellite retro-bump or constellation datum change is already pending for this satellite this epoch, so it is excluded from the μ vote and the step test (marked upstream; its step must not be marked twice or drag the frame).
         bool        marked{false}; ///< OUT: the stage-2 (or stage-2b) step test fired; the caller routes this satellite to markSatDiscontinuity and the R-record set.
         double      step_m{0.0};   ///< OUT: the common-removed step (m) when @ref marked, the event-row statistic; 0 otherwise.
-        double      level_step_m{0.0}; ///< IN (card CLV): the satellite's declared level step since its previous emission (m), removed from its innovation before the frame vote and the step tests.  A level re-base moves both the clock and the phase biases, so it is neither a frame move nor a discontinuity.  0 unless network.clock_level_carry (byte-identical).
     };
 
     /// Running tallies for the run-end telemetry line (invariant #4).

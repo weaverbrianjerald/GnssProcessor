@@ -88,7 +88,7 @@
 #include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts
 #include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (card 5, RTF-1)
 #include "filter/NetworkEstimator.hpp"
-#include "filter/NetworkClockLevel.hpp"         // code-only satellite-clock level re-base (card CLV)
+#include "filter/NetworkClockLevel.hpp"         // satellite-clock level monitor and restore raise (card CTU)
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
@@ -2603,14 +2603,10 @@ int Application::runNetwork() {
         // Card SMH: the clones re-harvested on the stash just written, and the clones of
         // the generations that started at this epoch's emit born on it.  No-op off.
         networkPbHoldCloneHarvest(ctx, est, x_s, TimeUtils::continuousGpsSeconds(se.time));
-        // Code-only level re-base (card CLV).  It runs after the stash, because it moves
-        // the carry the stash just wrote (and every coupling term the leveling harvest
-        // wrote), and only on a kept epoch, which is every epoch that reaches here.
-        networkClockLevelRebase(ctx, traces, se.time, est, x_s, asm_res, est_index_of,
-                                datum_changed);
-        // The level monitor of card CTU reads the same post-fit code and the block the
-        // stash just wrote; with the bound raise armed it raises that block before the
-        // next fold.  Mutually exclusive with the re-base above (loader).  No-op off.
+        // The level monitor of card CTU reads the post-fit code and the block the stash
+        // just wrote; with the bound raise armed it raises that block before the next
+        // fold.  It runs only on a kept epoch, which is every epoch that reaches here.
+        // No-op off.
         networkClockLevelMonitor(ctx, traces, se.time, est, x_s, asm_res, est_index_of,
                                  datum_changed);
         // Drains this epoch's buffered carry-state rows (RF-1 §7.4).  It is last inside

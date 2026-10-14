@@ -72,7 +72,6 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       sh_spectrum_mode_trace_path(log_dir_ / "network_sh_spectrum_mode.csv"),
       pf_keyed_trace_path(log_dir_ / "network_pf_keyed.csv"),
       pf_rows_trace_path(log_dir_ / "network_pf_rows.csv"),
-      clock_level_trace_path(log_dir_ / "network_clock_level.csv"),
       level_bound_trace_path(log_dir_ / "network_level_bound.csv"),
       anchor_guard_trace_path(log_dir_ / "network_anchor_guard.csv"),
       level_innov_trace_path(log_dir_ / "network_level_innov.csv"),
@@ -600,16 +599,6 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open pb-hold clone trace {}",
                       pb_hold_clone_trace_path.string());
-    }
-    if (config_.networkClockLevelCarry() && nc.trace_events) {
-        // The per-satellite level filter (card CLV); the header documents the columns.
-        clock_level_trace.open(clock_level_trace_path);
-        if (clock_level_trace)
-            clock_level_trace << "week,tow,sat,v_level_m2,i_level,n_rows_epoch,e_level_m,"
-                                 "d_level_m,event\n";
-        else
-            log->warn("Network: failed to open clock-level trace {}",
-                      clock_level_trace_path.string());
     }
     if (nc.trace_station_block) {
         // Per-station local-block audit (SPEC_event_harness §24.10, card ZP).  One `#`
@@ -1812,16 +1801,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.amb_float_declared_handover ? "true" : "false",
                                      nc.trace_amb_state ? "true" : "false")
                        : std::string())
-               // The level re-base (card CLV) affects the solve, so the manifest records
-               // the knob and its two parameters when armed.  Emitted only when armed,
-               // so an unarmed run's manifest bytes are unchanged.
-               << (config_.networkClockLevelCarry()
-                       ? fmt::format("\"clock_level_carry\":true,"
-                                     "\"clock_level_sigma_floor_m\":{},"
-                                     "\"clock_level_horizon_s\":{},",
-                                     config_.networkClockLevelSigmaFloorM(),
-                                     config_.networkClockLevelHorizonS())
-                       : std::string())
                // The drop-only floor affects the solve, so the manifest records it
                // when armed (RF-3a).  Emitted only when armed, so an unarmed run's
                // manifest bytes are unchanged.
@@ -2441,29 +2420,6 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                << "\"carry_gap_2_30\":" << counters.sid.carry_gap_2_30 << ','
                << "\"carry_gap_2_30_answered\":" << counters.sid.carry_gap_2_30_answered
                << "},"
-               // The level re-base's on-path counters (card CLV), present only on an armed
-               // run (clv_epochs counts the kept epochs it ran on), so an unarmed run's
-               // completion record is byte-identical.
-               << ((counters.clv_epochs > 0)
-                       ? fmt::format("\"clock_level\":{{\"epochs\":{},\"skip_datum\":{},"
-                                     "\"twoway_failed\":{},\"pairs\":{},\"pairs_clipped\":{},"
-                                     "\"sat_few\":{},\"sat_tripped\":{},\"sat_unarmed\":{},"
-                                     "\"arms\":{},\"breaks\":{},\"updates\":{},\"at_floor\":{},"
-                                     "\"shift_mean_abs_m\":{:.6f},\"shift_max_abs_m\":{:.6f},"
-                                     "\"refs_shifted\":{},\"held_moved\":{}}},",
-                                     counters.clv_epochs, counters.clv_skip_datum,
-                                     counters.clv_twoway_failed, counters.clv_pairs,
-                                     counters.clv_pairs_clipped, counters.clv_sat_few,
-                                     counters.clv_sat_tripped, counters.clv_sat_unarmed,
-                                     counters.clv_arms, counters.clv_breaks, counters.clv_updates,
-                                     counters.clv_at_floor,
-                                     counters.clv_updates > 0
-                                         ? counters.clv_shift_sum_abs
-                                               / static_cast<double>(counters.clv_updates)
-                                         : 0.0,
-                                     counters.clv_shift_max_abs, counters.clv_refs_shifted,
-                                     counters.clv_held_moved)
-                       : std::string())
                // The inter-system bias census (card GAL), present only when a second
                // constellation is active (an empty member writes nothing).
                << (extra_member.empty() ? std::string() : extra_member + ",")
@@ -2634,7 +2590,6 @@ void NetworkRunTraces::closeAll() {
     // Same reason: added after INC-4, and the per-row residual dump is the graded
     // artifact of a §24.6 attribution leg, so its tail must be flushed at teardown.
     if (pf_rows_trace.is_open()) pf_rows_trace.close();
-    if (clock_level_trace.is_open()) clock_level_trace.close();
     if (level_bound_trace.is_open()) level_bound_trace.close();
     if (level_innov_trace.is_open()) level_innov_trace.close();
     if (anchor_guard_trace.is_open()) anchor_guard_trace.close();

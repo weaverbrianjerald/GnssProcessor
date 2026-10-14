@@ -402,26 +402,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // state; the shadow mode is trace-only.  Appended only in phase mode.
         if (ctx.knobs.cta_on && ctx.knobs.cta_space == 2)
             add(fmt::format("cta:space:phase:{:.4f}", ctx.knobs.cta_phi_floor_m));
-        // The clock level re-base (card CLV) moves the carried clock and phase-bias values
-        // (and every coupling term that references them), so a snapshot written with it
-        // armed holds a different state than one written without it.  Appended only when
-        // armed, so a snapshot written with it off keeps its fingerprint.
-        if (ctx.knobs.clv_on)
-            add(fmt::format("clv:{}:{}", ctx.knobs.clv_floor_m, ctx.knobs.clv_horizon_s));
-        // Card CLV return plan: appended only when a sub-knob leaves its default, so a
-        // snapshot written by the built card keeps its fingerprint.
-        if (ctx.knobs.clv_on
-            && (ctx.knobs.clv_pin_pair_read || ctx.knobs.clv_cb_follow != 0
-                || ctx.knobs.clv_datum_pause || ctx.knobs.clv_confirm_epochs != 1
-                || ctx.knobs.clv_pivot_ref))
-            add(fmt::format("clvrp:{}:{}:{}:{}:{}", ctx.knobs.clv_pin_pair_read ? 1 : 0,
-                            ctx.knobs.clv_cb_follow, ctx.knobs.clv_datum_pause ? 1 : 0,
-                            ctx.knobs.clv_confirm_epochs, ctx.knobs.clv_pivot_ref ? 1 : 0));
-        // Card CLV2: the batch-2 knobs move further carried values (the free code-bias
-        // columns), so a snapshot written with one armed carries a different state.
-        // Conditional append, so every earlier fingerprint is unchanged.
-        if (ctx.knobs.clv_on && ctx.knobs.clv_free_cb_rebase)
-            add("clv2:fcb");
         // Card HLT: the health rule changes the clock pivot ("pivot") or the satellite set
         // ("exclude"), so a snapshot written with it armed carries a different datum or
         // state.  Conditional append, so every earlier fingerprint is unchanged.

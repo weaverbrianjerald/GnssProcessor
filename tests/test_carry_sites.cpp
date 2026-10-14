@@ -20,7 +20,6 @@
 #include "filter/NetworkAmbFloat.hpp"
 #include "filter/NetworkCarrySites.hpp"
 #include "filter/NetworkChainDatum.hpp"
-#include "filter/NetworkClockLevel.hpp"
 #include "filter/NetworkCoupling.hpp"
 #include "filter/NetworkHandoverStransform.hpp"
 #include "filter/NetworkRelevel.hpp"
@@ -254,12 +253,6 @@ TEST(CarrySites, MechanismTableStatesTheHandListsAndTheirGaps) {
                            S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
                            S::HoldIonoBlockCoupling, S::RxClockCoupling,
                            S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling};
-    // Card CLV: the ten local carries of its list, not card LGM's later one.
-    for (S s : couplings) EXPECT_TRUE(moves(M::ClockLevel, s));
-    EXPECT_FALSE(moves(M::ClockLevel, S::PhaseColourCoupling));
-    EXPECT_TRUE(exempt(M::ClockLevel, S::PhaseColourCoupling));
-    EXPECT_TRUE(moves(M::ClockLevel, S::PinBridge));
-    EXPECT_TRUE(exempt(M::ClockLevel, S::PbHold));
     // The ephemeris re-level: two of the local carries (card CLV section 6.4 item 6).
     EXPECT_TRUE(moves(M::EphRelevel, S::AmbiguityCoupling));
     EXPECT_TRUE(moves(M::EphRelevel, S::ZwdCoupling));
@@ -295,43 +288,6 @@ TEST(CarrySites, MechanismTableStatesTheHandListsAndTheirGaps) {
             if (ms.moves) EXPECT_EQ(ms.reason, nullptr);
             if (ms.reason) EXPECT_GT(std::strlen(ms.reason), 10u);
         }
-}
-
-// Card CLV's re-base through the traversal: every site of its row moves by the satellite's
-// level shift, every other site stays, and the transfer and declaration follow (the rule
-// written out over a state with every site populated; step 1 checked the walk against the
-// hand-written one bit for bit, card PRM section 16).
-TEST(CarrySites, ClockLevelReBaseMovesItsSitesAndNothingElse) {
-    NetworkCarryState c, e;   // not copyable: built twice
-    populateEverySite(c);
-    populateEverySite(e);
-    CarrySiteCounts counts;
-    const long long n = clockLevelShiftCarry(c, {{"G01", 1.0}}, nullptr, nullptr, nullptr,
-                                             nullptr, &counts);
-    // Expected: the sites of the row hold G01 clock or phase-bias references (moved by 1);
-    // the code-bias datum reference moves only with the follow or a direct step; the hold's
-    // held value is read for its signal and not moved.
-    long long n_expect = 0;
-    std::vector<double> want;
-    forEachCarriedReference(e, kAllCarrySites, [&](const CarriedRef& r) {
-        const bool moves = carryMechanismSite(CarryMechanism::ClockLevel, r.site).moves
-                        && r.site != CarrySite::CodeBiasPrev
-                        && (r.kind == SharedParamKind::Clock || r.kind == SharedParamKind::PhaseBias);
-        want.push_back(*r.value + (moves ? 1.0 : 0.0));
-        if (r.var) want.push_back(*r.var);
-        if (moves) ++n_expect;
-        return false;
-    });
-    EXPECT_EQ(n, n_expect);
-    EXPECT_TRUE(bitwiseEqual(referencedDoubles(c), want));
-    EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::PhaseColourCoupling)], 0);
-    EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::CxuPivot)], 0);
-    EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::PbHold)], 0);
-    EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 1);
-    // The held signal's emit-side transfer and the declared step.
-    EXPECT_EQ(c.clk_level.sat.at("G01").xfer.at("L1C"), 1.0);
-    EXPECT_EQ(c.clk_level.sat.at("G01").pending_step, 1.0);
-    EXPECT_EQ(clockLevelShiftCarry(c, {}), 0);
 }
 
 // The ephemeris re-level through the traversal: the rule written out (the oscillator's offset
@@ -577,8 +533,6 @@ TEST(CarrySites, OwedSitesAreTheHandListsGaps) {
         for (S s : sites) bits |= carrySiteBit(s);
         return bits;
     };
-    EXPECT_EQ(carryMechanismOwedSites(M::ClockLevel),
-              mask({S::CxuPivot, S::PhaseColourCoupling}));
     EXPECT_EQ(carryMechanismOwedSites(M::EphRelevel),
               mask({S::CxuPivot, S::CbExcPrevClk, S::PbHoldPrevClock, S::IonoCoupling,
                     S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
@@ -613,56 +567,17 @@ TEST(CarrySites, OwedSitesAreTheHandListsGaps) {
     }
     // The phase hold's held value stays exempt, with its reason, wherever a direction reaches
     // it; the two phase-bias shifts state that the knob leaves it.
-    for (M m : {M::ClockLevel, M::Eq34Shift, M::DeclaredHandover})
+    for (M m : {M::Eq34Shift, M::DeclaredHandover})
         EXPECT_NE(carryMechanismSite(m, S::PbHold).reason, nullptr) << carryMechanismName(m);
     for (M m : {M::Eq34Shift, M::DeclaredHandover})
         EXPECT_NE(std::string(carryMechanismSite(m, S::PbHold).reason).find("carry_rebase_complete"),
                   std::string::npos) << carryMechanismName(m);
-    // By design, with the knob too: the oscillator under card CLV, the D4 shift's bridged root,
-    // and every handover exemption (the receiver clock's included).
-    EXPECT_FALSE(carryMechanismMoves(M::ClockLevel, S::ClockOsc, true));
+    // By design, with the knob too: the D4 shift's bridged root and every handover exemption
+    // (the receiver clock's included).
     EXPECT_FALSE(carryMechanismMoves(M::Eq34Shift, S::PinBridge, true));
     for (M m : {M::Handover, M::HandoverBeforeRows})
         for (S s : {S::ClockOsc, S::PrevClk, S::CbExcPrevClk, S::PbHoldPrevClock, S::RxClockValue})
             EXPECT_FALSE(carryMechanismMoves(m, s, true)) << carryMechanismName(m);
-}
-
-// Card CLV's re-base with the owed sites: the stash's pinned pivot value and card LGM's
-// phase-colour terms move by the satellite's level shift like the rest of its row; the hold's
-// held value is read for the transfer and not moved; without the knob the walk is phase 2's.
-TEST(CarrySites, ClockLevelReBaseCompleteMovesTheOwedSites) {
-    for (const bool complete : {false, true}) {
-        NetworkCarryState c, e;   // not copyable: built twice
-        populateEverySite(c);
-        populateEverySite(e);
-        CarrySiteCounts counts;
-        const long long n = clockLevelShiftCarry(c, {{"G01", 1.0}}, nullptr, nullptr, nullptr,
-                                                 nullptr, &counts, complete);
-        const std::uint32_t mask = carryMechanismSiteMask(CarryMechanism::ClockLevel, complete);
-        long long n_expect = 0;
-        const std::vector<double> want = expectedDoubles(e, [&](const CarriedRef& r) {
-            const bool moves = inMask(mask, r.site) && r.site != CarrySite::CodeBiasPrev
-                && (r.kind == SharedParamKind::Clock || r.kind == SharedParamKind::PhaseBias);
-            return moves ? 1.0 : 0.0;
-        }, n_expect);
-        EXPECT_EQ(n, n_expect) << "complete=" << complete;
-        EXPECT_EQ(movedTotal(counts), n_expect) << "complete=" << complete;
-        EXPECT_TRUE(bitwiseEqual(referencedDoubles(c), want)) << "complete=" << complete;
-        expectOwedMoved(CarryMechanism::ClockLevel, counts, complete,
-                        [](CarrySite) { return false; });
-        EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 1);
-        EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::PbHold)], 0);
-        EXPECT_EQ(c.pb_hold.at("G01|L1C").held_m, e.pb_hold.at("G01|L1C").held_m);
-        EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::ClockOsc)], 0);
-        EXPECT_EQ(c.clk_level.sat.at("G01").xfer.at("L1C"), 1.0);   // the transfer, either way
-    }
-    // Off is the default: no knob argument is complete = false.
-    NetworkCarryState a, b;
-    populateEverySite(a);
-    populateEverySite(b);
-    clockLevelShiftCarry(a, {{"G01", 0.5}});
-    clockLevelShiftCarry(b, {{"G01", 0.5}}, nullptr, nullptr, nullptr, nullptr, nullptr, false);
-    EXPECT_TRUE(bitwiseEqual(referencedDoubles(a), referencedDoubles(b)));
 }
 
 // The ephemeris re-level with the owed sites (card CLV section 6.4 item 6): the stash's pivot

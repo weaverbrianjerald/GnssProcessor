@@ -3119,8 +3119,7 @@ namespace GnssProcessor {
          * simulator's truth, the COD finals on the field); with a broadcast a priori
          * (@c apriori_source brdc_rts) it would drop the real clock motion.  Emit-side
          * only: the solve, the C and B records are byte-identical.  Declared on the S
-         * line as @c pbhold=2.  Requires @ref emit_pb_hold; refuses
-         * @c network.clock_level_carry (card CLV), whose transfer it replaces.
+         * line as @c pbhold=2.  Requires @ref emit_pb_hold.
          */
         bool emit_pb_hold_phase_clock{ false };
         /**
@@ -3145,10 +3144,8 @@ namespace GnssProcessor {
          * @c network.raim_within_epoch (whose fold capture records which keys the final
          * solve folded) and @c network.clock_temporal_anchor without
          * @c network.clock_model, all refused at load time on their resolved values; excludes
-         * @ref emit_pb_hold_phase_clock (its fallback); refuses
-         * @c network.clock_level_carry for the phase-clock mode's reasons.  Emit-side only:
-         * the solve, the C and B records are byte-identical.  Declared on the S line as
-         * @c pbhold=3.
+         * @ref emit_pb_hold_phase_clock (its fallback).  Emit-side only: the solve, the C
+         * and B records are byte-identical.  Declared on the S line as @c pbhold=3.
          */
         bool emit_pb_hold_smoothed{ false };
         /**
