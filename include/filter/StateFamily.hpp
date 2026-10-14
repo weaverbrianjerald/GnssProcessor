@@ -13,8 +13,10 @@
  * missing from four).  This header is now the one list: a reader finds every
  * family in @ref kStateFamilies with its label prefix and snapshot tag, its
  * re-inflation counter, its gap response, the rule that names the satellite of
- * a key and its process-noise rule (step U6e), and a new family is added by one
- * row here plus its map in `StateManager`.
+ * a key and its process-noise rule (step U6e), the configuration that arms its
+ * birth, the source of its initial variance and the events wired to it (step
+ * U6f, printed at run start by `StateManager::logFamiliesAsArmed`), and a new
+ * family is added by one row here plus its map in `StateManager`.
  *
  * Plain value types and a constant table, with two small pure lookups; no
  * behaviour lives here.  The fixed core block (position, clock, ZWD, velocity,
@@ -109,6 +111,35 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief The configuration that arms a family's birth site.
+     *
+     * The family's states are created by the measurement model or the network
+     * producer; this names the configuration they test, for the run-start table
+     * (`StateManager::familiesAsArmed`).  The birth sites decide; the table reports.
+     */
+    enum class BirthGate : std::uint8_t {
+        PhaseRows,                 ///< Every processed phase row (none in a baseline code-only run).
+        Uncombined,                ///< processing.uncombined_enabled.
+        UncombinedAndIonoRate,     ///< uncombined_enabled and estimation.enable_iono_rate.
+        UncombinedAndEstimateIfb,  ///< uncombined_enabled and estimation.estimate_ifb.
+        EstimateSatBiases,         ///< estimation.estimate_sat_biases (user rows; on the network, the OSB).
+        NetworkSatPhaseBiases,     ///< The network producer with estimation.estimate_sat_phase_biases.
+        NetworkPhaseDatumEq34,     ///< The network producer with network.phase_datum_eq34.
+        NetworkPhaseColour,        ///< network.phase_colour_state.
+        NetworkSatClocks,          ///< The network producer with estimation.estimate_sat_clocks.
+    };
+
+    /**
+     * @brief Where a family's initial variance comes from.
+     */
+    enum class InitialStdRule : std::uint8_t {
+        ConfigField,     ///< filter.initial_std.<field> (@ref StateFamilySpec::initial_std).
+        AmbiguityStd,    ///< GnssConfig::getAmbiguityStd() (1000 m, no JSON key) unless the caller
+                         ///< passes an override (card UOM defect S3).
+        CallerSupplied,  ///< The creating code passes the variance (network.phase_colour_sigma_zen_m).
+    };
+
+    /**
      * @brief The declared properties of one dynamic state family.
      */
     struct StateFamilySpec {
@@ -137,6 +168,15 @@ namespace GnssProcessor {
         double ProcessNoise::* q_psd;
         /// The JSON name of that field under @c filter.process_noise, or nullptr.
         const char* q_key;
+        BirthGate birth;                   ///< The configuration that arms the birth site.
+        InitialStdRule initial_std_rule;   ///< Where the initial variance comes from.
+        /// The @c filter.initial_std field (squared at birth) for
+        /// @c InitialStdRule::ConfigField; nullptr otherwise.
+        double InitialStd::* initial_std;
+        /// The JSON name of that field under @c filter.initial_std, or nullptr.
+        const char* initial_std_key;
+        bool has_reset;     ///< A single state's value and variance can be reset in place.
+        bool prune_cache;   ///< A pruned state is kept in a warm-restart cache.
     };
 
     /**
@@ -154,33 +194,52 @@ namespace GnssProcessor {
         //  family / name / label prefix / snapshot tag
         //      re-inflation, gap decouple, satellite of key
         //      Q rule, Q field, Q key
+        //      birth gate, initial-std rule, field, key; reset in place, prune to a cache
         { StateFamily::Ionosphere, "slant ionosphere", "IONO:", "ION",
               Reinflation::Ionosphere, true, SatOfKey::Bare,
-              QRule::ObliquityRandomWalk, &ProcessNoise::ionosphere, "ionosphere_q" },
+              QRule::ObliquityRandomWalk, &ProcessNoise::ionosphere, "ionosphere_q",
+              BirthGate::Uncombined, InitialStdRule::ConfigField, &InitialStd::ionosphere, "ionosphere",
+              false, false },
         { StateFamily::IonosphereRate, "ionosphere rate", "IONORATE:", "IONR",
               Reinflation::IonosphereRate, true, SatOfKey::Bare,
-              QRule::CwnaWithLevel, &ProcessNoise::iono_rate_psd, "iono_rate_psd" },
+              QRule::CwnaWithLevel, &ProcessNoise::iono_rate_psd, "iono_rate_psd",
+              BirthGate::UncombinedAndIonoRate, InitialStdRule::ConfigField, &InitialStd::ionosphere_rate, "ionosphere_rate",
+              false, false },
         { StateFamily::Ambiguity, "ambiguity", "AMB:", "AMB",
               kNoReinflation, true, SatOfKey::BeforeUnderscore,
-              QRule::RandomWalk, &ProcessNoise::ambiguity, "ambiguity_q" },
+              QRule::RandomWalk, &ProcessNoise::ambiguity, "ambiguity_q",
+              BirthGate::PhaseRows, InitialStdRule::AmbiguityStd, nullptr, nullptr,
+              true, false },
         { StateFamily::ReceiverCodeBias, "receiver code bias", "CBIAS:", "RXCB",
               Reinflation::CodeBias, false, SatOfKey::None,
-              QRule::RandomWalk, &ProcessNoise::code_bias, "code_bias_q" },
+              QRule::RandomWalk, &ProcessNoise::code_bias, "code_bias_q",
+              BirthGate::UncombinedAndEstimateIfb, InitialStdRule::ConfigField, &InitialStd::code_bias, "code_bias",
+              false, false },
         { StateFamily::SatBias, "satellite code bias", "SATB:", "SATB",
               Reinflation::SatBias, true, SatOfKey::BeforePipe,
-              QRule::RandomWalk, &ProcessNoise::sat_bias, "sat_bias_q" },
+              QRule::RandomWalk, &ProcessNoise::sat_bias, "sat_bias_q",
+              BirthGate::EstimateSatBiases, InitialStdRule::ConfigField, &InitialStd::sat_bias, "sat_bias",
+              true, true },
         { StateFamily::SatPhaseBias, "satellite phase bias", "SATPB:", "SATPB",
               Reinflation::SatPhaseBias, false, SatOfKey::BeforePipe,
-              QRule::RandomWalk, &ProcessNoise::sat_phase_bias, "sat_phase_bias_q" },
+              QRule::RandomWalk, &ProcessNoise::sat_phase_bias, "sat_phase_bias_q",
+              BirthGate::NetworkSatPhaseBiases, InitialStdRule::ConfigField, &InitialStd::sat_phase_bias, "sat_phase_bias",
+              false, false },
         { StateFamily::ReceiverPhaseBias, "receiver phase bias", "RPB:", "RXPB",
               kNoReinflation, false, SatOfKey::None,
-              QRule::None, nullptr, nullptr },
+              QRule::None, nullptr, nullptr,
+              BirthGate::NetworkPhaseDatumEq34, InitialStdRule::ConfigField, &InitialStd::sat_phase_bias, "sat_phase_bias",
+              false, false },
         { StateFamily::PhaseColour, "phase colour", "PCOL:", nullptr,
               kNoReinflation, false, SatOfKey::Bare,
-              QRule::None, nullptr, nullptr },
+              QRule::None, nullptr, nullptr,
+              BirthGate::NetworkPhaseColour, InitialStdRule::CallerSupplied, nullptr, nullptr,
+              false, false },
         { StateFamily::SatClock, "satellite clock", "SATCLK:", "SATCLK",
               Reinflation::SatClock, false, SatOfKey::SatClockSuffix,
-              QRule::RandomWalk, &ProcessNoise::sat_clock, "sat_clock_q" },
+              QRule::RandomWalk, &ProcessNoise::sat_clock, "sat_clock_q",
+              BirthGate::NetworkSatClocks, InitialStdRule::ConfigField, &InitialStd::sat_clock, "sat_clock",
+              false, false },
     }};
 
     /**
@@ -238,9 +297,13 @@ namespace GnssProcessor {
             if (static_cast<std::size_t>(kStateFamilies[i].family) != i) return false;
             if ((kStateFamilies[i].q_rule == QRule::None) != (kStateFamilies[i].q_psd == nullptr))
                 return false;
+            if ((kStateFamilies[i].initial_std_rule == InitialStdRule::ConfigField)
+                != (kStateFamilies[i].initial_std != nullptr))
+                return false;
         }
         return true;
     }(), "kStateFamilies must list every StateFamily once, in enumerator order, and give a "
-         "process-noise field exactly to the families with a Q rule");
+         "process-noise field exactly to the families with a Q rule, and an initial-std "
+         "field exactly to the families whose initial variance is a configured field");
 
 } // namespace GnssProcessor

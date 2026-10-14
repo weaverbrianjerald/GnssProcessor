@@ -146,3 +146,61 @@ TEST(StateManagerFamiliesTest, FrozenPivotSkipFollowsTheSatelliteOfKeyRule) {
         EXPECT_EQ(Q(i, i), skipped ? 0.0 : pn.*s.q_psd * kDt) << s.name;
     }
 }
+
+TEST(StateManagerFamiliesTest, ArmedTableHasATitleAndOneLinePerFamily) {
+    Harness h;
+    const auto lines = h.sm.familiesAsArmed();
+    ASSERT_EQ(lines.size(), 1 + kStateFamilyCount);
+    EXPECT_EQ(lines[0].rfind("State families as armed", 0), 0u);
+    for (std::size_t i = 0; i < kStateFamilyCount; ++i) {
+        const StateFamilySpec& s = kStateFamilies[i];
+        const std::string& line = lines[1 + i];
+        EXPECT_NE(line.find(std::string(s.name) + ":"), std::string::npos) << line;
+        EXPECT_NE(line.find(std::string("label ") + s.label_prefix), std::string::npos) << line;
+        EXPECT_NE(line.find(std::string("snapshot ") + (s.snapshot_tag ? s.snapshot_tag : "none")),
+                  std::string::npos) << line;
+    }
+}
+
+TEST(StateManagerFamiliesTest, ArmedTableReportsTheBirthGateAndTheEvents) {
+    Harness h;   // default configuration: not the network producer
+    const auto lines = h.sm.familiesAsArmed();
+    auto lineOf = [&](StateFamily f) { return lines[1 + static_cast<std::size_t>(f)]; };
+    EXPECT_NE(lineOf(StateFamily::Ambiguity).find("born yes"), std::string::npos);
+    EXPECT_NE(lineOf(StateFamily::SatPhaseBias).find("born no"), std::string::npos);
+    EXPECT_NE(lineOf(StateFamily::SatClock).find("born no"), std::string::npos);
+    EXPECT_NE(lineOf(StateFamily::Ionosphere).find(h.config.isUncombinedEnabled() ? "born yes" : "born no"),
+              std::string::npos);
+    EXPECT_NE(lineOf(StateFamily::SatBias).find("re-inflation sat_bias"), std::string::npos);
+    EXPECT_NE(lineOf(StateFamily::SatBias).find("prune (to the warm-restart cache)"), std::string::npos);
+    EXPECT_NE(lineOf(StateFamily::Ambiguity).find("frozen-pivot Q skip"), std::string::npos);
+    EXPECT_EQ(lineOf(StateFamily::ReceiverCodeBias).find("frozen-pivot Q skip"), std::string::npos);
+    EXPECT_EQ(lineOf(StateFamily::PhaseColour).find("RT snapshot"), std::string::npos);
+}
+
+TEST(StateManagerFamiliesTest, DeclaredInitialStdIsTheVarianceTheAddFunctionsWrite) {
+    Harness h;
+    std::map<StateFamily, std::string> keys;
+    for (const auto& s : kStateFamilies) keys[s.family] = addOne(h.sm, s.family);
+    const Eigen::MatrixXd P = h.sm.getCovariance();
+    const auto& init = h.config.getInitialStd();
+    for (const auto& s : kStateFamilies) {
+        if (keys[s.family].empty()) continue;
+        const auto i = static_cast<Eigen::Index>(h.sm.indicesOf(s.family).at(keys[s.family]));
+        switch (s.initial_std_rule) {
+            case InitialStdRule::ConfigField: {
+                const double sd = init.*s.initial_std;
+                EXPECT_DOUBLE_EQ(P(i, i), sd * sd) << s.name;
+                break;
+            }
+            case InitialStdRule::AmbiguityStd: {
+                const double sd = h.config.getAmbiguityStd();
+                EXPECT_DOUBLE_EQ(P(i, i), sd * sd) << s.name;
+                break;
+            }
+            case InitialStdRule::CallerSupplied:
+                EXPECT_DOUBLE_EQ(P(i, i), 0.25) << s.name;   // addOne passes 0.25
+                break;
+        }
+    }
+}

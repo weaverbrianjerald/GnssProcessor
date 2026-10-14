@@ -798,6 +798,29 @@ namespace GnssProcessor {
         const std::map<std::string, size_t>& indicesOf(StateFamily family) const;
 
         /**
+         * @brief The run-start table "state families as armed" (card UOM step U6f).
+         *
+         * One line per row of @ref kStateFamilies, after a title line: whether this
+         * configuration arms the family's birth site (@ref StateFamilySpec::birth),
+         * its label prefix and RT snapshot tag, the source and value of its initial
+         * standard deviation, its process-noise rule and value, and the events wired
+         * to it (re-inflation counter, in-place reset, prune and its cache, gap
+         * decouple, frozen-pivot Q skip, RT snapshot).  Every column is read from the
+         * table and the configuration.
+         *
+         * @return The table's lines, without trailing newlines.
+         */
+        std::vector<std::string> familiesAsArmed() const;
+
+        /**
+         * @brief Log @ref familiesAsArmed once on the "state_manager" logger at info.
+         *
+         * Meant for the user-side drivers, once after construction.  The network
+         * producer builds one StateManager per station and does not call it.
+         */
+        void logFamiliesAsArmed() const;
+
+        /**
          * @brief Re-create one dynamic state at its serialized index and value
          *        (RT warm resume).
          *

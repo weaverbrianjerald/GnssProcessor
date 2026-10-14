@@ -56,7 +56,9 @@ SCH = "include/filter/StateKeySchema.hpp"
 D = "src/core/filter/"
 SM, PN, LY, FA = (D + "StateManager.cpp", D + "StateManagerProcessNoise.cpp",
                   D + "StateManagerLayout.cpp", D + "StateManagerFamilies.cpp")
-NEW_FILES = [SM, PN, LY, FA]
+NEW_FILES = [SM, PN, LY]
+# Files that carry no frozen line at all (new code, reviewed as such); reported, not matched.
+DECLARED_NEW = {FA: "U6f: the run-start table 'state families as armed' (new code)"}
 
 
 def F(a, b=None, shift=0):
@@ -521,6 +523,12 @@ def main():
         return 0 if results and all(results) else 1
 
     fails = run_checks(texts, frozen_text, headers, verbose=a.verbose)
+    print("\n6. Declared new files (no frozen code)")
+    for path, why in DECLARED_NEW.items():
+        lines = code_lines((root / path).read_text(encoding="utf-8"))
+        n = sum(1 for l in lines[1:] if l.strip())
+        logs = [c for l in lines for c in log_calls(l)]
+        print(f"  {pathlib.Path(path).name}: {n} code lines, {len(logs)} log call(s) {logs}  ({why})")
     print("\nDeclared substitutions (frozen line: from -> to)")
     for i in sorted(SUBS):
         for fr, to in SUBS[i]:

@@ -87,6 +87,7 @@ add_library(gnss_core STATIC
     src/core/filter/StateManager.cpp
     src/core/filter/StateManagerProcessNoise.cpp
     src/core/filter/StateManagerLayout.cpp
+    src/core/filter/StateManagerFamilies.cpp
     src/core/filter/ImuIntegrator.cpp
     src/core/filter/AmbiguityResolver.cpp
     src/core/filter/IlsCore.cpp
