@@ -74,7 +74,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
     const double q_cb = ctx.knobs.q_cb;
     const bool   clock_sum_to_zero = ctx.knobs.clock_sum_to_zero;
     const bool   clock_brdc_anchored = ctx.knobs.clock_brdc_anchored;
-    const bool   pb_excl_unmatched = ctx.knobs.pb_excl_unmatched;
     const bool   cb_time_linked = ctx.knobs.cb_time_linked;
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond;
     const bool   carry_cpl_tu = ctx.knobs.carry_cpl_tu;
@@ -392,12 +391,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // only when armed, so a snapshot written with it off keeps its fingerprint.
         if (config_.getNetworkConfig().disc_mark_scope == "channel")
             add("discscope=channel");
-        // Excluding unmatched-antenna stations from phase-bias emission changes which
-        // per-(sat,signal) phase-bias states the carried solution holds; a resume across a
-        // toggle change would carry a different shared-state set.  Appended only when
-        // armed, so a snapshot written with it off keeps its fingerprint.
-        if (pb_excl_unmatched)
-            add(fmt::format("pbexclunmatched={}", pb_excl_unmatched));
         // Epoch decimation changes the carried-state cadence, so a resume has to match it
         // (T2e).  Appended only when != 1, so a config without decimation keeps its
         // fingerprint.  The DD-trace stride is trace-only and left out on purpose: arming

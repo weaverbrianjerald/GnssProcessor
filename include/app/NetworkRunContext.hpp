@@ -613,7 +613,6 @@ namespace GnssProcessor {
         /// marks as owed (carryMechanismOwedSites; the phase hold's held value excepted).
         /// The loader forces it false when none of those mechanisms is armed.
         bool rebase_complete{};
-        bool pb_excl_unmatched{};
         bool emit_gen_time{};
         bool emit_gen_id{};
         bool ser_disc_ctrs{};

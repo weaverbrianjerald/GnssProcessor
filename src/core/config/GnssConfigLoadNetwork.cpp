@@ -6060,13 +6060,6 @@ namespace GnssProcessor {
             jval<double>(json, "network.signal_min_station_fraction", "network_signal_min_station_fraction", 0.0);
         network_phase_bias_min_station_fraction_ =
             jval<double>(json, "network.phase_bias_min_station_fraction", "network_phase_bias_min_station_fraction", 0.0);
-        // Per-station analogue of the phase-bias coverage float-gate above: withhold a
-        // station whose receiver antenna has no ATX model match (zero receiver PCO/PCV
-        // → uncalibrated carrier phase) from every satellite phase-bias state.  Default
-        // off = every station contributes (byte-identical).
-        network_phase_bias_exclude_unmatched_antenna_ =
-            jval<bool>(json, "network.phase_bias_exclude_unmatched_antenna",
-                       "network_phase_bias_exclude_unmatched_antenna", false);
         // Policy backstop (invariant #6: default off): hard-drops any station whose
         // receiver antenna still has no ATX match after the always-on radome→NONE
         // fallback (an unknown antenna type means unmodelled receiver PCO/PCV, a

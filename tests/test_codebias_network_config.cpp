@@ -198,34 +198,6 @@ TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedParsesAndSurvivesCoupling) {
     }
 }
 
-// phase_bias_exclude_unmatched_antenna: parses (default false, so every station
-// contributes to phase-bias emission, byte-identical), and arms independently of
-// the W6 code-bias slice (it gates only which stations feed the satellite phase
-// biases, orthogonal to whether the network also estimates code biases).
-TEST(CodeBiasNetworkConfig, PhaseBiasExcludeUnmatchedAntennaParses) {
-    LogManager log;
-    // Default: key absent -> false (every station contributes, byte-identical).
-    {
-        const fs::path p = writeTempConfig("pbexcl_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_FALSE(cfg.networkPhaseBiasExcludeUnmatchedAntenna());
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Armed on its own (no code-bias slice): the toggle is honoured, so a station
-    // with an unmatched receiver antenna is withheld from satellite phase-bias emission.
-    {
-        const fs::path p = writeTempConfig("pbexcl_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                          "    \"phase_bias_exclude_unmatched_antenna\": true,\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.networkPhaseBiasExcludeUnmatchedAntenna());
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
 // cold_clock_seed: parses (default false, so the network state pre-pass never
 // pre-seeds the receiver clock and every fixture is byte-identical), and arms
 // independently of the W6 code-bias slice (it only pre-writes x(clock) from the

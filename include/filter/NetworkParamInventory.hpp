@@ -354,8 +354,8 @@ namespace GnssProcessor {
      */
     struct AbsorbedReasonSpec {
         AbsorbedReason reason;    ///< The gate.
-        const char*    name;      ///< Its name in the JSON record ("unmatched_antenna").
-        const char*    label;     ///< Its name in the table's note column ("unmatched antenna").
+        const char*    name;      ///< Its name in the JSON record ("coverage_gate").
+        const char*    label;     ///< Its name in the table's note column ("coverage allowlist").
         const char*    rule;      ///< When the gate withholds, with the knob that arms it.
         const char*    site;      ///< The function that holds the gate.
         /// What takes up a withheld satellite phase bias; "" when the gate never withholds one.
@@ -374,8 +374,8 @@ namespace GnssProcessor {
     /**
      * @brief The JSON name of a reason.
      * @param r The reason.
-     * @return "glonass_code_only_scope", "unmatched_antenna", "coverage_gate", "allowlist",
-     *         "code_census_cogate", "anchored_union_coverage" or "anchor_hygiene_block".
+     * @return "glonass_code_only_scope", "coverage_gate", "allowlist", "code_census_cogate",
+     *         "anchored_union_coverage" or "anchor_hygiene_block".
      */
     const char* absorbedReasonName(AbsorbedReason r);
 
@@ -808,7 +808,7 @@ namespace GnssProcessor {
      * A title line (the scope, the time span, the station and epoch counts), a header,
      * one line per class (label, kind and form, the count per disposition, the number of
      * stations, and the note that explains them: the rule or fixed treatment, and the
-     * absorbed count per reason, e.g. "absorbed: unmatched antenna 5"), one line per
+     * absorbed count per reason, e.g. "absorbed: coverage allowlist 5"), one line per
      * reason with absorbed instances (its rule, its code site and what takes the withheld
      * state up), one WARNING line per class governed by @p rule whose premise does not
      * hold with instances present, and five integrity lines: the station-epochs that did

@@ -1534,7 +1534,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
     const bool   emit_clock_disc = knobs.emit_clock_disc;
     const bool   sticky_pivot = knobs.sticky_pivot;
     const bool   scoped_handover = knobs.scoped_handover;
-    const bool   pb_excl_unmatched = knobs.pb_excl_unmatched;
     const bool   emit_gen_id = knobs.emit_gen_id;
     const bool   ser_disc_ctrs = knobs.ser_disc_ctrs;
     const bool   emit_epoch_status = knobs.emit_epoch_status;
@@ -2227,7 +2226,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"carry_invariant_innov_calibrate\":"
                << (config_.networkCarryInvariantInnovCalibrate() ? "true" : "false") << ','
                << "\"scoped_handover_response\":" << (scoped_handover ? "true" : "false") << ','
-               << "\"phase_bias_exclude_unmatched_antenna\":" << (pb_excl_unmatched ? "true" : "false") << ','
                << "\"exclude_unmodeled_antenna_stations\":"
                << (config_.networkExcludeUnmodeledAntennaStations() ? "true" : "false") << ','
                << "\"emit_generation_id\":" << (emit_gen_id ? "true" : "false") << ','

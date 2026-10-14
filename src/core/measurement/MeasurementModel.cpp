@@ -1254,18 +1254,6 @@ namespace GnssProcessor {
                                  AbsorbedReason::GlonassCodeOnlyScope);
                         continue;
                     }
-                    // Per-station phase-bias exclusion (network.phase_bias_exclude_unmatched_antenna):
-                    // a station with an unmatched receiver antenna gets no phase-bias state for
-                    // any signal, so its uncalibrated (zero receiver PCV) carrier phase cannot
-                    // enter the shared satellite phase biases.  As with the coverage gate below,
-                    // the observation is withheld from the bias, not dropped: the phase row is
-                    // still built (feeding the sat clock and the local float ambiguity) and
-                    // only the shared bias column is withheld.  Default false: byte-identical.
-                    if (phase_bias_emission_excluded_) {
-                        withhold(StateContainer::SatPhaseBiasStates, pk,
-                                 AbsorbedReason::UnmatchedAntenna);
-                        continue;
-                    }
                     // Phase-bias coverage gate (network.phase_bias_min_station_fraction):
                     // a signal tracked too sparsely across the network gets no phase-bias
                     // state; the float ambiguity absorbs the bias and the signal is not

@@ -1028,24 +1028,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // Kept (not excluded) but unmatched: recorded for the loaded-station summary
             // warning below.
             unmatched_antenna_stations.push_back(cfg.name);
-            // Optional (network.phase_bias_exclude_unmatched_antenna): keep this station's
-            // uncalibrated carrier phase out of the emitted satellite phase biases.  The
-            // clock-datum pivot is never excluded: it realizes the phase-bias datum, and in
-            // the legacy single-pivot gauge its states are the shared set, so excluding it
-            // would zero all emission.  Its antenna model has to be fixed instead.
-            if (config_.networkPhaseBiasExcludeUnmatchedAntenna()) {
-                if (is_pivot) {
-                    log->warn("Network: clock-datum station '{}' has the unmatched antenna "
-                              "but realizes the phase-bias datum — NOT excluded "
-                              "(network.phase_bias_exclude_unmatched_antenna); supply its "
-                              "ATX model to remove the receiver phase-centre bias.",
-                              cfg.name);
-                } else {
-                    st.mm->setPhaseBiasEmissionExcluded(true);
-                    log->info("Network: station '{}' excluded from phase-bias emission "
-                              "contributions (unmatched receiver antenna).", cfg.name);
-                }
-            }
         } else if (rx_corr_on) {
             // Matched.  A match that came only through the always-on type-preserving
             // radome→NONE fallback (mm-level radome-agnostic calibration) is logged once
@@ -1244,12 +1226,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             names += unmatched_antenna_stations[i];
         }
         log->warn("Network: {} of {} loaded station(s) have NO receiver antenna ATX match "
-                  "(receiver PCO/PCV zeroed there): {}{}",
-                  unmatched_antenna_stations.size(), stations.size(), names,
-                  config_.networkPhaseBiasExcludeUnmatchedAntenna()
-                      ? " — non-pivot ones excluded from phase-bias emission"
-                      : " — supply their ATX models, or set "
-                        "network.phase_bias_exclude_unmatched_antenna to withhold them");
+                  "(receiver PCO/PCV zeroed there): {} — supply their ATX models, or set "
+                  "network.exclude_unmodeled_antenna_stations to exclude them",
+                  unmatched_antenna_stations.size(), stations.size(), names);
     }
     // Join a name vector into a comma-separated list for the summaries below.
     auto joinNames = [](const std::vector<std::string>& v) {

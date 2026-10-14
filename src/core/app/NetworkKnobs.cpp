@@ -201,7 +201,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.handover_stransform_before_rows = config_.networkHandoverStransformBeforeRows();
     k.handover_stransform_dense = config_.networkHandoverStransformDense();   // card SCL B2
     k.rebase_complete = config_.networkCarryRebaseComplete();   // card PRM phase 3b step 2
-    k.pb_excl_unmatched = config_.networkPhaseBiasExcludeUnmatchedAntenna();
     k.emit_gen_time = config_.networkEmitGenerationTime();
     k.emit_gen_id = config_.networkEmitGenerationId();
     k.ser_disc_ctrs = config_.networkSerializeDiscCounters();

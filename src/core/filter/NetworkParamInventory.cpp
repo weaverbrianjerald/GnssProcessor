@@ -146,7 +146,7 @@ std::string classNote(const ParamClass& c, const RxIfbRule& rule) {
     return {};
 }
 
-/// The absorbed part of a class's note, e.g. "absorbed: unmatched antenna 5"; "" when the
+/// The absorbed part of a class's note, e.g. "absorbed: coverage allowlist 5"; "" when the
 /// class has no absorbed instance.  Reasons in enum order.
 std::string absorbedNote(const ParamClassCount& cnt) {
     std::string s;
@@ -433,10 +433,6 @@ constexpr AbsorbedReasonSpec kAbsorbedReasonTable[kAbsorbedReasons] = {
      // network.estimate_glonass.
      "the station's receiver per-slot IFB (FDMA bands, slot k != 0 only; not reachable in a "
      "loaded run, which refuses network.estimate_sat_code_bias with network.estimate_glonass)"},
-    {AbsorbedReason::UnmatchedAntenna, "unmatched_antenna", "unmatched antenna",
-     "the station's receiver antenna has no ATX model and "
-     "network.phase_bias_exclude_unmatched_antenna is armed (never the clock-datum station)",
-     "MeasurementModel::ensureNetworkSharedStates", kByAmbiguity, ""},
     {AbsorbedReason::CoverageGate, "coverage_gate", "coverage allowlist",
      "the signal is outside the coverage allowlist built from "
      "network.phase_bias_min_station_fraction",

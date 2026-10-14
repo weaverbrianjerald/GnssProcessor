@@ -297,8 +297,7 @@ namespace GnssProcessor {
          *
          * False means every receiver PCO/PCV correction is silently zero for this
          * station's carrier phase.  The network driver warns at startup and can
-         * withhold the station from phase-bias emission
-         * (network.phase_bias_exclude_unmatched_antenna).
+         * exclude the station (network.exclude_unmodeled_antenna_stations).
          *
          * @return True iff an ATX entry matches the receiver antenna type.
          */

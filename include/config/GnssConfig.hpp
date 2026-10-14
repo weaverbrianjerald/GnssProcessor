@@ -5853,37 +5853,12 @@ namespace GnssProcessor {
         double networkPhaseBiasMinStationFraction() const { return network_phase_bias_min_station_fraction_; }
 
         /**
-         * @brief Whether a station whose receiver antenna has no ATX model match is
-         *        excluded from satellite phase-bias emission contributions
-         *        (@c network.phase_bias_exclude_unmatched_antenna).
-         *
-         * A receiver antenna type that matches no entry in the loaded ANTEX model
-         * gets zero receiver PCO/PCV correction (@ref Antenna::getAntennaCorrection
-         * silently returns the satellite-side terms only), which leaves a
-         * centimetre-level, elevation-dependent phase-centre error in that station's
-         * carrier phase.  Folded into the joint solve it biases the
-         * per-(satellite,signal) phase biases the whole network shares and emits.
-         * When on, such a station's carrier phase is withheld from every satellite
-         * phase-bias state (its float ambiguity absorbs the arc, as
-         * @ref networkPhaseBiasMinStationFraction does per signal) while it still
-         * contributes to the satellite clock, code bias, ionosphere and its own
-         * position: the per-station analogue of the phase-bias coverage float-gate.
-         * The clock-datum (pivot) station is never excluded (it realizes the
-         * phase-bias datum); an unmatched pivot is warned about instead.  Applies to
-         * @c PPP_RTK_Network mode only.  Default false (every station contributes;
-         * byte-identical).
-         *
-         * @see networkPhaseBiasMinStationFraction, Antenna::hasReceiverAntennaMatch
-         */
-        bool networkPhaseBiasExcludeUnmatchedAntenna() const { return network_phase_bias_exclude_unmatched_antenna_; }
-
-        /**
          * @brief Whether a station whose receiver antenna still has no ATX model
          *        match after the always-on radome→NONE fallback is dropped from
          *        the network at station-build time
          *        (@c network.exclude_unmodeled_antenna_stations).
          *
-         * The harder, policy-level backstop to @ref networkPhaseBiasExcludeUnmatchedAntenna.
+         * A policy-level backstop.
          * The always-on type-preserving radome→NONE fallback (@ref Antenna::findReceiverAntennaEntry)
          * already recovers every station whose only problem is an uncalibrated radome
          * code on an otherwise-known antenna; a station that still fails to match has an
@@ -5902,7 +5877,7 @@ namespace GnssProcessor {
          * stations, so arming this is inert on known-antenna data and only affects an
          * antenna of unknown type.
          *
-         * @see networkPhaseBiasExcludeUnmatchedAntenna, Antenna::hasReceiverAntennaMatch
+         * @see Antenna::hasReceiverAntennaMatch
          */
         bool networkExcludeUnmodeledAntennaStations() const { return network_exclude_unmodeled_antenna_stations_; }
 
@@ -8401,7 +8376,6 @@ namespace GnssProcessor {
         int    network_raim_refloat_maturity_epochs_{0};   ///< Emitted-epoch maturity horizon for the isolated-arc refloat gate above (T2d; passed as the warmup-ramp horizon and combined with @c phase_leveling_warmup_epochs and the σ̂0-EWMA update count as in @c networkWarmupRampLifted). 0 = no horizon beyond the carry warmup (the gate is then effectively inert, since RAIM normally runs only once carry-warm); a value > phase_leveling_warmup_epochs is needed to suppress anything.
         double network_signal_min_station_fraction_{0.0}; ///< Network-wide signal coverage gate: a RINEX code is admitted to the producer only if ≥ this fraction of stations observing its constellation track it (drops sparse channels like L2S everywhere, unlike per-station channel_mode). 0 = off (admit all tracked channels, byte-identical). Network mode only.
         double network_phase_bias_min_station_fraction_{0.0}; ///< Phase-bias coverage gate: a signal below this network coverage keeps its observation but gets no satellite phase-bias state (float ambiguity absorbs it, signal not AR-eligible); the "float, not drop" alternative. 0 = off (every phase signal gets a bias, byte-identical). Network mode only.
-        bool   network_phase_bias_exclude_unmatched_antenna_{false}; ///< Exclude a station whose receiver antenna has no ATX model match (zero receiver PCO/PCV → uncalibrated carrier phase) from every satellite phase-bias state; its arc is absorbed by the local float ambiguity (like phase_bias_min_station_fraction, but per-station and all-signals) while it still feeds the satellite clock/code-bias/iono/position. The clock-datum pivot is never excluded (warned instead). Off = every station contributes (byte-identical). Network mode only.
         bool   network_station_marker_to_arp_{false};              ///< Reduce every roster station's configured position_ecef from the monument to the antenna reference point at setup (network.station_marker_to_arp; card UPO), via Coordinates::markerToArp with that station's RINEX `ANTENNA: DELTA H/E/N`: the helper and frame the held-out consumer's truth already uses. The roster is held fixed at a published (monument) coordinate while the observations refer to the antenna and the ATX model is ARP-relative, so the station misfits every range by H·sin(elev); its zenith wet delay absorbs about a quarter of H and the rest leaks into the satellite clocks regionally. A station whose header has no eccentricity record is left unchanged and warned; a zero eccentricity is an exact no-op. Off = byte-identical (eccentricities are read and reported only). Fingerprinted (armed-only append). Network mode only.
         std::vector<std::string> network_rhs_attrib_columns_;      ///< Named shared columns of the attribution's solution-share readout (network.rhs_attrib_columns; card ICF instrument A'): every attribution dump also writes logs/rhs_attrib/cols_<tow>.csv, each contribution's reduced-RHS load and solution share at these columns; a LOC:<station>:<key> label names a station-local column instead, decomposed into loc_<tow>.csv at the armed dumps and a trip's current-epoch dump (card L5B). Empty (default) = no cols_ or loc_ file. Diagnostics only, not fingerprinted. Network mode only.
         bool   network_signal_roster_{false};                      ///< Write the arc ledger's trace (network.signal_roster; card SID phase 1, a trace switch since card NOM step N3a): logs/network_arc_ledger.csv and the ARC event rows of the roster's build and audit. The per-station signal roster, the arc ledger and their disagreement census are built on every network run whatever this says. Trace class. Not fingerprinted. Network mode only.
