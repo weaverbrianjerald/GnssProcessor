@@ -91,8 +91,56 @@ DROP_RANGES = [
     (2413, 2462, U6B_DEAD + " (resetSatClockState)"),
 ]
 
+SIG = "const ProcessNoise& pn, double dt"
+
+
+def QF(name, extra=""):
+    """The declared signature line of one Q block function (U6c)."""
+    return f"void StateManager::{name}(Eigen::MatrixXd& Q, {SIG}{extra}) const {{"
+
+
 UNITS = [
-    dict(name="StateManager.cpp (carried whole)", file=SM, pieces=[F(11, 2745)]),
+    # --- StateManager.cpp: everything but the process-noise section ---
+    dict(name="StateManager.cpp head .. getStateVariance", file=SM, pieces=[F(11, 512)]),
+    dict(name="StateManager.cpp index getters .. end", file=SM, pieces=[F(862, 2745)]),
+    # --- StateManagerProcessNoise.cpp (U6c) ---
+    dict(name="getProcessNoiseMatrix (driver)", file=PN, pieces=[
+        F(514, 526),
+        N("addMotionQ_(Q, pn, dt);"),
+        F(555, 561),
+        N("addBaselineQ_(Q, pn, dt, state_size);"),
+        F(576, 577),
+        N("addReceiverClockQ_(Q, pn, dt);"),
+        N("addPhaseClockQ_(Q, pn, dt);"),
+        N("addTroposphereQ_(Q, pn, dt);"),
+        N("addIonosphereQ_(Q, pn, dt);"),
+        N("addReceiverCodeBiasQ_(Q, pn, dt);"),
+        N("addSatBiasQ_(Q, pn, dt);"),
+        N("addSatPhaseBiasQ_(Q, pn, dt);"),
+        N("addSatClockQ_(Q, pn, dt);"),
+        N("addSystemTimeOffsetQ_(Q, pn, dt);"),
+        N("addAmbiguityQ_(Q, pn, dt, state_size);"),
+        F(809, 812)]),
+    dict(name="addMotionQ_ (Q1)", file=PN, pieces=[N(QF("addMotionQ_")), F(528, 553), N("}")]),
+    dict(name="addBaselineQ_ (Q2)", file=PN,
+         pieces=[N(QF("addBaselineQ_", ", size_t state_size")), F(562, 575, 4), N("}")]),
+    dict(name="addReceiverClockQ_ (Q3)", file=PN,
+         pieces=[N(QF("addReceiverClockQ_")), F(579), F(582, 615), N("}")]),
+    dict(name="addPhaseClockQ_ (Q4)", file=PN, pieces=[N(QF("addPhaseClockQ_")), F(617, 623), N("}")]),
+    dict(name="addTroposphereQ_ (Q5)", file=PN,
+         pieces=[N(QF("addTroposphereQ_")), F(580), F(625, 634), N("}")]),
+    dict(name="addIonosphereQ_ (Q6)", file=PN, pieces=[N(QF("addIonosphereQ_")), F(636, 693), N("}")]),
+    dict(name="addReceiverCodeBiasQ_ (Q7)", file=PN,
+         pieces=[N(QF("addReceiverCodeBiasQ_")), F(695, 707), N("}")]),
+    dict(name="addSatBiasQ_ (Q8)", file=PN, pieces=[N(QF("addSatBiasQ_")), F(709, 723), N("}")]),
+    dict(name="addSatPhaseBiasQ_ (Q9)", file=PN,
+         pieces=[N(QF("addSatPhaseBiasQ_")), F(725, 738), N("}")]),
+    dict(name="addSatClockQ_ (Q10)", file=PN, pieces=[N(QF("addSatClockQ_")), F(740, 752), N("}")]),
+    dict(name="addSystemTimeOffsetQ_ (Q11)", file=PN,
+         pieces=[N(QF("addSystemTimeOffsetQ_")), F(754, 786), N("}")]),
+    dict(name="addAmbiguityQ_ (Q12)", file=PN,
+         pieces=[N(QF("addAmbiguityQ_", ", size_t state_size")), F(788, 807), N("}")]),
+    dict(name="getTransitionMatrix", file=PN, pieces=[F(814, 860)]),
 ]
 
 # Frozen header lines: substitutions and drops, per header.
@@ -378,30 +426,33 @@ def main():
                for h in (HPP, FAM, SCH)}
 
     if a.mutation_test:
-        # Change one character of the first carried line that holds a digit, in memory.
-        for unit in UNITS:
-            for p in unit["pieces"]:
-                if p[0] != "F":
-                    continue
-                for i in range(p[1], p[2] + 1):
-                    line = Frozen(frozen_text, SUBS).code[i]
-                    m = re.search(r"\d", line)
-                    if not m or i in DROPS:
-                        continue
-                    new_line = line[p[3]:]
-                    t = texts[unit["file"]]
-                    k = t.find(new_line.strip())
-                    if k < 0:
-                        continue
-                    pos = k + new_line.strip().find(m.group())
-                    mutated = dict(texts)
-                    mutated[unit["file"]] = t[:pos] + ("1" if t[pos] != "1" else "2") + t[pos + 1:]
-                    f = run_checks(mutated, frozen_text, headers, quiet=True)
-                    print(f"mutation of {pathlib.Path(unit['file']).name} (frozen line {i}): "
-                          f"{'FAIL as required' if f else 'NOT DETECTED'}")
-                    return 0 if f else 1
-        print("no line to mutate")
-        return 1
+        # In each new file, change one character of the first carried line that holds a
+        # digit (in memory); every such mutation must make the check FAIL.
+        FCm = Frozen(frozen_text, SUBS)
+        results = []
+        for path in texts:
+            done = False
+            for unit in (u for u in UNITS if u["file"] == path):
+                for p in (q for q in unit["pieces"] if q[0] == "F"):
+                    for i in range(p[1], p[2] + 1):
+                        line = FCm.code[i]
+                        m = re.search(r"\d", line)
+                        if done or not m or i in DROPS:
+                            continue
+                        stripped = line[p[3]:].strip()
+                        t = texts[path]
+                        k = t.find(stripped)
+                        if k < 0:
+                            continue
+                        pos = k + stripped.find(m.group())
+                        mutated = dict(texts)
+                        mutated[path] = t[:pos] + ("1" if t[pos] != "1" else "2") + t[pos + 1:]
+                        f = run_checks(mutated, frozen_text, headers, quiet=True)
+                        results.append(bool(f))
+                        print(f"mutation of {pathlib.Path(path).name} (frozen line {i}): "
+                              f"{'FAIL as required' if f else 'NOT DETECTED'}")
+                        done = True
+        return 0 if results and all(results) else 1
 
     fails = run_checks(texts, frozen_text, headers, verbose=a.verbose)
     print("\nDeclared substitutions (frozen line: from -> to)")

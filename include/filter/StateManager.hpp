@@ -1629,6 +1629,141 @@ namespace GnssProcessor {
         void evictExpiredSatBiasCache(const GnssTime& now);
 
         // -------------------------------------------------------------------
+        // The blocks of the process noise matrix (StateManagerProcessNoise.cpp)
+        //
+        // getProcessNoiseMatrix calls one function per block, in this order.
+        // Each writes its own entries of Q (no entry is written twice), so the
+        // order of the calls does not change Q.
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Q block of the position and velocity states.
+         *
+         * With velocity: the continuous white-noise acceleration (CWNA) block
+         * driven by @c pn.acceleration_psd (dt^3/3, dt^2/2, dt with the pos/vel
+         * cross terms).  Without: a position random walk @c pn.position * dt.
+         *
+         * @param Q  The process noise matrix being built (state-sized, zero where unwritten).
+         * @param pn The configured process noise (@c filter.process_noise).
+         * @param dt Time step in seconds (> 0).
+         */
+        void addMotionQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the baseline (DD) mode: the ambiguities and the
+         *        optional differential ZWD.
+         *
+         * The ambiguity random walk takes the per-key overrides and, unlike
+         * @ref addAmbiguityQ_, skips no frozen pivot (baseline has no BSSD pivot).
+         *
+         * @param Q          The process noise matrix being built.
+         * @param pn         The configured process noise.
+         * @param dt         Time step in seconds.
+         * @param state_size The state size Q was allocated with.
+         */
+        void addBaselineQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt,
+                           size_t state_size) const;
+
+        /**
+         * @brief Q block of the receiver clock: the CWNA clock/clock-rate pair when
+         *        the clock rate is estimated, else a clock random walk.
+         *
+         * Writes nothing under BSSD, where the constructor allocates neither state.
+         *
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addReceiverClockQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the phase clock offset: a random walk, none under BSSD.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addPhaseClockQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the troposphere: the ZWD random walk and, when
+         *        estimated, the two gradient random walks.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addTroposphereQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the slant ionosphere and its rate.
+         *
+         * Applied only in @c ProcessingMode::PPP_RTK (card UOM defect S1).  Per
+         * satellite: the zenith spectral density (or its adaptive override) over
+         * max(sin^2 el, 0.01), as a random walk, or as the CWNA level/rate pair when
+         * the rate state exists.  Frozen pivots get none.
+         *
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addIonosphereQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the receiver code biases: a random walk; under BSSD only
+         *        the GLONASS per-slot IFB keys keep it.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addReceiverCodeBiasQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the satellite code biases: a random walk, none for a
+         *        frozen pivot's satellite.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addSatBiasQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the satellite phase biases: a random walk, none for a
+         *        frozen pivot's satellite (the S-basis datum).
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addSatPhaseBiasQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the satellite clocks: a random walk, none for a frozen
+         *        pivot's satellite.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addSatClockQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the inter-system time offsets: the CWNA ISB/ISBR pairs
+         *        when the rate offsets exist, else an ISB random walk.
+         * @param Q  The process noise matrix being built.
+         * @param pn The configured process noise.
+         * @param dt Time step in seconds.
+         */
+        void addSystemTimeOffsetQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const;
+
+        /**
+         * @brief Q block of the ambiguities: the random walk @c pn.ambiguity (or the
+         *        per-key override); a frozen pivot's ambiguities get none.
+         * @param Q          The process noise matrix being built.
+         * @param pn         The configured process noise.
+         * @param dt         Time step in seconds.
+         * @param state_size The state size Q was allocated with.
+         */
+        void addAmbiguityQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt,
+                            size_t state_size) const;
+
+        // -------------------------------------------------------------------
         // Internal state vector / covariance manipulation helpers
         // -------------------------------------------------------------------
 
