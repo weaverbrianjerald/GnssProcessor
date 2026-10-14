@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Permanent lint of the network producer's epoch function (card NOM3 step EP1, checks V4, V10, V11).
+"""Permanent lint of the network producer's epoch function (card NOM3 step EP1, checks V0, V4, V10, V11).
 
     python scripts/nom_epoch_lint.py [--tree DIR] [--partial] [--presolve-writer {outputs,epoch}]
 
@@ -12,6 +12,15 @@ type cannot be found.
 
 What it proves (spec sections 2.3, 3.1 and 5.5 of the EP1 specification):
 
+  V0  The reading.  The epoch function the lint reads is the one the compiler builds and its
+      calls reach the seams they name: Application::networkProcessEpoch_ is defined once
+      under src/; its translation unit holds no preprocessor directive but #include and
+      conditional groups of #include lines (a #define of a seam's name, an #if 0 around the
+      read copy with the compiled one under #else, are what this rules out); no name the
+      epoch function calls is declared in that translation unit outside the function (a
+      better-matching overload, a variable or a type of a seam's name would capture the
+      call); and each converted seam the spine calls has one epoch-form definition of that
+      arity.
   V4  Driver writes after the solve.  In Application::networkProcessEpoch_, after the
       statement `ep.solve = networkSolveGlue(...)`, the only writes into `ep` are the four
       driver stores `ep.ar_fixes =`, `ep.fixed_cycles =`, `ep.prep =`, `ep.emitted =` (each
@@ -56,9 +65,10 @@ epoch) and `// ---- End of the bindings ----`, which open the body (preamble_lea
 relocation verifier's V1b fails code before them); an adapter's epoch form is one forwarding
 call.
 
-The module also holds the tree reader and the comment-free statement rendering that
-scripts/nom_ep1_verify.py uses (DiskTree, render(), epoch_function()), so the relocation
-verifier and this lint read a tree the same way.  The verifier runs V4 on an empty
+The module also holds the tree reader, the comment-free statement rendering and the
+preprocessor reading that scripts/nom_ep1_verify.py uses (DiskTree, render(),
+epoch_function(), pp_directive(), cond_include_lines()), so the relocation verifier and this
+lint read a tree the same way.  The verifier runs V4 on an empty
 conversion too (the frozen lambda, its epoch locals named by scripts/nom_ep1/declared.py),
 through the same write scan with another path mapping.
 """
@@ -184,6 +194,42 @@ class DiskTree:
 # ---------------------------------------------------------------------------------------------
 # Comment-free rendering of a token range
 # ---------------------------------------------------------------------------------------------
+def pp_directive(text):
+    """The directive name of a source line or pp token that is a preprocessor directive (`#`
+    or the digraph `%:` first), else None."""
+    m = re.match(r"\s*(?:#|%:)\s*(\w*)", text)
+    return m.group(1) if m else None
+
+
+def cond_include_lines(T):
+    """Lines of the conditional directives (#if, #ifdef, #ifndef, #elif, #else, #endif) of
+    groups that hold only #include directives and nested such groups: the one conditional
+    form a step file may carry (`#ifdef _OPENMP / #include <omp.h> / #endif`), since it can
+    only choose a header, never compile a definition in or out."""
+    ok, stack = set(), []
+    for j in range(T.n):
+        d = pp_directive(T.t(j)) if T.k(j) == "pp" else None
+        if d in ("if", "ifdef", "ifndef"):
+            stack.append({"lines": [T.line(j)], "clean": True})
+            continue
+        if not stack:
+            continue
+        if d in ("elif", "else"):
+            stack[-1]["lines"].append(T.line(j))
+            continue
+        if d == "endif":
+            grp = stack.pop()
+            if grp["clean"]:
+                ok.update(grp["lines"] + [T.line(j)])
+            elif stack:
+                stack[-1]["clean"] = False
+            continue
+        if d == "include":
+            continue
+        stack[-1]["clean"] = False        # code, or another directive, inside the group
+    return ok
+
+
 class Sub:
     """A rendering substitution: tokens [a, b) are replaced by @p text; eat_before / eat_after
     drop the source gap before token a / after token b - 1."""
@@ -775,6 +821,41 @@ class Lint:
         return out
 
     # -- checks --
+    def v0(self):
+        """The reading (module docstring, V0)."""
+        fn, T, P = self.fn, self.fn.T, self.problems["V0"]
+        defs = []
+        for p in self.tree.files("src"):
+            text = self.tree.read(p)
+            if p.endswith(".cpp") and text and EPOCH_FN in text:
+                defs += [f"{p}:{f.line}" for f in self.tree.index(p).funcs
+                         if f.name == EPOCH_FN and f.is_def and f.cls == "Application"]
+        if len(defs) != 1:
+            P.append(f"Application::{EPOCH_FN} has {len(defs)} definitions ({', '.join(defs)}); the lint "
+                     "reads the first, the compiler builds one")
+        condl = cond_include_lines(T)
+        for j in range(T.n):
+            if T.k(j) == "pp" and pp_directive(T.t(j)) != "include" and T.line(j) not in condl:
+                P.append(f"{fn.path}:{T.line(j)}: the directive `{T.t(j)[:70]}` in the epoch function's "
+                         "translation unit (only #include and conditional groups of #include lines)")
+        start = fn.func.name_tok - 1
+        while start >= 0 and T.k(start) != "pp" and T.t(start) not in (";", "{", "}"):
+            start -= 1
+        start += 1
+        called = {re.split(r"\.|->|::", c.name)[-1] for c in calls_in(T, fn.open + 1, fn.close)}
+        hits = sorted({T.t(j) for j in list(range(0, start)) + list(range(fn.close + 1, T.n))
+                       if T.k(j) == "id" and T.t(j) in called})
+        if hits:
+            P.append(f"{fn.path}: {hits} named outside the epoch function in its translation unit; each is a "
+                     "name the epoch function calls, so a declaration there could capture the call")
+        for sc in self.spine:
+            leaf = re.split(r"\.|->|::", sc.callee)[-1]
+            ds = [f for f in self.defs.find(leaf) if len(f.params) == sc.call.nargs]
+            if len(ds) > 1:
+                P.append(f"{fn.path}:{T.line(sc.call.tok)}: {sc.callee} has {len(ds)} epoch-form definitions "
+                         f"of arity {sc.call.nargs} ({', '.join(f'{f.path}:{f.line}' for f in ds)})")
+        self.info["V0"].append(f"one definition, {len(called)} called names, {len(self.spine)} spine calls")
+
     def v4(self):
         fn = self.fn
         T = fn.T
@@ -909,6 +990,7 @@ def run(tree, out=print, partial=False, presolve_writer="outputs"):
     if tree.read(EPOCH_HPP) is None:
         out(f"nom_epoch_lint: {EPOCH_HPP} does not exist in {tree.rev}")
         return 2
+    lint.v0()
     lint.v4()
     lint.v10()
     card = presolve_writer == "epoch"
@@ -927,7 +1009,7 @@ def run(tree, out=print, partial=False, presolve_writer="outputs"):
                 f"{callee} takes NetworkEpoch& (the card's pre-solve form); in this form a writer "
                 "names its groups as output parameters (--presolve-writer epoch lints the card's form)")
     bad = 0
-    for chk in ("V4", "V10", "V11"):
+    for chk in ("V0", "V4", "V10", "V11"):
         probs = lint.problems[chk]
         bad += len(probs)
         st = "n/a" if chk == "V11" and card else ("pass" if not probs else "FAIL")

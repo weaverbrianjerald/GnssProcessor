@@ -685,6 +685,15 @@ DECLARED = (
 )
 
 
+# The member order of NetworkEpoch (spec 2.3): the order the stages fill the groups, `ws`
+# where the solve, its first writer, runs.  `NetworkEpoch ep(se);` constructs the members in
+# this order and the epoch's end destroys them in its reverse, so the layout is declared, not
+# left to the generator (check V3c).  Within a group the order is that of the group's
+# EPOCH_MEMBER entries above.
+EPOCH_LAYOUT = ("se", "clock", "funnel", "pass_a", "columns", "assembly", "dd_build", "ws", "solve",
+                "ar_fixes", "fixed_cycles", "prep", "emitted")
+
+
 def declared(cls=None):
     return [d for d in DECLARED if cls is None or d.cls == cls]
 
