@@ -141,6 +141,11 @@ add_library(gnss_core STATIC
 	src/core/slip/EwlSlipDetector.cpp
 	src/core/slip/SlipDetectorRegistry.cpp
 	src/core/slip/CycleSlipManager.cpp
+	src/core/slip/CycleSlipDetection.cpp
+	src/core/slip/CycleSlipAdjudication.cpp
+	src/core/slip/CycleSlipPivot.cpp
+	src/core/slip/CycleSlipNonMwPasses.cpp
+	src/core/slip/CycleSlipRepair.cpp
 	src/core/slip/IonoVariabilityMonitor.cpp
 	src/core/slip/TurboEditResolver.cpp
 	src/core/slip/SoftLliBridge.cpp

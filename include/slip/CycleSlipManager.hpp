@@ -57,6 +57,8 @@
 
 namespace GnssProcessor {
 
+struct SlipEpochWork;  // detectAndRepair's per-epoch working value (slip/CycleSlipEpochWork.hpp)
+
 /**
  * @brief Epoch-level result of cycle slip processing.
  */
@@ -146,6 +148,10 @@ public:
      *   4. Fall through to full reset for unidentified slips.
      *   5. Apply TurboEdit GF-only resolutions, then auxiliary-detector
      *      resets, to satellites not already handled.
+     *
+     * The body is a short ordered driver over the private section members
+     * declared below (S0 to S17, the section list of card UOM's organization
+     * map), which share one @c SlipEpochWork.
      *
      * @param epoch_prefix     Log prefix.
      * @param modeled_obs      Modeled observations for this epoch.
@@ -254,11 +260,293 @@ public:
     void resetSoftLliBridge();
 
 private:
+    // =======================================================================
+    // detectAndRepair, section by section
+    // =======================================================================
+    // detectAndRepair (CycleSlipManager.cpp) calls these in this order, over one
+    // SlipEpochWork.  S3 and S10 declare working sets only, so they are
+    // members of SlipEpochWork rather than functions.  S8 to S14 run only when
+    // the MW detector reported anything this epoch; S11 runs once per
+    // satellite with a mandate.
+    //
+    //   S0   beginSlipEpoch                       CycleSlipManager.cpp
+    //   S1   registerSoftLliGapHolds              CycleSlipDetection.cpp
+    //   S2   runAuxiliaryDetectors                CycleSlipDetection.cpp
+    //   S4   detectMwSlips                        CycleSlipDetection.cpp
+    //   S5   resolveTurboEdit                     CycleSlipDetection.cpp
+    //   S6   resolveSoftLliHolds                  CycleSlipDetection.cpp
+    //   S7   groupMwPairsBySatellite              CycleSlipDetection.cpp
+    //   S8   collectMwMandates                    CycleSlipDetection.cpp
+    //   S9   scanPivotCulprits                    CycleSlipPivot.cpp
+    //   S11  handleSatelliteMandates              CycleSlipAdjudication.cpp
+    //   S12  repairAcrossSlippedPivotInPlace      CycleSlipPivot.cpp
+    //   S13  forcePivotHandoverAndApplyDeferred   CycleSlipPivot.cpp
+    //   S14  logMwEpochSummary                    CycleSlipAdjudication.cpp
+    //   S15  applyTurboEditGfOnlyResolutions      CycleSlipNonMwPasses.cpp
+    //   S16  applyAuxiliarySlipEvents             CycleSlipNonMwPasses.cpp
+    //   S17  finishSlipEpoch                      CycleSlipManager.cpp
+    //
+    // The state primitives every response goes through (resetAmbiguityBssdAware,
+    // repairAmbiguityBssdAware) are in CycleSlipRepair.cpp.
+
+    /**
+     * @brief S0: clear the per-epoch accumulators (@c last_mw_slips_,
+     *        @c epoch_reset_sats_, @c epoch_repairs_), take the epoch time from
+     *        the first observation and build the BSSD pivot predicate.
+     * @param w Epoch work; writes @c epoch_now_s and @c is_bssd_pivot.
+     */
+    void beginSlipEpoch(SlipEpochWork& w);
+
+    /**
+     * @brief S1: hold the ambiguities of phase signals that dropped out this
+     *        epoch with a recent converged snapshot, so the TurboEdit gap
+     *        bridge can adjudicate the outage on the signal's return.
+     *
+     * No-op unless TurboEdit and @c turbo_edit_bridge_lli are on.
+     *
+     * @param w Epoch work; reads the observations, the state and the pivot
+     *          predicate (the holds live in @c soft_lli_).
+     */
+    void registerSoftLliGapHolds(SlipEpochWork& w);
+
+    /**
+     * @brief S2: run the auxiliary detectors (GRAPHIC, EWL) through
+     *        @c ISlipDetector::detect and gather their events.
+     *
+     * The MW detector is skipped here; S4 drives it through its concrete API.
+     * The events are applied after the MW path, by S16.
+     *
+     * @param w Epoch work; writes @c aux_events.
+     */
+    void runAuxiliaryDetectors(SlipEpochWork& w);
+
+    /**
+     * @brief S4: run the MW / LLI detector
+     *        (@c MwSlipDetector::detectLargeMwResets).
+     * @param w Epoch work; writes @c slip_results (empty when the MW detector
+     *          is disabled).
+     */
+    void detectMwSlips(SlipEpochWork& w);
+
+    /**
+     * @brief S5: the TurboEdit MW+GF joint resolution of this epoch: per-signal
+     *        culprits and integers, the no-state-action adjudications (code
+     *        events, bridged moot, adjudicated clean) and the WL-settle holds.
+     *
+     * No-op unless TurboEdit is on; the resolver also rolls its GF arcs
+     * forward, so it runs on epochs without MW slips too.
+     *
+     * @param w Epoch work; writes @c te, @c te_culprits_by_sat,
+     *          @c te_slips_by_sat and @c te_suppress_by_sat.
+     */
+    void resolveTurboEdit(SlipEpochWork& w);
+
+    /**
+     * @brief S6: resolve the outstanding soft-LLI holds against this epoch's
+     *        bridge output (restore with @c snapshot + dN·λ, reset, or time
+     *        out).
+     *
+     * No-op unless TurboEdit is on and a hold is outstanding.
+     *
+     * @param w Epoch work; writes @c soft_lli_repaired (S11 skips those
+     *          satellites), @c reset_sats and the result counters.
+     */
+    void resolveSoftLliHolds(SlipEpochWork& w);
+
+    /**
+     * @brief S7: group the MW results per satellite: the slipped pairs, and
+     *        the slipped plus clean pairs (clean ones synthesized from the
+     *        detector's mature arcs) that cross-consistency compares.
+     * @param w Epoch work; writes @c slips_by_sat and @c all_pairs_by_sat.
+     */
+    void groupMwPairsBySatellite(SlipEpochWork& w) const;
+
+    /**
+     * @brief S8: the mandated ambiguity keys per satellite, the satellites
+     *        with a receiver loss of lock, and the per-satellite status cache
+     *        @c last_mw_slips_ (the satellite_status trace's "Slip" rows).
+     * @param w Epoch work; writes @c reset_keys_by_sat and @c lli_sats.
+     */
+    void collectMwMandates(SlipEpochWork& w);
+
+    /**
+     * @brief S9: find the (constellation, signal) pairs whose BSSD pivot is
+     *        itself a culprit; every satellite's repair on such a signal is
+     *        then deferred to S12 or S13.  No-op without BSSD.
+     * @param w Epoch work; writes @c pivot_affected_cons_sig.
+     */
+    void scanPivotCulprits(SlipEpochWork& w) const;
+
+    /**
+     * @brief S11: adjudicate one satellite's MW mandates and act on them.
+     *
+     * In order: skip a satellite the soft-LLI bridge already repaired or whose
+     * TurboEdit WL-settle deferral is pending; resolve the culprit signals
+     * (cross-consistency over 3+ pairs, else the TurboEdit split), demoting a
+     * culprit set that contradicts a code-event adjudication; repair or reset
+     * each culprit (deferring pivot-affected ones) and reset the mandates the
+     * analysis did not adjudicate; or suppress the TurboEdit-adjudicated
+     * mandates; or fall through to a full reset of every mandated key, with
+     * the LLI arc handling and the satellite-wide re-inflation.
+     *
+     * @param w        Epoch work; writes the state, the result counters,
+     *                 @c reset_sats, @c epoch_reset_amb_keys and the deferred
+     *                 queues.
+     * @param sat_id   Satellite, e.g. "G05".
+     * @param amb_keys The satellite's mandated ambiguity keys.
+     */
+    void handleSatelliteMandates(SlipEpochWork& w,
+                                 const std::string& sat_id,
+                                 const std::set<std::string>& amb_keys);
+
+    /**
+     * @brief Whether a satellite is affirmatively clean on a signal this
+     *        epoch: a mature MW arc involves the signal and the signal is not
+     *        among its culprits.  A receiver loss of lock never counts.
+     * @param w   Epoch work (read only).
+     * @param sat Satellite, e.g. "G07".
+     * @param sig Signal, e.g. "L2W".
+     * @return true if the satellite may take the lossless -dN_pivot shift of
+     *         S12; false if it must be reset instead.
+     */
+    bool confidentlyCleanOnSignal(const SlipEpochWork& w,
+                                  const std::string& sat,
+                                  const std::string& sig) const;
+
+    /**
+     * @brief S12: repair the SD frame in place for every pivot-affected
+     *        constellation whose pivot integer is known, then drain those
+     *        constellations from the deferred queues and the pivot-affected
+     *        set, so S13 sees only what still needs a handover.
+     *
+     * No-op without BSSD or without a deferred integer repair.
+     *
+     * @param w Epoch work; writes the state and the deferred queues.
+     */
+    void repairAcrossSlippedPivotInPlace(SlipEpochWork& w);
+
+    /**
+     * @brief S12 for one constellation: when the pivot's own integer is known
+     *        on every pivot-affected signal, shift each flagged peer's SD
+     *        ambiguity by dN_peer - dN_pivot, each confidently clean peer by
+     *        -dN_pivot, reset the unverifiable peers, and keep the pivot.
+     * @param w          Epoch work; writes the state and the result.
+     * @param cons       Constellation name (as @c PppUtils::getSystemString).
+     * @param pivots_now The BSSD pivot per constellation.
+     * @return true if the constellation was handled in place (it then needs
+     *         no handover); false if its pivot integer is not known on every
+     *         pivot-affected signal or it has no pivot.
+     */
+    bool repairConstellationInPlace(SlipEpochWork& w,
+                                    const std::string& cons,
+                                    const std::map<std::string, std::string>& pivots_now);
+
+    /**
+     * @brief The satellites a forced handover may not elect as the new pivot:
+     *        every satellite with slip evidence this epoch (MW pair slips,
+     *        receiver loss of lock, TurboEdit culprits and unresolved
+     *        satellites).
+     * @param w Epoch work (read only).
+     * @return The exclude set passed to @c PivotManager::handlePivotHandover.
+     */
+    std::set<std::string> handoverExcludeSet(const SlipEpochWork& w) const;
+
+    /**
+     * @brief S13: force a pivot handover on the constellations still
+     *        pivot-affected, then apply the deferred integer repairs in the
+     *        new frame (a reset where the handover refused) and the deferred
+     *        resets.
+     *
+     * No-op when both deferred queues are empty.  Writes the measurement
+     * model's @c PivotManager through a @c const_cast (the caller owns it as
+     * non-const).  The post-handover repair is recorded for the smoother as a
+     * reset (segmented), not as a compensated repair.
+     *
+     * @param w Epoch work; writes the state.
+     */
+    void forcePivotHandoverAndApplyDeferred(SlipEpochWork& w);
+
+    /**
+     * @brief S14: the per-epoch MW warn line (targeted, full-reset and
+     *        code-event counts), printed only when the MW path acted.
+     *
+     * Runs before S15 and S16, so their repairs and resets are not in it.
+     *
+     * @param w Epoch work (read only).
+     */
+    void logMwEpochSummary(const SlipEpochWork& w) const;
+
+    /**
+     * @brief S15: apply TurboEdit resolutions for GF-only detections.
+     *
+     * Satellites the MW pipeline already handled this epoch (in
+     * @c w.reset_sats) are skipped: their dual-frequency culprits were resolved
+     * in the MW loop through the TurboEdit-augmented cross-consistency path
+     * and the BSSD pivot machinery.  This pass covers the remainder:
+     * satellites flagged purely by the geometry-free jump (MW's
+     * @f$\Delta N_1=\Delta N_2@f$ blind spot, where MW reported nothing).
+     * Confident per-signal integers are applied via
+     * @c repairAmbiguityBssdAware (covariance preserved; BSSD pivot refused,
+     * then reset), and @c TurboEditResolver reset-fallback satellites are
+     * reset BSSD-aware across all their observed phase signals.  No-op unless
+     * TurboEdit is on.
+     *
+     * @param w Epoch work; reads @c te, writes the state, the result counters
+     *          and @c reset_sats (the satellites this pass handled).
+     */
+    void applyTurboEditGfOnlyResolutions(SlipEpochWork& w);
+
+    /**
+     * @brief S16: apply slip events from the auxiliary (non-MW) detectors.
+     *
+     * GRAPHIC and EWL (the auxiliaries the registry builds) run through the
+     * polymorphic @c ISlipDetector::detect contract (S2) and emit unified
+     * @c SlipEvent records.  The MW pipeline owns the WL-lock state, AR
+     * coupling and BSSD pivot machinery and can therefore repair in place; the
+     * auxiliary detectors are independent cross-checks, and the project's
+     * response to one of their detections is a BSSD-aware ambiguity *reset*
+     * (see "reset over repair for bias-less signals").  Events for a satellite
+     * already acted on this epoch (in @c w.reset_sats) are skipped so they do
+     * not override MW's targeted per-signal repairs.  No-op without events.
+     *
+     * @param w Epoch work; reads @c aux_events, writes the state, the result
+     *          counters and @c reset_sats.
+     */
+    void applyAuxiliarySlipEvents(SlipEpochWork& w);
+
+    /**
+     * @brief S17: advance the soft-LLI epoch marker and hand the smoother
+     *        accumulators (@c epoch_reset_sats_, @c epoch_repairs_) to the
+     *        result.
+     * @param w Epoch work.
+     * @return The epoch's result.
+     */
+    CycleSlipEpochResult finishSlipEpoch(SlipEpochWork& w);
+
+    // =======================================================================
+    // State primitives (CycleSlipRepair.cpp) and culprit analysis
+    // (CycleSlipAdjudication.cpp)
+    // =======================================================================
+
     /**
      * @brief Reset a single ambiguity with BSSD awareness.
      *
-     * When BSSD is active, pivot slips are deferred and non-pivot
-     * ambiguities are re-seeded as SD values.
+     * Without BSSD, or without a pivot for the satellite's constellation, a
+     * plain @c StateManager::resetAmbiguity.  With BSSD: the pivot's variance
+     * is inflated so @c PivotManager hands it over (its value stays 0); a
+     * non-pivot ambiguity is reseeded as the SD value
+     * seed(sat) - seed(pivot, same band) when both are observed, else its
+     * variance is inflated and the reseed deferred to the next epoch.  Every
+     * branch records the satellite in @c epoch_reset_sats_ (smoother
+     * segmentation).
+     *
+     * @param amb_key       Ambiguity key, e.g. "G05_L2W".
+     * @param sat_id        Satellite of the key.
+     * @param signal        Signal of the key.
+     * @param modeled_obs   Modeled observations of this epoch (seeds).
+     * @param state_manager Filter state (modified).
+     * @param meas_model    BSSD pivot map.
+     * @param epoch_prefix  Log prefix.
      */
     void resetAmbiguityBssdAware(
         const std::string& amb_key,
@@ -345,66 +633,20 @@ private:
         const std::vector<MwSlipResult>& all_results) const;
 
     /**
-     * @brief Apply slip events from the auxiliary (non-MW) detectors.
-     *
-     * GRAPHIC and EWL (the auxiliaries the registry builds) run through the
-     * polymorphic @c ISlipDetector::detect contract and emit unified
-     * @c SlipEvent records.  The MW pipeline owns the WL-lock state, AR
-     * coupling and BSSD pivot machinery and can therefore repair in place; the
-     * auxiliary detectors are independent cross-checks, and the project's
-     * response to one of their detections is a BSSD-aware ambiguity *reset*
-     * (see "reset over repair for bias-less signals").  Events for a satellite
-     * the MW pipeline already acted on this epoch (present in @p handled_sats)
-     * are skipped so they do not override MW's targeted per-signal repairs.
-     *
-     * @param events        Aggregated auxiliary-detector slip events.
-     * @param handled_sats  Satellites already reset/repaired by the MW path
-     *                      (updated in place as auxiliary resets are applied).
-     * @param modeled_obs   Modeled observations for this epoch.
-     * @param state_manager Filter state (mutated on reset).
-     * @param meas_model    For BSSD pivot lookup.
-     * @param epoch_prefix  Log prefix.
-     * @param[in,out] result Epoch result counters (n_reset / state_modified).
+     * @brief Satellite of an ambiguity key ("G01_L1C" -> "G01"); the whole key
+     *        when it has no underscore.
+     * @param key Ambiguity key.
+     * @return The satellite identifier.
      */
-    void applyAuxiliarySlipEvents(
-        const std::vector<SlipEvent>& events,
-        std::set<std::string>& handled_sats,
-        const std::vector<PppObservation>& modeled_obs,
-        StateManager& state_manager,
-        const MeasurementModel& meas_model,
-        const std::string& epoch_prefix,
-        CycleSlipEpochResult& result);
+    static std::string satIdFromAmbiguityKey(const std::string& key);
 
     /**
-     * @brief Apply TurboEdit resolutions for GF-only detections.
-     *
-     * Satellites the MW pipeline already handled this epoch (in @p handled_sats)
-     * are skipped: their dual-frequency culprits were resolved in the MW loop
-     * through the TurboEdit-augmented cross-consistency path and the BSSD pivot
-     * machinery.
-     * This pass covers the remainder: satellites flagged purely by the
-     * geometry-free jump (MW's @f$\Delta N_1=\Delta N_2@f$ blind spot, where MW
-     * reported nothing).  Confident per-signal integers are applied via
-     * @c repairAmbiguityBssdAware (covariance preserved; BSSD pivot refused →
-     * reset), and @c TurboEditResolver reset-fallback satellites are reset
-     * BSSD-aware across all their observed phase signals.
-     *
-     * @param te            TurboEdit resolution for this epoch.
-     * @param handled_sats  Satellites already handled by the MW path (skipped).
-     * @param modeled_obs   Modeled observations for this epoch.
-     * @param state_manager Filter state (mutated).
-     * @param meas_model    For BSSD pivot lookup.
-     * @param epoch_prefix  Log prefix.
-     * @param[in,out] result Epoch result counters.
+     * @brief Signal of an ambiguity key ("G01_L1C" -> "L1C"); empty when the
+     *        key has no underscore.
+     * @param key Ambiguity key.
+     * @return The signal identifier.
      */
-    void applyTurboEditGfOnlyResolutions(
-        const TurboEditResolver::EpochResolution& te,
-        std::set<std::string>& handled_sats,
-        const std::vector<PppObservation>& modeled_obs,
-        StateManager& state_manager,
-        const MeasurementModel& meas_model,
-        const std::string& epoch_prefix,
-        CycleSlipEpochResult& result);
+    static std::string signalFromAmbiguityKey(const std::string& key);
 
     const GnssConfig& config_;
     LogManager& log_manager_;
