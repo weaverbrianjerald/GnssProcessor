@@ -2,10 +2,17 @@
  * \file StateManager.cpp
  * \brief Kalman filter state, covariance and ambiguity bookkeeping.
  *
- * Organized as: internal helpers (appendState, removeStateAtIndex),
- * construction, core accessors/mutators, process noise / transition, index
- * getters, ambiguity management, PppState sync, then the ionosphere and
- * code-bias state management.
+ * Organized as: file-scope helpers; the internal row edits (appendState,
+ * removeStateAtIndex, indicesOf_); construction; core accessors and mutators;
+ * process noise and transition; index getters and state labels; ambiguity
+ * lookup and birth; PppState synchronization; the SSR discontinuity memory;
+ * ambiguity reset, shift, restore, rename, removal, seed and prune; the slant
+ * ionosphere family; the re-inflations and their shared rule; the inputs of the
+ * process-noise rules (elevations, azimuths, frozen pivots, overrides); then one
+ * section per remaining family (receiver code bias, satellite code bias,
+ * satellite phase bias, receiver phase bias, phase colour, satellite clock), the
+ * satellite code-bias cache, the unresolvable and pending-reseed marks, and the
+ * gap-recovery edits.
  */
 
 #include "filter/StateManager.hpp"
@@ -59,7 +66,8 @@ namespace GnssProcessor {
     }
 
     /// Map a band digit + GNSS system to the carrier frequency (Hz).
-    /// Used by computeAmbiguitySeed() when PppUtils is not available.
+    /// Used by computeAmbiguitySeed() when PppUtils is not available.  The
+    /// GLONASS FDMA bands return the base (slot 0) frequency.
     double bandFrequency(char band, System system) {
         switch (system) {
         case System::GPS:
@@ -199,7 +207,7 @@ namespace GnssProcessor {
         // receiver clocks and ISBs and, on a short baseline, the iono and tropo,
         // so none of those states is estimated.  Ambiguities are still added
         // dynamically through addAmbiguity(); their keys are DD-specific
-        // ("GPS|G05|L1C|G01"), and StateManager does not parse the format.
+        // ("DD|GPS|G05|L1C|G01"), and StateManager does not parse the format.
         if (is_baseline_) {
             core_state_size_ = base_core_size_;   // just position (3)
             systems_with_time_offsets_.clear();
@@ -590,12 +598,12 @@ namespace GnssProcessor {
         //   (b) No clock-rate state: random walk on the clock bias with spectral
         //       density pn.clock (m²/s).
         //
-        // Under BSSD the clock-bias column of H is zero for code and phase (the
-        // clock cancels in SD), so the bias receives no update and its Q is
-        // suppressed to prevent unbounded variance growth.  Doppler is exempt
-        // from BSSD, so the clock-rate state still updates and keeps its Q;
-        // without it the rate variance would freeze at 0 and every Doppler
-        // observation would be rejected.
+        // Under BSSD the constructor allocates neither the clock bias nor the
+        // clock rate (both cancel in the between-satellite difference), so
+        // neither regime writes anything there.  The !BSSD tests below are
+        // therefore always true when they are reached: the one inside the
+        // clock-rate branch can never be false, because the clock rate exists
+        // only when BSSD is off.
         if (hasClockRate()) {
             const size_t crIdx = getClockRateIndex();
             const double q_cr  = pn.clock_rate;
@@ -633,7 +641,10 @@ namespace GnssProcessor {
             Q(gradient_east_idx_, gradient_east_idx_) = grad_var;
         }
 
-        // Per-satellite ionospheric noise (PPP-RTK uncombined)
+        // Per-satellite ionospheric noise, applied only when the processing mode
+        // is PPP_RTK.  The states are born whenever uncombined processing is on
+        // (in any mode), so a PPP run with uncombined processing gives them no
+        // process noise (card UOM defect S1).
         // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sin²(el)
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             const double q_zenith_default = pn.ionosphere;
@@ -692,7 +703,7 @@ namespace GnssProcessor {
             }
         }
 
-        // Receiver code bias (IFB) noise (PPP-RTK uncombined).
+        // Receiver code bias (IFB) noise (uncombined processing with estimate_ifb).
         // Suppressed under BSSD: receiver DCB/IFB columns are zeroed in the SD
         // H-matrix, so those states are unobservable.  The exception is the
         // per-FCN-slot GLONASS IFB states: BssdTransform does not zero their
@@ -706,7 +717,8 @@ namespace GnssProcessor {
             }
         }
 
-        // Per-satellite signal bias noise (PPP-RTK uncombined).
+        // Per-satellite signal bias noise (estimate_sat_biases; on a network
+        // station the same map holds the satellite OSB columns).
         // These absorb uncorrected satellite hardware delays on signals
         // without BIA coverage.  They are nearly constant, so the random walk
         // is very small.  Suppressed for BSSD pivot satellites (absorbed into the
@@ -757,9 +769,10 @@ namespace GnssProcessor {
         // When the ISBR (rate offset) states exist, each ISB/ISBR pair gets a
         // CWNA block with spectral density pn.system_time_rate_offset;
         // otherwise the bias gets the legacy random walk with
-        // pn.system_time_offset.  Under BSSD the ISB column is zero for code and
-        // phase (no update on the bias), but Doppler is exempt from BSSD and
-        // updates the ISBR, so the ISBR Q stays active.
+        // pn.system_time_offset.  Under BSSD the constructor allocates neither
+        // the ISBs nor the ISBRs, so both maps are empty there; the bssd tests
+        // below never select a different branch (inside the ISBR branch, bssd is
+        // always false).
         if (!system_time_rate_offset_indices_.empty()) {
             const double q_isbr = pn.system_time_rate_offset;
             const double dt2    = dt * dt;
@@ -1333,7 +1346,7 @@ namespace GnssProcessor {
                 tropo_grad = mf_grad * (gn * std::cos(az_rad) + ge * std::sin(az_rad));
             }
 
-            // Per-satellite ionosphere (PPP-RTK uncombined, phase advance)
+            // Per-satellite ionosphere (uncombined processing, phase advance)
             double iono_term = 0.0;
             if (config_.isUncombinedEnabled() && !ref_type.empty() && ref_type[0] == 'L') {
                 const int iono_idx = getIonosphereIndex(obs.satellite);
@@ -1389,7 +1402,7 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // Per-satellite ionosphere state management (PPP-RTK uncombined)
+    // Per-satellite ionosphere state management (uncombined processing)
     // ===================================================================
 
     int StateManager::getIonosphereIndex(const std::string& satellite) const {
