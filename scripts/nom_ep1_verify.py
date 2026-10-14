@@ -1967,7 +1967,8 @@ class Verifier:
                     names = [p.name for p in f.params]
                     slots = [("run", 0)] + ([("ep", 1)] if r.mech != RUN else [])
                     k0 = 2 + len(r.kept)
-                    slots += [(o, k0 + q) for q, o in enumerate(r.outs) if o in GROUP_TYPES]
+                    if not lint.is_card_form(f):
+                        slots += [(o, k0 + q) for q, o in enumerate(r.outs) if o in GROUP_TYPES]
                     for base, pos in slots:
                         got = names[pos] if pos < len(names) else None
                         fallback = "n" + base if base in ("run", "ep") else base + "_out"
@@ -2107,7 +2108,8 @@ class Verifier:
                 edited = []
                 if name == lint.SOLVE:
                     a0 = a
-                    a, b, edited = _solve_declared(a, b, self.R)
+                    a, b, edited = _solve_declared(a, b, self.R,
+                                                   card=lint.is_card_form(f))
                 d = same_lines(a, b)
                 for k in edited:
                     if (d is None or k < d[0]) and k < len(b):
@@ -2732,7 +2734,7 @@ def _code_lines(text):
     return out
 
 
-def _solve_declared(a, b, R, replay=True):
+def _solve_declared(a, b, R, replay=True, card=False):
     """The solve's declared body edits (spec 3.4): the replay's two callback lines become
     direct calls (WCF's resolves counter kept), the three epilogue lines write result.handoff."""
     fa = [ln for ln in a]
@@ -2745,7 +2747,7 @@ def _solve_declared(a, b, R, replay=True):
         t = ln[1].strip()
         if replay and t in ("buildEnsembleGauges();", "buildCarryDdPriors();"):
             builder = "network" + t[0].upper() + t[1:t.index("(")]
-            args = "(run, ep)" if "Ensemble" in builder else "(run, ep, dd_build, funnel)"
+            args = "(run, ep)" if "Ensemble" in builder or card else "(run, ep, dd_build, funnel)"
             out_a.append([ln[0], ln[1].replace(t, builder + args + ";")] + ln[2:])
             edited.append(k)
             continue

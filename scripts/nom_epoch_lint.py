@@ -325,6 +325,35 @@ class SeamDefs:
         return out
 
 
+def is_card_form(f):
+    """True for the card's form of a writer before the solve (--presolve-writer epoch): the
+    epoch arrives as a non-const NetworkEpoch& and the writes bind through it."""
+    return bool(f.params) and len(f.params) >= 2 and ptype(f.params[1]) == "NetworkEpoch&"
+
+
+def written_bindings(T, f):
+    """The epoch paths a definition's bindings mark `// written` (through its second
+    parameter): the groups a card-form writer writes."""
+    span = preamble_span(T, f)
+    if span is None or len(f.params) < 2:
+        return []
+    epn = f.params[1].name
+    out = []
+    for s, e in statements(T, *span):
+        line_end = T.source.find("\n", T[e - 1].end)
+        if "// written" not in T.source[T[e - 1].end:line_end if line_end >= 0 else None]:
+            continue
+        for j in range(s, e):
+            if T.t(j) == epn and T.t(j + 1) == "." and T.k(j + 2) == "id" and T.t(j - 1) == "=":
+                path, k = "ep." + T.t(j + 2), j + 3
+                while T.t(k) == "." and T.k(k + 1) == "id":
+                    path += "." + T.t(k + 1)
+                    k += 2
+                out.append(path)
+                break
+    return out
+
+
 def preamble_span(T, f):
     """(first token, end token) of the generated bindings of definition @p f: the statements
     between the two markers, or None when the markers are absent."""
@@ -644,6 +673,8 @@ class Lint:
                     path = arg_epoch_path(T, *c.args[k])
                     if path and sc.defn.params[k].kind in ("W", "W*"):
                         sc.out_paths.append(path)
+                if is_card_form(sc.defn):
+                    sc.out_paths += written_bindings(DT, sc.defn)
             self.spine.append(sc)
 
     # -- positions --
