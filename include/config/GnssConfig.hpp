@@ -7061,7 +7061,7 @@ namespace GnssProcessor {
          * (SB_RAIM), by which point the funnel has already been consumed at SB_DDBUILD,
          * so the response is deferred one epoch through
          * @c NetworkCarryState::raim_refloat_pending, as the card-4 D5 innovation gate
-         * and the iono-deweight release edge defer theirs.
+         * defers its own.
          *
          * Drains into the funnel proper, not into its raw-observable subset: a post-fit
          * residual consensus is estimation-side evidence, and draining it into
@@ -7747,17 +7747,6 @@ namespace GnssProcessor {
          * @return Const reference to the global SH-VTEC config.
          */
         const GlobalVtecShConfig& getGlobalVtecShConfig() const { return global_vtec_sh_; }
-
-        /**
-         * @brief Access the station-adaptive SH-VTEC-constraint deweight configuration.
-         *
-         * Relaxes the per-LOS-iono ↔ global SH-VTEC coupling per station by a factor
-         * w_s ∈ (0,1] (v1 static list + v2 adaptive IGG gate): a targeted
-         * alternative to dropping a problem station.  Network producer only.
-         * @return Const reference to the iono-constraint deweight config.
-         * @see IonoConstraintDeweightConfig, estimateNetworkIonoSh
-         */
-        const IonoConstraintDeweightConfig& getIonoConstraintDeweightConfig() const { return iono_constraint_deweight_; }
 
         /**
          * @brief Use the CIO-based IAU 2000A/2006 ECI↔ECEF frame transform.
@@ -8872,8 +8861,6 @@ namespace GnssProcessor {
                                          const std::shared_ptr<spdlog::logger>& log);
         void loadNetworkReattachHygiene_(const nlohmann::json& json,
                                          const std::shared_ptr<spdlog::logger>& log);
-        void loadNetworkDeweightReleaseHygiene_(const nlohmann::json& json,
-                                                const std::shared_ptr<spdlog::logger>& log);
         void loadNetworkSignalIntegrity_(const nlohmann::json& json,
                                          const std::shared_ptr<spdlog::logger>& log);
         bool loadNetworkEmissionFilters_(const nlohmann::json& json,
@@ -9491,7 +9478,6 @@ namespace GnssProcessor {
         AdaptiveIonoQConfig adaptive_iono_q_;                       ///< Adaptive ionospheric process-noise (GF second-difference) config.
         IonosphereWeightingConfig iono_weighting_;                  ///< GIM ionosphere-weighting (PPP-RTK soft iono constraint) config.
         GlobalVtecShConfig global_vtec_sh_;                         ///< Co-estimated global SH-VTEC ionosphere (network producer) config.
-        IonoConstraintDeweightConfig iono_constraint_deweight_;     ///< Station-adaptive SH-VTEC-constraint deweight (v1 static list + v2 adaptive IGG gate); default empty ⇒ off (byte-identical).
 
         bool has_reference_position_;                          ///< True if user supplied a reference ECEF position.
         std::array<double, 3> reference_position_ecef_; ///< User-supplied reference position ECEF (m).

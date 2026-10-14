@@ -19,7 +19,7 @@
  * per-field "not snapshotted" notes below are the exemption record.
  * Kept out of this header on purpose (they stay locals of the run TU): the
  * engine objects (NetworkEstimator, NetworkInvariantCarryDriver, NetworkCarryVce,
- * NetworkIonoDeweightGate, NetworkEmitRebase), the D0/D0b section-timer
+ * NetworkEmitRebase), the D0/D0b section-timer
  * instrumentation, and the closed-loop consumer metrics.  The driver holds them in
  * the groups of filter/NetworkRunGroups.hpp (engines, emit engines, run
  * timing, closed-loop tally), which the seams receive by reference.
@@ -42,7 +42,6 @@
 #include "filter/NetworkYoungInflate.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
 #include "filter/NetworkAnchorHygiene.hpp" // NetworkAnchorTallies (eq34 reattach hygiene)
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
-#include "filter/NetworkIonoDwRelease.hpp"   // NetworkIonoDwReleaseTallies (iono-deweight release hygiene)
 #include "filter/NetworkRaim.hpp"            // NetworkRaimCiTallies (RAIM pool re-host), RaimPoolAdmissionTally (card NOM N2b)
 #include "filter/NetworkWithinEpochCulprits.hpp" // WithinEpochCulpritTally (card WCF)
 #include "filter/NetworkGrossLos.hpp"        // NetworkGrossLosTallies / GrossLosState (card GL)
@@ -891,17 +890,6 @@ namespace GnssProcessor {
         int    sig_flicker_max_ep{};  ///< Maximum band outage (epochs) still classed as a flicker (INC-1).
         bool   sig_refloat_regain{};  ///< Refloat the LOS's ambiguities on all bands when a flickered band returns (INC-3(a)).
         bool   sig_resume_warmup{};   ///< Vet every arc for sig_revet_ep epochs after a warm resume, because tight carries are restored and detector state is not (addendum).
-        // --- iono-deweight release hygiene ---
-        // Resolved against the SH field and the gate: the loader has already disarmed every
-        // increment without estimate_iono_sh (and INC-1 without the adaptive gate), and
-        // `dw_hygiene_on` is the one predicate the seam and the assembly read for "does
-        // this run sweep at all", so an off run touches nothing.
-        bool   dw_hygiene_on{};          ///< Master: any increment armed on a live SH field; the gate for the release seam and the held-row lookup.
-        bool   dw_release_reseed{};      ///< Release-time slant reseed, ambiguity refloat and stash erase armed (INC-1).
-        double dw_release_eps{};         ///< "Decoupled" weight threshold; the release edge is a rise above it (INC-1).
-        double dw_park_bound_tecu{};     ///< While-decoupled park bound in slant TECU (0 = off; INC-2).
-        double dw_release_validate_k{};  ///< Standardized deviation screen on a re-engaged tie row (0 = off; INC-3).
-        double dw_admit_validate_k{};    ///< The same screen at a LOS's first tie row, the admission gate measured as the valve (0 = off; INC-3b).
         // --- redundancy / testability census ---
         // `redun_census_on` is the one predicate the driver reads for "does this run enter
         // the census seam at all", so an off run never calls into the translation unit and
@@ -1051,9 +1039,7 @@ namespace GnssProcessor {
         double sh_dev_tau{};
         /// The SH-deviation carry is live: @ref sh_dev_tau > 0.  The one derivation of this
         /// predicate: read by networkPassB_, networkShDevVtec and its run-end report
-        /// (networkShDevCarryRunEnd), and by this snapshot itself, which disarms the
-        /// iono-deweight screens and bounds without the channel (@ref dw_park_bound_tecu,
-        /// @ref dw_release_validate_k, @ref dw_admit_validate_k).
+        /// (networkShDevCarryRunEnd).
         bool   sh_dev_on{};
         bool   sh_dev_demean{};    ///< Anti-ratchet de-mean (Iono-2 v3): sh_dev_on and estimation.global_vtec_sh.rep_error_demean.  Read by networkPassB_.
         bool   sh_dev_d5_keep{};   ///< Erase-policy split (Iono-2 v3k): sh_dev_on and estimation.global_vtec_sh.rep_error_d5_keep.  Read by networkPassB_.
@@ -1605,9 +1591,7 @@ namespace GnssProcessor {
         std::map<std::string, long long> adm_event_last;
         // Per-epoch L1 scalars (INC-3).  @c adm_ep_tow is the stamp the epoch-status writer
         // compares against, so an epoch the screen did not run on leaves the columns blank
-        // instead of repeating stale numbers (the redun_ep_tow pattern; the ep_dw_engaged
-        // pattern does not fit, because its -1 sentinel is never reset and sticks after the
-        // first write).
+        // instead of repeating stale numbers (the redun_ep_tow pattern).
         double adm_ep_tow          = -1.0;
         double ep_adm_sta_worst_z  = 0.0;  ///< median over screened stations of each station's worst |z| (m): the typical level.
         double ep_adm_net_worst_z  = 0.0;  ///< network maximum |z| (m): the extreme.  Its identity goes to the events.
@@ -2473,18 +2457,6 @@ namespace GnssProcessor {
         /// the first install always announces the state it starts in.
         std::string d5_calib_state_prev;
 
-        // --- Per-epoch iono-deweight state (SPEC_day129_frame_guards P1-2) ---
-        // Harvested at the serial NetworkShHealth advance() site (the gate's threading
-        // contract forbids reading it from the parallel assembly) and copied into the emit
-        // epoch's status row.  n_dw_zero counts stations the gate has driven to
-        // w == floor == 0, i.e. whose entire SH block is dropped (the w_s <= 0 early return
-        // at ApplicationNetworkAssembly.cpp:1190-1191) and whose per-LOS iono floats: the
-        // candidate trigger for a "deweight release wave".
-        int    ep_dw_engaged = -1;   // -1 = not harvested this epoch (blank in the trace)
-        int    ep_dw_zero    = 0;
-        double ep_dw_min_w   = 1.0;
-        double ep_dw_mean_w  = 1.0;
-
         // --- Measure-only post-fit σ̂0 (SPEC_day129_frame_guards P1-4) ---
         // Filled by networkPostfitSigma0 (filter/NetworkFrameDiag) under
         // network.trace_postfit_sigma0; ep_pf_rows == 0 means "not computed this epoch",
@@ -2587,29 +2559,12 @@ namespace GnssProcessor {
         // erasing it.  shdev_slip_resets_total then counts actual erases only.
         long long shdev_d5_keeps_total = 0;
 
-        // --- iono-deweight release hygiene ---
-        // Every member below stays empty or at its sentinel unless
-        // ctx.knobs.dw_hygiene_on, so an off run allocates nothing.  None of it is
-        // serialized: the gate itself is not snapshotted either (a resumed leg starts
-        // every station at w = 1 with no samples), so there is no carried release state
-        // to restore.  The warm-resume shock is bounded instead by INC-2's gate-cold
-        // trigger, which makes the spec §6 deferral explicit.
-        //
-        // INC-1 ambiguity refloats detected at the release edge (post-solve, SB_T1A),
-        // queued for the next epoch's slip funnel.  The funnel `carry_slipped_ambs` is a
-        // per-epoch driver local whose consumer (buildCarryDdPriors) has already run by
-        // then, and a bare markAmbiguityPendingReseed issued at SB_T1A is wiped a few lines
-        // later by the leveling harvest's clearPendingReseed, so the response is deferred,
-        // as the card-4 D5 innovation gate defers its own post-solve detections through
-        // carry_innov_pending.
-        std::set<std::pair<int, std::string>> dw_release_pending;
-
         // --- RAIM pool re-host ---
         // (station index, ambiguity key) flagged by the re-hosted post-fit RAIM screen at
         // SB_RAIM, queued for the next epoch's slip funnel: the same deferral as
-        // `dw_release_pending` above, for the same reason (`carry_slipped_ambs` is a
-        // per-epoch driver local whose consumer, buildCarryDdPriors at SB_DDBUILD, has
-        // already run by the time RAIM detects post-solve).
+        // `carry_innov_pending`, for the same reason (`carry_slipped_ambs` is a per-epoch
+        // driver local whose consumer, buildCarryDdPriors at SB_DDBUILD, has already run
+        // by the time RAIM detects post-solve).
         //
         // A queue rather than the seam's own actions, because neither mutation that
         // networkPostFitRaim performs can move the solve:
@@ -2631,48 +2586,9 @@ namespace GnssProcessor {
         // The lifetime is bounded to exactly one epoch by an unconditional drain-and-clear
         // at the driver head (standing invariant #1); the drain must stay unconditional even
         // on a datum-change or station-drop epoch, or a stale (station index, key) pair
-        // could outlive its arc.  Not serialized (as for dw_release_pending), so a warm
-        // resume starts with an empty queue.
+        // could outlive its arc.  Not serialized, so a warm resume starts with an empty
+        // queue.
         std::set<std::pair<int, std::string>> raim_refloat_pending;
-        /// "<station>|<sat>" LOS whose SH<->slant tie row is currently withheld, because its
-        /// standardized deviation failed k or because it has not yet earned admission
-        /// (INC-3 / INC-3b).  Rebuilt from scratch for every station the release seam
-        /// sweeps (so a set or pruned LOS cannot leave a stale hold behind) and read by the
-        /// assembly's tie-row build.
-        std::set<std::string> dw_row_held;
-        /// "<station>|<sat>" LOS whose tie row has been admitted (INC-3b).  A LOS absent from
-        /// this set has its row held, which is what makes the guard act on a LOS's first
-        /// tie row rather than one epoch after it (a positive admission list cannot be
-        /// expressed as a hold list: at first sighting the seam has never run for that
-        /// key).  Empty unless INC-3b is armed.
-        std::set<std::string> dw_tie_seen;
-        /// One-shot start/resume seed latch (INC-3b).  Nothing in this mechanism is
-        /// serialized, so on the first epoch of a run (or of a warm-resumed leg) the
-        /// admitted set is empty, and holding every tie row for one epoch would leave the
-        /// whole SH field unconstrained, a shock far larger than the coupling event the
-        /// guard exists to catch.  There is also nothing to guard at that point: the guard
-        /// concerns a LOS coupling for the first time relative to an established field,
-        /// and at start there is no established field.  So the first seam pass admits every
-        /// present LOS unscreened and sets this latch; the assembly keeps the admission
-        /// check inert until it is set.  The same reasoning as the eq34 card's
-        /// `anchor_age_resume_seed`.
-        bool dw_tie_seeded = false;
-        /// Consecutive epochs a quarantined LOS has gone with no harvested deviation, keyed
-        /// "<station>|<sat>".  `networkShDevVtec` skips its harvest for a station at weight
-        /// <= 0 and for a LOS with no local column, so such a LOS can never produce the
-        /// statistic the screen needs, and a screen that holds on missing data would
-        /// withhold its tie row for the whole run.  The guard rejects on evidence, not on
-        /// the absence of evidence, so after `kAdmitNoDevMaxEp` barren epochs the LOS is
-        /// admitted and counted separately.  A LOS with data gets its first harvest in the
-        /// same epoch its row would fold, so the bound never fails open for one the screen
-        /// could judge.
-        std::map<std::string, int> dw_admit_wait;
-        /// Last NetworkIonoDeweightGate::advanceCount() the release seam consumed.  The
-        /// producer skips the whole gate block on a datum-change epoch (there is no
-        /// advance(false) caller), which leaves the gate's per-call release list holding
-        /// the previous epoch's contents; without this watermark the seam would re-fire an
-        /// old release on every held epoch.  -1 = nothing consumed yet.
-        long long dw_gate_adv_seen = -1;
 
         // --- SH-field warning edge state and convergence latch (T1a/T1d) ---
         // Persistent state for the a₀₀ physical-band divergence warning (T1a).  It starts
@@ -2942,11 +2858,9 @@ namespace GnssProcessor {
         /// never).  The vet honours flags from the immediately preceding loop epoch only;
         /// anything older is stale and is counted as an absent consultation rather than
         /// believed.  The same staleness discipline as the `adm_ep_tow` / `redun_ep_tow`
-        /// column stamps, and not the `ep_dw_engaged` pattern, whose sentinel is never
-        /// reset and therefore sticks.
+        /// column stamps.
         long long prefit_code_flag_ep = -1;
-        std::map<int, int>    topo_prev_tie;   ///< station index -> last epoch's iono_sh_row count, the deweight valve's own edge (INC-4).
-        std::map<int, double> topo_prev_w;     ///< station index -> last epoch's SH-constraint deweight weight, the "w 0 -> 0.25" half of the event (INC-4).
+        std::map<int, int>    topo_prev_tie;   ///< station index -> last epoch's iono_sh_row count (INC-4).
         std::map<std::pair<int, std::string>, unsigned> topo_prev_kind;  ///< (station index, satellite) -> last epoch's data-class bitmask: band gained/lost, code-only <-> code+phase (INC-4).
         std::set<std::string> topo_prev_cols;  ///< last epoch's shared-column label set, for registry deltas (INC-4).
         bool topo_seeded = false;              ///< the baselines above hold a real epoch (INC-4).
@@ -3246,10 +3160,6 @@ namespace GnssProcessor {
         // into its own copy (the fold runs inside the parallel produce, so the row tally
         // cannot live here).
         NetworkSignalIntegrityTallies sig;
-        // Run tallies of iono-deweight release hygiene; every field is documented on the
-        // struct.  Bumped only when ctx.knobs.dw_hygiene_on, and reported by
-        // networkDwReleaseHygieneRunEnd (filter/NetworkIonoDwRelease.cpp).
-        NetworkIonoDwReleaseTallies dwr;
         /// Run-end telemetry of the RAIM pool re-host.  All zero unless
         /// ctx.knobs.raim_ci_on; the denominators separate "seam never ran" from "census
         /// empty" from "nothing flagged" (standing invariant #4).

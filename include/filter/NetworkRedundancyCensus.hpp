@@ -31,8 +31,8 @@
  * @f$r_i \to 0@f$.  A row with @f$r_i \approx 0@f$ only feeds a state: its misfit
  * is invisible to every residual-based test (post-fit RAIM, σ̂₀, robust
  * weighting) however large it is.  The typical case is a code row that becomes
- * the only observation of an otherwise unconstrained slant-iono state after the
- * iono-deweight gate cuts its station's SH ties; the state can then absorb an
+ * the only observation of an otherwise unconstrained slant-iono state once its
+ * station has no SH ties; the state can then absorb an
  * arbitrarily large error without any residual moving.
  *
  * ## The alarm condition is the cross-flag

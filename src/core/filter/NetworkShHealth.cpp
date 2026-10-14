@@ -13,7 +13,6 @@
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
-#include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/NetworkRhsAttrib.hpp"   // flight-recorder trip latch (INC-5)
 #include "filter/StateKeySchema.hpp"
@@ -48,7 +47,6 @@ void networkShHealth(
     const std::vector<StationAssembly>& asm_res,
     const std::vector<int>& est_index_of,
     const std::vector<std::vector<PppObservation>>& modeled,
-    NetworkIonoDeweightGate& iono_deweight,
     NetworkCarryVce& carry_vce_est,
     NetworkPriorResidual& prires_est,
     bool datum_changed,
@@ -70,9 +68,6 @@ void networkShHealth(
     auto& n_emitted = ctx.counters.n_emitted;
     auto& sh_a00_was_in_band = ctx.carry.sh_a00_was_in_band;
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
-    // Engage/release thresholds, written into the IONO_DW event rows so that each
-    // row shows the z-score next to the threshold it was tested against (P1-2).
-    const IonoConstraintDeweightConfig& idw_cfg = config_.getIonoConstraintDeweightConfig();
 
 
     // --- T1a: SH-field health probe + a₀₀ physical-band divergence warning ---
@@ -112,24 +107,14 @@ void networkShHealth(
         }
     }
 
-    // (b) Full health metrics and the station-adaptive deweight gate, both fed by
-    //     one post-solve SH↔slant sweep (H1 dedup).
+    // (b) Full health metrics, from one post-solve SH↔slant sweep.
     //     The SH health trace (shc.trace) writes one row per emitted epoch: a₀₀
     //     (+σ), coefficient RMS by degree, that RMS relative to the per-degree Kaula
     //     prior σ (σ_n = kaula/n, σ₀ = a₀₀ prior σ), and the network-wide SH→slant
     //     misfit reconstructed at posterior geometry (mean/rms/max |residual| and
     //     3σ-exceedance counts over LOS and stations).
-    //     The station-adaptive deweight (v2) uses the same standardized slant
-    //     residual r/σ per present station: its per-station RMS √mean((r/σ)²) is
-    //     the gate's observe() input.  Both come from one station reconstruction
-    //     and one SH evaluation per LOS.  The gate accumulates within a station,
-    //     so sharing the sweep does not change its result.  With the gate off, or
-    //     on a datum-change epoch, observe() and advance() are not called and the
-    //     output is byte-identical; with the trace on, the gate adds no
-    //     reconstructStation calls or SH evaluations of its own.
     const bool sh_want_trace = vtec_sh_health_trace.is_open();
-    const bool sh_want_gate  = iono_deweight.adaptive() && !datum_changed;
-    if (sh_model && (sh_want_trace || sh_want_gate)) {
+    if (sh_model && sh_want_trace) {
         const Eigen::MatrixXd& shcov = est.sharedCovariance();
         const auto& coeffs = sh_model->coeffs();
         Eigen::VectorXd coeff(static_cast<Eigen::Index>(coeffs.size()));
@@ -213,7 +198,6 @@ void networkShHealth(
                                      std::make_pair(o.elevation, o.sat_pos));
                 const auto& h2l = asm_res[i].h2local;
                 bool sta_present = false, sta_gt3 = false;
-                double zz_gate = 0.0; int nn_gate = 0;   // per-station Σ(r/σ)², count (deweight gate)
                 for (const auto& kv : stations[i].sm->getIonosphereStates()) {
                     if (kv.first.empty() || systemOfSat(kv.first) == System::GLONASS) continue;  // SH excludes GLONASS
                     const auto gt = geom.find(kv.first);
@@ -243,13 +227,6 @@ void networkShHealth(
                     if (!std::isfinite(resid)) continue;
                     const double sig = std::max(
                         iw.floor_m, shc.representation_sigma_tecu * g.mapping * tecu_to_L1m);
-                    // Deweight gate: this LOS's standardized residual (guarded on
-                    // sig > 0 before dividing).
-                    if (sh_want_gate && sig > 0.0) {
-                        const double sr = resid / sig;
-                        zz_gate += sr * sr; ++nn_gate;
-                    }
-                    if (!sh_want_trace) continue;   // gate-only: skip trace aggregates
                     const double ar = std::fabs(resid);
                     res_sum += ar;
                     res_sumsq += resid * resid;
@@ -260,10 +237,6 @@ void networkShHealth(
                 }
                 if (sta_present) ++n_sta;
                 if (sta_gt3) ++n_sta_gt3;
-                // Feed the deweight gate this station's standardized-residual RMS
-                // (stations in serial order).
-                if (sh_want_gate && nn_gate > 0)
-                    iono_deweight.observe(stations[i].name, std::sqrt(zz_gate / nn_gate));
             }
             const double res_mean = (n_los > 0) ? res_sum / n_los : 0.0;
             const double res_rms  = (n_los > 0) ? std::sqrt(res_sumsq / n_los) : 0.0;
@@ -309,42 +282,8 @@ void networkShHealth(
                 }
             }
             vtec_sh_health_trace << '\n';
-            // Advance the deweight gate one clean epoch (EWMA + robust z +
-            // hysteresis + slew).  With the gate off this does not run, so the
-            // output is byte-identical.
-            if (sh_want_gate) {
-                iono_deweight.advance(true);
-                // --- Deweight weight-field harvest (SPEC_day129_frame_guards P1-2) ---
-                // aggregate() and lastTransitions() are read here, on the serial
-                // site that calls advance(), as the gate's threading contract
-                // requires (observe/advance mutate; the parallel assembly only
-                // reads weight()).  The weight field goes to the epoch-status row,
-                // and each engage/release is emitted as a discrete IONO_DW event,
-                // so the timing of a release wave relative to a collapse epoch can
-                // be read from the traces; run-end engage/release totals do not
-                // show when transitions happened.  Trace only: no decision reads
-                // these values.
-                const auto agg = iono_deweight.aggregate();
-                ctx.carry.ep_dw_engaged = agg.n_engaged;
-                ctx.carry.ep_dw_zero    = agg.n_zero;
-                ctx.carry.ep_dw_min_w   = agg.min_w;
-                ctx.carry.ep_dw_mean_w  = agg.mean_w;
-                for (const auto& tr : iono_deweight.lastTransitions())
-                    traces.emitEvent(se.time, "IONO_DW",
-                                     tr.engaged ? "engage" : "release",
-                                     /*sat=*/"", tr.station, tr.z,
-                                     tr.engaged ? idw_cfg.sigma_hi : idw_cfg.sigma_lo,
-                                     tr.engaged ? "deweight" : "restore",
-                                     fmt::format("w={:.4f} n_engaged={} n_zero={}",
-                                                 tr.w, agg.n_engaged, agg.n_zero));
-            }
         }
     }
-
-    // The station-adaptive SH-VTEC-constraint deweight gate has no sweep of its
-    // own: it is fed from the merged sweep above (observe() per station, then
-    // advance() once, from the same per-LOS resid/σ), in the block guarded on
-    // (sh_want_trace || sh_want_gate) (H1 dedup).
 
     // Carry-variance monitor, LS-VCE (M2): advance it for this emitted epoch,
     // which applies exponential forgetting and sets the clean-epoch flag (a

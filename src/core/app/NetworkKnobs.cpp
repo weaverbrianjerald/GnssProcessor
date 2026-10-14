@@ -469,9 +469,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                                 && (k.sig_withhold || k.sig_unvetted_scale > 1.0);
     }
     // The SH-deviation carry (card T5, Iono-2): live when a co-estimated SH field
-    // (network.estimate_iono_sh) has a positive correlation time.  Resolved once, ahead of
-    // the deweight block below, whose screens and bounds need the channel.  The epoch
-    // driver tested the SH model (setup.sh_model) where this reads the flag: setup builds
+    // (network.estimate_iono_sh) has a positive correlation time.  The epoch driver
+    // tested the SH model (setup.sh_model) where this reads the flag: setup builds
     // the model exactly when the flag is set, and a run whose setup fails never reaches the
     // epoch loop or the run end (card NOM3 step EP0).
     {
@@ -480,30 +479,6 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.sh_dev_on      = k.sh_dev_tau > 0.0;
         k.sh_dev_demean  = k.sh_dev_on && shc.rep_error_demean;    // anti-ratchet de-mean (Iono-2 v3)
         k.sh_dev_d5_keep = k.sh_dev_on && shc.rep_error_d5_keep;   // erase-policy split (v3k)
-    }
-    // Iono-deweight release hygiene.  The loader already disarms every increment without
-    // the SH field (and INC-1 without the adaptive gate, the only source of a release
-    // edge); resolving it here as well is a second guard, so a hand-built NetworkConfig
-    // (tests) cannot arm a response to an event that cannot occur.  `dw_hygiene_on` is the
-    // single predicate the seam and the assembly's held-row lookup read.
-    {
-        const bool field = config_.estimateNetworkIonoSh();
-        const auto& idw = config_.getIonoConstraintDeweightConfig();
-        k.dw_release_reseed = field && nc.iono_dw_release_reseed && idw.adaptive;
-        k.dw_release_eps    = (nc.iono_dw_release_floor_eps > 0.0)
-                              ? nc.iono_dw_release_floor_eps : 1e-9;
-        k.dw_park_bound_tecu = field ? std::max(0.0, nc.iono_dw_park_bound_tecu) : 0.0;
-        // Every screen and bound standardizes the harvested T5 deviation, so they need
-        // that channel (sh_dev_on, resolved above); the loader has already disarmed them
-        // without it.
-        k.dw_park_bound_tecu = k.sh_dev_on ? k.dw_park_bound_tecu : 0.0;
-        k.dw_release_validate_k =
-            k.sh_dev_on ? std::max(0.0, nc.iono_dw_release_validate_k) : 0.0;
-        k.dw_admit_validate_k =
-            k.sh_dev_on ? std::max(0.0, nc.iono_dw_admit_validate_k) : 0.0;
-        k.dw_hygiene_on = k.dw_release_reseed || k.dw_park_bound_tecu > 0.0
-                       || k.dw_release_validate_k > 0.0
-                       || k.dw_admit_validate_k > 0.0;
     }
     // Redundancy / testability census.  Nothing to resolve against the estimation
     // configuration: the census reads the solved system and writes counters, so the two
@@ -673,7 +648,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     }
     // --- The epoch driver's configuration-derived values (card NOM3 step EP0) ---
     // Moved from runNetwork with each expression unchanged (the SH-deviation switches are
-    // resolved above, ahead of the deweight block).  Where the driver tested the SH model
+    // resolved above).  Where the driver tested the SH model
     // (setup.sh_model), the test reads network.estimate_iono_sh: setup builds the model
     // exactly when that flag is set (ApplicationNetworkSetup.cpp), and a run whose setup
     // fails never reaches the epoch loop.  The rest is read from `nc`, which is the

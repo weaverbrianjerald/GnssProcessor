@@ -104,9 +104,9 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
  * tag (@c StationAssembly::row_tags, read through @ref rowClassOfKind in
  * filter/NetworkRowClassify), not from the columns it touches:
  *  - an SH-VTEC to slant-ionosphere tie row is excluded from all three pools (about
- *    70 to 90 % of those rows exceed 3σ by construction, documented in
- *    @c NetworkIonoDeweightGate.hpp, so pooling them would swamp the statistic with a
- *    known artifact);
+ *    70 to 90 % of those rows exceed 3σ by construction, because the single-layer SH
+ *    surface cannot represent per-LOS slant structure, so pooling them would swamp
+ *    the statistic with a known artifact);
  *  - a coupling row or a whitened carried-prior block row is also excluded (it is a
  *    statement about the carry, not about data);
  *  - an observation row is code or phase by its declared observation type (the

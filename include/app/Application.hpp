@@ -51,7 +51,6 @@ enum class GimRowsOutcome : std::uint8_t;  // filter/NetworkContributions.hpp (c
 struct ShDevCarry;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
 struct SyncedEpoch;          // rinex/MultiRinexSync.hpp, namespace scope (decomposition INC-7)
 class  NetworkEstimator;     // filter/NetworkEstimator.hpp (decomposition INC-7)
-class  NetworkIonoDeweightGate;      // filter/NetworkIonoDeweightGate.hpp (decomposition INC-7)
 class  SphericalHarmonicIonosphere;  // atmosphere/SphericalHarmonicIonosphere.hpp (decomposition INC-7)
 class  PppUtils;             // common/PppUtils.hpp (decomposition INC-7)
 struct SlipQcChannel;        // slip/NetworkRawObservables.hpp (slip-QC hardening)
@@ -632,12 +631,11 @@ private:
     /**
      * @brief Co-estimated SH-VTEC ionosphere pseudo-observation rows: the
      *        joint slant-iono ↔ SH-field constraint, including the T5 deviation
-     *        carry treatment and the station-adaptive deweight scaling
-     *        (decomposition INC-7).
+     *        carry treatment (decomposition INC-7).
      *
      * The run-loop state it reads arrives as explicit parameters: @p sh_model /
      * @p sh_model2 (the Iono-2 dual-layer second shell, null on the single-layer
-     * path), @p iono_deweight (const, a read-only weight lookup), @p shc,
+     * path), @p shc,
      * @p sh_dev_on, @p sh_dev_carry (const: the serial pre-pass ages it, and
      * this function only looks entries up).  Implemented in
      * @c ApplicationNetworkAssembly.cpp.
@@ -651,11 +649,8 @@ private:
                                   const GnssTime& t,
                                   const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model,
                                   const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model2,
-                                  const NetworkIonoDeweightGate& iono_deweight,
                                   const GlobalVtecShConfig& shc, bool sh_dev_on,
                                   const std::map<std::string, ShDevCarry>& sh_dev_carry,
-                                  const std::set<std::string>& dw_row_held,
-                                  const std::set<std::string>* dw_tie_admitted,
                                   Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                                   Eigen::VectorXd& w, Eigen::VectorXd& y,
                                   std::vector<RowTag>& tags) const;
@@ -886,7 +881,6 @@ private:
     EpochAction networkPassB_(const SyncedEpoch& se, NetworkRunContext& ctx,
                               NetworkSetupResult& setup, NetworkRunTraces& traces,
                               NetworkEstimator& est,
-                              const NetworkIonoDeweightGate& iono_deweight,
                               const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                               const std::set<std::pair<int, std::string>>& carry_slipped_raw,
                               bool carry_warm, double pl_now_s,

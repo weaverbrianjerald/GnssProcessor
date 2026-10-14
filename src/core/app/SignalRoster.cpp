@@ -1313,8 +1313,8 @@ namespace GnssProcessor {
         // census uses it.  The gap re-entry response fires in PASS A, upstream of
         // this pass, and its latch is `ctx.carry.relevel.free_ambs` with the cause
         // bit `kCauseGap` (an entry with no recorded cause also counts).  The
-        // driver's slipped set is a wider channel (RAIM, D5 and the deweight release
-        // all write to it), so the narrow latch is what shows whether a re-entry was
+        // driver's slipped set is a wider channel (RAIM and D5 both write to it), so
+        // the narrow latch is what shows whether a re-entry was
         // answered by the tier built for it.
         const auto& rel = ctx.carry.relevel;
         const auto answered = [&](int sta, const std::string& sat,

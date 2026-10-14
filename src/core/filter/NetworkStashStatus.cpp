@@ -15,7 +15,6 @@
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkClockAnchor.hpp"     // gauge projection shared with the guard (§2.1 of card Q3)
 #include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
-#include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
@@ -549,16 +548,6 @@ void networkStashStatus(
         es.n_d5_retaps     = ctx.carry.ep_d5_retaps;
         es.n_chord_births  = ctx.carry.ep_chord_births;
         es.n_slip_refloats = ctx.carry.ep_slip_refloats;
-        // The iono-deweight weight field (P1-2), harvested at the serial
-        // NetworkShHealth advance() site.  -1 = the gate did not advance this epoch
-        // (inactive, or a held datum epoch); the columns are then left blank rather
-        // than written as "0 engaged".
-        if (ctx.carry.ep_dw_engaged >= 0) {
-            es.n_dw_engaged = ctx.carry.ep_dw_engaged;
-            es.n_dw_zero    = ctx.carry.ep_dw_zero;
-            es.dw_min_w     = ctx.carry.ep_dw_min_w;
-            es.dw_mean_w    = ctx.carry.ep_dw_mean_w;
-        }
         // Measure-only post-fit variance factor (P1-4; blank unless armed).
         if (ctx.carry.ep_pf_rows > 0) {
             es.sigma0_pf       = ctx.carry.ep_sigma0_pf;
@@ -687,8 +676,7 @@ void networkStashStatus(
     // the epoch tail that only a solve that committed its carry reaches, and not at
     // the election.  A withheld epoch (rank gate / A4 σ̂₀) skips this function, so
     // its marks persist into the next epoch's fold, which still faces the
-    // retired-frame prev_carry; an SH-gate epoch runs the stash (emission-only
-    // withhold) and clears.  The set is empty when the knob is off, so this is a
+    // retired-frame prev_carry.  The set is empty when the knob is off, so this is a
     // byte-identical no-op.
     ctx.carry.phase_anchor_reref.clear();
 

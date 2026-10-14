@@ -269,7 +269,6 @@ namespace GnssProcessor {
         loadNetworkClockModelAndChannels_(json, log);
         loadNetworkDatumSignalling_(json, log);
         loadNetworkReattachHygiene_(json, log);
-        loadNetworkDeweightReleaseHygiene_(json, log);
         loadNetworkSignalIntegrity_(json, log);
         if (!loadNetworkEmissionFilters_(json, log)) return false;
         if (!validateNetworkDatumCoherence_(log)) return false;
@@ -4538,9 +4537,9 @@ namespace GnssProcessor {
      * @brief Cross-epoch carries: phase leveling, the shared-border carry and its couplings.
      *
      * @c network.phase_leveling*, @c network.shared_carry_*, the Card-1 conditional-coupling
-     * family, @c network.carry_zwd / @c carry_rx_code_bias / @c carry_vce, and the
-     * station-adaptive SH-VTEC constraint deweight.  Prerequisite violations here throw (the
-     * coupling cards are exact only against a dense shared-border carry).
+     * family and @c network.carry_zwd / @c carry_rx_code_bias / @c carry_vce.  Prerequisite
+     * violations here throw (the coupling cards are exact only against a dense
+     * shared-border carry).
      *
      * @param json  Parsed root config object.
      * @param log   The "gnss_config" logger.
@@ -5983,68 +5982,6 @@ namespace GnssProcessor {
                               "v1 wires zero decisions to the new quantity, and it is a SCALE, not a "
                               "test statistic.");
             }
-        }
-
-        // Station-adaptive SH-VTEC constraint deweight (invariant #6: default off,
-        // byte-identical).  Relaxes the per-LOS-iono ↔ global SH field coupling per
-        // station by a factor w_s ∈ (0,1] (σ² ×= 1/w_s).  It is the targeted
-        // alternative to dropping a hostile (scintillation-belt) station: the station
-        // keeps serving the shared clocks, biases, datum and position while its per-LOS
-        // iono stops corrupting the field and its own ambiguities.  v1 is a static
-        // list, v2 an adaptive IGG gate.
-        {
-            IonoConstraintDeweightConfig& idw = iono_constraint_deweight_;
-            idw.stations.clear();
-            const auto& dw_arr = jsection(json, "network.iono_constraint_deweight_stations",
-                                          "iono_constraint_deweight_stations");
-            if (dw_arr.is_array())
-                idw.stations = dw_arr.get<std::vector<std::string>>();
-            idw.factor = jval<double>(json, "network.iono_constraint_deweight_factor",
-                                      "iono_constraint_deweight_factor", 0.0);
-            idw.adaptive = jval<bool>(json, "network.iono_constraint_deweight_adaptive",
-                                      "iono_constraint_deweight_adaptive", false);
-            idw.window_epochs = jval<double>(json, "network.iono_constraint_deweight_window_epochs",
-                                             "iono_constraint_deweight_window_epochs", 60.0);
-            idw.sigma_hi = jval<double>(json, "network.iono_constraint_deweight_sigma_hi",
-                                        "iono_constraint_deweight_sigma_hi", 3.0);
-            idw.sigma_lo = jval<double>(json, "network.iono_constraint_deweight_sigma_lo",
-                                        "iono_constraint_deweight_sigma_lo", 2.0);
-            idw.floor = jval<double>(json, "network.iono_constraint_deweight_floor",
-                                     "iono_constraint_deweight_floor", 0.0);
-            idw.rate_limit = jval<double>(json, "network.iono_constraint_deweight_rate_limit",
-                                          "iono_constraint_deweight_rate_limit", 0.25);
-            idw.min_epochs = jval<int>(json, "network.iono_constraint_deweight_min_epochs",
-                                       "iono_constraint_deweight_min_epochs", 30);
-            // Clamps: keep the mechanism well-posed (never NaN / never information-inflating).
-            if (idw.factor < 0.0) idw.factor = 0.0;
-            if (idw.factor > 1.0) idw.factor = 1.0;
-            if (idw.floor < 0.0)  idw.floor = 0.0;
-            if (idw.floor >= 1.0) idw.floor = 0.999;
-            if (idw.window_epochs < 1.0) idw.window_epochs = 1.0;
-            if (idw.rate_limit <= 0.0) idw.rate_limit = 1.0;   // 0 ⇒ no slew limit (snap)
-            if (idw.min_epochs < 1) idw.min_epochs = 1;
-            const bool dw_static_on = !idw.stations.empty() && idw.factor < 1.0;
-            if (idw.adaptive && idw.sigma_lo >= idw.sigma_hi) {
-                log->warn("Network (iono deweight): sigma_lo ({:.2f}) >= sigma_hi ({:.2f}) — "
-                          "hysteresis band ill-formed; forcing sigma_lo = 0.5*sigma_hi.",
-                          idw.sigma_lo, idw.sigma_hi);
-                idw.sigma_lo = 0.5 * idw.sigma_hi;
-            }
-            if (dw_static_on)
-                log->info("Network (iono deweight v1): {} station(s) statically deweighted at "
-                          "w_s={:.3f} ({} — {} the SH field) — they still serve the shared "
-                          "clocks/biases/datum/position.",
-                          idw.stations.size(), idw.factor,
-                          (idw.factor <= 0.0) ? "w_s=0, free-floating iono" : "partial info",
-                          (idw.factor <= 0.0) ? "fully decoupled from"
-                                              : "loosely coupled to");
-            if (idw.adaptive)
-                log->info("Network (iono deweight v2): adaptive IGG gate ON — engage a station when "
-                          "its EWMA SH-misfit z-score (median/MAD across the network, half-life "
-                          "{:.0f} ep, ≥{} clean samples) exceeds {:.2f}σ, release below {:.2f}σ; "
-                          "ramp to w_s floor {:.3f}, slew ≤{:.3f}/epoch.",
-                          idw.window_epochs, idw.min_epochs, idw.sigma_hi, idw.sigma_lo,
-                          idw.floor, idw.rate_limit);
         }
     }
 
@@ -8762,181 +8699,6 @@ namespace GnssProcessor {
                               "degradation; arm one of the two feeds for full coverage).");
             }
         }
-    }
-
-    // =================================================================
-    //  network subsection helper: loadNetworkDeweightReleaseHygiene_
-    // =================================================================
-    /**
-     * @brief Iono-deweight release hygiene INC-1/2/3
-     *        (docs/SPEC_deweight_release_hygiene.md).
-     *
-     * Ordered here because every guard below needs the iono-deweight gate config and
-     * the SH-field / deviation-channel settings, all parsed above; and because the
-     * INC-1 refloat rides the same two funnels the reattach-hygiene block just
-     * reported on (@c network_carry_invariant_ / @c network_phase_leveling_).
-     *
-     * @param json  Parsed root config object.
-     * @param log   The "gnss_config" logger.
-     */
-    void GnssConfig::loadNetworkDeweightReleaseHygiene_(
-        const nlohmann::json& json, const std::shared_ptr<spdlog::logger>& log) {
-        // --- Iono-deweight release hygiene (docs/SPEC_deweight_release_hygiene.md) --
-        // All three increments are default off and, when off, allocate no state, write
-        // no state and remove no row.  Not appended to the warm-resume fingerprint, on
-        // purpose (see the NetworkConfig doxygen and networkSnapshotFingerprint):
-        // forward-only release-time state/row policy, so an off and an on leg may share
-        // one snapshot, which is what makes the §5 shared-snapshot event A/B legal.
-        network_config_.iono_dw_release_reseed =
-            jval<bool>(json, "network.iono_dw_release_reseed",
-                       "network_iono_dw_release_reseed", false);
-        network_config_.iono_dw_release_floor_eps =
-            jval<double>(json, "network.iono_dw_release_floor_eps",
-                         "network_iono_dw_release_floor_eps", 1e-9);
-        network_config_.iono_dw_park_bound_tecu =
-            jval<double>(json, "network.iono_dw_park_bound_tecu",
-                         "network_iono_dw_park_bound_tecu", 0.0);
-        network_config_.iono_dw_release_validate_k =
-            jval<double>(json, "network.iono_dw_release_validate_k",
-                         "network_iono_dw_release_validate_k", 0.0);
-        network_config_.iono_dw_admit_validate_k =
-            jval<double>(json, "network.iono_dw_admit_validate_k",
-                         "network_iono_dw_admit_validate_k", 0.0);
-
-        // --- Clamps: every bad value falls back to the off/legacy behavior (the eps
-        // floor with a warning).
-        if (!(network_config_.iono_dw_release_floor_eps > 0.0)) {
-            log->warn("Network (dw release hygiene): "
-                      "network.iono_dw_release_floor_eps = {} is not > 0 — a release "
-                      "edge is 'weight rose ABOVE eps', which at eps <= 0 can never be "
-                      "detected from a floor of 0.  Restoring the default 1e-9 (the same "
-                      "constant the gate's n_zero aggregate uses).",
-                      network_config_.iono_dw_release_floor_eps);
-            network_config_.iono_dw_release_floor_eps = 1e-9;
-        }
-        if (network_config_.iono_dw_park_bound_tecu < 0.0)
-            network_config_.iono_dw_park_bound_tecu = 0.0;
-        if (network_config_.iono_dw_release_validate_k < 0.0)
-            network_config_.iono_dw_release_validate_k = 0.0;
-        if (network_config_.iono_dw_admit_validate_k < 0.0)
-            network_config_.iono_dw_admit_validate_k = 0.0;
-
-        const bool dwr_any = network_config_.iono_dw_release_reseed
-                          || network_config_.iono_dw_park_bound_tecu > 0.0
-                          || network_config_.iono_dw_release_validate_k > 0.0
-                          || network_config_.iono_dw_admit_validate_k > 0.0;
-        if (!dwr_any) return;
-
-        // --- Inert guards.  This first one disarms every increment, because each is
-        // defined against the SH<->slant tie rows: with no field there is nothing to
-        // reseed from, nothing to decouple, and no row to hold.  The two guards after it
-        // disarm only the increments they name.
-        if (!estimate_network_iono_sh_) {
-            log->warn("Network (dw release hygiene): configured, but "
-                      "network.estimate_iono_sh is OFF — there is no SH field to reseed "
-                      "from and no SH<->slant tie row to guard, so every increment is "
-                      "INERT (disabled).");
-            network_config_.iono_dw_release_reseed = false;
-            network_config_.iono_dw_park_bound_tecu = 0.0;
-            network_config_.iono_dw_release_validate_k = 0.0;
-            network_config_.iono_dw_admit_validate_k = 0.0;
-            return;
-        }
-        // Every screen and bound here standardizes the solved per-LOS deviation that
-        // networkShDevVtec harvests into the T5 stash.  Without that channel there is no
-        // statistic at all, and screening the linearization point instead would be
-        // wrong, not merely degraded (it is provably invariant in the reduced solve).  So
-        // the two screens and the bound disarm together.
-        if (!(global_vtec_sh_.rep_error_tau_s > 0.0)
-            && (network_config_.iono_dw_release_validate_k > 0.0
-                || network_config_.iono_dw_admit_validate_k > 0.0
-                || network_config_.iono_dw_park_bound_tecu > 0.0)) {
-            log->warn("Network (dw release hygiene): the T5 deviation channel is OFF "
-                      "(global_vtec_sh.rep_error_tau_s <= 0), so there is no harvested "
-                      "per-LOS deviation to standardize — INC-2's bound and the INC-3 / "
-                      "INC-3b screens have no statistic and are INERT (disabled).  The "
-                      "linearization point is NOT a substitute: shifting it leaves the "
-                      "reduced shared RHS algebraically unchanged, so a screen on it "
-                      "would be measuring an arbitrary frame.");
-            network_config_.iono_dw_park_bound_tecu = 0.0;
-            network_config_.iono_dw_release_validate_k = 0.0;
-            network_config_.iono_dw_admit_validate_k = 0.0;
-            if (!network_config_.iono_dw_release_reseed) return;
-        }
-        // The INC-1 reseed additionally needs the gate that produces the release edge.
-        // The static (v1) list cannot release (it holds a fixed weight for the whole
-        // run), so the edge exists only on the v2 adaptive path.  INC-2 and INC-3 remain
-        // meaningful without it (INC-2 still covers the gate-cold / warm-resume case;
-        // INC-3 is a pure row screen), so this disarms INC-1 only.
-        if (network_config_.iono_dw_release_reseed
-            && !iono_constraint_deweight_.adaptive) {
-            log->warn("Network (dw release hygiene INC-1): "
-                      "network.iono_dw_release_reseed is armed but "
-                      "network.iono_constraint_deweight_adaptive is OFF — a statically "
-                      "listed station holds ONE weight for the whole run and therefore "
-                      "never produces a release edge, so the reseed is INERT (disabled). "
-                      " INC-2 / INC-3 are unaffected.");
-            network_config_.iono_dw_release_reseed = false;
-        }
-
-        // --- Arming log (one line per live increment, each naming what it will do).
-        if (network_config_.iono_dw_release_reseed) {
-            log->info("Network (dw release hygiene INC-1): release-time state hygiene "
-                      "ARMED (eps {:g}) — when a station's deweight rises above eps, its "
-                      "per-LOS slant-iono states are reseeded from the CURRENT SH field, "
-                      "its float ambiguities are refloated through the slip funnel (one "
-                      "epoch deferred, into BOTH the funnel and its RAW subset so the "
-                      "v3k d5_keep policy cannot resurrect the parked deviation), and its "
-                      "deviation-stash entries are erased.  The re-engaged tie rows then "
-                      "fold information instead of whatever the zero-weight era parked.",
-                      network_config_.iono_dw_release_floor_eps);
-            // Invariant #1 disclosure, as the eq34 hygiene block reports it: the refloat
-            // is only as live as the funnel it feeds.
-            if (!network_carry_invariant_ && !network_phase_leveling_)
-                log->warn("Network (dw release hygiene INC-1): neither "
-                          "network.carry_invariant nor network.phase_leveling is on, so "
-                          "the queued ambiguity refloat reaches NO carry consumer — the "
-                          "slant reseed and the stash erase still land, but the phase "
-                          "side re-seeds only through the per-epoch MeasurementModel "
-                          "path.  Check the run-end refloat counter before crediting the "
-                          "ambiguity half of INC-1.");
-            if (!(global_vtec_sh_.rep_error_tau_s > 0.0))
-                log->info("Network (dw release hygiene INC-1): the T5 deviation channel "
-                          "is off (global_vtec_sh.rep_error_tau_s <= 0), so the stash "
-                          "erase has nothing to erase — the slant reseed and the refloat "
-                          "are the whole response this run.");
-        }
-        if (network_config_.iono_dw_park_bound_tecu > 0.0)
-            log->info("Network (dw release hygiene INC-2): while-decoupled park bound "
-                      "ARMED at {:g} slant TECU ({:.1f} m of L1 delay) — a slant-iono "
-                      "state beyond it is reset to the field evaluation immediately, "
-                      "while the station's weight is <= eps AND (warm-resume coverage) "
-                      "while the gate holds no samples for it at all.  No gate state is "
-                      "serialized, so a resumed leg starts every station at w = 1 and "
-                      "re-folds every tie row on its FIRST assembly with no release edge "
-                      "to hook; the gate-cold trigger is what bounds that shock.",
-                      network_config_.iono_dw_park_bound_tecu,
-                      network_config_.iono_dw_park_bound_tecu * 0.1623727);
-        if (network_config_.iono_dw_release_validate_k > 0.0)
-            log->info("Network (dw release hygiene INC-3): tie-row RELEASE screen ARMED "
-                      "at k = {:g} — an already-admitted LOS whose standardized deviation "
-                      "|dev| / {:g} TECU exceeds k keeps its SH<->slant tie row WITHHELD "
-                      "(it stays decoupled) and is re-tested every epoch until it passes.",
-                      network_config_.iono_dw_release_validate_k,
-                      global_vtec_sh_.representation_sigma_tecu);
-        if (network_config_.iono_dw_admit_validate_k > 0.0)
-            log->info("Network (dw release hygiene INC-3b): tie-row ADMISSION screen "
-                      "ARMED at k = {:g} — a LOS entering a station's tie stack for the "
-                      "FIRST time is held for one epoch (its deviation is still "
-                      "harvested), then admitted only if that deviation passes k.  This "
-                      "is the valve MEASURED at DOY-129 TOW 329160: the station carrying "
-                      "the parked column was at w = 1.0 throughout and never released — "
-                      "a satellite crossed the {:g} deg elevation cutoff and coupled an "
-                      "unvalidated slant column to the field.  Expect one quarantine "
-                      "LOS-epoch per rising satellite per station; only the REJECT "
-                      "counter is the guarded event.",
-                      network_config_.iono_dw_admit_validate_k,
-                      iono_weighting_.elevation_cutoff_deg);
     }
 
     // =================================================================

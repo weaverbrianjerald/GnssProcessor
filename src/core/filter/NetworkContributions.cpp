@@ -145,7 +145,7 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      "unit (whitened); R from estimation.global_vtec_sh.representation_sigma_tecu, floored at "
      "estimation.ionosphere_weighting.floor_m, with the common mode "
      "estimation.ionosphere_weighting.common_mode_sigma_m, x "
-     "estimation.global_vtec_sh.row_decimation_epochs, / the station's iono deweight",
+     "estimation.global_vtec_sh.row_decimation_epochs",
      "Application::networkAppendShIonoRows_ (ApplicationNetworkAssembly.cpp)", false, nullptr},
     {CK::GimIono, "gim_iono", CC::StationRows, CG::BeforeGate, CS::StationLos, CU::Rows,
      bit(PK::SlantIono),

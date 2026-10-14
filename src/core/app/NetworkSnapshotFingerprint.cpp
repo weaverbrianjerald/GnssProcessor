@@ -624,8 +624,6 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   eq34 reattach hygiene   eq34_anchor_min_arc_ep, phase_datum_time_linked,
         //                           eq34_fresh_pin_sigma_scale
         //   signal integrity        network.signal_integrity.*
-        //   iono-deweight release   iono_dw_{release_reseed,park_bound_tecu,
-        //                           release_validate_k}
         //   measurement admission   adm_{screen,bound_m,min_sats,heal_ep,max_frac,
         //                           trace} and adm_revet{,_gap_ep,_ep,_census,_hold}
         //   carry hygiene           phase_anchor_carry_reref

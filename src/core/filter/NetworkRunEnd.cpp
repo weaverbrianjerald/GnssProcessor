@@ -54,7 +54,6 @@
 #include "filter/NetworkHandoverStransform.hpp"
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkInvariantCarryDriver.hpp"
-#include "filter/NetworkIonoDwRelease.hpp"
 #include "filter/NetworkLedgerEmit.hpp"
 #include "filter/NetworkLevelAuthority.hpp"
 #include "filter/NetworkLevelingCarryRunEnd.hpp"
@@ -125,8 +124,6 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkGrossLos.cpp", networkGrossLosRunEnd},
     {"the gross line-of-sight screen's cold-start bound",
      "filter/NetworkGrossLos.cpp", networkGrossLosColdBoundRunEnd},
-    {"the ionosphere-deweight release hygiene",
-     "filter/NetworkIonoDwRelease.cpp", networkDwReleaseHygieneRunEnd},
     {"the flicker and gap signal integrity",
      "filter/NetworkSignalIntegrity.cpp", networkSignalIntegrityRunEnd},
     {"the prior-residual census",
@@ -221,14 +218,10 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkSbasis.cpp", networkCodeDatumFamilyRunEnd},
     {"the D5 fine-slip innovation gate and its variants",
      "filter/NetworkInvariantCarryDriver.cpp", networkD5GateRunEnd},
-    {"the station-adaptive SH-VTEC constraint deweight",
-     "filter/NetworkIonoDwRelease.cpp", networkIonoDeweightRunEnd},
     {"the CB-excursion guard (Phase 2.1)",
      "filter/NetworkClockQc.cpp", networkCbExcursionRunEnd},
     {"the post-fit sigma0 and the post-fit rows",
      "filter/NetworkFrameDiag.cpp", networkPostfitRunEnd},
-    {"the producer's state-manager re-inflations",
-     "filter/NetworkIonoDwRelease.cpp", networkReinflateRunEnd},
     {"the ZP station-block trace",
      "filter/NetworkStationBlock.cpp", networkStationBlockRunEnd},
     {"the ambiguity vehicle and the joint-block PD-fallback bar",

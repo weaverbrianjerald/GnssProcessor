@@ -1032,8 +1032,8 @@ struct PlAmb {
 /// shift on a local column is an exact solve no-op, so pinning to it would carry no
 /// information about where the arc sits.  The absolute estimate is
 /// `x_lin + back-substituted Δx`, which exists only after the solve; hence the
-/// one-epoch deferral, the same shape as `carry_innov_pending`,
-/// `dw_release_pending` and `raim_refloat_pending`.
+/// one-epoch deferral, the same shape as `carry_innov_pending` and
+/// `raim_refloat_pending`.
 struct AnchorHandoverLedger {
     /// (station index, ambiguity key "sat_signal") -> that station's absolute
     /// ambiguity estimate from the previous epoch's solve, in that epoch's realized
@@ -1867,7 +1867,7 @@ struct ShDevCarry { double dev{0.0}; double var{0.0}; double var_ss{0.0}; double
 /// @param p_pred   GM-aged prior variance (> 0).
 /// @param u_hat    Solved posterior mean of the pin functional.
 /// @param v_hat    Solved posterior variance of the pin functional (≥ 0).
-/// @param floor2   Pin-row floor variance f² (> 0; station-deweight-effective).
+/// @param floor2   Pin-row floor variance f² (> 0).
 /// @return {d̂, P⁺}.
 inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
                                                   double u_hat, double v_hat,
@@ -2328,15 +2328,6 @@ struct EpochStatusRow {
     std::optional<long long> n_d5_retaps;
     std::optional<long long> n_chord_births;
     std::optional<long long> n_slip_refloats;
-    // --- per-epoch iono deweight state (P1-2) --------------------------------
-    // n_adapt (above) is a different counter: the within-epoch RAIM adaptation count.
-    // These describe the SH-VTEC constraint deweight gate's weight field: the engaged
-    // count, the count driven to w == 0 (whole SH block dropped, per-LOS iono
-    // floating), and the minimum and mean weight.
-    std::optional<int>    n_dw_engaged;
-    std::optional<int>    n_dw_zero;
-    std::optional<double> dw_min_w;
-    std::optional<double> dw_mean_w;
     // --- measure-only post-fit variance factor on the emit path (P1-4) --------
     // Present only under network.trace_postfit_sigma0.  sigma0 (above) is the
     // within-epoch RAIM's statistic and is 0.0000 whenever that RAIM is off.

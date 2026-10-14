@@ -12,7 +12,6 @@
 #include "common/GnssIdentity.hpp"     // systemOfSat, ionoDelayMetresPerTecu
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
-#include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
@@ -50,8 +49,7 @@ void networkShDevVtec(
     const NetworkSbasis::Plan& plan,
     const std::vector<StationAssembly>& asm_res,
     const std::vector<int>& est_index_of,
-    const std::vector<std::vector<PppObservation>>& modeled,
-    NetworkIonoDeweightGate& iono_deweight) {
+    const std::vector<std::vector<PppObservation>>& modeled) {
     // --- Alias preamble: mechanically-derived run-TU aliases (+ reconstructions). --
     const bool sh_dev_on = ctx.knobs.sh_dev_on;   // was a parameter (card NOM3 step EP0)
     auto& sh_model = setup.sh_model;
@@ -76,9 +74,7 @@ void networkShDevVtec(
     // information U, so a weak epoch leaves P at P_pred and information
     // accumulates at the true rate (the per-LOS iono temporal-accumulation
     // channel).  Carried in vertical TECU via the layer-0 mapping (elevation-
-    // stationary).  Stations whose pin is fully deweighted (w_s ≤ 0) fold no
-    // rows and get no update, so the aged prior stands; a partial deweight
-    // inflates the effective floor by 1/w_s, matching the row the solve used.
+    // stationary).
     // Insertions happen only here (serial), never in the assembly.
     if (sh_dev_on) {
         const auto& iwh = config_.getIonosphereWeightingConfig();
@@ -115,8 +111,6 @@ void networkShDevVtec(
             Eigen::VectorXd vrow;   // b_s + m_ι in shared space
             for (std::size_t i = 0; i < stations.size(); ++i) {
                 if (est_index_of[i] < 0) continue;
-                const double w_s_h = iono_deweight.weight(stations[i].name);
-                if (w_s_h <= 0.0) continue;   // no pin rows folded ⇒ no new info
                 Eigen::VectorXd x_r;
                 try {
                     x_r = est.reconstructStation(
@@ -182,7 +176,7 @@ void networkShDevVtec(
                     // vertical-TECU frame; then the exact closed form.
                     const double u_v  = u_hat / m0t;
                     const double v_v  = v_hat / (m0t * m0t);
-                    const double f2_v = (floor_m2 / w_s_h) / (m0t * m0t);
+                    const double f2_v = floor_m2 / (m0t * m0t);
                     if (v_v >= dc.var + f2_v) ++ctx.carry.shdev_nodata_total;
                     const auto upd =
                         shDevExactUpdate(dc.dev, dc.var, u_v, v_v, f2_v);

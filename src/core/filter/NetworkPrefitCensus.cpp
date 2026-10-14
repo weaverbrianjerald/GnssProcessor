@@ -22,7 +22,6 @@
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkEstimator.hpp"
-#include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
 
@@ -317,8 +316,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                          const std::vector<NetStation>& stations,
                          const NetworkEstimator& est,
                          const std::vector<StationAssembly>& asm_res,
-                         const std::vector<int>& est_index_of,
-                         const NetworkIonoDeweightGate* iono_deweight) {
+                         const std::vector<int>& est_index_of) {
     if (!ctx.knobs.pc_walk_on) return;
     (void)config_;   // arming is expressed entirely through the knob snapshot
     // Cleared first, so an epoch the walk cannot serve leaves the epoch-status
@@ -578,13 +576,8 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             traces.emitEvent(se.time, "TOPOLOGY", event, sat, station, stat, thr,
                              "delta", detail);
         };
-        std::map<int, double> w_now;
-        if (iono_deweight)
-            for (std::size_t i = 0; i < stations.size(); ++i)
-                w_now[static_cast<int>(i)] = iono_deweight->weight(stations[i].name);
-
         if (ctx.carry.topo_seeded) {
-            // (a) SH-tie row-count delta per station: the edges of the iono deweight valve.
+            // (a) SH-tie row-count delta per station.
             for (std::size_t i = 0; i < stations.size() && i < asm_res.size(); ++i) {
                 if (i >= est_index_of.size() || est_index_of[i] < 0) continue;
                 const int idx = static_cast<int>(i);
@@ -593,15 +586,11 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 const auto nit = tie_now.find(idx);
                 const int now = (nit == tie_now.end()) ? 0 : nit->second;
                 if (now == pit->second) continue;
-                const auto wp = ctx.carry.topo_prev_w.find(idx);
-                const auto wn = w_now.find(idx);
                 ++ctr.topo_tie_events;
                 emitTopo("tie_rows", "", stations[i].name,
                          static_cast<double>(now), static_cast<double>(pit->second),
-                         fmt::format("prev={} now={} delta={:+d} w_prev={:.4g} w_now={:.4g}",
-                                     pit->second, now, now - pit->second,
-                                     wp == ctx.carry.topo_prev_w.end() ? 1.0 : wp->second,
-                                     wn == w_now.end() ? 1.0 : wn->second));
+                         fmt::format("prev={} now={} delta={:+d}",
+                                     pit->second, now, now - pit->second));
             }
             // (b) per-(station, satellite) row-kind changes while the sat stays present.
             for (const auto& [cell, mask] : kind_now) {
@@ -648,7 +637,6 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         }
         ctx.carry.topo_prev_tie  = std::move(tie_now);
         ctx.carry.topo_prev_kind = std::move(kind_now);
-        ctx.carry.topo_prev_w    = std::move(w_now);
     }
 
     // --- presence map advance (INC-3) ---------------------------------------
@@ -766,10 +754,9 @@ int networkPrefitCensusRunEnd(const NetworkRunEndView& v) {
                           : std::string());
             if (p.topo_tie_events == 0 && p.epochs > 1)
                 log->info("Network (prefit census INC-4): NOT ONE station's SH-tie row "
-                          "set changed all run.  The deweight valve never moved a tie "
-                          "row here — so this run contains no instance of the era-2 "
-                          "topology event and cannot be used to grade the ledger "
-                          "against it.");
+                          "set changed all run.  This run therefore contains no instance "
+                          "of the era-2 topology event and cannot be used to grade the "
+                          "ledger against it.");
         }
         if (p.epochs == 0)
             log->warn("Network (prefit census): ARMED but the walk ran on ZERO epochs "
@@ -816,8 +803,8 @@ int networkPrefitCensusRunEnd(const NetworkRunEndView& v) {
                   static_cast<double>(p.rec_prev_bytes_last) / (1024.0 * 1024.0));
         if (p.rec_consults == 0)
             log->warn("Network (rhs-attrib INC-5): ARMED but NO trigger site ever "
-                      "consulted the latch — the four trip sites (SH-gate engage, "
-                      "sigma0 withhold, clock runaway, a00 band) are all gated behind "
+                      "consulted the latch — the three trip sites (sigma0 withhold, "
+                      "clock runaway, a00 band) are all gated behind "
                       "their own feature toggles, and none of them ran.  The recorder "
                       "is DEAD WIRING in this configuration, not a quiet run.");
         else if (p.rec_trips == 0)

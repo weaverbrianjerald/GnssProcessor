@@ -13,7 +13,6 @@
 #include "app/NetworkSetupResult.hpp"
 #include "common/PppObservation.hpp"
 #include "filter/NetworkEstimator.hpp"
-#include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "rinex/MultiRinexSync.hpp"

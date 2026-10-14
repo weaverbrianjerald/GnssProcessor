@@ -14,7 +14,6 @@
 #include "common/PppObservation.hpp"
 #include "common/PppUtils.hpp"
 #include "filter/NetworkEstimator.hpp"
-#include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "rinex/MultiRinexSync.hpp"

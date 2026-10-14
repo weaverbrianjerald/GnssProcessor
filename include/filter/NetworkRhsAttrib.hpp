@@ -86,7 +86,7 @@
  *  - @c network.rhs_attrib_on_trip (bool, default false): the INC-5 flight
  *    recorder (docs/SPEC_prefit_census_observability.md §7).  Arms the capture
  *    recorder every epoch and dumps automatically at the first trip of a QC era
- *    (SH-gate engage, A4 σ̂₀ withhold, clock runaway, a₀₀-band exit) instead of
+ *    (A4 σ̂₀ withhold, clock runaway, a₀₀-band exit) instead of
  *    at a hand-picked TOW.  With @c rhs_attrib_on_trip_prev (default true) the
  *    retained frame of the previous epoch is dumped too, since the pre-trip
  *    frame is the one that shows the cause.

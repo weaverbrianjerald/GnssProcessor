@@ -403,7 +403,9 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // P1-1/P1-2/P1-4 (SPEC_day129_frame_guards) append four carry-churn, four
             // iono-deweight and four post-fit σ̂0 columns after n_arc_refloat.  Every
             // earlier column keeps its position (as with T2d), so an old reader keeps
-            // working and a new one gets the trigger channels.
+            // working and a new one gets the trigger channels.  The four iono-deweight
+            // columns stay as permanently blank fields since the station deweight gate
+            // was retired, so every later column keeps its position too.
             epoch_status_trace << "week,tow,disposition,sigma0,n_adapt,n_present,"
                                   "n_clock_sats,clock_median_m,clock_std_m,worst_sat,"
                                   "worst_dev_m,n_refloat_sats,n_retro_applied,datum_changed,"
@@ -1159,14 +1161,9 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
         o << ',';
         if (r.n_slip_refloats) o << *r.n_slip_refloats;
         o << ',';
-        if (r.n_dw_engaged)    o << *r.n_dw_engaged;
-        o << ',';
-        if (r.n_dw_zero)       o << *r.n_dw_zero;
-        o << ',';
-        if (r.dw_min_w)        o << fmt::format("{:.4f}", *r.dw_min_w);
-        o << ',';
-        if (r.dw_mean_w)       o << fmt::format("{:.4f}", *r.dw_mean_w);
-        o << ',';
+        // n_dw_engaged, n_dw_zero, dw_min_w, dw_mean_w: always blank (the station
+        // deweight gate that filled them was retired; the columns keep the layout).
+        o << ",,,,";
         if (r.sigma0_pf)       o << fmt::format("{:.4f}", *r.sigma0_pf);
         o << ',';
         if (r.sigma0_pf_code)  o << fmt::format("{:.4f}", *r.sigma0_pf_code);
@@ -2019,19 +2016,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                               nc.state_snapshot_resume_shock_m)
                << "\"estimate_sat_code_bias\":" << (config_.estimateNetworkSatCodeBias() ? "true" : "false") << ','
                << "\"estimate_iono_sh\":" << (config_.estimateNetworkIonoSh() ? "true" : "false") << ','
-               << fmt::format("\"iono_constraint_deweight_factor\":{},",
-                              config_.getIonoConstraintDeweightConfig().factor)
-               << "\"iono_constraint_deweight_adaptive\":"
-                   << (config_.getIonoConstraintDeweightConfig().adaptive ? "true" : "false") << ','
-               << "\"iono_constraint_deweight_stations\":["
-                   << [&] {
-                          std::string s; bool f = true;
-                          for (const auto& nm : config_.getIonoConstraintDeweightConfig().stations) {
-                              if (!f) s += ','; s += '"'; s += jesc(nm); s += '"'; f = false;
-                          }
-                          return s;
-                      }()
-                   << "],"
                << "\"phase_leveling\":" << (pl_on ? "true" : "false") << ','
                << fmt::format("\"phase_leveling_q_amb\":{},", pl_q_amb)
                << "\"phase_leveling_warmup_epochs\":" << pl_warmup << ','

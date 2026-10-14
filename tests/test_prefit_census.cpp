@@ -574,7 +574,7 @@ TEST(PrefitCensusObservability, CensusNamesTheCellAndBirthNeedsAPriorAbsence) {
     auto walk = [&](std::vector<StationAssembly> asm_res, double tow, int ep) {
         ctx.counters.n_loop_epochs = static_cast<std::size_t>(ep);
         networkPrefitCensus(ctx, *cfg, nullLogger(), traces, epochAt(tow), stations,
-                            est, asm_res, est_index_of, nullptr);
+                            est, asm_res, est_index_of);
     };
 
     walk(parkedEpoch(), 1000.0, 0);   // seeds the presence map
@@ -666,7 +666,7 @@ TEST(PrefitCensusObservability, EventDomainExcludesPhaseButColumnsStillReportIt)
     std::vector<StationAssembly> a{ makeStation(rows) };
     ctx.counters.n_loop_epochs = 0;
     networkPrefitCensus(ctx, *cfg, nullLogger(), traces, epochAt(1000.0), stations,
-                        est, a, est_index_of, nullptr);
+                        est, a, est_index_of);
     traces.events_trace.flush();
 
     EXPECT_EQ(ctx.counters.pc.exceedances, 2) << "both cells exceed the threshold";
@@ -716,7 +716,7 @@ TEST(PrefitCensusObservability, TopologyLedgerSeedsSilentlyThenEventsTieRowDelta
     auto walk = [&](std::vector<StationAssembly> a, double tow, int ep) {
         ctx.counters.n_loop_epochs = static_cast<std::size_t>(ep);
         networkPrefitCensus(ctx, *cfg, nullLogger(), traces, epochAt(tow), stations,
-                            est, a, est_index_of, nullptr);
+                            est, a, est_index_of);
     };
 
     walk(epochWithTies(2), 1000.0, 0);
@@ -726,7 +726,7 @@ TEST(PrefitCensusObservability, TopologyLedgerSeedsSilentlyThenEventsTieRowDelta
     walk(epochWithTies(2), 1030.0, 1);
     EXPECT_EQ(ctx.counters.pc.topo_tie_events, 0) << "no change, no event";
 
-    walk(epochWithTies(3), 1060.0, 2);            // the deweight valve re-folds a tie
+    walk(epochWithTies(3), 1060.0, 2);            // a tie row re-folds
     EXPECT_EQ(ctx.counters.pc.topo_tie_events, 1);
 
     walk(epochWithTies(0), 1090.0, 3);            // …and cuts them all

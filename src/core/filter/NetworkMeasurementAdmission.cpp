@@ -432,7 +432,7 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
             // fresh".  Both feeds are written and counted separately: a bare
             // `markAmbiguityPendingReseed` is a one-shot that PASS B consumes and the
             // leveling harvest clears, so on a lineage without warm leveling it is
-            // not a refloat at all (NetworkIonoDwRelease.hpp describes that case).
+            // not a refloat at all.
             for (const std::string& b : phase_keys) {
                 const std::string amb = StateKeys::makeAmbiguityKey(obs.satellite, b);
                 if (carry_invariant) {
@@ -836,8 +836,7 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
     // maximum (the extreme).  The identity of over-bound cells goes to the events,
     // as §3 says.  Stamped with the TOW so an epoch this seam did not screen leaves
     // the columns blank rather than repeating stale numbers (the redun_ep_tow
-    // pattern, not the ep_dw_engaged pattern, whose sentinel is never reset and
-    // therefore persists).
+    // pattern).
     if (!station_worst.empty()) {
         ctx.carry.adm_ep_tow         = t.tow;
         ctx.carry.ep_adm_sta_worst_z = medianOf(station_worst);

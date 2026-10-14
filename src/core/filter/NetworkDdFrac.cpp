@@ -12,7 +12,6 @@
 #include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"
 #include "filter/NetworkCarryVce.hpp"
-#include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"

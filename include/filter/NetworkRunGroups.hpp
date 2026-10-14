@@ -35,7 +35,6 @@ class NetworkEstimator;
 class NetworkInvariantCarryDriver;
 class NetworkCarryVce;
 class NetworkPriorResidual;
-class NetworkIonoDeweightGate;
 struct SlipQcChannel;
 
 /// A const view of the run's estimation engines for the run-end reports.  The driver
@@ -47,7 +46,6 @@ struct NetworkRunEngines {
     const NetworkCarryVce&             carry_vce;     ///< The LS-VCE carry-row variance-component monitor (M2).
     const NetworkPriorResidual&        prires;        ///< The prior-residual census, read by networkPriorResidualRunEnd.
     const SlipQcChannel&               slip_qc;       ///< The slip-QC hardening channel and its run-end counters.
-    const NetworkIonoDeweightGate&     iono_deweight; ///< The station-adaptive SH-VTEC-constraint deweight gate.
 };
 
 /// The two emit-layer engines.  The driver builds them before the epoch loop,

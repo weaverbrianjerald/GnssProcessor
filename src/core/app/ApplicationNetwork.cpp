@@ -93,7 +93,6 @@
 #include "filter/NetworkPivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "filter/NetworkCarryVce.hpp"        // LS-VCE variance-component monitor for carry rows (M2)
 #include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
-#include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (card 4, M1 C3b)
 #include "filter/StateKeySchema.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, rinexLetter, systemName
@@ -140,8 +139,7 @@
 #include "filter/NetworkDdFrac.hpp"    // cross-station DD fractional-residual trace (INC-11b)
 #include "filter/NetworkSdEwlAr.hpp"   // SD EWL Route-B integer decision (increment 2a)
 #include "filter/NetworkShDevVtec.hpp"    // SH-deviation carry KF and VTEC-coefficient trace (INC-11b)
-#include "filter/NetworkShHealth.hpp"    // SH-field health probe, adaptive-deweight gate, carry LS-VCE (INC-11b)
-#include "filter/NetworkIonoDwRelease.hpp" // iono-deweight release hygiene: reseed / park bound / row screen
+#include "filter/NetworkShHealth.hpp"    // SH-field health probe, carry LS-VCE (INC-11b)
 #include "filter/NetworkLevelAuthority.hpp"  // per-epoch level-authority census (LV-6)
 #include "filter/NetworkLeveling.hpp"    // phase-leveling carry harvest, D2/C1 stash, SH-convergence latch (INC-11b)
 #include "filter/NetworkStashStatus.hpp"    // carry re-stash, LS-VCE fold, epoch-status QC row (INC-11b)
@@ -696,45 +694,8 @@ int Application::runNetwork() {
     // switches (sh_dev_tau, sh_dev_on, sh_dev_demean, sh_dev_d5_keep) are ctx.knobs fields,
     // read by networkPassB_ and networkShDevVtec.
 
-    // ---- Station-adaptive SH-VTEC-constraint deweight (iono deweight card) ----------
-    // A per-station factor w_s ∈ (0,1] scales the information of the station's SH↔slant
-    // iono pseudo-obs (σ² ×= 1/w_s ⇒ info ×= w_s).  w_s→0 decouples the station's per-LOS
-    // iono from the global SH field in both directions (there is a single joint
-    // pseudo-obs, so one w_s covers both), while the station still serves the shared
-    // clocks/biases/datum/position.  All of the gate math (v1 static list, v2
-    // network-relative IGG auto-trigger, EWMA, hysteresis, slew) lives in
-    // NetworkIonoDeweightGate.  The serial post-solve harvest feeds it per-station
-    // statistics, and the parallel assembly reads iono_deweight.weight() (a const find,
-    // race-free under the sh_dev_carry contract).  An empty static list with adaptive off
-    // ⇒ weight() is 1.0 for every station ⇒ byte-identical to off (invariant #6).
-    const IonoConstraintDeweightConfig& idw = config_.getIonoConstraintDeweightConfig();
-    NetworkIonoDeweightGate iono_deweight(
-        std::set<std::string>(idw.stations.begin(), idw.stations.end()), idw.factor,
-        idw.adaptive, idw.window_epochs, idw.sigma_hi, idw.sigma_lo, idw.floor,
-        idw.rate_limit, idw.min_epochs);
-    // Iono-deweight release hygiene: the gate's per-epoch release-edge capture is armed
-    // only when a response is armed, so an unarmed run never allocates the list.  The
-    // edge is "the weight rose above eps", captured around the rate-limited slew.  The
-    // engage/release transition list cannot serve it: a station climbs off the floor
-    // with no flag flip whenever its z decays inside the hysteresis band, and
-    // Transition::w is post-slew only.
-    if (ctx.knobs.dw_hygiene_on)
-        iono_deweight.enableReleaseTracking(ctx.knobs.dw_release_eps);
-    const bool idw_on = iono_deweight.active();
-    if (idw_on && !sh_model)
-        log->warn("Network (iono deweight): configured but network.estimate_iono_sh is OFF — "
-                  "there is no SH field to deweight; the setting is inert this run.");
-    if (sh_model && iono_deweight.staticCount() > 0) {
-        std::set<std::string> idw_present;
-        for (const auto& st : stations) idw_present.insert(st.name);
-        for (const auto& nm : iono_deweight.staticStations())
-            if (!idw_present.count(nm))
-                log->warn("Network (iono deweight): statically-listed station '{}' is not in this "
-                          "network — ignored (check the name).", nm);
-    }
-
     // appendShIonoRows is Application::networkAppendShIonoRows_ in
-    // ApplicationNetworkAssembly.cpp; sh_model, iono_deweight, shc and the sh_dev state
+    // ApplicationNetworkAssembly.cpp; sh_model, shc and the sh_dev state
     // are passed explicitly at the PASS-B call site.
 
     // Eigen runs single-threaded for the duration of the (parallelized) epoch loop.
@@ -1270,33 +1231,10 @@ int Application::runNetwork() {
         // from D5-only re-taps.  97 % of D5-only re-taps have no raw observable step: they
         // are iono-tension events the deviation should absorb rather than be erased by.
         std::set<std::pair<int, std::string>> carry_slipped_raw;
-        // Iono-deweight release hygiene (INC-1): the previous epoch's release-edge
-        // refloats are drained here.  The edge is detected after the solve (SB_T1A, inside
-        // the gate's own slew); by then this set's load-bearing consumer has already run,
-        // and a bare pending-reseed mark would be wiped by the leveling harvest's
-        // clearPendingReseed.  The refloat is therefore deferred to here, as the D5
-        // innovation gate defers its post-solve flags above.  It goes into the raw subset
-        // because a re-coupled parked slant is a raw-observable-class event: the union
-        // below carries it into the funnel for every existing consumer, and the raw
-        // provenance keeps the Iono-2 v3k d5_keep policy from restoring the deviation
-        // level this response discards.  The pending-reseed mark is also issued here
-        // (nothing between here and PASS B clears it), so the ambiguity re-seed reads the
-        // already-reseeded slant.
-        if (!ctx.carry.dw_release_pending.empty()) {
-            for (const auto& sk : ctx.carry.dw_release_pending) {
-                carry_slipped_raw.insert(sk);
-                if (sk.first >= 0 && sk.first < static_cast<int>(stations.size()))
-                    stations[static_cast<std::size_t>(sk.first)]
-                        .sm->markAmbiguityPendingReseed(sk.second);
-            }
-            ctx.counters.dwr.refloats_drained +=
-                static_cast<long long>(ctx.carry.dw_release_pending.size());
-            ctx.carry.dw_release_pending.clear();
-        }
         // RAIM pool re-host: the previous epoch's post-fit RAIM flags are drained here.
-        // The deferral is the same as for the two drains above, for the same reason: RAIM
-        // detects after the solve, at SB_RAIM, when this funnel's load-bearing consumer
-        // (buildCarryDdPriors, SB_DDBUILD) has already run.
+        // The deferral is the same as for the innovation-gate drain above, for the same
+        // reason: RAIM detects after the solve, at SB_RAIM, when this funnel's
+        // load-bearing consumer (buildCarryDdPriors, SB_DDBUILD) has already run.
         //
         // The flags go into `carry_slipped_ambs` and not into `carry_slipped_raw`.  The
         // raw subset means a raw-observable step, which the Iono-2 v3k d5_keep erase
@@ -1305,9 +1243,8 @@ int Application::runNetwork() {
         // gate, which also drains into the funnel only.  Draining RAIM into raw would
         // change the Iono-2 deviation-erase policy with no visible sign.
         //
-        // The pending-reseed mark is not re-issued here (unlike the dw-release drain,
-        // whose slant rewrite must be visible to the ambiguity re-seed): the seam already
-        // set it at detection time, and on this lineage it is bookkeeping either way.
+        // The pending-reseed mark is not re-issued here: the seam already set it at
+        // detection time, and on this lineage it is bookkeeping either way.
         //
         // The clear is unconditional: the one-epoch lifetime bound (standing invariant #1)
         // keeps a stale (station index, key) pair from outliving its arc across a datum
@@ -1377,9 +1314,9 @@ int Application::runNetwork() {
                                carry_slipped_ambs, carry_slipped_raw,
                                carry_invariant, carry_warm);
         // Product-referenced measurement admission, the first layer of the defence in
-        // depth (this screen, then tie admission and the prefit fuse).  It is the
-        // absolute test for a channel whose code and phase are displaced together,
-        // the class every differential check passes by construction
+        // depth (this screen, then the prefit fuse).  It is the absolute test for a
+        // channel whose code and phase are displaced together, the class every
+        // differential check passes by construction
         // (stations have been seen +198.2 km and +99.9 km off SP3+CLK).  The statistic is
         // `observed - modeled` on code alone, centred on the station median; `modeled` is
         // the state-free deterministic model, which lets the screen fire at a cell's
@@ -2060,7 +1997,7 @@ int Application::runNetwork() {
         // post-solve back-substitution can recover each present station's local
         // slant-iono block; -1 for stations not added this epoch.
         std::vector<int> est_index_of(stations.size(), -1);
-        if (networkPassB_(se, ctx, setup, traces, est, iono_deweight,
+        if (networkPassB_(se, ctx, setup, traces, est,
                           carry_slipped_ambs, carry_slipped_raw,
                           carry_warm, pl_now_s,
                           modeled, present, shared_phase_keys,
@@ -2329,23 +2266,12 @@ int Application::runNetwork() {
         subEnd(SB_DDFRAC);       // close block 6, dd-frac B5 (D0b)
         subBegin(SB_SHDEV_VTEC); // block 4b: T5 SH-deviation carry KF + VTEC coefficient trace (D0b)
         networkShDevVtec(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
-                         est_index_of, modeled, iono_deweight);
+                         est_index_of, modeled);
         subEnd(SB_SHDEV_VTEC);  // close block 4b, T5 sh-dev + VTEC trace (D0b)
-        subBegin(SB_T1A);       // block 3: T1a SH health probe + fused adaptive-deweight gate (D0b)
+        subBegin(SB_T1A);       // block 3: T1a SH health probe (D0b)
         networkShHealth(ctx, config_, log, traces, setup, se, est, x_s, asm_res, est_index_of,
-                        modeled, iono_deweight, carry_vce_est, prires_est, datum_changed,
-                        pl_now_s);
-        // Iono-deweight release hygiene.  It must sit here: networkShHealth above is the
-        // only caller of the gate's advance(), and the release edge created by that slew
-        // raises the weight that the next epoch's PASS-B assembly multiplies into the
-        // SH<->slant tie rows, so the response has exactly this epoch to act before the
-        // parked states are re-coupled.  It also comes after networkShDevVtec: that seam's
-        // harvest is the epoch's legitimate deviation measurement update, and erasing the
-        // stash ahead of it would discard good information.  No-op unless an increment is
-        // armed.
-        networkIonoDwRelease(ctx, config_, log, traces, setup, se, est, x_s,
-                             est_index_of, modeled, iono_deweight);
-        subEnd(SB_T1A);        // close block 3, T1a health + deweight (D0b)
+                        modeled, carry_vce_est, prires_est, datum_changed, pl_now_s);
+        subEnd(SB_T1A);        // close block 3, T1a health (D0b)
         subBegin(SB_LEVELING); // block 5: phase-leveling carry harvest + T1d SH convergence (D0b)
         networkLeveling(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
                         est_index_of, carry_vce_est, prires_est, carry_warm, pl_now_s,
@@ -2481,7 +2407,7 @@ int Application::runNetwork() {
         // unarmed run out of the translation unit entirely.
         if (ctx.knobs.pc_walk_on)
             networkPrefitCensus(ctx, config_, log, traces, se, stations, est,
-                                asm_res, est_index_of, &iono_deweight);
+                                asm_res, est_index_of);
         // Redundancy / testability census (docs/SPEC_redundancy_census.md).  It runs
         // before networkRhsAttribution: a flight-recorder trip epoch forces a full sweep,
         // and the trip predicate is the attribution's own (unconsumed) window test, so the
@@ -2535,7 +2461,7 @@ int Application::runNetwork() {
             networkRhsAttribution(ctx, config_, log, traces, se, stations, est,
                                   plan.shared_datum, asm_res, est_index_of, &x_s);
         // Flight recorder (INC-5): consumes a trip raised anywhere earlier this epoch
-        // (SH-gate engage, clock runaway, a00-band exit; the A4 withhold consumes its own,
+        // (clock runaway, a00-band exit; the A4 withhold consumes its own,
         // since that epoch never reaches here), then retains this epoch as the next trip's
         // "before" frame.  Last in the group, so a trip dump sees the same kernel state
         // every other diagnostic just read.
@@ -2670,8 +2596,7 @@ int Application::runNetwork() {
     if (parallel_on) Eigen::setNbThreads(eigen_threads_saved);  // restore Eigen's own threading
 
     // The run end reads the run's groups through one const bundle (card NOM step TD1a).
-    const NetworkRunEngines engines{ est, carry_driver, carry_vce_est, prires_est, slip_qc,
-                                     iono_deweight };
+    const NetworkRunEngines engines{ est, carry_driver, carry_vce_est, prires_est, slip_qc };
     return networkTeardown(ctx, config_, log, traces, setup,
                            NetworkRunEndInputs{ engines, emit_engines, timing, cl_tally });
 }

@@ -79,8 +79,7 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  *                                        → it flagged but the actuator is disarmed.
  *
  * Every member stays at zero unless @c ctx.knobs.raim_ci_on, and the run-end readout
- * is written only then, so an off run reports nothing.  Modelled on
- * @c NetworkIonoDwReleaseTallies.
+ * is written only then, so an off run reports nothing.
  */
 struct NetworkRaimCiTallies {
     long long epochs = 0;            ///< Seam passes with the re-hosted pool armed.

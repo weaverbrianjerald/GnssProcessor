@@ -206,7 +206,6 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkAnchorHygiene.cpp
     src/core/filter/NetworkSignalIntegrity.cpp
     src/core/filter/NetworkMeasurementAdmission.cpp
-    src/core/filter/NetworkIonoDwRelease.cpp
     src/core/filter/NetworkRaim.cpp
     src/core/filter/NetworkClockQc.cpp
     src/core/filter/NetworkClockAnchor.cpp
@@ -432,7 +431,6 @@ add_executable(gnss_tests
     tests/test_residual_qc_wtest.cpp
     tests/test_pivot_frame_q.cpp
     tests/test_border_clone.cpp
-    tests/test_network_iono_deweight_gate.cpp
     tests/test_network_zstore.cpp
     tests/test_network_arc_graph.cpp
     tests/test_network_arc_graph_oracles.cpp
@@ -469,7 +467,6 @@ add_executable(gnss_tests
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
     tests/test_measurement_admission.cpp
-    tests/test_iono_dw_release_hygiene.cpp
     tests/test_redundancy_census.cpp
     tests/test_network_mdb.cpp
     tests/test_block_baarda.cpp

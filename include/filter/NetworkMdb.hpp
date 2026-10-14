@@ -414,8 +414,9 @@ struct NetworkMdbScale {
  * single blank:
  *  - `absent_no_pf`: the P1-4 pass is not armed (`network.trace_postfit_sigma0`);
  *  - `absent_no_pool_for_class`: @c obs_other / @c iono_sh_row have no pool by
- *    construction (an SH tie row's misfit is a known artifact, see
- *    NetworkIonoDeweightGate.hpp, and pooling it would dominate the statistic);
+ *    construction (an SH tie row's misfit is a known artifact: the single-layer
+ *    field leaves 70 to 90 % of them above 3σ, and pooling it would dominate the
+ *    statistic);
  *  - `absent_pool_empty`: the class's pool saw no rows this epoch;
  *  - `absent_sigma0_zero`: @f$\hat\sigma_0@f$ is zero (or not finite).  Zero is the
  *    normal state of the phase pool under free ambiguities, since each phase row

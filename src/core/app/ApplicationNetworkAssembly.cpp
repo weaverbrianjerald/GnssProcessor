@@ -34,7 +34,6 @@
 #include "filter/NetworkSecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
 #include "filter/NetworkPivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "filter/NetworkCarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "filter/NetworkSdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "filter/NetworkCoupling.hpp"       // conditional coupling-row builder (Card 1/1b/1d, INC-7b)
@@ -332,7 +331,7 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
     //
     // Thread-safety: `st.phase_sigma_scale` is republished serially by
     // @ref networkSignalIntegrity before the parallel produce and only read (find)
-    // here (the pinned_amb_sigma_scale / iono-deweight contract).  Off
+    // here (the pinned_amb_sigma_scale contract).  Off
     // byte-identity: the map is never populated when the card is disarmed, so `w`
     // keeps the exact cwiseInverse result with no additional floating-point
     // operations.
@@ -1284,23 +1283,14 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
                                            const GnssTime& t,
                                            const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model,
                                            const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model2,
-                                           const NetworkIonoDeweightGate& iono_deweight,
                                            const GlobalVtecShConfig& shc, bool sh_dev_on,
                                            const std::map<std::string, ShDevCarry>& sh_dev_carry,
-                                           const std::set<std::string>& dw_row_held,
-                                           const std::set<std::string>* dw_tie_admitted,
                                            Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                                            Eigen::VectorXd& w, Eigen::VectorXd& y,
                                            std::vector<RowTag>& tags) const {
     if (!sh_model) return;
     const auto& iw = config_.getIonosphereWeightingConfig();
     if (!iw.enabled) return;
-    // Iono-constraint deweight factor for this station (read-only const lookup;
-    // race-free per the threading contract above).  w_s == 1: untouched (byte-identical
-    // when off).  w_s <= 0: no SH iono rows are appended (the per-LOS iono floats on its
-    // own GF code/phase, fully decoupled).
-    const double w_s = iono_deweight.weight(st.name);
-    if (w_s <= 0.0) return;
     const Eigen::VectorXd x = st.sm->getStateVector();
     const double Re = shc.earth_radius_km * 1000.0;
     const double tecu_to_L1m =
@@ -1334,22 +1324,6 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
         if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
         const auto hit = h2local.find(iono_idx);
         if (hit == h2local.end()) continue;   // iono not in this station's local block this epoch
-        // Iono-deweight release hygiene (docs/SPEC_deweight_release_hygiene.md).  Two
-        // dispositions keep a tie row out of this station's stack:
-        //   - Release screen failed (INC-3): the LOS's solved deviation is still too
-        //     far from the field for the row to carry valid information, so it stays
-        //     decoupled until the serial seam re-tests it next epoch.
-        //   - Not yet admitted (INC-3b): this is a positive list, not a hold list,
-        //     because at a LOS's first sighting the seam has never run for that key,
-        //     so nothing could have put it in a hold list; and its first tie row is
-        //     the coupling event the screen exists for.
-        // Both are empty / null unless armed, so the off path costs one empty() test and
-        // one null test and never looks a key up (byte-identical).
-        if (!dw_row_held.empty() || dw_tie_admitted) {
-            const std::string dw_key = st.name + "|" + o.satellite;
-            if (!dw_row_held.empty() && dw_row_held.count(dw_key)) continue;
-            if (dw_tie_admitted && !dw_tie_admitted->count(dw_key)) continue;
-        }
         const IppGeometry g0 =
             computeIppGeometry(st.ecef, o.sat_pos, Re, layers[0].shell_height_m);
         if (!g0.valid) continue;
@@ -1445,13 +1419,6 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
         // byte-identical.
         if (shc.row_decimation_epochs >= 2)
             R *= static_cast<double>(shc.row_decimation_epochs);
-        // Station-adaptive iono-constraint deweight: scale this station's whole SH-iono
-        // block information (σ² ×= 1/w_s, so information ×= w_s), uniformly on the
-        // per-LOS diagonal variance and the common-mode off-diagonal, which preserves
-        // the receiver-DCB-free structure.  w_s == 1: no scaling, byte-identical (as with
-        // the row_decimation σ-inflation above).  w_s <= 0 already returned early.
-        if (w_s < 1.0)
-            R *= 1.0 / w_s;
         Eigen::MatrixXd Hr = Eigen::MatrixXd::Zero(mc, ncol_r);    // local +1 (slant iono)
         Eigen::MatrixXd Hs = Eigen::MatrixXd::Zero(mc, nshared);   // −M_l·tecu·basis_l (SH cols, all shells)
         Eigen::VectorXd zc(mc);
@@ -2971,7 +2938,6 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                        NetworkSetupResult& setup,
                                        NetworkRunTraces& traces,
                                        NetworkEstimator& est,
-                                       const NetworkIonoDeweightGate& iono_deweight,
                                        const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                                        const std::set<std::pair<int, std::string>>& carry_slipped_raw,
                                        bool carry_warm, double pl_now_s,
@@ -3874,15 +3840,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // outcome (card NOM section 16, suspect 4).
             if (config_.estimateNetworkIonoSh())
                 networkAppendShIonoRows_(st, est, modeled[i], h2local, se.time,
-                                         sh_model, setup.sh_model2, iono_deweight,
-                                         shc, sh_dev_on,
-                                         sh_dev_carry, ctx.carry.dw_row_held,
-                                         // Inert until the seam's one-shot
-                                         // start/resume seed has run (INC-3b), or the
-                                         // first epoch would withhold every tie row.
-                                         (ctx.knobs.dw_admit_validate_k > 0.0
-                                          && ctx.carry.dw_tie_seeded)
-                                             ? &ctx.carry.dw_tie_seen : nullptr,
+                                         sh_model, setup.sh_model2,
+                                         shc, sh_dev_on, sh_dev_carry,
                                          R.A_s, R.A_r, R.w, R.y, R.row_tags);
             else if (config_.estimateNetworkSatCodeBias())
                 R.gim_rows = networkAppendGimIonoRows_(st, modeled[i], h2local, se.time,

@@ -23,10 +23,10 @@
  * value is then released when a topology valve opens (the 25° tie admission),
  * which discharges it into the ionosphere and starts a long withhold era.
  *
- * Layers of defense, in order of engagement: this seam (layer 0, at the origin);
- * the INC-3b admission validation (the valve, `network.iono_dw_admit_validate_k`);
+ * Layers of defense, in order of engagement: this seam (layer 0, at the origin) and
  * the prefit fuse (a bound on the symptom, `network.prefit_fuse_sigma`).  The card's
- * fourth layer, the SH health gate (the backstop), was retired with its keys.
+ * other two layers, the INC-3b admission validation (the valve) and the SH health
+ * gate (the backstop), were retired with their keys.
  *
  * ## The screen statistic: absolute, coarse, clock-free and state-free
  *
@@ -62,7 +62,7 @@
  *    terms lie inside the healthy spread the threshold must tolerate (at BSHM,
  *    -12.5…+19.1 m across eleven satellites, storm conditions included).  This is
  *    a structural fault detector for the @f$10^5@f$ m regime, not a residual test;
- *    Huber weighting, the deweight gate and RAIM cover the 3-10σ regime.
+ *    Huber weighting and RAIM cover the 3-10σ regime.
  *  - The station median stands in for the receiver clock at this precision, so
  *    ms-scale clock offsets and steps cancel exactly (URUM00CHN and INEG00MEX take
  *    clean 1 ms steps in the FT63 leg window; the prefit census's negative gate
@@ -164,7 +164,7 @@
  *   * after `networkSignalIntegrity` (see below); and
  *   * before the phase-datum census and election, the shared-column registration
  *     and PASS B.  It is layer 0 of the card's §1 defense in depth (this seam, the
- *     INC-3b tie admission, the prefit fuse), and every later layer,
+ *     prefit fuse), and every later layer,
  *     the election, the prefit census and RAIM observe the admitted set rather
  *     than the raw one.
  *

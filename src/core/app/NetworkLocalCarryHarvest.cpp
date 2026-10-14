@@ -240,7 +240,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // information about where the arc sits.  The estimate is `x_lin + back-substituted
     // Δx`, which exists only here, after the solve.  Hence the one-epoch deferral:
     // harvested now, consumed by the next epoch's election, in the same way as
-    // carry_innov_pending / dw_release_pending / raim_refloat_pending.
+    // carry_innov_pending / raim_refloat_pending.
     //
     // The population is `R.qc_amb`, the carry-neutral census: columns present in A_r
     // and not pinned.  A station holding the pin is not a handover target, and its

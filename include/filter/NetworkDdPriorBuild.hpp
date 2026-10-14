@@ -53,8 +53,7 @@ void networkBuildCarryDdPriors(
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
     /// The raw-detector subset of this epoch's slip funnel (card 4, M1, D5 v4).  Every
     /// raw-observable inserter writes both sets (NetworkSlipQc via the PASS-A binding,
-    /// networkSignalIntegrity, networkMeasurementAdmission, the deweight-release
-    /// drain), so the complement `carry_slipped_ambs \ carry_slipped_raw` holds the
+    /// networkSignalIntegrity, networkMeasurementAdmission), so the complement `carry_slipped_ambs \ carry_slipped_raw` holds the
     /// estimation-side entries: the D5 innovation drain and the post-fit RAIM refloat
     /// drain (raim_refloat_pending).  The Iono-2 v3k erase-policy split uses the same
     /// idiom.  Read only under network.carry_invariant_innov_retap_only.

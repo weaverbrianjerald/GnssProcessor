@@ -1737,25 +1737,6 @@ namespace GnssProcessor {
         double eq34_fresh_pin_sigma_scale{ 1.0 };   ///< σ multiplier applied to a datum row that had to be pinned on a host younger than eq34_anchor_min_arc_ep + eq34_fresh_pin_ramp_ep, decaying linearly over the ramp (INC-3).  1.0 = off (the exact 1e10 hard pin, byte-identical).
         int  eq34_fresh_pin_ramp_ep{ 0 };        ///< Length (epochs) of the fresh-pin deweight ramp above (INC-3).  0 = off.
 
-        // --- Iono-deweight release hygiene ---
-        // A station held at w_s = 0 by the adaptive SH-constraint deweight gate has no
-        // tie rows folded, so its per-LOS slant-iono states spend the era unconstrained
-        // by the field.  Because the network producer's per-station StateManager is a
-        // frozen linearization point, a bad state does not decay during that era; it
-        // stays parked.  When the gate releases, the tie rows re-couple those parked
-        // states to the SH block with no signal of their own: the row is identical
-        // across the break and only the coupling changes, so a parked state can move
-        // the SH field by orders of magnitude in one epoch.  The increments below
-        // (INC-1 to INC-3b) are default-off and, off, allocate no state, write no
-        // state and remove no row.  Deliberately not in the warm-resume fingerprint:
-        // this is a forward-only release-time state and row policy that changes the
-        // meaning of no serialized quantity (as with adaptive_iono_q and the eq34
-        // hygiene), which keeps the shared-snapshot event A/B valid.
-        bool   iono_dw_release_reseed{ false };   ///< When a station's gate weight rises above iono_dw_release_floor_eps (its zero-weight era ends), reseed every per-LOS slant-iono state of that station from the current SH field evaluation, refloat its float ambiguities through the standard slip funnel (deferred one epoch), and erase its per-LOS deviation-stash entries (INC-1).  false = legacy (the release re-couples whatever was parked).
-        double iono_dw_release_floor_eps{ 1e-9 }; ///< The decoupled-weight threshold (INC-1).  A station at or below this has its SH block dropped entirely (the assembly's w_s <= 0 early return), so a rise above it is the release edge.  Detected around the gate's rate-limited slew, never by comparing to exactly 0.0.
-        double iono_dw_park_bound_tecu{ 0.0 };    ///< While a station is decoupled (weight <= eps), and, for warm-resume coverage, while the gate holds no samples for it at all, any slant-iono state whose magnitude exceeds this bound (slant TECU) is reset to the field evaluation immediately (INC-2).  0 = off.  A physical bound of O(300 TECU) sits three orders of magnitude below the parked values observed (about 1.15e6 TECU equivalent).
-        double iono_dw_release_validate_k{ 0.0 }; ///< Fold a re-engaged SH<->slant tie row only if its standardized deviation |dev| / representation_sigma_tecu passes this k; a failing LOS stays decoupled and is re-tested every epoch (INC-3).  0 = off.  Reads the solved deviation that networkShDevVtec harvests, never the linearization point (which is provably frame-arbitrary; see NetworkIonoDwRelease.hpp).  Requires the T5 deviation channel (global_vtec_sh.rep_error_tau_s > 0); validated at load.
-        double iono_dw_admit_validate_k{ 0.0 };   ///< The same screen at a LOS's first tie row (INC-3b).  A LOS crossing the elevation cutoff into a station's tie stack couples a slant column not yet validated to the SH field; this was the entry path in the measured event, at a station whose gate weight stayed at 1.0 throughout (its only IONO_DW event is an engage at the break, and that epoch's release wave first acts one epoch later).  A LOS is held for one epoch, during which its deviation is still harvested, then admitted if and only if that deviation passes k.  0 = off.  Requires the T5 deviation channel; validated at load.
         // Deterministic-parallel fan-out of the post-solve serial seam: the ~72 % of a
         // 305-station epoch that reduce/assembly parallelism does not cover (the DD
         // carry-fold of the invariant carry, @ref NetworkNormalEquations::foldReducedDdPriors,
@@ -2419,8 +2400,8 @@ namespace GnssProcessor {
          */
         std::string prefit_fuse_classes{ "code,sh" };
         double seed_birth_check_sigma{ 0.0 };///< Seed-birth tripwire (INC-3; 0 = off).  Measure-only: applies the INC-1 statistic at this tighter threshold to the rows of a (station, satellite) whose per-LOS states were born this epoch.  A correctly self-seeded birth has s ≈ 0 by construction, so any fire localizes a seed-path defect to an exact epoch and site (recommended 100).  Makes the census walk run even with @ref trace_prefit_census off.
-        bool   trace_topology{ false };      ///< Topology ledger (INC-4): TOPOLOGY-tier events for estimation-topology changes: per-station SH-tie row-count deltas (the deweight valve, whose weight change from 0 to 0.25 on one added tie row is otherwise unlogged), per-(station, satellite) row-kind changes while the satellite stays present, and shared-column registry deltas.  Measure-only; makes the census walk run.
-        bool   rhs_attrib_on_trip{ false };  ///< Flight recorder (INC-5): arm the estimator's shared-info capture recorder every epoch and fire @ref networkRhsAttribution automatically at the first trip of a QC era (SH-gate engage, A4 σ̂0 withhold, clock runaway, a₀₀-band exit), instead of at a hand-picked @ref rhs_attrib_tow.  With this armed, the next discharge of any class is attributed to its source in the run where it first happens, without a separate investigation.
+        bool   trace_topology{ false };      ///< Topology ledger (INC-4): TOPOLOGY-tier events for estimation-topology changes: per-station SH-tie row-count deltas, per-(station, satellite) row-kind changes while the satellite stays present, and shared-column registry deltas.  Measure-only; makes the census walk run.
+        bool   rhs_attrib_on_trip{ false };  ///< Flight recorder (INC-5): arm the estimator's shared-info capture recorder every epoch and fire @ref networkRhsAttribution automatically at the first trip of a QC era (A4 σ̂0 withhold, clock runaway, a₀₀-band exit), instead of at a hand-picked @ref rhs_attrib_tow.  With this armed, the next discharge of any class is attributed to its source in the run where it first happens, without a separate investigation.
         bool   rhs_attrib_on_trip_prev{ true }; ///< Also dump the retained previous epoch on a trip (INC-5).  The pre-trip frame is the informative one: it shows the weight flip that the trip epoch alone shows only as its aftermath.  Costs one epoch of retained assemblies and kernel blocks (order 100 MB at 63 stations), so it disables itself above @ref rhs_attrib_prev_max_stations.
         int    rhs_attrib_prev_max_stations{ 128 }; ///< Network size above which previous-epoch retention is disabled, with a one-shot warning (INC-5).  A trip still dumps the current epoch.
         // --- Redundancy / testability census (docs/SPEC_redundancy_census.md;
@@ -2673,7 +2654,7 @@ namespace GnssProcessor {
         // --- Product-referenced measurement admission
         //     (docs/SPEC_measurement_admission.md; filter/NetworkMeasurementAdmission)
         // The corrupt-channel screen: the first layer of a layered defense (this
-        // screen -> iono_dw_admit_validate_k -> prefit_fuse_sigma).  A receiver can
+        // screen -> prefit_fuse_sigma).  A receiver can
         // emit a channel offset by ~1e5 m against SP3+CLK
         // (measured: two satellites at one station, +198.2 km and +99.9 km).  Because
         // the offset rides both the code and the phase of the channel, it is invisible
@@ -4572,56 +4553,6 @@ namespace GnssProcessor {
         double max_multiplier  = 100.0; ///< Upper clamp on the per-satellite process-noise multiplier (lower clamp 1.0).
         int    min_epochs      = 30;    ///< Min TD2 samples on an arc before its multiplier may deviate from 1.0.
         bool   trace           = false; ///< Write a per-satellite GF/TD2/variability CSV trace to the log directory.
-    };
-
-    /**
-     * @brief Station-adaptive SH-VTEC-constraint deweight (PPP-RTK network producer).
-     *
-     * The per-LOS slant-iono states couple to the shared global SH-VTEC field in
-     * both directions through a single joint pseudo-observation per (station, LOS):
-     * (a) the station's LOS feed the field fit; (b) the field constrains the
-     * station's per-LOS iono.  A station whose true slant ionosphere is beyond what
-     * the single-layer field can represent (e.g. an equatorial-anomaly /
-     * scintillation-belt site at solar maximum) injects that misfit through (a) into
-     * every other station (the global support functions export it) and through (b)
-     * into its own ambiguities and from there into the shared clocks / code / phase
-     * biases.  This config relaxes that coupling per station by a scalar factor
-     * @c w_s ∈ (0,1] that multiplies the information of the SH iono rows
-     * (σ² ×= 1/w_s ⇒ information ×= w_s).  @c w_s → 0 lets the station's per-LOS iono
-     * float freely on its own GF code/phase (noisier but still observable, no rank
-     * hole; the dual-frequency code bias stays lumped into iono per Odijk 2016),
-     * while the station keeps serving the shared clocks, biases, datum graph and
-     * position.  It is the targeted alternative to dropping the station (the
-     * amputation falsifier): geometry and the datum survive.
-     *
-     * The single joint pseudo-obs means that one w_s deweights both directions and
-     * their cross-coupling uniformly.  Two paths:
-     *  - v1 (static): every station in @c stations is deweighted by @c factor.
-     *  - v2 (adaptive, @c adaptive): an IGG-style trailing gate engages a station
-     *    when its smoothed per-station SH-misfit statistic becomes a robust outlier
-     *    against the network's own distribution (median/MAD-standardized z-score),
-     *    with hysteresis (@c sigma_hi / @c sigma_lo) and a per-epoch rate
-     *    limit so the deweight⇄fit feedback loop cannot oscillate.  The statistic is
-     *    relative to the network's robust centre on purpose: the single-layer surface
-     *    leaves ~70–90 % of LOS residuals > 3σ at any degree (a chronic, common-mode
-     *    background), so an absolute 3σ gate would trigger every station; only the
-     *    network-relative excess isolates the genuinely problematic sites.
-     *
-     * JSON (all under @c network.iono_constraint_deweight_*): @c stations, @c factor,
-     * @c adaptive, @c window_epochs, @c sigma_hi, @c sigma_lo, @c floor,
-     * @c rate_limit, @c min_epochs.  Empty @c stations with @c adaptive=false makes
-     * every w_s 1.0, byte-identical to off (invariant #6).
-     */
-    struct IonoConstraintDeweightConfig {
-        std::vector<std::string> stations;              ///< v1: station long-names whose SH iono coupling is deweighted by @c factor (explicit list always wins over the adaptive gate).
-        double factor = 0.0;                            ///< v1 deweight strength w_s for listed stations.  0 = free iono (full decouple; the station's per-LOS iono floats on its own GF code/phase); clamped to (0,1] otherwise.  Default 0.
-        bool   adaptive = false;                        ///< v2: enable the IGG-style network-relative auto-trigger (in addition to the static list).  Default off.
-        double window_epochs = 60.0;                    ///< v2: half-life (epochs) of the per-station SH-misfit EWMA (forgetting-window robust-stat idiom, cf. NetworkCarryVce).
-        double sigma_hi = 3.0;                          ///< v2: engage the deweight when a station's smoothed misfit z-score (median/MAD-standardized across the network) rises above this.
-        double sigma_lo = 2.0;                          ///< v2: release when the z-score falls back below this (hysteresis band; must be < @c sigma_hi).
-        double floor = 0.0;                             ///< v2: minimum w_s the ramp drives toward at/above @c sigma_hi (0 = full decouple at strong outlier).  Clamped to [0,1).
-        double rate_limit = 0.25;                       ///< v2: maximum |Δw_s| per clean epoch (anti-oscillation slew limit).
-        int    min_epochs = 30;                         ///< v2: minimum clean EWMA samples on a station before its gate may fire.
     };
 
     /**
