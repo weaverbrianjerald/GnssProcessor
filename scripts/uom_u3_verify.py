@@ -2,6 +2,7 @@
 """Relocation verifier for card UOM step U3 (gate G-UR): the cut of
 CycleSlipManager::detectAndRepair into section members (step U3b) and the
 split of its per-satellite section S11 into a verdict and its actions (U3c).
+The run-end counter increments of step U3d are declared new lines (marked U3d).
 
     python scripts/uom_u3_verify.py [--verbose]
 
@@ -144,7 +145,10 @@ UNITS = [
          pieces=[F(23, 24)]),
     dict(file=CSM, def_re=r"^std::string CycleSlipManager::signalFromAmbiguityKey\(",
          pieces=[F(29, 30)]),
-    dict(file=CSM, def_re=r"^CycleSlipManager::CycleSlipManager\(", pieces=[F(42, 65)]),
+    dict(file=CSM, def_re=r"^CycleSlipManager::CycleSlipManager\(", pieces=[
+        F(42, 65),
+        N("for (const auto& d : detectors_)"),                                  # U3d
+        N("counters_.detections.emplace_back(toString(d->kind()), 0);")]),     # U3d
     dict(file=CSM, def_re=r"CycleSlipManager::getResolvedWlAmbiguities\(", pieces=[F(73, 73)]),
     dict(file=CSM, def_re=r"CycleSlipManager::getResolvedWlFractions\(", pieces=[F(77, 77)]),
     dict(file=CSM, def_re=r"^CycleSlipManager::getResolvedWlQuality\(", pieces=[F(82, 83)]),
@@ -158,7 +162,8 @@ UNITS = [
     dict(file=CSM, def_re=r"CycleSlipManager::getHeldPendingBridgeKeys\(", pieces=[F(1811, 1811)]),
     dict(file=CSM, def_re=r"CycleSlipManager::resetSoftLliBridge\(", pieces=[F(1815, 1815)]),
     # --- CycleSlipRepair.cpp and CycleSlipAdjudication.cpp: moved, unchanged.
-    dict(file=REP, def_re=r"^void CycleSlipManager::resetAmbiguityBssdAware\(", pieces=[F(143, 258)]),
+    dict(file=REP, def_re=r"^void CycleSlipManager::resetAmbiguityBssdAware\(", pieces=[
+        F(143, 150), N("++counters_.ambiguity_resets;"), F(151, 258)]),        # U3d
     dict(file=REP, def_re=r"^bool CycleSlipManager::repairAmbiguityBssdAware\(", pieces=[F(273, 343)]),
     dict(file=ADJ, def_re=r"CycleSlipManager::computeCulpritSlipIntegers\(", pieces=[F(349, 400)]),
     dict(file=ADJ, def_re=r"CycleSlipManager::identifySlippedSignals\(", pieces=[F(410, 453)]),
@@ -186,6 +191,7 @@ UNITS = [
              F(1639, 1639, 4),
              N("applyTurboEditGfOnlyResolutions(w);"),
              N("applyAuxiliarySlipEvents(w);"),
+             N("tallySlipEpoch(w);"),                                          # U3d
              N("return finishSlipEpoch(w);"),
          ],
          subs=[(702, "slip_results", "w.slip_results"),
@@ -234,7 +240,9 @@ UNITS = [
              F(1259, 1267, 12),
              N("if (repairConstellationInPlace(w, cons, pivots_now))"),
              F(1432, 1432, 8),
-             F(1434, 1466, 12)]),
+             F(1434, 1434, 12),
+             N("counters_.pivot_frames_repaired_in_place += static_cast<long long>(handled_cons.size());"),  # U3d
+             F(1435, 1466, 12)]),
     dict(file=PIV, def_re=r"^bool CycleSlipManager::repairConstellationInPlace\(", section=True, pieces=[
         *aliases("log", "epoch_prefix", "modeled_obs", "state_manager", "meas_model", "result",
                  "epoch_reset_amb_keys", "pivot_affected_cons_sig", "deferred_integer_repairs",
@@ -253,14 +261,21 @@ UNITS = [
              G(1490, 1631, "if (deferred_integer_repairs.empty() && deferred_resets.empty()) return;"),
              F(1491, 1506, 12),
              N("std::set<std::string> exclude_sats = handoverExcludeSet(w);"),
-             F(1532, 1630, 12)]),
+             F(1532, 1555, 12),
+             N("for (const auto& cons : affected_cons)"),                      # U3d
+             N("if (handoverFired(cons)) ++counters_.forced_pivot_handovers;"), # U3d
+             F(1556, 1602, 12),
+             N("++counters_.integer_repairs;"),                                # U3d
+             F(1603, 1630, 12)]),
     # --- S11 (CycleSlipAdjudication.cpp): the verdict, then the one action it
     #     selects (step U3c).
     dict(file=ADJ, def_re=r"^void CycleSlipManager::handleSatelliteMandates\(", section=True, pieces=[
         N("const SatelliteSlipVerdict verdict = adjudicateSatellite(w, sat_id);"),
         N("switch (verdict.action) {"),
         N("case SatelliteSlipAction::SkipBridgeRepaired:"),
+        N("return;"),
         N("case SatelliteSlipAction::SkipWlSettlePending:"),
+        N("counters_.suppressed_mandates += static_cast<long long>(amb_keys.size());"),  # U3d
         N("return;"),
         N("case SatelliteSlipAction::RepairCulprits:"),
         N("applyCulpritVerdict(w, sat_id, amb_keys, verdict);"),
@@ -269,6 +284,7 @@ UNITS = [
         N("applySuppressionVerdict(w, sat_id, amb_keys, verdict);"),
         N("return;"),
         N("case SatelliteSlipAction::FullReset:"),
+        N("++counters_.full_satellite_resets;"),                               # U3d
         N("resetEveryMandate(w, sat_id, amb_keys, verdict);"),
         N("holdOrResetLliArcs(w, sat_id, amb_keys, verdict);"),
         N("reinflateSatelliteStates(w, sat_id);"),
@@ -318,7 +334,9 @@ UNITS = [
     dict(file=ADJ, def_re=r"^void CycleSlipManager::applySuppressionVerdict\(", section=True, pieces=[
         *aliases("log", "epoch_prefix", "modeled_obs", "state_manager", "meas_model", "result",
                  "reset_sats_w", "epoch_reset_amb_keys_w"),
-        F(1063, 1092, 20)],
+        F(1063, 1081, 20),
+        N("counters_.suppressed_mandates += static_cast<long long>(n_suppressed);"),  # U3d
+        F(1082, 1092, 20)],
         subs=[(1067, "tce->second.count(signal)", "verdict.suppressed_signals.count(signal)")]),
     dict(file=ADJ, def_re=r"^void CycleSlipManager::resetEveryMandate\(", section=True, pieces=[
         *aliases("log", "epoch_prefix", "modeled_obs", "state_manager", "meas_model", "result",

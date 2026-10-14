@@ -201,6 +201,7 @@ void CycleSlipManager::repairAcrossSlippedPivotInPlace(SlipEpochWork& w) {
         if (repairConstellationInPlace(w, cons, pivots_now))
             handled_cons.insert(cons);
     }
+    counters_.pivot_frames_repaired_in_place += static_cast<long long>(handled_cons.size());
 
     // Drain handled constellations from the deferred queues and the
     // pivot-affected set so the handover block processes only what
@@ -530,6 +531,8 @@ void CycleSlipManager::forcePivotHandoverAndApplyDeferred(SlipEpochWork& w) {
             return false;
         return bit->second != ait->second;
     };
+    for (const auto& cons : affected_cons)
+        if (handoverFired(cons)) ++counters_.forced_pivot_handovers;
 
     for (const auto& dr : deferred_integer_repairs) {
         const std::string cons = PppUtils::getSystemString(dr.sat_id);
@@ -577,6 +580,7 @@ void CycleSlipManager::forcePivotHandoverAndApplyDeferred(SlipEpochWork& w) {
         const double prev = x(amb_idx);
         x(amb_idx) += delta_m;
         state_manager.setStateVector(x);
+        ++counters_.integer_repairs;
 
         // This +delta lands in the new (post-forced-handover) SD
         // frame, while the smoother's x_pred is in the old frame;

@@ -78,8 +78,9 @@ struct SlipEpochWork {
     std::shared_ptr<spdlog::logger> log;             ///< "cycle_slip_manager" logger.
 
     // --- S0: the epoch frame --------------------------------------------------
-    /// The epoch's result: counters and state_modified, written by every
-    /// section; S17 copies the smoother accumulators in and returns it.
+    /// The epoch's result: the counters and @c state_modified, written by the
+    /// sections that repair, reset or suppress; S17 copies the smoother
+    /// accumulators in and returns it.
     CycleSlipEpochResult result;
     /// Continuous GPS seconds of this epoch (for soft-LLI hold bookkeeping);
     /// 0 when no observation carries a satellite.

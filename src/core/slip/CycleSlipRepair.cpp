@@ -34,6 +34,7 @@ void CycleSlipManager::resetAmbiguityBssdAware(
     // information backward, so the satellite is recorded for the smoother to
     // exclude at this epoch's boundary (audit F1).
     epoch_reset_sats_.insert(sat_id);
+    ++counters_.ambiguity_resets;
 
     if (!config_.enableBetweenSatelliteSd()) {
         state_manager.resetAmbiguity(amb_key, reset_std_m);

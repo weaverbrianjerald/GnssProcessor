@@ -74,6 +74,18 @@ CycleSlipManager::CycleSlipManager(const GnssConfig& config, LogManager& log_man
                 "MW-only (TurboEdit OFF).");
         }
     }
+
+    // Run-end counters: one detection row per built detector, in run order.
+    for (const auto& d : detectors_)
+        counters_.detections.emplace_back(toString(d->kind()), 0);
+}
+
+CycleSlipManager::~CycleSlipManager() {
+    try {
+        logRunEndCounters();
+    } catch (...) {
+        // A run-end report must not throw out of a destructor.
+    }
 }
 
 // ===========================================================================
@@ -171,6 +183,7 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
 
     applyTurboEditGfOnlyResolutions(w);         // S15 TurboEdit GF-only (MW blind spot)
     applyAuxiliarySlipEvents(w);                // S16 auxiliary-detector resets
+    tallySlipEpoch(w);                          //     run-end counters
     return finishSlipEpoch(w);                  // S17 soft-LLI marker, smoother accumulators
 }
 
@@ -206,6 +219,27 @@ void CycleSlipManager::beginSlipEpoch(SlipEpochWork& w) {
             const auto pit = pivots.find(PppUtils::getSystemString(sat));
             return pit != pivots.end() && pit->second == sat;
         };
+}
+
+void CycleSlipManager::tallySlipEpoch(const SlipEpochWork& w) {
+    ++counters_.epochs;
+    for (auto& [token, count] : counters_.detections) {
+        if (token == toString(SlipDetectorKind::MelbourneWubbena))
+            count += static_cast<long long>(w.slip_results.size());
+        for (const auto& ev : w.aux_events)
+            if (toString(ev.source) == token) ++count;
+    }
+    for (const auto& [sat, keys] : w.reset_keys_by_sat)
+        counters_.mw_mandates += static_cast<long long>(keys.size());
+    counters_.soft_lli_bridge_repairs += static_cast<long long>(w.soft_lli_repaired.size());
+    counters_.integer_repairs += static_cast<long long>(epoch_repairs_.size());
+}
+
+void CycleSlipManager::logRunEndCounters() const {
+    if (counters_.epochs == 0) return;
+    auto log = log_manager_.getLogger("cycle_slip_manager");
+    for (const auto& line : cycleSlipCounterLines(counters_))
+        log->info("{}", line);
 }
 
 CycleSlipEpochResult CycleSlipManager::finishSlipEpoch(SlipEpochWork& w) {

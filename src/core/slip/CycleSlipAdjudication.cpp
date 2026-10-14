@@ -139,7 +139,9 @@ void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
     const SatelliteSlipVerdict verdict = adjudicateSatellite(w, sat_id);
     switch (verdict.action) {
         case SatelliteSlipAction::SkipBridgeRepaired:
+            return;
         case SatelliteSlipAction::SkipWlSettlePending:
+            counters_.suppressed_mandates += static_cast<long long>(amb_keys.size());
             return;
         case SatelliteSlipAction::RepairCulprits:
             applyCulpritVerdict(w, sat_id, amb_keys, verdict);
@@ -148,6 +150,7 @@ void CycleSlipManager::handleSatelliteMandates(SlipEpochWork& w,
             applySuppressionVerdict(w, sat_id, amb_keys, verdict);
             return;
         case SatelliteSlipAction::FullReset:
+            ++counters_.full_satellite_resets;
             resetEveryMandate(w, sat_id, amb_keys, verdict);
             holdOrResetLliArcs(w, sat_id, amb_keys, verdict);
             reinflateSatelliteStates(w, sat_id);
@@ -480,6 +483,7 @@ void CycleSlipManager::applySuppressionVerdict(SlipEpochWork& w,
                   "TurboEdit adjudication)", epoch_prefix, key);
     }
     ++result.n_code_events;
+    counters_.suppressed_mandates += static_cast<long long>(n_suppressed);
     log->info("{}TurboEdit adjudication for {}: {} phase reset "
               "mandate(s) suppressed (code event / bridged moot "
               "/ adjudicated clean), ambiguities preserved "

@@ -37,6 +37,7 @@
 *     is not possible.
 */
 
+#include "slip/CycleSlipCounters.hpp"
 #include "slip/ISlipDetector.hpp"
 #include "slip/MwSlipDetector.hpp"
 #include "slip/TurboEditResolver.hpp"
@@ -135,6 +136,22 @@ public:
      * @param log_manager   Logging facility.
      */
     CycleSlipManager(const GnssConfig& config, LogManager& log_manager);
+
+    /**
+     * @brief Print the run-end slip counters (@c runEndCounters) to the
+     *        "cycle_slip_manager" log, when at least one epoch was processed.
+     *
+     * The manager is destroyed with the post-processing @c Application at run
+     * end, after the run's own summary; the table is the slip layer's run-end
+     * telemetry (standing invariant 4).  Never throws.
+     */
+    ~CycleSlipManager();
+
+    /**
+     * @brief The slip layer's counters accumulated over the run so far.
+     * @return The counters; one detection row per detector the registry built.
+     */
+    const CycleSlipCounters& runEndCounters() const { return counters_; }
 
     /**
      * @brief Pre-estimation: cycle slip detection, repair and reset.
@@ -288,6 +305,7 @@ private:
     //   S14  logMwEpochSummary                    CycleSlipAdjudication.cpp
     //   S15  applyTurboEditGfOnlyResolutions      CycleSlipNonMwPasses.cpp
     //   S16  applyAuxiliarySlipEvents             CycleSlipNonMwPasses.cpp
+    //        tallySlipEpoch (run-end counters)    CycleSlipManager.cpp
     //   S17  finishSlipEpoch                      CycleSlipManager.cpp
     //
     // The state primitives every response goes through (resetAmbiguityBssdAware,
@@ -609,6 +627,22 @@ private:
     void applyAuxiliarySlipEvents(SlipEpochWork& w);
 
     /**
+     * @brief Add this epoch's evidence to the run-end counters: the epoch, the
+     *        detections per detector, the MW mandates, the soft-LLI bridge
+     *        repairs and the covariance-preserving repairs recorded for the
+     *        smoother.  The other counters are incremented where their event
+     *        happens (the reset primitive, S11, S12, S13).
+     * @param w Epoch work (read only).
+     */
+    void tallySlipEpoch(const SlipEpochWork& w);
+
+    /**
+     * @brief Log the run-end counter table (@c cycleSlipCounterLines) at info
+     *        level; nothing when no epoch was processed.
+     */
+    void logRunEndCounters() const;
+
+    /**
      * @brief S17: advance the soft-LLI epoch marker and hand the smoother
      *        accumulators (@c epoch_reset_sats_, @c epoch_repairs_) to the
      *        result.
@@ -768,9 +802,9 @@ private:
     /// Cached MW slip results from the last detectAndRepair() call.
     std::map<std::string, MwSlipResult> last_mw_slips_;
 
-    /// Per-epoch slip-action accumulators for the RTS smoother, cleared at the
-    /// top of @c detectAndRepair and copied into the returned
-    /// @c CycleSlipEpochResult before it returns.  Written by
+    /// Per-epoch slip-action accumulators for the RTS smoother, cleared by
+    /// @c beginSlipEpoch (S0) and copied into the returned
+    /// @c CycleSlipEpochResult by @c finishSlipEpoch (S17).  Written by
     /// @c resetAmbiguityBssdAware (reset satellites), @c repairAmbiguityBssdAware
     /// (compensatable repairs), the inline post-handover repair (recorded as a
     /// reset, since it lands in the new SD frame), and the soft-LLI bridge
@@ -782,6 +816,9 @@ private:
     /// Inert unless @c estimation.cycle_slip.turbo_edit_bridge_lli.  The same
     /// type backs the real-time path so the two cannot diverge.
     SoftLliBridge soft_lli_;
+
+    /// Run-end counters (@c runEndCounters), printed by the destructor.
+    CycleSlipCounters counters_;
 };
 
 } // namespace GnssProcessor
