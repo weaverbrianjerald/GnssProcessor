@@ -2,7 +2,8 @@
 
 A list of small, real, open tasks on the single-receiver PPP and real-time path. Each is
 the size of the [worked example](03_worked_example.md) or smaller, and each was checked
-against the code on 2026-09-19. File and line references drift; the function or symbol
+against the code on 2026-09-19 and again on 2026-10-14, after the reorganization of the
+single-receiver code (card UOM). File and line references drift; the function or symbol
 name is the reliable anchor.
 
 A task is chosen together with a maintainer, who also confirms that nobody else has
@@ -135,15 +136,22 @@ east, north and up errors, and the header states which solution and epoch were u
 
 ## T8: End-of-run position error summary
 
-**Problem.** A PPP run ends with a timing line only. `receiver.reference_position_ecef`
-exists in the config but is used solely to seed the a-priori position. The quality of a
-run is visible only after external analysis.
+**Problem.** A PPP run ends with the reports of `kPppRunEndReports`
+(`src\core\app\PppRunEnd.cpp`): the processing time, the state re-inflations, the Kalman
+filter's timings and QC counters, the cycle-slip counters and, when armed, the wind-up
+census, the smoother and the normal-equation export. None of them states the position
+error. `receiver.reference_position_ecef` exists in the config, but post-processing uses
+it only to seed the a-priori position (real time also checks a broadcast station
+position against it, `realtime.arp_blunder_gate_m`). The quality of a run is visible only
+after external analysis.
 
-**Change.** When a reference position is configured, log a summary at the end of
-`Application::run()`: mean and RMS of east, north and up over the final N hours, and
-the convergence time to a configurable 3-D threshold. The arithmetic is the same as in
-`compare_ppp_runs.py`. The feature is inert when no reference is configured, so
-default behaviour is unchanged.
+**Change.** When a reference position is configured, add a report to the PPP run end:
+mean and RMS of east, north and up over the final N hours, and the convergence time to a
+configurable 3-D threshold. A report is one member in `PppRunEnd.cpp`, declared in
+`include\app\Application.hpp` beside the others, and one row of `kPppRunEndReports`
+(the file's banner gives the steps). The arithmetic is the same as in
+`compare_ppp_runs.py`. The feature is inert when no reference is configured, so default
+behaviour is unchanged.
 
 **Test.** A unit test of the summary computation on a synthetic position series with a
 known offset and a known convergence epoch.

@@ -56,8 +56,10 @@ The first row is carried out step by step in
   `"KalmanFilter.hpp"`.
 - **No source globbing.** A new `.cpp` that is missing from `CMakeLists.txt` produces
   "unresolved external symbol" at link time.
-- **State-vector keys** are built and parsed only through
-  `include/filter/StateKeySchema.hpp`. Key strings are never formatted by hand.
+- **State-vector keys** in new code are built and parsed only through
+  `include/filter/StateKeySchema.hpp`, never formatted by hand. Older single-receiver
+  code still formats some keys by hand (`sat + "_" + signal`); card UOM step U8 moves
+  them onto the schema.
 - **Post-processing-only features** (smoother, `gnss_rate_s`) must not run in real-time
   mode. They are guarded on `AppMode::RealTime`.
 - **One test suite name per file.** A new test file is preferred over extending an

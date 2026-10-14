@@ -6,7 +6,7 @@ Each page ends with a working result.
 | # | Page | Result | Time |
 | --- | --- | --- | --- |
 | 1 | [Setup](01_setup.md) | Code built, one PPP position solution, unit tests passing | ½ day |
-| 2 | [Code tour](02_code_tour.md) | A map of the PPP and real-time paths, and a reading list | 1 to 2 days |
+| 2 | [Code tour](02_code_tour.md) | A map of the PPP, real-time and baseline paths stage by stage, the tables a run prints, where new code goes, and a reading list | 1 to 2 days |
 | 3 | [Worked example](03_worked_example.md) | One complete small change: code, test, data run, LaTeX, commits | 1 to 2 days |
 | 4 | [Git workflow](04_git_workflow.md) | The branch, commit and merge-request loop | 1 hour |
 | 5 | [Debugging](05_debugging.md) | The IDE opened on the project, launch arguments set, a breakpoint hit in the epoch loop | 2 hours |

@@ -215,3 +215,58 @@ Every fix keeps the network goldens unreachable except G9 (log stamps on every l
 - The newly visible differential ZWD ends the 2 h CIT1-JPLM baseline at -0.644 m (sigma 1.9 mm), implausible for 8.7 km; not investigated.
 - `tests/test_network_rx_extra_band_delay.cpp` writes fixed names in `%TEMP%`, which collide with a concurrent `gnss_tests` from another worktree.
 - After UB7 the slip layer and the KalmanFilter's pivot reactions still build per-band keys; under NL/WL the MW full reset seeds 0 for the non-pivot SD ambiguities.
+
+## 12. 2026-10-14: Where new user-side code goes (step U9)
+
+Step U9 (branch `uom/u9-docs` from `ff7766a`, the wave B integration): the onboarding code tour (`docs/onboarding/02_code_tour.md`) rewritten for the structure of waves A and B, the way `07_network_tour.md` reads the network: the setup of `Application::runPpp` in its ten steps, one epoch as the 18 stages of the spine with the function and file of each, the run end as `kPppRunEndReports`, where a reader starts for the Kalman filter, the measurement model, the state families and the slip layer, the three tables a run prints (state families as armed; the KF QC counters; the slip counters, with an excerpt of each from a 10-minute `ppp_internal.json` run on the reference build `gnss_processor_u9docsref.exe` of `ff7766a`), the real-time order corrected with a table of where real time differs, the baseline driver, and the decision list below, which is also a section of the tour. Claims were checked against `ff7766a`; function sizes by `funcsize.py`. Docs only; no code changed.
+
+**Statements corrected.** The ten of the organization map (`uom_map/pipeline.md` section 6) and three more:
+
+| page | old | now |
+| --- | --- | --- |
+| tour | both pipelines share "the same slip detectors" | real time runs its own slip orchestration (MW, TurboEdit, soft-LLI bridge; no `CycleSlipManager`, no GRAPHIC or EWL); a table of the differences |
+| tour | real time differs "in the data source and in the handling of corrections" | also the MW tiebreak, the Huber clearing (K-D1), the gap policy, the AR setup (18 of 20 fields), the ATX Q override and the run-end counters |
+| tour | setup: `initializePosition`, then the constructors | `StateManager` (and its run-start table) before `initializePosition`, then the ten build, wire and initialize stages of `PppSetup.cpp` in order |
+| tour | the overview sends post-processing to "the epoch loop in run()" | `run()` dispatches; `runPpp()` is the pipeline |
+| tour | the epoch in 8 steps | the 18 stages of the spine, each with its function and file; three steps named as doing more than their names say (`computeMeasurementUpdate` writes the layout, `KalmanFilter::update` resets and requests, `beginEpoch` clears the Huber queue) |
+| tour | the run end: the smoother, then the elapsed time | the seven rows of `kPppRunEndReports` with their knobs and logs |
+| tour | "`MeasurementModel` only copies them into **R**" | `rowVariance` adds the consumer's network-correction terms and the no-BIA code downweight; the KF inflates R (persistent bias, Huber) |
+| tour, CONTRIBUTING | keys "built and parsed only by" `StateKeySchema.hpp`; "never formatted by hand" | the rule for new code; older code still formats some keys by hand (35 `+ "_" +` lines in the `Kalman*`, `CycleSlip*`, `MeasurementModel*`, `Ppp*` and `EpochUpdateSupport` files), step U8 |
+| tour | real time in 7 steps, one file per group | 12 rows: the state snapshot first and last, the roster refresh and `computeModels` in the driver, the corrections-ready gate after it, the predict in the driver, the consumer readout after the estimation tail |
+| tour | admission is "the only place allowed to skip an epoch" | the driver also ends an epoch on four conditions |
+| tour | `Application.hpp`: "every per-epoch step is declared here" | true since U7b; reworded to the class comment's stage list by file |
+| tour | `CycleSlipManager.hpp`: "cycle-slip detection and repair" | post-processing only |
+| first tasks (T8) | "a PPP run ends with a timing line only"; the reference position "used solely to seed the a-priori"; the summary added "at the end of `Application::run()`" | the run-end table's reports; real time also checks a broadcast station position against it; the summary is a report and a row of `kPppRunEndReports` |
+
+T1 to T7 still hold on `ff7766a`. `docs/onboarding/README.md` names the tour's new content; `03_worked_example.md` cites no moved code and is unchanged.
+
+**Where new user-side code goes.** Each kind of change has one place; the drivers stay lists of calls.
+
+- **New dynamic state family** → an enumerator of `StateFamily`, `kStateFamilyCount` and one row of `kStateFamilies` (`filter/StateFamily.hpp`); its map in `StateManager` and its case in `indicesOf_`; its key format in `StateKeySchema.hpp`; its Q block one call in `getProcessNoiseMatrix` (`StateManagerProcessNoise.cpp`; a satellite random walk is `addSatelliteRandomWalkQ_` over the row); a new birth gate one `BirthGate` with its two cases in `StateManagerFamilies.cpp`. The size, index shift, labels, RT snapshot, gap decoupling and the run-start table follow from the row.
+- **New fixed core state** → the constructor's steps in `StateManagerLayout.cpp` (`layoutCore_`, `seedCoreVariances_`, `logLayout_`) and its Q block.
+- **New pre-pass state (birth, seed, prune)** → a member of `MeasurementModelStates.cpp`, called by `ensureRequiredStates` at its place in the dependency order, and a row of the pre-pass table in `MeasurementModel.hpp`.
+- **New observation-equation term** → `buildJacobianRow` (`MeasurementModelRow.cpp`); a row-usability rule → `isUsableMeasurement`.
+- **New variance term** → `rowVariance` (`MeasurementModelVariance.cpp`) in its composition order; a new weighting model → `model/StochasticModel`.
+- **New baseline DD stage** → a stage of `ddRunStages` (`MeasurementModelDd.cpp`) over `DdBuild`; a stage that writes filter state is named in the driver.
+- **Network-only measurement code** → `MeasurementModelNetwork.cpp` (card NOM).
+- **New post-fit QC stage** → a private stage of `validatePostFitResiduals` in `KalmanPostFitQc.cpp` over `PostFitQcWork`, a line of the stage list in `KalmanPostFitQc.hpp`; its event a member of `KalmanQcCounters` and a row of `kKalmanQcCounterRows`.
+- **New coherent-offset pivot detector** → a row of `kalman::kPivotDetectors`; a new option a field of `PivotDetectorSpec`.
+- **New outlier response** → `KalmanOutlierResponse.cpp`, called from the dispatch stage; algebra → `KalmanKernels.cpp`; the statistical kernel → `KalmanResidualQc.cpp`.
+- **New slip response** → a `SatelliteSlipAction` and its fields in `SatelliteSlipVerdict` (`slip/CycleSlipVerdict.hpp`), decided in `adjudicateSatellite` (no state writes) and applied in `handleSatelliteMandates` (`CycleSlipAdjudication.cpp`); state edits through `CycleSlipRepair.cpp`; its counter in `CycleSlipCounters` and `cycleSlipCounterLines`.
+- **New slip-epoch section** → a member called by `detectAndRepair`, in the section file of its concern, over `SlipEpochWork`, and a line of the section table in `CycleSlipManager.hpp`.
+- **New slip detector** → the registry's steps (`ISlipDetector`, a `SlipDetectorKind`, a creator in `SlipDetectorRegistry.cpp`, the toggle and `createEnabled`'s selection list) until decision 1 (section 7) is taken; a step of an existing detector → its driver (MW: `MwDetectorWork.hpp`; TurboEdit: the step table in `TurboEditResolver.hpp`).
+- **New PPP epoch step** → a private stage of `Application`, declared in `Application.hpp` in pipeline order, defined in the `PppEpoch*.cpp` file of its concern, one line of the spine of `runPpp`; values for later stages are members of `PppEpochWork` (`app/PppPipelineWork.hpp`); a value that must survive the epoch is an `Application` member.
+- **New setup component** → a build or wire stage in `PppSetup.cpp`, one line of `runPpp`'s setup list.
+- **New PPP run-end readout** → a report member in `PppRunEnd.cpp`, declared in `Application.hpp`, one row of `kPppRunEndReports`.
+- **New baseline step** → the stage of its level in `ApplicationBaseline.cpp` (run, rover, epoch), its values in `BaselineRunWork`, `BaselineRoverWork` or `BaselineEpochWork`.
+- **Logic every driver needs in the update loop** → a free function in `app/EpochUpdateSupport.cpp`, called by each driver.
+- **Real-time step** → the matching `RealTimeEngine*.cpp` seam (`CLAUDE.md`, "Real-time engine: where new code goes").
+
+**Recorded, not changed** (outside U9's files, or code comments):
+- `include/slip/CycleSlipCounters.hpp` says the manager prints the counters when destroyed; since `ddf3bbb` an explicit run-end call does (`Application::reportCycleSlipRunEnd_`), and the class has no destructor.
+- `src/core/filter/StateManager.cpp`'s banner lists construction and process noise among its contents; they are in `StateManagerLayout.cpp` and `StateManagerProcessNoise.cpp` since U6c and U6d.
+- `KalmanFilter::beginEpoch`'s Doxygen ("no-op when concise mode is off") and its call-site comment in `PppEpochUpdate.cpp` still describe a log gate only (map M3); it also clears the Huber and stuck-code-bias queues.
+- The comment of `Application::mergeEpochResets_` still says relinearization resets "through its internal update() call" (map M5); `include/app/EpochUpdateSupport.hpp` still says real time adds AR (map M6).
+- `docs/onboarding/05_debugging.md` sets the first breakpoint at "`Application::run()`, first line of the epoch loop"; the loop is in `Application::runPpp`.
+- `CLAUDE.md` (held by another session) says `run()` is the post-processing pipeline and the place for new per-epoch logic, that post-processing-only features live in `Application::run`, and that `resolveData` runs from `run()`; all three are `runPpp` now. The decision list above is the text for a user-side routing section there.
+- The STATUS block and Outcome of this card still describe the state before wave B.
