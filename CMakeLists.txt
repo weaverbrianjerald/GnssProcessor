@@ -655,6 +655,7 @@ add_executable(gnss_tests
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
     tests/test_stochastic_model.cpp
+    tests/test_dd_innovation_state.cpp
     tests/test_turbo_edit_resolver.cpp
     tests/test_soft_lli_bridge.cpp
     tests/test_cycle_slip_counters.cpp

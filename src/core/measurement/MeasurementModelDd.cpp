@@ -37,6 +37,33 @@ namespace GnssProcessor {
     // filter needs.
     // =================================================================
 
+    namespace {
+
+        /**
+         * @brief Whether a caller's state snapshot has the state's size but not
+         *        its values: the builds whose phase innovations would read
+         *        different numbers from the snapshot than from the state.
+         *
+         * A snapshot of another size was never read, so it is not counted.  Two
+         * NaN entries compare equal, so an untouched state that holds a NaN does
+         * not count.
+         *
+         * @param snapshot The caller's copy, taken before the build.
+         * @param state    The state after the build's handover, prune and births.
+         * @return True when the sizes agree and at least one entry differs.
+         */
+        bool ddSnapshotIsStale(const Eigen::VectorXd& snapshot, const Eigen::VectorXd& state) {
+            if (snapshot.size() != state.size()) return false;
+            for (Eigen::Index i = 0; i < state.size(); ++i) {
+                const double a = snapshot(i);
+                const double b = state(i);
+                if (a != b && !(std::isnan(a) && std::isnan(b))) return true;
+            }
+            return false;
+        }
+
+    } // anonymous namespace
+
     // ===================================================================
     // The DD build's working types
     // ===================================================================
@@ -775,7 +802,7 @@ namespace GnssProcessor {
         }
     }
 
-    bool MeasurementModel::ddInnovations(const Eigen::VectorXd& current_state, DdBuild& dd) const {
+    bool MeasurementModel::ddInnovations(const Eigen::VectorXd& current_state, DdBuild& dd) {
         const auto& klog = dd.klog;
         const bool diag = dd.diag;
         auto& rows = dd.rows;
@@ -784,18 +811,25 @@ namespace GnssProcessor {
         const bool code_only = config_.getBaselineConfig().code_only;
 
         // --- Per-row innov (code = pre; phase = pre - amb_state) ---
+        // The ambiguity is read from the state as it stands after the three
+        // state writes (handover, prune, births): the KalmanFilter applies the
+        // update to that state, and each row's amb_idx indexes it.
         Eigen::VectorXd x;
         try {
-            const size_t ss = state_manager_.getStateSize();
-            x = (current_state.size() == static_cast<Eigen::Index>(ss))
-                ? current_state
-                : state_manager_.getStateVector();
+            x = state_manager_.getStateVector();
         } catch (const std::exception& ex) {
             klog->error("DD state-vector fetch failed: {}", ex.what());
             return false;
         } catch (...) {
             klog->error("DD state-vector fetch failed: unknown exception");
             return false;
+        }
+        if (ddSnapshotIsStale(current_state, x)) {
+            ++dd_stale_snapshot_builds_;
+            klog->debug("DD build at state size {}: the caller's snapshot differs from the "
+                        "state after this build's handover, prune and births; innovations "
+                        "read the state ({} such build(s) so far)",
+                        x.size(), dd_stale_snapshot_builds_);
         }
         kept.reserve(rows.size());
         try {

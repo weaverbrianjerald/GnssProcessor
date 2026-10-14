@@ -130,11 +130,11 @@ namespace GnssProcessor {
          * @param rov_modeled  Rover output, one PppObservation per satellite.
          * @param ref_modeled  Reference output.
          * @param current_state The caller's state snapshot, taken before this
-         *        call.  The phase-row innovation subtracts the ambiguity from it
-         *        whenever its size equals the state size after this call's pivot
-         *        handover, prune and births, and from the current state
-         *        otherwise.  Equal size does not imply equal layout or values
-         *.
+         *        call.  Not read for the update: the phase-row innovation
+         *        subtracts the ambiguity from the state after this call's pivot
+         *        handover, prune and births, the state the KalmanFilter updates.
+         *        It is compared with that state only to count the builds it
+         *        would have misled (@ref ddStaleSnapshotBuilds).
          * @param excluded_measurements Row signatures to skip, formatted
          *        @c "sat_i_<signal_token>" where the token matches
          *        @c EpochMeasurement::signal_types (@c rov_code when rov/ref agree,
@@ -196,6 +196,20 @@ namespace GnssProcessor {
         const std::set<std::string>& getNonIntegerCapableDdAmbiguityKeys() const {
             return non_integer_capable_dd_ambiguity_keys_;
         }
+
+        /**
+         * @brief The DD builds whose caller snapshot had the state's size but
+         *        not its values after the build's own state writes.
+         *
+         * Counted by the DD overload of @c computeMeasurementUpdate, one per
+         * build (a rebuild pass is a build).  These are the builds whose phase
+         * innovations would differ if they read the snapshot instead of the state
+         * after the build's own writes (a pivot handover that changes no state
+         * size, or a prune balanced by births).  Zero for PPP and PPP-RTK.
+         *
+         * @return The count since construction.
+         */
+        size_t ddStaleSnapshotBuilds() const { return dd_stale_snapshot_builds_; }
 
         /**
          * @brief Validate an @c EpochMeasurement before Kalman processing.
@@ -408,6 +422,10 @@ namespace GnssProcessor {
         /// to keep these ambiguities out of the integer-fixing candidate
         /// set.
         std::set<std::string> non_integer_capable_dd_ambiguity_keys_;
+
+        /// DD builds whose caller snapshot had the state's size but not its
+        /// values after the build's state writes (@ref ddStaleSnapshotBuilds).
+        size_t dd_stale_snapshot_builds_{ 0 };
 
         /// Ambiguity keys exempt from the @c ensureRequiredStates prune
         /// while their signal is in a tracking outage, held by the
@@ -1022,16 +1040,17 @@ namespace GnssProcessor {
          * @brief Each row's innovation (a phase row minus its ambiguity) and the
          *        rows kept for the update.
          *
-         * The ambiguity is read from @p current_state when its size equals the
-         * state size after the three state writes, else from the state: equal
-         * size does not imply equal layout or values (a known defect, kept
-         * unchanged here).
+         * The ambiguity is read from the state after the three state writes,
+         * which each row's state column indexes and the KalmanFilter updates.
+         * @p current_state is only compared with that state: when the sizes
+         * agree and a value differs, the build is counted
+         * (@ref ddStaleSnapshotBuilds) and a debug line logged.
          *
-         * @param current_state The caller's state snapshot.
+         * @param current_state The caller's state snapshot, taken before the build.
          * @param dd            The working value (innovations and kept filled).
          * @return False when no row is kept or the state cannot be read.
          */
-        bool ddInnovations(const Eigen::VectorXd& current_state, DdBuild& dd) const;
+        bool ddInnovations(const Eigen::VectorXd& current_state, DdBuild& dd);
 
         /**
          * @brief H (rover position, the ambiguity column, the differential wet
