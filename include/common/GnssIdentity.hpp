@@ -1087,4 +1087,16 @@ namespace GnssProcessor {
         return row_id.find('-') != std::string_view::npos;
     }
 
+    /**
+     * @brief The band the slant-ionosphere state is referenced to: GPS L1, for every
+     *        constellation.
+     *
+     * The state is the first-order slant delay in metres on this band's carrier, so a row on
+     * a carrier f reads it with the coefficient (f_ref / f)^2, f_ref being
+     * @c nominalCarrierFrequencyHz(kIonoReferenceBand), which equals
+     * @c Constants::GPS_L1_FREQ bit for bit.  The GIM pseudo-observation is queried at
+     * f_ref, and a TECU converts to metres at f_ref (@ref ionoDelayMetresPerTecu).
+     */
+    inline constexpr FrequencyBand kIonoReferenceBand = FrequencyBand::GpsL1;
+
 } // namespace GnssProcessor

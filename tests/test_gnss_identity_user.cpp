@@ -14,8 +14,10 @@
 
 #include <gtest/gtest.h>
 
+#include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"
 
+#include <cstring>
 #include <optional>
 #include <string>
 #include <utility>
@@ -283,4 +285,40 @@ TEST(GnssIdentityUserTest, SatPairIdStrEqualsTheBuilderJoin) {
         }
     EXPECT_EQ((SatPairId{"G01", "G05"}.str()), "G01-G05");
     EXPECT_EQ((SatPairId{"G01", ""}.str()), "G01-");      // joined whatever the members hold
+}
+
+// ===========================================================================
+// The ionosphere reference band
+// ===========================================================================
+
+TEST(GnssIdentityUserTest, IonoReferenceBandIsGpsL1) {
+    static_assert(kIonoReferenceBand == FrequencyBand::GpsL1, "the slant-iono state is referenced to GPS L1");
+    const double f_ref = nominalCarrierFrequencyHz(kIonoReferenceBand);
+    const double f_l1  = Constants::GPS_L1_FREQ;
+    // Bit for bit, since the sites that wrote Constants::GPS_L1_FREQ claim identical output.
+    EXPECT_EQ(std::memcmp(&f_ref, &f_l1, sizeof(double)), 0);
+    EXPECT_EQ(carrierFrequencyHz(kIonoReferenceBand, 0), f_l1);
+    EXPECT_EQ(carrierFrequencyHz(kIonoReferenceBand, 7), f_l1);   // a CDMA band: no slot term
+}
+
+TEST(GnssIdentityUserTest, IonoReferenceBandCoefficientsEqualTheL1Expressions) {
+    // The coefficient (f_ref / f)^2 as the sites write it, with f_ref from the constant and
+    // from the named band, over every band of every constellation's traits row.
+    const double f_ref = nominalCarrierFrequencyHz(kIonoReferenceBand);
+    for (System sys : {System::GPS, System::Galileo, System::GLONASS, System::BeiDou,
+                       System::QZSS, System::SBAS}) {
+        const ConstellationTraits& t = traitsOf(sys);
+        for (std::size_t i = 0; i < t.n_bands; ++i) {
+            const double f = nominalCarrierFrequencyHz(t.bands[i].band);
+            ASSERT_GT(f, 0.0);
+            const double by_constant = (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ) / (f * f);
+            const double by_band     = (f_ref * f_ref) / (f * f);
+            EXPECT_EQ(std::memcmp(&by_constant, &by_band, sizeof(double)), 0)
+                << t.name << " band digit " << t.bands[i].digit;
+        }
+    }
+    // The TECU conversion of StateInitializer's seed-offset log, at the reference carrier.
+    const double tecu_band = ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(kIonoReferenceBand));
+    const double tecu_l1   = ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
+    EXPECT_EQ(std::memcmp(&tecu_band, &tecu_l1, sizeof(double)), 0);
 }
