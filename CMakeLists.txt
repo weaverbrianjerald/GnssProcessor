@@ -158,6 +158,9 @@ add_library(gnss_core STATIC
 	src/core/slip/CycleSlipCounters.cpp
 	src/core/slip/IonoVariabilityMonitor.cpp
 	src/core/slip/TurboEditResolver.cpp
+	src/core/slip/TurboEditChain.cpp
+	src/core/slip/TurboEditAdjudication.cpp
+	src/core/slip/TurboEditBridge.cpp
 	src/core/slip/SoftLliBridge.cpp
 	src/core/slip/JumpGapFitter.cpp
 	src/core/slip/SlipBridgeKernel.cpp
