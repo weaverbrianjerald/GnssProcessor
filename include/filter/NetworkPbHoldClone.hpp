@@ -42,8 +42,8 @@
  * The row form equals the first stage of a clone column in the estimator (a zero-noise
  * column informed only by its prior correlation with the border).
  *
- * Card SMD (@c network.emit_pb_hold_smoothed_block): a block clone carries, on one
- * lifetime, a clock row and the row of the ionosphere-free phase-visible clock
+ * Card SMD (an instrument of the smoothed hold; its wire selection was removed): a block
+ * clone carries, on one lifetime, a clock row and the row of the ionosphere-free phase-visible clock
  * @f$D = c - \sum_j w_j p_j@f$ over one phase bias per band, the pair fixed at birth.  The
  * exact rule is linear in a row's coefficients, so the D row is the functional of the
  * (c, p_1, p_2) block with every cross term (@ref couplingExactCross).  Its passed motion

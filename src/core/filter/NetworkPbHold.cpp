@@ -252,10 +252,9 @@ void networkPbHold(NetworkRunContext& ctx,
                     ctx, key, st.generation,
                     (marked & NetworkProductEmitter::kDiscChanPhaseBias) != 0u, epoch_s,
                     [&emitter, &s](const std::string& sg) { return emitter.discThresholdM(s.sat, sg); });
-                // The member that writes: card SMH's clock clone, or card SMD's block clone
-                // (network.emit_pb_hold_smoothed_block).  Both share the key's bridge.
-                const bool blk  = ctx.knobs.emit_pb_hold_smoothed_block;
-                auto&      wmap = blk ? ctx.carry.smh_block : ctx.carry.smh_clone;
+                // The member that writes: card SMH's clock clone.  Card SMD's block clone
+                // is an instrument only (above, and the trace columns below).
+                auto&      wmap = ctx.carry.smh_clone;
                 const auto cit  = wmap.find(key);
                 const bool mine = cit != wmap.end() && cit->second.generation == st.generation;
                 const bool live = !st.smh_reverted && mine && cit->second.alive
@@ -268,14 +267,13 @@ void networkPbHold(NetworkRunContext& ctx,
                 if (live) {
                     const PbHoldClone& c = cit->second;
                     const double nan = std::numeric_limits<double>::quiet_NaN();
-                    // The writing row: the clock row, or the block's phase-visible row.
-                    const double c_phi     = blk ? c.pv_phi : c.phi;
-                    const bool   c_phi_ok  = blk ? c.pv_phi_ok : c.phi_ok;
-                    const double c_W       = blk ? c.pv_W : c.W;
-                    const bool   c_w_valid = blk ? c.pv_w_valid : c.w_valid;
-                    const double c_vpost   = blk ? c.pv_vpost : c.vpost;
-                    const double c_var     = blk ? c.pv_var : c.var;
-                    if (blk) ++ctx.counters.smh_pv_held;
+                    // The writing row: the clock row.
+                    const double c_phi     = c.phi;
+                    const bool   c_phi_ok  = c.phi_ok;
+                    const double c_W       = c.W;
+                    const bool   c_w_valid = c.w_valid;
+                    const double c_vpost   = c.vpost;
+                    const double c_var     = c.var;
                     if (!st.smh_on_clone) {
                         st.smh_on_clone = true;
                         // LAH's reference continues from the transfer the key reached: a
@@ -314,7 +312,7 @@ void networkPbHold(NetworkRunContext& ctx,
                         }
                     }
                     if (traces.pb_hold_clone_trace.is_open()) {
-                        // Card SMD: the key's block clone beside the writing member (the
+                        // Card SMD: the key's block clone beside the writing clock clone (the
                         // split of its passed motion on its own birth), empty when not live.
                         // Card REV: then the revision, the step, the stated variance of D(t0)
                         // (now and at birth), the filtered variance of D and the epoch's walk.
@@ -346,7 +344,7 @@ void networkPbHold(NetworkRunContext& ctx,
                             << (std::isfinite(r) ? fmt::format("{:.4f}", r) : std::string{}) << ','
                             << (std::isfinite(c.pd0) ? fmt::format("{:.6e}", c.pd0) : std::string{}) << ','
                             << (std::isfinite(c.f0) ? fmt::format("{:.4f}", c.f0) : std::string{}) << ','
-                            << (blk ? "pv" : "clk") << ',' << bcols << '\n';
+                            << "clk" << ',' << bcols << '\n';
                     }
                 } else if (!st.smh_reverted) {
                     // Leaving the clone: LAH's transfer continues with the passed motion

@@ -1641,8 +1641,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 nc.emit_pb_hold && nc.emit_pb_hold_phase_clock;
             pending_contract.emit_pb_hold_smoothed =          // pbhold=3: the smoothed hold (Card SMH)
                 nc.emit_pb_hold && nc.emit_pb_hold_smoothed;
-            pending_contract.emit_pb_hold_smoothed_block =    // pbhold=4: its phase-visible member (Card SMD)
-                nc.emit_pb_hold && nc.emit_pb_hold_smoothed && nc.emit_pb_hold_smoothed_block;
             // Advertise the combined-σ age-scaling coefficient on the S line only when the
             // combined-σ channel is on and a coefficient is set, so a run with the channel
             // off (or agek = 0) writes a byte-identical v2 header (no agek= token).

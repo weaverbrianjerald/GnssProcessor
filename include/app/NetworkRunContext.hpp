@@ -711,7 +711,6 @@ namespace GnssProcessor {
         double emit_pb_hold_max_gap_s{};   ///< Arc gap (s) beyond which a returning key starts a new generation (network.emit_pb_hold_max_gap_s; card PBH).  Inert unless emit_pb_hold.
         bool   emit_pb_hold_phase_clock{}; ///< Hold the phase-visible clock instead of the phase bias (network.emit_pb_hold_phase_clock; card LAH).  Inert unless emit_pb_hold.
         bool   emit_pb_hold_smoothed{};    ///< The smoothed hold (network.emit_pb_hold_smoothed; card SMH): the held phase bias follows the clock clone c(t0|t); LAH's transfer after a clone dies.  Inert unless emit_pb_hold.
-        bool   emit_pb_hold_smoothed_block{}; ///< The smoothed hold's phase-visible member (network.emit_pb_hold_smoothed_block; card SMD): the wire takes the block clone's Phi_D instead of the clock clone's Phi.  Inert unless emit_pb_hold_smoothed.
         // --- Guarded temporal clock anchor (card Q3) ---
         // Solve-affecting and fingerprinted.  `cta_on` is the one predicate every site reads
         // for "does this run touch the clock carry at all", so an off run never allocates the
@@ -1958,8 +1957,8 @@ namespace GnssProcessor {
         /// Card SMH: continuous GPS seconds of the first held emission (the hour basis).
         double smh_t_first_s{-1.0};
         /// Card SMD: hold key ("sat|signal") -> its block clone (a clock row and the
-        /// phase-visible row on one lifetime).  Carried whenever the smoothed hold is armed;
-        /// the wire reads it under network.emit_pb_hold_smoothed_block.
+        /// phase-visible row on one lifetime).  Carried whenever the smoothed hold is armed,
+        /// as its instrument (the split of the passed motion); the wire never reads it.
         std::map<std::string, PbHoldClone> smh_block;
         /// Card SMD: hold keys whose block clone waits for a birth (as @c smh_pending).
         std::map<std::string, PbHoldClone> smh_block_pending;
@@ -3819,7 +3818,6 @@ namespace GnssProcessor {
         long long smh_pv_steps_unmarked = 0;  ///< live block-clone steps of D above the smallest emitter jump bar of the pair (passed as motion), per held key
         std::map<int, long long> smh_pv_steps_unmarked_hour;   ///< the same by hour of the run
         double    smh_pv_step_unmarked_max = 0.0;  ///< the largest such step (m)
-        long long smh_pv_held           = 0;  ///< held emissions written from a block clone (the block member)
         std::map<std::string, long long> smh_pv_pairs;   ///< the pair at birth ("L1C+L2W") -> block births
         std::vector<double> smh_pv_phi_abs;   ///< |Phi_D| per live block clone at a held emission (m)
         std::vector<double> smh_pv_lvl_abs;   ///< |Phi_c - Phi_D| (the level part) per live block clone at a held emission (m)

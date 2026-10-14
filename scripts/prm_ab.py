@@ -8,9 +8,11 @@
 `make` writes two arms per posture with scripts/rapid_arm.py, all from the committed goldens:
   _rap_prm_<tag>_gf / _gs   config/golden/golden_{field,sim}_refound.json as generated
   _rap_prm_<tag>_pf / _ps   the same plus the knobs of the clock-level program posture
-                            (PROGRAM below: the smoothed block hold and the monitors, with card
+                            (PROGRAM below: the smoothed hold and the monitors, with card
                             LAH's phase-clock hold off, which the loader refuses with the
-                            smoothed hold), the posture of cards CTU2, SMD, REV and LGM
+                            smoothed hold), the posture of cards CTU2, REV and LGM (card
+                            SMD's block member was removed; its block clones remain the
+                            smoothed hold's instrument)
   _rap_prm_<tag>_sf / _ss   the golden with the scalar coupling update (SCALAR below: card CTU's
                             exact update off), the route the goldens ran before card EXL
   _rap_prm_<tag>_df / _ds   the golden on the diagonal border fold (DIAG below: no dense carried
@@ -50,7 +52,6 @@ PROGRAM = [
     'network.clock_anchor_guard_space=phase',
     'network.clock_level_monitor=true',
     'network.emit_pb_hold_smoothed=true',
-    'network.emit_pb_hold_smoothed_block=true',
     'network.phase_visible_monitor=true',
     'network.rank_gate_tol=1e-11',
 ]

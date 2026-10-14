@@ -849,8 +849,8 @@ namespace GnssProcessor {
         /// variance of c - p_j at birth and the clock's share of it (they carry the
         /// float-ambiguity datum and are not G3's prediction inputs, card SMH section 9;
         /// empty on a pinned clock).  @c phi_m, @c w_m2, @c vpost_m2, @c var_m2 and @c r are the
-        /// writing member's: @c member @c clk (card SMH's clock clone) or @c pv (card SMD's
-        /// block clone, whose Phi_D writes).  The @c b_* columns are the key's block clone
+        /// writing member's: @c member is always @c clk (card SMH's clock clone writes; the
+        /// column stays for the trace format).  The @c b_* columns are the key's block clone
         /// (card SMD) when it is live, on its own birth: its age, its clock row's Phi_c, Phi_D,
         /// the level part Phi_c - Phi_D, the fold inflation along D, the posterior variance of
         /// the D increment, r_D = Phi_D^2 / (W_D - V_D) and the band pair ("L1C+L2W").

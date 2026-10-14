@@ -348,8 +348,9 @@ struct LineAssembler {
                             const int ph = std::stoi(f[k].substr(7));
                             c.emit_pb_hold = (ph != 0);               // phase-bias hold (Card PBH)
                             c.emit_pb_hold_phase_clock = (ph == 2);   // phase-clock mode (Card LAH)
+                            // pbhold=4 (the removed block member, card SMD) still reads as a
+                            // smoothed hold, so an older product file keeps its meaning.
                             c.emit_pb_hold_smoothed    = (ph == 3 || ph == 4);   // smoothed mode (Card SMH)
-                            c.emit_pb_hold_smoothed_block = (ph == 4);   // its phase-visible member (Card SMD)
                         } else if (f[k].rfind("hsig=", 0) == 0) {
                             c.h_sigma0_source = f[k].substr(5);   // sigma0 statistic id (H-rider)
                         } else if (f[k].rfind("cbpin=", 0) == 0) {
@@ -583,10 +584,9 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // pbhold=2: the hold keeps the phase-visible clock instead (card LAH), so a held
     // bias_m moves with the satellite's common-removed clock within a generation.
     // pbhold=3: the smoothed hold (card SMH), a held bias_m follows the clock clone.
-    // pbhold=4: its phase-visible member (card SMD), the block clone's Phi_D.
+    // (pbhold=4, the removed block member of card SMD, is no longer written.)
     if (contract.emit_pb_hold)
-        out_ << (contract.emit_pb_hold_smoothed
-                     ? (contract.emit_pb_hold_smoothed_block ? ",pbhold=4" : ",pbhold=3")
+        out_ << (contract.emit_pb_hold_smoothed ? ",pbhold=3"
                  : contract.emit_pb_hold_phase_clock ? ",pbhold=2" : ",pbhold=1");
     out_ << '\n';
 }
@@ -1046,9 +1046,6 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.emit_pb_hold_smoothed != expected.emit_pb_hold_smoothed)
         note(fmt::format("emit_pb_hold_smoothed: file {} vs expected {}",
                          file.emit_pb_hold_smoothed, expected.emit_pb_hold_smoothed));
-    if (file.emit_pb_hold_smoothed_block != expected.emit_pb_hold_smoothed_block)
-        note(fmt::format("emit_pb_hold_smoothed_block: file {} vs expected {}",
-                         file.emit_pb_hold_smoothed_block, expected.emit_pb_hold_smoothed_block));
     if (file.emit_clock_disc != expected.emit_clock_disc)
         note(fmt::format("emit_clock_disc: file {} vs expected {}",
                          file.emit_clock_disc, expected.emit_clock_disc));

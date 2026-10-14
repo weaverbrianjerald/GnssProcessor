@@ -2774,22 +2774,6 @@ namespace GnssProcessor {
                       "the solve, C and B records are unchanged; trace "
                       "logs/network_pb_hold_clone.csv.");
         }
-        // The smoothed hold's phase-visible member (card SMD): the wire takes the block
-        // clone's Phi_D.  The block clones themselves run whenever the smoothed hold does.
-        network_config_.emit_pb_hold_smoothed_block =
-            jval<bool>(json, "network.emit_pb_hold_smoothed_block",
-                       "emit_pb_hold_smoothed_block", false);
-        if (network_config_.emit_pb_hold_smoothed_block) {
-            if (!network_config_.emit_pb_hold_smoothed)
-                throw std::runtime_error("network.emit_pb_hold_smoothed_block requires "
-                                         "network.emit_pb_hold_smoothed (it selects the smoothed "
-                                         "hold's phase-visible member; card SMD)");
-            log->info("Network (card SMD): network.emit_pb_hold_smoothed_block = true: a held "
-                      "(satellite, signal) emits the phase-clock transfer minus Phi_D = D(t|t) - "
-                      "D(t0|t), D = c - sum_j w_j p_j on a (c, p_1, p_2) block clone with the band "
-                      "pair fixed at birth, retiring at every re-reference, new anchor tenure and "
-                      "emitter phase-channel mark of its pair.  S line pbhold=4.");
-        }
         // Installs the station's own datum rows before the PD test (card RF-PD-fix).
         // Solve-affecting (it changes which stations are in the network); the
         // rx_code_bias_datum cross-check is deferred to that knob's own block, which is
