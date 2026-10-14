@@ -101,8 +101,27 @@ def QF(name, extra=""):
 
 UNITS = [
     # --- StateManager.cpp: everything but the process-noise section ---
-    dict(name="StateManager.cpp head .. getStateVariance", file=SM, pieces=[F(11, 512)]),
+    # --- StateManager.cpp: everything but construction and the process-noise section ---
+    dict(name="StateManager.cpp head .. indicesOf", file=SM, pieces=[F(11, 182)]),
+    dict(name="StateManager.cpp accessors .. getStateVariance", file=SM, pieces=[F(441, 512)]),
     dict(name="StateManager.cpp index getters .. end", file=SM, pieces=[F(862, 2745)]),
+    # --- StateManagerLayout.cpp (U6d) ---
+    dict(name="StateManager constructor (driver)", file=LY, pieces=[
+        F(183, 203),
+        N("layoutBaseline_();"),
+        F(242, 243),
+        N("layoutCore_();"),
+        N("seedCoreVariances_();"),
+        N("logLayout_();"),
+        F(440)]),
+    dict(name="layoutBaseline_", file=LY,
+         pieces=[N("void StateManager::layoutBaseline_() {"), F(204, 241, 4), N("}")]),
+    dict(name="layoutCore_", file=LY,
+         pieces=[N("void StateManager::layoutCore_() {"), F(244, 346), N("}")]),
+    dict(name="seedCoreVariances_", file=LY,
+         pieces=[N("void StateManager::seedCoreVariances_() {"), F(347, 414), N("}")]),
+    dict(name="logLayout_", file=LY,
+         pieces=[N("void StateManager::logLayout_() {"), F(415, 439), N("}")]),
     # --- StateManagerProcessNoise.cpp (U6c) ---
     dict(name="getProcessNoiseMatrix (driver)", file=PN, pieces=[
         F(514, 526),

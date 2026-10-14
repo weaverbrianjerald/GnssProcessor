@@ -1629,6 +1629,45 @@ namespace GnssProcessor {
         void evictExpiredSatBiasCache(const GnssTime& now);
 
         // -------------------------------------------------------------------
+        // Construction steps (StateManagerLayout.cpp)
+        //
+        // The constructor lays out the baseline core and returns, or lays out the
+        // PPP / PPP-RTK core, seeds its variances and logs the layout, in that
+        // order.
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Baseline (DD) mode: the core is position (3) plus the optional
+         *        differential ZWD; allocates x and P, seeds their variances and
+         *        logs the layout.
+         *
+         * Reads the constructor argument (kept in @c base_core_size_) as the
+         * position block size; clears the inter-system offset maps.
+         */
+        void layoutBaseline_();
+
+        /**
+         * @brief PPP / PPP-RTK mode: assigns the core indices (position, clock when
+         *        BSSD is off, ZWD, then velocity and clock rate, phase clock,
+         *        gradients, IMU, one ISB and one ISBR per non-GPS system) and
+         *        sets @c core_state_size_.
+         */
+        void layoutCore_();
+
+        /**
+         * @brief Allocates x (zero) and P (identity) at the core size and writes
+         *        each allocated core state's initial variance from
+         *        @c filter.initial_std (the IMU states from the IMU configuration).
+         */
+        void seedCoreVariances_();
+
+        /**
+         * @brief Logs the core layout (sizes per block, the BSSD note and the
+         *        systems with an inter-system offset) on the "state_manager" logger.
+         */
+        void logLayout_();
+
+        // -------------------------------------------------------------------
         // The blocks of the process noise matrix (StateManagerProcessNoise.cpp)
         //
         // getProcessNoiseMatrix calls one function per block, in this order.
