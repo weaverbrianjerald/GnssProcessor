@@ -18,6 +18,7 @@
  */
 
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"   // SatPairId
 #include <string>
 #include <utility>
 
@@ -82,16 +83,15 @@ namespace kalman {
      *
      * BssdTransform forms single-difference pairs as "non_pivot-pivot", so the
      * second element is the pivot when present.  A plain ID returns it with an empty
-     * reference.
+     * reference.  Forwards to @c SatPairId::parse (common/GnssIdentity.hpp), which owns
+     * the rule; kept until the KalmanFilter call sites read @c SatPairId directly.
      *
      * @param sat_id Row satellite ID: "G01", or the pair "G01-G05".
      * @return {primary, reference}; reference is empty for a non-pair ID.
      */
     inline std::pair<std::string, std::string> splitBssdSatId(const std::string& sat_id) {
-        const size_t dash = sat_id.find('-');
-        if (dash != std::string::npos && dash > 0 && dash + 1 < sat_id.size())
-            return { sat_id.substr(0, dash), sat_id.substr(dash + 1) };
-        return { sat_id, "" };
+        SatPairId p = SatPairId::parse(sat_id);
+        return { std::move(p.primary), std::move(p.reference) };
     }
 
 } // namespace kalman

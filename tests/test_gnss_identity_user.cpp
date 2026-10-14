@@ -18,6 +18,7 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -79,6 +80,45 @@ namespace {
         const size_t us = signal.find('_');
         return (us != std::string::npos && us > 0 && us + 1 < signal.size());
     }
+
+    /// Row-id corpus: every string of up to four characters over a satellite id's characters
+    /// and the pair separator, plus named ids.
+    const std::vector<std::string>& rowIdCorpus() {
+        static const std::vector<std::string> k = [] {
+            std::vector<std::string> v = allStrings("G1-", 4);
+            for (const char* s : {"G01", "G01-G05", "-G05", "G01-", "G01-G05-G07", "G01--G05",
+                                  "G 5-G03", "E11-E02", "C01-C05"})
+                v.emplace_back(s);
+            return v;
+        }();
+        return k;
+    }
+
+    /// kalman::splitBssdSatId's body before it forwarded to SatPairId::parse (KalmanRowIdentity.hpp).
+    std::pair<std::string, std::string> idiomSplitBssdSatId(const std::string& sat_id) {
+        const size_t dash = sat_id.find('-');
+        if (dash != std::string::npos && dash > 0 && dash + 1 < sat_id.size())
+            return { sat_id.substr(0, dash), sat_id.substr(dash + 1) };
+        return { sat_id, "" };
+    }
+
+    /// The trace writer's primary (TraceLogger.cpp, three sites).
+    std::string idiomPrimaryBeforeDash(const std::string& sat_full) {
+        const auto dash = sat_full.find('-');
+        return (dash == std::string::npos) ? sat_full : sat_full.substr(0, dash);
+    }
+
+    /// The baseline DD statistics' pivot (ApplicationBaseline.cpp): the pivot when the
+    /// condition holds, std::nullopt where the site skips the row.
+    std::optional<std::string> idiomPivotAfterDash(const std::string& sid) {
+        const auto dash = sid.find('-');
+        if (dash != std::string::npos && dash + 1 < sid.size()) return sid.substr(dash + 1);
+        return std::nullopt;
+    }
+
+    /// The real-time engine's difference-row skip (RealTimeEngineEstimate.cpp,
+    /// RealTimeEngineSsrDiag.cpp).
+    bool idiomHasDash(const std::string& sat) { return sat.find('-') != std::string::npos; }
 
 } // namespace
 
@@ -148,4 +188,99 @@ TEST(GnssIdentityUserTest, IonoFreePairLabelPredicateAndParseDifferOnlyAtTheEnds
         EXPECT_TRUE(isIonoFreePairLabel(s)) << s;
         EXPECT_FALSE(IonoFreePairLabel::parse(s).has_value()) << s;
     }
+}
+
+// ===========================================================================
+// The between-satellite difference row id
+// ===========================================================================
+
+TEST(GnssIdentityUserTest, SatPairIdParseEqualsSplitBssdSatId) {
+    for (const std::string& s : rowIdCorpus()) {
+        const auto [prim, ref] = idiomSplitBssdSatId(s);
+        const SatPairId p = SatPairId::parse(s);
+        EXPECT_EQ(p.primary, prim) << '"' << s << '"';
+        EXPECT_EQ(p.reference, ref) << '"' << s << '"';
+        const size_t dash = s.find('-');
+        EXPECT_EQ(p.isPair(), dash != std::string::npos && dash > 0 && dash + 1 < s.size())
+            << '"' << s << '"';
+    }
+}
+
+TEST(GnssIdentityUserTest, SatPairIdParseValues) {
+    const auto [prim, ref] = SatPairId::parse("G01-G05");   // structured bindings, as the sites read it
+    EXPECT_EQ(prim, "G01");
+    EXPECT_EQ(ref, "G05");
+    EXPECT_TRUE(SatPairId::parse("G01-G05").isPair());
+
+    struct Case { const char* id; const char* primary; const char* reference; };
+    for (const Case& c : {Case{"G01", "G01", ""},
+                          Case{"", "", ""},
+                          Case{"-G05", "-G05", ""},           // '-' first: not a pair
+                          Case{"G01-", "G01-", ""},           // '-' last: not a pair
+                          Case{"-", "-", ""},
+                          Case{"G01-G05-G07", "G01", "G05-G07"},
+                          Case{"G01--G05", "G01", "-G05"}}) {
+        const SatPairId p = SatPairId::parse(c.id);
+        EXPECT_EQ(p.primary, c.primary) << c.id;
+        EXPECT_EQ(p.reference, c.reference) << c.id;
+        EXPECT_EQ(p.isPair(), !std::string(c.reference).empty()) << c.id;
+    }
+}
+
+TEST(GnssIdentityUserTest, SatPairIdSplitAtFirstDashEqualsTheLooseIdioms) {
+    for (const std::string& s : rowIdCorpus()) {
+        const SatPairId p = SatPairId::splitAtFirstDash(s);
+        EXPECT_EQ(p.primary, idiomPrimaryBeforeDash(s)) << '"' << s << '"';
+        const std::optional<std::string> pivot = idiomPivotAfterDash(s);
+        EXPECT_EQ(!p.reference.empty(), pivot.has_value()) << '"' << s << '"';
+        if (pivot) EXPECT_EQ(p.reference, *pivot) << '"' << s << '"';
+    }
+}
+
+TEST(GnssIdentityUserTest, SatPairIdTheTwoReadingsDifferOnlyAtTheEnds) {
+    for (const std::string& s : rowIdCorpus()) {
+        const size_t dash = s.find('-');
+        const bool at_an_end = dash != std::string::npos && (dash == 0 || dash + 1 == s.size());
+        if (at_an_end) continue;
+        const SatPairId strict = SatPairId::parse(s);
+        const SatPairId loose  = SatPairId::splitAtFirstDash(s);
+        EXPECT_EQ(loose.primary, strict.primary) << '"' << s << '"';
+        EXPECT_EQ(loose.reference, strict.reference) << '"' << s << '"';
+    }
+    struct Case { const char* id; const char* primary; const char* reference; };
+    for (const Case& c : {Case{"-G05", "", "G05"}, Case{"G01-", "G01", ""}, Case{"-", "", ""},
+                          Case{"G01", "G01", ""}, Case{"", "", ""}}) {
+        const SatPairId p = SatPairId::splitAtFirstDash(c.id);
+        EXPECT_EQ(p.primary, c.primary) << c.id;
+        EXPECT_EQ(p.reference, c.reference) << c.id;
+    }
+}
+
+TEST(GnssIdentityUserTest, HasSatPairSeparatorEqualsTheFindIdiom) {
+    static_assert(hasSatPairSeparator("G01-G05"), "constexpr: a pair row");
+    static_assert(!hasSatPairSeparator("G01"), "constexpr: an undifferenced row");
+    for (const std::string& s : rowIdCorpus())
+        EXPECT_EQ(hasSatPairSeparator(s), idiomHasDash(s)) << '"' << s << '"';
+    // Looser than parse(...).isPair(): true where the '-' is first or last.
+    for (const char* s : {"-G05", "G01-", "-"}) {
+        EXPECT_TRUE(hasSatPairSeparator(s)) << s;
+        EXPECT_FALSE(SatPairId::parse(s).isPair()) << s;
+    }
+    EXPECT_FALSE(hasSatPairSeparator(""));
+}
+
+TEST(GnssIdentityUserTest, SatPairIdStrEqualsTheBuilderJoin) {
+    const std::vector<std::string> members = allStrings("G1-", 2);
+    for (const std::string& a : members)
+        for (const std::string& b : members) {
+            const SatPairId p{a, b};
+            EXPECT_EQ(p.str(), a + "-" + b) << '"' << a << "\" \"" << b << '"';
+            if (!a.empty() && !b.empty() && a.find('-') == std::string::npos) {
+                const SatPairId back = SatPairId::parse(p.str());
+                EXPECT_EQ(back.primary, a) << '"' << a << "\" \"" << b << '"';
+                EXPECT_EQ(back.reference, b) << '"' << a << "\" \"" << b << '"';
+            }
+        }
+    EXPECT_EQ((SatPairId{"G01", "G05"}.str()), "G01-G05");
+    EXPECT_EQ((SatPairId{"G01", ""}.str()), "G01-");      // joined whatever the members hold
 }

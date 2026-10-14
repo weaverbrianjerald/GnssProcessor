@@ -188,4 +188,19 @@ namespace GnssProcessor {
         return IonoFreePairLabel{std::string(label.substr(0, us)), std::string(label.substr(us + 1))};
     }
 
+    SatPairId SatPairId::parse(std::string_view row_id) {
+        const std::size_t dash = row_id.find('-');
+        if (dash != std::string_view::npos && dash > 0 && dash + 1 < row_id.size())
+            return SatPairId{std::string(row_id.substr(0, dash)), std::string(row_id.substr(dash + 1))};
+        return SatPairId{std::string(row_id), std::string()};
+    }
+
+    SatPairId SatPairId::splitAtFirstDash(std::string_view row_id) {
+        const std::size_t dash = row_id.find('-');
+        if (dash == std::string_view::npos) return SatPairId{std::string(row_id), std::string()};
+        return SatPairId{std::string(row_id.substr(0, dash)), std::string(row_id.substr(dash + 1))};
+    }
+
+    std::string SatPairId::str() const { return primary + "-" + reference; }
+
 } // namespace GnssProcessor

@@ -997,4 +997,94 @@ namespace GnssProcessor {
         static std::optional<IonoFreePairLabel> parse(std::string_view label);
     };
 
+    /**
+     * @brief The row id of a between-satellite difference: "G01-G05", the primary
+     *        (non-pivot) satellite first and the reference (pivot) satellite second.
+     *
+     * The BSSD single difference (@c BssdTransform, "non_pivot-pivot") and the baseline
+     * double-difference rows ("sat_i-sat_p") write this id into
+     * @c EpochMeasurement::satellite_ids, where an undifferenced row carries its satellite
+     * alone ("G01"); the ambiguity resolver writes the same form into its log text.  The
+     * members are the satellite id strings as they stand in the row id, not normalized
+     * (@ref SatId::parse validates one satellite).
+     *
+     * The user-side sites read a row id three ways, and the three differ for a '-' at either
+     * end of the id, so each has its own name: @ref parse (the KalmanFilter rule),
+     * @ref splitAtFirstDash and @ref hasSatPairSeparator.
+     */
+    struct SatPairId {
+        std::string primary;    ///< The non-pivot satellite, e.g. "G01"; the whole id of an undifferenced row.
+        std::string reference;  ///< The pivot satellite, e.g. "G05"; empty for an undifferenced row.
+
+        /**
+         * @brief Read a row id: split at its first '-' when that '-' has text on both sides;
+         *        otherwise the whole id is the primary and the reference is empty.
+         *
+         * The rule of @c kalman::splitBssdSatId (filter/KalmanRowIdentity.hpp, which forwards
+         * here), equal to it for every input, so a malformed id reads as an undifferenced
+         * satellite: "-G05" and "G01-" are each their own primary with an empty reference,
+         * and the empty id gives two empty members.  A second '-' stays in the reference
+         * ("G01-G05-G07" gives "G01" and "G05-G07").
+         *
+         * @param row_id The row id, e.g. "G01-G05" or "G01".
+         * @return The pair; never fails.
+         */
+        static SatPairId parse(std::string_view row_id);
+
+        /**
+         * @brief Split a row id at its first '-' wherever it stands; without a '-', the
+         *        whole id and an empty reference.
+         *
+         * The looser reading of two sites: the trace writer takes the primary (the text
+         * before the first '-', the whole id without one) and the baseline DD statistics
+         * take the pivot (the text after the first '-', when there is any).  Equal to
+         * @ref parse except where the first '-' is the first or the last character:
+         * "-G05" gives "" and "G05" (@ref parse: "-G05" and ""), "G01-" gives "G01" and ""
+         * (@ref parse: "G01-" and ""), "-" gives two empty members (@ref parse: "-" and "").
+         *
+         * @param row_id The row id.
+         * @return The text before and after the first '-'.
+         */
+        static SatPairId splitAtFirstDash(std::string_view row_id);
+
+        /**
+         * @brief True when the id names a pair: the reference is non-empty.
+         *
+         * For a value from @ref parse, true exactly when the first '-' has text on both
+         * sides; not the test @ref hasSatPairSeparator makes.
+         *
+         * @return @c !reference.empty().
+         */
+        bool isPair() const { return !reference.empty(); }
+
+        /**
+         * @brief The row id, primary + "-" + reference, joined whatever the members hold.
+         *
+         * Equal to the builders' expression @c sat_i @c + @c "-" @c + @c sat_p for every pair
+         * of strings, so an empty reference renders "G01-" (an undifferenced row's id is its
+         * satellite id itself, not a rendering of this type).  For a pair whose primary holds
+         * no '-' and whose members are both non-empty, @ref parse of the rendering gives the
+         * pair back.
+         *
+         * @return The row id, e.g. "G01-G05".
+         */
+        std::string str() const;
+    };
+
+    /**
+     * @brief True when a row id holds a '-' anywhere: a between-satellite difference row
+     *        (see @ref SatPairId).
+     *
+     * The test the real-time engine's single-satellite reads write as
+     * @c row_id.find('-') @c != @c npos to skip the difference rows, equal to it for every
+     * input.  Looser than @c SatPairId::parse(row_id).isPair(): true also for "-G05", "G01-"
+     * and "-".
+     *
+     * @param row_id The row id.
+     * @return True when @p row_id contains '-'.
+     */
+    constexpr bool hasSatPairSeparator(std::string_view row_id) {
+        return row_id.find('-') != std::string_view::npos;
+    }
+
 } // namespace GnssProcessor
