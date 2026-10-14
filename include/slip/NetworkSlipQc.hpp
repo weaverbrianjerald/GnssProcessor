@@ -643,14 +643,13 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
  * (MW-blind: the step is band-common, so ΔWL = 0), while the carried ambiguity
  * and the zero-q leveling level survive at their pre-gap values.  The response
  * is the free-epoch refloat the raw-slip drains use: under a warm carry, mark
- * pending-reseed, latch @c free_ambs (cause @c kCauseWindup, so the lane
- * observatory grades this response like any other) and void the outstanding
- * bridge pends of the (station, satellite); under carry_invariant, feed the C3c
- * funnel.
+ * pending-reseed, latch @c free_ambs (cause @c kCauseWindup) and void the
+ * outstanding bridge pends of the (station, satellite); under carry_invariant,
+ * feed the C3c funnel.
  *
  * Runs serially in station order, after the per-station model evaluations have
- * filled the ledgers and before the lane observatory's PASS-A half, which needs
- * the complete freed set.  Each present station's ledger is cleared after the
+ * filled the ledgers, so the freed set is complete for the PASS-B inject.  Each
+ * present station's ledger is cleared after the
  * drain; an absent station is skipped and keeps its ledger.  An entry stamped
  * with an earlier epoch (one that no drain consumed at the time) is refused and
  * counted (@c wu_restart_stale): its step has been absorbed since, and a
@@ -733,8 +732,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * station's other carried phases of those two bands) are treated as a detected
  * slip: the C3c funnel insert under @p carry_invariant; the pending-reseed mark
  * (where the ambiguity column already exists) and a @c free_ambs latch (cause
- * @c RelevelEpochState::kCauseGap, so the lane observatory grades this response
- * like any other) under a warm leveling carry.  Nothing is repaired and no
+ * @c RelevelEpochState::kCauseGap) under a warm leveling carry.  Nothing is
+ * repaired and no
  * integer is applied: across a loss of lock the slip magnitude is unbounded and
  * unknown, so the re-entry is treated as a fresh, code-anchored arc.
  *
@@ -771,10 +770,9 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * widened together.
  *
  * Runs serially in station order (deterministic).  Called in the slip-drain band
- * of PASS A, after the wind-up restart drain and before the lane observatory's
- * PASS-A half, so the freed set is complete for the observatory and visible to
- * the PASS-B inject in the same epoch; a response one epoch late would let the
- * stale level fold once.
+ * of PASS A, after the wind-up restart drain, so the freed set is visible to the
+ * PASS-B inject in the same epoch; a response one epoch late would let the stale
+ * level fold once.
  *
  * On the legacy datum (i_lo = 1), resumptions at station 0, the gauge-pinned
  * pivot, are skipped and counted (pivot_skipped): its ambiguities are pinned, so
@@ -1047,20 +1045,17 @@ BridgeReplaceOutcome networkSlipBridgeReplace(
  *    dangerous direction.  The shipped 0.6 (@ref kBridgeGfIfRho) is a
  *    conservative middle.
  *
- * Stage 2 (@c has_ewl) chains band 3: ΔN3 = ΔN_shared + dn_ewl_b3 (the pend
- * normalized the candidate's frequency-sorted sign at fill), var3 = var_shared +
- * σ_EWL² (cycles), with λ3 derived from (λ_shared, λ_EWL) alone.  The kernel
+ * The band-3 chain from the EWL-MW integer (stage 2, bridge v3 E3) is retired
+ * with @c network.cycle_slip.relevel_bridge_ewl.  The kernel
  * works in floats throughout and never rounds: rounding its output would bring
  * back the wrong-integer risk of the mw_only variant behind a small propagated σ.
  */
 struct BridgeV3Solve {
     bool   ok{false};
-    bool   has3{false};            ///< Band-3 chained (EWL slot present + stage 1 ok).
     bool   used_gf{false};         ///< Stage 1 took the E1+E4 route (no MW integer).
-    double dn1_cyc{0}, dn2_cyc{0}, dn3_cyc{0};
-    double shift1_m{0}, shift2_m{0}, shift3_m{0};
-    double var1_m2{0}, var2_m2{0}, var3_m2{0};
-    double lam3_m{0};              ///< Band-3 wavelength (for the corroboration).
+    double dn1_cyc{0}, dn2_cyc{0};
+    double shift1_m{0}, shift2_m{0};
+    double var1_m2{0}, var2_m2{0};
     double plane_resid_sigma{-1.0};///< E2-vs-E4 overdetermination residual (σ); <0 = not formed.
 };
 /// Conservative E1/E4 error correlation (shared band-TD content; phase limit 0.97).
@@ -1071,39 +1066,19 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
                                        double max_abs_cyc, double max_sigma_cyc);
 
 /**
- * @brief Bridge v3 replace: the v2 outcome ladder over up to three bands.
+ * @brief Bridge v3 replace: the v2 outcome ladder over the IF pair's two bands.
  *
  * Same discipline as @ref networkSlipBridgeReplace: kernel caps, then per-band
- * free-level corroboration (band 3 included when it was solved and its pre-slip
- * carry was captured at the flag epoch), then a value-and-var-only mutation.
- * There is no partial apply: a corroboration failure on any solved band rejects
- * the whole bridge, because a half-replaced LOS would mix pre-slip and free
- * re-level frames.
+ * free-level corroboration, then a value-and-var-only mutation.  There is no
+ * partial apply: a corroboration failure on either band rejects the whole
+ * bridge, because a half-replaced LOS would mix pre-slip and free re-level
+ * frames.
  */
 BridgeReplaceOutcome networkSlipBridgeV3Replace(
     const RelevelPend& pd, int sta, const std::string& sat,
     std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
     double rho_if_gf, double max_abs_cyc, double max_sigma_cyc, double corrob_cyc,
     BridgeV3Solve* solved = nullptr);
-
-/**
- * @brief Bridge v3 E3: fill a pend's EWL slot from a confident MW candidate
- *        whose pair shares exactly one band with the pend's IF pair.
- *
- * Normalizes the integer to ΔN(band3) − ΔN(shared band) whatever the
- * candidate's frequency-sorted pair order.  A missed sign flip would pass every
- * σ cap: the Galileo EWL arrives as (L7Q, L5Q) = ΔN3 − ΔN2, while GPS's
- * (L2W, L5Q) = ΔN2 − ΔN3.  Also derives the shared-band index (1 or 2 within
- * the IF pair) and whether band 3 sits on the EWL pair's high-frequency side
- * (the λ3 derivation needs the sign of 1/λ_EWL).  @p sigma_floor_eff_cyc is the
- * floor already mapped to the elevation, because the v2 frac proxy understates
- * the single-epoch EWL σ by about 100× at low elevation.  Returns false (pend
- * untouched) when the pair does not share exactly one band, the pend already
- * holds an EWL, the linked third band contradicts the pend's recorded sig3, or
- * the candidate's wide-lane wavelength is not positive.
- */
-bool networkSlipFillEwlSlot(RelevelPend& pd, const MwBridgeCand& cand,
-                            double sigma_floor_eff_cyc);
 
 /**
  * @brief IF-phase triple-difference slip driver: pool the PASS-A deferred

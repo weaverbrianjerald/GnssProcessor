@@ -585,7 +585,6 @@ add_executable(gnss_tests
     tests/test_carry_disposition.cpp
     tests/test_carry_sites.cpp
     tests/test_param_responses.cpp
-    tests/test_lane_observatory_config.cpp
     tests/test_zwd_seam_reseed_config.cpp
     tests/test_zwd_seam_reseed_q.cpp
     tests/test_carry_zwd_in_block.cpp

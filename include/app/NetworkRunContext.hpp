@@ -1825,32 +1825,14 @@ namespace GnssProcessor {
         std::map<std::tuple<int, std::string, std::string>, LocalCarry> local_carry;
         /// Continuous-GPS-seconds stamp of the previous harvest, i.e. the value
         /// @c LocalCarry::last_seen_s carries for an entry stashed one processed epoch
-        /// ago.  Written at the end of every harvest; -1 before the first.  The §7.3 lane
-        /// observatory uses it to require that a pre-event carry is exactly one epoch old,
-        /// so a stale level is never differenced against a one-epoch ΔMW.
+        /// ago.  Written at the end of every harvest; -1 before the first.  Readers
+        /// difference it against this epoch's stamp for the observed inter-epoch spacing.
         double pl_prev_now_s{-1.0};
         /// The previous receiver-clock harvest's stamp (s), for RX-CLK-in-block.  A second
         /// field rather than a read of @c pl_prev_now_s, because that one has already been
         /// advanced to this epoch by the time the clock harvest runs.  Used only to convert
         /// a sighting gap into epochs for the per-epoch q.
         double rxclk_prev_now_s{-1.0};
-        /// T4-side pre-erase capture for the §7.6(d) lane observatory: the
-        /// @c LocalCarry::value_abs about to be erased (with its @c last_seen_s stamp and
-        /// the erase-cause bit) at the RAIM attribution and consensus erase sites, keyed
-        /// like @c local_carry.  Measure-only, armed with the observatory knob.  Lifetime
-        /// is one epoch: filled at SB_RAIM of epoch t (post-harvest), consumed and cleared
-        /// at epoch t+1's harvest (the bound invariant #1 puts on what a decoupled capture
-        /// may carry; a missed epoch drops the capture rather than measuring across an
-        /// unequal interval).  Not snapshotted.  Unlike the §7.3 detector path, whose pre
-        /// level lives in @c local_carry and is therefore gauge-current by construction,
-        /// this is a copy across one epoch boundary: the consumer must skip pairs whose
-        /// (sat, σ) appears in this epoch's @c eq34_reref set (n_lane_t4_skip_gauge).
-        struct LaneT4Pre {
-            double value_abs{0.0};
-            double stamp_s{-1.0};
-            std::uint8_t cause{0};   ///< RelevelEpochState::kCauseT4Attrib / kCauseT4Consens.
-        };
-        std::map<std::tuple<int, std::string, std::string>, LaneT4Pre> lane_t4_pre;
         /// This epoch's @c network_amb_state.csv rows (@c network.trace_amb_state; RF-1
         /// §7.4), buffered here and drained serially by @ref networkAmbStateTrace at the
         /// end of the epoch (as @c sd_ewl_trace does, so the file order does not depend on
@@ -2392,17 +2374,6 @@ namespace GnssProcessor {
         /// the units folded at the last step, for the fold's edges.  Empty and untouched unless
         /// the fold runs with source lattice.  Not snapshotted.
         FixedCycleState              fixed_cycles;
-        /// Retap piece (relevel_retap_statistical): per-arc consecutive-retap streak
-        /// (key → last continuous-GPS s, streak).  An arc that re-trips
-        /// relevel_retap_streak_max times inside the 120 s window falls back to the erase
-        /// (a real missed slip that the loose prior cannot absorb).  Also the set of arcs
-        /// retapped between one RAIM pass and the next harvest, for the statistics guard
-        /// (read and cleared by the next harvest's labeling).  Neither is snapshotted
-        /// (forward-only response state; a resume degrades to the erase path, the
-        /// conservative direction).
-        std::map<std::tuple<int, std::string, std::string>, std::pair<double, int>>
-                                     relevel_retap_streak;
-        std::set<std::tuple<int, std::string, std::string>> relevel_retapped_prev;
         /// Bridge v2 pend store, keyed (station idx, sat, "sig1_sig2"); persistent across
         /// epochs (the MW integer arrives 1–2 epochs after the T1 flag), swept for expiry
         /// and replacement at the top of the MW drain.  Not snapshotted: a resume drops
@@ -3824,78 +3795,6 @@ namespace GnssProcessor {
         long long n_cpl_readmit_diverted  = 0;  ///< coupling terms diverted to the departed route by a re-admission window
         long long n_snap_parked_excluded  = 0;  ///< parked entries excluded from written snapshots
 
-        // --- The carry-domain lane observatory ---
-        // Measure-only: it computes the lane response of the free re-level and histograms
-        // it, writing nothing back, so an armed run is byte-identical on every solve
-        // artifact.  The |delta| distribution decides whether an apply leg is worth
-        // building at all, so the counters below are reconciled by the closure identity.
-        //
-        // delta = [C_a(t+)/lam_a - C_b(t+)/lam_b] - [C_a(t-)/lam_a - C_b(t-)/lam_b] - dM
-        // The residual is eps_L(t+) - eps_L(t-) - eps_MW, with eps_MW = 0.351 cyc on GPS
-        // L1/L2 and 0.051 cyc on L2/L5 EWL at sigma_P = 0.3 m.  The carry-frame hypothesis
-        // predicts the bulk of |delta| below about 2 cyc; a bulk above 25 cyc is what a
-        // frame mismatch looks like, and is the falsifier to watch for.
-        //
-        // Closure identity (invariant #4: a channel that does not close is a miswire, not
-        // a null):
-        //     n_lane_attempts == n_lane_measured
-        //                      + n_lane_skip_no_row     + n_lane_skip_no_mw
-        //                      + n_lane_skip_unmeasured + n_lane_skip_pair_changed
-        //                      + n_lane_skip_no_freed_band
-        //                      + n_lane_skip_no_pre     + n_lane_skip_stale_pre
-        //                      + n_lane_skip_no_post
-        //                      + n_lane_skip_bridged    + n_lane_skip_bad_lambda
-        //     n_lane_measured  == sum(n_lane_hist[0..8])
-        long long n_lane_attempts        = 0;  ///< (station, satellite) pairs with >= 1 freed signal this epoch: the denominator.  Counted over the freed set, not over the raw rows, so an arc the raw pass never saw is still visible (as n_lane_skip_no_row) instead of leaving the denominator unnoticed.
-        long long n_lane_measured        = 0;  ///< pairs that yielded a finite delta.
-        long long n_lane_skip_no_row     = 0;  ///< the freed (station, satellite) had no raw-observable row this epoch at all (satellite not tracked by the raw pass, or station absent).
-        long long n_lane_skip_no_mw      = 0;  ///< a raw row existed but carried no usable second band (not dual).
-        long long n_lane_skip_unmeasured = 0;  ///< raw-MW entry present but no adjacent predecessor (step not formable).
-        long long n_lane_skip_pair_changed = 0;///< the adjacent raw predecessor used a different band pair, so ΔMW is not in this lane's cycles.
-        long long n_lane_skip_no_freed_band = 0;///< the satellite had a freed band, but not one of this pair's two: both carries are continuous, so there is no re-level response to measure.  (Third-band frees: L5 on a triple posture, or a second channel of the same band under channel_mode=all.)
-        long long n_lane_skip_no_pre     = 0;  ///< a band had no live pre-event carry (new arc, or retired last epoch).
-        long long n_lane_skip_stale_pre  = 0;  ///< a pre-event carry existed but was not stashed at the immediately preceding processed epoch, so differencing it against a one-epoch ΔMW would compare unequal intervals.
-        long long n_lane_skip_no_post    = 0;  ///< a band was not re-stashed this epoch.  Tested on last_seen_s, not on map presence: an un-refreshed entry survives for a full pl_max_gap_s, and accepting it would contribute the pre value as the post value, collapsing δ to a one-band code re-level (top bins) or to exactly −ΔMW (≈0.35 cyc, bottom bins).  Either direction would produce a false verdict.
-        long long n_lane_skip_bridged    = 0;  ///< a band was delta-bridged: its carry is already re-based, so the lane response is the bridge's, not the free re-level's.
-        long long n_lane_skip_bad_lambda = 0;  ///< non-finite / non-positive wavelength on either band.
-        long long n_lane_both_freed      = 0;  ///< ...of the measured, pairs where both bands were freed (vertex-wide response).
-        long long n_lane_one_freed       = 0;  ///< ...of the measured, pairs where exactly one band was freed (band-scoped response; its partner's carry is continuous).
-        double    lane_abs_delta_sum_cyc = 0.0;///< Σ |delta| over measured pairs (cycles), uncapped.
-        double    lane_abs_delta_max_cyc = 0.0;///< max |delta| (cycles).
-        /// |delta| histogram, bins < 0.1 / 0.25 / 0.5 / 1 / 2 / 5 / 10 / 25 / >= 25 cyc.
-        long long n_lane_hist[9]         = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-        // --- Instrument additions of §7.6 ---
-        // (b) Band-scoped-only histogram: the one_freed subset of n_lane_hist, so the
-        //     vertex-wide distribution is the bin-wise difference and the two responses
-        //     (the rung-2 contrast) separate.  Closure:
-        //     sum(n_lane_hist_bandscoped) == n_lane_one_freed.
-        long long n_lane_hist_bandscoped[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-        // (c) Cause split over measured pairs, as bit counts (a pair freed by two
-        //     detectors increments two of these), so they sum to >= n_lane_measured.
-        long long n_lane_meas_mw   = 0;  ///< measured pairs with the MW bit.
-        long long n_lane_meas_lli  = 0;  ///< measured pairs with the LLI bit.
-        long long n_lane_meas_iftd = 0;  ///< measured pairs with the IF-TD bit.
-        // (d) T4-side coverage: the same delta measured on pairs whose carries the RAIM
-        //     attribution/consensus erase refloated, the channel that frees most arcs in
-        //     the field and is structurally invisible to free_ambs.  Pre-erase values are
-        //     captured at the erase site (lane_t4_pre) and measured at the next harvest.
-        //     Separate closure: n_lane_t4_attempts == n_lane_t4_measured +
-        //     Σ n_lane_t4_skip_*.
-        long long n_lane_t4_captured     = 0;  ///< (station,sat,signal) arcs captured at the erase sites.
-        long long n_lane_t4_attempts     = 0;  ///< (station,sat) pairs with >= 1 captured band last epoch.
-        long long n_lane_t4_measured     = 0;  ///< pairs that yielded a finite T4 delta.
-        long long n_lane_t4_skip_no_row  = 0;  ///< no raw-observable row this epoch.
-        long long n_lane_t4_skip_no_mw   = 0;  ///< raw row not dual.
-        long long n_lane_t4_skip_unmeasured = 0;   ///< no adjacent raw predecessor.
-        long long n_lane_t4_skip_pair_changed = 0; ///< predecessor used a different band pair.
-        long long n_lane_t4_skip_gauge   = 0;  ///< the pair's (sat,σ) was eq34-re-referenced this epoch, so the capture predates the frame step.  The detector path gets this guard for free because lane_pre lives in local_carry; the capture is a copy and must be interlocked.
-        long long n_lane_t4_skip_no_pre  = 0;  ///< a band of the MW pair had no capture.
-        long long n_lane_t4_skip_stale_pre = 0;///< capture not from the immediately preceding harvest.
-        long long n_lane_t4_skip_no_post = 0;  ///< a band was not re-stashed this epoch (the same last_seen_s test as the detector path).
-        long long n_lane_t4_skip_bad_lambda = 0; ///< non-finite wavelength/delta.
-        double    lane_t4_abs_delta_sum_cyc = 0.0;
-        double    lane_t4_abs_delta_max_cyc = 0.0;
-        long long n_lane_t4_hist[9]      = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         // Declaration telemetry for both edges (invariant #7) and hygiene accounting
         // (QUEUE item 4 R2/R4).
         long long n_staf_departs          = 0;  ///< depart events (EWMA ratio > threshold; R2)
@@ -4254,17 +4153,6 @@ namespace GnssProcessor {
         /// miswire (invariant #4): the drains latched but the inject never consulted, or no
         /// marked arc ever had a live carry.
         long long n_relevel_free_skips = 0;
-        /// Run totals of the retap piece: arcs kept (level preserved, variance re-tapped),
-        /// streak escalations to the erase, and flagged arcs with no live carry.
-        long long n_relevel_retap_kept = 0, n_relevel_retap_escalated = 0,
-                  n_relevel_retap_miss = 0;
-        /// Corroborated retap: keeps that carried positive raw-observable continuity
-        /// evidence, refusals because the raw level stepped, and refusals because the arc
-        /// was unmeasured (no predecessor, or the qualification pass did not run).  Both
-        /// refusal counters at 0 on a slip-bearing armed run is invariant #4's "clean log,
-        /// dead wiring"; check them, not the keep count.
-        long long n_relevel_retap_corr_kept = 0, n_relevel_retap_corr_stepped = 0,
-                  n_relevel_retap_corr_unmeasured = 0;
         /// Run totals of the slant-iono carry (QUEUE 8b), for both coupling edges
         /// (invariant #7).  injected: priors folded (scope-gated).  kept_through_slip:
         /// slip-funnel entries whose bands were freed (kept).  erased_slip: funnel entries

@@ -14,14 +14,13 @@ namespace GnssProcessor {
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: slip QC: MW and LLI detections, the re-level response, the statistical retap.
+ * @brief Run-end report: slip QC: MW and LLI detections, the re-level response.
  *
- * Slip QC: card E's MW and LLI detections, the slip re-level response (free epoch,
- * bridge v2 and v3) and the statistical retap.
+ * Slip QC: card E's MW and LLI detections and the slip re-level response (free
+ * epoch, bridge v2 and v3).
  *
  * Gate: each section under its own condition, as in the teardown:
- * `config_.networkCycleSlipMwDetect()`; `config_.networkCycleSlipRelevelFreeEpoch()`;
- * `config_.networkCycleSlipRelevelRetapStatistical()`.
+ * `config_.networkCycleSlipMwDetect()`; `config_.networkCycleSlipRelevelFreeEpoch()`.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
@@ -45,15 +44,12 @@ int networkSlipMwRelevelRunEnd(const NetworkRunEndView& v);
 int networkSlipWindupMwRunEnd(const NetworkRunEndView& v);
 
 /**
- * @brief Run-end report: slip QC: IF-TD pairs, band-scoped responses, the lane observatory, retap corroboration.
+ * @brief Run-end report: slip QC: IF-TD pairs and band-scoped responses.
  *
- * Slip QC: the IF-TD pair width, the band-scoped responses, the carry-domain lane
- * observatory (rung 3 v3) and the retap corroboration.
+ * Slip QC: the IF-TD pair width and the band-scoped responses.
  *
  * Gate: each section under its own condition, as in the teardown:
- * `config_.networkCycleSlipIfPhaseTd()`; always (a block);
- * `config_.networkCycleSlipRelevelLaneSnap()`;
- * `config_.networkCycleSlipRelevelRetapCorroborate()`.
+ * `config_.networkCycleSlipIfPhaseTd()`; always (a block).
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).

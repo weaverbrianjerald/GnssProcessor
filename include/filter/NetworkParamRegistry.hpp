@@ -129,13 +129,12 @@ enum class ResponsePolicy : int {
     Loosen,            ///< Folded at the loose rate until a guard re-validates it (card Q3's anchor).
     Recouple,          ///< The guard re-validated a loosened instance: it folds at its anchored rate again.
     Reinit,            ///< Folded at the re-initialization variance (the clock monitor's flag).
-    Retap,             ///< Value kept, variance inflated.
     Hold,              ///< Frozen and re-applied while a guard holds it.
     ReanchorAtTarget,  ///< A carried time link re-anchored at its absolute target.
 };
 
 /// Number of @ref ResponsePolicy values (array sizing).
-inline constexpr std::size_t kResponsePolicies = 18;
+inline constexpr std::size_t kResponsePolicies = 17;
 
 /// @brief Table name of an event (e.g. "slip").
 const char* paramEventName(ParamEvent e);

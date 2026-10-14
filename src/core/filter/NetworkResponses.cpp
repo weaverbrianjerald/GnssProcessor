@@ -60,8 +60,6 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
      "NetworkRaim.cpp attribution (T4) and consensus (T3)", "arcs whose prior the drop changed"},
     {R::AmbRaimErase, "amb_raim_erase", K::Ambiguity, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkRaim.cpp attribution (T4) and consensus (T3)", "arcs erased"},
-    {R::AmbRaimRetap, "amb_raim_retap", K::Ambiguity, E::Slip, P::Retap, Src::Increment, kNoDisp,
-     "NetworkRaim.cpp attribution (T4)", "arcs whose variance the retap raised or whose regression it cleared"},
     {R::AmbDatumSlipErase, "amb_datum_slip_erase", K::Ambiguity, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkSlipQc.cpp datum-station slip re-reference", "arcs erased"},
     {R::AmbGrossErase, "amb_gross_erase", K::Ambiguity, E::Decouple, P::EraseAndRebirth, Src::Increment, kNoDisp,
@@ -218,7 +216,6 @@ const char* responsePolicyName(ResponsePolicy p) {
         case ResponsePolicy::Loosen:            return "loosen";
         case ResponsePolicy::Recouple:          return "recouple";
         case ResponsePolicy::Reinit:            return "reinit";
-        case ResponsePolicy::Retap:             return "retap";
         case ResponsePolicy::Hold:              return "hold";
         case ResponsePolicy::ReanchorAtTarget:  return "reanchor_at_target";
     }
@@ -301,8 +298,6 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::AmbGapPrune:          return ambCarried;
         case R::AmbRaimDrop:          return k.raim_on && k.pl_on && k.amb_float_kf;
         case R::AmbRaimErase:         return k.raim_on && ambCarried && !k.amb_float_kf;
-        case R::AmbRaimRetap:
-            return k.raim_on && k.pl_on && t4 && config.networkCycleSlipRelevelRetapStatistical();
         case R::AmbDatumSlipErase:    return k.datum_station_detect && k.pl_on;   // forced off without mw_detect and under the prioritized datum
         case R::AmbGrossErase:        return k.gl_on && !k.gl_bound && ambCarried;
         case R::AmbGrossHold:         return k.gl_on && k.gl_bound && ambCarried;

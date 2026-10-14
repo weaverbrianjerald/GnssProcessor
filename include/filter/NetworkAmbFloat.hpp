@@ -188,7 +188,7 @@ namespace GnssProcessor {
      *
      * Two causes, both of which skip an inject on the leveling vehicle:
      *  - @c relevel_free: every @c (station, amb key) the detectors latched this epoch.
-     *    The latched set itself is left in place, because the lane observatory, the
+     *    The latched set itself is left in place, because the
      *    phase-datum candidacy screen, the anchor-slip handover staging and the
      *    harvest's statistics guards all read it (§4.1: "keep the latched-set
      *    plumbing").  With @c network.phase_datum_held_basis armed, every latched arc

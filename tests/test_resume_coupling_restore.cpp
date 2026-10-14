@@ -668,9 +668,9 @@ TEST(ResumeCouplingConfig, RestoreRequiresGaugeProject) {
 //     Under conditional coupling `var` is the row's pure conditional variance, so
 //     inflating it loosens the row the regressors make border-neutral while the
 //     row still asserts Σ M_j·ŝ_prev,j.  No continuous epoch produces that
-//     combination, and the in-tree precedent runs the other way (the relevel
-//     re-tap in networkPostFitRaim, NetworkRaim.cpp, clears the regression when it
-//     loosens the variance).  The loader therefore makes the two knobs mutually
+//     combination, and the in-tree precedent ran the other way (the retired relevel
+//     re-tap in networkPostFitRaim cleared the regression when it loosened the
+//     variance).  The loader therefore makes the two knobs mutually
 //     exclusive.
 TEST(ResumeCouplingConfig, RestoreRefusesSeamReinflate) {
     GnssConfig cfg;

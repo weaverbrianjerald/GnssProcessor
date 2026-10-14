@@ -3605,8 +3605,8 @@ namespace GnssProcessor {
          * the prefit census is x_lin-framed).  The floor keeps the per-event code
          * adoption near 10 %, so a wrong carry is corrected over ~10 events while the
          * churn suppression (adoption² in variance) is kept.  Default 0.04 = (0.2 m)²;
-         * the retap's 0.25 m² is the in-house precedent for a prior loose enough that
-         * the data decides.
+         * the retired statistical retap's 0.25 m² was the in-house precedent for a prior
+         * loose enough that the data decides.
          */
         double networkIonoCarryVarFloor() const { return network_iono_carry_var_floor_; }
 
@@ -4674,83 +4674,8 @@ namespace GnssProcessor {
         ///        @ref networkCycleSlipRelevelBridgeGfSigmaFloorM.  Rider on
         ///        relevel_delta_bridge; default false is byte-identical.
         bool networkCycleSlipRelevelBridgeGf() const { return network_cycle_slip_relevel_bridge_gf_; }
-        /// @brief Bridge v3, E3 (@c network.cycle_slip.relevel_bridge_ewl): route
-        ///        confident EWL-MW integers (the instantly-roundable
-        ///        extra-widelane, λ 5.9/9.8 m on GPS L2-L5 / GAL E5b-E5a) into a
-        ///        pend's band-3 slot, chaining ΔN3 = ΔN_shared + ΔN_EWL.  This
-        ///        covers band 3, which a (1,2)-plane bridge alone leaves to the free
-        ///        re-level.
-        ///        Rider on relevel_delta_bridge; default false is byte-identical.
-        bool networkCycleSlipRelevelBridgeEwl() const { return network_cycle_slip_relevel_bridge_ewl_; }
         /// @brief Floor on the GF-TD step's 1σ (metres) entering the v3 kernel.
         double networkCycleSlipRelevelBridgeGfSigmaFloorM() const { return network_cycle_slip_relevel_bridge_gf_sigma_floor_m_; }
-        /// @brief Zenith floor on the EWL integer's 1σ (cycles); elevation-mapped
-        ///        at the fill site (the v2 frac proxy understates the single-epoch
-        ///        EWL noise ~100× at low elevation, which would make band 3 too
-        ///        stiff).
-        double networkCycleSlipRelevelBridgeEwlSigmaFloorCyc() const { return network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc_; }
-        /// @brief The statistical-refloat half of the re-level response
-        ///        (SPEC_slip_relevel_walk §6): a post-fit-RAIM refloat with no
-        ///        measured delta (T2 consensus / T4 arc) keeps its level and
-        ///        re-taps the confidence to relevel_retap_var_m2 (idempotent set)
-        ///        instead of erasing, on the premise that the false-alarm
-        ///        population's levels are overwhelmingly correct and the free
-        ///        re-level was the steady-state injection.  A real missed slip
-        ///        loses to the data through the loose prior; an arc that re-trips
-        ///        relevel_retap_streak_max times in a row falls back to the erase.
-        ///        FALSIFIED on the lane-integer instrument (SPEC_lane_slip_response:
-        ///        keep-always 54.0 % at the own true integer against 70.2 % for
-        ///        refloat-always); keep off.  Fingerprint-exempt, byte-identical off.
-        bool networkCycleSlipRelevelRetapStatistical() const { return network_cycle_slip_relevel_retap_statistical_; }
-        /// @brief Corroborated retap (SPEC_lane_slip_response §3 rung 1'): the keep
-        ///        branch above fires only when the pre-solve raw-observable pass
-        ///        (slip-QC MW/GF, the same evidence the D5-v3 corroboration gate
-        ///        consumes) positively measured the arc as continuous this epoch
-        ///        (measured and not stepped).  Unmeasured or stepped arcs fall
-        ///        through to the erase.  Motivation (wu93 lane-integer A/B):
-        ///        blanket keep (F3) lost 16 points of settled EWL at-own-integer
-        ///        rate against blanket refloat (F1), while blanket refloat lost ~29
-        ///        points against response-virgin chords, so the flagged population
-        ///        is heterogeneous and only evidence separates it.  FALSIFIED on
-        ///        the same instrument (corroborated keep 59.6 % against 70.2 % for
-        ///        refloat-always); keep off.  Requires relevel_retap_statistical;
-        ///        fingerprint-exempt, byte-identical off.
-        bool networkCycleSlipRelevelRetapCorroborate() const { return network_cycle_slip_relevel_retap_corroborate_; }
-        /**
-         * @brief Carry-domain lane observatory.
-         *
-         * This knob formerly drove a lane-preserving snap at the per-band
-         * ambiguity seed.  That mechanism (rung 3 v1/v2/v2.1) is deleted and must
-         * not be rebuilt: its only write was an @c x_lin shift on a local ambiguity
-         * column, which the reduced network solve absorbs exactly, so it never
-         * moved the estimate.  The derivation, including why its correction
-         * measured @c -Δe_b/λ_b rather than a lane error, is kept at the deletion
-         * site in @c MeasurementModel::ensureRequiredStates.
-         *
-         * Armed, on every epoch where the free-epoch response frees an arc, the
-         * lane response of the free re-level is computed in the leveling carry's
-         * absolute levels, the frame where the lane lives, because
-         * @c LocalCarry::value_abs is the estimate (@c x_lin + back-substituted
-         * Δx) and the frozen linearization is therefore structurally absent:
-         *
-         *     δ = [C_a(t⁺)/λ_a − C_b(t⁺)/λ_b]
-         *       − [C_a(t⁻)/λ_a − C_b(t⁻)/λ_b] − ΔM_MW      [cycles]
-         *
-         * Measure-only: the result is counted and histogrammed at run end,
-         * never written back, so an armed run is byte-identical on every solve
-         * artifact.  That is deliberate: the |δ| distribution decides whether an
-         * apply leg is worth building.
-         *
-         * Interlocks (warn-and-disarm): requires @c network.phase_leveling (no
-         * leveling carry, no levels to difference) and
-         * @c network.cycle_slip.relevel_free_epoch evaluated on its settled
-         * value (the freed set is the population; without it every counter is
-         * a structural zero that cannot be told apart from dead wiring); disarmed
-         * under @c network.carry_invariant with its base.
-         *
-         * @return True if the carry-domain lane observatory is armed.
-         */
-        bool networkCycleSlipRelevelLaneSnap() const { return network_cycle_slip_relevel_lane_snap_; }
         /**
          * @brief Wired response to a wind-up accumulator restart
          *        (@c network.cycle_slip.windup_restart_refloat; SPEC_phase_windup_sign
@@ -4769,10 +4694,6 @@ namespace GnssProcessor {
          * or without @c network.phase_leveling (nothing stale to refloat).
          */
         bool networkCycleSlipWindupRestartRefloat() const { return network_cycle_slip_windup_restart_refloat_; }
-        /// @brief Retap set value (m²): the kept level's loosened confidence.
-        double networkCycleSlipRelevelRetapVarM2() const { return network_cycle_slip_relevel_retap_var_m2_; }
-        /// @brief Consecutive-retap streak at which an arc falls back to erase.
-        int networkCycleSlipRelevelRetapStreakMax() const { return network_cycle_slip_relevel_retap_streak_max_; }
 
         /**
          * @brief Whether the post-fit network RAIM backstop is on
@@ -9558,15 +9479,8 @@ namespace GnssProcessor {
         double network_cycle_slip_relevel_bridge_corrob_cyc_{3.0};          ///< Free-level corroboration gate (cyc; bridge v2).
         double network_cycle_slip_relevel_bridge_pend_window_s_{120.0};     ///< Pend expiry window (s; bridge v2).
         bool   network_cycle_slip_relevel_bridge_gf_{false};                ///< Same-pair GF-phase-TD float row, which closes the (1,2) plane without waiting for the MW integer (bridge v3, E4).
-        bool   network_cycle_slip_relevel_bridge_ewl_{false};               ///< EWL-MW integer slot (band-3 coverage; sign normalized at fill for the Galileo sign flip; bridge v3, E3).
         double network_cycle_slip_relevel_bridge_gf_sigma_floor_m_{0.01};   ///< σ floor (m) on the empirical GF-step scale (bridge v3, E4).
-        double network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc_{0.05};///< Zenith σ floor (cyc), elevation-mapped at fill (bridge v3, E3).
-        bool   network_cycle_slip_relevel_retap_statistical_{false};        ///< Keep and retap on statistical RAIM refloats (SPEC_slip_relevel_walk; FALSIFIED, keep off).
-        bool   network_cycle_slip_relevel_retap_corroborate_{false};        ///< Keep only on positive raw-observable continuity evidence (SPEC_lane_slip_response; FALSIFIED, keep off).
-        bool   network_cycle_slip_relevel_lane_snap_{false};                ///< Carry-domain lane observatory, measure-only (SPEC_lane_slip_response §7.3).  Not the deleted seed-site snap; see @ref networkCycleSlipRelevelLaneSnap.
         bool   network_cycle_slip_windup_restart_refloat_{false};           ///< Refloat arcs that a wind-up accumulator restart stepped (SPEC_phase_windup_sign §10.4); see @ref networkCycleSlipWindupRestartRefloat.
-        double network_cycle_slip_relevel_retap_var_m2_{0.25};              ///< Retap set variance (m²).
-        int    network_cycle_slip_relevel_retap_streak_max_{3};             ///< Consecutive-retap fallback-to-erase streak.
         bool   network_raim_{false};              ///< Post-fit network RAIM (Increment 3, T2): cross-station post-fit residual consensus refloats a carried ambiguity whose slip the pre-processors missed; off = byte-identical.
         double network_raim_k_sigma_{6.0};        ///< Standardized post-fit residual threshold (σ) above which a carried-ambiguity phase row is flagged slip-contaminated.
         double network_raim_sigma0_floor_{1.0};   ///< Floor on the RAIM robust a-posteriori variance factor σ̂0 = max(floor, 1.4826·median|v·√w|); 1.0 default (never below the a-priori σ); lower lets σ̂0 drop below 1 (tightens the gate).

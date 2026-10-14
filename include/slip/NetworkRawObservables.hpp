@@ -536,29 +536,6 @@ struct SlipQcParams {
     /// it arms both passes too.
     bool   iono_cs{false};
 
-    // --- Corroborated retap (network.cycle_slip.relevel_retap_corroborate) ---
-    /// The SB_RAIM corroborated keep consumes the qualified verdicts (measured and
-    /// not stepped), so it arms both passes.  Otherwise an armed corroborate would
-    /// find `computed == false` every epoch and refuse every keep, degrading to
-    /// refloat-always with only the refusal counters showing it
-    /// (SPEC_lane_slip_response §3).
-    bool   retap_corr{false};
-
-    /// The carry-domain lane observatory of SPEC_lane_slip_response §7.3
-    /// (@c network.cycle_slip.relevel_lane_snap).  It must appear in both arming
-    /// predicates, for different reasons:
-    ///   - @ref anyConsumer decides whether the raw observables are computed at
-    ///     all (a null @c slip_qc.utils leaves every row absent);
-    ///   - @ref SlipQcChannel::cardsArmed decides whether the qualification pass
-    ///     runs, and the observatory reads @c RawSlipVerdict::measured / @c d_mw,
-    ///     which only that pass writes.
-    /// Left out of cardsArmed, the rows exist (the "no MW pair" skip count stays 0)
-    /// while every verdict stays default-constructed, so the card reports attempts
-    /// with none measured: armed and inert, the case standing invariant #4 is meant
-    /// to expose.  The closure identity still holds in that state, which is why the
-    /// skip channel is counted separately.
-    bool   lane_snap{false};
-
     /// The arc-scoped GF jump trigger (card ARL; @c network.cycle_slip.gf_arc_jump*).
     /// It reads the raw rows only (its own per-arc state forms the steps), so it arms
     /// @ref anyConsumer and not @ref SlipQcChannel::cardsArmed.
@@ -567,7 +544,7 @@ struct SlipQcParams {
     /// True when any consumer needs the raw observables computed this run.
     bool anyConsumer(bool trace_slip_raw) const {
         return trace_slip_raw || lli_corroborate || gap_instrument || bridge_gf
-            || iono_cs || retap_corr || lane_snap || gap_reentry
+            || iono_cs || gap_reentry
             || gap_reentry_per_signal || gf_jump.armed;
     }
 };
@@ -1011,13 +988,10 @@ struct SlipQcCounters {
     long long bridge_pend_expired{0};         ///< Pends that never met an MW integer inside the window.
     long long bridge_pend_voided{0};          ///< Pends voided by a fresh mark on the same (station, sat).
     long long bridge_replace_corrob_reject{0};///< Replaces rejected by the free-level corroboration gate.
-    // Bridge v3 (second equation from the GF row, plus the EWL slot; SPEC_slip_relevel_walk §8.3):
+    // Bridge v3 (second equation from the GF row; SPEC_slip_relevel_walk §8.3):
     long long bridge_gf_captured{0};          ///< Pends whose GF-TD row was captured at the flag epoch.
     long long bridge_gf_applied{0};           ///< Applies whose (1,2) plane came from the E1+E4 float route.
     long long bridge_plane_reject{0};         ///< E2-route kernel rejects tripped by the E4 plane residual (wrong WL integer screen).
-    long long bridge_ewl_joint{0};            ///< EWL integers filled same-epoch at pend creation.
-    long long bridge_ewl_belated{0};          ///< EWL integers filled belatedly in the MW drain.
-    long long bridge_band3_applied{0};        ///< Applies that chained and replaced band 3.
 
     // --- Arc-scoped GF jump trigger (card ARL; network.cycle_slip.gf_arc_jump) ---
     GfArcJumpCounters gf_jump;                ///< Tests, flags and the flag closure (networkGfArcJumpRunEnd).
@@ -1048,7 +1022,7 @@ struct SlipQcChannel {
     /// True when the raw observables must be computed this run.
     bool armed() const { return static_cast<bool>(utils); }
     /// True when a decision card (not only the trace) is armed.
-    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.retap_corr || params.lane_snap || params.gap_reentry || params.gap_reentry_per_signal; }
+    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.gap_reentry || params.gap_reentry_per_signal; }
 };
 
 /**

@@ -73,51 +73,6 @@ void networkLeveling(
                                carry_warm, pl_now_s, registered_clock_sats,
                                shared_phase_keys, registered_code_keys);
 
-    // --- Lane-observatory per-event rows on the existing events stream -------
-    // (SPEC_lane_slip_response §7.6(a)).  Emitted here, like the LV-2 rows below,
-    // because the trace sinks and the epoch time live on this side of the seam;
-    // the spec's "do not create a new stream" rule applies.  One row per attempt,
-    // detector-freed (`delta`) and T4-captured (`t4_delta`) alike; `action` is
-    // "measured" or the skip channel, `statistic` the lane delta in cycles,
-    // `threshold` the raw ΔMW it was differenced against.  Measure-only.  The
-    // harvest buffers the rows; they are cleared here and again at the next
-    // PASS-A clear().
-    if (!ctx.carry.relevel.lane_obs_rows.empty()) {
-        const auto cause_str = [](std::uint8_t c) {
-            std::string s;
-            const auto add = [&s](const char* tag) {
-                if (!s.empty()) s += '|';
-                s += tag;
-            };
-            if (c & RelevelEpochState::kCauseMw)        add("MW");
-            if (c & RelevelEpochState::kCauseLli)       add("LLI");
-            if (c & RelevelEpochState::kCauseIfTd)      add("IFTD");
-            if (c & RelevelEpochState::kCauseT4Attrib)  add("T4A");
-            if (c & RelevelEpochState::kCauseT4Consens) add("T3C");
-            if (c & RelevelEpochState::kCauseWindup)    add("WU");
-            if (c & RelevelEpochState::kCauseGap)       add("GAP");
-            if (c & RelevelEpochState::kCauseGfJump)    add("GFJ");
-            return s.empty() ? std::string("none") : s;
-        };
-        for (const auto& row : ctx.carry.relevel.lane_obs_rows) {
-            const std::string& sta_name =
-                (row.sta >= 0 && row.sta < static_cast<int>(stations.size()))
-                    ? stations[static_cast<std::size_t>(row.sta)].name
-                    : std::string{};
-            traces.emitEvent(
-                se.time, "LANE_OBS", row.t4 ? "t4_delta" : "delta",
-                row.sat, sta_name,
-                row.measured ? std::optional<double>(row.delta_cyc) : std::nullopt,
-                std::optional<double>(row.d_mw_cyc),
-                row.outcome,
-                fmt::format("cause={};scope={};pair={}-{};el={:.1f}",
-                            cause_str(row.cause),
-                            row.t4 ? "t4" : (row.vertex_wide ? "vertex" : "band"),
-                            row.sig1.empty() ? "?" : row.sig1,
-                            row.sig2.empty() ? "?" : row.sig2, row.el_deg));
-        }
-        ctx.carry.relevel.lane_obs_rows.clear();
-    }
     // --- eq34 (sat,σ) re-reference attribution rows (SPEC_lane_slip_response §7.7)
     // The chain datum counts its re-references, but without these rows only the
     // reattach hygiene emits per-event rows, so a frame step could not be joined

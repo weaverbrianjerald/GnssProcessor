@@ -65,7 +65,6 @@ enum class ResponseSite : int {
     AmbGapPrune,           ///< an arc unseen past the gap horizon erased
     AmbRaimDrop,           ///< float vehicle: RAIM's attribution or consensus dropped a carried arc
     AmbRaimErase,          ///< leveling vehicle: RAIM's attribution or consensus erased a carried arc
-    AmbRaimRetap,          ///< RAIM's attribution kept the value and inflated the variance
     AmbDatumSlipErase,     ///< a slip at the datum station re-referenced the family: every station's arc erased
     AmbGrossErase,         ///< the gross line-of-sight screen erased a carried arc
     AmbGrossHold,          ///< the gross line-of-sight screen held a carried arc
@@ -136,7 +135,7 @@ enum class ResponseSite : int {
 };
 
 /// Number of @ref ResponseSite values (array sizing).
-inline constexpr int kResponseSites = 69;
+inline constexpr int kResponseSites = 68;
 
 static_assert(static_cast<int>(ResponseSite::ShRetire) + 1 == kResponseSites,
               "kResponseSites must follow the ResponseSite enum");

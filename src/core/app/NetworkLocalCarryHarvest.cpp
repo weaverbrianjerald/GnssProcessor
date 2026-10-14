@@ -414,48 +414,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             }
             return {reg.cond_var, std::move(cpl)};
         };
-        // ---- Lane observatory (rung 3 v3): pre-event snapshot ---------------
-        // Taken here because the loop below overwrites local_carry entry by entry, so a
-        // band's pre-event level is gone once its own iteration runs.  Only the freed
-        // population is snapshotted, so the off path and an epoch without slips cost
-        // nothing.
-        //
-        // C(t-) and C(t+) are both read inside this function, so both are in the gauge
-        // this epoch's datum work already settled; the frame hazard of the deleted
-        // seed-site snap cannot arise here.
-        // (value_abs, last_seen_s): the stamp matters, because a carry that was not
-        // stashed at the immediately preceding epoch spans a different interval from
-        // the one-epoch ΔMW it would be differenced against.
-        std::map<std::tuple<int, std::string, std::string>, std::pair<double, double>> lane_pre;
-        // Not gated on a non-empty lane_mw: an epoch with freed arcs but no raw rows
-        // still has to reach the measurement loop, so each freed LOS is counted in
-        // n_lane_skip_no_row; otherwise the denominator would miss those arcs, which the
-        // no_row channel exists to prevent.
-        const bool lane_obs_on = config_.networkCycleSlipRelevelLaneSnap();
-        if (lane_obs_on) {
-            for (const auto& fa : ctx.carry.relevel.free_ambs) {
-                const auto parts = StateKeys::parseAmbiguityKey(fa.second);
-                if (!parts) continue;
-                const auto key = std::make_tuple(fa.first, parts->satellite, parts->signal);
-                const auto cit = local_carry.find(key);
-                if (cit != local_carry.end())
-                    lane_pre[key] = { cit->second.value_abs, cit->second.last_seen_s };
-                // A freed band's partner may not itself be freed (band-scoped response):
-                // snapshot the whole pair, because the partner's carry anchors the lane
-                // and the same loop overwrites it.
-                const auto mit = ctx.carry.relevel.lane_mw.find({fa.first, parts->satellite});
-                if (mit == ctx.carry.relevel.lane_mw.end()) continue;
-                for (const std::string& sig : { mit->second.sig1, mit->second.sig2 }) {
-                    if (sig.empty() || sig == parts->signal) continue;
-                    const auto pkey = std::make_tuple(fa.first, parts->satellite, sig);
-                    if (lane_pre.count(pkey)) continue;
-                    const auto pit = local_carry.find(pkey);
-                    if (pit != local_carry.end())
-                        lane_pre[pkey] = { pit->second.value_abs, pit->second.last_seen_s };
-                }
-            }
-        }
-
         // ZWD in the local block (B9-in-block, network.carry_zwd_in_block): the ZWD
         // harvest is a separate loop further down (it has to run for stations with no
         // carried ambiguities), so the block this loop allocates, and the `cols` order its
@@ -681,9 +639,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     const bool relevel_bridged =
                         ctx.carry.relevel.bridged.count(
                             {static_cast<int>(i), pa.sat, pa.signal}) > 0;
-                    const bool relevel_retapped =
-                        ctx.carry.relevel_retapped_prev.count(
-                            {static_cast<int>(i), pa.sat, pa.signal}) > 0;
                     if (oc != local_carry.end()) {
                         const double gapv = pl_now_s - oc->second.last_seen_s;
                         if (gapv >= 0.0 && gapv <= pl_max_gap_s) {
@@ -745,8 +700,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             // A/B.
                             const double innov = oc->second.value_abs - value_abs;
                             if (carry_vce && !reseed_pending && !reref
-                                && !relevel_freed && !relevel_bridged
-                                && !relevel_retapped)
+                                && !relevel_freed && !relevel_bridged)
                                 carry_vce_est.addRow("pl", pa.sat, innov,
                                                      gapv, var, fold_var, fold_var_hand);
                             if (prires_want) {
@@ -765,14 +719,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                 in.folded   = !reseed_pending && !relevel_freed
                                            && std::isfinite(pa.x_lin)
                                            && fold_var > 0.0;
-                                in.label = (reseed_pending || relevel_freed || relevel_bridged
-                                            || relevel_retapped)
+                                in.label = (reseed_pending || relevel_freed || relevel_bridged)
                                                ? PriorResidualLabel::Responded
                                          : reref ? PriorResidualLabel::Frame
                                                  : PriorResidualLabel::Clean;
                                 in.mech  = reseed_pending   ? "reseed"
                                          : relevel_bridged  ? "delta_bridge"
-                                         : relevel_retapped ? "raim_retap"
                                          : relevel_freed    ? "relevel_free"
                                          : reref            ? "eq34_reref" : "";
                                 prires_est.addRow(in);
@@ -1173,298 +1125,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
             }
         }
-        // ---- Lane observatory (rung 3 v3): post-event measurement -----------
-        // Runs after the harvest loop, so both bands' fresh levels coexist, and before the
-        // gap prune, so a pair that is about to be time-pruned is still measurable this
-        // epoch.
-        //
-        //   delta = [C_a(t+)/lam_a - C_b(t+)/lam_b]
-        //         - [C_a(t-)/lam_a - C_b(t-)/lam_b] - dM        [cycles]
-        //
-        // Every per-(station, satellite, pair) bias (receiver and satellite, code and
-        // phase) is constant across the event and cancels in both differences, so no bias
-        // convention has to be reconciled (the failure of v1), and snapped and unsnapped
-        // arcs would mix freely in a DD (the v1 DD-closure failure).  Measure-only:
-        // nothing is written back.
-        if (lane_obs_on) {
-            // The denominator is the freed set, not the raw rows: a freed arc the raw
-            // pass never saw shows up as a counted skip, not as an unreported shrinkage
-            // of the denominator (invariant #3: measure the deferral).
-            std::set<std::pair<int, std::string>> freed_los;
-            // LOS-level union of freeing causes (§7.6(c)): a satellite freed on two
-            // bands by two different detectors carries both bits.
-            std::map<std::pair<int, std::string>, std::uint8_t> los_cause;
-            for (const auto& fa : ctx.carry.relevel.free_ambs) {
-                const auto parts = StateKeys::parseAmbiguityKey(fa.second);
-                if (!parts) continue;
-                const std::pair<int, std::string> lk{fa.first, parts->satellite};
-                freed_los.insert(lk);
-                const auto cit2 = ctx.carry.relevel.free_cause.find(fa);
-                if (cit2 != ctx.carry.relevel.free_cause.end())
-                    los_cause[lk] |= cit2->second;
-            }
-            // Signal-code namespace: the raw pass names a band by the lexicographically
-            // first attribute it tracks (L1C), while the ambiguity / carry key uses the
-            // estimator-selected code (L1W under a "W-before-C" priority list).  Matching
-            // the two by full code would miss every entry on such a network and report
-            // the miss as "no pre-event carry", a wrong population verdict rather than a
-            // wiring alarm.  Resolve by band digit against the carry itself, which is the
-            // namespace both lane levels are read from.
-            const auto resolve = [&](int sta, const std::string& sat,
-                                     const std::string& code) -> std::string {
-                const System sys = systemOfSat(sat);
-                const auto want = SignalId::fromObsCode(sys, code);
-                if (!want) return {};
-                auto it = local_carry.lower_bound(std::make_tuple(sta, sat, std::string{}));
-                for (; it != local_carry.end(); ++it) {
-                    if (std::get<0>(it->first) != sta || std::get<1>(it->first) != sat) break;
-                    const std::string& sig = std::get<2>(it->first);
-                    const auto have = SignalId::fromObsCode(sys, sig);
-                    if (have && have->digit == want->digit) return sig;   // same band
-                }
-                return {};
-            };
-            for (const auto& los : freed_los) {
-                const int  sta = los.first;
-                const std::string& sat = los.second;
-                ++ctx.counters.n_lane_attempts;
-                // One per-event row per attempt (§7.6(a)); the skip channel is the
-                // outcome, so the trace closes against the counters.
-                RelevelEpochState::LaneObsRow row;
-                row.sta = sta; row.sat = sat;
-                {
-                    const auto lc = los_cause.find(los);
-                    if (lc != los_cause.end()) row.cause = lc->second;
-                }
-                const auto skip = [&](long long& counter, const char* outcome) {
-                    ++counter;
-                    row.outcome = outcome;
-                    ctx.carry.relevel.lane_obs_rows.push_back(row);
-                };
-                const auto mit = ctx.carry.relevel.lane_mw.find(los);
-                if (mit == ctx.carry.relevel.lane_mw.end()) {
-                    skip(ctx.counters.n_lane_skip_no_row, "skip_no_row"); continue;
-                }
-                const auto& m = mit->second;
-                row.sig1 = m.sig1; row.sig2 = m.sig2;
-                row.el_deg = m.el_deg;
-                row.d_mw_cyc = m.measured ? m.d_mw_cyc : 0.0;
-                if (m.sig2.empty())    { skip(ctx.counters.n_lane_skip_no_mw,        "skip_no_mw");        continue; }
-                if (!m.measured)       { skip(ctx.counters.n_lane_skip_unmeasured,   "skip_unmeasured");   continue; }
-                if (m.pair_changed)    { skip(ctx.counters.n_lane_skip_pair_changed, "skip_pair_changed"); continue; }
-                if (!(m.lam1_m > 0.0) || !(m.lam2_m > 0.0)
-                    || !std::isfinite(m.lam1_m) || !std::isfinite(m.lam2_m)
-                    || !(m.lam2_m > m.lam1_m)) {   // see the PASS-A note on lambda_wl's sign
-                    skip(ctx.counters.n_lane_skip_bad_lambda, "skip_bad_lambda"); continue;
-                }
-                const std::string sa = resolve(sta, sat, m.sig1);
-                const std::string sb = resolve(sta, sat, m.sig2);
-                if (sa.empty() || sb.empty()) { skip(ctx.counters.n_lane_skip_no_pre, "skip_no_pre"); continue; }
-                const auto ka = std::make_tuple(sta, sat, sa);
-                const auto kb = std::make_tuple(sta, sat, sb);
-                // The response has to have touched this pair.  A satellite can be in
-                // freed_los because a third band was freed (L5 on a triple posture, or a
-                // second channel of the same band under channel_mode=all); both of this
-                // pair's carries are then continuous, there is no re-level to measure, and
-                // admitting the pair would fold ordinary carried-prior evolution into the
-                // histogram, biasing it toward the pre-registered "mass below ~2 cyc"
-                // conclusion.
-                const bool a_freed =
-                    ctx.carry.relevel.free_ambs.count({sta, StateKeys::makeAmbiguityKey(sat, sa)}) > 0;
-                const bool b_freed =
-                    ctx.carry.relevel.free_ambs.count({sta, StateKeys::makeAmbiguityKey(sat, sb)}) > 0;
-                if (!a_freed && !b_freed) {
-                    skip(ctx.counters.n_lane_skip_no_freed_band, "skip_no_freed_band"); continue;
-                }
-                // A delta-bridged band's carry was already re-based to pre_slip + shift,
-                // so its lane response is the bridge's, not the free re-level's: a
-                // different population, counted separately.
-                if (ctx.carry.relevel.bridged.count(ka)
-                    || ctx.carry.relevel.bridged.count(kb)) {
-                    skip(ctx.counters.n_lane_skip_bridged, "skip_bridged"); continue;
-                }
-                const auto pa_it = lane_pre.find(ka), pb_it = lane_pre.find(kb);
-                if (pa_it == lane_pre.end() || pb_it == lane_pre.end()) {
-                    skip(ctx.counters.n_lane_skip_no_pre, "skip_no_pre"); continue;
-                }
-                // Pre-event freshness: exactly one processed epoch old.  Otherwise the
-                // carry difference spans a different interval from the one-epoch MW step
-                // it is differenced against.
-                if (!(ctx.carry.pl_prev_now_s > 0.0)
-                    || pa_it->second.second != ctx.carry.pl_prev_now_s
-                    || pb_it->second.second != ctx.carry.pl_prev_now_s) {
-                    skip(ctx.counters.n_lane_skip_stale_pre, "skip_stale_pre"); continue;
-                }
-                // Post-event freshness: re-stashed this epoch, tested on last_seen_s and
-                // not on map presence.  An entry that was not refreshed survives a full
-                // pl_max_gap_s, and accepting it would use the pre-event value as the
-                // post-event value, collapsing the delta either to a one-band code
-                // re-level (top bins) or to exactly -dMW (~0.35 cyc, bottom bins).  Either
-                // way the histogram would show a verdict the data does not support.
-                const auto qa_it = local_carry.find(ka), qb_it = local_carry.find(kb);
-                if (qa_it == local_carry.end() || qb_it == local_carry.end()
-                    || qa_it->second.last_seen_s != pl_now_s
-                    || qb_it->second.last_seen_s != pl_now_s) {
-                    skip(ctx.counters.n_lane_skip_no_post, "skip_no_post"); continue;
-                }
-                const double pre_lane  = pa_it->second.first / m.lam1_m
-                                       - pb_it->second.first / m.lam2_m;
-                const double post_lane = qa_it->second.value_abs / m.lam1_m
-                                       - qb_it->second.value_abs / m.lam2_m;
-                const double delta = post_lane - pre_lane - m.d_mw_cyc;
-                if (!std::isfinite(delta)) { skip(ctx.counters.n_lane_skip_bad_lambda, "skip_bad_lambda"); continue; }
-                ++ctx.counters.n_lane_measured;
-                const bool vertex_wide = a_freed && b_freed;
-                ++(vertex_wide ? ctx.counters.n_lane_both_freed
-                               : ctx.counters.n_lane_one_freed);
-                // Cause split over measured pairs, as bit counts (§7.6(c)).
-                if (row.cause & RelevelEpochState::kCauseMw)   ++ctx.counters.n_lane_meas_mw;
-                if (row.cause & RelevelEpochState::kCauseLli)  ++ctx.counters.n_lane_meas_lli;
-                if (row.cause & RelevelEpochState::kCauseIfTd) ++ctx.counters.n_lane_meas_iftd;
-                const double ad = std::abs(delta);
-                ctx.counters.lane_abs_delta_sum_cyc += ad;
-                if (ad > ctx.counters.lane_abs_delta_max_cyc)
-                    ctx.counters.lane_abs_delta_max_cyc = ad;
-                static const double kBins[8] = { 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0 };
-                int bin = 8;
-                for (int bi = 0; bi < 8; ++bi) if (ad < kBins[bi]) { bin = bi; break; }
-                ++ctx.counters.n_lane_hist[bin];
-                // The band-scoped subset separately (§7.6(b)), so the rung-2 contrast
-                // (vertex-wide against band-scoped response) is readable.
-                if (!vertex_wide) ++ctx.counters.n_lane_hist_bandscoped[bin];
-                row.measured = true;
-                row.vertex_wide = vertex_wide;
-                row.delta_cyc = delta;
-                ctx.carry.relevel.lane_obs_rows.push_back(row);
-            }
-            // ---- T4-side measurement over the previous epoch's pre-erase captures
-            // (§7.6(d)): the RAIM attribution / consensus erase channel, which is most
-            // of all field freeing and does not appear in free_ambs.  Same delta, with
-            // one extra interlock: the capture is a copy across an epoch boundary, so a
-            // pair whose (sat,σ) was eq34-re-referenced this epoch is skipped (the
-            // detector path has that guard implicitly, because lane_pre reads
-            // local_carry, which the re-reference hygiene already erased).
-            // Measure-only, with its own closure.
-            static const double kT4Bins[8] = { 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0 };
-            if (!ctx.carry.lane_t4_pre.empty()) {
-                std::set<std::pair<int, std::string>> t4_los;
-                for (const auto& [tk, tv] : ctx.carry.lane_t4_pre)
-                    t4_los.insert({std::get<0>(tk), std::get<1>(tk)});
-                for (const auto& los : t4_los) {
-                    const int  sta = los.first;
-                    const std::string& sat = los.second;
-                    ++ctx.counters.n_lane_t4_attempts;
-                    RelevelEpochState::LaneObsRow row;
-                    row.sta = sta; row.sat = sat;
-                    row.t4 = true; row.vertex_wide = true;
-                    const auto t4_lo = ctx.carry.lane_t4_pre.lower_bound(
-                        std::make_tuple(sta, sat, std::string{}));
-                    const auto t4_end = ctx.carry.lane_t4_pre.end();
-                    const auto t4_same = [&](decltype(t4_lo) it2) {
-                        return it2 != t4_end && std::get<0>(it2->first) == sta
-                            && std::get<1>(it2->first) == sat;
-                    };
-                    for (auto it2 = t4_lo; t4_same(it2); ++it2)
-                        row.cause |= it2->second.cause;
-                    const auto skip = [&](long long& counter, const char* outcome) {
-                        ++counter;
-                        row.outcome = outcome;
-                        ctx.carry.relevel.lane_obs_rows.push_back(row);
-                    };
-                    const auto mit = ctx.carry.relevel.lane_mw.find(los);
-                    if (mit == ctx.carry.relevel.lane_mw.end()) {
-                        skip(ctx.counters.n_lane_t4_skip_no_row, "t4_skip_no_row"); continue;
-                    }
-                    const auto& m = mit->second;
-                    row.sig1 = m.sig1; row.sig2 = m.sig2;
-                    row.el_deg = m.el_deg;
-                    row.d_mw_cyc = m.measured ? m.d_mw_cyc : 0.0;
-                    if (m.sig2.empty())    { skip(ctx.counters.n_lane_t4_skip_no_mw,        "t4_skip_no_mw");        continue; }
-                    if (!m.measured)       { skip(ctx.counters.n_lane_t4_skip_unmeasured,   "t4_skip_unmeasured");   continue; }
-                    if (m.pair_changed)    { skip(ctx.counters.n_lane_t4_skip_pair_changed, "t4_skip_pair_changed"); continue; }
-                    if (!(m.lam1_m > 0.0) || !(m.lam2_m > 0.0)
-                        || !std::isfinite(m.lam1_m) || !std::isfinite(m.lam2_m)
-                        || !(m.lam2_m > m.lam1_m)) {
-                        skip(ctx.counters.n_lane_t4_skip_bad_lambda, "t4_skip_bad_lambda"); continue;
-                    }
-                    // Resolve the captured bands by band digit against the raw pair (the
-                    // capture keys carry the estimator-selected carry signal names; see
-                    // the namespace note at `resolve`).
-                    const auto cap_of = [&](const std::string& code)
-                        -> std::pair<const std::string*, const NetworkCarryState::LaneT4Pre*> {
-                        const System sys = systemOfSat(sat);
-                        const auto want = SignalId::fromObsCode(sys, code);
-                        if (!want) return {nullptr, nullptr};
-                        for (auto it2 = t4_lo; t4_same(it2); ++it2) {
-                            const std::string& sig = std::get<2>(it2->first);
-                            const auto have = SignalId::fromObsCode(sys, sig);
-                            if (have && have->digit == want->digit)   // same band
-                                return {&std::get<2>(it2->first), &it2->second};
-                        }
-                        return {nullptr, nullptr};
-                    };
-                    const auto ca = cap_of(m.sig1);
-                    const auto cb = cap_of(m.sig2);
-                    if (!ca.second || !cb.second) {
-                        skip(ctx.counters.n_lane_t4_skip_no_pre, "t4_skip_no_pre"); continue;
-                    }
-                    // Handover cross-guard (§7.7): every frame channel that can
-                    // re-realize this pair's family between capture and measurement.
-                    // These are the eq34 (sat,σ) re-reference, the phase-anchor
-                    // election's re-referenced families (non-eq34 lineages; the set
-                    // persists across withheld epochs, on purpose, until a stash
-                    // commits the new frame), and the datum-station slip's network-wide
-                    // reseed (per satellite, all signals).
-                    if (eq34_reref.count({sat, *ca.first})
-                        || eq34_reref.count({sat, *cb.first})
-                        || ctx.carry.phase_anchor_reref.count({sat, *ca.first})
-                        || ctx.carry.phase_anchor_reref.count({sat, *cb.first})
-                        || ctx.carry.relevel.datum_reref_sats.count(sat)) {
-                        skip(ctx.counters.n_lane_t4_skip_gauge, "t4_skip_gauge"); continue;
-                    }
-                    if (!(ctx.carry.pl_prev_now_s > 0.0)
-                        || ca.second->stamp_s != ctx.carry.pl_prev_now_s
-                        || cb.second->stamp_s != ctx.carry.pl_prev_now_s) {
-                        skip(ctx.counters.n_lane_t4_skip_stale_pre, "t4_skip_stale_pre"); continue;
-                    }
-                    // Post-event: re-stashed this epoch under the same signal names; an
-                    // attribute re-selection after the refloat is a different lane, not a
-                    // measurable response.
-                    const auto qa_it = local_carry.find(std::make_tuple(sta, sat, *ca.first));
-                    const auto qb_it = local_carry.find(std::make_tuple(sta, sat, *cb.first));
-                    if (qa_it == local_carry.end() || qb_it == local_carry.end()
-                        || qa_it->second.last_seen_s != pl_now_s
-                        || qb_it->second.last_seen_s != pl_now_s) {
-                        skip(ctx.counters.n_lane_t4_skip_no_post, "t4_skip_no_post"); continue;
-                    }
-                    const double pre_lane  = ca.second->value_abs / m.lam1_m
-                                           - cb.second->value_abs / m.lam2_m;
-                    const double post_lane = qa_it->second.value_abs / m.lam1_m
-                                           - qb_it->second.value_abs / m.lam2_m;
-                    const double delta = post_lane - pre_lane - m.d_mw_cyc;
-                    if (!std::isfinite(delta)) {
-                        skip(ctx.counters.n_lane_t4_skip_bad_lambda, "t4_skip_bad_lambda"); continue;
-                    }
-                    ++ctx.counters.n_lane_t4_measured;
-                    const double ad = std::abs(delta);
-                    ctx.counters.lane_t4_abs_delta_sum_cyc += ad;
-                    if (ad > ctx.counters.lane_t4_abs_delta_max_cyc)
-                        ctx.counters.lane_t4_abs_delta_max_cyc = ad;
-                    int bin = 8;
-                    for (int bi = 0; bi < 8; ++bi) if (ad < kT4Bins[bi]) { bin = bi; break; }
-                    ++ctx.counters.n_lane_t4_hist[bin];
-                    row.measured = true;
-                    row.delta_cyc = delta;
-                    ctx.carry.relevel.lane_obs_rows.push_back(row);
-                }
-            }
-            // One-epoch lifetime (invariant #1): a capture is consumed at the first
-            // harvest after its erase, or dropped; it is never measured across an
-            // unequal interval.
-            ctx.carry.lane_t4_pre.clear();
-        }
-        // Stamp this harvest so the next epoch can require a one-epoch-old pre-event
-        // value.
+        // Stamp this harvest: the next epoch differences it against its own stamp for
+        // the observed inter-epoch spacing.
         ctx.carry.pl_prev_now_s = pl_now_s;
 
         // Card LGM: prune phase-colour entries past the maximum gap.  Such an entry would
@@ -1541,9 +1203,6 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
             }
         }
-        // Retap statistics-guard set: one RAIM-to-harvest lifetime, consumed by the
-        // labeling above and cleared here, so next epoch's RAIM refills it.
-        ctx.carry.relevel_retapped_prev.clear();
         // --- In-block slant-iono carry (network.carry_iono_in_block): harvest each
         //     station's per-LOS iono posteriors through the same per-column solve the
         //     ambiguities used, write their rows of the station's harvest block, stash

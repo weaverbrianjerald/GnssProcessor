@@ -206,7 +206,7 @@ TEST(GapReentryRelevel, ShiftedReturnFreesBothBandsOnAWarmLevelingCarry) {
     EXPECT_TRUE(h.pendingReseed(kSig2));
     EXPECT_TRUE(h.freed(kSig1));
     EXPECT_TRUE(h.freed(kSig2));
-    // The cause tag the lane observatory grades this response under.
+    // The cause tag this response is classified under.
     EXPECT_EQ(h.cause(kSig1) & RelevelEpochState::kCauseGap, RelevelEpochState::kCauseGap);
     EXPECT_EQ(h.cause(kSig2) & RelevelEpochState::kCauseGap, RelevelEpochState::kCauseGap);
     // No DD funnel insert: carry_invariant is off, so that vehicle is not live.

@@ -24,7 +24,6 @@
 #include "filter/StateManager.hpp"            // stations[i].sm->markAmbiguityPendingReseed
 #include "logging/NetworkRunTraces.hpp"       // trace streams + emitEvent
 #include "products/NetworkStateSnapshot.hpp"  // networkWarmupRampLifted
-#include "slip/NetworkRawObservables.hpp"     // RawSlipEpoch (corroborated retap evidence)
 
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -93,8 +92,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         std::set<std::string>& retro_flag_sats,
                         bool retro_feed,
                         int& n_arc_refloat_epoch,
-                        NetworkPriorResidual& prires,
-                        const RawSlipEpoch* slip_ep) {
+                        NetworkPriorResidual& prires) {
     // --- Alias preamble: byte-copies of the former Application::runNetwork alias
     //     block, so the relocated SB_RAIM body below reads the original names. ---
     const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
@@ -844,34 +842,6 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         }
         if ((attrib_act || inject_arc_act)
             && (!bad_sats.empty() || !bad_stations.empty() || !bad_arcs.empty())) {
-            const bool retap_on =
-                config_.networkCycleSlipRelevelRetapStatistical();
-            const double retap_var = config_.networkCycleSlipRelevelRetapVarM2();
-            const int    retap_streak_max = config_.networkCycleSlipRelevelRetapStreakMax();
-            // Corroborated keep (SPEC_lane_slip_response §3).  The wu93 lane-integer A/B
-            // found both blanket policies wrong: blanket refloat (F1) costs ~29 points of
-            // settled EWL at-own-integer against response-virgin chords, and blanket keep
-            // (F3) costs a further 16 against F1 (the kept levels were wrong at flag time,
-            // and var 0.25 anchors them).  The flagged population is heterogeneous, and
-            // only per-arc evidence separates it.  Rule (the D5-v3 tri-state): keep only
-            // when the pre-solve raw MW/GF pass measured this (station, sat) as
-            // continuous, that is, measured and not stepped.  Unmeasured, stepped, no
-            // evidence this epoch, or the qualification pass not run at all: erase,
-            // exactly as without the retap (invariant #1: a slip response is never
-            // suppressed on absence of evidence).
-            const bool retap_corr =
-                retap_on && config_.networkCycleSlipRelevelRetapCorroborate();
-            auto retapEvidenceFlat = [&](int i, const std::string& sat,
-                                         bool& was_stepped) -> bool {
-                was_stepped = false;
-                if (!slip_ep || !slip_ep->computed
-                    || static_cast<std::size_t>(i) >= slip_ep->verdict.size())
-                    return false;
-                if (slip_ep->stepped.count({ i, sat })) { was_stepped = true; return false; }
-                const auto& vmap = slip_ep->verdict[static_cast<std::size_t>(i)];
-                const auto vit = vmap.find(sat);
-                return vit != vmap.end() && vit->second.measured;
-            };
             // ---- Band-scoped erase (§Z, docs/SPEC_event_harness.md) -------------
             // `min_keep_one`: an isolated-arc (statistical) erase frees only the bands
             // whose own post-fit normalized residual stands above the T4 gate, and
@@ -964,70 +934,6 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         && !(inj_sigs && inj_sigs->count(pa.signal) == 0)
                         && !(bs_on && bs_erase.count(pa.signal) == 0)) {
                         if (bs_on) ++ctx.counters.n_bscope_t4_erased;
-                        // Retap (SPEC_slip_relevel_walk §6): an isolated-arc refloat
-                        // carries no measured delta, and its population is dominated by
-                        // false alarms (21114 arc refloats against ~4500 slip-driven on
-                        // the 60-sta campaign), so the arc's level is usually correct
-                        // and erasing it injects error in steady state.  The retap keeps
-                        // the level, loosens the confidence (var raised to at least
-                        // retap_var; idempotent, since the bad_sats + bad_arcs double
-                        // visit is reachable), clears the coupling regression (as the
-                        // warm-resume empty-coupling degrade does), and lets the data
-                        // decide: a real missed slip wins against the loose prior within
-                        // an epoch or two, and an arc that re-trips
-                        // relevel_retap_streak_max times, each within 120 s of the last,
-                        // falls back to the erase.  Whole-sat consensus refloats
-                        // (statistical_arc = false) keep the erase: a network event at
-                        // ≥ min_sta stations has real evidence behind it.
-                        if (retap_on && statistical_arc) {
-                            const auto key = std::make_tuple(i, pa.sat, pa.signal);
-                            auto it = local_carry.find(key);
-                            if (it != local_carry.end()) {
-                                bool corr_ok = true;
-                                if (retap_corr) {
-                                    bool was_stepped = false;
-                                    corr_ok = retapEvidenceFlat(i, pa.sat, was_stepped);
-                                    if (!corr_ok)
-                                        ++(was_stepped
-                                               ? ctx.counters.n_relevel_retap_corr_stepped
-                                               : ctx.counters.n_relevel_retap_corr_unmeasured);
-                                }
-                                if (corr_ok) {
-                                    const double now_s =
-                                        se.time.week * 604800.0 + se.time.tow;
-                                    auto& streak = ctx.carry.relevel_retap_streak[key];
-                                    streak.second =
-                                        (now_s - streak.first <= 120.0) ? streak.second + 1 : 1;
-                                    streak.first = now_s;
-                                    if (streak.second < retap_streak_max) {
-                                        // Card PRM phase 3a: whether the retap changes the
-                                        // entry (raises its variance or clears a regression);
-                                        // a pure read before the assignments, so an
-                                        // idempotent second visit is not counted.
-                                        const bool retap_moves =
-                                            it->second.var < retap_var
-                                            || !it->second.coupling.empty();
-                                        it->second.var = std::max(it->second.var, retap_var);
-                                        it->second.coupling.clear();
-                                        ctx.carry.relevel_retapped_prev.insert(key);
-                                        ++ctx.counters.n_relevel_retap_kept;
-                                        if (retap_moves)
-                                            prmRespond(ctx.counters.prm_resp,
-                                                       ResponseSite::AmbRaimRetap);
-                                        if (retap_corr)
-                                            ++ctx.counters.n_relevel_retap_corr_kept;
-                                        ++n;
-                                        continue;   // level kept: no erase, no mark, no queue
-                                    }
-                                    ++ctx.counters.n_relevel_retap_escalated;
-                                }
-                                // Corroboration refused or streak escalated: fall
-                                // through to the erase, so the arc takes the full
-                                // refloat exactly as without the retap.
-                            } else {
-                                ++ctx.counters.n_relevel_retap_miss;
-                            }
-                        }
                         {
                             // With pd_held_basis armed, a T4 attribution flag stamps the
                             // arc, so the next election refuses it the S-basis for
@@ -1050,16 +956,6 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                             const auto lane_lk = std::make_tuple(i, pa.sat, pa.signal);
                             const auto lane_lit = local_carry.find(lane_lk);
                             if (lane_lit != local_carry.end()) {
-                                // Pre-erase capture for the lane observatory, T4 side
-                                // (§7.6(d)); measure-only, consumed at the next harvest.
-                                // The erase below is the existing actuator, unchanged.
-                                if (config_.networkCycleSlipRelevelLaneSnap()) {
-                                    ctx.carry.lane_t4_pre[lane_lk] = {
-                                        lane_lit->second.value_abs,
-                                        lane_lit->second.last_seen_s,
-                                        RelevelEpochState::kCauseT4Attrib };
-                                    ++ctx.counters.n_lane_t4_captured;
-                                }
                                 // The entry is recorded before the erase (RF-1 §7.4 D3):
                                 // this is the class design §3.4 replaces with a bounded
                                 // drop, and its variance before the event exists only here.
@@ -1125,9 +1021,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         // and the attribution cannot separate level error from
                         // carried-iono error (the T4 statistic reads their sum), so the
                         // LOS's iono carry is erased with it and the re-level re-draws
-                        // both (queue 8b).  Idempotent across the per-signal loop; an arc
-                        // kept by the retap above never reaches this line (kept level,
-                        // kept iono carry).
+                        // both (queue 8b).  Idempotent across the per-signal loop.
                         if (inj_iono && ctx.knobs.iono_on &&
                             ctx.carry.iono_carry.erase({i, pa.sat})) {
                             ++ctx.counters.n_iono_carry_erased_t4;
@@ -1316,14 +1210,6 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                             std::make_tuple(static_cast<int>(i), pa.sat, pa.signal);
                         const auto lane_lit = local_carry.find(lane_lk);
                         if (lane_lit != local_carry.end()) {
-                            // Pre-erase capture (§7.6(d)); see the attribution site.
-                            if (config_.networkCycleSlipRelevelLaneSnap()) {
-                                ctx.carry.lane_t4_pre[lane_lk] = {
-                                    lane_lit->second.value_abs,
-                                    lane_lit->second.last_seen_s,
-                                    RelevelEpochState::kCauseT4Consens };
-                                ++ctx.counters.n_lane_t4_captured;
-                            }
                             // Entry record and bounded drop (RF-1 §7.4 D3, RF-1 step 4);
                             // see the attribution site.
                             if (ctx.knobs.amb_float_kf) {

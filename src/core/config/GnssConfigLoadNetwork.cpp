@@ -470,10 +470,6 @@ namespace GnssProcessor {
                       "empty there) — both disabled.");
             network_cycle_slip_relevel_free_epoch_ = false;
             network_cycle_slip_relevel_delta_bridge_ = false;
-            // Rider: the lane observatory reads local_carry.value_abs and the
-            // freed set, both structurally empty here.  Riders die with their
-            // base (SPEC_lane_slip_response §7.3).
-            network_cycle_slip_relevel_lane_snap_ = false;
         }
         // Gap re-entry response interlocks (card G; docs/SPEC_slip_qc_hardening.md
         // §G3/W1), placed here for the load-order reason above: network.carry_invariant
@@ -719,13 +715,6 @@ namespace GnssProcessor {
                           "the window keep their level, so the run-end 'applied' count is 0 "
                           "BY CONSTRUCTION and the arm's actuation counter is "
                           "'false-alarm kept'.");
-        }
-        if (network_cycle_slip_relevel_retap_statistical_ && network_carry_invariant_) {
-            log->warn("Network: network.cycle_slip.relevel_retap_statistical is inert "
-                      "under network.carry_invariant (the leveling local carry is "
-                      "superseded and structurally empty there) — disabled.");
-            network_cycle_slip_relevel_retap_statistical_ = false;
-            network_cycle_slip_relevel_retap_corroborate_ = false;   // rider dies with its base
         }
 
         // Slant-iono carry interlocks (QUEUE 8b), placed here for the same
@@ -6453,109 +6442,23 @@ namespace GnssProcessor {
                          "network_cycle_slip_relevel_bridge_pend_window_s", 120.0);
         // Bridge v3 (the better second equation): the GF-phase-TD float row (E4, which
         // closes the (1,2) plane in the same epoch without waiting for MW, with zero
-        // integer-hypothesis risk) and the EWL-MW integer slot (E3, band-3 coverage
-        // from the instantly roundable extra-widelane).  E5 (multi-epoch MW
-        // accumulation) was refused at design review: the λ_IF-amplified cap needs
-        // σ_WL ≤ 0.11 cyc ⇒ el ≥ ~48°, above where any fixture slip lives, and a
-        // rounded belated float re-imports mw_only.
+        // integer-hypothesis risk).  The EWL-MW integer slot (E3) is retired.  E5
+        // (multi-epoch MW accumulation) was refused at design review: the
+        // λ_IF-amplified cap needs σ_WL ≤ 0.11 cyc ⇒ el ≥ ~48°, above where any
+        // fixture slip lives, and a rounded belated float re-imports mw_only.
         network_cycle_slip_relevel_bridge_gf_ =
             jval<bool>(json, "network.cycle_slip.relevel_bridge_gf",
                        "network_cycle_slip_relevel_bridge_gf", false);
-        network_cycle_slip_relevel_bridge_ewl_ =
-            jval<bool>(json, "network.cycle_slip.relevel_bridge_ewl",
-                       "network_cycle_slip_relevel_bridge_ewl", false);
         network_cycle_slip_relevel_bridge_gf_sigma_floor_m_ =
             jval<double>(json, "network.cycle_slip.relevel_bridge_gf_sigma_floor_m",
                          "network_cycle_slip_relevel_bridge_gf_sigma_floor_m", 0.01);
-        network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc_ =
-            jval<double>(json, "network.cycle_slip.relevel_bridge_ewl_sigma_floor_cyc",
-                         "network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc", 0.05);
-        //   relevel_retap_statistical: the statistical-refloat half (T2/T3/T4
-        //     post-fit RAIM).  A refloat with no measured delta mostly hits arcs whose
-        //     level was correct (the false-alarm population), so the level is kept and
-        //     the confidence re-tapped to a loose set value, which still lets a
-        //     genuinely missed slip lose to the data within an epoch or two.  The
-        //     escalation streak falls back to the erase for an arc that keeps
-        //     re-tripping (a real missed slip the loose prior cannot shake).
-        network_cycle_slip_relevel_retap_statistical_ =
-            jval<bool>(json, "network.cycle_slip.relevel_retap_statistical",
-                       "network_cycle_slip_relevel_retap_statistical", false);
-        //   relevel_retap_corroborate (SPEC_lane_slip_response §3): the keep above
-        //     fires only on positive pre-solve evidence of arc continuity (slip-QC raw
-        //     MW/GF: measured and not stepped, the same tri-state the D5-v3
-        //     corroboration gate consumes).  A blanket keep measured 16 points worse on
-        //     settled EWL at-own-integer than a blanket refloat, and a blanket refloat
-        //     ~29 points worse than response-virgin arcs; only evidence separates the
-        //     flagged population.
-        network_cycle_slip_relevel_retap_corroborate_ =
-            jval<bool>(json, "network.cycle_slip.relevel_retap_corroborate",
-                       "network_cycle_slip_relevel_retap_corroborate", false);
-        //   relevel_lane_snap (SPEC_lane_slip_response §7.3): arms the carry-domain
-        //     lane observatory, the lane response of the free re-level measured in
-        //     local_carry.value_abs (the frame where the lane lives).  Measure-only,
-        //     so an armed run is byte-identical on every solve artifact.  The knob's
-        //     meaning changed: the seed-site mechanism it drove in v1/v2/v2.1 is
-        //     deleted.  That mechanism's only write was an x_lin shift
-        //     on a local ambiguity column, which the reduced network solve absorbs
-        //     exactly, so it never moved the estimate (the two default-off prefit
-        //     screens that gate on H·x_lin are the only exception; the deleted-
-        //     mechanism banner in MeasurementModel::ensureRequiredStates has the
-        //     derivation, including why its `d` measured −Δe_b/λ_b rather than a
-        //     lane error).  The observatory reads the leveling carry, hence the two
-        //     interlocks below; without them an inert knob can be armed and graded
-        //     as a null result.
-        network_cycle_slip_relevel_lane_snap_ =
-            jval<bool>(json, "network.cycle_slip.relevel_lane_snap",
-                       "network_cycle_slip_relevel_lane_snap", false);
-        network_cycle_slip_relevel_retap_var_m2_ =
-            jval<double>(json, "network.cycle_slip.relevel_retap_var_m2",
-                         "network_cycle_slip_relevel_retap_var_m2", 0.25);
-        network_cycle_slip_relevel_retap_streak_max_ =
-            jval<int>(json, "network.cycle_slip.relevel_retap_streak_max",
-                      "network_cycle_slip_relevel_retap_streak_max", 3);
         // Interlocks (warn and disarm: an arm that cannot change anything is disabled
         // here rather than discovered after a field run):
-        if (network_cycle_slip_relevel_retap_statistical_ && !network_phase_leveling_) {
-            log->warn("Network: network.cycle_slip.relevel_retap_statistical needs "
-                      "network.phase_leveling (its target is the leveling carry) "
-                      "— disabled.");
-            network_cycle_slip_relevel_retap_statistical_ = false;
-        }
-        // After the leveling disarm above, so it reads the settled base flag.
-        if (network_cycle_slip_relevel_retap_corroborate_
-            && !network_cycle_slip_relevel_retap_statistical_) {
-            log->warn("Network: network.cycle_slip.relevel_retap_corroborate is set "
-                      "but relevel_retap_statistical is OFF (or was disarmed) — "
-                      "there is no keep branch to gate, so it is INERT this run.");
-            network_cycle_slip_relevel_retap_corroborate_ = false;
-        }
-        // relevel_lane_snap interlocks.  The observatory's object is the leveling
-        // carry, so both are hard requirements.  They must read the settled base
-        // flags, so the free_epoch check is repeated at the end of this interlock band
-        // (see the rider below).
-        if (network_cycle_slip_relevel_lane_snap_ && !network_phase_leveling_) {
-            log->warn("Network: network.cycle_slip.relevel_lane_snap needs "
-                      "network.phase_leveling (the lane it measures lives in the "
-                      "leveling carry's absolute levels) — disabled.");
-            network_cycle_slip_relevel_lane_snap_ = false;
-        }
         if (network_cycle_slip_relevel_free_epoch_ && !network_phase_leveling_) {
             log->warn("Network: network.cycle_slip.relevel_free_epoch needs "
                       "network.phase_leveling (its target is the leveling carry) "
                       "— disabled.");
             network_cycle_slip_relevel_free_epoch_ = false;
-        }
-        // After the free_epoch disarm above, so it reads the settled base flag:
-        // free_ambs is the observatory's population, so without it every epoch takes
-        // the `any_freed` continue and the counters read a structural zero that is
-        // indistinguishable from dead wiring (invariant #4).
-        if (network_cycle_slip_relevel_lane_snap_
-            && !network_cycle_slip_relevel_free_epoch_) {
-            log->warn("Network: network.cycle_slip.relevel_lane_snap requires "
-                      "network.cycle_slip.relevel_free_epoch (its population is the "
-                      "freed set; without it every counter is a structural zero) "
-                      "— disabled.");
-            network_cycle_slip_relevel_lane_snap_ = false;
         }
         if (network_cycle_slip_relevel_delta_bridge_
             && !network_cycle_slip_relevel_free_epoch_) {
@@ -6623,15 +6526,11 @@ namespace GnssProcessor {
                       "double-apply) — bridge disabled.");
             network_cycle_slip_relevel_delta_bridge_ = false;
         }
-        if ((network_cycle_slip_relevel_bridge_gf_
-             || network_cycle_slip_relevel_bridge_ewl_)
+        if (network_cycle_slip_relevel_bridge_gf_
             && !network_cycle_slip_relevel_delta_bridge_) {
-            log->warn("Network: network.cycle_slip.relevel_bridge_gf / "
-                      "relevel_bridge_ewl are v3 riders on "
-                      "cycle_slip.relevel_delta_bridge, which is off — both "
-                      "disabled.");
+            log->warn("Network: network.cycle_slip.relevel_bridge_gf is a v3 rider on "
+                      "cycle_slip.relevel_delta_bridge, which is off — disabled.");
             network_cycle_slip_relevel_bridge_gf_ = false;
-            network_cycle_slip_relevel_bridge_ewl_ = false;
         }
 
         // --- Slip-QC hardening cards R / L / G (docs/SPEC_slip_qc_hardening.md) ---

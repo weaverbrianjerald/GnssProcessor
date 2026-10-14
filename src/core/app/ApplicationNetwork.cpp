@@ -341,14 +341,6 @@ int Application::runNetwork() {
         sp.iono_cs             = (config_.networkCarryIono()
                                   && config_.networkIonoCarrySource() == "smoothed_gf")
                                  || config_.networkLevelAuthorityCsgf();
-        // Corroborated retap: the SB_RAIM keep
-        // consumes the qualified verdicts, so it must arm the evidence passes.
-        sp.retap_corr          = config_.networkCycleSlipRelevelRetapCorroborate();
-        // Per SPEC_lane_slip_response §7.3, the lane observatory consumes both the
-        // raw rows and the qualified verdict (d_mw / measured), so it arms both
-        // anyConsumer and cardsArmed; the member's doc records the failure
-        // measured when only the former was armed.
-        sp.lane_snap           = config_.networkCycleSlipRelevelLaneSnap();
         // The arc-scoped GF jump trigger (card ARL) reads the raw rows and keeps its own
         // per-arc steps, so it arms the compute pass (anyConsumer) and not the qualify
         // pass.
@@ -2464,8 +2456,7 @@ int Application::runNetwork() {
             networkPostFitRaim(ctx, config_, log, traces, se,
                                stations, asm_res, est_index_of, present, x_s, est,
                                plan.shared_datum, clock_refloat_sats, retro_flag_sats,
-                               retro_feed, n_arc_refloat_epoch, prires_est,
-                               &slip_qc.epoch);
+                               retro_feed, n_arc_refloat_epoch, prires_est);
         }
         // Gross line-of-sight screen (card GL, docs/SPEC_event_harness.md §24.18), the
         // only acting post-fit tier that screens code.  It sits inside this bracket,

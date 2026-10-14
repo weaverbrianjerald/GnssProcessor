@@ -31,7 +31,7 @@
 #include <algorithm>      // rxCbStepScale's median / MAD (nth_element, remove_if)
 #include <array>
 #include <cmath>          // the invariant step z (std::abs / std::isfinite)
-#include <cstdint>        // freeing-cause bitmask of the lane observatory (§7.6)
+#include <cstdint>        // the freeing-cause bitmask (RelevelEpochState::free_cause)
 #include <limits>
 #include <map>
 #include <memory>
@@ -909,7 +909,6 @@ struct RelevelPend {
     double lambda_if{0};           ///< (1,1) IF wavelength (m).
     std::string sig1, sig2;        ///< The pair's phase signals.
     double tow_s{0};               ///< Continuous-GPS-s of the flag (expiry base).
-    double el_deg{0};              ///< Elevation at the flag epoch (v3: maps the EWL σ floor at a belated fill).
     bool   has_dn{false};          ///< The MW integer has arrived.
     int    dn_wl{0};               ///< Confident ZD wide-lane integer (cycles).
     double sigma_wl{0};            ///< Its 1σ (cycles, floored).
@@ -928,23 +927,6 @@ struct RelevelPend {
     bool   has_gf{false};
     double dgf_m{0};               ///< T1-measured ΔGF across the slip epoch (m).
     double sigma_gf_m{0};          ///< Its 1σ (m; empirical, floored).
-    // --- Bridge v3, E3: the EWL-MW integer slot (band-3 coverage) ------------
-    // dn_ewl_b3 is normalized at fill time to ΔN(band3) − ΔN(shared IF band),
-    // whatever the candidate's frequency-sorted pair order: the GAL EWL (L7Q, L5Q)
-    // is sign-flipped relative to GPS (L2W, L5Q) in raw candidate order, and a
-    // missed flip passes every σ cap.
-    bool   has_ewl{false};
-    int    dn_ewl_b3{0};           ///< ΔN(band3) − ΔN(shared band), cycles.
-    double sigma_ewl{0};           ///< Its 1σ (cycles; el-mapped floor).
-    double lambda_ewl{0};          ///< EWL wavelength (m).
-    int    ewl_shared_band{0};     ///< Which IF-pair band the EWL pair shares (1 or 2).
-    bool   ewl_b3_hi{false};       ///< Band 3 is the higher-frequency band of the EWL pair.
-    std::string sig3;              ///< The third band's phase signal ("L5Q"/"L7Q").
-    bool   has_pre3{false};        ///< Band-3 pre-slip carry captured at the flag epoch
-                                   ///  (a later capture would read the interim free
-                                   ///  re-level, not the pre-slip level, so the capture
-                                   ///  is made only at the flag epoch).
-    double pre3{0}, pre_var3{0};   ///< Pre-slip carry (band 3).
 };
 
 /// Per-epoch state of the slip re-level response (SPEC_slip_relevel_walk §6;
@@ -967,10 +949,10 @@ struct RelevelPend {
 /// snapshotted, by design (forward-only response policy; an epoch after a resume
 /// degrades to the pre-fix path, the conservative direction).
 struct RelevelEpochState {
-    /// Freeing-cause bits for the lane observatory (§7.6(c)).  A bitmask because one
-    /// (station, amb key) can be freed by several detectors in the same epoch (an LLI
-    /// assertion corroborated by an MW step marks twice).  The T4 bits are used only
-    /// by the RAIM-side pre-erase capture (§7.6(d)); the RAIM path never touches
+    /// Freeing-cause bits (§7.6(c)).  A bitmask because one (station, amb key) can be
+    /// freed by several detectors in the same epoch (an LLI assertion corroborated by an
+    /// MW step marks twice).  The T4 bits name the RAIM erase causes (the injected-free
+    /// drain also tags kCauseT4Attrib); the RAIM path itself never touches
     /// @c free_ambs (§7.6, confound (1)).
     enum : std::uint8_t {
         kCauseMw        = 1,   ///< MW wide-lane integer-jump drain.
@@ -986,69 +968,17 @@ struct RelevelEpochState {
     /// inject site skips these, which gives each marked arc its free epoch.
     std::set<std::pair<int, std::string>> free_ambs;
     /// Cause tag parallel to @c free_ambs (§7.6(c); the same one-epoch lifetime).
-    /// Measure-only: nothing downstream reads it except the lane observatory.
+    /// Read downstream by the classifiers of a freeing (for example the second-phase
+    /// census, the float vehicle and the signal roster).
     std::map<std::pair<int, std::string>, std::uint8_t> free_cause;
-    /// Satellites whose datum-station slip re-reference was applied this epoch (a
-    /// network-wide carry erase and reseed, i.e. a family frame step on every
-    /// signal); the §7.7 handover cross-guard.  Same one-epoch lifetime: the apply
-    /// edge runs in PASS A after clear(), and the T4 measurement reads it at the
-    /// harvest.  Measure-only.
-    std::set<std::string> datum_reref_sats;
     /// Deferred MW candidates for the IF-TD-driver delta bridge.
     std::vector<MwBridgeCand> mw_cands;
     /// Arcs whose carry was delta-bridged this epoch (station, sat, signal), for the
     /// harvest-side statistics guard (excluded from LS-VCE, relabelled in prires).
     std::set<std::tuple<int, std::string, std::string>> bridged;
 
-    /// Per-(station, satellite) raw-MW input of the carry-domain lane observatory for
-    /// this epoch (SPEC_lane_slip_response §7.3, rung 3 v3).
-    ///
-    /// The MW delta travels here instead of being read at the measuring site because
-    /// the raw MW is a pure observable, unaffected by the eq34 D4 and phase-datum
-    /// S-transforms that shift @c LocalCarry::value_abs between PASS A and the
-    /// harvest.  Carrying only the observable across the seam, and reading both lane
-    /// levels inside the harvest, keeps the pre- and post-event lanes in one gauge by
-    /// construction, so a gauge mismatch cannot arise and needs no interlock.
-    ///
-    /// Lifetime: one epoch (the same contract as @c free_ambs).  Populated by the
-    /// PASS-A raw-observable pass when the observatory is armed, consumed by the
-    /// harvest, cleared at the next PASS-A entry.  Not snapshotted.
-    struct LaneMw {
-        std::string sig1, sig2;    ///< The raw pass's primary (lo, hi) band pair.
-        double lam1_m{0.0};        ///< sig1 wavelength (m).
-        double lam2_m{0.0};        ///< sig2 wavelength (m).
-        double lambda_wl_m{0.0};   ///< Wide-lane wavelength 1/(1/lam1 - 1/lam2) (m).
-        double d_mw_cyc{0.0};      ///< ΔMW across the epoch in WL cycles (d_mw / lambda_wl_m).
-        double el_deg{0.0};        ///< Elevation at this epoch (deg; 0 = unavailable; §7.6(a)).
-        bool   measured{false};    ///< An adjacent-epoch predecessor existed, so the step is real.
-        bool   pair_changed{false};///< That predecessor used a different band pair, so d_mw_cyc is not in this lane's cycles.
-    };
-    std::map<std::pair<int, std::string>, LaneMw> lane_mw;
-
-    /// One per-event record of the lane observatory (§7.6(a)): one row per attempt,
-    /// measured or skipped (for a skip, the skip channel is the outcome).  Filled by
-    /// the harvest and emitted onto the existing events stream by the leveling seam
-    /// right after the harvest returns (as LV-2 does: the trace sinks and the epoch
-    /// time live on that side of the seam), then cleared; clear() also wipes it.
-    /// Measure-only.
-    struct LaneObsRow {
-        int          sta{-1};        ///< Station index.
-        std::string  sat;            ///< RINEX satellite id.
-        std::string  sig1, sig2;     ///< The measured band pair (carry namespace; empty when unresolved).
-        std::uint8_t cause{0};       ///< Freeing-cause bitmask (kCause*).
-        bool         t4{false};      ///< T4-side row (pre-erase capture, §7.6(d)), not a detector-freed one.
-        bool         vertex_wide{false}; ///< Both bands freed (detector rows; T4 rows always vertex-wide).
-        double       el_deg{0.0};    ///< Elevation at the measuring epoch (deg; 0 = unavailable).
-        double       delta_cyc{0.0}; ///< The lane delta (cycles; only valid when measured).
-        double       d_mw_cyc{0.0};  ///< The raw ΔMW in WL cycles (0 when unmeasured).
-        bool         measured{false};///< True = delta valid; false = see outcome.
-        const char*  outcome{"measured"}; ///< "measured" or the skip channel (string literals only).
-    };
-    std::vector<LaneObsRow> lane_obs_rows;
-
     void clear() {
-        free_ambs.clear(); free_cause.clear(); datum_reref_sats.clear();
-        mw_cands.clear(); bridged.clear(); lane_mw.clear(); lane_obs_rows.clear();
+        free_ambs.clear(); free_cause.clear(); mw_cands.clear(); bridged.clear();
     }
 };
 

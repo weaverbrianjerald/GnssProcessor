@@ -2435,7 +2435,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // family, and a slip repeated in the epoch after an IF-TD flag.  Sited after the
     // IF-TD driver, so a band that driver already freed takes only the cause bit (its
     // response and bridge pend stay as they were), and before the wind-up, gap
-    // re-entry and injected-free drains and the lane observatory, like every freeing
+    // re-entry and injected-free drains, like every freeing
     // site, so this epoch's PASS-B inject and the anchor-slip handover read the latch
     // it fills.  No-op unless network.cycle_slip.gf_arc_jump.
     networkSlipDrainGfArcJump(qc, stations, present, i_lo, n_sta_total,
@@ -2456,9 +2456,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // (SPEC_phase_windup_sign §10.4.)  Drains the per-station restart ledgers that
     // the model evaluations above just filled and refloats the stepped arcs: the
     // wired invariant-#1 response that any accumulate_phase_windup arm requires.
-    // Sited before the lane observatory's PASS-A half below, so a restart-freed
-    // pair enters this epoch's freed set (and its lane response is measured under
-    // cause=WU like every other).  No-op unless
+    // A restart-freed pair enters this epoch's freed set like every other.  No-op unless
     // network.cycle_slip.windup_restart_refloat (disarmed by the loader outside
     // accumulated mode).  It receives the leveling carry for the reason the gap
     // re-entry drain below does: a restart is a return after a gap, so the arc
@@ -2481,11 +2479,10 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // is the wired invariant-#1 response: it marks both bands of a slipped re-entry
     // exactly as a detected slip.
     //
-    // Sited here for two reasons: it must run in the same epoch as the re-entry (the
-    // PASS-B leveling inject in networkPassB_ would fold the stale level, and it
-    // reads `relevel.free_ambs`), and it must precede the lane observatory's PASS-A
-    // half, so a gap-freed pair enters this epoch's freed set and is measured under
-    // cause=GAP like every other response.
+    // Sited here because it must run in the same epoch as the re-entry (the PASS-B
+    // leveling inject in networkPassB_ would fold the stale level, and it reads
+    // `relevel.free_ambs`), so a gap-freed pair enters this epoch's freed set like
+    // every other response.
     //
     // It receives `local_carry` and (pl_now_s, pl_max_gap_s), not only the
     // StateManager, because at this point in the epoch a re-entering arc has no
@@ -2537,9 +2534,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // answers a raw row that went absent.  A satellite that keeps one tracking
     // signal through a primary-pair loss of lock keeps its row, so that tier does
     // not see it, and the returning phases' carried ambiguities would fold across
-    // the break.  Sited immediately after it, for the same two reasons (same epoch
-    // as the re-entry; before the lane observatory's PASS-A half), with the same
-    // arguments.
+    // the break.  Sited immediately after it, for the same reason (same epoch as the
+    // re-entry), with the same arguments.
     // No-op unless network.cycle_slip.gap_reentry_per_signal (a rider of
     // gap_reentry_relevel).
     networkSlipDrainGapReentryPerSignal(stations, present, i_lo, n_sta_total,
@@ -2565,65 +2561,6 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                      carry_slipped_ambs, ctx.inject, se, traces, log,
                                      relevel_ptr,
                                      relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
-
-    // ---- Carry-domain lane observatory, PASS-A half (rung 3 v3) --------------
-    // (SPEC_lane_slip_response §7.3.)  Sited after both slip drains, so this epoch's
-    // freed set is complete.  It carries only the raw-MW observable forward; no
-    // carry level is read here.  The raw MW is untouched by the eq34 D4 /
-    // phase-datum S-transforms that shift LocalCarry::value_abs between this seam
-    // and the harvest, so reading both lane levels inside the harvest keeps them in
-    // one gauge by construction, instead of interlocking around a frame step after
-    // the fact.
-    //
-    // Measure-only: nothing downstream mutates a value from this map, so an armed
-    // run stays byte-identical on every solve artifact.
-    if (relevel_ptr && config_.networkCycleSlipRelevelLaneSnap() && qc.epoch.computed) {
-        for (std::size_t i = 0; i < stations.size() && i < qc.epoch.rows.size(); ++i) {
-            if (i < present.size() && !present[i]) continue;
-            // Per-satellite elevation for the per-event trace rows (§7.6(a)): the
-            // raw pass carries none, but the modelled set (same station, same
-            // epoch) does.  0 stays "unavailable" for a satellite the model pass
-            // dropped.
-            std::map<std::string, double> el_of;
-            if (i < modeled.size())
-                for (const auto& mo : modeled[i]) el_of[mo.satellite] = mo.elevation;
-            for (const auto& row : qc.epoch.rows[i]) {
-                // Non-dual rows are admitted too (sig2 empty).  Without them a
-                // satellite the raw pass tracked on one band is indistinguishable
-                // from one it never saw, and the "no MW pair" channel could never
-                // fire (an invariant-#4 gap in the instrument built to expose such
-                // gaps).
-                const auto vit = qc.epoch.verdict[i].find(row.satellite);
-                RelevelEpochState::LaneMw m;
-                m.sig1 = row.sig1;
-                m.lam1_m = row.lam1_m;
-                const auto eit = el_of.find(row.satellite);
-                if (eit != el_of.end()) m.el_deg = eit->second;
-                if (row.dual && row.lambda_wl_m > 0.0 && std::isfinite(row.lambda_wl_m)) {
-                    m.sig2        = row.sig2;
-                    m.lambda_wl_m = row.lambda_wl_m;
-                    // lam2 from the WL definition 1/lam_wl = 1/lam1 - 1/lam2, so
-                    // the pair's wavelengths stay consistent with the MW being
-                    // differenced against them.  lambda_wl_m is stored as an
-                    // absolute value, so this inversion is valid only when the
-                    // lower-band-digit signal has the shorter wavelength; otherwise
-                    // the consumer rejects the pair (bad_lambda), because the
-                    // derived lam2 is wrong and the MW's phase term is sign-flipped
-                    // relative to the carry lane.
-                    const double inv2 = (row.lam1_m > 0.0)
-                                            ? (1.0 / row.lam1_m - 1.0 / row.lambda_wl_m)
-                                            : 0.0;
-                    m.lam2_m = (inv2 > 0.0) ? 1.0 / inv2 : 0.0;
-                    if (vit != qc.epoch.verdict[i].end()) {
-                        m.measured     = vit->second.measured;
-                        m.pair_changed = vit->second.pair_changed;
-                        m.d_mw_cyc     = m.measured ? vit->second.d_mw / row.lambda_wl_m : 0.0;
-                    }
-                }
-                relevel_ptr->lane_mw[{static_cast<int>(i), row.satellite}] = m;
-            }
-        }
-    }
 }
 
 void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,

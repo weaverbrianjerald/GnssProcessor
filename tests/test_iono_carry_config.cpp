@@ -194,10 +194,8 @@ TEST(IonoCarryConfig, BridgeV3RidersRequireDeltaBridge) {
         networkConfig("    \"phase_leveling\": true,\n"
                       "    \"cycle_slip\": { \"mw_detect\": true, \"if_phase_td\": true,\n"
                       "                      \"relevel_free_epoch\": true,\n"
-                      "                      \"relevel_bridge_gf\": true,\n"
-                      "                      \"relevel_bridge_ewl\": true },\n"), cfg));
+                      "                      \"relevel_bridge_gf\": true },\n"), cfg));
     EXPECT_FALSE(cfg.networkCycleSlipRelevelBridgeGf());
-    EXPECT_FALSE(cfg.networkCycleSlipRelevelBridgeEwl());
 }
 
 TEST(IonoCarryConfig, BridgeV3RidersSurviveWithDeltaBridge) {
@@ -207,12 +205,9 @@ TEST(IonoCarryConfig, BridgeV3RidersSurviveWithDeltaBridge) {
                       "    \"cycle_slip\": { \"mw_detect\": true, \"if_phase_td\": true,\n"
                       "                      \"relevel_free_epoch\": true,\n"
                       "                      \"relevel_delta_bridge\": true,\n"
-                      "                      \"relevel_bridge_gf\": true,\n"
-                      "                      \"relevel_bridge_ewl\": true },\n"), cfg));
+                      "                      \"relevel_bridge_gf\": true },\n"), cfg));
     EXPECT_TRUE(cfg.networkCycleSlipRelevelBridgeGf());
-    EXPECT_TRUE(cfg.networkCycleSlipRelevelBridgeEwl());
     EXPECT_DOUBLE_EQ(cfg.networkCycleSlipRelevelBridgeGfSigmaFloorM(), 0.01);
-    EXPECT_DOUBLE_EQ(cfg.networkCycleSlipRelevelBridgeEwlSigmaFloorCyc(), 0.05);
 }
 
 // --- CS-GF authority: the source knob and the pure recursion (successor to QUEUE 8b).
