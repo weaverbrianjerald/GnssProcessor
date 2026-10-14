@@ -18,6 +18,7 @@
 #include "filter/KalmanFilter.hpp"
 #include "filter/KalmanKernels.hpp"       // sparse-H products
 #include "filter/KalmanRowIdentity.hpp"   // splitBssdSatId, bandWavelengthForSat
+#include "common/GnssIdentity.hpp"        // obsTypeOf, isIonoFreePairLabel
 #include "logging/GatedSink.hpp"
 #include "logging/KalmanFilterLogger.hpp"
 #include "math/TimeUtils.hpp"
@@ -346,10 +347,10 @@ namespace GnssProcessor {
             for (Eigen::Index i = 0; i < n_rows; ++i) {
                 const auto& sat_id = measurement.satellite_ids[static_cast<size_t>(i)];
                 const auto& sig    = measurement.signal_types[static_cast<size_t>(i)];
-                if (sig.empty() || sig[0] != 'L') continue;
+                if (obsTypeOf(sig) != ObsType::Phase) continue;
                 // Iono-free combos don't have a single-λ interpretation;
                 // skip them (consistent with the per-row outlier λ-floor).
-                if (sig.find('_') != std::string::npos) continue;
+                if (isIonoFreePairLabel(sig)) continue;
                 if (sig.size() < 2) continue;
 
                 const auto [prim, _ref] = splitBssdSatId(sat_id);

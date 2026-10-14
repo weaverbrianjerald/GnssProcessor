@@ -9,6 +9,7 @@
 #include "filter/KalmanQcCounters.hpp"
 #include "aiding/AidingTypes.hpp"
 #include "common/Constants.hpp"
+#include "common/SignalBand.hpp"     // ObsType
 #include "logging/KalmanFilterLogger.hpp"
 #include <Eigen/Dense>
 #include <map>
@@ -699,10 +700,11 @@ namespace GnssProcessor {
          * (@ref rowAtxSubstituted_) and, for code, combined (ionosphere-free) signals.
          *
          * @param w        Work value (read only).
-         * @param obs_type 'L' for phase rows, 'C' for code rows.
+         * @param obs_type @c ObsType::Phase for phase rows, @c ObsType::Code for code rows
+         *                 (the signal's type by @c obsTypeOf).
          * @return The groups and the pools, each in map order.
          */
-        kalman::PivotRowGroups groupPivotRows_(const PostFitQcWork& w, char obs_type) const;
+        kalman::PivotRowGroups groupPivotRows_(const PostFitQcWork& w, ObsType obs_type) const;
 
         /**
          * @brief True if the ATX correction of @p signal was frequency-fallback-substituted

@@ -47,7 +47,7 @@ void PivotManager::buildEpochMaps(
         // Count distinct phase signal types for this satellite.
         size_t n_phase = 0;
         for (const auto& [sig, val] : obs.observed)
-            if (!sig.empty() && sig[0] == 'L')
+            if (obsTypeOf(sig) == ObsType::Phase)
                 ++n_phase;
 
         SatInfo info{ cons, obs.elevation, n_phase, -1.0 };
@@ -61,7 +61,7 @@ void PivotManager::buildEpochMaps(
         // SD frame.  The worst per-signal variance is therefore the
         // pivot-fitness measure.
         for (const auto& [sig, val] : obs.observed) {
-            if (sig.empty() || sig[0] != 'L') continue;
+            if (obsTypeOf(sig) != ObsType::Phase) continue;
             const int aidx = state_manager.getAmbiguityIndex(obs.satellite + "_" + sig);
             if (aidx < 0) continue;
             const double v = state_manager.getStateVariance(aidx);
@@ -112,7 +112,7 @@ std::set<std::string> PivotManager::collectPhaseSignals(
     std::set<std::string> phase_sigs;
     for (const auto& obs : observations)
         for (const auto& [sig, val] : obs.observed)
-            if (!sig.empty() && sig[0] == 'L')
+            if (obsTypeOf(sig) == ObsType::Phase)
                 phase_sigs.insert(sig);
     return phase_sigs;
 }
@@ -815,7 +815,7 @@ void PivotManager::handlePivotHandover(
             for (const auto& obs : observations) {
                 if (obs.satellite != pivot) continue;
                 for (const auto& [sig, val] : obs.observed)
-                    if (!sig.empty() && sig[0] == 'L')
+                    if (obsTypeOf(sig) == ObsType::Phase)
                         pivot_phase_sigs.insert(sig);
                 break;
             }
@@ -922,7 +922,7 @@ void PivotManager::freezePivotAmbiguityCovariance(StateManager& state_manager) {
             if (us == std::string::npos) continue;
             if (amb_key.substr(0, us) != piv) continue;
             const std::string amb_sig = amb_key.substr(us + 1);
-            if (amb_sig.empty() || amb_sig[0] != 'L') continue;
+            if (obsTypeOf(amb_sig) != ObsType::Phase) continue;
             const auto aidx = static_cast<Eigen::Index>(amb_idx);
             if (Pf(aidx, aidx) != 0.0) {
                 Pf.row(aidx).setZero();
