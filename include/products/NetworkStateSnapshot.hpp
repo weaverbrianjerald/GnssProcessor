@@ -353,13 +353,15 @@ struct NetworkStateSnapshot {
     ///
     /// @note @c p_prev == 0 carries meaning: a datum-pinned or ensemble-gauge column is
     ///       "exactly known" (Card 1e; the harvest lambda in networkHarvestLocalCarries,
-    ///       src/core/app/NetworkRunContext.cpp).  A reader must not treat it as absent or
-    ///       re-derive it: the κ shrink is guarded on @c p_prev > 0 (the CouplingRowBuilder
-    ///       row builders, NetworkCoupling.cpp), so a re-derived value would shrink a column
-    ///       that the datum re-applies exactly and change the row's gauge sum.
+    ///       src/core/app/NetworkLocalCarryHarvest.cpp).  A reader must not treat it as
+    ///       absent or re-derive it: the κ shrink is guarded on @c p_prev > 0 (the
+    ///       CouplingRowBuilder row builders, NetworkCoupling.cpp), so a re-derived value
+    ///       would shrink a column that the datum re-applies exactly and change the row's
+    ///       gauge sum.
     /// @note @c sh_layer is a field of its own, not the "L1" layer tag that the @c D record
-    ///       stores in its sat field (networkWriteStateSnapshot and networkTryWarmResume,
-    ///       NetworkRunContext.cpp): @c resolveSharedCol resolves through
+    ///       stores in its sat field (networkWriteStateSnapshot in
+    ///       NetworkStateSnapshotWrite.cpp and networkTryWarmResume in
+    ///       NetworkWarmResume.cpp): @c resolveSharedCol resolves through
     ///       @c vtecCoeffColumn(n,m,trig,sh_layer), so a lost layer would bind a layer-1
     ///       coefficient to the live layer-0 column.
     struct CouplingCol {
@@ -378,8 +380,8 @@ struct NetworkStateSnapshot {
     ///
     /// @note The dictionary key is (identity, @c s_prev, @c p_prev), not the identity
     ///       alone.  @c harvestCoupling (the harvest lambda in networkHarvestLocalCarries,
-    ///       NetworkRunContext.cpp) assigns both values from the shared column @c j, so the
-    ///       rows of one harvest epoch agree.  A station whose harvest fails skips the
+    ///       NetworkLocalCarryHarvest.cpp) assigns both values from the shared column @c j,
+    ///       so the rows of one harvest epoch agree.  A station whose harvest fails skips the
     ///       stash and keeps an older coupling, so two rows can hold different vintages of
     ///       one identity, and a dictionary keyed on identity alone would restore the
     ///       older rows against the wrong frame.
@@ -391,7 +393,7 @@ struct NetworkStateSnapshot {
     std::map<std::tuple<int, std::string, std::string>,
              std::vector<std::pair<int, double>>> coupling_rows;
     /// station roster index -> the ZWD carry's regression (same shape).  ZWD coupling is
-    /// harvested (networkHarvestLocalCarries, NetworkRunContext.cpp) and injected
+    /// harvested (networkHarvestLocalCarries, NetworkLocalCarryHarvest.cpp) and injected
     /// (networkPassB_, ApplicationNetworkAssembly.cpp), so a Z row restored without its
     /// regression has the same defect as an L row.
     std::map<int, std::vector<std::pair<int, double>>> coupling_zrows;
@@ -476,7 +478,7 @@ struct NetworkStateSnapshot {
     /// True when any coupling record is present (the writer then emits the v3 header).
     ///
     /// @warning Kept separate from @ref hasFrameState, which also gates the resume-side
-    ///          frame restore (networkTryWarmResume, NetworkRunContext.cpp).  Widening
+    ///          frame restore (networkTryWarmResume, NetworkWarmResume.cpp).  Widening
     ///          hasFrameState to the coupling records would let a coupling-bearing snapshot
     ///          with no PA/PT/CA rows claim frame state it does not have: the restore would
     ///          proceed with an empty @c anchor_incumbent, the QUEUE-1(d) erase would still

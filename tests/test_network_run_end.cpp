@@ -7,7 +7,8 @@
  * could break without any data run noticing: the trace close first, every manifest record
  * before the manifest's complete record, the product contract round trip before the
  * closed-loop summary, the six tail reports last, and the ambiguity-block bar before the
- * injection verdict (the exit code's precedence).
+ * injection verdict (the exit code's precedence).  One placement is pinned besides: the
+ * culprit withhold of card WCF directly after the within-epoch RAIM report.
  */
 
 #include "filter/NetworkRunEnd.hpp"
@@ -26,7 +27,9 @@
 #include "filter/NetworkLedgerEmit.hpp"
 #include "filter/NetworkMultiGnss.hpp"
 #include "filter/NetworkParamInventory.hpp"
+#include "filter/NetworkRaim.hpp"
 #include "filter/NetworkResponses.hpp"
+#include "filter/NetworkWithinEpochCulprits.hpp"
 
 #include <gtest/gtest.h>
 
@@ -85,6 +88,13 @@ TEST(NetworkRunEndTable, TheTailReportsAreTheLastRowsInOrder) {
         networkChannelAllRunEnd, networkMultiGnssRunEnd, networkLedgerEmitRunEnd};
     const std::size_t n = kNetworkRunEndReports.size();
     for (std::size_t k = 0; k < 6; ++k) EXPECT_EQ(rowOf(tail[k]), n - 6 + k);
+}
+
+TEST(NetworkRunEndTable, TheCulpritWithholdFollowsTheWithinEpochRaimReport) {
+    // Card WCF: the hand-off's line is read beside the T2 responses it accounts for.
+    const std::size_t we = rowOf(networkWithinEpochRaimRunEnd);
+    ASSERT_LT(we, kNetworkRunEndReports.size());
+    EXPECT_EQ(rowOf(networkWithinEpochCulpritWithholdRunEnd), we + 1);
 }
 
 TEST(NetworkRunEndTable, TheInjectionVerdictFollowsTheAmbiguityBlockBar) {

@@ -77,7 +77,7 @@ cheap remedy measured here is datum election, not that knob.
   rank by mid-arc losses, then |geocentric latitude| among ties (the §9.8
   equatorial preference, now enforced rather than advised), then name for
   determinism. The elected value lands in the config and is therefore
-  fingerprint-stable (NetworkRunContext.cpp:564: the datum station is in the
+  fingerprint-stable (NetworkSnapshotFingerprint.cpp: the datum station is in the
   warm-resume fingerprint, so election must never vary for a fixed roster).
 """
 import argparse

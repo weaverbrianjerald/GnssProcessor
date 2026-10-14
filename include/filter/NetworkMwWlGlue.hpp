@@ -50,6 +50,11 @@ struct NetworkRunTraces;
  * carry_driver.buildDdPriors.  The shared per-(rx,sat) maps are read-only inputs
  * populated by the census block.  Rows are appended in the order WL-1, then EWL (only
  * with mw_wl.ewl_fold_rows), then WL hold rows.  See the .cpp for the relocated body.
+ *
+ * @p we_culprits is the caller's culprit set (card WCF, filter/NetworkWithinEpochCulprits):
+ * a chord term whose (station, satellite) a culprit names is treated as slipped, so its
+ * lagged MW sample, which predates the re-tap, is not used this epoch.  Read only; the
+ * caller counts the withhold.
  */
 void networkMwWlInject(
     NetworkRunContext& ctx,
@@ -60,8 +65,7 @@ void networkMwWlInject(
     const std::vector<NetStation>& stations,
     const SyncedEpoch& se,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-    const std::set<std::string>* carry_we_drop_sats,
-    const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
+    const WithinEpochCulprits& we_culprits,
     int n_threads,
     std::vector<EwlLane>& ewl_lanes,
     const NetworkMwWlLayer::Config& ewl_cfg,

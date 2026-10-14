@@ -127,7 +127,7 @@ struct NetworkRunContext;    // app/NetworkRunContext.hpp
 struct NetworkRunEndView;    // filter/NetworkRunEnd.hpp
 struct NetworkRunTraces;     // logging/NetworkRunTraces.hpp
 struct SyncedEpoch;          // rinex/MultiRinexSync.hpp
-struct WithinEpochCulprits;  // filter/NetworkRunTypes.hpp
+struct WithinEpochCulprits;  // filter/NetworkWithinEpochCulprits.hpp
 
 namespace fcyc {
 

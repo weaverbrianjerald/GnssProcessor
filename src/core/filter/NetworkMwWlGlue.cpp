@@ -38,8 +38,7 @@ void networkMwWlInject(
     const std::vector<NetStation>& stations,
     const SyncedEpoch& se,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-    const std::set<std::string>* carry_we_drop_sats,
-    const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
+    const WithinEpochCulprits& we_culprits,
     int n_threads,
     std::vector<EwlLane>& ewl_lanes,
     const NetworkMwWlLayer::Config& ewl_cfg,
@@ -407,13 +406,7 @@ void networkMwWlInject(
                                    { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig1) })
                             || carry_slipped_ambs.count(
                                    { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig2) });
-                if (!slipped && carry_we_drop_sats
-                    && carry_we_drop_sats->count(rv.sat)) slipped = true;
-                if (!slipped && carry_we_drop_arcs) {
-                    const auto dit = carry_we_drop_arcs->find(rv.rx);
-                    if (dit != carry_we_drop_arcs->end()
-                        && dit->second.count(rv.sat)) slipped = true;
-                }
+                if (!slipped && we_culprits.names(rv.rx, rv.sat)) slipped = true;
                 if (slipped) { ok = false; break; }
                 MwSlipDetector::MwArcZdLast zl;
                 if (stations[rv.rx].mw_slip)
@@ -655,13 +648,7 @@ void networkMwWlInject(
                                    { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig1) })
                             || carry_slipped_ambs.count(
                                    { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig2) });
-                if (!slipped && carry_we_drop_sats
-                    && carry_we_drop_sats->count(rv.sat)) slipped = true;
-                if (!slipped && carry_we_drop_arcs) {
-                    const auto dit = carry_we_drop_arcs->find(rv.rx);
-                    if (dit != carry_we_drop_arcs->end()
-                        && dit->second.count(rv.sat)) slipped = true;
-                }
+                if (!slipped && we_culprits.names(rv.rx, rv.sat)) slipped = true;
                 MwSlipDetector::MwBridgeLast bl;
                 if (!slipped && stations[rv.rx].mw_slip)
                     bl = stations[rv.rx].mw_slip->arcBridgeLast(

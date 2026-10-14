@@ -15,7 +15,7 @@ Landing 15 s below the target epoch gives ~6 orders of magnitude of margin, and
 is nowhere near the previous epoch 30 s back.
 
 Only fingerprint-safe keys are touched (verified against networkSnapshotFingerprint(),
-NetworkRunContext.cpp:641-1227). The station roster and its
+NetworkSnapshotFingerprint.cpp). The station roster and its
 order, carry_invariant, state_snapshot_carry*, estimate_iono_sh, every q/floor,
 apriori_source, epoch_decimation_n and the datum station are all in the
 fingerprint: changing any of them hard-aborts every subsequent leg.
@@ -161,7 +161,7 @@ def main():
     net["trace_flag_rates"] = True
     net["health_interval_s"] = 300.0
     # SPEC_day129_frame_guards Phase 1. Every key below is verified absent from
-    # the fingerprint construction (NetworkRunContext.cpp:641-1227), so arming them
+    # the fingerprint construction (NetworkSnapshotFingerprint.cpp), so arming them
     # on a resume against the untraced 6 h seed is legal.
     if args.frame_guards:
         net["trace_sh_spectrum"] = True

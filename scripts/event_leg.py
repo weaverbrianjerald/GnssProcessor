@@ -13,7 +13,7 @@ Four subcommands:
     step of the harness: it converges the network and writes a snapshot every
     ``--interval-ep`` emitted epochs to
     ``runs/evseed_<name>/state_snapshot.txt.epNNNN`` (the history suffix is
-    ``n_emitted``; ``networkWriteStateSnapshot`` in ``NetworkRunContext.cpp``).
+    ``n_emitted``; ``networkWriteStateSnapshot`` in ``NetworkStateSnapshotWrite.cpp``).
 
 ``make-leg``
     Copy one ``.epNNNN`` snapshot into the leg dir twice: ``seed.txt``, the
@@ -26,7 +26,7 @@ Four subcommands:
 
     With two copies the exe never reads and writes the same file.  This matters
     because the producer's first snapshot write is unconditional (in
-    ``NetworkRunContext.cpp`` the write fires while ``last_snapshot_write_s <
+    ``NetworkStateSnapshotWrite.cpp`` the write fires while ``last_snapshot_write_s <
     0.0``, whatever ``state_snapshot_interval_s`` says): a single file would hold
     the leg's own second epoch after one run, and any relaunch on the same
     ``leg.json`` would be refused.  ``seed.txt``'s sha256 goes into
@@ -359,7 +359,7 @@ def _leg_common(args, event_json):
     legdir = os.path.join(REPO, "runs", f"evleg_{args.name}")
     os.makedirs(os.path.join(legdir, "logs"), exist_ok=True)
     # Two copies, so the exe never reads and writes the same file.  The producer's
-    # first snapshot write is unconditional (NetworkRunContext.cpp fires it while
+    # first snapshot write is unconditional (NetworkStateSnapshotWrite.cpp fires it while
     # `last_snapshot_write_s < 0.0`, whatever state_snapshot_interval_s says), so
     # the file `state_snapshot_path` names holds the leg's own second epoch as soon
     # as the run emits, and a relaunch on the same leg.json would resume from a

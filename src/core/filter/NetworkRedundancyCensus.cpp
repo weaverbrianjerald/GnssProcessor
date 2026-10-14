@@ -485,7 +485,7 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 // could not fail.
                 //
                 // This depends on seam order.  SB_LEVELING's carry harvest clears
-                // the pending-reseed set (NetworkRunContext.cpp,
+                // the pending-reseed set (NetworkLocalCarryHarvest.cpp,
                 // clearPendingReseed), and SB_RAIM then marks this epoch's
                 // refloats, so at SB_FRAMEDIAG the set holds the arcs an
                 // estimator-side mechanism responded to in this epoch, which is

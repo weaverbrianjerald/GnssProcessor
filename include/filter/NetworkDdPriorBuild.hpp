@@ -93,8 +93,12 @@ void networkBuildCarryDdPriors(
     /// drain (raim_refloat_pending).  The Iono-2 v3k erase-policy split uses the same
     /// idiom.  Read only under network.carry_invariant_innov_retap_only.
     const std::set<std::pair<int, std::string>>& carry_slipped_raw,
-    const std::set<std::string>* carry_we_drop_sats,
-    const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
+    /// The within-epoch RAIM tier's culprit sets (card C3c §3; card WCF): every carried
+    /// ambiguity of a culprit satellite or arc is treated as slipped (here and in the MW
+    /// wide-lane rows).  The epoch workspace's member (@ref EpochWorkspace::we_culprits),
+    /// naming something only on a T2 re-solve's rebuild; each rebuild that reads a culprit
+    /// is counted, with what it withheld, in @c NetworkServiceCounters::we_culprit_withhold.
+    const WithinEpochCulprits& we_culprits,
     int n_threads,
     NetworkLaneRun& lane_run,
     const std::function<bool(char, const std::string&)>& isUncarriedThirdBand);

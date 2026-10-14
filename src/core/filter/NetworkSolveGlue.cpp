@@ -118,8 +118,6 @@ NetworkSolveGlueResult networkSolveGlue(
     int n_cb,
     int n_present,
     int total_pins,
-    const std::set<std::string>* carry_we_drop_sats,
-    const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
     bool carry_warm,
     bool within_epoch_armed,
     double dt,
@@ -1510,7 +1508,7 @@ double sigma0_adapt = 0.0;         // final within-epoch σ̂0; 0 = adaptation d
 // A failed re-solve whose undo could not complete: est then holds a partial rebuild that
 // no consumer may read, so the epoch is skipped once the within-epoch block has closed
 // (card RPD section 7).  Declared here, like sigma0_adapt, because the skip happens
-// after the block retires its culprit-set aliases.
+// after the block clears the epoch's culprit sets.
 bool we_restore_failed = false;
 std::string we_restore_what;       // why the undo could not complete, for the skip report
 // Card PRM phase 3a: the landed replay's withheld carried priors, folded into the response
@@ -1629,16 +1627,18 @@ if (within_epoch_armed && carry_warm) {
     // prior) so they re-estimate from full-weight data and absorb the slip locally.
     // A whole bad station (a data-quality problem, not a slip) is excluded, which is
     // the de-weight / exclude tool, the right one for a bad measurement.
-    std::set<std::string> drop_sats;                       // refloat that sat's ambiguities network-wide
-    std::set<int>         drop_stations;                   // excluded entirely (bad-data case)
-    std::map<int, std::set<std::string>> drop_arcs;        // (station → sats) refloat at that station only
-    // The DD-carry re-solve (buildCarryDdPriors, via resolve_dropping) treats a
-    // mid-epoch RAIM culprit as slipped, so its stale carry is not folded again
-    // (C3c §3, H13 plus culprit withhold: refold from the unchanged predicted
-    // state).  The aliases live only while this block runs and are nulled before
-    // the sets leave scope.
-    carry_we_drop_sats = &drop_sats;
-    carry_we_drop_arcs = &drop_arcs;
+    //
+    // The sets are the epoch workspace's (ws.we_culprits, card WCF; the hand-off is
+    // described in filter/NetworkWithinEpochCulprits.hpp): the DD-carry rebuild of every
+    // re-solve (buildCarryDdPriors, via resolve_dropping) reads that member and treats a
+    // culprit satellite's or arc's carried ambiguities as slipped, so their stale carry is
+    // not folded again (C3c §3, H13 plus culprit withhold: refold from the unchanged
+    // predicted state).  The block starts them empty and clears them when it ends, so the
+    // withhold is active exactly while the block runs.
+    ws.we_culprits.clear();
+    std::set<std::string>&                drop_sats     = ws.we_culprits.sats;      // refloat that sat's ambiguities network-wide
+    std::set<int>&                        drop_stations = ws.we_culprits.stations;  // excluded entirely (bad-data case)
+    std::map<int, std::set<std::string>>& drop_arcs     = ws.we_culprits.arcs;      // (station → sats) refloat at that station only
 
     // σ̂0 and median-polish effects of the current shared solution.  The (station × sat)
     // residual table (carried-ambiguity phase rows only) decomposes additively into a
@@ -2129,7 +2129,13 @@ if (within_epoch_armed && carry_warm) {
         buildEnsembleGauges();
         // Rebuild the DD-prior blocks on the fresh arrowhead (beginEpoch cleared
         // them, and est_index_of was rebuilt above).  The predict is not re-run;
-        // only the fold is rebuilt.  No-op when off (card 4 (M1), C3b).
+        // only the fold is rebuilt.  No-op when off (card 4 (M1), C3b).  The rebuild
+        // reads this re-solve's culprit sets from ws.we_culprits (card WCF); the count
+        // here is the writer's end of that hand-off, read against the rebuild's own count
+        // at the run end.  It is gated on the knob the rebuild itself returns on, so the
+        // two ends count on the same postures.
+        if (ctx.knobs.carry_invariant && ws.we_culprits.namesAmbiguities())
+            ++ctx.counters.we_culprit_withhold.resolves;
         buildCarryDdPriors();
         Eigen::VectorXd x_replay = est.solve(plan.shared_datum);
         est.contributionReplay(false);   // card NOM N2a
@@ -2330,7 +2336,7 @@ if (within_epoch_armed && carry_warm) {
             // primary solve rebuilds est with the station in it.  A throw in the shared
             // system or the solve, a rejected legacy pivot or the budget spent leaves est
             // partly rebuilt, which no consumer may read, and the epoch is skipped once
-            // this block has retired its culprit-set aliases.  The undo fails only
+            // this block has cleared the epoch's culprit sets.  The undo fails only
             // through a replay that cannot rebuild a system the estimator held earlier in
             // the epoch, which is a defect of the replay.
             for (;;) {
@@ -2464,17 +2470,17 @@ if (within_epoch_armed && carry_warm) {
     ctx.carry.ep_we_clk_move_sat = we_clk_move_sat;
 
     // Card FCF: the landed replay's culprits, for the fixed-cycle ledger.  The sets hold the
-    // landed state here (an undone replay restored them above) and leave scope with this
-    // block; the by-value aliases retired below are left as they are.
-    result.we_landed = WithinEpochCulprits{drop_sats, drop_arcs, drop_stations};
+    // landed state here (an undone replay restored them above); they are copied before the
+    // clear below.
+    result.we_landed = ws.we_culprits;
 
     sigma0_adapt = sigma0;   // publish the final within-epoch σ̂0 for the withhold gate (A4)
 }
-// drop_sats / drop_arcs leave scope with the RAIM block, so retire the aliases and the
-// next epoch's primary buildCarryDdPriors cannot dereference a dangling set (see C3c
-// §3 at the alias site).
-carry_we_drop_sats = nullptr;
-carry_we_drop_arcs = nullptr;
+// The T2 block has ended: its culprit sets withhold nothing from here on (C3c §3, card
+// WCF).  No DD-carry rebuild follows in this epoch (resolve_dropping is its only caller
+// past the driver's primary build) and the next epoch starts a fresh workspace; the clear
+// keeps the member empty outside the block, as its contract states.
+ws.we_culprits.clear();
 
 // --- A failed re-solve that could not be undone (card RPD section 7) -------------------
 // The undo could not complete (a throw in the shared system or the solve, a rejected

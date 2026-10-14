@@ -122,8 +122,7 @@ void networkBuildCarryDdPriors(
     std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
     const std::set<std::pair<int, std::string>>& carry_slipped_raw,
-    const std::set<std::string>* carry_we_drop_sats,
-    const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
+    const WithinEpochCulprits& we_culprits,
     int n_threads,
     NetworkLaneRun& lane_run,
     const std::function<bool(char, const std::string&)>& isUncarriedThirdBand) {
@@ -185,6 +184,21 @@ void networkBuildCarryDdPriors(
         carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly();
 
     if (!carry_invariant) return;
+    // The reader's end of the culprit hand-off (card WCF): a rebuild that reads a culprit
+    // satellite or arc is a T2 re-solve's, and what it withholds is counted here, where the
+    // withhold takes effect.  The arc ambiguities it marks slipped for a culprit (and not for
+    // the slip funnel) are collected in a set, so each counts once per rebuild however often
+    // ambSlipped below is asked about it; they are added after the station loop.  Every arc
+    // of the carry graph is asked, tree edges (which carry no DD) and arcs born this epoch
+    // included, so the count bounds the carried DDs withheld from above.
+    const bool culprits_read = we_culprits.namesAmbiguities();
+    std::set<std::pair<int, std::string>> culprit_marked;   // (station, ambiguity key)
+    if (culprits_read) {
+        auto& wcf = ctx.counters.we_culprit_withhold;
+        ++wcf.rebuilds;
+        wcf.sats += static_cast<long long>(we_culprits.sats.size());
+        wcf.arcs += static_cast<long long>(we_culprits.arcCount());
+    }
     constexpr int kSatBase = 1000000;   // satellite vertices sit above every receiver index
     std::map<int, NetworkInvariantCarryDriver::GroupInput> groups;
     if (carry_innov_gate) { carry_arc_amb_key.clear(); carry_arc_amb_key2.clear(); }  // rebuilt with this call's arcs (D5)
@@ -580,7 +594,9 @@ void networkBuildCarryDdPriors(
             // within-epoch RAIM culprit (§3) invalidates this arc's carried DD.  The arc
             // is then re-tapped fresh this epoch instead of folding a stiff pre-slip prior.
             auto ambSlipped = [&](const std::string& amb_key) -> bool {
-                if (carry_slipped_ambs.count({static_cast<int>(i), amb_key})) {
+                const std::pair<int, std::string> sk{static_cast<int>(i), amb_key};
+                bool funnel_spared = false;   // a funnel entry the retap-only exception spared
+                if (carry_slipped_ambs.count(sk)) {
                     // Retap-only exception (D5 v4, network.carry_invariant_innov_retap_only).
                     // A funnel entry made by a D5 innovation flag, on an arc whose raw
                     // observables were measured as continuous, has no integer jump behind
@@ -603,19 +619,19 @@ void networkBuildCarryDdPriors(
                     // The funnel entry itself is unchanged either way: the Iono-2 v3k erase
                     // classifier, the WL-3 MW-row slip-skip, anchor hygiene, the PB emit
                     // filter and card G all read the same union as before.
-                    const std::pair<int, std::string> sk{static_cast<int>(i), amb_key};
                     if (!(retap_only && ctx.carry.carry_innov_flat_now.count(sk)
                           && !carry_slipped_raw.count(sk)))
                         return true;
-                    ++ctx.carry.carry_innov_kill_suppressed;
+                    funnel_spared = true;
                 }
-                if (carry_we_drop_sats
-                    && carry_we_drop_sats->count(parts->satellite)) return true;
-                if (carry_we_drop_arcs) {
-                    const auto dit = carry_we_drop_arcs->find(static_cast<int>(i));
-                    if (dit != carry_we_drop_arcs->end()
-                        && dit->second.count(parts->satellite)) return true;
+                if (we_culprits.names(static_cast<int>(i), parts->satellite)) {
+                    culprit_marked.insert(sk);
+                    return true;
                 }
+                // The suppressed kill is counted only where the arc survives: on a T2
+                // re-solve a culprit kills a spared arc anyway (card WCF), and that arc is
+                // counted in we_culprit_withhold.ambs, not here.
+                if (funnel_spared) ++ctx.carry.carry_innov_kill_suppressed;
                 return false;
             };
             int& sv = carry_sat_vertex[parts->satellite];
@@ -724,6 +740,8 @@ void networkBuildCarryDdPriors(
                 carry_arc_amb_key[gk][ArcKey(static_cast<int>(i), sv)] = key;
         }
     }
+    if (culprits_read)   // card WCF: the reader's ambiguity count, once per ambiguity
+        ctx.counters.we_culprit_withhold.ambs += static_cast<long long>(culprit_marked.size());
     std::vector<NetworkInvariantCarryDriver::GroupInput> glist;
     glist.reserve(groups.size());
     for (auto& [k, g] : groups) glist.push_back(std::move(g));
@@ -749,7 +767,7 @@ void networkBuildCarryDdPriors(
     if (mw_mach_on)
         networkMwWlInject(
             ctx, config_, log, traces, carry_driver, stations,
-            se, carry_slipped_ambs, carry_we_drop_sats, carry_we_drop_arcs, n_threads, ewl_lanes,
+            se, carry_slipped_ambs, we_culprits, n_threads, ewl_lanes,
             ewl_cfg, mw_wl_layer, mw_wl_f6, mw_wl_epoch, wl_inject_epoch, lane_trace_epoch,
             wl_epoch, wl_cons_epoch, revmap, lin_of, iono_of, primary,
             band_top_of, band_top2_of, band_mid_of, lam, blocks, mw_wl_on,

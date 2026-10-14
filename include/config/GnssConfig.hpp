@@ -9250,9 +9250,9 @@ namespace GnssProcessor {
         /// One recommendation row.
         ///
         /// `fp` = the knob is part of the warm-resume fingerprint (the add() set of
-        /// networkSnapshotFingerprint in NetworkRunContext.cpp).  This is the chain axis, and
-        /// it is why a recommendation cannot be read as an instruction: on a resumed leg,
-        /// arming a fingerprinted knob does not take effect mid-chain.  With
+        /// networkSnapshotFingerprint in NetworkSnapshotFingerprint.cpp).  This is the chain
+        /// axis, and it is why a recommendation cannot be read as an instruction: on a
+        /// resumed leg, arming a fingerprinted knob does not take effect mid-chain.  With
         /// state_snapshot_require on the leg hard-aborts; with it off the leg silently
         /// cold-starts, which is the worse failure and the one this readout exists to
         /// prevent.  Such a knob has to be armed in a fresh lineage (a new seed), never added

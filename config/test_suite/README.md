@@ -27,7 +27,7 @@ Rule 4's eight: `global_network_stations_305.json`, `manifest_vmf3.json`,
 ## Why warm-resume configs are never archived
 
 A snapshot under `runs/` can only be resumed by a config whose **fingerprint** matches
-(`NetworkRunContext.cpp`), and sixteen of the field-recommended knobs sit inside that
+(`NetworkSnapshotFingerprint.cpp`), and sixteen of the field-recommended knobs sit inside that
 fingerprint. Moving such a config is harmless; *editing* one is not — with
 `network.state_snapshot_require` on, the leg hard-aborts, and with it off the leg
 **silently cold-starts and reads as a clean resume**. Keeping them visible in the working

@@ -2359,14 +2359,6 @@ int Application::runNetwork() {
         };
         buildEnsembleGauges();
 
-        // Within-epoch RAIM culprit set forwarded into the DD-carry re-solve rebuild
-        // (spec §3 culprit-withhold).  The pointers alias the RAIM block's drop sets while
-        // it runs, and are null otherwise.  The PASS-A slip feed (carry_slipped_ambs,
-        // above) is the primary source; both are carry_invariant only, so a run with the
-        // toggle off is byte-identical (buildCarryDdPriors returns early).
-        const std::set<std::string>*                carry_we_drop_sats = nullptr;
-        const std::map<int, std::set<std::string>>* carry_we_drop_arcs = nullptr;
-
         // Reverse map (group key → chord ArcKey → ambiguity state key) so a
         // post-solve innovation flag (group, chord) maps back to its (station, ambiguity) for
         // the next epoch's slip funnel.  Rebuilt with the blocks each buildCarryDdPriors call
@@ -2517,12 +2509,17 @@ int Application::runNetwork() {
         // receiver = app index).  Re-invoked on the RAIM re-solve (est.beginEpoch there
         // clears the priors and rebuilds est_index_of), like buildEnsembleGauges.  A
         // no-op, byte-identical, unless carry_invariant.
+        //
+        // The slip feed is the PASS-A funnel (carry_slipped_ambs, above) and, on a
+        // within-epoch RAIM re-solve, the tier's culprit sets (spec §3 culprit withhold),
+        // read from the epoch workspace's ws.we_culprits.  The solve glue's T2 block
+        // adapts that member while it runs and clears it when it ends (card WCF), so the
+        // primary build here reads it empty.
         auto buildCarryDdPriors = [&]() {
             networkBuildCarryDdPriors(ctx, config_, log, traces, carry_driver, est, stations, asm_res,
                                       est_index_of, present, shared_phase_keys, se, carry_arc_amb_key,
                                       carry_arc_amb_key2, carry_slipped_ambs, carry_slipped_raw,
-                                      carry_we_drop_sats,
-                                      carry_we_drop_arcs, n_threads, lane_run, isUncarriedThirdBand);
+                                      ws.we_culprits, n_threads, lane_run, isUncarriedThirdBand);
         };
         subEnd(SB_GAUGEBUILD);   // close gauge build and carry-driver setup (D0b)
         subBegin(SB_DDBUILD);    // carry_driver.beginEpoch + buildCarryDdPriors, W·Pᶻ·Wᵀ (D0b)
@@ -2541,8 +2538,8 @@ int Application::runNetwork() {
         subBegin(SB_SOLVEGLUE);  // pre-solve prep + clock predict + solve + within-epoch re-solve (D0b)
         NetworkSolveGlueResult sg_ = networkSolveGlue(ctx, config_, log, traces, setup, est, ws, se, asm_res, est_index_of,
                                                       present, shared_phase_keys, registered_clock_sats, registered_code_keys,
-                                                      col_desc, n_clock, n_pb, n_cb, n_present, total_pins, carry_we_drop_sats,
-                                                      carry_we_drop_arcs, carry_warm, within_epoch_armed, dt, pl_now_s,
+                                                      col_desc, n_clock, n_pb, n_cb, n_present, total_pins,
+                                                      carry_warm, within_epoch_armed, dt, pl_now_s,
                                                       clk_anchor_sigma, buildEnsembleGauges, buildCarryDdPriors);
         if (sg_.action == EpochAction::SkipEpoch) return LoopSignal::Next;
         auto& x_s = sg_.x_s;
@@ -2957,7 +2954,7 @@ int Application::runNetwork() {
                       se.time.tow, d0b, d0b_net_sum, d_other, d_other - d0b_net_sum);
         }
 
-        // Periodic atomic snapshot (RTB-7(a)); the body is in NetworkRunContext.cpp
+        // Periodic atomic snapshot (RTB-7(a)); the body is in NetworkStateSnapshotWrite.cpp
         // (INC-4).  It stays after the prev_week/prev_tow advance, so the snapshot
         // captures this epoch.
         networkWriteStateSnapshot(ctx, config_, se.time, pl_now_s, emitter, carry_driver,
