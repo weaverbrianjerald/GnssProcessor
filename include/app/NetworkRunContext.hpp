@@ -300,6 +300,26 @@ namespace GnssProcessor {
         bool rxclk_isb{};           ///< Carry the per-system ISB columns too (pure RW, no drift state).
         bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
         bool rxcb_blk{};      ///< RXCB-IN-BLOCK (network.carry_rx_code_bias_in_block, card CTU section 14): the rx-CB columns fold inside the station's whitened local block; loader guarantees rx_cb_on + coupling + a local block.
+        /// The live F3 block predicate: @ref pl_local_block and @ref carry_cpl_cond (the block's
+        /// rows are coupling rows).  Read by networkPassB_ (the produce's block route and the
+        /// tally's F3 telemetry) and, through the four predicates below, by the harvest
+        /// (card NOM3 step PB1a; it was derived in both).
+        bool pl_blk_on{};
+        /// The carried ZWD column joins the F3 block: @ref zwd_in_block and @ref pl_blk_on.
+        /// Read by networkPassB_ and networkLocalCarryHarvest.
+        bool zwd_blk_on{};
+        /// The carried slant-iono columns join the F3 block: @ref iono_blk and @ref pl_blk_on.
+        /// Read by networkPassB_ and networkLocalCarryHarvest.
+        bool iono_blk_on{};
+        /// The receiver clock (and ISB) columns join the F3 block: @ref rxclk_blk and
+        /// @ref pl_blk_on.  Read by networkPassB_ and networkLocalCarryHarvest.
+        bool rxclk_blk_on{};
+        /// The receiver code-bias columns join the F3 block: @ref rxcb_blk, @ref pl_blk_on and
+        /// @ref rx_cb_on.  Read by networkPassB_ and networkLocalCarryHarvest.
+        bool rxcb_blk_on{};
+        /// network.cycle_slip.relevel_free_epoch: the produce consults the latched free-epoch
+        /// set and the tally folds its skips (SPEC_slip_relevel_walk).  Read by networkPassB_.
+        bool relevel_free_on{};
         bool rx_cb_datum{};   ///< Zero-mean-over-receivers DCB datum (network.rx_code_bias_datum; card RXCB-DATUM).
         double rx_cb_datum_sigma{};  ///< Loose physical-bound sigma (m) of that datum (network.rx_code_bias_datum_sigma_m).
         bool sta_prior_pre_pd{};  ///< Fold the station's datum rows before the addStation PD test (network.station_prior_before_pd; card RF-PD-fix).

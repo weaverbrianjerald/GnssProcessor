@@ -241,6 +241,8 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkDdFrac.cpp
     src/core/filter/NetworkSdEwlAr.cpp
     src/core/filter/NetworkShDevVtec.cpp
+    src/core/filter/NetworkSolveStations.cpp
+    src/core/filter/NetworkStationBuild.cpp
     src/core/filter/NetworkShHealth.cpp
     src/core/filter/NetworkLeveling.cpp
     src/core/filter/NetworkStashStatus.cpp
@@ -579,6 +581,7 @@ add_executable(gnss_tests
     tests/test_network_contributions.cpp
     tests/test_network_knobs_lane_emit.cpp
     tests/test_network_knobs_epoch_driver.cpp
+    tests/test_network_knobs_station_assembly.cpp
     tests/test_network_epoch_contract.cpp
     tests/test_network_engine_spec.cpp
     tests/test_network_row_classify.cpp

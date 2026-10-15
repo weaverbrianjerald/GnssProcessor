@@ -32,11 +32,13 @@
 #include "filter/NetworkAmbStateTrace.hpp"
 #include "filter/NetworkBlockBaarda.hpp"
 #include "filter/NetworkCarryDisposition.hpp"
+#include "filter/NetworkChainDatum.hpp"
 #include "filter/NetworkChannelAll.hpp"
 #include "filter/NetworkClockLevel.hpp"
 #include "filter/NetworkClockQc.hpp"
 #include "filter/NetworkCongruence.hpp"
 #include "filter/NetworkContributions.hpp"
+#include "filter/NetworkCoupling.hpp"
 #include "filter/NetworkDatumGraph.hpp"
 #include "filter/NetworkDdFrac.hpp"
 #include "filter/NetworkDdPriorBuild.hpp"
@@ -69,6 +71,7 @@
 #include "filter/NetworkSignalIntegrity.hpp"
 #include "filter/NetworkSolPrep.hpp"
 #include "filter/NetworkSolveGlue.hpp"
+#include "filter/NetworkSolveStations.hpp"
 #include "filter/NetworkStashStatus.hpp"
 #include "filter/NetworkStationBlock.hpp"
 #include "app/NetworkEpochAdmission.hpp"      // card NOM3 step EP2
@@ -80,6 +83,7 @@
 #include "filter/NetworkPhaseAnchorEpoch.hpp"
 #include "filter/NetworkSlipFunnel.hpp"
 #include "slip/NetworkGapResumeCensus.hpp"
+#include "filter/NetworkStationBuild.hpp"
 
 #include <gtest/gtest.h>
 
@@ -200,6 +204,23 @@ using SigStationBlock = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 dire
 static_assert(std::is_same_v<decltype(static_cast<SigStationBlock>(&networkStationBlock)), SigStationBlock>);
 using SigPrefitCensus = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigPrefitCensus>(&networkPrefitCensus)), SigPrefitCensus>);
+// Card NOM3 step PB1a: PASS B's serial stages, called by networkPassB_ (not by the spine) with
+// its run and epoch.  A stage that reads the assembly networkPassB_ is still writing takes it as
+// a const parameter (scripts/nom_epoch_lint.py V10 forbids reading it through the epoch).
+using SigShDevCarryAge = void (*)(NetworkRun&, const NetworkEpoch&);   // PB1a stage S04
+static_assert(std::is_same_v<decltype(static_cast<SigShDevCarryAge>(&networkShDevCarryAge)), SigShDevCarryAge>);
+using SigCouplingReinitHistory = void (*)(NetworkRun&, const NetworkEpoch&);   // PB1a stage S05
+static_assert(std::is_same_v<decltype(static_cast<SigCouplingReinitHistory>(&networkCouplingReinitHistory)), SigCouplingReinitHistory>);
+using SigAssemblyTally = void (*)(NetworkRun&, const NetworkEpoch&, const EpochAssembly&);   // PB1a stage S07
+static_assert(std::is_same_v<decltype(static_cast<SigAssemblyTally>(&networkAssemblyTally)), SigAssemblyTally>);
+using SigPrefitFuseEpoch = void (*)(NetworkRun&, const NetworkEpoch&, EpochAssembly&);   // PB1a stage S08, writes assembly
+static_assert(std::is_same_v<decltype(static_cast<SigPrefitFuseEpoch>(&networkPrefitFuseEpoch)), SigPrefitFuseEpoch>);
+using SigAssemblyConsume = bool (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&, EpochAssembly&);   // PB1a stage S09-S11, writes pass_a, assembly
+static_assert(std::is_same_v<decltype(static_cast<SigAssemblyConsume>(&networkAssemblyConsume)), SigAssemblyConsume>);
+using SigSolveStationsTrack = void (*)(NetworkRun&, const NetworkEpoch&, const EpochAssembly&, bool);   // PB1a stage S12
+static_assert(std::is_same_v<decltype(static_cast<SigSolveStationsTrack>(&networkSolveStationsTrack)), SigSolveStationsTrack>);
+using SigEq34PinAudit = void (*)(NetworkRun&, const NetworkEpoch&, const EpochAssembly&, bool);   // PB1a stage S13
+static_assert(std::is_same_v<decltype(static_cast<SigEq34PinAudit>(&networkEq34PinAudit)), SigEq34PinAudit>);
 using SigRedundancyCensus = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigRedundancyCensus>(&networkRedundancyCensus)), SigRedundancyCensus>);
 using SigBlockBaardaEmit = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct

@@ -49,6 +49,10 @@
  *     was a by-value pointer copy that stayed null while the original moved on).
  * After the solve the seams' outputs are solve.handoff and prep.sol; the driver's own writes
  * are the four stores above (the lint checks the driver, the compiler checks the seams).
+ * Inside networkPassB_ (card NOM3 step PB1a) its outputs reach its own serial stages, not the
+ * spine: networkPrefitFuseEpoch writes the assembly, networkAssemblyConsume writes pass_a and
+ * the assembly; the tally, the in-solve track and the eq34 audit take the assembly as a const
+ * parameter, since a group the caller is still writing is not read through `ep`.
  *
  * Const is deep: no member, here or in a struct held by value inside it, is a non-const
  * reference, a pointer to non-const, a smart pointer or a std::function

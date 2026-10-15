@@ -116,17 +116,17 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // itself (pl_local_block && carry_cpl_cond), so the harvest and the inject agree on
     // which station-epochs have a block.  Off ⇒ `cols` is untouched and
     // PlHarvestBlock::C keeps its dimension without the ZWD column (byte-identical).
-    const bool   zwd_blk_on  = ctx.knobs.zwd_in_block && pl_local_block && carry_cpl_cond;
+    const bool   zwd_blk_on  = ctx.knobs.zwd_blk_on;
     // Iono in the local block (network.carry_iono_in_block): the per-LOS iono columns
     // join the same harvest block, on the same live predicate, for the same reason.
     // Off ⇒ `cols` is untouched and PlHarvestBlock::C keeps its dimension
     // (byte-identical).
-    const bool   iono_blk_on = ctx.knobs.iono_blk && pl_local_block && carry_cpl_cond;
+    const bool   iono_blk_on = ctx.knobs.iono_blk_on;
     // Receiver clock in the local block (network.carry_rx_clock_in_block): the
     // receiver-clock (and ISB) columns join the same harvest block, on the same live
     // predicate, for the same reason.  Off ⇒ `cols` is untouched and PlHarvestBlock::C
     // keeps its dimension (byte-identical).
-    const bool   rxclk_blk_on  = ctx.knobs.rxclk_blk && pl_local_block && carry_cpl_cond;
+    const bool   rxclk_blk_on  = ctx.knobs.rxclk_blk_on;
     const double rxclk_gap_s   = ctx.knobs.rxclk_max_gap_s;
     const double rxclk_q       = ctx.knobs.rxclk_q_m2;
     const double rxclk_rate_q  = ctx.knobs.rxclk_rate_q;
@@ -136,8 +136,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // receiver code-bias columns join the same harvest block and are stashed with their
     // border regression and block row here; the standalone diagonal harvest below then
     // skips its stash.  Off => `cols` is untouched (byte-identical).
-    const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk && ctx.knobs.rx_cb_on
-                                 && pl_local_block && carry_cpl_cond;
+    const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk_on;
     // Seam-scoped ZWD re-seed + unconditional Z-row capture (§17 finding 3).
     const bool   zwd_capture   = ctx.knobs.zwd_capture;
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;

@@ -153,6 +153,14 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rxclk_isb        = config_.networkCarryRxClockIsb();
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
     k.rxcb_blk = config_.networkCarryRxCodeBiasInBlock();   // RXCB-IN-BLOCK; loader guarantees rx_cb_on + coupling + a local block
+    // The live block predicates and the free-epoch consult, resolved once here (card NOM3
+    // step PB1a): networkPassB_ derived them per epoch and the harvest a second time.
+    k.pl_blk_on       = k.pl_local_block && k.carry_cpl_cond;
+    k.zwd_blk_on      = k.zwd_in_block && k.pl_blk_on;
+    k.iono_blk_on     = k.iono_blk && k.pl_blk_on;
+    k.rxclk_blk_on    = k.rxclk_blk && k.pl_blk_on;
+    k.rxcb_blk_on     = k.rxcb_blk && k.pl_blk_on && k.rx_cb_on;
+    k.relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();
     k.rx_cb_datum = config_.networkRxCodeBiasDatum();
     k.rx_cb_datum_sigma = config_.networkRxCodeBiasDatumSigmaM();
     k.sta_prior_pre_pd = config_.getNetworkConfig().station_prior_before_pd;
