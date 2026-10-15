@@ -86,7 +86,6 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     auto& contract_pending = setup.contract_pending;
     auto& events_trace         = traces.events_trace;
     net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the pivots, datum_rx (N4b)
-    auto& c1_zoh_active = ctx.carry.c1_zoh_active;
     auto& this_epoch_if_pin_sel = ctx.carry.this_epoch_if_pin_sel;
     auto& this_epoch_if_pin_real = ctx.carry.this_epoch_if_pin_real;
     auto& last_if_pin_sel = ctx.carry.last_if_pin_sel;
@@ -94,13 +93,10 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     auto& emitted_anchor = ctx.carry.emitted_anchor;
 
     auto& eq34_emitted_pdr = ctx.carry.eq34_emitted_pdr;
-    auto& clock_osc = ctx.carry.clock_osc;
     auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
     auto& this_epoch_cb_reseed = ctx.carry.this_epoch_cb_reseed;
     auto& cb_reseed_disc_pending = ctx.carry.cb_reseed_disc_pending;
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
-    auto& ura_refloat_horizon = ctx.carry.ura_refloat_horizon;
-    auto& ura_retro_sats = ctx.carry.ura_retro_sats;
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
     auto& ramp_lifted = ctx.carry.ramp_lifted;
     auto& first_emit_content_s = ctx.carry.first_emit_content_s;
@@ -241,8 +237,8 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // epoch's clock-model update runs after the emit.  With clock_model off, C1 stays 0.
     if (clk_model_on)
         for (auto& s : sol.sats) {
-            const auto oit = clock_osc.find(s.sat);
-            if (oit == clock_osc.end() || !oit->second.init) continue;
+            const ClockOsc* oit = net::getSat(ctx.entities.sats, s.sat, &net::SatelliteState::clock_osc);
+            if (!oit || !oit->init) continue;
             // A satellite returning from a gap (for example an eclipse) still carries its
             // pre-gap drift here, because the clock-model update that reseeds x1 to 0 runs
             // after this emit; publishing oit->second.x1 unconditionally would emit an
@@ -250,16 +246,16 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
             // against the staleness bound the prediction and the drift finite difference
             // use (R11): past the gap the drift is not trusted, so c1 stays 0 (ZOH),
             // matching the reseed the update will do.
-            const double sat_dt = (oit->second.t_last > 0.0) ? (pl_now_s - oit->second.t_last)
+            const double sat_dt = (oit->t_last > 0.0) ? (pl_now_s - oit->t_last)
                                                              : 0.0;
             if (sat_dt >= 0.0 && sat_dt <= clk_model_max_gap) {
-                s.clock_c1_m_s = oit->second.x1;
-                c1_zoh_active.erase(s.sat);
+                s.clock_c1_m_s = oit->x1;
+                net::unmarkSat(ctx.entities.sats, s.sat, &net::SatelliteState::c1_zoh_active);
             } else {
                 // A return past the gap ships c1 = 0 (ZOH) for one epoch instead of an
                 // hours-old rate (T5/R6, V2 blind spot).  The event is edge-triggered on
                 // c1_zoh_active, so a satellite that stays stale logs once, not every emit.
-                if (events_trace.is_open() && c1_zoh_active.insert(s.sat).second)
+                if (events_trace.is_open() && net::markSat(ctx.entities, s.sat, &net::SatelliteState::c1_zoh_active))
                     emitEvent("T5_clock_model", "c1_zoh_suppress", s.sat, "", sat_dt,
                               clk_model_max_gap, "c1_zero", "vanish_return");
             }
@@ -465,7 +461,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // output is byte-identical.
     if (!ctx.carry.gl_emit_disc.empty()) {
         for (const auto& gsat : ctx.carry.gl_emit_disc)
-            ctx.carry.ura_retro_sats.insert(gsat);
+            net::markSat(ctx.entities, gsat, &net::SatelliteState::ura_retro_sats);
         ctx.counters.gross_los.emit_disc_marked +=
             static_cast<long long>(ctx.carry.gl_emit_disc.size());
     }
@@ -535,8 +531,8 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
             const double var = scov(col, col);
             if (!(var > 0.0) || !std::isfinite(var)) continue;
             double ura = s0 * std::sqrt(var);
-            const auto hit = ura_refloat_horizon.find(s.sat);
-            if (ura_refloat_inflate > 1.0 && hit != ura_refloat_horizon.end() && hit->second > 0)
+            const int* hit = net::getSat(ctx.entities.sats, s.sat, &net::SatelliteState::ura_refloat_horizon);
+            if (ura_refloat_inflate > 1.0 && hit && *hit > 0)
                 ura *= ura_refloat_inflate;   // stands in for the post-refloat DIA penalty
             // Cold-start quality ramp (RTB-7(b)): a freshly (re)started producer
             // advertises a URA of at least warmup_ura_floor_m until the ramp lifts
@@ -693,8 +689,8 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // each need the pending/quarantine logic and could bump a satellite twice when
     // both tiers flag it in one epoch.
     if (!ctx.carry.refsat_mark_sats.empty()) {
-        ura_retro_sats.insert(ctx.carry.refsat_mark_sats.begin(),
-                              ctx.carry.refsat_mark_sats.end());
+        for (const std::string& sat : ctx.carry.refsat_mark_sats)
+            net::markSat(ctx.entities, sat, &net::SatelliteState::ura_retro_sats);
         ctx.carry.refsat_mark_sats.clear();
     }
     // The drain must be armed whenever a source queues into ura_retro_sats, not only
@@ -713,7 +709,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // original `ura_retro`, and the output is byte-identical.
     if ((ura_retro || mark_refsat || datum_detect || ctx.knobs.pd_held_basis
          || ctx.knobs.gl_emit_exclude)
-        && !ura_retro_sats.empty()) {
+        && net::present(ctx.entities.sats, &net::SatelliteState::ura_retro_sats) > 0) {
         // The R record must describe only bumps that landed in the emitted product
         // (P0-1, RT0-5).  A flagged satellite absent from this epoch's emission (its
         // constellation quarantined above, or the satellite itself gone) is not
@@ -728,9 +724,9 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
         std::set<std::string> present_sats;
         for (const auto& s : sol.sats) present_sats.insert(s.sat);
         std::set<std::string> retro_pending;
-        for (const auto& sat : ura_retro_sats)
+        for (const auto& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::ura_retro_sats))
             (present_sats.count(sat) ? retro_emit_sats : retro_pending).insert(sat);
-        ura_retro_sats = std::move(retro_pending);   // absent sats wait for their next emit
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::ura_retro_sats, retro_pending);   // absent sats wait for their next emit
         if (!retro_emit_sats.empty())
             // The union drain (Card MS): every source of ura_retro_sats arrives here
             // (URA-retro QC contamination, the reference-satellite mark, the

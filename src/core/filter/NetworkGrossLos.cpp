@@ -620,7 +620,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
             tal.sat_epoch_max = std::max<long long>(
                 tal.sat_epoch_max, static_cast<long long>(ctx.carry.gl2_sat_down.size()));
             for (const auto& sat : ctx.carry.gl2_sat_down) {
-                ctx.carry.ura_retro_sats.insert(sat);   // the consensus path's disc bump
+                net::markSat(ctx.entities, sat, &net::SatelliteState::ura_retro_sats);   // the consensus path's disc bump
                 if (gl2_wire) ctx.carry.gl2_wire_pending.insert(sat);
             }
         }

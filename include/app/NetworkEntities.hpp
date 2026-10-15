@@ -232,9 +232,86 @@ struct ConstellationState {
     std::map<std::string, ChannelState> channels;
 };
 
-/// One satellite's carried state (steps N4e1 and N4e2 fill it).
+/// One satellite's carried state, keyed by @c SatId in the string order of the old satellite
+/// keys (O1; "" is the no-satellite @c SatId{}).  Step N4e1 fills its clock half: the clock
+/// carries, the CTU level monitor, the re-admission windows, the URA and retro-bump state
+/// and the clock baselines of the hold and the CB excursion test; step N4e2 the datum and QC
+/// half.  A field is present exactly when the old map held the satellite; a set membership
+/// is a flag.
 struct SatelliteState {
     Lifecycle seen;  ///< Decision D4; stays Absent until a card needs it.
+    /// Two-state oscillator clock state per satellite (network.clock_model): the carried
+    /// [offset, drift] and 2×2 covariance, persisted across epochs.  Empty and inert
+    /// unless clk_model_on.
+    /// per-sat carried [offset,drift]+cov+t_last (P0-3: t_last drives per-sat prediction/drift-FD across gaps)
+    /// Was @c NetworkCarryState::clock_osc.  Record K.
+    std::optional<ClockOsc> clock_osc;
+    /// Per-satellite clock sanity monitor (network.clock_monitor): the previous emitted
+    /// clock value and the continuous-GPS second it was stashed, per satellite, for the
+    /// adjacent-epoch jump test.  Erased on refloat so the post-reinit clock re-baselines.
+    /// sat -> {Δδtˢ (m), seen_s}
+    /// Was @c NetworkCarryState::prev_clk.  Record J.
+    std::optional<std::pair<double, double>> prev_clk;
+    /// sats currently emitting c1=0 (ZOH); edge trigger for the R6 event (L2/T5)
+    /// (a set membership: the flag).
+    /// Was @c NetworkCarryState::c1_zoh_active.  Record C.
+    bool c1_zoh_active{false};
+    /// card CTU monitor: satellite -> accumulated code-only level information I_L (1/m^2), undecayed
+    /// Was @c NetworkCarryState::clm_info.  ColdStart.
+    std::optional<double> clm_info;
+    /// card CTU G5: satellite -> code-only level information in the constellation contrast, 1/(s0^2 Q) summed (1/m^2)
+    /// Was @c NetworkCarryState::clm_info_c.  Record LB.
+    std::optional<double> clm_info_c;
+    /// card CTU monitor: satellite -> epochs of code information accumulated
+    /// Was @c NetworkCarryState::clm_n.  Record LB.
+    std::optional<int> clm_n;
+    /// previous monitored epoch's clock per satellite (m), the innovation's prior mean
+    /// Was @c NetworkCarryState::clm_prev_clk.  ColdStart.
+    std::optional<double> clm_prev_clk;
+    /// satellite -> row of clm_prev_pclk
+    /// Was @c NetworkCarryState::clm_prev_pidx.  ColdStart.
+    std::optional<int> clm_prev_pidx;
+    /// per-satellite window sums
+    /// Was @c NetworkCarryState::clm_win.  ColdStart.
+    std::optional<ClockLevelInnovWin> clm_win;
+    /// sat → n_loop_epochs of its last stash with a registered clock column (the re-admission detector)
+    /// Was @c NetworkCarryState::readmit_last_seen_ep.  ColdStart.
+    std::optional<long long> readmit_last_seen_ep;
+    /// sat → loop epoch at which its post-re-admission coupling marginalization expires
+    /// Was @c NetworkCarryState::readmit_marg.  ColdStart.
+    std::optional<long long> readmit_marg;
+    /// sat → continuous-GPS s of its last clock seed (the guard's "moved" attribution window)
+    /// Was @c NetworkCarryState::readmit_seeded_s.  ColdStart.
+    std::optional<double> readmit_seeded_s;
+    /// sat -> epochs remaining of post-refloat URA inflation.
+    /// Was @c NetworkCarryState::ura_refloat_horizon.  Record Y.
+    std::optional<int> ura_refloat_horizon;
+    /// Retro-bump (B1; P0-2/P1-3): per satellite, tier-independent, edge-triggered.
+    /// ura_retro_sats = sats a post-emit QC tier flagged last epoch, applied as a
+    /// per-sat discontinuity at the sat's next actual emit (markSatDiscontinuity): a
+    /// flagged sat absent from an emitted epoch (RT0-5 quarantine, vanish) stays
+    /// pending here instead of being consumed without landing.  retro_active = sats
+    /// currently flagged and already bumped, so a sat that stays flagged during
+    /// recovery is bumped once (on its rising edge), with no per-constellation reset
+    /// storm.
+    /// Here: the satellite is pending its retro-bump.
+    /// Was @c NetworkCarryState::ura_retro_sats.  Record R.
+    bool ura_retro_sats{false};
+    /// The satellite is flagged and already bumped (see @ref ura_retro_sats).
+    /// Was @c NetworkCarryState::retro_active.  Record A.
+    bool retro_active{false};
+    /// Satellite -> the clock (m) this producer emitted at that satellite's previous
+    /// emission: the baseline the coupled-mark step above is differenced against (card
+    /// PBH).  Maintained only while the hold is armed.
+    /// Was @c NetworkCarryState::pb_hold_prev_clock_m.  ColdStart.
+    std::optional<double> pb_hold_prev_clock_m;
+    /// Card LAH: satellite -> emitted clock (m) at the previous emitted epoch, holding
+    /// only that epoch's satellites (a satellite absent there contributes no step).
+    /// Was @c NetworkCarryState::pb_hold_frz_prev_clk.  ColdStart.
+    std::optional<double> pb_hold_frz_prev_clk;
+    /// sat -> previous epoch's solved clock (m)
+    /// Was @c NetworkCarryState::cb_exc_prev_clk.  ColdStart.
+    std::optional<double> cb_exc_prev_clk;
 };
 
 /// One open INC-2 bridge: the key's gauge is realized by a soft shared row at
@@ -623,6 +700,9 @@ using StationTable = Table<StationId, StationState>;
 /// The line-of-sight table, in (station, satellite) order.
 using LosTable = Table<LosId, LosState>;
 
+/// The satellite table, in satellite order.
+using SatTable = Table<SatId, SatelliteState>;
+
 /// The satellite-signal table, in (satellite, signal) order.
 using SatSignalTable = Table<SatSignalId, SatSignalState>;
 
@@ -671,7 +751,7 @@ struct EntityReach {
  */
 struct NetworkEntities {
     ConstellationTable                          constellations;
-    Table<SatId, SatelliteState>                sats;
+    SatTable                                    sats;
     SatSignalTable                              sat_signals;
     StationTable                                stations;
     LosTable                                    los;
@@ -1056,6 +1136,76 @@ void forEach(T& t, M R::*sub, std::optional<V> SR::*f, Fn fn) {
             if (sk.second.*f) fn(kv.first, sk.first, *(sk.second.*f));
 }
 
+// ---- Satellites addressed by the old satellite-string key (step N4e1) ----
+
+/// The satellite of a satellite string, without counting (the reader's converter, safe in
+/// the parallel produce): "" is the no-satellite @c SatId{}; any other string must
+/// round-trip (O2).
+std::optional<SatId> satIdKey(const std::string& sat);
+
+/// The satellite of a satellite string, counting a failure under Converter::Satellite (the
+/// writer's converter; serial code).
+std::optional<SatId> satIdOf(const NetworkEntities& e, const std::string& sat);
+
+/// The value of field @p f of satellite @p sat, or null (no count).
+template <class T, class V>
+FieldPtr<T, V> getSat(T& t, const std::string& sat, std::optional<V> SatelliteState::*f) {
+    const std::optional<SatId> id = satIdKey(sat);
+    return id ? get(t, *id, f) : nullptr;
+}
+
+/// True when flag @p f of satellite @p sat is set (no count): the old set's @c count().
+inline bool hasSat(const SatTable& t, const std::string& sat, bool SatelliteState::*f) {
+    const std::optional<SatId> id = satIdKey(sat);
+    return id && has(t, *id, f);
+}
+
+/**
+ * @brief The value of field @p f of satellite @p sat, created when absent: the old map's
+ *        @c operator[].  Serial code only.  A satellite that does not round-trip is counted
+ *        and gets a scratch value the table never holds.
+ */
+template <class V>
+V& putSat(NetworkEntities& e, const std::string& sat, std::optional<V> SatelliteState::*f);
+
+/// Resets field @p f of satellite @p sat; 1 when it was present: the old map's erase.
+template <class V>
+std::size_t dropSat(SatTable& t, const std::string& sat, std::optional<V> SatelliteState::*f) {
+    const std::optional<SatId> id = satIdKey(sat);
+    return id ? drop(t, *id, f) : 0;
+}
+
+/// Sets flag @p f of satellite @p sat; true when it was not set: the old set's
+/// @c insert().second.  Serial code only (counted on a failed conversion).
+bool markSat(NetworkEntities& e, const std::string& sat, bool SatelliteState::*f);
+
+/// Clears flag @p f of satellite @p sat; 1 when it was set: the old set's @c erase(key).
+std::size_t unmarkSat(SatTable& t, const std::string& sat, bool SatelliteState::*f);
+
+/// Flag @p f as the satellite-string set its readers and the snapshot take, in id order.
+std::set<std::string> satSet(const SatTable& t, bool SatelliteState::*f);
+
+/// Replaces flag @p f with the satellites of @p s: the old set's assignment.  Serial code only.
+void assignSatFlags(NetworkEntities& e, bool SatelliteState::*f, const std::set<std::string>& s);
+
+/// Field @p f as the satellite-string-keyed map its readers and the snapshot take, in id
+/// order (the string order of the keys, O1).
+template <class V>
+std::map<std::string, V> satMap(const SatTable& t, std::optional<V> SatelliteState::*f) {
+    std::map<std::string, V> out;
+    forEach(t, f, [&](const SatId& id, const V& v) { out.emplace(satKey(id), v); });
+    return out;
+}
+
+/// Replaces field @p f with the cells of the satellite-keyed map @p m: the old map's
+/// assignment.  Serial code only.
+template <class V>
+void assignSat(NetworkEntities& e, std::optional<V> SatelliteState::*f,
+               const std::map<std::string, V>& m) {
+    dropAll(e.sats, f);
+    for (const auto& [k, v] : m) putSat(e, k, f) = v;
+}
+
 // ---- Satellite signals addressed by the old string keys (step N4d) ----
 
 /// The value of field @p f of the satellite signal of old key @p key, or null (no count).
@@ -1152,6 +1302,14 @@ std::map<std::string, V> channelMap(const ConstellationTable& t, std::optional<V
 template <class V>
 V& putLos(NetworkEntities& e, int station, const std::string& sat, std::optional<V> LosState::*f) {
     if (const std::optional<LosId> id = losOf(e, station, sat)) return put(e.los, *id, f);
+    static thread_local std::optional<V> scratch;
+    scratch.emplace();
+    return *scratch;
+}
+
+template <class V>
+V& putSat(NetworkEntities& e, const std::string& sat, std::optional<V> SatelliteState::*f) {
+    if (const std::optional<SatId> id = satIdOf(e, sat)) return put(e.sats, *id, f);
     static thread_local std::optional<V> scratch;
     scratch.emplace();
     return *scratch;

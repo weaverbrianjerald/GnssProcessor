@@ -31,6 +31,7 @@ using C  = net::ConstellationState;
 using Ch = net::ChannelState;
 using L  = net::LosState;
 using G  = net::SatSignalState;
+using A  = net::SatelliteState;
 
 /// A run context on the default configuration (the record functions read its knobs).
 struct Ctx {
@@ -343,6 +344,128 @@ TEST(NetworkEntitiesRecords, SatSignalKeysRoundTripInTheOldOrder) {
     EXPECT_TRUE(net::emplaceSig(e, "G24_L1C", &G::pb_level_prev, 2.0));
     EXPECT_FALSE(net::emplaceSig(e, "G24_L1C", &G::pb_level_prev, 3.0));
     EXPECT_EQ(*net::getSig(e.sat_signals, "G24_L1C", &G::pb_level_prev), 2.0);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripK) {
+    Ctx a, b;
+    ClockOsc o;
+    o.x0 = 1.25; o.x1 = -3.5e-4; o.p00 = 0.04; o.p01 = 1.0e-6; o.p11 = 2.0e-9;
+    o.t_last = 1399161660.0; o.init = true;
+    net::putSat(a.ctx.entities, "G24", &A::clock_osc) = o;
+    o.x0 = -0.5; o.init = false;
+    net::putSat(a.ctx.entities, "E11", &A::clock_osc) = o;
+    net::putSat(a.ctx.entities, "G05", &A::clm_info) = 2.0;   // a row without the field
+    roundTrip("K", a.ctx, b.ctx);
+    const net::SatTable& r = b.ctx.entities.sats;
+    EXPECT_EQ(net::present(r, &A::clock_osc), 2u);
+    const ClockOsc* g = net::getSat(r, "G24", &A::clock_osc);
+    ASSERT_NE(g, nullptr);
+    EXPECT_EQ(g->x0, 1.25);
+    EXPECT_EQ(g->x1, -3.5e-4);
+    EXPECT_EQ(g->p00, 0.04);
+    EXPECT_EQ(g->p01, 1.0e-6);
+    EXPECT_EQ(g->p11, 2.0e-9);
+    EXPECT_EQ(g->t_last, 1399161660.0);
+    EXPECT_TRUE(g->init);
+    EXPECT_FALSE(net::getSat(r, "E11", &A::clock_osc)->init);
+    EXPECT_EQ(net::getSat(r, "G05", &A::clock_osc), nullptr);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripJ) {
+    Ctx a, b;
+    net::putSat(a.ctx.entities, "G24", &A::prev_clk) = {0.125, 1399161660.0};
+    net::putSat(a.ctx.entities, "C19", &A::prev_clk) = {-7.5, 1399161690.0};
+    net::putSat(a.ctx.entities, "G05", &A::clm_n) = 3;   // a row without the field
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("J", a.ctx, snap);
+    EXPECT_EQ(snap.prev_clk.begin()->first, "C19");   // the pre-N4e1 key shape and order
+    roundTrip("J", a.ctx, b.ctx);
+    const net::SatTable& r = b.ctx.entities.sats;
+    EXPECT_EQ(net::present(r, &A::prev_clk), 2u);
+    EXPECT_EQ(*net::getSat(r, "G24", &A::prev_clk), (std::pair<double, double>{0.125, 1399161660.0}));
+    EXPECT_EQ(*net::getSat(r, "C19", &A::prev_clk), (std::pair<double, double>{-7.5, 1399161690.0}));
+    EXPECT_EQ(net::getSat(r, "G05", &A::prev_clk), nullptr);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripY) {
+    Ctx a, b;
+    net::putSat(a.ctx.entities, "G24", &A::ura_refloat_horizon) = 7;
+    net::putSat(a.ctx.entities, "E11", &A::ura_refloat_horizon) = 1;
+    net::markSat(a.ctx.entities, "G05", &A::retro_active);   // a row without the field
+    roundTrip("Y", a.ctx, b.ctx);
+    const net::SatTable& r = b.ctx.entities.sats;
+    EXPECT_EQ(net::present(r, &A::ura_refloat_horizon), 2u);
+    EXPECT_EQ(*net::getSat(r, "G24", &A::ura_refloat_horizon), 7);
+    EXPECT_EQ(*net::getSat(r, "E11", &A::ura_refloat_horizon), 1);
+    EXPECT_EQ(net::getSat(r, "G05", &A::ura_refloat_horizon), nullptr);
+}
+
+/// Records C, R and A: a satellite set as a flag, written and restored wholesale.
+void flagRoundTrip(const char* tag, bool net::SatelliteState::*f) {
+    Ctx a, b;
+    net::markSat(a.ctx.entities, "G24", f);
+    net::markSat(a.ctx.entities, "E11", f);
+    net::putSat(a.ctx.entities, "G05", &A::clm_info) = 2.0;   // a row without the flag
+    net::markSat(b.ctx.entities, "G10", f);                    // replaced by the restore
+    roundTrip(tag, a.ctx, b.ctx);
+    const net::SatTable& r = b.ctx.entities.sats;
+    EXPECT_EQ(net::satSet(r, f), (std::set<std::string>{"E11", "G24"})) << tag;
+    EXPECT_FALSE(net::hasSat(r, "G05", f)) << tag;
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripC) {
+    flagRoundTrip("C", &A::c1_zoh_active);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripR) {
+    flagRoundTrip("R", &A::ura_retro_sats);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripA) {
+    flagRoundTrip("A", &A::retro_active);
+}
+
+
+TEST(NetworkEntitiesRecords, RecordRoundTripLB) {
+    Ctx a, b;
+    net::putSat(a.ctx.entities, "G24", &A::clm_info_c) = 400.0;
+    net::putSat(a.ctx.entities, "G24", &A::clm_n) = 12;
+    net::putSat(a.ctx.entities, "E11", &A::clm_info_c) = 25.0;   // no epoch count: written as 0
+    net::putSat(a.ctx.entities, "G05", &A::clm_info_c) = 0.0;    // not positive: not written
+    net::putSat(a.ctx.entities, "G07", &A::clm_n) = 4;           // no information: not written
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("LB", a.ctx, snap);
+    ASSERT_EQ(snap.level_info.size(), 2u);
+    EXPECT_EQ(snap.level_info.at("G24"), (std::pair<double, int>{400.0, 12}));
+    EXPECT_EQ(snap.level_info.at("E11"), (std::pair<double, int>{25.0, 0}));
+    roundTrip("LB", a.ctx, b.ctx);
+    const net::SatTable& r = b.ctx.entities.sats;
+    EXPECT_EQ(net::present(r, &A::clm_info_c), 2u);
+    EXPECT_EQ(*net::getSat(r, "G24", &A::clm_info_c), 400.0);
+    EXPECT_EQ(*net::getSat(r, "G24", &A::clm_n), 12);
+    EXPECT_EQ(*net::getSat(r, "E11", &A::clm_n), 0);
+    EXPECT_EQ(net::getSat(r, "G07", &A::clm_n), nullptr);
+}
+
+TEST(NetworkEntitiesRecords, SatelliteKeysRoundTripInTheOldOrder) {
+    // O1 and O2: a satellite string converts and back, and the table iterates in the string
+    // order; "" is the no-satellite SatId{} (its row is kept), and a non-canonical string
+    // does not round-trip (counted by the writer's converter).
+    net::NetworkEntities e;
+    const std::vector<std::string> keys{"", "C19", "E05", "G05", "G10", "R08"};
+    for (auto it = keys.rbegin(); it != keys.rend(); ++it)
+        net::putSat(e, *it, &A::readmit_marg) = 1;
+    std::vector<std::string> walked;
+    net::forEach(e.sats, &A::readmit_marg,
+                 [&](const SatId& id, long long) { walked.push_back(net::satKey(id)); });
+    EXPECT_EQ(walked, keys);
+    EXPECT_FALSE(net::satIdKey("G5").has_value());
+    EXPECT_FALSE(net::satIdOf(e, "XYZ").has_value());
+    EXPECT_EQ(e.reach.failures[static_cast<std::size_t>(net::Converter::Satellite)], 1);
+    EXPECT_TRUE(net::markSat(e, "G05", &A::ura_retro_sats));
+    EXPECT_FALSE(net::markSat(e, "G05", &A::ura_retro_sats));
+    EXPECT_EQ(net::unmarkSat(e.sats, "G05", &A::ura_retro_sats), 1u);
+    EXPECT_EQ(net::unmarkSat(e.sats, "G05", &A::ura_retro_sats), 0u);
 }
 
 TEST(NetworkEntitiesRecords, EveryRecordRowIsDeclaredOnceAndRestoredInOrder) {

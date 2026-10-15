@@ -428,10 +428,11 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     EXPECT_EQ(off_f.R.cpl_readmit_diverted, 0);
 
     // Inside the window: loop epoch 10 < expiry 12.
-    std::map<std::string, long long> marg{{"G01", 12}};
+    net::SatTable marg;   // readmit_marg (card NOM step N4e1)
+    net::put(marg, *net::satIdKey("G01"), &net::SatelliteState::readmit_marg) = 12;
     BuilderFixture in_f;
     auto in = in_f.builder(/*tu=*/false);
-    in.readmit_marg = &marg;
+    in.sats = &marg;
     in.loop_ep      = 10;
     in.buildCplRow(0, 0.5, lc, var, 30.0);
     ASSERT_EQ(in.crows.size(), 1u);
@@ -445,7 +446,7 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     // Expired (loop epoch == expiry): the legacy row again.
     BuilderFixture ex_f;
     auto ex = ex_f.builder(/*tu=*/false);
-    ex.readmit_marg = &marg;
+    ex.sats = &marg;
     ex.loop_ep      = 12;
     ex.buildCplRow(0, 0.5, lc, var, 30.0);
     ASSERT_EQ(ex.crows.size(), 1u);
@@ -455,10 +456,11 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     EXPECT_EQ(ex_f.R.cpl_readmit_diverted, 0);
 
     // Another satellite's window: untouched.
-    std::map<std::string, long long> other{{"G02", 100}};
+    net::SatTable other;   // readmit_marg (card NOM step N4e1)
+    net::put(other, *net::satIdKey("G02"), &net::SatelliteState::readmit_marg) = 100;
     BuilderFixture ot_f;
     auto ot = ot_f.builder(/*tu=*/false);
-    ot.readmit_marg = &other;
+    ot.sats = &other;
     ot.loop_ep      = 10;
     ot.buildCplRow(0, 0.5, lc, var, 30.0);
     ASSERT_EQ(ot.crows.size(), 1u);
@@ -471,10 +473,11 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     lsh.last_seen_s = 0.0;
     lsh.coupling = { CoupledShared{SharedParamKind::VtecSh, "", "", 1, 0, 'C', 0,
                                    /*coeff=*/0.3, /*s_prev=*/2.0, /*p_prev=*/0.05} };
-    std::map<std::string, long long> empty_sat{{"", 100}};
+    net::SatTable empty_sat;   // readmit_marg (card NOM step N4e1)
+    net::put(empty_sat, *net::satIdKey(""), &net::SatelliteState::readmit_marg) = 100;
     BuilderFixture sh_f;
     auto sh = sh_f.builder(/*tu=*/false);
-    sh.readmit_marg = &empty_sat;
+    sh.sats = &empty_sat;
     sh.loop_ep      = 1;
     sh.buildCplRow(0, 0.0, lsh, var, 30.0);
     ASSERT_EQ(sh.crows.size(), 1u);

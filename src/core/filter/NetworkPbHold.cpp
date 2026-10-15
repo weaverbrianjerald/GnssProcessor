@@ -98,13 +98,12 @@ void networkPbHold(NetworkRunContext& ctx,
         // An emitted epoch with no satellite (every one pruned) is still an emission, so
         // the phase-clock mode's next step is taken against it: nothing (card LAH).
         if (ctx.knobs.emit_pb_hold_phase_clock || ctx.knobs.emit_pb_hold_smoothed)
-            ctx.carry.pb_hold_frz_prev_clk.clear();
+            net::dropAll(ctx.entities.sats, &net::SatelliteState::pb_hold_frz_prev_clk);
         return;
     }
 
     net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pb_hold and the clones (card NOM step N4d)
     using SG = net::SatSignalState;
-    auto&        prev_clk  = ctx.carry.pb_hold_prev_clock_m;
     const double max_gap_s = ctx.knobs.emit_pb_hold_max_gap_s;
     const double epoch_s   = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
 
@@ -115,7 +114,8 @@ void networkPbHold(NetworkRunContext& ctx,
     // step at that epoch is recorded, so the run-end summary states the size of what
     // was not transferred.  The marks pending at this point are the complete set:
     // every marking site has run, and emitToStore, which consumes them, follows.
-    const std::map<std::string, double> clk_step = decommonedClockStep(sol, prev_clk);
+    const std::map<std::string, double> clk_step =
+        decommonedClockStep(sol, net::satMap(ctx.entities.sats, &net::SatelliteState::pb_hold_prev_clock_m));
 
     bool logged_arm = ctx.counters.n_pbh_held_emissions > 0
                       || ctx.counters.n_pbh_gen_first > 0;
@@ -143,19 +143,21 @@ void networkPbHold(NetworkRunContext& ctx,
             if (s.has_clock && !s.sat.empty() && std::isfinite(s.clock_c0_m))
                 ccs.insert(letterOfSat(s.sat));
         bool advanced = false;
+        const std::map<std::string, double> frz_prev =   // pb_hold_frz_prev_clk (N4e1)
+            net::satMap(ctx.entities.sats, &net::SatelliteState::pb_hold_frz_prev_clk);
         for (char cc : ccs) {
             double med = 0.0;
-            if (pbHoldCommonClockStep(sol, ctx.carry.pb_hold_frz_prev_clk, cc, med)) {
+            if (pbHoldCommonClockStep(sol, frz_prev, cc, med)) {
                 net::put(ctx.entities.constellations, systemFromLetter(cc),
                          &net::ConstellationState::pb_hold_frz_M) += med;
                 advanced = true;
             }
         }
         if (advanced) ++ctx.counters.n_pbh_frz_epochs;
-        ctx.carry.pb_hold_frz_prev_clk.clear();
+        net::dropAll(ctx.entities.sats, &net::SatelliteState::pb_hold_frz_prev_clk);
         for (const auto& s : sol.sats) {
             if (!s.has_clock || s.sat.empty() || !std::isfinite(s.clock_c0_m)) continue;
-            ctx.carry.pb_hold_frz_prev_clk[s.sat] = s.clock_c0_m;
+            net::putSat(ctx.entities, s.sat, &net::SatelliteState::pb_hold_frz_prev_clk) = s.clock_c0_m;
             frz_c[s.sat] = s.clock_c0_m - net::put(ctx.entities.constellations, systemOfSat(s.sat),
                                                    &net::ConstellationState::pb_hold_frz_M);
         }
@@ -448,7 +450,8 @@ void networkPbHold(NetworkRunContext& ctx,
     // the sweep, so the step above is taken against the previous emission, and only
     // for satellites that carry a clock this epoch.
     for (const auto& s : sol.sats)
-        if (s.has_clock && !s.sat.empty()) prev_clk[s.sat] = s.clock_c0_m;
+        if (s.has_clock && !s.sat.empty())
+            net::putSat(ctx.entities, s.sat, &net::SatelliteState::pb_hold_prev_clock_m) = s.clock_c0_m;
 
     if (!logged_arm && log && ctx.counters.n_pbh_gen_first > 0) {
         logged_arm = true;

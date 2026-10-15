@@ -236,10 +236,12 @@ def v4(tree, entity):
 
 
 # The row-inserting or resetting calls: the generic ones (N4.0) and the keyed forms of N4b
-# (the letter maps), N4c (the line-of-sight forms, eraseIf) and N4d (the satellite-signal forms).
+# (the letter maps), N4c (the line-of-sight forms, eraseIf), N4d (the satellite-signal forms)
+# and N4e1 (the satellite forms).
 WRITE_RE = re.compile(r'\bnet::(put|mark|drop|dropAll|unmark|putLos|dropLos|assignLos|'
                       r'assignLosFlags|eraseIf|assignLetterMap|mergeLetterMap|putSig|dropSig|'
-                      r'emplaceSig|assignSig)\s*\(')
+                      r'emplaceSig|assignSig|putSat|dropSat|markSat|unmarkSat|assignSat|'
+                      r'assignSatFlags)\s*\(')
 
 
 def functions_of(text):

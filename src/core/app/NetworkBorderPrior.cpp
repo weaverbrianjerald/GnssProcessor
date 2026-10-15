@@ -250,7 +250,7 @@ void readmitNoteSeed(NetworkRunContext& ctx, NetworkRunTraces& traces, const Gns
     if (clk) {
         ++ctx.counters.n_readmit_seeded_clk;
         if (anchored) ++ctx.counters.n_readmit_seeded_anch;
-        ctx.carry.readmit_seeded_s[cp.sat] = ctx.carry.readmit_now_s;
+        net::putSat(ctx.entities, cp.sat, &net::SatelliteState::readmit_seeded_s) = ctx.carry.readmit_now_s;
     } else {
         ++ctx.counters.n_readmit_seeded_cb;
     }
@@ -930,7 +930,6 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 double pl_now_s, double dt, bool within_epoch_armed) {
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
-    auto& clock_osc = ctx.carry.clock_osc;
     const double clk_model_q1 = ctx.knobs.clk_model_q1;
     const double clk_model_q2 = ctx.knobs.clk_model_q2;
     const double clk_model_max_gap = ctx.knobs.clk_model_max_gap;
@@ -961,11 +960,11 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // it).
     if (clk_model_warm && (!datum_changed || scoped_handover)) {
         std::vector<NetworkEstimator::SharedPrior> clkp;
-        clkp.reserve(clock_osc.size());
+        clkp.reserve(net::present(ctx.entities.sats, &net::SatelliteState::clock_osc));
         for (const std::string& sat : registered_clock_sats) {
             if (handover_affects(sat)) continue;  // retired-datum satellite, scoped mode only (RTA-2)
-            auto it = clock_osc.find(sat);
-            if (it == clock_osc.end() || !it->second.init) continue;
+            const ClockOsc* it = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::clock_osc);
+            if (!it || !it->init) continue;
             // Predict over this satellite's true elapsed time, not the global epoch dt
             // (P0-3).  A satellite absent for several epochs (eclipse exclusion is on in
             // the clock-model config) would otherwise get an hours-old state predicted
@@ -974,8 +973,8 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // data and the a-priori anchor instead of an old value.  (Within the bound,
             // the Q·dt inflation over the true gap de-weights the prior, which limits
             // itself.)
-            const double sat_dt = (it->second.t_last > 0.0)
-                                      ? (pl_now_s - it->second.t_last) : std::max(0.0, dt);
+            const double sat_dt = (it->t_last > 0.0)
+                                      ? (pl_now_s - it->t_last) : std::max(0.0, dt);
             if (!(sat_dt >= 0.0) || sat_dt > clk_model_max_gap) {
                 // Event for the stale-carry reseed, which is otherwise not reported (T5,
                 // V2 blind spot).  It is edge-triggered by construction: the update
@@ -984,7 +983,7 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                           clk_model_max_gap, "reseed", "carry past gap");
                 continue;   // stale → no prior, reseed (R11)
             }
-            const ClockOscPred pr = clockOscPredict(it->second, sat_dt,
+            const ClockOscPred pr = clockOscPredict(*it, sat_dt,
                                                     clk_model_q1, clk_model_q2);
             if (!(pr.p00 > 0.0) || !std::isfinite(pr.x0)) continue;
             clk_pred[sat] = pr;

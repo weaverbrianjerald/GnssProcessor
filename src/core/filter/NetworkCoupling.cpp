@@ -156,11 +156,9 @@ bool CouplingRowBuilder::readmitDiverted(const CoupledShared& cs) {
     // still settling from the cold seed, so conditioning a stiff carried row on it
     // injects that settling as row bias (and F3's dense L⁻¹ then mixes it into every
     // ambiguity of the station block).
-    if (!readmit_marg || readmit_marg->empty() || cs.kind == SharedParamKind::VtecSh
-        || cs.sat.empty())
-        return false;
-    const auto it = readmit_marg->find(cs.sat);
-    if (it == readmit_marg->end() || loop_ep >= it->second) return false;
+    if (!sats || cs.kind == SharedParamKind::VtecSh || cs.sat.empty()) return false;
+    const long long* until = net::getSat(*sats, cs.sat, &net::SatelliteState::readmit_marg);
+    if (!until || loop_ep >= *until) return false;
     ++R.cpl_readmit_diverted;
     return true;
 }

@@ -33,6 +33,7 @@ using EC = net::ConstellationState;   // the constellation carries (card NOM ste
 using ECh = net::ChannelState;
 using EL = net::LosState;             // the line-of-sight carries (card NOM step N4c)
 using EG = net::SatSignalState;       // the satellite-signal carries (card NOM step N4d)
+using EA = net::SatelliteState;       // the satellite carries (card NOM step N4e1)
 using R = CarryRefRole;
 
 // One row per site, in the order of CarrySite (checked by the unit test).
@@ -329,22 +330,28 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
                          hand(CarriedRef{S::CxuPivot, SharedParamKind::Clock, pv.first, kNone, -1,
                                          &pv.second, nullptr, false, nullptr, nullptr, nullptr, nullptr});
                      });
+    // The satellite carries (card NOM step N4e1), in satellite order: the order of their old
+    // satellite-string keys (O1).
     if (on(S::ClockOsc))
-        for (auto& [sat, o] : carry.clock_osc)
-            hand(CarriedRef{S::ClockOsc, SharedParamKind::Clock, sat, kNone, -1, &o.x0,
+        net::forEach(entities.sats, &EA::clock_osc, [&](const SatId& id, ClockOsc& o) {
+            hand(CarriedRef{S::ClockOsc, SharedParamKind::Clock, net::satKey(id), kNone, -1, &o.x0,
                             nullptr, false, nullptr, nullptr, nullptr, &o});
+        });
     if (on(S::PrevClk))
-        for (auto& [sat, b] : carry.prev_clk)
-            hand(CarriedRef{S::PrevClk, SharedParamKind::Clock, sat, kNone, -1, &b.first,
+        net::forEach(entities.sats, &EA::prev_clk, [&](const SatId& id, std::pair<double, double>& b) {
+            hand(CarriedRef{S::PrevClk, SharedParamKind::Clock, net::satKey(id), kNone, -1, &b.first,
                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
+        });
     if (on(S::CbExcPrevClk))
-        for (auto& [sat, v] : carry.cb_exc_prev_clk)
-            hand(CarriedRef{S::CbExcPrevClk, SharedParamKind::Clock, sat, kNone, -1, &v,
+        net::forEach(entities.sats, &EA::cb_exc_prev_clk, [&](const SatId& id, double& v) {
+            hand(CarriedRef{S::CbExcPrevClk, SharedParamKind::Clock, net::satKey(id), kNone, -1, &v,
                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
+        });
     if (on(S::PbHoldPrevClock))
-        for (auto& [sat, v] : carry.pb_hold_prev_clock_m)
-            hand(CarriedRef{S::PbHoldPrevClock, SharedParamKind::Clock, sat, kNone, -1, &v,
+        net::forEach(entities.sats, &EA::pb_hold_prev_clock_m, [&](const SatId& id, double& v) {
+            hand(CarriedRef{S::PbHoldPrevClock, SharedParamKind::Clock, net::satKey(id), kNone, -1, &v,
                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
+        });
     // The satellite-signal carries (card NOM step N4d), in (satellite, signal) order: the
     // order of their old "sat_signal" / "sat|signal" keys (O1).
     if (on(S::PbLevelPrev))

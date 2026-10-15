@@ -1047,17 +1047,17 @@ namespace GnssProcessor {
         CouplingExactEpoch cxu_epoch;                       ///< this epoch's inputs; ok = false when off or unbuilt
         ClockCloneEpoch    ccl;                             ///< card SCL: this epoch's clock clones and the rows' copy of cxu_epoch (filter/NetworkClockClone); rebuilt every armed epoch, empty off
         SharedHistoryState shx;                             ///< card SCL2 X2: the held compression and this epoch's history columns (filter/NetworkSharedHistory); not snapshotted, empty off
-        std::map<std::string, double> clm_info;             ///< card CTU monitor: satellite -> accumulated code-only level information I_L (1/m^2), undecayed
-        std::map<std::string, int>    clm_n;                ///< card CTU monitor: satellite -> epochs of code information accumulated
-        std::map<std::string, double> clm_info_c;           ///< card CTU G5: satellite -> code-only level information in the constellation contrast, 1/(s0^2 Q) summed (1/m^2)
+        // clm_info: moved to net::SatelliteState::clm_info (card NOM step N4e1, app/NetworkEntities.hpp).
+        // clm_n: moved to net::SatelliteState::clm_n (card NOM step N4e1, app/NetworkEntities.hpp).
+        // clm_info_c: moved to net::SatelliteState::clm_info_c (card NOM step N4e1, app/NetworkEntities.hpp).
         std::map<std::string, double> clm_seam_q;           ///< card CTU G5: satellite -> level process noise of this epoch's time update (m^2), set at a switch-on resume, cleared after the fold
         bool                          clm_restore_raise_pending{false};   ///< card CTU G5: a warm resume restored LB rows and the raise waits for the first leg epoch
         // Level innovation instrument (card CTU section 14), measure-only.
-        std::map<std::string, double> clm_prev_clk;         ///< previous monitored epoch's clock per satellite (m), the innovation's prior mean
+        // clm_prev_clk: moved to net::SatelliteState::clm_prev_clk (card NOM step N4e1, app/NetworkEntities.hpp).
         Eigen::MatrixXd               clm_prev_pclk;        ///< previous stash's clock-clock block (m^2), the innovation's prior variance
-        std::map<std::string, int>    clm_prev_pidx;        ///< satellite -> row of clm_prev_pclk
+        // clm_prev_pidx: moved to net::SatelliteState::clm_prev_pidx (card NOM step N4e1, app/NetworkEntities.hpp).
         double                        clm_prev_s{-1.0};     ///< continuous GPS seconds of the previous monitored epoch
-        std::map<std::string, ClockLevelInnovWin> clm_win;  ///< per-satellite window sums
+        // clm_win: moved to net::SatelliteState::clm_win (card NOM step N4e1, app/NetworkEntities.hpp).
         int                           clm_win_ep{0};        ///< epochs in the current window
         // Phase-visible consistency instrument (card PVN), measure-only: the open window's sums.
         int       pv_win_ep{0};           ///< epochs in the current window
@@ -1072,14 +1072,14 @@ namespace GnssProcessor {
         // restart empty.  All empty or zero, and unread, when both knobs are off.
         double readmit_now_s{0.0};          ///< continuous-GPS s of the current epoch, stamped at the D2 install (the stash has no clock of its own)
         double readmit_prev_stash_s{0.0};   ///< continuous-GPS s of the previous kept stash: the park stamp a departing entry receives
-        std::map<std::string, long long> readmit_last_seen_ep;  ///< sat → n_loop_epochs of its last stash with a registered clock column (the re-admission detector)
-        std::map<std::string, long long> readmit_marg;          ///< sat → loop epoch at which its post-re-admission coupling marginalization expires
-        std::map<std::string, double>    readmit_seeded_s;      ///< sat → continuous-GPS s of its last clock seed (the guard's "moved" attribution window)
+        // readmit_last_seen_ep: moved to net::SatelliteState::readmit_last_seen_ep (card NOM step N4e1, app/NetworkEntities.hpp).
+        // readmit_marg: moved to net::SatelliteState::readmit_marg (card NOM step N4e1, app/NetworkEntities.hpp).
+        // readmit_seeded_s: moved to net::SatelliteState::readmit_seeded_s (card NOM step N4e1, app/NetworkEntities.hpp).
         struct ReadmitSeed { SharedParamKind kind; std::string sat, signal; double value, var_eff; };
         std::vector<ReadmitSeed> readmit_seed_check;            ///< this epoch's seeds, checked against the solve at the stash (mark-if-moved telemetry for every seeded kind)
         // ddfrac_ref_age, ddfrac_ref_prev: moved to net::ChannelState (card NOM step N4b, app/NetworkEntities.hpp).
         // prev_pivot: moved to net::ConstellationState::prev_pivot (card NOM step N4b, app/NetworkEntities.hpp).
-        std::set<std::string> c1_zoh_active;                 // sats currently emitting c1=0 (ZOH); edge trigger for the R6 event (L2/T5)
+        // c1_zoh_active: moved to net::SatelliteState::c1_zoh_active (card NOM step N4e1, app/NetworkEntities.hpp).
         // last_pivot: moved to net::ConstellationState::last_pivot (card NOM step N4b, app/NetworkEntities.hpp).
         // Deterministic IF-pin selection discontinuity.  The pin is re-derived from every
         // epoch's coverage; the deterministic NetworkSbasis::selectIfPinPair makes it a
@@ -1485,14 +1485,8 @@ namespace GnssProcessor {
         };
         std::map<char, StsCarryDatum> sts_carry_pivot;
 
-        // Per-satellite clock sanity monitor (network.clock_monitor): the previous emitted
-        // clock value and the continuous-GPS second it was stashed, per satellite, for the
-        // adjacent-epoch jump test.  Erased on refloat so the post-reinit clock re-baselines.
-        std::map<std::string, std::pair<double, double>> prev_clk;  // sat -> {Δδtˢ (m), seen_s}
-        // Two-state oscillator clock state per satellite (network.clock_model): the carried
-        // [offset, drift] and 2×2 covariance, persisted across epochs.  Empty and inert
-        // unless clk_model_on.
-        std::map<std::string, ClockOsc> clock_osc;   // per-sat carried [offset,drift]+cov+t_last (P0-3: t_last drives per-sat prediction/drift-FD across gaps)
+        // prev_clk: moved to net::SatelliteState::prev_clk (card NOM step N4e1, app/NetworkEntities.hpp).
+        // clock_osc: moved to net::SatelliteState::clock_osc (card NOM step N4e1, app/NetworkEntities.hpp).
         // The broadcast-ephemeris IODE to which each satellite's carried clock state
         // (clock_osc.x0, the D2 clock carry, the clock-monitor jump baseline) is currently
         // referenced.  Advanced at the eph-cutover re-level (before the solve), not
@@ -1669,14 +1663,9 @@ namespace GnssProcessor {
         /// one move the hold does not transfer, on purpose, so its size is the measured
         /// cost of the identity-passing contract; empty on an off run.
         std::vector<double> pb_hold_coupled_step_m;
-        /// Satellite -> the clock (m) this producer emitted at that satellite's previous
-        /// emission: the baseline the coupled-mark step above is differenced against (card
-        /// PBH).  Maintained only while the hold is armed.
-        std::map<std::string, double> pb_hold_prev_clock_m;
+        // pb_hold_prev_clock_m: moved to net::SatelliteState::pb_hold_prev_clock_m (card NOM step N4e1, app/NetworkEntities.hpp).
         // pb_hold_frz_M: moved to net::ConstellationState::pb_hold_frz_M (card NOM step N4b, app/NetworkEntities.hpp).
-        /// Card LAH: satellite -> emitted clock (m) at the previous emitted epoch, holding
-        /// only that epoch's satellites (a satellite absent there contributes no step).
-        std::map<std::string, double> pb_hold_frz_prev_clk;
+        // pb_hold_frz_prev_clk: moved to net::SatelliteState::pb_hold_frz_prev_clk (card NOM step N4e1, app/NetworkEntities.hpp).
         /// Card LAH: |transfer step| (m) per held emission, the per-epoch move the mode
         /// writes on top of the held value (invariant #7, the decoupling edge's rate).
         std::vector<double> pb_hold_frz_step_abs_m;
@@ -1765,18 +1754,10 @@ namespace GnssProcessor {
         std::vector<std::pair<long long, long long>> rxcb_lin_sta_counts;
         // URA quality channel carried state, B1 (inert unless network.emit_ura).
         double                       ura_sigma0_ewma = 1.0;   ///< network-wide σ̂0 EWMA scaling the emitted URA (one-epoch lag).
-        std::map<std::string, int>   ura_refloat_horizon;     ///< sat -> epochs remaining of post-refloat URA inflation.
+        // ura_refloat_horizon: moved to net::SatelliteState::ura_refloat_horizon (card NOM step N4e1, app/NetworkEntities.hpp).
         // arc_spike_streak: moved to net::LosState::arc_spike_streak (card NOM step N4c, app/NetworkEntities.hpp).
-        // Retro-bump (B1; P0-2/P1-3): per satellite, tier-independent, edge-triggered.
-        // ura_retro_sats = sats a post-emit QC tier flagged last epoch, applied as a
-        // per-sat discontinuity at the sat's next actual emit (markSatDiscontinuity): a
-        // flagged sat absent from an emitted epoch (RT0-5 quarantine, vanish) stays
-        // pending here instead of being consumed without landing.  retro_active = sats
-        // currently flagged and already bumped, so a sat that stays flagged during
-        // recovery is bumped once (on its rising edge), with no per-constellation reset
-        // storm.
-        std::set<std::string>        ura_retro_sats;
-        std::set<std::string>        retro_active;
+        // ura_retro_sats: moved to net::SatelliteState::ura_retro_sats (card NOM step N4e1, app/NetworkEntities.hpp).
+        // retro_active: moved to net::SatelliteState::retro_active (card NOM step N4e1, app/NetworkEntities.hpp).
         // Satellites whose reference-path arc was reset by IF-TD slip QC this epoch,
         // queued for a per-satellite discontinuity mark at the sat's next actual emit
         // (Edge-1 piece 2, network.mark_refsat_reset_disc; off by default, and then this
@@ -2062,7 +2043,7 @@ namespace GnssProcessor {
         // live without (the counter is silent by default).  cb_exc_prev_clk rebuilds from
         // the first post-resume epoch, which correctly suppresses a spurious trip on the
         // resume seam itself (no baseline, so no delta and no trip).
-        std::map<std::string, double> cb_exc_prev_clk;      ///< sat -> previous epoch's solved clock (m)
+        // cb_exc_prev_clk: moved to net::SatelliteState::cb_exc_prev_clk (card NOM step N4e1, app/NetworkEntities.hpp).
         std::set<std::string> cb_excursion_sats;            ///< this epoch's stash: mark these sats' CB carry inflate_q
         std::set<std::string> cb_excursion_pending_bump;    ///< disc-bump these sats' code biases at the next emit
         long long cb_exc_trips           = 0;   ///< epochs the detector tripped

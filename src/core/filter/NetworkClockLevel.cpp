@@ -353,14 +353,14 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
     for (const ClockLevelPair& p : pairs) (p.station % 2 == 0 ? pa : pb).push_back(p);
     const ClockLevelTwoWay ta = clockLevelTwoWay(pa, kClvMinPairs, kClvClipK, kClvClipFloorM);
     const ClockLevelTwoWay tb = clockLevelTwoWay(pb, kClvMinPairs, kClvClipK, kClvClipFloorM);
-    if (tw.ok && !C.clm_prev_clk.empty() && dt > 0.0 && dt <= 300.0
+    if (tw.ok && net::present(ctx.entities.sats, &net::SatelliteState::clm_prev_clk) > 0 && dt > 0.0 && dt <= 300.0
         && std::isfinite(tw.s0sq)) {
         // The fit set F: satellites with an effect, a clock now and a clock before, not
         // decoupled by the anchor this epoch (its prior was withdrawn).
         std::vector<std::string> F;
         for (const auto& [sat, z] : tw.effect) {
             (void)z;
-            if (!c_now.count(sat) || !C.clm_prev_clk.count(sat)) continue;
+            if (!c_now.count(sat) || !net::getSat(ctx.entities.sats, sat, &net::SatelliteState::clm_prev_clk)) continue;
             if (C.clk_anchor.tripped.count(sat)) { ++K.clm_innov_tripped; continue; }
             F.push_back(sat);
         }
@@ -370,7 +370,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
             std::size_t nab = 0;
             for (const auto& s : F) {
                 zbar += tw.effect.at(s);
-                dbar += c_now.at(s) - C.clm_prev_clk.at(s);
+                dbar += c_now.at(s) - (*net::getSat(ctx.entities.sats, s, &net::SatelliteState::clm_prev_clk));
             }
             zbar /= static_cast<double>(n); dbar /= static_cast<double>(n);
             // The halves share the fit set only where both saw the satellite.
@@ -382,14 +382,14 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
                 double dab = 0.0;
                 for (const auto& s : Fab) {
                     zabar += ta.effect.at(s); zbbar += tb.effect.at(s);
-                    dab += c_now.at(s) - C.clm_prev_clk.at(s);
+                    dab += c_now.at(s) - (*net::getSat(ctx.entities.sats, s, &net::SatelliteState::clm_prev_clk));
                 }
                 nab = Fab.size();
                 zabar /= static_cast<double>(nab); zbbar /= static_cast<double>(nab);
                 dab /= static_cast<double>(nab);
                 for (const auto& s : Fab) {
-                    const double dc = c_now.at(s) - C.clm_prev_clk.at(s) - dab;
-                    auto& w = C.clm_win[s];
+                    const double dc = c_now.at(s) - (*net::getSat(ctx.entities.sats, s, &net::SatelliteState::clm_prev_clk)) - dab;
+                    auto& w = net::putSat(ctx.entities, s, &net::SatelliteState::clm_win);
                     w.s_nua += (ta.effect.at(s) - zabar) - dc;
                     w.s_nub += (tb.effect.at(s) - zbbar) - dc;
                     ++w.kab;
@@ -401,8 +401,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
             const double q_clk = ctx.params.q(SharedParamKind::Clock);   // the registry (card PRM)
             std::vector<int> pr(n, -1);
             for (std::size_t a = 0; a < n; ++a) {
-                const auto it = C.clm_prev_pidx.find(F[a]);
-                if (it != C.clm_prev_pidx.end()) pr[a] = it->second;
+                if (const int* pi = net::getSat(ctx.entities.sats, F[a], &net::SatelliteState::clm_prev_pidx)) pr[a] = *pi;
             }
             const auto Pab = [&](std::size_t a, std::size_t b) {
                 if (pr[a] < 0 || pr[b] < 0) return 0.0;
@@ -427,7 +426,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
             for (std::size_t a = 0; a < n; ++a) {
                 const std::string& s = F[a];
                 const double z  = tw.effect.at(s) - zbar;
-                const double dc = c_now.at(s) - C.clm_prev_clk.at(s) - dbar;
+                const double dc = c_now.at(s) - (*net::getSat(ctx.entities.sats, s, &net::SatelliteState::clm_prev_clk)) - dbar;
                 const double nu = z - dc;
                 const double P  = std::max(0.0, Pab(a, a) - 2.0 * rowsum[a] / nn + sumP / (nn * nn));
                 const auto vit = tw.var.find(s);
@@ -435,7 +434,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
                 const double S  = P + R;
                 if (!(S > 0.0) || !std::isfinite(nu)) continue;
                 const double nis = nu * nu / S;
-                auto& w = C.clm_win[s];
+                auto& w = net::putSat(ctx.entities, s, &net::SatelliteState::clm_win);
                 ++w.k; w.s_nu += nu; w.s_var += S; w.s_r += R; w.s_p += P;
                 ++K.clm_innov_rows;
                 if (K.clm_epochs > 15) {
@@ -459,8 +458,10 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
         int nsat = 0, nab = 0, nT = 0;
         long long ngt = 0;
         const int kmin = std::max(1, C.clm_win_ep / 2);
-        for (const auto& [s, w] : C.clm_win) {
-            if (w.k < kmin) continue;
+        net::forEach(ctx.entities.sats, &net::SatelliteState::clm_win,   // satellite order (O1)
+                     [&](const SatId& id, const ClockLevelInnovWin& w) {
+            const std::string s = net::satKey(id);
+            if (w.k < kmin) return;
             const double kk = static_cast<double>(w.k);
             const double nub = w.s_nu / kk;
             const double T = nub * nub / (w.s_var / (kk * kk));
@@ -481,7 +482,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
                                                  nub, nua, nubb, w.s_var / (kk * kk),
                                                  w.s_p / kk, T)
                     << '\n';
-        }
+        });
         if (nsat > 0 && nab > 0 && sP > 0.0) {
             const double nees = sxab / sP;
             const double phi = (sRk > 0.0) ? (sdd / nab) / (sRk / nsat) : 0.0;
@@ -492,16 +493,16 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
             K.clm_win_Tgt += ngt;
             K.clm_win_Tn += nT;
         }
-        C.clm_win.clear();
+        net::dropAll(ctx.entities.sats, &net::SatelliteState::clm_win);
         C.clm_win_ep = 0;
     }
     // The prior of the next epoch: this epoch's clocks and stashed clock block (the raise,
     // when armed, runs after this call and moves only the level direction's variance,
     // which the next epoch then reads through this copy only if it was taken after it;
     // taking it here keeps the instrument independent of the raise).
-    C.clm_prev_clk = std::move(c_now);
+    net::assignSat(ctx.entities, &net::SatelliteState::clm_prev_clk, c_now);
     C.clm_prev_s = now_s;
-    C.clm_prev_pidx.clear();
+    net::dropAll(ctx.entities.sats, &net::SatelliteState::clm_prev_pidx);
     const SharedCarryCov& pcc = C.prev_carry_cov;
     std::vector<std::pair<std::string, std::size_t>> crow;
     for (const auto& [key, row] : pcc.row) {
@@ -513,7 +514,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
     C.clm_prev_pclk.resize(static_cast<Eigen::Index>(crow.size()),
                            static_cast<Eigen::Index>(crow.size()));
     for (std::size_t a = 0; a < crow.size(); ++a) {
-        C.clm_prev_pidx[crow[a].first] = static_cast<int>(a);
+        net::putSat(ctx.entities, crow[a].first, &net::SatelliteState::clm_prev_pidx) = static_cast<int>(a);
         for (std::size_t b = 0; b < crow.size(); ++b)
             C.clm_prev_pclk(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b)) =
                 pcc.P(static_cast<Eigen::Index>(crow[a].second),
@@ -548,8 +549,8 @@ void networkClockLevelRestoreRaise(NetworkRun& run) {
     long long n = 0;
     double sum = 0.0, mx = 0.0;
     for (const auto& [sat, rows] : u_rows) {
-        const auto it = ctx.carry.clm_info_c.find(sat);
-        if (it == ctx.carry.clm_info_c.end() || !(it->second > 0.0)) continue;
+        const double* it = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::clm_info_c);
+        if (!it || !(*it > 0.0)) continue;
         bool has_clk = false;
         for (const auto& [key, row] : pcc.row)
             if (key == sat + "|CLK") { has_clk = true; break; }
@@ -568,11 +569,11 @@ void networkClockLevelRestoreRaise(NetworkRun& run) {
         // level recursion was not consistent holds a level error beyond its own
         // information, and crediting it with less re-opens the level to the code.
         const int credit = ctx.knobs.clm_restore_credit_ep;
-        const auto nit = ctx.carry.clm_n.find(sat);
-        const int n_ep = (nit != ctx.carry.clm_n.end()) ? nit->second : 0;
+        const int* nit = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::clm_n);
+        const int n_ep = nit ? *nit : 0;
         const double v = (credit > 0 && n_ep > credit)
-                             ? static_cast<double>(n_ep) / (static_cast<double>(credit) * it->second)
-                             : 1.0 / it->second;
+                             ? static_cast<double>(n_ep) / (static_cast<double>(credit) * *it)
+                             : 1.0 / *it;
         ctx.carry.clm_seam_q[sat] = v;
         (void)rows;
         ++n; sum += v; mx = std::max(mx, v);
@@ -605,9 +606,9 @@ void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
         ++ctx.counters.clm_skip_datum;
         // The clock frame stepped: the previous epoch's clocks and block are in the
         // retired frame, so the next innovation has no prior (the window keeps its sums).
-        ctx.carry.clm_prev_clk.clear();
+        net::dropAll(ctx.entities.sats, &net::SatelliteState::clm_prev_clk);
         ctx.carry.clm_prev_pclk.resize(0, 0);
-        ctx.carry.clm_prev_pidx.clear();
+        net::dropAll(ctx.entities.sats, &net::SatelliteState::clm_prev_pidx);
         return;
     }
     // (1)-(2) The level read, on the realized pin pair only.
@@ -620,15 +621,15 @@ void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
     //     noise, and a decaying bound would make the raise a per-epoch level variance.
     for (const auto& [sat, info] : tw.info) {
         if (!(info > 0.0) || !std::isfinite(info)) continue;
-        ctx.carry.clm_info[sat] += info;
-        ++ctx.carry.clm_n[sat];
+        net::putSat(ctx.entities, sat, &net::SatelliteState::clm_info) += info;
+        ++net::putSat(ctx.entities, sat, &net::SatelliteState::clm_n);
     }
     // Card CTU G5: the same information in the constellation contrast and at the fit's own
     // unit variance, 1 / (s0^2 Q_ss): the level variance a consistent carry holds after
     // these epochs is its inverse (section 14.4: the effective code gain is IF-efficient).
     if (tw.ok && std::isfinite(tw.s0sq) && tw.s0sq > 0.0)
         for (const auto& [sat, q] : tw.var)
-            if (q > 0.0 && std::isfinite(q)) ctx.carry.clm_info_c[sat] += 1.0 / (tw.s0sq * q);
+            if (q > 0.0 && std::isfinite(q)) net::putSat(ctx.entities, sat, &net::SatelliteState::clm_info_c) += 1.0 / (tw.s0sq * q);
     // (4) The stashed block's variance along each satellite's level direction.
     SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
     const Eigen::Index np = pcc.P.rows();
@@ -649,8 +650,8 @@ void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
     }
     const double now_tow = t.tow;
     for (const auto& [sat, rows] : u_rows) {
-        const auto ii = ctx.carry.clm_info.find(sat);
-        if (ii == ctx.carry.clm_info.end() || !(ii->second > 0.0)) continue;
+        const double* ii = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::clm_info);
+        if (!ii || !(*ii > 0.0)) continue;
         if (!has_clk.count(sat)) {                       // the pinned pivot, or a clock not carried
             ++ctx.counters.clm_no_clock;
             continue;
@@ -661,9 +662,9 @@ void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
             for (std::size_t b : rows)
                 upu += pcc.P(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b));
         const double p_level = upu / (uu * uu);
-        const double inv     = 1.0 / ii->second;
+        const double inv     = 1.0 / *ii;
         const double ratio   = p_level / inv;
-        const int    n_ep    = ctx.carry.clm_n[sat];
+        const int    n_ep    = net::putSat(ctx.entities, sat, &net::SatelliteState::clm_n);
         if (n_ep >= 2 && std::isfinite(ratio)) {
             ++ctx.counters.clm_rows;
             if (ratio < 1.0) ++ctx.counters.clm_below1;

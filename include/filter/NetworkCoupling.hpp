@@ -211,8 +211,9 @@ struct CouplingRowBuilder {
     /// row is conditioned on a column whose realization is still settling from its cold
     /// re-registration.  This edge is the source of the network-wide DD episodes after
     /// eclipse re-admission clusters; see SPEC_amb_iono_split_overcount §6.9 for the
-    /// measurement.  Null = off.
-    const std::map<std::string, long long>* readmit_marg{nullptr};
+    /// measurement.  The windows are @c net::SatelliteState::readmit_marg of this table
+    /// (card NOM step N4e1; uncounted lookups, safe in the parallel produce).  Null = off.
+    const net::SatTable* sats{nullptr};
     long long                                loop_ep{0};   ///< this epoch's n_loop_epochs (the expiry basis)
     /// The exact conditional time update (card CTU, network.carry_coupling_exact_update):
     /// this epoch's inputs, built serially before the produce loop.  Null = off (the card

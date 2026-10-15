@@ -233,7 +233,165 @@ const std::vector<FieldDecl> kConstellationFields = {
     {"ddfrac_ref_prev", "ddfrac_ref_prev", Persist::ColdStart, "", "",
      nullptr, nullptr, &channelRows<&Ch::ddfrac_ref_prev>},
 };
-const std::vector<FieldDecl> kSatelliteFields = {};
+// ---- The satellite fields (step N4e1: the clock half) ----
+
+std::optional<SatId> satIdKey(const std::string& sat) {
+    if (sat.empty()) return SatId{};
+    const std::optional<SatId> s = SatId::parse(sat);
+    if (!s || s->str() != sat) return std::nullopt;
+    return *s;
+}
+
+std::optional<SatId> satIdOf(const NetworkEntities& e, const std::string& sat) {
+    const std::optional<SatId> id = satIdKey(sat);
+    if (!id) ++e.reach.failures[static_cast<std::size_t>(Converter::Satellite)];
+    return id;
+}
+
+bool markSat(NetworkEntities& e, const std::string& sat, bool SatelliteState::*f) {
+    const std::optional<SatId> id = satIdOf(e, sat);
+    return id ? mark(e.sats, *id, f) : true;
+}
+
+std::size_t unmarkSat(SatTable& t, const std::string& sat, bool SatelliteState::*f) {
+    const std::optional<SatId> id = satIdKey(sat);
+    return id ? unmark(t, *id, f) : 0;
+}
+
+std::set<std::string> satSet(const SatTable& t, bool SatelliteState::*f) {
+    std::set<std::string> out;
+    for (const auto& [id, row] : t)
+        if (row.*f) out.insert(satKey(id));
+    return out;
+}
+
+void assignSatFlags(NetworkEntities& e, bool SatelliteState::*f, const std::set<std::string>& s) {
+    for (auto& kv : e.sats) kv.second.*f = false;
+    for (const std::string& sat : s) markSat(e, sat, f);
+}
+
+namespace {
+
+using A = SatelliteState;
+
+template <auto F>
+std::size_t satRows(const NetworkEntities& e) { return present(e.sats, F); }
+
+// Record K: satellite -> the two-state oscillator, field by field.
+void kToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    forEach(ctx.entities.sats, &A::clock_osc, [&](const SatId& id, const ClockOsc& o) {
+        NetworkStateSnapshot::Osc so;
+        so.x0 = o.x0; so.x1 = o.x1;
+        so.p00 = o.p00; so.p01 = o.p01; so.p11 = o.p11;
+        so.t_last = o.t_last; so.init = o.init;
+        snap.clock_osc[satKey(id)] = so;
+    });
+}
+void kFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;
+    dropAll(e.sats, &A::clock_osc);
+    for (const auto& [sat, o] : snap.clock_osc) {
+        ClockOsc c;
+        c.x0 = o.x0; c.x1 = o.x1;
+        c.p00 = o.p00; c.p01 = o.p01; c.p11 = o.p11;
+        c.t_last = o.t_last; c.init = o.init;
+        putSat(e, sat, &A::clock_osc) = c;
+    }
+}
+
+// Records J and Y: satellite-keyed maps, written and restored wholesale.
+void jToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.prev_clk = satMap(ctx.entities.sats, &A::prev_clk);
+}
+void jFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSat(ctx.entities, &A::prev_clk, snap.prev_clk);
+}
+void yToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.ura_refloat_horizon = satMap(ctx.entities.sats, &A::ura_refloat_horizon);
+}
+void yFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSat(ctx.entities, &A::ura_refloat_horizon, snap.ura_refloat_horizon);
+}
+
+// Records C, R and A: satellite sets as flags, written and restored wholesale.
+void cToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.c1_zoh_active = satSet(ctx.entities.sats, &A::c1_zoh_active);
+}
+void cFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSatFlags(ctx.entities, &A::c1_zoh_active, snap.c1_zoh_active);
+}
+void rToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.ura_retro_sats = satSet(ctx.entities.sats, &A::ura_retro_sats);
+}
+void rFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSatFlags(ctx.entities, &A::ura_retro_sats, snap.ura_retro_sats);
+}
+void aToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.retro_active = satSet(ctx.entities.sats, &A::retro_active);
+}
+void aFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSatFlags(ctx.entities, &A::retro_active, snap.retro_active);
+}
+
+// Record LB (two rows): satellite -> {contrast-frame level information, epochs}.  The
+// information row writes the satellites with a finite positive value; the epoch row fills
+// their counts (0 when absent).  The restore merges into the table (no reset), as before.
+void lbInfoToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    forEach(ctx.entities.sats, &A::clm_info_c, [&](const SatId& id, double info) {
+        if (std::isfinite(info) && info > 0.0) snap.level_info[satKey(id)] = {info, 0};
+    });
+}
+void lbNToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    for (auto& [sat, in] : snap.level_info) {
+        const int* n = getSat(ctx.entities.sats, sat, &A::clm_n);
+        in.second = n ? *n : 0;
+    }
+}
+void lbInfoFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    for (const auto& [sat, in] : snap.level_info) putSat(ctx.entities, sat, &A::clm_info_c) = in.first;
+}
+void lbNFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    for (const auto& [sat, in] : snap.level_info) putSat(ctx.entities, sat, &A::clm_n) = in.second;
+}
+
+}  // namespace
+
+const std::vector<FieldDecl> kSatelliteFields = {
+    {"clock_osc", "clock_osc", Persist::Record, "K", "", &kToSnapshot, &kFromSnapshot,
+     &satRows<&A::clock_osc>},
+    {"prev_clk", "prev_clk", Persist::Record, "J", "", &jToSnapshot, &jFromSnapshot,
+     &satRows<&A::prev_clk>},
+    {"c1_zoh_active", "c1_zoh_active", Persist::Record, "C", "", &cToSnapshot, &cFromSnapshot,
+     &satRows<&A::c1_zoh_active>},
+    {"clm_info", "clm_info", Persist::ColdStart, "", "", nullptr, nullptr, &satRows<&A::clm_info>},
+    {"clm_info_c", "clm_info_c", Persist::Record, "LB", "", &lbInfoToSnapshot, &lbInfoFromSnapshot,
+     &satRows<&A::clm_info_c>},
+    {"clm_n", "clm_n", Persist::Record, "LB", "", &lbNToSnapshot, &lbNFromSnapshot,
+     &satRows<&A::clm_n>},
+    {"clm_prev_clk", "clm_prev_clk", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::clm_prev_clk>},
+    {"clm_prev_pidx", "clm_prev_pidx", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::clm_prev_pidx>},
+    {"clm_win", "clm_win", Persist::ColdStart, "", "", nullptr, nullptr, &satRows<&A::clm_win>},
+    {"readmit_last_seen_ep", "readmit_last_seen_ep", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::readmit_last_seen_ep>},
+    {"readmit_marg", "readmit_marg", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::readmit_marg>},
+    {"readmit_seeded_s", "readmit_seeded_s", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::readmit_seeded_s>},
+    {"ura_refloat_horizon", "ura_refloat_horizon", Persist::Record, "Y", "", &yToSnapshot,
+     &yFromSnapshot, &satRows<&A::ura_refloat_horizon>},
+    {"ura_retro_sats", "ura_retro_sats", Persist::Record, "R", "", &rToSnapshot, &rFromSnapshot,
+     &satRows<&A::ura_retro_sats>},
+    {"retro_active", "retro_active", Persist::Record, "A", "", &aToSnapshot, &aFromSnapshot,
+     &satRows<&A::retro_active>},
+    {"pb_hold_prev_clock_m", "pb_hold_prev_clock_m", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::pb_hold_prev_clock_m>},
+    {"pb_hold_frz_prev_clk", "pb_hold_frz_prev_clk", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::pb_hold_frz_prev_clk>},
+    {"cb_exc_prev_clk", "cb_exc_prev_clk", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::cb_exc_prev_clk>},
+};
 // ---- The satellite-signal fields (step N4d) ----
 
 std::optional<SatSignalId> satSignalKey(const std::string& sat, const std::string& signal) {
@@ -572,7 +730,8 @@ const std::array<EntityFields, 6> kEntityFieldTables = {{
     {"arc",           &kArcFields},
 }};
 
-const std::vector<const char*> kRestoreOrder = {"V", "Z", "PA", "PT", "EQD", "EQP", "EQE", "CBP", "RC", "SD", "GG"};
+const std::vector<const char*> kRestoreOrder = {"V", "C", "J", "K", "Z", "PA", "PT", "EQD", "EQP", "EQE",
+                                                  "CBP", "LB", "RC", "SD", "Y", "R", "A", "GG"};
 
 // ===========================================================================
 // Record lookup

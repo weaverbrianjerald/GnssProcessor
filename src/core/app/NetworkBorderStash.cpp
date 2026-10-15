@@ -49,9 +49,6 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
                                 bool retro_feed) {
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
-    auto& ura_refloat_horizon = ctx.carry.ura_refloat_horizon;
-    auto& ura_retro_sats = ctx.carry.ura_retro_sats;
-    auto& retro_active = ctx.carry.retro_active;
     const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate;
     const int    pl_warmup = ctx.knobs.pl_warmup;
     const bool   ura_retro = ctx.knobs.ura_retro;
@@ -70,7 +67,7 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
             if (!sat.empty()) flagged_now.insert(sat);
 
         if (ura_refloat_inflate > 1.0 && pl_warmup > 0)
-            for (const std::string& sat : flagged_now) ura_refloat_horizon[sat] = pl_warmup;
+            for (const std::string& sat : flagged_now) net::putSat(ctx.entities, sat, &net::SatelliteState::ura_refloat_horizon) = pl_warmup;
 
         // The retro-bump is edge-triggered (P1-3): queue only a satellite that just
         // became flagged (not already in retro_active), so a satellite that stays
@@ -79,16 +76,14 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
         // re-flag re-arms the bump.  ura_retro_sats is consumed at the next emit.
         if (ura_retro) {
             for (const std::string& sat : flagged_now)
-                if (!retro_active.count(sat)) ura_retro_sats.insert(sat);
-            retro_active = std::move(flagged_now);
+                if (!net::hasSat(ctx.entities.sats, sat, &net::SatelliteState::retro_active)) net::markSat(ctx.entities, sat, &net::SatelliteState::ura_retro_sats);
+            net::assignSatFlags(ctx.entities, &net::SatelliteState::retro_active, flagged_now);
         }
 
         // Age out the post-refloat inflation horizon one epoch at a time.
         if (ura_refloat_inflate > 1.0)
-            for (auto it = ura_refloat_horizon.begin(); it != ura_refloat_horizon.end();) {
-                if (--it->second <= 0) it = ura_refloat_horizon.erase(it);
-                else ++it;
-            }
+            net::eraseIf(ctx.entities.sats, &net::SatelliteState::ura_refloat_horizon,
+                         [](const SatId&, int& left) { return --left <= 0; });
     }
 }
 
@@ -362,7 +357,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         //     column is registered now but was last stashed >= kReadmitMinGapEp loop
         //     epochs ago.
         for (const std::string& sat : registered_clock_sats) {
-            long long& last = ctx.carry.readmit_last_seen_ep[sat];   // 0 on first sight
+            long long& last = net::putSat(ctx.entities, sat, &net::SatelliteState::readmit_last_seen_ep);   // 0 on first sight
             const long long gap_ep = (last > 0) ? ep - last : 0;
             const bool readmitted = last > 0 && gap_ep >= kReadmitMinGapEp;
             last = ep;
@@ -370,7 +365,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             ++ctx.counters.n_readmit_events;
             std::string marg;
             if (ctx.knobs.readmit_marg_ep > 0) {
-                ctx.carry.readmit_marg[sat] = ep + ctx.knobs.readmit_marg_ep;
+                net::putSat(ctx.entities, sat, &net::SatelliteState::readmit_marg) = ep + ctx.knobs.readmit_marg_ep;
                 ++ctx.counters.n_readmit_marg_windows;
                 marg = fmt::format(";marg_until_ep={}", ep + ctx.knobs.readmit_marg_ep);
             }
@@ -380,16 +375,13 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         }
         // Expired windows: the block's re-coupling edge (the returned satellite's
         // columns fold as present terms again), traced per satellite.
-        for (auto it = ctx.carry.readmit_marg.begin(); it != ctx.carry.readmit_marg.end();) {
-            if (ep >= it->second) {
-                traces.emitEvent(t, "READMIT", "marg_expired", it->first, "",
-                                 static_cast<double>(it->second), std::nullopt, "recouple",
-                                 "coupling terms on this satellite fold as PRESENT again");
-                it = ctx.carry.readmit_marg.erase(it);
-            } else {
-                ++it;
-            }
-        }
+        net::eraseIf(ctx.entities.sats, &net::SatelliteState::readmit_marg, [&](const SatId& id, long long until) {
+            if (ep < until) return false;
+            traces.emitEvent(t, "READMIT", "marg_expired", net::satKey(id), "",
+                             static_cast<double>(until), std::nullopt, "recouple",
+                             "coupling terms on this satellite fold as PRESENT again");
+            return true;
+        });
         // (2) Park departures; retire consumed or expired parks (the seed knob only).
         if (readmit_h > 0.0) {
             const double now_s = ctx.carry.readmit_now_s;

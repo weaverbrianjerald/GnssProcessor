@@ -64,14 +64,8 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
     auto& last_snapshot_write_s = ctx.carry.last_snapshot_write_s;
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     auto& prev_carry = ctx.carry.prev_carry;
-    auto& c1_zoh_active = ctx.carry.c1_zoh_active;
-    auto& prev_clk = ctx.carry.prev_clk;
-    auto& clock_osc = ctx.carry.clock_osc;
     auto& local_carry = ctx.carry.local_carry;
     const net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
-    auto& ura_refloat_horizon = ctx.carry.ura_refloat_horizon;
-    auto& ura_retro_sats = ctx.carry.ura_retro_sats;
-    auto& retro_active = ctx.carry.retro_active;
     auto& relevel_iode = ctx.carry.relevel_iode;
     auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
@@ -161,15 +155,9 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             snap.shared_carry.push_back(std::move(sc));
         }
         net::recordToSnapshot("V", ctx, snap);   // the constellation pivots (N4b)
-        snap.c1_zoh_active = c1_zoh_active;
-        snap.prev_clk      = prev_clk;
-        for (const auto& [sat, o] : clock_osc) {
-            NetworkStateSnapshot::Osc so;
-            so.x0 = o.x0; so.x1 = o.x1;
-            so.p00 = o.p00; so.p01 = o.p01; so.p11 = o.p11;
-            so.t_last = o.t_last; so.init = o.init;
-            snap.clock_osc[sat] = so;
-        }
+        net::recordToSnapshot("C", ctx, snap);   // the satellites (N4e1)
+        net::recordToSnapshot("J", ctx, snap);   // the satellites (N4e1)
+        net::recordToSnapshot("K", ctx, snap);   // the satellites (N4e1)
         // network.phase_datum_handover_max_var_ratio: the arc's first-stash variance is an
         // optional trailing L field, filled only when the ratio ceiling is armed, so a
         // default snapshot's L rows stay byte-identical.
@@ -185,9 +173,9 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             snap.local_carry[key] = L;
         }
         net::recordToSnapshot("Z", ctx, snap);   // the station table's zwd (card NOM step N4a)
-        snap.ura_refloat_horizon = ura_refloat_horizon;
-        snap.ura_retro_sats      = ura_retro_sats;
-        snap.retro_active        = retro_active;
+        net::recordToSnapshot("Y", ctx, snap);   // the satellites (N4e1)
+        net::recordToSnapshot("R", ctx, snap);   // the satellites (N4e1)
+        net::recordToSnapshot("A", ctx, snap);   // the satellites (N4e1)
         snap.relevel_iode              = relevel_iode;              // eph cutover (card 6)
         snap.eph_cutover_disc_pending  = eph_cutover_disc_pending;  // eph cutover (card 6)
         // Resume frame state (§18.10, snapshot format v2), captured when
@@ -430,11 +418,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         }
         // Card CTU G5: the monitor's contrast-frame level information (LB rows).
         if (ctx.knobs.clm_on) {
-            for (const auto& [sat, info] : ctx.carry.clm_info_c)
-                if (std::isfinite(info) && info > 0.0) {
-                    const auto nit = ctx.carry.clm_n.find(sat);
-                    snap.level_info[sat] = {info, nit != ctx.carry.clm_n.end() ? nit->second : 0};
-                }
+            net::recordToSnapshot("LB", ctx, snap);   // the satellites (N4e1)
         }   // state_snapshot_station_capture
         // Canonical-signal capture (RS-8; network.state_snapshot_signal_capture,
         // SPEC_event_harness §21.16): the write half of the per-station latch that no

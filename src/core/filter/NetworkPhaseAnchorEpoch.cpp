@@ -506,7 +506,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                            ? !h.continuous
                                            : std::abs(dlt) > kStsExactTolM;
                     if (steps) {
-                        ctx.carry.ura_retro_sats.insert(pk->satellite);
+                        net::markSat(ctx.entities, pk->satellite, &net::SatelliteState::ura_retro_sats);
                         ++ctx.counters.n_pb_basis_declared;
                         if (!h.continuous) ++ctx.counters.n_pb_basis_declared_cold;
                     }

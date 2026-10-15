@@ -194,8 +194,8 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
     // Re-admission re-coupling edge (network.readmit_coupling_marg_ep): the
     // open marginalization windows (written serially at the stash, read-only
     // here).
-    if (ctx.knobs.readmit_marg_ep > 0 && !ctx.carry.readmit_marg.empty()) {
-        cb.readmit_marg = &ctx.carry.readmit_marg;
+    if (ctx.knobs.readmit_marg_ep > 0 && net::present(ctx.entities.sats, &net::SatelliteState::readmit_marg) > 0) {
+        cb.sats = &ctx.entities.sats;   // readmit_marg (card NOM step N4e1)
         cb.loop_ep      = static_cast<long long>(ctx.counters.n_loop_epochs);
     }
     // Card CTU: the exact time update's epoch inputs (built serially before this
