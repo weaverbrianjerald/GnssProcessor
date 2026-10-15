@@ -541,7 +541,7 @@ class Check:
             self.notes.append("H12: not applied (HV1c pending)")
             return
         for site, file in rows.CITATIONS.items():
-            m = re.search(r"ResponseSite::" + site + r"\b[^}]*?\"([^\"]+)\"\s*,\s*\"[^\"]*\"\s*\}", text, re.S)
+            m = re.search(r"\{R::" + site + r",[^{}]*?\"([^\"]+)\"\s*,\s*\"[^\"]*\"\s*\}", text, re.S)
             where = m.group(1) if m else ""
             if not where.startswith(file):
                 self.fail("H12", f"{site}: printed where {where!r}, expected {file}")
@@ -596,6 +596,7 @@ def controls():
     S, LV = "src/core/app/NetworkLocalCarryHarvest.cpp", "src/core/filter/NetworkLevelingCarry.cpp"
     Z, IO = "src/core/filter/NetworkZwdCarry.cpp", "src/core/filter/NetworkSlantIonoCarry.cpp"
     CH, RS = "src/core/filter/NetworkChainDatum.cpp", "src/core/filter/NetworkResponses.cpp"
+    CTX, RC = "include/app/NetworkRunContext.hpp", "src/core/filter/NetworkRxCodeBiasCarry.cpp"
     cases = [
         ("C1 receiver clock before the ionosphere", "H6",
          mut(S, "        networkHarvestSlantIonoBlock(run, ep, border, blocks);\n        networkHarvestRxClock(run, ep, border, blocks);",
@@ -630,9 +631,14 @@ def controls():
     cases[2] = (cases[2][0], cases[2][1], {S: c4.replace(
         "        for (size_t i = 0; i < stations.size(); ++i) {\n            blocks[i]",
         "        ctx.carry.pl_prev_now_s = pl_now_s;\n        for (size_t i = 0; i < stations.size(); ++i) {\n            blocks[i]")})
+    if "long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0," in t.read(CTX) and \
+            "ctx.counters.rx_cb_injected_total" in t.read(RC):
+        cases.append(("C13 a moved counter with another initializer", "H10",
+                      mut(CTX, "long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,",
+                          "long long rx_cb_injected_total = 1, rx_cb_innov_skips_total = 0,")))
     if "NetworkLocalCarryHarvest.cpp" not in t.read(RS):
         cases.append(("C14 a citation naming the wrong file", "H12",
-                      mut(RS, '"NetworkZwdCarry.cpp', '"NetworkRxClockCarry.cpp')))
+                      mut(RS, '"NetworkZwdCarry.cpp harvest prune"', '"NetworkRxClockCarry.cpp harvest prune"')))
     fz = fh.load()
     ok = True
     for name, want, over in cases:

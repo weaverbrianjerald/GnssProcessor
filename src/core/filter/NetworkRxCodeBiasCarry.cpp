@@ -487,7 +487,7 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
             networkSharedHistoryNoteEntry(shx_h, est_idx, ccol, SharedHistoryMap::RxCb,
                                           static_cast<int>(i), cb_key);   // card SCL2 X2; no-op off
             ++ctx.counters.n_rxcb_blk_harvested;
-            ++ctx.carry.rx_cb_harvested_total;
+            ++ctx.counters.rx_cb_harvested_total;
         }
     }
 }
@@ -549,13 +549,13 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
     for (size_t i = 0; i < stations.size(); ++i) {
         if (est_index_of[i] < 0) continue;
         const StationAssembly& R = asm_res[i];
-        ctx.carry.rx_cb_injected_total += R.pl_cb_injected;
+        ctx.counters.rx_cb_injected_total += R.pl_cb_injected;
         // n_rxcb_gauges is not summed here: it belongs to the RXCB-DATUM knob, not
         // the carry, and has its own walk above.  Every counter left in this bracket
         // is carry-only: their producer-side increments all sit below the
         // `if (!rx_cb_on) continue;` in the assembly's pl_cb walk, so a datum-only run
         // cannot populate them.
-        ctx.carry.rx_cb_innov_skips_total += R.pl_cb_innov_skips;
+        ctx.counters.rx_cb_innov_skips_total += R.pl_cb_innov_skips;
         // The same two tallies, kept per station (RS-9 rider, §21.18).  The pooled
         // "N folded, M withheld" line cannot tell a share of stations refused
         // occasionally from a similar share refused always; in the second case the set
@@ -566,7 +566,7 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
         // the multi-family generalization of the one-key field posture).  Serial, so
         // no race.
         if (R.pl_cb_injected > 0 || R.pl_cb_innov_skips > 0) {
-            auto& tally = ctx.carry.rx_cb_sta_tally[stations[i].name];
+            auto& tally = ctx.counters.rx_cb_sta_tally[stations[i].name];
             ++tally.first;
             if (R.pl_cb_injected == 0) ++tally.second;
         }
@@ -648,7 +648,7 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
             }
             rx_cb_carry[{static_cast<int>(i), cb_key}] =
                 LocalCarry{value_abs, var, pl_now_s};
-            ++ctx.carry.rx_cb_harvested_total;
+            ++ctx.counters.rx_cb_harvested_total;
         }
     }
     // The horizon is the registry's (kRxCbMaxGapS, the same constant; card PRM phase 3b).

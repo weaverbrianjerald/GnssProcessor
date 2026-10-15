@@ -1995,24 +1995,6 @@ namespace GnssProcessor {
         /// Card AIL: formatted rows of network_amb_if.csv buffered at the harvest and
         /// written by the driver after it (empty unless network.trace_amb_if).
         std::vector<std::string> amb_if_rows;
-        // rx-CB carry run counters (armed-only run-end line).
-        long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,
-                  rx_cb_harvested_total = 0;
-        /// Per-station fold/withhold tally of the rx-CB carry (RS-9 rider, §21.18), kept on
-        /// every run where the carry is armed; trace-class, with byte-identical products.
-        /// It shows what the pooled "N folded, M withheld" line hides.  Keyed by station
-        /// name (the teardown has no station roster); value = {station-epochs with at least
-        /// one rx-CB carry decision, station-epochs in which every decision was a
-        /// withhold}.  A station whose second number is > 90 % of its first carried nothing
-        /// for the run, while the run-end line still counted it among the "N carried" (a
-        /// blind spot of the kind standing invariant #4 names, measured by the RS-7b
-        /// census).  §21.18(b) gives the cause:
-        /// the harvest overwrites a withheld entry unconditionally and the prune drops only
-        /// entries older than 900 s, so a refused station is refreshed and refused for the
-        /// whole run.  Written serially at the post-solve harvest from the produce phase's
-        /// per-station StationAssembly tallies, so it is race-free like the counters beside
-        /// it.
-        std::map<std::string, std::pair<long long, long long>> rx_cb_sta_tally;
         /// The snapshot's RL rows for the RS-9 restore (§21.18): station roster index ->
         /// (CB state key -> the writer's @c x_lin, metres).  Stashed by
         /// @c networkTryWarmResume beside the RS-6 RC restore and consumed once, by
@@ -3138,6 +3120,24 @@ namespace GnssProcessor {
         long long n_rxcb_blk_restored_skip = 0;          ///< RXCB-IN-BLOCK: carried entries without a harvest-block row (restored from a diagonal-carry snapshot) left out of the block and re-harvested
         long long n_rxcb_blk_step_reset = 0;             ///< receiver code-bias entries erased at the harvest by the frame-invariant step test (10 sigma of the two harvested variances, the walk and a 0.5 m guard): the event response of invariant #1
         long long n_rxcb_blk_no_block = 0;               ///< receiver code-bias entries stashed without a harvest-block row (cross terms to the station's other columns missing next epoch)
+        // rx-CB carry run counters (armed-only run-end line).
+        long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,
+                  rx_cb_harvested_total = 0;
+        /// Per-station fold/withhold tally of the rx-CB carry (RS-9 rider, §21.18), kept on
+        /// every run where the carry is armed; trace-class, with byte-identical products.
+        /// It shows what the pooled "N folded, M withheld" line hides.  Keyed by station
+        /// name (the teardown has no station roster); value = {station-epochs with at least
+        /// one rx-CB carry decision, station-epochs in which every decision was a
+        /// withhold}.  A station whose second number is > 90 % of its first carried nothing
+        /// for the run, while the run-end line still counted it among the "N carried" (a
+        /// blind spot of the kind standing invariant #4 names, measured by the RS-7b
+        /// census).  §21.18(b) gives the cause:
+        /// the harvest overwrites a withheld entry unconditionally and the prune drops only
+        /// entries older than 900 s, so a refused station is refreshed and refused for the
+        /// whole run.  Written serially at the post-solve harvest from the produce phase's
+        /// per-station StationAssembly tallies, so it is race-free like the counters beside
+        /// it.
+        std::map<std::string, std::pair<long long, long long>> rx_cb_sta_tally;
         long long n_rxclk_carry_refused = 0;             ///< clock carries erased by the jump gate (network.carry_rx_clock_jump_k) at harvest: |one-step prediction innovation| > k*sigma means the receiver (or the solve) stepped, so both the bias and the drift are dropped and re-born cold.  The wired response of invariant #1 for a quantity that has no other jump detector on the network path.
         long long n_rxclk_carry_gap_drop = 0;            ///< clock-family carries dropped at the harvest prune for exceeding carry_rx_clock_max_gap_s without a sighting (the absent-station edge)
         // --- The jump gate's own scale, so a leg can say what it would have caught ---

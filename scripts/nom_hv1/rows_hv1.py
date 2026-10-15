@@ -122,7 +122,8 @@ ROWS = [
       "subs": {1426: ("cblk_of_sta[i]", "blocks[i].segmentBlock(BlockSegment::RxCodeBias)"),
                1428: ("&cblk_cols_of_sta[i]", "&blocks[i].cols"),
                1429: ("cblk_row0_of_sta[i]", "blocks[i].rowOf(BlockSegment::RxCodeBias)"),
-               1438: CALL_COL}}),
+               1438: CALL_COL,
+               1509: ("ctx.carry.rx_cb_harvested_total", "ctx.counters.rx_cb_harvested_total")}}),
     ("networkHarvestZwd", "filter/NetworkZwdCarry", "guard",
      [(1513, 1521, 4), (1522, 1697, 8), (1698, 1698, 4)],
      {"anchor": "if (zwd_on || zwd_capture || zwd_seam_live) {", "kept": (BORDER, BLOCKS),
@@ -145,12 +146,17 @@ ROWS = [
      {"anchor": "if (ctx.knobs.rx_cb_datum) {", "kept": ()}),
     ("networkHarvestRxCbCarry", "filter/NetworkRxCodeBiasCarry", "guard",
      [(1771, 1779, 0), (1780, 1893, 4), (1894, 1894, 0)],
-     {"anchor": "if (ctx.knobs.rx_cb_on) {", "kept": ()}),
+     {"anchor": "if (ctx.knobs.rx_cb_on) {", "kept": (),
+      "subs": {1786: ("ctx.carry.rx_cb_injected_total", "ctx.counters.rx_cb_injected_total"),
+               1792: ("ctx.carry.rx_cb_innov_skips_total", "ctx.counters.rx_cb_innov_skips_total"),
+               1803: ("ctx.carry.rx_cb_sta_tally", "ctx.counters.rx_cb_sta_tally"),
+               1885: ("ctx.carry.rx_cb_harvested_total", "ctx.counters.rx_cb_harvested_total")}}),
     ("networkResumeFirstEpochRetire", "app/NetworkWarmResume", "verbatim", [(1896, 1914, 0)],
      {"anchor": "if (ctx.carry.resume_cpl_census_pending)", "run_only": True, "kept": ()}),
 ]
 
-# HV1b (FIELD_MOVE): the four rx-CB run fields move from ctx.carry to ctx.counters.
+# HV1b (FIELD_MOVE): the four rx-CB run fields move from ctx.carry to ctx.counters
+# (NetworkCarryState to NetworkServiceCounters, beside the n_rxcb_blk_* counters).
 FIELD_MOVE = ("rx_cb_injected_total", "rx_cb_innov_skips_total", "rx_cb_harvested_total",
               "rx_cb_sta_tally")
 

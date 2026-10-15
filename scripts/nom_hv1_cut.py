@@ -17,7 +17,9 @@ differ from what the generator would write):
     PB1b, and generated regions in filter/NetworkAmbStateTrace, filter/NetworkChainDatum and
     app/NetworkWarmResume), with its declaration and Doxygen in the owner's header (the two
     run-only resume functions in app/NetworkRunContext.hpp, replacing the old declaration);
-  - networkLeveling's call (filter/NetworkLeveling.cpp) and the declared comment edits.
+  - networkLeveling's call (filter/NetworkLeveling.cpp) and the declared comment edits;
+  - step HV1b's field move: the four rx-CB run fields (rows_hv1.FIELD_MOVE) declared in
+    NetworkServiceCounters and spelled ctx.counters at their writers and run-end reader.
 
 Each function opens with generated bindings: the frozen parameters it reads (bound as
 networkLeveling's EP1 preamble bound them), the frozen alias lines it reads (verbatim, with
@@ -452,7 +454,32 @@ def context_header():
     k = lines.index("    /// @brief Harvest, stash and prune the station-local carries from this epoch's solve.")
     e = next(j for j in range(k, len(lines)) if lines[j].rstrip().endswith(");"))
     lines = lines[:k] + CENSUS_DECLS.split("\n") + lines[e + 1:]
-    return "\n".join(lines)
+    return field_move_decls("\n".join(lines))
+
+
+FM_OPEN = "        // rx-CB carry run counters (armed-only run-end line)."
+FM_LAST = "        std::map<std::string, std::pair<long long, long long>> rx_cb_sta_tally;"
+FM_AFTER = "        long long n_rxcb_blk_no_block = 0;"
+
+
+def field_move_decls(text):
+    """HV1b: the four rx-CB run fields' declarations, Doxygen and initializers unchanged, from
+    NetworkCarryState to NetworkServiceCounters (after the n_rxcb_blk_* counters)."""
+    L = text.split("\n")
+    a = L.index(FM_OPEN)
+    b = L.index(FM_LAST)
+    block = L[a:b + 1]
+    L = L[:a] + L[b + 1:]
+    k = next(j for j, l in enumerate(L) if l.startswith(FM_AFTER))
+    return "\n".join(L[:k + 1] + block + L[k + 1:])
+
+
+def field_move_uses(rel):
+    """HV1b: the run-end reader spells the moved fields ctx.counters."""
+    text = read_base(rel)
+    for f in rows.FIELD_MOVE:
+        text = re.sub(r"\bctx\.carry\." + f + r"\b", "ctx.counters." + f, text)
+    return text
 
 
 def leveling_source():
@@ -494,6 +521,8 @@ def outputs(fz):
             out[f"include/{d}/{base}.hpp"] = owner_header(f"include/{d}/{base}.hpp", funcs)
     out["include/app/NetworkRunContext.hpp"] = context_header()
     out["src/core/filter/NetworkLeveling.cpp"] = leveling_source()
+    rel = "src/core/filter/NetworkRxCodeBiasCarryRunEnd.cpp"
+    out[rel] = field_move_uses(rel)
     for rel in sorted({r for r, _, _ in COMMENT_EDITS}):
         out[rel] = comment_edited(rel, out.get(rel) or read_base(rel))
     return out
