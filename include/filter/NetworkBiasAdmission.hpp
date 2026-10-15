@@ -191,4 +191,17 @@ void networkFoldCodeBiasKaulaPrior(NetworkRun& run, const NetworkEpoch& ep, Epoc
  */
 void networkKaulaMargin(NetworkRun& run);
 
+struct NetworkRun;
+
+/**
+ * @brief Runs the code-bias admission census once before the loop and logs its table.
+ *
+ * Armed by network.cb_admission with the satellite code-bias slice; refused, with a warning,
+ * under streaming.  Setup builder (card NOM3 step EP4): called once from
+ * Application::runNetwork, in the order scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.ctx.admission and its two counters.
+ */
+void networkCbAdmissionCensus(NetworkRun& run);
+
 } // namespace GnssProcessor

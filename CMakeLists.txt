@@ -231,6 +231,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkDatumGraph.cpp
     src/core/filter/NetworkBlockBaarda.cpp
     src/core/filter/NetworkCongruence.cpp
+    src/core/filter/NetworkCongruenceSetup.cpp
     src/core/filter/NetworkPriorResidual.cpp
     src/core/filter/NetworkSolPrep.cpp
     src/core/filter/NetworkEmitStore.cpp
@@ -243,6 +244,16 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkShDevVtec.cpp
     src/core/filter/NetworkSolveStations.cpp
     src/core/filter/NetworkStationBuild.cpp
+    src/core/filter/NetworkIonoConstraintRows.cpp
+    src/core/filter/NetworkLevelingCarry.cpp
+    src/core/filter/NetworkPhaseColourCarry.cpp
+    src/core/filter/NetworkRxClockCarry.cpp
+    src/core/filter/NetworkRxCodeBiasCarry.cpp
+    src/core/filter/NetworkSlantIonoCarry.cpp
+    src/core/filter/NetworkStationAnchors.cpp
+    src/core/filter/NetworkStationCarry.cpp
+    src/core/filter/NetworkStationSplit.cpp
+    src/core/filter/NetworkZwdCarry.cpp
     src/core/filter/NetworkShHealth.cpp
     src/core/filter/NetworkLeveling.cpp
     src/core/filter/NetworkStashStatus.cpp
@@ -274,13 +285,16 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkLevelingCarryRunEnd.cpp
     src/core/filter/NetworkRxCodeBiasCarryRunEnd.cpp
     src/core/filter/NetworkCarryVceRunEnd.cpp
+    src/core/filter/NetworkCarryVceApply.cpp
     src/core/slip/NetworkSlipQcRunEnd.cpp
     src/core/filter/NetworkRunEnd.cpp
+    src/core/filter/NetworkEpochObservers.cpp
     src/core/filter/NetworkInject.cpp
     src/core/filter/NetworkCanonicalPairAdmission.cpp
     src/core/filter/ArcLedger.cpp
     src/core/filter/NetworkAnchorReentry.cpp
     src/core/filter/NetworkOraclePin.cpp
+    src/core/filter/NetworkOraclePinSetup.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkCouplingExact.cpp
     src/core/filter/NetworkClockClone.cpp
@@ -583,6 +597,7 @@ add_executable(gnss_tests
     tests/test_network_knobs_epoch_driver.cpp
     tests/test_network_knobs_station_assembly.cpp
     tests/test_network_epoch_contract.cpp
+    tests/test_network_station_build.cpp
     tests/test_network_engine_spec.cpp
     tests/test_network_row_classify.cpp
     tests/test_raim_pool_data_rows_only.cpp
@@ -607,6 +622,7 @@ add_executable(gnss_tests
     tests/test_rt_state_snapshot.cpp
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp
+    tests/test_network_epoch_observers.cpp
     tests/test_network_solve_skip.cpp
     tests/test_network_we_choice.cpp
     tests/test_network_within_epoch_culprits.cpp

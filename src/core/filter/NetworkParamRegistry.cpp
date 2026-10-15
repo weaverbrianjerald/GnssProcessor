@@ -308,7 +308,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.birth_var_m2 = kNaN;
         s.gap_horizon_s = kNaN;
         s.route = ParamRoute::NotCarried;
-        s.source = "held at the roster coordinate (networkSplitStation_; network.station_marker_to_arp "
+        s.source = "held at the roster coordinate (networkSplitStation; network.station_marker_to_arp "
                    "reduces it to the antenna reference point)";
         set(NetworkParamKind::RxPosition, std::move(s));
     }

@@ -1959,6 +1959,7 @@ void networkRhsAttribution(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     const Eigen::VectorXd* x_s = &ep.solve.x_s;
     // ---- End of the bindings ----
+    if (!est.attribArmed()) return;   // the driver's gate (card NOM3 step EP3)
     const auto& nc = config_.getNetworkConfig();
     if (nc.rhs_attrib_tow < 0.0) return;
     if (ctx.carry.rhs_attrib_done >= std::max(1, nc.rhs_attrib_n_ep)) return;

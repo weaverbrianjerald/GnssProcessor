@@ -1639,7 +1639,7 @@ namespace GnssProcessor {
                 // warning rather than letting the run report zero fixed rows.
                 log->warn("Network: network.sd_ewl.fix_enable is INERT without "
                           "network.sd_ewl.enable — the integer decision has no row "
-                          "layer to fold into (networkAppendSdEwlRows_ returns "
+                          "layer to fold into (networkAppendSdEwlRows returns "
                           "immediately when enable is false).  Disarming fix_enable.");
                 se.fix_enable = false;
             }
@@ -4813,7 +4813,7 @@ namespace GnssProcessor {
                 "restore is legal ONLY because an x_lin shift is an exact solve no-op for "
                 "a state that enters linearly, so the gate is its only consumer.  The "
                 "receiver code-bias DATUM breaks that — its prior's RHS is η = λ·(0 − "
-                "x_lin(cb)) (ApplicationNetworkAssembly.cpp), so moving x_lin MOVES the "
+                "x_lin(cb)) (NetworkRxCodeBiasCarry.cpp), so moving x_lin MOVES the "
                 "target and therefore the solve.  Run the RS-9 restore without the datum, "
                 "or the datum without the restore.");
         // Re-admission continuity: E2 seed-first re-admission and the block re-coupling
@@ -10644,7 +10644,7 @@ namespace GnssProcessor {
                            "(got phase_leveling={}, carry_invariant={}).  float_kf replaces the "
                            "LEVELING carry's scalar prior with a float state carrying a joint "
                            "covariance; on a carry_invariant lineage the Card-4 DD carry IS the "
-                           "ambiguity time-link and ApplicationNetworkAssembly's do_amb_carry "
+                           "ambiguity time-link and NetworkStationCarry's do_amb_carry "
                            "skips the leveling inject outright, so there is nothing for the "
                            "vehicle to replace and the arm could not move a byte.",
                            network_phase_leveling_, network_carry_invariant_);
@@ -11444,7 +11444,7 @@ namespace GnssProcessor {
                 log->warn("Network: network.raim is on with network.carry_invariant (phase_leveling"
                           "={}) but WITHOUT network.raim_carry_invariant — post-fit RAIM is INERT: "
                           "its residual pool `pl_amb` is never filled under carry_invariant "
-                          "(ApplicationNetworkAssembly's `do_amb_carry` requires !carry_invariant, "
+                          "(NetworkStationCarry's `do_amb_carry` requires !carry_invariant, "
                           "because Card 4's DD carry supersedes the phase-leveling ambiguity "
                           "carry), so `ambPool()` hands the seam an EMPTY pool and every station is "
                           "skipped.  ⚠ phase_leveling does NOT rescue this — it satisfies the "

@@ -105,6 +105,9 @@ EPOCH_HPP = "include/app/NetworkEpoch.hpp"
 EPOCH_FN = "networkProcessEpoch_"
 SOLVE = "networkSolveGlue"
 EMIT = "networkEmitStore"
+OBSERVE = "networkObserveEpoch"   # the observer table's slot walk (card NOM3 step EP3)
+OBSERVERS_CPP = "src/core/filter/NetworkEpochObservers.cpp"
+_OBSERVER_ROW = re.compile(r'\{"(\w+)",\s*"[^"]*",\s*"[^"]*",\s*Slot::(\w+),\s*&(\w+)\}')
 PREAMBLE_OPEN = re.compile(r"//\s*-{2,}\s*From the run\b")
 PREAMBLE_CLOSE = re.compile(r"//\s*-{2,}\s*End of the bindings")
 
@@ -1075,7 +1078,7 @@ def parse_banner(text):
 # The lint
 # ---------------------------------------------------------------------------------------------
 class SpineCall:
-    __slots__ = ("callee", "call", "stmt", "defn", "out_paths", "reads", "nested")
+    __slots__ = ("callee", "call", "stmt", "defn", "out_paths", "reads", "nested", "observers")
 
     def __init__(self, callee, call, stmt):
         self.callee, self.call, self.stmt = callee, call, stmt
@@ -1084,6 +1087,7 @@ class SpineCall:
         self.reads = []       # epoch paths the bindings read
         self.nested = []      # (callee, path:line, epoch paths its bindings read) of the converted
                               # seams this seam's body calls with its own run and epoch
+        self.observers = []   # a slot walk's rows (card NOM3 step EP3), read as spine calls here
 
 
 def nested_epoch_calls(tree, defs, f, depth=0, seen=None):
@@ -1109,6 +1113,15 @@ def nested_epoch_calls(tree, defs, f, depth=0, seen=None):
         DT = tree.tokens(ds[0].path)
         out.append((leaf, f"{f.path}:{c.line}", [p for p, _ in binding_reads(DT, ds[0])]))
         out += nested_epoch_calls(tree, defs, ds[0], depth + 1, seen)
+    return out
+
+
+def observer_rows(tree):
+    """slot -> [seam name] of the observer table (card NOM3 step EP3), in table order; a row
+    whose name is not its function is returned under the slot "?" so the caller reports it."""
+    out = collections.defaultdict(list)
+    for name, slot, fn in _OBSERVER_ROW.findall(tree.read(OBSERVERS_CPP) or ""):
+        out[slot if name == fn else "?"].append(fn)
     return out
 
 
@@ -1166,6 +1179,23 @@ class Lint:
                 if is_card_form(sc.defn):
                     sc.out_paths += written_bindings(DT, sc.defn)
                 sc.nested = nested_epoch_calls(self.tree, self.defs, sc.defn)
+            if leaf == OBSERVE and c.nargs == 3:
+                # The slot walk runs its rows at this spine line: their reads are this call's.
+                rows = observer_rows(self.tree)
+                for bad in rows.get("?", []):
+                    self.problems["V10"].append(f"{OBSERVERS_CPP}: the row of {bad} names another seam")
+                slot = re.split(r"::", T.join(*c.args[2]))[-1]
+                if not rows.get(slot):
+                    self.problems["V10"].append(f"{self.fn.path}:{c.line}: slot {slot} has no row")
+                for name in rows.get(slot, []):
+                    ods = [f for f in self.defs.find(name) if len(f.params) == 2]
+                    if not ods:
+                        self.problems["V10"].append(f"{OBSERVERS_CPP}: row {name} has no epoch form")
+                        continue
+                    OT = self.tree.tokens(ods[0].path)
+                    sc.reads += [p for p, _ in binding_reads(OT, ods[0])]
+                    sc.nested += nested_epoch_calls(self.tree, self.defs, ods[0])
+                    sc.observers.append(name)
             self.spine.append(sc)
 
     # -- positions --
@@ -1454,7 +1484,9 @@ class Lint:
                             f"{where}: {callee}, called inside {sc.callee} (spine line "
                             f"{self.fn.path}:{sc.call.line}), reads {p}, which is not written before "
                             "that spine line")
-        self.info["V10"].append(f"{len(self.spine)} spine calls, {n} epoch reads checked against "
+        n_obs = sum(len(sc.observers) for sc in self.spine)
+        self.info["V10"].append(f"{len(self.spine)} spine calls ({n_obs} observer rows read at their "
+                                f"slot walk), {n} epoch reads checked against "
                                 f"{len(avail)} groups' first writes; {n_nested} reads of seams called "
                                 "inside a seam")
 

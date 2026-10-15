@@ -69,16 +69,21 @@ constexpr ParamKindSet kBlkRxClk = kBlkIono | bit(PK::RxClock);
 constexpr ParamKindSet kBlkRxCb  = kBlkRxClk | bit(PK::RxCodeBias);
 constexpr ParamKindSet kBlkPc    = kBlkRxCb | bit(PK::PhaseColour);
 
-constexpr const char* kSplit   = "MeasurementModel::computeMeasurementUpdate, "
-                                 "Application::networkSplitStation_ (ApplicationNetworkAssembly.cpp)";
-constexpr const char* kPinFold = "Application::networkPassB_, phase-datum pin fold "
-                                 "(ApplicationNetworkAssembly.cpp)";
-constexpr const char* kGloFold = "Application::networkPassB_, GLONASS anchors "
-                                 "(ApplicationNetworkAssembly.cpp)";
-constexpr const char* kCarryWalk = "Application::networkPassB_, carry walk "
-                                   "(ApplicationNetworkAssembly.cpp)";
-constexpr const char* kLgmRows = "Application::networkPassB_, card LGM rows "
-                                 "(ApplicationNetworkAssembly.cpp)";
+constexpr const char* kSplit = "MeasurementModel::computeMeasurementUpdate, networkSplitStation (NetworkStationSplit.cpp), station step data_rows";
+constexpr const char* kPinFold = "networkPhaseDatumPinRows (NetworkPhaseDatum.cpp), station step phase_datum_pins";
+constexpr const char* kGloFold = "networkGlonassAnchorRows (NetworkStationAnchors.cpp), station step glonass_anchors";
+constexpr const char* kLgmRows = "networkPhaseColourRows (NetworkPhaseColourCarry.cpp), station step phase_colour_rows";
+// The builder column of the station kinds, from the step rows of card NOM3 step PB1b
+// (scripts/nom_pb1/rows_pb1b.py, decision 3): the function and file that create the
+// kind's rows, and the station step that calls it.
+constexpr const char* kSimZeroIono = "networkSimZeroIonoRows (NetworkStationAnchors.cpp), station step sim_zero_iono";
+constexpr const char* kShIonoRows = "networkAppendShIonoRows (NetworkIonoConstraintRows.cpp), station step iono_constraint";
+constexpr const char* kGimIonoRows = "networkAppendGimIonoRows (NetworkIonoConstraintRows.cpp), station step iono_constraint";
+constexpr const char* kSdEwlRows = "networkAppendSdEwlRows (NetworkSdEwlAr.cpp), station step sd_ewl";
+constexpr const char* kAmbCarryRow = "networkAmbCarryEmitRow (NetworkLevelingCarry.cpp), station step ambiguity";
+constexpr const char* kZwdCarryRow = "networkZwdCarryPrior (NetworkZwdCarry.cpp), station step zwd";
+constexpr const char* kRxCbRows = "networkRxCbPriors (NetworkRxCodeBiasCarry.cpp), station step rx_cb";
+constexpr const char* kOraclePinRows = "networkOraclePinPriors (NetworkOraclePin.cpp), station step oracle_pin";
 constexpr const char* kCplRows = "CouplingRowBuilder::buildCplRow, appendCouplingRows "
                                  "(NetworkCoupling.cpp)";
 constexpr const char* kBlock   = "CouplingRowBuilder::buildLocalBlock, appendCouplingRows "
@@ -143,24 +148,24 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
     {CK::SimZeroIono, "sim_zero_iono", CC::StationRows, CG::BeforeGate, CS::StationLos,
      CU::Rows, bit(PK::SlantIono),
      "1/network.sim_zero_iono_sigma_m^2 (test-only; a fixture simulated without ionosphere)",
-     kGloFold, false, nullptr},
+     kSimZeroIono, false, nullptr},
     {CK::ShIonoTie, "sh_iono_tie", CC::StationRows, CG::BeforeGate, CS::StationLos, CU::Rows,
      bit(PK::SlantIono) | bit(PK::VtecSh),
      "unit (whitened); R from estimation.global_vtec_sh.representation_sigma_tecu, floored at "
      "estimation.ionosphere_weighting.floor_m, with the common mode "
      "estimation.ionosphere_weighting.common_mode_sigma_m, x "
      "estimation.global_vtec_sh.row_decimation_epochs",
-     "Application::networkAppendShIonoRows_ (ApplicationNetworkAssembly.cpp)", false, nullptr},
+     kShIonoRows, false, nullptr},
     {CK::GimIono, "gim_iono", CC::StationRows, CG::BeforeGate, CS::StationLos, CU::Rows,
      bit(PK::SlantIono),
      "unit (whitened); R from estimation.ionosphere_weighting.std_scale x the GIM sigma, floored "
      "at estimation.ionosphere_weighting.floor_m, with the common mode "
      "estimation.ionosphere_weighting.common_mode_sigma_m",
-     "Application::networkAppendGimIonoRows_ (ApplicationNetworkAssembly.cpp)", false, nullptr},
+     kGimIonoRows, false, nullptr},
     {CK::SdEwl, "sd_ewl", CC::StationRows, CG::BeforeGate, CS::StationLos, CU::Rows,
      bit(PK::Ambiguity) | bit(PK::SatPhaseBias) | bit(PK::SatCodeBias),
      "unit (whitened); R = diag(arc variance) + the pivot arc's variance (network.sd_ewl)",
-     "Application::networkAppendSdEwlRows_ (ApplicationNetworkAssembly.cpp)", false, nullptr},
+     kSdEwlRows, false, nullptr},
     // --- Station coupling and block rows (the coupling region) ---
     {CK::CouplingScalar, "coupling_scalar", CC::StationRows, CG::BeforeGate, CS::StationLosSignal,
      CU::Rows, kBorder | bit(PK::Ambiguity) | bit(PK::Zwd) | bit(PK::PhaseColour),
@@ -193,22 +198,22 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      CS::StationLosSignal, CU::Entries, bit(PK::Ambiguity),
      "1/(var + network.phase_leveling_q_amb * gap), floored by "
      "network.phase_leveling_var_floor_m2, x the carry VCE factor",
-     kCarryWalk, false, nullptr},
+     kAmbCarryRow, false, nullptr},
     {CK::PriorZwdCarry, "prior_zwd_carry", CC::StationPriorPostPd, CG::BeforeGate, CS::Station,
-     CU::Entries, bit(PK::Zwd), "1/(var + network.zwd_carry_q * gap)", kCarryWalk, false, nullptr},
+     CU::Entries, bit(PK::Zwd), "1/(var + network.zwd_carry_q * gap)", kZwdCarryRow, false, nullptr},
     {CK::PriorRxCbCarry, "prior_rx_cb_carry", CC::StationPriorPostPd, CG::BeforeGate, CS::Station,
      CU::Entries, bit(PK::RxCodeBias),
      "1/(var + network.rx_cb_carry_q * gap); inject gate k = 10, guard 0.25 (literals)",
-     kCarryWalk, false, nullptr},
+     kRxCbRows, false, nullptr},
     {CK::PriorAmbiguityOraclePin, "prior_ambiguity_oracle_pin", CC::StationPriorPostPd,
      CG::BeforeGate, CS::StationLosSignal, CU::Entries, bit(PK::Ambiguity),
-     "1/sigma^2 of the oracle_pin event (simulation only)", kCarryWalk, false, nullptr},
+     "1/sigma^2 of the oracle_pin event (simulation only)", kOraclePinRows, false, nullptr},
     {CK::PriorRxCbDatum, "prior_rx_cb_datum", CC::StationPriorPostPd, CG::BeforeGate,
      CS::Station, CU::Entries, bit(PK::RxCodeBias), "1/network.rx_code_bias_datum_sigma_m^2",
-     kCarryWalk, false, nullptr},
+     kRxCbRows, false, nullptr},
     {CK::PriorRxCbDatumPrePd, "prior_rx_cb_datum_pre_pd", CC::StationPriorPrePd, CG::BeforeGate,
      CS::Station, CU::Entries, bit(PK::RxCodeBias),
-     "1/network.rx_code_bias_datum_sigma_m^2 (network.station_prior_before_pd)", kCarryWalk,
+     "1/network.rx_code_bias_datum_sigma_m^2 (network.station_prior_before_pd)", kRxCbRows,
      false, nullptr},
     // --- Shared rows ---
     {CK::CbIfPin, "cb_if_pin", CC::SharedRows, CG::BeforeGate, CS::Satellite, CU::Rows,

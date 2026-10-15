@@ -447,7 +447,7 @@ void networkMdbRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
                   "elapsed (phase_leveling={}) — and (b) a non-empty per-station "
                   "`pl_amb` list.  MEASURED CAUSE on this lineage: `pl_amb` is built "
                   "only when network.carry_invariant is OFF "
-                  "(ApplicationNetworkAssembly.cpp, `do_amb_carry`), because the DD "
+                  "(NetworkStationCarry.cpp, `do_amb_carry`), because the DD "
                   "invariant carry SUPERSEDES the phase-leveling ambiguity carry as a "
                   "solve input — so with carry_invariant={} the post-fit RAIM pool is "
                   "empty and network.raim_redundancy_normalize is inert with it.  That "
