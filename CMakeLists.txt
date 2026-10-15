@@ -286,6 +286,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkCarryVceRunEnd.cpp
     src/core/slip/NetworkSlipQcRunEnd.cpp
     src/core/filter/NetworkRunEnd.cpp
+    src/core/filter/NetworkEpochObservers.cpp
     src/core/filter/NetworkInject.cpp
     src/core/filter/NetworkCanonicalPairAdmission.cpp
     src/core/filter/ArcLedger.cpp
@@ -618,6 +619,7 @@ add_executable(gnss_tests
     tests/test_rt_state_snapshot.cpp
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp
+    tests/test_network_epoch_observers.cpp
     tests/test_network_solve_skip.cpp
     tests/test_network_we_choice.cpp
     tests/test_network_within_epoch_culprits.cpp

@@ -28,6 +28,7 @@
 #include "filter/NetworkRunTypes.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include "app/NetworkRunContext.hpp"
+#include "filter/NetworkEpochObservers.hpp"
 #include "app/SignalRoster.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
 #include "filter/NetworkBlockBaarda.hpp"
@@ -273,6 +274,8 @@ using SigCongruencePredict = void (*)(NetworkRun&, const NetworkEpoch&);   // EP
 static_assert(std::is_same_v<decltype(static_cast<SigCongruencePredict>(&networkCongruencePredict)), SigCongruencePredict>);
 using SigSectionTimersReadout = void (*)(NetworkRun&, const NetworkEpoch&, const EpochSectionTimers&);   // EP2 direct, kept parameter
 static_assert(std::is_same_v<decltype(static_cast<SigSectionTimersReadout>(&networkSectionTimersReadout)), SigSectionTimersReadout>);
+using SigObserveEpoch = void (*)(NetworkRun&, const NetworkEpoch&, NetworkObserverSlot);   // EP3 direct, the observer table's slot walk
+static_assert(std::is_same_v<decltype(static_cast<SigObserveEpoch>(&networkObserveEpoch)), SigObserveEpoch>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkGapResumeCensus)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkBufferedTraceDrains)), NetworkEpochObserver>);
 // Every measure-only row has the observer form.
@@ -301,6 +304,6 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&network
 } // namespace
 
 TEST(NetworkEpochContract, CompiledChecks) {
-    // Every check of this file is a static_assert; the case records that it built (56 converted seams of step EP1, 12 of step EP2).
+    // Every check of this file is a static_assert; the case records that it built (56 converted seams of step EP1, 12 of step EP2, 1 of step EP3).
     SUCCEED();
 }
