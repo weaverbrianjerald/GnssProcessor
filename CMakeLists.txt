@@ -123,6 +123,7 @@ add_library(gnss_core STATIC
     src/core/app/NetworkKnobs.cpp
     src/core/app/NetworkSnapshotFingerprint.cpp
     src/core/app/NetworkWarmResume.cpp
+    src/core/app/NetworkEntities.cpp
     src/core/app/NetworkStateSnapshotWrite.cpp
     src/core/app/NetworkBorderPrior.cpp
     src/core/app/NetworkBorderStash.cpp

@@ -98,6 +98,7 @@
 #include "products/NetworkClockEmitRebase.hpp"
 #include "products/NetworkEmitRebase.hpp"
 #include "slip/NetworkCommonBandScope.hpp"
+#include "app/NetworkEntities.hpp"
 #include "slip/NetworkGfArcJump.hpp"
 #include "slip/NetworkSlipOracle.hpp"
 #include "slip/NetworkSlipQcRunEnd.hpp"
@@ -260,6 +261,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "app/NetworkRunArtifactsRunEnd.cpp", networkRunSummaryRunEnd},
     {"the closed-loop integer-recovery harness",
      "app/NetworkClosedLoopRunEnd.cpp", networkClosedLoopRunEnd},
+    {"entities as carried: the reach table of the entity tables (card NOM step N4)",
+     "app/NetworkEntities.cpp", net::networkEntitiesRunEnd},
     {"the event harness (fault injection)",
      "filter/NetworkInject.cpp", networkInjectRunEnd},
     {"the canonical-pair admission (CPA)",

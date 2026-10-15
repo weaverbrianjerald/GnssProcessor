@@ -29,6 +29,7 @@
  */
 
 #include "filter/NetworkRunTypes.hpp"
+#include "app/NetworkEntities.hpp"         // net::NetworkEntities: the entity tables (card NOM step N4)
 #include "filter/NetworkArSuspect.hpp"      // ArSuspectLedger / ArSuspectCounters (card ARL)
 #include "filter/NetworkArCycleBasis.hpp"   // ArBasisMemory / ArCycleBasisCounters (card AGT)
 #include "filter/NetworkArLattice.hpp"      // ArLatticeState / ArLatticeCounters (card AGT, AGT-6)
@@ -4290,6 +4291,10 @@ namespace GnssProcessor {
         /// Tabled after the first emitted epoch and at run end ("contributions as armed").
         NetworkContributionLedger contributions;
         NetworkCarryState      carry;
+        /// The cross-epoch run state as entity tables (card NOM step N4,
+        /// app/NetworkEntities.hpp): each sub-step moves one entity's members out of
+        /// @ref carry into its table.
+        net::NetworkEntities   entities;
         NetworkServiceCounters counters;
         NetworkBiasAdmission   admission;   // latched census result of CB-ADM (active=false: the legacy path)
         /// Event-harness scripted-fault schedule and ledger (filter/NetworkInject.hpp).

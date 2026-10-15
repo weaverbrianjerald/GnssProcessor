@@ -23,6 +23,7 @@
 
 #include "app/Application.hpp"
 #include "app/NetworkEpoch.hpp"
+#include "app/NetworkEntities.hpp"
 #include "app/NetworkRun.hpp"
 #include "filter/NetworkRunGroups.hpp"
 #include "filter/NetworkRunTypes.hpp"
@@ -307,6 +308,7 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&network
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRhsAttribution)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRhsAttribTrip)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkAmbStateTrace)), NetworkEpochObserver>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&net::networkEntitiesReachSample)), NetworkEpochObserver>);
 
 // Card NOM3 step HV1: the harvest by carried kind.  The orchestrator and the 19 functions it
 // calls take the epoch form and no epoch output (the harvest writes run state only); the two

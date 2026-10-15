@@ -11,6 +11,7 @@
 
 #include "filter/NetworkEpochObservers.hpp"
 
+#include "app/NetworkEntities.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
 #include "filter/NetworkBlockBaarda.hpp"
 #include "filter/NetworkChannelAll.hpp"
@@ -70,6 +71,7 @@ const Pinned kPinned[] = {
     {"networkRhsAttribution",               Slot::FrameDiag,     &networkRhsAttribution},
     {"networkRhsAttribTrip",                Slot::FrameDiag,     &networkRhsAttribTrip},
     {"networkAmbStateTrace",                Slot::StashTail,     &networkAmbStateTrace},
+    {"networkEntitiesReachSample",          Slot::StashTail,     &net::networkEntitiesReachSample},
 };
 
 /// The row named @p name, or the table's size when no row has that name.
