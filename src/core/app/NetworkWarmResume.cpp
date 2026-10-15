@@ -474,10 +474,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             ctx.carry.eq34_prev_target.clear();
                             for (const auto& [key, tgt] : snap.eq34_prev_target)
                                 ctx.carry.eq34_prev_target[{key.first, key.second}] = tgt;
-                            ctx.carry.eq34_prev_el.clear();
-                            for (const auto& [key, el] : snap.eq34_prev_el)
-                                ctx.carry.eq34_prev_el[{static_cast<std::size_t>(key.first),
-                                                        key.second}] = el;
+                            net::recordFromSnapshot("EQE", snap, ctx);   // the lines of sight (N4c)
                             ctx.carry.eq34_retained_edges.clear();
                             for (const auto& [idx, amb] : snap.eq34_retained_edges)
                                 ctx.carry.eq34_retained_edges.emplace(idx, amb);
@@ -670,12 +667,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // test is `t_s <= 0`, so keeping the writer's harvest stamp makes
                             // the entry read warm, and the epoch's aging pre-pass then ages it
                             // over the true gap (and drops it at 5·tau, the staleness rule).
-                            ctx.carry.sh_dev_carry.clear();
-                            for (const auto& [key, d] : snap.sh_dev_carry)
-                                ctx.carry.sh_dev_carry[key] =
-                                    ShDevCarry{d.dev, d.var, d.var_ss, d.t_s};
+                            net::recordFromSnapshot("SD", snap, ctx);   // the lines of sight (N4c, O3)
                             ctx.counters.n_resume_station_shdev =
-                                static_cast<long long>(ctx.carry.sh_dev_carry.size());
+                                static_cast<long long>(net::present(ctx.entities.los,
+                                                                    &net::LosState::sh_dev));
                         } else {
                             log->warn("Network (RS-6 station restore): ARMED but {} — the "
                                       "T5 deviation half is INERT; every per-LOS entry "

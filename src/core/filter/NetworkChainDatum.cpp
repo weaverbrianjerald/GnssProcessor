@@ -128,7 +128,7 @@ auto& anchor_incumbent = ctx.carry.anchor_incumbent;
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
 net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
-auto& eq34_prev_el = ctx.carry.eq34_prev_el;
+
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
 auto& eq34_erase_total = ctx.carry.eq34_erase_total;
 auto& eq34_shift_total = ctx.carry.eq34_shift_total;
@@ -290,8 +290,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             auto ei = sat_el[ri].find(sat);
             if (ei == sat_el[ri].end()) return -1e9;   // no elevation (unreachable for a live arc)
             const double el = ei->second;
-            auto pe = eq34_prev_el.find({ri, sat});
-            const bool rising = (pe != eq34_prev_el.end() && el > pe->second + 1e-6);
+            const double* pe = net::getLos(entities.los, static_cast<int>(ri), sat,
+                                           &net::LosState::eq34_prev_el);
+            const bool rising = (pe != nullptr && el > *pe + 1e-6);
             // Slip-aware (Card 3/4): an arc that slipped this epoch is the worst new
             // tree edge at any elevation.  As a tree edge it invalidates every
             // fundamental cycle that closes through it, so the whole dependent chord set
@@ -1048,11 +1049,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // pruned arc drops out); skipped when the longevity election is
     // off, so the map stays empty on the B9 baseline.
     if (eq34_longevity) {
-        eq34_prev_el.clear();
+        net::dropAll(entities.los, &net::LosState::eq34_prev_el);
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i]) continue;
             for (const auto& [sat, el] : sat_el[i])
-                eq34_prev_el[{i, sat}] = el;
+                net::putLos(entities, static_cast<int>(i), sat, &net::LosState::eq34_prev_el) = el;
         }
     }
 }

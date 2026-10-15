@@ -29,6 +29,7 @@ using S  = net::StationState;
 using SS = net::StationSignalState;
 using C  = net::ConstellationState;
 using Ch = net::ChannelState;
+using L  = net::LosState;
 
 /// A run context on the default configuration (the record functions read its knobs).
 struct Ctx {
@@ -222,6 +223,70 @@ TEST(NetworkEntitiesRecords, RecordRoundTripEQD) {
     net::recordFromSnapshot("EQD", snap, b.ctx);
     EXPECT_EQ(b.ctx.entities.reach.failures[static_cast<std::size_t>(net::Converter::ConstellationLetter)], 1);
     EXPECT_EQ(net::present(r, &C::channels, &Ch::datum_rx), 2u);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripEQE) {
+    Ctx a, b;
+    net::put(a.ctx.entities.los, LosId{StationId{3}, SatId{System::GPS, 24}}, &L::eq34_prev_el) =
+        61.284999999999997;
+    net::put(a.ctx.entities.los, LosId{StationId{17}, SatId{System::GPS, 7}}, &L::eq34_prev_el) = 12.5;
+    net::put(a.ctx.entities.los, LosId{StationId{3}, SatId{System::Galileo, 11}}, &L::pc) =
+        LocalCarry{1.0, 1.0, 1.0};   // a row without the field
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("EQE", a.ctx, snap);
+    EXPECT_EQ(snap.eq34_prev_el.at({3, "G24"}), 61.284999999999997);   // the pre-N4c key shape
+    roundTrip("EQE", a.ctx, b.ctx);
+    const net::LosTable& r = b.ctx.entities.los;
+    EXPECT_EQ(net::present(r, &L::eq34_prev_el), 2u);
+    EXPECT_EQ(*net::getLos(r, 17, "G07", &L::eq34_prev_el), 12.5);
+    EXPECT_EQ(*net::getLos(r, 3, "G24", &L::eq34_prev_el), 61.284999999999997);
+    EXPECT_EQ(net::getLos(r, 3, "E11", &L::eq34_prev_el), nullptr);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripSD) {
+    Ctx a, b;
+    const std::vector<std::string> roster{"WTZZ00DEU", "MAJU00MHL", "ABMF00GLP"};
+    a.ctx.entities.names.assign(roster);
+    b.ctx.entities.names.assign(roster);
+    net::LosTable& t = a.ctx.entities.los;
+    net::putLos(a.ctx.entities, 0, "G24", &L::sh_dev) = ShDevCarry{0.75, 0.04, 0.09, 1399161660.0};
+    net::putLos(a.ctx.entities, 1, "E11", &L::sh_dev) = ShDevCarry{-0.5, 0.02, 0.09, 1399161690.0};
+    net::putLos(a.ctx.entities, 2, "G05", &L::sh_dev) =
+        ShDevCarry{std::numeric_limits<double>::quiet_NaN(), 0.02, 0.09, 1.0};   // dropped
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("SD", a.ctx, snap);
+    ASSERT_EQ(snap.sh_dev_carry.size(), 2u);
+    EXPECT_EQ(snap.sh_dev_carry.begin()->first, "MAJU00MHL|E11");   // name order (O3)
+    roundTrip("SD", a.ctx, b.ctx);
+    const net::LosTable& r = b.ctx.entities.los;
+    EXPECT_EQ(net::present(r, &L::sh_dev), 2u);
+    const ShDevCarry* d = net::getLos(r, 0, "G24", &L::sh_dev);
+    ASSERT_NE(d, nullptr);
+    EXPECT_EQ(d->dev, 0.75);
+    EXPECT_EQ(d->var, 0.04);
+    EXPECT_EQ(d->var_ss, 0.09);
+    EXPECT_EQ(d->t_s, 1399161660.0);
+    EXPECT_EQ(net::getLos(r, 2, "G05", &L::sh_dev), nullptr);
+    EXPECT_NE(net::getLos(t, 2, "G05", &L::sh_dev), nullptr);
+}
+
+TEST(NetworkEntitiesRecords, LosKeysRoundTripInTheOldOrder) {
+    // O1 and O2: a (station index, satellite) key converts and back, and the table iterates
+    // in the old pair order; "" is the no-satellite identity, and a non-canonical satellite
+    // string does not round-trip (counted by the writer's converter).
+    net::NetworkEntities e;
+    const std::vector<std::pair<int, std::string>> keys{
+        {0, ""}, {0, "C19"}, {0, "E05"}, {0, "G05"}, {0, "G10"}, {1, "G01"}, {12, "R08"}};
+    for (auto it = keys.rbegin(); it != keys.rend(); ++it)
+        net::putLos(e, it->first, it->second, &L::arc_spike_streak) = 1;
+    std::vector<std::pair<int, std::string>> walked;
+    net::forEach(e.los, &L::arc_spike_streak,
+                 [&](const LosId& id, int) { walked.push_back(net::losPair(id)); });
+    EXPECT_EQ(walked, keys);
+    EXPECT_FALSE(net::losKey(0, "G5").has_value());
+    EXPECT_FALSE(net::losOf(e, 0, "XYZ").has_value());
+    EXPECT_EQ(e.reach.failures[static_cast<std::size_t>(net::Converter::Satellite)], 1);
+    EXPECT_EQ(net::present(e.los, &L::arc_spike_streak), keys.size());
 }
 
 TEST(NetworkEntitiesRecords, EveryRecordRowIsDeclaredOnceAndRestoredInOrder) {

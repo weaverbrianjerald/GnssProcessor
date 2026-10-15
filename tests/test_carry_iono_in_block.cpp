@@ -530,26 +530,26 @@ TEST(CarryIonoInBlockTest, IonoWithoutAHarvestBlockZeroesItsPairsAndIsCountedSep
 // not per signal, so one erase clears the LOS once however many bands tripped, and
 // a sibling satellite (or the same satellite at another station) survives.
 TEST(CarryIonoInBlockTest, T4EraseKeyClearsExactlyOneLosAndSparesSiblings) {
-    NetworkCarryState carry;
+    net::NetworkEntities ent;   // the line-of-sight table (card NOM step N4c)
     auto put = [&](int sta, const std::string& sat, double v) {
-        carry.iono_blk_carry[{sta, sat}] = LocalCarry{v, 0.0120, 100.0};
+        net::putLos(ent, sta, sat, &net::LosState::iono_blk) = LocalCarry{v, 0.0120, 100.0};
     };
     put(0, "G01", 3.10);
     put(0, "G02", 4.20);
     put(1, "G01", 2.90);
-    ASSERT_EQ(carry.iono_blk_carry.size(), 3u);
+    ASSERT_EQ(net::present(ent.los, &net::LosState::iono_blk), 3u);
 
     // Same shape as the expression at the NetworkRaim T4 site: erase({i, pa.sat}).
-    const std::size_t erased = carry.iono_blk_carry.erase({0, std::string("G01")});
+    const std::size_t erased = net::dropLos(ent.los, 0, std::string("G01"), &net::LosState::iono_blk);
     EXPECT_EQ(erased, 1u);                                   // one counted erase
-    EXPECT_EQ(carry.iono_blk_carry.count({0, std::string("G01")}), 0u);
-    EXPECT_EQ(carry.iono_blk_carry.count({0, std::string("G02")}), 1u);  // sibling sat
-    EXPECT_EQ(carry.iono_blk_carry.count({1, std::string("G01")}), 1u);  // other station
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ent.los, 0, std::string("G01"), &net::LosState::iono_blk) != nullptr), 0u);
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ent.los, 0, std::string("G02"), &net::LosState::iono_blk) != nullptr), 1u);  // sibling sat
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ent.los, 1, std::string("G01"), &net::LosState::iono_blk) != nullptr), 1u);  // other station
     // Idempotent across the per-signal loop: a second band's erase counts nothing.
-    EXPECT_EQ(carry.iono_blk_carry.erase({0, std::string("G01")}), 0u);
+    EXPECT_EQ(net::dropLos(ent.los, 0, std::string("G01"), &net::LosState::iono_blk), 0u);
     // The retired diagonal vehicle's map is a separate map and stays empty: nothing
     // writes it, and the in-block carry never shares its state.
-    EXPECT_TRUE(carry.iono_carry.empty());
+    EXPECT_TRUE((net::present(ent.los, &net::LosState::iono) == 0));
 }
 
 // =============================================================================

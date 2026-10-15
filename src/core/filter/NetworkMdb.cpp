@@ -282,14 +282,19 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
         for (const NetworkMdbCandidate& cd : acc.cand) {
             if (!(cd.mdb > event_m)) continue;
             const char* cls = rowClassName(static_cast<NetRowClass>(cd.cls));
-            const std::string key = cd.station + "\x1f" + cd.sat + "\x1f" + cls;
-            auto& last = ctx.carry.mdb_event_last;
-            const auto it = last.find(key);
-            if (it != last.end() && holdoff > 0 && (seq - it->second) < holdoff) {
+            // The line of sight's holdoff clock of the class (the station by NAME, O3).
+            const std::optional<LosId> hid = net::losOfName(ctx.entities, cd.station, cd.sat);
+            const long long* last =
+                hid ? net::get(ctx.entities.los, *hid, &net::LosState::events, std::string(cls),
+                               &net::LosEventState::mdb_event_last)
+                    : nullptr;
+            if (last != nullptr && holdoff > 0 && (seq - *last) < holdoff) {
                 ++q.events_held;
                 continue;
             }
-            last[key] = seq;
+            if (hid)
+                net::put(ctx.entities.los, *hid, &net::LosState::events, std::string(cls),
+                         &net::LosEventState::mdb_event_last) = seq;
             ++q.events;
             traces.emitEvent(se.time, "MDB", "mdb_exceedance", cd.sat, cd.station,
                              cd.mdb, event_m, "observe",

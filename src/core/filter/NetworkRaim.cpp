@@ -149,7 +149,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     // distinguishable from "it ran and screened nothing".
     if (raim_ci_on) ++raim_ci_tallies.epochs;
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
-    auto& arc_spike_streak = ctx.carry.arc_spike_streak;
+
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
 
     auto& n_emitted = ctx.counters.n_emitted;
@@ -730,14 +730,15 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     continue;
                 }
                 const auto akey = std::make_pair(sta, sat);
-                const auto it = arc_spike_streak.find(akey);
-                const int streak = (it != arc_spike_streak.end() ? it->second : 0) + 1;
+                const int* it = net::getLos(ctx.entities.los, sta, sat, &net::LosState::arc_spike_streak);
+                const int streak = (it != nullptr ? *it : 0) + 1;
                 if (streak >= raim_arc_persist)
                     bad_arcs.emplace_back(sta, sat);   // persisted K epochs → refloat, drop streak
                 else
                     next_arc_streak[akey] = streak;    // still building → carry forward
             }
-            if (raim_arc_persist > 1) arc_spike_streak.swap(next_arc_streak);
+            if (raim_arc_persist > 1)
+                net::assignLos(ctx.entities, &net::LosState::arc_spike_streak, next_arc_streak);
             n_arc_refloat_epoch += static_cast<int>(bad_arcs.size());  // heartbeat churn metric (T2d)
         }
 
@@ -944,7 +945,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         // with it.  Erasing here makes the LOS re-draw both from data (its
                         // next harvest re-creates the entry with a fresh birth_s).
                         if (ctx.knobs.iono_blk &&
-                            ctx.carry.iono_blk_carry.erase({i, pa.sat})) {
+                            net::dropLos(ctx.entities.los, i, pa.sat, &net::LosState::iono_blk)) {
                             ++ctx.counters.n_iono_blk_erased_t4;
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::IonoRaimErase);   // card PRM phase 3a
@@ -953,7 +954,8 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         // T4 statistic reads its error in the same sum, so a level that is
                         // no longer trusted cannot vouch for it either; it re-starts from
                         // its birth prior next epoch.
-                        if (ctx.knobs.pc_on && ctx.carry.pc_carry.erase({i, pa.sat})) {
+                        if (ctx.knobs.pc_on
+                            && net::dropLos(ctx.entities.los, i, pa.sat, &net::LosState::pc)) {
                             ++ctx.counters.n_pc_erase_raim;
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::PcRaimErase);   // card PRM phase 3a

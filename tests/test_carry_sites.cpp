@@ -86,18 +86,18 @@ void populateEverySite(NetworkCarryState& c, net::NetworkEntities& c_ent, Shared
         term(kind, "G01", sig, 1.0, next(), 1e-5)}; };
     c.local_carry[{0, "G01", "L1C"}] = local(next(), t());
     net::put(c_ent.stations, StationId{0}, &net::StationState::zwd) = local(next(), t());
-    c.iono_carry[{0, "G01"}] = local(next(), t());
-    c.iono_blk_carry[{0, "G01"}] = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::iono) = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::iono_blk) = local(next(), t());
     c.gl_hold_amb[{0, "G01", "L1C"}] = local(next(), t());
-    c.gl_hold_iono[{0, "G01"}] = local(next(), t());
-    c.gl_hold_iono_blk[{0, "G01"}] = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::gl_hold_iono) = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::gl_hold_iono_blk) = local(next(), t());
     net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "",
              &net::StationSignalState::rx_clk) = local(next(), t());
     net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "GPS_RPB_L1C",
              &net::StationSignalState::rpb) = local(next(), t());
     net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "GPS_DCB",
              &net::StationSignalState::rx_cb) = local(next(), t());
-    c.pc_carry[{0, "G01"}] = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::pc) = local(next(), t());
 }
 
 /// Every referenced double (and its variance) in the traversal's order: the bitwise
@@ -437,7 +437,7 @@ TEST(CarrySites, Eq34ShiftThroughSitesFollowsTheRule) {
     net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "G_RPB_L1C",
              &net::StationSignalState::rpb) = local(0.6, {});
     net::put(c_ent.stations, StationId{0}, &net::StationState::zwd) = local(0.1, {pbTerm("G01", 0.4)});
-    c.iono_blk_carry[{0, "G01"}] = local(9.0, {pbTerm("G01", 0.4)});   // exempt: stays
+    net::putLos(c_ent, 0, "G01", &net::LosState::iono_blk) = local(9.0, {pbTerm("G01", 0.4)});   // exempt: stays
     const std::map<std::pair<std::string, std::string>, double> shift_sat{{{"G01", "L1C"}, 0.3}};
     const std::map<std::tuple<int, char, std::string>, double> shift_rxg{
         {std::make_tuple(0, 'G', std::string("L1C")), 0.1}};
@@ -459,7 +459,7 @@ TEST(CarrySites, Eq34ShiftThroughSitesFollowsTheRule) {
     EXPECT_EQ(net::put(c_ent.stations, StationId{0},
                        &net::StationState::zwd).coupling[0].s_prev, 0.4 + 0.3);
     const std::pair<int, std::string> iono_key{0, "G01"};
-    EXPECT_EQ(c.iono_blk_carry[iono_key].coupling[0].s_prev, 0.4);
+    EXPECT_EQ(net::putLos(c_ent, iono_key.first, iono_key.second, &net::LosState::iono_blk).coupling[0].s_prev, 0.4);
     // No satellite or receiver step: nothing moves.
     eq34ShiftCarry(c, c_ent, {}, {}, shift_rpb, nv, nt);
     EXPECT_EQ(nv + nt, 0);

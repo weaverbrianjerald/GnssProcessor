@@ -39,6 +39,7 @@ const char* converterName(Converter c) {
     switch (c) {
     case Converter::StationName: return "station name";
     case Converter::ConstellationLetter: return "constellation letter";
+    case Converter::Satellite: return "satellite";
     case Converter::Count:       break;
     }
     return "?";
@@ -357,7 +358,128 @@ const std::vector<FieldDecl> kStationFields = {
     {"eq34_rx_parent", "eq34_rx_parent", Persist::Record, "EQP", "",
      &eqpToSnapshot, &eqpFromSnapshot, &signalRows<&SS::eq34_rx_parent>},
 };
-const std::vector<FieldDecl> kLosFields = {};
+std::optional<LosId> losKey(int station, const std::string& sat) {
+    if (sat.empty()) return LosId{StationId{station}, SatId{}};
+    const std::optional<SatId> s = SatId::parse(sat);
+    if (!s || s->str() != sat) return std::nullopt;
+    return LosId{StationId{station}, *s};
+}
+
+std::optional<LosId> losOf(const NetworkEntities& e, int station, const std::string& sat) {
+    const std::optional<LosId> id = losKey(station, sat);
+    if (!id) ++e.reach.failures[static_cast<std::size_t>(Converter::Satellite)];
+    return id;
+}
+
+std::optional<LosId> losOfName(const NetworkEntities& e, const std::string& station,
+                               const std::string& sat) {
+    const std::optional<StationId> sta = stationOfName(e, station);
+    return sta ? losOf(e, sta->index, sat) : std::nullopt;
+}
+
+std::string satKey(const SatId& s) { return s == SatId{} ? std::string() : s.str(); }
+
+void assignLosFlags(NetworkEntities& e, bool LosState::*f,
+                    const std::set<std::pair<int, std::string>>& cells) {
+    for (auto& kv : e.los) kv.second.*f = false;
+    for (const auto& [sta, sat] : cells)
+        if (const std::optional<LosId> id = losOf(e, sta, sat)) mark(e.los, *id, f);
+}
+
+// ---- The line-of-sight fields (step N4c) ----
+
+namespace {
+
+using L  = LosState;
+using LE = LosEventState;
+
+template <auto F>
+std::size_t losRows(const NetworkEntities& e) { return present(e.los, F); }
+
+template <auto F>
+std::size_t losEventRows(const NetworkEntities& e) { return present(e.los, &L::events, F); }
+
+// Record EQE: (station index, satellite) -> elevation.
+void eqeToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    forEach(ctx.entities.los, &L::eq34_prev_el, [&](const LosId& id, double el) {
+        snap.eq34_prev_el[losPair(id)] = el;
+    });
+}
+void eqeFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;
+    dropAll(e.los, &L::eq34_prev_el);
+    for (const auto& [key, el] : snap.eq34_prev_el) putLos(e, key.first, key.second, &L::eq34_prev_el) = el;
+}
+
+// Record SD: "<station name>|<sat>" -> the deviation (O3: the DTO map orders by the name);
+// the writer drops a non-finite entry (cold on the resume, never corrupt).
+void sdToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    const NetworkEntities& e = ctx.entities;
+    forEach(e.los, &L::sh_dev, [&](const LosId& id, const ShDevCarry& dc) {
+        const auto i = static_cast<std::size_t>(id.station.index);
+        if (i < e.names.names.size() && std::isfinite(dc.dev) && std::isfinite(dc.var)
+            && dc.var >= 0.0 && std::isfinite(dc.var_ss) && dc.var_ss >= 0.0
+            && std::isfinite(dc.t_s))
+            snap.sh_dev_carry[e.names.names[i] + "|" + satKey(id.sat)] =
+                NetworkStateSnapshot::ShDev{dc.dev, dc.var, dc.var_ss, dc.t_s};
+    });
+}
+void sdFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;
+    dropAll(e.los, &L::sh_dev);
+    for (const auto& [key, d] : snap.sh_dev_carry) {
+        const auto bar = key.find('|');
+        if (bar == std::string::npos) {
+            ++e.reach.failures[static_cast<std::size_t>(Converter::StationName)];
+            continue;
+        }
+        const std::optional<StationId> sta = stationOfName(e, key.substr(0, bar));
+        if (!sta) continue;   // counted by the converter
+        // Restored as written: ShDevCarry's cold test is t_s <= 0, so the writer's stamp
+        // reads warm and the aging pre-pass ages it over the true gap.
+        putLos(e, sta->index, key.substr(bar + 1), &L::sh_dev) =
+            ShDevCarry{d.dev, d.var, d.var_ss, d.t_s};
+    }
+}
+
+}  // namespace
+
+const std::vector<FieldDecl> kLosFields = {
+    {"eq34_prev_el", "eq34_prev_el", Persist::Record, "EQE", "",
+     &eqeToSnapshot, &eqeFromSnapshot, &losRows<&L::eq34_prev_el>},
+    {"si_arc", "si_arc", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::si_arc>},
+    {"iono", "iono_carry", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::iono>},
+    {"iono_blk", "iono_blk_carry", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::iono_blk>},
+    {"gross_los", "gl_state", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::gross_los>},
+    {"gl_event_last", "gl_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::gl_event_last>},
+    {"gl_hold_iono", "gl_hold_iono", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::gl_hold_iono>},
+    {"gl_hold_iono_blk", "gl_hold_iono_blk", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::gl_hold_iono_blk>},
+    {"iono_cs", "iono_cs", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::iono_cs>},
+    {"pc", "pc_carry", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::pc>},
+    {"arc_spike_streak", "arc_spike_streak", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::arc_spike_streak>},
+    {"sh_dev", "sh_dev_carry", Persist::Record, "SD", "",
+     &sdToSnapshot, &sdFromSnapshot, &losRows<&L::sh_dev>},
+    {"sd_ewl_prev", "sd_ewl_prev", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::sd_ewl_prev>},
+    {"topo_prev_kind", "topo_prev_kind", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::topo_prev_kind>},
+    {"prefit_present_prev", "prefit_present_prev", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::prefit_present_prev>},
+    {"prefit_code_flag", "prefit_code_flag", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::prefit_code_flag>},
+    {"redun_event_last", "redun_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losEventRows<&LE::redun_event_last>},
+    {"mdb_event_last", "mdb_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losEventRows<&LE::mdb_event_last>},
+    {"prires_event_last", "prires_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losEventRows<&LE::prires_event_last>},
+    {"prefit_event_last", "prefit_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losEventRows<&LE::prefit_event_last>},
+};
 const std::vector<FieldDecl> kArcFields = {};
 
 const std::array<EntityFields, 6> kEntityFieldTables = {{
@@ -369,7 +491,7 @@ const std::array<EntityFields, 6> kEntityFieldTables = {{
     {"arc",           &kArcFields},
 }};
 
-const std::vector<const char*> kRestoreOrder = {"V", "Z", "EQD", "EQP", "CBP", "RC", "GG"};
+const std::vector<const char*> kRestoreOrder = {"V", "Z", "EQD", "EQP", "EQE", "CBP", "RC", "SD", "GG"};
 
 // ===========================================================================
 // Record lookup

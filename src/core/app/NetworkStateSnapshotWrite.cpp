@@ -357,8 +357,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             snap.eq34_sat_root  = ctx.carry.eq34_sat_root;
             for (const auto& [key, tgt] : ctx.carry.eq34_prev_target)
                 snap.eq34_prev_target[{key.first, key.second}] = tgt;
-            for (const auto& [key, el] : ctx.carry.eq34_prev_el)
-                snap.eq34_prev_el[{static_cast<int>(key.first), key.second}] = el;
+            net::recordToSnapshot("EQE", ctx, snap);   // the lines of sight (N4c)
             for (const auto& [idx, amb] : ctx.carry.eq34_retained_edges)
                 snap.eq34_retained_edges.emplace(idx, amb);
             // Non-finite screen on the code-bias values only: the eq34 targets and
@@ -425,12 +424,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // capture, for that one key), whereas a corrupt entry cannot be recovered.
         if (nc.state_snapshot_station_capture) {
             net::recordToSnapshot("RC", ctx, snap);   // the station signals (N4a)
-            for (const auto& [key, dc] : ctx.carry.sh_dev_carry)
-                if (std::isfinite(dc.dev) && std::isfinite(dc.var) && dc.var >= 0.0
-                    && std::isfinite(dc.var_ss) && dc.var_ss >= 0.0
-                    && std::isfinite(dc.t_s))
-                    snap.sh_dev_carry[key] =
-                        NetworkStateSnapshot::ShDev{dc.dev, dc.var, dc.var_ss, dc.t_s};
+            net::recordToSnapshot("SD", ctx, snap);   // the lines of sight (N4c, O3)
             ctx.carry.snap_station_rows_last =
                 static_cast<long long>(snap.rx_cb_carry.size() + snap.sh_dev_carry.size());
         }

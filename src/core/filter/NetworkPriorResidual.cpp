@@ -222,11 +222,18 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     for (const auto& h : prires.hits()) {
         const std::string& fam = prires.families()[static_cast<std::size_t>(h.family_idx)];
         const std::string sta  = stationName(stations, h.station);
-        const std::string key  = fam + "\x1f" + sta + "\x1f" + h.sat + "\x1f" + h.signal;
-        auto it = ctx.carry.prires_event_last.find(key);
-        if (it != ctx.carry.prires_event_last.end() && now_ep - it->second < holdoff)
+        // The line of sight's holdoff clock of (family, signal) (the station by NAME, O3).
+        const std::optional<LosId> hid = net::losOfName(ctx.entities, sta, h.sat);
+        const std::string sub = fam + "\x1f" + h.signal;
+        const long long* last =
+            hid ? net::get(ctx.entities.los, *hid, &net::LosState::events, sub,
+                           &net::LosEventState::prires_event_last)
+                : nullptr;
+        if (last != nullptr && now_ep - *last < holdoff)
             continue;
-        ctx.carry.prires_event_last[key] = now_ep;
+        if (hid)
+            net::put(ctx.entities.los, *hid, &net::LosState::events, sub,
+                     &net::LosEventState::prires_event_last) = now_ep;
         traces.emitEvent(
             se.time, "PRIORRES",
             h.raw_formal ? "prior_residual_raw" : "prior_residual",

@@ -576,7 +576,7 @@ TEST(NetworkSignalIntegrity, DisarmedIsStructurallyInertEvenWithActionKnobsSet) 
     r.step(ctx, *cfg, {obsWith("G21", {kL1})});
     r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
 
-    EXPECT_TRUE(ctx.carry.si_arc.empty()) << "no band history allocated";
+    EXPECT_TRUE((net::present(ctx.entities.los, &net::LosState::si_arc) == 0)) << "no band history allocated";
     EXPECT_TRUE(r.stations[0].phase_sigma_scale.empty()) << "no sigma map published";
     EXPECT_EQ(0, r.stations[0].si_rows_demoted);
     EXPECT_EQ(0, ctx.counters.sig.epochs) << "not one counter moved";

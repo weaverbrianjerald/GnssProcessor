@@ -65,9 +65,10 @@ void networkLevelAuthorityCensus(NetworkRun& run, const NetworkEpoch& ep) {
     for (std::size_t i = 0; i < stations.size(); ++i) {
         if (i >= present.size() || !present[i]) continue;
         for (const auto& o : modeled[i]) {
-            const auto it = ctx.carry.iono_cs.find({static_cast<int>(i), o.satellite});
-            if (it == ctx.carry.iono_cs.end()) continue;
-            const IonoCsState& cs = it->second;
+            const IonoCsState* it = net::getLos(ctx.entities.los, static_cast<int>(i), o.satellite,
+                                                &net::LosState::iono_cs);
+            if (it == nullptr) continue;
+            const IonoCsState& cs = *it;
             if (cs.n <= 0 || !(cs.lam1_m > 0.0) || !std::isfinite(cs.val)) continue;
             if (cs.n < ctx.knobs.lvlauth_min_n) { ++immature; continue; }
             const IppGeometry g =

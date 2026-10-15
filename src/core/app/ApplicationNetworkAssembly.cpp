@@ -834,7 +834,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                     const double srad = std::sin(row.elev_deg * 0.017453292519943295);
                     const double sigma =
                         kIonoCsCodeSigmaZenith / std::max(srad, 0.15);
-                    auto& cs = ctx.carry.iono_cs[{i, row.satellite}];
+                    auto& cs = net::putLos(ctx.entities, i, row.satellite, &net::LosState::iono_cs);
                     networkIonoCsUpdate(cs, i_code, di, adjacent, stepped, sigma);
                     cs.lam1_m = row.lam1_m;   // exact per-pair TECU conversion (LV-6)
                 }

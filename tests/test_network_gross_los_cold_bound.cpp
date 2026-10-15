@@ -228,7 +228,7 @@ TEST(NetworkGrossLosColdBound, TheColdEraseSweepsEveryCarriedAmbiguityOfTheLineO
     ctx.carry.local_carry[l1]    = LocalCarry{ 178.0, 1.0e-4, 100.0 };
     ctx.carry.local_carry[l2]    = LocalCarry{ -3.0, 1.0e-4, 100.0 };   // not tracked this epoch
     ctx.carry.local_carry[other] = LocalCarry{ 12.0, 1.0e-4, 100.0 };
-    ctx.carry.iono_carry[{ 0, "G07" }] = LocalCarry{ -91.0, 1.0e-2, 100.0 };
+    net::putLos(ctx.entities, 0, "G07", &net::LosState::iono) = LocalCarry{ -91.0, 1.0e-2, 100.0 };
 
     ctx.carry.gl_act_cold_refloat.push_back({ 0, "G07" });
     networkGrossLosAct(ctx, nullptr, stations, asm_res);
@@ -236,7 +236,7 @@ TEST(NetworkGrossLosColdBound, TheColdEraseSweepsEveryCarriedAmbiguityOfTheLineO
     EXPECT_EQ(ctx.carry.local_carry.count(l1), 0u);
     EXPECT_EQ(ctx.carry.local_carry.count(l2), 0u);
     EXPECT_EQ(ctx.carry.local_carry.count(other), 1u);
-    EXPECT_EQ(ctx.carry.iono_carry.count({ 0, "G07" }), 0u);
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, 0, "G07", &net::LosState::iono) != nullptr), 0u);
     EXPECT_EQ(ctx.counters.gross_los.cold_amb_erased, 2);
     EXPECT_TRUE(ctx.carry.gl_hold_amb.empty()) << "the cold path never holds";
 }
@@ -251,7 +251,7 @@ TEST(NetworkGrossLosColdBound, AColdDeclarationFoldsTheCodeRows) {
     std::vector<NetStation> stations(1);
     stations[0].name = "STA1";
 
-    GrossLosState& st = ctx.carry.gl_state[{ 0, "G07" }];
+    GrossLosState& st = net::putLos(ctx.entities, 0, "G07", &net::LosState::gross_los);
     ASSERT_EQ(networkGrossLosColdStep(st, verdict(24.2), ctx.knobs.gl_cold_bound_m, true, true,
                                       259410.0),
               GrossLosColdEdge::Declare);

@@ -128,7 +128,7 @@ void networkSlantIonoBlockColumns(StationCarryFrame& carry) {
     const bool   iono_blk_on   = ctx.knobs.iono_blk_on;
     const double iono_blk_q    = ctx.knobs.iono_blk_q_m2;      // m² at L1, per epoch
     const double iono_blk_gap_s = ctx.knobs.iono_blk_max_gap_s;
-    auto& iono_blk_carry = ctx.carry.iono_blk_carry;  // I-in-block: produce phase reads only
+    const net::LosTable& los_rows = ctx.entities.los;  // I-in-block: produce phase reads only (const: no row insert)
     // ---- End of the bindings ----
 
     if (!(legacy_local_inject && do_amb_carry)) return;
@@ -169,10 +169,11 @@ void networkSlantIonoBlockColumns(StationCarryFrame& carry) {
             if (ihit == h2local.end()) continue;  // iono column not in A_r this epoch
             const Eigen::Index icol = static_cast<Eigen::Index>(ihit->second);
             R.pl_iono.emplace_back(isat, icol, x_lin(iidx));
-            const auto iit = iono_blk_carry.find({static_cast<int>(i), isat});
-            if (iit == iono_blk_carry.end()) continue;  // first sighting / post-erase: cold by design
-            const double igap = pl_now_s - iit->second.last_seen_s;
-            if (carryPastHorizon(pl_now_s, iit->second.last_seen_s, iono_blk_gap_s)) {
+            const LocalCarry* iit =
+                net::getLos(los_rows, static_cast<int>(i), isat, &net::LosState::iono_blk);
+            if (iit == nullptr) continue;  // first sighting / post-erase: cold by design
+            const double igap = pl_now_s - iit->last_seen_s;
+            if (carryPastHorizon(pl_now_s, iit->last_seen_s, iono_blk_gap_s)) {
                 // Invariant #1's absent-satellite edge: a stale LOS is refused,
                 // never aged into a fold.  The harvest prune erases it.
                 ++R.pl_blk_iono_gap_drop;
@@ -181,10 +182,10 @@ void networkSlantIonoBlockColumns(StationCarryFrame& carry) {
             }
             const double gap_ep =
                 (dt_ep > 0.0) ? std::max(1.0, igap / dt_ep) : 1.0;
-            const double ivar_eff = iit->second.var + iono_blk_q * gap_ep;
+            const double ivar_eff = iit->var + iono_blk_q * gap_ep;
             if (!(ivar_eff > 0.0) || !std::isfinite(ivar_eff)) continue;
             iono_bc.push_back(LocalBlockCol{
-                icol, x_lin(iidx), &iit->second, ivar_eff,
+                icol, x_lin(iidx), iit, ivar_eff,
                 std::max(0.0, igap), /*vce_fac=*/1.0,
                 /*is_zwd=*/false, /*is_iono=*/true});
             if (const auto col_sat = SatId::parse(isat))   // its block row's tag (card NOM N2a)
@@ -239,7 +240,7 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
     //     zeroed and counted (n_pl_blk_iono_missing_cross), which is the safe
     //     degrade.
     if (!iono_blk_on) return;
-    auto& iono_blk_carry = ctx.carry.iono_blk_carry;
+    net::LosTable& los_rows = ctx.entities.los;   // the I-in-block carries (card NOM step N4c)
     for (size_t i = 0; i < stations.size(); ++i) {
         if (est_index_of[i] < 0) continue;
         const StationAssembly& R = asm_res[i];
@@ -283,9 +284,8 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
             // the age of an iono carry means the same thing.  (This map is not
             // snapshotted, so it never sees a restored sentinel; the shared helper
             // keeps the rule correct if it ever is.)
-            const auto oit = iono_blk_carry.find(key);
             const LocalCarry* iprev =
-                (oit != iono_blk_carry.end()) ? &oit->second : nullptr;
+                net::getLos(los_rows, key.first, key.second, &net::LosState::iono_blk);
             ent.var_first = iprev ? iprev->var_first : var;
             localCarryStampBirth(
                 ent, iprev,
@@ -304,7 +304,7 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
                     ent.blk_idx = static_cast<int>(irow);
                 }
             }
-            iono_blk_carry[key] = std::move(ent);
+            net::putLos(ctx.entities, key.first, key.second, &net::LosState::iono_blk) = std::move(ent);
             networkSharedHistoryNoteEntry(shx_h, est_idx, icol, SharedHistoryMap::Iono,
                                           static_cast<int>(i), isat);   // card SCL2 X2; no-op off
         }
@@ -315,9 +315,9 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
     // exercise it.  The horizon is the registry's: under the block carry it is
     // network.carry_iono_in_block_max_gap_s, the same double
     // (ctx.knobs.iono_blk_max_gap_s) this prune read before card PRM phase 3b.
-    carryGapPrune(iono_blk_carry, pl_now_s,
+    carryGapPrune(los_rows, &net::LosState::iono_blk, pl_now_s,
                   ctx.params.spec(NetworkParamKind::SlantIono).gap_horizon_s,
-                  [&](const auto&) {
+                  [&](const auto&, const auto&) {
                       ++ctx.counters.n_iono_blk_gap_drop;
                       prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);   // card PRM phase 3a
                   });

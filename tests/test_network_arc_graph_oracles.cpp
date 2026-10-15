@@ -2070,10 +2070,12 @@ TEST(NetworkArcGraphOracle, EmitRebaseComponentIdsEqualTheFrozenStringUnionFind)
 /// from NetworkCarryState into the station table (app/NetworkEntities.hpp).  The frozen body
 /// keeps their pre-N4a map shapes: this shim converts the tables into those maps at entry, back
 /// at exit, and around the one walker call that reads the tables.  Card NOM step N4b moved the
-/// eq34 datum receivers into the constellation table's channels; the shim carries their map too.
+/// eq34 datum receivers into the constellation table's channels, and N4c the eq34 arc elevations
+/// into the line-of-sight table; the shim carries their maps too.
 struct FrozenStationMaps {
     NetworkRunContext& ctx;
     std::map<std::string, std::string> eq34_datum_rx;                  ///< "<c>|<sigma>" -> receiver (N4b)
+    std::map<std::pair<size_t, std::string>, double> eq34_prev_el;     ///< (station, sat) -> elevation (N4c)
     std::map<std::string, std::string> eq34_rx_parent;                 ///< "<name>|<c>|<sigma>" -> sat
     std::map<std::pair<int, std::string>, LocalCarry> rpb_carry;        ///< (station, rpb key)
     explicit FrozenStationMaps(NetworkRunContext& c) : ctx(c) { load(); }
@@ -2085,6 +2087,10 @@ struct FrozenStationMaps {
         rpb_carry.clear();
         const net::NetworkEntities& e = ctx.entities;
         eq34_datum_rx = net::channelMap(e.constellations, &net::ChannelState::datum_rx);
+        eq34_prev_el.clear();
+        net::forEach(e.los, &net::LosState::eq34_prev_el, [&](const LosId& id, double el) {
+            eq34_prev_el[{static_cast<size_t>(id.station.index), net::satKey(id.sat)}] = el;
+        });
         net::byStationName(e.stations, e.names, [&](const StationId& id, const net::StationState& row) {
             for (const auto& [family, cell] : row.signals)
                 if (cell.eq34_rx_parent)
@@ -2097,6 +2103,9 @@ struct FrozenStationMaps {
     }
     void store() {
         net::NetworkEntities& e = ctx.entities;
+        net::dropAll(e.los, &net::LosState::eq34_prev_el);
+        for (const auto& [key, el] : eq34_prev_el)
+            net::putLos(e, static_cast<int>(key.first), key.second, &net::LosState::eq34_prev_el) = el;
         net::dropAll(e.constellations, &net::ConstellationState::channels, &net::ChannelState::datum_rx);
         for (const auto& [key, rx] : eq34_datum_rx) {
             const auto ch = net::channelOfKey(e, key);
@@ -2137,7 +2146,7 @@ FrozenStationMaps station_maps(ctx);   // card NOM step N4a shim, not in the fro
 auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // card NOM step N4b shim
 auto& eq34_rx_parent = station_maps.eq34_rx_parent;
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
-auto& eq34_prev_el = ctx.carry.eq34_prev_el;
+auto& eq34_prev_el = station_maps.eq34_prev_el;   // card NOM step N4c shim
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
 auto& eq34_erase_total = ctx.carry.eq34_erase_total;
 auto& eq34_shift_total = ctx.carry.eq34_shift_total;
@@ -3316,7 +3325,13 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     if (cells(f, &net::StationSignalState::eq34_rx_parent)
         != cells(l, &net::StationSignalState::eq34_rx_parent)) return "eq34_rx_parent";
     if (a.eq34_sat_root != b.eq34_sat_root) return "eq34_sat_root";
-    if (a.eq34_prev_el != b.eq34_prev_el) return "eq34_prev_el";
+    const auto prevEl = [](const NetworkRunContext& c) {
+        std::map<LosId, double> out;
+        net::forEach(c.entities.los, &net::LosState::eq34_prev_el,
+                     [&](const LosId& id, double el) { out[id] = el; });
+        return out;
+    };
+    if (prevEl(f) != prevEl(l)) return "eq34_prev_el";
     if (a.eq34_reref != b.eq34_reref) return "eq34_reref";
     if (a.eq34_prev_target != b.eq34_prev_target) return "eq34_prev_target";
     if (a.eq34_retained_edges != b.eq34_retained_edges) return "eq34_retained_edges";

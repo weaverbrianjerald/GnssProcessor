@@ -38,7 +38,7 @@ STEP_OF = {'station': 'N4a', 'constellation': 'N4b', 'los': 'N4c', 'sat_signal':
            'satellite': 'N4e', 'arc': 'N4f'}
 ROW_STRUCTS = {'station': ['StationState', 'StationSignalState'],
                'constellation': ['ConstellationState', 'ChannelState'],
-               'los': ['LosState'], 'sat_signal': ['SatSignalState'],
+               'los': ['LosState', 'LosEventState'], 'sat_signal': ['SatSignalState'],
                'satellite': ['SatelliteState'], 'arc': ['ArcState']}
 TABLES = ('constellations', 'sats', 'sat_signals', 'stations', 'los', 'arcs')
 RUN_CTX = 'include/app/NetworkRunContext.hpp'
@@ -233,7 +233,10 @@ def v4(tree, entity):
     return fails
 
 
-WRITE_RE = re.compile(r'\bnet::(put|mark|drop|dropAll|unmark)\s*\(')
+# The row-inserting or resetting calls: the generic ones (N4.0) and the keyed forms of N4b
+# (the letter maps) and N4c (the line-of-sight forms, eraseIf).
+WRITE_RE = re.compile(r'\bnet::(put|mark|drop|dropAll|unmark|putLos|dropLos|assignLos|'
+                      r'assignLosFlags|eraseIf|assignLetterMap|mergeLetterMap)\s*\(')
 
 
 def functions_of(text):

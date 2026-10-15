@@ -433,12 +433,19 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep) {
                 // Rate limit per (station, satellite, class), holdoff counted in
                 // census passes: a parked cell logs its identity periodically
                 // instead of every epoch (120 times an hour at 30 s cadence).
-                const std::string key = sname + "\x1f"
-                                      + sat[static_cast<std::size_t>(row)] + "\x1f"
-                                      + rowClassName(k);
-                const auto lit = carry.redun_event_last.find(key);
-                if (lit == carry.redun_event_last.end() || (ep - lit->second) >= holdoff) {
-                    carry.redun_event_last[key] = ep;
+                // The line of sight's holdoff clock of the class (an empty satellite is the
+                // station's own row, SatId{}).
+                const std::optional<LosId> hid = net::losOf(
+                    ctx.entities, static_cast<int>(i), sat[static_cast<std::size_t>(row)]);
+                const std::string cls = rowClassName(k);
+                const long long* lit =
+                    hid ? net::get(ctx.entities.los, *hid, &net::LosState::events, cls,
+                                   &net::LosEventState::redun_event_last)
+                        : nullptr;
+                if (lit == nullptr || (ep - *lit) >= holdoff) {
+                    if (hid)
+                        net::put(ctx.entities.los, *hid, &net::LosState::events, cls,
+                                 &net::LosEventState::redun_event_last) = ep;
                     emit("uncheckable_hot_cell", sat[static_cast<std::size_t>(row)],
                          sname, s, hot_sigma,
                          fmt::format("class={};r={:.3e};eps={:g};y={:.4e};w={:.4e};row={}",

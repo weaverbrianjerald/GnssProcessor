@@ -98,7 +98,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
     const bool   refloat_on   = ctx.knobs.sig_refloat_regain;
     const bool   deweight     = scale > 1.0;
 
-    auto& arcs = ctx.carry.si_arc;
+    net::LosTable& los_rows = ctx.entities.los;   // the arc records (card NOM step N4c)
     auto& ctr  = ctx.counters.sig;
     ++ctr.epochs;
 
@@ -145,11 +145,8 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             ++ctr.los_epochs;
 
             const std::set<std::string> cur = signalIntegrityPhaseBands(obs);
-            const auto key = std::make_pair(si, sat);
-            auto it = arcs.find(key);
-            const bool first = (it == arcs.end());
-            if (first) it = arcs.emplace(key, SignalIntegrityArc{}).first;
-            SignalIntegrityArc& a = it->second;
+            const bool first = net::getLos(los_rows, si, sat, &net::LosState::si_arc) == nullptr;
+            SignalIntegrityArc& a = net::putLos(ctx.entities, si, sat, &net::LosState::si_arc);
 
             const long long gap = first ? -1 : (epoch_idx - a.last_seen_ep - 1);
             if (cur.size() >= 2) a.ever_dual = true;
@@ -444,10 +441,9 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
     // census sizes.  It is read against sf_continuation_epochs: if the producer drops
     // a degrading arc, this count is large and the continuation count near zero; if
     // it continues the arc single-frequency, the reverse.  The audit needs both.
-    for (auto it = arcs.begin(); it != arcs.end();) {
-        const int si = it->first.first;
-        SignalIntegrityArc& a = it->second;
-        if (seen.count(it->first)) { ++it; continue; }
+    net::eraseIf(los_rows, &net::LosState::si_arc, [&](const LosId& id, SignalIntegrityArc& a) {
+        const int si = id.station.index;
+        if (seen.count(net::losPair(id))) return false;
         const bool sta_present = si >= 0 && si < static_cast<int>(present.size())
                                  && present[static_cast<std::size_t>(si)];
         if (sta_present && a.last_seen_ep == epoch_idx - 1) {
@@ -456,11 +452,10 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
         }
         if (epoch_idx - a.last_seen_ep > kArcForgetEp) {
             ++ctr.arcs_forgotten;
-            it = arcs.erase(it);
-            continue;
+            return true;
         }
-        ++it;
-    }
+        return false;
+    });
 
     if (ctr.epochs == 1)
         log->debug("Network (signal integrity): first classifier pass — {} line(s) of "

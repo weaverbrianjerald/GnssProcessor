@@ -492,7 +492,8 @@ TEST(RedundancyCensusTest, OffIsStructurallyInert) {
     NetworkCarryState carry;
     EXPECT_EQ(carry.redun_epochs, 0);
     EXPECT_TRUE(carry.redun_escalate_pending.empty());
-    EXPECT_TRUE(carry.redun_event_last.empty());
+    EXPECT_EQ(net::present(net::NetworkEntities{}.los, &net::LosState::events,
+                           &net::LosEventState::redun_event_last), 0u);
     EXPECT_EQ(net::present(net::NetworkEntities{}.stations,
                            &net::StationState::redun_unobs_active), 0u);
     EXPECT_DOUBLE_EQ(carry.redun_ep_tow, -1.0);

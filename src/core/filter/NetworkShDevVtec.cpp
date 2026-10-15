@@ -65,7 +65,6 @@ void networkShDevVtec(NetworkRun& run, const NetworkEpoch& ep) {
     auto& sh_model2 = setup.sh_model2;   // Iono-2 dual-layer second shell (null unless armed)
     auto& stations = setup.stations;
     auto& vtec_sh_trace        = traces.vtec_sh_trace;
-    auto& sh_dev_carry = ctx.carry.sh_dev_carry;
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
 
 
@@ -170,8 +169,8 @@ void networkShDevVtec(NetworkRun& run, const NetworkEpoch& ep) {
                     } catch (...) { continue; }
                     if (reg.row.size() == vrow.size()) vrow += reg.row;
                     const double v_hat = reg.cond_var + vrow.dot(Sfree * vrow);
-                    ShDevCarry& dc =
-                        sh_dev_carry[stations[i].name + "|" + o.satellite];
+                    ShDevCarry& dc = net::putLos(ctx.entities, static_cast<int>(i), o.satellite,
+                                                 &net::LosState::sh_dev);
                     dc.var_ss = shc.representation_sigma_tecu
                                 * shc.representation_sigma_tecu;
                     if (dc.t_s <= 0.0) {          // cold entry: seed at steady state
@@ -233,7 +232,7 @@ int networkShDevCarryRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const bool sh_dev_on = v.ctx.knobs.sh_dev_on;   // the run's one derivation (card NOM3 step EP0)
     const GlobalVtecShConfig& shc = v.config.getGlobalVtecShConfig();
-    const auto& sh_dev_carry = v.ctx.carry.sh_dev_carry;
+
 
     if (!sh_dev_on) return 0;
     log->info("Network (Iono-2/T5v2 per-LOS deviation carry): {} warm harvest(s), "
@@ -242,7 +241,7 @@ int networkShDevCarryRunEnd(const NetworkRunEndView& v) {
               "σ_ss={} TECU vertical, exact posterior harvest).",
               ctx.carry.shdev_warm_total, ctx.carry.shdev_cold_total,
               ctx.carry.shdev_slip_resets_total, ctx.carry.shdev_nodata_total,
-              sh_dev_carry.size(), shc.rep_error_tau_s,
+              net::present(v.ctx.entities.los, &net::LosState::sh_dev), shc.rep_error_tau_s,
               shc.representation_sigma_tecu);
     // v3k clause only when armed, so the v2/v3 lines stay byte-identical with it off.
     if (shc.rep_error_d5_keep)
@@ -287,7 +286,11 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep) {
     const bool   sh_dev_demean  = ctx.knobs.sh_dev_demean;    // anti-ratchet de-mean (Iono-2 v3)
     const bool   sh_dev_d5_keep = ctx.knobs.sh_dev_d5_keep;   // erase-policy split (v3k)
     auto& stations = setup.stations;
-    auto& sh_dev_carry = ctx.carry.sh_dev_carry;
+    net::LosTable& los_rows = ctx.entities.los;   // the deviation carries (card NOM step N4c)
+    // The old "<station name>|<sat>" key of a line of sight (O3).
+    const auto nameKey = [&](const LosId& id) {
+        return stations[static_cast<std::size_t>(id.station.index)].name + "|" + net::satKey(id.sat);
+    };
 
     // Age the SH-deviation carries once per epoch (T5v2), serially; the parallel
     // assembly below only reads them.  GM prediction in vertical TECU: dev *= λ,
@@ -321,10 +324,9 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep) {
         }
     }
     const double now_s = se.time.week * 604800.0 + se.time.tow;
-    for (auto it = sh_dev_carry.begin(); it != sh_dev_carry.end();) {
-        ShDevCarry& dc = it->second;
+    net::eraseIf(los_rows, &net::LosState::sh_dev, [&](const LosId& id, ShDevCarry& dc) {
         const double dt = now_s - dc.t_s;
-        if (!slipped_los.empty() && slipped_los.count(it->first)) {
+        if (!slipped_los.empty() && slipped_los.count(nameKey(id))) {
             // v3k erase-policy split (SPEC_iono2_mechB_v3 addendum): a
             // raw-confirmed slip (MW/LLI/IF-TD this epoch) aliases n·λ into
             // the GF iono, so the pre-slip deviation is invalid and is erased
@@ -335,27 +337,23 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep) {
             // few harvests instead of being carried stiffly).  The v3 de-mean
             // removes any common mode of the kept levels, so the keep cannot
             // re-open the ratchet.
-            if (!sh_dev_d5_keep || raw_los.count(it->first)) {
+            if (!sh_dev_d5_keep || raw_los.count(nameKey(id))) {
                 ++ctx.carry.shdev_slip_resets_total;
-                it = sh_dev_carry.erase(it);
-                continue;
+                return true;
             }
             shDevD5Retap(dc);
             ++ctx.carry.shdev_d5_keeps_total;
             // falls through to staleness + GM aging (retap is idempotent
             // under the aging step: λ²σ_ss² + (1−λ²)σ_ss² = σ_ss²).
         }
-        if (dc.t_s <= 0.0 || dt > 5.0 * sh_dev_tau) {
-            it = sh_dev_carry.erase(it);
-            continue;
-        }
+        if (dc.t_s <= 0.0 || dt > 5.0 * sh_dev_tau) return true;
         if (dt > 0.0) {
             const double lam = std::exp(-dt / sh_dev_tau);
             dc.dev *= lam;
             dc.var  = lam * lam * dc.var + dc.var_ss * (1.0 - lam * lam);
         }
-        ++it;
-    }
+        return false;
+    });
     // Anti-ratchet (Iono-2 v3, docs/SPEC_iono2_mechB_v3.md): remove the
     // information-weighted global and per-station means from the carried
     // priors.  A common vertical-TECU deviation shares the a00 column's exact
@@ -367,7 +365,14 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep) {
     // prior.  Same serial context as the aging above.  Thresholds 30/4 per
     // the spec (constants, not knobs).
     if (sh_dev_demean) {
-        const ShDevDemeanStats ds = shDevDemean(sh_dev_carry, 30, 4);
+        // The de-mean reads the carries as the "<station name>|<sat>" map it is written
+        // against (its sums run in that order, O3) and its results are written back.
+        std::map<std::string, ShDevCarry> view;
+        net::forEach(los_rows, &net::LosState::sh_dev,
+                     [&](const LosId& id, const ShDevCarry& dc) { view.emplace(nameKey(id), dc); });
+        const ShDevDemeanStats ds = shDevDemean(view, 30, 4);
+        net::forEach(los_rows, &net::LosState::sh_dev,
+                     [&](const LosId& id, ShDevCarry& dc) { dc = view.at(nameKey(id)); });
         if (ds.applied) {
             ++ctx.carry.shdev_demean_epochs_total;
             ctx.carry.shdev_demean_sta_total += ds.n_sta;

@@ -209,16 +209,17 @@ void networkPhaseColourBlockColumns(StationCarryFrame& carry) {
             if (pidx < 0 || pidx >= x_lin.size() || !std::isfinite(x_lin(pidx))) continue;
             const auto phit = h2local.find(pidx);
             if (phit == h2local.end()) continue;   // no phase row this epoch
-            const auto pit = ctx.carry.pc_carry.find({static_cast<int>(i), pc_sat});
-            if (pit == ctx.carry.pc_carry.end()) continue;           // cold: birth row
-            const double pgap = pl_now_s - pit->second.last_seen_s;
+            const LocalCarry* pit =
+                net::getLos(ctx.entities.los, static_cast<int>(i), pc_sat, &net::LosState::pc);
+            if (pit == nullptr) continue;           // cold: birth row
+            const double pgap = pl_now_s - pit->last_seen_s;
             if (!(pgap >= 0.0) || pgap > ctx.knobs.pc_max_gap_s) continue;   // stale: birth row
             const double phi = std::exp(-pgap / ctx.knobs.pc_tau_s);
             const double s2  = ctx.knobs.pcStationaryVar(
                 st.sm->getPhaseColourElevation(pc_sat));
-            const double pvar = phi * phi * pit->second.var + s2 * (1.0 - phi * phi);
+            const double pvar = phi * phi * pit->var + s2 * (1.0 - phi * phi);
             if (!(pvar > 0.0) || !std::isfinite(pvar)) continue;
-            pc_pred.push_back(pit->second);
+            pc_pred.push_back(*pit);
             LocalCarry& pr = pc_pred.back();
             pr.value_abs *= phi;
             for (CoupledShared& cs : pr.coupling) cs.coeff *= phi;
@@ -287,7 +288,7 @@ void networkHarvestPhaseColourStation(NetworkRun& run, const NetworkEpoch& ep,
             ent.blk     = hblk;
             ent.blk_idx = static_cast<int>(prow);
         }
-        ctx.carry.pc_carry[{static_cast<int>(i), pp.sat}] = std::move(ent);
+        net::putLos(ctx.entities, static_cast<int>(i), pp.sat, &net::LosState::pc) = std::move(ent);
         networkSharedHistoryNoteEntry(shx_h, est_idx, pp.col, SharedHistoryMap::Pc,
                                       static_cast<int>(i), pp.sat);   // card SCL2 X2; no-op off
         ++ctx.counters.n_pc_stash;
@@ -312,9 +313,9 @@ void networkPrunePhaseColour(NetworkRun& run, const NetworkEpoch& ep) {
     // the map to the live lines of sight and counts the edge.  The horizon is the
     // registry's (network.phase_colour_max_gap_s, the same double; card PRM phase 3b).
     if (ctx.knobs.pc_on)
-        carryGapPrune(ctx.carry.pc_carry, pl_now_s,
+        carryGapPrune(ctx.entities.los, &net::LosState::pc, pl_now_s,
                       ctx.params.spec(NetworkParamKind::PhaseColour).gap_horizon_s,
-                      [&](const auto&) {
+                      [&](const auto&, const auto&) {
                           ++ctx.counters.n_pc_gap_prune;
                           prmRespond(ctx.counters.prm_resp, ResponseSite::PcGapPrune);   // card PRM phase 3a
                       });
@@ -344,7 +345,7 @@ int networkPhaseColourRunEnd(const NetworkRunEndView& v) {
               n > 0.0 ? 1e3 * std::sqrt(C.pc_sq_sum / n) : 0.0,
               n > 0.0 ? 1e3 * C.pc_abs_sum / n : 0.0, C.n_pc_stash_fail,
               C.n_pc_erase_raim, C.n_pc_erase_gross, C.n_pc_gap_prune,
-              ctx.knobs.pc_max_gap_s, ctx.carry.pc_carry.size());
+              ctx.knobs.pc_max_gap_s, net::present(ctx.entities.los, &net::LosState::pc));
     if (C.n_pc_stash > 0 && C.n_pc_block_folds + C.n_pc_fallback_folds == 0)
         log->warn("Network (card LGM): the phase-colour state was harvested but never "
                   "folded a carried prior: it acted only through its birth rows, i.e. as "

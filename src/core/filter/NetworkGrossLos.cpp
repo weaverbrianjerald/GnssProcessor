@@ -162,12 +162,13 @@ void networkGrossLosPublishScales(NetworkRunContext& ctx,
     // the same pass that a new declaration gains one, and building fresh maps and
     // swapping them in leaves no window in which a stale key survives.
     std::vector<std::map<std::string, double>> fresh(stations.size());
-    for (const auto& [key, st] : ctx.carry.gl_state) {
-        if (!st.gross) continue;
-        const std::size_t i = static_cast<std::size_t>(key.first);
-        if (i >= fresh.size()) continue;
-        fresh[i][key.second] = f;
-    }
+    net::forEach(ctx.entities.los, &net::LosState::gross_los,
+                 [&](const LosId& id, const GrossLosState& st) {
+                     if (!st.gross) return;
+                     const std::size_t i = static_cast<std::size_t>(id.station.index);
+                     if (i >= fresh.size()) return;
+                     fresh[i][net::satKey(id.sat)] = f;
+                 });
     // A station-level declaration folds all of that station's code rows (RF-3b B4,
     // requirement F4).  The assembly's map is keyed per satellite (the same map the
     // per-LOS response writes), so a station-wide fold is expressed as "every
@@ -282,7 +283,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     const bool   cold_window  = cold_bound > 0.0 && !mature;
 
     auto& tal    = ctx.counters.gross_los;
-    auto& gstate = ctx.carry.gl_state;
+    net::LosTable& los_rows = ctx.entities.los;   // the gross-LOS dispositions (card NOM step N4c)
     ++tal.epochs;
     ++ctx.carry.gl_seq;
     const long long seq = ctx.carry.gl_seq;
@@ -299,12 +300,13 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                          const std::string& station, std::optional<double> statistic,
                          std::optional<double> threshold, const char* action,
                          const std::string& detail) {
-        if (holdoff > 0) {
-            const std::string hk = station + "\x1f" + sat;
-            auto& last = ctx.carry.gl_event_last;
-            const auto it = last.find(hk);
-            if (it != last.end() && (seq - it->second) < holdoff) return;
-            last[hk] = seq;
+        if (holdoff > 0) {   // the line of sight's holdoff clock (the station by NAME, O3)
+            const std::optional<StationId> hs = net::stationOfName(ctx.entities, station);
+            const long long* lp = hs ? net::getLos(los_rows, hs->index, sat,
+                                                   &net::LosState::gl_event_last)
+                                     : nullptr;
+            if (lp != nullptr && (seq - *lp) < holdoff) return;
+            if (hs) net::putLos(ctx.entities, hs->index, sat, &net::LosState::gl_event_last) = seq;
         }
         traces.emitEvent(se.time, "GROSSLOS", event, sat, station, statistic,
                          threshold, action, detail);
@@ -627,7 +629,8 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
         for (const auto& [sat, d] : pass.verdicts) {
             const auto key = std::make_pair(static_cast<int>(i), sat);
             seen.insert(key);
-            GrossLosState& st = gstate[key];
+            GrossLosState& st = net::putLos(ctx.entities, key.first, key.second,
+                                            &net::LosState::gross_los);
             st.last_seen_s = now_s;
             // A stood-down satellite (GL-2) takes its lines of sight with it.  An
             // already-declared one is released here: the deweight lifts, because the
@@ -806,45 +809,47 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     // ambiguity, and the old evidence does not apply to it.  Past
     // gross_los_max_gap_s, every unseen entry is erased; a declared one first
     // expires with its own event.
-    for (auto it = gstate.begin(); it != gstate.end(); ) {
-        const bool here = seen.count(it->first) != 0;
-        if (here) { ++it; continue; }
-        it->second.over_streak  = 0;   // absence is not evidence either way
-        it->second.clear_streak = 0;
-        const double gap = now_s - it->second.last_seen_s;
-        if (gap <= max_gap_s) { ++it; continue; }
-        if (it->second.gross && it->second.cold) {
+    net::eraseIf(los_rows, &net::LosState::gross_los, [&](const LosId& id, GrossLosState& gs) {
+        const std::pair<int, std::string> key = net::losPair(id);
+        const bool here = seen.count(key) != 0;
+        if (here) return false;
+        gs.over_streak  = 0;   // absence is not evidence either way
+        gs.clear_streak = 0;
+        const double gap = now_s - gs.last_seen_s;
+        if (gap <= max_gap_s) return false;
+        if (gs.gross && gs.cold) {
             // The cold path's absent-satellite exit (card ICF response 1), with the same
             // re-seed as its release: whatever carry the line of sight still holds was
             // harvested while the fault was in its rows.
             ++tal.cold_expired;
             ++n_cold_edges_ep;
-            const std::size_t si = static_cast<std::size_t>(it->first.first);
-            emitEvent("gross_los_cold_expire", it->first.second,
+            const std::size_t si = static_cast<std::size_t>(key.first);
+            emitEvent("gross_los_cold_expire", key.second,
                       si < stations.size() ? stations[si].name : std::string(),
                       gap, max_gap_s, "expire",
                       fmt::format("unseen_s={:.1f};declared_tow={:.1f};episode={};reseed=erase",
-                                  gap, it->second.declared_tow, it->second.n_declared));
-            ctx.carry.gl_act_release.push_back({ it->first.first, it->first.second });
-            ctx.carry.gl_act_cold_refloat.push_back({ it->first.first, it->first.second });
-        } else if (it->second.gross) {
+                                  gap, gs.declared_tow, gs.n_declared));
+            ctx.carry.gl_act_release.push_back(key);
+            ctx.carry.gl_act_cold_refloat.push_back(key);
+        } else if (gs.gross) {
             ++tal.expired;
-            const std::size_t si = static_cast<std::size_t>(it->first.first);
-            emitEvent("gross_los_expire", it->first.second,
+            const std::size_t si = static_cast<std::size_t>(key.first);
+            emitEvent("gross_los_expire", key.second,
                       si < stations.size() ? stations[si].name : std::string(),
                       gap, max_gap_s, "expire",
                       fmt::format("unseen_s={:.1f};declared_tow={:.1f};episode={}",
-                                  gap, it->second.declared_tow, it->second.n_declared));
+                                  gap, gs.declared_tow, gs.n_declared));
             // The expiry is the other exit from a declaration, so it drops the hold too
             // (RF-3b B2); otherwise a frozen prior would stay on a line of sight the
             // screen has stopped tracking (standing invariant #1's absent-satellite edge).
-            ctx.carry.gl_act_release.push_back({ it->first.first, it->first.second });
+            ctx.carry.gl_act_release.push_back(key);
         }
-        it = gstate.erase(it);
-    }
+        return true;
+    });
 
     long long now_gross = 0;
-    for (const auto& kv : gstate) if (kv.second.gross) ++now_gross;
+    net::forEach(los_rows, &net::LosState::gross_los,
+                 [&](const LosId&, const GrossLosState& gs) { if (gs.gross) ++now_gross; });
     tal.currently_gross = now_gross;
     if (now_gross > tal.max_concurrent) tal.max_concurrent = now_gross;
 
@@ -875,8 +880,8 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
             for (const auto& [sat, d] : pass.verdicts) {
                 (void)d;
                 ++contrib[sat];
-                const auto sit = gstate.find({ si, sat });
-                if (sta_down_here || (sit != gstate.end() && sit->second.gross))
+                const GrossLosState* sit = net::getLos(los_rows, si, sat, &net::LosState::gross_los);
+                if (sta_down_here || (sit != nullptr && sit->gross))
                     ++excluded[sat];
             }
         }
@@ -1003,39 +1008,37 @@ void networkGrossLosAct(NetworkRunContext& ctx,
         // that feeds it, so the iono carry is not trusted either.  Under the hold it is
         // frozen for the same reason as the level: a re-drawn iono would have to be
         // determined by the folded code row, which cannot do it.
-        const std::pair<int, std::string> ik{ si, sat };
+        net::LosTable& los = ctx.entities.los;
         if (gl_bound) {
-            const auto it1 = ctx.carry.iono_carry.find(ik);
-            if (it1 != ctx.carry.iono_carry.end()) {
-                const LocalCarry h = glFreeze(it1->second);
-                ctx.carry.gl_hold_iono[ik] = h;
-                it1->second = h;
+            if (LocalCarry* it1 = net::getLos(los, si, sat, &net::LosState::iono)) {
+                const LocalCarry h = glFreeze(*it1);
+                net::putLos(ctx.entities, si, sat, &net::LosState::gl_hold_iono) = h;
+                *it1 = h;
                 ++tal.bound_iono_held;
                 prmRespond(ctx.counters.prm_resp,
                            ResponseSite::IonoGrossHold);   // card PRM phase 3a
             }
-            const auto it2 = ctx.carry.iono_blk_carry.find(ik);
-            if (it2 != ctx.carry.iono_blk_carry.end()) {
-                const LocalCarry h = glFreeze(it2->second);
-                ctx.carry.gl_hold_iono_blk[ik] = h;
-                it2->second = h;
+            if (LocalCarry* it2 = net::getLos(los, si, sat, &net::LosState::iono_blk)) {
+                const LocalCarry h = glFreeze(*it2);
+                net::putLos(ctx.entities, si, sat, &net::LosState::gl_hold_iono_blk) = h;
+                *it2 = h;
                 ++tal.bound_iono_held;
                 prmRespond(ctx.counters.prm_resp,
                            ResponseSite::IonoGrossHold);   // card PRM phase 3a
             }
         } else {
             // Card PRM phase 3a: each erase that removed an entry is counted.
-            if (ctx.carry.iono_carry.erase(ik)) {
+            if (net::dropLos(los, si, sat, &net::LosState::iono)) {
                 ++tal.iono_erased;
                 prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGrossErase);
             }
-            if (ctx.carry.iono_blk_carry.erase(ik)) {
+            if (net::dropLos(los, si, sat, &net::LosState::iono_blk)) {
                 ++tal.iono_erased;
                 prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGrossErase);
             }
             // Card LGM: a gross line of sight's phase-colour entry re-starts from its
             // birth prior as well (the gross phase rows wrote into it).
-            if (ctx.carry.pc_carry.erase(ik)) {
+            if (net::dropLos(los, si, sat, &net::LosState::pc)) {
                 ++ctx.counters.n_pc_erase_gross;
                 prmRespond(ctx.counters.prm_resp, ResponseSite::PcGrossErase);
             }
@@ -1078,8 +1081,8 @@ void networkGrossLosAct(NetworkRunContext& ctx,
     // --- The re-coupling edge: a release or an expiry drops the hold, and the states
     //     continue from the values they were held at.  Idempotent.
     for (const auto& [si, sat] : ctx.carry.gl_act_release) {
-        ctx.carry.gl_hold_iono.erase({ si, sat });
-        ctx.carry.gl_hold_iono_blk.erase({ si, sat });
+        net::dropLos(ctx.entities.los, si, sat, &net::LosState::gl_hold_iono);
+        net::dropLos(ctx.entities.los, si, sat, &net::LosState::gl_hold_iono_blk);
         for (auto it = ctx.carry.gl_hold_amb.begin(); it != ctx.carry.gl_hold_amb.end(); ) {
             if (std::get<0>(it->first) == si && std::get<1>(it->first) == sat)
                 it = ctx.carry.gl_hold_amb.erase(it);
@@ -1098,8 +1101,13 @@ void networkGrossLosAct(NetworkRunContext& ctx,
             ctx.carry.local_carry[key] = h;
             los_held.insert({ std::get<0>(key), std::get<1>(key) });
         }
-        for (const auto& [key, h] : ctx.carry.gl_hold_iono)     ctx.carry.iono_carry[key] = h;
-        for (const auto& [key, h] : ctx.carry.gl_hold_iono_blk) ctx.carry.iono_blk_carry[key] = h;
+        net::LosTable& los = ctx.entities.los;
+        net::forEach(los, &net::LosState::gl_hold_iono, [&](const LosId& id, const LocalCarry& h) {
+            net::put(los, id, &net::LosState::iono) = h;
+        });
+        net::forEach(los, &net::LosState::gl_hold_iono_blk, [&](const LosId& id, const LocalCarry& h) {
+            net::put(los, id, &net::LosState::iono_blk) = h;
+        });
         tal.bound_los_epochs += static_cast<long long>(los_held.size());
     }
     if (log && !ctx.carry.gl_act_declare.empty())
@@ -1107,7 +1115,8 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                    "{} carried level(s) and {} iono carr(ies) currently held.",
                    ctx.carry.gl_act_declare.size(), gl_bound ? "HOLD" : "erase",
                    ctx.carry.gl_hold_amb.size(),
-                   ctx.carry.gl_hold_iono.size() + ctx.carry.gl_hold_iono_blk.size());
+                   net::present(ctx.entities.los, &net::LosState::gl_hold_iono)
+                       + net::present(ctx.entities.los, &net::LosState::gl_hold_iono_blk));
 }
 
 // ---------------------------------------------------------------------------
@@ -1132,8 +1141,9 @@ void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
     }
     const auto& g = ctx.counters.gross_los;
     long long standing = 0;
-    for (const auto& kv : ctx.carry.gl_state)
-        if (kv.second.gross && kv.second.cold) ++standing;
+    net::forEach(ctx.entities.los, &net::LosState::gross_los, [&](const LosId&, const GrossLosState& gs) {
+        if (gs.gross && gs.cold) ++standing;
+    });
 
     log->info("Network (gross-LOS, card ICF cold bound {:g} m): {} LOS-epoch(s) screened inside "
               "the maturity horizon ({} emitted epochs), {} over the bound.  Largest post-fit "

@@ -63,6 +63,9 @@
 
 #include "common/GnssIdentity.hpp"
 #include "filter/NetworkArCycleBasis.hpp"   // ArFamilyKey, ArBasisMemory
+#include "filter/NetworkGrossLos.hpp"       // GrossLosState
+#include "filter/NetworkSignalIntegrity.hpp"   // SignalIntegrityArc
+#include "slip/NetworkRawObservables.hpp"   // IonoCsState
 #include "filter/NetworkRunTypes.hpp"   // LocalCarry, SdEwlFix
 #include "model/PppModel.hpp"           // PppModel::CanonicalSignal
 
@@ -387,8 +390,100 @@ struct StationState {
     std::map<std::string, StationSignalState> signals;
 };
 
-/// One line of sight's carried state (step N4c fills it).
-struct LosState {};
+/// The event holdoff clocks of one line of sight, in @ref LosState::events: each member has
+/// its own key space (the part of its old key besides the station and the satellite), and a
+/// cell is present in a member exactly when the old map held the key.  They thin the event
+/// streams, never the counts.
+struct LosEventState {
+    /// Census pass of the last emitted uncheckable-hot-cell event (holdoff
+    /// network.redundancy_event_holdoff_ep).  Key: the row class.  Was
+    /// @c NetworkCarryState::redun_event_last ("station\x1fsat\x1fclass").  ColdStart.
+    std::optional<long long> redun_event_last;
+    /// MDB sequence of the last emitted MDB event.  Key: the row class.  Was
+    /// @c NetworkCarryState::mdb_event_last ("station\x1fsat\x1fclass").  ColdStart.
+    std::optional<long long> mdb_event_last;
+    /// Census-epoch index of the last emitted PRIORRES event.  Key: "family\x1fsignal".
+    /// Was @c NetworkCarryState::prires_event_last ("family\x1fstation\x1fsat\x1fsignal").
+    /// ColdStart.
+    std::optional<long long> prires_event_last;
+    /// Processed-epoch index of the last emitted PREFIT event (INC-1 and INC-2 rate limit).
+    /// Key: "<event>|<class>".  Was @c NetworkCarryState::prefit_event_last
+    /// ("<event>|<station>|<sat>|<class>", "?" for no satellite).  ColdStart.
+    std::optional<long long> prefit_event_last;
+};
+
+/// One line of sight's carried state (step N4c), keyed (station, satellite) in that order
+/// (the order of the old (station index, satellite) keys, O1).  The satellite of a station's
+/// own rows (a receiver row of a census, whose old key carried an empty satellite) is the
+/// no-satellite identity @c SatId{}.  Members keyed by station NAME before N4c (@ref sh_dev
+/// and the event clocks) convert the name to its StationId (O3).
+struct LosState {
+    /// Last epoch's arc elevation (deg), for the rising-vs-setting test that ranks new
+    /// spanning-tree edges by how long they will survive.  Rebuilt each epoch from sat_el;
+    /// empty and unread unless network.phase_datum_eq34_longevity_election.  Was
+    /// @c NetworkCarryState::eq34_prev_el.  Record EQE.
+    std::optional<double> eq34_prev_el;
+    /// The signal-integrity arc record (flicker/gap signal integrity).  Empty unless
+    /// ctx.knobs.sig_integrity_on.  Not serialized: a resumed leg's first epoch sees every
+    /// LOS as a first sighting and re-vets it, the conservative direction.  Was
+    /// @c NetworkCarryState::si_arc.  ColdStart.
+    std::optional<SignalIntegrityArc> si_arc;
+    /// Per-LOS slant-iono carry of the retired diagonal vehicle (QUEUE 8b,
+    /// network.carry_iono).  Nothing writes it since that vehicle was deleted, so it stays
+    /// empty; the gross line-of-sight response and the carry-site table still read it
+    /// (decision D9: its deletion waits for the reach table of every gate arm).  Was
+    /// @c NetworkCarryState::iono_carry.  ColdStart.
+    std::optional<LocalCarry> iono;
+    /// I-in-block per-LOS slant-iono carry (network.carry_iono_in_block): the absolute slant
+    /// delay in metres at L1 (x_lin + x_r), with the F3 bookkeeping (blk / blk_idx /
+    /// coupling / birth_s), folded as a column of the station's whitened block like a carried
+    /// ambiguity.  Not snapshotted: a warm resume cold-starts it.  Was
+    /// @c NetworkCarryState::iono_blk_carry.  ColdStart.
+    std::optional<LocalCarry> iono_blk;
+    /// The gross line-of-sight disposition (card GL, docs/SPEC_event_harness.md section
+    /// 24.18): the streaks of every screened line of sight and the declared subset, pruned on
+    /// the absent-satellite edge (network.gross_los_max_gap_s).  Empty unless knobs.gl_on.
+    /// Not snapshotted and not fingerprinted (two epochs of evidence, re-earned).  Was
+    /// @c NetworkCarryState::gl_state.  ColdStart.
+    std::optional<GrossLosState> gross_los;
+    /// Last gross-LOS event sequence, for network.gross_los_event_holdoff_ep (card GL).
+    /// Empty at the default holdoff 0.  Was @c NetworkCarryState::gl_event_last
+    /// ("station\x1fsat").  ColdStart.
+    std::optional<long long> gl_event_last;
+    /// The held per-LOS iono carry (RF-3b B2), same lifecycle as the held ambiguity levels.
+    /// Was @c NetworkCarryState::gl_hold_iono.  ColdStart.
+    std::optional<LocalCarry> gl_hold_iono;
+    /// The held in-block per-LOS iono carry, the twin of @ref iono_blk (RF-3b B2).  Was
+    /// @c NetworkCarryState::gl_hold_iono_blk.  ColdStart.
+    std::optional<LocalCarry> gl_hold_iono_blk;
+    /// The CS-GF level-authority recursion of the line of sight
+    /// (network.level_authority_csgf, the LV-6 census).  Was @c NetworkCarryState::iono_cs.
+    /// ColdStart.
+    std::optional<IonoCsState> iono_cs;
+    /// The phase-colour carry (card LGM).  Was @c NetworkCarryState::pc_carry.  ColdStart.
+    std::optional<LocalCarry> pc;
+    /// Consecutive post-fit RAIM spikes of the arc (network.raim_arc_persist_epochs > 1).
+    /// Was @c NetworkCarryState::arc_spike_streak.  ColdStart.
+    std::optional<int> arc_spike_streak;
+    /// The Iono-2 per-LOS SH deviation carry (T5v2).  Was @c NetworkCarryState::sh_dev_carry
+    /// (keyed "<station name>|<sat>", O3).  Record SD.
+    std::optional<ShDevCarry> sh_dev;
+    /// The SD EWL flip memory: (integer, the detector's lagged count).  Was
+    /// @c NetworkCarryState::sd_ewl_prev (keyed (station, constellation, satellite); the
+    /// constellation is the satellite's).  ColdStart.
+    std::optional<std::pair<long long, std::size_t>> sd_ewl_prev;
+    /// Last epoch's data-class bitmask (band gained/lost, code-only <-> code+phase, INC-4).
+    /// Was @c NetworkCarryState::topo_prev_kind.  ColdStart.
+    std::optional<unsigned> topo_prev_kind;
+    /// Seen in the last epoch's prefit walk; absence on a present LOS is the birth (INC-3).
+    /// Was @c NetworkCarryState::prefit_present_prev.  ColdStart.
+    bool prefit_present_prev{false};
+    /// Flagged by the last prefit walk's code census (the admission re-vet trigger).  Was
+    /// @c NetworkCarryState::prefit_code_flag.  ColdStart.
+    bool prefit_code_flag{false};
+    /// The event holdoff clocks keyed below the line of sight.
+    std::map<std::string, LosEventState> events;
+};
 
 /// One arc's carried state (steps N4f1 and N4f2 fill it).
 struct ArcState {
@@ -404,6 +499,9 @@ using ConstellationTable = Table<System, ConstellationState, ByLetter>;
 
 /// The station table.
 using StationTable = Table<StationId, StationState>;
+
+/// The line-of-sight table, in (station, satellite) order.
+using LosTable = Table<LosId, LosState>;
 
 // ===========================================================================
 // Station names and the identity converters
@@ -425,6 +523,7 @@ struct StationNames {
 enum class Converter : std::uint8_t {
     StationName,  ///< A station name to its StationId (name keys, O3).
     ConstellationLetter,  ///< A constellation letter (char or one-letter string) to its System (O5).
+    Satellite,    ///< A satellite string to its SatId ("" is the no-satellite SatId{}, O2).
     Count
 };
 
@@ -451,7 +550,7 @@ struct NetworkEntities {
     Table<SatId, SatelliteState>                sats;
     Table<SatSignalId, SatSignalState>          sat_signals;
     StationTable                                stations;
-    Table<LosId, LosState>                      los;
+    LosTable                                    los;
     Table<ArcId, ArcState>                      arcs;
     StationNames                                names;   ///< Run constant (setup).
     mutable EntityReach                         reach;   ///< Trace class.
@@ -533,6 +632,45 @@ void assignLetterMap(NetworkEntities& e, std::optional<std::string> Constellatio
  */
 void mergeLetterMap(NetworkEntities& e, std::optional<std::string> ConstellationState::*f,
                     const std::map<std::string, std::string>& m);
+
+/**
+ * @brief The line of sight of (station index, satellite string), without counting: the
+ *        reader's converter (safe in the parallel produce).  "" is the no-satellite
+ *        @c SatId{}; any other string must round-trip through @c SatId (O2).
+ * @param station The station's roster index.
+ * @param sat     The satellite ("G05"), or "" for a station's own rows.
+ * @return The line of sight, or @c std::nullopt when the satellite does not round-trip.
+ */
+std::optional<LosId> losKey(int station, const std::string& sat);
+
+/**
+ * @brief The line of sight of (station index, satellite string), counting a failure under
+ *        Converter::Satellite (the writer's converter; serial code).
+ * @param e       The entities (the converter tally).
+ * @param station The station's roster index.
+ * @param sat     The satellite, or "".
+ * @return The line of sight, or @c std::nullopt (counted).
+ */
+std::optional<LosId> losOf(const NetworkEntities& e, int station, const std::string& sat);
+
+/**
+ * @brief The line of sight of (station NAME, satellite string) (O3), counting either
+ *        converter's failure (serial code).
+ * @param e       The entities (the names and the converter tallies).
+ * @param station A station name.
+ * @param sat     The satellite, or "".
+ * @return The line of sight, or @c std::nullopt (counted).
+ */
+std::optional<LosId> losOfName(const NetworkEntities& e, const std::string& station,
+                               const std::string& sat);
+
+/// The satellite string of a line of sight's satellite: "" for the no-satellite @c SatId{}.
+std::string satKey(const SatId& s);
+
+/// The old (station index, satellite) key of a line of sight.
+inline std::pair<int, std::string> losPair(const LosId& id) {
+    return {id.station.index, satKey(id.sat)};
+}
 
 // ===========================================================================
 // Field access: free functions over a table
@@ -681,6 +819,56 @@ std::size_t present(const T& t, M R::*sub, std::optional<V> SR::*f) {
     return n;
 }
 
+/// Resets field @p f on every row where @p fn(id, value) returns true, in identity order:
+/// the old map's erase-while-iterating loop.  @p fn must not insert rows.
+template <class T, class R, class V, class Fn>
+void eraseIf(T& t, std::optional<V> R::*f, Fn fn) {
+    for (auto& kv : t)
+        if ((kv.second.*f) && fn(kv.first, *(kv.second.*f))) (kv.second.*f).reset();
+}
+
+// ---- Lines of sight addressed by the old (station index, satellite) key ----
+
+/// The value of field @p f of the line of sight (@p station, @p sat), or null (no count).
+template <class T, class V>
+FieldPtr<T, V> getLos(T& t, int station, const std::string& sat, std::optional<V> LosState::*f) {
+    const std::optional<LosId> id = losKey(station, sat);
+    return id ? get(t, *id, f) : nullptr;
+}
+
+/// True when set-membership field @p f of (@p station, @p sat) is set (no count).
+inline bool hasLos(const LosTable& t, int station, const std::string& sat, bool LosState::*f) {
+    const std::optional<LosId> id = losKey(station, sat);
+    return id && has(t, *id, f);
+}
+
+/**
+ * @brief The value of field @p f of (@p station, @p sat), created when absent: the old
+ *        map's @c operator[].  Serial code only.  A satellite that does not round-trip is
+ *        counted and gets a scratch value the table never holds.
+ */
+template <class V>
+V& putLos(NetworkEntities& e, int station, const std::string& sat, std::optional<V> LosState::*f);
+
+/// Resets field @p f of (@p station, @p sat); 1 when it was present: the old map's erase.
+template <class V>
+std::size_t dropLos(LosTable& t, int station, const std::string& sat, std::optional<V> LosState::*f) {
+    const std::optional<LosId> id = losKey(station, sat);
+    return id ? drop(t, *id, f) : 0;
+}
+
+/// Replaces set-membership field @p f with @p cells: the old set's assignment.  Serial code only.
+void assignLosFlags(NetworkEntities& e, bool LosState::*f,
+                    const std::set<std::pair<int, std::string>>& cells);
+
+/// Replaces field @p f with the cells of @p m: the old map's assignment.  Serial code only.
+template <class V>
+void assignLos(NetworkEntities& e, std::optional<V> LosState::*f,
+               const std::map<std::pair<int, std::string>, V>& m) {
+    dropAll(e.los, f);
+    for (const auto& [k, v] : m) putLos(e, k.first, k.second, f) = v;
+}
+
 /// The first present cell of nested field @p f in (identity, sub-key) order, or null: the
 /// old pair-keyed map's @c begin().
 template <class T, class R, class M, class SR, class V>
@@ -723,6 +911,14 @@ std::map<std::string, V> channelMap(const ConstellationTable& t, std::optional<V
                 out.emplace(constellationKey(sys) + "|" + sig, v);
             });
     return out;
+}
+
+template <class V>
+V& putLos(NetworkEntities& e, int station, const std::string& sat, std::optional<V> LosState::*f) {
+    if (const std::optional<LosId> id = losOf(e, station, sat)) return put(e.los, *id, f);
+    static thread_local std::optional<V> scratch;
+    scratch.emplace();
+    return *scratch;
 }
 
 // ===========================================================================
