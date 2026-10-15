@@ -596,6 +596,7 @@ add_executable(gnss_tests
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp
     tests/test_network_solve_skip.cpp
+    tests/test_network_we_choice.cpp
     tests/test_network_within_epoch_culprits.cpp
     tests/test_canonical_pair_admission.cpp
     tests/test_oracle_pin.cpp

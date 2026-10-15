@@ -39,15 +39,15 @@ def solve_scope(fz):
     return canon, names
 
 
-def own_locals(fz, fn):
-    """The solve's function-scope locals whose declaring line lies in this function's pieces."""
+def own_locals(fz, fn, locals_map=None):
+    """The frozen function-scope locals whose declaring line lies in this function's pieces."""
     lines = set()
     for item in fn.body:
         if isinstance(item, S.P):
             a, b = S.resolve(fz, item)
             lines.update(range(a, b + 1))
     out = set()
-    for name, anchor in S.SOLVE_LOCALS.items():
+    for name, anchor in (locals_map or S.SOLVE_LOCALS).items():
         try:
             n = fz.find(anchor)
         except AssertionError:
@@ -57,7 +57,7 @@ def own_locals(fz, fn):
     return out
 
 
-GEN_DECL = re.compile(r"^\s+(?:const\s+)?[\w:<>]+\s+(\w+)\s*(?:=|;)")
+GEN_DECL = re.compile(r"^\s+(?:const\s+)?[\w:<>]+[&*]?\s+(\w+)\s*(?:=|;)")
 
 
 def gen_declared(fn):
@@ -72,11 +72,16 @@ def gen_declared(fn):
     return out
 
 
-def preamble(fz, fn, canon, names):
+def bind_lines(text):
+    """A declared binding's lines at the preamble's indent (a binding may span lines)."""
+    return ["    " + l for l in text.split("\n")]
+
+
+def preamble(fz, fn, canon, names, locals_map=None, globals_=()):
     """The preamble lines (absolute indent) for fn, and the names it binds."""
     body = S.render_body(fz, fn) + fn.tail
     read = S.idents_read("\n".join(S.code_lines(body)))
-    provided = set(fn.params) | own_locals(fz, fn) | gen_declared(fn)
+    provided = set(fn.params) | own_locals(fz, fn, locals_map) | gen_declared(fn) | set(globals_)
     binds = {b[0]: b for b in fn.binds}
     canon_by = {c[0]: c for c in canon}
     want = set()
@@ -88,37 +93,62 @@ def preamble(fz, fn, canon, names):
         if n in binds:
             want.add(n)
             rhs = binds[n][1].split("=", 1)[1] if "=" in binds[n][1] else ""
-            todo.extend(d for d in S.idents_read(S.blank_code(rhs, [False])) if d in names or d in binds)
+            todo.extend(d for d in S.idents_read("\n".join(S.code_lines(rhs.split("\n"))))
+                        if d in names or d in binds)
         elif n in canon_by:
             want.add(n)
             todo.extend(d for d in canon_by[n][2] if d in names or d in binds)
         else:
-            raise SystemExit(f"{fn.name}: unbound solve-scope name {n!r} (no parameter, binding or local)")
+            raise SystemExit(f"{fn.name}: unbound name {n!r} (no parameter, binding or local)")
     out = []
     for name, text, _deps in canon:
         if name in want and name not in binds:
             out.extend(text)
     for name, line, _cls in fn.binds:
         if name in want:
-            out.append("    " + line)
+            out.extend(bind_lines(line))
     return out, want
 
 
-def render_fn(fz, fn, canon, names):
+def render_fn(fz, fn, canon, names, locals_map=None, globals_=(), doc=None):
     if fn.kind == "comment":
         return S.render_body(fz, fn)
-    pre, _ = preamble(fz, fn, canon, names)
-    out = [f"/// {fn.brief} (card NOM3 step SG; Doxygen at the declaration)."] + list(fn.sig)
+    pre, _ = preamble(fz, fn, canon, names, locals_map, globals_)
+    head = doc or [f"/// {fn.brief} (card NOM3 step SG; Doxygen at the declaration)."]
+    out = list(head) + list(fn.sig)
     if pre:
         out += S.PRE_OPEN.split("\n") + pre + [S.PRE_CLOSE]
     out += S.render_body(fz, fn) + fn.tail + ["}"]
     return out
 
 
-def regions(fz):
+STAGE_ORDER = ["sg1", "sg2"]
+CURRENT = "sg2"
+
+
+def sg2_frozen():
+    from nom_sg import rows_sg2 as R2
+    return S.Frozen(S.git_show(R2.SG1_COMMIT, S.WE_HOME), R2.T2_SIG)
+
+
+def sg2_functions(canon, names):
+    """The SG2 functions that replace SG1's networkWithinEpochAdapt, rendered from the SG1 commit."""
+    from nom_sg import rows_sg2 as R2
+    fz2 = sg2_frozen()
+    names2 = names | set(R2.T2_LOCALS) | {"datum", "handoff", "we", "x_s"}
+    out = []
+    for fn in R2.FUNCTIONS:
+        out.append(render_fn(fz2, fn, canon, names2, R2.T2_LOCALS, R2.FILE_CONSTS, R2.DOC.get(fn.name)))
+    return out
+
+
+def regions(fz, stage=CURRENT):
     canon, names = solve_scope(fz)
     by_home = {}
     for fn in R.FUNCTIONS:
+        if fn.name == "networkWithinEpochAdapt" and STAGE_ORDER.index(stage) >= 1:
+            by_home.setdefault(fn.home, []).extend(sg2_functions(canon, names))
+            continue
         by_home.setdefault(fn.home, []).append(render_fn(fz, fn, canon, names))
     out = {}
     for home, fns in by_home.items():
@@ -184,14 +214,14 @@ def survey(fz):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--survey", action="store_true")
-    ap.add_argument("--stage", choices=["sg1"])
+    ap.add_argument("--stage", choices=STAGE_ORDER)
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--base", default=S.BASE)
     a = ap.parse_args(argv)
     fz = S.Frozen(S.git_show(a.base, S.SG_CPP))
     if a.survey:
         return 0 if survey(fz) else 1
-    regs = regions(fz)
+    regs = regions(fz, a.stage or CURRENT)
     bad = 0
     for home, region in regs.items():
         new = splice(home, region)

@@ -182,8 +182,20 @@ def decl_name(stmt_lines):
 def params_of(sig_lines):
     text = " ".join(l.strip() for l in sig_lines)
     inner = text[text.index("(") + 1:text.rindex(")")]
+    parts, depth, cur = [], 0, ""
+    for ch in inner:   # split at the top-level commas (template arguments hold commas)
+        if ch in "<(":
+            depth += 1
+        elif ch in ">)":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
     out = {}
-    for p in [p.strip() for p in inner.split(",") if p.strip()]:
+    for p in [p.strip() for p in parts if p.strip()]:
         name = S.IDENT.findall(p)[-1]
         out[name] = p
     return out
@@ -294,36 +306,46 @@ def s2_bodies(fz, rows, tree, rep):
             rep.check("S2", False, f"{fn.name}: body line {k + 1}: {got.strip()[:50]!r} != {want.strip()[:50]!r}")
         else:
             rep.check("S2", True, fn.name)
-    # Each region holds only the table's functions (and the moved comment block).
+
+
+def s2_regions(order, fz_of, docs, tree, rep):
+    """Each region holds exactly the table's functions (SG1's, with T2 replaced by SG2's at stage
+    sg2), each under its head comment, separated by one blank line."""
+    by_home = {}
+    for fn in order:
+        by_home.setdefault(fn.home, []).append(fn)
     for home, fns in by_home.items():
-        text = tree.read(home) or ""
-        lines = text.split("\n")
+        lines = (tree.read(home) or "").split(LF)
         try:
             a, b = lines.index(S.REGION_OPEN), lines.index(S.REGION_CLOSE)
         except ValueError:
             rep.check("S2", False, f"{home}: region markers missing")
             continue
-        region = lines[a + 1:b]
         expect = []
         for i, fn in enumerate(fns):
             if i:
                 expect.append("")
             if fn.kind == "comment":
-                expect.extend(S.render_body(fz, fn))
+                expect.extend(S.render_body(fz_of[fn.name], fn))
             else:
                 t = fn_text(tree, fn) or []
-                expect.extend(["" if not t else f"/// {fn.brief} (card NOM3 step SG; Doxygen at the declaration)."] + t)
-        rep.check("S2", region == expect, f"{home}: the region holds other text than the table's functions")
+                head = docs.get(fn.name) or [f"/// {fn.brief} (card NOM3 step SG; Doxygen at the declaration)."]
+                expect.extend(list(head) + t if t else [""])
+        rep.check("S2", lines[a + 1:b] == expect, f"{home}: the region holds other text than the table's functions")
 
 
-def frozen_decl(fz, canon_by, name):
-    """The frozen declaring text of a solve-scope name."""
+def frozen_decl(fz, canon_by, name, locals_map=None):
+    """The frozen declaring text of a solve-scope (or T2-scope) name."""
+    locals_map = locals_map or S.SOLVE_LOCALS
     if name in canon_by:
         return "".join(canon_by[name][1])
     if name in S.SOLVE_PARAMS:
         return S.SOLVE_PARAMS[name]
-    if name in S.SOLVE_LOCALS:
-        return fz.line(fz.find(S.SOLVE_LOCALS[name]))
+    if name in locals_map:
+        try:
+            return fz.line(fz.find(locals_map[name]))
+        except AssertionError:
+            return None
     return None
 
 
@@ -338,7 +360,8 @@ def frozen_scalar_const(text, name):
     return bool(m)
 
 
-def s3_bindings(fz, rows, tree, rep, canon, names):
+def s3_bindings(fz, rows, tree, rep, canon, names, locals_map=None, globals_=()):
+    locals_map = locals_map or S.SOLVE_LOCALS
     canon_by = {c[0]: c for c in canon}
     canon_texts = {tuple(c[1]) for c in canon}
     for fn in rows.FUNCTIONS:
@@ -354,22 +377,29 @@ def s3_bindings(fz, rows, tree, rep, canon, names):
             want = fn.params.get(pname)
             rep.check("S3", want is not None and " ".join(ptext.split()) == " ".join(want.split()),
                       f"{fn.name}: parameter {ptext!r} is not the row's {want!r}")
-            fd = frozen_decl(fz, canon_by, pname) if pname in names else None
+            fd = frozen_decl(fz, canon_by, pname, locals_map) if pname in names else None
             if fd is not None and not is_reference_decl(ptext, pname):
-                rep.check("S3", frozen_scalar_const(fd, pname) or pname in ("run",),
+                # A copy is allowed only of a const scalar, or of a scalar the function never
+                # writes (it runs synchronously, so its copy equals the frozen name throughout).
+                scalar = re.search(r"\b(bool|int|double|long long|std::size_t|size_t)\s+" + re.escape(pname)
+                                   + r"\b", S.blank_code(fd, [False]))
+                code = LF.join(S.code_lines(body))
+                written = re.search(r"(\+\+|--)\s*" + re.escape(pname) + r"\b|\b" + re.escape(pname)
+                                    + r"\s*(\+\+|--|[-+*/|&]?=(?!=))", code)
+                rep.check("S3", frozen_scalar_const(fd, pname) or (scalar and not written),
                           f"{fn.name}: {pname} passed by value, frozen {fd.strip()[:50]!r}")
         # preamble statements
-        binds = {b[1]: b for b in fn.binds}
+        binds = {b[1]: b for b in fn.binds}   # by full text (a binding may span lines)
         bound = set()
         for st in statements(pre):
             nm = decl_name(st)
             if tuple(st) in canon_texts:
                 bound.add(nm)
                 continue
-            line = st[0].strip() if len(st) == 1 else None
+            line = LF.join(l[4:] if l.startswith("    ") else l for l in st)
             if line in binds:
                 b = binds[line]
-                if b[2] == "REALIZE":
+                if b[2] in ("REALIZE", "STATE"):
                     rep.check("S3", is_reference_decl(line, b[0]), f"{fn.name}: REALIZE {line!r} is not a reference")
                 bound.add(b[0])
                 continue
@@ -380,7 +410,7 @@ def s3_bindings(fz, rows, tree, rep, canon, names):
         for item in fn.body:
             if isinstance(item, S.P):
                 a, b = S.resolve(fz, item)
-                for nm, anchor in S.SOLVE_LOCALS.items():
+                for nm, anchor in locals_map.items():
                     try:
                         if a <= fz.find(anchor) <= b:
                             own.add(nm)
@@ -388,11 +418,11 @@ def s3_bindings(fz, rows, tree, rep, canon, names):
                         pass
             else:
                 for l in item.lines:
-                    m = re.match(r"^\s+(?:const\s+)?[\w:<>]+\s+(\w+)\s*(?:=|;)", l)
+                    m = re.match(r"^\s+(?:const\s+)?[\w:<>]+[&*]?\s+(\w+)\s*(?:=|;)", l)
                     if m and not l.strip().startswith("return"):
                         own.add(m.group(1))
         for nm in sorted(read & names):
-            rep.check("S3", nm in bound or nm in params or nm in own,
+            rep.check("S3", nm in bound or nm in params or nm in own or nm in globals_,
                       f"{fn.name}: solve-scope name {nm!r} read but not bound")
 
 
@@ -542,10 +572,20 @@ def s7_homes(tree, base, rep):
         rep.check("S7", f'"{home}", {name}}}' in table, f"run-end table row of {name} does not name {home}")
 
 
-def s8_docs(rows, tree, rep):
+def s8_docs(rows, tree, rep, docs=None):
     headers = list((tree.root / "include" / "filter").glob("*.hpp"))
     for fn in rows.FUNCTIONS:
-        if fn.kind != "fn" or fn.sig[0].startswith("static"):
+        if fn.kind != "fn":
+            continue
+        if fn.sig[0].startswith("static"):
+            # a file-local function's Doxygen is its head comment in the .cpp (SG2's DOC rows)
+            doc = "\n".join((docs or {}).get(fn.name, []))
+            if not doc:
+                continue
+            ok = all(re.search(r"@param\s+" + re.escape(p) + r"\b", doc) for p in params_of(fn.sig))
+            if not fn.sig[0].startswith("static void"):
+                ok = ok and "@return" in doc
+            rep.check("S8", ok, f"{fn.name}: file-local Doxygen lacks a @param or @return")
             continue
         sig0 = fn.sig[0].split("(")[0] + "("
         doc = None
@@ -567,14 +607,27 @@ def s8_docs(rows, tree, rep):
         rep.check("S8", ok, f"{fn.name}: Doxygen lacks @brief, a @param or @return")
 
 
-def s10_replay(tree, rep):
+def s10_replay(tree, rep, stage):
     calls, lines = orchestrator_calls(tree)
     joined = " ".join(" ".join(lines).split())
     rep.check("S10", "networkWithinEpochAdapt(run, ep, datum, x_s, ws, est_index_of, dd_build, funnel, handoff, we)"
               in joined, "the orchestrator does not pass its own ws / est_index_of / dd_build / funnel")
-    t2 = fn_text(tree, R.fn_by_name("networkWithinEpochAdapt")) or []
-    n = sum(l.count("networkBuildCarryDdPriors(run, ep, dd_build, funnel)") for l in S.code_lines(t2))
-    rep.check("S10", n == 1, f"the replay's DD rebuild call appears {n} times")
+    if stage == "sg1":
+        t2 = fn_text(tree, R.fn_by_name("networkWithinEpochAdapt")) or []
+        n = sum(l.count("networkBuildCarryDdPriors(run, ep, dd_build, funnel)") for l in S.code_lines(t2))
+        rep.check("S10", n == 1, f"the replay's DD rebuild call appears {n} times")
+        return
+    # SG2: the rebuild lives in weReplay, which every replay reaches through a forwarding lambda
+    # that passes T2's own ws, est_index_of, dd_build, funnel and state (never a copy).
+    from nom_sg import rows_sg2 as R2
+    by = {f.name: f for f in R2.FUNCTIONS}
+    rp = fn_text(tree, by["weReplay"]) or []
+    n = sum(l.count("networkBuildCarryDdPriors(run, ep, dd_build, funnel)") for l in S.code_lines(rp))
+    rep.check("S10", n == 1, f"weReplay's DD rebuild call appears {n} times")
+    fwd = "return weReplay(run, ep, datum, ws, est_index_of, dd_build, funnel, st);"
+    for name in ("networkWithinEpochAdapt", "weUndo"):
+        t = fn_text(tree, by[name]) or []
+        rep.check("S10", sum(l.count(fwd) for l in t) == 1, f"{name}: the replay is not forwarded with its own objects")
 
 
 def s11_paths(rows, tree, rep):
@@ -644,32 +697,89 @@ def s14_knob(tree, rep):
 CHECKS = ["S1", "S1b", "S2", "S3", "S5", "S6", "S7", "S8", "S10", "S11", "S12", "S13", "S14"]
 
 
-def run_all(base, tree, rows, verbose=False, only=None):
+class Unit:
+    """One frozen source and the rows cut from it: SG1 (the solve at the base) or SG2 (T2 at the
+    SG1 commit).  FUNCTIONS / DROPS are the whole table (coverage); `checked` are the functions
+    whose text the tree holds at the stage."""
+
+    def __init__(self, fz, rows, checked, locals_map, globals_, docs, names):
+        self.fz, self.FUNCTIONS, self.DROPS = fz, rows.FUNCTIONS, rows.DROPS
+        self.checked = checked
+        self.locals_map, self.globals_, self.docs, self.names = locals_map, globals_, docs, names
+
+
+class _Checked:
+    """A unit seen through the functions the tree holds at the stage."""
+
+    def __init__(self, unit):
+        self.FUNCTIONS, self.DROPS = unit.checked, unit.DROPS
+
+
+def units_for(base, rows, stage):
+    """The units of a stage and the region order of the functions."""
     fz = S.Frozen(S.git_show(base, S.SG_CPP))
     canon = S.canon(fz)
     names = {c[0] for c in canon} | set(S.SOLVE_LOCALS) | set(S.SOLVE_PARAMS)
+    if stage == "sg1":
+        u1 = Unit(fz, rows, list(rows.FUNCTIONS), S.SOLVE_LOCALS, (), {}, names)
+        return canon, [u1], list(rows.FUNCTIONS), {f.name: fz for f in rows.FUNCTIONS}, {}
+    from nom_sg import rows_sg2 as R2
+    fz2 = S.Frozen(S.git_show(R2.SG1_COMMIT, S.WE_HOME), R2.T2_SIG)
+    u1 = Unit(fz, rows, [f for f in rows.FUNCTIONS if f.name != "networkWithinEpochAdapt"], S.SOLVE_LOCALS,
+              (), {}, names)
+    names2 = names | set(R2.T2_LOCALS) | {"datum", "handoff", "we", "x_s"}
+    u2 = Unit(fz2, R2, list(R2.FUNCTIONS), R2.T2_LOCALS, R2.FILE_CONSTS, R2.DOC, names2)
+    order = []
+    for f in rows.FUNCTIONS:
+        order.extend(R2.FUNCTIONS if f.name == "networkWithinEpochAdapt" else [f])
+    fz_of = {f.name: (fz2 if f in R2.FUNCTIONS else fz) for f in order}
+    return canon, [u1, u2], order, fz_of, R2.DOC
+
+
+def s2_chain(base, rep):
+    """SG2's frozen T2 (the SG1 commit) is SG1's rendering of networkWithinEpochAdapt from the base."""
+    import nom_sg_cut as C
+    from nom_sg import rows_sg2 as R2
+    fz = S.Frozen(S.git_show(base, S.SG_CPP))
+    canon, names = C.solve_scope(fz)
+    rendered = C.render_fn(fz, R.fn_by_name("networkWithinEpochAdapt"), canon, names)
+    fz2 = S.Frozen(S.git_show(R2.SG1_COMMIT, S.WE_HOME), R2.T2_SIG)
+    frozen = fz2.lines[fz2.first - 1:fz2.last]
+    rep.check("S2", rendered[1:] == frozen, "SG2's frozen T2 is not SG1's rendering of networkWithinEpochAdapt")
+
+
+def run_all(base, tree, rows, verbose=False, only=None, stage=None):
+    import nom_sg_cut as C
+    stage = stage or C.CURRENT
+    canon, units, order, fz_of, docs = units_for(base, rows, stage)
     rep = Report(verbose)
     todo = only or CHECKS
-    if "S1" in todo:
-        s1_coverage(fz, rows, rep)
-    if "S1b" in todo:
-        s1b_forms(fz, rows, rep)
+    fz = units[0].fz
+    for u in units:
+        if "S1" in todo:
+            s1_coverage(u.fz, u, rep)
+        if "S1b" in todo:
+            s1b_forms(u.fz, u, rep)
+        if "S2" in todo:
+            s2_bodies(u.fz, _Checked(u), tree, rep)
+        if "S3" in todo:
+            s3_bindings(u.fz, _Checked(u), tree, rep, canon, u.names, u.locals_map, u.globals_)
+        if "S11" in todo:
+            s11_paths(_Checked(u), tree, rep)
+        if "S8" in todo:
+            s8_docs(_Checked(u), tree, rep, u.docs)
     if "S2" in todo:
-        s2_bodies(fz, rows, tree, rep)
-    if "S3" in todo:
-        s3_bindings(fz, rows, tree, rep, canon, names)
+        if stage != "sg1":
+            s2_chain(base, rep)
+        s2_regions(order, fz_of, docs, tree, rep)
     if "S5" in todo:
         s5_order(fz, rows, tree, rep)
     if "S6" in todo:
         s6_exits(fz, rows, tree, rep)
     if "S7" in todo:
         s7_homes(tree, base, rep)
-    if "S8" in todo:
-        s8_docs(rows, tree, rep)
     if "S10" in todo:
-        s10_replay(tree, rep)
-    if "S11" in todo:
-        s11_paths(rows, tree, rep)
+        s10_replay(tree, rep, stage)
     if "S12" in todo:
         s12_stateless(tree, rep)
     if "S13" in todo and tree.overlay == {}:
@@ -688,9 +798,11 @@ CBDC = "src/core/filter/NetworkCodeBiasDatum.cpp"
 def mut_file(path, old, new, nth=1):
     def f(tree, rows):
         t = tree.read(path)
-        assert t.count(old) >= nth, f"control anchor not found in {path}: {old[:50]!r}"
+        assert t.count(old) >= max(nth, 1), f"control anchor not found in {path}: {old[:50]!r}"
         k = -1
-        for _ in range(nth):
+        if nth < 0:   # the last occurrence
+            k = t.rindex(old)
+        for _ in range(max(nth, 0)):
             k = t.index(old, k + 1)
         tree.overlay[path] = t[:k] + new + t[k + len(old):]
     return f
@@ -741,7 +853,8 @@ CONTROLS = [
     ("C9", "a data member added to NetworkSbasis", ["S12"],
      mut_file("include/filter/NetworkSbasis.hpp", "class NetworkSbasis {\n", "class NetworkSbasis {\n    int cache_{0};\n")),
     ("C10", "a one-token edit inside a moved body", ["S2"],
-     mut_file(WE, "constexpr int    kMaxAdapt   = 5;", "constexpr int    kMaxAdapt   = 6;")),
+     mut_file("src/core/filter/NetworkRankGate.cpp", "    ++ctx.counters.n_gate_evaluated;",
+              "    ctx.counters.n_gate_evaluated += 2;")),
     ("C11", "GateWithheld's H sigma0 without the 0.0 default", ["S6"],
      mut_file(SGC, "    f.datum_changed = d.datum_changed;\n    return f;",
               "    f.datum_changed = d.datum_changed;\n    f.sigma0_adapt = -1.0;\n    return f;")),
@@ -750,7 +863,7 @@ CONTROLS = [
     ("C13", "we_sigma0_pool_c bound by value in networkSigma0Ceiling", ["S3"],
      mut_file(WE, "    std::map<char, std::vector<double>>& we_sigma0_pool_c = we.sigma0_pool_c;   // written\n",
               "    std::map<char, std::vector<double>> we_sigma0_pool_c = we.sigma0_pool_c;   // written\n",
-              nth=2)),
+              nth=-1)),
     ("C14", "WeRestoreFailed's row given the T2 meter columns", ["S6"],
      mut_file(SGC, "     true,  true,  false, -1, false, NetworkProducerStatus::State::Unknown,",
               "     true,  true,  true,  -1, false, NetworkProducerStatus::State::Unknown,")),
@@ -770,6 +883,15 @@ CONTROLS = [
     ("C19", "SolveSkipFacts::of stores the address of a copy of the plan", ["S6"],
      mut_file(SGC, "    f.plan = &d.plan;\n", "    static NetworkSbasis::Plan copy; copy = d.plan;\n    f.plan = &copy;\n")),
     ("C20", "R04 declared whole instead of open", ["S1b"], mut_rows(_r04_whole)),
+    # SG2 (T2's internals)
+    ("C21", "weUndo does not restore the code de-weights", ["S2"],
+     lambda tree, rows: _drop_line(tree, WE, "    dw_code_sats  = landed_dw;")),
+    ("C22", "T2's replay is forwarded with a copy of its state", ["S2", "S10"],
+     mut_file(WE, "            return weReplay(run, ep, datum, ws, est_index_of, dd_build, funnel, st);",
+              "            WeEpochState copy = st; return weReplay(run, ep, datum, ws, est_index_of, dd_build, funnel, copy);")),
+    ("C23", "weChooseCulprit binds the dropped satellites by value", ["S3"],
+     mut_file(WE, "    const std::set<std::string>& drop_sats = culprits.sats;",
+              "    const std::set<std::string> drop_sats = culprits.sats;")),
 ]
 
 

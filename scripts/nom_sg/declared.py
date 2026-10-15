@@ -55,6 +55,12 @@ CLASSES = {
     "REBIND": "one binding per name read after the block; no later write",
     # SG2: a catch clause's body becomes a helper's body.
     "CATCH_BODY": "EXTRACT's obligations; the catch header, the call and any jump stay",
+    # SG2: a type declared with a local moves to a header type (enum class Kind -> WeChoice::Kind).
+    "TYPE_MOVE": "the enumerators are the same, in the same order; `using Kind = WeChoice::Kind;` binds the name",
+    # SG2: a function-local constant becomes a file-scope constexpr with the same name and value.
+    "HOIST": "same name, type and value at file scope; the local line is removed",
+    # SG2: a local shared by the lambdas becomes a WeEpochState member (as REALIZE).
+    "STATE": "member type equals the local's; its default or the stored initializer equals the frozen one",
     # SG2: a captured lambda becomes a free function behind a one-line forwarding lambda.
     "CALLABLE": "every call site character-exact; the forwarding lambda forwards each argument",
 }

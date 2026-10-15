@@ -12,6 +12,10 @@
 
 #include <Eigen/Core>
 
+#include <map>
+#include <set>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace GnssProcessor {
@@ -26,6 +30,7 @@ struct SolveDatum;              // filter/NetworkSolveGlue.hpp
 struct WithinEpochOutcome;      // filter/NetworkSolveGlue.hpp
 struct Sigma0CeilingDecision;   // filter/NetworkSolveGlue.hpp
 struct SolveSkipFacts;          // filter/NetworkSolveGlue.hpp
+struct WithinEpochCulprits;     // filter/NetworkWithinEpochCulprits.hpp
 
 /**
  * @brief Stage 13, T2: when the robust sigma0 shows the joint solve contaminated, drop the most
@@ -51,6 +56,38 @@ EpochAction networkWithinEpochAdapt(NetworkRun& run, const NetworkEpoch& ep, con
                                     std::vector<int>& est_index_of, EpochDdBuild& dd_build,
                                     NetworkSlipFunnel& funnel, NetworkPostFitHandoff& handoff,
                                     WithinEpochOutcome& we);
+
+/// The culprit the adaptation loop drops next (card NOM3 step SG2): its granularity and identity.
+struct WeChoice {
+    enum class Kind { None, Arc, Sat, Sta };
+    Kind        kind{Kind::None};  ///< None when nothing clears the gate.
+    int         arc_sta{-1};       ///< Arc culprit: the station.
+    std::string arc_sat;           ///< Arc culprit: the satellite.
+    std::string sat;               ///< Satellite culprit.
+    int         sta{-1};           ///< Station culprit.
+};
+
+/**
+ * @brief The culprit T2 drops next (pure; card NOM3 step SG2): the best arc, satellite and
+ *        station not yet dropped, each gated on effect / sigma0 > raim_k; a satellite with at
+ *        least raim_min_sta arcs over the gate takes its arc's place (consensus escalation);
+ *        on an equal score the preference is arc, then satellite, then station (surgical-first),
+ *        and a station's score is de-rated by sta_bias.
+ * @param arc_eff      The per-(station, satellite) interactions of the median polish.
+ * @param sat_eff      The per-satellite effects.
+ * @param sta_eff      The per-station effects.
+ * @param culprits     The culprits already dropped this epoch (excluded).
+ * @param sigma0       The current robust sigma0.
+ * @param surgical     network.raim_surgical_station: arcs are candidates.
+ * @param sta_bias     The station de-rating (1 unless surgical).
+ * @param raim_k       The flag threshold on effect / sigma0.
+ * @param raim_min_sta The cross-station consensus count.
+ * @return The choice; kind None when nothing clears the gate.
+ */
+WeChoice weChooseCulprit(const std::map<std::pair<int, std::string>, double>& arc_eff,
+                         const std::map<std::string, double>& sat_eff, const std::map<int, double>& sta_eff,
+                         const WithinEpochCulprits& culprits, double sigma0, bool surgical, double sta_bias,
+                         double raim_k, int raim_min_sta);
 
 /**
  * @brief Stage 14, the A4 ceiling: the per-constellation carve-out (RTA-10), the flight-recorder

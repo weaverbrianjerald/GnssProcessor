@@ -87,14 +87,15 @@ def idents_read(code):
 class Frozen:
     """The frozen networkSolveGlue at a base: its lines (1-based) and anchor resolution."""
 
-    def __init__(self, text):
+    def __init__(self, text, sig=SOLVE_SIG):
         self.text = text
-        self.lines = text.split("\n")
+        self.lines = text.replace(chr(13) + chr(10), chr(10)).split("\n")
         self.code = code_lines(self.lines)
-        starts = [i for i, l in enumerate(self.lines) if l.startswith(SOLVE_SIG)]
-        assert len(starts) == 1, "networkSolveGlue definition not found exactly once"
+        starts = [i for i, l in enumerate(self.lines) if l.startswith(sig)]
+        assert len(starts) == 1, f"{sig[:40]!r}: definition not found exactly once"
         self.first = starts[0] + 1
-        self.last = self.close_line(self.first + 2)   # the signature's `{` line
+        self.last = len(self.lines)
+        self.last = self.close_line(self.first)   # the signature's `{` (the first line holding one)
         assert self.lines[self.last - 1] == "}", self.lines[self.last - 1]
 
     def line(self, n):
