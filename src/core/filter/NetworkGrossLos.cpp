@@ -301,7 +301,11 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                          std::optional<double> threshold, const char* action,
                          const std::string& detail) {
         if (holdoff > 0) {   // the line of sight's holdoff clock (the station by NAME, O3)
-            const std::optional<StationId> hs = net::stationOfName(ctx.entities, station);
+            // A satellite-level event has no station (an empty name): its clock sits on the
+            // row of the unset station, index -1, as the old key ("station" empty) held it.
+            const std::optional<StationId> hs =
+                station.empty() ? std::optional<StationId>(StationId{})
+                                : net::stationOfName(ctx.entities, station);
             const long long* lp = hs ? net::getLos(los_rows, hs->index, sat,
                                                    &net::LosState::gl_event_last)
                                      : nullptr;

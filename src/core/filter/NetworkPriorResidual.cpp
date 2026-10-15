@@ -222,8 +222,10 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     for (const auto& h : prires.hits()) {
         const std::string& fam = prires.families()[static_cast<std::size_t>(h.family_idx)];
         const std::string sta  = stationName(stations, h.station);
-        // The line of sight's holdoff clock of (family, signal) (the station by NAME, O3).
-        const std::optional<LosId> hid = net::losOfName(ctx.entities, sta, h.sat);
+        // The line of sight's holdoff clock of (family, signal).  The hit's station index
+        // is the row's own (-1 for a shared satellite-level prior, whose name is empty), so
+        // no name converter is needed and a shared prior keeps its clock.
+        const std::optional<LosId> hid = net::losOf(ctx.entities, h.station, h.sat);
         const std::string sub = fam + "\x1f" + h.signal;
         const long long* last =
             hid ? net::get(ctx.entities.los, *hid, &net::LosState::events, sub,
