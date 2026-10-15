@@ -20,13 +20,13 @@
  *   member        group type           available from            written by
  *   se            const SyncedEpoch&   construction              the admission (before construction)
  *   clock         EpochClock           the epoch top             the driver, once
- *   funnel        NetworkSlipFunnel    the funnel's opening      the driver's drains (inline until EP2), networkPassASlipScan_ (raw subset),
- *                                                                networkSignalIntegrity, networkMeasurementAdmission;
+ *   funnel        NetworkSlipFunnel    the funnel's opening      networkSlipFunnelOpen, networkPassASlipScan_ (raw subset), networkSlipFunnelUnionRaw,
+ *                                                                networkSignalIntegrity, networkMeasurementAdmission (filter/NetworkSlipFunnel.hpp);
  *                                                                declared writable, read only (EP1c makes them const): networkBuildCarryDdPriors,
  *                                                                networkSolveGlue (its replay's DD rebuild)
  *   pass_a        EpochPassA           PASS A's sizing           networkPassAHead_, networkPassASlipScan_, networkAssemblyPrefilter_,
- *                                                                networkSignalIntegrity, networkMeasurementAdmission, the phase-datum election
- *                                                                (inline until EP2: shared_phase_keys), networkPassB_ (modeled, present)
+ *                                                                networkSignalIntegrity, networkMeasurementAdmission, networkPhaseAnchorEpoch
+ *                                                                (shared_phase_keys), networkPassB_ (modeled, present)
  *   columns       EpochColumns         networkAssemblyRegisterColumns_   that seam only
  *   assembly      EpochAssembly        networkPassB_             networkPassB_; est_index_of also networkSolveGlue (each T2 replay rebuilds it)
  *   dd_build      EpochDdBuild         the DD build              networkBuildCarryDdPriors (the driver's primary call), networkSolveGlue
@@ -64,6 +64,7 @@
 #include "filter/NetworkArCycleBasis.hpp"  // ArEpochFixes
 #include "filter/NetworkFixedCycles.hpp"   // FixedCycleEmission
 #include "filter/NetworkZStore.hpp"        // ArcKey
+#include "filter/NetworkSlipFunnel.hpp"    // NetworkSlipFunnel (card NOM3 step EP2)
 #include "common/PppObservation.hpp"
 #include <Eigen/Core>
 #include <map>
@@ -85,15 +86,6 @@ struct EpochClock {
     double dt{0.0};           ///< Seconds since the previous processed epoch, week-aware; 0 on the first.  (The DD-carry predict uses its own TOW-only step, card NOM3 section 2 finding 4.)
     double pl_now_s{0.0};     ///< This epoch in continuous GPS seconds.
     bool   carry_warm{false}; ///< The phase-leveling carry is past its warm-up (the emitted-epoch count reached network.phase_leveling_warmup_epochs).
-};
-
-/// The slip funnel (card C3c): every (station roster index, ambiguity key) this epoch treats
-/// as slipped, the object standing invariants 1 and 7 turn on.  Opened at the epoch top with
-/// the previous epoch's deferred flags, grown by PASS A and the two admission screens, read
-/// from the phase datum on.  Step EP2 moves the type and its drains to filter/NetworkSlipFunnel.
-struct NetworkSlipFunnel {
-    std::set<std::pair<int, std::string>> carry_slipped_ambs; ///< The funnel.
-    std::set<std::pair<int, std::string>> carry_slipped_raw;  ///< Its raw-detector subset (Iono-2 v3k): what a raw observable saw.
 };
 
 /// The layout after PASS A.

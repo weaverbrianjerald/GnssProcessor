@@ -1,0 +1,220 @@
+Templates of scripts/nom_ep2_cut.py (card NOM3 step EP2).  A block starts with "@@@ <key>";
+<path>:new is a new file (@FUNCTIONS@ marks where the cut functions go); <path>:anchor is the
+line the functions are inserted before; <path>:before is a section heading inserted ahead of
+them; <path>:inc_anchor / <path>:inc add include lines after the anchor line.
+@@@ src/core/app/NetworkEpochAdmission.cpp:new
+/**
+ * @file NetworkEpochAdmission.cpp
+ * @brief The epoch admission of the network producer: the start-offset fast-forward and the
+ *        per-epoch admission verdict (card NOM3 step EP2).
+ *
+ * Every statement below a "From ..." preamble is the frozen text of
+ * Application::networkProcessEpoch_ (main 7141240), moved by scripts/nom_ep2_cut.py and checked
+ * by scripts/nom_ep2_verify.py.  The two declared changes: a `return LoopSignal::Next;` became
+ * `return EpochAdmission::Skip;` and a `return LoopSignal::Stop;` became
+ * `return EpochAdmission::Stop;`, and each function ends with `return EpochAdmission::Process;`.
+ */
+#include "app/NetworkEpochAdmission.hpp"
+
+#include "app/NetworkEpoch.hpp"            // NetworkEpoch
+#include "app/NetworkRun.hpp"              // NetworkRun
+#include "app/NetworkRunContext.hpp"       // ctx.knobs, ctx.carry, ctx.counters
+#include "app/NetworkSetupResult.hpp"      // the staged broadcast records, navAvailabilityGpsSeconds, brdc_apriori
+#include "filter/NetworkEstimator.hpp"     // attribArm
+#include "logging/LogManager.hpp"
+#include "math/TimeUtils.hpp"              // continuousGpsSeconds
+#include "products/LiveEphemerisStore.hpp" // the broadcast store the staged records feed
+#include "rinex/MultiRinexSync.hpp"        // SyncedEpoch
+
+#include <spdlog/spdlog.h>
+
+#include <memory>
+
+namespace GnssProcessor {
+
+@FUNCTIONS@
+
+} // namespace GnssProcessor
+@@@ src/core/filter/NetworkSlipFunnel.cpp:new
+/**
+ * @file NetworkSlipFunnel.cpp
+ * @brief The slip funnel's two driver-side drains: its opening and the raw subset's union
+ *        (card NOM3 step EP2; the type and its producers and readers: filter/NetworkSlipFunnel.hpp).
+ *
+ * Every statement below a "From ..." preamble is the frozen text of
+ * Application::networkProcessEpoch_ (main 7141240), moved by scripts/nom_ep2_cut.py and checked
+ * by scripts/nom_ep2_verify.py.
+ */
+#include "filter/NetworkSlipFunnel.hpp"
+
+#include "app/NetworkEpoch.hpp"        // NetworkEpoch
+#include "app/NetworkRun.hpp"          // NetworkRun
+#include "app/NetworkRunContext.hpp"   // ctx.knobs, ctx.carry
+
+#include <set>
+#include <string>
+#include <utility>
+
+namespace GnssProcessor {
+
+@FUNCTIONS@
+
+} // namespace GnssProcessor
+@@@ src/core/filter/NetworkPhaseAnchorEpoch.cpp:new
+/**
+ * @file NetworkPhaseAnchorEpoch.cpp
+ * @brief The phase datum of one network epoch: the shared phase-bias set, the anchor election
+ *        and the eq34 receiver phase-bias allocation (card NOM3 step EP2).
+ *
+ * Every statement below a "From ..." preamble is the frozen text of
+ * Application::networkProcessEpoch_ (main 7141240), moved by scripts/nom_ep2_cut.py and checked
+ * by scripts/nom_ep2_verify.py.  The includes are the driver's, which these statements were
+ * compiled under.
+ */
+#include "filter/NetworkPhaseAnchorEpoch.hpp"
+
+#include "app/Application.hpp"
+#include "app/NetworkEpoch.hpp"   // NetworkEpoch
+#include "app/NetworkRun.hpp"     // NetworkRun
+#include "app/NetworkRunContext.hpp"
+#include "app/NetworkSetupResult.hpp"
+#include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"           // systemOfSat, systemName
+#include "filter/NetworkAmbStateTrace.hpp"   // the carry re-reference erase rows
+#include "filter/NetworkAmbFloat.hpp"        // networkAmbFloatDeclaredHandover
+#include "filter/NetworkAnchorHygiene.hpp"   // eq34 reattach hygiene
+#include "filter/NetworkCarryDisposition.hpp"
+#include "filter/NetworkChainDatum.hpp"      // the eq34 chain datum
+#include "filter/NetworkHandoverStransform.hpp"
+#include "filter/NetworkPhaseDatum.hpp"      // census, anchor election, drop-and-heal
+#include "filter/NetworkPivotHandover.hpp"
+#include "filter/NetworkRunTypes.hpp"
+#include "filter/StateKeySchema.hpp"
+#include "logging/NetworkRunTraces.hpp"
+#include "rinex/MultiRinexSync.hpp"          // SyncedEpoch
+#include "slip/NetworkCommonBandScope.hpp"   // networkSplitReferencedSats
+
+#include <fmt/format.h>
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <cmath>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
+#include <tuple>
+#include <vector>
+
+namespace GnssProcessor {
+
+@FUNCTIONS@
+
+} // namespace GnssProcessor
+@@@ src/core/slip/NetworkGapResumeCensus.cpp:new
+/**
+ * @file NetworkGapResumeCensus.cpp
+ * @brief The arc-resumption bridge census of one network epoch (card G; card NOM3 step EP2).
+ *
+ * Every statement below a "From ..." preamble is the frozen text of
+ * Application::networkProcessEpoch_ (main 7141240), moved by scripts/nom_ep2_cut.py and checked
+ * by scripts/nom_ep2_verify.py.
+ */
+#include "slip/NetworkGapResumeCensus.hpp"
+
+#include "app/NetworkEpoch.hpp"   // NetworkEpoch
+#include "app/NetworkRun.hpp"     // NetworkRun
+#include "app/NetworkRunContext.hpp"
+#include "app/NetworkSetupResult.hpp"
+#include "common/GnssIdentity.hpp"                 // letterOfSat
+#include "filter/NetworkInvariantCarryDriver.hpp"  // carriedChordValue
+#include "filter/NetworkRunTypes.hpp"
+#include "filter/NetworkZStore.hpp"                // ArcKey
+#include "filter/StateKeySchema.hpp"
+#include "logging/NetworkRunTraces.hpp"
+#include "rinex/MultiRinexSync.hpp"                // SyncedEpoch
+#include "slip/NetworkSlipQc.hpp"                  // SlipQcChannel
+
+#include <fmt/format.h>
+
+#include <optional>
+#include <string>
+#include <tuple>
+
+namespace GnssProcessor {
+
+@FUNCTIONS@
+
+} // namespace GnssProcessor
+@@@ src/core/app/NetworkRun.cpp:anchor
+} // namespace GnssProcessor
+@@@ src/core/app/NetworkRun.cpp:before
+// ---- The epoch's section-timer frame (card NOM3 step EP2; frozen text of
+//      Application::networkProcessEpoch_, moved by scripts/nom_ep2_cut.py) ----
+
+@@@ src/core/app/NetworkRun.cpp:inc_anchor
+#include "app/NetworkRun.hpp"
+@@@ src/core/app/NetworkRun.cpp:inc
+#include "app/NetworkEpoch.hpp"          // NetworkEpoch (the readout's epoch, card NOM3 step EP2)
+#include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
+#include <fmt/format.h>
+#include <spdlog/spdlog.h>
+@@@ src/core/filter/NetworkAmbFloat.cpp:anchor
+// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+@@@ src/core/filter/NetworkAmbFloat.cpp:before
+// ---- The epoch form (card NOM3 step EP2; frozen text of Application::networkProcessEpoch_,
+//      moved by scripts/nom_ep2_cut.py) ----
+
+@@@ src/core/filter/NetworkAmbFloat.cpp:inc_anchor
+#include "filter/NetworkAmbFloat.hpp"
+@@@ src/core/filter/NetworkAmbFloat.cpp:inc
+#include "app/NetworkEpoch.hpp"          // NetworkEpoch (card NOM3 step EP2)
+#include "app/NetworkRun.hpp"            // NetworkRun (card NOM3 step EP2)
+#include "app/NetworkSetupResult.hpp"    // run.setup.stations
+#include "filter/NetworkResponses.hpp"   // networkResponseLatchTally
+#include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
+@@@ src/core/filter/NetworkDdPriorBuild.cpp:anchor
+} // namespace GnssProcessor
+@@@ src/core/filter/NetworkDdPriorBuild.cpp:before
+// ---- The DD carry's z-store predict (card NOM3 step EP2; frozen text of
+//      Application::networkProcessEpoch_, moved by scripts/nom_ep2_cut.py) ----
+
+@@@ src/core/filter/NetworkBlockBaarda.cpp:anchor
+// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+@@@ src/core/filter/NetworkBlockBaarda.cpp:before
+// ---- The predict half (card NOM3 step EP2; frozen text of Application::networkProcessEpoch_,
+//      moved by scripts/nom_ep2_cut.py) ----
+
+@@@ src/core/filter/NetworkCongruence.cpp:anchor
+// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+@@@ src/core/filter/NetworkCongruence.cpp:before
+// ---- The predict half (card NOM3 step EP2; frozen text of Application::networkProcessEpoch_,
+//      moved by scripts/nom_ep2_cut.py) ----
+
+@@@ src/core/filter/NetworkAmbStateTrace.cpp:anchor
+// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+@@@ src/core/filter/NetworkAmbStateTrace.cpp:before
+// ---- The buffered-row drains of cards LGM and AIL (card NOM3 step EP2; frozen text of
+//      Application::networkProcessEpoch_, moved by scripts/nom_ep2_cut.py) ----
+
+@@@ src/core/app/ApplicationNetworkEpoch.cpp:header
+ * Maintenance.  This file was written by the EP1 generator and cut by the EP2 generator
+ * (scripts/nom_ep2_cut.py, checked by scripts/nom_ep2_verify.py): step EP2 moved its inline
+ * blocks to their concerns (the admission, the slip funnel's drains, the phase datum, the
+ * gap-resume census, the float drop, the DD-carry predict, the section-timer frame) and the
+ * driver-side gates to their seams' first lines.  It is maintained by hand; nothing
+ * regenerates it.  Two checks guard every change: `python scripts/nom_epoch_lint.py` (the
+ * epoch function's reading, the post-solve write discipline, each group read only after its
+ * first writer, the writer banner of app/NetworkEpoch.hpp), run before any commit that touches
+ * this file, a seam signature or CMakeLists.txt; and tests/test_network_epoch_contract.cpp,
+ * whose casts pin every spine seam's epoch form at compile time.  Do not add code here;
+ * CLAUDE.md's decision tree names the seam each concern belongs in.
+@@@ src/core/app/ApplicationNetworkEpoch.cpp:includes
+#include "app/NetworkEpochAdmission.hpp"     // networkFastForward, networkAdmitEpoch (card NOM3 step EP2)
+#include "filter/NetworkSlipFunnel.hpp"       // the slip funnel's drains (card NOM3 step EP2)
+#include "filter/NetworkPhaseAnchorEpoch.hpp" // the phase datum of the epoch (card NOM3 step EP2)
+#include "slip/NetworkGapResumeCensus.hpp"    // the arc-resumption bridge census (card NOM3 step EP2)
+@@@ src/core/app/ApplicationNetworkEpoch.cpp:preamble_comment
+    // ---- The run under the names the remaining lines read (card NOM3 step EP1; generated by
+    //      scripts/nom_ep1_cut.py; each line the frozen runNetwork declaration with the run's
+    //      objects re-pointed).  Step EP2 removed the names only the moved blocks read. ----

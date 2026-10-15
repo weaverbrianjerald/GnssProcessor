@@ -82,6 +82,7 @@ void networkShSpectrum(NetworkRun& run, const NetworkEpoch& ep) {
     const SyncedEpoch& se = ep.se;
     NetworkEstimator& est = run.engines.est;
     // ---- End of the bindings ----
+    if (!ctx.knobs.trace_sh_spectrum) return;   // the driver's gate (card NOM3 step EP2)
     if (!traces.sh_spectrum_trace.is_open()) return;
 
     // reducedSharedNormals() is the cached Schur complement the datum rank gate
@@ -207,6 +208,7 @@ void networkPostfitSigma0(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     const std::vector<std::vector<PppObservation>>* modeled = &ep.pass_a.modeled;
     // ---- End of the bindings ----
+    if (!ctx.knobs.trace_postfit_on) return;   // the driver's gate (card NOM3 step EP2)
     (void)config_;   // toggles are expressed through which traces are open
     const std::size_t stations_n = stations.size();
     // Keyed extension (§4.3): active only while its trace is open; with the trace

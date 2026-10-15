@@ -575,7 +575,7 @@ void networkOraclePinEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunTraces& traces = run.traces;
     // ---- End of the bindings ----
     auto* pin = ctx.carry.oracle_pin.get();
-    if (!pin) return;                    // not reached when off (the caller tests too)
+    if (!pin) return;                    // the gate: no oracle_pin event (the driver's test went in card NOM3 step EP2)
 
     const auto& nc   = config_.getNetworkConfig();
     const double tow   = t.tow;

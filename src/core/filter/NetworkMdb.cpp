@@ -184,6 +184,7 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunTraces& traces = run.traces;
     const SyncedEpoch& se = ep.se;
     // ---- End of the bindings ----
+    if (!ctx.knobs.mdb_on) return;   // the driver's gate (card NOM3 step EP2)
     // Alias preamble (seam contract): the body reads the driver's names.
     const auto& nc      = config_.getNetworkConfig();
     auto& acc           = ctx.carry.mdb;

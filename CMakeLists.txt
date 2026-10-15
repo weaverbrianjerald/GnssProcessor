@@ -116,6 +116,7 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationNetwork.cpp
     src/core/app/ApplicationNetworkEpoch.cpp
     src/core/app/NetworkRun.cpp
+    src/core/app/NetworkEpochAdmission.cpp
     src/core/app/ApplicationNetworkSetup.cpp
     src/core/app/ApplicationConsumerReplay.cpp
     src/core/app/ApplicationNetworkAssembly.cpp
@@ -150,6 +151,7 @@ add_library(gnss_core STATIC
 	src/core/slip/SlipBridgeKernel.cpp
 	src/core/slip/NetworkRawObservables.cpp
 	src/core/slip/NetworkSlipQc.cpp
+	src/core/slip/NetworkGapResumeCensus.cpp
 	src/core/slip/NetworkSlipOracle.cpp
 	src/core/slip/NetworkCommonBandScope.cpp
 	src/core/slip/NetworkGfArcJump.cpp
@@ -204,6 +206,8 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkChannelAll.cpp
     src/core/filter/NetworkMultiGnss.cpp
     src/core/filter/NetworkPhaseDatum.cpp
+    src/core/filter/NetworkPhaseAnchorEpoch.cpp
+    src/core/filter/NetworkSlipFunnel.cpp
     src/core/filter/NetworkChainDatum.cpp
     src/core/filter/NetworkAnchorHygiene.cpp
     src/core/filter/NetworkSignalIntegrity.cpp

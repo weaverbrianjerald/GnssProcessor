@@ -226,6 +226,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     double now_s = ep.clock.pl_now_s;
     // ---- End of the bindings ----
+    if (phase == GrossLosPhase::Decide && !ctx.knobs.gl_emit_exclude) return;   // the driver's gate (card NOM3 step EP2)
     if (!ctx.knobs.gl_on) return;
     // The Act half applies the response deferred by this epoch's Decide pass (RF-3b
     // B3).  It is routed through this entry point so the driver has one call shape at
