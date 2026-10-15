@@ -2363,7 +2363,33 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
+   "subs": [
+    {
+     "line": 4477,
+     "from": "ctx.carry.rx_cb_sta_tally",
+     "to": "ctx.counters.rx_cb_sta_tally"
+    },
+    {
+     "line": 4487,
+     "from": "ctx.carry.rx_cb_sta_tally",
+     "to": "ctx.counters.rx_cb_sta_tally"
+    },
+    {
+     "line": 4495,
+     "from": "ctx.carry.rx_cb_injected_total",
+     "to": "ctx.counters.rx_cb_injected_total"
+    },
+    {
+     "line": 4495,
+     "from": "ctx.carry.rx_cb_innov_skips_total",
+     "to": "ctx.counters.rx_cb_innov_skips_total"
+    },
+    {
+     "line": 4496,
+     "from": "ctx.carry.rx_cb_harvested_total",
+     "to": "ctx.counters.rx_cb_harvested_total"
+    }
+   ],
    "drops": [
     4530,
     4531,

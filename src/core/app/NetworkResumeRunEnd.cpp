@@ -69,7 +69,7 @@ int networkResumeRestoreRunEnd(const NetworkRunEndView& v) {
     // to a live column; both edges are printed here.
     //
     // The census vectors hold one entry per row of the first post-resume harvest (the
-    // measure-only observatory in networkHarvestLocalCarries), so they are reduced here
+    // measure-only observatory networkResumeCouplingCensusRow), so they are reduced here
     // rather than accumulated online: nth_element is O(n), the run is over, and the
     // observatory stays byte-identical on every solve artifact.  The reduction works on
     // copies so the readout never permutes carried state.

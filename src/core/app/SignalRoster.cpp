@@ -1322,6 +1322,9 @@ namespace GnssProcessor {
         if (!rs.active) return;
         auto& ctr = ctx.counters.sid;
         Stopwatch watch(ctr.audit_ms);
+        // The N3b site census (app/SignalRosterSites.cpp): the rule sites of card NOM
+        // section 18 against this epoch's roster, after the IF pin wrote its datum role.
+        signalRosterSiteCensus(rs, ctr.n3b);
         // The epoch's continuous-GPS seconds, the unit every carry horizon is in.
         const double now_s = TimeUtils::continuousGpsSeconds(se.time);
 

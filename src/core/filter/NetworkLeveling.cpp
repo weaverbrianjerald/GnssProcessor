@@ -32,6 +32,7 @@
 #include <vector>
 #include "app/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
 #include "app/NetworkRun.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "app/NetworkLocalCarryHarvest.hpp"   // networkHarvestLocalCarries (card NOM3 step HV1)
 #include "app/NetworkSetupResult.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
@@ -42,36 +43,12 @@ void networkLeveling(NetworkRun& run, const NetworkEpoch& ep) {
     //      each line checked by scripts/nom_ep1_verify.py). Reads bind through `ep`; writes bind
     //      through the output parameters and are marked `// written`. ----
     NetworkRunContext& ctx = run.ctx;
-    const GnssConfig& config_ = run.config;
-    const std::shared_ptr<spdlog::logger>& log = run.log;
     NetworkRunTraces& traces = run.traces;
-    NetworkSetupResult& setup = run.setup;
     const SyncedEpoch& se = ep.se;
-    NetworkEstimator& est = run.engines.est;
-    const Eigen::VectorXd& x_s = ep.solve.x_s;
-    const NetworkSbasis::Plan& plan = ep.solve.plan;
-    const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
-    const std::vector<int>& est_index_of = ep.assembly.est_index_of;
-    NetworkCarryVce& carry_vce_est = run.engines.carry_vce;
-    NetworkPriorResidual& prires_est = run.engines.prires;
-    bool carry_warm = ep.clock.carry_warm;
-    double pl_now_s = ep.clock.pl_now_s;
-    const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;
-    const std::vector<std::pair<std::string, std::string>>& registered_code_keys =
-        ep.columns.registered_code_keys;
-    const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;
     // ---- End of the bindings ----
-    // --- Alias preamble: mechanically-derived run-TU aliases (+ reconstructions). --
-    auto& sh_model = setup.sh_model;
-    auto& sh_model2 = setup.sh_model2;   // Iono-2 dual-layer second shell (null unless armed)
-    auto& stations = setup.stations;
-
-
-    networkHarvestLocalCarries(ctx, config_, est, x_s, stations, est_index_of,
-                               asm_res, plan, sh_model.get(), sh_model2.get(),
-                               carry_vce_est, prires_est,
-                               carry_warm, pl_now_s, registered_clock_sats,
-                               shared_phase_keys, registered_code_keys);
+    // The station-local carries' harvest, stash and prune, kind by kind
+    // (app/NetworkLocalCarryHarvest.hpp, card NOM3 step HV1).
+    networkHarvestLocalCarries(run, ep);
 
     // --- eq34 (sat,σ) re-reference attribution rows (SPEC_lane_slip_response §7.7)
     // The chain datum counts its re-references, but without these rows only the

@@ -1173,6 +1173,14 @@ POST_CUT = {
         why="C19: the LV-1, LV-2, LV-4, LV-5 and S2H lines",
         drops=_span((4530, 4558), (4563, 4570), (4576, 4600), (4607, 4637), (4663, 4693), (4698, 4728)),
         no_alias=['stations'],
+        # card NOM3 step HV1b: the four rx-CB run fields moved to the service counters
+        subs=[
+            (4477, "ctx.carry.rx_cb_sta_tally", "ctx.counters.rx_cb_sta_tally"),
+            (4487, "ctx.carry.rx_cb_sta_tally", "ctx.counters.rx_cb_sta_tally"),
+            (4495, "ctx.carry.rx_cb_injected_total", "ctx.counters.rx_cb_injected_total"),
+            (4495, "ctx.carry.rx_cb_innov_skips_total", "ctx.counters.rx_cb_innov_skips_total"),
+            (4496, "ctx.carry.rx_cb_harvested_total", "ctx.counters.rx_cb_harvested_total"),
+        ],
     ),
     "networkSbasisDatumRunEnd": dict(
         why="C20: the IF-LEVEL-DATUM (RF-0e e1) lines and the SAT-GF TIME-LINK pointer to them",
