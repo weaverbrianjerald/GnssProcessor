@@ -235,7 +235,8 @@ INERT clauses for armed knobs that never acted. These lines are the run's own te
 (an armed knob reading "0 driven" is dead wiring), and grading scripts parse them.
 
 The run end is a table. `include\filter\NetworkRunEnd.hpp` declares
-`kNetworkRunEndReports`: 107 reports in print order, each row naming what it reports and
+`kNetworkRunEndReports`: 83 rows in print order, one report per subsystem (each printed
+under a `Network[run-end] <row name>` heading line), each row naming what it reports and
 the file it lives in. `networkTeardown` (`src\core\filter\NetworkTeardown.cpp`, 68 lines)
 walks the table. A report is one function, `int networkXxxRunEnd(const NetworkRunEndView&)`,
 in the file of the subsystem it describes: the RAIM pool's report is in `NetworkRaim.cpp`,
