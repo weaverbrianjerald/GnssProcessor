@@ -10,6 +10,7 @@ generator and its verifier are built from: types in code, every cut range, every
 | `SG_design.md` | SG: the solve glue as a linear orchestrator of typed stages; the five exits a declared table | main `31c393f` plus the deletion's track branches merged | designed and adversarially checked (2026-10-14); not pre-registered |
 | `PB1_design.md` | PB1: PASS B's stages in the epoch form, then the produce loop as a declared per-station step table with the parallel contract as a type | as SG | as SG |
 | `HV1_design.md` | HV1: the station-local carry harvest cut by carried kind under one orchestrator | as SG | as SG |
+| `N4_design.md`, `N4_fields.tsv` | NOM N4 and N5: entity tables own the run state (one entity per sub-step, persistence declared per field, the snapshot records filled from the declarations), then `EpochEvents` and entity-table bindings; the TSV places every `NetworkCarryState` member | `nom/wave3` `4816d1d` | designed and pre-registered (2026-10-15); defaults stated, not built |
 
 How to read them:
 
