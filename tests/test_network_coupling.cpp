@@ -34,7 +34,7 @@ namespace {
 struct BuilderFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
+    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1}, sh_col{-1}, clk2_col{-1};
 
@@ -263,7 +263,7 @@ TEST(NetworkCouplingTest, GaugeProjectIsIdenticalWhenNothingTruncated) {
 TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
     BuilderFixture f;
     // A (kind,sat,signal) mark, as the phase-anchor / eq34 re-reference feeds write it.
-    f.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", "L1C"}] = 100.0;
+    net::put(f.tu_reinit_hist, *net::satSignalKey("G01", "L1C"), &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = 100.0;
     LocalCarry lc;
     lc.value_abs = 0.0;
     lc.last_seen_s = 50.0;            // harvested before the re-realization at t=100
@@ -279,7 +279,7 @@ TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
 
     // kappa still off, card 1g on: it takes the departed route (kappa = 0).
     BuilderFixture g;
-    g.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", "L1C"}] = 100.0;
+    net::put(g.tu_reinit_hist, *net::satSignalKey("G01", "L1C"), &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = 100.0;
     auto fixed = g.builder(/*tu=*/false, /*gauge=*/false, /*reinit=*/true);
     fixed.buildCplRow(0, 0.0, lc, 0.01, 30.0);
     ASSERT_EQ(fixed.crows.size(), 1u);
@@ -292,7 +292,7 @@ TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
 // every signal of that satellite, so the widened key still covers the legacy feed.
 TEST(NetworkCouplingTest, ReinitSatWideWildcardMatchesAnySignal) {
     BuilderFixture f;
-    f.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", std::string{}}] = 100.0;
+    net::put(f.tu_reinit_hist, *net::satSignalKey("G01", ""), &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = 100.0;
     LocalCarry lc;
     lc.value_abs = 0.0;
     lc.last_seen_s = 50.0;

@@ -195,7 +195,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // is armed.
     const bool harvest_pb_levels =
         ctx.knobs.pin_bridge_on || ctx.knobs.sbasis_complete_on;
-    if (harvest_pb_levels) ctx.carry.pb_level_prev.clear();
+    if (harvest_pb_levels) net::dropAll(ctx.entities.sat_signals, &net::SatSignalState::pb_level_prev);
     for (const auto& pk : shared_phase_keys) {
         const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
         if (!parts) continue;
@@ -218,8 +218,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 const double v =
                     x_s(est.phaseBiasColumn(parts->satellite, parts->signal));
                 if (std::isfinite(v))
-                    ctx.carry.pb_level_prev[StateKeys::makeAmbiguityKey(parts->satellite,
-                                                                        parts->signal)] = v;
+                    net::putSig(ctx.entities, StateKeys::makeAmbiguityKey(parts->satellite, parts->signal),
+                                &net::SatSignalState::pb_level_prev) = v;
             } catch (...) {}
         }
         // The DD invariant carry is the phase time-link, so the S-dependent shared

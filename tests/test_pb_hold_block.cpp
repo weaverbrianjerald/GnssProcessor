@@ -437,22 +437,22 @@ TEST(PbHoldBlockTest, ABlockRetiresAtAReReferenceOrANewTenureOfItsPair) {
     ASSERT_TRUE(ctx->knobs.emit_pb_hold_smoothed);
     ctx->counters.n_loop_epochs = 7;
     auto& carry = ctx->carry;
-    carry.smh_block["G32|L1W"] = liveBlock("G32", "L1W", 6);
-    carry.smh_block["G12|L1W"] = liveBlock("G12", "L1C", 6);
-    carry.smh_block["G05|L1W"] = liveBlock("G05", "L1W", 6);
-    carry.smh_block["G07|L1W"] = liveBlock("G07", "L1W", 6);
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block) = liveBlock("G32", "L1W", 6);
+    net::putSig(ctx->entities, "G12|L1W", &net::SatSignalState::smh_block) = liveBlock("G12", "L1C", 6);
+    net::putSig(ctx->entities, "G05|L1W", &net::SatSignalState::smh_block) = liveBlock("G05", "L1W", 6);
+    net::putSig(ctx->entities, "G07|L1W", &net::SatSignalState::smh_block) = liveBlock("G07", "L1W", 6);
     for (const char* s : {"G32", "G12", "G05", "G07"}) {
         carry.clk_anchor.sat[s].anchored        = true;
         carry.clk_anchor.sat[s].folded_anchored = true;
     }
     carry.phase_anchor_reref.insert({"G32", "L2W"});         // a cold handover of G32's L2W
-    carry.phase_basis["G12_L1C"].elected_ep = 7;             // a continuous handover of G12's L1C
-    carry.phase_basis["G05_L1C"].elected_ep = 7;             // outside G05's pair: no step of D
-    carry.phase_basis["G07_L1W"].elected_ep = 6;             // an earlier tenure
+    net::putSig(ctx->entities, "G12_L1C", &net::SatSignalState::phase_basis).elected_ep = 7;             // a continuous handover of G12's L1C
+    net::putSig(ctx->entities, "G05_L1C", &net::SatSignalState::phase_basis).elected_ep = 7;             // outside G05's pair: no step of D
+    net::putSig(ctx->entities, "G07_L1W", &net::SatSignalState::phase_basis).elected_ep = 6;             // an earlier tenure
     NetworkEpoch& e = fx->newEpoch(GnssTime{});   // an empty workspace and datum, the run's estimator
     e.solve.x_s = Eigen::VectorXd::Zero(1);
     networkPbHoldCloneUpdate(fx->run(), e);
-    const auto& b = carry.smh_block;
+    const auto b = net::sigMap(ctx->entities.sat_signals, &net::SatSignalState::smh_block, '|');
     EXPECT_EQ(b.at("G32|L1W").death, PbHoldCloneDeath::Followed);
     EXPECT_EQ(b.at("G32|L1W").follow, PbHoldFollow::Reref);
     EXPECT_EQ(b.at("G12|L1W").death, PbHoldCloneDeath::Followed);
@@ -462,12 +462,12 @@ TEST(PbHoldBlockTest, ABlockRetiresAtAReReferenceOrANewTenureOfItsPair) {
     EXPECT_EQ(b.at("G07|L1W").death, PbHoldCloneDeath::Unfactored);
     EXPECT_EQ(ctx->counters.smh_pv_follow[static_cast<int>(PbHoldFollow::Reref)], 1);
     EXPECT_EQ(ctx->counters.smh_pv_follow[static_cast<int>(PbHoldFollow::Tenure)], 1);
-    const auto& pend = carry.smh_block_pending;
+    const auto pend = net::sigMap(ctx->entities.sat_signals, &net::SatSignalState::smh_block_pending, '|');
     ASSERT_EQ(pend.size(), 2u);
     EXPECT_TRUE(pend.at("G32|L1W").rebirth);
     EXPECT_TRUE(pend.at("G32|L1W").block);
     EXPECT_EQ(pend.at("G12|L1W").queued_ep, 7);
-    EXPECT_TRUE(carry.smh_clone.empty()) << "card SMH's clock clones are untouched";
+    EXPECT_TRUE((net::present(ctx->entities.sat_signals, &net::SatSignalState::smh_clone) == 0)) << "card SMH's clock clones are untouched";
 }
 
 TEST(PbHoldBlockTest, ABlockIsBornWithItsPairFromTheStash) {
@@ -476,12 +476,12 @@ TEST(PbHoldBlockTest, ABlockIsBornWithItsPairFromTheStash) {
     NetworkRunContext* ctx = &fx->ctx();
     auto& carry = ctx->carry;
     for (const char* s : {"G32", "G12"}) {
-        NetworkCarryState::PbHoldKey k;
+        net::PbHoldKey k;
         k.generation = 1;
-        carry.pb_hold[std::string(s) + "|L1W"] = k;
+        net::putSig(ctx->entities, std::string(s) + "|L1W", &net::SatSignalState::pb_hold) = k;
         PbHoldClone pc;
         pc.sat = s; pc.signal = "L1W"; pc.generation = 1; pc.queued_ep = 1; pc.block = true;
-        carry.smh_block_pending[std::string(s) + "|L1W"] = pc;
+        net::putSig(ctx->entities, std::string(s) + "|L1W", &net::SatSignalState::smh_block_pending) = pc;
         carry.clk_anchor.sat[s].anchored = true;
     }
     // G32: a clock and three phase biases; G12: a clock and L1C alone (one band).
@@ -509,8 +509,8 @@ TEST(PbHoldBlockTest, ABlockIsBornWithItsPairFromTheStash) {
     NetworkEpoch& e = fx->newEpoch(GnssTime{ 0, 200.0 });   // continuous GPS seconds 200
     e.solve.x_s = Eigen::VectorXd::Zero(1);
     networkPbHoldCloneHarvest(fx->run(), e);
-    ASSERT_EQ(carry.smh_block.count("G32|L1W"), 1u);
-    const PbHoldClone& c = carry.smh_block.at("G32|L1W");
+    ASSERT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_block) ? 1u : 0u), 1u);
+    const PbHoldClone& c = (*net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_block));
     EXPECT_TRUE(c.alive);
     EXPECT_TRUE(c.block);
     ASSERT_EQ(c.pv_pair.sig.size(), 2u);
@@ -525,8 +525,8 @@ TEST(PbHoldBlockTest, ABlockIsBornWithItsPairFromTheStash) {
     EXPECT_EQ(ctx->counters.smh_pv_births, 1);
     EXPECT_EQ(ctx->counters.smh_pv_pairs.at("L1W+L2W"), 1);
     EXPECT_EQ(ctx->counters.smh_pv_defer_nopair, 1) << "G12 has one band";
-    EXPECT_EQ(carry.smh_block_pending.count("G12|L1W"), 1u);
-    EXPECT_TRUE(carry.smh_clone.empty());
+    EXPECT_EQ((net::getSig(ctx->entities.sat_signals, "G12|L1W", &net::SatSignalState::smh_block_pending) ? 1u : 0u), 1u);
+    EXPECT_TRUE((net::present(ctx->entities.sat_signals, &net::SatSignalState::smh_clone) == 0));
 }
 
 /// One satellite of a test epoch.
@@ -574,20 +574,20 @@ TEST(PbHoldBlockTest, AMarkRetiresTheBlockBesideTheWritingClockClone) {
     };
     auto e1 = smdEpoch(100.0, {{"G32", 10.0, 1.0}, {"G12", 20.0, 2.0}, {"G05", 30.0, 3.0}});
     step(e1, 1);
-    ASSERT_EQ(ctx->carry.smh_block_pending.count("G32|L1W"), 1u) << "the generation queues its block";
-    ctx->carry.smh_block_pending.clear();
-    ctx->carry.smh_pending.clear();
+    ASSERT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_block_pending) ? 1u : 0u), 1u) << "the generation queues its block";
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_block_pending);
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_pending);
     // Epoch 2: card SMH's clock clone passed 2 cm and writes the wire.  The key's block
     // clone beside it revised D(t0) by +3 cm (Phi_D = -3 cm) on the same clock motion, and
     // the split is recorded.
     PbHoldClone clk = liveBlock("G32", "L1W", 2);
     clk.block = false;
     clk.phi   = 0.02;
-    ctx->carry.smh_clone["G32|L1W"] = clk;
-    ctx->carry.smh_block["G32|L1W"] = liveBlock("G32", "L1W", 2);
-    ctx->carry.smh_block["G32|L1W"].pv_phi = -0.03;
-    ctx->carry.smh_block["G32|L1W"].phi    = 0.02;
-    ctx->carry.smh_block["G32|L1W"].pv_step_d = 0.003;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone) = clk;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block) = liveBlock("G32", "L1W", 2);
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).pv_phi = -0.03;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).phi    = 0.02;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).pv_step_d = 0.003;
     auto e2 = smdEpoch(130.0, {{"G32", 10.0, 1.5}, {"G12", 20.0, 2.5}, {"G05", 30.0, 3.5}});
     step(e2, 2);
     EXPECT_NEAR(pbOf(e2, "G32"), 0.98, 1e-12) << "card SMH's Phi writes";
@@ -596,25 +596,25 @@ TEST(PbHoldBlockTest, AMarkRetiresTheBlockBesideTheWritingClockClone) {
     EXPECT_EQ(ctx->counters.smh_pv_steps_unmarked, 0);
     // Epoch 3: an emitter mark on G32's phase channel retires the block; the clock clone
     // goes on writing, so the key does not bridge.
-    ctx->carry.smh_clone["G32|L1W"].updated_ep = 3;
-    ctx->carry.smh_block["G32|L1W"].pv_phi     = -0.04;
-    ctx->carry.smh_block["G32|L1W"].updated_ep = 3;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).updated_ep = 3;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).pv_phi     = -0.04;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).updated_ep = 3;
     emitter.markSatDiscontinuity({"G32"}, NetworkProductEmitter::kDiscChanPhaseBias);
     auto e3 = smdEpoch(160.0, {{"G32", 10.0, 1.7}, {"G12", 20.0, 2.7}, {"G05", 30.0, 3.7}});
     step(e3, 3);
     EXPECT_NEAR(pbOf(e3, "G32"), 0.98, 1e-12);
-    EXPECT_EQ(ctx->carry.smh_block.at("G32|L1W").death, PbHoldCloneDeath::Followed);
-    EXPECT_EQ(ctx->carry.smh_block.at("G32|L1W").follow, PbHoldFollow::Mark);
+    EXPECT_EQ((*net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_block)).death, PbHoldCloneDeath::Followed);
+    EXPECT_EQ((*net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_block)).follow, PbHoldFollow::Mark);
     EXPECT_EQ(ctx->counters.smh_pv_follow[static_cast<int>(PbHoldFollow::Mark)], 1);
-    EXPECT_EQ(ctx->carry.smh_block_pending.count("G32|L1W"), 1u) << "born again at this stash";
+    EXPECT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_block_pending) ? 1u : 0u), 1u) << "born again at this stash";
     EXPECT_EQ(ctx->counters.smh_bridges, 0) << "the mark retires the block, not the writing clone";
     EXPECT_EQ(ctx->counters.smh_reverts, 0);
     // Epoch 4: born again; a pair step above the emitter's 5 cm bar with nothing declared is
     // an unmarked step, passed as motion.
-    ctx->carry.smh_clone["G32|L1W"].updated_ep = 4;
-    ctx->carry.smh_block["G32|L1W"] = liveBlock("G32", "L1W", 4);
-    ctx->carry.smh_block["G32|L1W"].pv_phi  = -0.01;
-    ctx->carry.smh_block["G32|L1W"].pv_step_d = 0.08;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).updated_ep = 4;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block) = liveBlock("G32", "L1W", 4);
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).pv_phi  = -0.01;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).pv_step_d = 0.08;
     auto e4 = smdEpoch(190.0, {{"G32", 10.0, 1.9}, {"G12", 20.0, 2.9}, {"G05", 30.0, 3.9}});
     step(e4, 4);
     EXPECT_NEAR(pbOf(e4, "G32"), 0.98, 1e-12);
@@ -645,18 +645,18 @@ TEST(PbHoldBlockTest, ASwitchToTheBridgeKeepsTheEpochsClockStep) {
     };
     auto e1 = smdEpoch(100.0, {{"G32", 10.0, 1.0}, {"G12", 20.0, 2.0}, {"G05", 30.0, 3.0}});
     step(e1, 1);
-    ctx->carry.smh_block_pending.clear();
-    ctx->carry.smh_pending.clear();
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_block_pending);
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_pending);
     PbHoldClone clk = liveBlock("G32", "L1W", 2);
     clk.block = false;
     clk.phi   = -0.03;
-    ctx->carry.smh_clone["G32|L1W"] = clk;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone) = clk;
     auto e2 = smdEpoch(130.0, {{"G32", 10.0, 1.5}, {"G12", 20.0, 2.5}, {"G05", 30.0, 3.5}});
     step(e2, 2);
     EXPECT_NEAR(pbOf(e2, "G32"), 1.03, 1e-12);
     // Epoch 3: the anchor withdraws the clock (the clone dies), and G32's clock moves 5 cm.
-    ctx->carry.smh_clone["G32|L1W"].alive = false;
-    ctx->carry.smh_clone["G32|L1W"].death = PbHoldCloneDeath::Withdrawn;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).alive = false;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).death = PbHoldCloneDeath::Withdrawn;
     auto e3 = smdEpoch(160.0, {{"G32", 10.05, 1.7}, {"G12", 20.0, 2.7}, {"G05", 30.0, 3.7}});
     step(e3, 3);
     EXPECT_NEAR(pbOf(e3, "G32"), 1.08, 1e-12) << "the bridge takes this epoch's clock step";
@@ -684,15 +684,15 @@ TEST(PbHoldBlockTest, TheClockMemberIgnoresTheBlockOnTheWire) {
     };
     auto e1 = smdEpoch(100.0, {{"G32", 10.0, 1.0}, {"G12", 20.0, 2.0}});
     step(e1, 1);
-    ctx->carry.smh_block_pending.clear();
-    ctx->carry.smh_pending.clear();
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_block_pending);
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_pending);
     PbHoldClone c = liveBlock("G32", "L1W", 2);
     c.block = false;
     c.phi   = -0.02;
-    ctx->carry.smh_clone["G32|L1W"] = c;
-    ctx->carry.smh_block["G32|L1W"] = liveBlock("G32", "L1W", 2);
-    ctx->carry.smh_block["G32|L1W"].pv_phi = -0.07;
-    ctx->carry.smh_block["G32|L1W"].phi    = -0.02;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone) = c;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block) = liveBlock("G32", "L1W", 2);
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).pv_phi = -0.07;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).phi    = -0.02;
     auto e2 = smdEpoch(130.0, {{"G32", 10.0, 1.5}, {"G12", 20.0, 2.5}});
     step(e2, 2);
     EXPECT_NEAR(pbOf(e2, "G32"), 1.02, 1e-12) << "card SMH's Phi writes; the block is an instrument";

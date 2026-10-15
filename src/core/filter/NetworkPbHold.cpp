@@ -102,7 +102,8 @@ void networkPbHold(NetworkRunContext& ctx,
         return;
     }
 
-    auto&        hold      = ctx.carry.pb_hold;
+    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pb_hold and the clones (card NOM step N4d)
+    using SG = net::SatSignalState;
     auto&        prev_clk  = ctx.carry.pb_hold_prev_clock_m;
     const double max_gap_s = ctx.knobs.emit_pb_hold_max_gap_s;
     const double epoch_s   = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
@@ -171,18 +172,18 @@ void networkPbHold(NetworkRunContext& ctx,
 
         for (auto& [signal, npb] : s.phase_bias) {
             const std::string key = s.sat + "|" + signal;
-            auto  it    = hold.find(key);
-            const bool first = (it == hold.end());
+            net::PbHoldKey* it = net::getSig(sigs, key, &SG::pb_hold);
+            const bool first = (it == nullptr);
             const bool gap   = !first && max_gap_s > 0.0
-                               && (epoch_s - it->second.last_emit_s) > max_gap_s;
+                               && (epoch_s - it->last_emit_s) > max_gap_s;
 
             if (first || gap) {
                 // Re-coupling edge: a generation starts here.  The current estimate
                 // becomes the held value (the one epoch per generation at which the
                 // wire equals the estimate), and the declaration is the stamped
                 // generation number, which the consumer reacts to.
-                NetworkCarryState::PbHoldKey st;
-                st.generation  = first ? 1u : (it->second.generation + 1u);
+                net::PbHoldKey st;
+                st.generation  = first ? 1u : (it->generation + 1u);
                 st.held_m      = npb.bias_m;
                 st.last_emit_s = epoch_s;
                 if (has_frz) {                // the phase-visible clock is held from here (card LAH)
@@ -193,25 +194,25 @@ void networkPbHold(NetworkRunContext& ctx,
                     // Card SMH: the generation's clock clone is born at this epoch's
                     // stash, or at the first later one at which card Q3's anchor holds
                     // the clock (section 9); the previous generation's clone retires here.
-                    ctx.carry.smh_clone.erase(key);
+                    net::dropSig(sigs, key, &SG::smh_clone);
                     PbHoldClone pc;
                     pc.sat        = s.sat;
                     pc.signal     = signal;
                     pc.generation = st.generation;
                     pc.queued_ep  = loop_ep;
-                    ctx.carry.smh_pending[key] = pc;
+                    net::putSig(ctx.entities, key, &SG::smh_pending) = pc;
                     // Card SMD: the generation's block clone, under the same rule.
-                    ctx.carry.smh_block.erase(key);
+                    net::dropSig(sigs, key, &SG::smh_block);
                     pc.block = true;
-                    ctx.carry.smh_block_pending[key] = pc;
+                    net::putSig(ctx.entities, key, &SG::smh_block_pending) = pc;
                 }
                 if (first) {
-                    hold.emplace(key, st);
+                    net::putSig(ctx.entities, key, &SG::pb_hold) = st;
                     ++ctx.counters.n_pbh_keys;
                     ++ctx.counters.n_pbh_gen_first;
                 } else {
-                    const double prev_gap = epoch_s - it->second.last_emit_s;
-                    it->second = st;
+                    const double prev_gap = epoch_s - it->last_emit_s;
+                    *it = st;
                     ++ctx.counters.n_pbh_gen_gap;
                     traces.emitEvent(se.time, "PB_HOLD", "gen_start", s.sat, "",
                                      prev_gap, max_gap_s, "gap",
@@ -231,7 +232,7 @@ void networkPbHold(NetworkRunContext& ctx,
 
             // Decoupling edge: the hold writes.  |estimate - held| is the whole cost,
             // and it is recorded on every held emission, not sampled.
-            auto& st = it->second;
+            auto& st = *it;
             double held_emit = st.held_m;
             // Card LAH: the held phase bias moves with the satellite's common-removed
             // clock, so c - p stays at its generation-start value.  An epoch without the
@@ -256,18 +257,17 @@ void networkPbHold(NetworkRunContext& ctx,
                     [&emitter, &s](const std::string& sg) { return emitter.discThresholdM(s.sat, sg); });
                 // The member that writes: card SMH's clock clone.  Card SMD's block clone
                 // is an instrument only (above, and the trace columns below).
-                auto&      wmap = ctx.carry.smh_clone;
-                const auto cit  = wmap.find(key);
-                const bool mine = cit != wmap.end() && cit->second.generation == st.generation;
-                const bool live = !st.smh_reverted && mine && cit->second.alive
-                                  && cit->second.updated_ep == loop_ep;
-                const bool structural = mine && !cit->second.alive
-                                        && cit->second.death != PbHoldCloneDeath::Withdrawn
-                                        && cit->second.death != PbHoldCloneDeath::Disengaged
-                                        && cit->second.death != PbHoldCloneDeath::Followed
-                                        && cit->second.death != PbHoldCloneDeath::PairLost;
+                const PbHoldClone* cit = net::getSig(sigs, key, &SG::smh_clone);
+                const bool mine = cit && cit->generation == st.generation;
+                const bool live = !st.smh_reverted && mine && cit->alive
+                                  && cit->updated_ep == loop_ep;
+                const bool structural = mine && !cit->alive
+                                        && cit->death != PbHoldCloneDeath::Withdrawn
+                                        && cit->death != PbHoldCloneDeath::Disengaged
+                                        && cit->death != PbHoldCloneDeath::Followed
+                                        && cit->death != PbHoldCloneDeath::PairLost;
                 if (live) {
-                    const PbHoldClone& c = cit->second;
+                    const PbHoldClone& c = *cit;
                     const double nan = std::numeric_limits<double>::quiet_NaN();
                     // The writing row: the clock row.
                     const double c_phi     = c.phi;
@@ -319,11 +319,11 @@ void networkPbHold(NetworkRunContext& ctx,
                         // Card REV: then the revision, the step, the stated variance of D(t0)
                         // (now and at birth), the filtered variance of D and the epoch's walk.
                         std::string bcols = ",,,,,,,,,,,,,";
-                        const auto bit = ctx.carry.smh_block.find(key);
-                        if (bit != ctx.carry.smh_block.end() && bit->second.generation == st.generation
-                            && bit->second.alive && bit->second.updated_ep == loop_ep
-                            && bit->second.phi_ok && bit->second.pv_phi_ok) {
-                            const PbHoldClone& b = bit->second;
+                        const PbHoldClone* bit = net::getSig(sigs, key, &SG::smh_block);
+                        if (bit && bit->generation == st.generation
+                            && bit->alive && bit->updated_ep == loop_ep
+                            && bit->phi_ok && bit->pv_phi_ok) {
+                            const PbHoldClone& b = *bit;
                             const double bden = b.pv_W - b.pv_vpost;
                             std::string pair;
                             for (std::size_t j = 0; j < b.pv_pair.sig.size(); ++j)
@@ -367,7 +367,7 @@ void networkPbHold(NetworkRunContext& ctx,
                         st.frz_last     = st.smh_last;
                         st.smh_on_clone = false;
                     }
-                    const int why = mine ? static_cast<int>(cit->second.death) : -1;
+                    const int why = mine ? static_cast<int>(cit->death) : -1;
                     if (structural) {
                         st.smh_reverted = true;
                         ++ctx.counters.smh_reverts;

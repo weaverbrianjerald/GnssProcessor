@@ -199,8 +199,8 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // byte.  Whether a resume uses the rows is the resume-side knob
         // network.resume_frame_restore.
         if (nc.state_snapshot_frame_capture) {
-        snap.anchor_incumbent  = ctx.carry.anchor_incumbent;
-        snap.anchor_pin_target = ctx.carry.anchor_pin_target;
+        net::recordToSnapshot("PA", ctx, snap);   // the satellite signals (N4d)
+        net::recordToSnapshot("PT", ctx, snap);   // the satellite signals (N4d)
         for (const auto& [sat, st] : ctx.carry.clk_anchor.sat) {
             if (!(st.t_last > 0.0)) continue;   // never folded: nothing to carry
             NetworkStateSnapshot::ClockAnchorSat cs;

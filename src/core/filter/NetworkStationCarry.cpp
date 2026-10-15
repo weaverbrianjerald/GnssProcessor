@@ -131,7 +131,7 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
     const bool   rx_cb_on      = ctx.knobs.rx_cb_on;             // rx-CB carry (SPEC_rx_cb_carry)
     const bool   rx_cb_datum  = ctx.knobs.rx_cb_datum;           // zero-mean-over-receivers DCB datum (RXCB-DATUM; shares the pl_cb walk with the carry)
     const bool carry_invariant         = ctx.knobs.carry_invariant;
-    auto& tu_reinit_hist = ctx.carry.tu_reinit_hist;
+    const net::SatSignalTable& sat_signals = ctx.entities.sat_signals;   // tu_reinit (N4d)
     // ---- End of the bindings ----
 
     // --- Phase-leveling carry: record present ambiguities and build the
@@ -175,7 +175,7 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
                             CouplingRowBuilder{est, shc, q_clock, q_cb, q_pb,
                                                carry_cpl_tu,
                                                ctx.knobs.carry_cpl_gauge, ctx.knobs.carry_cpl_reinit,
-                                               tu_reinit_hist, R}};
+                                               sat_signals, R}};
     const Eigen::VectorXd& x_lin = carry.x_lin;
     std::vector<std::tuple<Eigen::Index, double, double, RowTag>>& inj = carry.inj;  // (col, Λ, η, tag): legacy diagonal path (the tag: card NOM N2a)
     // The pre-PD half of the same channel (card RF-PD-fix).  Rows land here

@@ -30,6 +30,7 @@ using SS = net::StationSignalState;
 using C  = net::ConstellationState;
 using Ch = net::ChannelState;
 using L  = net::LosState;
+using G  = net::SatSignalState;
 
 /// A run context on the default configuration (the record functions read its knobs).
 struct Ctx {
@@ -287,6 +288,61 @@ TEST(NetworkEntitiesRecords, LosKeysRoundTripInTheOldOrder) {
     EXPECT_FALSE(net::losOf(e, 0, "XYZ").has_value());
     EXPECT_EQ(e.reach.failures[static_cast<std::size_t>(net::Converter::Satellite)], 1);
     EXPECT_EQ(net::present(e.los, &L::arc_spike_streak), keys.size());
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripPA) {
+    Ctx a, b;
+    net::putSig(a.ctx.entities, "G24_L1C", &G::anchor_incumbent) = "WTZZ00DEU";
+    net::putSig(a.ctx.entities, "E11_L5Q", &G::anchor_incumbent) = "MAJU00MHL";
+    net::putSig(a.ctx.entities, "G05_L2W", &G::pb_level_prev) = 0.25;   // a row without the field
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("PA", a.ctx, snap);
+    ASSERT_EQ(snap.anchor_incumbent.size(), 2u);
+    EXPECT_EQ(snap.anchor_incumbent.begin()->first, "E11_L5Q");   // the pre-N4d key shape
+    roundTrip("PA", a.ctx, b.ctx);
+    const net::SatSignalTable& r = b.ctx.entities.sat_signals;
+    EXPECT_EQ(net::present(r, &G::anchor_incumbent), 2u);
+    EXPECT_EQ(*net::getSig(r, "G24_L1C", &G::anchor_incumbent), "WTZZ00DEU");
+    EXPECT_EQ(*net::getSig(r, "E11_L5Q", &G::anchor_incumbent), "MAJU00MHL");
+    EXPECT_EQ(net::getSig(r, "G05_L2W", &G::anchor_incumbent), nullptr);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripPT) {
+    Ctx a, b;
+    net::putSig(a.ctx.entities, "E02_L5Q", &G::anchor_pin_target) = -28.981234567;
+    net::putSig(a.ctx.entities, "G24_L1C", &G::anchor_pin_target) = 0.0625;
+    net::putSig(a.ctx.entities, "G05_L2W", &G::anchor_incumbent) = "ABMF00GLP";   // without the field
+    roundTrip("PT", a.ctx, b.ctx);
+    const net::SatSignalTable& r = b.ctx.entities.sat_signals;
+    EXPECT_EQ(net::present(r, &G::anchor_pin_target), 2u);
+    EXPECT_EQ(*net::getSig(r, "E02_L5Q", &G::anchor_pin_target), -28.981234567);
+    EXPECT_EQ(*net::getSig(r, "G24_L1C", &G::anchor_pin_target), 0.0625);
+    EXPECT_EQ(net::getSig(r, "G05_L2W", &G::anchor_pin_target), nullptr);
+}
+
+TEST(NetworkEntitiesRecords, SatSignalKeysRoundTripInTheOldOrder) {
+    // O1 and O2: an ambiguity-form key and a hold-form key name the same satellite signal; the
+    // table iterates in the string order of either form; "" is the satellite-wide wildcard,
+    // and a code-type or non-canonical key does not round-trip (counted by the writer).
+    net::NetworkEntities e;
+    const std::vector<std::string> keys{"C19_L2I", "E05_L1C", "E05_L1X", "E05_L5Q", "G05_",
+                                        "G05_L1C", "G05_L2W", "G10_L1C", "R08_L1C"};
+    for (auto it = keys.rbegin(); it != keys.rend(); ++it)
+        net::putSig(e, *it, &G::pb_level_prev) = 1.0;
+    std::vector<std::string> walked;
+    net::forEach(e.sat_signals, &G::pb_level_prev,
+                 [&](const SatSignalId& id, double) { walked.push_back(net::ambKey(id)); });
+    EXPECT_EQ(walked, keys);
+    EXPECT_EQ(net::satSignalKey("G05|L1C"), net::satSignalKey("G05_L1C"));
+    EXPECT_EQ(net::holdKey(*net::satSignalKey("G05_L1C")), "G05|L1C");
+    EXPECT_FALSE(net::satSignalKey("G05_C1C").has_value());
+    EXPECT_FALSE(net::satSignalKey("G5_L1C").has_value());
+    EXPECT_FALSE(net::satSignalOf(e, "G05").has_value());
+    EXPECT_EQ(e.reach.failures[static_cast<std::size_t>(net::Converter::SatSignal)], 1);
+    EXPECT_EQ(net::present(e.sat_signals, &G::pb_level_prev), keys.size());
+    EXPECT_TRUE(net::emplaceSig(e, "G24_L1C", &G::pb_level_prev, 2.0));
+    EXPECT_FALSE(net::emplaceSig(e, "G24_L1C", &G::pb_level_prev, 3.0));
+    EXPECT_EQ(*net::getSig(e.sat_signals, "G24_L1C", &G::pb_level_prev), 2.0);
 }
 
 TEST(NetworkEntitiesRecords, EveryRecordRowIsDeclaredOnceAndRestoredInOrder) {

@@ -507,7 +507,7 @@ namespace {
 struct RowFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
+    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
     StationAssembly R;
     CouplingExactEpoch ep;
     SharedHistoryState shx;
@@ -821,18 +821,18 @@ TEST(NetworkSharedHistoryTest, HarvestEndProjectsTheHoldRowsOntoTheCompression) 
         r3(i) = nd(rng);
     }
     const double v1 = r1.dot(Sig * r1), v2 = r2.dot(Sig * r2), v3 = r3.dot(Sig * r3);
-    ctx.carry.smh_clone["G05|L1C"] = pendingClone("G05", r1, v1, ep, 1e-6);
-    ctx.carry.smh_clone["G07|L1C"] = pendingClone("G07", r2, v2, ep - 1, 2e-6);   // another epoch
+    net::putSig(ctx.entities, "G05|L1C", &net::SatSignalState::smh_clone) = pendingClone("G05", r1, v1, ep, 1e-6);
+    net::putSig(ctx.entities, "G07|L1C", &net::SatSignalState::smh_clone) = pendingClone("G07", r2, v2, ep - 1, 2e-6);   // another epoch
     PbHoldClone dead = pendingClone("G09", r2, v2, ep, 3e-6);
     dead.alive = false;
-    ctx.carry.smh_clone["G09|L1C"] = dead;
+    net::putSig(ctx.entities, "G09|L1C", &net::SatSignalState::smh_clone) = dead;
     PbHoldClone blk = pendingClone("G11", r2, v2, ep, 4e-6);
     blk.block        = true;
     blk.pv_var       = 5e-6;
     blk.pv_shx.rc    = r3;
     blk.pv_shx.rc_var = v3;
     blk.pv_shx.rc_ep = ep;
-    ctx.carry.smh_block["G11|L1C"] = blk;
+    net::putSig(ctx.entities, "G11|L1C", &net::SatSignalState::smh_block) = blk;
 
     networkSharedHistoryProjectHoldRows(ctx, &X, kStash);
     const auto check = [&](const PbHoldCloneShx& sh, double var, double var0, const Eigen::VectorXd& r) {
@@ -844,12 +844,12 @@ TEST(NetworkSharedHistoryTest, HarvestEndProjectsTheHoldRowsOntoTheCompression) 
         EXPECT_EQ(sh.rc_ep, -1) << "no longer pending";
         EXPECT_EQ(sh.rc.size(), 0);
     };
-    check(ctx.carry.smh_clone.at("G05|L1C").shx, ctx.carry.smh_clone.at("G05|L1C").var, 1e-6, r1);
-    check(ctx.carry.smh_block.at("G11|L1C").shx, ctx.carry.smh_block.at("G11|L1C").var, 4e-6, r2);
-    check(ctx.carry.smh_block.at("G11|L1C").pv_shx, ctx.carry.smh_block.at("G11|L1C").pv_var, 5e-6, r3);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G07|L1C").shx.rc_ep, ep - 1) << "not this epoch's pending";
-    EXPECT_EQ(ctx.carry.smh_clone.at("G07|L1C").var, 2e-6);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G09|L1C").var, 3e-6) << "a dead row is not touched";
+    check((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).shx, (*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).var, 1e-6, r1);
+    check((*net::getSig(ctx.entities.sat_signals, "G11|L1C", &net::SatSignalState::smh_block)).shx, (*net::getSig(ctx.entities.sat_signals, "G11|L1C", &net::SatSignalState::smh_block)).var, 4e-6, r2);
+    check((*net::getSig(ctx.entities.sat_signals, "G11|L1C", &net::SatSignalState::smh_block)).pv_shx, (*net::getSig(ctx.entities.sat_signals, "G11|L1C", &net::SatSignalState::smh_block)).pv_var, 5e-6, r3);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).shx.rc_ep, ep - 1) << "not this epoch's pending";
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).var, 2e-6);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G09|L1C", &net::SatSignalState::smh_clone)).var, 3e-6) << "a dead row is not touched";
     EXPECT_EQ(ctx.counters.shx.hold_projected, 3);
     EXPECT_EQ(ctx.counters.shx.hold_proj_failed, 0);
     ASSERT_EQ(ctx.counters.shx.hold_kept_share.size(), 3u);
@@ -857,26 +857,26 @@ TEST(NetworkSharedHistoryTest, HarvestEndProjectsTheHoldRowsOntoTheCompression) 
 
     // The re-harvest's finalize: the row pending from the previous epoch takes the per-row term.
     networkSharedHistoryFinalizeHoldRows(ctx, ep);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G07|L1C").var, 2e-6 + v2);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G07|L1C").shx.rc_ep, -1);
-    EXPECT_TRUE(ctx.carry.smh_clone.at("G07|L1C").shx.coef.empty());
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).var, 2e-6 + v2);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).shx.rc_ep, -1);
+    EXPECT_TRUE((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).shx.coef.empty());
     EXPECT_EQ(ctx.counters.shx.hold_nocomp_unreached, 1);
     EXPECT_EQ(ctx.counters.shx.hold_proj_failed, 0);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G05|L1C").var, 1e-6 + sharedHistoryProject(r1, X.L, X.V, 2).rem)
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).var, 1e-6 + sharedHistoryProject(r1, X.L, X.V, 2).rem)
         << "a projected row is final";
 
     // No compression this epoch (a harvest without the regression, a failed compression):
     // the per-row term, counted.
-    ctx.carry.smh_clone["G13|L1C"] = pendingClone("G13", r3, v3, ep, 6e-6);
+    net::putSig(ctx.entities, "G13|L1C", &net::SatSignalState::smh_clone) = pendingClone("G13", r3, v3, ep, 6e-6);
     networkSharedHistoryProjectHoldRows(ctx, nullptr, kStash);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G13|L1C").var, 6e-6 + v3);
-    EXPECT_TRUE(ctx.carry.smh_clone.at("G13|L1C").shx.coef.empty());
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G13|L1C", &net::SatSignalState::smh_clone)).var, 6e-6 + v3);
+    EXPECT_TRUE((*net::getSig(ctx.entities.sat_signals, "G13|L1C", &net::SatSignalState::smh_clone)).shx.coef.empty());
     EXPECT_EQ(ctx.counters.shx.hold_nocomp_end, 1);
     EXPECT_EQ(ctx.counters.shx.hold_proj_failed, 0);
     // A width mismatch (the hold's Y is not the compression's) is a failure too.
-    ctx.carry.smh_clone["G15|L1C"] = pendingClone("G15", Eigen::VectorXd::Ones(3), 0.5, ep, 0.0);
+    net::putSig(ctx.entities, "G15|L1C", &net::SatSignalState::smh_clone) = pendingClone("G15", Eigen::VectorXd::Ones(3), 0.5, ep, 0.0);
     networkSharedHistoryProjectHoldRows(ctx, &X, kStash);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G15|L1C").var, 0.5);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G15|L1C", &net::SatSignalState::smh_clone)).var, 0.5);
     EXPECT_EQ(ctx.counters.shx.hold_proj_failed, 1);
 }
 
@@ -981,11 +981,11 @@ TEST(NetworkSharedHistoryTest, AmendmentIsBitwiseInertWithTheHistoryOrTheSmoothe
         NetworkRunContext& ctx = *S.ctx;
         ASSERT_TRUE(ctx.knobs.emit_pb_hold_smoothed);
         const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
-        ctx.carry.smh_clone["G05|L1C"] = pendingClone("G05", Eigen::VectorXd::Ones(2), 0.25, ep, 1e-6);
+        net::putSig(ctx.entities, "G05|L1C", &net::SatSignalState::smh_clone) = pendingClone("G05", Eigen::VectorXd::Ones(2), 0.25, ep, 1e-6);
         networkSharedHistoryProjectHoldRows(ctx, nullptr, kStash);
         networkSharedHistoryFinalizeHoldRows(ctx, ep);
-        EXPECT_EQ(ctx.carry.smh_clone.at("G05|L1C").var, 1e-6);
-        EXPECT_EQ(ctx.carry.smh_clone.at("G05|L1C").shx.rc_ep, ep);
+        EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).var, 1e-6);
+        EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).shx.rc_ep, ep);
         EXPECT_EQ(ctx.counters.shx.hold_proj_failed + ctx.counters.shx.hold_projected
                       + ctx.counters.shx.hold_nocomp_end + ctx.counters.shx.hold_nocomp_unreached, 0);
     }
@@ -1078,12 +1078,12 @@ TEST(NetworkSharedHistoryTest, AmendmentIsBitwiseInertWithTheHistoryOrTheSmoothe
                                               sat, "L1C");
             }
             if (with_hold)
-                ctx.carry.smh_clone["G05|L1C"] = pendingClone(
+                net::putSig(ctx.entities, "G05|L1C", &net::SatSignalState::smh_clone) = pendingClone(
                     "G05", Eigen::VectorXd::Ones(2), 0.25, static_cast<long long>(ctx.counters.n_loop_epochs), 1e-6);
             networkSharedHistoryHarvestEnd(H, hh, ctx, kStash);
             if (with_hold) {
-                EXPECT_EQ(ctx.carry.smh_clone.at("G05|L1C").var, 1e-6) << "the hold off: not projected";
-                EXPECT_TRUE(ctx.carry.smh_clone.at("G05|L1C").shx.coef.empty());
+                EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).var, 1e-6) << "the hold off: not projected";
+                EXPECT_TRUE((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).shx.coef.empty());
             }
             return S;
         };

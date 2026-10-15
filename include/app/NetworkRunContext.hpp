@@ -1033,13 +1033,7 @@ namespace GnssProcessor {
         // reproduces the marks from the serialized R records.
         std::set<std::string> clk_anchor_disc_pending;
         std::set<std::string> prev_clock_refloat_sats;      // clock-monitor flags at the last stash; hard-refloat mode skip-stashes the sat, so prev_carry cannot carry the flag (card 1d)
-        // (kind, sat, signal) → content time of the last reinit fold, for multi-epoch-gap
-        // coverage (cards 1d/1g).  An empty signal is the sat-wide wildcard: the clock-QC
-        // feeds (inflate_q stash marks, clock refloats) mark a whole satellite kind by
-        // kind, while the card-1g realization-step feeds mark one (sat, signal) family,
-        // because that is the granularity at which a phase-bias datum is re-referenced.
-        // buildCplRow probes the exact key, then the wildcard.
-        std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
+        // tu_reinit_hist: moved to net::SatSignalState::tu_reinit (card NOM step N4d, app/NetworkEntities.hpp).
         SharedCarryCov prev_carry_cov;                      // dense covariance side-car of prev_carry, empty when off (C1)
         // Card CTU (network.carry_coupling_exact_update).  The stash records when the dense
         // block was taken and which clock the datum pinned then; PASS B's serial preamble
@@ -1209,19 +1203,9 @@ namespace GnssProcessor {
         // anchor_incumbent is written to the snapshot under
         // network.state_snapshot_frame_capture and restored under
         // network.resume_frame_restore.
-        std::map<std::string, std::string> anchor_incumbent;
+        // anchor_incumbent: moved to net::SatSignalState::anchor_incumbent (card NOM step N4d, app/NetworkEntities.hpp).
         std::map<std::string, std::string> this_epoch_anchor;
-        /// Sticky continuous target (R2): the pin target at which each incumbent anchor is
-        /// currently realized, per (sat, signal) "sat_signal" key.  Without it the
-        /// continuous handover is a one-epoch deferral: the ledger pin reverts to 0 at T+1
-        /// and the frame steps anyway (measured null in §5.0).  Entries exist only for keys
-        /// whose last handover was continuous (a cold pin or a first sighting realizes the
-        /// 0-frame and stores nothing); rebuilt with anchor_incumbent at each election, so
-        /// a key that leaves the union drops its target with its incumbent.  Empty unless
-        /// `knobs.pd_handover_continuous`.  Written to the snapshot only under
-        /// network.state_snapshot_frame_capture and restored only under
-        /// network.resume_frame_restore; otherwise a resume's first handover is cold.
-        std::map<std::string, double> anchor_pin_target;
+        // anchor_pin_target: moved to net::SatSignalState::anchor_pin_target (card NOM step N4d, app/NetworkEntities.hpp).
         /// Two-edge continuous handover ledger: each anchor-candidate station's absolute
         /// ambiguity estimate from the previous epoch's solve, so a handover can re-pin the
         /// successor in the outgoing frame instead of re-zeroing it.  Rebuilt wholesale by
@@ -1349,19 +1333,9 @@ namespace GnssProcessor {
         // keys on purpose: stacks that run with phase_leveling off have an empty
         // local_carry, so a carry-keyed seed would seed nothing.
         bool anchor_age_resume_seed = false;
-        // Bridge source (INC-2): the last solved shared phase bias per "sat_signal",
-        // harvested at the D2 stash (kept epochs only, like code_bias_prev_).  Kept apart
-        // from prev_carry on purpose: under carry_invariant the shared PhaseBias carry is
-        // not stashed at all, so prev_carry would be an empty source there.
-        std::map<std::string, double> pb_level_prev;
-        /// One open INC-2 bridge: the key's gauge is realized by a soft shared row at
-        /// @c value instead of a tree-edge or anchor pin.
-        struct PinBridge {
-            double value = 0.0;      ///< the held shared phase bias (m), from pb_level_prev at open time
-            int    folds = 0;        ///< consecutive epochs this bridge has been folded (staleness bound)
-            double opened_tow = 0.0; ///< TOW of the epoch it opened (trace only)
-        };
-        std::map<std::string, PinBridge> pin_bridge;   ///< "sat_signal" -> open bridge.
+        // pb_level_prev: moved to net::SatSignalState::pb_level_prev (card NOM step N4d, app/NetworkEntities.hpp).
+        // PinBridge: moved to net::PinBridge (card NOM step N4d, app/NetworkEntities.hpp).
+        // pin_bridge: moved to net::SatSignalState::pin_bridge (card NOM step N4d, app/NetworkEntities.hpp).
         // Engage/release identity of the S-basis completion (SBC, network.sbasis_complete):
         // the satellites participating (|eigenvector component| >=
         // NetworkSbasis::kSbasisAttrSpan) in a direction constrained last epoch.  Under
@@ -1616,12 +1590,7 @@ namespace GnssProcessor {
         /// (the datum block).  Cleared by the drain, so an epoch that never reaches it
         /// cannot leak rows into the next one.  Empty on every unarmed run.
         std::vector<AmbStateRow> amb_state_rows;
-        /// The held S-basis ledger (RF-2 item 1): ambiguity key -> the frozen datum
-        /// (@ref PhaseBasisEntry).  Written once per anchor tenure by the election and read
-        /// by it on every later epoch of that tenure, so the pinned value is a constant
-        /// rather than something re-derived from a moving carry.  Empty on every run
-        /// without network.phase_datum_held_basis.
-        std::map<std::string, PhaseBasisEntry> phase_basis;
+        // phase_basis: moved to net::SatSignalState::phase_basis (card NOM step N4d, app/NetworkEntities.hpp).
         /// (station idx, ambiguity key) -> the loop epoch of that arc's last screen flag: a
         /// slip response (the latched free set), a T4 / T3 refloat, or a gross-LOS
         /// declaration (RF-2 items 3 and 4).  The election's quiet-window gate reads it to
@@ -1689,50 +1658,8 @@ namespace GnssProcessor {
         /// serialized: each resume is its own seam, and a leg that resumes twice has two
         /// seams.
         bool resume_pb_seam_pending{false};
-        /// One (satellite, signal) key's emit-side phase-bias hold state (card PBH).
-        struct PbHoldKey {
-            double        held_m{0.0};       ///< The value every emission of this generation writes.
-            std::uint32_t generation{0};     ///< 1-based; 0 never appears on a live entry.
-            double        last_emit_s{0.0};  ///< Product content time (s) of this key's last emission.
-            /// Card LAH (@c network.emit_pb_hold_phase_clock): the satellite's
-            /// common-removed emitted clock @f$\tilde c = c - M@f$ at this generation's
-            /// start.  The held emission is @c held_m + (c~(t) - frz_ref).  0 and unread
-            /// unless the mode is armed.
-            double        frz_ref{0.0};
-            /// Card LAH: false when the generation started on an epoch without an emitted
-            /// clock for the satellite (no reference; the key is held plainly).
-            bool          frz_ok{false};
-            /// Card LAH: the transfer written at this key's last held emission (m), reused
-            /// on an epoch without an emitted clock for the satellite.
-            double        frz_last{0.0};
-            /// Card SMH: the key's clone died this generation of a cause other than the
-            /// anchor's withdrawal or disengagement, and the key carries card LAH's
-            /// transfer from the switch on for the rest of the generation.
-            bool          smh_reverted{false};
-            /// Card SMH: the transfer written at this key's last held emission (m).
-            double        smh_last{0.0};
-            /// Card SMH: a clone left before LAH had a reference (a generation started
-            /// without an emitted clock), so LAH's reference waits for the satellite's next
-            /// emitted clock and starts from the last transfer (continuity of the transfer).
-            /// With a reference, leaving a clone folds its passed motion into it instead
-            /// (card SMD section 7).
-            bool          smh_ref_pending{false};
-            /// Card SMH: the key's last held emission wrote its clone's transfer (so a
-            /// clone that is not live now is a switch to the bridge).
-            bool          smh_on_clone{false};
-            /// Card SMH: LAH's transfer at the key's last smoothed emission (m), the frame
-            /// the clone's transfer is written in (LAH's minus the passed motion), reused
-            /// on an epoch without an emitted clock for the satellite (section 10).
-            double        smh_lah_last{0.0};
-        };
-        /// "<sat>|<signal>" -> the held value and its generation (card PBH,
-        /// @c network.emit_pb_hold).  Owned here rather than in the seam because it must
-        /// survive the epoch loop; empty and never touched when the knob is off.  Not
-        /// snapshotted: a warm resume cold-starts every key as a first sighting, which
-        /// advances the generation the consumer sees and so re-floats instead of silently
-        /// re-seating a stale held value (the conservative direction, as for the slant-iono
-        /// carry below).
-        std::map<std::string, PbHoldKey> pb_hold;
+        // PbHoldKey: moved to net::PbHoldKey (card NOM step N4d, app/NetworkEntities.hpp).
+        // pb_hold: moved to net::SatSignalState::pb_hold (card NOM step N4d, app/NetworkEntities.hpp).
         /// |estimate - held| (m) over every held emission (card PBH): the cost of the
         /// decoupling edge, measured rather than asserted (invariant #7).  Read at run end
         /// for p50 / p90 / max; empty on an off run.
@@ -1756,21 +1683,12 @@ namespace GnssProcessor {
         /// Card LAH: |transfer| (m) per held emission, the accumulated move since the
         /// generation start.
         std::vector<double> pb_hold_frz_total_abs_m;
-        /// Card SMH: hold key ("sat|signal") -> its clock clone (network.emit_pb_hold_smoothed).
-        /// A clone lives for its key's generation; a dead one stays until the next
-        /// generation replaces it.  Empty and untouched unless the mode is armed.
-        std::map<std::string, PbHoldClone> smh_clone;
-        /// Card SMH: hold keys whose generation started at this epoch's emit, born at
-        /// this epoch's stash (sat, signal and generation filled in).
-        std::map<std::string, PbHoldClone> smh_pending;
+        // smh_clone: moved to net::SatSignalState::smh_clone (card NOM step N4d, app/NetworkEntities.hpp).
+        // smh_pending: moved to net::SatSignalState::smh_pending (card NOM step N4d, app/NetworkEntities.hpp).
         /// Card SMH: continuous GPS seconds of the first held emission (the hour basis).
         double smh_t_first_s{-1.0};
-        /// Card SMD: hold key ("sat|signal") -> its block clone (a clock row and the
-        /// phase-visible row on one lifetime).  Carried whenever the smoothed hold is armed,
-        /// as its instrument (the split of the passed motion); the wire never reads it.
-        std::map<std::string, PbHoldClone> smh_block;
-        /// Card SMD: hold keys whose block clone waits for a birth (as @c smh_pending).
-        std::map<std::string, PbHoldClone> smh_block_pending;
+        // smh_block: moved to net::SatSignalState::smh_block (card NOM step N4d, app/NetworkEntities.hpp).
+        // smh_block_pending: moved to net::SatSignalState::smh_block_pending (card NOM step N4d, app/NetworkEntities.hpp).
         // iono_carry: moved to net::LosState::iono (card NOM step N4c, app/NetworkEntities.hpp).
         // iono_blk_carry: moved to net::LosState::iono_blk (card NOM step N4c, app/NetworkEntities.hpp).
         // gl_state: moved to net::LosState::gross_los (card NOM step N4c, app/NetworkEntities.hpp).

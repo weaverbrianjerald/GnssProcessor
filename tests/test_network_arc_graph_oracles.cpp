@@ -2078,6 +2078,7 @@ struct FrozenStationMaps {
     std::map<std::pair<size_t, std::string>, double> eq34_prev_el;     ///< (station, sat) -> elevation (N4c)
     std::map<std::string, std::string> eq34_rx_parent;                 ///< "<name>|<c>|<sigma>" -> sat
     std::map<std::pair<int, std::string>, LocalCarry> rpb_carry;        ///< (station, rpb key)
+    std::map<std::string, std::string> anchor_incumbent;               ///< "sat_signal" -> station (N4d)
     explicit FrozenStationMaps(NetworkRunContext& c) : ctx(c) { load(); }
     ~FrozenStationMaps() { store(); }
     FrozenStationMaps(const FrozenStationMaps&) = delete;
@@ -2087,6 +2088,7 @@ struct FrozenStationMaps {
         rpb_carry.clear();
         const net::NetworkEntities& e = ctx.entities;
         eq34_datum_rx = net::channelMap(e.constellations, &net::ChannelState::datum_rx);
+        anchor_incumbent = net::sigMap(e.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
         eq34_prev_el.clear();
         net::forEach(e.los, &net::LosState::eq34_prev_el, [&](const LosId& id, double el) {
             eq34_prev_el[{static_cast<size_t>(id.station.index), net::satKey(id.sat)}] = el;
@@ -2103,6 +2105,7 @@ struct FrozenStationMaps {
     }
     void store() {
         net::NetworkEntities& e = ctx.entities;
+        net::assignSig(e, &net::SatSignalState::anchor_incumbent, anchor_incumbent);
         net::dropAll(e.los, &net::LosState::eq34_prev_el);
         for (const auto& [key, el] : eq34_prev_el)
             net::putLos(e, static_cast<int>(key.first), key.second, &net::LosState::eq34_prev_el) = el;
@@ -2140,9 +2143,9 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                             std::set<std::string>& shared_phase_keys) {
 auto& prev_carry = ctx.carry.prev_carry;
-auto& anchor_incumbent = ctx.carry.anchor_incumbent;
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
 FrozenStationMaps station_maps(ctx);   // card NOM step N4a shim, not in the frozen source
+auto& anchor_incumbent = station_maps.anchor_incumbent;   // card NOM step N4d shim
 auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // card NOM step N4b shim
 auto& eq34_rx_parent = station_maps.eq34_rx_parent;
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
@@ -2989,14 +2992,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         eq34_shift_total += n_shifted;
         // Card PRM phase 3b step 2: the held emissions of the shifted families, left in the old
         // frame (PbHold is exempt from the shift).  Measure-only.
-        for (const auto& [hk, hv] : ctx.carry.pb_hold) {
-            (void)hv;
-            const auto bar = hk.find('|');
-            if (bar == std::string::npos) continue;
-            const auto sh = shift_sat.find({hk.substr(0, bar), hk.substr(bar + 1)});
+        net::forEach(ctx.entities.sat_signals, &net::SatSignalState::pb_hold,   // N4d shim
+                     [&](const SatSignalId& id, const net::PbHoldKey&) {
+            const auto sh = shift_sat.find({net::satKey(id.sat), net::signalKey(id.signal)});
             if (sh != shift_sat.end() && sh->second != 0.0)
                 ++ctx.counters.prm_pbhold_unmoved_at_shift;
-        }
+        });
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Eq34Shift)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Eq34Shift, prm_cc);
     }
@@ -3253,7 +3254,9 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
             }
             if (chance(rng, 0.03)) {
                 const std::string sta = chance(rng, 0.9) ? w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))] : "ZZZZ";
-                both([&](NetworkCarryState& c) { c.anchor_incumbent[amb] = sta; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::putSig(c, amb, &net::SatSignalState::anchor_incumbent) = sta;
+                });
             }
             if (chance(rng, 0.04)) {
                 const std::string sta = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
@@ -3306,7 +3309,9 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     if (shf != shl) return "shared_phase_keys";
     const NetworkCarryState& a = f.carry;
     const NetworkCarryState& b = l.carry;
-    if (a.anchor_incumbent != b.anchor_incumbent) return "anchor_incumbent";
+    if (net::sigMap(f.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_')
+        != net::sigMap(l.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_'))
+        return "anchor_incumbent";
     if (a.this_epoch_anchor != b.this_epoch_anchor) return "this_epoch_anchor";
     if (net::channelMap(f.entities.constellations, &net::ChannelState::datum_rx)
         != net::channelMap(l.entities.constellations, &net::ChannelState::datum_rx))

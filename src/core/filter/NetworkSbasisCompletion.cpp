@@ -89,13 +89,15 @@ Eigen::VectorXd networkSbcContinuityTargets(const NetworkRunContext& ctx, const 
                 }
             } catch (...) { /* departed key: no target */ }
         }
-        for (const auto& [key, v] : ctx.carry.pb_level_prev) {
+        net::forEach(ctx.entities.sat_signals, &net::SatSignalState::pb_level_prev,   // card NOM step N4d
+                     [&](const SatSignalId& id, double v) {
+            const std::string key = net::ambKey(id);
             const auto parts = StateKeys::parseAmbiguityKey(key);   // "G01_L1C"
-            if (!parts || !std::isfinite(v)) continue;
+            if (!parts || !std::isfinite(v)) return;
             try {
                 sbc_x_prev(est.phaseBiasColumn(parts->satellite, parts->signal)) = v;
             } catch (...) {}
-        }
+        });
         net::forEach(ctx.entities.constellations, &net::ConstellationState::channels,
                      &net::ChannelState::code_bias_prev,
                      [&](System, const std::string& sig, const std::map<std::string, double>& sats) {

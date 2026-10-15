@@ -233,13 +233,16 @@ void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est)
         for (std::size_t j = 0; j < n; ++j)
             if (sh.coef[j] != 0.0) ref[j] = 1;
     };
-    for (const auto& kv : ctx.carry.smh_clone)
-        if (kv.second.alive) holdRef(kv.second.shx);
-    for (const auto& kv : ctx.carry.smh_block)
-        if (kv.second.alive) {
-            holdRef(kv.second.shx);
-            holdRef(kv.second.pv_shx);
-        }
+    // The hold rows live in the satellite-signal table (card NOM step N4d), in key order.
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_clone,
+                 [&](const SatSignalId&, const PbHoldClone& c) { if (c.alive) holdRef(c.shx); });
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_block,
+                 [&](const SatSignalId&, const PbHoldClone& c) {
+                     if (c.alive) {
+                         holdRef(c.shx);
+                         holdRef(c.pv_shx);
+                     }
+                 });
     S.col.assign(static_cast<std::size_t>(S.kt), Eigen::Index{-1});
     long long n = 0;
     for (int j = 0; j < S.kt; ++j) {
@@ -455,13 +458,15 @@ namespace {
 /// Every live hold row's shared-history record (card SMH's clock rows; card SMD's two rows).
 template <typename Fn>
 void shxForEachHoldRow(NetworkRunContext& ctx, Fn&& fn) {
-    for (auto& kv : ctx.carry.smh_clone)
-        if (kv.second.alive) fn(kv.second.shx, kv.second.var);
-    for (auto& kv : ctx.carry.smh_block)
-        if (kv.second.alive) {
-            fn(kv.second.shx, kv.second.var);
-            fn(kv.second.pv_shx, kv.second.pv_var);
-        }
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_clone,   // N4d
+                 [&](const SatSignalId&, PbHoldClone& c) { if (c.alive) fn(c.shx, c.var); });
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_block,
+                 [&](const SatSignalId&, PbHoldClone& c) {
+                     if (c.alive) {
+                         fn(c.shx, c.var);
+                         fn(c.pv_shx, c.pv_var);
+                     }
+                 });
 }
 
 /// A pending hold row's per-row term (B1's form): its whole shared term on its own variance,

@@ -369,7 +369,8 @@ long long networkAmbFloatDeclaredHandover(
         carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);
         // Card PRM phase 3b step 2: the family's held emission, left in the old frame (PbHold
         // is exempt from the shift).  Measure-only.
-        if (delta != 0.0 && ctx.carry.pb_hold.count(sat + "|" + sig))
+        if (delta != 0.0
+            && net::getSig(ctx.entities.sat_signals, sat + "|" + sig, &net::SatSignalState::pb_hold))
             ++counters.prm_pbhold_unmoved_at_shift;
         // ---- Exactness self-check (the sts_selfcheck_ok pattern).  The incoming
         //      anchor's column now reads 0, which is what its w = 1e10 pin asserts.

@@ -56,8 +56,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     if (!on) return;   // off: no map, no bridge, no counter (structurally inert)
 
     auto& age_map  = ctx.carry.anchor_arc_age;
-    auto& bridges  = ctx.carry.pin_bridge;
-    auto& levels   = ctx.carry.pb_level_prev;
+    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pin_bridge, pb_level_prev, anchor_incumbent (N4d)
+    using SG = net::SatSignalState;
     auto& ctr      = ctx.counters;
     ++ctr.hyg.epochs;
 
@@ -182,8 +182,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     std::set<std::string> blocked;    // keys leaving the anchored set this epoch
     for (const auto& [amb, pbkey] : cnd.union_keys) {
         (void)pbkey;
-        const auto inc = ctx.carry.anchor_incumbent.find(amb);
-        const bool has_incumbent = inc != ctx.carry.anchor_incumbent.end();
+        const std::string* inc = net::getSig(sigs, amb, &SG::anchor_incumbent);
+        const bool has_incumbent = inc != nullptr;
         bool incumbent_live = false;
         bool eligible_exists = false;
         bool slipped_any = false;
@@ -194,7 +194,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
             const int a = hyg.arcAge(i, amb);
             if (a > best_age) { best_age = a; best_i = i; }
             if (a >= min_arc_ep) eligible_exists = true;
-            if (has_incumbent && stations[i].name == inc->second) incumbent_live = true;
+            if (has_incumbent && stations[i].name == *inc) incumbent_live = true;
             if (a == 0
                 && (carry_slipped_ambs.count({static_cast<int>(i), amb}) != 0
                     || (stations[i].sm
@@ -207,8 +207,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
         // epoch after a hold-out, the key would read as a first sighting (never gated)
         // and the election would pin it on the cold host it was protected from one
         // epoch earlier.
-        const auto br = bridges.find(amb);
-        const bool was_bridged = br != bridges.end();
+        net::PinBridge* br = net::getSig(sigs, amb, &SG::pin_bridge);
+        const bool was_bridged = br != nullptr;
         const bool was_blocked = ctx.carry.anchor_blocked.count(amb) != 0;
         // `prior_fresh` covers the case anchor_incumbent cannot: a key absent for a few
         // epochs drops out of the incumbent map (each election replaces it wholesale),
@@ -231,15 +231,16 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                                           // Card PRM phase 3a: the bridge erased below.
                                           prmRespond(ctr.prm_resp,
                                                      ResponseSite::PbPinBridgeDiscard); }
-            else if (br->second.folds >= bridge_max)
+            else if (br->folds >= bridge_max)
                                         { drop = "stale"; ++ctr.hyg.bridge_drop_stale; }
             else if (eligible_exists && min_arc_ep > 0)
                                         { drop = "healed"; ++ctr.hyg.bridge_drop_healed; }
             if (drop) {
                 emit("pin_bridge_drop", satOf(amb), "",
-                     static_cast<double>(br->second.folds),
+                     static_cast<double>(br->folds),
                      static_cast<double>(bridge_max), drop, amb);
-                bridges.erase(br);
+                net::dropSig(sigs, amb, &SG::pin_bridge);
+                br = nullptr;
                 // A dropped bridge leaves the key to the logic below.  On the "healed"
                 // path an eligible host exists, so the election reattaches normally.
                 // On slip, datum or stale, the held value is invalid while the key may
@@ -273,19 +274,19 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
         const bool want_bridge = bridge_on && !reopen_barred && prior_fresh
                                  && (min_arc_ep <= 0 || !eligible_exists);
         if (want_bridge) {
-            const auto lv = levels.find(amb);
-            if (lv != levels.end() && std::isfinite(lv->second)) {
-                NetworkCarryState::PinBridge nb;
-                nb.value      = lv->second;
+            const double* lv = net::getSig(sigs, amb, &SG::pb_level_prev);
+            if (lv && std::isfinite(*lv)) {
+                net::PinBridge nb;
+                nb.value      = *lv;
                 nb.folds      = 0;
                 nb.opened_tow = t.tow;
-                bridges.emplace(amb, nb);
+                net::emplaceSig(ctx.entities, amb, &SG::pin_bridge, nb);
                 hyg.bridged.insert(amb);
                 ctx.carry.anchor_blocked.erase(amb);   // a bridge supersedes a hold-out
                 ++ctr.hyg.bridges_opened;
                 emit("pin_bridge_open", satOf(amb),
-                     has_incumbent ? inc->second : std::string{},
-                     lv->second, ctx.knobs.pin_bridge_sigma, "bridge",
+                     has_incumbent ? *inc : std::string{},
+                     *lv, ctx.knobs.pin_bridge_sigma, "bridge",
                      amb + " held at last solved level");
                 continue;
             }
@@ -319,7 +320,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                      best_age < 0 ? std::optional<double>{}
                                   : std::optional<double>(static_cast<double>(best_age)),
                      static_cast<double>(min_arc_ep), "hold_out",
-                     amb + " from " + (has_incumbent ? inc->second : std::string("-")));
+                     amb + " from " + (has_incumbent ? *inc : std::string("-")));
             }
         } else if (ctx.carry.anchor_blocked.erase(amb)) {
             // A converged host appeared (or INC-1 is off): the hold releases and the
@@ -340,14 +341,15 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     // the coverage gate, or a station roster change).  A held value for a key the solve
     // no longer contains has no meaning, so the bridge is dropped now rather than left
     // to age out.
-    for (auto it = bridges.begin(); it != bridges.end();) {
-        if (cnd.union_keys.count(it->first)) { ++it; continue; }
+    net::eraseIf(sigs, &SG::pin_bridge, [&](const SatSignalId& id, const net::PinBridge& b) {
+        const std::string key = net::ambKey(id);
+        if (cnd.union_keys.count(key)) return false;
         ++ctr.hyg.bridge_drop_leftset;
-        emit("pin_bridge_drop", satOf(it->first), "",
-             static_cast<double>(it->second.folds),
-             static_cast<double>(bridge_max), "left_set", it->first);
-        it = bridges.erase(it);
-    }
+        emit("pin_bridge_drop", satOf(key), "",
+             static_cast<double>(b.folds),
+             static_cast<double>(bridge_max), "left_set", key);
+        return true;
+    });
 
     // --- (3) Realize the block: the key leaves the anchored union ---------
     // The same disposition as the coverage gate (NetworkPhaseDatum

@@ -40,6 +40,7 @@ const char* converterName(Converter c) {
     case Converter::StationName: return "station name";
     case Converter::ConstellationLetter: return "constellation letter";
     case Converter::Satellite: return "satellite";
+    case Converter::SatSignal: return "satellite signal";
     case Converter::Count:       break;
     }
     return "?";
@@ -233,7 +234,87 @@ const std::vector<FieldDecl> kConstellationFields = {
      nullptr, nullptr, &channelRows<&Ch::ddfrac_ref_prev>},
 };
 const std::vector<FieldDecl> kSatelliteFields = {};
-const std::vector<FieldDecl> kSatSignalFields = {};
+// ---- The satellite-signal fields (step N4d) ----
+
+std::optional<SatSignalId> satSignalKey(const std::string& sat, const std::string& signal) {
+    // An empty component keeps its row: "" is the no-satellite SatId{} (as for the lines of
+    // sight) and the satellite-wide SignalId{}; any other string must round-trip (O2).
+    SatId s{};
+    if (!sat.empty()) {
+        const std::optional<SatId> p = SatId::parse(sat);
+        if (!p || p->str() != sat) return std::nullopt;
+        s = *p;
+    }
+    if (signal.empty()) return SatSignalId{s, SignalId{}};
+    if (signal.size() != 3 || signal[0] != static_cast<char>(ObsType::Phase)
+        || signal[1] < '0' || signal[1] > '9' || signal[2] < 'A' || signal[2] > 'Z')
+        return std::nullopt;
+    return SatSignalId{s, SignalId{s.sys, signal[1], signal[2]}};
+}
+
+std::optional<SatSignalId> satSignalKey(const std::string& key) {
+    const std::size_t cut = key.find_first_of("_|");
+    if (cut == std::string::npos) return std::nullopt;
+    return satSignalKey(key.substr(0, cut), key.substr(cut + 1));
+}
+
+std::optional<SatSignalId> satSignalOf(const NetworkEntities& e, const std::string& key) {
+    const std::optional<SatSignalId> id = satSignalKey(key);
+    if (!id) ++e.reach.failures[static_cast<std::size_t>(Converter::SatSignal)];
+    return id;
+}
+
+std::string signalKey(const SignalId& s) {
+    return s == SignalId{} ? std::string() : s.obsCode(ObsType::Phase);
+}
+
+namespace {
+
+using G = SatSignalState;
+
+template <auto F>
+std::size_t satSignalRows(const NetworkEntities& e) { return present(e.sat_signals, F); }
+
+// Records PA and PT: "<sat>_<signal>" -> the incumbent station / the pin target, written and
+// restored wholesale (the old map's assignment both ways).
+void paToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.anchor_incumbent = sigMap(ctx.entities.sat_signals, &G::anchor_incumbent, '_');
+}
+void paFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSig(ctx.entities, &G::anchor_incumbent, snap.anchor_incumbent);
+}
+void ptToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.anchor_pin_target = sigMap(ctx.entities.sat_signals, &G::anchor_pin_target, '_');
+}
+void ptFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSig(ctx.entities, &G::anchor_pin_target, snap.anchor_pin_target);
+}
+
+}  // namespace
+
+const std::vector<FieldDecl> kSatSignalFields = {
+    {"tu_reinit", "tu_reinit_hist", Persist::ResumeSeeded, "", "", nullptr, nullptr,
+     &satSignalRows<&G::tu_reinit>},
+    {"anchor_incumbent", "anchor_incumbent", Persist::Record, "PA", "",
+     &paToSnapshot, &paFromSnapshot, &satSignalRows<&G::anchor_incumbent>},
+    {"anchor_pin_target", "anchor_pin_target", Persist::Record, "PT", "",
+     &ptToSnapshot, &ptFromSnapshot, &satSignalRows<&G::anchor_pin_target>},
+    {"pb_level_prev", "pb_level_prev", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satSignalRows<&G::pb_level_prev>},
+    {"pin_bridge", "pin_bridge", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satSignalRows<&G::pin_bridge>},
+    {"phase_basis", "phase_basis", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satSignalRows<&G::phase_basis>},
+    {"pb_hold", "pb_hold", Persist::ColdStart, "", "", nullptr, nullptr, &satSignalRows<&G::pb_hold>},
+    {"smh_clone", "smh_clone", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satSignalRows<&G::smh_clone>},
+    {"smh_pending", "smh_pending", Persist::Pending, "", "", nullptr, nullptr,
+     &satSignalRows<&G::smh_pending>},
+    {"smh_block", "smh_block", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satSignalRows<&G::smh_block>},
+    {"smh_block_pending", "smh_block_pending", Persist::Pending, "", "", nullptr, nullptr,
+     &satSignalRows<&G::smh_block_pending>},
+};
 namespace {
 
 using S  = StationState;
@@ -491,7 +572,7 @@ const std::array<EntityFields, 6> kEntityFieldTables = {{
     {"arc",           &kArcFields},
 }};
 
-const std::vector<const char*> kRestoreOrder = {"V", "Z", "EQD", "EQP", "EQE", "CBP", "RC", "SD", "GG"};
+const std::vector<const char*> kRestoreOrder = {"V", "Z", "PA", "PT", "EQD", "EQP", "EQE", "CBP", "RC", "SD", "GG"};
 
 // ===========================================================================
 // Record lookup

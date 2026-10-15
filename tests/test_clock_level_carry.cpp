@@ -207,7 +207,7 @@ TEST(ClockLevelCarryTest, TimeUpdateTurnsAnAmbiguityRowIntoALevelStatement) {
     NetworkEstimator est;
     const Net n = makeNet(est, /*S=*/3, /*R=*/1);
     GlobalVtecShConfig shc;
-    const std::map<std::tuple<SharedParamKind, std::string, std::string>, double> hist;
+    const net::SatSignalTable hist;   // the reinit history (card NOM step N4d)
     const double q_clock = 1e-3, q_cb = 1e-10, q_pb = 1e-12, gap = 30.0;
 
     LocalCarry lc{1.25, 1e-4, 0.0};

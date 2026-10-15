@@ -361,8 +361,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "INERT this run; the first election re-pins cold exactly "
                                       "as an unarmed resume.");
                         } else {
-                            ctx.carry.anchor_incumbent  = snap.anchor_incumbent;
-                            ctx.carry.anchor_pin_target = snap.anchor_pin_target;
+                            net::recordFromSnapshot("PA", snap, ctx);   // the satellite signals (N4d)
+                            net::recordFromSnapshot("PT", snap, ctx);   // the satellite signals (N4d)
                             ctx.counters.n_resume_frame_anchors =
                                 static_cast<long long>(snap.anchor_incumbent.size());
                             ctx.counters.n_resume_frame_targets =
@@ -926,8 +926,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                          std::numeric_limits<double>::infinity());
                             long long n_seed = 0, n_loose = 0;
                             const auto seedClock = [&](const std::string& sat) {
-                                ctx.carry.tu_reinit_hist[{SharedParamKind::Clock, sat,
-                                                          std::string{}}] = t_seed;
+                                net::putSig(ctx.entities, sat, "", &net::SatSignalState::tu_reinit)
+                                    [SharedParamKind::Clock] = t_seed;   // the satellite-wide wildcard
                                 ++n_seed;
                             };
                             for (const auto& [sat, ca] : snap.clock_anchor)

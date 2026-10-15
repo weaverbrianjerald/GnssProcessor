@@ -173,27 +173,24 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // --- eq34 reattach hygiene (INC-2): the time-linked phase datum ----------
     // The header explains why this is folded before the gate.  Inert (no allocation,
     // no row) unless a bridge is open, which requires network.phase_datum_time_linked.
-    auto& bridges = ctx.carry.pin_bridge;
-    if (!ctx.knobs.pin_bridge_on || bridges.empty()) return;
+    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pin_bridge (card NOM step N4d)
+    const std::size_t n_bridges = net::present(sigs, &net::SatSignalState::pin_bridge);
+    if (!ctx.knobs.pin_bridge_on || n_bridges == 0) return;
     std::vector<NetworkEstimator::SharedPrior> bp;
-    bp.reserve(bridges.size());
-    for (auto& [amb, br] : bridges) {
-        // "sat_signal" → (sat, signal).  The satellite id never contains '_', so the
-        // first underscore splits it (an iono-free combination keeps its own
-        // underscores inside `signal`).
-        const auto parts = StateKeys::parseAmbiguityKey(amb);
-        if (!parts) continue;
-        if (!std::isfinite(br.value)) continue;
+    bp.reserve(n_bridges);
+    // In (satellite, signal) order, the order of the old "sat_signal" keys (O1).
+    net::forEach(sigs, &net::SatSignalState::pin_bridge, [&](const SatSignalId& id, net::PinBridge& br) {
+        if (!std::isfinite(br.value)) return;
         NetworkEstimator::SharedPrior p;
         p.kind   = SharedParamKind::PhaseBias;
-        p.sat    = parts->satellite;
-        p.signal = parts->signal;
+        p.sat    = net::satKey(id.sat);
+        p.signal = net::signalKey(id.signal);
         p.value  = br.value;
         p.info   = ctx.knobs.pin_bridge_info;
         bp.push_back(p);
         ++br.folds;                       // staleness clock (bounded by bridge_max_ep)
         ++ctx.counters.hyg.bridge_folds;
-    }
+    });
     if (bp.empty()) return;
     est.contributionKind(ContributionKind::PinBridge);   // card NOM N2a
     est.addSharedPrior(bp);   // skips keys absent from this epoch's layout
