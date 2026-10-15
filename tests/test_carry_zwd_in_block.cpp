@@ -286,7 +286,7 @@ TEST(CarryZwdInBlockTest, KnobOffLeavesKBlockRowsAndTheZwdAsTheDiagonalB9Row) {
     LocalCarry a1 = makeCarry(2.25, cdiag[1], blk, 1);
     LocalCarry a2 = makeCarry(1.75, cdiag[2], blk, 2);
     // Off: the ZWD carry is harvested without a block (the unarmed
-    // `harvestCoupling(est_idx, R.pl_zwd.col, nullptr, nullptr)` call).
+    // `networkHarvestColumn(..., est_idx, R.pl_zwd.col, nullptr, nullptr)` call).
     LocalCarry zw = makeCarry(0.16, 0.0090, /*blk=*/nullptr, /*idx=*/-1);
     const double zvar_eff = 0.0090 + 1e-9 * 30.0;   // var + zwd_q·gap, the B9 expression
 

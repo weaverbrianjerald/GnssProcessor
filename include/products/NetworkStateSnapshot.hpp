@@ -349,7 +349,7 @@ struct NetworkStateSnapshot {
     /// their integer values, as in @ref SharedCarry.
     ///
     /// @note @c p_prev == 0 carries meaning: a datum-pinned or ensemble-gauge column is
-    ///       "exactly known" (Card 1e; the harvest lambda in networkHarvestLocalCarries,
+    ///       "exactly known" (Card 1e; networkHarvestColumn, the former harvest lambda,
     ///       src/core/app/NetworkLocalCarryHarvest.cpp).  A reader must not treat it as
     ///       absent or re-derive it: the κ shrink is guarded on @c p_prev > 0 (the
     ///       CouplingRowBuilder row builders, NetworkCoupling.cpp), so a re-derived value
@@ -376,7 +376,7 @@ struct NetworkStateSnapshot {
     /// row's regression references.  Its index is the @c QL / @c QZ entry id.
     ///
     /// @note The dictionary key is (identity, @c s_prev, @c p_prev), not the identity
-    ///       alone.  @c harvestCoupling (the harvest lambda in networkHarvestLocalCarries,
+    ///       alone.  @c networkHarvestColumn (the former harvest lambda harvestCoupling,
     ///       NetworkLocalCarryHarvest.cpp) assigns both values from the shared column @c j,
     ///       so the rows of one harvest epoch agree.  A station whose harvest fails skips the
     ///       stash and keeps an older coupling, so two rows can hold different vintages of
@@ -390,7 +390,7 @@ struct NetworkStateSnapshot {
     std::map<std::tuple<int, std::string, std::string>,
              std::vector<std::pair<int, double>>> coupling_rows;
     /// station roster index -> the ZWD carry's regression (same shape).  ZWD coupling is
-    /// harvested (networkHarvestLocalCarries, NetworkLocalCarryHarvest.cpp) and injected
+    /// harvested (networkHarvestZwd, filter/NetworkZwdCarry.cpp) and injected
     /// (networkPassB_, ApplicationNetworkAssembly.cpp), so a Z row restored without its
     /// regression has the same defect as an L row.
     std::map<int, std::vector<std::pair<int, double>>> coupling_zrows;

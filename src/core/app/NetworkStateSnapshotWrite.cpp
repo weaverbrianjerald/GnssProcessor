@@ -233,8 +233,8 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // (identity, ŝ_prev, P_prev), plus one packed line per carried row.
         //
         // The value pair is part of the dictionary key, not only the payload, because
-        // harvestCoupling assigns cs.s_prev = x_s(j) and cs.p_prev = cov_df(j,j) from the
-        // shared column alone (the harvest lambda in networkHarvestLocalCarries): rows of
+        // networkHarvestColumn assigns cs.s_prev = x_s(j) and cs.p_prev = cov_df(j,j) from the
+        // shared column alone (app/NetworkLocalCarryHarvest.cpp): rows of
         // one harvest epoch agree, but a station whose harvest failed hits `continue`
         // before the stash and keeps an older coupling, so a file can hold L rows with an
         // older last_seen_s.  An identity-only hoist would restore those rows against the

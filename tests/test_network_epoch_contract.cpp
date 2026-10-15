@@ -85,6 +85,13 @@
 #include "filter/NetworkSlipFunnel.hpp"
 #include "slip/NetworkGapResumeCensus.hpp"
 #include "filter/NetworkStationBuild.hpp"
+#include "app/NetworkLocalCarryHarvest.hpp"   // the harvest by carried kind (card NOM3 step HV1)
+#include "filter/NetworkLevelingCarry.hpp"
+#include "filter/NetworkPhaseColourCarry.hpp"
+#include "filter/NetworkRxClockCarry.hpp"
+#include "filter/NetworkRxCodeBiasCarry.hpp"
+#include "filter/NetworkSlantIonoCarry.hpp"
+#include "filter/NetworkZwdCarry.hpp"
 
 #include <gtest/gtest.h>
 
@@ -300,6 +307,54 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&network
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRhsAttribution)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRhsAttribTrip)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkAmbStateTrace)), NetworkEpochObserver>);
+
+// Card NOM3 step HV1: the harvest by carried kind.  The orchestrator and the 19 functions it
+// calls take the epoch form and no epoch output (the harvest writes run state only); the two
+// post-resume steps read no epoch group and take the run only.
+using SigHvHarvestLocalCarries = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 orchestrator
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestLocalCarries>(&networkHarvestLocalCarries)), SigHvHarvestLocalCarries>);
+using SigHvHarvestHandoverLedger = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestHandoverLedger>(&networkHarvestHandoverLedger)), SigHvHarvestHandoverLedger>);
+using SigHvHarvestBorderBegin = HarvestBorder (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestBorderBegin>(&networkHarvestBorderBegin)), SigHvHarvestBorderBegin>);
+using SigHvHarvestColumn = std::pair<double, std::vector<CoupledShared>> (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, std::size_t, Eigen::Index, const std::vector<Eigen::Index>*, Eigen::VectorXd*);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestColumn>(&networkHarvestColumn)), SigHvHarvestColumn>);
+using SigHvHarvestStationBlock = StationHarvestBlock (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, std::size_t);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestStationBlock>(&networkHarvestStationBlock)), SigHvHarvestStationBlock>);
+using SigHvHarvestAmbiguityStation = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, const StationHarvestBlock&, std::size_t);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestAmbiguityStation>(&networkHarvestAmbiguityStation)), SigHvHarvestAmbiguityStation>);
+using SigHvAmbiguityMonitorFeeds = void (*)(NetworkRun&, const NetworkEpoch&, std::size_t, const PlAmb&, double, double);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvAmbiguityMonitorFeeds>(&networkAmbiguityMonitorFeeds)), SigHvAmbiguityMonitorFeeds>);
+using SigHvAmbIfTraceStation = void (*)(NetworkRun&, const NetworkEpoch&, const StationHarvestBlock&, std::size_t);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvAmbIfTraceStation>(&networkAmbIfTraceStation)), SigHvAmbIfTraceStation>);
+using SigHvHarvestPhaseColourStation = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, const StationHarvestBlock&, std::size_t);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestPhaseColourStation>(&networkHarvestPhaseColourStation)), SigHvHarvestPhaseColourStation>);
+using SigHvPrunePhaseColour = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvPrunePhaseColour>(&networkPrunePhaseColour)), SigHvPrunePhaseColour>);
+using SigHvPruneAmbiguities = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvPruneAmbiguities>(&networkPruneAmbiguities)), SigHvPruneAmbiguities>);
+using SigHvHarvestSlantIonoBlock = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, const std::vector<StationHarvestBlock>&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestSlantIonoBlock>(&networkHarvestSlantIonoBlock)), SigHvHarvestSlantIonoBlock>);
+using SigHvHarvestRxClock = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, const std::vector<StationHarvestBlock>&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestRxClock>(&networkHarvestRxClock)), SigHvHarvestRxClock>);
+using SigHvHarvestRxCbBlock = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, const std::vector<StationHarvestBlock>&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestRxCbBlock>(&networkHarvestRxCbBlock)), SigHvHarvestRxCbBlock>);
+using SigHvRxCbDatumGaugeCensus = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvRxCbDatumGaugeCensus>(&networkRxCbDatumGaugeCensus)), SigHvRxCbDatumGaugeCensus>);
+using SigHvHarvestRxCbCarry = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestRxCbCarry>(&networkHarvestRxCbCarry)), SigHvHarvestRxCbCarry>);
+using SigHvHarvestZwd = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, const std::vector<StationHarvestBlock>&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestZwd>(&networkHarvestZwd)), SigHvHarvestZwd>);
+using SigHvZwdSeamWindowStep = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvZwdSeamWindowStep>(&networkZwdSeamWindowStep)), SigHvZwdSeamWindowStep>);
+using SigHvHarvestBorderEnd = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestBorderEnd>(&networkHarvestBorderEnd)), SigHvHarvestBorderEnd>);
+using SigHvHarvestRxPhaseBias = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
+static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestRxPhaseBias>(&networkHarvestRxPhaseBias)), SigHvHarvestRxPhaseBias>);
+using SigHvResumeCouplingCensusRow = void (*)(NetworkRun&, const LocalCarry&, const std::vector<CoupledShared>&);   // HV1 run only
+static_assert(std::is_same_v<decltype(static_cast<SigHvResumeCouplingCensusRow>(&networkResumeCouplingCensusRow)), SigHvResumeCouplingCensusRow>);
+using SigHvResumeFirstEpochRetire = void (*)(NetworkRun&);   // HV1 run only
+static_assert(std::is_same_v<decltype(static_cast<SigHvResumeFirstEpochRetire>(&networkResumeFirstEpochRetire)), SigHvResumeFirstEpochRetire>);
 
 } // namespace
 

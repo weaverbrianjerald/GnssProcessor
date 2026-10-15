@@ -4349,6 +4349,10 @@ namespace GnssProcessor {
     //   NetworkBorderPrior.cpp          the priors folded on the shared (border) columns,
     //                                   and the exact coupling update's inputs
     //   NetworkLocalCarryHarvest.cpp    the station-local carries: harvest, stash, prune
+    //                                   (since card NOM3 step HV1 declared in
+    //                                   app/NetworkLocalCarryHarvest.hpp and cut by
+    //                                   carried kind; its two resume steps are in
+    //                                   NetworkWarmResume.cpp)
     //   NetworkBorderStash.cpp          the epoch-tail border stash and the retro-URA flags
     // ------------------------------------------------------------------
 
@@ -4563,22 +4567,23 @@ namespace GnssProcessor {
                                     const std::set<char>& changed_consts,
                                     double pl_now_s, double dt, bool within_epoch_armed);
 
-    /// @brief Harvest, stash and prune the station-local carries from this epoch's solve.
-    /// Defined in src/core/app/NetworkLocalCarryHarvest.cpp.
-    void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config_,
-                                    NetworkEstimator& est, const Eigen::VectorXd& x_s,
-                                    std::vector<NetStation>& stations,
-                                    const std::vector<int>& est_index_of,
-                                    const std::vector<StationAssembly>& asm_res,
-                                    const NetworkSbasis::Plan& plan,
-                                    const SphericalHarmonicIonosphere* sh_model,
-                                    const SphericalHarmonicIonosphere* sh_model2,
-                                    NetworkCarryVce& carry_vce_est,
-                                    NetworkPriorResidual& prires_est, bool carry_warm,
-                                    double pl_now_s,
-                                    const std::vector<std::string>& registered_clock_sats,
-                                    const std::set<std::string>& shared_phase_keys,
-                                    const std::vector<std::pair<std::string, std::string>>& registered_code_keys);
+    /// @brief The first post-resume harvest's check of one restored regression against this
+    ///        epoch's fresh one: matched and unmatched terms, the largest relative coefficient
+    ///        change and the RHS change, filed in the run's census (§18.12).  Measure-only.
+    ///        Called for an ambiguity (L) row by networkHarvestAmbiguityStation and for a ZWD
+    ///        (Z) row by networkHarvestZwd; card NOM3 step HV1 merged the two copies.
+    /// @param run      The run (its context's counters and census samples).
+    /// @param restored The restored carry entry (the L or Z row read from the snapshot).
+    /// @param coupling This epoch's freshly derived regression of the same row.
+    /// Defined in src/core/app/NetworkWarmResume.cpp.
+    void networkResumeCouplingCensusRow(NetworkRun& run, const LocalCarry& restored,
+                                        const std::vector<CoupledShared>& coupling);
+
+    /// @brief Card P9a: the first post-resume fold's CTA trip count, then the first-warm-epoch
+    ///        latch (resume_cpl_census_pending) retired.  Last step of the harvest.
+    /// @param run The run (its context's carry and counters).
+    /// Defined in src/core/app/NetworkWarmResume.cpp.
+    void networkResumeFirstEpochRetire(NetworkRun& run);
 
     /// @brief Record the satellites the QC tiers flagged, for the next emit's retro-bump
     ///        and the post-refloat URA inflation horizon.
