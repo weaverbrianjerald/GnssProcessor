@@ -3947,10 +3947,11 @@ namespace GnssProcessor {
         /// NOM step N3a (networkSignalRosterArm sets active); active == false, the default,
         /// is a context no run set up, where every seam returns on its first line.
         SignalRoster           roster;
-        /// The arc lifecycle machine, one record per (station, satellite, signal) (card SID
-        /// phase 1).  Same exemption and same reason as @ref roster; advanced by the same
-        /// single call.
-        ArcLedger              arc_ledger;
+        /// The arc lifecycle machine (card SID phase 1).  Its records are the @c ledger
+        /// fields of @ref entities' arc rows (card NOM step N4f2), so it is bound to
+        /// @ref entities, declared above it.  Same exemption and same reason as
+        /// @ref roster; advanced by the same single call.
+        ArcLedger              arc_ledger{entities};
         /// The per-epoch reason buffer that every removal screen writes and the roster's
         /// audit pass folds into the ledger (card SID phase 4a, network.ledger_screens).
         /// Same exemption as @ref arc_ledger: nothing in the solve reads it, so it is

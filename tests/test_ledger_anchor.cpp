@@ -19,6 +19,7 @@
 
 #include <gtest/gtest.h>
 
+#include "app/NetworkEntities.hpp"
 #include "filter/ArcLedger.hpp"
 #include "filter/NetworkAnchorReentry.hpp"
 
@@ -70,7 +71,8 @@ TEST(LedgerAnchorTest, SameGenerationReturnRestoresTheIncumbent) {
     // The population phase 4b exists for: the family kept tracking through the
     // gated era, so the arc the incumbent anchored is the arc that came back and
     // the election has no reason to re-realize the datum on another station.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G30", "L1W");
     const auto b = K(1, "G30", "L1W");
@@ -95,7 +97,8 @@ TEST(LedgerAnchorTest, SameGenerationReturnRestoresTheIncumbent) {
 TEST(LedgerAnchorTest, NewGenerationReturnElectsFresh) {
     // The incumbent's arc died and was re-born inside the gated era, so its carry
     // means something else now: the election proceeds as it would without the rule.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/60.0, kArcLedgerForgetEp);   // short, so the gap kills
     const auto a = K(0, "G30", "L1W");
     const auto b = K(1, "G30", "L1W");
@@ -122,7 +125,8 @@ TEST(LedgerAnchorTest, AGappedIncumbentIsNotARestoreTarget) {
     // The incumbent's arc is inside its gap, not back: restoring a station that is
     // not tracking the key would pin a column it does not feed.  The classifier
     // refuses it before the election's own eligibility ever runs.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G30", "L1W");
     const auto b = K(1, "G30", "L1W");
@@ -142,7 +146,8 @@ TEST(LedgerAnchorTest, AGappedIncumbentIsNotARestoreTarget) {
 TEST(LedgerAnchorTest, NoDropMemoIsNoMemoryAndNotARestore) {
     // Every other first sighting on the run (a genuine rise, a bridge exit, the
     // first epoch) has no memo and is left to the unchanged election.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G30", "L1W");
     admit(led, 0, { a });
@@ -164,7 +169,8 @@ TEST(LedgerAnchorTest, NoDropMemoIsNoMemoryAndNotARestore) {
 TEST(LedgerAnchorTest, AnUnknownIncumbentStationIsNotRestored) {
     // A station that left the roster between the drop and the return cannot be
     // resolved to an index, and inventing one would pin the wrong block.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G30", "L1W");
     for (long long ep = 0; ep <= 3; ++ep) admit(led, ep, { a });
@@ -181,7 +187,8 @@ TEST(LedgerAnchorTest, ASecondDropReplacesTheMemoRatherThanMergingIt) {
     // The question a return answers is about the last era the family was anchored
     // in.  Merging two eras would let an arc that died between them read as
     // continuous, which is the failure the generation test exists to prevent.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G30", "L1W");
     const auto b = K(1, "G30", "L1W");
@@ -206,7 +213,8 @@ TEST(LedgerAnchorTest, ASecondDropReplacesTheMemoRatherThanMergingIt) {
 // ---------------------------------------------------------------------------
 
 TEST(LedgerAnchorTest, FamilyCensusSplitsTrackingGapAndDead) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/60.0, kArcLedgerForgetEp);
     const auto a = K(0, "G30", "L1W");
     const auto b = K(1, "G30", "L1W");
@@ -234,7 +242,8 @@ TEST(LedgerAnchorTest, FamilyCensusSplitsTrackingGapAndDead) {
 // ---------------------------------------------------------------------------
 
 TEST(LedgerAnchorTest, LedgerArcAgeCountsTheAdmittedTrackingRun) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G30", "L1W");
     const auto b = K(1, "G30", "L1W");

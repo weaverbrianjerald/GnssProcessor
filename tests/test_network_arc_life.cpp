@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -183,7 +184,10 @@ struct EpochPlan {
 /// The producer's owners of an arc's life, run in epoch order for one subject arc (station 0,
 /// G05, L1C) and one companion (station 0, G07, L1C) that keeps the station present.
 struct LifeLoop {
-    ArcLedger                                                     ledger;
+    /// The ledger's records (step N4f2), on the heap so a returned loop keeps the ledger's
+    /// binding valid (the ledger holds a pointer to them).
+    std::unique_ptr<net::NetworkEntities>                         ents{std::make_unique<net::NetworkEntities>()};
+    ArcLedger                                                     ledger{*ents};
     std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
     std::map<std::pair<int, std::string>, long long>              flags;
     std::optional<ArcLifeTrack> last;

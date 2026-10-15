@@ -23,6 +23,7 @@
 
 #include "app/SignalRoster.hpp"
 #include "config/GnssConfig.hpp"
+#include "app/NetworkEntities.hpp"
 #include "filter/ArcLedger.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
@@ -146,7 +147,9 @@ TEST(WindupRestartTargets, LedgerNamesTheCarriedArcsAndTheCarryAnswersBeforeIt) 
     Harness h;
     h.addCarry(0, kSat, kSig1, 420.0);
     h.addCarry(0, kSat, kSig2, 420.0);
-    ArcLedger ledger;
+    net::NetworkEntities ents;
+    ents.arcs = h.carry;   // one arc table: the carry and the ledger's records (step N4f2)
+    ArcLedger ledger{ ents };
     ledger.configure(/*horizon_s=*/3600.0, /*forget_ep=*/0);
     ledger.beginEpoch(0, h.now_s);
     const ArcLedger::Key k1{ 0, kSat, kSig1 };
@@ -157,7 +160,7 @@ TEST(WindupRestartTargets, LedgerNamesTheCarriedArcsAndTheCarryAnswersBeforeIt) 
     const auto site = static_cast<std::size_t>(RosterN3bSite::WindupRestartArcs);
     bool via = false;
     // L1C admitted in the ledger; L2W carried with no ledger record: both named.
-    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &h.carry, h.now_s, h.max_gap_s,
+    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
                                           &via, &ledger, &census),
               keys({ kSig1, kSig2 }));
     EXPECT_TRUE(via);
@@ -170,7 +173,7 @@ TEST(WindupRestartTargets, LedgerNamesTheCarriedArcsAndTheCarryAnswersBeforeIt) 
     ledger.observe(k1, true);
     ledger.observe(k2, true);
     ledger.admitEpoch(std::set<ArcLedger::Key>{ k1, k2 }, edges);
-    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &h.carry, h.now_s, h.max_gap_s,
+    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
                                           &via, &ledger, &census),
               keys({ kSig1, kSig2 }));
     EXPECT_EQ(census.count[site].compared, 2);

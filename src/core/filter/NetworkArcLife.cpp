@@ -86,8 +86,12 @@ ArcLifeKeys arcLifeKeys(const ArcId& arc) {
 }
 
 ArcLifeStamp arcLifeStamp(const NetworkRunContext& ctx, const ArcLifeKeys& keys) {
-    const ArcRecord* ledger = ctx.arc_ledger.find(keys.arc);
-    const auto lc = net::getArc(ctx.entities.arcs, keys.arc, &net::ArcState::amb);
+    // One row (step N4f2): the arc's ledger record and its leveling carry.
+    const std::optional<ArcId> id = net::arcKey(keys.arc);
+    const auto it = id ? ctx.entities.arcs.find(*id) : ctx.entities.arcs.end();
+    const net::ArcState* row = (it == ctx.entities.arcs.end()) ? nullptr : &it->second;
+    const ArcRecord*  ledger = (row && row->ledger) ? &*row->ledger : nullptr;
+    const LocalCarry* lc     = (row && row->amb) ? &*row->amb : nullptr;
     const long long* fl = net::getAmbFlagEp(ctx.entities.stations, keys.amb.first, keys.amb.second);
     return arcLifeStampOf(ledger, lc, fl);
 }

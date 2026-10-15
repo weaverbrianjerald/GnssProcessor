@@ -1064,6 +1064,8 @@ const std::vector<FieldDecl> kArcFields = {
      &eqrFromSnapshot, &retainedRows},
     {"anchor_arc_age", "anchor_arc_age", Persist::ColdStart, "", "", nullptr, nullptr,
      &arcRows<&R::anchor_arc_age>},
+    {"ledger", "arc_ledger", Persist::ColdStart, "", "", nullptr, nullptr,
+     &arcRows<&R::ledger>},
 };
 
 const std::array<EntityFields, 6> kEntityFieldTables = {{

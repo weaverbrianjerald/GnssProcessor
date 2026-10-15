@@ -63,6 +63,7 @@
 #include <vector>
 
 #include "common/GnssIdentity.hpp"
+#include "filter/ArcLedger.hpp"            // ArcRecord (an arc's ledger record, step N4f2)
 #include "filter/NetworkArCycleBasis.hpp"   // ArFamilyKey, ArBasisMemory
 #include "filter/NetworkGrossLos.hpp"       // GrossLosState
 #include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone
@@ -819,7 +820,18 @@ struct LosState {
 /// @ref StationState::amb_flag_ep, @ref StationState::adm_arc,
 /// @ref StationState::adm_event_last and @ref LosState::relevel_pend.
 struct ArcState {
-    Lifecycle seen;  ///< Decision D4; filled from the arc ledger in step N4f2.
+    /// Decision D4, filled by the arc ledger's machine (step N4f2): Present at the first
+    /// sighting, Departed when a gap opens, Returned at the next sighting.  The row is never
+    /// erased (D8), so the lifecycle outlives the ledger's forget window: a return after it
+    /// is Returned here while the ledger reports a first sighting.  Read by no output.
+    Lifecycle seen;
+    /// The arc's lifecycle record (card SID phase 1): its raw and admitted states, gap
+    /// lengths, generations and reason masks, advanced once per epoch by the ledger's
+    /// machine (@c ctx.arc_ledger, filter/ArcLedger.hpp) and read by the roster's audit,
+    /// the re-entry response, the anchor hygiene and @c arcLifeStamp.  Present from the
+    /// first sighting until the forget window resets it.  Was the record map of
+    /// @c ArcLedger (not a @c NetworkCarryState member).  ColdStart: not snapshotted.
+    std::optional<ArcRecord> ledger;
     /// The phase-leveling ambiguity carry (increment 1): persistent across epochs.  The
     /// table is ordered, so the inject order (which feeds rank-1 LDLT updates) is
     /// byte-identical serial and parallel.  Inert unless network.phase_leveling.  Was
@@ -1147,6 +1159,18 @@ template <class T, class R, class V, class Fn>
 void forEach(T& t, std::optional<V> R::*f, Fn fn) {
     for (auto& kv : t)
         if (kv.second.*f) fn(kv.first, *(kv.second.*f));
+}
+
+/**
+ * @brief @ref forEach for a reader that also reads the row's other fields: calls
+ *        @p fn(id, value, row) for every row where field @p f is present, in identity order
+ *        (one row holds an arc's ledger record and its carry, step N4f2).  @p fn must not
+ *        insert rows; it may reset field @p f of the row it is given.
+ */
+template <class T, class R, class V, class Fn>
+void forEachRow(T& t, std::optional<V> R::*f, Fn fn) {
+    for (auto& kv : t)
+        if (kv.second.*f) fn(kv.first, *(kv.second.*f), kv.second);
 }
 
 /// True when the set-membership field @p f of row @p id is set: the old set's @c count.

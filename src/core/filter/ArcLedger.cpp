@@ -4,6 +4,8 @@
  */
 #include "filter/ArcLedger.hpp"
 
+#include "app/NetworkEntities.hpp"   // the arc table the records live in (step N4f2)
+
 #include <algorithm>
 
 namespace GnssProcessor {
@@ -122,15 +124,17 @@ namespace GnssProcessor {
         // if that station holds `sat`, an unbounded scan would write the bit on
         // another station's arcs.  The satellite test alone does not catch this,
         // because the satellite matches there.
+        // The arc table orders the same way (O1, O8): net::arcsFrom is the old
+        // lower_bound on (station, sat, ""), and net::arcOfLos the station and satellite
+        // stop test.  A row without a record is not an arc the ledger knows.
         const auto scan = [&](int want_sta) {
-            for (auto it = arcs.lower_bound(ArcLedger::Key{ want_sta, sat, "" });
-                 it != arcs.end(); ++it) {
-                if (std::get<0>(it->first) != want_sta) break;
-                if (std::get<1>(it->first) != sat) break;
-                if (!signal.empty() && std::get<2>(it->first) != signal) continue;
-                if (it->second.adm_state != ArcState::Tracking
-                    && it->second.adm_state != ArcState::Reentered) continue;
-                arcReasonRecord(buf, it->first, bit, true);
+            for (auto it = net::arcsFrom(arcs, want_sta, sat);
+                 it != arcs.end() && net::arcOfLos(it->first, want_sta, sat); ++it) {
+                if (!it->second.ledger) continue;
+                if (!signal.empty() && net::signalKey(it->first.signal) != signal) continue;
+                if (it->second.ledger->adm_state != ArcState::Tracking
+                    && it->second.ledger->adm_state != ArcState::Reentered) continue;
+                arcReasonRecord(buf, net::arcTuple(it->first), bit, true);
                 ++n;
             }
         };
@@ -138,10 +142,10 @@ namespace GnssProcessor {
             scan(station);
         } else {
             for (auto it = arcs.begin(); it != arcs.end(); ) {
-                const int si = std::get<0>(it->first);
+                const int si = it->first.station.index;
                 scan(si);
-                // Advance to the first key of the next station.
-                it = arcs.lower_bound(ArcLedger::Key{ si + 1, "", "" });
+                // Advance to the first row of the next station.
+                it = net::arcsOfStation(arcs, si + 1);
             }
         }
         if (n == 0) ++buf.calls_unknown[static_cast<std::size_t>(
@@ -170,33 +174,51 @@ namespace GnssProcessor {
         t_s_       = t_s;
     }
 
+    namespace {
+        /// The row of arc @p key, created when absent (serial code: the roster's single
+        /// call).  A key that does not round-trip is counted under Converter::Arc and gets
+        /// a fresh scratch row the table never holds, so its record is never stored.
+        net::ArcState& rowOf(net::NetworkEntities& e, const ArcLedger::Key& key) {
+            if (const std::optional<ArcId> id = net::arcOf(e, key)) return e.arcs[*id];
+            static thread_local net::ArcState scratch;
+            scratch = net::ArcState{};
+            return scratch;
+        }
+
+        /// The record of @p row, created when absent (a first sighting).
+        ArcRecord& recordOf(net::ArcState& row) {
+            if (!row.ledger) row.ledger.emplace();
+            return *row.ledger;
+        }
+    }  // namespace
+
+    const ArcLedger::Table& ArcLedger::arcs() const { return ents_->arcs; }
+
+    std::size_t ArcLedger::size() const { return net::present(ents_->arcs, &net::ArcState::ledger); }
+
     const ArcRecord* ArcLedger::find(const Key& key) const {
-        const auto it = arcs_.find(key);
-        return it == arcs_.end() ? nullptr : &it->second;
+        return net::getArc(ents_->arcs, key, &net::ArcState::ledger);
     }
 
     std::size_t ArcLedger::liveCount() const {
         std::size_t n = 0;
-        for (const auto& [k, r] : arcs_) {
-            (void)k;
+        net::forEach(ents_->arcs, &net::ArcState::ledger, [&](const ArcId&, const ArcRecord& r) {
             if (r.state == ArcState::Tracking || r.state == ArcState::Reentered) ++n;
-        }
+        });
         return n;
     }
 
     std::size_t ArcLedger::admittedLiveCount() const {
         std::size_t n = 0;
-        for (const auto& [k, r] : arcs_) {
-            (void)k;
+        net::forEach(ents_->arcs, &net::ArcState::ledger, [&](const ArcId&, const ArcRecord& r) {
             if (r.adm_state == ArcState::Tracking || r.adm_state == ArcState::Reentered) ++n;
-        }
+        });
         return n;
     }
 
     ArcStep ArcLedger::observe(const Key& key, bool modelled) {
-        auto it = arcs_.find(key);
-        if (it == arcs_.end()) it = arcs_.emplace(key, ArcRecord{}).first;
-        ArcRecord& a = it->second;
+        net::ArcState& row = rowOf(*ents_, key);
+        ArcRecord& a = recordOf(row);
 
         ArcStep s;
         s.from = a.state;
@@ -239,6 +261,16 @@ namespace GnssProcessor {
         a.ep_last_seen  = epoch_idx_;
         a.t_last_seen_s = t_s_;
         a.modelled      = modelled;
+        // The row's lifecycle (decision D4): a first sighting, or a return after a
+        // departure.  It survives the forget sweep (D8), so it is never a second birth.
+        net::Lifecycle& seen = row.seen;
+        if (seen.life == net::Life::Absent) {
+            seen.life     = net::Life::Present;
+            seen.ep_first = epoch_idx_;
+        } else if (seen.life == net::Life::Departed) {
+            seen.life = net::Life::Returned;
+        }
+        seen.ep_last = epoch_idx_;
         s.to            = a.state;
         s.generation    = a.generation;
         s.reason_mask   = a.reason_mask;
@@ -255,18 +287,18 @@ namespace GnssProcessor {
     void ArcLedger::endEpoch(const std::set<int>& present_stations,
                              std::vector<std::pair<Key, ArcStep>>& out) {
         out.clear();
-        std::vector<Key> forget;
-        for (auto& [key, a] : arcs_) {
-            const int sta = std::get<0>(key);
+        net::forEachRow(ents_->arcs, &net::ArcState::ledger,
+                        [&](const ArcId& id, ArcRecord& a, net::ArcState& row) {
+            const int sta = id.station.index;
             if (a.state == ArcState::Dead) {
                 // The forget sweep runs at every station, present or not: a record that
                 // has been dead for the whole window carries no information a station's
-                // return could use.
+                // return could use.  The record resets and the row stays (D8).
                 if (forget_ep_ > 0 && epoch_idx_ - a.ep_state_changed > forget_ep_)
-                    forget.push_back(key);
-                continue;
+                    row.ledger.reset();
+                return;
             }
-            if (!present_stations.count(sta)) continue;   // station absent: frozen
+            if (!present_stations.count(sta)) return;   // station absent: frozen
             // Observed this epoch: observe() stamps ep_last_seen with the open
             // epoch's index, and nothing else writes it, so the stamp is the
             // record of the sighting (the epoch index strictly increases from one
@@ -274,7 +306,7 @@ namespace GnssProcessor {
             // keys that held the same fact at the cost of one tree insert per
             // observation and one lookup per arc (card NOM step N3a, where the
             // ledger became part of every run).
-            if (a.ep_last_seen == epoch_idx_) continue;
+            if (a.ep_last_seen == epoch_idx_) return;
 
             ArcStep s;
             s.from = a.state;
@@ -285,6 +317,7 @@ namespace GnssProcessor {
                 a.ep_state_changed = epoch_idx_;
                 a.gap_len_ep       = static_cast<int>(epoch_idx_ - a.ep_last_seen);
                 s.gap_len_ep       = a.gap_len_ep;
+                row.seen.life      = net::Life::Departed;
             } else {   // already Gap
                 a.gap_len_ep = static_cast<int>(epoch_idx_ - a.ep_last_seen);
                 if (horizon_s_ > 0.0 && (t_s_ - a.t_last_seen_s) > horizon_s_) {
@@ -294,7 +327,7 @@ namespace GnssProcessor {
                     a.reason_mask     |= kArcReasonHorizon;
                     s.gap_len_ep       = a.gap_len_ep;
                 } else {
-                    continue;   // still gapped, no edge
+                    return;   // still gapped, no edge
                 }
             }
             s.to          = a.state;
@@ -303,9 +336,8 @@ namespace GnssProcessor {
             s.adm_state      = a.adm_state;
             s.adm_gap_len_ep = a.admittedGapEp(epoch_idx_);
             s.adm_generation = a.adm_generation;
-            out.emplace_back(key, s);
-        }
-        for (const auto& k : forget) arcs_.erase(k);
+            out.emplace_back(net::arcTuple(id), s);
+        });
     }
 
     void ArcLedger::admitEpoch(const std::set<Key>& admitted,
@@ -332,9 +364,7 @@ namespace GnssProcessor {
         // (1) The arcs admitted at this epoch.  Inserts happen here, before the
         //     sweep below walks the map, so the sweep never sees a half-built record.
         for (const Key& key : admitted) {
-            auto it = arcs_.find(key);
-            if (it == arcs_.end()) it = arcs_.emplace(key, ArcRecord{}).first;
-            ArcRecord& a = it->second;
+            ArcRecord& a = recordOf(rowOf(*ents_, key));
 
             ArcStep s;
             s.from = a.adm_state;
@@ -388,14 +418,14 @@ namespace GnssProcessor {
         }
 
         // (2) Gap and kill the admitted arcs the present stations did not model.
-        for (auto& [key, a] : arcs_) {
-            if (a.adm_state == ArcState::Absent || a.adm_state == ArcState::Dead) continue;
-            if (!present.count(std::get<0>(key))) continue;   // station absent: frozen
+        net::forEach(ents_->arcs, &net::ArcState::ledger, [&](const ArcId& id, ArcRecord& a) {
+            if (a.adm_state == ArcState::Absent || a.adm_state == ArcState::Dead) return;
+            if (!present.count(id.station.index)) return;   // station absent: frozen
             // Admitted this epoch: step (1) stamped ep_last_admitted with the open
             // epoch's index, the only write to it, so the stamp answers what a
             // lookup in `admitted` would (this call runs once per epoch; card NOM
             // step N3a, as for the raw side's sighting stamp).
-            if (a.ep_last_admitted == epoch_idx_) continue;
+            if (a.ep_last_admitted == epoch_idx_) return;
 
             ArcStep s;
             s.from = a.adm_state;
@@ -408,7 +438,7 @@ namespace GnssProcessor {
                 // Stamp the reason (S1).  The mask lasts through the whole gap and is
                 // still readable at the re-entry, which lets phase 3's no-verdict
                 // population be split by the screen that opened its gap.
-                a.adm_reason_mask      = gapReason(key);
+                a.adm_reason_mask      = gapReason(net::arcTuple(id));
             } else {   // already Gap
                 a.adm_gap_len_ep = static_cast<int>(epoch_idx_ - a.ep_last_admitted);
                 if (horizon_s_ > 0.0 && (t_s_ - a.t_last_admitted_s) > horizon_s_) {
@@ -418,7 +448,7 @@ namespace GnssProcessor {
                     a.adm_reason_mask     |= kArcReasonHorizon;
                     s.gap_len_ep           = a.adm_gap_len_ep;
                 } else {
-                    continue;   // still gapped, no edge
+                    return;   // still gapped, no edge
                 }
             }
             s.to             = a.adm_state;
@@ -427,14 +457,14 @@ namespace GnssProcessor {
             s.adm_state      = a.adm_state;
             s.adm_gap_len_ep = a.adm_gap_len_ep;
             s.adm_generation = a.adm_generation;
-            out.emplace_back(key, s);
-        }
+            out.emplace_back(net::arcTuple(id), s);
+        });
     }
 
     bool ArcLedger::markStatePruned(const Key& key) {
-        const auto it = arcs_.find(key);
-        if (it == arcs_.end()) return false;
-        ArcRecord& a = it->second;
+        ArcRecord* const found = net::getArc(ents_->arcs, key, &net::ArcState::ledger);
+        if (found == nullptr) return false;
+        ArcRecord& a = *found;
         a.state_pruned    = true;
         a.ep_state_pruned = epoch_idx_;
         ++a.n_state_pruned;
