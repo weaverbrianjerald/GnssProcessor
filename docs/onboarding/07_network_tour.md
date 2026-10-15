@@ -193,8 +193,12 @@ remain and are listed in the card.
 
 ## One epoch, in eight stages
 
-The epoch loop is in `runNetwork()` (`src\core\app\ApplicationNetwork.cpp`). Each stage
-is a function in its own file; the loop calls them in this order.
+One epoch is `Application::networkProcessEpoch_` (`src\core\app\ApplicationNetworkEpoch.cpp`),
+called by `runNetwork()` (`src\core\app\ApplicationNetwork.cpp`) for each synced epoch. Each
+stage is a function in its own file, called in this order with the run (`NetworkRun`,
+`app\NetworkRun.hpp`: the context, configuration, traces and engines) and the epoch
+(`NetworkEpoch`, `app\NetworkEpoch.hpp`: this epoch's values, grouped by the stage that
+writes them, const to every reader).
 
 | # | stage | main functions (file) |
 | --- | --- | --- |
