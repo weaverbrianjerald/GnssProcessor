@@ -205,9 +205,9 @@ struct SeamBed {
         NetworkCarryState fx = fixtureCarry(); net::NetworkEntities fx_ent;
         ctx->carry.prev_carry     = fx.prev_carry;
         ctx->carry.prev_carry_cov = fx.prev_carry_cov;
-        ctx->carry.prev_pivot["G"] = "G01";
-        ctx->carry.last_pivot["G"] = "G01";
-        ctx->carry.cxu_pivot['G']  = {"G01", 0.0};
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::prev_pivot) = "G01";
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::last_pivot) = "G01";
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::cxu_pivot)  = {"G01", 0.0};
     }
     ~SeamBed() {
         traces.reset();

@@ -500,6 +500,9 @@ TEST(PrefitCensusObservability, EventsAreRateLimitedPerCellAndResumeAfterTheHold
                        "    \"trace_events\": true,\n");
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     ASSERT_EQ(ctx.knobs.pc_event_holdoff, 5);
+    // The holdoff clocks are keyed by line of sight, the station by its roster name (card NOM
+    // step N4c, O3): the run's setup assigns the roster.
+    ctx.entities.names.assign({"BSHM00ISR"});
 
     const fs::path dir = scratchDir("holdoff");
     const fs::path csv = dir / "network_events.csv";

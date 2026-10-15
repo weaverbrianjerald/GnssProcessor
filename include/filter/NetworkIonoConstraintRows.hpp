@@ -9,6 +9,7 @@
  */
 
 #include <cstdint>
+#include "app/NetworkEntities.hpp"   // net::LosTable (the SH deviation carries, card NOM step N4c)
 #include "filter/NetworkRunTypes.hpp"
 #include "filter/NetworkContributions.hpp"
 #include "common/PppObservation.hpp"
@@ -90,7 +91,7 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
                              const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model,
                              const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model2,
                              const GlobalVtecShConfig& shc, bool sh_dev_on,
-                             const std::map<std::string, ShDevCarry>& sh_dev_carry,
+                             const net::LosTable& sh_dev_los, int sta_index,
                              Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r, Eigen::VectorXd& w,
                              Eigen::VectorXd& y, std::vector<RowTag>& tags);
 

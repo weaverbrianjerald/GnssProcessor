@@ -242,7 +242,7 @@ struct Rig {
     /// written it at the end of the previous epoch; that is the only stamp the vet
     /// honours (INC-4).  Call immediately before the `step` that should read it.
     void censusFlag(NetworkRunContext& ctx, const std::string& sat) const {
-        ctx.carry.prefit_code_flag    = {{0, sat}};
+        net::assignLosFlags(ctx.entities, &net::LosState::prefit_code_flag, {{0, sat}});
         ctx.carry.prefit_code_flag_ep =
             static_cast<long long>(ctx.counters.n_loop_epochs);
     }
@@ -937,7 +937,7 @@ TEST(MeasurementAdmission, StaleCensusFlagIsIgnoredAndCounted) {
 
     // A flag naming the cell, but stamped several epochs ago: the shape a run with
     // the prefit walk switched off part-way through would produce.
-    ctx.carry.prefit_code_flag    = {{0, std::string("G07")}};
+    net::assignLosFlags(ctx.entities, &net::LosState::prefit_code_flag, {{0, std::string("G07")}});
     ctx.carry.prefit_code_flag_ep = 0;
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/300.0));
 

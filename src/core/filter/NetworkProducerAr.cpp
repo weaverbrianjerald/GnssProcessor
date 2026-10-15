@@ -471,6 +471,7 @@ int arSignalBasisRows(bool tree_basis, ArPools& ar_pool, const SyncedEpoch& se,
 
 /// One family's build at this search, held until it becomes the family's memory after the search.
 struct ArCycleFamilyEpoch {
+    System                            sys{System::Unknown};  ///< The family's constellation (its memory's row).
     ArFamilyKey                       key;       ///< The family's bands.
     ArCycleBuild                      build;     ///< Its graph, forest and basis.
     std::map<ArcId, ArcLifeTrack>     arcs;      ///< Its band-arcs' tracks after this search.
@@ -655,9 +656,15 @@ int arCycleBasisRows(NetworkRunContext& ctx, bool sticky, const ArPools& pools, 
     for (const auto& [cons, sigs] : signals_of) {
         for (const ArFamilySpec& fam : arCycleFamilies(systemFromName(cons), sigs)) {
             ArCycleFamilyEpoch fe;
+            fe.sys = systemFromName(cons);
             fe.key = fam.bands;
-            const auto mit = ctx.carry.ar_basis.find(fe.key);
-            const ArBasisMemory& mem = (mit == ctx.carry.ar_basis.end()) ? none : mit->second;
+            const ArBasisMemory* memp = &none;   // the family's memory in its constellation's row
+            if (const auto cit = ctx.entities.constellations.find(fe.sys);
+                cit != ctx.entities.constellations.end()) {
+                const auto mit = cit->second.ar_basis.find(fe.key);
+                if (mit != cit->second.ar_basis.end()) memp = &mit->second;
+            }
+            const ArBasisMemory& mem = *memp;
             const auto t0 = Clock::now();
             const ArCycleInput in = arCycleInputOf(ctx, fam, cons, pools, mem, now_ep, fe.arcs, c, readings);
             const auto t1 = Clock::now();
@@ -691,10 +698,10 @@ int arCycleBasisRows(NetworkRunContext& ctx, bool sticky, const ArPools& pools, 
 }
 
 /// Each family built at this search becomes its memory for the next search (after the search).
-void arCycleBasisStore(std::map<ArFamilyKey, ArBasisMemory>& memory, std::vector<ArCycleFamilyEpoch>& epoch,
+void arCycleBasisStore(net::ConstellationTable& memory, std::vector<ArCycleFamilyEpoch>& epoch,
                        long long now_ep) {
     for (ArCycleFamilyEpoch& fe : epoch) {
-        ArBasisMemory& m = memory[fe.key];
+        ArBasisMemory& m = memory[fe.sys].ar_basis[fe.key];
         m.last_search_ep = now_ep;
         m.links          = arcgraph::incumbentLinksOf(fe.build.graph, fe.build.forest);
         m.basis          = std::move(fe.build.basis);
@@ -1207,7 +1214,8 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
         }
         // Card AGT: each family's build becomes its memory for the next search, whether or not
         // this one ran (no covariance, no row): stickiness follows the basis, not the search.
-        if (netar.cycle_basis) arCycleBasisStore(ctx.carry.ar_basis, cycle_epoch, suspect_now_ep);
+        if (netar.cycle_basis)
+            arCycleBasisStore(ctx.entities.constellations, cycle_epoch, suspect_now_ep);
     }
 
     // --- One-shot full-arrowhead NEQ export (network.neq_export_epoch) -----------

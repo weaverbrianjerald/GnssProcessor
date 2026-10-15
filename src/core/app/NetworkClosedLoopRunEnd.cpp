@@ -174,8 +174,11 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
             const double t50 = q(tt, 0.50), t90 = q(tt, 0.90);
             const double tmax = tt.empty() ? 0.0 : *std::max_element(tt.begin(), tt.end());
             std::string m_final;
-            for (const auto& [cc, m] : ctx.carry.pb_hold_frz_M)
-                m_final += fmt::format("{}{} {:.4f}", m_final.empty() ? "" : ", ", cc, m);
+            net::forEach(ctx.entities.constellations, &net::ConstellationState::pb_hold_frz_M,
+                         [&](System sys, double m) {
+                             m_final += fmt::format("{}{} {:.4f}", m_final.empty() ? "" : ", ",
+                                                    rinexLetter(sys), m);
+                         });
             log->info("  pb hold, phase clock (LAH): {} held emission(s) moved by the clock "
                       "transfer (> 1 um), {} on an epoch without the satellite's clock (last "
                       "transfer reused), {} of a generation started without one (held "

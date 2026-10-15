@@ -126,10 +126,9 @@ void networkElectChainDatum(NetworkRunContext& ctx,
 auto& prev_carry = ctx.carry.prev_carry;
 auto& anchor_incumbent = ctx.carry.anchor_incumbent;
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
-auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
-net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a)
+net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
-auto& eq34_prev_el = ctx.carry.eq34_prev_el;
+
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
 auto& eq34_erase_total = ctx.carry.eq34_erase_total;
 auto& eq34_shift_total = ctx.carry.eq34_shift_total;
@@ -291,8 +290,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             auto ei = sat_el[ri].find(sat);
             if (ei == sat_el[ri].end()) return -1e9;   // no elevation (unreachable for a live arc)
             const double el = ei->second;
-            auto pe = eq34_prev_el.find({ri, sat});
-            const bool rising = (pe != eq34_prev_el.end() && el > pe->second + 1e-6);
+            const double* pe = net::getLos(entities.los, static_cast<int>(ri), sat,
+                                           &net::LosState::eq34_prev_el);
+            const bool rising = (pe != nullptr && el > *pe + 1e-6);
             // Slip-aware (Card 3/4): an arc that slipped this epoch is the worst new
             // tree edge at any elevation.  As a tree edge it invalidates every
             // fundamental cycle that closes through it, so the whole dependent chord set
@@ -489,10 +489,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         if (stations[i].name == best_name) { r1 = i; break; }
             }
             if (r1 == static_cast<size_t>(-1)) {
-                auto it = eq34_datum_rx.find(dr_key);
-                if (it != eq34_datum_rx.end())
+                const std::string* drx = net::get(entities.constellations, grp_sys,
+                                                  &net::ConstellationState::channels, grp_sig,
+                                                  &net::ChannelState::datum_rx);
+                if (drx != nullptr)
                     for (size_t i : rx_list)
-                        if (stations[i].name == it->second) { r1 = i; break; }
+                        if (stations[i].name == *drx) { r1 = i; break; }
             }
             if (r1 == static_cast<size_t>(-1)) {
                 int best = -1;
@@ -847,7 +849,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 }
             }
         }
-        if (!best_datum_rx.empty()) eq34_datum_rx[dr_key] = best_datum_rx;
+        if (!best_datum_rx.empty())
+            net::put(entities.constellations, grp_sys, &net::ConstellationState::channels,
+                     grp_sig, &net::ChannelState::datum_rx) = best_datum_rx;
     }
     // Rank cross-check (D3): recorded pins == Σ (n_c + m_c).  A mismatch
     // means a component was mis-pinned before the W5 gate ever runs.
@@ -1045,11 +1049,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // pruned arc drops out); skipped when the longevity election is
     // off, so the map stays empty on the B9 baseline.
     if (eq34_longevity) {
-        eq34_prev_el.clear();
+        net::dropAll(entities.los, &net::LosState::eq34_prev_el);
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i]) continue;
             for (const auto& [sat, el] : sat_el[i])
-                eq34_prev_el[{i, sat}] = el;
+                net::putLos(entities, static_cast<int>(i), sat, &net::LosState::eq34_prev_el) = el;
         }
     }
 }

@@ -33,20 +33,16 @@ LocalCarry* shxFindEntry(NetworkRunContext& ctx, const SharedHistoryHarvest::Han
         }
         case SharedHistoryMap::Zwd:
             return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::zwd);
-        case SharedHistoryMap::Iono: {
-            const auto it = c.iono_blk_carry.find(std::make_pair(hd.sta, hd.sat));
-            return it != c.iono_blk_carry.end() ? &it->second : nullptr;
-        }
+        case SharedHistoryMap::Iono:
+            return net::getLos(ctx.entities.los, hd.sta, hd.sat, &net::LosState::iono_blk);
         case SharedHistoryMap::RxClk:
             return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::signals,
                             hd.sat, &net::StationSignalState::rx_clk);
         case SharedHistoryMap::RxCb:
             return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::signals,
                             hd.sat, &net::StationSignalState::rx_cb);
-        case SharedHistoryMap::Pc: {
-            const auto it = c.pc_carry.find(std::make_pair(hd.sta, hd.sat));
-            return it != c.pc_carry.end() ? &it->second : nullptr;
-        }
+        case SharedHistoryMap::Pc:
+            return net::getLos(ctx.entities.los, hd.sta, hd.sat, &net::LosState::pc);
     }
     return nullptr;
 }
@@ -58,14 +54,16 @@ void shxForEachEntry(const NetworkRunContext& ctx, Fn&& fn) {
     for (const auto& kv : c.local_carry) fn(kv.second);
     net::forEach(ctx.entities.stations, &net::StationState::zwd,
                  [&](const StationId&, const LocalCarry& lc) { fn(lc); });
-    for (const auto& kv : c.iono_blk_carry) fn(kv.second);
+    net::forEach(ctx.entities.los, &net::LosState::iono_blk,
+                 [&](const LosId&, const LocalCarry& lc) { fn(lc); });
     net::forEach(ctx.entities.stations, &net::StationState::signals,
                  &net::StationSignalState::rx_clk,
                  [&](const StationId&, const std::string&, const LocalCarry& lc) { fn(lc); });
     net::forEach(ctx.entities.stations, &net::StationState::signals,
                  &net::StationSignalState::rx_cb,
                  [&](const StationId&, const std::string&, const LocalCarry& lc) { fn(lc); });
-    for (const auto& kv : c.pc_carry) fn(kv.second);
+    net::forEach(ctx.entities.los, &net::LosState::pc,
+                 [&](const LosId&, const LocalCarry& lc) { fn(lc); });
 }
 
 /// The p50 and the maximum of a sample (0 when empty).

@@ -275,8 +275,8 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
 
     auto& stations = setup.stations;
     auto& C = ctx.counters;
-    auto& prev = ctx.carry.sd_ewl_prev;
-    auto& r0_sticky = ctx.carry.sd_ewl_r0;
+    net::LosTable& los_rows = ctx.entities.los;   // the flip memory (card NOM step N4c)
+    net::ConstellationTable& cons_rows = ctx.entities.constellations;   // sd_ewl_r0 (N4b)
     ++C.sdewl_epochs;
     (void)now_s;   // arc continuity is judged by the detector's own sample count
 
@@ -454,15 +454,16 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
         // event, because it shifts every propagated integer in the component.
         std::string r0 = graph.begin()->first;
         {
-            const auto it = r0_sticky.find(cons);
-            if (it != r0_sticky.end() && graph.count(it->second)) {
-                r0 = it->second;
+            const std::string* sticky =
+                net::get(cons_rows, systemFromLetter(cons), &net::ConstellationState::sd_ewl_r0);
+            if (sticky != nullptr && graph.count(*sticky)) {
+                r0 = *sticky;
             } else {
                 std::size_t best_n = 0;
                 for (const auto& [nm, ss] : graph)
                     if (ss.size() > best_n) { r0 = nm; best_n = ss.size(); }
-                if (it != r0_sticky.end()) ++C.sdewl_sd_ref_reelected;
-                r0_sticky[cons] = r0;
+                if (sticky != nullptr) ++C.sdewl_sd_ref_reelected;
+                net::put(cons_rows, systemFromLetter(cons), &net::ConstellationState::sd_ewl_r0) = r0;
             }
         }
         ++C.sdewl_components;
@@ -491,17 +492,20 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
                     continue;
                 }
                 const SdEwlDecision& d = dit->second.at(sat);
-                const auto key = std::make_tuple(sta, cons, sat);
-                const auto pit = prev.find(key);
-                const long long n_prev = pit != prev.end() ? pit->second.first : 0;
+                // The flip memory of the line of sight (the old key's constellation is the
+                // satellite's).
+                const std::pair<long long, std::size_t>* pit =
+                    net::getLos(los_rows, static_cast<int>(sta), sat, &net::LosState::sd_ewl_prev);
+                const long long n_prev = pit != nullptr ? pit->first : 0;
                 const SdEwlFlipVerdict v =
-                    sdEwlFlipCheck(pit != prev.end(), n_prev,
-                                   pit != prev.end() ? pit->second.second : 0,
+                    sdEwlFlipCheck(pit != nullptr, n_prev,
+                                   pit != nullptr ? pit->second : 0,
                                    d.n_cyc, stat.count);
                 if (v == SdEwlFlipVerdict::Restart) ++C.sdewl_dd_restart;
                 if (v == SdEwlFlipVerdict::Flip)    ++C.sdewl_dd_flip;
                 const bool vetoed = (v == SdEwlFlipVerdict::Flip);
-                prev[key] = { d.n_cyc, stat.count };
+                net::putLos(ctx.entities, static_cast<int>(sta), sat, &net::LosState::sd_ewl_prev) =
+                    { d.n_cyc, stat.count };
                 SdEwlFix f;
                 f.n_cyc = d.n_cyc;
                 f.sig1 = pk.first;
@@ -524,13 +528,15 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
     // Drop the flip memory of arcs that vanished, so a satellite that disappears for an
     // hour and returns is not compared against a stale integer (that comparison would
     // charge a spurious flip and veto a valid fix on the return epoch).
-    for (auto it = prev.begin(); it != prev.end();) {
-        const auto& [sta, cons, sat] = it->first;
-        const auto cit = chan.find(cons);
-        const bool alive = cit != chan.end() && cit->second.count(sat)
-                           && cit->second.at(sat).second.count(sta);
-        it = alive ? std::next(it) : prev.erase(it);
-    }
+    net::eraseIf(los_rows, &net::LosState::sd_ewl_prev,
+                 [&](const LosId& id, const std::pair<long long, std::size_t>&) {
+                     const auto sta = static_cast<std::size_t>(id.station.index);
+                     const std::string sat = net::satKey(id.sat);
+                     const auto cit = chan.find(id.sat.letter());
+                     const bool alive = cit != chan.end() && cit->second.count(sat)
+                                        && cit->second.at(sat).second.count(sta);
+                     return !alive;
+                 });
 
     if (traces.sd_ewl_ar_trace) traces.sd_ewl_ar_trace.flush();
     log->debug("Network (SD EWL 2a) TOW {:.1f}: {} arc(s) admitted, {} DD attempt(s), "
@@ -539,8 +545,11 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
                se.time.tow, C.sdewl_dd_pairs_seen, C.sdewl_dd_fix_attempts,
                C.sdewl_dd_fixed, C.sdewl_dd_reject_frac, C.sdewl_dd_reject_ffr,
                C.sdewl_dd_flip, C.sdewl_dd_restart, C.sdewl_components,
-               [&] { std::string s; for (const auto& [c, nm] : r0_sticky)
-                                        s += fmt::format("{}={} ", c, nm);
+               [&] { std::string s;
+                     net::forEach(cons_rows, &net::ConstellationState::sd_ewl_r0,
+                                  [&](System sys, const std::string& nm) {
+                                      s += fmt::format("{}={} ", rinexLetter(sys), nm);
+                                  });
                      return s; }());
 }
 

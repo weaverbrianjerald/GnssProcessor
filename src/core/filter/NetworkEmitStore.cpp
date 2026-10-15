@@ -97,8 +97,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     auto& consumer = setup.consumer;
     auto& cl_trace             = traces.cl_trace;
     auto& soln                 = traces.soln;
-    auto& last_pivot = ctx.carry.last_pivot;
-    auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
+    const net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the pivots, datum_rx (N4b)
     auto& eq34_emitted_pdr = ctx.carry.eq34_emitted_pdr;
     auto& first_emit_content_s = ctx.carry.first_emit_content_s;
     const bool   ser_disc_ctrs   = ctx.knobs.ser_disc_ctrs;    // serialize post-emit disc-counter values on C/B/P records (RTA-4)
@@ -462,12 +461,16 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
         // biases by a common fractional + per-sat integers.  That is a smaller event
         // than a clock-pivot handover but still a datum break on which the consumer
         // re-syncs the contract (Card 3, D4).
-        const std::string cur_pdr = (phase_datum_eq34 && !eq34_datum_rx.empty())
-                                      ? eq34_datum_rx.begin()->second : std::string{};
+        const std::string* first_dr =
+            net::first(cons_rows, &net::ConstellationState::channels, &net::ChannelState::datum_rx);
+        const std::string cur_pdr = (phase_datum_eq34 && first_dr != nullptr)
+                                      ? *first_dr : std::string{};
         const bool eq34_root_changed = phase_datum_eq34 && cur_pdr != eq34_emitted_pdr;
         if (due || datum_changed || eq34_root_changed || clk_reanchor_marked) {
-            for (const auto& [cst, sat] : last_pivot)
-                pending_contract.decl.clock_pivot_sat[cst] = sat;   // refresh realized pivots
+            net::forEach(cons_rows, &net::ConstellationState::last_pivot,
+                         [&](System sys, const std::string& sat) {
+                             pending_contract.decl.clock_pivot_sat[constellationKey(sys)] = sat;   // refresh realized pivots
+                         });
             if (phase_datum_eq34) {
                 pending_contract.decl.eq34_datum_receiver = cur_pdr;   // refresh pdr=
                 eq34_emitted_pdr = cur_pdr;

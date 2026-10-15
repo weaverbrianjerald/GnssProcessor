@@ -329,7 +329,9 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
     auto& stations = setup.stations;
     auto& this_epoch_if_pin_sel = ctx.carry.this_epoch_if_pin_sel;
     auto& this_epoch_if_pin_real = ctx.carry.this_epoch_if_pin_real;
-    auto& code_bias_prev_ = ctx.carry.code_bias_prev_;
+    // The previous-epoch code-bias values as the builder reads them ("<c>|<signal>" -> sat).
+    const std::map<std::string, std::map<std::string, double>> code_bias_prev_ =
+        net::channelMap(ctx.entities.constellations, &net::ChannelState::code_bias_prev);
     auto& code_bias_ifpin_pair_ = ctx.carry.code_bias_ifpin_pair_;
     auto& this_epoch_cb_ifpin = ctx.carry.this_epoch_cb_ifpin;
     auto& this_epoch_cb_reseed = ctx.carry.this_epoch_cb_reseed;

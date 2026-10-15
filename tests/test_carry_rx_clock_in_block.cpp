@@ -708,7 +708,7 @@ TEST(CarryRxClockInBlockTest, CarryKeyAddressesTheClockAndEachIsbSeparately) {
     EXPECT_LT(fresh.prev_s, 0.0);
 
     // The neighbouring carries are separate maps; no vehicle shares state.
-    EXPECT_TRUE(carry.iono_blk_carry.empty());
+    EXPECT_TRUE((net::present(ent.los, &net::LosState::iono_blk) == 0));
     EXPECT_EQ(net::present(ent.stations, &net::StationState::zwd), 0u);
 }
 

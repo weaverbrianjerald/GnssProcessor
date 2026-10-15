@@ -99,6 +99,14 @@ namespace fs = std::filesystem;
 
 namespace {
 
+/// The value behind an entity-table lookup, throwing like std::map::at when it is absent
+/// (card NOM step N4b moved the map the test read into the constellation table).
+template <class V>
+const V& netAt(const V* p) {
+    if (p == nullptr) throw std::out_of_range("netAt: absent");
+    return *p;
+}
+
 using Pair    = std::pair<std::string, std::string>;
 using Outcome = NetworkSbasis::FamilyRowOutcome;
 using PinOut  = NetworkSbasis::PinPairOutcome;
@@ -2384,7 +2392,8 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
                            bool with_carry) {
         Harness h;
         armBirthPrior(h, 0.10);
-        h.code_bias_prev       = ctx.carry.code_bias_prev_;
+        h.code_bias_prev       = net::channelMap(ctx.entities.constellations,
+                                                 &net::ChannelState::code_bias_prev);
         h.code_bias_sat_seen   = ctx.carry.code_bias_sat_seen_;
         h.code_bias_ifpin_pair = ctx.carry.code_bias_ifpin_pair_;
         if (with_carry) h.carry = networkCodeBiasCarryMap(ctx);
@@ -2401,7 +2410,7 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
     NetworkEstimator& e1 = fx.renewEstimator();
     const auto keys_all = registerRoster(e1, kTwoFamily);
     keep(e1, keys_all, t1);
-    ASSERT_EQ(ctx.carry.code_bias_prev_.at("E|C1C").count("E03"), 1u);
+    ASSERT_EQ(netAt(net::get(ctx.entities.constellations, System::Galileo, &net::ConstellationState::channels, "C1C", &net::ChannelState::code_bias_prev)).count("E03"), 1u);
 
     // t2: E03's C1C column leaves the layout; kept, so READMIT parks its carry and the
     // previous-value map drops it.
@@ -2410,7 +2419,7 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
     decide(at(t1 + 30.0), 30.0);
     keep(e2, keys_gone, t1 + 30.0);
     EXPECT_EQ(ctx.counters.n_readmit_parked, 1);
-    EXPECT_EQ(ctx.carry.code_bias_prev_.at("E|C1C").count("E03"), 0u);
+    EXPECT_EQ(netAt(net::get(ctx.entities.constellations, System::Galileo, &net::ConstellationState::channels, "C1C", &net::ChannelState::code_bias_prev)).count("E03"), 0u);
 
     // t3 = t2 + 20 min: back, seeded from the park.  No birth; a second row without the carry.
     NetworkEstimator& e3 = fx.renewEstimator();

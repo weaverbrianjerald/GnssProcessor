@@ -459,12 +459,12 @@ struct PreviewBed {
         traces->openAll(L.cfg, L.cfg.getNetworkConfig(), L.cfg.getGlobalVtecShConfig(),
                         /*sh_model=*/nullptr, /*cl_trace_armed=*/false, log);
         ctx = &fx->ctx();
-        ctx->carry.prev_pivot["G"] = "G01";
-        ctx->carry.last_pivot["G"] = "G01";
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::prev_pivot) = "G01";
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::last_pivot) = "G01";
         ctx->carry.prev_carry = {clk("G02", -2.0, 0.25), clk("G05", -0.75, 0.5),
                                  clk("G32", 1.25, 0.125), clk("G07", 0.5, 0.0625)};
         ctx->carry.prev_carry[3].t_park_s = 1000.0;
-        ctx->carry.cxu_pivot['G'] = {"G01", 0.0};
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::cxu_pivot) = {"G01", 0.0};
         LocalCarry lc{3.0, 1e-4, 100.0};
         lc.coupling = {CoupledShared{SharedParamKind::Clock, "G05", "", 0, 0, 'C', 0, 0.5, -0.75, 0.5},
                        CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, -0.5, 0.0, 0.0}};
@@ -511,7 +511,7 @@ TEST(HandoverStransformBeforeRows, PreviewReExpressesOnceAndKeepsItOnTheSamePivo
     EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G05"), 0.75);
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G07"), 2.5);
     EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G07"), 0.3125);
-    EXPECT_EQ(B.ctx->carry.cxu_pivot['G'].second, 2.0);
+    EXPECT_EQ(net::put(B.ctx->entities.constellations, System::GPS, &net::ConstellationState::cxu_pivot).second, 2.0);
     EXPECT_EQ(B.term(0).s_prev, 1.25);
     EXPECT_EQ(B.term(0).p_prev, 0.75);
     EXPECT_EQ(B.term(1).s_prev, 2.0);
@@ -550,7 +550,7 @@ TEST(HandoverStransformBeforeRows, PreviewUndoesWhenTheOutgoingPivotReturns) {
     EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G05"), 0.5);
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G07"), 0.5);
     EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G07"), 0.0625);
-    EXPECT_EQ(B.ctx->carry.cxu_pivot['G'].second, 0.0);
+    EXPECT_EQ(net::put(B.ctx->entities.constellations, System::GPS, &net::ConstellationState::cxu_pivot).second, 0.0);
     EXPECT_EQ(B.term(0).s_prev, -0.75);
     EXPECT_EQ(B.term(0).p_prev, 0.5);
     EXPECT_EQ(B.term(1).s_prev, 0.0);

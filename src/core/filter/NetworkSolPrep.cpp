@@ -85,15 +85,14 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     auto& pending_contract = setup.pending_contract;
     auto& contract_pending = setup.contract_pending;
     auto& events_trace         = traces.events_trace;
-    auto& prev_pivot = ctx.carry.prev_pivot;
+    net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the pivots, datum_rx (N4b)
     auto& c1_zoh_active = ctx.carry.c1_zoh_active;
-    auto& last_pivot = ctx.carry.last_pivot;
     auto& this_epoch_if_pin_sel = ctx.carry.this_epoch_if_pin_sel;
     auto& this_epoch_if_pin_real = ctx.carry.this_epoch_if_pin_real;
     auto& last_if_pin_sel = ctx.carry.last_if_pin_sel;
     auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
     auto& emitted_anchor = ctx.carry.emitted_anchor;
-    auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
+
     auto& eq34_emitted_pdr = ctx.carry.eq34_emitted_pdr;
     auto& clock_osc = ctx.carry.clock_osc;
     auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
@@ -653,11 +652,14 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
                                                                          : std::string();
                 std::string old_p;
                 const char* arm;
-                auto pp = prev_pivot.find(key);
-                if (pp != prev_pivot.end()) { old_p = pp->second; arm = "adjacent"; }
+                const std::optional<System> csys = net::constellationOfLetter(ctx.entities, c);
+                const std::string* pp =
+                    csys ? net::get(cons_rows, *csys, &net::ConstellationState::prev_pivot) : nullptr;
+                if (pp != nullptr) { old_p = *pp; arm = "adjacent"; }
                 else {
-                    auto lp = last_pivot.find(key);
-                    old_p = (lp != last_pivot.end()) ? lp->second : std::string("?");
+                    const std::string* lp =
+                        csys ? net::get(cons_rows, *csys, &net::ConstellationState::last_pivot) : nullptr;
+                    old_p = (lp != nullptr) ? *lp : std::string("?");
                     arm = "vanish_return";
                 }
                 // At the decoupling edge, state what the S-transform did to this
@@ -1006,11 +1008,12 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // at this one site where the handover baseline advances, before last_pivot is
     // merged, so a handover is counted between emitted products (Card GAL).  It
     // returns on its first line unless a constellation other than GPS is active.
-    networkMultiGnssNotePivots(ctx, config_, plan.clock_pivot, last_pivot);
-    prev_pivot = plan.clock_pivot;
+    networkMultiGnssNotePivots(ctx, config_, plan.clock_pivot,
+                               net::letterMap(cons_rows, &net::ConstellationState::last_pivot));
+    net::assignLetterMap(ctx.entities, &net::ConstellationState::prev_pivot, plan.clock_pivot);
     // Merge-update the persistent last-ever pivot map without erasing any
     // constellation, so a later vanish-return with a different pivot is caught (A1).
-    for (const auto& kv : plan.clock_pivot) last_pivot[kv.first] = kv.second;
+    net::mergeLetterMap(ctx.entities, &net::ConstellationState::last_pivot, plan.clock_pivot);
     // Prioritized phase-bias anchor: record per-(sat, signal) anchor handovers for
     // observability and advance the emit baseline (emitted_anchor).  The
     // consumer-facing discontinuity is already handled, replay-safely, by the
@@ -1178,8 +1181,10 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
             pending_contract.decl.clock_pivot_sat[cst] = sat;   // realized auto-picked pivots
         // Stamp the realized datum receiver r1 as the diagnostic pdr= token, the
         // component-0 representative (Card 3, SingleReceiverChain).
-        if (phase_datum_eq34 && !eq34_datum_rx.empty()) {
-            pending_contract.decl.eq34_datum_receiver = eq34_datum_rx.begin()->second;
+        const std::string* first_dr =
+            net::first(cons_rows, &net::ConstellationState::channels, &net::ChannelState::datum_rx);
+        if (phase_datum_eq34 && first_dr != nullptr) {
+            pending_contract.decl.eq34_datum_receiver = *first_dr;
             eq34_emitted_pdr = pending_contract.decl.eq34_datum_receiver;
         }
         // The generation id (minted above at this first emit, or restored by a warm

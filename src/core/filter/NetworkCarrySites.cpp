@@ -29,6 +29,9 @@ namespace {
 using S = CarrySite;
 using ES = net::StationState;         // the station carries (card NOM step N4a)
 using ESS = net::StationSignalState;
+using EC = net::ConstellationState;   // the constellation carries (card NOM step N4b)
+using ECh = net::ChannelState;
+using EL = net::LosState;             // the line-of-sight carries (card NOM step N4c)
 using R = CarryRefRole;
 
 // One row per site, in the order of CarrySite (checked by the unit test).
@@ -320,11 +323,11 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
             hand(CarriedRef{S::PrevCarry, cp.kind, cp.sat, cp.signal, -1, &cp.value, &cp.var,
                             cp.t_park_s > 0.0, &cp, nullptr, nullptr, nullptr});
     if (on(S::CxuPivot))
-        for (auto& [cc, pv] : carry.cxu_pivot) {
-            (void)cc;
-            hand(CarriedRef{S::CxuPivot, SharedParamKind::Clock, pv.first, kNone, -1,
-                            &pv.second, nullptr, false, nullptr, nullptr, nullptr, nullptr});
-        }
+        net::forEach(entities.constellations, &EC::cxu_pivot,
+                     [&](System, std::pair<std::string, double>& pv) {
+                         hand(CarriedRef{S::CxuPivot, SharedParamKind::Clock, pv.first, kNone, -1,
+                                         &pv.second, nullptr, false, nullptr, nullptr, nullptr, nullptr});
+                     });
     if (on(S::ClockOsc))
         for (auto& [sat, o] : carry.clock_osc)
             hand(CarriedRef{S::ClockOsc, SharedParamKind::Clock, sat, kNone, -1, &o.x0,
@@ -368,14 +371,12 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
         }
     }
     if (on(S::CodeBiasPrev))
-        for (auto& [fam, per_sat] : carry.code_bias_prev_) {
-            const std::size_t bar = fam.find('|');
-            if (bar == std::string::npos) continue;
-            const std::string sig = fam.substr(bar + 1);
-            for (auto& [sat, v] : per_sat)
-                hand(CarriedRef{S::CodeBiasPrev, SharedParamKind::CodeBias, sat, sig, -1, &v,
-                                nullptr, false, nullptr, nullptr, nullptr, nullptr});
-        }
+        net::forEach(entities.constellations, &EC::channels, &ECh::code_bias_prev,
+                     [&](System, const std::string& sig, std::map<std::string, double>& per_sat) {
+                         for (auto& [sat, v] : per_sat)
+                             hand(CarriedRef{S::CodeBiasPrev, SharedParamKind::CodeBias, sat, sig, -1, &v,
+                                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
+                     });
     // A local carry map: its value in a border frame (when the site exists) and its
     // regression terms.
     const auto terms = [&](S site, int station, LocalCarry& lc) {
@@ -395,9 +396,12 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
             terms(S::ZwdCoupling, id.index, lc);
         });
     if (on(S::IonoCoupling))
-        for (auto& [key, lc] : carry.iono_carry) terms(S::IonoCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::iono,
+                     [&](const LosId& id, LocalCarry& lc) { terms(S::IonoCoupling, id.station.index, lc); });
     if (on(S::IonoBlockCoupling))
-        for (auto& [key, lc] : carry.iono_blk_carry) terms(S::IonoBlockCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::iono_blk, [&](const LosId& id, LocalCarry& lc) {
+            terms(S::IonoBlockCoupling, id.station.index, lc);
+        });
     if (on(S::HoldAmbiguityValue))
         for (auto& [key, lc] : carry.gl_hold_amb)
             hand(CarriedRef{S::HoldAmbiguityValue, SharedParamKind::PhaseBias, std::get<1>(key),
@@ -407,10 +411,13 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
         for (auto& [key, lc] : carry.gl_hold_amb)
             terms(S::HoldAmbiguityCoupling, std::get<0>(key), lc);
     if (on(S::HoldIonoCoupling))
-        for (auto& [key, lc] : carry.gl_hold_iono) terms(S::HoldIonoCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::gl_hold_iono, [&](const LosId& id, LocalCarry& lc) {
+            terms(S::HoldIonoCoupling, id.station.index, lc);
+        });
     if (on(S::HoldIonoBlockCoupling))
-        for (auto& [key, lc] : carry.gl_hold_iono_blk)
-            terms(S::HoldIonoBlockCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::gl_hold_iono_blk, [&](const LosId& id, LocalCarry& lc) {
+            terms(S::HoldIonoBlockCoupling, id.station.index, lc);
+        });
     if (on(S::RxClockValue))
         net::forEach(entities.stations, &ES::signals, &ESS::rx_clk,
                      [&](const StationId& id, const std::string& key, LocalCarry& lc) {
@@ -447,7 +454,9 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
                          terms(S::RxCodeBiasCoupling, id.index, lc);
                      });
     if (on(S::PhaseColourCoupling))
-        for (auto& [key, lc] : carry.pc_carry) terms(S::PhaseColourCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::pc, [&](const LosId& id, LocalCarry& lc) {
+            terms(S::PhaseColourCoupling, id.station.index, lc);
+        });
     return moved;
 }
 

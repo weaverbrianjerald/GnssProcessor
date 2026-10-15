@@ -43,7 +43,7 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
     const bool carry_invariant         = ctx.knobs.carry_invariant;
     NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;
     auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
-    auto& carry_group_id = ctx.carry.carry_group_id;
+    const net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the carry group ids (N4b)
     const SyncedEpoch& se = ep.se;
     const std::set<std::pair<int, std::string>>& carry_slipped_ambs = ep.funnel.carry_slipped_ambs;
     const double pl_now_s = ep.clock.pl_now_s;
@@ -96,16 +96,14 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
                 //     everything.
                 bool dd_bridged = false;
                 if (carry_invariant && svit != carry_sat_vertex.end() && cons != '\0') {
-                    for (const auto& [gkey, gid] : carry_group_id) {
-                        if (gkey.first != cons || gid == 0) continue;
-                        if (gkey.second != sig) continue;   // the per-band group of `sig`
-                        double zg = 0.0, vg = 0.0;
-                        if (carry_driver.carriedChordValue(gid, ArcKey(i, svit->second),
-                                                           zg, vg)) {
-                            dd_bridged = true;
-                            break;
-                        }
-                    }
+                    // The per-band group of `sig` (one cell: the key is (constellation, signal)).
+                    const int* gid = net::get(cons_rows, systemOfSat(g.satellite),
+                                              &net::ConstellationState::channels, sig,
+                                              &net::ChannelState::group_id);
+                    double zg = 0.0, vg = 0.0;
+                    if (gid != nullptr && *gid != 0
+                        && carry_driver.carriedChordValue(*gid, ArcKey(i, svit->second), zg, vg))
+                        dd_bridged = true;
                 }
                 const bool bridged = (pl_bridged || dd_bridged) && !slip_marked;
                 // The arc ledger mirrors the resumption's three-way split

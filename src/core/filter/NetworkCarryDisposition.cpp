@@ -186,7 +186,9 @@ void networkCarryPivotFrame(NetworkRunContext& ctx) {
     const double r_model = ctx.knobs.cta_on ? ctx.knobs.cta_q
                                             : ctx.params.q(SharedParamKind::Clock);
     std::map<char, double> rate_of;
-    for (const auto& [cc, sat] : ctx.carry.pfq_pivot) {
+    net::forEach(ctx.entities.constellations, &net::ConstellationState::pfq_pivot,
+                 [&](System sys, const std::string& sat) {
+        const char cc = rinexLetter(sys);
         const CarryPrior* pv = nullptr;
         for (const CarryPrior& cp : ctx.carry.prev_carry)
             if (cp.kind == SharedParamKind::Clock && cp.sat == sat) { pv = &cp; break; }
@@ -201,7 +203,7 @@ void networkCarryPivotFrame(NetworkRunContext& ctx) {
         }
         rate_of[cc] = r;
         if (r > C.rate_max) C.rate_max = r;
-    }
+    });
     // Every other folding clock of the constellation takes the pivot's walk over its own
     // interval (pivotFrameDiag); the pairwise term between two of them is added where the
     // covariance is dense (the C1 fold and the exact coupling update), from pfq_rate_m2ps.
@@ -210,10 +212,11 @@ void networkCarryPivotFrame(NetworkRunContext& ctx) {
         CarryFoldDecision& d = cp.fold;
         d.pfq_rate_m2ps = 0.0;
         d.pfq_add_m2    = 0.0;
-        const char cons = letterOfSat(cp.sat);            // the key of carry.pfq_pivot
-        const auto pv = ctx.carry.pfq_pivot.find(cons);
-        if (pv == ctx.carry.pfq_pivot.end()) continue;    // no pivot recorded for it
-        if (cp.sat == pv->second) continue;               // the pivot is 0 by definition
+        const char cons = letterOfSat(cp.sat);            // the key of rate_of
+        const std::string* pv = net::get(ctx.entities.constellations, systemOfSat(cp.sat),
+                                         &net::ConstellationState::pfq_pivot);
+        if (pv == nullptr) continue;                      // no pivot recorded for it
+        if (cp.sat == *pv) continue;                      // the pivot is 0 by definition
         if (!folds(d)) continue;
         const double r = rate_of[cons];
         const double add = pivotFrameDiag(r, d.dt_applied_s);

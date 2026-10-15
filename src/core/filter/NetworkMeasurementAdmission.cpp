@@ -671,7 +671,8 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
                                 // Armed, but no fresh flag set to read.  Not a clean
                                 // result (invariant #4 applied to a cross-seam read).
                                 ++ctr.revet_census_absent;
-                            } else if (ctx.carry.prefit_code_flag.count({si, sat})) {
+                            } else if (net::hasLos(ctx.entities.los, si, sat,
+                                                   &net::LosState::prefit_code_flag)) {
                                 vet_fail = true;
                             }
                         }

@@ -104,8 +104,11 @@ EpochAction networkClockDatum(NetworkRun& run, const NetworkEpoch& ep, SolveDatu
     const SyncedEpoch& se = ep.se;
     const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;
     const double clk_anchor_sigma   = ctx.knobs.clk_anchor_sigma;     // D6-resolved anchor sigma (m)
-    auto& prev_pivot = ctx.carry.prev_pivot;
-    auto& last_pivot = ctx.carry.last_pivot;
+    // The constellation pivots as the election reads them (one-letter key -> satellite).
+    const std::map<std::string, std::string> prev_pivot =
+        net::letterMap(ctx.entities.constellations, &net::ConstellationState::prev_pivot);
+    const std::map<std::string, std::string> last_pivot =
+        net::letterMap(ctx.entities.constellations, &net::ConstellationState::last_pivot);
     const bool   pivot_vr_signal = ctx.knobs.pivot_vr_signal;  // also signal a vanish-return pivot change (A1)
     const bool   sticky_pivot    = ctx.knobs.sticky_pivot;              // keep the incumbent clock pivot while it stays registered (RTA-1)
     // ---- End of the bindings ----

@@ -145,7 +145,8 @@ void networkPbHold(NetworkRunContext& ctx,
         for (char cc : ccs) {
             double med = 0.0;
             if (pbHoldCommonClockStep(sol, ctx.carry.pb_hold_frz_prev_clk, cc, med)) {
-                ctx.carry.pb_hold_frz_M[cc] += med;
+                net::put(ctx.entities.constellations, systemFromLetter(cc),
+                         &net::ConstellationState::pb_hold_frz_M) += med;
                 advanced = true;
             }
         }
@@ -154,7 +155,8 @@ void networkPbHold(NetworkRunContext& ctx,
         for (const auto& s : sol.sats) {
             if (!s.has_clock || s.sat.empty() || !std::isfinite(s.clock_c0_m)) continue;
             ctx.carry.pb_hold_frz_prev_clk[s.sat] = s.clock_c0_m;
-            frz_c[s.sat] = s.clock_c0_m - ctx.carry.pb_hold_frz_M[letterOfSat(s.sat)];
+            frz_c[s.sat] = s.clock_c0_m - net::put(ctx.entities.constellations, systemOfSat(s.sat),
+                                                   &net::ConstellationState::pb_hold_frz_M);
         }
     }
 

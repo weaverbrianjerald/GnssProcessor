@@ -756,7 +756,7 @@ TEST(PbHoldSmoothedTest, ADisengagedParentKillsTheCloneAndQueuesTheBirthAgain) {
     an.tripped.insert("G32");                                  // withdrawn this epoch
     an.sat["G12"].anchored = false; an.sat["G12"].folded_anchored = false;   // LOOSE fold
     an.sat["G05"].anchored = true;  an.sat["G05"].folded_anchored = true;    // engaged
-    ctx->carry.cxu_pivot['G'] = {"G07", 0.0};                  // G07 pinned: no anchor fold
+    net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::cxu_pivot) = {"G07", 0.0};                  // G07 pinned: no anchor fold
     NetworkEpoch& e = fx->newEpoch(GnssTime{});   // an empty workspace and datum, the run's estimator
     e.solve.x_s = Eigen::VectorXd::Zero(1);
     networkPbHoldCloneUpdate(fx->run(), e);

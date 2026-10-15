@@ -110,7 +110,7 @@ StationStep networkIonoConstraintRows(StationBuild& build) {
     const bool   sh_dev_on      = ctx.knobs.sh_dev_on;
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     auto& sh_model = setup.sh_model;
-    auto& sh_dev_carry = ctx.carry.sh_dev_carry;
+    const net::LosTable& los_rows = ctx.entities.los;   // the SH deviation carries (read only: parallel produce)
     // ---- End of the bindings ----
 
     // Ionosphere constraint (W6): the between-satellite structure that makes
@@ -126,7 +126,7 @@ StationStep networkIonoConstraintRows(StationBuild& build) {
     if (config_.estimateNetworkIonoSh())
         networkAppendShIonoRows(config_, st, est, modeled[i], h2local, se.time,
                                  sh_model, setup.sh_model2,
-                                 shc, sh_dev_on, sh_dev_carry,
+                                 shc, sh_dev_on, los_rows, static_cast<int>(i),
                                  R.A_s, R.A_r, R.w, R.y, R.row_tags);
     else if (config_.estimateNetworkSatCodeBias())
         R.gim_rows = networkAppendGimIonoRows(config_, build.gim, st, modeled[i], h2local, se.time,
@@ -240,7 +240,7 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
                              const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model,
                              const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model2,
                              const GlobalVtecShConfig& shc, bool sh_dev_on,
-                             const std::map<std::string, ShDevCarry>& sh_dev_carry,
+                             const net::LosTable& sh_dev_los, int sta_index,
                              Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r, Eigen::VectorXd& w,
                              Eigen::VectorXd& y, std::vector<RowTag>& tags) {
     if (!sh_model) return;
@@ -317,10 +317,11 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
                 shc.representation_sigma_tecu * g0.mapping * tecu_to_L1m;
             double dev_pred_slant = 0.0;
             double var_pred_slant = sig_ss_slant * sig_ss_slant;
-            const auto dit = sh_dev_carry.find(st.name + "|" + o.satellite);
-            if (dit != sh_dev_carry.end() && dit->second.t_s > 0.0) {
-                dev_pred_slant = dit->second.dev * m0_tecu;
-                var_pred_slant = dit->second.var * m0_tecu * m0_tecu;
+            const ShDevCarry* dit =
+                net::getLos(sh_dev_los, sta_index, o.satellite, &net::LosState::sh_dev);
+            if (dit != nullptr && dit->t_s > 0.0) {
+                dev_pred_slant = dit->dev * m0_tecu;
+                var_pred_slant = dit->var * m0_tecu * m0_tecu;
             }
             r.innov = -x(iono_idx) + dev_pred_slant;
             r.var   = iw.floor_m * iw.floor_m + var_pred_slant;

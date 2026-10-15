@@ -122,12 +122,21 @@ struct CellWorst {
 /// the last one (holdoff <= 0 disables the limit).  A parked cell keeps logging
 /// its identity, so its duration is readable from the events, but not once per
 /// epoch.
-bool holdoffAllows(NetworkRunContext& ctx, const std::string& key, long long seq,
-                   long long holdoff) {
-    auto& last = ctx.carry.prefit_event_last;
-    const auto it = last.find(key);
-    if (it != last.end() && holdoff > 0 && (seq - it->second) < holdoff) return false;
-    last[key] = seq;
+bool holdoffAllows(NetworkRunContext& ctx, const char* event, const std::string& station,
+                   const std::string& sat, const char* cls, long long seq, long long holdoff) {
+    // The line of sight's clock of (event, class): the station by NAME (O3), and "?" (the
+    // census's no-satellite placeholder) is the station's own row, SatId{}.
+    const std::optional<LosId> id =
+        net::losOfName(ctx.entities, station, sat == "?" ? std::string() : sat);
+    const std::string sub = std::string(event) + "|" + cls;
+    const long long* last =
+        id ? net::get(ctx.entities.los, *id, &net::LosState::events, sub,
+                      &net::LosEventState::prefit_event_last)
+           : nullptr;
+    if (last != nullptr && holdoff > 0 && (seq - *last) < holdoff) return false;
+    if (id)
+        net::put(ctx.entities.los, *id, &net::LosState::events, sub,
+                 &net::LosEventState::prefit_event_last) = seq;
     return true;
 }
 
@@ -228,8 +237,8 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
             // row, not a per-cell birth, so it is never deferred, although its tag names
             // its line of sight's satellite (card NOM step N2b keeps that rule).
             if (tg.cls != NetRowClass::IonoShRow && !tg.sat.empty() && have_prior
-                && ctx.carry.prefit_present_prev.count(
-                       {static_cast<int>(i), tg.sat}) == 0)
+                && !net::hasLos(ctx.entities.los, static_cast<int>(i), tg.sat,
+                                &net::LosState::prefit_present_prev))
                 continue;
             pool.push_back(prefitStandardizedDeviation(y, w, c.m[ti]));
         }
@@ -306,8 +315,10 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
 
     for (const auto& [key, cw] : worst) {
         const char* cls = rowClassName(static_cast<NetRowClass>(key.second));
-        const std::string hk = std::string("fused|") + station + "|" + key.first + "|" + cls;
-        if (!holdoffAllows(ctx, hk, seq, holdoff)) { ++ctr.fuse_events_held; continue; }
+        if (!holdoffAllows(ctx, "fused", station, key.first, cls, seq, holdoff)) {
+            ++ctr.fuse_events_held;
+            continue;
+        }
         ++ctr.fuse_events;
         traces.emitEvent(t, "PREFIT", "prefit_fused", key.first, station, cw.s, s_fuse,
                          "cap_weight",
@@ -426,7 +437,8 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 // is armed.  INC-1 defers them either way; a deferral conditional
                 // on INC-3 would make the census numbers depend on configuration.
                 if (have_prior_presence
-                    && ctx.carry.prefit_present_prev.count(cell) == 0) {
+                    && !net::hasLos(ctx.entities.los, cell.first, cell.second,
+                                    &net::LosState::prefit_present_prev)) {
                     born_here.insert(row_sat);
                     ++ctr.birth_rows;
                 }
@@ -493,9 +505,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 ++ctr.events_class_skipped;
                 continue;
             }
-            const std::string hk =
-                std::string("exc|") + sname + "|" + key.first + "|" + cls;
-            if (holdoffAllows(ctx, hk, seq, holdoff)) {
+            if (holdoffAllows(ctx, "exc", sname, key.first, cls, seq, holdoff)) {
                 ++ctr.events;
                 traces.emitEvent(se.time, "PREFIT", "prefit_exceedance", key.first,
                                  sname, cw.s, ev_sigma, "flag",
@@ -608,15 +618,16 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             // (b) per-(station, satellite) row-kind changes while the sat stays present.
             for (const auto& [cell, mask] : kind_now) {
-                const auto pit = ctx.carry.topo_prev_kind.find(cell);
-                if (pit == ctx.carry.topo_prev_kind.end()) continue;   // rise, not a change
-                if (pit->second == mask) continue;
+                const unsigned* pit = net::getLos(ctx.entities.los, cell.first, cell.second,
+                                                  &net::LosState::topo_prev_kind);
+                if (pit == nullptr) continue;   // rise, not a change
+                if (*pit == mask) continue;
                 ++ctr.topo_kind_events;
                 const std::string sname =
                     (cell.first >= 0 && static_cast<std::size_t>(cell.first) < stations.size())
                         ? stations[static_cast<std::size_t>(cell.first)].name : std::string();
                 emitTopo("row_kinds", cell.second, sname, std::nullopt, std::nullopt,
-                         fmt::format("prev={} now={}", kindMaskName(pit->second),
+                         fmt::format("prev={} now={}", kindMaskName(*pit),
                                      kindMaskName(mask)));
             }
             // (c) shared-column registry deltas.
@@ -652,11 +663,11 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         net::dropAll(ctx.entities.stations, &net::StationState::topo_prev_tie);
         for (const auto& [idx, n] : tie_now)
             net::put(ctx.entities.stations, StationId{idx}, &net::StationState::topo_prev_tie) = n;
-        ctx.carry.topo_prev_kind = std::move(kind_now);
+        net::assignLos(ctx.entities, &net::LosState::topo_prev_kind, kind_now);
     }
 
     // --- presence map advance (INC-3) ---------------------------------------
-    ctx.carry.prefit_present_prev = std::move(present_now);
+    net::assignLosFlags(ctx.entities, &net::LosState::prefit_present_prev, present_now);
     ctx.carry.prefit_walk_seeded  = true;
 
     // --- publish the admission vet trigger ----------------------------------
@@ -666,7 +677,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     // only the stamp `n_loop_epochs - 1` and counts anything older as an absent
     // consultation.  Both seams read `n_loop_epochs`, incremented once per loop
     // epoch before either runs, so the one-epoch offset is exact.
-    ctx.carry.prefit_code_flag    = std::move(code_flag_now);
+    net::assignLosFlags(ctx.entities, &net::LosState::prefit_code_flag, code_flag_now);
     ctx.carry.prefit_code_flag_ep = seq;
 
     // --- invariant #4: an inert walk reports that it is inert -----------------

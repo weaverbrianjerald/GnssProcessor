@@ -112,7 +112,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
     auto& prev_clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
-    auto& code_bias_prev_ = ctx.carry.code_bias_prev_;
+    net::ConstellationTable& cons_rows = ctx.entities.constellations;
     auto& code_bias_ifpin_pair_ = ctx.carry.code_bias_ifpin_pair_;
     auto& code_bias_sat_seen_ = ctx.carry.code_bias_sat_seen_;
     auto& this_epoch_cb_ifpin = ctx.carry.this_epoch_cb_ifpin;
@@ -247,7 +247,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // only under network.state_snapshot_datum_capture (RS-3).  Empty and untouched when
     // off.
     if (cb_time_linked) {
-        code_bias_prev_.clear();
+        net::dropAll(cons_rows, &net::ConstellationState::channels,
+                     &net::ChannelState::code_bias_prev);
         // Advance the IF-pin comparison baseline to this kept epoch's pairs (a pair
         // recorded on an epoch that was then withheld never reaches here, so the
         // baseline tracks emitted / kept datum realizations only).
@@ -271,8 +272,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         if (cb_time_linked) {
             const double v = x_s(col);
             if (std::isfinite(v)) {
-                code_bias_prev_[constellationKey(systemOfSat(kv.first)) + "|" + kv.second]
-                               [kv.first] = v;
+                net::put(cons_rows, systemOfSat(kv.first), &net::ConstellationState::channels,
+                         kv.second, &net::ChannelState::code_bias_prev)[kv.first] = v;
                 code_bias_sat_seen_.insert(kv.first);
             }
         }
@@ -303,24 +304,27 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     if (ctx.knobs.carry_cpl_exact) {
         ctx.carry.cxu_stash_s     = TimeUtils::continuousGpsSeconds(t);
         ctx.carry.cxu_stash_valid = prev_carry_cov.P.rows() > 0;
-        ctx.carry.cxu_pivot.clear();
+        net::dropAll(ctx.entities.constellations, &net::ConstellationState::cxu_pivot);
         for (const std::string& sat : registered_clock_sats) {
             if (sat.empty()) continue;
             Eigen::Index col = -1;
             try { col = est.clockColumn(sat); } catch (...) { continue; }
             if (pinned_cols.count(col) && col >= 0 && col < x_s.size())
-                ctx.carry.cxu_pivot[letterOfSat(sat)] = {sat, x_s(col)};
+                net::put(ctx.entities.constellations, systemOfSat(sat),
+                         &net::ConstellationState::cxu_pivot) = {sat, x_s(col)};
         }
     }
     // Card PFQ: the clock pivot this stash was pinned on, the frame of the carried clocks
     // the next epoch's fold applies the pivot-frame process noise in.
     if (ctx.knobs.pfq_on) {
-        ctx.carry.pfq_pivot.clear();
+        net::dropAll(ctx.entities.constellations, &net::ConstellationState::pfq_pivot);
         for (const std::string& sat : registered_clock_sats) {
             if (sat.empty()) continue;
             Eigen::Index col = -1;
             try { col = est.clockColumn(sat); } catch (...) { continue; }
-            if (col >= 0 && pinned_cols.count(col)) ctx.carry.pfq_pivot[letterOfSat(sat)] = sat;
+            if (col >= 0 && pinned_cols.count(col))
+                net::put(ctx.entities.constellations, systemOfSat(sat),
+                         &net::ConstellationState::pfq_pivot) = sat;
         }
     }
     if (config_.estimateNetworkIonoSh() && sh_model) {   // SH-VTEC coefficients
