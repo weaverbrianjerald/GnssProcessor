@@ -598,6 +598,7 @@ add_executable(gnss_tests
     tests/test_network_knobs_station_assembly.cpp
     tests/test_network_epoch_contract.cpp
     tests/test_network_station_build.cpp
+    tests/test_network_harvest_layout.cpp
     tests/test_network_engine_spec.cpp
     tests/test_network_row_classify.cpp
     tests/test_raim_pool_data_rows_only.cpp

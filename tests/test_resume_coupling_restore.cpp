@@ -355,7 +355,7 @@ TEST(ResumeCouplingSnapshotTest, ShLayerRoundTripsAsItsOwnField) {
 }
 
 // 5. The dictionary key is (identity, ŝ_prev, P_prev), not the identity alone.
-//    harvestCoupling assigns both values from the shared column, so the rows of one
+//    networkHarvestColumn assigns both values from the shared column, so the rows of one
 //    harvest epoch agree, but a station whose harvest failed `continue`s before the
 //    stash and keeps an older coupling (observed on the branch-point snapshot file).
 //    An identity-only key would restore those rows against the wrong frame.
