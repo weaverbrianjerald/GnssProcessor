@@ -132,8 +132,9 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
     const double rxclk_gap_s   = ctx.knobs.rxclk_max_gap_s;
     const double rxclk_rate_var0 = ctx.knobs.rxclk_rate_var0; // m²/s², the unknown-drift prior
     const bool   rxclk_isb     = ctx.knobs.rxclk_isb;
-    auto& rx_clk_carry = ctx.carry.rx_clk_carry;      // RX-CLK-in-block: produce phase reads only
-    auto& rx_clk_rate  = ctx.carry.rx_clk_rate;       // its drift half (read-only here; std::map::find is concurrency-safe, operator[] would not be)
+    // RX-CLK-in-block: the produce phase reads the clock carry and its drift half only (a
+    // const table: net::get is a find, concurrency-safe; an insert would not be).
+    const net::StationTable& sta_rows = ctx.entities.stations;
     // ---- End of the bindings ----
 
     if (!(legacy_local_inject && do_amb_carry)) return;
@@ -209,10 +210,11 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
                 static_cast<Eigen::Index>(rhit->second);
             R.pl_rxclk.push_back(PlRxClk{rcol, x_lin(rc.sidx), rc.kind});
             const auto rkey = std::make_pair(static_cast<int>(i), rc.kind);
-            const auto rit = rx_clk_carry.find(rkey);
-            if (rit == rx_clk_carry.end()) continue;  // first sighting / post-jump: cold by design
-            const double rgap = pl_now_s - rit->second.last_seen_s;
-            if (carryPastHorizon(pl_now_s, rit->second.last_seen_s, rxclk_gap_s)) {
+            const auto* rit = net::get(sta_rows, StationId{rkey.first}, &net::StationState::signals,
+                                       rkey.second, &net::StationSignalState::rx_clk);
+            if (rit == nullptr) continue;  // first sighting / post-jump: cold by design
+            const double rgap = pl_now_s - rit->last_seen_s;
+            if (carryPastHorizon(pl_now_s, rit->last_seen_s, rxclk_gap_s)) {
                 // Invariant #1's absent-station edge: a stale carry is refused,
                 // never aged into a fold.  The harvest prune erases it.
                 ++R.pl_blk_rxclk_gap_drop;
@@ -223,26 +225,27 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
                 (dt_ep > 0.0) ? std::max(1.0, rgap / dt_ep) : 1.0;
             double rate = 0.0, rate_var = 0.0;
             if (rc.kind.empty()) {   // the primary clock: the drift half
-                const auto rtit = rx_clk_rate.find(rkey);
+                const auto* rtit = net::get(sta_rows, StationId{rkey.first},
+                                            &net::StationState::signals, rkey.second, &net::StationSignalState::rx_clk_rate);
                 rate_var = rxclk_rate_var0;
-                if (rtit != rx_clk_rate.end()) {
-                    rate = rtit->second.rate;
-                    if (rtit->second.rate_var >= 0.0)
-                        rate_var = rtit->second.rate_var;
+                if (rtit != nullptr) {
+                    rate = rtit->rate;
+                    if (rtit->rate_var >= 0.0)
+                        rate_var = rtit->rate_var;
                 }
             }
             // The shared (bias, drift) kernel: the harvest's jump gate forms
             // its innovation against this same prediction, so the two edges
             // cannot drift apart (filter/NetworkRunTypes.hpp).
             const RxClkPred rp = rxClockPredict(
-                rit->second.value_abs, rit->second.var, rate, rate_var,
+                rit->value_abs, rit->var, rate, rate_var,
                 std::max(0.0, rgap), gap_ep, rxclk_q);
             const double mean_pred = rp.mean;
             const double rvar_eff  = rp.var;
             if (!(rvar_eff > 0.0) || !std::isfinite(rvar_eff)
                 || !std::isfinite(mean_pred))
                 continue;
-            rxclk_pred.push_back(rit->second);        // copy of the carry …
+            rxclk_pred.push_back(*rit);        // copy of the carry …
             rxclk_pred.back().value_abs = mean_pred;  // … with the predicted mean
             rxclk_bc.push_back(LocalBlockCol{
                 rcol, x_lin(rc.sidx), &rxclk_pred.back(), rvar_eff,
@@ -304,8 +307,7 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
     //     the drift: an inter-system bias is a near-constant offset (the sim
     //     injects a fixed 8.000 m), so it takes a pure random walk.
     if (!rxclk_blk_on) return;
-    auto& rx_clk_carry = ctx.carry.rx_clk_carry;
-    auto& rx_clk_rate  = ctx.carry.rx_clk_rate;
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     // The run's own observed harvest-to-harvest spacing, kept here rather than
     // read from ctx.carry.pl_prev_now_s, because that field has already been
     // advanced to pl_now_s when this loop runs.  Used only to convert a gap into
@@ -354,7 +356,8 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
             // --- (bias, drift) filter and the clock-jump response, for the primary
             //     clock only (pr.kind empty); an ISB has no rate by construction.
             if (pr.kind.empty()) {
-                auto& rt = rx_clk_rate[key];   // default-constructs on first sighting
+                auto& rt = net::put(sta_rows, StationId{key.first}, &net::StationState::signals,
+                                    key.second, &net::StationSignalState::rx_clk_rate);   // default-constructs on first sighting
                 if (rt.prev_s > 0.0) {
                     const double dt = pl_now_s - rt.prev_s;
                     if (dt > 0.0 && dt <= rxclk_gap_s) {
@@ -403,8 +406,10 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
                             // sighting is a cold rebirth whose rate prior is
                             // uninformative again, so the two epochs after a jump
                             // inject a nearly free prior rather than a stale one.
-                            const std::size_t prm_n_clk = rx_clk_carry.erase(key);
-                            rx_clk_rate.erase(key);
+                            const std::size_t prm_n_clk = net::drop(sta_rows, StationId{key.first},
+                                                                    &net::StationState::signals, key.second, &net::StationSignalState::rx_clk);
+                            net::drop(sta_rows, StationId{key.first}, &net::StationState::signals,
+                                      key.second, &net::StationSignalState::rx_clk_rate);
                             ++ctx.counters.n_rxclk_carry_refused;
                             // Card PRM phase 3a: the carried clock the jump erased.
                             prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkJumpErase,
@@ -440,9 +445,10 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
             // ambiguity carry's rule, applied through the ambiguity carry's own
             // helper, so the age of a clock carry means the same thing.  (This map
             // is not snapshotted either; see the note in the iono block above.)
-            const auto oit = rx_clk_carry.find(key);
+            const auto* oit = net::get(sta_rows, StationId{key.first}, &net::StationState::signals,
+                                       key.second, &net::StationSignalState::rx_clk);
             const LocalCarry* rprev =
-                (oit != rx_clk_carry.end()) ? &oit->second : nullptr;
+                (oit != nullptr) ? &*oit : nullptr;
             ent.var_first = rprev ? rprev->var_first : var;
             localCarryStampBirth(
                 ent, rprev,
@@ -461,7 +467,8 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
                     ent.blk_idx = static_cast<int>(rrow);
                 }
             }
-            rx_clk_carry[key] = std::move(ent);
+            net::put(sta_rows, StationId{key.first}, &net::StationState::signals, key.second,
+                     &net::StationSignalState::rx_clk) = std::move(ent);
             networkSharedHistoryNoteEntry(shx_h, est_idx, pr.col, SharedHistoryMap::RxClk,
                                           static_cast<int>(i), pr.kind);   // card SCL2 X2; no-op off
         }
@@ -472,10 +479,11 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
     // the carry is designed to avoid.  Counted.  The horizon is the registry's
     // (network.carry_rx_clock_max_gap_s, the same double as rxclk_gap_s; card PRM
     // phase 3b).
-    carryGapPrune(rx_clk_carry, pl_now_s,
+    carryGapPrune(sta_rows, &net::StationState::signals, &net::StationSignalState::rx_clk, pl_now_s,
                   ctx.params.spec(NetworkParamKind::RxClock).gap_horizon_s,
-                  [&](const auto& it) {
-                      rx_clk_rate.erase(it->first);
+                  [&](const StationId& id, const std::string& kind, const LocalCarry&) {
+                      net::drop(sta_rows, id, &net::StationState::signals, kind,
+                                &net::StationSignalState::rx_clk_rate);
                       ++ctx.counters.n_rxclk_carry_gap_drop;
                       prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapPrune);   // card PRM phase 3a
                   });

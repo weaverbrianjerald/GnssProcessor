@@ -556,7 +556,9 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep) {
             // emits an event with the column's identity; exit (the re-coupling
             // edge) is counted.  The per-station set is rebuilt each sweep, so a
             // column that recovers emits again if it becomes unobservable again.
-            std::set<std::string>& prev = carry.redun_unobs_active[i];
+            std::set<std::string>& prev =
+                net::put(ctx.entities.stations, StationId{static_cast<int>(i)},
+                         &net::StationState::redun_unobs_active);
             for (const std::string& kkey : now) {
                 if (prev.find(kkey) != prev.end()) continue;
                 ++counters.redun_unobs_entered;

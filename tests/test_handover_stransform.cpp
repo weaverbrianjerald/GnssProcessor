@@ -105,9 +105,9 @@ std::vector<CarryPrior> makeCarry() {
 ClockStransformResult applyTo(std::vector<CarryPrior>& c,
                               const std::vector<std::pair<std::string, double>>& v_c,
                               const std::string& q) {
-    NetworkCarryState state;
+    NetworkCarryState state; net::NetworkEntities state_ent;
     state.prev_carry = std::move(c);
-    const ClockStransformResult r = applyClockStransform(state, v_c, q);
+    const ClockStransformResult r = applyClockStransform(state, state_ent, v_c, q);
     c = std::move(state.prev_carry);
     return r;
 }

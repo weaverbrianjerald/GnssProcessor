@@ -27,10 +27,11 @@
 
 namespace GnssProcessor {
 
-long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat, double d,
+long long ephCutoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
+                               const std::string& sat, double d,
                                bool cpl_cond, CarrySiteCounts* counts, bool complete) {
     return forEachCarriedReference(
-        carry, carryMechanismSiteMask(CarryMechanism::EphRelevel, complete),
+        carry, entities, carryMechanismSiteMask(CarryMechanism::EphRelevel, complete),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::Clock || r.sat != sat) return false;
             switch (r.site) {
@@ -143,7 +144,7 @@ if (brdc_rts) {
             // moved.  The sites the re-level does not move are declared in the mechanism table
             // (card CLV section 6.4 item 6).
             CarrySiteCounts prm_cc;
-            ephCutoverShiftCarry(ctx.carry, sat, d, carry_cpl_cond, &prm_cc,
+            ephCutoverShiftCarry(ctx.carry, ctx.entities, sat, d, carry_cpl_cond, &prm_cc,
                                  ctx.knobs.rebase_complete);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::EphRelevel)];
             carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::EphRelevel, prm_cc);

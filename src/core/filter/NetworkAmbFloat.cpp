@@ -262,7 +262,8 @@ void networkAmbFloatApplyDrops(
                    tow, n, n_free, n_stale, n_idem);
 }
 
-void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
+void declaredHandoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
+                                    const std::string& sat,
                                 const std::string& sig, double delta,
                                 long long& n_shift, long long& n_pb, long long& n_cpl,
                                 CarrySiteCounts* counts, bool complete) {
@@ -274,7 +275,7 @@ void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat
     // screen's held ambiguity as the ambiguity, the last solved phase bias and an open pin
     // bridge as the carried phase bias, and every other coupling map's terms on the family.
     forEachCarriedReference(
-        carry, carryMechanismSiteMask(CarryMechanism::DeclaredHandover, complete),
+        carry, entities, carryMechanismSiteMask(CarryMechanism::DeclaredHandover, complete),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::PhaseBias || r.sat != sat || r.signal != sig)
                 return false;
@@ -362,7 +363,7 @@ long long networkAmbFloatDeclaredHandover(
         //      NetworkChainDatum.cpp, SPEC_card1_coupling_carry §14).
         CarrySiteCounts prm_cc;
         long long n_shift = 0, n_pb = 0, n_cpl = 0;
-        declaredHandoverShiftCarry(ctx.carry, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc,
+        declaredHandoverShiftCarry(ctx.carry, ctx.entities, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc,
                                    ctx.knobs.rebase_complete);
         ++counters.prm_ref_calls[static_cast<int>(CarryMechanism::DeclaredHandover)];
         carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);

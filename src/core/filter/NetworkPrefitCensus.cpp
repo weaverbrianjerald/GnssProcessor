@@ -594,16 +594,17 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             for (std::size_t i = 0; i < stations.size() && i < asm_res.size(); ++i) {
                 if (i >= est_index_of.size() || est_index_of[i] < 0) continue;
                 const int idx = static_cast<int>(i);
-                const auto pit = ctx.carry.topo_prev_tie.find(idx);
-                if (pit == ctx.carry.topo_prev_tie.end()) continue;   // first sighting
+                const int* pit = net::get(ctx.entities.stations, StationId{idx},
+                                          &net::StationState::topo_prev_tie);
+                if (pit == nullptr) continue;   // first sighting
                 const auto nit = tie_now.find(idx);
                 const int now = (nit == tie_now.end()) ? 0 : nit->second;
-                if (now == pit->second) continue;
+                if (now == *pit) continue;
                 ++ctr.topo_tie_events;
                 emitTopo("tie_rows", "", stations[i].name,
-                         static_cast<double>(now), static_cast<double>(pit->second),
+                         static_cast<double>(now), static_cast<double>(*pit),
                          fmt::format("prev={} now={} delta={:+d}",
-                                     pit->second, now, now - pit->second));
+                                     *pit, now, now - *pit));
             }
             // (b) per-(station, satellite) row-kind changes while the sat stays present.
             for (const auto& [cell, mask] : kind_now) {
@@ -648,7 +649,9 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                       "epoch (a first sighting is not a topology change).",
                       se.time.tow, tie_now.size(), cm.label.size());
         }
-        ctx.carry.topo_prev_tie  = std::move(tie_now);
+        net::dropAll(ctx.entities.stations, &net::StationState::topo_prev_tie);
+        for (const auto& [idx, n] : tie_now)
+            net::put(ctx.entities.stations, StationId{idx}, &net::StationState::topo_prev_tie) = n;
         ctx.carry.topo_prev_kind = std::move(kind_now);
     }
 

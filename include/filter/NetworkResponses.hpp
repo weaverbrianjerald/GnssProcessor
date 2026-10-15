@@ -37,6 +37,7 @@
 #include "filter/NetworkParamRegistry.hpp"  // NetworkParamKind, ParamEvent, ResponsePolicy
 
 #include <cstdint>
+#include <optional>
 
 namespace GnssProcessor {
 
@@ -254,6 +255,62 @@ long long carryGapPrune(Map& m, double now_s, double horizon_s, OnErase on_erase
             ++it;
         }
     }
+    return n;
+}
+
+/**
+ * @brief The entity-table form of @ref carryGapPrune (card NOM step N4a): walks field @p f
+ *        of table @p t in identity order (the order of the map it replaces) and resets each
+ *        present value past the horizon, after calling @p on_erase(id, value).  The rows
+ *        stay (an entity row is never erased).  @p on_erase must not insert rows.
+ *
+ * @param t         The entity table.
+ * @param f         The carried field (a @c std::optional of a type with @c last_seen_s).
+ * @param now_s     The current epoch time (s).
+ * @param horizon_s The kind's gap horizon (s).
+ * @param on_erase  Called once per pruned value, before its reset.
+ * @return The number of values reset.
+ */
+template <class T, class R, class V, class OnErase>
+long long carryGapPrune(T& t, std::optional<V> R::*f, double now_s, double horizon_s,
+                        OnErase on_erase) {
+    long long n = 0;
+    for (auto& kv : t) {
+        std::optional<V>& o = kv.second.*f;
+        if (o && carryPastHorizon(now_s, o->last_seen_s, horizon_s)) {
+            on_erase(kv.first, *o);
+            o.reset();
+            ++n;
+        }
+    }
+    return n;
+}
+
+/**
+ * @brief The nested entity-table form of @ref carryGapPrune: field @p f of the cells of
+ *        the nested map @p sub, in (identity, sub-key) order; @p on_erase(id, key, value).
+ *
+ * @param t         The entity table.
+ * @param sub       The nested map of the row (a station's signals).
+ * @param f         The carried field of a cell.
+ * @param now_s     The current epoch time (s).
+ * @param horizon_s The kind's gap horizon (s).
+ * @param on_erase  Called once per pruned value, before its reset.
+ * @return The number of values reset.
+ */
+template <class T, class R, class M, class SR, class V, class OnErase>
+long long carryGapPrune(T& t, M R::*sub, std::optional<V> SR::*f, double now_s,
+                        double horizon_s, OnErase on_erase) {
+    long long n = 0;
+    for (auto& kv : t)
+        for (auto& sk : kv.second.*sub) {
+            std::optional<V>& o = sk.second.*f;
+            if (o && carryPastHorizon(now_s, o->last_seen_s, horizon_s)) {
+                on_erase(kv.first, sk.first, *o);
+                o.reset();
+                ++n;
+            }
+        }
     return n;
 }
 

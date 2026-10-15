@@ -294,7 +294,9 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
         // True on this station's first screened epoch since a warm resume, the pass
         // on which its restored arcs appear as first sightings.
         const bool sta_resume_pass =
-            resume_run && ctx.carry.adm_resume_seen.insert(si).second;
+            resume_run
+            && net::mark(ctx.entities.stations, StationId{static_cast<int>(si)},
+                         &net::StationState::adm_resume_seen);
 
         // ---- (2) centre, and reduce to one verdict per (satellite, band) --
         // Several code observables can share a band (C1C and C1W); they are one

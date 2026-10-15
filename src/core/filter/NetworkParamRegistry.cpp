@@ -453,10 +453,15 @@ int networkParamModelRunEnd(const NetworkRunEndView& v) {
               "rx_code_bias {}",
               nb[SharedParamKind::Clock], nb[SharedParamKind::PhaseBias],
               nb[SharedParamKind::CodeBias], nb[SharedParamKind::VtecSh],
-              ctx.carry.local_carry.size(), ctx.carry.zwd_carry.size(),
+              ctx.carry.local_carry.size(),
+              net::present(ctx.entities.stations, &net::StationState::zwd),
               ctx.carry.iono_carry.size(), ctx.carry.iono_blk_carry.size(),
-              ctx.carry.rx_clk_carry.size(), ctx.carry.rpb_carry.size(),
-              ctx.carry.rx_cb_carry.size());
+              net::present(ctx.entities.stations, &net::StationState::signals,
+                           &net::StationSignalState::rx_clk),
+              net::present(ctx.entities.stations, &net::StationState::signals,
+                           &net::StationSignalState::rpb),
+              net::present(ctx.entities.stations, &net::StationState::signals,
+                           &net::StationSignalState::rx_cb));
     return 0;
 }
 

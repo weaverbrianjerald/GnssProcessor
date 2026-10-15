@@ -174,12 +174,13 @@ void networkGrossLosPublishScales(NetworkRunContext& ctx,
     // satellite this station was last seen screening".  That set is refreshed each
     // screened epoch, so a satellite that rises while the station is declared is folded
     // from the epoch after it is first screened, and one that sets drops out.
-    for (const auto& [si, sst] : ctx.carry.gl_sta_state) {
-        if (!sst.gross) continue;
-        const std::size_t i = static_cast<std::size_t>(si);
-        if (i >= fresh.size()) continue;
-        for (const auto& sat : sst.sats) fresh[i][sat] = f;
-    }
+    net::forEach(ctx.entities.stations, &net::StationState::gross_los,
+                 [&](const StationId& si, const net::GrossLosStationState& sst) {
+                     if (!sst.gross) return;
+                     const std::size_t i = static_cast<std::size_t>(si.index);
+                     if (i >= fresh.size()) return;
+                     for (const auto& sat : sst.sats) fresh[i][sat] = f;
+                 });
     for (std::size_t i = 0; i < stations.size(); ++i)
         stations[i].gl_code_sigma_scale.swap(fresh[i]);
 }
@@ -188,6 +189,13 @@ void networkGrossLosPublishScales(NetworkRunContext& ctx,
 // The hold: the bounded decoupling edge (RF-3b B2, standing invariant #7)
 // ---------------------------------------------------------------------------
 namespace {
+
+/// True when station @p si stands declared at the station tier (RF-3b B4).
+bool stationDeclaredGross(const NetworkRunContext& ctx, int si) {
+    const net::GrossLosStationState* sst =
+        net::get(ctx.entities.stations, StationId{si}, &net::StationState::gross_los);
+    return sst != nullptr && sst->gross;
+}
 
 /// Freeze one carried entry at its pre-declaration value (RF-3b B2).  The border
 /// regression and the joint block are cleared; that is the decoupling, since a
@@ -455,7 +463,8 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
         // screened epochs.  The release bar is the cap and not gross_los_clear_sigma:
         // the station-level statistic is the fraction, so its hysteresis is the streak.
         if (gl_sta_tier && mature) {
-            auto& sst = ctx.carry.gl_sta_state[static_cast<int>(i)];
+            auto& sst = net::put(ctx.entities.stations, StationId{static_cast<int>(i)},
+                                 &net::StationState::gross_los);
             sst.sats.clear();
             for (const auto& [sat, d] : verdicts) { (void)d; sst.sats.insert(sat); }
             if (!sst.gross && sta_standdown) {
@@ -722,8 +731,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
             // stands, as the guard does for one epoch.  Releases stay allowed (the
             // step's own contract).
             const bool sta_declared_now =
-                gl_sta_tier && ctx.carry.gl_sta_state.count(static_cast<int>(i))
-                && ctx.carry.gl_sta_state[static_cast<int>(i)].gross;
+                gl_sta_tier && stationDeclaredGross(ctx, static_cast<int>(i));
             const bool allow =
                 mature && !sta_standdown && !sat_down && !sta_declared_now;
             const GrossLosEdge edge =
@@ -863,8 +871,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
         for (const auto& pass : passes) {
             const int si = static_cast<int>(pass.i);
             const bool sta_down_here =
-                gl_sta_tier && ctx.carry.gl_sta_state.count(si)
-                && ctx.carry.gl_sta_state[si].gross;
+                gl_sta_tier && stationDeclaredGross(ctx, si);
             for (const auto& [sat, d] : pass.verdicts) {
                 (void)d;
                 ++contrib[sat];
@@ -1040,12 +1047,12 @@ void networkGrossLosAct(NetworkRunContext& ctx,
     // was last seen screening, as one verdict rather than N sequential ones (RF-3b B4).
     // A station release queues a release for each of those satellites.
     for (const auto& [si, declared] : ctx.carry.gl_act_station) {
-        const auto sit = ctx.carry.gl_sta_state.find(si);
-        if (sit == ctx.carry.gl_sta_state.end()) continue;
+        const auto* sit = net::get(ctx.entities.stations, StationId{si}, &net::StationState::gross_los);
+        if (sit == nullptr) continue;
         if (declared) {
-            for (const auto& sat : sit->second.sats) respond(si, sat);
+            for (const auto& sat : sit->sats) respond(si, sat);
         } else {
-            for (const auto& sat : sit->second.sats)
+            for (const auto& sat : sit->sats)
                 ctx.carry.gl_act_release.push_back({ si, sat });
         }
     }

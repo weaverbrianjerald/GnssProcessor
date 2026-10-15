@@ -1229,7 +1229,10 @@ static int networkRxExtraBandDelayRunEnd(const NetworkRunEndView& v) {
     stations.reserve(v.setup.stations.size());
     for (const NetStation& st : v.setup.stations) stations.emplace_back(st.name, &st.l5b);
     std::map<std::pair<int, std::string>, double> carried;
-    for (const auto& [sk, lc] : ctx.carry.rx_cb_carry) carried[sk] = lc.value_abs;
+    net::forEach(ctx.entities.stations, &net::StationState::signals, &net::StationSignalState::rx_cb,
+                 [&](const StationId& id, const std::string& key, const LocalCarry& lc) {
+                     carried[{id.index, key}] = lc.value_abs;
+                 });
     for (const RxIfbReportLine& l :
          rxExtraBandDelayReport(ctx.param_inventory.rx_ifb, ctx.param_inventory.whole_run,
                                 stations, carried, ctx.knobs.rx_cb_on, ctx.knobs.rxcb_blk)) {

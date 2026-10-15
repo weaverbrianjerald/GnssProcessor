@@ -27,6 +27,8 @@ namespace GnssProcessor {
 namespace {
 
 using S = CarrySite;
+using ES = net::StationState;         // the station carries (card NOM step N4a)
+using ESS = net::StationSignalState;
 using R = CarryRefRole;
 
 // One row per site, in the order of CarrySite (checked by the unit test).
@@ -295,7 +297,8 @@ bool carryMechanismMoves(CarryMechanism m, CarrySite s, bool complete) {
     return (carryMechanismSiteMask(m, complete) & carrySiteBit(s)) != 0;
 }
 
-long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
+long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities& entities,
+                                  std::uint32_t sites,
                                   const CarryRefVisitor& visit, CarrySiteCounts* counts) {
     static const std::string kNone;
     long long moved = 0;
@@ -388,7 +391,9 @@ long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
     if (on(S::AmbiguityCoupling))
         for (auto& [key, lc] : carry.local_carry) terms(S::AmbiguityCoupling, std::get<0>(key), lc);
     if (on(S::ZwdCoupling))
-        for (auto& [key, lc] : carry.zwd_carry) terms(S::ZwdCoupling, key, lc);
+        net::forEach(entities.stations, &ES::zwd, [&](const StationId& id, LocalCarry& lc) {
+            terms(S::ZwdCoupling, id.index, lc);
+        });
     if (on(S::IonoCoupling))
         for (auto& [key, lc] : carry.iono_carry) terms(S::IonoCoupling, key.first, lc);
     if (on(S::IonoBlockCoupling))
@@ -407,35 +412,52 @@ long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
         for (auto& [key, lc] : carry.gl_hold_iono_blk)
             terms(S::HoldIonoBlockCoupling, key.first, lc);
     if (on(S::RxClockValue))
-        for (auto& [key, lc] : carry.rx_clk_carry)
-            hand(CarriedRef{S::RxClockValue, SharedParamKind::Clock, kNone, key.second, key.first,
-                            &lc.value_abs, nullptr, false, nullptr, nullptr, &lc, nullptr});
+        net::forEach(entities.stations, &ES::signals, &ESS::rx_clk,
+                     [&](const StationId& id, const std::string& key, LocalCarry& lc) {
+                         hand(CarriedRef{S::RxClockValue, SharedParamKind::Clock, kNone, key, id.index,
+                                         &lc.value_abs, nullptr, false, nullptr, nullptr, &lc, nullptr});
+                     });
     if (on(S::RxClockCoupling))
-        for (auto& [key, lc] : carry.rx_clk_carry) terms(S::RxClockCoupling, key.first, lc);
+        net::forEach(entities.stations, &ES::signals, &ESS::rx_clk,
+                     [&](const StationId& id, const std::string&, LocalCarry& lc) {
+                         terms(S::RxClockCoupling, id.index, lc);
+                     });
     if (on(S::RxPhaseBiasValue))
-        for (auto& [key, lc] : carry.rpb_carry)
-            hand(CarriedRef{S::RxPhaseBiasValue, SharedParamKind::PhaseBias, kNone, key.second,
-                            key.first, &lc.value_abs, nullptr, false, nullptr, nullptr, &lc,
-                            nullptr});
+        net::forEach(entities.stations, &ES::signals, &ESS::rpb,
+                     [&](const StationId& id, const std::string& key, LocalCarry& lc) {
+                         hand(CarriedRef{S::RxPhaseBiasValue, SharedParamKind::PhaseBias, kNone, key,
+                                                 id.index, &lc.value_abs, nullptr, false, nullptr, nullptr, &lc,
+                                                 nullptr});
+                     });
     if (on(S::RxPhaseBiasCoupling))
-        for (auto& [key, lc] : carry.rpb_carry) terms(S::RxPhaseBiasCoupling, key.first, lc);
+        net::forEach(entities.stations, &ES::signals, &ESS::rpb,
+                     [&](const StationId& id, const std::string&, LocalCarry& lc) {
+                         terms(S::RxPhaseBiasCoupling, id.index, lc);
+                     });
     if (on(S::RxCodeBiasValue))
-        for (auto& [key, lc] : carry.rx_cb_carry)
-            hand(CarriedRef{S::RxCodeBiasValue, SharedParamKind::CodeBias, kNone, key.second,
-                            key.first, &lc.value_abs, nullptr, false, nullptr, nullptr, &lc,
-                            nullptr});
+        net::forEach(entities.stations, &ES::signals, &ESS::rx_cb,
+                     [&](const StationId& id, const std::string& key, LocalCarry& lc) {
+                         hand(CarriedRef{S::RxCodeBiasValue, SharedParamKind::CodeBias, kNone, key,
+                                                 id.index, &lc.value_abs, nullptr, false, nullptr, nullptr, &lc,
+                                                 nullptr});
+                     });
     if (on(S::RxCodeBiasCoupling))
-        for (auto& [key, lc] : carry.rx_cb_carry) terms(S::RxCodeBiasCoupling, key.first, lc);
+        net::forEach(entities.stations, &ES::signals, &ESS::rx_cb,
+                     [&](const StationId& id, const std::string&, LocalCarry& lc) {
+                         terms(S::RxCodeBiasCoupling, id.index, lc);
+                     });
     if (on(S::PhaseColourCoupling))
         for (auto& [key, lc] : carry.pc_carry) terms(S::PhaseColourCoupling, key.first, lc);
     return moved;
 }
 
-void carrySiteHeld(const NetworkCarryState& carry, long long (&held)[kCarrySites]) {
+void carrySiteHeld(const NetworkCarryState& carry, const net::NetworkEntities& entities,
+                   long long (&held)[kCarrySites]) {
     CarrySiteCounts c;
     // The walk writes nothing, creates no entry and reads no value (its contract), and this
     // visitor moves nothing, so counting through the mutable walk leaves the carry as it was.
-    forEachCarriedReference(const_cast<NetworkCarryState&>(carry), kAllCarrySites,
+    forEachCarriedReference(const_cast<NetworkCarryState&>(carry),
+                            const_cast<net::NetworkEntities&>(entities), kAllCarrySites,
                             [](const CarriedRef&) { return false; }, &c);
     for (int i = 0; i < kCarrySites; ++i) held[i] = c.visited[i];
 }
@@ -455,7 +477,7 @@ int networkCarrySitesRunEnd(const NetworkRunEndView& v) {
     // same rows go to the run manifest as a `param_sites` record.
     const auto& C = ctx.counters;
     long long held[kCarrySites]{};
-    carrySiteHeld(ctx.carry, held);
+    carrySiteHeld(ctx.carry, ctx.entities, held);
     std::string js = "{\"record\":\"param_sites\",\"sites\":[";
     for (int i = 0; i < kCarrySites; ++i) {
         const CarrySiteSpec& sp = carrySiteSpec(static_cast<CarrySite>(i));

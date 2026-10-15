@@ -56,11 +56,14 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <type_traits>
 #include <vector>
 
 #include "common/GnssIdentity.hpp"
+#include "filter/NetworkRunTypes.hpp"   // LocalCarry, SdEwlFix
+#include "model/PppModel.hpp"           // PppModel::CanonicalSignal
 
 namespace GnssProcessor {
     struct NetworkRunContext;
@@ -160,9 +163,155 @@ struct SatelliteState {
 /// One satellite signal's carried state (step N4d fills it).
 struct SatSignalState {};
 
-/// One station's carried state (step N4a fills it).
+/// The station-level dispositions (RF-3b B4, @c network.gross_los_station_tier),
+/// keyed by station.  @c gross means every one of that station's code rows
+/// folds at the deweight; @c sats is the satellite set the last screened epoch saw,
+/// which @ref networkGrossLosPublishScales turns into per-satellite scales (the
+/// assembly's map is per satellite, so a station-wide fold is expressed as "every
+/// satellite this station tracks").  Empty unless @c knobs.gl_station_tier.
+struct GrossLosStationState {
+    bool   gross{ false };       ///< The station is declared.
+    int    clear_streak{ 0 };    ///< Consecutive screened epochs at or under the cap while declared.
+    double declared_tow{ 0.0 };  ///< TOW of the standing declaration.
+    long long n_declared{ 0 };   ///< Declarations over the run for this station.
+    std::set<std::string> sats;  ///< Satellites the station was last seen screening.
+};
+
+/// The drift half of the carried (bias, drift) pair for RX-CLK-in-block, keyed like
+/// @c rx_clk_carry but populated only for the primary clock (kind ""); an ISB is a
+/// near-constant bias and takes a pure random walk.  Kept in its own map rather
+/// than added to @c LocalCarry, because @c LocalCarry is shared machinery used by
+/// the other carries, none of which has a rate.
+///
+/// This state exists because the network producer never writes its solution back
+/// into the station StateManager: @c x_lin(clock) is set once (0, or the latched
+/// cold_clock_seed median) and is constant for the run, so @c x_r carries the whole
+/// clock including its ramp of about 0.3 m/s (9 m per 30 s epoch, about 30 sigma
+/// against a bias-only prior).  The rate is a scalar Kalman state driven by the
+/// harvested increments; it also supplies the one-step prediction whose innovation
+/// is the clock-jump detector.
+struct RxClkRate {
+    double rate{0.0};          ///< Estimated drift, m/s (GPS-referenced, same frame as the clock state).
+    double rate_var{-1.0};     ///< Its variance, m^2/s^2.  < 0 = never updated, so the injector uses network.carry_rx_clock_rate_var0_m2ps2.
+    double prev_abs{0.0};      ///< Previous harvested absolute clock (m): the increment's left end.
+    double prev_s{-1.0};       ///< Its time (s).  < 0 = no previous sighting.
+    double prev_var{0.0};      ///< Its harvested variance (m^2), for the increment's measurement noise.
+    long long n_incr{0};       ///< Increments folded.  0 = no rate yet, so the jump gate cannot fire (there is no prediction to test).
+};
+
+/// One station's carried state below the station, in @ref StationState::signals: each
+/// member has its own key space (the string its old key carried after the station index),
+/// and a cell is present in a member exactly when the old map held (station, key).
+struct StationSignalState {
+    /// The carried receiver-clock-family local columns for RX-CLK-in-block
+    /// (@c network.carry_rx_clock_in_block), keyed (station index, kind), with kind ""
+    /// for the primary receiver clock and the system name for each ISB.  The value is
+    /// the absolute clock/ISB in metres (x_lin + x_r) as of @c last_seen_s, with the
+    /// F3 bookkeeping (@c blk / @c blk_idx / @c coupling) that every in-block column
+    /// carries.  Not snapshotted: a warm resume cold-starts it, which is one epoch of
+    /// white-clock behaviour, and a restored entry would carry no block anyway.
+    /// Key: the clock kind ("" for the primary clock, the system name for an ISB).  Was
+    /// @c NetworkCarryState::rx_clk_carry.  ColdStart.
+    std::optional<LocalCarry> rx_clk;
+    /// The drift half of @ref rx_clk (the struct @ref RxClkRate documents it); the primary
+    /// clock only.  Was @c NetworkCarryState::rx_clk_rate.  ColdStart.
+    std::optional<RxClkRate> rx_clk_rate;
+    /// Per-(station index, "sys_RPB_σ") receiver phase-bias carry for card 3 (eq34):
+    /// local time-linking of δ_{r,σ} (spec D6 v2 in its minimal local form, with no
+    /// border promotion).  Re-estimating the RPB fresh each epoch injects
+    /// anti-correlated per-epoch wander into every individual ambiguity float of that
+    /// (station, σ): DDs cancel it exactly, but the per-key phase-leveling carry does
+    /// not, which damages the datum-invariant DD steps.  Read-only during the parallel
+    /// matrix build (fold), written at the serial post-solve stash, erased for dirty
+    /// receiver vertices at the election (their chain frame stepped), and pruned on gap
+    /// like local_carry.  Inert unless network.phase_datum_eq34 with
+    /// phase_datum_eq34_rpb_q_m2s > 0.
+    /// Key: the receiver phase-bias state key ("sys_RPB_signal").  Was
+    /// @c NetworkCarryState::rpb_carry.  ColdStart.
+    std::optional<LocalCarry> rpb;
+    /// rx-CB carry: carried receiver code-bias posteriors, keyed (station index, CB
+    /// state key).  Harvested outside the carry_warm bracket, under its own gate, since
+    /// it must work on the carry_invariant / no-leveling lineage.  Inert unless
+    /// network.carry_rx_code_bias.
+    /// Key: the code-bias state key.  Was @c NetworkCarryState::rx_cb_carry.  Record RC.
+    std::optional<LocalCarry> rx_cb;
+    /// The receiver's parent-edge satellite in last epoch's eq34 spanning tree, for the
+    /// signal family "<c>|<sigma>" (the key; the old key was "<station name>|<c>|<sigma>").
+    /// With @c anchor_incumbent (the satellite side) it is last epoch's tree; replaced
+    /// wholesale per election.  Was @c NetworkCarryState::eq34_rx_parent.  Record EQP.
+    std::optional<std::string> eq34_rx_parent;
+};
+
+/// The SD EWL integer fixes of one station: constellation letter -> satellite -> fix.
+using SdEwlFixes = std::map<char, std::map<std::string, SdEwlFix>>;
+
+/// One station's carried state (step N4a).
+///
+/// The station's own fields are keyed by roster index (StationId); a member keyed below
+/// the station keeps the string its old key carried after the station index (O4), in
+/// @ref StationState::signals.  The receiver-side eq34 parent edges, keyed by station
+/// NAME before N4a, are walked through @ref byStationName (O3).
 struct StationState {
-    Lifecycle seen;  ///< Decision D4.
+    Lifecycle seen;  ///< Decision D4; Absent: no owner computes a station presence edge on every run yet.
+    /// Per-station ZWD carry (B9): persistent across epochs, keyed by station index (one
+    /// ZWD per station).  Solve-inert unless network.carry_zwd (every-epoch inject) or a
+    /// live zwd_seam_ep_left window (post-resume inject).  Also kept fresh (capture
+    /// only, no inject) on any snapshot-armed run (knobs.zwd_capture), so every RTB-7
+    /// snapshot serializes Z rows regardless of carry_zwd.
+    /// Was @c NetworkCarryState::zwd_carry.  Record Z.
+    std::optional<LocalCarry> zwd;
+    /// The station-level gross line-of-sight disposition (the struct documents it).  Was
+    /// @c NetworkCarryState::gl_sta_state.  ColdStart.
+    std::optional<GrossLosStationState> gross_los;
+    /// --- Slow channel of the declared per-station variance factor (QUEUE item 4 R2):
+    /// an EWMA over emitted epochs.  The seam runs only after acceptance, so the factor
+    /// freezes across withholds by construction.  Keyed by station index (the roster is
+    /// stable).  Not snapshotted: a warm resume re-converges the EWMA over about τ, the
+    /// conservative direction.
+    /// EWMA of the per-epoch factor
+    /// Was @c NetworkCarryState::staf_ewma.  ColdStart.
+    std::optional<double> staf_ewma;
+    /// EWMA update count (declaration warm-up).  Was @c NetworkCarryState::staf_updates.
+    /// ColdStart.
+    std::optional<long long> staf_updates;
+    /// The station is past the depart edge.  Was @c NetworkCarryState::staf_departed.
+    /// ColdStart.
+    bool staf_departed{false};
+    /// Last epoch's iono_sh_row count (INC-4); absent before the station's first sighting.
+    /// Was @c NetworkCarryState::topo_prev_tie.  ColdStart.
+    std::optional<int> topo_prev_tie;
+    /// The local-column keys currently flagged unobservable (the decoupling-edge set; an
+    /// entry appearing is an event, an entry disappearing is a counted re-couple).  Was
+    /// @c NetworkCarryState::redun_unobs_active.  ColdStart.
+    std::optional<std::set<std::string>> redun_unobs_active;
+    /// Station indices whose first post-resume screened epoch has already happened:
+    /// the per-station half of @c adm_resume_pending.  Bounded by the station roster;
+    /// empty and unread on a cold start.
+    /// Was @c NetworkCarryState::adm_resume_seen.  ColdStart.
+    bool adm_resume_seen{false};
+    /// The snapshot's RL rows for the RS-9 restore (§21.18): station roster index ->
+    /// (CB state key -> the writer's @c x_lin, metres).  Stashed by
+    /// @c networkTryWarmResume beside the RS-6 RC restore and consumed once, by
+    /// @c networkApplyRxCbLinRestore, which installs each station's map on its own
+    /// @c StateInitializer before the first epoch.  Empty on every other run.
+    /// CB state key -> the writer's @c x_lin (m).  Was
+    /// @c NetworkCarryState::rxcb_lin_restore.  ResumeSeeded.
+    std::optional<std::map<std::string, double>> rxcb_lin_restore;
+    /// Snapshot: exempt (RS-8 §21.16); a resume-response staging buffer, filled by
+    /// networkTryWarmResume and drained by networkRestoreCanonicalSignals in the same
+    /// process.  The parsed CN rows, keyed by station roster index, wait here for the
+    /// driver to hand them to the station models (networkTryWarmResume has no
+    /// `stations` and must not grow one; the restore is the seam right after it).  Empty
+    /// on every run that does not resume with network.resume_signal_canon_restore armed.
+    /// Was @c NetworkCarryState::resume_canon_rows.  ResumeSeeded.
+    std::optional<std::vector<PppModel::CanonicalSignal>> resume_canon_rows;
+    /// The SD EWL integer fixes published for PASS B (increment 2a), constellation letter ->
+    /// satellite -> fix; cleared every epoch before the decision (O4: the old key was
+    /// (station index, constellation)).  Not snapshotted (the SD EWL block of
+    /// NetworkCarryState states why).  Was @c NetworkCarryState::sd_ewl_fix.  ColdStart.
+    std::optional<SdEwlFixes> sd_ewl_fix;
+    /// The members keyed below the station.
+    std::map<std::string, StationSignalState> signals;
 };
 
 /// One line of sight's carried state (step N4c fills it).

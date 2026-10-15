@@ -1419,7 +1419,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     const double eq34_rpb_prior_w = ctx.knobs.eq34_rpb_prior_w;
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
-    auto& rpb_carry = ctx.carry.rpb_carry;
+    const net::StationTable& sta_rows = ctx.entities.stations;   // rpb: read-only in the parallel build
     // ---- End of the bindings ----
 
     // The anchor station(s) fold tight-prior pins on the ambiguities they
@@ -1577,23 +1577,24 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
                     // per-epoch re-estimate lacks.  The carry map is
                     // read-only here (parallel build); stash happens
                     // post-solve, erase at the election dirty walk.
-                    auto rc = rpb_carry.find(
-                        {static_cast<int>(i), rpb_key});
-                    if (rc != rpb_carry.end()) {
+                    const LocalCarry* rc = net::get(
+                        sta_rows, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                        rpb_key, &net::StationSignalState::rpb);
+                    if (rc != nullptr) {
                         const double gap =
-                            pl_now_s - rc->second.last_seen_s;
+                            pl_now_s - rc->last_seen_s;
                         if (gap >= 0.0 && gap <= pl_max_gap_s) {
-                            const double v = rc->second.var
+                            const double v = rc->var
                                            + eq34_rpb_q * gap;
                             if (v > 0.0 && std::isfinite(v)) {
                                 pin_col.push_back(hit->second);
                                 pin_y.push_back(
-                                    rc->second.value_abs - x0);
+                                    rc->value_abs - x0);
                                 pin_w.push_back(1.0 / v);
                                 pin_tag.push_back(rxPhaseBiasTag(
                                     ContributionKind::Eq34RpbTimeLink, rpb_key));
                             }
-                        } else if (carryPastHorizon(pl_now_s, rc->second.last_seen_s,
+                        } else if (carryPastHorizon(pl_now_s, rc->last_seen_s,
                                                     pl_max_gap_s)) {
                             // Card PRM phase 3a: a carried receiver phase
                             // bias past the horizon, not time-linked this

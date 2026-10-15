@@ -188,7 +188,7 @@ void networkZwdCarryPrior(StationCarryFrame& carry) {
     // keeps its B9 row.  The loader already refuses the arm without carry_zwd +
     // phase_leveling_local_block; this is the live half of the same gate.
     const bool   zwd_blk_on    = ctx.knobs.zwd_blk_on;
-    auto& zwd_carry = ctx.carry.zwd_carry;
+    const net::StationTable& sta_rows = ctx.entities.stations;   // read-only: the parallel produce
     // ---- End of the bindings ----
 
     // --- ZWD carry (B9): treat the tropo ZWD column as one more carried
@@ -209,29 +209,30 @@ void networkZwdCarryPrior(StationCarryFrame& carry) {
                 const Eigen::Index zcol = static_cast<Eigen::Index>(zhit->second);
                 R.pl_zwd_present = true;   // record for the post-solve stash
                 R.pl_zwd = PlZwd{zcol, x_lin(tropo_idx)};
-                const auto zit = zwd_carry.find(static_cast<int>(i));
+                const auto* zit = net::get(sta_rows, StationId{static_cast<int>(i)},
+                                           &net::StationState::zwd);
                 // B9-in-block: when this station-epoch's ZWD has already
                 // folded as a column of the F3 whitened block above, the
                 // diagonal row here would assert the same direction a second
                 // time (the double count the in-block route removes), so it
                 // is skipped.
-                if (zit != zwd_carry.end() && !R.pl_zwd_in_block) {
-                    const double zgap = pl_now_s - zit->second.last_seen_s;
+                if (zit != nullptr && !R.pl_zwd_in_block) {
+                    const double zgap = pl_now_s - zit->last_seen_s;
                     if (zgap <= pl_max_gap_s) {
                         const double zvar_eff =
-                            zit->second.var
+                            zit->var
                             + zwd_q_eff * std::max(0.0, zgap);
                         if (zvar_eff > 0.0) {
                             if (carry_cpl_cond) {
                                 cb.buildCplRow(zcol, x_lin(tropo_idx),
-                                            zit->second, zvar_eff,
+                                            *zit, zvar_eff,
                                             std::max(0.0, zgap),
                                             SatId{}, SignalId{});
                                 R.pl_zwd_injected = true;   // a carry was actually folded (L7)
                             } else {
                                 const double zlambda = 1.0 / zvar_eff;
                                 const double zeta =
-                                    zlambda * (zit->second.value_abs - x_lin(tropo_idx));
+                                    zlambda * (zit->value_abs - x_lin(tropo_idx));
                                 if (std::isfinite(zeta)) {
                                     inj.emplace_back(zcol, zlambda, zeta,
                                                      RowTag{ContributionKind::PriorZwdCarry, {}, {}});
@@ -251,7 +252,7 @@ void networkZwdCarryPrior(StationCarryFrame& carry) {
                             if (zwd_blk_on && R.pl_zwd_injected)
                                 ++R.pl_blk_zwd_fallback_diag;
                         }
-                    } else if (carryPastHorizon(pl_now_s, zit->second.last_seen_s,
+                    } else if (carryPastHorizon(pl_now_s, zit->last_seen_s,
                                                 pl_max_gap_s)) {
                         // Card PRM phase 3a: a carried wet delay past the
                         // horizon, not folded.  Counted here once for both
@@ -283,7 +284,7 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
     const NetworkSbasis::Plan& plan = ep.solve.plan;
     NetworkPriorResidual& prires_est = run.engines.prires;
     double pl_now_s = ep.clock.pl_now_s;
-    auto& zwd_carry = ctx.carry.zwd_carry;
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond;
     const double pl_max_gap_s = ctx.knobs.pl_max_gap_s;
     const bool   zwd_on = ctx.knobs.zwd_on;
@@ -357,20 +358,21 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
         // the census of a run with a snapshot path stays byte-identical to one
         // without the capture.
         if (prires_zwd && prires_est.enabled() && (zwd_on || zwd_seam_live)) {
-            const auto zit = zwd_carry.find(static_cast<int>(i));
-            if (zit != zwd_carry.end()) {
-                const double zgap = pl_now_s - zit->second.last_seen_s;
+            const auto* zit = net::get(sta_rows, StationId{static_cast<int>(i)},
+                                       &net::StationState::zwd);
+            if (zit != nullptr) {
+                const double zgap = pl_now_s - zit->last_seen_s;
                 if (zgap >= 0.0 && zgap <= pl_max_gap_s) {
                     NetworkPriorResidual::Input in;
                     in.family   = "zwd";
                     in.station  = static_cast<int>(i);
-                    in.e        = zit->second.value_abs - value_abs;
+                    in.e        = zit->value_abs - value_abs;
                     // Mirror the injector's q exactly (RS-10b): inside a live
                     // seam window an armed network.zwd_seam_reseed_q applies
                     // there, and a census computed against a variance no row used
                     // would report the `zwd` family's σ̂₀ (the R1' instrument) off
                     // by the override ratio.
-                    in.fold_var = zit->second.var
+                    in.fold_var = zit->var
                                 + ctx.knobs.zwdQEff(zwd_seam_live)
                                       * std::max(0.0, zgap);
                     in.post_var = var;
@@ -396,12 +398,13 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
         // the stash below moves `coupling` out.
         if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond
             && !coupling.empty()) {
-            const auto zold = zwd_carry.find(static_cast<int>(i));
-            if (zold != zwd_carry.end() && !zold->second.coupling.empty()) {
-                networkResumeCouplingCensusRow(run, zold->second, coupling);
+            const auto* zold = net::get(sta_rows, StationId{static_cast<int>(i)},
+                                        &net::StationState::zwd);
+            if (zold != nullptr && !zold->coupling.empty()) {
+                networkResumeCouplingCensusRow(run, *zold, coupling);
             }
         }
-        zwd_carry[static_cast<int>(i)] =
+        net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::zwd) =
             LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
         networkSharedHistoryNoteEntry(shx_h, est_idx, R.pl_zwd.col, SharedHistoryMap::Zwd,
                                       static_cast<int>(i));   // card SCL2 X2; no-op off
@@ -417,16 +420,16 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
         if (zblk && zcross.size() == zblk->C.rows()) {
             const Eigen::Index zrow = zblk->C.rows() - 1;   // the appended column
             zblk->C.row(zrow) = zcross.transpose();
-            auto& zent = zwd_carry[static_cast<int>(i)];
+            auto& zent = net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::zwd);
             zent.blk     = zblk;
             zent.blk_idx = static_cast<int>(zrow);
         }
     }
     // The horizon is the registry's (network.phase_leveling_max_gap_s, the same
     // double as pl_max_gap_s; card PRM phase 3b).
-    carryGapPrune(zwd_carry, pl_now_s,
+    carryGapPrune(sta_rows, &net::StationState::zwd, pl_now_s,
                   ctx.params.spec(NetworkParamKind::Zwd).gap_horizon_s,
-                  [&](const auto&) {
+                  [&](const auto&, const auto&) {
                       ++ctx.counters.n_cr_zwd_gap_prune;   // same predicate, same census
                       prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapPrune);   // card PRM phase 3a
                   });

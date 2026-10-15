@@ -4,8 +4,9 @@
  *
  * The body was moved out of Application::runNetwork at decomposition INC-8b.  The
  * alias preamble below reproduces the run TU's local names for the entries this body
- * references: 19 `auto& X = ctx.carry.X;` references (zwd_carry and
- * eq34_cpl_sprev_total serve the §14 coupling re-base) and 7 `ctx.knobs` values.
+ * references: `auto& X = ctx.carry.X;` references (eq34_cpl_sprev_total serves the §14
+ * coupling re-base), the entity tables of the station carries (card NOM step N4a: the
+ * receiver phase-bias carry and the receiver-side eq34 parents) and 7 `ctx.knobs` values.
  */
 
 #include "filter/NetworkChainDatum.hpp"
@@ -52,7 +53,7 @@
 
 namespace GnssProcessor {
 
-void eq34ShiftCarry(NetworkCarryState& carry,
+void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
                     const std::map<std::tuple<int, char, std::string>, double>& shift_rxg,
                     const std::map<std::pair<int, std::string>, double>& shift_rpb,
@@ -68,7 +69,7 @@ void eq34ShiftCarry(NetworkCarryState& carry,
         return s != 0.0;
     };
     forEachCarriedReference(
-        carry, carryMechanismSiteMask(CarryMechanism::Eq34Shift, complete),
+        carry, entities, carryMechanismSiteMask(CarryMechanism::Eq34Shift, complete),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::PhaseBias) return false;
             double d = 0.0;
@@ -126,7 +127,7 @@ auto& prev_carry = ctx.carry.prev_carry;
 auto& anchor_incumbent = ctx.carry.anchor_incumbent;
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
 auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
-auto& eq34_rx_parent = ctx.carry.eq34_rx_parent;
+net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a)
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
 auto& eq34_prev_el = ctx.carry.eq34_prev_el;
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
@@ -139,8 +140,7 @@ auto& eq34_retained_edges = ctx.carry.eq34_retained_edges;
 auto& eq34_prev_target = ctx.carry.eq34_prev_target;
 auto& eq34_reref = ctx.carry.eq34_reref;
 auto& local_carry = ctx.carry.local_carry;
-auto& rpb_carry = ctx.carry.rpb_carry;
-auto& zwd_carry = ctx.carry.zwd_carry;
+net::StationTable& sta_rows = ctx.entities.stations;   // rpb: the station signals (N4a)
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
 const bool eq34_longevity = ctx.knobs.eq34_longevity;
@@ -403,12 +403,15 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         }
         const std::string rx_suffix =
             "|" + constellationKey(grp_sys) + "|" + grp_sig;
-        for (const auto& [rxkey, sat] : eq34_rx_parent) {
-            if (rxkey.size() <= rx_suffix.size()
-                || rxkey.compare(rxkey.size() - rx_suffix.size(),
-                                 rx_suffix.size(), rx_suffix) != 0) continue;
-            seedEdge(rxkey.substr(0, rxkey.size() - rx_suffix.size()), sat);
-        }
+        // The receiver-side parents of this family, in station-name order (O3: the order of
+        // the "<name>|<c>|<sigma>" keys they had).
+        net::byStationName(entities.stations, entities.names,
+                           [&](const StationId& id, const net::StationState&) {
+            const std::string* sat = net::get(entities.stations, id, &net::StationState::signals,
+                                              rx_suffix.substr(1),
+                                              &net::StationSignalState::eq34_rx_parent);
+            if (sat) seedEdge(entities.names.names[id.index], *sat);
+        });
 
         // The connected components, in the order of their roots.  Under the shared link
         // rule (a station is united under a satellite, arc by arc) every root is a
@@ -666,9 +669,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     new_sat_root[amb] = stations[r1].name;
                 } else {
                     const std::string rxkey = stations[ri].name + rx_suffix;
-                    auto rp = eq34_rx_parent.find(rxkey);
-                    edge_changed = (rp != eq34_rx_parent.end()
-                                    && rp->second != sat);
+                    const std::string* rp =
+                        net::get(entities.stations, StationId{static_cast<int>(ri)},
+                                 &net::StationState::signals, rx_suffix.substr(1),
+                                 &net::StationSignalState::eq34_rx_parent);
+                    edge_changed = (rp != nullptr && *rp != sat);
                     new_rx_parent[rxkey] = sat;
                 }
                 if (edge_changed) {
@@ -831,7 +836,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         // Unknown frame step: the carried δ̂_{r,σ}
                         // belongs to an unrecoverable retired frame.
                         // Card PRM phase 3a: counted only when an entry was erased.
-                        if (rpb_carry.erase({idx, rpb_key}) != 0)
+                        if (net::drop(sta_rows, StationId{idx}, &net::StationState::signals, rpb_key,
+                                      &net::StationSignalState::rpb) != 0)
                             prmRespond(ctx.counters.prm_resp, ResponseSite::RpbEq34Erase);
                     } else if (s != 0.0) {
                         shift_rxg[std::make_tuple(idx, rinexLetter(grp_sys),
@@ -921,7 +927,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         CarrySiteCounts prm_cc;
         long long n_shifted = 0, n_cpl = 0;
-        eq34ShiftCarry(ctx.carry, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
+        eq34ShiftCarry(ctx.carry, ctx.entities, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
                        ctx.knobs.rebase_complete);
         if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
@@ -988,7 +994,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 new_sat_root.emplace(amb, sr->second);
         }
         // Receiver-side parents ("<name>|<c>|<σ>" → sat).
-        for (const auto& [rxkey, sat] : eq34_rx_parent) {
+        net::byStationName(entities.stations, entities.names,
+                           [&](const StationId& sid, const net::StationState& row) {
+          for (const auto& [family, cell] : row.signals) {
+            if (!cell.eq34_rx_parent) continue;
+            const std::string rxkey = entities.names.names[sid.index] + "|" + family;
+            const std::string& sat = *cell.eq34_rx_parent;
             if (new_rx_parent.count(rxkey)) continue;
             const auto p2 = rxkey.rfind('|');
             if (p2 == std::string::npos || p2 == 0) continue;
@@ -1002,7 +1013,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             new_rx_parent.emplace(rxkey, sat);
             eq34_retained_edges.emplace(static_cast<int>(gi->second),
                                         StateKeys::makeAmbiguityKey(sat, sig));
-        }
+          }
+        });
         // Pinned integers ({receiver idx, "sat_signal"} → target).
         for (const auto& [k, tgt] : eq34_prev_target) {
             if (new_prev_target.count(k)) continue;
@@ -1013,7 +1025,19 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         }
     }
     anchor_incumbent = this_epoch_anchor;
-    eq34_rx_parent   = std::move(new_rx_parent);
+    // The receiver-side parents are replaced wholesale ("<name>|<c>|<sigma>" -> sat).
+    net::dropAll(entities.stations, &net::StationState::signals,
+                 &net::StationSignalState::eq34_rx_parent);
+    for (const auto& [rxkey, sat] : new_rx_parent) {
+        const auto p2 = rxkey.rfind('|');
+        const auto p1 = (p2 == std::string::npos || p2 == 0) ? std::string::npos
+                                                              : rxkey.rfind('|', p2 - 1);
+        const std::optional<StationId> sid =
+            p1 == std::string::npos ? std::nullopt : net::stationOfName(entities, rxkey.substr(0, p1));
+        if (sid)
+            net::put(entities.stations, *sid, &net::StationState::signals, rxkey.substr(p1 + 1),
+                     &net::StationSignalState::eq34_rx_parent) = sat;
+    }
     eq34_sat_root    = std::move(new_sat_root);
     eq34_prev_target = std::move(new_prev_target);
     // Snapshot this epoch's arc elevations (I4) so next epoch's arcLife
@@ -1277,7 +1301,7 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     const NetworkSbasis::Plan& plan = ep.solve.plan;
     double pl_now_s = ep.clock.pl_now_s;
-    auto& rpb_carry = ctx.carry.rpb_carry;
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
     // ---- End of the bindings ----
     // --- RPB carry (card 3, eq34): harvest δ̂_{r,σ}, stash and prune ----------
@@ -1310,15 +1334,16 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
                                    ? vard(a) : -1.0;
             if (!std::isfinite(value_abs) || !(var > 0.0)
                 || !std::isfinite(var)) continue;
-            rpb_carry[{static_cast<int>(i), rpb_key}] =
+            net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::signals, rpb_key,
+                     &net::StationSignalState::rpb) =
                 LocalCarry{value_abs, var, pl_now_s};
         }
     }
     // The horizon is the registry's (network.phase_leveling_max_gap_s, the same
     // double as pl_max_gap_s; card PRM phase 3b).
-    carryGapPrune(rpb_carry, pl_now_s,
+    carryGapPrune(sta_rows, &net::StationState::signals, &net::StationSignalState::rpb, pl_now_s,
                   ctx.params.spec(NetworkParamKind::RxPhaseBias).gap_horizon_s,
-                  [&](const auto&) {
+                  [&](const auto&, const auto&, const auto&) {
                       ++ctx.counters.n_cr_rpb_gap_prune;   // same predicate, same census
                       prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);   // card PRM phase 3a
                   });

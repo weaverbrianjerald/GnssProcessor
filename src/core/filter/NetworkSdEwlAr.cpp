@@ -267,10 +267,10 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<bool>& present = ep.pass_a.present;
     // ---- End of the bindings ----
     const auto& cfg = config_.getNetworkConfig().sd_ewl;
-    auto& fix = ctx.carry.sd_ewl_fix;
+    net::StationTable& fix = ctx.entities.stations;   // each station's sd_ewl_fix (card NOM step N4a)
     // Cleared first and unconditionally: with the knob off, PASS B must see an empty map,
     // and a stale publication from a previous epoch would act as an unannounced hold.
-    fix.clear();
+    net::dropAll(fix, &net::StationState::sd_ewl_fix);
     if (!cfg.enable || !cfg.fix_enable) return;
 
     auto& stations = setup.stations;
@@ -510,7 +510,8 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
                 f.ffr = d.ffr;
                 f.measured = d.measured;
                 f.usable = !vetoed;
-                fix[{ sta, cons }][sat] = f;
+                net::put(fix, StationId{static_cast<int>(sta)},
+                         &net::StationState::sd_ewl_fix)[cons][sat] = f;
                 if (f.usable) ++C.sdewl_dd_fixed;
                 tr(vetoed ? "FLIP" : (nm == r0 ? "R0" : (d.ffr >= 1.0 ? "LINK"
                                                                       : "FIXED")),
@@ -707,7 +708,7 @@ StationStep networkSdEwlStationRows(StationBuild& build) {
     const long long sd_rows0 = st.sd_ewl_ctr.rows_built;
     networkAppendSdEwlRows(config_, st, est, modeled[i], h2local, se.time,
                             R.A_s, R.A_r, R.w, R.y, R.row_tags, R.sd_ewl_trace,
-                            &ctx.carry.sd_ewl_fix, i);
+                            &ctx.entities.stations, i);
     // The builder's own count this station-epoch, for the tag check (card NOM N2a).
     R.sd_ewl_rows = st.sd_ewl_ctr.rows_built - sd_rows0;
     return StationStep::Next;
@@ -724,7 +725,7 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
                             Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r, Eigen::VectorXd& w,
                             Eigen::VectorXd& y, std::vector<RowTag>& tags,
                             std::vector<std::string>& trace_rows,
-                            const std::map<std::pair<std::size_t, char>, std::map<std::string, SdEwlFix>>* fix,
+                            const net::StationTable* fix,
                             std::size_t station_index) {
     const auto& cfg = config_.getNetworkConfig().sd_ewl;
     if (!cfg.enable) return;
@@ -926,8 +927,10 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
         // candidates in the same ascending order).
         const SdEwlFix* my_fix = nullptr;
         if (fix_on) {
-            const auto git = fix->find({ station_index, cons });
-            if (git != fix->end()) {
+            const auto* sta_fix = net::get(*fix, StationId{static_cast<int>(station_index)},
+                                           &net::StationState::sd_ewl_fix);
+            const auto git = sta_fix ? sta_fix->find(cons) : net::SdEwlFixes::const_iterator{};
+            if (sta_fix && git != sta_fix->end()) {
                 const auto sit = git->second.find(o.satellite);
                 if (sit != git->second.end() && sit->second.usable)
                     my_fix = &sit->second;

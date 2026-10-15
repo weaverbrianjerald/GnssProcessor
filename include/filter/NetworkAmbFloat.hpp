@@ -242,6 +242,7 @@ namespace GnssProcessor {
      * phase bias and code bias, card LGM's phase colour) by @f$+\Delta@f$.  The phase hold's
      * held value is an emitted value and is not moved.
      * @param carry    the run's carried state.
+     * @param entities the run's entity tables (the station carries, card NOM step N4a).
      * @param sat      the family's satellite.
      * @param sig      the family's signal.
      * @param delta    the incoming anchor's carried level (m), read before anything moves.
@@ -253,7 +254,8 @@ namespace GnssProcessor {
      * @param counts   optional out: per-site tallies (accumulated).
      * @param complete also move the owed sites (false = the walk of card PRM phase 2).
      */
-    void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
+    void declaredHandoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
+                                    const std::string& sat,
                                     const std::string& sig, double delta,
                                     long long& n_shift, long long& n_pb, long long& n_cpl,
                                     CarrySiteCounts* counts = nullptr, bool complete = false);

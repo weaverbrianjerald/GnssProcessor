@@ -493,7 +493,8 @@ TEST(RedundancyCensusTest, OffIsStructurallyInert) {
     EXPECT_EQ(carry.redun_epochs, 0);
     EXPECT_TRUE(carry.redun_escalate_pending.empty());
     EXPECT_TRUE(carry.redun_event_last.empty());
-    EXPECT_TRUE(carry.redun_unobs_active.empty());
+    EXPECT_EQ(net::present(net::NetworkEntities{}.stations,
+                           &net::StationState::redun_unobs_active), 0u);
     EXPECT_DOUBLE_EQ(carry.redun_ep_tow, -1.0);
 
     // The epoch-status row leaves the four census columns blank, so a run with the
