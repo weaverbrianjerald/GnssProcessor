@@ -168,7 +168,7 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkLevelingCarryRunEnd.cpp", networkLevelingCarryRunEnd},
     {"the receiver-clock carry's jump gate (F3 block)",
      "filter/NetworkRxClockCarry.cpp", networkRxClockCarryRunEnd},
-    {"warm resume: restores (frame, coupling regressors, dense border), then resume and snapshot (RTB-7, RS-2 to RS-9, the coupling capture)",
+    {"warm resume: restores (frame, coupling regressors, dense border), then the resume and state-capture events (RTB-7, RS-2 to RS-9, the coupling capture)",
      "app/NetworkResumeRunEnd.cpp", networkResumeRunEnd},
     {"re-admission continuity",
      "app/NetworkReadmitRunEnd.cpp", networkReadmitRunEnd},
